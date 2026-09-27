@@ -1,12 +1,3 @@
-(* BUG-040 / FND-0031: a Secret Sol could not read is not a Secret that is absent.
-
-   [sol secret set] writes what it read back into the Secret, so reading "could not
-   ask" as "nothing there" made it apply a manifest without the existing keys (which
-   client-side apply then removes) and report success; [delete] reported a deletion
-   it never sent; [list] reported no keys. The fake kubectl answers every [get] per a
-   mode file and records each verb plus every manifest it was asked to apply, so the
-   assertions are about what Sol invoked, not about what the code appears to say. *)
-
 let write_file path contents =
   let oc = open_out path in
   output_string oc contents;
@@ -24,15 +15,6 @@ let read_file path =
   | Sys_error _ -> ""
 ;;
 
-(* Modes:
-   - unreachable: every get fails like an API server that cannot be reached;
-   - missing:     the Secret is NotFound, listings succeed and are empty;
-   - present:     the Secret exists with key EXISTING, listings are empty;
-   - no-rollouts: as [missing], but the Rollout kind is not served (CRD absent);
-   - listing-fails:   [sol-secrets] is readable, the per-workload Secret listing is Forbidden;
-   - workloads-fail:  Secrets are readable, the Deployment listing is Forbidden.
-   The last two get past the first read, so they prove every read happens before the
-   first write: a failure there must leave nothing applied, patched or restarted. *)
 let fake_kubectl ~log ~mode_file =
   Printf.sprintf
     {|#!/bin/sh

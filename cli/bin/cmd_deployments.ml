@@ -1,10 +1,5 @@
 open Cmdliner
 
-(* FEAT-070: read the deployment-event records the cluster holds. Read-only —
-   it never touches the release store or reconstructs history from telemetry. *)
-
-(* DEC-024: the workspace name comes from the resolved root, so it is the same
-   from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
@@ -39,7 +34,6 @@ let cmd =
       $ Cmd_destination.target_arg)
 ;;
 
-(* FEAT-063: the local form -- deployment events from Sol's own cluster. *)
 let local_cmd =
   Cmd.v
     (Cmd.info

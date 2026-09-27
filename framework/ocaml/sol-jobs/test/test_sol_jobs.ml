@@ -1,10 +1,3 @@
-(* FEAT-077: sol-jobs' backoff schedule mirrors kafka-eio's Kafka.Consumer.backoff_s
-   exactly (same formula, same self-seeded/mutex-protected rng discipline) but is
-   reimplemented independently rather than pulling kafka-eio into a Postgres-only
-   library -- these tests are deliberately close copies of kafka-eio's own
-   test_consumer_unit.ml backoff_s coverage, to catch the two formulas drifting
-   apart. *)
-
 let policy : Sol_jobs.retry_policy =
   { base_delay_s = 1.0; max_delay_s = 10.0; max_attempts = -1; jitter_ratio = 0.2 }
 ;;
@@ -56,12 +49,6 @@ let test_backoff_s_no_jitter_when_ratio_zero () =
     (Sol_jobs.For_testing.backoff_s ~rng policy 2)
 ;;
 
-(* FEAT-077: run() must fail fast on an invalid retry_policy (max_attempts = 0)
-   before ever touching Postgres or entering the claim loop -- same "discover
-   the problem before the first job, not after" discipline FEAT-078 applied to
-   sol-worker's mandatory retry_strategy. Testing the extracted
-   [validate_retry_policy] directly (rather than a full [Make(_).run] call)
-   avoids needing a live Postgres pool just to exercise this check. *)
 let test_validate_retry_policy_rejects_zero_max_attempts () =
   let policy = { Sol_jobs.default_retry_policy with max_attempts = 0 } in
   Alcotest.(check bool)
@@ -72,7 +59,6 @@ let test_validate_retry_policy_rejects_zero_max_attempts () =
      | Error (`Database _) | Ok () -> false)
 ;;
 
-(* BUG-044: kinds are the claim filter, joined with ',' into one parameter. *)
 let test_validate_kinds () =
   let ok kinds = Result.is_ok (Sol_jobs.For_testing.validate_kinds kinds) in
   Alcotest.(check bool) "typical kinds accepted" true (ok [ "send_email"; "report.v2-x" ]);

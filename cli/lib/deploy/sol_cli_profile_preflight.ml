@@ -19,10 +19,6 @@ let qualified_providers =
     (Sol_cli_provider_capabilities.capabilities_of provider).production_qualified)
 ;;
 
-(* Every capability in the profile now has a real establishment branch: none is
-   staged or assumed. Each branch asserts only what is observable offline (a
-   declaration, a rendered configuration, a profile-derived setting); the live
-   behavioural evidence behind a guarantee is HARDEN-002's. *)
 let establish
       ~(target : Sol_cli_config.target)
       ~apply_mode
@@ -51,9 +47,6 @@ let establish
          , "--emit-to hands reconciliation to a GitOps controller; this profile requires \
             Sol's direct apply" ))
   | Immutable_artifacts ->
-    (* FEAT-050: a tag can move under a recorded release, so the profile accepts
-       only content digests. This is the application's choice of reference, not
-       a property of the target. *)
     let images =
       plan.services
       |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.image)
@@ -67,9 +60,6 @@ let establish
            <service>=<repo>@sha256:<digest> (or a single --image-ref \
            <repo>@sha256:<digest> with a one-service scope) instead of a mutable tag" )
   | Alert_delivery ->
-    (* OBS-043: the receiver, owner and runbook are target declarations. Preflight
-       asserts the declaration is complete and syntactically routable; delivered-
-       and-acknowledged evidence is HARDEN-002's. *)
     (match
        Sol_cli_alerting.validate
          ~receiver_type:target.alert_receiver_type
@@ -79,21 +69,8 @@ let establish
      with
      | Ok () -> Established
      | Error reason -> Unmet (Target, reason))
-  | Credential_posture ->
-    (* SEC-004: the renderer disables ServiceAccount token automount for every
-       workload it generates (Sol_cli_manifest_yaml.service_account_doc), so no
-       plan can contain a workload with an ambient Kubernetes credential. This is
-       a Sol-owned property of the rendered plan, not a target or application
-       choice. Runtime secret rotation is the command-level behaviour of
-       `sol secret set` (in-place update + verified restart), proven end-to-end by
-       HARDEN-002. *)
-    Established
+  | Credential_posture -> Established
   | Qualified_versions ->
-    (* FEAT-088: the enforceable compatibility input is the declared framework
-       language. Every workload must state one, and the profile must qualify it;
-       nothing is inferred from build metadata (DEC-022 §7). The pinned
-       CLI/substrate/chart versions are recorded in
-       docs/deployment/compatibility.md. *)
     let profile =
       match plan.profile with
       | Some claim -> claim.profile
@@ -131,15 +108,8 @@ let establish
              (Sol_cli_compat.to_string language)
              (Sol_cli_profile.to_string profile) ))
   | Remote_state ->
-    (* AUDIT-072: control state must be encrypted, versioned and locked, and a
-       local backend is never conformant. Sol provisions a conformant backend by
-       default (platform/cloud/aws/bootstrap); an operator may bring their own by
-       declaring it. Preflight asserts the declaration; the destructive recovery
-       and concurrency checks are HARDEN-002's. *)
     let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
     let declared = Option.is_some in
-    (* REFAC-098: the lock is declared in the provider's own block, where the
-       provider's backend does not lock natively. *)
     let locked =
       match capabilities.state_locking with
       | None -> true
@@ -162,10 +132,6 @@ let establish
                  key
              | None -> "") )
   | Scoped_operator_identities ->
-    (* AUDIT-072: named provisioning/deploy/operator identities, distinct from
-       the cluster-creator admin, plus an explicitly restricted public endpoint.
-       Sol generates the least-privilege policy contracts; the operator supplies
-       the role ARNs. *)
     let present = Option.is_some in
     let missing_roles =
       List.filter_map
@@ -202,12 +168,6 @@ let establish
         | Ok _ -> Established
         | Error reason -> Unmet (Target, reason)))
   | Workload_availability ->
-    (* AUDIT-080: the plan already refuses an availability claim a workload
-       cannot satisfy ([validate_availability]: functions, volume-backed
-       workloads, fewer than two replicas). What remains is the cluster's
-       ability to place and restore those replicas: the target must declare one
-       spare node's capacity per node-failure-tolerant workload, so a lost node
-       can be replaced inside the DEC-026 §3 bound. *)
     let required =
       List.length
         (plan.services
@@ -239,16 +199,6 @@ let establish
               required
               required ))
   | Platform_capacity ->
-    (* INFRA-030. The profile applies its recommended node shape to the provider
-       root through the profile-precedence path, so no target field, var-file or
-       --var can undersize the cluster and still claim this profile: that half of
-       the contract is enforced by construction rather than validated here. What
-       an operator can still get wrong is the headroom they *declare*, so that is
-       what this branch judges — asking to survive losing more nodes than leave
-       the platform schedulable is a configuration that provably violates the
-       contract, and it is refused rather than discovered during a live install
-       as "context deadline exceeded" behind "Insufficient cpu" (Run 5 attempt
-       1). Note this is deliberately conservative arithmetic, not a scheduler. *)
     let headroom = Option.value target.node_failure_headroom_nodes ~default:0 in
     (match
        Sol_cli_profile.satisfies_capacity
@@ -259,20 +209,6 @@ let establish
      | Ok () -> Established
      | Error reason -> Unmet (Target, reason))
   | Postgres_durability ->
-    (* AUDIT-078: this capability is only in [requirements] when the plan uses
-       Postgres (migrations or a declared `postgres` resource), and the
-       missing-declaration case is already an application finding reported
-       ahead of this branch. What preflight establishes here is the
-       *configuration* consistency DEC-026 §4 asks a profile target to declare:
-       for exactly this (Postgres in use + profile selected) pair Sol drives the
-       provider root with `create_rds = true` and `rds_multi_az = true`
-       (Sol_cli_terraform_vars.of_config derives the latter from the profile), and
-       that module renders encrypted storage with a 7-day PITR window. What
-       preflight cannot observe, and therefore must not claim: that a failover
-       or a point-in-time restore has actually been performed or met its bound.
-       The RPO/RTO numbers in DEC-026 §5 are measured live by HARDEN-002. A
-       provider without such a module fails closed rather than being assumed
-       equivalent. *)
     if List.mem target.provider qualified_providers
     then Established
     else
@@ -287,17 +223,6 @@ let establish
              |> List.map Sol_cli_provider.to_string
              |> String.concat ", ") )
   | Kafka_durability ->
-    (* AUDIT-078: likewise applicable only when the plan *positively declares*
-       Kafka use (topics declared or a `kafka` resource used) — never inferred
-       from a worker's shape — and the missing-declaration case is an
-       application finding reported ahead of this branch. The qualified path
-       requires RF >= 3 with `acks=all` and write caching disabled, and the
-       plan records that requirement on every Kafka-consuming workload as
-       `SOL_KAFKA_DURABILITY=single-broker-loss`, which `kafka-eio-service`
-       verifies against the broker before the workload uses the topic. Preflight
-       asserts that rendered requirement is present for every such workload and
-       that the provider implements the path. The zero-loss-on-broker-loss
-       behaviour and the consumer-resume bound are HARDEN-002's live evidence. *)
     let consumers =
       plan.services
       |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) -> s.consumes_kafka)

@@ -9,7 +9,6 @@ type result =
   ; stderr : string
   }
 
-(* ponytail: OCaml stores signals as -(posix_n) on Linux; abs gives the POSIX number *)
 let signal_number n = abs n
 
 let status_of_unix = function
@@ -92,9 +91,6 @@ let close_noerr fd =
   | Unix.Unix_error _ -> ()
 ;;
 
-(* Run [argv] directly with Unix.create_process and capture stdout + stderr.
-   No shell is involved, so metacharacters are passed as ordinary argument
-   bytes. *)
 let run_argv ?(echo = false) argv =
   match argv with
   | [] -> invalid_arg "Sol_process.run_argv: empty argv"
@@ -126,10 +122,6 @@ let run_argv ?(echo = false) argv =
        })
 ;;
 
-(* Run [cmd] via /bin/sh and capture stdout + stderr.
-   Reads stdout then stderr sequentially; safe for the small outputs typical
-   of CLI tools (kubectl, helm, git, docker).  Do not use for commands that
-   stream MB+ to stderr while producing stdout. *)
 let run_shell ?(echo = false) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
   let ic, oc, ec = Unix.open_process_full cmd (Unix.environment ()) in
@@ -140,8 +132,6 @@ let run_shell ?(echo = false) cmd =
   { status; stdout = String.trim stdout; stderr = String.trim stderr }
 ;;
 
-(* Capture stdout lines; stderr goes to /dev/null.
-   Uses Unix.open_process_in so no temp file is needed. *)
 let lines_shell ?(echo = false) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
   let ic = Unix.open_process_in (cmd ^ " 2>/dev/null") in
@@ -150,7 +140,6 @@ let lines_shell ?(echo = false) cmd =
   List.filter (fun s -> s <> "") (String.split_on_char '\n' (String.trim content))
 ;;
 
-(* Capture stdout as a trimmed string; stderr goes to /dev/null. *)
 let output_shell ?(echo = false) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
   let ic = Unix.open_process_in (cmd ^ " 2>/dev/null") in
@@ -159,13 +148,11 @@ let output_shell ?(echo = false) cmd =
   String.trim s
 ;;
 
-(* Run and return exit code only; does not capture output. *)
 let run_shell_rc ?(echo = true) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
   Sys.command cmd
 ;;
 
-(* Run and fail with an informative message if exit code is non-zero. *)
 let run_shell_ok ?(echo = true) cmd =
   let rc = run_shell_rc ~echo cmd in
   if rc <> 0 then failwith (Printf.sprintf "command failed (exit %d): %s" rc cmd)

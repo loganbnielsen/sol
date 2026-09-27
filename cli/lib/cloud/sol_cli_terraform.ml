@@ -1,20 +1,12 @@
 let run = Sol_cli_process.run
 let cmd = Sol_cli_process.cmd
 
-(* INFRA-076: every command that takes the state lock runs under a supervisor
-   (Sol_cli_supervised), so Sol's death cannot kill Terraform abruptly, and each
-   run leaves an operation record. The record is keyed by the state it acts on --
-   the root plus its backend configuration, as [init] last configured it -- not by
-   the root alone, because every target of a provider shares one root. *)
 let operation_key ~chdir ~backend_config =
   let digest =
     Digest.to_hex
       (Digest.string
          (String.concat "\x00" (chdir :: List.sort String.compare backend_config)))
   in
-  (* REFAC-100: roots are named by role under their provider
-     (platform/cloud/<provider>/<role>), so the readable prefix is both components --
-     aws-cluster, gcp-platform -- not a basename every provider shares. *)
   Printf.sprintf
     "%s-%s-%s"
     (Filename.basename (Filename.dirname chdir))
@@ -102,9 +94,6 @@ let plan ?(env = []) ~scope ~chdir ~var_files ~vars () =
         @ var_args ~var_files ~vars))
 ;;
 
-(* A plan saved to a file, so the plan that was asserted is the plan that is
-   applied -- an apply that re-plans with the same arguments could differ from
-   the asserted plan (HARDEN-004 step 3). *)
 let plan_saved ?(env = []) ~scope ~chdir ~var_files ~vars ~out () =
   supervised
     ~chdir
@@ -155,19 +144,10 @@ let show_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json" ])
 ;;
 
-(* `terraform show -json <saved plan>`: the plan representation, with its
-   resource changes, for [Sol_cli_terraform_plan] to classify. Not exported
-   (SEC-008): the JSON carries sensitive values in plain text, so the only way
-   out is [show_saved_plan], which logs the classified changes and never the
-   JSON -- a caller cannot route it through [Sol_cli_run_log.run_phase]. *)
 let show_json_plan ?(env = []) ~chdir ~plan_file () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json"; plan_file ])
 ;;
 
-(* One read of a saved plan, shared by the two things that need it: the apply
-   assertion, which classifies resource changes, and the declared-universe
-   observation (FND-0055 / B2). Neither caller receives the JSON directly -- both
-   go through a [Sol_cli_terraform_plan] recorder, which enforces SEC-008. *)
 let saved_plan_json ?env ~chdir ~plan_file () =
   match show_json_plan ?env ~chdir ~plan_file () with
   | Ok r -> Ok r.stdout
@@ -186,8 +166,6 @@ let show_saved_plan ?env ~run_log ~phase ~chdir ~plan_file () =
     saved_plan_json ?env ~chdir ~plan_file ())
 ;;
 
-(* Apply the saved plan itself. No `-auto-approve`: a saved plan applies without
-   confirmation, and the point is that no re-plan happens here. *)
 let apply_saved ?(env = []) ~chdir ~plan_file () =
   supervised ~chdir (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "apply"; plan_file ])
 ;;

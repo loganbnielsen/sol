@@ -13,8 +13,6 @@ let reason_of = function
   | U.No_url reason -> reason
 ;;
 
-(* ── backend_of_string / backend_to_string ──────────────────────────────── *)
-
 let test_backend_of_string_valid () =
   check_bool "local" true (U.backend_of_string "local" = Some U.Local);
   check_bool
@@ -34,8 +32,6 @@ let test_backend_to_string_roundtrip () =
        check_bool "roundtrip" true (U.backend_of_string (U.backend_to_string b) = Some b))
     [ U.Local; U.Self_hosted_durable; U.External ]
 ;;
-
-(* ── resolve ─────────────────────────────────────────────────────────────── *)
 
 let test_resolve_local_default () =
   check_string
@@ -76,8 +72,6 @@ let test_resolve_override_wins_for_every_backend () =
     [ U.Local; U.Self_hosted_durable; U.External ]
 ;;
 
-(* ── effective_backend_and_base_domain ──────────────────────────────────── *)
-
 let write path content =
   let oc = open_out path in
   output_string oc content;
@@ -106,7 +100,6 @@ let with_temp_dir f =
     ~finally:(fun () -> Sys.chdir cwd)
     (fun () ->
        Sys.chdir dir;
-       (* DEC-024: the fixture directory is a Sol workspace. *)
        write "sol.yml" "";
        f ())
 ;;

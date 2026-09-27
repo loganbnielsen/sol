@@ -1,8 +1,6 @@
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 
-(* ── url_encode_logql ───────────────────────────────────────────────────── *)
-
 let test_encode_braces () =
   check_string "braces encoded" "%7Bfoo%7D" (Sol_cli_logs.url_encode_logql "{foo}")
 ;;
@@ -65,8 +63,6 @@ let test_encode_hash () =
     (Sol_cli_logs.url_encode_logql "a#b")
 ;;
 
-(* ── grafana_explore_url ────────────────────────────────────────────────── *)
-
 let make_url ?(base_url = "http://localhost:3000") ?(k8s_name = "charge-svc") () =
   Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name
 ;;
@@ -81,9 +77,6 @@ let test_url_contains_base_url () =
      && String.sub url 0 (String.length prefix) = prefix)
 ;;
 
-(* FRIC-029: the selector matches on "service" (a substring regex), not
-   "namespace" -- Sol's Loki streams never carry a "namespace"/"app" label
-   pair. *)
 let test_url_contains_service_selector () =
   let url = make_url () in
   check_bool
@@ -112,7 +105,6 @@ let test_url_contains_k8s_name () =
 
 let test_url_no_raw_braces () =
   let url = make_url () in
-  (* Strip the base_url prefix so only the query parameters are inspected. *)
   let query_start =
     try Str.search_forward (Str.regexp "?") url 0 with
     | Not_found -> 0
@@ -123,8 +115,6 @@ let test_url_no_raw_braces () =
 ;;
 
 let test_url_no_raw_equals_in_logql () =
-  (* The LogQL expr is embedded in the query value — its = signs must be
-     percent-encoded so they don't break URL parsing. *)
   let url = make_url () in
   check_bool
     "%3D present (= encoded in logql)"
@@ -139,7 +129,6 @@ let test_url_no_raw_equals_in_logql () =
 
 let test_url_no_raw_double_quotes () =
   let url = make_url () in
-  (* Raw double-quotes must not appear anywhere in the URL *)
   check_bool "no raw double-quote in URL" false (String.contains url '"')
 ;;
 
@@ -154,8 +143,6 @@ let test_url_default_base () =
      String.length url >= String.length prefix
      && String.sub url 0 (String.length prefix) = prefix)
 ;;
-
-(* ── kubectl_logs_argv ─────────────────────────────────────────────────── *)
 
 let test_kubectl_logs_deployment_target () =
   check_string
@@ -186,8 +173,6 @@ let test_kubectl_logs_fn_target () =
           ~follow:false
           ~tail:25))
 ;;
-
-(* ── release_query (FEAT-069) ────────────────────────────────────────────── *)
 
 let test_release_query_malformed_never_consults_store () =
   let consulted = ref false in
@@ -260,8 +245,6 @@ let test_release_query_scoped_selector_narrows_to_the_unit () =
       logql
   | _ -> Alcotest.fail "expected Release_logs"
 ;;
-
-(* ── runner ─────────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

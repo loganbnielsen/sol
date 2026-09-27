@@ -1,6 +1,3 @@
-(* Inject pool and observability handle via functor so there's no mutable state.
-   Worker.Make_with_retry requires module Message, group_id, and handle inside
-   the functor. *)
 module Make (Config : sig
   val pool : Pg_db.pool
   val obs  : Sol_obs.t

@@ -17,13 +17,9 @@ type t =
   ; handler : handler
   }
 
-(* ── Path parsing and matching ───────────────────────────────────────────── *)
-
 let split_path path = String.split_on_char '/' path |> List.filter (fun s -> s <> "")
 let trailing_slash s = s <> "" && s.[String.length s - 1] = '/'
 
-(* Parses a request path; None if malformed (consecutive slashes), else
-   Some (segments, has_trailing_slash). *)
 let parse_request_path path =
   let len = String.length path in
   let rec has_double_slash i =

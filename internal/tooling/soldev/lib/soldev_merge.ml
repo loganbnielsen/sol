@@ -19,14 +19,6 @@ let git_branch_exists branch =
   = 0
 ;;
 
-(* ── PR lookup (see REFAC-077) ───────────────────────────────────────────────
-
-   Since a ticket in flight no longer carries `branch:`/`pr:` frontmatter on
-   `main` (there is nothing to persist there until it lands in DONE), finding
-   a ticket's PR means asking GitHub directly rather than reading a local
-   field. A branch's convention is `<TICKET-ID>/<slug>`, so the ticket ID is
-   the path segment before the first `/`. *)
-
 type pr_info =
   { pr_number : int
   ; pr_url : string
@@ -64,10 +56,6 @@ let find_pr_for_ticket ticket_id =
   open_prs () |> List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id)
 ;;
 
-(* `gh pr checks` exits 0 iff every required check has completed and passed —
-   pending or failing checks give a non-zero exit. That is exactly the
-   "is this actually ready" signal `merge` needs; no need to parse the JSON
-   ourselves. *)
 let pr_checks_green pr_url =
   Sol_process.run_shell_rc
     ~echo:false
@@ -75,29 +63,11 @@ let pr_checks_green pr_url =
   = 0
 ;;
 
-(* This is a solo-owned repo: the `gh` identity running review/merge is
-   always the PR's own author, and GitHub refuses to let an author formally
-   approve their own PR (`gh pr review --approve` fails with "Can not
-   approve your own pull request"). So review readiness can't be GitHub's
-   own reviewDecision — it's a plain PR comment carrying this marker,
-   posted by `run_review` and checked for here. Branch protection's
-   1-approval requirement is separately satisfied at merge time via
-   `gh pr merge --admin`, same as before.
-
-   A pass comment is only trustworthy for the exact commit it reviewed: a
-   bounce-then-refix round posts a *later* comment on the same PR, and a
-   naive "does a PASS exist anywhere in history" check would still see the
-   earlier PASS and call the PR approved even though the latest verdict is
-   FAIL, or even though HEAD moved past the reviewed commit entirely (a
-   rebase, a manual fixup, any commit nobody re-reviewed). So: only the
-   temporally-last SOLDEV-REVIEW comment counts, and a PASS only counts if
-   its embedded sha still equals the PR's current head. *)
 let review_pass_marker = "SOLDEV-REVIEW: PASS"
 let review_fail_marker = "SOLDEV-REVIEW: FAIL"
 
 type review_verdict =
   | Reviewed_pass of string
-  (* reviewed sha *)
   | Reviewed_fail
 
 let starts_with ~prefix s =
@@ -122,8 +92,6 @@ let parse_review_marker body =
     else None
 ;;
 
-(* Later comments override earlier ones — this is what makes a bounce
-   correctly supersede a prior pass. *)
 let latest_review_verdict_of_bodies bodies =
   List.fold_left
     (fun acc body ->
@@ -156,9 +124,6 @@ let pr_review_approved pr =
   | Some Reviewed_fail | None -> false
 ;;
 
-(* ── pipeline check-reverts ──────────────────────────────────────────────── *)
-
-(* `Revert "Merge branch 'EXP-023/cloud-init-kubeconfig'..."` -> "EXP-023" *)
 let ticket_id_from_branch branch = ticket_id_of_branch branch
 
 let extract_reverted_branch subject =
@@ -181,8 +146,6 @@ let is_id_char c =
   || c = '-'
 ;;
 
-(* Whole-token substring match: "AUDIT-023" must not match inside
-   "CODEX_STYLE_AUDIT-023" or "AUDIT-0231". *)
 let mentions_id ~id line =
   let idlen = String.length id
   and linelen = String.length line in
@@ -199,15 +162,6 @@ let mentions_id ~id line =
   go 0
 ;;
 
-(* This repo routinely reverts a merge on a test failure and then reapplies
-   the fix in a later "Reapply ..." commit — that pattern is healthy and must
-   not be flagged. Only a revert with no later commit mentioning the ticket id
-   is a real "never refixed" case.
-
-   Since REFAC-077, a ticket's DONE move is committed on the same commit as
-   its code, so a revert here already un-does both atomically — this check
-   should rarely if ever fire going forward. Kept as defense in depth, not
-   because it's still load-bearing the way it was for EXP-032. *)
 let refixed_after ~id ~revert_hash =
   Soldev_shell.run_cmd_lines
     (Printf.sprintf "git log --oneline %s" (Filename.quote (revert_hash ^ "..HEAD")))
@@ -258,14 +212,6 @@ let run_check_reverts () =
     Soldev_exit.reported ())
 ;;
 
-(* ── pipeline submit ──────────────────────────────────────────────────────── *)
-
-(* Run from WITHIN the ticket's worktree (not the main checkout — see
-   REFAC-077). The worker's own last implementation commit already moved the
-   ticket file from READY_FOR_ENGINEERING/ to DONE/ *on this branch*; submit's
-   only job is to push the branch and open the PR (or reuse an existing one).
-   It never touches `internal/pipeline/tickets/` on `main` — there is nothing to move
-   there until the PR actually merges. *)
 let run_submit ticket_id =
   let open Result.Syntax in
   let done_path = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Done) ticket_id in
@@ -329,8 +275,6 @@ let run_submit ticket_id =
     else Soldev_exit.error ("error: gh pr create failed:\n" ^ r.Sol_process.stderr)
 ;;
 
-(* ── pipeline review ──────────────────────────────────────────────────────── *)
-
 type review_status =
   | Pass
   | Fail
@@ -357,8 +301,6 @@ let result_fields status j =
   Ok (status, summary, violations)
 ;;
 
-(* A result that is not the expected JSON is a failure to report, not an
-   exception out of the command. *)
 let parse_result json_str =
   let open Yojson.Basic.Util in
   let decode j =
@@ -387,13 +329,6 @@ let format_violations vs =
        vs)
 ;;
 
-(* Review leaves its verdict on the PR itself as a plain comment — not a
-   formal GitHub review, since self-approval is impossible here (see
-   pr_review_approved) — instead of moving any ticket file. There is nothing
-   to move: the ticket's DONE move already happened on the branch when it
-   was implemented, and a bounce just means the same open PR gets another
-   commit (this repo's established convention), not a ticket-directory
-   round trip. *)
 let run_review ticket_id result_file =
   let open Result.Syntax in
   match find_pr_for_ticket ticket_id with
@@ -420,9 +355,6 @@ let run_review ticket_id result_file =
     let* status, summary, violations = parse_result (String.trim json_str) in
     (match status with
      | Pass ->
-       (* Embed the PR's current head sha (from GitHub, not the local
-          worktree — see REFAC-077 follow-up) so a later commit nobody
-          reviewed can never ride in on this comment's approval. *)
        let body =
          Printf.sprintf
            "%s %s\n\n%s"
@@ -473,32 +405,6 @@ let run_review ticket_id result_file =
          Ok ()))
 ;;
 
-(* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
-
-   Runs the post-merge test suite and updates the perf baseline. `merge` always
-   invokes this as a subprocess of a binary rebuilt *after* the PR's merge commit
-   landed — never inline in the resident pre-merge process (see REFAC-075). There
-   is no ticket file to move here any more: the squash commit `merge` just applied
-   already carried the ticket's own READY_FOR_ENGINEERING -> DONE move (committed by
-   the worker, on the branch).
-
-   What this must *not* do is act on a local failure (BUG-033). Everything that can
-   be known about the code — build, tests, review marker, CI — was established
-   before `gh pr merge` touched origin/main, and GitHub's own required checks are
-   the authoritative gate. A suite run after that point, on this machine, reflects
-   this machine's environment as much as the code; the common failure here is
-   missing local kafka/e2e infra, not a regression. The previous behaviour reverted
-   the squash commit on *local* main and printed "ticket returns to
-   READY_FOR_ENGINEERING" — a rollback that never reached origin, left local main
-   diverged from the branch of record, and told the operator something untrue about
-   the ticket. A local failure is a report, not an action. *)
-
-(* The decision as a value, so the rule is testable without a shell or a cluster
-   (test_merge.ml). rc = 2 is the perf-ratio verdict, which is informational;
-   every other non-zero — including a crashed or unrunnable suite (127) — is a
-   failure to report rather than a baseline to record. The old shape treated only
-   1 as a failure and everything else as "merged", so an unrunnable suite was
-   silently recorded as a success. *)
 type post_merge_action =
   | Record_baseline
   | Record_baseline_after_perf_regression
@@ -528,8 +434,6 @@ let run_merge_finish ~ticket_id ~merge_sha =
          ticket_id
          merge_sha)
   | Record_baseline | Record_baseline_after_perf_regression ->
-    (* Perf-ratio regressions (rc = 2) are informational only: record the new
-       baseline so history reflects the merged commit, but never revert. *)
     if perf_rc = 2
     then
       Printf.eprintf
@@ -558,13 +462,8 @@ let run_merge_finish ~ticket_id ~merge_sha =
     Ok ()
 ;;
 
-(* Path to the binary `dune build` just refreshed. Invoked directly rather
-   than via the `soldev` name on PATH, so this doesn't depend on
-   ~/.local/bin/soldev being symlinked at all. *)
 let freshly_built_soldev = "_build/default/internal/tooling/soldev/bin/main.exe"
 
-(* Merges each approved, green candidate in turn; a failure on one is counted
-   and reported, and the sweep carries on. *)
 let merge_candidates ~dry_run candidates =
   let errors = ref 0 in
   let merged = ref [] in
@@ -578,12 +477,6 @@ let merge_candidates ~dry_run candidates =
        else if dry_run
        then Printf.printf "  (dry-run) gh pr merge %s --squash --delete-branch\n" p.pr_url
        else (
-         (* `gh pr merge --delete-branch` fails outright — nonzero exit, even
-         though the merge itself already landed on GitHub — if the branch is
-         still checked out in a linked worktree. That's not an edge case:
-         it's the normal state of any ticket that just finished. Remove the
-         worktree *before* calling `gh pr merge` so branch deletion never
-         conflicts with it in the first place. *)
          Soldev_shell.run_cmd_lines "git worktree list --porcelain"
          |> List.filter_map (fun line ->
            if String.length line > 9 && String.sub line 0 9 = "worktree "
@@ -634,11 +527,6 @@ let merge_candidates ~dry_run candidates =
              let build_rc = Soldev_shell.run_cmd "dune build" in
              if build_rc <> 0
              then (
-               (* BUG-033: report, never revert. The merge is already on
-                  origin/main; a build failure on this machine after that point
-                  cannot undo it, and a local-only revert would leave local main
-                  diverged from the branch of record while printing a rollback
-                  that did not happen. *)
                Printf.eprintf
                  "  post-merge build failed — %s is NOT reverted.\n\
                  \  The merge is on origin/main and the ticket's DONE move travelled \
@@ -669,14 +557,6 @@ let merge_candidates ~dry_run candidates =
   Ok ()
 ;;
 
-(* ── pipeline merge ──────────────────────────────────────────────────────── *)
-
-(* Merges via `gh pr merge` — GitHub branch protection and required checks
-   gate the actual merge, not local logic. A ticket is candidate for merging
-   the moment it has an open PR with an approved review and green checks;
-   there is no local READY_TO_MERGE directory to enumerate any more (see
-   REFAC-077) — `merge` asks GitHub directly. Pass a ticket ID to merge one;
-   omit to sweep every open PR whose branch looks like `<TICKET-ID>/...`. *)
 let run_merge ~dry_run ~ticket_filter =
   let open Result.Syntax in
   let* candidates =
@@ -698,15 +578,6 @@ let run_merge ~dry_run ~ticket_filter =
       (Printf.sprintf "error: must be on main to merge (currently on %s)." branch)
   else merge_candidates ~dry_run candidates
 ;;
-
-(* ── worktree annotations for pipeline ls/check (FEAT-040) ───────────────
-
-   REFAC-077 removed the local "in progress" state: an open branch/worktree
-   plus PR is the source of truth. But an interrupted implementation can sit
-   as uncommitted/unpushed changes in a worktree with no PR and no local
-   status marker. `pipeline ls`/`check` therefore surface dirty/unpushed
-   worktrees for READY tickets so an orchestrator resumes instead of
-   re-starting the ticket. *)
 
 let parse_worktree_porcelain lines =
   let rec go current acc = function
@@ -804,8 +675,6 @@ let worktree_annotation_for_ticket ticket_id =
     else Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path)
 ;;
 
-(* ── pipeline ls ─────────────────────────────────────────────────────────── *)
-
 let run_ls include_done =
   let states =
     if include_done
@@ -813,10 +682,6 @@ let run_ls include_done =
     else List.filter (fun s -> s <> Soldev_ticket.Done) Soldev_ticket.all_states
   in
   let any = ref false in
-  (* BUG-060: a ticket this command cannot read is named in its row *and* fails
-     the listing. Reporting it only in the row left the command's exit status
-     green, so a pipeline that ran `ls` -- or a reader skimming it -- could not
-     tell a queue with an unreadable ticket from a healthy one. *)
   let unreadable = ref [] in
   List.iter
     (fun state ->
@@ -848,12 +713,6 @@ let run_ls include_done =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
                 let path = Filename.concat state_dir filename in
-                (* BUG-060: an unreadable ticket is named in the listing exactly as
-                   `check` and `validate` would refuse it -- one rule, so a ticket
-                   cannot be rejected by one command and listed as ordinary by
-                   another. Nothing else is asked of it: no premise probe, no PR
-                   lookup, no worktree lookup, because a row that says
-                   "premise-stale" would read as a ticket the pipeline understands. *)
                 let ready =
                   match Soldev_ticket.unreadable ~path content with
                   | Some reason ->
@@ -863,10 +722,6 @@ let run_ls include_done =
                     let ready =
                       Soldev_ticket.readiness_label ~ticket_id:id state content
                     in
-                    (* INFRA-010: a stale premise must not read as actionable, and
-                       the listing is exactly where it silently did. Echo is off
-                       here because `ls` is a summary; `check` is where the probe is
-                       shown before it runs. *)
                     let ready =
                       match Soldev_ticket.premise_of content with
                       | None -> ready
@@ -918,20 +773,7 @@ let run_ls include_done =
          (List.length tickets))
 ;;
 
-(* ── pipeline validate ───────────────────────────────────────────────────── *)
-
-(* BUG-060: the invariant this command owns is whole-tree, and it exists because
-   the other two surfaces cannot express it: `ls` is a queue view (it does not
-   read the DONE history by default) and `check` only ever looks at the ticket it
-   is handed. A malformed ticket in DONE -- which is exactly the case that
-   motivated this, INFRA-042, plus the FEAT-103 frontmatter that had already been
-   merged -- was therefore invisible to both, and CI never parsed a ticket at
-   all. *)
 let run_validate () =
-  (* A state directory that is not there is not "no tickets" -- the tree is
-     broken (or the command is being run from outside the repository), and
-     reading it as an empty state would be the same silent degradation this
-     command exists to stop. *)
   let missing_dirs =
     Soldev_ticket.all_states
     |> List.filter_map (fun state ->
@@ -974,17 +816,12 @@ let run_validate () =
          (List.length paths))
 ;;
 
-(* ── pipeline check ──────────────────────────────────────────────────────── *)
-
 let run_check ticket_id =
   let open Result.Syntax in
   match Soldev_ticket.find_ticket ticket_id with
   | None -> Soldev_exit.error ~code:2 (Printf.sprintf "unknown ticket: %s" ticket_id)
   | Some (state, path) ->
     let content = read_file path in
-    (* BUG-060: the same rule `ls` and `validate` use. A ticket the pipeline
-       cannot read must not be answered for -- "status: actionable" is what a
-       worker acts on. *)
     let* () =
       match Soldev_ticket.unreadable ~path content with
       | None -> Ok ()
@@ -999,10 +836,6 @@ let run_check ticket_id =
     (match worktree_annotation_for_ticket ticket_id with
      | Some annotation -> Printf.printf "worktree: %s\n" annotation
      | None -> ());
-    (* INFRA-010: before the dependency and gate checks, ask whether the finding
-       still exists at all. A stale ticket is indistinguishable from real work
-       from the outside, and this is the cheapest place to find out. The probe is
-       echoed, so it is visible what is about to run. *)
     let* () =
       match Soldev_ticket.premise_of content with
       | None -> Ok ()
@@ -1035,10 +868,6 @@ let run_check ticket_id =
         Soldev_exit.reported ())
       else Ok ()
     in
-    (* A cycle is reported before the ordinary dependency list, because "blocked
-       by dependency" is exactly what a deadlock looks like from the outside:
-       every member is waiting on another, so the queue reads as busy rather than
-       broken. *)
     let* () =
       match Soldev_ticket.find_dependency_cycle ticket_id with
       | Some cycle when Soldev_ticket.cycle_blocks cycle ->

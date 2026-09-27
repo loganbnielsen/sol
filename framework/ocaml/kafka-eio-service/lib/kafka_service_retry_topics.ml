@@ -1,9 +1,3 @@
-(* FEAT-078: message-retry delay for Forward_retry, using kafka-eio's shared
-   jittered backoff (Kafka.Consumer.backoff_s) so In_memory and Retry_topics
-   apply the exact same computation over the exact same retry_policy fields,
-   not just the same type. Mutex-protected self-seeded rng -- never the bare
-   global Random module -- mirroring produce_rng below, shared across every
-   partition fiber's retry decision. *)
 let message_rng = Random.State.make_self_init ()
 let message_rng_mutex = Mutex.create ()
 
@@ -18,23 +12,10 @@ let hdr_attempt = "X-Sol-Attempt"
 let hdr_retry_at = "X-Sol-Retry-At"
 let hdr_decode_error = "X-Sol-Decode-Error"
 let hdr_origin_group = "X-Sol-Origin-Group"
-
-(* BUG-029: bounded in-process retry for the relay's own producer calls
-   (retry/DLQ publication), so a single transient produce failure self-heals
-   instead of immediately exhausting consume_partitioned's zero-tolerance
-   policy below. These are internal constants, not the user-facing
-   retry_policy vocabulary FEAT-078 will introduce -- this only protects the
-   relay's plumbing, not application-level retry semantics. *)
 let produce_max_attempts = 5
 let produce_base_delay_s = 0.1
 let produce_max_delay_s = 5.0
 let produce_jitter_ratio = 0.2
-
-(* Scoped to this module, not process-wide like Obs_trace's rng_state, but
-   mutex-protected for the same reason: Random.State.t mutation is not
-   domain-safe, and this state is shared across every partition fiber's
-   publish calls. Never the global Random module (this repo has been
-   bitten twice by that). *)
 let produce_rng = Random.State.make_self_init ()
 let produce_rng_mutex = Mutex.create ()
 
@@ -50,11 +31,6 @@ let produce_backoff_s attempt =
   Float.min produce_max_delay_s (Float.max 0.0 jittered)
 ;;
 
-(** [retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce ()] retries
-    [produce] (a single attempt, side-effecting) up to [max_attempts] times,
-    calling [on_retry ~attempt ~error] and [sleep (backoff_s attempt)] between
-    attempts. [produce]/[sleep]/[on_retry] are injected so this is testable
-    without a live broker or a real clock. Exposed for testing (BUG-029). *)
 let retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce () =
   let rec go attempt =
     match produce () with
@@ -99,12 +75,6 @@ let strip_sol_hdrs headers =
   List.filter (fun (k, _) -> k <> hdr_attempt && k <> hdr_retry_at) headers
 ;;
 
-(** A relay command: publish [source] to some target topic, carrying the
-    already-fully-resolved [headers] to send (no further header policy is
-    decided at publish time) plus [attempt]/[delay_s] for metrics
-    ([on_retry]/[on_relay_publish]) — not for serialization. Built exclusively
-    by [retry_message]/[dead_letter_message]/[decode_failure_message]
-    below; nothing else should construct one by hand. *)
 type relay =
   { source : Kafka.Consumer.message
   ; headers : (string * string option) list
@@ -112,8 +82,6 @@ type relay =
   ; delay_s : float
   }
 
-(** A scheduled retry: strips any stale [X-Sol-*] headers from [raw_msg] and
-    stamps fresh [X-Sol-Attempt]/[X-Sol-Retry-At] ([delay_s] from now). *)
 let retry_message ~raw_msg ~attempt ~delay_s =
   let retry_at = Unix.gettimeofday () +. delay_s in
   let headers =
@@ -124,22 +92,11 @@ let retry_message ~raw_msg ~attempt ~delay_s =
   { source = raw_msg; headers; attempt; delay_s }
 ;;
 
-(** Retry budget exhausted: a [retry_message] with [delay_s = 0.0] (dead
-    letters are immediate, not scheduled), plus [X-Sol-Origin-Group] (BUG-030:
-    dead-lettering is a statement about [group_id]'s processing attempt, not
-    an intrinsic property of the source event -- the DLQ topic is already
-    scoped to [group_id], but the header keeps the record self-describing if
-    it's ever exported or inspected independently of its topic name). *)
 let dead_letter_message ~raw_msg ~attempt ~group_id =
   let base = retry_message ~raw_msg ~attempt ~delay_s:0.0 in
   { base with headers = (hdr_origin_group, Some group_id) :: base.headers }
 ;;
 
-(** A source or retry record that couldn't even be decoded: preserves
-    [raw_msg]'s existing headers untouched (including whatever [X-Sol-Attempt]/
-    [X-Sol-Retry-At] a retry record already carried — this is not another
-    scheduled attempt), and appends a decode diagnostic plus
-    [X-Sol-Origin-Group] (BUG-030, see {!dead_letter_message}). *)
 let decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
   { source = raw_msg
   ; headers =
@@ -151,7 +108,6 @@ let decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
   }
 ;;
 
-(** Typed outcome for a single retry-routing decision. *)
 type retry_action =
   | Ack
   | Forward_retry of
@@ -162,9 +118,6 @@ type retry_action =
 
 let topic_name_to_string = Kafka_service_intf.topic_name_to_string
 
-(** Decide where a failed message should go after [attempt] attempts. [attempt]
-    is the attempt number that will be committed to the target topic (i.e. the
-    already-incremented counter). *)
 let decide_action
       ~retry_topic
       ~dlq_topic
@@ -185,11 +138,6 @@ let action_of_handler_error ~retry_topic ~dlq_topic ~retry_policy ~attempt = fun
   | Kafka_service_intf.Dead_letter _ -> Ok (Forward_dlq { target = dlq_topic })
 ;;
 
-(** Execute the side-effecting part of a retry action: build the relay
-    command, publish it, then ack. [raw_msg]'s key travels with it (via
-    [relay.source]), so a retried message hashes to the same partition on the
-    target topic that its key would hash to on the source topic (BUG-027:
-    both topics share [svc.partitions]). *)
 let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
   match action with
   | Ack -> ack ()
@@ -205,11 +153,6 @@ let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
      | Error e -> Error e)
 ;;
 
-(** A record that couldn't be decoded goes to the DLQ: always on the retry
-    topic, and on the source topic under [Route_to_dlq] (BUG-051). It doesn't
-    need [execute_action]'s [retry_action] dispatch, so it builds its own relay
-    command and publishes directly; the record is acked only once that publish
-    succeeds. *)
 let route_decode_error
       ~stage
       ~dlq_topic
@@ -235,19 +178,6 @@ let route_decode_error
   | Error e -> Error e
 ;;
 
-(* BUG-030: retry/DLQ topic identity must include both source-topic and
-   consumer-group identity, or independent consumer groups on the same source
-   topic can consume each other's retries/dead-letters. Group ids are
-   sanitized to alphanumerics and '-' only -- never left free to contain '.'
-   or '_', which Kafka's own metrics/JMX naming treats as interchangeable, so
-   two differently-punctuated group ids could otherwise collide at the
-   metrics layer even while remaining distinct topic-name strings. Kafka
-   topic names cap at 249 bytes; a group id long enough to risk that limit is
-   truncated and given a short content-hash suffix, always (not only when a
-   collision is detected -- there is no registry of every other group id to
-   check against, so "would collide" is read conservatively as "truncation
-   happened at all"), so two different overlong ids can never truncate to the
-   same canonical segment. *)
 let max_group_segment_len = 64
 
 let sanitize_group_id group_id =
@@ -271,10 +201,6 @@ let canonical_group_segment group_id =
     String.sub sanitized 0 prefix_len ^ "-" ^ hash_suffix)
 ;;
 
-(** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
-    ([suffix] is ["retry"] or ["dlq"]). Used by topic provisioning and the
-    retry consumer alike -- never reconstruct a retry/DLQ topic name any other
-    way (BUG-030). *)
 let relay_topic_name ~source ~group_id ~suffix =
   Printf.sprintf "%s.%s.%s" source (canonical_group_segment group_id) suffix
 ;;
@@ -357,15 +283,9 @@ let consume
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
-  (* The relay's headers are already fully resolved by whichever smart
-     constructor built [msg] -- this function knows nothing about retry vs.
-     decode-failure header policy, only how to publish a relay command. *)
   let publish ~target_topic (msg : relay) =
     let partition = msg.source.Kafka.Consumer.partition in
     on_retry ~partition ~attempt:msg.attempt ~delay_s:msg.delay_s;
-    (* BUG-029: bounded retry around the produce call itself -- a single
-       transient failure here must not be the thing that reaches
-       consume_partitioned's exhaustion policy below. *)
     let result =
       retry_produce
         ~max_attempts:produce_max_attempts
@@ -418,20 +338,9 @@ let consume
   let no_retry : Kafka.Consumer.retry_policy =
     { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 0; jitter_ratio = 0.0 }
   in
-  (* BUG-029: the relay (retry-topic consumer) forks off and previously had no
-     way to make its own failure visible to this function's return value --
-     it would log to stderr and the source consumer would keep running,
-     looking healthy, while retry delivery was silently dead. Set from the
-     forked relay fiber below; read once the source consumer stops, so a
-     relay failure is never reported as an overall Ok result. Plain [ref] is
-     safe here: both readers/writers are Eio fibers on the same domain, never
-     OS threads, so there is no data race to guard against. *)
   let relay_failure : Kafka_service_intf.consume_partitioned_error option ref =
     ref None
   in
-  (* Set when the relay closed the source consumer (BUG-043). A source error after
-     that close -- e.g. an in-flight ack answered with Destroy -- is a consequence
-     of the relay failure, so the relay's error is the one reported. *)
   let relay_closed_source = ref false in
   match
     Kafka.Consumer.create
@@ -507,11 +416,6 @@ let consume
                    | Ok () -> Kafka.Consumer.Continue
                    | Error e -> Kafka.Consumer.Error e)))
         in
-        (* BUG-027: routed through [consume_partitioned] (same as the source
-           topic below), not a single serial fetch loop -- so the per-message
-           backoff sleep below blocks only its own partition. During the sleep
-           [consume_partitioned] pauses that partition at the librdkafka level,
-           matching the isolation [In_memory] already documents. *)
         let retry_handler raw_msg ~ack =
           match parse_retry_metadata raw_msg.Kafka.Consumer.headers with
           | Error e ->
@@ -533,12 +437,6 @@ let consume
             if delay > 0.001 then Eio.Time.sleep clock delay;
             decode_retry raw_msg ~ack ~attempt
         in
-        (* BUG-043 / FND-0035: a relay that has stopped must stop the worker too.
-           Recording the failure alone surfaced it only when the source consumer
-           next returned -- which a healthy source never does, so retry delivery
-           stayed dead behind a green health check. Closing the source consumer
-           ends its consume_partitioned (kafka-eio treats a direct close as a
-           stop), and the relay_failure check below turns that into Error. *)
         let stop_source_after_relay_failure () =
           relay_closed_source := true;
           Printf.eprintf
@@ -594,10 +492,6 @@ let consume
            observe_decode_error e ~raw_bytes ~disposition:`Dropped;
            Kafka_service_intf.ack_and_drop_decode_error e ~raw_bytes ~ack
          | Route_to_dlq ->
-           (* BUG-051 / FND-0049: a provisioned DLQ exists, so an undecodable
-              source record is diverted there, never acked through. A failed
-              publish leaves it unacked and fails the partition, like any
-              other relay failure. *)
            observe_decode_error e ~raw_bytes ~disposition:`Dead_lettered;
            (match
               route_decode_error
@@ -651,13 +545,6 @@ let consume
         | Kafka.Consumer.Invalid_config msg ->
           Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
     in
-    (* BUG-029: an already-failed source consumer keeps its own error; a
-       healthy-looking source result must not mask an earlier relay failure
-       -- that is exactly the silent-degradation shape this ticket exists to
-       close. This is the documented exhaustion policy: a stopped retry
-       relay fails the worker rather than leaving it running degraded, and
-       since BUG-043 it does so promptly -- the relay closes the source
-       consumer, so this point is reached as soon as the relay stops. *)
     let result =
       match result, !relay_failure with
       | Error _, Some relay_err when !relay_closed_source ->

@@ -1,10 +1,3 @@
-(* FEAT-100: tests used to write one file per target
-   (sol/<env>/<provider>/<region>.yml). [write ~target text] keeps that shape for
-   the test author -- [text] is what such a file held, a [target:] block plus
-   optional [resources:] and [services:] -- and records it as a target body in
-   sol/environments.yml, regenerated from every target written so far in the
-   current directory. Writing the same target again replaces it. *)
-
 let written : (string, (string * string) list) Hashtbl.t = Hashtbl.create 8
 
 let indent_of line =
@@ -13,8 +6,6 @@ let indent_of line =
   go 0
 ;;
 
-(* The old file's [target:] children move up to the body's top level; its
-   [resources:]/[services:] sections stay as they are. *)
 let body_of_target_file text =
   let lines = String.split_on_char '\n' text in
   let in_target = ref false in

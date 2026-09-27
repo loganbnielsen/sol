@@ -1,11 +1,5 @@
-(* REFAC-131: Sol writes YAML as a value through one emitter. These pin the two
-   properties that made the sprintf templates unsafe: a value is written as
-   exactly that value whatever characters it holds, and a string never changes
-   type on the way into Kubernetes. *)
-
 let render_value v = Sol_cli_yaml.render [ Sol_cli_yaml.document v ]
 
-(* Everything after the leading "---\n", parsed back. *)
 let read_back text =
   let prefix = "---\n" in
   let n = String.length prefix in
@@ -86,8 +80,6 @@ let round_trips_exactly make label =
 let test_string_round_trips () = round_trips_exactly Sol_cli_yaml.string "string"
 let test_quoted_round_trips () = round_trips_exactly Sol_cli_yaml.quoted "quoted"
 
-(* The plain form is kept for readable values, and that is where the existing
-   manifest tests look for "name: charge-svc". *)
 let test_plain_where_safe () =
   [ "charge-svc"
   ; "sol-registry:5000/myapp/charge-svc:abc123"

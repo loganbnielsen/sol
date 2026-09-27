@@ -1,9 +1,3 @@
-(* Pure parsing/summarizing of kubectl pod + event JSON for 'sol status'
-   rollout diagnosis. The parse_*/format_* functions below do no I/O —
-   callers fetch JSON via Sol_cli_kubectl and pass it in. The one exception is
-   [diagnose_service_live], which fetches cluster state itself; see its own
-   doc comment. *)
-
 type container_state =
   | Waiting of
       { reason : string
@@ -36,124 +30,53 @@ type event =
   ; involved_name : string
   }
 
-(** Parse the output of [kubectl get pods -n <ns> -l <selector> -o json]. [Ok []]
-    only when the API answered with an empty list; text that is not JSON, or has
-    no [items] list, is an [Error] naming what was wrong (REFAC-127), never "no
-    pods". *)
 val parse_pods_json : string -> (pod_status list, string) result
-
-(** Parse the output of [kubectl get events -n <ns> -o json], on the same terms
-    as {!parse_pods_json}. *)
 val parse_events_json : string -> (event list, string) result
-
-(** Most recent [limit] events (default 5) involving the given pod name, newest
-    first. *)
 val events_for_pod : ?limit:int -> pod_name:string -> event list -> event list
-
-(** A pod is healthy when it is Running, ready, and its container state is also
-    Running (not stuck Waiting/Terminated with a stale ready flag). *)
 val is_healthy : pod_status -> bool
 
-(** Workload health model. [Continuous] services should always have current
-    pods. [Ephemeral] functions leave historical run-pods behind with no
-    reliable way to pick the latest run from pod state alone, so they're
-    diagnosed from CronJob status instead -- except a currently active run,
-    identified unambiguously via [status.active]'s Job names. *)
 type pod_expectation =
   | Continuous
   | Ephemeral
 
-(** INFRA-057 / DEC-038 §5: the result of reading a namespace's events.
-
-    A failed read is **not** an empty result, and the two must never render the
-    same way:
-
-    - [Events []] -- the read succeeded and there is nothing to report;
-    - [Events_unavailable why] -- Sol could not look, and says so, naming why.
-
-    The status contract stays best-effort (one denied read must not deny the
-    operator the rest of the diagnosis), but it must never present a part it did
-    not obtain as though it had. *)
 type events_fetch_result =
   | Events of event list
   | Events_unavailable of string
 
-(** Render one pod's diagnosis block: state/reason, restarts, last termination
-    reason, image, and recent events. When the events read failed, the block says
-    so rather than showing none. *)
 val format_pod_diagnosis : pod_status -> events_fetch_result -> string
 
-(** DEC-038 §7: the evidence behind a verdict.
-
-    [Healthy] and [Unhealthy] both mean the evidence was *obtained*; they differ
-    only in what it says. [Undetermined] means it could not be obtained, and
-    carries why.
-
-    This replaces a [string option] whose [None] meant both "nothing wrong" and
-    "could not read", which is how an unreadable workload came to be reported as
-    healthy. A verdict must never be produced by reads that did not happen. *)
 type diagnosis =
   | Healthy
   | Unhealthy of string
   | Undetermined of string
 
-(** [Continuous] diagnosis over a confirmed pod list. Pass only a real pod list
-    from a successful kubectl fetch: [] means confirmed zero pods, not "could
-    not check." [Healthy] means every pod is healthy; [Undetermined] is for a list
-    that could not be obtained, which is a different thing entirely. *)
 val format_service_diagnosis
   :  service_name:string
   -> pod_status list
   -> events_fetch_result
   -> diagnosis
 
-(** CronJob status fields used for [Ephemeral] diagnosis. *)
 type cronjob_status =
   { last_schedule_time : string option
   ; last_successful_time : string option
   ; active_job_names : string list
-    (** The currently-running Jobs, from [status.active], for targeting
-        current-run pods without scanning history. Kubernetes omits the field
-        when none is running, so [[]] is that answer. *)
   }
 
-(** Parse [kubectl get cronjob <name> -n <ns> -o json]. A CronJob with no
-    [status] yet has no schedule times and no active jobs. Text that is not
-    JSON, a [status.active] that is not a list, or an active job with no name is
-    an [Error]. *)
 val parse_cronjob_status : string -> (cronjob_status, string) result
 
-(** CronJob fetch result. [Missing] is confirmed NotFound and should be reported;
-    [Unavailable] is a fetch/parse failure and carries why, so the verdict can say
-    it could not read rather than reporting health it did not observe. *)
 type cronjob_fetch_result =
   | Found of cronjob_status
   | Missing
   | Unavailable of string
 
-(** [Ephemeral] diagnosis of the CronJob's last *completed* run: healthy when no
-    run has ever been scheduled or [lastSuccessfulTime >= lastScheduleTime]. A
-    currently-active run is never a finding here regardless of its pod's state
-    -- see [format_active_run_diagnosis] for that. *)
 val format_cronjob_diagnosis : service_name:string -> cronjob_fetch_result -> diagnosis
 
-(** [Ephemeral] diagnosis of an active run's own pod(s), scoped to exactly the
-    Job(s) in [cronjob_status.active_job_names]. More lenient than
-    [format_service_diagnosis]: a [Succeeded] pod, or one merely starting up
-    with no restart history, is not a finding. *)
 val format_active_run_diagnosis
   :  service_name:string
   -> pod_status list
   -> events_fetch_result
   -> diagnosis
 
-(** Live diagnosis for a deployed workload in the cluster [ctx] names. Unlike
-    the rest of this module, this fetches cluster state itself (pods, events,
-    cronjob status) via [Sol_cli_kubectl.get_raw] rather than taking
-    already-fetched JSON. [Ephemeral] tries [format_active_run_diagnosis]
-    first when a run is currently active and its pod(s) can be fetched,
-    falling back to [format_cronjob_diagnosis] otherwise (no active run, or
-    the active pod fetch itself failed). *)
 val diagnose_service_live
   :  ctx:Sol_cli_kube_destination.context
   -> pod_expectation:pod_expectation

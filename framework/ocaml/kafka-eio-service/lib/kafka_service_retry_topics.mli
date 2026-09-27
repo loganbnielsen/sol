@@ -1,9 +1,3 @@
-(** [Retry_topics] strategy backing [Kafka_service.consume_partitioned] — see
-    that function's [.mli] doc for the retry/DLQ topic contract. Only [consume]
-    is called from [Kafka_service]; the rest is exposed for direct unit testing
-    of the retry-routing decision and header codec. *)
-
-(** Typed outcome for a single retry-routing decision. *)
 type retry_action =
   | Ack
   | Forward_retry of
@@ -12,23 +6,9 @@ type retry_action =
       }
   | Forward_dlq of { target : Kafka_service_intf.topic_name }
 
-(** Read and validate the [X-Sol-Attempt]/[X-Sol-Retry-At] headers off a message
-    forwarded to a retry topic. *)
 val parse_retry_metadata : (string * string option) list -> (int * float, string) result
-
-(** BUG-029: backoff (with jitter, capped) for the relay's in-process produce
-    retry, keyed by produce attempt number (1-based). Not the user-facing
-    retry_policy vocabulary FEAT-078 will introduce -- this only bounds the
-    relay's own producer resilience. Exposed for testing the shape of the
-    schedule (monotonic growth, cap, non-negativity), not its exact jittered
-    value. *)
 val produce_backoff_s : int -> float
 
-(** [retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce ()] retries
-    [produce] up to [max_attempts] times, calling [on_retry ~attempt ~error] and
-    [sleep (backoff_s attempt)] between attempts. Exposed so the retry-count and
-    give-up behavior can be tested with stubbed [produce]/[sleep], without a
-    live broker or a real clock (BUG-029). *)
 val retry_produce
   :  max_attempts:int
   -> backoff_s:(int -> float)
@@ -46,12 +26,6 @@ val action_of_handler_error
   -> Kafka_service_intf.handler_error
   -> (retry_action, Kafka.Error.t) result
 
-(** A relay command: publish [source] to some target topic, carrying the
-    already-fully-resolved [headers] to send (no further header policy is
-    decided at publish time) plus [attempt]/[delay_s] for metrics
-    ([on_retry]/[on_relay_publish]) — not for serialization. Built exclusively
-    by [retry_message]/[dead_letter_message]/[decode_failure_message]
-    below; nothing else should construct one by hand. *)
 type relay =
   { source : Kafka.Consumer.message
   ; headers : (string * string option) list
@@ -59,28 +33,18 @@ type relay =
   ; delay_s : float
   }
 
-(** A scheduled retry: strips any stale [X-Sol-*] headers from [raw_msg] and
-    stamps fresh [X-Sol-Attempt]/[X-Sol-Retry-At] ([delay_s] from now). *)
 val retry_message
   :  raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> delay_s:float
   -> relay
 
-(** Retry budget exhausted: a {!retry_message} with [delay_s = 0.0] (dead
-    letters are immediate, not scheduled), plus [X-Sol-Origin-Group] (BUG-030:
-    dead-lettering is a statement about [group_id]'s processing attempt, not
-    an intrinsic property of the source event). *)
 val dead_letter_message
   :  raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> group_id:string
   -> relay
 
-(** A source or retry record that couldn't even be decoded: preserves
-    [raw_msg]'s existing headers untouched (this is not another scheduled
-    attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
-    (BUG-030, see {!dead_letter_message}). *)
 val decode_failure_message
   :  raw_msg:Kafka.Consumer.message
   -> attempt:int
@@ -88,10 +52,6 @@ val decode_failure_message
   -> group_id:string
   -> relay
 
-(** Execute the side-effecting part of a retry decision: build the relay
-    command for the chosen action (for [Forward_retry]/[Forward_dlq]),
-    [publish] it, then [ack]. [Ack] skips straight to acking. [group_id] is
-    only used on the [Forward_dlq] path (BUG-030's [X-Sol-Origin-Group]). *)
 val execute_action
   :  group_id:string
   -> retry_action
@@ -104,13 +64,6 @@ val execute_action
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> (unit, Kafka.Error.t) result
 
-(** Publish an undecodable record, raw, with decode diagnostics attached, to the
-    DLQ, then ack it -- only once the publish succeeded; a failed publish is
-    returned and nothing is acked. Used for every retry-topic decode failure
-    (BUG-028: acking would drop the last durable copy) and, under
-    [Route_to_dlq], every source-topic one (BUG-051). [stage] only labels the
-    stderr line. Always targets the DLQ, so it builds its own relay command
-    rather than going through {!execute_action}'s [retry_action] dispatch. *)
 val route_decode_error
   :  stage:[ `Source | `Retry ]
   -> dlq_topic:Kafka_service_intf.topic_name
@@ -125,22 +78,8 @@ val route_decode_error
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> (unit, Kafka.Error.t) result
 
-(** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
-    ([suffix] is ["retry"] or ["dlq"]). [group_id] is sanitized to
-    alphanumerics and ['-'] and, if long enough to risk Kafka's 249-byte topic
-    name limit, truncated with a content-hash suffix (BUG-030: retry/DLQ
-    topic identity must include consumer-group identity, or independent
-    groups on the same source topic consume each other's retries/dead
-    letters). Exposed for direct testing of sanitization, truncation, and
-    cross-group distinctness; never reconstruct a retry/DLQ topic name any
-    other way. *)
 val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
 
-(** [on_relay_publish] fires after each attempt to publish to the retry/DLQ
-    topic itself resolves -- [`Published] once (after in-process produce
-    retries succeed), [`Failed] once if they're exhausted (BUG-029). Distinct
-    from [on_retry], which fires once per record when a retry is *scheduled*,
-    before publication is attempted. *)
 val consume
   :  Kafka_service_intf.t
   -> 'a Kafka_service_intf.topic

@@ -1,5 +1,3 @@
-(* REFAC-130: the workspace a fixture describes, read once through the loader
-   under test -- the same value the commands pass into the plan. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -14,16 +12,12 @@ module R = Sol_cli_release
 
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
-(* ── labels ──────────────────────────────────────────────────────────────── *)
-
 let test_sanitize_label () =
   check_string "target path" "dev-aws-us-east-1" (R.sanitize_label "dev/aws/us-east-1");
   check_string "unit scope" "payments-charge_svc" (R.sanitize_label "payments/charge_svc");
   check_string "uppercase lowers" "prod" (R.sanitize_label "PROD");
   check_string "all separators collapses to none" "none" (R.sanitize_label "///")
 ;;
-
-(* ── record shape ────────────────────────────────────────────────────────── *)
 
 let sample_workload : R.workload =
   { domain = "payments"
@@ -48,8 +42,6 @@ let sample_workload : R.workload =
   }
 ;;
 
-(* The id is derived from the record's own content, so a hand-built fixture is
-   canonical by construction — exactly the property [validate] checks. *)
 let sample_record : R.t =
   let placeholder =
     { R.release_id = "r-0000000000000000"
@@ -86,8 +78,6 @@ let test_json_round_trip () =
       r.migrations
 ;;
 
-(* The AC: an immutable, labelled ConfigMap named by the release id, whose
-   record carries the resolved content and no secret *values*. *)
 let test_configmap_object () =
   let json = Yojson.Safe.from_string (R.to_configmap_json sample_record) in
   let open Yojson.Safe.Util in
@@ -117,8 +107,6 @@ let test_configmap_object () =
   check_bool "no unrelated secret value" false (contains "hunter2" record)
 ;;
 
-(* The pointer is a claim about *which* record is selected, not a second copy of
-   it: its payload is release_id and nothing else, so it cannot drift. *)
 let test_current_pointer_is_minimal () =
   let json = Yojson.Safe.from_string (R.to_current_configmap_json sample_record) in
   let open Yojson.Safe.Util in
@@ -138,8 +126,6 @@ let test_current_pointer_is_minimal () =
     (List.assoc "release_id" data |> to_string)
 ;;
 
-(* ── validating both directions ──────────────────────────────────────────── *)
-
 let test_validate_accepts_canonical_record () =
   R.validate ~name:(R.configmap_name sample_record) sample_record
   |> Result.iter_error (fun msg -> Alcotest.fail ("canonical record rejected: " ^ msg))
@@ -153,15 +139,11 @@ let test_validate_rejects_wrong_name () =
 ;;
 
 let test_validate_rejects_corrupt_content () =
-  (* A correctly named record whose body does not rederive its id: exactly the
-     corruption a name-only check would miss. *)
   let corrupt = { sample_record with workloads = [] } in
   match R.validate ~name:(R.configmap_name corrupt) corrupt with
   | Ok () -> Alcotest.fail "expected a content-direction failure"
   | Error msg -> check_bool "reports corruption" true (contains "corrupt" msg)
 ;;
-
-(* ── reading back ────────────────────────────────────────────────────────── *)
 
 let item ?(name = R.configmap_name sample_record) ?digest json =
   let digest =
@@ -184,8 +166,6 @@ let test_parse_kubectl_list_reads_valid_items () =
   | Ok records -> check_int "one record" 1 (List.length records)
 ;;
 
-(* FEAT-072 retention orders by the cluster-assigned creation timestamp, which is
-   object metadata and never part of the record body. *)
 let test_parse_kubectl_list_with_creation () =
   let record_body = Yojson.Safe.to_string (R.to_json sample_record) in
   let json =
@@ -216,8 +196,6 @@ let test_parse_kubectl_list_with_creation () =
   | Ok _ -> Alcotest.fail "expected exactly one record"
 ;;
 
-(* FEAT-071: the store is authoritative, so a corrupt record is an error naming
-   it, never something silently dropped. *)
 let test_parse_kubectl_list_fails_closed_on_corrupt () =
   let json =
     `Assoc
@@ -241,10 +219,6 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
     check_bool "names the record" true (contains "sol-release" msg)
 ;;
 
-(* FEAT-066: the full-record digest makes the *complete* body -- including the
-   non-identity [migrations]/[apply_mode] fields [release_id] cannot cover --
-   tamper-evident. A body altered after it was written (e.g. by editing the
-   ConfigMap) no longer matches the stored digest. *)
 let test_of_kubectl_item_accepts_canonical_record () =
   match R.of_kubectl_item (item (R.record_json_string sample_record)) with
   | Error msg -> Alcotest.fail msg
@@ -267,8 +241,6 @@ let test_of_kubectl_item_rejects_missing_digest () =
 let test_of_kubectl_item_rejects_tampered_body () =
   let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
   let record_string = R.record_json_string tampered in
-  (* The stored digest is the *original* record's, so the altered body's digest
-     no longer matches. *)
   match
     R.of_kubectl_item (item ~digest:(R.record_digest sample_record) record_string)
   with
@@ -277,9 +249,6 @@ let test_of_kubectl_item_rejects_tampered_body () =
     check_bool "reports integrity failure" true (contains "integrity validation" msg)
 ;;
 
-(* The precise finding: a change to [migrations] does not move [release_id], so
-   [validate] alone would accept it. The digest is what catches it -- the
-   safety-relevant field is not the one the identity protects. *)
 let test_migrations_tampering_is_caught_by_digest_not_validate () =
   let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
   R.validate ~name:(R.configmap_name tampered) tampered
@@ -293,12 +262,6 @@ let test_migrations_tampering_is_caught_by_digest_not_validate () =
   | Error msg ->
     check_bool "reports integrity failure" true (contains "integrity validation" msg)
 ;;
-
-(* ── canonicalization ──────────────────────────────────────────────────────
-   The digest is only meaningful if the body it hashes is a total function of
-   the record. These pin that: order-independence, a total order even for
-   duplicate keys, and a known vector so a change to the canonical rules or the
-   serializer is a deliberate, reviewed decision. *)
 
 let shuffled_workload : R.workload =
   { sample_workload with
@@ -320,8 +283,6 @@ let ordered_workload : R.workload =
   }
 ;;
 
-(* A second workload whose name sorts before [sample_workload]'s, so workload
-   list order can be reversed too. *)
 let earlier_workload : R.workload =
   { sample_workload with name = "aaa_svc"; image = "reg/myworkspace/aaa-svc:abc1234" }
 ;;
@@ -349,10 +310,6 @@ let test_record_digest_is_order_independent () =
     (R.record_digest reversed)
 ;;
 
-(* Key-only ordering is not a total order: duplicate keys would fall back on
-   [List.sort]'s (unspecified) stability, so the canonical form must break the
-   tie on the value. Mostly the planner rejects collisions, but maps are not
-   sets and the encoder may not assume it. *)
 let test_record_digest_is_total_for_duplicate_keys () =
   let with_config config =
     { sample_record with workloads = [ { sample_workload with config } ] }
@@ -363,11 +320,6 @@ let test_record_digest_is_total_for_duplicate_keys () =
     (R.record_digest (with_config [ "K", "b"; "K", "a" ]))
 ;;
 
-(* A known vector for the canonical serialization. If this changes, the
-   canonical rules (or the JSON serializer) changed: either is a deliberate
-   decision that must be made here, not a silent redefinition of every stored
-   record's digest. AUDIT-080 added the workload availability string to the
-   record, so this vector moved deliberately. *)
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
@@ -375,8 +327,6 @@ let test_record_digest_known_vector () =
     (R.record_digest sample_record)
 ;;
 
-(* FEAT-066: apply_mode is required historical metadata; a record that omits it
-   or carries an unknown value fails closed rather than defaulting to Direct. *)
 let test_apply_mode_round_trips () =
   match R.of_json (R.to_json { sample_record with apply_mode = R.Gitops }) with
   | Error msg -> Alcotest.fail msg
@@ -415,8 +365,6 @@ let test_format_table_lists_the_id () =
   check_bool "id column present" true (contains sample_record.release_id table);
   check_bool "header present" true (contains "ID" table)
 ;;
-
-(* ── of_plan / bundle determinism ────────────────────────────────────────── *)
 
 let mkdirs path =
   let rec go p =
@@ -497,9 +445,6 @@ let test_of_plan_rederives_the_plan_identity () =
     check_bool "image recorded" true (contains "charge-svc" (List.hd r.workloads).image))
 ;;
 
-(* The step-6 promise at the artifact layer: same content -> same id ->
-   byte-for-byte the same record, even though the two plans were asked for by
-   different scopes (scope is intent, not released state). *)
 let test_same_content_same_record () =
   with_plan ~requested_scope:"payments" (fun plan_a ->
     with_plan ~requested_scope:"workspace" (fun plan_b ->
@@ -524,11 +469,6 @@ let test_bundle_files_are_deterministic () =
      = R.to_configmap_json sample_record)
 ;;
 
-(* ── DEC-037 / INFRA-054: the deployment outcome ─────────────────────────── *)
-
-(* The live Run 8 case: workload application succeeded and only the release
-   record write failed. The deployment must fail, and must not print a success
-   line over a release state that still describes the previous release. *)
 let test_record_failure_fails_the_deployment () =
   let reported = ref false in
   let result =

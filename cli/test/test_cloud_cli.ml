@@ -1,6 +1,3 @@
-(* REFAC-136: one classifier per cloud CLI, each held by the verbatim messages it
-   recognises and by negative controls. *)
-
 let non_zero ?(stdout = "") stderr =
   Sol_cli_process.Non_zero { exit_code = 1; stdout; stderr }
 ;;

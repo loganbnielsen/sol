@@ -53,8 +53,6 @@ let test_malformed_value_fails_closed () =
     assert (contains "sideways" msg)
 ;;
 
-(* Not a substring search: a mention later in the file must not be mistaken
-   for the authored header. *)
 let test_late_mention_is_not_the_header () =
   match
     Sol_cli_migration_disposition.of_file_content

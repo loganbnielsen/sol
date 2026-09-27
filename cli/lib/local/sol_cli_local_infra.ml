@@ -12,18 +12,9 @@ type child =
   ; child_log : string
   }
 
-(* A child writes its own stdout and stderr to its own file, so three concurrent
-   installs never interleave in a way the reader has to disentangle, and the
-   output survives a failure. [Unix._exit] rather than [exit]: the parent's
-   [at_exit] handlers (stopping port-forwards, for one) must not run once per
-   child. *)
 let spawn ~index install =
   let log = Filename.temp_file (Printf.sprintf "sol-local-%d-" index) ".log" in
   let fd = Unix.openfile log [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-  (* Fork duplicates buffered output. The parent's progress lines are written
-     with [%!], so in practice there is nothing pending -- flushing first makes
-     that a property of this function rather than of every caller's format
-     strings, and keeps the parent's earlier output out of a child's log. *)
   flush stdout;
   flush stderr;
   match Unix.fork () with
@@ -35,7 +26,6 @@ let spawn ~index install =
       match install.run () with
       | Ok () -> 0
       | Error msg ->
-        (* The child's stderr is its log file (dup2 above). *)
         Sol_cli_report.err "%s" msg;
         1
     in
@@ -85,10 +75,6 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
       true
   in
   let rec pump () =
-    (* Fill the slots, unless something has already failed: a failure stops new
-       installs from starting, so a bad component does not get five more
-       half-installed companions, while the ones already running are waited for
-       rather than abandoned. *)
     let rec fill () =
       if !failures = [] && !started < max_in_flight && start_one () then fill ()
     in
@@ -98,11 +84,7 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
     else (
       let pid, status = Unix.waitpid [] (-1) in
       match List.partition (fun c -> c.child_pid = pid) !running with
-      | [], _ ->
-        (* Not one of ours: no other waiter exists in this process at this
-           point, so this cannot happen -- but reaping it and carrying on is
-           still better than treating an unknown child as a component. *)
-        pump ()
+      | [], _ -> pump ()
       | child :: _, others ->
         running := others;
         decr started;
@@ -123,8 +105,6 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
   let failures = List.sort (fun (_, _, a) (_, _, b) -> compare a b) !failures in
   failures
   |> List.iter (fun (label, log, _) ->
-    (* REFAC-134: a log that cannot be read says so, rather than reading as a
-       failure with no output. *)
     match In_channel.with_open_bin log In_channel.input_all with
     | exception Sys_error message ->
       Sol_cli_report.err
@@ -134,8 +114,6 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
     | "" -> Sol_cli_report.err "\n--- %s failed with no output ---" label
     | output ->
       Sol_cli_report.err_block (Printf.sprintf "\n--- %s output ---\n%s" label output));
-  (* Every log is temporary: the failing ones have just been printed, and the
-     successful ones said all they had to say in their progress line. *)
   !logs
   |> List.iter (fun log ->
     Sol_cli_fs.remove_if_present log

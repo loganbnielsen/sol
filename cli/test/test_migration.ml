@@ -1,7 +1,3 @@
-(* AUDIT-069: the pure migration prerequisite -- required (db/migrations) ⊆
-   applied (schema_migrations) -- and the JSON encoding the read-only status Job
-   and the deploy path share. *)
-
 module M = Sol_cli_migration
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
@@ -68,9 +64,6 @@ let test_required_rejects_unnumbered () =
       Alcotest.(check bool) "names the offending file" true (contains msg "init_db.sql"))
 ;;
 
-(* BUG-041 / FND-0032: two branches that each add "the next" migration produce two
-   files with one version. The runner keys on version alone, so once one is applied
-   the other is skipped forever, and a version-only gate calls it satisfied. *)
 let test_required_rejects_a_shared_version () =
   with_tmp_dir (fun dir ->
     write_file (Filename.concat dir "001_create_orders.sql") "";
@@ -85,8 +78,6 @@ let test_required_rejects_a_shared_version () =
         (contains msg "migrations 004_add_invoices.sql and 004_add_refunds.sql"))
 ;;
 
-(* The repo's own examples use four-digit versions; the error must name the files
-   that exist, not a reformatted version of them. *)
 let test_shared_version_names_four_digit_files () =
   with_tmp_dir (fun dir ->
     write_file (Filename.concat dir "0004_a.sql") "";
@@ -100,8 +91,6 @@ let test_shared_version_names_four_digit_files () =
         (contains msg "migrations 0004_a.sql and 0004_b.sql"))
 ;;
 
-(* Down files are the runner's rollback companions; the runner does not treat them as
-   migrations and neither may the gate. *)
 let test_required_ignores_down_files () =
   with_tmp_dir (fun dir ->
     write_file (Filename.concat dir "001_create_orders.sql") "";
@@ -222,10 +211,6 @@ let test_passwordless_and_non_uri_inputs_are_unchanged () =
     (Sol_cli_redaction.connection_error ~url:"opaque" "bad input")
 ;;
 
-(* INFRA-040: the deploy's migration gate removes its Job, so a failure has to be
-   reported out of it. Attempt 6's message said "see the Job logs" after the Job
-   was gone, and the cause had to be rediscovered with a different command. *)
-
 let test_evidence_report_unstartable_names_the_reason () =
   let report =
     M.evidence_report
@@ -271,8 +256,6 @@ let test_evidence_report_carries_both () =
 ;;
 
 let test_evidence_report_is_empty_without_observations () =
-  (* Blank output is decided at the kubectl adapter (REFAC-123); the report only
-     sees what was observed. *)
   Alcotest.(check bool)
     "no observations, no report"
     true

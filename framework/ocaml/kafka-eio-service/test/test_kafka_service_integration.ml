@@ -1,7 +1,3 @@
-(** E2E integration tests for kafka-eio-service. Requires: rpk redpanda start
-    (broker + schema registry on port 8081) Override broker location with the
-    standard Kafka broker environment variable. *)
-
 let registry_url =
   match Sys.getenv_opt "SCHEMA_REGISTRY_URL" with
   | Some u -> u
@@ -14,13 +10,8 @@ let admin_url =
   | None -> "http://localhost:9644"
 ;;
 
-(* Unique suffix per test run to avoid cross-run topic collisions. *)
 let () = Random.self_init ()
 let run_id = Random.int 99999
-
-(* ------------------------------------------------------------------ *)
-(* Test message modules                                                *)
-(* ------------------------------------------------------------------ *)
 
 module PaymentEvent = struct
   type t =
@@ -56,8 +47,6 @@ module PaymentEvent = struct
   ;;
 end
 
-(* Same topic_name as PaymentEvent but changes amount_cents type integer → string.
-   This is a breaking change under FULL compatibility. *)
 module PaymentEventBreaking = struct
   type t =
     { payment_id : string
@@ -91,7 +80,6 @@ module PaymentEventBreaking = struct
   ;;
 end
 
-(* Separate topic for the decode error test. *)
 module RawTestEvent = struct
   type t = { id : string }
 
@@ -115,10 +103,6 @@ module RawTestEvent = struct
     | _ -> Error "expected object"
   ;;
 end
-
-(* ------------------------------------------------------------------ *)
-(* Helpers                                                             *)
-(* ------------------------------------------------------------------ *)
 
 let make_config () : Kafka_service.config =
   { brokers = Kafka_test_helpers.brokers ()
@@ -165,11 +149,6 @@ let test_single_broker_loss_rejects_under_replicated_topic () =
   | Ok _ -> Alcotest.fail "under-replicated existing topic was accepted"
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Schema.check tests                                                  *)
-(* ------------------------------------------------------------------ *)
-
-(* Schema.check against a topic with no registered schema returns Ok. *)
 let test_schema_check_new_topic () =
   Eio_main.run
   @@ fun env ->
@@ -196,7 +175,6 @@ let test_schema_check_new_topic () =
   | Ok () -> ()
 ;;
 
-(* After registering PaymentEvent, checking the same schema returns Ok. *)
 let test_schema_check_compatible () =
   Eio_main.run
   @@ fun env ->
@@ -224,7 +202,6 @@ let test_schema_check_compatible () =
         | Ok () -> ()))
 ;;
 
-(* After registering PaymentEvent, checking PaymentEventBreaking returns Error. *)
 let test_schema_check_incompatible () =
   Eio_main.run
   @@ fun env ->
@@ -249,7 +226,6 @@ let test_schema_check_incompatible () =
         | Error _ -> ()))
 ;;
 
-(* Schema.check_all fails fast on first incompatible schema. *)
 let test_schema_check_all_fails_fast () =
   Eio_main.run
   @@ fun env ->
@@ -263,7 +239,6 @@ let test_schema_check_all_fails_fast () =
      with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
-       (* PaymentEvent is compatible, PaymentEventBreaking is not *)
        let result =
          Kafka_service.Schema.check_all
            ~net:env#net
@@ -277,10 +252,6 @@ let test_schema_check_all_fails_fast () =
         | Ok () -> Alcotest.fail "expected Error for list containing incompatible schema"
         | Error _ -> ()))
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Produce / consume roundtrip                                         *)
-(* ------------------------------------------------------------------ *)
 
 let test_publish_consume_roundtrip () =
   Eio_main.run
@@ -300,7 +271,6 @@ let test_publish_consume_roundtrip () =
        in
        let received_p, received_r = Eio.Promise.create () in
        let consumer_ready_p, consumer_ready_r = Eio.Promise.create () in
-       (* Fork consumer fiber first so it's subscribed before we publish. *)
        Eio.Fiber.fork ~sw (fun () ->
          ignore
            (Kafka_service.consume
@@ -315,7 +285,6 @@ let test_publish_consume_roundtrip () =
                 Eio.Promise.resolve received_r msg;
                 Kafka.Consumer.Stop)
               ()));
-       (* Fail fast if the consumer never gets assigned, rather than hanging. *)
        (match
           Eio.Time.with_timeout env#clock 15.0 (fun () ->
             Ok (Eio.Promise.await consumer_ready_p))
@@ -327,7 +296,6 @@ let test_publish_consume_roundtrip () =
        (match Eio.Promise.await (Kafka_service.publish svc topic expected) with
         | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
         | Ok () -> ());
-       (* Wait up to 15s for the consumer to receive it. *)
        (match
           Eio.Time.with_timeout env#clock 15.0 (fun () ->
             Ok (Eio.Promise.await received_p))
@@ -343,10 +311,6 @@ let test_publish_consume_roundtrip () =
             expected.amount_cents
             msg.PaymentEvent.amount_cents))
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* consume_partitioned error surfacing                                 *)
-(* ------------------------------------------------------------------ *)
 
 module PartitionFailEvent = struct
   type t = { n : int }
@@ -374,11 +338,6 @@ module PartitionFailEvent = struct
   ;;
 end
 
-(* A handler that always fails, with a retry policy that gives up after one
-   attempt, should surface the failing partition's error wrapped in
-   Partition_errors — not collapsed into a bare Kafka.Error.t and not
-   silently dropped. Regression test for the "consume_partitioned
-   re-collapses kafka-eio's per-partition error list" audit finding. *)
 let test_consume_partitioned_reports_partition_error () =
   Eio_main.run
   @@ fun env ->
@@ -435,10 +394,6 @@ let test_consume_partitioned_reports_partition_error () =
           Alcotest.(check bool) "at least one partition error reported" true (errs <> [])))
 ;;
 
-(* FEAT-078: In_memory has no DLQ to route Dead_letter to. Acking it anyway
-   would be an acknowledge-and-discard with no durable destination, exactly
-   the shape BUG-028's invariant forbids. It must fail closed: surfaced as a
-   Partition_errors failure (like an exhausted Retry), never silently acked. *)
 let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
   Eio_main.run
   @@ fun env ->
@@ -500,11 +455,6 @@ let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
             (errs <> [])))
 ;;
 
-(* BUG-049 / FND-0040: schema compatibility is enforced, not best-effort. *)
-
-(* A registry reached through a wrong base path answers 404 without the
-   "subject not found" error code; that used to read as "no prior version", so
-   a misconfigured CI gate passed every schema. *)
 let test_schema_check_wrong_registry_path_is_an_error () =
   Eio_main.run
   @@ fun env ->
@@ -519,10 +469,6 @@ let test_schema_check_wrong_registry_path_is_an_error () =
   | Error _ -> ()
 ;;
 
-(* A stub registry whose compatibility PUT fails. [register] must return an error
-   and must not have registered the schema first: FULL is set before the first
-   registration, and a failure to set it is fatal (it used to be a warning after
-   the fact, leaving the subject at the registry default). *)
 module StubRegistryEvent = struct
   include RawTestEvent
 
@@ -620,13 +566,6 @@ let test_register_sets_full_before_registering_and_fails_loudly () =
          requests)
 ;;
 
-(* BUG-043 / FND-0035: a retry relay that stops must fail the worker promptly.
-   The handler asks for a retry on the source delivery, so the record goes to the
-   retry topic; on the relay's redelivery it returns a Kafka error, which stops
-   the relay (it runs with a zero-tolerance policy). The source topic then sits
-   idle. Before the fix the relay failure was reported only when the source
-   consumer next returned -- never, for an idle healthy source -- so this timed
-   out. *)
 module RelayDeathEvent = struct
   include PartitionFailEvent
 
@@ -702,13 +641,6 @@ let test_retry_topics_dead_relay_fails_the_worker () =
             (Kafka.Error.to_string e)))
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* on_decode_error callback                                            *)
-(* ------------------------------------------------------------------ *)
-
-(* Fork consumer first, then publish a raw
-   (non-wire-format) message. decode_wire will fail on the missing magic byte
-   and on_decode_error should be called. *)
 let test_decode_error_callback () =
   Eio_main.run
   @@ fun env ->
@@ -727,7 +659,6 @@ let test_decode_error_callback () =
        in
        let error_stream = Eio.Stream.create 1 in
        let consumer_ready_p, consumer_ready_r = Eio.Promise.create () in
-       (* Fork consumer so it's subscribed before the bad message arrives. *)
        Eio.Fiber.fork ~sw (fun () ->
          ignore
            (Kafka_service.consume
@@ -745,7 +676,6 @@ let test_decode_error_callback () =
                 ignore (ack ());
                 Kafka.Consumer.Stop)
               ()));
-       (* Wait until the broker has assigned partitions before publishing. *)
        (match
           Eio.Time.with_timeout env#clock 15.0 (fun () ->
             Ok (Eio.Promise.await consumer_ready_p))
@@ -753,7 +683,6 @@ let test_decode_error_callback () =
         | Error `Timeout ->
           Alcotest.fail "timed out waiting for consumer partition assignment (on_ready)"
         | Ok () -> ());
-       (* Publish raw bytes (no Confluent wire framing) via the raw producer. *)
        let producer_cfg : Kafka.Producer.config =
          { brokers = Kafka_test_helpers.brokers ()
          ; delivery_mode = Kafka.Producer.At_least_once
@@ -778,7 +707,6 @@ let test_decode_error_callback () =
            | Error e -> Alcotest.failf "raw publish failed: %s" (Kafka.Error.to_string e)
            | Ok () -> ());
           Kafka.Producer.close producer);
-       (* Wait up to 10s for the decode error to be observed. *)
        (match
           Eio.Time.with_timeout env#clock 10.0 (fun () ->
             Ok (Eio.Stream.take error_stream))
@@ -786,10 +714,6 @@ let test_decode_error_callback () =
         | Error `Timeout -> Alcotest.fail "timed out waiting for decode error callback"
         | Ok _ -> ()))
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Source decode-error policy (BUG-051)                                *)
-(* ------------------------------------------------------------------ *)
 
 module Decode_policy_event (N : sig
     val suffix : string
@@ -813,7 +737,6 @@ struct
   ;;
 end
 
-(* Raw bytes without Confluent wire framing: decode fails on the magic byte. *)
 let produce_undecodable ~sw ~topic_name =
   let producer_cfg : Kafka.Producer.config =
     { brokers = Kafka_test_helpers.brokers ()
@@ -841,7 +764,6 @@ let produce_undecodable ~sw ~topic_name =
     Kafka.Producer.close producer
 ;;
 
-(* The first record on [topic], or None after [timeout_s]. *)
 let read_first ~sw ~clock ~topic ~timeout_s =
   let cfg : Kafka.Consumer.config =
     { brokers = Kafka_test_helpers.brokers ()
@@ -873,9 +795,6 @@ let read_first ~sw ~clock ~topic ~timeout_s =
     !seen
 ;;
 
-(* Run [consume] (given its own switch) in the background while [f] runs, then
-   tear it down. The retry relay lives as long as the switch it is given, so a
-   test must own a switch it can cancel rather than hand over the test's own. *)
 exception Test_done
 
 let while_consuming ~consume f =
@@ -1070,10 +989,6 @@ let test_route_to_dlq_refused_under_in_memory () =
        | Error `Timeout -> Alcotest.fail "In_memory with Route_to_dlq started consuming"
        | Ok _ -> Alcotest.fail "In_memory has no DLQ; Route_to_dlq must be refused")
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Runner                                                              *)
-(* ------------------------------------------------------------------ *)
 
 let () =
   let open Alcotest in

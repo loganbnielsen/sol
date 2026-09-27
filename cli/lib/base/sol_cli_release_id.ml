@@ -1,23 +1,3 @@
-(* FEAT-069: the content-addressed identity of a release.
-
-   A release is *what is running*: the desired released state, canonicalised and
-   hashed. It is not an invocation. Two deploys of identical content are one
-   release; one deploy is one deployment event (FEAT-070).
-
-   Why content-addressed rather than minted: the identity is rendered into the
-   pod template, so a minted id would change the template on every deploy and
-   force a rollout even when nothing substantive changed. Observability metadata
-   must never be the thing that mutates the workload it observes.
-
-   The projection below is deliberately explicit rather than "hash the plan".
-   Only fields whose difference means *this is a different running release* are
-   here, so adding a field to the plan (a timestamp, an output directory,
-   provenance) cannot silently change every release identity. *)
-
-(* One workload's contribution to the released state. [secrets] holds
-   *references* (env key -> secret name), never material: rotating a secret's
-   value does not by itself change the release. That is a deliberate rule, not
-   an accident -- see the tests. *)
 type workload =
   { domain : string
   ; name : string
@@ -32,18 +12,12 @@ type workload =
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list
-    (* BUG-026: every remaining resolved input that changes the rendered
-     manifests. Omitting these let a change of ingress, volume, rollout
-     strategy, progressive delivery, cluster issuer or service call keep the
-     previous release id while the manifests moved underneath it. *)
   ; volumes : (string * string * string * string) list
-    (* name, mount path, size, access mode *)
-  ; rollout : string (* effective strategy; canary steps included *)
+  ; rollout : string
   ; ingress_host : string option
   ; ingress_path : string option
   ; cluster_issuer : string
   ; calls : (string * string * string * string) list
-    (* env var, target domain, target k8s name, target namespace *)
   }
 
 type content =
@@ -52,23 +26,10 @@ type content =
   ; workloads : workload list
   }
 
-(** [r-<16 hex>]: a legal Kubernetes label value by construction, so the label
-    can be written verbatim without a sanitiser that could disagree with the
-    stored id (the BUG-025 failure mode). *)
 type t = string
 
-(* Bumping this is a deliberate identity change: it makes every release hash
-   differently, which is exactly what you want when the projection's meaning
-   changes, and exactly what you must not do accidentally. *)
-(* BUG-026 extended the projection to cover every manifest-affecting input, so
-   every release identity changes with this version. AUDIT-080 added the declared
-   availability, which changes the rendered placement/disruption budget/probes,
-   so it is part of the projection too and the vector moves again. *)
 let encoding_version = "sol-release-v3"
 
-(* Length-prefixed encoding. The length prefix is not decoration: with a bare
-   separator, workloads ("ab", "c") and ("a", "bc") would encode identically and
-   hash the same. *)
 let enc_string b s =
   Buffer.add_string b (Printf.sprintf "%d:" (String.length s));
   Buffer.add_string b s
@@ -83,8 +44,6 @@ let enc_option enc b = function
     enc b v
 ;;
 
-(* Ordering of a map-like list is not semantic, so it is canonicalised away
-   before hashing: [a; b; c] and [c; a; b] are the same release. *)
 let enc_pairs b pairs =
   let pairs = List.sort (fun (a, _) (b, _) -> String.compare a b) pairs in
   enc_int b (List.length pairs);
@@ -94,9 +53,6 @@ let enc_pairs b pairs =
     enc_string b v)
 ;;
 
-(* A *table* canonicalises a set of rows (volumes, calls): row order is not
-   semantic, so sort by the whole row. Each row is itself length-prefixed, which
-   keeps ([a;b], [c]) distinct from ([a], [b;c]). *)
 let compare4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
   let c = String.compare a1 b1 in
   if c <> 0
@@ -123,8 +79,6 @@ let canonical_string (content : content) =
   enc_string b encoding_version;
   enc_string b content.workspace;
   enc_option enc_string b content.environment;
-  (* Workload *ordering* is likewise not semantic (discovery order must not
-     change the identity), so sort before encoding. *)
   let workloads =
     content.workloads
     |> List.sort (fun a c ->

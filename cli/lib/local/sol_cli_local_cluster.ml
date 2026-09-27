@@ -1,15 +1,7 @@
-(* REFAC-139, part F: Sol's local k3d cluster, moved out of `cmd_local.ml`. *)
-
 open Result.Syntax
 
 let name = "sol-local"
 let registry_port = 5000
-
-(* FRIC-017: k3d v5.6.0's embedded Docker client pins API 1.43, but Docker
-   Engine 29 removed every API below 1.44, so any k3d invocation fails with
-   "client version 1.43 is too old" on a current host. Ask the daemon for the
-   oldest API it still accepts and hand that to k3d via DOCKER_API_VERSION --
-   but never below k3d's own 1.43 floor, so older daemons keep working too. *)
 let k3d_client_api_floor = "1.43"
 
 let version_gt a b =
@@ -44,13 +36,6 @@ let k3d_env () =
 let k3d args = Sol_cli_process.cmd ~env:(k3d_env ()) ("k3d" :: args)
 let exists () = Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; name ]))
 
-(* ponytail: FRIC-008, one-time Sun->Sol migration check -- delete this once
-   nobody plausibly still has a 'sun-local' cluster around. A pre-rename
-   'sun-local' cluster's inline registry binds the same host port this cluster's
-   registry needs, causing a silent k3d port-bind conflict with no indication of
-   the real cause. Blocks unconditionally on 'sun-local' existing at all (not just
-   on a verified port-5000 conflict) -- deliberately simple for a shim meant to be
-   deleted. *)
 let refuse_pre_rename_cluster () =
   let pre_rename = "sun-local" in
   if Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename ]))
@@ -78,9 +63,6 @@ let provision () =
     Ok ())
   else
     let* () = refuse_pre_rename_cluster () in
-    (* FRIC-006: k3d's own output is the actual diagnosis (e.g. "port is already
-       allocated") -- surface it instead of leaving the user to re-run k3d by hand
-       to find out why. *)
     Sol_cli_process.run
       ~echo:true
       (k3d

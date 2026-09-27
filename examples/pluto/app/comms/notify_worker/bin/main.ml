@@ -44,10 +44,6 @@ let () =
     end)
   in
   let module WR = Worker.Make_with_retry (W) in
-  (* Explicit, matching this worker's pre-FEAT-078 implicit behavior: a
-     transient DB failure retries in-process rather than being routed to a
-     DLQ. No implicit default exists any more -- every retry-capable worker
-     must name its strategy. *)
   WR.run
     ~env
     ~config:kafka_config

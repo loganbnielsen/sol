@@ -23,25 +23,13 @@ type deploy_request =
   ; emit_plan_to : string option
   ; image_tag : string
   ; image_refs : (string option * string) list
-    (** FEAT-050: raw [--image-ref] values, already validated as digest
-          references but not yet resolved against the selected services (that
-          happens in [cmd_deploy.ml] once the scope is known). Each entry is
-          [Some service, ref] for [<service>=<ref>] or [None, ref] for a bare
-          reference. *)
   ; registry : string option
   ; secret_backend : Sol_cli_manifest.secret_backend option
-    (** INFRA-050: [None] means the operator did not choose, so the resolved
-          *destination* decides ({!Sol_cli_env_target.default_secret_backend}:
-          live for a direct/local deploy, placeholder for GitOps). The CLI must
-          not carry a default of its own -- two defaults meant a direct deploy
-          emitted an empty Secret and the workload could not start. *)
   ; confirm_group_change : bool
   ; loki_push_url : string option
   ; keep_releases : int
   }
 
-(* BUG-058: the commit an image built from this checkout is tagged with. An
-   error carries git's own reason; there is no sentinel tag. *)
 let git_sha () =
   match
     Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
@@ -67,7 +55,6 @@ let make_up_request ~scope ~dry_run ~tag ~confirm_group_change ~keep_releases ~g
       "keep-releases must be at least 1 (the current and previous release are always \
        kept)"
   else (
-    (* A local cluster may fall back to a fixed tag, but says so. *)
     let image_tag, image_tag_warning =
       match tag with
       | Some t -> t, None
@@ -122,7 +109,6 @@ let make_deploy_request
         "keep-releases must be at least 1 (the current and previous release are always \
          kept)"
     else (
-      (* BUG-058: a deploy never falls back to a shared, mutable tag. *)
       let image_tag =
         match image_tag with
         | Some t -> Ok t

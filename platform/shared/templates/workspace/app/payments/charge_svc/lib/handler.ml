@@ -1,9 +1,3 @@
-(* POST /charges  — publish Charged to Kafka
-   GET  /health      — liveness probe
-   GET  /notifications — list notifications written by notify_worker *)
-
-(* FRIC-026: seed the RNG once. Without this the charge id is a fixed
-   sequence per process start, so ids repeat across restarts. *)
 let () = Random.self_init ()
 
 let routes pool ~publish_charged ~obs = [

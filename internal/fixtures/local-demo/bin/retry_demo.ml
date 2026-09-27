@@ -1,34 +1,3 @@
-(** Sol retry-topics demo
-    ─────────────────────────────────────────────────────────────────────────
-    Scenario: 5 jobs are produced. Three are reliable (always succeed). Two are
-    "flakey" — they fail on the first attempt, exercising the Retry_topics
-    strategy end-to-end:
-
-    1. Main consumer: handler returns Worker.Retry _ for a flakey job. kafka_service
-    intercepts it, publishes the raw bytes to sol-demo-jobs-retry with headers
-    X-Sol-Attempt: 1 X-Sol-Retry-At: <now + 2 s> and commits the original offset
-    immediately. The main partition keeps flowing — reliable jobs are never
-    delayed.
-
-    2. Background retry consumer (group "sol-demo-retry-worker-sol-retry")
-    subscribes to sol-demo-jobs-retry. When the scheduled time arrives it sleeps,
-    then re-runs the handler. The second attempt succeeds.
-
-    3. After max_attempts total failures a message would go to the
-    group-scoped DLQ, sol-demo-jobs.sol-demo-retry-worker.dlq. This demo stays
-    well within the limit.
-
-    4. A record that cannot even be decoded never reaches the handler. Under
-    Retry_topics the default decode_error_policy (Route_to_dlq, BUG-051) sends
-    it, raw, to that same DLQ with an X-Sol-Decode-Error header, rather than
-    acking it away. The demo publishes one and reads it back from the DLQ.
-
-    Run: bash platform/local/scripts/ensure-broker.sh
-    KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 dune exec
-    internal/fixtures/local-demo/bin/retry_demo.exe *)
-
-(* ── Job message ────────────────────────────────────────────────────────── *)
-
 module Job = struct
   type t =
     { id : string
@@ -64,8 +33,6 @@ module Job = struct
   ;;
 end
 
-(* ── Demo configuration ─────────────────────────────────────────────────── *)
-
 let kafka_config : Kafka_service.config =
   let config =
     match Kafka_service.config_of_env () with
@@ -78,11 +45,6 @@ let kafka_config : Kafka_service.config =
 let sep = String.make 60 '-'
 let say fmt = Printf.ksprintf (Printf.printf "\n[demo]   %s\n%!") fmt
 let stamp () = Unix.gettimeofday ()
-
-(* ── Flakey-job table ───────────────────────────────────────────────────── *)
-(* Maps job_id → number of times handle has been called.
-   Flakey jobs fail on call 0 and succeed on call 1+. *)
-
 let call_count : (string, int) Hashtbl.t = Hashtbl.create 8
 let call_mu = Mutex.create ()
 
@@ -98,8 +60,6 @@ let record_call job_id =
 
 let flakey_jobs = [ "job-A"; "job-C" ]
 let is_flakey id = List.mem id flakey_jobs
-
-(* ── Main ───────────────────────────────────────────────────────────────── *)
 
 let () =
   let total_jobs = 5 in
@@ -133,7 +93,6 @@ let () =
     | Error e -> failwith ("kafka_service.register: " ^ Kafka_service.error_to_string e)
   in
   say "topic %S registered." (Kafka_service.topic_name_to_string Job.topic_name);
-  (* ── Worker ────────────────────────────────────────────────────────────── *)
   let worker_ready_p, worker_ready_r = Eio.Promise.create () in
   let module W = struct
     module Message = Job
@@ -187,10 +146,9 @@ let () =
        | Ok () -> ()
        | Error msg -> failwith msg
      with
-     | Failure _ -> () (* clean exit via cancellation surfaces as Failure *)
+     | Failure _ -> ()
      | _ -> ());
     `Stop_daemon);
-  (* ── Wait for partition assignment ──────────────────────────────────────── *)
   say "waiting for partition assignment (up to 15s) ...";
   (match
      Eio.Time.with_timeout env#clock 15.0 (fun () ->
@@ -198,16 +156,13 @@ let () =
    with
    | Error `Timeout -> failwith "timed out waiting for partition assignment"
    | Ok () -> ());
-  (* ── Produce jobs ───────────────────────────────────────────────────────── *)
   Printf.printf "\n%s\n" sep;
   t0 := stamp ();
   let jobs =
     [ { Job.id = "job-A"; payload = "process invoice #1001" }
-    ; (* flakey *)
-      { Job.id = "job-B"; payload = "send confirmation email" }
+    ; { Job.id = "job-B"; payload = "send confirmation email" }
     ; { Job.id = "job-C"; payload = "update inventory #42" }
-    ; (* flakey *)
-      { Job.id = "job-D"; payload = "charge payment method" }
+    ; { Job.id = "job-D"; payload = "charge payment method" }
     ; { Job.id = "job-E"; payload = "notify fulfillment team" }
     ]
   in
@@ -221,7 +176,6 @@ let () =
          Printf.eprintf "[prod]   publish error: %s\n%!" (Kafka.Error.to_string ke))
     jobs;
   Printf.printf "%s\n%!" sep;
-  (* ── Wait for all jobs to complete ─────────────────────────────────────── *)
   say "waiting for all %d jobs to complete (flakey ones retry after ~2s) ..." total_jobs;
   (match
      Eio.Time.with_timeout env#clock 30.0 (fun () -> Ok (Eio.Promise.await all_done_p))
@@ -238,7 +192,6 @@ let () =
      Printf.printf "  reliable jobs: processed immediately on main consumer\n";
      Printf.printf "  flakey  jobs:  acked on main, retried via the group retry topic\n";
      Printf.printf "%s\n%!" sep);
-  (* ── An undecodable record goes to the DLQ (BUG-051) ─────────────────────── *)
   let dlq =
     Kafka_service.Retry_topics.relay_topic_name
       ~source:(Kafka_service.topic_name_to_string Job.topic_name)
@@ -305,6 +258,5 @@ let () =
      Kafka.Consumer.close reader;
      if not !found
      then Printf.eprintf "\n[demo]   the undecodable record did not reach %s\n%!" dlq);
-  (* Give the worker a moment to flush its last log line before exit. *)
   Eio.Time.sleep env#clock 0.2
 ;;

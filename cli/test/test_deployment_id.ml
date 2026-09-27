@@ -4,13 +4,9 @@ let check_int = Alcotest.(check int)
 
 module D = Sol_cli_deployment_id
 
-(* 2026-01-01T00:00:00Z. *)
 let t0 = 1767225600.0
 let mk now entropy = D.to_string (D.create ~now ~entropy)
 
-(* ── minting ──────────────────────────────────────────────────────────────── *)
-
-(* Pins the encoding, so drift in the id shape is loud rather than silent. *)
 let test_known_vector () =
   check_string "known vector" "d-20260101t000000z-900150983cd24fb0" (mk t0 "abc")
 ;;
@@ -26,7 +22,6 @@ let test_distinct_entropy_mints_distinct_id () =
     (not (String.equal (mk t0 "a") (mk t0 "b")))
 ;;
 
-(* The time prefix is what makes lexical order deployment order. *)
 let test_later_time_sorts_after () =
   let earlier = mk t0 "same"
   and later = mk (t0 +. 1.0) "same" in
@@ -51,8 +46,6 @@ let test_id_is_lowercase_and_name_safe () =
 let test_random_entropy_has_16_bytes () =
   check_int "16 bytes" 16 (String.length (D.random_entropy ()))
 ;;
-
-(* ── parsing ──────────────────────────────────────────────────────────────── *)
 
 let test_round_trip () =
   let id = mk t0 "abc" in

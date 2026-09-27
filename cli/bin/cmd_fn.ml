@@ -1,28 +1,6 @@
-(* sol fn run — manual invocation of a deployed -fn (FEAT-079).
-
-   -fn is a run-once Kubernetes execution primitive; cron is one invocation
-   mechanism, this is the other. The deployed CronJob's jobTemplate is the
-   canonical execution definition (image, env, secrets, resources, retry
-   policy) -- this command does not reconstruct or store a second copy of
-   it from sol.toml/local source. It copies the live CronJob's template via
-   `kubectl create job --from=cronjob/...`, so a manual run always executes
-   exactly what the next scheduled tick would.
-
-   Deliberately not constrained by the deployed CronJob's
-   scheduled_concurrency: that field only governs overlap between the
-   CronJob controller's own scheduled Jobs (Kubernetes' concurrencyPolicy
-   semantics), never a manually created ad-hoc Job. Giving `sol fn run` a
-   stronger guarantee than that would be dishonest about what
-   scheduled_concurrency actually promises -- see FEAT-079's ticket. *)
-
 open Cmdliner
 open Result.Syntax
 
-(* Same resolution shape as `sol logs`'s resolve_unit: a selector must name
-   exactly one workload. Here the selector is a required positional
-   argument rather than --scope, and the resolved workload must additionally
-   be a -fn -- `sol fn run` on a -svc/-worker name is a usage error, not a
-   silent no-op. *)
 let resolve_fn ~facts selector =
   let* selected =
     Sol_cli_workload_selection.resolve
@@ -49,7 +27,6 @@ let resolve_fn ~facts selector =
     Error (Sol_cli_exit.error "'sol fn run' addresses exactly one unit ('domain/name').")
 ;;
 
-(* The cronjob must be there before a Job is made from it. *)
 let require_deployed ~ctx ~domain ~name ~ns ~k8s_name =
   match Sol_cli_kubectl.presence ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ] with
   | Sol_cli_kubectl.Present -> Ok ()
@@ -84,11 +61,6 @@ let run ~ctx selector =
   in
   let* k8s_name = Sol_cli_deployment_plan.k8s_name name |> Sol_cli_exit.of_msg in
   let* () = require_deployed ~ctx ~domain ~name ~ns ~k8s_name in
-  (* BUG-032: the name is minted in the lib rather than here, so the uniqueness
-     rule is testable without a cluster — see Sol_cli_manual_job_name. The
-     seconds-resolution form this replaced collided whenever two runs were fired in
-     the same second, and the comment that justified it ("a manual run is a human
-     typing a command") was the assumption that turned out to be false. *)
   let job_name = Sol_cli_manual_job_name.mint ~k8s_name in
   let* _ =
     Sol_cli_kubectl.create_job_from_cronjob ~ctx ~cronjob:k8s_name ~job_name ~namespace:ns
@@ -101,8 +73,6 @@ let run ~ctx selector =
   Printf.printf "Track it with: sol logs %s/%s --target ...\n%!" domain name;
   Ok ()
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let selector_arg =
   Arg.(

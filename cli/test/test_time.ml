@@ -1,6 +1,3 @@
-(* REFAC-119: each timestamp format Sol writes, pinned for a fixed instant.
-   1790436649.75 is 2026-09-26 15:30:49.75 UTC; the fraction is truncated. *)
-
 let instant = 1790436649.75
 
 let test_formats () =
@@ -12,7 +9,6 @@ let test_formats () =
     (Sol_cli_time.compact_lower instant)
 ;;
 
-(* The callers keep their exact shapes. *)
 let test_callers () =
   Alcotest.(check string)
     "run id"
@@ -24,7 +20,6 @@ let test_callers () =
     (Sol_cli_deployment.rfc3339_utc instant)
 ;;
 
-(* Positive control: the epoch is not special-cased away. *)
 let test_epoch () =
   Alcotest.(check string) "epoch" "1970-01-01T00:00:00Z" (Sol_cli_time.rfc3339 0.)
 ;;

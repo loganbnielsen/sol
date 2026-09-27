@@ -1,8 +1,6 @@
 type secret_backend =
   | Kubernetes_live
-  (** Emit a Kubernetes Secret with real values (live deploy / sol up). *)
   | Kubernetes_placeholder
-  (** Emit a redacted Kubernetes Secret with empty stringData (GitOps). *)
   | External_secrets of
       { store_ref : string
       ; store_kind : string
@@ -24,19 +22,7 @@ type service =
   ; dir : string
   }
 
-(* CODE_LAYER-019: typed workspace facts. A [workload_fact] is produced for
-   every recognized Sol primitive directory, even when it is missing a
-   Dockerfile, so `sol check` can report that as a finding. Directories that do
-   not look like a Sol primitive are returned in [unexpected] instead of being
-   silently skipped.
-   Tuples are used rather than records so the new facts do not duplicate the
-   field labels already used by [service] in this module. *)
-
-(** A [service] plus whether it has a Dockerfile. *)
 type workload_fact = service * bool
-
-(** [(domain, name, dir)] for a directory that does not match a Sol workload
-    suffix. *)
 type unexpected = string * string * string
 
 type workspace_scan =
@@ -49,68 +35,21 @@ type discover_error =
   | Workspace_error of Sol_cli_workspace.workspace_error
 
 val workload_fact_to_service : workload_fact -> service
-
-(** Scan every workload on disk. Discovery never filters: selection is applied
-    once, after discovery, by [Sol_cli_workload_selection] (FEAT-065).
-
-    [~root], when given, names the workspace to read directly -- the caller has
-    already established the boundary ([Sol_cli_workspace.enter_cwd]). Without
-    it the boundary is resolved from the current directory, which is the one
-    reader [Sol_cli_workspace_model.load] calls on a caller's behalf. *)
 val scan_workspace : ?root:string -> unit -> (workspace_scan, discover_error) result
-
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
-
-(** The workspace's services, or why they could not be discovered (REFAC-115:
-    the caller reports it; discovery never exits). [~root] as in
-    {!scan_workspace}. *)
 val discover_services : ?root:string -> unit -> (service list, discover_error) result
-
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
-
-(** The per-workload Secret name ([<workload>-secrets]). The convention lives here
-    once; the shared runtime Secret is deliberately NOT workload-suffixed, so the
-    two names are not derived from each other. *)
 val workload_secret_name : string -> string
-
 val config_hash : (string * string) list -> string
-
-(** Bounds a taxonomy label value to Kubernetes' 63-char label-value limit and
-    fixes up a trailing non-alphanumeric character left by truncation (or
-    present in the original value). Applied to every taxonomy label value
-    except [`release`], which is label-safe by construction
-    ([Sol_cli_release_id.t]) and is written verbatim so the manifest label can
-    never drift from the stored release id -- exposed here since it's a
-    reusable safety net, not a guarantee any particular caller already
-    provides.
-*)
 val sanitize_label_value : string -> string
-
-(** Manifest builders used by [Sol_cli_deployment_render.render_spec] and
-    [Sol_cli_substrate]. Each returns a [Sol_cli_yaml] document; the caller
-    renders the documents it applies once, with [Sol_cli_yaml.render]
-    (REFAC-131). *)
 val namespace_doc : ns:string -> Sol_cli_yaml.document
-
-(** INFRA-025: binds the deploy identity's Kubernetes group to the
-    `sol-deploy` ClusterRole inside [ns]. Used by {!Sol_cli_substrate.ensure}
-    to scope the deploy identity to application namespaces only. *)
 val deploy_role_binding_doc : ns:string -> Sol_cli_yaml.document
-
-(** DEC-038: the operator's read-only diagnostic RoleBinding for one application
-    namespace. Binds the [sol-operator-diagnostics] ClusterRole to the
-    [sol:operators] group; grants observation only, never mutation. *)
 val operator_role_binding_doc : ns:string -> Sol_cli_yaml.document
-
 val service_account_doc : ns:string -> name:string -> Sol_cli_yaml.document
-
-(** AUDIT-080: the voluntary-disruption budget rendered for a
-    node-failure-tolerant workload, so a node drain cannot evict every ready
-    replica at once. *)
 val pdb_doc : ns:string -> name:string -> replicas:int -> Sol_cli_yaml.document
 
 val configmap_doc
@@ -120,9 +59,6 @@ val configmap_doc
   -> unit
   -> Sol_cli_yaml.document
 
-(** [name] is the *final* Secret name -- this applies no naming convention. Pass
-    [runtime_secret_name] for the shared runtime Secret, or
-    [workload_secret_name workload] for a workload's own. *)
 val secret_doc
   :  ?base_secrets:(string * string) list
   -> ?extra_secrets:(string * string) list
@@ -145,10 +81,6 @@ val external_secret_doc
 type workload_shape =
   | Http_service
   | Background_worker
-  (** Workload shape determines exposed container ports and health probes.
-          [Http_service] exposes app HTTP on 8080 with probes;
-          [Background_worker] exposes metrics on 9090; consumer probes are
-          rendered when it also consumes Kafka (AUDIT-080). *)
 
 val deployment_doc
   :  ?rollout_strategy:Sol_cli_toml.rollout_strategy
@@ -174,9 +106,6 @@ val deployment_doc
   -> unit
   -> Sol_cli_yaml.document
 
-(** [rollout_doc] renders an Argo Rollout resource instead of a Deployment.
-    Requires Argo Rollouts installed in the cluster. [pd] must be [Canary _] or
-    [Blue_green]. *)
 val rollout_doc
   :  ?extra_labels:(string * string) list
   -> ?secret_keys:string list
@@ -201,24 +130,15 @@ val rollout_doc
   -> unit
   -> Sol_cli_yaml.document
 
-(** [pvc_docs ~ns ~name volumes] renders one PersistentVolumeClaim per declared
-    volume. [storage] is emitted as-is; StorageClass and backup policy are out
-    of scope. *)
 val pvc_docs
   :  ns:string
   -> name:string
   -> Sol_cli_toml.volume list
   -> Sol_cli_yaml.document list
 
-(** [blue_green_service_docs ~ns ~name] renders two ClusterIP Services
-    ([<name>-active] and [<name>-preview]) required by the blue-green strategy.
-*)
 val blue_green_service_docs : ns:string -> name:string -> Sol_cli_yaml.document list
-
 val service_doc : ns:string -> name:string -> Sol_cli_yaml.document
 
-(** Without [ingress_host], the rule is HTTP-only on a per-service dev host
-    ([<name>.<ns>.localhost]); with one, cert-manager TLS and an ssl-redirect. *)
 val ingress_doc
   :  ?ingress_host:string
   -> ?ingress_path:string
@@ -254,16 +174,12 @@ val cronjob_doc
   -> unit
   -> Sol_cli_yaml.document
 
-(** The ConfigMap carrying a migration run's SQL files, one key per file. *)
 val migration_configmap_doc
   :  name:string
   -> namespace:string
   -> (string * string) list
   -> Sol_cli_yaml.document
 
-(** The migration runner Job. It reads the workspace's shared runtime Secret
-    ([runtime_secret_name], INFRA-040) and mounts [configmap_name] at
-    [/migrations]; [args] are the runner's arguments. *)
 val migration_job_doc
   :  name:string
   -> namespace:string
@@ -272,17 +188,11 @@ val migration_job_doc
   -> configmap_name:string
   -> Sol_cli_yaml.document
 
-(** INFRA-048: establishes an object with [kubectl create], treating
-    "AlreadyExists" as success. This is how a Sol-created namespace is
-    established: the deploy identity's bootstrap grant is deliberately
-    create-only, so idempotency cannot come from [kubectl apply]'s patch. Shared
-    with {!Sol_cli_substrate}. Any other failure is returned as kubectl's error. *)
 val create_idempotent
   :  ctx:Sol_cli_kube_destination.context
   -> file:string
   -> (unit, Sol_cli_process.error) result
 
-(** FEAT-063: applies into the cluster [ctx] names. *)
 val apply
   :  ctx:Sol_cli_kube_destination.context
   -> string * string

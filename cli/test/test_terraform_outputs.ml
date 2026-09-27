@@ -1,5 +1,3 @@
-(* REFAC-118: which Terraform outputs `sol cloud apply` shows, and how. *)
-
 module O = Sol_cli_terraform_outputs
 
 let shown json =
@@ -31,8 +29,6 @@ let test_unreadable () =
   (match O.displayable "{not json" with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "malformed JSON was read");
-  (* REFAC-132: a document that is not an object of outputs is unreadable, not
-     "no outputs". *)
   match O.displayable "[]" with
   | Error _ -> ()
   | Ok _ -> Alcotest.fail "a non-object read as no outputs"

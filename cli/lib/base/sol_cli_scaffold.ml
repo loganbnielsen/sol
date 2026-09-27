@@ -22,8 +22,6 @@ let subst vars s =
     vars
 ;;
 
-(* REFAC-134: directory creation and writing are Sol_cli_fs's; a failure is
-   returned, not raised. *)
 let write_file ~path ~content =
   let open Result.Syntax in
   let* () = Sol_cli_fs.mkdir_p (Filename.dirname path) in

@@ -1,13 +1,3 @@
-(* REFAC-139, part A: running the migration runner in the target cluster.
-
-   `sol migrate apply` and the deploy's read-only prerequisite check both run
-   the runner as a Job over a ConfigMap of the migration files, wait for it, read
-   its logs and clean up. They did so with two ~200-line copies in
-   `cmd_migrate.ml` that had drifted: only the check failed fast on a container
-   that cannot start (INFRA-040), so `apply` waited its full 300s on, for one,
-   a missing runtime Secret. This module is that Job, once; the command decides
-   what an outcome means for it and renders it. *)
-
 open Result.Syntax
 
 type job =
@@ -27,7 +17,6 @@ type outcome =
 
 let kubectl ~ctx ?(timeout_s = 30.) args = Sol_cli_kubectl.run ~timeout_s ~ctx args
 
-(* The runner image is the Sol CLI itself, which carries `sol migrate`. *)
 let runner_dockerfile =
   {docker|FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
 RUN sudo apt-get update && sudo apt-get install -y librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config
@@ -49,10 +38,6 @@ ENTRYPOINT ["/usr/local/bin/sol"]
 |docker}
 ;;
 
-(* REFAC-130: the caller read the workspace once and passes the inventory. The
-   Job runs in the first service's namespace (by domain, then name), and a
-   source-built runner is pushed to that service's repository: ECR needs the
-   repository to exist, and there is one per service. *)
 let namespace_and_repository ~workspace ~(services : Sol_cli_manifest.service list) =
   let by_domain_and_name (a : Sol_cli_manifest.service) (b : Sol_cli_manifest.service) =
     compare (a.domain, a.name) (b.domain, b.name)
@@ -74,10 +59,6 @@ let namespace_and_repository ~workspace ~(services : Sol_cli_manifest.service li
     Ok (namespace, k8s_name)
 ;;
 
-(* DEC-049: a checkout builds its runner from itself and pushes it to the target's
-   registry; an installed release runs the runner published with it, by digest,
-   and needs no build and no registry. The apply path and the deploy's check
-   obtain it the same way, so the check runs exactly the code that would apply. *)
 let runner_source () =
   let* assets =
     Sol_cli_platform_assets.resolve ()
@@ -134,8 +115,6 @@ let apply_doc ~ctx ~what doc =
   |> Result.join
 ;;
 
-(* Removes the Job and its ConfigMap. Absent is fine; any other failure is
-   reported, because a stray Job is something the operator should know about. *)
 let cleanup ~ctx job =
   [ [ "delete"
     ; "job"
@@ -161,9 +140,6 @@ let cleanup ~ctx job =
         (Sol_cli_process.error_to_string e)))
 ;;
 
-(* The Job and its ConfigMap, named [<prefix>-<id>] and [<prefix>-files-<id>]. A
-   ConfigMap whose Job then fails to apply is removed, so a half-created attempt
-   leaves nothing behind. *)
 let submit ~ctx ~namespace ~name_prefix ~label ~image ~args ~files =
   let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
   let job =
@@ -195,14 +171,6 @@ let submit ~ctx ~namespace ~name_prefix ~label ~image ~args ~files =
     e
 ;;
 
-(* INFRA-040: a Job whose container cannot start has already failed. Waiting the
-   full timeout for an outcome that cannot come describes the symptom and hides the
-   cause: Attempt 6 spent its entire migration gate on "did not complete within
-   120s" while the Pod had been reporting
-   `CreateContainerConfigError: secret "sol-secrets" not found` from the start.
-
-   The reason and the message are read together, because the reason names the class
-   and the message names the thing -- which Secret, which image. *)
 let waiting_status ~ctx job =
   let jsonpath =
     "jsonpath={range \
@@ -223,8 +191,6 @@ let waiting_status ~ctx job =
       ]
   with
   | Ok r ->
-    (* The adapter's boundary: kubectl prints blanks for a container that is not
-       waiting, and they are decided here, once. *)
     (match String.split_on_char '|' r.stdout with
      | reason :: rest ->
        Sol_cli_string.non_blank reason
@@ -234,8 +200,6 @@ let waiting_status ~ctx job =
   | Error _ -> None
 ;;
 
-(* Reasons that mean the container will never run without a change: waiting longer
-   cannot help, so the operation should fail now and say why. *)
 let terminal_waiting_reasons =
   [ "CreateContainerConfigError"
   ; "CreateContainerError"
@@ -247,10 +211,6 @@ let terminal_waiting_reasons =
   ]
 ;;
 
-(* kubectl wait's own --for=condition=complete never returns on a failed Job, so
-   the status fields are polled. JobStatus's succeeded/failed are `omitempty`, so
-   each is read on its own: an absent field is then just blank. A read that fails
-   reads as "not finished yet"; the poll's bound is what ends it. *)
 let job_field ~ctx job field =
   match
     kubectl
@@ -299,10 +259,6 @@ let logs ~ctx job =
   |> Result.map_error Sol_cli_process.error_to_string
 ;;
 
-(* INFRA-040: read the failing Job's evidence out before anything removes it.
-   Both observations are gathered because a Job fails in either direction: a
-   container that cannot start has a waiting reason and no logs, while a Job that
-   ran and failed has logs and no waiting reason. *)
 let evidence ~ctx job =
   let logs =
     match

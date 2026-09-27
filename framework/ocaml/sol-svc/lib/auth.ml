@@ -44,8 +44,6 @@ type principal =
 
 type context = { principal : principal }
 
-(* ── Internal validation ───────────────────────────────────────────────── *)
-
 type error =
   [ `Unauthorized of string
   | `Forbidden of string

@@ -1,18 +1,3 @@
-(* Offline tests for the destroy execution core (HARDEN-004 step 2 / REFAC-091).
-
-   Two things are pinned here and they are deliberately different claims:
-
-   - the typed inventory is built from the real Terraform representation
-     (addresses, child modules, ids/regions) and distinguishes valid absence
-     from valid representation from UNKNOWN. UNKNOWN is never absence.
-   - the execution core derives its behaviour from that inventory, never from
-     the install-time outputs contract, and its elevated-access cleanup runs on
-     every path -- including a failure to enable or a failure of the operation
-     the access was opened for. A cleanup failure is evidence, not silence.
-
-   Every provider operation is a fake, so none of this needs terraform, gcloud,
-   aws, or a network. *)
-
 open Sol_cli_cloud_destroy
 
 let contains re s =
@@ -31,8 +16,6 @@ let gcp_cluster =
   {|{"address":"google_container_cluster.main","type":"google_container_cluster","values":{"name":"c","deletion_protection":true,"self_link":"https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c","project":"sol-qualification","location":"us-central1"}}|}
 ;;
 
-(* ── Inventory ───────────────────────────────────────────────────────────── *)
-
 let test_empty_state () =
   let state = inventory_of_show_json {|{"values":{"root_module":{"resources":[]}}}|} in
   Alcotest.(check bool) "empty is a valid absence" true (state = State_empty);
@@ -44,7 +27,6 @@ let test_empty_state () =
 ;;
 
 let test_missing_values_is_empty () =
-  (* FND-0048: a missing `values` is the empty state, not a read failure. *)
   List.iter
     (fun json ->
        Alcotest.(check bool)
@@ -84,7 +66,6 @@ let test_represented_identity () =
 ;;
 
 let test_null_protection_is_not_an_error () =
-  (* FND-0048: a benign null must not surface as "could not read state". *)
   let json =
     show_json_resources
       {|{"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":null}}|}
@@ -151,15 +132,12 @@ let test_unreadable_is_unknown () =
          Alcotest.failf "expected UNKNOWN for %s" json)
     [ "not json at all"
     ; {|{"values":42}|}
-    ; show_json_resources {|{"type":"google_container_cluster"}|} (* no address *)
+    ; show_json_resources {|{"type":"google_container_cluster"}|}
     ; show_json_resources
         {|{"address":"x.y","type":"z","values":{"deletion_protection":"yes"}}|}
     ]
 ;;
 
-(* REFAC-094: the inventory keeps no generic provider identity (no ARN, self-link,
-   project or region) -- only what a surviving check needs. The RDS instance's
-   `identifier` is kept for the retain-nothing retention check. *)
 let test_identifier_captured () =
   let json =
     show_json_resources
@@ -178,10 +156,6 @@ let test_identifier_captured () =
   | _ -> Alcotest.fail "expected a represented resource"
 ;;
 
-(* ── Execution core ──────────────────────────────────────────────────────── *)
-
-(* A recording set of fakes. Every operation is counted, so "was cleanup
-   attempted?" is an observation rather than an inference. *)
 type calls =
   { mutable credentials : int
   ; mutable init : int
@@ -195,11 +169,6 @@ type calls =
   ; mutable reports : string list
   }
 
-(* A verification observation that establishes absence: nothing was represented
-   before destruction, the state read is empty afterwards, the sweep found nothing,
-   no retention promise was declared, and the plan declared nothing state did not
-   represent. Every case below overrides exactly the leg it is about, so the others
-   cannot mask it. *)
 let verified_observation =
   { Sol_cli_destroy_verification.state = State_absent
   ; sweep = Sweep_ran { residues = []; indeterminate = [] }
@@ -279,8 +248,6 @@ let fake_deps
 ;;
 
 let test_empty_state_destroys_without_outputs () =
-  (* Test 1 of the contract: an empty inventory is empty, and missing install
-     outputs do not fail the destroy. *)
   let deps, calls =
     fake_deps ~state:(Ok {|{}|}) ~outputs:(Outputs_unavailable "no outputs") ()
   in
@@ -304,9 +271,6 @@ let test_empty_state_destroys_without_outputs () =
 ;;
 
 let test_half_built_state_is_destroyable () =
-  (* Test 2: a state representing a subset of the configured resources, with no
-     usable install outputs, must still be destroyable -- and the preparation
-     must be handed the represented state. *)
   let state = show_json_resources gcp_cluster in
   let deps, calls =
     fake_deps ~state:(Ok state) ~outputs:(Outputs_unavailable "partial outputs") ()
@@ -332,7 +296,6 @@ let test_half_built_state_is_destroyable () =
 ;;
 
 let test_partial_outputs_never_refuse () =
-  (* Test 3: no install-contract parse failure can prevent destruction. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -349,8 +312,6 @@ let test_partial_outputs_never_refuse () =
 ;;
 
 let test_state_read_failure_is_not_absence () =
-  (* Test 6: a state read/process failure is UNKNOWN, and the destroy does not
-     read it as "the substrate is gone". *)
   let deps, calls = fake_deps ~state:(Error "terraform show exited 1") () in
   let outcome = execute ~deps in
   (match outcome with
@@ -389,8 +350,6 @@ let test_elevated_access_opened_and_removed () =
 ;;
 
 let test_protected_operation_failure_still_removes () =
-  (* Test 7: the operation the access was opened for fails; removal is still
-     attempted through the bracket. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -412,10 +371,6 @@ let test_protected_operation_failure_still_removes () =
 ;;
 
 let test_skipped_teardown_is_a_degradation () =
-  (* Step 4 + the Step-2 guarantee: the reconciliation apply obtains the authority
-     the platform teardown needs. When it fails, the protected operation is skipped
-     -- a degradation, not a refusal, because the substrate destroy needs no cluster
-     authority -- and removal is still attempted. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -440,9 +395,6 @@ let test_skipped_teardown_is_a_degradation () =
 ;;
 
 let test_platform_failure_is_not_a_degradation () =
-  (* "We could not obtain the authority, so the protected operation could not run"
-     and "the protected operation ran and failed" are different consequences. Only
-     the first is a degradation. *)
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -460,9 +412,6 @@ let test_platform_failure_is_not_a_degradation () =
 ;;
 
 let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
-  (* The three facts of a degraded-and-dirty run stay separate: the skipped
-     protected operation, the primary failure the cleanup failure stands for, and
-     the cleanup evidence itself. *)
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -491,8 +440,6 @@ let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
 ;;
 
 let test_cleanup_failure_is_not_replaced_by_success () =
-  (* Test 8: a cleanup failure on the otherwise-successful path is the failure,
-     and it is carried, not swallowed. *)
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -534,12 +481,6 @@ let test_cleanup_failure_preserved_when_operation_fails () =
   | _ -> Alcotest.fail "expected the platform failure with its cleanup evidence"
 ;;
 
-(* ── Failure policy (HARDEN-004 step 4) ────────────────────────────────────
-
-   "Preparation failed" and "destruction must not proceed" are different claims.
-   The preparation declares the consequence of its own failure (DEC-033), and these
-   pin both directions so neither can drift into the other. *)
-
 let continue_failure reason =
   Sol_cli_cloud_lifecycle.Preparation_failed
     { reason; policy = Sol_cli_cloud_lifecycle.Continue_to_destroy }
@@ -551,8 +492,6 @@ let block_failure reason =
 ;;
 
 let test_continue_preparation_failure_destroys () =
-  (* Regression 1 + 3: a best-effort preparation fails; the destroy proceeds, and
-     the failure stays visible rather than being erased by the success. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -580,8 +519,6 @@ let test_continue_preparation_failure_destroys () =
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
-  (* Regression 4 + 5: a Block_destroy preparation names the guarantee the target
-     declared, and destruction does not run at all. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -607,7 +544,6 @@ let test_block_preparation_failure_blocks_destruction () =
 ;;
 
 let test_clean_destruction_is_clean () =
-  (* Regression 10. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -625,8 +561,6 @@ let test_clean_destruction_is_clean () =
 ;;
 
 let test_degradation_preserved_when_destroy_fails () =
-  (* Regression 8: a degraded preparation is preserved even when a later step fails;
-     neither fact may collapse into the other. *)
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -655,10 +589,6 @@ let test_degradation_preserved_when_destroy_fails () =
 ;;
 
 let test_unknown_state_is_not_absence_and_not_silent () =
-  (* Regression 11: an unreadable state is not absence, and it does not silently
-     become a best-effort preparation failure -- the preparation runs (it is not
-     skipped as "nothing to prepare"), the substrate stays UNKNOWN, and the failure
-     is reported. *)
   let deps, calls =
     fake_deps
       ~state:(Error "terraform show failed with exit 1")
@@ -676,9 +606,6 @@ let test_unknown_state_is_not_absence_and_not_silent () =
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
-(* Regression 12 / step 3 preserved: a refused plan is an outcome, not permission to
-   weaken the assertion, and the *policy* controls only what follows. Composed here
-   with the real step-3 mechanism, the way [Sol_cli_cloud_wiring] wires it. *)
 let test_refused_plan_is_a_continue_failure () =
   let applied = ref 0 in
   let policy =
@@ -751,8 +678,6 @@ let test_absent_state_with_outputs_skips_teardown () =
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
-(* ── Plan assertion composed with the execution core (HARDEN-004 step 3) ──── *)
-
 let binding =
   Sol_cli_terraform_plan.Exact
     "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
@@ -777,10 +702,6 @@ let refused_apply plan_ref policy plan_json () =
   | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure)
 ;;
 
-(* Step 3's property, unchanged by step 4: if the assertion refuses a plan, the
-   corresponding apply is never invoked. Step 4 changes only what *follows* -- the
-   refusal is a degradation, so the substrate destroy still runs, which is exactly
-   the half-built target this path exists to keep destroyable. *)
 let test_refused_reconciliation_never_applies () =
   let open Sol_cli_terraform_plan in
   let applied = ref 0 in
@@ -804,9 +725,6 @@ let test_refused_reconciliation_never_applies () =
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
-(* "Cleanup" is a name, not a safety property: a removal whose plan is refused
-   does not run, is not reported as a successful cleanup, and leaves the outcome
-   saying the elevated access may remain. *)
 let test_refused_removal_is_not_success () =
   let open Sol_cli_terraform_plan in
   let applied = ref 0 in
@@ -830,13 +748,6 @@ let test_refused_removal_is_not_success () =
   Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
 ;;
 
-(* ── Verification composed with the outcome (HARDEN-004 step 5) ─────────────
-
-   Verification is an additional dimension, not a replacement: it does not erase a
-   Step-4 degradation, and a preparation degradation does not soften an
-   unestablished postcondition. The exit contract -- 0 verified absence (a degradation is a warning),
-   1 failure -- makes UNKNOWN a failure, never a success. *)
-
 let observation_with
       ?(state = Sol_cli_destroy_verification.State_absent)
       ?(sweep =
@@ -847,8 +758,6 @@ let observation_with
   { Sol_cli_destroy_verification.state; sweep; retention }
 ;;
 
-(* Regression 23: a preparation degradation plus verified absence is a degraded
-   success. *)
 let test_degradation_with_verified_absence () =
   let deps, calls =
     fake_deps
@@ -872,7 +781,6 @@ let test_degradation_with_verified_absence () =
   Alcotest.(check int) "the substrate destroy ran" 1 calls.substrate
 ;;
 
-(* Regression 24: a clean preparation whose verification is UNKNOWN is a failure. *)
 let test_verification_unknown_is_a_failure () =
   let deps, calls =
     fake_deps
@@ -903,8 +811,6 @@ let test_verification_unknown_is_a_failure () =
   Alcotest.(check int) "the destroy itself was still attempted" 1 calls.substrate
 ;;
 
-(* Regression 25: a degradation and a PRESENT resource both survive, and the exit
-   is a failure -- the earlier degradation is not erased by the later violation. *)
 let test_degradation_preserved_when_verification_fails () =
   let deps, _ =
     fake_deps
@@ -939,9 +845,6 @@ let test_degradation_preserved_when_verification_fails () =
   Alcotest.(check int) "a violation exits 1" exit_failure (exit_code outcome)
 ;;
 
-(* Regression 26: a clean destruction whose promised final snapshot is missing
-   fails. The retention observation is the evidence, and it is a violation rather
-   than a degradation. *)
 let test_missing_retention_fails () =
   let deps, _ =
     fake_deps
@@ -967,8 +870,6 @@ let test_missing_retention_fails () =
   Alcotest.(check int) "it exits 1" exit_failure (exit_code outcome)
 ;;
 
-(* Regression 27: everything clean -- preparation, destroy, state, provider and
-   retention evidence. *)
 let test_fully_clean_is_exit_0 () =
   let observed =
     observation_with
@@ -994,9 +895,6 @@ let test_fully_clean_is_exit_0 () =
   Alcotest.(check int) "the verification ran" 1 calls.verify
 ;;
 
-(* A Block_destroy never reaches verification: destruction did not happen, so there
-   is no postcondition to observe, and observing one would be reporting on a
-   destruction that never ran. *)
 let test_blocked_destroy_never_verifies () =
   let deps, calls =
     fake_deps

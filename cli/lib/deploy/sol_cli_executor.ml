@@ -1,11 +1,3 @@
-(* Deployment executors — plan-in, side-effect-out.
-   Each executor renders a service_spec to YAML and dispatches to the
-   appropriate Sol_cli_manifest primitive.
-
-   FEAT-063: applying is a Kubernetes operation, so the destination-side context
-   is threaded through. [Emit_to] writes files and touches no cluster, but it
-   takes the same parameter so the dispatch shape stays uniform. *)
-
 type result =
   { namespace : string
   ; name : string
@@ -16,8 +8,6 @@ type mode =
   | Dry_run
   | Emit_to of string
   | Apply
-
-(* ── helpers ─────────────────────────────────────────────────────────────── *)
 
 let make_result (spec : Sol_cli_deployment_plan.service_spec) =
   { namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
@@ -41,11 +31,6 @@ let dispatch_rendered ~ctx ~mode spec yaml =
   Result.map (fun () -> make_result spec) dispatched
 ;;
 
-(* ── executors ───────────────────────────────────────────────────────────── *)
-
-(* SEC-006: the local cluster is the one place a service may run
-   [Unverified_dev_only] JWT auth, so only this executor renders the opt-in that
-   [Service.Make.run] requires for it. [sol deploy] and GitOps emission never do. *)
 let local_development_spec (spec : Sol_cli_deployment_plan.service_spec) =
   let key = "SOL_ALLOW_UNVERIFIED_JWT" in
   { spec with config = (key, "1") :: List.remove_assoc key spec.config }
@@ -70,11 +55,6 @@ let gitops
   |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
 ;;
 
-(* FEAT-069: the emitted bundle carries the release artifact — the immutable
-   [sol-release-<id>] record and the current-release pointer — so the record
-   travels with the manifests it describes instead of being a CLI side effect.
-   [bundle_files] is pure in the plan's release identity, so re-emitting
-   identical content is an empty diff. *)
 let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
   let open Result.Syntax in
   let* () = Sol_cli_fs.mkdir_p dir in
@@ -84,13 +64,6 @@ let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
   |> Result.map ignore
 ;;
 
-(* ── plan-level executor ─────────────────────────────────────────────────── *)
-
-(* REFAC-089/FEAT-069: [run_plan] takes the *plan*, not a bare service list. Once
-   the plan carries release identity -- which materially affects rendering -- the
-   services alone are no longer the complete executable payload. Consuming the
-   plan also means the executor reads decisions rather than re-deriving them: it
-   must never reconstruct [release_id] from the plan. *)
 let run_plan
       (execution : Sol_cli_execution.context)
       ~mode
@@ -107,7 +80,6 @@ let run_plan
     | Dry_run | Apply -> secret_backend
   in
   let open Result.Syntax in
-  (* Render all specs upfront; surface the first error before any side effect. *)
   let render spec =
     Sol_cli_deployment_render.render_spec
       ~workspace
@@ -127,9 +99,6 @@ let run_plan
          (Ok [])
     |> Result.map List.rev
   in
-  (* FEAT-072: [before_apply] runs between rendered workloads so a caller can
-       refresh or lose a coordination lease before the next mutation; its error
-       stops the run before that service is applied. *)
   let before_apply_result (spec : Sol_cli_deployment_plan.service_spec) =
     match mode with
     | Dry_run | Emit_to _ -> Ok ()

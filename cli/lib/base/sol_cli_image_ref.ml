@@ -1,11 +1,3 @@
-(* Immutable workload artifact references (FEAT-050).
-
-   A recorded production release and its rollback must refer to the same bytes.
-   A tag can move, so a content digest is the only artifact reference that
-   means that. This module is the single definition of what counts as a digest
-   reference, so the command request, the plan and the profile preflight cannot
-   disagree about it. *)
-
 let digest_prefix = "sha256:"
 let digest_hex_length = 64
 
@@ -18,10 +10,6 @@ let is_lower_hex s =
        s
 ;;
 
-(* [repo@sha256:<64 lowercase hex>] with a non-empty repository. Deliberately
-   strict about the lowercase hex: Docker/OCI digests are lower-case, and
-   accepting uppercase would let two spellings of the same reference produce
-   different release identities. *)
 let is_digest s =
   match String.rindex_opt s '@' with
   | None -> false
@@ -34,9 +22,6 @@ let is_digest s =
     && is_lower_hex (String.sub suffix (String.length digest_prefix) digest_hex_length)
 ;;
 
-(* A raw [--image-ref] value is either [<service>=<repo>@sha256:<digest>] or a
-   bare [<repo>@sha256:<digest>]. Service and repository names never contain
-   '=', so the first '=' is the separator. *)
 let split_flag_value value =
   match String.index_opt value '=' with
   | Some eq when eq > 0 ->
@@ -44,11 +29,6 @@ let split_flag_value value =
   | _ -> None, value
 ;;
 
-(* Resolve parsed [--image-ref] values against the services actually selected
-   for this invocation. A named reference must name a selected service; a bare
-   reference is unambiguous only when exactly one service is selected. Every
-   named reference must be a digest — a mutable tag is never an acceptable
-   [--image-ref]. *)
 let resolve ~service_names refs =
   let validate (_, ref) =
     if is_digest ref
@@ -96,9 +76,6 @@ let resolve ~service_names refs =
     go [] [] refs
 ;;
 
-(* Every workload in the plan must deploy an immutable reference for the
-   production profile's artifact guarantee to hold. A plan with no services is
-   not admissible either: an empty plan proves nothing. *)
 let plan_is_immutable (images : string list) =
   images <> [] && List.for_all is_digest images
 ;;

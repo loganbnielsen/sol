@@ -1,15 +1,8 @@
-(* YAML manifest rendering and apply logic shared by sol up and sol deploy. *)
-
-(* Re-export all YAML generators and service model types. *)
 include Sol_cli_manifest_yaml
-
-(* ── Secret backend type ─────────────────────────────────────────────────── *)
 
 type secret_backend =
   | Kubernetes_live
-  (** Emit a Kubernetes Secret with real values (live deploy / sol up). *)
   | Kubernetes_placeholder
-  (** Emit a redacted Kubernetes Secret with empty stringData (GitOps). *)
   | External_secrets of
       { store_ref : string
       ; store_kind : string
@@ -22,8 +15,6 @@ let secret_backend_to_string = function
   | Kubernetes_placeholder -> "kubernetes-placeholder"
   | External_secrets _ -> "external-secrets"
 ;;
-
-(* ── Service discovery ───────────────────────────────────────────────────── *)
 
 let primitive_of_suffix name =
   if String.ends_with ~suffix:"_svc" name
@@ -44,21 +35,7 @@ let discover_error_to_string = function
   | Workspace_error e -> Sol_cli_workspace.workspace_error_to_string e
 ;;
 
-(* CODE_LAYER-019: one scan produces typed workspace facts instead of each
-   caller re-walking `app/<domain>/...` with its own suffix/Dockerfile rules.
-   A workload fact exists for every directory that looks like a Sol primitive,
-   even when its Dockerfile is missing — `sol check` needs those to report the
-   missing file. Unexpected directories are captured as warnings instead of
-   disappearing silently.
-   Records are avoided for these facts because they would duplicate the field
-   labels already used by [service] in this module and make every existing
-   qualified record access ambiguous. *)
-
-(** [workload_fact] is a [service] plus whether it has a Dockerfile. *)
 type workload_fact = service * bool
-
-(** [unexpected] is [(domain, name, dir)] for directories that do not match a
-    Sol workload suffix. *)
 type unexpected = string * string * string
 
 type workspace_scan =
@@ -69,17 +46,6 @@ type workspace_scan =
 let workload_fact_to_service ((svc, _) : workload_fact) : service = svc
 let has_dockerfile dir = Sys.file_exists (Filename.concat dir "Dockerfile")
 
-(* Discovery answers "what is on disk", never "what did the user ask for".
-   Selection happens once, after discovery, in [Sol_cli_workload_selection]
-   (FEAT-065): a scan that took a filter could return a subset that looked
-   identical to an empty workspace, which is exactly the confusion the strict
-   selector removes.
-
-   REFAC-130: [~root] is the workspace to read. Without it the scan resolves the
-   boundary from the current directory, which is what every command did before
-   the workspace model existed; with it the caller has already established the
-   boundary (it entered the workspace) and the scan reads exactly that root --
-   which is how [Sol_cli_workspace_model.load] reads a fixture without chdir. *)
 let scan_workspace ?root () =
   let resolved =
     match root with
@@ -105,10 +71,6 @@ let scan_workspace ?root () =
             let full = Filename.concat dp name in
             if name.[0] <> '.' && Sys.is_directory full
             then (
-              (* [dir] stays workspace-root relative: it becomes the
-                       plan's [source_dir], which is always combined with the
-                       build context (itself derived from the root), never with
-                       the invocation cwd. *)
               let dir = Filename.concat "app" (Filename.concat domain name) in
               match primitive_of_suffix name with
               | Some primitive ->
@@ -128,21 +90,6 @@ let discover_services ?root () =
          if has_dockerfile then Some svc else None))
 ;;
 
-(* ── Apply / emit helpers ────────────────────────────────────────────────── *)
-
-(* INFRA-048 / FND-0011: a namespace Sol created is established with [create],
-   never [apply].
-
-   The deploy identity's bootstrap grant is create-only by design
-   (platform/cloud/modules/platform/platform_deploy_rbac.tf, sol-deploy-bootstrap), and
-   both that file and Sol_cli_substrate state the assumption this function
-   satisfies: idempotency comes from tolerating "AlreadyExists" on [create], not
-   from [kubectl apply]'s patch, which the identity does not have for namespaces.
-
-   Applying an existing namespace needs [patch] and is refused -- and the
-   substrate step always creates the namespace before this runs, so applying it
-   could only ever fail. That is how both the first deploy and the migration-gate
-   recovery path failed on a live target. *)
 let create_idempotent ~ctx ~file =
   match Sol_cli_kubectl.create ~ctx ~file with
   | Ok _ -> Ok ()
@@ -150,8 +97,6 @@ let create_idempotent ~ctx ~file =
   | Error e -> Error e
 ;;
 
-(* REFAC-134: a manifest reaches kubectl through a temporary file that
-   Sol_cli_fs removes afterwards; failing to create one is a spawn failure. *)
 let with_manifest_file yaml f =
   Sol_cli_fs.with_temp_file ~prefix:"sol-manifest-" ~suffix:".yaml" yaml f
   |> Result.map_error (fun message -> Sol_cli_process.Spawn_failed message)
@@ -162,8 +107,6 @@ let create_idempotent_yaml ~ctx yaml =
   with_manifest_file yaml (fun file -> create_idempotent ~ctx ~file)
 ;;
 
-(* REFAC-133: each step's failure is returned with kubectl's own words behind a
-   prefix naming the step, and nothing is raised. *)
 let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   let open Result.Syntax in
   let step what = Result.map_error (fun e -> what ^ Sol_cli_process.error_to_string e) in
@@ -188,8 +131,6 @@ let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
     |> Result.join
 ;;
 
-(* Write YAML for one service to <dir>/<ns>-<name>.yaml.
-   Used by sol deploy --emit-to for GitOps workflows. *)
 let emit_to_dir dir (ns_yaml, workload_yaml) ~ns ~name =
   let open Result.Syntax in
   let path = Filename.concat dir (Printf.sprintf "%s-%s.yaml" ns name) in

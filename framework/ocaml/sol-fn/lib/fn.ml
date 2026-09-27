@@ -19,16 +19,7 @@ module type FN = sig
   val run : unit -> (unit, string) result
 end
 
-(* ── Signal handling ────────────────────────────────────────────────────── *)
-
-(* The self-pipe handler lives in [Sol_runtime] (REFAC-081): the function, the
-   service and the worker all need the same shutdown contract. *)
-
-(* ── Make functor ───────────────────────────────────────────────────────── *)
-
 module Make (F : FN) = struct
-  (* BUG-048: the job label is the workload's identity (rendered as
-     SOL_PUSHGATEWAY_JOB), never the schedule. *)
   let default_job = function
     | Cron -> "sol-fn"
     | Lambda -> "lambda"
@@ -40,17 +31,11 @@ module Make (F : FN) = struct
       | Some job, _ | None, Some job -> job
       | None, None -> default_job F.trigger
     in
-    (* BUG-048 / EXP-022: generated -fn mains never passed a URL, so metrics were
-       recorded and discarded. The manifest's PUSHGATEWAY_URL is the default. *)
     let pushgateway_url =
       match pushgateway_url with
       | Some _ as url -> url
       | None -> Sol_runtime.setting "PUSHGATEWAY_URL"
     in
-    (* OBS-048: Loki/Tempo export is asynchronous; [flush_logs] sends what is
-       queued. A cron job exits right after [run], and a Lambda sandbox is frozen
-       between invocations (its export fiber cannot run), so both flush
-       explicitly. *)
     let flush_logs () = Option.iter (fun o -> Sol_obs.flush o) ot in
     let backend, renderer =
       match ot with
@@ -68,12 +53,7 @@ module Make (F : FN) = struct
         ~histogram_help:"Function run duration in seconds"
         ~histogram_labels:[]
     in
-    (* Push errors are always swallowed — push never blocks exit (Cron) or
-       the next loop iteration (Lambda). *)
     let push_metrics url =
-      (* Obs_prometheus.push already re-raises Eio.Cancel.Cancelled and fatal
-         exceptions, and converts everything else to Error; no need to
-         duplicate that here. *)
       match Obs_prometheus.push ~net:env#net ~clock:env#clock ~url ~job renderer with
       | Ok () -> ()
       | Error e ->
@@ -170,9 +150,6 @@ module Make (F : FN) = struct
                   await_stop ();
                   Ok ()))
          in
-         (* Fiber.first discards the losing fiber's Cancelled internally, so when
-           stop resolves first this Switch.run completes normally — it ends the
-           loop, not the process. *)
          result)
   ;;
 end

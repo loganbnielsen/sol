@@ -17,11 +17,6 @@ let with_tmpdir f =
     (fun () -> f tmpdir)
 ;;
 
-(* ── DEC-024 regression suite — pin the abstraction, not BUG-034 ───────────── *)
-
-(* Row 1: a workspace with no dune marker at all. This is the layout that made
-   BUG-034 fail: `find_root` must resolve it from its own sol.yml, never from an
-   enclosing ecosystem marker. *)
 let test_workspace_without_dune_marker () =
   with_tmpdir (fun tmpdir ->
     write_file (Filename.concat tmpdir "sol.yml") "";
@@ -32,8 +27,6 @@ let test_workspace_without_dune_marker () =
       (Sol_cli_workspace.find_root ~dir:tmpdir = Some tmpdir))
 ;;
 
-(* Row 2: a Sol workspace nested inside a larger OCaml repo. The enclosing
-   dune-project must not win. *)
 let test_nested_in_ocaml_repo () =
   with_tmpdir (fun tmpdir ->
     let child = Filename.concat tmpdir "child" in
@@ -46,8 +39,6 @@ let test_nested_in_ocaml_repo () =
       (Sol_cli_workspace.find_root ~dir:child = Some child))
 ;;
 
-(* Row 3: same, but the enclosing repo is a Node project. This stops a future
-   "also detect package.json roots" fix from creeping back in. *)
 let test_nested_in_node_repo () =
   with_tmpdir (fun tmpdir ->
     let child = Filename.concat tmpdir "child" in
@@ -60,9 +51,6 @@ let test_nested_in_node_repo () =
       (Sol_cli_workspace.find_root ~dir:child = Some child))
 ;;
 
-(* Row 4: mixed-language workspace — OCaml and TS units underneath one Sol
-   root. Language is a unit property (DEC-022 clause 7); it does not split the
-   workspace boundary. *)
 let test_mixed_ocaml_and_typescript_workspace () =
   with_tmpdir (fun tmpdir ->
     write_file (Filename.concat tmpdir "sol.yml") "";
@@ -83,8 +71,6 @@ let test_mixed_ocaml_and_typescript_workspace () =
       (Sol_cli_workspace.find_root ~dir:ts_unit = Some tmpdir))
 ;;
 
-(* Row 5: a descendant cwd resolves the workspace root, per DEC-024 clause 4
-   (`cd app/payments/charge_svc && sol check` acts on the workspace). *)
 let test_descendant_cwd_resolves_root () =
   with_tmpdir (fun tmpdir ->
     write_file (Filename.concat tmpdir "sol.yml") "";
@@ -96,8 +82,6 @@ let test_descendant_cwd_resolves_root () =
       (Sol_cli_workspace.find_root ~dir:nested = Some tmpdir))
 ;;
 
-(* Row 6: sibling workspaces resolve independently — one is not shadowed by the
-   other, and neither consults the directory that Sol_cli_string.contains them both. *)
 let test_sibling_workspaces_resolve_independently () =
   with_tmpdir (fun tmpdir ->
     let a = Filename.concat tmpdir "product-a"
@@ -116,9 +100,6 @@ let test_sibling_workspaces_resolve_independently () =
       (Sol_cli_workspace.find_root ~dir:b = Some b))
 ;;
 
-(* Row 7: a nested boundary is a hard error that names both boundaries, not
-   silent shadowing. Resolution stays cheap; the invariant is enforced by
-   validation/discovery. *)
 let test_nested_workspace_is_rejected () =
   with_tmpdir (fun tmpdir ->
     let outer = Filename.concat tmpdir "product"
@@ -140,8 +121,6 @@ let test_nested_workspace_is_rejected () =
       Alcotest.fail "expected Nested_workspace, got Not_in_workspace")
 ;;
 
-(* Fail-closed: no sol.yml anywhere means no workspace, and the message names
-   the fix rather than inferring intent from an enclosing repo marker. *)
 let test_absence_fails_closed_with_guidance () =
   with_tmpdir (fun tmpdir ->
     mkdir_p (Filename.concat tmpdir "app/payments/charge_svc");
@@ -164,7 +143,6 @@ let test_absence_fails_closed_with_guidance () =
       Alcotest.fail "expected Not_in_workspace")
 ;;
 
-(* A directory merely named sol.yml is not a manifest. *)
 let test_sol_yml_must_be_a_file () =
   with_tmpdir (fun tmpdir ->
     Unix.mkdir (Filename.concat tmpdir "sol.yml") 0o755;
@@ -173,8 +151,6 @@ let test_sol_yml_must_be_a_file () =
       true
       (Sol_cli_workspace.find_root ~dir:tmpdir = None))
 ;;
-
-(* ── local infra from the declared model (REFAC-107) ────────────────────────── *)
 
 let local_infra sol_yml =
   with_tmpdir (fun tmpdir ->
@@ -192,8 +168,6 @@ let test_declared_resources_decide_infra () =
   check_bool "kafka" true req.kafka
 ;;
 
-(* The defect REFAC-107 closes: a TypeScript unit has no dune file for a grep to
-   find, so its declared Postgres was never started. *)
 let test_typescript_workspace_gets_its_postgres () =
   let req =
     local_infra
@@ -225,7 +199,6 @@ let test_omitted_resource_starts_nothing () =
   check_bool "omitted postgres is not started" false req.postgres
 ;;
 
-(* REFAC-108: the one entry point, from a subdirectory. *)
 let test_enter_from_a_subdirectory () =
   with_tmpdir (fun tmpdir ->
     let root = Unix.realpath tmpdir in
@@ -246,8 +219,6 @@ let test_enter_from_a_subdirectory () =
          Alcotest.(check string) "cwd is the root" root (Unix.realpath (Sys.getcwd ()))))
 ;;
 
-(* The scenario behind the symlink rule: a symlinked checkout that Sol_cli_string.contains its
-   own sol.yml is not a nested workspace. *)
 let test_symlinked_checkout_is_not_nested () =
   with_tmpdir (fun tmpdir ->
     let outer = Filename.concat tmpdir "ws" in

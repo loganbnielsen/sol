@@ -63,21 +63,8 @@ let run_error_to_string = function
        ^ consume_error_to_string e)
 ;;
 
-(* ── Signal handling ────────────────────────────────────────────────────── *)
-
-(* The self-pipe handler lives in [Sol_runtime] (REFAC-081): the worker, the
-   service and the function all need the same shutdown contract, and the
-   handler's correctness is subtle enough that one copy is safer than three. *)
-
-(* ── Shared runtime harness ─────────────────────────────────────────────── *)
-
 let default_metrics_port = 9090
 
-(* Metrics registration, signal handling, and stop/max_messages bookkeeping
-   are identical between the Ack-only and retry-capable tiers -- only the
-   per-message handler wrapping (what W.handle can return, which
-   Kafka_service entry point to call) differs. [body] receives everything a
-   tier needs to build and run its own handler/consume-loop. *)
 let with_runtime_unflushed
       ~(env : (_, _, _, _) Sol_env.timed)
       ~ot
@@ -110,8 +97,6 @@ let with_runtime_unflushed
     | Some n -> Some (ref n)
     | None -> None
   in
-  (* Checked before processing each message: an external/signal stop request,
-     or max_messages already reached by an earlier message. *)
   let should_stop () =
     Eio.Promise.is_resolved signal_stop
     || (match stop with
@@ -132,9 +117,6 @@ let with_runtime_unflushed
   let health = Worker_health.create ~now:(fun () -> Eio.Time.now env#clock) in
   Eio.Switch.run (fun sw ->
     Sol_runtime.install_signal_handler ~sw signal_stop_r;
-    (* AUDIT-080: /metrics, /readyz and /livez on the one metrics port. The
-       renderer is empty when observability is off, so the health endpoints are
-       always present even if there is nothing to scrape. *)
     Eio.Fiber.fork_daemon ~sw (fun () ->
       Worker_health.serve ~sw ~net:env#net ~port:metrics_port health (fun () ->
         match metrics_renderer with
@@ -143,23 +125,12 @@ let with_runtime_unflushed
     body ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health)
 ;;
 
-(* OBS-048: Loki/Tempo export is asynchronous, so what the worker logged on its
-   way out is still queued when [run] returns. Flush it before handing back. *)
 let with_runtime ~env ~ot ~metrics_port ~stop ~max_messages ~body =
   let result = with_runtime_unflushed ~env ~ot ~metrics_port ~stop ~max_messages ~body in
   Option.iter (fun o -> Sol_obs.flush o) ot;
   result
 ;;
 
-(* Ack after the handler succeeds, so a side effect is never acked before it
-   happens. An ack failure is a commit failure, not a processing failure --
-   retrying would risk a duplicate -- so it's only escalated to
-   Kafka.Consumer.Error when fatal. Shared by both tiers: this branch never
-   depends on what W.handle returned, only on whether ack() itself
-   succeeded. [wrap_fatal] lets each tier's handler_error type stay its own
-   -- plain [Kafka.Error.t] for the Ack-only tier ([Kafka_service.consume]'s
-   handler type), [Kafka_service.handler_error] for the retryable tier
-   ([consume_partitioned]'s). *)
 let handle_ack
       ~env
       ~ot
@@ -213,8 +184,6 @@ let log_partition_errors ~ot result =
       errs
   | _ -> ()
 ;;
-
-(* ── Ack-only tier ───────────────────────────────────────────────────────── *)
 
 module Make_with_test_seam (W : WORKER) = struct
   let run
@@ -293,8 +262,6 @@ module Make (W : WORKER) = struct
   ;;
 end
 
-(* ── Retry-capable tier ─────────────────────────────────────────────────── *)
-
 module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
   let run
         ~(env : (_, _, _, _) Sol_env.timed)
@@ -322,12 +289,6 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
             | Some c -> c ~labels:[ "status", "retry" ] 1
             | None -> ()
           in
-          (* BUG-029: distinct from on_retry (fires once per record when a
-             retry is *scheduled*, before publication is attempted) -- this
-             fires once the relay's own publish to the retry/DLQ topic
-             resolves, so "retry" in sol_worker_messages_total no longer
-             conflates "we decided to retry" with "the retry was actually
-             durably published". *)
           let on_relay_publish ~partition:_ ~attempt:_ ~outcome =
             match msg_count with
             | None -> ()

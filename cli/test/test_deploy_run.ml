@@ -1,8 +1,3 @@
-(* REFAC-139 part E: what `sol deploy` does after its plan is decided. These
-   pin the pieces that need no cluster: the deploy markers, and the AUDIT-069
-   gate's offline answers -- a deploy with no profile is not checked, and a side-
-   effect-free run reports the prerequisite as not verified, never as met. *)
-
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
@@ -95,8 +90,6 @@ let temp_dir () =
   dir
 ;;
 
-(* A context over a temporary workspace. The gate's offline paths never reach
-   the cluster, so the destination is the local one. *)
 let with_context ?(migrations = []) f =
   let root = temp_dir () in
   let cwd = Sys.getcwd () in

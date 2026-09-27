@@ -1,23 +1,5 @@
-(* REFAC-096: the GCP cluster behind [Sol_cli_cluster.t].
-
-   The GCP cloud root's outputs, their parsing, and everything that reaches the
-   GKE cluster with them live here, private to the provider: the ephemeral
-   kubeconfig from `gcloud container clusters get-credentials`, the host
-   toolchain it needs, and the substrate readiness check. GCP's bootstrap window
-   lives in the platform root and is closed by applying it, so there is no
-   Sol-side window to observe. Moved verbatim from `cmd_cloud_tf.ml` and
-   `Sol_cli_cloud_lifecycle`. *)
-
 open Result.Syntax
 
-(* GCP's cloud-root contract: its own type, deliberately, rather than a relabelled
-   [aws_outputs]. The two providers publish different facts, not the same facts
-   under different names -- a GCP root names the project and region because every
-   GCP API is addressed through them *and* the cluster credential is derived from
-   them, and names no role ARN because a caller there impersonates a service
-   account through short-lived credentials. One record carrying both shapes would
-   make every field optional and leave every reader responsible for knowing which
-   fields its provider actually fills in. *)
 type gcp_outputs =
   { cluster_name : string
   ; project_id : string
@@ -45,9 +27,6 @@ let gcp_outputs_of_json text =
   let* thanos_workload_identity_sa_email =
     optional_string "thanos_workload_identity_sa_email"
   in
-  (* Required, not optional: without it the platform would be installed as
-       whatever identity happened to call Sol, which is the thing Attempt 1 did
-       and the review named as not being an authority model. *)
   let* provisioner_service_account = string "provisioner_service_account" in
   Ok
     { cluster_name
@@ -62,30 +41,6 @@ let gcp_outputs_of_json text =
     }
 ;;
 
-(* The GCP counterpart of [provisioner_kubeconfig], and the same semantic: an
-   ephemeral kubeconfig for *this target's* cluster, in a temp file, exported
-   under every name the platform providers read (finding 12), never the
-   operator's ambient one.
-
-   What differs is how a credential is obtained. AWS assumes a role through
-   `aws eks update-kubeconfig --role-arn`; GCP asks the cluster for credentials
-   with the caller's Application Default Credentials. Sol does not yet narrow
-   that caller to a provisioner service account of its own on GCP -- there is no
-   GCP equivalent of the AWS root's provisioner role -- so this is the target's
-   Owner identity in the privileged install window, which is a recorded gap and
-   not something this function should paper over. *)
-(* Attempt 3's first meaningful failure, moved to where it belongs.
-
-   The platform applies authenticate to GKE through the kubeconfig gcloud writes,
-   and that kubeconfig names `gke-gcloud-auth-plugin` as its client-go exec
-   credential plugin. Without it, every Kubernetes call dies with
-   `exec: executable gke-gcloud-auth-plugin not found` -- *inside* the platform
-   apply, which is to say after GKE and Cloud SQL have been provisioned and paid
-   for, and after Sol has spent its way to the interesting part.
-
-   That is a host prerequisite in the same class as terraform itself, so it is
-   checked before the first platform call rather than discovered by one. Failing
-   here costs nothing; failing there costs an apply. *)
 let gcp_platform_toolchain_result () : (unit, string) result =
   match
     Sol_cli_process.run (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
@@ -125,30 +80,13 @@ let gcp_provisioner_kubeconfig_result
            ; region
            ; "--project"
            ; outputs.project_id
-             (* Impersonation is the point: Sol acts as the target's named
-              provisioner, through short-lived tokens, rather than as whoever
-              happened to run the command. *)
            ; "--impersonate-service-account"
            ; outputs.provisioner_service_account
-             (* No `--kubeconfig`. Attempt 2's first live failure was
-                "unrecognized arguments: --kubeconfig": the flag does not exist on
-                this subcommand. gcloud writes to the kubeconfig named by
-                `$KUBECONFIG`, which [provisioner_kube_env] has already exported for
-                this child, and that is the interface it actually has.
-
-                The offline stub accepted the flag because it was written from this
-                implementation, which is the limitation worth remembering: a stub
-                cannot falsify the interface it was modelled on.
-                `check_gcloud_interface.sh` now validates the argv against gcloud's
-                own help output instead. *)
            ; "--quiet"
            ])
     with
     | Ok _ -> f ~env
     | Error (Sol_cli_process.Non_zero result) ->
-      (* Attempt 2 also showed why this failed without saying so. The message named
-         the step and nothing else, so the reason -- a missing impersonation grant
-         versus a wrong flag -- had to be reconstructed by hand. *)
       Error
         (Printf.sprintf
            "could not establish ephemeral cluster access as %s: gcloud exited %d%s"
@@ -163,13 +101,6 @@ let gcp_provisioner_kubeconfig_result
            (Sol_cli_process.error_to_string error)))
 ;;
 
-(* What "the cloud substrate is Ready" means on GCP: the GKE control plane is
-   RUNNING and the Cloud SQL instance is RUNNABLE. The AWS check also asserts the
-   EBS CSI addon is ACTIVE because Sol creates it; on GKE the block-storage
-   provisioner is part of the platform the provider manages, and the storage
-   contract is asserted at the Kubernetes layer instead -- the provider's
-   StorageClass is the sole default and is backed by its CSI driver, which is the
-   check that actually covers what a workload binds to. *)
 let gcp_cloud_ready outputs =
   let project = outputs.project_id in
   let region = outputs.region in
@@ -205,19 +136,12 @@ let gcp_cloud_ready outputs =
   | _ -> false
 ;;
 
-(* The provider's share of the platform definition's variables. *)
 let platform_vars
       outputs
       (context : Sol_cli_cluster.platform_vars_context)
       ~cluster_issuer
       ~region:_
   =
-  (* Refused rather than half-wired: the definition's ClusterIssuers are still
-     the Route 53 DNS-01 solver, so a GCP target that expects TLS would get a
-     platform that looks wired for it and cannot issue. `cluster_issuer` is
-     optional, so this is a refusal only when a target actually asks for the
-     capability -- and a target that does not ask for it gets a platform with no
-     issuer rather than an issuer that cannot work. *)
   match cluster_issuer, context with
   | Some _, Install ->
     Error
@@ -235,11 +159,6 @@ let platform_vars
           ; "loki_workload_identity_sa_email", outputs.loki_workload_identity_sa_email
           ; "thanos_gcs_bucket", outputs.thanos_gcs_bucket
           ; "thanos_workload_identity_sa_email", outputs.thanos_workload_identity_sa_email
-            (* The identity that holds the platform's authorities on GCP. It is
-             provider-shaped data for the same reason the buckets are: the
-             definition binds *this* identity to the same ClusterRoles the AWS
-             provisioner's group receives, so the authority model is shared and
-             the identity is not. *)
           ; "gcp_provisioner_service_account", Some outputs.provisioner_service_account
           ]
       }
@@ -250,9 +169,7 @@ let of_outputs_json = gcp_outputs_of_json
 
 let cluster ~region outputs : Sol_cli_cluster.t =
   { name = outputs.cluster_name
-  ; (* A GCP caller impersonates a service account; there is no role-shaped
-       identity to compare against the target's declaration. *)
-    check_identity = (fun ~cluster_access_role_arn:_ -> Ok ())
+  ; check_identity = (fun ~cluster_access_role_arn:_ -> Ok ())
   ; platform_vars = platform_vars outputs
   ; with_access = (fun f -> gcp_provisioner_kubeconfig_result ~region outputs f)
   ; ready = (fun () -> gcp_cloud_ready outputs)
@@ -260,8 +177,6 @@ let cluster ~region outputs : Sol_cli_cluster.t =
   }
 ;;
 
-(* INFRA-039: resolve Google Application Default Credentials (moved from
-   `cmd_cloud_tf.ml`, HARDEN-005). The token itself is never printed. *)
 let credentials ~operation ~leaves_target_standing : (unit, string) result =
   let standing_remark =
     if leaves_target_standing
@@ -286,47 +201,11 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
          standing_remark)
 ;;
 
-(* INFRA-090: the project the cloud root published, so the quota is read from the project Sol
-   actually deployed into rather than from whatever gcloud happens to have active. A missing
-   field is an error: an unknown project is not a project with room. *)
-(* INFRA-091 / FND-0063: the contract Sol consumes is `terraform output -json`, and every entry
-   it publishes is an object carrying the value under `value`, beside Terraform's own `type` and
-   `sensitive` fields:
-
-     {"project_id": {"sensitive": false, "type": "string", "value": "sol-qualification"}}
-
-   Attempt 13 read a bare string or a single-field [{"value": ...}] object -- neither of which
-   Terraform emits -- so it refused every real run while its own test, fed the same invented shape,
-   agreed with it. This parser is deliberately narrow rather than permissive: it accepts exactly
-   that object, and anything else is an error, because the alternative to refusing is comparing a
-   quota against a project nobody named. *)
-(* INFRA-091 / FND-0063: `terraform output -json` publishes every output as a record carrying
-   the value under `value`, beside Terraform's own `type` and `sensitive` fields:
-
-     {"project_id": {"sensitive": false, "type": "string", "value": "sol-qualification"}}
-
-   Attempt 13 read a bare string or a single-field [{"value": ...}] object instead -- neither of
-   which Terraform emits -- so it refused every real run, while its own test, fed the same invented
-   shape, agreed with it. Sol already has the reader for this contract, and has had it all along:
-   [Sol_cli_cluster.outputs_reader] unwraps `value`, tolerates an absent *optional* output as a
-   null, and fails closed with a named error for an absent or non-string required one. It is what
-   the cluster readers use, and what Qualification Attempts 11 and 12 went through to reach Ready,
-   so the fix is to consume it rather than keep a second, private idea of Terraform's output shape.
-
-   Reading it through this module also keeps the error a *provider* error, naming GCP, which is
-   what an operator sees when the cloud root's outputs are not what they should be. *)
 let project_id_of_outputs_json text : (string, string) result =
   Sol_cli_cluster.outputs_reader ~provider:"GCP" text
   |> Fun.flip Result.bind (fun (_raw, string, _optional_string) -> string "project_id")
 ;;
 
-(* INFRA-090: the region's own disk-quota reading, for the lifecycle check that runs after the
-   cluster exists and before the platform asks for a volume. Read-only, one regional call: the
-   quota that governs the platform's storage class is regional, so a zonal reading would be the
-   wrong number.
-
-   The observation is deliberately thin -- the provider's limit and usage -- and the comparison
-   against Sol's declared minimum happens in the lifecycle, not here. *)
 let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) result =
   let open Result.Syntax in
   let* project = project_id_of_outputs_json outputs_json in
@@ -353,16 +232,11 @@ let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) 
          (Sol_cli_process.error_to_string error))
 ;;
 
-(* INFRA-093: what an existing cluster's mode is, read-only, before anything is planned or applied.
-   `autopilot.enabled` is GKE's own field for the mode, and the tri-state is deliberate: a cluster
-   that is not there is a fresh target, and a read that fails for any other reason is *unknown*. *)
 let autopilot_of_describe_json text : (bool, string) result =
   match Yojson.Safe.from_string text with
   | exception Yojson.Json_error message ->
     Error (Printf.sprintf "the describe output is not JSON: %s" message)
   | json ->
-    (* A describe that does not carry `autopilot` is "no mode here", which the caller turns
-       into `Unknown`; field access is total, so it cannot escape as an exception. *)
     Sol_cli_json.field [ "autopilot"; "enabled" ] json
     |> Sol_cli_json.bool
     |> Option.to_result ~none:"the cluster describe carries no autopilot.enabled field"
@@ -372,8 +246,6 @@ let substrate_of_describe ~outputs_json ~region ~cluster_name
   : (Sol_cli_cluster_substrate.t, string) result
   =
   let open Sol_cli_cluster_substrate in
-  (* The project comes from the cloud root's own outputs, never from whatever gcloud happens to have
-     active: the mode of a cluster in some other project is not the question being asked. *)
   let project =
     match project_id_of_outputs_json outputs_json with
     | Ok project -> project
@@ -406,9 +278,6 @@ let substrate_of_describe ~outputs_json ~region ~cluster_name
       let said =
         String.trim (failure.Sol_cli_process.stderr ^ failure.Sol_cli_process.stdout)
       in
-      (* A cluster that is not there is a fresh target; every other failure is
-         Unknown, because reading an unreadable cluster as absent is how a run would
-         go on to touch a cluster it never identified. *)
       if Sol_cli_gcloud.says_not_found said
       then Ok Absent
       else

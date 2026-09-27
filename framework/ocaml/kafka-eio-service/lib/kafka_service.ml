@@ -254,10 +254,6 @@ let register
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
-  (* BUG-049 / FND-0040: FULL compatibility is set before the first registration
-     and a failure is an error. It used to be set afterwards with only a warning,
-     so a subject whose PUT ever failed stayed at the registry default (BACKWARD)
-     and every later registration was checked against that weaker level. *)
   let* () =
     Kafka_service_schema.set_subject_compatibility
       net
@@ -390,8 +386,6 @@ let consume_partitioned
             "decode_error_policy Route_to_dlq needs a DLQ, which only Retry_topics \
              provisions; use Retry_topics, or state Ack_and_drop for In_memory"))
   | In_memory retry, (None | Some Ack_and_drop) ->
-    (* BUG-051: In_memory has no DLQ, so ack-and-drop is its only decode
-       disposition -- the documented default, not a silent one. *)
     let on_decode_error e ~raw_bytes ~ack =
       observe_decode_error e ~raw_bytes ~disposition:`Dropped;
       Kafka_service_intf.ack_and_drop_decode_error e ~raw_bytes ~ack
@@ -441,16 +435,6 @@ let consume_partitioned
              | Kafka.Consumer.Error Retry -> Kafka.Consumer.Error Kafka.Error.Application
              | Kafka.Consumer.Error (Kafka_error e) -> Kafka.Consumer.Error e
              | Kafka.Consumer.Error (Dead_letter reason) ->
-               (* FEAT-078: In_memory has no DLQ to route to, so Dead_letter
-                  cannot get its own destination the way Retry_topics gives
-                  it one. Treating this as an ack-and-drop would violate the
-                  acknowledgement ownership invariant (BUG-028) -- "no durable
-                  destination -> ack -> gone" is forbidden regardless of
-                  which outcome constructor asked for it. Fail closed by
-                  running it through the same retry-then-exhaust path as an
-                  ordinary handler failure: the message stays unacknowledged
-                  either way, and this reuses the existing exhaustion/failure
-                  reporting instead of inventing a second one. *)
                Printf.eprintf
                  "sol-worker: DEAD_LETTER without Retry_topics configured (no DLQ \
                   available) reason=%S -- failing closed, not acking\n\

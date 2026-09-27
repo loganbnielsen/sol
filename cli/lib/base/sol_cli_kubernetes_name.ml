@@ -51,16 +51,6 @@ let namespace_of_parts ~workspace ~domain =
 let k8s_name_to_string (K8s_name value) = value
 let namespace_to_string (Namespace value) = value
 
-(* OBS-021: a lenient sibling to [normalize]/[validate_dns_label] for
-   taxonomy label values (workspace/domain/etc.) -- those get sanitized
-   into something safe rather than rejected, since a bad label value is
-   far cheaper than a failed deploy. [normalize] alone isn't enough here:
-   it only rewrites underscores, so anything else invalid (spaces, other
-   punctuation) survives untouched. This is also the one function
-   [Sol_cli_manifest_yaml.render_taxonomy_labels] and
-   [Sol_cli_open.dashboard_url] must both call for workspace/domain --
-   two different transforms there is exactly how a rendered label and a
-   dashboard link's query param end up disagreeing for the same value. *)
 let sanitize_label_value v =
   let buf = Buffer.create (String.length v) in
   v
@@ -84,12 +74,6 @@ let sanitize_label_value v =
   else String.sub s 0 (len - 1) ^ "0"
 ;;
 
-(* BUG-025: Kubernetes object *names* (metadata.name) are RFC 1123 subdomains —
-   lowercase alphanumerics, '-' and '.', up to 253 characters, and they must
-   start and end alphanumerically. '_' is legal in a label *value* but NOT in a
-   name, which is how "sol-deploy-state-ci_smoke" came to be rejected. This is
-   the shared home for that transform; [Sol_cli_release] and
-   [Sol_cli_deployment_state] both build object names from a workspace. *)
 let sanitize_name (s : string) : string =
   let buf = Buffer.create (String.length s) in
   s
@@ -115,9 +99,6 @@ let sanitize_name (s : string) : string =
   if trimmed = "" then "none" else trimmed
 ;;
 
-(* A pure function of the two resolved names -- no workspace/config/env read --
-   shared by the planner and by rollback's decode of a recorded release, so the
-   two can never disagree about the URL format. *)
 let service_url ~(namespace : namespace) ~(k8s_name : k8s_name) : string =
   Printf.sprintf
     "http://%s.%s.svc.cluster.local"
@@ -125,10 +106,6 @@ let service_url ~(namespace : namespace) ~(k8s_name : k8s_name) : string =
     (namespace_to_string namespace)
 ;;
 
-(* A pure function of an already-resolved source name -- moved here from the
-   planner (FEAT-066) alongside [service_url] because it is deterministic
-   naming, not planner policy, so both the planner and rollback's decode of a
-   recorded release's [called_by] can share one definition. *)
 let call_env_var source_name =
   source_name
   |> String.map (function

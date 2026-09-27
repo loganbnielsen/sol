@@ -54,10 +54,6 @@ type service_spec =
   ; replicas : int
   ; availability : Sol_cli_availability.t
   ; consumes_kafka : bool
-    (* AUDIT-080: a consumer's readiness is its join state and its liveness is
-       its poll cadence, so only a workload that actually consumes Kafka gets
-       those probes. Derived from the declared [kafka] resource/`events/` topics
-       (AUDIT-078's declaration), never guessed from the primitive. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -80,10 +76,6 @@ type profile_claim =
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
-    (** FEAT-069: the content-addressed identity of the desired released state.
-        Computed once in {!of_services_result} -- the first point at which every
-        release-defining service input is resolved -- and never recomputed.
-        Downstream rendering and recording consume this value. *)
   ; environment : env_config
   ; services : service_spec list
   ; topics : Sol_cli_plan_ids.Topic_name.t list
@@ -91,10 +83,6 @@ type t =
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
-    (** What the user asked for, before discovery narrowed it (FEAT-065):
-          ["workspace"], a domain, or ["domain/unit"]. The concrete resolved
-          set is [services]; the pair is intent plus reproducibility, and
-          DEC-018's release record needs both. *)
   ; profile : profile_claim option
   }
 
@@ -133,9 +121,6 @@ let primitive_to_string = function
   | Fn -> "fn"
 ;;
 
-(* Canonical inverse of [primitive_to_string] (FEAT-066): rollback reconstructs
-   a recorded release's specs from the release record, which stores this value
-   in its canonical string form. *)
 let primitive_of_string = function
   | "svc" -> Ok Svc
   | "worker" -> Ok Worker
@@ -159,8 +144,6 @@ let default_memory =
   | Error message -> invalid_arg message
 ;;
 
-(* FEAT-079: -fn's pre-FEAT-079 hardcoded behavior, now the explicit default
-   when scheduled_concurrency/backoff_limit are unset in sol.toml. *)
 let default_scheduled_concurrency = Sol_cli_toml.Allow
 let default_backoff_limit = 3
 
@@ -184,11 +167,6 @@ let effective_rollout_strategy_to_string = function
 let k8s_name_to_string = Sol_cli_kubernetes_name.k8s_name_to_string
 let namespace_to_string = Sol_cli_kubernetes_name.namespace_to_string
 
-(* BUG-026: the single projection from a resolved workload to its contribution
-   to the release identity. It is exported so [Sol_cli_release]'s record builder
-   calls it rather than hand-mirroring it — two mirrored projections drift, and
-   the drift is exactly how a manifest-affecting field stops moving the id.
-   Every input the renderer turns into manifest content must appear here. *)
 let progressive_steps_to_string steps =
   String.concat
     ","
@@ -200,8 +178,6 @@ let progressive_steps_to_string steps =
        steps)
 ;;
 
-(* The effective strategy, so [None] and [Some RollingUpdate] are one release.
-   Canary steps are part of the identity: changing them changes the Rollout. *)
 let release_rollout_to_string (spec : service_spec) =
   match spec.progressive_delivery with
   | Some (Sol_cli_toml.Canary { steps }) -> "canary:" ^ progressive_steps_to_string steps
@@ -569,11 +545,6 @@ let validate_persistence (spec : service_spec) =
   | (Svc | Worker), _ -> Ok ()
 ;;
 
-(* AUDIT-080: a declared failure tolerance must be satisfiable before render.
-   A node-failure-tolerant claim needs at least two replicas; a volume pins one
-   writable attachment (FEAT-083) and functions are scheduled jobs. Anything
-   unsupported fails here -- before any manifest exists -- and names a supported
-   alternative, so the operator never gets a rendered claim Sol cannot keep. *)
 let validate_availability (spec : service_spec) =
   if not (Sol_cli_availability.is_node_failure_tolerant spec.availability)
   then Ok ()
@@ -614,15 +585,8 @@ let primitive_of_manifest = function
   | Sol_cli_manifest.Fn -> Fn
 ;;
 
-(* Delegates to the shared helper (FEAT-066): the naming rule has one
-   definition, so the planner and rollback's decode of a recorded release
-   cannot diverge. *)
 let call_env_var = Sol_cli_kubernetes_name.call_env_var
 
-(* sol.yml scale (a min/max range) and sol.toml's replicas (a fixed count)
-   aren't the same shape -- no HorizontalPodAutoscaler is emitted anywhere
-   today, so scale_max (falling back to scale_min) stands in as the interim
-   fixed count. See BUG-004. *)
 let sol_yml_replicas_override ~resolved_config ~service_name =
   match resolved_config with
   | None -> None
@@ -636,8 +600,6 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
 ;;
 
-(* FEAT-088: the declared framework language, straight from [sol.yml]'s service
-   entry. Nothing infers it from the build system (DEC-022 §7). *)
 let sol_yml_language ~resolved_config ~service_name =
   match resolved_config with
   | None -> None
@@ -650,10 +612,6 @@ let sol_yml_language ~resolved_config ~service_name =
      | Some s -> s.language)
 ;;
 
-(* Only positive, language-neutral evidence counts. A worker may consume Kafka
-   or host sol-jobs (DEC-021), so its shape implies no dependency; schema
-   subjects are not evidence either, being discovered from OCaml event
-   modules. *)
 let workload_capabilities ~resolved_config ~services ~topics ~migrations =
   let declares typ =
     match resolved_config with
@@ -712,26 +670,7 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
             [ ( not (declares "postgres")
               , Sol_cli_profile.Postgres_durability
               , "declare a postgres resource for database migrations" )
-            ; (* INFRA-038: a Service acquires a Kafka/event requirement by
-                    *declaring* one, and not otherwise. The predicate below used to be
-                    [not (service_uses "kafka")], which asked whether *any* selected
-                    Service declared Kafka -- so a service that uses nothing, like the
-                    stateless checkout_svc, could not be deployed on its own at all:
-                    the target's ability to provide Kafka was being treated as a
-                    requirement of every workload deployed onto it. That is the
-                    conflation this ticket exists to remove.
-
-                    What is worth failing closed on is the mismatch that *can* be
-                    established: the workspace declares Kafka topics, so something in
-                    it is meant to handle them, yet no Service declares the Kafka
-                    resource it uses. That reading is only meaningful for the whole
-                    workspace -- a scope excludes the Service that would declare the
-                    use, so requiring it of every scope is the same bug in a smaller
-                    hat. A scope that declares no Kafka use therefore acquires no
-                    Kafka requirement, and a Service that declares one still gets the
-                    durability contract through [requirements] above, which is the
-                    target-side question and is checked separately. *)
-              ( whole_workspace && topics <> [] && not (service_uses "kafka")
+            ; ( whole_workspace && topics <> [] && not (service_uses "kafka")
               , Sol_cli_profile.Kafka_durability
               , "this workspace declares Kafka topics, so the Service that handles them \
                  must declare uses: [<kafka resource>]" )
@@ -749,20 +688,6 @@ let of_services_result
       ?inventory
       services
   =
-  (* DEC-036: what gets *deployed* is [services] -- the requested scope, unchanged
-     and never widened. What a call reference may *name* is the workspace
-     inventory: a unit deployed alone still has to resolve a callee that already
-     exists in the workspace, and it needs only that callee's manifest metadata
-     (domain, name, derived URL) -- never its liveness, and never its presence in
-     this release. Resolution stays fail-closed: a reference that names nothing in
-     the inventory is an error, not an empty URL.
-
-     [inventory] defaults to [services], which leaves every existing caller (and
-     test) on the previous behaviour until it passes the discovered set.
-
-     REFAC-130: [facts] is the workspace the command already read. The plan takes
-     its workspace-level inputs (topics, migrations, schema subjects) and each
-     unit's [sol.toml] from it rather than reading the disk again. *)
   let resolution_units =
     match inventory with
     | None -> services
@@ -776,20 +701,11 @@ let of_services_result
            else (
              Hashtbl.add seen key ();
              true))
-        (* [services] first: the selection wins over the same unit as discovered.
-           They are the same unit either way, but the selection is the one this
-           invocation was asked about. *)
         (services @ units)
   in
   let loaded =
     resolution_units
     |> List.map (fun svc ->
-      (* REFAC-130: a unit this workspace contains already carries its parsed
-            [sol.toml] on the model, so the workspace is read once. A unit the
-            caller supplied that is *not* part of this workspace -- a synthetic
-            list, a hosted-mode caller assembling one -- has no model entry and
-            is read here, through [at_root] so the read is correct even when the
-            command was invoked from a descendant directory (DEC-024). *)
       let config =
         match
           List.find_opt
@@ -815,9 +731,6 @@ let of_services_result
       collect_loaded (item :: acc) rest
   in
   let* loaded = collect_loaded [] loaded in
-  (* DEC-036: a reference that resolves to nothing must name what it referenced
-     and what the workspace does contain. The old message said "target service not
-     found", which read as though the callee had to be *selected*. *)
   let known_units () =
     loaded
     |> List.map (fun (svc, _) ->
@@ -872,11 +785,7 @@ let of_services_result
     let* namespace = namespace_result ~workspace ~domain:svc.Sol_cli_manifest.domain in
     let image =
       match List.assoc_opt svc.name image_refs with
-      | Some ref ->
-        (* FEAT-050: a supplied artifact reference is used verbatim. It is a
-           fully-qualified digest, so the registry/workspace/tag defaults do
-           not apply to it. *)
-        ref
+      | Some ref -> ref
       | None -> image_ref ~registry:env.registry ~workspace ~k8s_name ~tag:env.image_tag
     in
     let primitive = primitive_of_manifest svc.primitive in
@@ -903,9 +812,6 @@ let of_services_result
              ; message = "call URL env var conflicts with [infra.env] config"
              })
     in
-    (* BUG-048 / FND-0034: a -fn's schedule is the one thing that defines it, so it
-       is required in sol.toml. It used to default to hourly, from a second read of
-       the same file, so a missing or misspelled key deployed an hourly job. *)
     let* schedule =
       match primitive with
       | Fn ->
@@ -939,9 +845,6 @@ let of_services_result
     in
     let service_config = List.remove_assoc "SOL_KAFKA_DURABILITY" toml.env_config in
     let language = sol_yml_language ~resolved_config ~service_name:svc.name in
-    (* AUDIT-080: the Kafka-consumer declaration AUDIT-078 put in the plan, not a
-       guess from the primitive. A declared `kafka` resource or `events/` topic
-       makes this a consumer. *)
     let consumes_kafka =
       toml.topics <> [] || service_uses_resource_type resolved_config svc.name "kafka"
     in
@@ -989,11 +892,6 @@ let of_services_result
       let* spec = to_spec svc in
       collect (spec :: acc) rest
   in
-  (* DEC-036: specs are built for the *selection* only. [loaded] holds the whole
-     inventory so that call references resolve against it, but what gets deployed
-     is exactly what was asked for -- resolving a callee never pulls it into the
-     release. This is the line that keeps DEC-036's "no transitive widening"
-     clause true, so it is worth keeping adjacent to [resolution_units]. *)
   let selection_key (svc : Sol_cli_manifest.service) = svc.domain ^ "/" ^ svc.name in
   let selection_keys = List.map selection_key services in
   let deployable =
@@ -1028,11 +926,6 @@ let of_services_result
       in
       { svc with called_by })
   in
-  (* FEAT-069: release identity is computed here because this is the first point
-     at which all release-defining service inputs have been resolved. It is
-     derived once from the canonical projection (which deliberately excludes
-     provenance: timestamps, commit, output directory) and stored on the plan;
-     downstream code must consume [plan.release_id] rather than recompute it. *)
   let release_id =
     Sol_cli_release_id.of_content
       { workspace
@@ -1055,11 +948,6 @@ let of_services_result
         derive_consumer_groups ?resolved_config workspace resolved_services
     ; requested_scope
     ; profile =
-        (* INFRA-038: whether the *whole* workspace is being deployed decides
-           whether the Kafka declaration-completeness reading applies. A scope
-           deliberately excludes the Service that would declare a use, so asking
-           it of every scope would keep the target's capability attached to
-           workloads that do not use it. *)
         profile_claim
           ~resolved_config
           ~services:resolved_services

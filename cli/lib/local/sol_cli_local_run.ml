@@ -1,10 +1,3 @@
-(* FEAT-103: what `sol local run` runs, per workload.
-
-   Decisions only -- this module starts nothing, so the adapters are testable
-   without a cluster or a process. The declared language (FEAT-104) picks the
-   adapter; the unit's own toolchain metadata is read only once that is known.
-   The interface rationale is in the .mli. *)
-
 open Result.Syntax
 
 type command =
@@ -27,17 +20,12 @@ type plan =
 
 let label (svc : Sol_cli_manifest.service) = svc.domain ^ "/" ^ svc.name
 
-(* ── a unit's own toolchain metadata ─────────────────────────────────────── *)
-
-(* [path] is workspace-root relative; [""] and ["."] both mean the root. *)
 let join root path =
   match path with
   | "" | "." -> root
   | path -> Filename.concat root path
 ;;
 
-(* [dir] with [prefix] removed, where [prefix] is an ancestor of [dir]; both are
-   workspace-root relative. *)
 let relative_under ~prefix dir =
   match prefix with
   | "" | "." -> dir
@@ -60,8 +48,6 @@ let read_json path =
   | exception Sys_error msg -> Error msg
 ;;
 
-(* Total: a package.json whose top level is not an object reads as having no such
-   field, rather than raising out of the reader (REFAC-132). *)
 let string_member key json = Sol_cli_json.field [ key ] json |> Sol_cli_json.string
 
 let string_list = function
@@ -74,7 +60,6 @@ let string_list = function
   | _ -> []
 ;;
 
-(* npm accepts either `workspaces: [ ... ]` or `workspaces: { packages: [ ... ] }`. *)
 let workspaces_of json =
   match Sol_cli_json.field [ "workspaces" ] json with
   | `Assoc fields ->
@@ -84,10 +69,6 @@ let workspaces_of json =
   | workspaces -> string_list workspaces
 ;;
 
-(* A workspace entry names a directory (`order_svc`), a package (`order-svc`) or a
-   glob; all three forms appear in the wild, and this repository's example uses
-   the directory form while its package names differ (`order_svc` vs
-   `order-svc`). *)
 let declares ~entry ~package_name ~dir_name =
   String.equal entry package_name
   || String.equal entry dir_name
@@ -96,9 +77,6 @@ let declares ~entry ~package_name ~dir_name =
 
 let package_json ~root dir = read_json (Filename.concat (join root dir) "package.json")
 
-(* The npm project a TypeScript unit builds in: the nearest ancestor whose
-   package.json lists the unit as a workspace, else the unit's own directory
-   (a standalone project). *)
 let npm_project_root ~root ~unit_dir ~package_name =
   let dir_name = Filename.basename unit_dir in
   let rec up dir =
@@ -119,11 +97,6 @@ let npm_project_root ~root ~unit_dir ~package_name =
   | None -> unit_dir
 ;;
 
-(* The built entry, relative to the unit's own directory: the package's `main`
-   when it declares one, else `<outDir>/index.js` -- the layout tsconfig
-   declares, `dist` by default. A tsconfig that does not parse (JSONC, say)
-   leaves the default in place; a wrong guess then fails naming the path rather
-   than silently running nothing. *)
 let entry_in_unit ~root ~unit_dir ~package_json =
   match Option.bind package_json (string_member "main") with
   | Some main -> main
@@ -139,14 +112,12 @@ let entry_in_unit ~root ~unit_dir ~package_json =
     Filename.concat out_dir "index.js"
 ;;
 
-(* ── the adapters ────────────────────────────────────────────────────────── *)
-
 let recipe_of_ocaml (svc : Sol_cli_manifest.service) =
   let dir = svc.Sol_cli_manifest.dir in
   Ok
     { label = label svc
     ; language = Sol_cli_compat.Ocaml
-    ; build = None (* merged into one dune build by [plan] *)
+    ; build = None
     ; launch = { argv = [ "_build/default/" ^ dir ^ "/bin/main.exe" ]; cwd = "" }
     ; artifact = dir ^ "/bin/main.exe"
     }
@@ -192,12 +163,7 @@ let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
   Ok
     { label = label svc
     ; language = Sol_cli_compat.Typescript
-    ; build =
-        Some build
-        (* The launch is `node <entry>`, never `npm run start`: the loop kills the
-         process it started, and killing npm would leave the service behind. It
-         runs where the unit's own instructions run it -- its npm project root --
-         so the entry is named relative to that. *)
+    ; build = Some build
     ; launch =
         { argv =
             [ "node"; Filename.concat (relative_under ~prefix:npm_root unit_dir) entry ]
@@ -212,8 +178,6 @@ let recipe ~root (svc : Sol_cli_manifest.service) language =
   | Sol_cli_compat.Ocaml -> recipe_of_ocaml svc
   | Sol_cli_compat.Typescript -> recipe_of_typescript ~root svc
 ;;
-
-(* ── the plan ────────────────────────────────────────────────────────────── *)
 
 let workload_of (facts : Sol_cli_workspace_model.t) (svc : Sol_cli_manifest.service) =
   List.find_opt
@@ -259,8 +223,6 @@ let plan ~root ~facts services =
           | Error _ -> None)
         resolved
     in
-    (* One dune build for every OCaml unit: concurrent dune invocations fight
-       over the build lock, which is why the loop always built them together. *)
     let dune_targets =
       recipes
       |> List.filter_map (fun r ->
@@ -277,9 +239,6 @@ let plan ~root ~facts services =
     Ok { builds = ocaml_build @ unit_builds; launches = recipes }
 ;;
 
-(* REFAC-139, part F: the shell line that runs a command in its directory. A
-   build is prefixed with the opam environment, since the loop may run outside
-   an activated switch. *)
 let shell_line ?(prefix = "") (command : command) =
   let in_dir =
     match command.cwd with
@@ -293,9 +252,6 @@ let opam_env_prefix = "eval $(opam env 2>/dev/null) 2>/dev/null; "
 let build_line command = shell_line ~prefix:opam_env_prefix command
 let launch_line command = shell_line command
 
-(* Dev-local addresses matching the port-forwards from `sol local infra up`,
-   mirroring the cluster-internal addresses `sol up` injects but rewritten to
-   localhost. *)
 let dev_env =
   [ "KAFKA_BROKERS", "localhost:9092"
   ; "SCHEMA_REGISTRY_URL", "http://localhost:8081"

@@ -1,7 +1,3 @@
-(* INFRA-076: before touching a Terraform state, look at the last operation
-   against it. Moved out of `cmd_cloud_tf.ml` (REFAC-139, part D), so the rule is
-   stated as a verdict and tested without a Terraform state. *)
-
 type verdict =
   | Proceed
   | Warn of string

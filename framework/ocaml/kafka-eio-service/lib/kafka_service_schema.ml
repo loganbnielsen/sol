@@ -37,10 +37,6 @@ let decode_registration_response resp_body =
 ;;
 
 module Schema = struct
-  (* BUG-049 / FND-0040: the registry answers 404 both for "no such subject"
-     (error_code 40401) or "no such version" (40402) -- a new topic, nothing to be
-     compatible with -- and for a request that never reached the subjects API at
-     all (a wrong base URL or proxy path). Only the first means "compatible". *)
   let is_subject_not_found body =
     match Yojson.Safe.from_string body with
     | `Assoc fields ->

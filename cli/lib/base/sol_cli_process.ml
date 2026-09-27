@@ -24,7 +24,6 @@ type error =
 
 let cmd ?cwd ?env ?timeout_s ?(redact = []) argv = { argv; cwd; env; timeout_s; redact }
 
-(* REFAC-124: Ok means the command succeeded, not merely that it ran. *)
 let completed ~exit_code ~stdout ~stderr =
   if exit_code = 0
   then Ok { stdout; stderr }
@@ -33,8 +32,6 @@ let completed ~exit_code ~stdout ~stderr =
 
 let error_to_string = function
   | Spawn_failed msg -> Printf.sprintf "spawn failed: %s" msg
-  (* What the command said is kept: stderr, else stdout (a tool that reports its
-     failure on stdout is not silenced). *)
   | Non_zero { exit_code; stderr; stdout } ->
     (match String.trim stderr, String.trim stdout with
      | "", "" -> Printf.sprintf "exited with code %d" exit_code

@@ -1,7 +1,3 @@
-(* Minimal Loki query client for 'sol logs'. Shells out to curl — same
-   pattern this CLI already uses for kubectl/docker/helm/terraform — rather
-   than pulling in an HTTP library for one blocking GET. *)
-
 type credentials =
   { username : string
   ; password : string
@@ -30,12 +26,6 @@ let query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
     ]
 ;;
 
-(* Service-scoped form, kept for 'sol logs' unit queries. FRIC-029: neither
-   Loki stream Sol produces carries a "namespace"/"app" label pair -- the
-   app-pushed stream (obs-loki-eio) is keyed by "service"/"team", and the
-   Alloy pod-stdout stream doesn't carry the app's log lines at all
-   (FRIC-023). A substring match on "service" is what FRIC-023 verified
-   working live (`{service=~".*notify-worker.*"}`). *)
 let query_range_argv ~base_url ~k8s_name ~limit ~timeout_s ?curl_config () =
   query_range_argv_logql
     ~base_url
@@ -51,8 +41,6 @@ type line =
   ; text : string
   }
 
-(* curl's -w '\n%{http_code}' appends the status code as a final line after
-   the response body; split it back off. *)
 let split_body_and_status (raw : string) : string * int option =
   match String.rindex_opt raw '\n' with
   | None -> raw, None
@@ -62,10 +50,6 @@ let split_body_and_status (raw : string) : string * int option =
     body, int_of_string_opt (String.trim code_str)
 ;;
 
-(* REFAC-132: a response without the structure a query result has is an error,
-   not "no log lines": before, a missing [data.result] read as no streams and a
-   malformed stream or value pair was dropped, so `sol logs` said nothing was
-   logged when it could not read what was. *)
 let parse_query_range_body (body : string) : (line list, string) result =
   let open Result.Syntax in
   let what = "Loki response" in
@@ -102,7 +86,6 @@ let fetch_error_to_string = function
   | Other msg -> msg
 ;;
 
-(* curl exit codes: 28 = operation timeout, 6/7/56 = couldn't resolve/connect/receive. *)
 let classify_process_error (e : Sol_cli_process.error) : fetch_error =
   match e with
   | Sol_cli_process.Timeout _ -> Timeout
@@ -113,15 +96,6 @@ let classify_process_error (e : Sol_cli_process.error) : fetch_error =
     Other (Printf.sprintf "curl exit %d: %s" exit_code stderr)
 ;;
 
-(* OBS-032: resolves the same read-side basic-auth credentials
-   platform/cloud/modules/platform/main.tf already collects for Alloy's write side
-   (external_loki_username/external_loki_password, OBS-039), mirroring
-   --loki-base-url's own flag-wins-over-nothing-else shape but as a
-   flag/env pair like Kafka_security.config_of_env()'s KAFKA_SASL_* --
-   flag wins over env var, field-by-field. [Error] when exactly one of
-   username/password ends up set: Loki basic auth needs both together,
-   same as main.tf's precondition on the write side. [Ok None] when
-   neither is set -- existing unauthenticated behavior is unchanged. *)
 let resolve_credentials ~flag_username ~flag_password ~env_username ~env_password
   : (credentials option, string) result
   =
@@ -163,7 +137,6 @@ let curl_config_quote s =
   Buffer.contents buf
 ;;
 
-(* curl reads the credentials from a 0600 file, so they never appear in argv. *)
 let curl_auth_config { username; password } =
   "user = \"" ^ curl_config_quote (username ^ ":" ^ password) ^ "\"\n"
 ;;
@@ -192,9 +165,6 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
     | None -> []
     | Some { password; _ } -> [ password ]
   in
-  (* OBS-031: a non-zero curl exit goes through the same classifier as a spawn
-       failure, so connection failures and timeouts read as such rather than as
-       raw curl stderr. *)
   match
     Sol_cli_process.run (Sol_cli_process.cmd ~timeout_s:(timeout_s +. 2.0) ~redact argv)
   with

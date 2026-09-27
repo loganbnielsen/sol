@@ -1,42 +1,3 @@
-(* Venus — Sol reference workspace
-   ─────────────────────────────────────────────────────────────────────────
-   Two autonomous domain teams collaborating through typed Kafka events:
-
-     HTTP client
-         │  POST /charges  [amount_cents, customer_id, currency]
-         ▼
-     payments / charge-svc  (sol-svc)
-         │  Loki span: "receive_charge"
-         │  Prometheus: sol_svc_requests_total, sol_svc_request_duration_seconds
-         │  publishes Charged event with W3C traceparent header
-         ▼
-     Kafka  venus-payments-charges
-         │
-         ▼
-     comms / notify-worker  (sol-worker)
-         │  Loki span: "record_notification"  (linked to charge-svc span via trace)
-         │  Prometheus: sol_worker_messages_total, sol_worker_message_duration_seconds
-         │  records notification in PostgreSQL  (pg-eio)
-         ▼
-     Loki · Prometheus · PostgreSQL
-
-   Run (from repo root):
-     bash platform/local/scripts/ensure-broker.sh
-     bash platform/local/scripts/ensure-postgres.sh   # optional
-     bash platform/local/scripts/ensure-loki.sh       # optional — stdout fallback
-     bash platform/local/scripts/ensure-grafana.sh    # optional
-
-     KAFKA_SECURITY_PROTOCOL=plaintext \
-     KAFKA_BROKERS=localhost:9092 \
-     SCHEMA_REGISTRY_URL=http://localhost:8081 \
-     REDPANDA_ADMIN_URL=http://localhost:9644 \
-     POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-     LOKI_URL=http://localhost:3100 \
-       dune exec internal/fixtures/venus/bin/run.exe
-*)
-
-(* ── Config ─────────────────────────────────────────────────────────────── *)
-
 let env_nonempty name =
   match Sys.getenv_opt name with
   | Some value when value <> "" -> Some value
@@ -55,8 +16,6 @@ let require_kafka label = function
 let kafka_config : Kafka_service.config =
   { (Kafka_service.config_of_env () |> require_kafka "kafka config") with linger_ms = 5 }
 ;;
-
-(* ── Helpers ─────────────────────────────────────────────────────────────── *)
 
 let sep = String.make 60 '-'
 let say fmt = Printf.ksprintf (fun s -> Printf.printf "\n[venus] %s\n%!" s) fmt
@@ -135,8 +94,6 @@ let http_post env ~sw ~port ~path ?(headers = []) ~body () =
   | _ -> 0
 ;;
 
-(* ── Main ───────────────────────────────────────────────────────────────── *)
-
 let () =
   Random.self_init ();
   Printf.printf "\n%s\n" sep;
@@ -158,7 +115,6 @@ let () =
   @@ fun env ->
   Eio.Switch.run
   @@ fun sw ->
-  (* ── Observability ─────────────────────────────────────────────────────── *)
   (match loki_url with
    | None -> Printf.printf "\n  Note: LOKI_URL not set — logs go to stdout.\n%!"
    | Some url -> Printf.printf "\n  Logs -> Loki at %s\n%!" url);
@@ -182,21 +138,15 @@ let () =
       ~context:[ "team", "comms" ]
       ()
   in
-  (* charge-svc and notify-worker each carry their own Prometheus registry
-     (like two real, separately-scraped services) — this demo's own
-     snapshot/push stitches both together. *)
   let render () =
     Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs ()
   in
   let svc_ot = Sol_obs.obs_eio svc_obs in
   let worker_ot = Sol_obs.obs_eio worker_obs in
-  (* ── Storage (comms team) ───────────────────────────────────────────────── *)
   let db_pool =
     optional_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) ~fs:env#fs postgres_url
   in
-  (* ── Kafka (shared infrastructure) ─────────────────────────────────────── *)
   let svc, topic = create_registered_topic ~sw ~net:env#net ~clock:env#clock () in
-  (* ── comms / notify-worker ──────────────────────────────────────────────── *)
   let charges_count = 3 in
   let worker_ready_p, worker_ready_r = Eio.Promise.create () in
   let worker_done_p, worker_done_r = Eio.Promise.create () in
@@ -228,7 +178,6 @@ let () =
      | Failure msg -> Printf.eprintf "[notify-worker] error: %s\n%!" msg);
     try Eio.Promise.resolve worker_done_r () with
     | _ -> ());
-  (* ── payments / charge-svc ──────────────────────────────────────────────── *)
   let handle_charge req =
     let corr_id =
       Option.value (Request.header req "x-correlation-id") ~default:(new_corr_id ())
@@ -311,7 +260,6 @@ let () =
      | Error e -> failwith e);
     `Stop_daemon);
   let port = Eio.Promise.await svc_port_p in
-  (* ── Wait for notify-worker partition assignment ─────────────────────────── *)
   say "waiting for worker partition assignment (up to 15s) ...";
   (match
      Eio.Time.with_timeout env#clock 15.0 (fun () ->
@@ -319,7 +267,6 @@ let () =
    with
    | Error `Timeout -> failwith "timed out waiting for worker partition assignment"
    | Ok () -> ());
-  (* ── Send 3 charges ─────────────────────────────────────────────────────── *)
   Printf.printf "\n%s\n%!" sep;
   let charges =
     [ "cust-001", 4999, "USD"; "cust-002", 12000, "EUR"; "cust-001", 799, "GBP" ]
@@ -353,7 +300,6 @@ let () =
          corr_id)
     charges;
   Printf.printf "%s\n%!" sep;
-  (* ── Wait for notify-worker ─────────────────────────────────────────────── *)
   say "waiting for notify-worker to process all %d events (up to 20s) ..." charges_count;
   (match
      Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await worker_done_p))
@@ -361,7 +307,6 @@ let () =
    | Error `Timeout -> Printf.eprintf "[venus] timed out waiting for worker\n%!"
    | Ok () -> ());
   say "all %d events processed." charges_count;
-  (* ── PostgreSQL: show what the comms team recorded ─────────────────────── *)
   (match db_pool with
    | None -> ()
    | Some pool ->
@@ -381,7 +326,6 @@ let () =
                r.currency)
           rows;
         Printf.printf "%s\n%!" sep));
-  (* ── Prometheus snapshot ────────────────────────────────────────────────── *)
   Printf.printf "\n%s\n" sep;
   Printf.printf "  Prometheus metrics snapshot\n";
   Printf.printf "%s\n" sep;

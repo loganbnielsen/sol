@@ -51,16 +51,12 @@ val apply_service_manifest
   -> Sol_cli_deployment_plan.service_spec
   -> (Sol_cli_executor.result, string) result
 
-(** FEAT-063: the rollout is watched in the cluster the target names. *)
 val wait_for_service_rollout
   :  ctx:Sol_cli_kube_destination.context
   -> Sol_cli_deployment_plan.service_spec
   -> service_execution
   -> (unit, string) result
 
-(** REFAC-130: the pending-migration count is a projection of the workspace the
-    command already read ([Sol_cli_workspace_model.count_unapplied_migrations]),
-    not a second walk of [db/migrations]. *)
 val post_deploy_summary
   :  facts:Sol_cli_workspace_model.t
   -> Sol_cli_deployment_plan.t

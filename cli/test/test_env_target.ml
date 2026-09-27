@@ -1,7 +1,5 @@
 let check_string = Alcotest.(check string)
 
-(* ── local_defaults ──────────────────────────────────────────────────────── *)
-
 let test_local_registry () =
   let t = Sol_cli_env_target.local_defaults ~image_tag:"abc123" in
   check_string "cluster registry" "sol-registry:5000" (Sol_cli_env_target.registry t)
@@ -21,8 +19,6 @@ let test_local_constructor () =
      | Sol_cli_env_target.Local _ -> true
      | _ -> false)
 ;;
-
-(* ── customer_cloud_defaults — direct mode ───────────────────────────────── *)
 
 let test_customer_direct_registry () =
   match
@@ -58,8 +54,6 @@ let test_customer_direct_constructor () =
        | _ -> false)
 ;;
 
-(* ── customer_cloud_defaults — gitops mode ───────────────────────────────── *)
-
 let test_customer_gitops_constructor () =
   match
     Sol_cli_env_target.customer_cloud_defaults
@@ -77,8 +71,6 @@ let test_customer_gitops_constructor () =
        | Sol_cli_env_target.Customer_gitops _ -> true
        | _ -> false)
 ;;
-
-(* ── empty/whitespace registry rejected at construction ─────────────────── *)
 
 let test_empty_registry_fails () =
   match
@@ -115,8 +107,6 @@ let test_whitespace_registry_fails () =
           ()))
 ;;
 
-(* ── to_env_config ───────────────────────────────────────────────────────── *)
-
 let test_to_env_config_local () =
   let t = Sol_cli_env_target.local_defaults ~image_tag:"abc123" in
   let cfg = Sol_cli_env_target.to_env_config ~name:"local" t in
@@ -143,8 +133,6 @@ let test_to_env_config_customer () =
       true
       (cfg.mode = Sol_cli_deployment_plan.Customer_cloud)
 ;;
-
-(* ── default_secret_backend ──────────────────────────────────────────────── *)
 
 let check_backend label expected actual =
   Alcotest.(check string)
@@ -218,13 +206,6 @@ let test_to_env_config_gitops_backend () =
       Sol_cli_manifest.Kubernetes_placeholder
       cfg.secret_backend
 ;;
-
-(* ── resolve_secret_backend (INFRA-050) ───────────────────────────────────── *)
-
-(* The defect this pins: the CLI supplied its own hard default of
-   [kubernetes-placeholder], so a *direct* deploy emitted a redacted (empty)
-   Secret and its workload could not start. "No --secret-backend" must mean "the
-   destination decides" -- there is exactly one default. *)
 
 let customer_direct_target () =
   match

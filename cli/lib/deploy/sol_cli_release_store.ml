@@ -1,51 +1,13 @@
-(* Writes and reads release records through kubectl (FEAT-067). The write path
-   is two applies: the immutable per-release ConfigMap, then the mutable pointer
-   naming the current release. A failure to write is reported to the caller,
-   which decides whether it is fatal — recording must never pretend to have
-   happened.
-
-   FEAT-063: records live in the cluster the target names, so each entry point
-   takes the destination-side context and hands it to kubectl. *)
-
-(* REFAC-134: the temporary file is Sol_cli_fs's; a failure to create it is this
-   write's error, and a failure to remove it is reported, not swallowed. *)
 let with_temp_json json f =
   Sol_cli_fs.with_temp_file ~prefix:"sol-release-" ~suffix:".json" json f |> Result.join
 ;;
-
-(* ── DEC-037 / INFRA-055: writing with the verbs the deploy identity holds ────
-
-   [kubectl apply] degrades to a *patch* when the object already exists, and the
-   boundary-lease grant deliberately withholds `patch` on ConfigMaps in `default`
-   (`platform_deploy_rbac.tf`). So every write after the first was refused, and the
-   release pointer silently stayed on an older release while the deploy reported
-   success. `create` and `update` -- the verb `kubectl replace` uses -- are both
-   granted, which is the narrower mechanism: the deploy role does not acquire
-   generic `patch` in `default`, the verb that would also let it rewrite the
-   boundary lease that serialises deploys.
-
-   Three consequences worth stating:
-
-   - An object whose [data] already matches is left alone. That matters for the
-     content-addressed record: re-deploying identical content re-writes the same
-     object name, and the immutable record would reject a changed replace anyway.
-   - Optimistic concurrency travels *in the object*: the replace carries the live
-     object's [resourceVersion], so a concurrent writer is a conflict rather than a
-     silent overwrite.
-   - Both of the above are only sound because the whole record step runs inside the
-     workspace boundary lease (`cmd_deploy.ml`'s [run_apply], and `cmd_up.ml`).
-     Moving it outside that lease would reintroduce a lost-update window. *)
 
 let metadata_string json key =
   Sol_cli_json.field [ "metadata"; key ] json |> Sol_cli_json.string
 ;;
 
-(* [`Null] when the object carries no [data]; compared, never trusted. *)
 let data_of_json json = Sol_cli_json.field [ "data" ] json
 
-(* The live object's [data] and [resourceVersion], or [None] when it does not
-   exist. A read that fails for any *other* reason is an error: a permission
-   failure must never be mistaken for absence and answered with a create. *)
 let fetch_live ~ctx ~name ~namespace =
   match
     Sol_cli_kubectl.get_if_present
@@ -125,11 +87,6 @@ let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
   write_json ~ctx current
 ;;
 
-(* FEAT-069: the record is content-addressed, so it is built from the plan's
-   own [release_id] and content — no invocation provenance is read or threaded
-   here. [sol up] and [sol deploy] therefore record the same artifact. FEAT-066:
-   [~apply_mode] is the owning/application mode of *this* release (direct vs
-   GitOps-emitted), recorded as non-identity historical metadata. *)
 let record_plan
       ~ctx
       ~(apply_mode : Sol_cli_release.apply_mode)
@@ -202,11 +159,6 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
                     workspace))))
 ;;
 
-(* FEAT-072: the pointer's [data.release_id], read without loading the record.
-   Retention needs the pre-transition "current" to protect it, and rollback
-   already has its own record reader. [None] means there is no pointer yet (or it
-   is empty), not an error: a workspace that has never deployed has no history to
-   protect. *)
 let current ~ctx ~(workspace : string) : (string option, string) result =
   let name = Sol_cli_release.current_configmap_name ~workspace in
   match
@@ -219,9 +171,6 @@ let current ~ctx ~(workspace : string) : (string option, string) result =
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-(* FEAT-072: delete one release record. Only the immutable per-release ConfigMap
-   is touched, never the pointer. The id is validated first, so a malformed id
-   cannot reach an object name. *)
 let delete ~ctx ~(release_id : string) : (unit, string) result =
   match Sol_cli_release_id.of_string release_id with
   | Error msg -> Error msg
@@ -232,8 +181,6 @@ let delete ~ctx ~(release_id : string) : (unit, string) result =
 ;;
 
 let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =
-  (* INFRA-055: rollback moves the same pointer, so it uses the same writer --
-     one mechanism, one set of verbs, one place for the lease constraint. *)
   match parse_configmap (Sol_cli_release.to_current_configmap_json t) with
   | Error e -> Error e
   | Ok json -> write_json ~ctx json

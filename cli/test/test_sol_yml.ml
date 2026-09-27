@@ -1,10 +1,3 @@
-(* FEAT-104: recording a generated workload's declared language in sol.yml.
-
-   [sol.yml] is hand-maintained, so the editor patches its text: every case here
-   asserts both that the declaration lands and that nothing the operator wrote
-   was changed. The last group covers the refusals -- the editor is allowed to
-   fail, never to guess or to rewrite a shape it does not recognise. *)
-
 let check_bool = Alcotest.(check bool)
 let check_string = Alcotest.(check string)
 let read_file path = In_channel.with_open_bin path In_channel.input_all
@@ -17,8 +10,6 @@ let write_file path text =
 
 let lines text = String.split_on_char '\n' text
 
-(* Every line of [original] still appears, in order, in [edited]: nothing Sol did
-   not write was changed, reordered or dropped. *)
 let check_original_preserved ~label ~original ~edited =
   let rec go original edited =
     match original, edited with
@@ -33,7 +24,6 @@ let check_original_preserved ~label ~original ~edited =
     (go (lines original) (lines edited))
 ;;
 
-(* A workspace with a sol.yml, cleaned up afterwards. *)
 let with_workspace sol_yml f =
   let dir = Filename.temp_file "sol-sol-yml-test-" "" in
   Sys.remove dir;
@@ -68,7 +58,6 @@ let language_of ~root name =
   |> Option.map (fun (s : Sol_cli_config.service) -> s.language)
 ;;
 
-(* The scaffold's own manifest: comments, resources, no services. *)
 let scaffold_sol_yml =
   {|# Sol workspace manifest.
 #
@@ -132,7 +121,6 @@ let test_adds_an_entry_to_an_existing_section () =
     ~label:"added entry"
     ~original:sol_yml_with_an_entry_and_comments
     ~edited;
-  (* The hand-written entry keeps its settings, and both services are declared. *)
   Alcotest.(check (list string))
     "both services"
     [ "charge_svc"; "ledger_worker" ]
@@ -209,8 +197,6 @@ let test_a_name_that_needs_quoting_is_quoted () =
    | Ok _ -> ()
    | Error e -> Alcotest.fail e);
   let edited = read_file path in
-  (* `true` unquoted would be a YAML boolean, so the emitted key is quoted and
-     the name round-trips. *)
   check_bool "the key is quoted" true (Sol_cli_string.contains ~needle:{|"true":|} edited);
   Alcotest.(check (list string))
     "the name round-trips"

@@ -1,18 +1,3 @@
-(* sol target — inspect a deployment target as a target (FEAT-062).
-
-   Offline by default. `--check` probes the cluster, and it is opt-in rather than
-   automatic because the target summary is also what a user reads while
-   *diagnosing* an unreachable cluster: a command that blocks on a timeout
-   before printing anything is least useful exactly when it is most needed. *)
-
-(* FEAT-100: the declared targets, read from sol/environments.yml (and the local
-   file) at the workspace root, so `sol target show` lists the same targets from
-   any descendant directory (DEC-024).
-
-   REFAC-130: the list is a projection of the workspace model, read at most once
-   per process. A load failure degrades to "no targets found", which is what
-   this listing did before; the command's own target lookup reports the real
-   error. *)
 let available_target_paths =
   lazy
     (match Sol_cli_workspace_model.load_cwd () with
@@ -26,18 +11,9 @@ let available_targets () =
   | paths -> "available targets:\n  " ^ String.concat "\n  " paths
 ;;
 
-(* A target that cannot be shown fails closed and lists what exists. *)
 let not_shown message = Sol_cli_exit.failure (message ^ "\n\n" ^ available_targets ())
 
-(* The only part that touches a cluster, and only when asked to.
-
-   [Sol_cli_kubectl.probe_result] keeps what kubectl said, so the reason is
-   reported rather than named as a command to run by hand. It is filtered by the
-   rendering layer when not verbose, because kubectl quotes the context back — an
-   "unreachable" line that leaked it would undo the masking rule through the back
-   door (REFAC-084). *)
 let first_line text =
-  (* kubectl's first line is the error; what follows is usually help text. *)
   match String.split_on_char '\n' (String.trim text) with
   | line :: _ -> String.trim line
   | [] -> ""
@@ -65,10 +41,6 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
 ;;
 
 let platform_status ~check (target : Sol_cli_config.target) =
-  (* No provider gate: the convergence checks are the target's own provider's
-     (see [Sol_cli_cloud_lifecycle.readiness]), and this surface answers "is this
-     target ready". A target with no explicit Kubernetes destination still reports
-     that, which is the honest answer and the same one AWS gets. *)
   if not check
   then None
   else (
@@ -84,9 +56,6 @@ let platform_status ~check (target : Sol_cli_config.target) =
         | Ok result -> Some result.stdout
         | _ -> None
       in
-      (* The same convergence checks `sol cloud apply` gates [Ready] on, so this
-         surface answers "is this target ready" rather than a second, looser
-         question. *)
       Some
         (Sol_cli_cloud_lifecycle.readiness ~provider:target.provider ~run
          |> Sol_cli_cloud_lifecycle.readiness_summary))
@@ -94,12 +63,6 @@ let platform_status ~check (target : Sol_cli_config.target) =
 
 open Result.Syntax
 
-(* DEC-024: sol.yml is always present now, so its existence alone can no longer
-   be what makes a target real. `sol target show` is an inspection of a
-   *declared* target, so a well-shaped path with no sol/environments.yml
-   declaration fails closed and lists what does exist. ([load_for_target] stays
-   permissive by design; cmd_deploy enforces the same declaration for its
-   mutating guarantee.) *)
 let declared_target target =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> Error (not_shown (Sol_cli_config.error_to_string e))
@@ -114,8 +77,6 @@ let declared_target target =
   | Ok config -> Ok config.target
 ;;
 
-(* Positional, not labelled: cmdliner's [Term.const] applies its arguments in
-   order, so a labelled function cannot be used directly. *)
 let show target verbose json check =
   let* target =
     match target with

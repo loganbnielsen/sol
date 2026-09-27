@@ -1,6 +1,3 @@
-(* DEC-049: the one owner of Sol-asset resolution. REFAC-114 moved the four
-   consumers here; FEAT-101 adds the installed release bundle. *)
-
 type form =
   | Checkout
   | Installed of { version : string }
@@ -62,9 +59,6 @@ let error_to_string = function
       fix
 ;;
 
-(* A dune build context mirrors source directories under `_build/...`,
-   including the two framework sentinels. Never accept one, or CLI tests run
-   from `_build/default/cli/test` would resolve to the build tree. *)
 let inside_build_context dir = String.split_on_char '/' dir |> List.mem "_build"
 
 let is_checkout dir =
@@ -105,8 +99,6 @@ let running_binary_dir () =
   Filename.dirname (realpath exe)
 ;;
 
-(* An installed bundle root: share/sol/<version>/ holding VERSION and platform/. *)
-(* The first line of [path], trimmed; [None] if it is missing, empty or unreadable. *)
 let first_line path =
   match open_in path with
   | exception Sys_error _ -> None
@@ -130,11 +122,6 @@ let installed_dir ~exe_dir ~version =
   Filename.concat (Filename.dirname exe_dir) (Filename.concat "share/sol" version)
 ;;
 
-(* DEC-049's order. An explicit SOL_HOME is a checkout, or a bundle of this very
-   release; anything else is an error, never a fall-through. A release binary
-   then uses its own bundle and nothing else: walking up to a checkout would hand
-   it assets that are not its release's. Only a development build discovers a
-   checkout. *)
 let resolve_from ~sol_home ~exe_dir ~release_version =
   match sol_home with
   | Some dir ->
@@ -187,10 +174,6 @@ let under t rel = Filename.concat t.dir rel
 let cloud_root t provider role = under t (cloud_root_rel provider role)
 let terraform_trees = [ "platform/cloud"; "platform/shared" ]
 let components_json t = under t "platform/shared/components.json"
-
-(* REFAC-128: the scaffold template trees. Sol-owned files `sol new` copies, so
-   they resolve here like every other asset (DEC-049), and a release bundle
-   carries them because it carries the tracked files under platform/. *)
 let templates_root t = under t "platform/shared/templates"
 
 let dashboard t name =
@@ -203,9 +186,6 @@ type migration_runner =
   | Build_from_source of { context : string }
   | Published of string
 
-(* An installed release names its runner in the bundle, as a digest reference
-   the release workflow wrote after publishing the image built beside this
-   binary. Only an immutable reference is accepted. *)
 let runner_image_file t = Filename.concat t.dir "migration-runner-image"
 
 let is_digest_ref s =

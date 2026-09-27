@@ -1,7 +1,3 @@
-(* BUG-042 / FND-0033: a misspelled sol.toml key or table used to load as if it had
-   not been written, so the setting silently took its default. Unknown keys and
-   tables are now errors that name the key; everything Sol documents still loads. *)
-
 let load contents =
   let path = Filename.temp_file "sol-toml-keys-" ".toml" in
   let oc = open_out path in
@@ -12,9 +8,6 @@ let load contents =
   result
 ;;
 
-(* REFAC-128: the scaffold's sol.toml files are templates under
-   platform/shared/templates/<kind>/; read them from there rather than from an
-   OCaml value. The check is the same: what `sol new` writes must load. *)
 let tpl ~kind rel =
   match Sol_cli_platform_assets.resolve () with
   | Error error ->
@@ -52,8 +45,6 @@ let accepts name contents =
     | Error e -> Alcotest.fail (Sol_cli_toml.parse_error_to_string e))
 ;;
 
-(* Every key the docs show (escape-hatches.md, workload-availability.md, sol-fn.md,
-   TUTORIAL.md) in one document. *)
 let every_documented_key =
   {|[infra.scale]
 replicas = 3

@@ -1,7 +1,3 @@
-(* FEAT-072: boundary-lease model, pure decisions and serialization. The kubectl
-   CAS path needs a live cluster and is not exercised here; everything that
-   decides *what* to do with a lease is. *)
-
 let contains re s =
   try
     ignore (Str.search_forward re s 0);
@@ -144,9 +140,6 @@ let test_serialization_round_trip () =
       (Sol_cli_boundary_lease.configmap_name ~workspace:"My_App")
 ;;
 
-(* FEAT-072: the optimistic take-over's compare-and-swap travels in the object
-   ([metadata.resourceVersion]), because [kubectl replace --resource-version] is
-   not present in every kubectl. *)
 let test_replace_carries_resource_version () =
   let lease =
     Sol_cli_boundary_lease.create ~boundary:"myapp" ~holder:Deploy ~run_id:"r" ~now:1.

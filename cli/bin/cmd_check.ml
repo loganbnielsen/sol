@@ -1,21 +1,8 @@
 open Cmdliner
-
-(* A requested scope must resolve, or the command fails. That rule is the point
-   of the vocabulary (FEAT-061): a name that matches nothing is an error naming
-   what exists, never a quiet empty selection that reports success. *)
 open Result.Syntax
 
 let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
 
-(* [scope] names what to check. There is no positional selector (FEAT-064):
-   a name and a directory are different concepts, and one argument meaning
-   "maybe one, maybe the other" is exactly what made selection unpredictable.
-   Resolving a scope needs discovery, because the kind of a unit comes from what
-   is on disk rather than from what the user typed -- and it goes through the
-   same [Sol_cli_workload_selection] every other command uses (FEAT-065).
-
-   REFAC-130: the workspace is read once, here at the command's edge, and both
-   the whole-workspace check and the scoped one are projections of it. *)
 let findings_for ~facts = function
   | None -> Ok (Sol_cli_check.run ~facts)
   | Some requested ->
@@ -26,17 +13,10 @@ let findings_for ~facts = function
         (Sol_cli_workspace_model.services facts)
       |> Result.map_error fail
     in
-    (* Reading is allowed to find nothing: an empty workspace is an answer, not
-       a failure. The mutating commands decide the opposite, which is why
-       emptiness is reported by the resolver rather than judged by it. *)
     Ok (Sol_cli_check.run_services ~facts selected.services)
 ;;
 
 let run scope =
-  (* DEC-024: resolve the workspace boundary and make it the cwd, so `sol
-     check` acts on the workspace from any descendant directory (discovery and
-     the per-unit file checks are all workspace-root relative). The root is the
-     cwd from here on; nothing below needs it by name. *)
   let* workspace = Sol_cli_workspace.enter_cwd () in
   let* facts =
     Sol_cli_workspace_model.load ~root:workspace.Sol_cli_workspace.root
@@ -52,12 +32,6 @@ let run scope =
     Ok ())
 ;;
 
-(** Workload selection. The command has exactly one grammar: the positional PATH
-    it used to accept is deleted, so a stray argument fails through the parser
-    rather than quietly meaning something else. There is deliberately no
-    rejected-argument shim — a shim would put an `[ARG]` in this usage line
-    permanently, adding invalid grammar to the surface to produce a nicer error
-    for it. *)
 let scope_arg =
   Arg.(
     value

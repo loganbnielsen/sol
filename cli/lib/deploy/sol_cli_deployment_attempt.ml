@@ -1,5 +1,3 @@
-(* FEAT-072: one deploy attempt as a unit. See the .mli. *)
-
 type t =
   { deployment_id : Sol_cli_deployment_id.t
   ; now : float

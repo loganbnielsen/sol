@@ -27,8 +27,6 @@ let check_state_option msg expected actual =
   Alcotest.(check (option ticket_state)) msg expected actual
 ;;
 
-(* ── parse_frontmatter ───────────────────────────────────────────────────── *)
-
 let test_parse_empty () =
   let fm = Soldev_ticket.fields "no frontmatter here" in
   Alcotest.(check (list (pair string string))) "empty" [] fm
@@ -55,8 +53,6 @@ let test_fm_get_colon_in_value () =
     (Some "https://example.com/path")
     (Soldev_ticket.fm_get fm "url")
 ;;
-
-(* ── parse_depends ───────────────────────────────────────────────────────── *)
 
 let test_depends_none () =
   let content = "---\nid: X\n---\n\n**Depends on:** None.\n" in
@@ -139,8 +135,6 @@ let test_depends_underscore_prefix () =
     (Soldev_ticket.parse_depends content)
 ;;
 
-(* ── has_human_decision_gate ─────────────────────────────────────────────── *)
-
 let test_no_gate () =
   let content = "---\nid: X\n---\n\nJust a ticket body.\n" in
   check_bool "no gate" false (Soldev_ticket.has_human_decision_gate content)
@@ -156,8 +150,6 @@ let test_gate_section () =
   check_bool "section gate" true (Soldev_ticket.has_human_decision_gate content)
 ;;
 
-(* ── ticket_title ────────────────────────────────────────────────────────── *)
-
 let test_title_basic () =
   let content = "---\nid: X\n---\n\n**Depends on:** None.\n\nFix the thing\n" in
   check_string "title" "Fix the thing" (Soldev_ticket.ticket_title content)
@@ -169,7 +161,6 @@ let test_title_no_frontmatter () =
 ;;
 
 let test_title_explicit_field_wins () =
-  (* The fix: a ticket can say what its title is, so nothing has to infer it. *)
   let content =
     "---\n\
      id: X\n\
@@ -185,7 +176,6 @@ let test_title_explicit_field_wins () =
 ;;
 
 let test_title_strips_heading_markers () =
-  (* A summary should read as a title, not as Markdown. *)
   let content =
     "---\nid: X\n---\n\n**Depends on:** None.\n\n# Real title here\n\nBody.\n"
   in
@@ -196,8 +186,6 @@ let test_title_strips_heading_markers () =
 ;;
 
 let test_title_skips_any_bold_field () =
-  (* Deliberately not a list of known labels: `**Related:**` and `**Replaces:**`
-     each became the displayed summary of a real ticket before anyone noticed. *)
   let content =
     "---\n\
      id: X\n\
@@ -222,8 +210,6 @@ let test_title_blank_field_falls_back () =
     (Soldev_ticket.ticket_title content)
 ;;
 
-(* ── dependency_summary ──────────────────────────────────────────────────── *)
-
 let test_dep_summary_empty () =
   check_string "empty" "none" (Soldev_ticket.dependency_summary [])
 ;;
@@ -231,8 +217,6 @@ let test_dep_summary_empty () =
 let test_dep_summary_list () =
   check_string "list" "A, B" (Soldev_ticket.dependency_summary [ "A"; "B" ])
 ;;
-
-(* ── ticket states ───────────────────────────────────────────────────────── *)
 
 let test_states_include_done () =
   check_bool "DONE present" true (List.mem Soldev_ticket.Done Soldev_ticket.all_states)
@@ -260,10 +244,6 @@ let test_state_unknown () =
 ;;
 
 let test_states_no_longer_include_removed_states () =
-  (* REFAC-077: IN_PROGRESS/REVIEW/READY_TO_MERGE/BLOCKED_BY_PERFORMANCE are
-     gone — GitHub's own open-PR/review/CI state represents what they used
-     to track, and a ticket's DONE move now rides in on its PR's squash
-     commit instead of a separate directory transition. *)
   check_state_option
     "IN_PROGRESS no longer a state"
     None
@@ -279,8 +259,6 @@ let test_states_no_longer_include_removed_states () =
     (Soldev_ticket.state_of_dir "BLOCKED_BY_PERFORMANCE");
   check_bool "only 3 states remain" true (List.length Soldev_ticket.all_states = 3)
 ;;
-
-(* ── frontmatter is YAML (REFAC-137) ──────────────────────────────────────── *)
 
 let test_yaml_quoting_is_decoded () =
   let content =
@@ -311,18 +289,12 @@ let test_yaml_comment_and_null () =
 ;;
 
 let test_invalid_frontmatter_is_an_error () =
-  (* The shape two tickets filed with this change had: an unquoted ": " in a
-     value. The hand-split parser read it; YAML refuses it, and so does soldev. *)
   match Soldev_ticket.frontmatter "---\nsource: operator: said so\n---\n" with
   | Ok _ -> Alcotest.fail "an invalid frontmatter was accepted"
   | Error message ->
     check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" message)
 ;;
 
-(* Every ticket in the repository is readable by the pipeline (BUG-060): a
-   frontmatter block that parses, and the fields the pipeline reads. This is the
-   unit-level form of `soldev pipeline validate`, over the complete tree -- DONE
-   included, which is where the ticket that motivated it lived. *)
 let test_every_ticket_is_readable () =
   let root = "../../../pipeline/tickets" in
   let failures =
@@ -341,8 +313,6 @@ let test_every_ticket_is_readable () =
     []
     failures
 ;;
-
-(* ── unreadable (BUG-060) ────────────────────────────────────────────────── *)
 
 let readable_ticket =
   {|---
@@ -367,8 +337,6 @@ let test_readable () =
 ;;
 
 let test_readable_extra_fields () =
-  (* Extra fields are the author's business: `premise:` above, and whatever a
-     later convention adds, must not make a ticket unreadable. *)
   let content = readable_ticket ^ "\nowning_stream: qualification\n" in
   check_option_string
     "extra fields are not policed"
@@ -411,8 +379,6 @@ let test_invalid_yaml_is_unreadable () =
 ;;
 
 let test_missing_field_is_unreadable () =
-  (* The parser reads a blank or null value as absent, so this covers both
-     `severity:` with nothing after it and dropping the line. *)
   let path = "internal/pipeline/tickets/BACKLOG/BUG-998.md" in
   let content =
     "---\nid: BUG-998\ntype: bug\nseverity:\nsource: a test\n---\n\nBody.\n"
@@ -528,10 +494,7 @@ let () =
         ; Alcotest.test_case "each required field" `Quick test_each_required_field
         ] )
     ; ( "dependency cycles"
-      , [ (* The walk takes [deps_of] injected, so these need no ticket files —
-             which also makes them a test of the walk rather than of the repo's
-             current contents. *)
-          Alcotest.test_case "self cycle" `Quick (fun () ->
+      , [ Alcotest.test_case "self cycle" `Quick (fun () ->
             Alcotest.(check (option (list string)))
               "a ticket depending on itself is a cycle"
               (Some [ "A-1"; "A-1" ])
@@ -581,11 +544,7 @@ let () =
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
         ] )
     ; ( "premise probes"
-      , [ (* INFRA-010: the probe SUCCEEDS when the premise is stale, so exit 0
-             means "this may already be done". These tests pin that inversion, and
-             the fail-open direction: a probe that cannot run is unverified
-             rather than "holds". *)
-          Alcotest.test_case "declared probe is read" `Quick (fun () ->
+      , [ Alcotest.test_case "declared probe is read" `Quick (fun () ->
             let content = "---\nid: X\npremise: \"rg -q foo bar.ml\"\n---\n\nBody\n" in
             Alcotest.(check (option string))
               "probe, with the documented quoting stripped"

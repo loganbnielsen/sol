@@ -1,9 +1,3 @@
-(* Tests for Sol workspace scaffold (cmd_new.ml / sol new workspace).
-   Calls new_workspace in a temp directory and asserts that the expected
-   files are created with the correct content.  No build or cluster needed. *)
-
-(* ── helpers ──────────────────────────────────────────────────────────────── *)
-
 let check_bool = Alcotest.(check bool)
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
@@ -27,9 +21,6 @@ let write_file path content =
   close_out oc
 ;;
 
-(* REFAC-128: the templates are files under platform/shared/templates/<kind>/,
-   resolved as Sol assets. The expectations below are the same bytes they always
-   were; only where they are read from changed. *)
 let template_root () =
   match Sol_cli_platform_assets.resolve () with
   | Ok assets -> Sol_cli_platform_assets.templates_root assets
@@ -44,7 +35,6 @@ let tpl ~kind rel =
   | Error message -> Alcotest.fail message
 ;;
 
-(* Run [f] inside a fresh temp directory, then restore cwd and delete the tree. *)
 let in_temp_dir f =
   let orig_cwd = Sys.getcwd () in
   let tmpdir = Filename.temp_file "sol-scaffold-test-" "" in
@@ -58,10 +48,6 @@ let in_temp_dir f =
     f
 ;;
 
-(* FEAT-104: `sol new svc|worker|fn` records the generated unit in the workspace
-   manifest -- which is what makes "every workload has a declared language" true
-   for a workspace Sol created -- so creating a unit needs a workspace. These
-   tests used to scaffold a bare unit in an empty directory. *)
 let in_workspace f =
   in_temp_dir
   @@ fun () ->
@@ -69,12 +55,6 @@ let in_workspace f =
   f ()
 ;;
 
-(* ── mkdir_p ──────────────────────────────────────────────────────────────── *)
-
-(* Regression test: mkdir_p used to shell out to `mkdir -p` and discard the
-   exit code, so a blocked path silently proceeded as if it had succeeded.
-   REFAC-134: the implementation is Sol_cli_fs.mkdir_p, and a failure is its
-   Error rather than an exception. *)
 let test_mkdir_p_creates_nested_dirs () =
   in_temp_dir
   @@ fun () ->
@@ -101,11 +81,6 @@ let test_mkdir_p_raises_on_blocked_path () =
     (Result.is_error (Sol_cli_fs.mkdir_p "blocker/child"))
 ;;
 
-(* Regression test: Sys.file_exists returns false for a broken symlink (it
-   follows the link and finds nothing), so the old implementation fell
-   through to Unix.mkdir, got EEXIST (the symlink dirent itself exists),
-   and treated that as success — silently leaving a still-unusable path
-   exactly like the original shell-out bug this fix was meant to eliminate. *)
 let test_mkdir_p_raises_on_broken_symlink () =
   in_temp_dir
   @@ fun () ->
@@ -127,9 +102,6 @@ let test_mkdir_p_tolerates_symlink_to_real_directory () =
     (Result.is_ok (Sol_cli_fs.mkdir_p "link-to-real"))
 ;;
 
-(* ── scaffold tests ───────────────────────────────────────────────────────── *)
-
-(* Verify that sol-ci.yml is generated *)
 let test_ci_workflow_created () =
   in_temp_dir
   @@ fun () ->
@@ -138,7 +110,6 @@ let test_ci_workflow_created () =
   check_bool "sol-ci.yml created" true (Sys.file_exists path)
 ;;
 
-(* Verify that the existing deploy.yml is still generated *)
 let test_deploy_workflow_created () =
   in_temp_dir
   @@ fun () ->
@@ -147,8 +118,6 @@ let test_deploy_workflow_created () =
   check_bool "deploy.yml created" true (Sys.file_exists path)
 ;;
 
-(* FEAT-026: deploy.yml's real (non-comment) `sol deploy` invocation passes
-   a target via a SOL_TARGET repo variable, documented in the header. *)
 let test_deploy_workflow_passes_target () =
   in_temp_dir
   @@ fun () ->
@@ -158,7 +127,6 @@ let test_deploy_workflow_passes_target () =
   assert_contains "deploy.yml" content "sol deploy \"$SOL_TARGET\""
 ;;
 
-(* Verify that sol-ci.yml contains 'sol deploy' *)
 let test_ci_contains_sol_deploy () =
   in_temp_dir
   @@ fun () ->
@@ -167,13 +135,6 @@ let test_ci_contains_sol_deploy () =
   assert_contains "sol-ci.yml" content "sol deploy"
 ;;
 
-(* FEAT-026: sol-ci.yml's two real (non-comment) `main.exe deploy` steps —
-   Export deployment plan, Emit GitOps manifests — must actually pass a
-   target, not just have a comment above them claiming one. An earlier
-   pass of this ticket updated only the comments and missed this: the
-   generated workflow failed with "required argument TARGET is missing"
-   on the very first push, since a substring check on "sol deploy" alone
-   (test_ci_contains_sol_deploy above) passes either way. *)
 let test_ci_deploy_steps_pass_target () =
   in_temp_dir
   @@ fun () ->
@@ -183,7 +144,6 @@ let test_ci_deploy_steps_pass_target () =
   assert_contains "sol-ci.yml" content {|main.exe deploy "$SOL_TARGET"|}
 ;;
 
-(* Verify that sol-ci.yml contains '--emit-plan-to' (FEAT-008 integration) *)
 let test_ci_contains_emit_plan_to () =
   in_temp_dir
   @@ fun () ->
@@ -192,7 +152,6 @@ let test_ci_contains_emit_plan_to () =
   assert_contains "sol-ci.yml" content "--emit-plan-to"
 ;;
 
-(* Verify that sol-ci.yml contains '--emit-to' (GitOps mode) *)
 let test_ci_contains_emit_to () =
   in_temp_dir
   @@ fun () ->
@@ -201,7 +160,6 @@ let test_ci_contains_emit_to () =
   assert_contains "sol-ci.yml" content "--emit-to"
 ;;
 
-(* Verify that sol-ci.yml contains 'dune build' and 'dune runtest' *)
 let test_ci_contains_dune_commands () =
   in_temp_dir
   @@ fun () ->
@@ -211,17 +169,14 @@ let test_ci_contains_dune_commands () =
   assert_contains "sol-ci.yml" content "dune runtest"
 ;;
 
-(* Verify no KUBECONFIG in the test/build job — cluster creds must stay out *)
 let test_ci_no_kubeconfig_in_build_job () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  (* KUBECONFIG must not appear as a required secret or env var *)
   check_bool "no KUBECONFIG in sol-ci.yml" false (contains content "KUBECONFIG_B64")
 ;;
 
-(* Verify that registry credentials are referenced as secrets (placeholders) *)
 let test_ci_registry_secrets () =
   in_temp_dir
   @@ fun () ->
@@ -232,7 +187,6 @@ let test_ci_registry_secrets () =
   assert_contains "sol-ci.yml" content "secrets.REGISTRY_PASSWORD"
 ;;
 
-(* Verify that the CI contract comment block is present — PHASE 1 and PHASE 2 *)
 let test_ci_contract_comment_present () =
   in_temp_dir
   @@ fun () ->
@@ -243,20 +197,15 @@ let test_ci_contract_comment_present () =
   assert_contains "sol-ci.yml" content "PHASE 2"
 ;;
 
-(* Verify that the deploy phase comment names sol deploy as the typed contract *)
 let test_ci_contract_deploy_phase_uses_sol_deploy () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  (* The contract comment block must reference the sol deploy command,
-     including the required <env>/<provider>/<region> target (FEAT-026) *)
   assert_contains "sol-ci.yml" content "sol deploy <target> --emit-plan-to";
   assert_contains "sol-ci.yml" content "sol deploy <target> --emit-to"
 ;;
 
-(* Verify that no raw kubectl apply appears in the generated workflow — all
-   cluster changes must go through sol deploy *)
 let test_ci_no_raw_kubectl_apply () =
   in_temp_dir
   @@ fun () ->
@@ -265,8 +214,6 @@ let test_ci_no_raw_kubectl_apply () =
   check_bool "no raw kubectl apply in sol-ci.yml" false (contains content "kubectl apply")
 ;;
 
-(* Verify that the build-images step retains the TODO(sol-build) marker so
-   future contributors know this step will be replaced by sol build *)
 let test_ci_build_images_has_todo_sol_build () =
   in_temp_dir
   @@ fun () ->
@@ -275,7 +222,6 @@ let test_ci_build_images_has_todo_sol_build () =
   assert_contains "sol-ci.yml" content "TODO(sol-build)"
 ;;
 
-(* Verify that other expected workspace files are still present *)
 let test_existing_files_still_generated () =
   in_temp_dir
   @@ fun () ->
@@ -301,7 +247,6 @@ let test_existing_files_still_generated () =
   expected
   |> List.iter (fun path ->
     check_bool (Printf.sprintf "%s exists" path) true (Sys.file_exists path));
-  (* quick count: at least 21 files *)
   let count = ref 0 in
   let rec walk dir =
     Sys.readdir dir
@@ -317,11 +262,6 @@ let test_existing_files_still_generated () =
   check_bool "at least 21 files generated" true (!count >= 21)
 ;;
 
-(* FEAT-026 follow-up: `sol deploy` refuses a target that sol/environments.yml
-   does not declare, even with an empty body (see cmd_deploy.ml's strict
-   declaration check) -- a freshly scaffolded
-   workspace must ship one so the acceptance criteria's own
-   `sol deploy prod/aws/us-east-1 --dry-run` works with zero manual setup. *)
 let test_scaffolded_workspace_has_a_real_deploy_target () =
   in_temp_dir
   @@ fun () ->
@@ -371,11 +311,6 @@ let test_readme_migrate_hint_substituted () =
   check_bool "README has no template placeholder" false (contains content "{{name}}")
 ;;
 
-(* DEC-025: `sol new` must NOT vendor framework source into the workspace. The
-   workspace owns its framework dependency through its own .opam declaration and
-   resolves it from the opam switch. A vendored copy would make the framework's
-   Dune files part of the *consumer's* Dune project -- the coupling DEC-024
-   forbids, and provably incompatible with the framework being a package at all. *)
 let test_framework_dependency_declared_not_vendored () =
   in_temp_dir
   @@ fun () ->
@@ -387,14 +322,6 @@ let test_framework_dependency_declared_not_vendored () =
     [ "sol-svc"; "sol-worker"; "sol-fn"; "sol-jobs"; "sol-obs"; "kafka-eio-service" ]
 ;;
 
-(* Regression test: the scaffold templates compiled to string literals in
-   sol_cli_scaffold_templates.ml are never type-checked by this test suite
-   itself (only string-matched) -- a template with a real type error or an
-   unused-value warning promoted to an error by dune's default dev profile
-   can silently ship. Actually building the generated workspace is the only
-   way to catch that. This is slow (a real `dune build`) relative to the
-   rest of this suite, deliberately -- there is no cheaper way to verify a
-   generated OCaml program actually compiles. *)
 let test_scaffold_compiles () =
   in_temp_dir
   @@ fun () ->
@@ -409,14 +336,6 @@ let test_scaffold_compiles () =
     (Result.is_ok built)
 ;;
 
-(* Regression test for BUG-007/BUG-011: `test_scaffold_compiles` above does
-   a whole-project `dune build`, which can silently mask a missing
-   `(libraries ...)` entry on one component's own lib stanza if some other
-   already-correct target in the same build happens to pull in the same
-   dependency first. Building just the new fn's own library target, in a
-   domain no other scaffolded component touches, is the only way to catch
-   that a generic-fn scaffold's library stanza is missing its own
-   `sol_fn` dependency. *)
 let test_bare_fn_library_compiles () =
   in_temp_dir
   @@ fun () ->
@@ -520,10 +439,6 @@ let test_parse_domain_name_rejects_malformed_names () =
     [ ""; "payments"; "payments/"; "/charge"; "payments/charge/extra" ]
 ;;
 
-(* ── bundle source resolution tests ──────────────────────────────────────── *)
-
-(* infer_sol_home must resolve a release-bundle SOL_HOME: both sentinel dune
-   files present, per is_sol_home. *)
 let test_bundle_layout_resolves_sol_home () =
   let tmpdir = Filename.temp_file "sol-bundle-test-" "" in
   Sys.remove tmpdir;
@@ -531,19 +446,16 @@ let test_bundle_layout_resolves_sol_home () =
   Fun.protect
     ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       (* Create the bundle directory structure *)
        let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
        mkdir_p (Filename.concat tmpdir "bin");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
-       (* Create the two sentinel dune files that is_sol_home checks *)
        let touch path =
          let oc = open_out path in
          close_out oc
        in
        touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
        touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
-       (* Point SOL_HOME at the bundle root — infer_sol_home should accept it *)
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
          Unix.putenv "SOL_HOME" tmpdir;
@@ -552,7 +464,7 @@ let test_bundle_layout_resolves_sol_home () =
              (Result.map Sol_cli_platform_assets.dir (Sol_cli_platform_assets.resolve ()))
          in
          (match saved with
-          | None -> Unix.putenv "SOL_HOME" "" (* can't unset, but empty won't match *)
+          | None -> Unix.putenv "SOL_HOME" ""
           | Some v -> Unix.putenv "SOL_HOME" v);
          r
        in
@@ -560,8 +472,6 @@ let test_bundle_layout_resolves_sol_home () =
        check_bool "bundle layout: resolved path matches tmpdir" true (result = Some tmpdir))
 ;;
 
-(* Verify that a directory missing the kafka-eio-service sentinel is rejected.
-   This guards against accidentally accepting a partial bundle. *)
 let test_incomplete_bundle_rejected () =
   let tmpdir = Filename.temp_file "sol-bundle-partial-" "" in
   Sys.remove tmpdir;
@@ -570,14 +480,12 @@ let test_incomplete_bundle_rejected () =
     ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
        let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
-       (* Only create the sol-svc sentinel, not the kafka-eio-service one *)
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        let touch path =
          let oc = open_out path in
          close_out oc
        in
        touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
-       (* SOL_HOME pointing here should be rejected — kafka-eio-service sentinel missing *)
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
          Unix.putenv "SOL_HOME" tmpdir;
@@ -593,10 +501,6 @@ let test_incomplete_bundle_rejected () =
        check_bool "incomplete bundle: infer_sol_home returns None" true (result = None))
 ;;
 
-(* Verify that find_ancestor + is_sol_home resolve the bundle root when starting
-   from a simulated bin/ subdirectory — this is the primary runtime path used
-   when a user downloads the release bundle and runs the binary directly.
-   SOL_HOME is deliberately NOT set during this test. *)
 let test_ancestor_walk_finds_bundle_root () =
   let tmpdir = Filename.temp_file "sol-ancestor-walk-test-" "" in
   Sys.remove tmpdir;
@@ -609,18 +513,15 @@ let test_ancestor_walk_finds_bundle_root () =
          let oc = open_out path in
          close_out oc
        in
-       (* Create the bundle layout: tmpdir/bin/, tmpdir/framework/... *)
        mkdir_p (Filename.concat tmpdir "bin");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
        touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
        touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
-       (* is_sol_home should accept the bundle root *)
        check_bool
          "is_sol_home returns true for valid bundle root"
          true
          (Sol_cli_platform_assets.is_checkout tmpdir);
-       (* find_ancestor starting from the bin/ subdirectory should walk up to tmpdir *)
        let bin_dir = Filename.concat tmpdir "bin" in
        let result =
          Sol_cli_platform_assets.find_ancestor Sol_cli_platform_assets.is_checkout bin_dir
@@ -632,10 +533,6 @@ let test_ancestor_walk_finds_bundle_root () =
          (result = Some tmpdir))
 ;;
 
-(* BUG-017: the ancestor walk must skip `_build/default` even when dune has
-   mirrored the framework sentinel files there. If it did not, CLI tests run
-   from `_build/default/cli/test` would resolve SOL_HOME to the build tree
-   and fail against missing source-side files/artifacts. *)
 let test_ancestor_walk_skips_build_context () =
   let tmpdir = Filename.temp_file "sol-build-context-test-" "" in
   Sys.remove tmpdir;
@@ -648,12 +545,10 @@ let test_ancestor_walk_skips_build_context () =
          let oc = open_out path in
          close_out oc
        in
-       (* A real source/release root: tmpdir/framework/... *)
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
        touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
        touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
-       (* The misleading build context: tmpdir/_build/default/framework/... *)
        let build_default = Filename.concat tmpdir "_build/default" in
        mkdir_p (Filename.concat build_default "framework/ocaml/sol-svc/lib");
        mkdir_p (Filename.concat build_default "framework/ocaml/kafka-eio-service/lib");
@@ -663,7 +558,6 @@ let test_ancestor_walk_skips_build_context () =
          "is_sol_home rejects _build/default"
          false
          (Sol_cli_platform_assets.is_checkout build_default);
-       (* Walk from a simulated test executable under the build context. *)
        let start = Filename.concat build_default "cli/test" in
        let result =
          Sol_cli_platform_assets.find_ancestor Sol_cli_platform_assets.is_checkout start
@@ -671,8 +565,6 @@ let test_ancestor_walk_skips_build_context () =
        check_bool "ancestor walk skips _build/default" true (result = Some tmpdir))
 ;;
 
-(* The framework acknowledges automatically after handle returns Worker.Ack; a
-   generated worker must have no ~ack param to call, misorder, or forget. *)
 let test_worker_has_no_ack_param () =
   in_workspace
   @@ fun () ->
@@ -684,18 +576,12 @@ let test_worker_has_no_ack_param () =
   assert_contains "worker lib" lib "Worker.Ack"
 ;;
 
-(* ── count_unapplied_migrations tests ───────────────────────────────────── *)
-
-(* REFAC-130: the count is a named function over the workspace model's
-   migrations, so a bare directory is loaded through the same loader a command
-   uses. *)
 let count_unapplied ~root =
   match Sol_cli_workspace_model.load ~root with
   | Ok facts -> Sol_cli_workspace_model.count_unapplied_migrations facts
   | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
 ;;
 
-(* No db/migrations directory → count is 0 *)
 let test_pending_migrations_no_dir () =
   let tmpdir = Filename.temp_file "sol-mig-test-" "" in
   Sys.remove tmpdir;
@@ -705,7 +591,6 @@ let test_pending_migrations_no_dir () =
     (fun () -> check_bool "no mig dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
-(* db/migrations exists but is empty → count is 0 *)
 let test_pending_migrations_empty_dir () =
   let tmpdir = Filename.temp_file "sol-mig-test-" "" in
   Sys.remove tmpdir;
@@ -717,7 +602,6 @@ let test_pending_migrations_empty_dir () =
        check_bool "empty dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
-(* db/migrations with two .sql files → count is 2 *)
 let test_pending_migrations_counts_sql_files () =
   let tmpdir = Filename.temp_file "sol-mig-test-" "" in
   Sys.remove tmpdir;
@@ -734,11 +618,9 @@ let test_pending_migrations_counts_sql_files () =
        touch "0001_init.sql";
        touch "0002_add_column.sql";
        touch "README.md";
-       (* non-.sql — must not be counted *)
        check_bool "two sql files → 2" true (count_unapplied ~root:tmpdir = 2))
 ;;
 
-(* A [.down.sql] reversal is not a migration of its own, so it is not counted. *)
 let test_pending_migrations_ignores_down_migrations () =
   let tmpdir = Filename.temp_file "sol-mig-test-" "" in
   Sys.remove tmpdir;
@@ -757,7 +639,6 @@ let test_pending_migrations_ignores_down_migrations () =
        check_bool "down files are not migrations" true (count_unapplied ~root:tmpdir = 1))
 ;;
 
-(* workspace scaffold generates one .sql file → count is 1 *)
 let test_pending_migrations_workspace_scaffold () =
   in_temp_dir
   @@ fun () ->
@@ -768,10 +649,6 @@ let test_pending_migrations_workspace_scaffold () =
     (count_unapplied ~root:"testapp" = 1)
 ;;
 
-(* ── golden tests ────────────────────────────────────────────────────────── *)
-
-(* Golden: sol-ci.yml is byte-for-byte equivalent to the template source after
-   substitution of {{name}}.  Any change to the template is visible in this diff. *)
 let test_golden_ci_workflow () =
   in_temp_dir
   @@ fun () ->
@@ -785,7 +662,6 @@ let test_golden_ci_workflow () =
   Alcotest.(check string) "sol-ci.yml golden" expected actual
 ;;
 
-(* Golden: charge_svc Dockerfile is byte-for-byte equivalent. *)
 let test_golden_dockerfile () =
   in_temp_dir
   @@ fun () ->
@@ -804,7 +680,6 @@ let test_golden_dockerfile () =
   Alcotest.(check string) "Dockerfile golden" expected actual
 ;;
 
-(* Golden: charge_svc bin/main.ml *)
 let test_golden_svc_bin_ml () =
   in_temp_dir
   @@ fun () ->
@@ -818,7 +693,6 @@ let test_golden_svc_bin_ml () =
   Alcotest.(check string) "svc bin/main.ml golden" expected actual
 ;;
 
-(* Golden: notify_worker bin/main.ml *)
 let test_golden_worker_bin_ml () =
   in_temp_dir
   @@ fun () ->
@@ -832,8 +706,6 @@ let test_golden_worker_bin_ml () =
   Alcotest.(check string) "worker bin/main.ml golden" expected actual
 ;;
 
-(* Golden: test/dune — exact content check so scaffold schema-test regressions
-   show up as a readable diff rather than a silent missing-file failure. *)
 let test_golden_test_dune () =
   in_temp_dir
   @@ fun () ->
@@ -857,7 +729,6 @@ let component_vars ~suffix ~mod_ =
   ; "domain", "comms"
   ; "Mod", mod_
   ; "binary", "notify-" ^ suffix
-    (* DEC-025: mirrors component_scaffold's v -- the workspace .opam basename. *)
   ; "basename", ws
   ]
 ;;
@@ -960,13 +831,6 @@ let test_golden_new_fn_files () =
     (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "Dockerfile"))
 ;;
 
-(* ── entry point ─────────────────────────────────────────────────────────── *)
-
-(* FEAT-104: a generated workload declares its language, and Sol knows it because
-   it wrote the unit. The manifest is hand-maintained, so this is also the
-   end-to-end proof that the editor lands the declaration in a real generated
-   workspace -- and that a scaffolded workspace is check-clean, with every
-   workload declared. *)
 let test_generated_workload_declares_its_language () =
   in_temp_dir
   @@ fun () ->
@@ -988,8 +852,6 @@ let test_generated_workload_declares_its_language () =
        "the reader sees the declaration"
        (Some "ocaml")
        (Option.map Sol_cli_compat.to_string svc.language));
-  (* The scaffolded workspace is check-clean: no undeclared workload, nothing to
-     fix by hand. *)
   (match Sol_cli_workspace_model.load ~root:"." with
    | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
    | Ok facts ->
@@ -998,7 +860,6 @@ let test_generated_workload_declares_its_language () =
        "a scaffolded workspace is check-clean"
        true
        (List.length findings = 0));
-  (* Re-running is idempotent: the unit is rewritten, the manifest is not. *)
   Sol_cli_cmd_new.new_svc "payments/charge" |> Result.get_ok;
   Alcotest.(check string)
     "sol.yml is untouched by the second run"

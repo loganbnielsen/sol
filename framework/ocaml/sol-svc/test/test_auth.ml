@@ -3,15 +3,11 @@ let headers_of kv = Http.Header.of_list kv
 let bearer tok = headers_of [ "authorization", "Bearer " ^ tok ]
 let api_key k = headers_of [ "x-api-key", k ]
 
-(* ── Public ─────────────────────────────────────────────────────────── *)
-
 let test_public () =
   match Test_auth_internal.validate `Public (headers_of []) with
   | Ok { principal = Auth.Public } -> ()
   | _ -> Alcotest.fail "expected Public principal"
 ;;
-
-(* ── Api_key ─────────────────────────────────────────────────────────── *)
 
 let test_api_key_valid () =
   let read_api_key () = Some "secretkey123" in
@@ -57,10 +53,6 @@ let test_api_key_empty_secret_fails_closed () =
   | Error _ -> Alcotest.fail "expected Server_error for empty configured API key"
 ;;
 
-(* ── JWT: Unverified_dev_only ──────────────────────────────────────────── *)
-
-(* Build a minimal (unverified) JWT payload: header.payload.sig
-   We use HS256 header and a simple JSON payload. Signature is fake for v1. *)
 let make_jwt ?(sub = "user1") ?(scopes = [ "read" ]) ?(exp_offset = 3600.0) () =
   let header =
     Base64.encode_exn
@@ -103,7 +95,6 @@ let test_jwt_valid () =
 ;;
 
 let test_jwt_superset_scopes () =
-  (* Token has more scopes than required — should pass *)
   let tok = make_jwt ~scopes:[ "read"; "write"; "admin" ] () in
   match Test_auth_internal.validate (jwt_cfg [ "read" ]) (bearer tok) with
   | Ok { principal = Auth.User _ } -> ()
@@ -164,8 +155,6 @@ let test_jwt_missing_header () =
   | _ -> Alcotest.fail "expected Unauthorized"
 ;;
 
-(* ── JWT: Verified_signature_required (JOSE/JWKS) ──────────────────────── *)
-
 let issuer = "https://issuer.example.com"
 let audience = "sol-svc-test"
 
@@ -214,7 +203,6 @@ let hs256_verified_cfg
       }
 ;;
 
-(* One RSA keypair, generated once, reused by every RS256 test. *)
 let rsa_priv_jwk = Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2048 ())
 
 let rsa_jwks_doc =
@@ -295,7 +283,6 @@ let test_jwt_verified_tampered_signature () =
 ;;
 
 let test_jwt_verified_wrong_alg_rejected () =
-  (* Correctly-signed HS256 token, but the route only allows RS256. *)
   let tok = sign_hs256 () in
   match
     Test_auth_internal.validate
@@ -392,8 +379,6 @@ let test_jwt_verified_malformed_static_jwks_fails_closed () =
   | Error _ -> Alcotest.fail "expected Server_error for malformed static JWKS"
 ;;
 
-(* ── BUG-053 / FND-0050 ──────────────────────────────────────────────── *)
-
 let test_jwt_payload_not_an_object () =
   match
     Test_auth_internal.validate (jwt_cfg []) (bearer (make_jwt_with_payload "[]"))
@@ -405,7 +390,6 @@ let test_jwt_payload_not_an_object () =
     Alcotest.failf "a non-object payload must be a 401, not %s" (Printexc.to_string e)
 ;;
 
-(* Each test uses its own URL, so the process-wide cache never carries over. *)
 let jwks_cfg_for url =
   `Jwt
     Auth.
@@ -423,7 +407,6 @@ let test_concurrent_cache_misses_share_one_fetch () =
   let fetches = ref 0 in
   let slow_fetch _ =
     incr fetches;
-    (* Suspends the fiber, as a network fetch does. *)
     Eio.Time.sleep env#clock 0.1;
     Ok (Jose.Jwks.of_string rsa_jwks_doc)
   in
@@ -455,7 +438,6 @@ let empty_jwks_doc = Jose.Jwks.to_string { Jose.Jwks.keys = [] }
 
 let test_unknown_kid_refetches () =
   let url = "https://idp.example.com/rotated/jwks.json" in
-  (* A set older than the refetch interval but inside the TTL, without the key. *)
   seed_jwks_cache ~url ~age_s:60.0 empty_jwks_doc;
   let fetches = ref 0 in
   let fetch _ =

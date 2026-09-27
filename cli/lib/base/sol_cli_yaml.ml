@@ -1,8 +1,5 @@
 type t = Yaml.yaml
 
-(* libyaml takes C strings, so a NUL would silently end the value there. The
-   boundaries that decode user text (sol.toml, migration files) refuse one, so
-   reaching this is a caller's bug, and it must not become a truncated value. *)
 let scalar style value =
   if String.contains value '\000'
   then invalid_arg "Sol_cli_yaml: a NUL character cannot be written to YAML";
@@ -16,9 +13,6 @@ let scalar style value =
     }
 ;;
 
-(* YAML 1.1's implicit types, as Kubernetes' decoder (go-yaml v2 underneath
-   sigs.k8s.io/yaml) resolves them: a plain scalar spelled like one of these is
-   not a string. *)
 let resolves_to_non_string s =
   let words =
     [ "y"
@@ -95,8 +89,6 @@ type document =
 
 let document ?(comments = []) body = { comments; body }
 
-(* ocaml-yaml's emitter writes into a fixed buffer and reports overflow as an
-   error; the only error it can report for a value built above. Grow and retry. *)
 let rec emit ~len body =
   match Yaml.yaml_to_string ~len body with
   | Ok text -> text

@@ -1,13 +1,3 @@
-(* Sol_cli_deployment_state: the consumer-group record and the removal guard.
-
-   Runs against a fake kubectl on PATH (never a real cluster), which answers per a
-   mode file and logs every verb, so a test cannot touch whatever cluster the
-   developer's kubeconfig points at.
-
-   BUG-045 / FND-0038: an unreadable record used to read as "no previous groups",
-   so the guard passed silently when the cluster could not be asked, and a failed
-   write was only a warning. *)
-
 let write_file path contents =
   let oc = open_out path in
   output_string oc contents;
@@ -19,8 +9,6 @@ let read_file path =
   | Sys_error _ -> ""
 ;;
 
-(* Modes: present (groups "a\nb"), missing (NotFound), forbidden (get fails),
-   apply-fails (get ok, apply refused). *)
 let fake_kubectl ~log ~mode_file =
   Printf.sprintf
     {|#!/bin/sh
@@ -85,8 +73,6 @@ let applied =
     }
 ;;
 
-(* ── record_outcome ──────────────────────────────────────────────────────── *)
-
 let test_non_applied_outcomes_touch_nothing () =
   with_fake_kubectl ~mode:"present" (fun ~calls ->
     List.iter
@@ -125,8 +111,6 @@ let test_failed_write_is_an_error () =
         (Sol_cli_string.contains ~needle:"sol-deploy-state" msg))
 ;;
 
-(* ── load_deployed_groups ────────────────────────────────────────────────── *)
-
 let test_load_present () =
   with_fake_kubectl ~mode:"present" (fun ~calls:_ ->
     Alcotest.(check (result (list string) string))
@@ -150,8 +134,6 @@ let test_load_unreadable_is_an_error () =
       true
       (Result.is_error (Sol_cli_deployment_state.load_deployed_groups ~ctx "ws")))
 ;;
-
-(* ── check_removed_groups (the guard) ───────────────────────────────────── *)
 
 let check ~mode ~confirm next =
   with_fake_kubectl ~mode (fun ~calls:_ ->
@@ -201,8 +183,6 @@ let test_guard_passes_when_stable_or_first () =
     (Result.is_ok (check ~mode:"missing" ~confirm:false [ "a" ]))
 ;;
 
-(* ── pure helpers ────────────────────────────────────────────────────────── *)
-
 let test_removed_consumer_groups () =
   let removed prev next = Sol_cli_deployment_state.removed_consumer_groups ~prev ~next in
   Alcotest.(check (list string))
@@ -213,7 +193,6 @@ let test_removed_consumer_groups () =
   Alcotest.(check (list string)) "additions ignored" [] (removed [ "a" ] [ "a"; "b" ])
 ;;
 
-(* BUG-025: the state ConfigMap name must be a valid object name. *)
 let test_configmap_name_sanitizes_workspace () =
   Alcotest.(check string)
     "underscore workspace"

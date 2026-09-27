@@ -1,18 +1,9 @@
-(* Tests for Sol_cli_platform_component (ADR 0001 / CODE_LAYER-005, REFAC-102):
-   reads <name>.common and <name>.<profile> from platform/shared/components.json
-   and deep-merges them, profile winning over common. Fully hermetic -- builds a throwaway
-   "Sol home" directory with fake marker files rather than depending on this
-   repo's own layout, since a dune test's cwd is a build sandbox. *)
-
 let check_str = Alcotest.(check string)
 
-(* Sol_cli_platform_assets.is_checkout requires these two files to exist under a
-   candidate SOL_HOME directory. *)
 let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
 ;;
 
-(* REFAC-115: the readers return results; a test fails with the reason. *)
 let ok = function
   | Ok x -> x
   | Error e -> Alcotest.fail e
@@ -40,10 +31,6 @@ let write_file path content =
   close_out oc
 ;;
 
-(* Runs [f] with SOL_HOME pointed at a fresh throwaway directory whose
-   components.json gives [component] the listed layers ("common", "local", ...),
-   restoring the previous SOL_HOME (or unsetting it) afterward regardless of
-   outcome. *)
 let with_fake_sol_home ~component ~files f =
   let root = Filename.temp_file "sol-home-test-" "" in
   Sys.remove root;
@@ -89,10 +76,7 @@ let test_profile_overrides_common () =
               ~profile:"local"
        in
        let json = Yojson.Safe.from_string merged in
-       (* profile's scalar wins outright *)
        check_str "a" "2" (Yojson.Safe.to_string (Yojson.Safe.Util.member "a" json));
-       (* nested object merges: base's untouched key survives, conflicting
-         key takes profile's value, profile's new key is added *)
        let nested = Yojson.Safe.Util.member "nested" json in
        check_str
          "nested.x"

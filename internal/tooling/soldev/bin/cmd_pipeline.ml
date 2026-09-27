@@ -20,8 +20,6 @@ let merge_ticket_arg =
            <TICKET-ID>/....")
 ;;
 
-(* REFAC-137: each command returns its outcome; this is the one place it becomes
-   a process exit. *)
 let exit_on = Soldev_exit.exit_on
 
 let run_merge dry_run ticket_filter =

@@ -1,9 +1,3 @@
-(** Schema registry HTTP client and Confluent wire-format codec backing
-    [Kafka_service]. [Kafka_service] re-exports [Schema], [Confluent_wire], and
-    [encode_wire] directly — see its [.mli] for the documented API.
-    [decode_compatibility_response]/[decode_registration_response] are exposed
-    only for direct unit testing of the registry response codec. *)
-
 type compatibility_response = { is_compatible : bool }
 type registration_response = { id : int }
 
@@ -50,11 +44,6 @@ end
 
 val encode_wire : schema_id:int -> Yojson.Safe.t -> bytes
 
-(** Decode a raw consumed message: Confluent wire format, then [topic]'s own
-    JSON decoder. On success also extracts the [traceparent] header (if present)
-    into an [Obs_trace.t]. On failure, returns the raw undecoded bytes alongside
-    the error so callers can route it to a decode-error handler without
-    re-fetching the message. *)
 val decode_message
   :  'a Kafka_service_intf.topic
   -> Kafka.Consumer.message

@@ -1,8 +1,3 @@
-(** Minimal HTTP client for the Redpanda admin API and schema registry — a
-    single request per call (10s timeout, connection closed after), not a pooled
-    client. Internal helper for [Kafka_service_intf] and [Kafka_service_schema];
-    not part of the package's public API. *)
-
 val http_get
   :  _ Eio.Net.t
   -> clock:_ Eio.Time.clock

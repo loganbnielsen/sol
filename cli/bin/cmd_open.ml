@@ -1,7 +1,5 @@
 open Cmdliner
 
-(* Best effort: the URL has been printed, so a machine without a browser loses
-   nothing. Spawned, not waited for, through Sol_cli_process (REFAC-134). *)
 let try_open_browser url =
   ignore (Sol_cli_process.spawn (Sol_cli_process.cmd [ "xdg-open"; url ]))
 ;;

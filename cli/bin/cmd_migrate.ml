@@ -1,8 +1,6 @@
 open Cmdliner
 open Result.Syntax
 
-(* Per-workspace table name avoids version-number collisions when multiple
-   workspaces share one local Postgres instance; --table always overrides it. *)
 let default_table_name =
   let cwd_name = Filename.basename (Sys.getcwd ()) in
   let buf = Buffer.create (String.length cwd_name) in
@@ -26,8 +24,6 @@ let cluster_pg_exists ~ctx () =
        ~output:"name")
 ;;
 
-(* Start a background port-forward to cluster postgres and return the local URL.
-   Registers at_exit cleanup so the forward is killed when the process exits. *)
 let auto_forward_pg ~ctx () =
   Printf.printf "Forwarding postgresql (cluster) → localhost:15432 ...\n%!";
   let url = "postgresql://postgres:dev@localhost:15432/dev" in
@@ -62,10 +58,6 @@ let get_postgres_url ~ctx () =
         \  Run 'sol local infra up' first, then retry."
 ;;
 
-(* INFRA-044: Pg/caqti errors may reproduce their connection URI verbatim.
-   Rendering through this boundary inside the migration runner is essential:
-   scrubbing only the parent CLI's copy would leave the credential in the
-   Kubernetes Job's own logs and in every sink that collects them. *)
 let pg_error_to_string ~url error =
   Sol_cli_redaction.connection_error ~url (Pg_error.to_string error)
 ;;
@@ -78,10 +70,6 @@ let with_pool url f =
       | Ok pool -> f ~fs:env#fs pool))
 ;;
 
-(* ── apply ───────────────────────────────────────────────────────────────── *)
-
-(* Print SQL files from [dir] in order without connecting to the database.
-   Used by --dry-run to let operators preview migration SQL before applying. *)
 let print_pending_sql dir =
   let migration_ext = ".sql" in
   let down_ext = ".down.sql" in
@@ -120,22 +108,6 @@ let run_apply_local ~ctx dir table dry_run =
       Ok ())
 ;;
 
-(* ── in-cluster migration Job (FRIC-012) ────────────────────────────────────
-   A real deployment's Postgres (RDS, etc.) is correctly not reachable from
-   outside the VPC -- confirmed live during DOGFOOD-011 (a 2-minute
-   Connection timed out running sol migrate from an operator's laptop, with
-   no network path at all, not a misconfiguration). Rather than punching a
-   hole in that security posture or requiring every operator/CI runner to
-   set up their own bastion/VPN, run the exact same Migration.apply logic
-   from a one-shot Kubernetes Job inside the cluster, where the security
-   group already allows access. This reuses infrastructure Sol already
-   owns (the cluster, the workspace's runtime secret) instead of adding a
-   new standing component, and generalizes to CI for free -- a GitHub
-   Actions runner has the same external-network problem a laptop does, and
-   can't hold an SSM session open the way an interactive operator could. *)
-
-(* REFAC-139, part A: the Job is Sol_cli_migration_job's; this decides what its
-   outcome means for `apply` and renders it. *)
 let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   let* cfg =
     Sol_cli_config.load_for_target ~target
@@ -153,9 +125,6 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   let* namespace, k8s_name =
     Sol_cli_migration_job.namespace_and_repository ~workspace ~services
   in
-  (* HARDEN-002 run 2, finding 8: the Job runs in this namespace and reads the
-     runtime Secret, so establish both before submitting it. Doing it here is what
-     makes a fresh target's first `sol migrate apply` possible. *)
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] in
   Sol_cli_migration_gate.reconcile_operator_bindings ~ctx ~workspace ~services;
   let* files = Sol_cli_migration_gate.migration_files dir in
@@ -207,12 +176,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
       Error "migration Job failed -- see logs above."
 ;;
 
-(* BUG-041: every entry point that hands [dir] to the runner validates it with the
-   same rule the deploy gate uses first, so a shared version stops here instead of
-   being applied once and skipped once. *)
 let require_valid_migrations dir = Sol_cli_migration.required ~dir |> Result.map ignore
-
-(* ── status ──────────────────────────────────────────────────────────────── *)
 
 let run_status ~ctx ?(json = false) dir table () =
   let* () = require_valid_migrations dir in
@@ -242,8 +206,6 @@ let run_status ~ctx ?(json = false) dir table () =
              (Option.value ~default:"(pending)" s.applied_at)))))
 ;;
 
-(* ── rollback ────────────────────────────────────────────────────────────── *)
-
 let run_rollback ~ctx dir table () =
   let* () = require_valid_migrations dir in
   let* url = get_postgres_url ~ctx () in
@@ -256,8 +218,6 @@ let run_rollback ~ctx dir table () =
     Ok ())
 ;;
 
-(* ── apply dispatch: local direct-connect vs in-cluster Job ────────────────── *)
-
 let run_apply ~ctx dir table dry_run target registry =
   let* () = require_valid_migrations dir in
   if dry_run
@@ -269,10 +229,6 @@ let run_apply ~ctx dir table dry_run target registry =
       run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override:registry)
 ;;
 
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
-
-(* FEAT-063: a named target supplies the destination; the no-target form is the
-   local dev path and uses the literal local cluster. *)
 let run_apply_term dir table dry_run target registry =
   Sol_cli_exit.exit_on
     (let* ctx =
@@ -400,7 +356,6 @@ let cmd =
     [ apply_cmd; status_cmd; rollback_cmd ]
 ;;
 
-(* FEAT-063: the local form -- migrations against Sol's own cluster. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")

@@ -1,8 +1,5 @@
 type topic_name = string
 
-(* Validation itself lives in kafka-eio, which this package builds directly
-   on -- Kafka topic naming syntax is kafka-eio's contract to own, not
-   something to reimplement here. See Kafka.Topic_name. *)
 let topic_name name =
   Kafka.Topic_name.of_string name |> Result.map Kafka.Topic_name.to_string
 ;;
@@ -147,9 +144,6 @@ let query_topic_partitions net ~clock ~admin_url ~topic_name =
   | Ok (status, body) -> Error (Topic_admin_unexpected_status (status, body))
 ;;
 
-(* Counts and logs one source-topic decode failure. [disposition] says what
-   happens to the record next -- BUG-051: under Retry_topics it is dead-lettered,
-   not dropped, so the log line must not claim it was skipped. *)
 let observe_decode_error ~ot ~topic_name =
   let decode_err_count =
     match ot with
@@ -192,7 +186,6 @@ let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
     user_on_decode_error e ~raw_bytes ~ack
 ;;
 
-(* The explicit ack-and-drop disposition: log, ack, continue. *)
 let ack_and_drop_decode_error e ~raw_bytes:_ ~ack =
   Printf.eprintf "sol-worker: DECODE_ERROR skip=true error=%S\n%!" e;
   ignore (ack ());

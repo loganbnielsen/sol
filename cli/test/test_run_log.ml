@@ -4,8 +4,6 @@ let check_bool = Alcotest.(check bool)
 
 module R = Sol_cli_run_log
 
-(* ── generate_run_id ─────────────────────────────────────────────────── *)
-
 let test_generate_run_id_format () =
   let id = R.generate_run_id ~prefix:"cloud-apply" ~now:1_700_000_000.0 ~pid:4242 in
   check_bool
@@ -33,8 +31,6 @@ let test_generate_run_id_deterministic () =
   check_string "same inputs -> same id" a b
 ;;
 
-(* ── tail_lines ──────────────────────────────────────────────────────── *)
-
 let test_tail_lines_shorter_than_n () =
   check_string "returns input unchanged" "a\nb" (R.tail_lines ~n:10 "a\nb")
 ;;
@@ -44,8 +40,6 @@ let test_tail_lines_longer_than_n () =
   let tailed = R.tail_lines ~n:3 s in
   check_string "last 3 lines" "97\n98\n99" tailed
 ;;
-
-(* ── phase_log_content ───────────────────────────────────────────────── *)
 
 let test_phase_log_content_no_stderr () =
   check_string "just stdout" "hello" (R.phase_log_content ~stdout:"hello" ~stderr:"")
@@ -71,8 +65,6 @@ let test_phase_log_content_with_stderr () =
      | Not_found -> false)
 ;;
 
-(* ── format_phase_line ───────────────────────────────────────────────── *)
-
 let test_format_phase_line_ok () =
   check_string
     "ok line"
@@ -87,12 +79,8 @@ let test_format_phase_line_failed () =
     (R.format_phase_line ~name:"terraform-apply" ~elapsed_s:0.3 ~ok:false)
 ;;
 
-(* ── format_failure_report ───────────────────────────────────────────── *)
-
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
-(* FEAT-055: a failing phase must name the run, not just the log path, so a
-   deploy is recoverable after the terminal that ran it is gone. *)
 let test_format_failure_report_names_run_and_log () =
   let report =
     R.format_failure_report
@@ -105,8 +93,6 @@ let test_format_failure_report_names_run_and_log () =
   check_bool "includes the tail" true (contains "boom" report)
 ;;
 
-(* ── runs_to_prune ───────────────────────────────────────────────────── *)
-
 let test_runs_to_prune_under_limit () =
   check_int
     "nothing to prune"
@@ -114,10 +100,6 @@ let test_runs_to_prune_under_limit () =
     (List.length (R.runs_to_prune ~all_run_ids:[ "a-1"; "a-2" ] ~keep:20 ()))
 ;;
 
-(* HARDEN-002 regression: pruning ordered whole run ids lexicographically, so a
-   fresh run whose command prefix sorted early ("cloud-apply-…" < "deploy-…") was
-   pruned as if it were the oldest -- deleting the directory create had just
-   made, and leaving the phase-log write to fail with an uncaught Sys_error. *)
 let test_runs_to_prune_orders_by_timestamp_across_prefixes () =
   let older = List.init 20 (fun i -> Printf.sprintf "deploy-20260917T1911%02dZ-1" i) in
   let fresh = "cloud-apply-20260917T205351Z-20714" in
@@ -130,7 +112,6 @@ let test_runs_to_prune_orders_by_timestamp_across_prefixes () =
     (List.mem "deploy-20260917T191100Z-1" pruned)
 ;;
 
-(* A run must never be a pruning candidate for itself, whatever the ordering. *)
 let test_runs_to_prune_excludes_the_new_run () =
   let fresh = "cloud-apply-20260917T205351Z-20714" in
   let older = List.init 20 (fun i -> Printf.sprintf "deploy-20260917T1911%02dZ-1" i) in
@@ -148,12 +129,6 @@ let test_runs_to_prune_keeps_most_recent () =
   check_bool "keeps run-24 (newest)" false (List.mem "run-24" pruned)
 ;;
 
-(* ── run_is_live ─────────────────────────────────────────────────────── *)
-
-(* [run_is_live] is what stops a live command's run directory being pruned. It
-   reads the process table, so on a platform without /proc it is conservatively
-   [false] and pruning keeps its previous behaviour; the assertions that need
-   /proc are skipped there rather than asserted about a different platform. *)
 let test_run_is_live_tracks_the_process_table () =
   if Sys.file_exists "/proc"
   then (
@@ -170,19 +145,10 @@ let test_run_is_live_rejects_a_non_pid_tail () =
   check_bool "an id with no tail is never live" false (R.run_is_live "cloud-apply")
 ;;
 
-(* INFRA-033, the regression: a long-running command (a cloud destroy takes tens
-   of minutes) writes into its run directory at the end of every phase. Pruning
-   that directory made the next write raise an uncaught [Sys_error], aborting the
-   teardown with the target still provisioned and billing — which is how Run 5
-   attempt 2's first destroy died. [create] now passes every live run in
-   [exclude], and this pins that a live run survives while dead overflow is still
-   reclaimed. *)
 let test_runs_to_prune_never_prunes_a_live_run () =
   if Sys.file_exists "/proc"
   then (
     let live = "cloud-destroy-20260919T001717Z-1" in
-    (* Impossibly high pids for the "dead" runs: low pids are taken by kernel
-       threads, and using one would make that run live and quietly test nothing. *)
     let older =
       [ "deploy-20260917T191100Z-9999998"; "cloud-apply-20260918T101500Z-9999999" ]
     in

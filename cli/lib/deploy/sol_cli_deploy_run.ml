@@ -1,9 +1,3 @@
-(* REFAC-139, part E: what `sol deploy` does once its selection and plan are
-   decided -- the AUDIT-069 migration gate, the lease-bracketed apply attempt, the
-   release record, and the reads that feed its report. It lived in
-   `cmd_deploy.ml`; the command now builds the [context], calls these and renders.
-   Nothing here exits; progress goes through [Sol_cli_report]. *)
-
 open Result.Syntax
 
 type context =
@@ -11,39 +5,19 @@ type context =
   ; sha : string
   ; registry : string
   ; facts : Sol_cli_workspace_model.t
-    (** REFAC-130: the workspace, read once in [run]. Everything this deploy
-        needs about the workspace -- the inventory, each unit's [sol.toml], its
-        topics, migrations and schema subjects -- is a projection of it. *)
   ; secret_backend : Sol_cli_manifest.secret_backend
-    (** INFRA-050: already resolved -- the operator's explicit choice, else the
-          destination's default. Resolved once in [run], so every path (dry-run,
-          emit, apply) uses the same decision. *)
   ; emit_plan_to : string option
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
-    (** The *selection* — what this deploy applies. Determined by [--scope] and
-        never widened (DEC-036). *)
   ; inventory : Sol_cli_manifest.service list
-    (** Everything discovery found. Call references resolve against this, so a
-        unit can be deployed alone while still naming a callee that already
-        exists in the workspace (DEC-036). Never what gets deployed. *)
   ; image_refs : (string * string) list
-    (** FEAT-050: resolved per-service immutable references for this
-          invocation, [service_name -> repo@sha256:<digest>]. Empty when no
-          [--image-ref] was supplied, which keeps the tag path unchanged. *)
   ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
   ; keep_releases : int
   }
 
-(* EXP-029: the HTTP services this deploy created -- the ClusterIP Services
-   listening on port 80, the same detection cmd_status.ml's print_raw_diagnostics
-   uses. Only Svc-primitive services ever get a Service resource
-   (sol_cli_deployment_render.ml only emits service_doc for Http_service shapes),
-   so this naturally excludes worker/fn services. Best effort: it feeds a hint,
-   so a read that fails lists nothing rather than failing the deploy. *)
 let http_services ~ctx (results : Sol_cli_executor.result list) =
   let deployed = results |> List.map (fun r -> r.Sol_cli_executor.name) in
   let cluster_ip_services ns =
@@ -77,10 +51,6 @@ let http_services ~ctx (results : Sol_cli_executor.result list) =
     |> List.filter (fun name -> List.mem name deployed && serves_port_80 ns name))
 ;;
 
-(* FEAT-050: a supplied artifact reference must resolve before anything is
-   mutated, and a missing digest names the reference rather than surfacing
-   later as an opaque image-pull failure. Apply-only by design: --dry-run and
-   --emit-to are offline paths that touch no registry. *)
 let verify_image_refs_exist ~image_refs =
   match
     image_refs
@@ -98,11 +68,6 @@ let verify_image_refs_exist ~image_refs =
          ref)
 ;;
 
-(* REFAC-089: the record the caller already holds is the parameter. Every input
-   here except [phase] and [mode] is a property of *this deploy invocation* --
-   workspace, run log, target environment, destination, secret backend -- not a
-   choice this execution makes, so listing them as labelled arguments unpacked
-   [deploy_context] only to repack it. *)
 let run_plan_result ctx ~phase ~mode ?before_apply plan =
   Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
     Sol_cli_factory.execute
@@ -113,39 +78,19 @@ let run_plan_result ctx ~phase ~mode ?before_apply plan =
       plan)
 ;;
 
-(* ── AUDIT-069: the migration prerequisite ───────────────────────────────────
-
-   The production profile's release-safety contract includes "application code
-   is not rolled out against a known-incompatible database migration state". The
-   deployable revision defines the schema it expects: every migration in the
-   workspace's [db/migrations] must already be applied (required ⊆ applied,
-   verified against the authoritative [schema_migrations] table). There is no
-   second Sol-side record of "which migrations matter".
-
-   The order is deliberate: static preflight -> live migration-status
-   verification -> workload mutation. [--dry-run] and [--emit-to] are
-   side-effect free, so they create no Job and report the prerequisite as
-   requiring live verification -- never as established. A non-production deploy
-   (no selected profile) makes no such claim and is not checked. *)
 type gate_failure =
-  | Refused of string (** Sol could not establish the gate's substrate *)
-  | Failed of string (** the gate's own report, printed as given *)
+  | Refused of string
+  | Failed of string
 
 let migration_prerequisite ctx ~plan ~live =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Ok ()
   | Some _ ->
-    (* REFAC-130: the workspace's migrations, at the workspace root -- not
-       "db/migrations" relative to whatever directory the deploy was invoked
-       from. [sol deploy] keeps the invocation cwd, so a cwd-relative read found
-       nothing from a descendant directory and the gate silently reported "no
-       migrations" for a workspace that has them. *)
     let dir =
       Filename.concat ctx.facts.Sol_cli_workspace_model.root Sol_cli_migration.default_dir
     in
     if not live
     then (
-      (* Side-effect free: report honestly instead of creating anything. *)
       match Sol_cli_migration.required ~dir with
       | Ok [] | Error _ -> Ok ()
       | Ok _ ->
@@ -155,12 +100,6 @@ let migration_prerequisite ctx ~plan ~live =
            deploy (before any workload moves).";
         Ok ())
     else
-      (* HARDEN-002 run 2, finding 8: this gate needs the workspace substrate --
-         the application namespace and the runtime Secret -- and workload
-         mutation, which used to create both, happens *after* this gate. Establish
-         it here, so the gate never depends on something behind itself. Not
-         workload mutation: a namespace and a Secret are not a Deployment, and
-         AUDIT-069's invariant is untouched. *)
       let* () =
         Sol_cli_substrate.ensure
           ~ctx:ctx.execution.cluster
@@ -211,8 +150,6 @@ let migration_prerequisite ctx ~plan ~live =
                  ctx.target_name)))
 ;;
 
-(* FEAT-071: one deploy marker per deployed service, joined to the authoritative
-   deployment event by [deployment_id]. *)
 let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_id plan =
   plan.Sol_cli_deployment_plan.services
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
@@ -231,11 +168,6 @@ let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_i
     })
 ;;
 
-(* Read the release the pointer names now. Deliberately three-valued: the value
-   feeds retention's "protect the previous release", so a read that failed must
-   not become "there is no previous release" -- that would drop the protection
-   exactly when it could not be established. Retention refuses to prune on
-   [Unreadable] and reports why. *)
 let read_previous_release ctx =
   match
     Sol_cli_release_store.current
@@ -247,17 +179,6 @@ let read_previous_release ctx =
   | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
-(* Post-apply bookkeeping, non-fatal by construction: record the release, then
-   bound the workspace's history. A failure here warns; it never turns a
-   successful deploy into a failed one. *)
-(* DEC-037: recording the release is part of the deploy's outcome, not
-   bookkeeping after it. The pointer this writes is what `sol rollback` restores
-   and what release retention anchors on, so a deploy that cannot advance it has
-   not succeeded -- and must say so rather than printing a success line over a
-   release state that still describes the previous release.
-
-   Pruning stays best-effort: it is housekeeping over old records, not the
-   release identity. *)
 let record_release_and_prune ctx ~previous plan =
   let cluster = ctx.execution.cluster in
   let workspace = ctx.execution.workspace in
@@ -292,13 +213,6 @@ let record_release_and_prune ctx ~previous plan =
     Ok ()
 ;;
 
-(* FEAT-074: report-only, and only for a whole-workspace deploy -- see
-   cmd_up.ml's identical rationale (a scoped deploy's [plan.services] is a
-   subset of the workspace, so comparing it against every live Sol-owned
-   workload would false-flag out-of-scope services; a deploy never deletes,
-   since it has no recorded release boundary the way [sol rollback] does).
-   Best-effort -- a failure here must not fail an otherwise-successful
-   deploy, so an unreadable live set reports nothing. *)
 let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
   if not (String.equal ctx.requested_scope "workspace")
   then []
@@ -313,12 +227,6 @@ let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
       Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst)
 ;;
 
-(* One deploy attempt: mint the id, apply (refreshing the lease between
-   workloads), derive the outcome, then record exactly one immutable event --
-   success or failure -- and push the markers only if that event exists and the
-   apply succeeded (FEAT-071: a marker is a join key to the authoritative event).
-   The release record is deliberately *not* written here: a failed attempt cannot
-   claim a release exists. *)
 let execute_deployment_attempt ctx ~before_apply ~push_events plan =
   let attempt = Sol_cli_deployment_attempt.start () in
   let applied =
@@ -361,14 +269,9 @@ let apply ctx ~push_events ~report_success plan =
            ~push_events
            plan
        in
-       (* DEC-037: record first, report second. If the authoritative release
-          state cannot be written, this deploy has not succeeded, so it must
-          neither print a success line nor exit zero -- and the message names
-          that the workloads may already be running. *)
        Sol_cli_release.finish_deployment
          ~record_release:(fun () ->
            let* () = record_release_and_prune ctx ~previous plan in
-           (* BUG-045: see Sol_cli_deployment_state.save_deployed_groups. *)
            Sol_cli_deployment_state.record_outcome
              ~ctx:ctx.execution.cluster
              ctx.execution.workspace

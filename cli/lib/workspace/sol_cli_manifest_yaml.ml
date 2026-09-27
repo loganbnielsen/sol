@@ -1,9 +1,3 @@
-(* Pure manifest builders -- no processes, open_out, or Sys.readdir. Every
-   manifest is a [Sol_cli_yaml] value, rendered once by the caller (REFAC-131);
-   no YAML is assembled from text here. *)
-
-(* ── Service model ───────────────────────────────────────────────────────── *)
-
 type primitive =
   | Svc
   | Worker
@@ -26,29 +20,18 @@ type workload_shape =
   | Http_service
   | Background_worker
 
-(* ── Manifests ───────────────────────────────────────────────────────────── *)
-
 let default_cluster_env =
-  [ (* SEC-007 / FND-0039: the transport posture is declared, not defaulted.
-       In-cluster Kafka is plaintext and unauthenticated today (TLS/SASL is
-       FEAT-093); rendering it explicitly makes that visible in every manifest,
-       and config_of_env refuses a workload that does not state it. *)
-    "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  [ "KAFKA_SECURITY_PROTOCOL", "plaintext"
   ; "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
   ; "SCHEMA_REGISTRY_URL", "http://redpanda.redpanda.svc.cluster.local:8081"
   ; "REDPANDA_ADMIN_URL", "http://redpanda.redpanda.svc.cluster.local:9644"
   ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"
   ; ( "PUSHGATEWAY_URL"
     , "http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091" )
-  ; (* OBS-042: OTLP/HTTP ingestion port, not Tempo's query port (3200) --
-     Grafana's Tempo datasource reads from 3200, but a running -svc pushes
-     spans to 4318 (obs-tempo-eio's TEMPO_URL). *)
-    "TEMPO_URL", "http://tempo.monitoring.svc.cluster.local:4318"
+  ; "TEMPO_URL", "http://tempo.monitoring.svc.cluster.local:4318"
   ]
 ;;
 
-(* Credentials that must never appear in ConfigMap; emitted empty into a
-   Secret for operators to fill in via env or a secrets manager. *)
 let default_secrets = [ "POSTGRES_URL", ""; "SOL_API_KEY", "" ]
 let runtime_secret_name = "sol-secrets"
 
@@ -62,8 +45,6 @@ let config_hash extra_env =
   |> Digest.to_hex
 ;;
 
-(* A mapping whose values Sol has always written quoted: env data, labels,
-   annotations. *)
 let quoted_map pairs = pairs |> List.map (fun (k, v) -> k, Y.quoted v) |> Y.map
 let metadata ~ns ~name = Y.map [ "name", Y.string name; "namespace", Y.string ns ]
 let app_selector name = Y.map [ "app", Y.string name ]
@@ -103,12 +84,6 @@ let role_binding_doc ~ns ~name ~cluster_role ~group =
     ]
 ;;
 
-(* INFRA-025: binds the deploy identity's Kubernetes group to the deploy
-   ClusterRole (platform/cloud/modules/platform/platform_deploy_rbac.tf) inside one
-   namespace. Applied per application namespace by Sol_cli_substrate.ensure,
-   not by Terraform -- application namespaces are created dynamically, and a
-   Terraform-time ClusterRoleBinding would grant deploy these verbs in
-   platform namespaces too. *)
 let deploy_role_binding_doc ~ns =
   role_binding_doc
     ~ns
@@ -117,9 +92,6 @@ let deploy_role_binding_doc ~ns =
     ~group:"sol:deployers"
 ;;
 
-(* DEC-038 / INFRA-057: the operator's read-only diagnostic grant, bound per
-   application namespace for the same reason as deploy's -- those namespaces are
-   created dynamically, and this grants observation only. *)
 let operator_role_binding_doc ~ns =
   role_binding_doc
     ~ns
@@ -128,11 +100,6 @@ let operator_role_binding_doc ~ns =
     ~group:"sol:operators"
 ;;
 
-(* SEC-004: a production workload gets no ambient Kubernetes credential. Every
-   Sol-rendered workload uses this ServiceAccount, so disabling token automount
-   here means no pod receives a mounted service-account token. Maturity A offers
-   no opt-back-in capability: a meaningful least-privilege Kubernetes-API
-   permission model is deferred until a concrete workload needs one. *)
 let service_account_doc ~ns ~name =
   resource
     ~api_version:"v1"
@@ -149,23 +116,8 @@ let configmap_doc ?(extra_env = []) ~ns ~name () =
     ]
 ;;
 
-(* The per-workload Secret name. The convention lives here, once, because the
-   shared runtime Secret is deliberately *not* workload-suffixed: it is
-   [runtime_secret_name] verbatim, and the two must not be derivable from each
-   other by a template that does not know which one it is rendering. *)
 let workload_secret_name name = Printf.sprintf "%s-secrets" name
 
-(* Renders the Kubernetes Secret whose identity is [name]. [name] is the *final*
-   resource name -- this function applies no naming convention of its own. That is
-   the whole point: a template that appends a suffix to whatever it is handed
-   produced `sol-secrets-secrets` for the shared runtime Secret while every
-   consumer referenced `sol-secrets`, and the only way to see it was to read the
-   rendered YAML. Callers pass either [runtime_secret_name] or
-   [workload_secret_name workload].
-
-   stringData lets operators fill in real values without base64-encoding them.
-   With ~redact:true (GitOps mode) all values are stripped to "" so nothing
-   sensitive lands in committed manifests. *)
 let secret_doc
       ?(base_secrets = default_secrets)
       ?(extra_secrets = [])
@@ -194,8 +146,6 @@ let secret_doc
     ]
 ;;
 
-(* ExternalSecret (ESO v1beta1); the controller materialises it into a
-   "<name>-secrets" Secret. secret_keys must be the full key list. *)
 let external_secret_doc
       ~store_ref
       ~store_kind
@@ -244,37 +194,9 @@ let secret_key_refs ~name secret_keys =
       ])
 ;;
 
-(* docs/architecture/observability-design.md's identity taxonomy: workspace,
-   domain, service, primitive, release, plus a sixth, `env`, sourced from
-   the active deployment target -- passed to taxonomy_labels below
-   as ?env, omitted (not a fake default) when no target resolved one, e.g.
-   sol up (FEAT-026; see OBS-016 for the original gap). `release` is the
-   content-addressed release id (FEAT-069) and is written verbatim: it is
-   label-safe by construction (Sol_cli_release_id.t), and sanitizing it at
-   the render site would let the label drift from the id the release record
-   stores -- the BUG-025 failure mode in a new place. The image tag is no
-   longer a label at all: it is already container.image, and re-emitting it
-   here would import unbounded cardinality into Loki's label space.
-   workspace/domain/service/primitive/env are still sanitized, because none
-   of them is label-safe by construction at this render site. *)
-
-(* OBS-021: delegates to Sol_cli_kubernetes_name's canonical sanitizer so
-   this and Sol_cli_open.dashboard_url always agree on the same
-   workspace/domain value -- keeping a separate, weaker implementation
-   here (bound + trailing-char fix only, no lowercasing) is exactly how a
-   rendered label and a dashboard link's query param end up permanently
-   disagreeing. *)
 let sanitize_label_value = Sol_cli_kubernetes_name.sanitize_label_value
 
 let taxonomy_labels ?env ~workspace ~domain ~service ~primitive ~release_id () =
-  (* Every value except `release` goes through sanitize_label_value:
-     workspace/domain are only indirectly bounded today (namespace_result
-     validates their combined length before render is ever called) and
-     service is only safe because it's always a validated k8s_name in this
-     render path; neither is a guarantee at this render site itself, so
-     don't rely on a value being safe by construction from somewhere else.
-     `release` is the exception precisely because it *is* safe by
-     construction, and must stay byte-identical to the stored id. *)
   let sanitized =
     [ "workspace", workspace
     ; "domain", domain
@@ -291,9 +213,6 @@ let taxonomy_labels ?env ~workspace ~domain ~service ~primitive ~release_id () =
   | Some e -> [ "env", sanitize_label_value e ]
 ;;
 
-(* CODE_LAYER-016: render per-workload volumes as a PVC per declared volume plus
-   container [volumeMounts] and pod [volumes] entries. StorageClass, snapshots,
-   and backup policy stay out of scope. *)
 let volume_claim_name ~name ~volume_name = Printf.sprintf "%s-%s" name volume_name
 
 let pvc_docs ~ns ~name volumes =
@@ -313,10 +232,6 @@ let pvc_docs ~ns ~name volumes =
       ])
 ;;
 
-(* AUDIT-080: the framework drain timeout is 30s (sol-svc/sol-worker), and
-   Kubernetes' own default grace is 30s -- the two race. Sol renders a grace
-   that is strictly larger than the drain bound so SIGTERM always has room to
-   finish, independent of the primitive. *)
 let default_termination_grace_seconds = 45
 
 let probe ~path ~port settings =
@@ -330,20 +245,9 @@ let container_port = function
   | Background_worker -> 9090
 ;;
 
-(* AUDIT-080: the probes a workload can honestly claim. An HTTP service is
-   healthy when it answers; a Kafka consumer is *ready* when its partitions
-   are assigned and *live* while it keeps polling, which is a different
-   statement from "the process is up" -- a hung consumer must be replaced. A
-   worker that consumes nothing has no observable consumer state, so Sol
-   renders no liveness/readiness claim rather than a default that asserts
-   nothing. A progressive rollout uses the same policy: it must not weaken the
-   availability claim the app declared. *)
 let probes ~shape ~consumes_kafka ~readiness_path =
   match shape, consumes_kafka with
   | Http_service, _ ->
-    (* INFRA-073: readiness is /readyz, which sol-svc turns 503 as shutdown
-       begins; liveness and startup stay on /healthz. A TypeScript service
-       renders /healthz until its framework serves /readyz (FEAT-096). *)
     [ ( "startupProbe"
       , probe ~path:"/healthz" ~port:8080 [ "failureThreshold", 30; "periodSeconds", 5 ] )
     ; ( "livenessProbe"
@@ -393,15 +297,11 @@ let resources ~cpu ~memory =
   Y.map [ "requests", quantities; "limits", quantities ]
 ;;
 
-(* [items] as a field only when there are any: Kubernetes reads an absent list
-   and an empty one alike, and the manifests have never carried empty ones. *)
 let non_empty_list key = function
   | [] -> []
   | items -> [ key, Y.list items ]
 ;;
 
-(* The pod template a Deployment and an Argo Rollout share: only the enclosing
-   kind, apiVersion and strategy differ between the two. *)
 let pod_template
       ~extra_labels
       ~secret_keys
@@ -435,9 +335,6 @@ let pod_template
       ; "prometheus.io/port", string_of_int port
       ]
   in
-  (* AUDIT-080: spread a node-failure-tolerant workload across nodes, so losing
-     one node cannot take every replica with it. The pod anti-affinity is
-     expressed as a hard spread: the claim is a guarantee, not a preference. *)
   let spread =
     if Sol_cli_availability.is_node_failure_tolerant availability
     then
@@ -555,9 +452,6 @@ let deployment_doc
     ]
 ;;
 
-(* AUDIT-080: a node-failure-tolerant workload gets a voluntary-disruption
-   budget so a drain cannot evict every ready replica at once. Rendered only for
-   that claim -- a [single] workload has no tolerance to protect. *)
 let pdb_doc ~ns ~name ~replicas =
   resource
     ~api_version:"policy/v1"
@@ -570,8 +464,6 @@ let pdb_doc ~ns ~name ~replicas =
           ] )
     ]
 ;;
-
-(* ── Argo Rollouts ────────────────────────────────────────────────────────── *)
 
 let canary_step = function
   | Sol_cli_toml.Weight n -> Y.map [ "setWeight", Y.int n ]
@@ -593,9 +485,6 @@ let rollout_strategy ~name = function
       ]
 ;;
 
-(** [rollout_doc] renders an Argo Rollout resource instead of a Deployment. The
-    pod template is the same as a Deployment's; only the top-level kind,
-    apiVersion, and strategy differ. *)
 let rollout_doc
       ?(extra_labels = [])
       ?(secret_keys = [])
@@ -651,8 +540,6 @@ let rollout_doc
     ]
 ;;
 
-(* ── Services and ingress ─────────────────────────────────────────────────── *)
-
 let service_doc ~ns ~name =
   resource
     ~api_version:"v1"
@@ -667,9 +554,6 @@ let service_doc ~ns ~name =
     ]
 ;;
 
-(** Two ClusterIP Services required by the blue-green strategy: [<name>-active]
-    receives live traffic; [<name>-preview] receives canary traffic. Both select
-    pods with the [app: <name>] label — Argo manages the selector patch. *)
 let blue_green_service_docs ~ns ~name =
   let service suffix =
     resource
@@ -696,14 +580,6 @@ let ingress_doc
       ~name
       ()
   =
-  (* BUG-021: never emit a hostless rule. nginx matches on host+path and its
-     admission webhook rejects a duplicate host+path cluster-wide, so two
-     services without an ingress_host (or two workspaces sharing `sol-local`)
-     collided on host "" + path "/" and broke `sol up`. Give each a
-     per-service dev host instead; including the namespace keeps it unique
-     when several workspaces share a cluster. It is HTTP-only -- the TLS,
-     cert-manager, and ssl-redirect bits below stay off unless a real
-     `ingress_host` was declared. *)
   let host =
     match ingress_host with
     | Some host -> host
@@ -770,7 +646,6 @@ let namespace_selector ns =
     ]
 ;;
 
-(* One peer: a namespace and a pod within it, as one selector. *)
 let peer ~ns ~name =
   Y.map
     [ ( "namespaceSelector"
@@ -815,15 +690,6 @@ let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
             ] )
       ]
   in
-  (* No `ports:` on a callee, deliberately. Egress policy is evaluated on the
-     packet leaving the caller, before kube-proxy DNATs the Service ClusterIP --
-     so a port restriction would have to name the target's *Service* port (80),
-     not its container port (8080). A CNI that instead matches post-DNAT would
-     need 8080, so no single number is portable. Scoping by the target pod
-     (namespace + app) with no port restriction is what the platform dependency
-     rules above already do, and it works under either interpretation. The
-     ingress side keeps 8080 because ingress is always evaluated after DNAT,
-     against the target pod's real port. *)
   let callee_egress (to_ns, to_name) =
     Y.map [ "to", Y.list [ peer ~ns:to_ns ~name:to_name ] ]
   in
@@ -910,16 +776,6 @@ let cronjob_doc
     ]
 ;;
 
-(* ── Migrations ───────────────────────────────────────────────────────────── *)
-
-(* ponytail: a ConfigMap has a 1MiB total size cap -- fine for typical
-   migration sets, but a workspace with unusually large SQL files could
-   exceed it. Move to a projected volume backed by multiple ConfigMaps (or
-   an init-container that fetches files another way) if that ever bites.
-
-   Migration file contents are arbitrary SQL, so every one is quoted: the
-   emitter escapes every control character, and a CRLF-terminated file keeps
-   its carriage returns rather than having them folded into spaces. *)
 let migration_configmap_doc ~name ~namespace files =
   resource
     ~api_version:"v1"
@@ -927,10 +783,6 @@ let migration_configmap_doc ~name ~namespace files =
     [ "metadata", metadata ~ns:namespace ~name; "data", quoted_map files ]
 ;;
 
-(* INFRA-040: the Job reads the workspace's shared runtime Secret by
-   [runtime_secret_name] -- the same constant the substrate creates it under, so
-   the two cannot disagree. Each argument is one quoted scalar, so a value (a
-   table name, a path) cannot change the argument structure. *)
 let migration_job_doc ~name ~namespace ~image ~args ~configmap_name =
   let container =
     Y.map

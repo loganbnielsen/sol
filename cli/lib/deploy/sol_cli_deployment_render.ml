@@ -80,9 +80,6 @@ let render
     | Some env ->
       ("SOL_ENV", env) :: List.filter (fun (key, _) -> key <> "SOL_ENV") config
   in
-  (* BUG-048: a -fn's Pushgateway group is its workload identity. Keyed by its
-     cron string (the old default), two functions on one schedule overwrote each
-     other's metrics. *)
   let config =
     match primitive with
     | "fn" ->
@@ -282,9 +279,6 @@ let render
                    ()
                ]
            in
-           (* AUDIT-080: the voluntary-disruption budget is what makes the
-              node-failure-tolerant claim survive a node drain, not just an
-              unplanned loss. Rendered only for that claim. *)
            let pdb =
              if Sol_cli_availability.is_node_failure_tolerant availability
              then [ Sol_cli_manifest_yaml.pdb_doc ~ns ~name ~replicas ]
@@ -390,11 +384,6 @@ let render_spec
     ; availability = s.availability
     ; consumes_kafka = s.consumes_kafka
     ; readiness_path =
-        (* Only a service that declares OCaml (sol-svc serves /readyz) gets it.
-           An undeclared language is unknown, not OCaml (DEC-022 §7): /healthz
-           is the probe every framework serves. `sol up` renders every service
-           with no declared language today (BUG-056), and a TypeScript service
-           probed on /readyz is never ready. *)
         (match s.language with
          | Some Sol_cli_compat.Ocaml -> "/readyz"
          | Some Sol_cli_compat.Typescript | None -> "/healthz")
@@ -423,8 +412,6 @@ let render_spec
               ; backoff_limit = s.backoff_limit
               })
        | None ->
-         (* BUG-048: the plan requires a -fn schedule; a spec without one (e.g. an
-             old recorded release) is refused rather than rendered hourly. *)
          Error
            (Printf.sprintf
               "the -fn %s has no schedule; set [service] schedule in its sol.toml"

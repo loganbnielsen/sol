@@ -1,13 +1,3 @@
-(* HARDEN-002 run 2, finding 8: the workspace execution substrate is a layer of its
-   own, established before anything that needs it (the migration gate included)
-   rather than by workload mutation.
-
-   The user-facing acceptance test is the live sequence -- on a freshly
-   provisioned target with no application namespace, `sol migrate apply` then
-   `sol migrate status` then `sol deploy` succeed with no out-of-band kubectl --
-   which needs a cluster and is run by HARDEN-002 itself. These tests pin the
-   layer properties that made the defect possible in the first place. *)
-
 module S = Sol_cli_substrate
 
 let check_bool = Alcotest.(check bool)
@@ -19,14 +9,7 @@ let docs_or_fail ?secrets namespaces =
   | Error msg -> Alcotest.fail msg
 ;;
 
-(* The substrate is a namespace, the deploy identity's RoleBinding in it
-   (INFRA-025), and the workspace's runtime Secret. Nothing else: if a
-   Deployment or Service ever appears here the layer has been misassigned
-   again, which is exactly the bug this module exists to prevent. *)
 let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
-  (* Explicit keys, always present in the test environment: the default key set
-     (POSTGRES_URL, SOL_API_KEY) is deliberately absent here, which is what the
-     fail-closed test below relies on. *)
   let docs = docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-payments" ] in
   check_int
     "namespace + deploy RoleBinding + operator RoleBinding + runtime Secret"
@@ -71,10 +54,6 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
       ])
 ;;
 
-(* Namespaces and RoleBindings all come before any Secret: a Secret in a
-   namespace that does not exist yet is the failure mode that blocked a fresh
-   target's first deploy, and the RoleBinding must exist before the deploy
-   identity needs to patch the Secret into place. *)
 let test_every_namespace_and_binding_precedes_every_secret () =
   let docs =
     docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-checkout"; "pluto-payments" ]
@@ -107,9 +86,6 @@ let test_every_namespace_and_binding_precedes_every_secret () =
     [ "pluto-checkout"; "pluto-payments" ]
 ;;
 
-(* A declared credential that is not in the environment must fail the substrate
-   closed rather than establish an empty Secret: the migration gate could not
-   verify anything through it, and an empty credential is worse than a refusal. *)
 let test_missing_credential_fails_closed_before_applying_anything () =
   match
     S.docs_for_namespaces
@@ -128,12 +104,6 @@ let test_missing_credential_fails_closed_before_applying_anything () =
       (Sol_cli_string.contains ~needle:"substrate" msg)
 ;;
 
-(* INFRA-025: RBAC cannot itself stop the deploy identity's bootstrap grant
-   from reaching a platform namespace (see the comment on
-   [reserved_platform_namespaces]), so this client-side refusal is the
-   software-side half of that mitigation. It must fire before any kubectl
-   call -- this test passes [local_context] precisely to prove the check
-   short-circuits without ever touching the destination. *)
 let test_ensure_refuses_a_reserved_platform_namespace () =
   match
     S.ensure ~ctx:Sol_cli_kube_destination.local_context ~namespaces:[ "cert-manager" ]
@@ -148,7 +118,6 @@ let test_ensure_refuses_a_reserved_platform_namespace () =
 ;;
 
 let test_present_credential_is_accepted () =
-  (* HOME is always set in the test environment. *)
   match S.docs_for_namespaces ~secrets:[ "HOME", "" ] [ "pluto-payments" ] with
   | Ok docs ->
     check_int
@@ -157,21 +126,6 @@ let test_present_credential_is_accepted () =
       (List.length docs)
   | Error msg -> Alcotest.fail ("expected success, got: " ^ msg)
 ;;
-
-(* ── INFRA-048 / FND-0011: the namespace is created, never applied ───────────
-
-   The live defect: the apply path ran `kubectl apply` over the Namespace
-   document, which requires `patch`, which the deploy identity's bootstrap grant
-   deliberately withholds. Sol_cli_substrate.ensure always creates the namespace
-   first, so that apply could only ever be refused -- on the first deploy and on
-   the migration-gate recovery path the deploy itself prints.
-
-   The fake kubectl below reproduces the live role exactly: it refuses `apply` on
-   a Namespace (as the API server did) and answers `create` on an existing
-   Namespace with AlreadyExists (as it does once the substrate has run). The test
-   therefore drives the real condition -- an existing namespace with no
-   last-applied annotation -- rather than a sanitised one, and fails with the
-   live failure if the apply path ever returns to `kubectl apply` for it. *)
 
 let read_file path =
   let ic = open_in path in
@@ -257,8 +211,6 @@ let test_namespace_is_created_not_applied () =
     let workload_yaml =
       "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout-svc\n"
     in
-    (* Before the fix this failed with the live Forbidden error: the namespace
-       was applied rather than created. *)
     Sol_cli_manifest.apply
       ~ctx:Sol_cli_kube_destination.local_context
       (ns_yaml, workload_yaml)
@@ -283,14 +235,6 @@ let test_namespace_is_created_not_applied () =
     check_bool "the workload is still applied" true (call "apply" "other"))
 ;;
 
-(* ── DEC-038 §6 / INFRA-058: the grant follows the workload ────────────────── *)
-
-(* Live, the operator's binding existed only in the namespace `sol migrate apply`
-   happened to touch, so the operator could not read the workload it exists to
-   diagnose -- and the only existing path that would have created it redeployed the
-   workload. These documents cover the workspace's own service inventory regardless
-   of any caller's scope, and they are RBAC and nothing else: establishing read
-   authorization must not touch a Secret or a workload. *)
 let test_operator_bindings_cover_every_workload_namespace () =
   let svc domain name =
     { Sol_cli_manifest.domain; name; primitive = Sol_cli_manifest.Svc; dir = "/tmp" }

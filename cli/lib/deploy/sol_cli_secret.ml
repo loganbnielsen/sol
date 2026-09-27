@@ -15,10 +15,6 @@ let mode_of_env env =
   let normalized = String.lowercase_ascii (String.trim env) in
   match normalized with
   | "hosted" | "sol_hosted" | "sol-hosted" -> Ok Sol_hosted
-  (* REFAC-086: `dev` was an alias here until it was retired as user vocabulary
-     when `sol dev up` became `sol local up` (REFAC-083). A retired word left in
-     a config vocabulary is how it comes back — in examples, in error messages,
-     in migrations — so it is deleted rather than tolerated. *)
   | "local" -> Ok Local
   | "cloud" | "customer_cloud" | "customer-cloud" -> Ok Customer_cloud
   | _ ->
@@ -47,14 +43,10 @@ let validate_key_format key =
   else Ok ()
 ;;
 
-(* Every key a Secret may be written under. [delete] checks only the format, so a
-   secret already stored under a reserved name can still be removed. *)
 let validate_key key =
   let* () = validate_key_format key in
   if String.equal key "SOL_ALLOW_UNVERIFIED_JWT"
   then
-    (* SEC-006: every Secret key reaches the pod's environment (envFrom), and this
-       one would switch on JWT auth without signature checks outside local. *)
     Error
       "SOL_ALLOW_UNVERIFIED_JWT is reserved: it allows JWT auth without signature \
        checks, and `sol up` sets it on the local cluster only"
@@ -75,8 +67,6 @@ type kubernetes_secret =
   ; string_data : (string * string) list
   }
 
-(* REFAC-131: rendered by the emitter. A secret value is arbitrary text, so
-   every value is quoted, and [data] appears only when there is any. *)
 let render_secret_manifest secret =
   let quoted_map pairs =
     Sol_cli_yaml.map (List.map (fun (k, v) -> k, Sol_cli_yaml.quoted v) pairs)
@@ -134,9 +124,6 @@ let redacted_result = function
   | Hosted_unavailable msg -> msg
 ;;
 
-(* FEAT-063: secrets are cluster objects, so every entry point takes the
-   destination-side context and passes it to kubectl. Nothing here reads the
-   ambient context. *)
 let apply_manifest ~ctx yaml =
   Sol_cli_fs.with_temp_file ~prefix:"sol-secret-" ~suffix:".yaml" yaml (fun path ->
     Sol_cli_kubectl.apply ~ctx ~file:path
@@ -144,10 +131,6 @@ let apply_manifest ~ctx yaml =
   |> Result.join
 ;;
 
-(* BUG-040 / FND-0031: only kubectl's own NotFound means the Secret is absent.
-   Every other failure -- no connection, Forbidden, a timeout, a body that does not
-   parse -- is an error. [set] writes what it read back into the Secret, so reading
-   "could not ask" as "nothing there" would rewrite it without its other keys. *)
 let get_named_secret_json ~ctx ~name namespace =
   match
     Sol_cli_kubectl.get_if_present
@@ -167,8 +150,6 @@ let get_named_secret_json ~ctx ~name namespace =
          (Sol_cli_process.error_to_string e))
 ;;
 
-(* The names a listing printed, or why it could not be read. A listing that
-   failed is never an empty one (BUG-040). *)
 let listed_names ~what (result : (Sol_cli_process.output, Sol_cli_process.error) result) =
   match result with
   | Ok r ->
@@ -210,9 +191,6 @@ let existing_data = function
       (data_keys json)
 ;;
 
-(* List per-workload secret names in a namespace — secrets ending in "-secrets"
-   except the shared sol-secrets object, which is patched separately for
-   Argo Rollout compatibility. *)
 let list_workload_secrets ~ctx namespace =
   let jsonpath = "{range .items[*]}{.metadata.name}{\"\\n\"}{end}" in
   Sol_cli_kubectl.get_raw
@@ -254,11 +232,6 @@ let fold_namespaces namespaces ~init ~f =
   List.fold_left (fun acc ns -> Result.bind acc (fun x -> f x ns)) (Ok init) namespaces
 ;;
 
-(* SEC-004: rotation must be verified, not assumed. The env-var secret contract
-   means a running pod never observes a rotated value, so the restart is what
-   makes the new value take effect; waiting for `rollout status` is what lets Sol
-   claim the workload returned to healthy state. A workload that never becomes
-   healthy is an error, not a silent success. *)
 let list_live_workloads ~ctx ~kind ~namespace =
   match
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
@@ -268,12 +241,6 @@ let list_live_workloads ~ctx ~kind ~namespace =
     listed_names ~what:(Printf.sprintf "%ss in namespace %s" kind namespace) result
 ;;
 
-(* BUG-040: everything a rotation depends on is read before its first write. A read
-   that fails after [sol-secrets] was already rewritten would leave the namespace
-   half-rotated with nothing restarted. So [set] and [delete] take one read of each
-   namespace -- every Secret's current data and the live workloads -- for all
-   namespaces, and only then write. Rollouts exist only with progressive delivery;
-   an absent CRD is an empty list, not a failure. *)
 type rotation =
   { namespace : string
   ; secrets : (string * (string * string) list) list
@@ -348,16 +315,10 @@ let restart_all ~ctx rotations =
     Ok ())
 ;;
 
-(* sol-secrets serves Argo Rollout workloads; each per-service <svc>-secrets serves
-   the Deployment that mounts it. Both are written, then every live workload is
-   restarted so the new value takes effect. *)
 let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* rotations = read_rotations ~ctx namespaces in
-  (* Every write, in every namespace, before any restart: a restart waits on
-     `rollout status`, and data read before that wait would be stale by the time a
-     later namespace's write used it. *)
   let* () =
     iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
       iter_namespaces secrets ~f:(fun (secret_name, existing_data) ->

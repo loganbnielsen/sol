@@ -1,10 +1,3 @@
-(* INFRA-093 / FND-0064: the substrate contract, and the observation that feeds it.
-
-   What matters here is the pair the two halves keep apart: the *product* statement (the standard
-   profile provisions and supports GKE Standard, and refuses Autopilot before anything is planned)
-   and the *observation* (what mode a cluster that already exists is in -- including the case where
-   Sol cannot read it, which is never treated as absence). *)
-
 open Sol_cli_cluster_substrate
 
 let test_standard_and_fresh_targets_are_accepted () =
@@ -22,8 +15,6 @@ let test_autopilot_is_refused_by_the_support_contract () =
   match acceptable Autopilot with
   | Ok () -> Alcotest.fail "Autopilot was accepted"
   | Error message ->
-    (* The contract names the profile and the substrate to use; the restrictions are the reason,
-       not the definition, so the message must not read as a list of today's components. *)
     Alcotest.(check bool)
       "names Autopilot"
       true
@@ -76,10 +67,7 @@ let test_absence_wording () =
          false
          (Sol_cli_gcloud.says_not_found wording))
     [ "PERMISSION_DENIED: caller does not have permission"
-    ; (* REFAC-136: gcloud's generic API-failure prefix on a 403. The substrate's own
-         list used to match "could not fetch resource", reading a permission
-         failure as an absent cluster -- a fresh target. *)
-      "ERROR: (gcloud.container.clusters.describe) Could not fetch resource:\n\
+    ; "ERROR: (gcloud.container.clusters.describe) Could not fetch resource:\n\
       \ - Required 'container.clusters.get' permission for \
        'projects/p/locations/r/clusters/c'."
     ; "Throttling: rate exceeded"

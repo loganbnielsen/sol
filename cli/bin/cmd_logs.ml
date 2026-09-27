@@ -1,12 +1,6 @@
 open Cmdliner
 open Result.Syntax
 
-(* [logs] streams exactly one workload's output, and both Loki's addressing
-   (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so
-   [--scope] is honest here at *unit* granularity only. A domain or
-   whole-workspace request does not project into "one pod's logs"; rather than
-   silently narrowing it, this command refuses and points at [sol open logs],
-   whose addressing model does support those scopes (FEAT-065's invariant). *)
 let resolve_unit ~facts ~scope =
   let* selected =
     Sol_cli_workload_selection.resolve
@@ -18,7 +12,6 @@ let resolve_unit ~facts ~scope =
   match selected.request, selected.services with
   | Sol_cli_deployment_scope.Unit_named _, [ svc ] -> Ok svc
   | Sol_cli_deployment_scope.Unit_named _, _ ->
-    (* A unit request always resolves to exactly one discovered service. *)
     Error
       (Sol_cli_exit.error
          (Printf.sprintf "--scope %S did not resolve to exactly one workload." scope))
@@ -29,11 +22,6 @@ let resolve_unit ~facts ~scope =
           view, use 'sol open logs <scope>'.")
 ;;
 
-(* FEAT-063: even this existence check goes through the adapter, so it cannot
-   drift into an unscoped kubectl invocation. It answers with the three-state
-   [presence], not a bool: "the service is not deployed" and "the check could not
-   run" are different claims, and the caller must not print the second as the
-   first (FND-0024). *)
 let workload_presence ~ctx ~ns ~primitive ~k8s_name =
   let kind =
     match (primitive : Sol_cli_manifest.primitive) with
@@ -43,7 +31,6 @@ let workload_presence ~ctx ~ns ~primitive ~k8s_name =
   Sol_cli_kubectl.presence ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
 ;;
 
-(* The unit's namespace and Kubernetes name, validated. *)
 let unit_names ~workspace (svc : Sol_cli_manifest.service) =
   Sol_cli_exit.of_msg
     (let* ns = Sol_cli_deployment_plan.namespace_name ~workspace ~domain:svc.domain in
@@ -78,10 +65,6 @@ let kubectl_log_target ~primitive ~k8s_name : Sol_cli_logs.kubectl_log_target =
   | Svc | Worker -> Deployment k8s_name
 ;;
 
-(* Because this [exec]s, no wrapper can inject anything after the fact: the
-   invocation must already carry the destination (FEAT-063). The argv gets
-   [--context], and the child env gets [KUBECONFIG] when one is scoped -- the
-   same pair [Sol_cli_kubectl] would apply for a non-exec call. *)
 let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
   let argv = Sol_cli_logs.kubectl_logs_argv ~ctx ~ns ~target ~follow ~tail in
   let overrides = Sol_cli_kube_destination.context_environment ctx in
@@ -104,9 +87,6 @@ let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
   Unix.execvpe "kubectl" (Array.of_list argv) env
 ;;
 
-(* REFAC-089: the observability flags travel together, mean one thing -- where to
-   read telemetry, and with what credentials -- and were six labelled arguments
-   on every command that touches telemetry. One value, built at the CLI edge. *)
 type observability_options =
   { backend : Sol_cli_observability_url.backend option
   ; base_domain : string option
@@ -116,9 +96,6 @@ type observability_options =
   ; loki_password : string option
   }
 
-(** What `sol logs` needs: the workload (or release) it is about, how to stream,
-    and where the telemetry lives. Exactly one of [scope]/[release] must be
-    given; [observability] is the rest. *)
 type log_options =
   { scope : string option
   ; release : string option
@@ -132,7 +109,6 @@ let loki_credentials (observability : observability_options) =
     ~flag_username:observability.loki_username
     ~flag_password:observability.loki_password
     ~env_username:(Sol_cli_string.env "SOL_LOKI_USERNAME")
-      (* A password's whitespace is data, so only an empty one is unset. *)
     ~env_password:(Sol_cli_string.non_empty (Sys.getenv_opt "SOL_LOKI_PASSWORD"))
   |> Sol_cli_exit.of_msg
 ;;
@@ -178,8 +154,6 @@ let run_unit ~ctx ~target (options : log_options) scope =
          ~k8s_name
          ()
      with
-     (* DEC-038 §7: a failed read is not a diagnosis, and printing nothing would
-        read as "fine". *)
      | Sol_cli_rollout_diagnosis.Unhealthy text -> Printf.printf "%s\n%!" text
      | Sol_cli_rollout_diagnosis.Undetermined why ->
        Printf.printf "diagnosis unavailable: %s\n%!" why
@@ -202,8 +176,6 @@ let run_unit ~ctx ~target (options : log_options) scope =
         ~probe_path:""
     with
     | None ->
-      (* OBS-031: no --loki-base-url and backend isn't Local -- nothing to
-         guess at, distinct from the query-failed case below. *)
       Printf.printf
         "(%s. Showing Kubernetes logs.)\n%!"
         (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend);
@@ -222,9 +194,6 @@ let run_unit ~ctx ~target (options : log_options) scope =
          lines |> List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text);
          Ok ()
        | Error e ->
-         (* OBS-031: a URL was configured and the request itself failed
-           (connection refused, timeout, non-2xx) -- a real outage or a
-           wrong URL, not the "nothing to check" case above. *)
          Printf.printf
            "(%s. Falling back to Kubernetes logs for %s...)\n%!"
            (Sol_cli_status.unreachable_message
@@ -234,13 +203,6 @@ let run_unit ~ctx ~target (options : log_options) scope =
          fallback_to_kubectl ()))
 ;;
 
-(* FEAT-069: [sol logs --release <id>]. The order is the contract: the id is
-   validated first (a malformed value never reaches the cluster), the unit's
-   namespace is validated next when one narrows the query, then the release
-   store says whether the id is known, and only then does the logs backend
-   participate. A known release with no matching lines is an empty success, not
-   "unknown release" -- a rollback or a short-lived workload can legitimately
-   have no logs left. *)
 let release_unknown ~release_id ~target records =
   let recent =
     match records with
@@ -261,15 +223,11 @@ let run_release ~ctx ~target (options : log_options) release =
     match options.scope with
     | None -> Ok None
     | Some scope ->
-      (* The workspace is read only when a scope has to be resolved: a
-         workspace-wide release read needs no inventory. *)
       let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
       let* svc = resolve_unit ~facts ~scope in
       let* names = unit_names ~workspace svc in
       Ok (Some names)
   in
-  (* Read only once the id is valid, and at most once. A failed read answers
-     "not known" to the query, and is then reported as itself. *)
   let records = lazy (Sol_cli_release_store.list ~ctx ~workspace) in
   let known id =
     match Lazy.force records with
@@ -340,8 +298,6 @@ let run ~ctx ~target (options : log_options) =
   | None, None ->
     Error (Sol_cli_exit.error "pass --scope DOMAIN/UNIT (or --release <id>)")
 ;;
-
-(* ── Cmdliner Terms ─────────────────────────────────────────────────────── *)
 
 let scope_arg =
   Arg.(
@@ -416,8 +372,6 @@ let grafana_base_url_arg =
            LogQL query before streaming kubectl logs.")
 ;;
 
-(* An enum, so an unknown backend is refused by the parser, with the choices
-   listed, before anything runs (REFAC-115). *)
 let observability_backend_arg =
   let backends =
     Sol_cli_observability_url.[ Local; Self_hosted_durable; External ]
@@ -510,7 +464,6 @@ let loki_password_arg =
 ;;
 
 let follow_term =
-  (* A usage error, so the parser reports it (124) with the usage line. *)
   let combine follow no_follow =
     match follow, no_follow with
     | true, true -> `Error (false, "--follow and --no-follow are mutually exclusive")
@@ -545,8 +498,6 @@ let observability_options_term =
     $ loki_password_arg)
 ;;
 
-(* REFAC-089: the two entry points differ only in how they produce the
-   destination and in whether --target is declared at all. *)
 let run_term ~local ~target_term =
   Term.(
     const (fun scope release follow tail observability target ->
@@ -576,8 +527,6 @@ let cmd =
     (run_term ~local:false ~target_term:Cmd_destination.target_arg)
 ;;
 
-(* FEAT-063: the local form -- logs from a workload on Sol's own cluster. The
-   destination is the local one, so no --target is declared at all. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "logs" ~doc:"Stream logs from a workload running on the local cluster")

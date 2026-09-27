@@ -54,16 +54,6 @@ let deployment_mode_of_target = function
   | Sol_hosted _ -> Sol_cli_deployment_plan.Sol_hosted
 ;;
 
-(** Derive the default secret backend from the deployment target.
-    - [Local] and [Customer_direct]: apply real credentials live via
-      [Kubernetes_live] (values are read from the process environment).
-    - [Customer_gitops]: emit a redacted placeholder Secret so that plaintext
-      values are never written to the GitOps repository.
-    - [Sol_hosted]: emit a redacted placeholder Secret; real secrets are managed
-      by the Sol platform out-of-band.
-
-    The CLI guard in [cmd_deploy.ml] additionally rejects any explicit
-    [--secret-backend kubernetes-live] override on a GitOps target. *)
 let default_secret_backend : t -> Sol_cli_manifest.secret_backend = function
   | Local _ -> Sol_cli_manifest.Kubernetes_live
   | Customer_direct _ -> Sol_cli_manifest.Kubernetes_live
@@ -71,19 +61,6 @@ let default_secret_backend : t -> Sol_cli_manifest.secret_backend = function
   | Sol_hosted _ -> Sol_cli_manifest.Kubernetes_placeholder
 ;;
 
-(** INFRA-050: resolve the runtime secret backend for a deploy.
-
-    [explicit] is the operator's [--secret-backend], or [None] when they did not
-    choose — and "did not choose" must mean *the destination decides*, never "a
-    CLI default". The CLI used to carry its own default of
-    [Kubernetes_placeholder], which always won because it always supplied a
-    value: a direct deploy then emitted a redacted (empty) Secret and the
-    workload could not start. There is exactly one default, and it is
-    {!default_secret_backend}'s.
-
-    An explicit choice wins in both directions. The CLI still refuses
-    [Kubernetes_live] on a GitOps destination before this is used, because that
-    combination would write plaintext secrets into the repository. *)
 let resolve_secret_backend ?explicit t =
   match explicit with
   | Some backend -> backend

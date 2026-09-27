@@ -15,8 +15,6 @@ let err_msg = function
   | Error msg -> msg
 ;;
 
-(* ── parse_scope ─────────────────────────────────────────────────────────── *)
-
 let test_parse_scope_none () =
   check_bool "None -> Workspace" true (O.parse_scope None = Ok O.Workspace)
 ;;
@@ -52,8 +50,6 @@ let test_parse_scope_resource () =
     (O.parse_scope (Some "resource/rds/acme-prod-postgres")
      = Ok (O.Resource ("rds", "acme-prod-postgres")))
 ;;
-
-(* ── url: dashboard / metrics (share a target) ──────────────────────────── *)
 
 let base_url = "http://localhost:3000"
 let workspace = "myapp"
@@ -106,11 +102,6 @@ let test_metrics_matches_dashboard () =
   check_string "metrics == dashboard target" dashboard metrics
 ;;
 
-(* Regression: dashboard_url used to pass scope strings through unchanged,
-   while logs_url already normalized them -- 'sol open dashboard
-   payments/charge_svc' presented a var-service value ("charge_svc") that
-   never matched any metric's normalized 'service' label ("charge-svc"),
-   so the dashboard opened empty. *)
 let test_dashboard_service_scope_normalizes_underscore_name () =
   let url =
     ok_url
@@ -136,9 +127,6 @@ let test_dashboard_domain_scope_normalizes_case_and_underscore () =
     (contains url "var-domain=payments-team")
 ;;
 
-(* OBS-021: sanitize_label_value handles arbitrary invalid characters
-   (spaces, etc.), not just underscore -- a workspace directory name like
-   "My App" used to survive un-mangled past the old normalize-only call. *)
 let test_dashboard_domain_scope_normalizes_internal_space () =
   let url =
     ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard (O.Domain "Payments Team"))
@@ -155,8 +143,6 @@ let test_dashboard_service_scope_invalid_name () =
   in
   check_bool "empty service name -> Error" true (String.length (err_msg result) > 0)
 ;;
-
-(* ── url: dashboard / metrics — managed resource scope (OBS-044) ─────────── *)
 
 let test_dashboard_resource_scope () =
   let url =
@@ -237,14 +223,10 @@ let test_logs_resource_scope_has_no_view () =
     (String.length (err_msg result) > 0)
 ;;
 
-(* ── url: logs ───────────────────────────────────────────────────────────── *)
-
 let test_logs_workspace_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs O.Workspace) in
   check_bool "explore url" true (contains url "/explore");
   check_bool "selects on the workspace identity label" true (contains url "myapp");
-  (* OBS-046: the Kubernetes namespace convention is an implementation detail by
-     the identity model's own rule, so no scope's log link may select on it. *)
   check_bool "no namespace selector" false (contains url "namespace")
 ;;
 
@@ -262,7 +244,6 @@ let test_logs_service_scope () =
       (O.url ~base_url ~workspace ~kind:O.Logs (O.Service ("payments", "charge_svc")))
   in
   check_bool "explore url" true (contains url "/explore");
-  (* charge_svc gets normalized to its k8s (hyphenated) name *)
   check_bool "k8s name normalized" true (contains url "charge-svc");
   check_bool "no namespace selector" false (contains url "namespace")
 ;;

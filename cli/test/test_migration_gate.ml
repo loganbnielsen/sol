@@ -1,7 +1,3 @@
-(* REFAC-139: the deploy's migration gate as a library. The in-cluster check
-   itself is covered through a fake kubectl in test_migration_job.ml; these pin
-   the pure pieces it shares with `sol migrate apply`. *)
-
 let temp_dir () =
   let dir = Filename.temp_file "sol-migration-gate-test-" "" in
   Sys.remove dir;

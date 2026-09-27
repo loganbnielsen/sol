@@ -1,6 +1,3 @@
-(* REFAC-114 / DEC-049: Sol_cli_platform_assets resolves Sol's asset root, in the
-   order SOL_HOME > (installed bundle, FEAT-101) > source-checkout discovery. *)
-
 module A = Sol_cli_platform_assets
 
 let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path)
@@ -19,7 +16,6 @@ let with_tmpdir f =
     (fun () -> f (Unix.realpath dir))
 ;;
 
-(* Unix.putenv cannot unset; the resolver treats "" as unset. *)
 let with_sol_home value f =
   let saved = Sys.getenv_opt "SOL_HOME" in
   Unix.putenv "SOL_HOME" value;
@@ -35,8 +31,6 @@ let fake_checkout dir =
 
 let resolved_dir () = Result.map A.dir (A.resolve ())
 
-(* The test binary runs from inside this checkout, so discovery alone would find
-   it. A valid SOL_HOME elsewhere must win over that. *)
 let test_sol_home_wins_over_discovery () =
   with_tmpdir (fun dir ->
     fake_checkout dir;
@@ -46,8 +40,6 @@ let test_sol_home_wins_over_discovery () =
       | Error e -> Alcotest.fail (A.error_to_string e)))
 ;;
 
-(* An explicit root that is wrong is an error. It must not fall through to the
-   checkout discovery would find. *)
 let test_invalid_sol_home_is_an_error () =
   with_tmpdir (fun dir ->
     with_sol_home dir (fun () ->
@@ -63,7 +55,6 @@ let test_invalid_sol_home_is_an_error () =
       | Error e -> Alcotest.fail ("expected Invalid_sol_home: " ^ A.error_to_string e)))
 ;;
 
-(* Unset: discovery walks up from the running binary to this checkout. *)
 let test_unset_discovers_the_checkout () =
   with_sol_home "" (fun () ->
     match A.resolve () with
@@ -76,7 +67,6 @@ let test_unset_discovers_the_checkout () =
         (Sys.file_exists (A.components_json t)))
 ;;
 
-(* A build tree mirrors the sentinels but is never a root. *)
 let test_build_tree_is_not_a_checkout () =
   with_tmpdir (fun dir ->
     let mirrored = Filename.concat dir "_build/default" in
@@ -108,8 +98,6 @@ let test_asset_paths () =
       | Error msg -> Alcotest.fail msg))
 ;;
 
-(* ── FEAT-101: the installed form and DEC-049's full order ─────────────────── *)
-
 let write path text =
   mkdir_p (Filename.dirname path);
   let oc = open_out path in
@@ -117,7 +105,6 @@ let write path text =
   close_out oc
 ;;
 
-(* <prefix>/bin and <prefix>/share/sol/<version>/ as a release archive lays them out. *)
 let fake_install prefix ~version =
   mkdir_p (Filename.concat prefix "bin");
   let bundle = Filename.concat prefix ("share/sol/" ^ version) in
@@ -141,8 +128,6 @@ let form_name = function
 
 let check_form name want got = Alcotest.(check string) name want (form_name got)
 
-(* The install sits inside a checkout, so every lower rung is also available and
-   each case shows which one wins. *)
 let with_layout f =
   with_tmpdir (fun root ->
     fake_checkout root;
@@ -223,8 +208,6 @@ let test_invalid_sol_home_never_falls_through () =
            ~release_version:(Some "v1.2.3"))))
 ;;
 
-(* REFAC-123: [resolve] reads SOL_HOME through [Sol_cli_string.env], so an empty
-   one ([Unix.putenv] cannot unset) is unset before [resolve_from] sees it. *)
 let test_empty_sol_home_is_unset () =
   let saved = Sys.getenv_opt "SOL_HOME" in
   Unix.putenv "SOL_HOME" "";
@@ -261,7 +244,6 @@ let test_installed_runner_is_published_by_digest () =
   | Ok _ -> Alcotest.fail "an empty runner reference was accepted"
 ;;
 
-(* An empty VERSION is not a bundle: an error, not an exception. *)
 let test_empty_version_is_not_a_bundle () =
   with_layout (fun ~root:_ ~bin ~bundle ->
     write (Filename.concat bundle "VERSION") "";

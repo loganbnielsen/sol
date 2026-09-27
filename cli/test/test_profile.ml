@@ -1,11 +1,6 @@
-(* FEAT-089: production profile selection, plan carriage, preflight and the
-   deployment-event claim, exercised through real workspace files. *)
-
 module P = Sol_cli_profile
 module Pre = Sol_cli_profile_preflight
 
-(* REFAC-130: the workspace a fixture describes, read once through the loader
-   under test -- the same value the commands pass into the plan. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -40,7 +35,6 @@ let with_workspace f =
        f ())
 ;;
 
-(* FEAT-100: [path] is a target address, <env>/<provider>/<region>. *)
 let write_target path body = Targets_fixture.write ~target:path body
 let prod_aws = "prod/aws/us-east-1"
 let selecting = "target:\n  profile: production-single-region\n"
@@ -59,8 +53,6 @@ let load_error target =
 
 let target_of cfg = cfg.Sol_cli_config.target
 let profile_name (target : Sol_cli_config.target) = Option.map P.to_string target.profile
-
-(* ── Identity and vocabulary ─────────────────────────────────────────────── *)
 
 let test_identity_round_trips () =
   check_str
@@ -103,8 +95,6 @@ let test_requirements_follow_usage () =
     (always @ [ "workload_availability"; "postgres_durability"; "kafka_durability" ])
     (names [ P.Kafka; P.Long_running; P.Postgres; P.Kafka ])
 ;;
-
-(* ── Selection ───────────────────────────────────────────────────────────── *)
 
 let test_prod_env_without_profile_claims_nothing () =
   with_workspace (fun () ->
@@ -173,8 +163,6 @@ let test_unrelated_value_does_not_change_selection () =
       (profile_name (target_of (load "dev/aws/us-east-1")) = None))
 ;;
 
-(* ── Plan carriage ───────────────────────────────────────────────────────── *)
-
 let env : Sol_cli_deployment_plan.env_config =
   { name = "pluto"
   ; mode = Sol_cli_deployment_plan.Customer_cloud
@@ -193,9 +181,6 @@ let unit ~domain ~name primitive : Sol_cli_manifest.service =
 ;;
 
 let charge_svc = unit ~domain:"payments" ~name:"charge_svc" Sol_cli_manifest.Svc
-
-(* INFRA-038: the stateless case -- a Service that declares no resource use at
-   all, mirroring examples/pluto's checkout_svc. *)
 let checkout_svc = unit ~domain:"checkout" ~name:"checkout_svc" Sol_cli_manifest.Svc
 
 let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
@@ -223,8 +208,6 @@ let requirements_of plan =
   | Some claim -> claim.requirements
 ;;
 
-(* INFRA-038: the findings a plan reports about the *workload*, as opposed to the
-   requirements it places on the target. *)
 let findings_of plan =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Alcotest.fail "expected a profile claim"
@@ -235,8 +218,6 @@ let kafka_findings plan =
   List.filter (fun (capability, _) -> capability = P.Kafka_durability) (findings_of plan)
 ;;
 
-(* AUDIT-080: a node-failure-tolerant workload needs at least two replicas; the
-   preflight then checks the target declares enough headroom to restore them. *)
 let node_failure_tolerant_plan target =
   mkdir_p charge_svc.dir;
   write
@@ -254,8 +235,6 @@ let node_failure_tolerant_plan target =
   | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
 ;;
 
-(* AUDIT-080: an availability claim the workload cannot satisfy is refused
-   before render, naming a supported alternative. *)
 let availability_rejection service ~toml =
   mkdir_p service.Sol_cli_manifest.dir;
   write (Filename.concat service.dir "sol.toml") toml;
@@ -331,7 +310,6 @@ let notify_worker = unit ~domain:"comms" ~name:"notify_worker" Sol_cli_manifest.
 let test_worker_shape_does_not_imply_kafka () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
-    (* An OCaml event module is language-specific source, not a declaration. *)
     mkdir_p "events/comms";
     write "events/comms/email_requested.ml" "";
     let requirements =
@@ -399,12 +377,6 @@ let test_declared_topics_require_kafka () =
          (requirements_of (plan_for ~services:[ notify_worker ] "prod/aws/us-east-1"))))
 ;;
 
-(* INFRA-038. A Service acquires a Kafka requirement by declaring one. The target
-   being *able* to provide Kafka durability is a property of the target, and it
-   must not attach itself to every workload deployed onto it -- which is what made
-   the stateless checkout_svc undeployable on its own, since no scope containing
-   it could satisfy a check that asked whether some Service in the scope used
-   Kafka. *)
 let kafka_workspace =
   "project: pluto\n\
    resources:\n\
@@ -460,9 +432,6 @@ let test_scope_declaring_kafka_is_unaffected () =
 
 let test_whole_workspace_topic_without_declaration_fails_closed () =
   with_workspace (fun () ->
-    (* No Service declares the Kafka use, but the workspace declares topics -- so
-       something here is meant to handle them. This is the mismatch that can be
-       established, and it is the only Kafka case the deploy path should refuse. *)
     write
       "sol.yml"
       "project: pluto\n\
@@ -512,8 +481,6 @@ let test_profile_does_not_change_release_identity () =
       (Sol_cli_release_id.to_string unclaimed.release_id)
       (Sol_cli_release_id.to_string claimed.release_id))
 ;;
-
-(* ── Preflight ───────────────────────────────────────────────────────────── *)
 
 let preflight ?establish ?plan ~apply_mode target =
   let plan = Option.value plan ~default:(plan_for target) in
@@ -836,14 +803,6 @@ let test_unqualified_provider_is_a_target_finding () =
         (Sol_cli_string.contains ~needle:"gcp" f.reason))
 ;;
 
-(* SEC-004: credential posture is a Sol-owned property of the renderer, so the
-   guarantee is established for every plan regardless of target/application. *)
-(* HARDEN-002 (run 1): the profile's durability guarantees were mapped to
-   not_yet_established, so every profile target failed preflight and no deploy
-   could run. They are now established from the configuration evidence the plan
-   and target actually carry -- never from live behaviour, which is HARDEN-002's
-   to measure. *)
-
 let kafka_consumer_plan plan =
   { plan with
     Sol_cli_deployment_plan.services =
@@ -898,8 +857,6 @@ let test_durability_fails_closed_for_an_unqualified_provider () =
 let test_kafka_durability_requires_the_rendered_requirement () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
-    (* A declared Kafka consumer whose plan does not carry the qualified
-       durability requirement must not pass. *)
     let plan =
       { (plan_for "prod/aws/us-east-1") with
         Sol_cli_deployment_plan.services =
@@ -939,8 +896,6 @@ let test_credential_posture_is_established () =
        = Pre.Established))
 ;;
 
-(* AUDIT-080: a declared node-failure-tolerant workload fails closed until the
-   target declares enough headroom to restore its replicas. *)
 let test_node_failure_tolerant_requires_headroom () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
@@ -1022,14 +977,6 @@ let test_emit_to_rejected_for_profile () =
 ;;
 
 let test_declared_kafka_resource_is_a_target_requirement () =
-  (* INFRA-038. A workspace that declares a Kafka *resource* is stating that the
-     target must provide Kafka durability -- a target-side requirement. It is not
-     stating that every Service deployed onto that target uses Kafka. Those are
-     different claims, and only the second belongs to a workload.
-
-     This test previously asserted the opposite: that declaring the resource
-     required a workload-side Kafka dependency to be declared. That is what made a
-     stateless Service undeployable on a target whose profile supports Kafka. *)
   with_workspace (fun () ->
     write "sol.yml" "project: pluto\nresources:\n  events:\n    type: kafka\n";
     write_target prod_aws selecting;
@@ -1103,8 +1050,6 @@ let test_report_speaks_in_guarantees () =
          [ "FEAT-"; "AUDIT-"; "SEC-"; "OBS-"; "DEC-" ]))
 ;;
 
-(* ── Deployment event ────────────────────────────────────────────────────── *)
-
 let event_of plan =
   Sol_cli_deployment.of_plan
     ~deployment_id:(Sol_cli_deployment_id.create ~now:1767225600.0 ~entropy:"seed")
@@ -1156,10 +1101,6 @@ let test_event_with_unknown_profile_rejected () =
     (Result.is_error (with_profile_field (Some (`String "production-single-region/v9"))))
 ;;
 
-(* INFRA-030: the production profile's capacity contract. These pin the envelope
-   and the recommended shape together, so shrinking the shape or growing the
-   platform's declared requests fails the build instead of failing a live install
-   the way HARDEN-002 Run 5 attempt 1 did. *)
 let test_recommended_shape_satisfies_the_envelope () =
   let shape = P.recommended_node_shape in
   P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
@@ -1169,9 +1110,6 @@ let test_recommended_shape_satisfies_the_envelope () =
          "the profile's own recommended shape must satisfy its own capacity contract, \
           but it does not: %s"
          reason));
-  (* And comfortably rather than barely: the platform must still fit after the
-     one-node headroom a node-failure-tolerant workload requires, which is the
-     margin attempt 1 did not have. *)
   check_bool
     "fits after headroom with margin"
     true
@@ -1179,8 +1117,6 @@ let test_recommended_shape_satisfies_the_envelope () =
 ;;
 
 let test_attempt_1_shape_is_rejected () =
-  (* Exactly HARDEN-002 Run 5 attempt 1: three 2-vCPU nodes, which is what the
-     provider root defaulted to while the profile declared nothing. *)
   let shape =
     { P.instance_type = "m6i.large"
     ; vcpu_per_node = 2
@@ -1245,8 +1181,6 @@ let test_profile_target_pins_the_node_shape () =
       "[\"m6i.xlarge\"]"
       (List.assoc "node_instance_types" vars);
     check_str "node count is profile-derived" "4" (List.assoc "node_desired_size" vars);
-    (* Ordering is the enforcement: Terraform takes the last assignment, so the
-       profile's value must come after the caller's. *)
     check_strs
       "the profile's value is applied after the caller's"
       [ "node_desired_size=2"; "node_desired_size=4" ]

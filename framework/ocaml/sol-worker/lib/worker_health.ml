@@ -1,18 +1,3 @@
-(* AUDIT-080: the worker's readiness/liveness observations and its HTTP surface.
-
-   Readiness is the consumer-join state: a Kafka worker is ready only once the
-   broker has assigned it partitions, and it stops being ready when a rebalance
-   takes them away. Liveness is the poll cadence: a consumer that stops polling
-   is stuck even though its process is up, so it must be replaced rather than
-   left looking healthy. Both are observations kafka-eio reports
-   ([on_assigned]/[on_revoked]/[on_poll]); the policy -- what they mean and when
-   they fail -- lives here, in Sol, not in the client.
-
-   Served on the same port as /metrics so the rendered probes need no second
-   listener. *)
-
-(* Ten times librdkafka's keepalive poll interval (3s): a consumer that has not
-   polled in this long is not merely idle, it is stuck. *)
 let liveness_bound_s = 30.0
 
 type t =
@@ -51,9 +36,6 @@ let serve ~sw ~net ~port t renderer =
     | _ -> respond_string ~status:`Not_found "not found\n"
   in
   let server = Cohttp_eio.Server.make ~callback () in
-  (* A worker that cannot bind its health port is not ready, but it must not
-     crash: the readiness/liveness probes report the failure, which is the honest
-     signal. It also keeps a second worker in the same process from aborting. *)
   try
     let socket =
       Eio.Net.listen

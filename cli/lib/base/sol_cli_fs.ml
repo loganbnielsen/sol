@@ -34,8 +34,6 @@ let rec remove_tree path =
   | _ -> remove_if_present path
 ;;
 
-(* Unix.stat follows symlinks, so a symlink to a directory is usable; lstat tells
-   "nothing here" apart from "a dirent stat cannot resolve" (a dangling link). *)
 let usable_as_directory dir =
   match Unix.stat dir with
   | { Unix.st_kind = Unix.S_DIR; _ } -> true
@@ -52,7 +50,6 @@ let rec mkdir_p ?(perm = 0o755) dir =
       (match Unix.mkdir dir perm with
        | () -> Ok ()
        | exception Unix.Unix_error (Unix.EEXIST, _, _) when usable_as_directory dir ->
-         (* Lost a race with a concurrent creator. *)
          Ok ()
        | exception Unix.Unix_error (Unix.EEXIST, _, _) ->
          Error
@@ -88,7 +85,6 @@ let write_file ?(perm = 0o644) path content =
 let write_atomic ?perm path content =
   let tmp = path ^ ".tmp-" ^ string_of_int (Unix.getpid ()) in
   let* () = write_file ?perm tmp content in
-  (* Creation goes through the umask; a caller that names a mode gets it. *)
   let* () =
     match perm with
     | None -> Ok ()
@@ -118,8 +114,6 @@ let with_temp_file ~prefix ~suffix content f =
   | Ok () -> Ok (Fun.protect ~finally:cleanup (fun () -> f path))
 ;;
 
-(* The permission bits exactly, as `rsync -a` keeps them: creation goes through
-   the umask, so they are set again afterwards. *)
 let copy_file ~src ~dst ~perm =
   match In_channel.with_open_bin src In_channel.input_all with
   | exception Sys_error message -> Error message
@@ -150,7 +144,5 @@ let rec copy_tree ~exclude ~src ~dst =
       copy_tree ~exclude ~src:(Filename.concat src entry) ~dst:(Filename.concat dst entry))
     |> Result.map ignore
   | { Unix.st_kind = Unix.S_REG; st_perm; _ } -> copy_file ~src ~dst ~perm:st_perm
-  | _ ->
-    (* Sockets, fifos and devices have no place in a build context. *)
-    Ok ()
+  | _ -> Ok ()
 ;;

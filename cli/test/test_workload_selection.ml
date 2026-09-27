@@ -1,11 +1,3 @@
-(* DEC-041: what a target's `omit` declarations do to a resolved selection.
-
-   The rule being pinned is the one the DEC was about: `omit` means "not in this
-   target's default set", so a bare `--scope <domain>` and a whole-workspace run
-   exclude an omitted unit, while `--scope <domain>/<name>` is explicit intent
-   about that unit and may include it back — reporting that it did. Pure, so no
-   workspace or cluster is involved. *)
-
 let svc domain name =
   { Sol_cli_manifest.domain; name; primitive = Sol_cli_manifest.Svc; dir = "" }
 ;;
@@ -14,8 +6,6 @@ let charge = svc "payments" "charge_svc"
 let checkout = svc "checkout" "checkout_svc"
 let invoices = svc "payments" "invoice_svc"
 let all = [ charge; checkout; invoices ]
-
-(* The target omits one unit in one domain. *)
 let omit_charge (s : Sol_cli_manifest.service) = String.equal s.name "charge_svc"
 
 let resolve scope services =
@@ -33,8 +23,6 @@ let names (services : Sol_cli_manifest.service list) =
   |> List.sort String.compare
 ;;
 
-(* A unit-level scope names the unit, so it is deployed even though the target
-   omits it -- and the caller is told, because this is the escape hatch. *)
 let test_unit_scope_names_it_back_in () =
   let o = apply (Some "payments/charge_svc") in
   Alcotest.(check (list string)) "it is deployed" [ "charge_svc" ] (names o.selected);
@@ -45,8 +33,6 @@ let test_unit_scope_names_it_back_in () =
   Alcotest.(check (list string)) "nothing dropped" [] (names o.excluded)
 ;;
 
-(* A domain-level scope names a domain, not a unit: the omitted unit is excluded
-   from the expansion rather than swept back in as collateral. *)
 let test_domain_scope_excludes_it () =
   let o = apply (Some "payments") in
   Alcotest.(check (list string))
@@ -60,7 +46,6 @@ let test_domain_scope_excludes_it () =
   Alcotest.(check (list string)) "not quietly re-included" [] (names o.included)
 ;;
 
-(* No scope at all is still not naming a unit. *)
 let test_whole_workspace_excludes_it () =
   let o = apply None in
   Alcotest.(check (list string))
@@ -74,7 +59,6 @@ let test_whole_workspace_excludes_it () =
   Alcotest.(check (list string)) "not quietly re-included" [] (names o.included)
 ;;
 
-(* A target that omits nothing must behave exactly as before. *)
 let test_untouched_when_nothing_is_omitted () =
   let o = apply ~is_omitted:(fun _ -> false) (Some "payments") in
   Alcotest.(check (list string))
@@ -85,10 +69,6 @@ let test_untouched_when_nothing_is_omitted () =
   Alcotest.(check (list string)) "nothing specially included" [] (names o.included)
 ;;
 
-(* `selected` and `excluded` must partition the resolved selection: a unit that is
-   neither deployed nor reported as excluded is a silent drop, which is the shape
-   this DEC exists to prevent. `included` is not part of that partition — it
-   names units already in `selected` — so it is asserted as a subset instead. *)
 let test_selected_and_excluded_partition_the_selection () =
   List.iter
     (fun scope ->
@@ -110,11 +90,6 @@ let test_selected_and_excluded_partition_the_selection () =
     [ None; Some "payments"; Some "payments/charge_svc" ]
 ;;
 
-(* The predicate sees the whole service, so a target can key by domain as well as
-   by name. That matters because the config declares `omit` on a service *name*
-   while discovery keys a unit by (domain, name), so a name alone can be ambiguous
-   — which is why the deploy passes a predicate over services rather than a name
-   list. Compared as domain/name here, since two units share a name. *)
 let test_the_predicate_sees_domain_and_name () =
   let billing_invoices = svc "billing" "invoice_svc" in
   let services = all @ [ billing_invoices ] in

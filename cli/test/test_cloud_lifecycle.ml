@@ -35,7 +35,6 @@ let target : Sol_cli_config.target =
   }
 ;;
 
-(* REFAC-098: provider-native configuration lives in the provider's own block. *)
 let without_aws_field key (t : Sol_cli_config.target) =
   { t with
     provider_fields =
@@ -91,12 +90,6 @@ let test_outputs () =
   Alcotest.(check bool) "wrong type" true (Result.is_error (parse wrong))
 ;;
 
-(* HARDEN-002 run 3, finding 10: `terraform output -json` OMITS an output whose
-   value is null (v1.9.8). loki_*/thanos_* are null unless durable observability
-   is enabled (the default), so a real target's output JSON simply has no such
-   keys. The parser must treat an absent optional output like a null one instead
-   of raising Type_error; a required output that is absent must still fail
-   closed with a named error. *)
 let test_outputs_absent_optional () =
   let optional =
     [ "loki_s3_bucket"
@@ -127,11 +120,6 @@ let test_outputs_absent_optional () =
     (Result.is_error (parse without_required))
 ;;
 
-(* GCP's cloud root publishes a different set of facts -- a project and a region
-   rather than a role ARN -- so it has its own type, its own parser, and its own
-   required/optional split. The optional half matters for the same reason as AWS's:
-   Terraform omits a null output entirely, so a target without durable
-   observability has no `loki_*`/`thanos_*` keys at all. *)
 let valid_gcp_outputs () =
   `Assoc
     [ output "cluster_name" ~value:(`String "sol-qual")
@@ -166,10 +154,6 @@ let test_gcp_outputs () =
      Alcotest.(check string) "region" "us-central1" outputs.region;
      Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
    | Error message -> Alcotest.fail message);
-  (* The project and region are contract, not incidental context: every GCP API
-     call and the cluster credential are addressed through them. A GCP root that
-     stopped publishing one must fail the lifecycle rather than leave Sol
-     guessing which project it is about to wire the platform into. *)
   List.iter
     (fun name ->
        Alcotest.(check bool)
@@ -194,28 +178,16 @@ let test_gcp_outputs () =
     ]
 ;;
 
-(* The platform definition's variables are the *provider's*: passing AWS's set to a
-   GCP root is an undeclared-variable error, and vice versa. So the mapping emits
-   only the provider's own inputs, and a capability the provider cannot wire yet is
-   refused rather than silently omitted. *)
 let gcp_target () =
   { target with
     name = "prod/gcp/us-central1"
   ; provider = Sol_cli_provider.Gcp
   ; region = "us-central1"
-  ; kube_context =
-      Some "gke_sol-qualification_us-central1_sol"
-      (* The base target names a ClusterIssuer; this one deliberately does not, so
-       the plain case is the case under test. GCP cannot wire an issuer yet, and
-       asking for one is asserted separately. *)
+  ; kube_context = Some "gke_sol-qualification_us-central1_sol"
   ; cluster_issuer = None
   }
 ;;
 
-(* REFAC-096: the identity check moved behind the cluster handle. The cloud root
-   reports the role the platform root will act as; one that differs from the role
-   the target declared must refuse the platform wiring, and the matching one must
-   not (the positive control). *)
 let test_cluster_identity_check () =
   let aws_target = Result.get_ok (L.cloud_target target) in
   let cluster role =
@@ -297,9 +269,6 @@ let test_platform_terraform_vars () =
      @ prefixed gcp_vars "loki_s3_bucket="
      @ prefixed gcp_vars "grafana_irsa_role_arn="
      = []);
-  (* TLS is the capability GCP cannot wire yet, and asking for it must be refused
-     with the gap named rather than quietly omitting the issuer. A target that does
-     not ask for it still gets a usable platform. *)
   let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
   let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
   match L.platform_inputs tls_cloud gcp_cloud |> Result.map L.platform_terraform_vars with
@@ -312,10 +281,6 @@ let test_platform_terraform_vars () =
   | Error message -> Alcotest.fail message
 ;;
 
-(* FND-0030 / DEC-033: the preparation declares the consequence of its own failure. An
-   ordinary failure preserves the reason and lets destruction be attempted; a failure that
-   stands for a declared retention guarantee blocks, and says why. Both directions are
-   asserted here so neither can drift into the other. *)
 let test_preparation_failure_policies () =
   let open L in
   let ordinary =
@@ -356,9 +321,6 @@ let test_preparation_failure_policies () =
     (preparation_failure (Prepared "snap-1"))
 ;;
 
-(* FND-0030: the destructive preparation targets only what state already represents, so a
-   half-built target cannot be made to create the resource it was asked to remove. This is
-   the property, not the mechanism: eligibility is configuration INTERSECT state. *)
 let test_preparations_eligible () =
   let desired =
     [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
@@ -385,9 +347,6 @@ let test_preparations_eligible () =
     "order follows the configuration, not the state"
     desired
     (eligible (List.rev desired));
-  (* The other half of the same read: what a destroy CANNOT reach. Terraform destroys what
-     its state knows about, so these can survive it -- the Attempt-6 cluster, still
-     billable. Reporting them is why this exists. *)
   Alcotest.(check (list string))
     "the unrepresented set is the complement of the eligible one"
     [ "google_container_cluster.main" ]
@@ -404,12 +363,6 @@ let test_preparations_eligible () =
     (L.preparations_unrepresented ~state:[] ~desired)
 ;;
 
-(* INFRA-067 / FND-0029: the refusal above is an INSTALL-time capability guarantee, so
-   it belongs to installation. Evaluating it while computing the DESTRUCTION variables
-   refused a target that `apply` had already accepted and created, which left billable
-   infrastructure with no supported way to remove it until the target declaration was
-   edited by hand. Both directions are asserted together so neither can drift:
-   installation still refuses, destruction must not. *)
 let test_platform_vars_destruction_context () =
   let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
   let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
@@ -437,10 +390,6 @@ let test_platform_vars_destruction_context () =
       ("destruction must not be refused by an install-time requirement: " ^ message)
 ;;
 
-(* HARDEN-002 run 4, finding 12: the base providers (hashicorp/kubernetes,
-   hashicorp/helm) resolve the kubeconfig from KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS,
-   not KUBECONFIG. Every name must point at the ephemeral provisioner kubeconfig,
-   or the platform phase silently uses the ambient ~/.kube/config. *)
 let test_provisioner_kube_env () =
   let path = "/tmp/sol-platform-provisioner-test.kubeconfig" in
   let env = Sol_cli_cluster.provisioner_kube_env path in
@@ -449,15 +398,8 @@ let test_provisioner_kube_env () =
     [ "KUBECONFIG"; "KUBE_CONFIG_PATH"; "KUBE_CONFIG_PATHS" ]
 ;;
 
-(* HARDEN-002 run 4 / ADR 0003: the lifecycle phase decides the authority and the
-   desired-state policy. These assert the transitions and the policy edges --
-   in particular that a verified PreparingDestroy can never be followed by a
-   Ready-policy reconciliation (finding 15), and that destroy policy contradicts
-   the production RDS-deletion-protection invariant by design. *)
 let test_lifecycle_phases () =
   let open L in
-  (* The model owns the operator-facing names, so a test label cannot drift from
-     what an operator is actually told. *)
   let name = phase_to_string in
   Alcotest.(check bool)
     "PlatformInstalling uses Installation policy"
@@ -515,12 +457,6 @@ let test_lifecycle_phases () =
     ; Cloud_bootstrap, Ready
     ; Platform_installing, Preparing_destroy
     ];
-  (* The abort edge (ADR 0003 invariant 6). Destruction is not a forward
-     transition, so the relation above is right to reject
-     `Platform_installing -> Preparing_destroy` -- teardown is a different class of
-     move, and the two must not be folded together or the relation stops meaning
-     "the diagram". What matters is that the abort edge admits it, so a failed or
-     partially installed target can never be stranded. *)
   Alcotest.(check bool)
     "the forward relation still rejects PlatformInstalling -> PreparingDestroy"
     false
@@ -543,9 +479,6 @@ let test_lifecycle_phases () =
     ; Preparing_destroy
     ; Destroying
     ];
-  (* A destroy never lands in a phase whose policy is Ready, which is what makes
-     invariant 4 hold at the decision point rather than only after re-verification
-     (finding 15). *)
   List.iter
     (fun phase ->
        Alcotest.(check bool)
@@ -579,16 +512,6 @@ let test_lifecycle_phases () =
     "destroy policy is exactly the three destroy vars"
     3
     (List.length destroy_vars);
-  (* The GCP policy carries GCP's guards and none of AWS's: `-var` for a variable a
-     root does not declare is an error, so inheriting AWS's would have failed the
-     first GCP destroy on an undeclared variable instead of lifting anything.
-
-     Both of GCP's guards, and the second was found live: the GKE cluster's
-     provider-level `deletion_protection` defaults to true, so a policy that lifted
-     only Cloud SQL left a target that could not be destroyed at all ("Cannot
-     destroy cluster because deletion_protection is set to true"). Neither entry is
-     retention -- that is DEC-033's separate axis, and on GCP it is not expressible
-     yet. *)
   Alcotest.(check (list string))
     "the GCP destroy policy carries both of GCP's guards"
     [ "sql_deletion_protection"; "false"; "gke_deletion_protection"; "false" ]
@@ -617,8 +540,6 @@ let test_lifecycle_phases () =
           ~phase:Ready
           ~destroy_snapshot_id:"x"
           ~retention:default_destroy_retention));
-  (* ADR 0003: the phase is recomputed from observation on every run, never
-     persisted and never infrastructure truth. *)
   Alcotest.(check string)
     "no substrate observes as Absent"
     "Absent"
@@ -635,10 +556,6 @@ let test_lifecycle_phases () =
     "a completed install observes as Ready"
     "Ready"
     (phase_to_string (observed_phase ~cloud_exists:true ~platform_installed:true));
-  (* The operation may only move along edges the relation admits. This is the
-     disagreement that used to exist: the relation rejected
-     Ready -> PlatformInstalling while `sol cloud apply` performed exactly that
-     on an already-Ready target. *)
   Alcotest.(check bool)
     "PlatformInstalling -> Ready is admitted"
     true
@@ -682,15 +599,10 @@ let test_backends () =
     "platform key"
     true
     (List.mem "key=sol/prod/aws/us-east-1/platform.tfstate" platform);
-  (* S3 has no native locking, so the lock resource is part of the AWS config and
-     its absence is a refusal rather than a silent concurrent-apply hazard. *)
   let aws_without_lock = without_aws_field "state_lock_table" target in
   (match L.backend_config aws_without_lock ~root:`Cloud with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "an AWS target without a lock table must be refused");
-  (* GCS locks natively: there is no resource to name, the object is addressed by
-     `prefix`, and a target that declares a lock table for some other tool is not
-     thereby invalid. *)
   let gcp =
     { target with
       name = "prod/gcp/us-central1"
@@ -720,7 +632,6 @@ let test_backends () =
        [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/cloud.tfstate" ]
        config
    | Error message -> Alcotest.fail ("a GCP lock table must not be an error: " ^ message));
-  (* The durable-state prerequisite is the same for both providers. *)
   List.iter
     (fun t ->
        match L.backend_config { t with state_bucket = None } ~root:`Cloud with
@@ -729,11 +640,6 @@ let test_backends () =
     [ target; gcp ]
 ;;
 
-(* The two providers' targets are not the same shape, and the difference is real
-   rather than cosmetic: AWS names a role ARN because that is how a caller assumes
-   the provisioner there, while GCP names nothing because the caller impersonates a
-   service account through short-lived credentials. Requiring both to carry a
-   role-shaped field would invent a concept GCP does not have. *)
 let test_cloud_target () =
   let gcp =
     { target with
@@ -766,8 +672,6 @@ let test_cloud_target () =
   | Ok _ -> Alcotest.fail "a target without a base domain must be refused"
 ;;
 
-(* REFAC-100 / DEC-046 rule 4: every provider reaches the shared platform module
-   through its own thin root, so the root and the address prefix are one rule. *)
 let test_platform_root_selection () =
   Alcotest.(check string)
     "AWS has a root that declares the S3 backend"
@@ -832,11 +736,6 @@ let test_deferred () =
   | _ -> Alcotest.fail "fully established cluster must plan both phases"
 ;;
 
-(* The fake cluster every readiness test reads. It answers the convergence checks
-   with the shape they parse, so a check's own predicate is what is under test
-   rather than the fake agreeing with it. The storage answer is derived from the
-   provider's contract rather than spelled out, so the baseline stays "this
-   cluster is converged for this provider". *)
 let converged_cluster provider =
   let { L.storage_class; csi_driver } = L.platform_storage provider in
   function
@@ -884,12 +783,6 @@ let readiness_with_storage ~provider storage_output =
   |> L.readiness_summary
 ;;
 
-(* The storage assertion is the one readiness predicate that is the provider's
-   rather than Sol's, so the ways it could pass vacuously or leak across
-   providers are what these pin. Two of them are states a real cluster actually
-   reaches: no default class at all (EKS ships none, and Sol's own class is
-   absent whenever `create_storage_class = false`), and *two* default classes
-   (what a GCP cluster would have if Sol created its own on top of GKE's). *)
 let test_storage_contract_is_provider_specific () =
   let aws = Sol_cli_provider.Aws in
   let gcp = Sol_cli_provider.Gcp in
@@ -928,10 +821,6 @@ let test_storage_contract_is_provider_specific () =
     "gp3|ebs.csi.aws.com|true "
 ;;
 
-(* The invocations are per provider too: a storage check that named the other
-   provider's driver would be answered by a cluster that is wrong for this
-   target. CI validates each provider's argv against kubectl, so the two sets
-   have to exist and stay the same shape. *)
 let test_readiness_invocations_are_provider_specific () =
   let aws = L.readiness_invocations ~provider:Sol_cli_provider.Aws in
   let gcp = L.readiness_invocations ~provider:Sol_cli_provider.Gcp in
@@ -960,15 +849,6 @@ let test_readiness_invocations_are_provider_specific () =
     (List.length gcp)
 ;;
 
-(* The convergence predicates decide whether `sol cloud apply` may report [Ready],
-   so the ways they could pass vacuously are worth pinning: an empty listing, and
-   a listing that says nothing useful. DaemonSets additionally require a desired
-   count — zero means the node set matched nothing — while StatefulSets do not,
-   because their replicas are declared by their owner. *)
-(* DEC-033: a destroy states what it deliberately keeps. The default must remain
-   retain -- a disposable target opting out is a choice, not a change to what
-   destroy promises for every target -- and an unparseable mode must be refused
-   rather than quietly falling back to it. *)
 let test_destroy_retention () =
   let destroy_vars retention =
     L.policy_vars
@@ -1011,11 +891,6 @@ let test_destroy_retention () =
      = Some "false")
 ;;
 
-(* HARDEN-004 step 5 / FND-0046: the two assertions that used to live here pinned
-   [retention_report]'s *policy* text -- including "no residual billable
-   artifacts", which nothing observed. Retention reporting is now evidence-driven
-   and is pinned in `test_destroy_verification.ml` instead. *)
-
 let test_convergence_predicates () =
   let summary_with kind output =
     L.readiness ~provider ~run:(fun argv ->
@@ -1054,17 +929,11 @@ let test_convergence_predicates () =
   check_unmet "no nodes at all is unmet" (summary_with "nodes" "")
 ;;
 
-(* The capability probes are typed now, so a test names both the capability and the
-   three-valued answer instead of a bare bool that conflated "denied" with "the probe
-   could not tell". *)
 let capability verb resource = { Sol_cli_cloud_lifecycle.verb; resource }
 let permitted capability = capability, Sol_cli_cloud_lifecycle.Permitted
 let denied capability = capability, Sol_cli_cloud_lifecycle.Denied
 let indeterminate capability why = capability, Sol_cli_cloud_lifecycle.Indeterminate why
 
-(* DEC-040: the classifier is where the fail-open lived, and a shell stub cannot produce
-   every case by hand (`no - reason`, a token/exit mismatch). It is pure, so it is tested
-   directly rather than only through the harness. *)
 let test_can_i_classification () =
   let classify ?(stderr = "") ~exit_code stdout =
     Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code ~stdout ~stderr
@@ -1075,11 +944,8 @@ let test_can_i_classification () =
     | Sol_cli_cloud_lifecycle.Indeterminate _ -> "indeterminate"
   in
   let check name expected actual = Alcotest.(check string) name expected (label actual) in
-  (* The forms real kubectl emits. *)
   check "yes" "permitted" (classify ~exit_code:0 "yes\n");
   check "no" "denied" (classify ~exit_code:1 "no\n");
-  (* Newer kubectl appends a reason after a denial. Matching the whole line would make
-     this indeterminate, and every real denial would stop the run. *)
   check
     "no with a reason"
     "denied"
@@ -1088,10 +954,8 @@ let test_can_i_classification () =
     "yes with a trailing line"
     "permitted"
     (classify ~exit_code:0 "yes\nsome trailing line\n");
-  (* A token that disagrees with the exit code is not an answer. *)
   check "yes with exit 1" "indeterminate" (classify ~exit_code:1 "yes\n");
   check "no with exit 0" "indeterminate" (classify ~exit_code:0 "no\n");
-  (* A transport or token failure: non-zero, nothing on stdout. *)
   check
     "a transport failure"
     "indeterminate"
@@ -1102,11 +966,6 @@ let test_can_i_classification () =
     (classify ~exit_code:1 "something unexpected\n")
 ;;
 
-(* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
-   surface, and only from the principal whose elevation is being removed. The live
-   counterexample: an EKS access-policy disassociation was accepted and the API
-   reported no access policies while the authorizer still granted cluster-admin for
-   over five minutes. *)
 let test_deescalation_requires_the_effective_surface () =
   let verdict
         ?(principal = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner")
@@ -1114,7 +973,6 @@ let test_deescalation_requires_the_effective_surface () =
     =
     Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes
   in
-  (* Every capability denied is the only thing that licenses the verdict. *)
   Alcotest.(check string)
     "all denied -> de-escalated"
     "de-escalated"
@@ -1127,8 +985,6 @@ let test_deescalation_requires_the_effective_surface () =
      | Sol_cli_cloud_lifecycle.Deescalated -> "de-escalated"
      | Sol_cli_cloud_lifecycle.Still_elevated _ -> "still elevated"
      | Sol_cli_cloud_lifecycle.Undetermined _ -> "undetermined");
-  (* One capability still permitted means the elevated authority is still usable,
-     however the revocation was reported. *)
   (match
      verdict
        [ denied (capability "create" "clusterroles")
@@ -1144,9 +1000,6 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "a permitted capability was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
      Alcotest.fail "a permitted capability was read as undetermined");
-  (* A definitely-permitted capability outranks another capability's indeterminate probe:
-     elevation is hard evidence, and the operator needs it named rather than hidden
-     behind "could not tell". *)
   (match
      verdict
        [ permitted (capability "escalate" "clusterroles")
@@ -1162,16 +1015,12 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "an indeterminate probe masked a capability that was permitted"
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a permitted capability was read as de-escalated");
-  (* No answer is not de-escalation: an unanswered probe must never license Ready. *)
   (match verdict [] with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "no evidence was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "no evidence was read as elevated");
-  (* An *indeterminate* answer is not a denial. `kubectl auth can-i` exits non-zero
-     when it cannot reach the API or mint a token, and folding that into `no` is how a
-     probe that obtained no evidence became evidence of removal (FND-0021). *)
   (match
      verdict [ indeterminate (capability "create" "clusterroles") "connection refused" ]
    with
@@ -1184,11 +1033,6 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "an indeterminate probe was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "an indeterminate probe was read as elevated");
-  (* The principal matters. If the probe answered as somebody else -- a SteadyState
-     identity rather than the one whose bootstrap elevation was removed -- its refusals
-     prove nothing about that principal, so the verdict may not be de-escalated. This
-     is the FND-0021 trap: a check that cannot detect the privilege it testifies about
-     must not testify. *)
   (match
      verdict
        ~principal:(Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
@@ -1203,8 +1047,6 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "another principal's refusal was read as de-escalation"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "another principal's answers were treated as answers");
-  (* The cluster refusing an identified principal is the expected post-de-escalation
-     state: the capability requires authentication, so its absence is its revocation. *)
   (match
      verdict
        ~principal:
@@ -1217,9 +1059,6 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "a refused principal was read as still elevated"
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
      Alcotest.fail "a refused principal was read as undetermined");
-  (* ...but failing to *obtain* evidence is not de-escalation. An expired credential, an
-     unreachable API or a token-generation failure leaves us knowing nothing, and the
-     absence of evidence must not become evidence of de-escalation. *)
   match
     verdict
       ~principal:
@@ -1234,9 +1073,6 @@ let test_deescalation_requires_the_effective_surface () =
     Alcotest.fail "a measurement failure was read as still elevated"
 ;;
 
-(* DEC-040's positive control: only a *transition* of the same principal and the same
-   capabilities licenses Ready. Every one of these cases produces a "denied" afterwards,
-   and only one of them is evidence. *)
 let test_deescalation_requires_a_transition () =
   let caps =
     [ capability "create" "clusterroles"
@@ -1261,15 +1097,10 @@ let test_deescalation_requires_a_transition () =
     | Sol_cli_cloud_lifecycle.Still_elevated _ ->
       Alcotest.fail "a capability never observed granted was read as still elevated"
   in
-  (* 1. The capability was never observed granted in the window: nothing was removed. *)
   not_a_transition [];
   not_a_transition refused;
-  (* 1b. A capability that was *indeterminate* in the window was never shown to be
-     granted, so its later denial is not evidence that it was removed. *)
   not_a_transition
     [ indeterminate (capability "create" "clusterroles") "the API was unreachable" ];
-  (* 2. A different principal answered after de-escalation: the transition is not
-     established, however clean the denial looks. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1281,7 +1112,6 @@ let test_deescalation_requires_a_transition () =
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a different principal's denial was read as a verified transition"
    | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
-  (* 3. A measurement failure after de-escalation leaves us knowing nothing. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1293,8 +1123,6 @@ let test_deescalation_requires_a_transition () =
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a measurement failure was read as a verified transition"
    | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
-  (* 4. Granted before, denied after, same principal and capabilities: the only shape
-     that licenses Ready. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1306,9 +1134,6 @@ let test_deescalation_requires_a_transition () =
      Alcotest.fail "a demonstrated transition was read as still elevated"
    | Sol_cli_cloud_lifecycle.Undetermined why ->
      Alcotest.fail ("a demonstrated transition was read as undetermined: " ^ why));
-  (* 5. A capability that comes back *indeterminate* after de-escalation is not a
-     denial: the surface was not established. Without the tri-state this read as
-     Deescalated -- the fail-open this case exists to pin. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1323,8 +1148,6 @@ let test_deescalation_requires_a_transition () =
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "an indeterminate post-de-escalation probe was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
-  (* 6. A probe that stops covering a capability observed granted in the window cannot
-     license a verdict about it. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1338,9 +1161,6 @@ let test_deescalation_requires_a_transition () =
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a capability the after-probe never covered was read as removed"
    | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
-  (* 7. A definitely-permitted capability after de-escalation outranks another
-     capability's indeterminate probe: it is hard evidence of elevation, and the operator
-     needs it named. *)
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1359,8 +1179,6 @@ let test_deescalation_requires_a_transition () =
      Alcotest.fail "an indeterminate probe masked a capability that was permitted"
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a permitted capability was read as de-escalated");
-  (* ... and if the capability is still permitted, it is still elevated -- the positive
-     control makes that observable rather than merely assumed. *)
   match
     Sol_cli_cloud_lifecycle.deescalation_transition
       ~before:granted
@@ -1374,16 +1192,6 @@ let test_deescalation_requires_a_transition () =
   | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
 ;;
 
-(* DEC-040: the principal is identified from a real SelfSubjectReview shape.
-
-   On EKS the AWS authenticator reports identity under status.userInfo.extra, where every
-   value is an array of strings -- including arn and canonicalArn. An earlier version
-   looked only for a plain string arn in userInfo, which is not what EKS produces, and
-   would have failed closed on every real install. The flat form is still covered because
-   other authenticators and stubs emit it.
-
-   The live response is captured into this fixture during the next bootstrap epoch (see
-   the run-record template); these lock in the documented shape meanwhile. *)
 let test_whoami_identity_shapes () =
   let sts = "arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth" in
   let canonical = "arn:aws:iam::111122223333:role/sol-provisioner" in
@@ -1400,24 +1208,19 @@ let test_whoami_identity_shapes () =
     | Ok i -> Sol_cli_aws_cluster.principal_role_name i
     | Error e -> Alcotest.fail e
   in
-  (* the EKS shape: arrays under extra, canonicalArn present *)
   Alcotest.(check (option string))
     "eks shape yields the role"
     (Some "sol-provisioner")
     (role_of (eks_body "EKSGetTokenAuth"));
-  (* the session name changes between probes of the same principal -- that must not read
-     as a principal mismatch, or the transition would be Undetermined for no reason *)
   Alcotest.(check (option string))
     "a new session is still the same principal"
     (role_of (eks_body "EKSGetTokenAuth"))
     (role_of (eks_body "some-other-session"));
-  (* the flat string form, which other authenticators and the stubs emit *)
   let flat = Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} canonical in
   Alcotest.(check (option string))
     "flat string form"
     (Some "sol-provisioner")
     (role_of flat);
-  (* pretty-printed, in case the emitter ever formats it *)
   let pretty =
     Printf.sprintf
       {|{
@@ -1437,7 +1240,6 @@ let test_whoami_identity_shapes () =
     "pretty-printed"
     (Some "sol-provisioner")
     (role_of pretty);
-  (* username as the last resort, and no principal at all is Error -- never a default *)
   (match
      Sol_cli_aws_cluster.whoami_identity_of_json
        {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|}
@@ -1457,7 +1259,6 @@ let test_whoami_identity_shapes () =
   (match Sol_cli_aws_cluster.whoami_identity_of_json "error: You must be logged in" with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "a non-JSON response was accepted");
-  (* the role name extraction itself, both ARN forms *)
   Alcotest.(check string)
     "assumed-role ARN"
     "sol-provisioner"
@@ -1468,12 +1269,6 @@ let test_whoami_identity_shapes () =
     (Sol_cli_aws_cluster.role_name_of_arn canonical)
 ;;
 
-(* DEC-040: the principal comparison must fail *closed*, and a parse failure must land in
-   Undetermined rather than in a verdict.
-
-   The previous comparison extracted a role name, which fails open: the same role name in
-   another account, or behind a different role path, would look like the same principal --
-   and a different principal being denied afterwards would read as Deescalated. *)
 let test_principal_comparison_fails_closed () =
   let expected = "arn:aws:iam::111122223333:role/sol-provisioner" in
   let identity ?canonical ?arn ?username () =
@@ -1511,9 +1306,6 @@ let test_principal_comparison_fails_closed () =
     (Sol_cli_aws_cluster.principal_matches ~expected (identity ~username:"somebody" ()))
 ;;
 
-(* A parse failure must be Undetermined on *both* sides of the transition. If it fell
-   through to a verdict it would be a wrong verdict, not a safe failure -- and this was on
-   the not-yet-applied list, so nothing proved it. *)
 let test_parse_failure_is_undetermined () =
   let granted = [ permitted (capability "create" "clusterroles") ] in
   let refused = [ denied (capability "create" "clusterroles") ] in
@@ -1531,15 +1323,12 @@ let test_parse_failure_is_undetermined () =
     | Sol_cli_cloud_lifecycle.Still_elevated _ ->
       Alcotest.fail (label ^ ": a parse failure was read as still elevated")
   in
-  (* after: the post-de-escalation probe could not identify the principal *)
   check_undetermined
     "after"
     (Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
        ~after_principal:parse_failure
        ~after:refused);
-  (* before: the window control could not identify the principal, so nothing was shown to
-     have been removed *)
   check_undetermined
     "before"
     (Sol_cli_cloud_lifecycle.deescalation_transition
@@ -1548,19 +1337,12 @@ let test_parse_failure_is_undetermined () =
        ~after:refused)
 ;;
 
-(* DEC-040: what the parser does with an *ambiguous* array, asserted rather than argued.
-
-   A response whose canonicalArn has more than one entry names more than one principal. The
-   argument for treating that as safe was that the exact comparison cannot confirm a
-   principal it never saw -- which holds for a false Deescalated, but it is an argument, not
-   a check. This asserts the mapping. If it fails, the parser returns a principal and
-   proceeds, and "believed closed" becomes a known gap; if it passes, it is verified. *)
 let test_ambiguous_array_does_not_proceed () =
   let two_entries =
     {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner","arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}|}
   in
   match Sol_cli_aws_cluster.whoami_identity_of_json two_entries with
-  | Error _ -> () (* refused: the ambiguity cannot produce a verdict *)
+  | Error _ -> ()
   | Ok identity ->
     Alcotest.fail
       (Printf.sprintf
@@ -1569,9 +1351,6 @@ let test_ambiguous_array_does_not_proceed () =
          (Option.value (Sol_cli_aws_cluster.principal_role_name identity) ~default:"?"))
 ;;
 
-(* DEC-040: the identity must report *which field* it came from. The gate requires
-   canonicalArn, because that is the field the de-escalation comparison depends on -- a pass
-   via the arn or username fallbacks would validate a path the comparison does not use. *)
 let test_identity_reports_its_source () =
   let source_of body =
     match Sol_cli_aws_cluster.whoami_identity_of_json body with
@@ -1594,11 +1373,6 @@ let test_identity_reports_its_source () =
     (source_of {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|})
 ;;
 
-(* DEC-040: a refusal is evidence of removal only if the credential is still good.
-   "You must be logged in" is also what a working credential gets when the role's trust
-   policy is broken, the clock is skewed, or the wrong role was assumed -- and
-   Principal_refused_by_cluster maps straight to Deescalated. Without the identity check that
-   is a fail-open into the one verdict that has to mean something. *)
 let test_refusal_needs_a_good_identity () =
   let granted = [ permitted (capability "create" "clusterroles") ] in
   let refused = [ denied (capability "create" "clusterroles") ] in
@@ -1609,18 +1383,15 @@ let test_refusal_needs_a_good_identity () =
         (Sol_cli_aws_cluster.refusal_is_deescalation assumption "Unauthorized")
       ~after:refused
   in
-  (* the credential is good: the refusal is the removal *)
   (match verdict_of Sol_cli_aws_cluster.Credential_assumable with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
-  (* the credential is broken: a revocation cannot be told from a bad trust policy *)
   (match verdict_of Sol_cli_aws_cluster.Credential_refused with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "a refusal with an unassumable role was read as still elevated");
-  (* the identity check could not be performed at all *)
   match verdict_of Sol_cli_aws_cluster.Credential_unchecked with
   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
   | Sol_cli_cloud_lifecycle.Deescalated ->

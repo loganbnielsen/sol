@@ -1,5 +1,3 @@
-(* REFAC-121 / REFAC-122: Sol_cli_string. *)
-
 module S = Sol_cli_string
 
 let opt = Alcotest.(option string)
@@ -15,7 +13,6 @@ let test_blank () =
   Alcotest.check opt "non_blank_opt value" (Some "v") (S.non_blank_opt (Some " v"))
 ;;
 
-(* non_empty treats only "" as absent: whitespace is data there. *)
 let test_non_empty () =
   Alcotest.check opt "None" None (S.non_empty None);
   Alcotest.check opt "empty" None (S.non_empty (Some ""));

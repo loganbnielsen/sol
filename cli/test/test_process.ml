@@ -1,11 +1,6 @@
-(* Tests for Sol_cli_process: successful run, non-zero exit, captured stderr,
-   redaction in echo output. *)
-
 let check = Alcotest.(check int)
 let check_str = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
-
-(* ── helpers ─────────────────────────────────────────────────────────────── *)
 
 let ok_result = function
   | Ok r -> r
@@ -17,14 +12,11 @@ let err_result = function
   | Ok _ -> Alcotest.fail "expected error but got Ok"
 ;;
 
-(* ── tests ───────────────────────────────────────────────────────────────── *)
-
 let test_successful_run () =
   let r = ok_result (Sol_cli_process.run (Sol_cli_process.cmd [ "echo"; "hello" ])) in
   check_str "stdout" "hello" r.stdout
 ;;
 
-(* REFAC-124: a non-zero exit is an [Error], never an [Ok] with a code in it. *)
 let test_non_zero_exit () =
   match err_result (Sol_cli_process.run (Sol_cli_process.cmd [ "false" ])) with
   | Sol_cli_process.Non_zero { exit_code; _ } ->
@@ -74,7 +66,6 @@ let test_chdir_failed () =
 
 let test_redaction_in_echo () =
   let secret = "s3cr3t-p4ss" in
-  (* REFAC-135: the echo is reported, not printed; assert on what was reported. *)
   let (), reported =
     Sol_cli_report.collect (fun () ->
       ignore
@@ -122,7 +113,6 @@ let test_error_to_string_nonzero () =
   check_bool "Sol_cli_string.contains 5" true (Sol_cli_string.contains s ~needle:"5")
 ;;
 
-(* A tool that reports its failure on stdout is not silenced. *)
 let test_error_to_string_keeps_stdout () =
   let s =
     Sol_cli_process.error_to_string
@@ -131,9 +121,6 @@ let test_error_to_string_keeps_stdout () =
   check_bool "stdout kept" true (Sol_cli_string.contains s ~needle:"said on stdout")
 ;;
 
-(* ── suite ───────────────────────────────────────────────────────────────── *)
-
-(* REFAC-116 / REFAC-124: Ok means the command succeeded, carrying its output. *)
 let test_run_is_success () =
   let open Sol_cli_process in
   (match run (cmd [ "sh"; "-c"; "echo hi" ]) with
@@ -144,7 +131,6 @@ let test_run_is_success () =
   | _ -> Alcotest.fail "a missing binary is Spawn_failed"
 ;;
 
-(* The runners that wait on a process themselves share [run]'s contract. *)
 let test_completed () =
   let open Sol_cli_process in
   (match completed ~exit_code:0 ~stdout:"o" ~stderr:"e" with
@@ -155,7 +141,6 @@ let test_completed () =
   | _ -> Alcotest.fail "exit 2 is Non_zero with the code and both streams"
 ;;
 
-(* REFAC-123: never empty -- a command that said nothing is described by its code. *)
 let test_failure_message () =
   let f stdout stderr =
     Sol_cli_process.failure_message { exit_code = 4; stdout; stderr }

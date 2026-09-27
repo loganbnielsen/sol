@@ -1,9 +1,3 @@
-(** Unit tests for kafka-eio-service. No broker required. *)
-
-(* ------------------------------------------------------------------ *)
-(* Wire format — uses the production Confluent_wire codec              *)
-(* ------------------------------------------------------------------ *)
-
 let test_wire_roundtrip () =
   let json = `Assoc [ "amount", `Int 100; "currency", `String "USD" ] in
   let schema_id = 42 in
@@ -45,26 +39,17 @@ let test_wire_too_short () =
 ;;
 
 let test_wire_magic_byte () =
-  (* Verify the first byte of any encoded message is 0x00 *)
   let encoded = Kafka_service.Confluent_wire.encode ~schema_id:1 (`String "x") in
   Alcotest.(check char) "magic byte is 0x00" '\x00' (Bytes.get encoded 0)
 ;;
 
 let test_wire_schema_id_big_endian () =
-  (* schema_id 0x01020304 must appear at bytes 1..4 in big-endian order *)
   let encoded = Kafka_service.Confluent_wire.encode ~schema_id:0x01020304 (`String "x") in
   Alcotest.(check char) "byte 1" '\x01' (Bytes.get encoded 1);
   Alcotest.(check char) "byte 2" '\x02' (Bytes.get encoded 2);
   Alcotest.(check char) "byte 3" '\x03' (Bytes.get encoded 3);
   Alcotest.(check char) "byte 4" '\x04' (Bytes.get encoded 4)
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* URL construction via Uri (replaces hand-written parse_base_url)    *)
-(* ------------------------------------------------------------------ *)
-
-(* Exercises the same Uri.of_string (base_url ^ path) parsing http_do_once
-   uses in production. *)
 
 let check_uri msg ~expected_host ~expected_port ~expected_scheme url =
   let u = Uri.of_string url in
@@ -109,10 +94,6 @@ let test_parse_url_https () =
     "https://registry.confluent.io"
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Env config                                                          *)
-(* ------------------------------------------------------------------ *)
-
 let contains s sub =
   let slen = String.length s
   and sublen = String.length sub in
@@ -137,8 +118,6 @@ let with_env name value f =
   Fun.protect f ~finally:(fun () -> Unix.putenv name (Option.value old ~default:""))
 ;;
 
-(* A complete local Kafka environment: SEC-007's posture plus BUG-055's
-   addresses, none of which config_of_env defaults any more. *)
 let with_kafka_env f =
   with_env "KAFKA_SECURITY_PROTOCOL" "plaintext" (fun () ->
     with_env "KAFKA_BROKERS" "localhost:9092" (fun () ->
@@ -159,8 +138,6 @@ let test_config_of_env_rejects_unknown_security_protocol () =
         (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"))
 ;;
 
-(* SEC-007 / FND-0039: an absent (or blank) protocol is an error, not an
-   implicit plaintext. *)
 let test_config_of_env_requires_security_protocol () =
   with_kafka_env
   @@ fun () ->
@@ -179,8 +156,6 @@ let test_config_of_env_requires_security_protocol () =
       (Result.is_ok (Kafka_service.config_of_env ())))
 ;;
 
-(* BUG-055: no substrate address defaults to localhost. Each unset one is an
-   error that names it; all missing ones are named together. *)
 let test_config_of_env_requires_addresses () =
   with_kafka_env
   @@ fun () ->
@@ -231,10 +206,6 @@ let test_config_of_env_topic_durability () =
         true
         (contains (Kafka_service.error_to_string e) "SOL_KAFKA_DURABILITY"))
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Retry topic control flow                                            *)
-(* ------------------------------------------------------------------ *)
 
 let raw_retry_msg ?(headers = []) ?key () : Kafka.Consumer.message =
   { topic = "orders-retry"
@@ -362,10 +333,6 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
             (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join)))
 ;;
 
-(* FEAT-078: a Retry within budget schedules a delay via the same jittered
-   backoff In_memory uses (Kafka.Consumer.backoff_s), bounded by the shared
-   retry_policy's max_delay_s -- and exhausting the budget still routes to
-   the DLQ, exactly as before the retry_policy unification. *)
 let test_retry_within_budget_schedules_jittered_bounded_delay () =
   let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
   let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
@@ -413,9 +380,6 @@ let test_retry_within_budget_schedules_jittered_bounded_delay () =
   | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
 ;;
 
-(* BUG-027: a retried message's key must travel with it to the retry/DLQ
-   topic, so it hashes to the same partition there that it would on the
-   source topic (both topics share the same partition count). *)
 let test_retry_publish_preserves_key () =
   let published_key = ref `Not_called in
   let publish ~target_topic:_ (msg : Kafka_service.Retry_topics.relay) =
@@ -447,8 +411,6 @@ let test_retry_publish_preserves_key () =
          (Bytes.to_string key))
 ;;
 
-(* BUG-029: the relay's produce backoff schedule -- bounded, non-negative, and
-   the cap is exact once jitter can no longer push a large raw delay under it. *)
 let test_produce_backoff_s_early_attempt_within_jittered_bounds () =
   let v = Kafka_service.Retry_topics.produce_backoff_s 1 in
   Alcotest.(check bool)
@@ -458,8 +420,6 @@ let test_produce_backoff_s_early_attempt_within_jittered_bounds () =
 ;;
 
 let test_produce_backoff_s_caps_at_max_delay () =
-  (* raw = 0.1 * 2^9 = 51.2s, far past the 5s cap even at the low end of
-     jitter -- the cap must be exact regardless of the random draw. *)
   Alcotest.(check (float 0.0))
     "large attempt clamps to the cap"
     5.0
@@ -473,8 +433,6 @@ let test_produce_backoff_s_never_negative () =
     (Kafka_service.Retry_topics.produce_backoff_s 1 >= 0.0)
 ;;
 
-(* BUG-029: retry_produce's control flow, fully deterministic via stubbed
-   produce/sleep/backoff_s/on_retry -- no live broker, no real clock. *)
 let test_retry_produce_succeeds_immediately_without_retrying () =
   let produce_calls = ref 0 in
   let sleeps = ref [] in
@@ -540,7 +498,6 @@ let test_retry_produce_gives_up_after_max_attempts () =
   | Error e ->
     Alcotest.(check string) "final error surfaces" "always fails" e;
     Alcotest.(check int) "produce called exactly max_attempts times" 3 !call_count;
-    (* on_retry fires between attempts, never on the final give-up. *)
     Alcotest.(check int) "on_retry called max_attempts - 1 times" 2 !retries
 ;;
 
@@ -645,9 +602,6 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
   | _ -> Alcotest.fail "expected publish failure to be returned"
 ;;
 
-(* BUG-030: retry/DLQ topic names must be scoped by consumer group, or
-   independent groups on the same source topic consume each other's
-   retries/dead-letters. *)
 let test_relay_topic_name_scopes_by_group () =
   Alcotest.(check string)
     "canonical shape"
@@ -723,10 +677,6 @@ let test_relay_topic_name_truncates_overlong_group_ids_deterministically () =
     (not (String.equal name1 name3))
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Topic names                                                         *)
-(* ------------------------------------------------------------------ *)
-
 let test_topic_name_accepts_kafka_compatible_names () =
   let check name =
     match Kafka_service.topic_name name with
@@ -750,10 +700,6 @@ let test_topic_name_rejects_invalid_names () =
   List.iter check [ ""; "."; ".."; "orders/v1"; "orders v1"; long_name ]
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Schema Registry response decoding                                  *)
-(* ------------------------------------------------------------------ *)
-
 let result_error () =
   Alcotest.testable
     (fun fmt -> function
@@ -769,8 +715,6 @@ let test_decode_compatibility_response () =
   | Error e -> Alcotest.failf "decode failed: %s" e
 ;;
 
-(* BUG-049: only "no such subject/version" 404s mean "nothing to be compatible
-   with"; a 404 from a request that never reached the subjects API does not. *)
 let test_is_subject_not_found () =
   let yes body = Kafka_service.Schema.is_subject_not_found body in
   Alcotest.(check bool)
@@ -821,10 +765,6 @@ let test_decode_registration_response_errors () =
     (Kafka_service.Schema.decode_registration_response {|{"id":|})
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Redpanda admin topic metadata decoding                             *)
-(* ------------------------------------------------------------------ *)
-
 let test_decode_topic_partitions () =
   match
     Kafka_service.Admin.decode_topic_partitions
@@ -856,10 +796,6 @@ let test_decode_topic_partitions_errors () =
   check_error "empty partitions" {|[]|};
   check_error "malformed json" {|[{"partition_id":|}
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Runner                                                              *)
-(* ------------------------------------------------------------------ *)
 
 let () =
   let open Alcotest in

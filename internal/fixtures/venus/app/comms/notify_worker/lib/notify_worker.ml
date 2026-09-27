@@ -1,10 +1,3 @@
-(** comms / notify-worker — Worker.RETRYABLE_WORKER implementation (it can
-    return Worker.Retry on a DB failure, so it isn't Ack-only). Consumes
-    Charged events, logs them via Obs, and records a notification in
-    PostgreSQL. The pool and observability handle are injected via functor
-    so the module itself has no mutable state. Run via Worker.Make_with_retry
-    with an explicit ~retry_strategy (FEAT-078: no implicit fallback). *)
-
 module Make (Config : sig
     val pool : Pg_db.pool option
     val ot : Obs_eio.t

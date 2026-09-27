@@ -1,11 +1,3 @@
-(* SEC-010: a secret the root declares must never reach the logged terraform argv,
-   on any provider. The HARDEN-002 run-1 guard keyed on `Aws -> true | _ -> false`
-   and so never ran on GCP, whose root creates Cloud SQL from the same db_password.
-
-   AUDIT-POST-006: the reader must not answer "no secrets" merely because a root is
-   laid out differently from the ones it was written against, so the parser cases
-   below cover the valid variants a root can have and the fail-closed path. *)
-
 module S = Sol_cli_sensitive_vars
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
@@ -62,10 +54,6 @@ resource "null_resource" "x" {
 |}
 ;;
 
-(* A valid root can carry those variants and terraform fmt leaves them alone, so the
-   reader must not depend on the one layout the repository's own roots happen to
-   use. The resource block's `sensitive = true` is deliberately not a variable
-   declaration, and a false/short declaration is not a secret. *)
 let test_parser () =
   Alcotest.check
     strings
@@ -86,9 +74,6 @@ let test_parser_merges_files () =
        ])
 ;;
 
-(* Fail closed: a `sensitive` assignment the reader cannot evaluate must be reported
-   rather than skipped, because skipping it is indistinguishable from "not a
-   secret" and the secret would then reach the logged argv. *)
 let test_unclassifiable_sensitive_is_an_error () =
   let cases =
     [ "an unresolved value", "variable \"a\" {\n  sensitive = var.is_secret\n}\n"
@@ -106,7 +91,6 @@ let test_unclassifiable_sensitive_is_an_error () =
        | Ok _ -> false))
 ;;
 
-(* ...and the error names the file and line, so the operator can fix it. *)
 let test_unclassifiable_names_the_location () =
   match
     S.declared_in
@@ -116,9 +100,6 @@ let test_unclassifiable_names_the_location () =
   | Error message -> check "names file and line" true (contains message "vars.tf:3")
 ;;
 
-(* Positive control against the real roots: both declare db_password sensitive, so
-   the guard is derived from the roots rather than from a provider list. The test
-   runs in _build/default/cli/test; the roots are declared deps. *)
 let real_root provider =
   match S.declared ~root:(Printf.sprintf "../../platform/cloud/%s/cluster" provider) with
   | Ok names -> names
@@ -142,9 +123,6 @@ let refuses ~sensitive vars =
   | Error _ -> true
 ;;
 
-(* Every provider with a cluster root, from the exhaustive provider list
-   (REFAC-100) rather than a hand-written one; a provider on paper has no root to
-   check (DEC-046 rule 4). *)
 let providers_with_roots () =
   Sol_cli_provider.all
   |> List.map Sol_cli_provider.to_string

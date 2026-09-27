@@ -18,28 +18,6 @@ let require_tools () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
-(* ── Helm helpers ────────────────────────────────────────────────────────── *)
-
-(* FRIC-006: same discard-on-failure bug as the cluster-creation/docker/
-   rollout sites this ticket already fixed -- upgrade_install's captured
-   result/error was being collapsed to a bare exit code at all 7 call
-   sites below, each printing only a generic "X install failed" with no
-   indication of why (bad values, chart not found, timeout, etc). Centralized
-   here instead of fixed at each site: every helm_install caller gets the
-   real diagnostic for free. *)
-(* INFRA-086: what this does with a failure has changed twice now, so both
-   halves are worth stating. FRIC-006's diagnostic is preserved: the component's
-   own output travels with the failure instead of a bare exit code. What is new
-   is *when* it runs -- each call records its install and [run_local_infra_installs]
-   below installs them with bounded concurrency, because the eight releases have
-   no install-time dependency on each other and installing them one after another
-   was ~290s of every golden path (both languages) and of a developer's first
-   `sol local infra up`.
-
-   Deferring also means the failure is no longer immediate: the component is
-   reported once the in-flight installs have been waited for, together with the
-   components that never got to run, and none of it can leave a half-installed
-   sibling behind with no explanation. *)
 let pending_installs = ref []
 
 let helm_install ~label release chart ~namespace ?version ?(values = []) ?values_yaml () =
@@ -74,11 +52,6 @@ let apply_yaml yaml =
 
 let install_local_grafana_config ~dashboards ~prometheus ~tempo =
   let* () = apply_yaml dashboards in
-  (* OBS-039: no longer auto-provisioned by a bundled loki-stack Grafana
-     subchart -- see Sol_cli_dev_observability.loki_datasource_configmap_yaml.
-     OBS-042: this datasource also carries the derivedFields link to Tempo,
-     applied regardless of `tempo` -- harmless if Tempo isn't installed, and
-     avoids two near-identical Loki datasource YAMLs. *)
   let* () =
     apply_yaml
       (Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring")
@@ -98,11 +71,6 @@ let install_local_grafana_config ~dashboards ~prometheus ~tempo =
   else Ok ()
 ;;
 
-(* ── dev up ──────────────────────────────────────────────────────────────── *)
-
-(* REFAC-107: what the workspace declares, read from sol.yml at the workspace
-   root, not inferred from build files, so it is the same from any subdirectory
-   and for OCaml and TypeScript units alike. *)
 let declared_resources () =
   let* root =
     Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
@@ -111,8 +79,6 @@ let declared_resources () =
   Sol_cli_config.local_infra ~root |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
 ;;
 
-(* REFAC-139, part B: what to install is Sol_cli_local_platform's decision; this
-   adds the repositories, queues each release and runs them. *)
 let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
   if Sol_cli_local_platform.needs_any_chart req
   then (
@@ -141,8 +107,6 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
       ?values_yaml:r.values_yaml
       ());
   let* () = run_local_infra_installs () in
-  (* Grafana's datasource ConfigMaps name the services above, so they are applied
-     once those releases exist -- after the installs, not interleaved with them. *)
   if Sol_cli_local_platform.needs_grafana req
   then
     install_local_grafana_config
@@ -154,7 +118,6 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
 
 let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
   Unix.sleepf 2.;
-  (* brief pause for service endpoints to settle *)
   Sol_cli_local_platform.endpoints ~req
   |> List.iter (fun { Sol_cli_local_platform.forward = pf; _ } ->
     Printf.printf
@@ -181,8 +144,6 @@ let print_summary ~(req : Sol_cli_workspace.infra_requirements) =
 let dev_up () =
   let* () = require_tools () in
   let* () = Sol_cli_state.ensure () |> Result.map_error Sol_cli_exit.error in
-  (* Kill stale port-forwards from previous sessions, else re-running after a
-     crash silently fails to bind ports while reporting success. *)
   Sol_cli_port_forward.stop_all ();
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let* () = Sol_cli_local_cluster.provision () |> Result.map_error Sol_cli_exit.error in
@@ -204,8 +165,6 @@ let dev_up () =
   Ok ()
 ;;
 
-(* ── dev down ────────────────────────────────────────────────────────────── *)
-
 let dev_down delete_cluster =
   let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
   Printf.printf "Stopping port-forwards...\n%!";
@@ -222,8 +181,6 @@ let dev_down delete_cluster =
       Sol_cli_local_cluster.name;
     Ok ())
 ;;
-
-(* ── dev status ──────────────────────────────────────────────────────────── *)
 
 let dev_status () =
   let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
@@ -243,7 +200,6 @@ let dev_status () =
        print_char '\n'
      | Error _ -> ());
     Printf.printf "\nPort-forwards:\n%!";
-    (* REFAC-126: what Sol recorded starting, and whether each is still up. *)
     let recorded, unreadable = Sol_cli_port_forward.records () in
     (match recorded with
      | [] -> Printf.printf "  none\n"
@@ -263,10 +219,6 @@ let dev_status () =
   Ok ()
 ;;
 
-(* ── dev run ─────────────────────────────────────────────────────────────── *)
-
-(** Read lines from [fd] and write them to stdout, prefixed with [label].
-    Returns when EOF is reached (the child process closed the pipe end). *)
 let prefix_lines_thread fd label =
   let ic = Unix.in_channel_of_descr fd in
   (try
@@ -291,11 +243,8 @@ let dev_run workspace_dir scope =
     | Some d -> d
     | None -> "."
   in
-  (* Change to workspace dir if given explicitly so the workspace resolves *)
   workspace_dir |> Option.iter Unix.chdir;
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
-  (* The loop is workspace-root relative -- every path in the plan is -- and the
-     workspace resolves from any descendant directory, so act from its root. *)
   if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
   then Unix.chdir facts.Sol_cli_workspace_model.root;
   let inventory = Sol_cli_workspace_model.services facts in
@@ -308,11 +257,6 @@ let dev_run workspace_dir scope =
       inventory
     |> Sol_cli_exit.of_msg
   in
-  (* FEAT-103: the declared language selects the adapter that builds and launches
-     each unit, so the loop drives a TypeScript unit through npm and node exactly
-     as it drives an OCaml one through dune. Every adapter is resolved before
-     anything is built or started: a loop that quietly ran half a selection would
-     be worse than one that refused. *)
   let* plan =
     Sol_cli_local_run.plan ~root:facts.Sol_cli_workspace_model.root ~facts services
     |> function
@@ -338,8 +282,6 @@ let dev_run workspace_dir scope =
       recipe.artifact);
   Printf.printf "\n%!";
   Printf.printf "  Building...\n%!";
-  (* The OCaml units are one dune invocation (concurrent dune calls fight over
-     the build lock); each TypeScript unit builds in its own npm project. *)
   let* () =
     plan.builds
     |> List.fold_left
@@ -358,17 +300,12 @@ let dev_run workspace_dir scope =
          (Ok ())
   in
   Printf.printf "  Build done.\n\n%!";
-  (* Run the built artifact directly, avoiding dune exec lock contention and
-     keeping npm out of the supervised process: [sol local run] kills what it
-     started, so it must start the service itself. *)
   let children =
     plan.launches
     |> List.filter_map (fun (recipe : Sol_cli_local_run.recipe) ->
       let label = recipe.label in
       let cmd_str = Sol_cli_local_run.launch_line recipe.launch in
       let pipe_read, pipe_write = Unix.pipe () in
-      (* REFAC-134: spawned through Sol_cli_process, with the dev settings merged
-         over the environment. *)
       let spawned =
         Sol_cli_process.spawn
           ~output:pipe_write
@@ -393,14 +330,12 @@ let dev_run workspace_dir scope =
     | children -> Ok children
   in
   Printf.printf "  Services running — press Ctrl-C to stop all.\n\n%!";
-  (* On SIGINT (Ctrl-C), kill every child before exiting *)
   let kill_all () =
     Printf.printf "\n  Stopping services...\n%!";
     children
     |> List.iter (fun c ->
       try Unix.kill c.pid Sys.sigterm with
       | _ -> ());
-    (* Brief grace period, then SIGKILL *)
     Unix.sleepf 0.5;
     children
     |> List.iter (fun c ->
@@ -413,7 +348,6 @@ let dev_run workspace_dir scope =
        (fun _ ->
          kill_all ();
          exit 130));
-  (* Wait for children in any-exit order so an early crash is reported immediately *)
   let by_pid = Hashtbl.create 8 in
   List.iter (fun c -> Hashtbl.replace by_pid c.pid c) children;
   let remaining = ref (Hashtbl.length by_pid) in
@@ -434,8 +368,6 @@ let dev_run workspace_dir scope =
   done;
   Ok ()
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let up_cmd =
   Cmd.v
@@ -491,10 +423,6 @@ let run_subcmd =
       const Sol_cli_exit.exit_on $ (const dev_run $ run_workspace_arg $ run_scope_arg))
 ;;
 
-(* FEAT-063: `sol local` reads as "the local destination". The substrate
-   lifecycle moves under `sol local infra`, so `sol local status` can mean the
-   same thing as `sol status --target <t>` (workloads) rather than overloading
-   "status" with two unrelated output domains. *)
 let infra_cmd =
   Cmd.group
     (Cmd.info

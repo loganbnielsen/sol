@@ -1,7 +1,3 @@
-(* REFAC-137: one rule for a primitive's settings -- trimmed, and blank reads as
-   unset. [Unix.putenv] cannot unset a variable, which is itself why "" has to
-   mean unset. *)
-
 let with_env name value f =
   let saved = Sys.getenv_opt name in
   Unix.putenv name value;

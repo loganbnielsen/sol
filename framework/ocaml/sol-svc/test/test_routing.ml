@@ -49,10 +49,6 @@ let test_constructor_rejects_malformed_pattern () =
     (fun () -> ignore (Route.get "users" ~auth:`Public dummy_handler))
 ;;
 
-(* ── method_of_http ──────────────────────────────────────────────────── *)
-
-(* ── parse_request_path ─────────────────────────────────────────────────── *)
-
 let test_parse_valid_path () =
   Alcotest.(check bool)
     "valid path → Some"
@@ -79,8 +75,6 @@ let test_parse_root () =
   | None -> Alcotest.fail "root path should be valid"
   | Some (segs, _ts) -> Alcotest.(check int) "root has no segments" 0 (List.length segs)
 ;;
-
-(* ── percent_decode ──────────────────────────────────────────────────────── *)
 
 let test_percent_decode_space () =
   Alcotest.(check string) "%20 → space" " " (Uri.pct_decode "%20")

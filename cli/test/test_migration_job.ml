@@ -1,8 +1,3 @@
-(* REFAC-139, part A: the migration Job runner both `sol migrate apply` and the
-   deploy's prerequisite check use. The wait is exercised against a fake kubectl
-   on PATH, so the INFRA-040 fail-fast -- which only the check used to have -- is
-   held for the one runner both paths now share. *)
-
 let with_fake_kubectl script f =
   let dir = Filename.temp_dir "sol-fake-kubectl-" "" in
   let bin = Filename.concat dir "kubectl" in
@@ -17,8 +12,6 @@ let with_fake_kubectl script f =
     f
 ;;
 
-(* Answers the three reads the wait makes: the Job's succeeded and failed counts,
-   and its pods' waiting state. *)
 let fake ~succeeded ~waiting =
   Printf.sprintf
     {|#!/bin/sh
@@ -72,7 +65,6 @@ let test_succeeded () =
 ;;
 
 let test_times_out_on_a_transient_wait () =
-  (* ContainerCreating is not terminal: the wait continues to its bound. *)
   with_fake_kubectl (fake ~succeeded:"" ~waiting:"ContainerCreating|") (fun () ->
     match wait () with
     | Timed_out _ -> ()

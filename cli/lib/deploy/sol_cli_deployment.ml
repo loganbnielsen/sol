@@ -1,20 +1,3 @@
-(* The deployment event (FEAT-070, FEAT-071): one deploy *attempt*, recorded
-   immutably.
-
-   It points at the release the attempt tried to put in place (by [release_id])
-   and carries the provenance around the attempt — including its [outcome]. It
-   never defines a release, and provenance never enters the release artifact or
-   the pod template — that is what keeps a no-op redeploy from changing the
-   rendered manifests.
-
-   The record is the authority; the Loki deploy marker carries the same
-   [deployment_id] only as a join key, and is only emitted once this record has
-   actually been persisted.
-
-   Both identities stay typed here (FEAT-071): [deployment_id] and [release_id]
-   are abstract ids, and [to_string]/[of_string] happen only at the JSON/YAML/
-   table boundary, exactly as on the release path. *)
-
 type outcome =
   | Applied
   | Apply_failed
@@ -50,7 +33,6 @@ let outcome_of_string = function
          s)
 ;;
 
-(* UTC, second precision, lexicographically sortable. *)
 let rfc3339_utc (now : float) : string = Sol_cli_time.rfc3339 now
 
 let deployment_mode_to_string (m : Sol_cli_deployment_plan.deployment_mode) =
@@ -60,8 +42,6 @@ let deployment_mode_to_string (m : Sol_cli_deployment_plan.deployment_mode) =
   | Sol_hosted -> "sol_hosted"
 ;;
 
-(* Invocation provenance. The release id is consumed from the plan, never
-   rederived; the provenance is recorded here and nowhere on the release path. *)
 let of_plan
       ~(deployment_id : Sol_cli_deployment_id.t)
       ~(now : float)
@@ -91,8 +71,6 @@ let of_plan
   }
 ;;
 
-(* Provenance is best-effort: outside a Git checkout these are [""] and clean,
-   not a failure to deploy. *)
 let run_git args =
   match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
   | Ok r -> String.trim r.stdout
@@ -102,14 +80,10 @@ let run_git args =
 let git_commit () = run_git [ "rev-parse"; "--short"; "HEAD" ]
 let git_dirty () = run_git [ "status"; "--porcelain" ] <> ""
 
-(* The id goes in verbatim: [d-...] is lowercase RFC 1123 by construction. *)
 let configmap_name (t : t) : string =
   Printf.sprintf "sol-deployment-%s" (Sol_cli_deployment_id.to_string t.deployment_id)
 ;;
 
-(* FEAT-071: constructing [t] (through [of_plan] or [of_json]) already
-   established both identities, so the only remaining invariant to check on the
-   read path is the name direction. A correctly named record is not corrupt. *)
 let validate ~(name : string) (t : t) : (unit, string) result =
   if String.equal name (configmap_name t)
   then Ok ()
@@ -121,8 +95,6 @@ let validate ~(name : string) (t : t) : (unit, string) result =
          (Sol_cli_deployment_id.to_string t.deployment_id)
          (configmap_name t))
 ;;
-
-(* ── JSON ─────────────────────────────────────────────────────────────────── *)
 
 let to_json (t : t) : Yojson.Safe.t =
   `Assoc
@@ -154,7 +126,6 @@ let to_json (t : t) : Yojson.Safe.t =
     ]
 ;;
 
-(* Safe accessors: a malformed cluster object must not crash a read-only list. *)
 let mem key = function
   | `Assoc kvs -> List.assoc_opt key kvs
   | _ -> None
@@ -178,9 +149,6 @@ let string_option key json =
   | _ -> None
 ;;
 
-(* FEAT-071: ids are parsed here, at the boundary, and stay typed in [t]. A
-   malformed id is an error, never a string that later reaches [configmap_name]
-   or a label. *)
 let of_json (json : Yojson.Safe.t) : (t, string) result =
   let missing field = Error (Printf.sprintf "deployment record is missing %s" field) in
   match str "deployment_id" json, str "release_id" json, str "workspace" json with
@@ -225,11 +193,6 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
                })))
 ;;
 
-(* ── Kubernetes objects ───────────────────────────────────────────────────── *)
-
-(* Applied through kubectl, which accepts JSON as YAML. [immutable: true] is what
-   makes the event a record: a later failure or unhealthy rollout is never
-   written back into it as a status snapshot. *)
 let to_configmap_json (t : t) : string =
   let labels =
     [ "sol.dev/type", `String "deployment"
@@ -260,18 +223,12 @@ let to_configmap_json (t : t) : string =
         ])
 ;;
 
-(* ── Reading back ─────────────────────────────────────────────────────────── *)
-
 let item_name item =
   match mem "metadata" item with
   | Some metadata -> str "name" metadata
   | None -> ""
 ;;
 
-(* FEAT-071: fail closed. The store is authoritative deployment history, so a
-   matching ConfigMap that is unparseable, malformed, or does not validate is
-   corruption — silently dropping it would print a partial history as if it were
-   the whole one. The error names the record so an operator can find it. *)
 let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
   let corrupt label msg =
     Error
@@ -299,15 +256,12 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
                    | Ok () -> go (r :: acc) rest)))
           | _ -> corrupt label "has no data.record"))
   in
-  (* REFAC-132: no [items] list is an unreadable response, not an empty history. *)
   let* items =
     Sol_cli_json.require ~what:"deployment list" [ "items" ] Sol_cli_json.list json
   in
   go [] items
 ;;
 
-(* Newest first. [created_at] is the authority; the id breaks ties (and is itself
-   time-prefixed, so the two agree unless a clock moved backwards). *)
 let format_table (records : t list) : string =
   let sorted =
     records

@@ -12,7 +12,6 @@ let of_error to_string r = Result.map_error (fun e -> error (to_string e)) r
 let exit_on = function
   | Ok () -> ()
   | Error { text; code } ->
-    (* What the command printed comes before why it failed. *)
     flush stdout;
     if text <> ""
     then

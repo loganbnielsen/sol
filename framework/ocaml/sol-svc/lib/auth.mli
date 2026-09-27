@@ -8,23 +8,13 @@ type jwt_algorithm =
 
 type jwt_key_source =
   | Hs256_secret of string
-  (** Shared secret. Verified via [jose]'s HS256 path, not a hand-rolled
-          HMAC comparison. *)
   | Jwks_static of string
-  (** A JWKS document (RFC 7517) baked into config, e.g. for a fixed
-          non-rotating key set. *)
   | Jwks_url of string
-  (** HTTPS URL of a JWKS endpoint. Fetched over TLS and cached with a fixed
-          rotation window; never fetched on every request. Enforced: a service
-          whose [Jwks_url] is not an absolute [https://] URL refuses to start
-          with a [`Config] error (SEC-009). *)
 
 type jwt_verified_config =
   { issuer : string
   ; audience : string
   ; algorithms : jwt_algorithm list
-    (** Allowlist. A token whose header [alg] is not in this list is rejected
-          before any key lookup or signature check. *)
   ; key_source : jwt_key_source
   }
 

@@ -1,10 +1,4 @@
 open Cmdliner
-
-(* FEAT-101 / DEC-049: say where this sol's own assets come from, and prove each
-   one its commands read is there and usable -- by running the same code those
-   commands run, not by listing paths. Needs no cluster, cloud account, registry
-   or Terraform, so an installed release can be checked anywhere. *)
-
 module A = Sol_cli_platform_assets
 
 let form_to_string assets =
@@ -15,7 +9,6 @@ let form_to_string assets =
 
 open Result.Syntax
 
-(* One check: what it covers, and either what it found or why it failed. *)
 type check =
   { label : string
   ; outcome : (string, string) result
@@ -47,7 +40,6 @@ let component_names assets =
   | exception Sys_error msg -> Error msg
 ;;
 
-(* sol local infra: each component's values, merged the way the install does. *)
 let component_checks assets =
   match component_names assets with
   | Error reason -> [ check "components" (Error reason) ]
@@ -78,9 +70,6 @@ let runner_check () =
        | A.Build_from_source { context } -> "built from " ^ context))
 ;;
 
-(* REFAC-128: the scaffold template trees `sol new` copies (DEC-046 rule 2:
-   platform/ holds what the CLI drives). The check runs the same walk the command
-   runs, so a missing or empty kind fails here rather than at scaffold time. *)
 let template_checks assets =
   let root = A.templates_root assets in
   Sol_cli_scaffold_tree.kinds
@@ -94,7 +83,6 @@ let template_checks assets =
        | Ok rels -> Ok (Printf.sprintf "%d files" (List.length rels))))
 ;;
 
-(* Every check the commands' own code would make, run through that code. *)
 let checks assets =
   List.concat
     [ Sol_cli_provider.all

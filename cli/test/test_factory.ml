@@ -1,5 +1,3 @@
-(* REFAC-130: the workspace a fixture describes, read once through the loader
-   under test -- the same value the commands pass into the plan. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -29,7 +27,6 @@ let with_tmp f =
          ~finally:(fun () -> Sys.chdir cwd)
          (fun () ->
             Sys.chdir root;
-            (* DEC-024: the fixture is a Sol workspace. *)
             write "sol.yml" "";
             f root))
 ;;
@@ -47,8 +44,6 @@ let env : Sol_cli_deployment_plan.env_config =
   }
 ;;
 
-(* FEAT-065: the factory no longer scans. The caller resolves a scope and hands
-   the resolved services in, so the factory cannot select a different set. *)
 let test_run_without_cmdliner () =
   with_tmp (fun root ->
     mkdir_p "app/payments/charge_svc";

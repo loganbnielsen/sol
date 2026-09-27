@@ -26,9 +26,6 @@ let test_one_degraded () =
      = S.Degraded)
 ;;
 
-(* DEC-038 §7 / FND-0019, the regression that matters: an unreadable workload
-   must not roll up to healthy. Before this, `Undetermined` did not exist and the
-   equivalent input was `None`, which rolled up to Healthy. *)
 let test_unreadable_is_unknown_not_healthy () =
   let status =
     S.rollup_domain_status
@@ -39,7 +36,6 @@ let test_unreadable_is_unknown_not_healthy () =
   (match status with
    | S.Unknown why -> check_bool "the verdict carries why" true (contains "Forbidden" why)
    | other -> Alcotest.fail ("expected Unknown, got " ^ S.domain_status_to_string other));
-  (* and it must stay distinguishable from a *successful* read finding nothing *)
   check_bool
     "a successful read with nothing wrong is still Healthy"
     true
@@ -58,8 +54,6 @@ let test_unreadable_namespace_is_unknown_not_absent () =
     (S.rollup_domain_status ~ns_presence:Ns_absent [] = S.Not_deployed)
 ;;
 
-(* Evidence of a fault outranks missing evidence: if something observed is broken,
-   that is a verdict. Missing evidence only decides when nothing contradicts it. *)
 let test_a_known_fault_outranks_an_unknown () =
   check_bool
     "unhealthy beats undetermined"
@@ -91,7 +85,6 @@ let test_domain_status_to_string () =
     "Not_deployed label is upper-cased"
     true
     (S.domain_status_to_string S.Not_deployed = "NOT DEPLOYED");
-  (* The reason is rendered inside the verdict line, first line only. *)
   check_bool
     "Unknown carries its reason"
     true
@@ -103,8 +96,6 @@ let test_domain_status_to_string () =
     (S.domain_status_to_string (S.Unknown "first line\nsecond line")
      = "UNKNOWN (first line)")
 ;;
-
-(* ── probe_url / reachability_of_probe (OBS-018) ────────────────────────── *)
 
 module O = Sol_cli_observability_url
 
@@ -186,8 +177,6 @@ let test_reachability_to_string () =
     true
     (S.reachability_to_string S.Not_checked = "not checked")
 ;;
-
-(* ── not_configured_message / unreachable_message (OBS-031) ─────────────── *)
 
 let test_not_configured_message_names_backend_and_flag () =
   let msg = S.not_configured_message ~signal:S.Loki ~backend:O.Self_hosted_durable in
@@ -283,8 +272,6 @@ let test_unreachable_message_names_url_and_error () =
      | Not_found -> false)
 ;;
 
-(* ── reachability_line (OBS-031) ─────────────────────────────────────────── *)
-
 let test_reachability_line_not_configured () =
   check_bool
     "no probe_url -> not_configured_message"
@@ -321,8 +308,6 @@ let test_reachability_line_unreachable () =
      = S.unreachable_message ~url:"http://x" ~error:"connection failed")
 ;;
 
-(* ── service_is_declared (OBS-022/024) ──────────────────────────────────── *)
-
 let test_service_is_declared_true_for_declared_name () =
   check_bool
     "declared service -> true"
@@ -343,8 +328,6 @@ let test_service_is_declared_false_for_empty_domain () =
     false
     (S.service_is_declared ~k8s_name:"charge-svc" [])
 ;;
-
-(* ── pod_expectation_of_primitive (OBS-026) ─────────────────────────────── *)
 
 module R = Sol_cli_rollout_diagnosis
 
