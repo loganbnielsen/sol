@@ -85,6 +85,7 @@
   test_local_run
   test_json
   test_cloud_cli
+  test_local_platform
   test_deploy_selection
   test_migration_job
   test_migration_gate)
