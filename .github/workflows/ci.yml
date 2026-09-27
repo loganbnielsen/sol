@@ -300,6 +300,18 @@ jobs:
       - name: Ticket-move guard mutation test
         run: bash internal/ci/test_ticket_move.sh
 
+      - name: Pipeline ticket validation guard (BUG-060)
+        # Deliberately unconditional, and deliberately not gated on `classify`:
+        # filing or editing a ticket *is* a docs-only change, which is exactly the
+        # PR shape this covers, and the invariant is about the whole tree. It runs
+        # `soldev pipeline validate` -- the same parser `pipeline ls`/`check` read
+        # tickets with -- over BACKLOG, READY_FOR_ENGINEERING and DONE, so an
+        # unreadable ticket is an error naming the file instead of a ticket that
+        # quietly disappears from the queue view. The script is also the guard's
+        # mutation test: it plants malformed tickets in a throwaway tree and
+        # expects each to be rejected, against a readable control tree that passes.
+        run: bash internal/ci/test_pipeline_validate.sh
+
       - name: Workflow paths-filter guard (REFAC-099)
         # Unconditional: a stale `paths:` entry makes its workflow stop triggering
         # silently, and the change that stales it can be any kind of move.

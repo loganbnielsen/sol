@@ -678,7 +678,7 @@ let test_unknown_state_is_not_absence_and_not_silent () =
 
 (* Regression 12 / step 3 preserved: a refused plan is an outcome, not permission to
    weaken the assertion, and the *policy* controls only what follows. Composed here
-   with the real step-3 mechanism, the way [cmd_cloud_tf] wires it. *)
+   with the real step-3 mechanism, the way [Sol_cli_cloud_wiring] wires it. *)
 let test_refused_plan_is_a_continue_failure () =
   let applied = ref 0 in
   let policy =

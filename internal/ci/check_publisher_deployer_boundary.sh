@@ -11,10 +11,13 @@ set -euo pipefail
 
 root="${1:-$(git rev-parse --show-toplevel)}"
 
+# The provisioner is the `sol cloud` commands and the cloud library they drive
+# (REFAC-139 moved the lifecycle wiring into cli/lib/cloud).
 if grep -Eq 'Sol_cli_docker\.(build|push)' \
-  "$root/cli/bin/cmd_cloud.ml" "$root/cli/bin/cmd_cloud_tf.ml"
+  "$root/cli/bin/cmd_cloud.ml" "$root/cli/bin/cmd_cloud_tf.ml" "$root"/cli/lib/cloud/*.ml
 then
-  echo "cmd_cloud[_tf].ml (provisioner) must not call Sol_cli_docker.build/push" >&2
+  echo "the provisioner (cmd_cloud[_tf].ml, cli/lib/cloud) must not call" \
+    "Sol_cli_docker.build/push" >&2
   exit 1
 fi
 

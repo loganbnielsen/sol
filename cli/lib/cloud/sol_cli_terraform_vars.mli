@@ -23,3 +23,19 @@ val var_file
   -> flag:string option
   -> target:string option
   -> string option
+
+(** [of_target ~strict ~workspace target] loads [target] and returns its
+    variables ({!of_config}) with the resolved target. [strict] (apply and
+    destroy, which mutate infrastructure) refuses a target that is not declared,
+    so a typo'd one cannot inherit sol.yml's shared defaults. *)
+val of_target
+  :  strict:bool
+  -> workspace:string
+  -> string
+  -> ((string * string) list * Sol_cli_config.target, string) result
+
+(** [resolved key ~var_files ~vars]: the value a Terraform run gives [key] --
+    the last [key=value] in [vars] (the [--var] flags), else the first var file
+    that assigns it. Surrounding quotes are dropped; an unreadable var file
+    assigns nothing. *)
+val resolved : string -> var_files:string list -> vars:string list -> string option

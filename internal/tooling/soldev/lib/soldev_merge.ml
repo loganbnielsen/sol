@@ -813,6 +813,11 @@ let run_ls include_done =
     else List.filter (fun s -> s <> Soldev_ticket.Done) Soldev_ticket.all_states
   in
   let any = ref false in
+  (* BUG-060: a ticket this command cannot read is named in its row *and* fails
+     the listing. Reporting it only in the row left the command's exit status
+     green, so a pipeline that ran `ls` -- or a reader skimming it -- could not
+     tell a queue with an unreadable ticket from a healthy one. *)
+  let unreadable = ref [] in
   List.iter
     (fun state ->
        let state_dir = ticket_dir state in
@@ -842,44 +847,52 @@ let run_ls include_done =
                 let deps =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
-                let ready = Soldev_ticket.readiness_label ~ticket_id:id state content in
-                (* REFAC-137: a frontmatter that is not valid YAML is named in the
-                   listing, never read as a ticket with no fields. *)
+                let path = Filename.concat state_dir filename in
+                (* BUG-060: an unreadable ticket is named in the listing exactly as
+                   `check` and `validate` would refuse it -- one rule, so a ticket
+                   cannot be rejected by one command and listed as ordinary by
+                   another. Nothing else is asked of it: no premise probe, no PR
+                   lookup, no worktree lookup, because a row that says
+                   "premise-stale" would read as a ticket the pipeline understands. *)
                 let ready =
-                  match Soldev_ticket.frontmatter content with
-                  | Ok _ -> ready
-                  | Error message -> "invalid-frontmatter: " ^ message
-                in
-                (* INFRA-010: a stale premise must not read as actionable, and the
-                   listing is exactly where it silently did. Echo is off here
-                   because `ls` is a summary; `check` is where the probe is shown
-                   before it runs. *)
-                let ready =
-                  match Soldev_ticket.premise_of content with
-                  | None -> ready
-                  | Some probe ->
-                    (match
-                       Soldev_ticket.premise_verdict
-                         ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
-                     with
-                     | Soldev_ticket.Premise_holds -> ready
-                     | Soldev_ticket.Premise_stale ->
-                       "premise-stale — the probe succeeded, so this may be done already"
-                     | Soldev_ticket.Premise_unverified reason ->
-                       "premise-unverified: " ^ reason)
-                in
-                let ready =
-                  if state = Soldev_ticket.Ready_for_engineering
-                  then (
-                    match find_pr_for_ticket id with
-                    | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
-                    | None -> ready)
-                  else ready
-                in
-                let ready =
-                  match worktree_annotation_for_ticket id with
-                  | Some annotation -> ready ^ " " ^ annotation
-                  | None -> ready
+                  match Soldev_ticket.unreadable ~path content with
+                  | Some reason ->
+                    unreadable := reason :: !unreadable;
+                    reason
+                  | None ->
+                    let ready =
+                      Soldev_ticket.readiness_label ~ticket_id:id state content
+                    in
+                    (* INFRA-010: a stale premise must not read as actionable, and
+                       the listing is exactly where it silently did. Echo is off
+                       here because `ls` is a summary; `check` is where the probe is
+                       shown before it runs. *)
+                    let ready =
+                      match Soldev_ticket.premise_of content with
+                      | None -> ready
+                      | Some probe ->
+                        (match
+                           Soldev_ticket.premise_verdict
+                             ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
+                         with
+                         | Soldev_ticket.Premise_holds -> ready
+                         | Soldev_ticket.Premise_stale ->
+                           "premise-stale — the probe succeeded, so this may be done \
+                            already"
+                         | Soldev_ticket.Premise_unverified reason ->
+                           "premise-unverified: " ^ reason)
+                    in
+                    let ready =
+                      if state = Soldev_ticket.Ready_for_engineering
+                      then (
+                        match find_pr_for_ticket id with
+                        | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
+                        | None -> ready)
+                      else ready
+                    in
+                    (match worktree_annotation_for_ticket id with
+                     | Some annotation -> ready ^ " " ^ annotation
+                     | None -> ready)
                 in
                 let title = Soldev_ticket.ticket_title content in
                 Printf.printf
@@ -893,7 +906,72 @@ let run_ls include_done =
              files)))
     states;
   if not !any then Printf.printf "No tickets found.\n";
-  Ok ()
+  match List.rev !unreadable with
+  | [] -> Ok ()
+  | tickets ->
+    List.iter (fun reason -> Printf.eprintf "error: %s\n%!" reason) tickets;
+    Soldev_exit.error
+      ~code:1
+      (Printf.sprintf
+         "%d ticket(s) in the states listed above could not be read; fix them, or run \
+          `soldev pipeline validate` for the whole tree"
+         (List.length tickets))
+;;
+
+(* ── pipeline validate ───────────────────────────────────────────────────── *)
+
+(* BUG-060: the invariant this command owns is whole-tree, and it exists because
+   the other two surfaces cannot express it: `ls` is a queue view (it does not
+   read the DONE history by default) and `check` only ever looks at the ticket it
+   is handed. A malformed ticket in DONE -- which is exactly the case that
+   motivated this, INFRA-042, plus the FEAT-103 frontmatter that had already been
+   merged -- was therefore invisible to both, and CI never parsed a ticket at
+   all. *)
+let run_validate () =
+  (* A state directory that is not there is not "no tickets" -- the tree is
+     broken (or the command is being run from outside the repository), and
+     reading it as an empty state would be the same silent degradation this
+     command exists to stop. *)
+  let missing_dirs =
+    Soldev_ticket.all_states
+    |> List.filter_map (fun state ->
+      let state_dir = ticket_dir state in
+      if Sys.file_exists state_dir
+      then None
+      else Some (Printf.sprintf "%s: no such ticket directory" state_dir))
+  in
+  let paths =
+    Soldev_ticket.all_states
+    |> List.concat_map (fun state ->
+      let state_dir = ticket_dir state in
+      if not (Sys.file_exists state_dir)
+      then []
+      else
+        Sys.readdir state_dir
+        |> Array.to_list
+        |> List.filter (fun f -> Filename.check_suffix f ".md")
+        |> List.sort String.compare
+        |> List.map (Filename.concat state_dir))
+  in
+  let unreadable =
+    missing_dirs
+    @ List.filter_map (fun path -> Soldev_ticket.unreadable ~path (read_file path)) paths
+  in
+  List.iter (fun reason -> Printf.eprintf "error: %s\n%!" reason) unreadable;
+  match unreadable with
+  | [] ->
+    Printf.printf
+      "pipeline tickets: %d read across %d state(s) — all readable\n"
+      (List.length paths)
+      (List.length Soldev_ticket.all_states);
+    Ok ()
+  | _ ->
+    Soldev_exit.error
+      ~code:1
+      (Printf.sprintf
+         "%d of %d pipeline tickets could not be read"
+         (List.length unreadable)
+         (List.length paths))
 ;;
 
 (* ── pipeline check ──────────────────────────────────────────────────────── *)
@@ -904,10 +982,13 @@ let run_check ticket_id =
   | None -> Soldev_exit.error ~code:2 (Printf.sprintf "unknown ticket: %s" ticket_id)
   | Some (state, path) ->
     let content = read_file path in
-    let* _fields =
-      Soldev_ticket.frontmatter content
-      |> Result.map_error (fun message ->
-        { Soldev_exit.message = Some (Printf.sprintf "%s: %s" path message); code = 1 })
+    (* BUG-060: the same rule `ls` and `validate` use. A ticket the pipeline
+       cannot read must not be answered for -- "status: actionable" is what a
+       worker acts on. *)
+    let* () =
+      match Soldev_ticket.unreadable ~path content with
+      | None -> Ok ()
+      | Some message -> Soldev_exit.error message
     in
     let deps = Soldev_ticket.parse_depends content in
     Printf.printf "%s  state: %s\n" ticket_id (dir state);
