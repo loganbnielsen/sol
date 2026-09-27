@@ -51,16 +51,22 @@ type discover_error =
 val workload_fact_to_service : workload_fact -> service
 
 (** Scan every workload on disk. Discovery never filters: selection is applied
-    once, after discovery, by [Sol_cli_workload_selection] (FEAT-065). *)
-val scan_workspace : unit -> (workspace_scan, discover_error) result
+    once, after discovery, by [Sol_cli_workload_selection] (FEAT-065).
+
+    [~root], when given, names the workspace to read directly -- the caller has
+    already established the boundary ([Sol_cli_workspace.enter_cwd]). Without
+    it the boundary is resolved from the current directory, which is the one
+    reader [Sol_cli_workspace_model.load] calls on a caller's behalf. *)
+val scan_workspace : ?root:string -> unit -> (workspace_scan, discover_error) result
 
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
 
 (** The workspace's services, or why they could not be discovered (REFAC-115:
-    the caller reports it; discovery never exits). *)
-val discover_services : unit -> (service list, discover_error) result
+    the caller reports it; discovery never exits). [~root] as in
+    {!scan_workspace}. *)
+val discover_services : ?root:string -> unit -> (service list, discover_error) result
 
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list

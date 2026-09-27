@@ -687,6 +687,14 @@ let load path =
   else load_string ~path (In_channel.with_open_bin path In_channel.input_all)
 ;;
 
+(* REFAC-130: the sol.yml layer on its own, for callers that need a declaration
+   sol.yml makes without resolving an environment or a target. The workspace
+   model reads each workload's declared language this way. *)
+let sol_yml_services ~root =
+  let* layer = load (Filename.concat root "sol.yml") in
+  Ok layer.services
+;;
+
 let prefer a b =
   match b with
   | Some _ -> b
@@ -1229,8 +1237,11 @@ let discover_targets envs =
   |> List.sort String.compare
 ;;
 
-let discover_target_paths () =
-  let* envs = load_environments ~root:(workspace_root ()) in
+(* REFAC-130: [~root] names the workspace to read; without it the root is
+   resolved from the current directory, as every caller did before. *)
+let discover_target_paths ?root () =
+  let root = Option.value root ~default:(workspace_root ()) in
+  let* envs = load_environments ~root in
   Ok (discover_targets envs)
 ;;
 

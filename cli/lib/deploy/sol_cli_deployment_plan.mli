@@ -133,22 +133,30 @@ type plan_error =
     Returns [Ok] validated {!Sol_cli_plan_ids.Topic_name.t} values, sorted and
     deduplicated. Invalid names are skipped with a warning. Returns [Ok []] when
     the [events/] directory does not exist. [Error] when an event [sol.toml] is
-    malformed or has an unknown key (BUG-042); a missing one declares no topics. *)
+    malformed or has an unknown key (BUG-042); a missing one declares no topics.
+
+    REFAC-130: re-exported from {!Sol_cli_workspace_scan} for callers that
+    already have a workspace root; [Sol_cli_workspace_model] reads these facts
+    once per command and is the only production caller. *)
 val discover_topics
-  :  unit
+  :  ?root:string
+  -> unit
   -> (Sol_cli_plan_ids.Topic_name.t list, Sol_cli_toml.parse_error) result
 
-(** Scan [db/migrations/*.sql] in the current directory and return validated
+(** Scan [db/migrations/*.sql] and return validated
     {!Sol_cli_plan_ids.Migration_file.t} values, sorted by filename. Returns
     [[]] when [db/migrations/] does not exist. *)
-val discover_migrations : unit -> Sol_cli_plan_ids.Migration_file.t list
+val discover_migrations : ?root:string -> unit -> Sol_cli_plan_ids.Migration_file.t list
 
 (** Scan [events/<domain>/*.ml] for event contract files and derive schema
     subject names as ["<domain>.<EventName>"]. Top-level [events/<event>.ml]
     files are returned without a domain prefix. Returns validated
     {!Sol_cli_plan_ids.Schema_subject.t} values, sorted and deduplicated.
     Returns [[]] when the [events/] directory does not exist. *)
-val discover_schema_subjects : unit -> Sol_cli_plan_ids.Schema_subject.t list
+val discover_schema_subjects
+  :  ?root:string
+  -> unit
+  -> Sol_cli_plan_ids.Schema_subject.t list
 
 (** [derive_consumer_groups ~resolved_config workspace services] returns validated
     {!Sol_cli_plan_ids.Consumer_group.t} values for [Worker] entries that

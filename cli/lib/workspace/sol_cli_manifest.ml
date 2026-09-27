@@ -73,9 +73,20 @@ let has_dockerfile dir = Sys.file_exists (Filename.concat dir "Dockerfile")
    Selection happens once, after discovery, in [Sol_cli_workload_selection]
    (FEAT-065): a scan that took a filter could return a subset that looked
    identical to an empty workspace, which is exactly the confusion the strict
-   selector removes. *)
-let scan_workspace () =
-  match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
+   selector removes.
+
+   REFAC-130: [~root] is the workspace to read. Without it the scan resolves the
+   boundary from the current directory, which is what every command did before
+   the workspace model existed; with it the caller has already established the
+   boundary (it entered the workspace) and the scan reads exactly that root --
+   which is how [Sol_cli_workspace_model.load] reads a fixture without chdir. *)
+let scan_workspace ?root () =
+  let resolved =
+    match root with
+    | Some root -> Ok root
+    | None -> Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
+  in
+  match resolved with
   | Error e -> Error (Workspace_error e)
   | Ok root ->
     let app_dir = Filename.concat root "app" in
@@ -107,8 +118,8 @@ let scan_workspace () =
       Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 
-let discover_services () =
-  match scan_workspace () with
+let discover_services ?root () =
+  match scan_workspace ?root () with
   | Error _ as err -> err
   | Ok scan ->
     Ok
