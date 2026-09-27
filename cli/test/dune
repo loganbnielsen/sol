@@ -86,6 +86,7 @@
   test_json
   test_cloud_cli
   test_migration_job)
+  test_cloud_cli)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable
