@@ -1,3 +1,10 @@
+---
+id: INFRA-042
+type: bug
+severity: high
+source: GCP qualification Attempt 3 (2026-09-19)
+---
+
 # INFRA-042 — a partially-installed GCP platform is not destroyable through the lifecycle
 
 **Status:** Done
