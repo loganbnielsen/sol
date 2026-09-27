@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: DOCS-025 — the readiness path depends on the declared language (2026-09-27)
+
+- `docs/deployment/workload-availability.md` said an HTTP service is probed on `/healthz` for startup, readiness and liveness. True before INFRA-073: readiness is now `/readyz` for a declared OCaml `-svc`, and stays `/healthz` for a TypeScript or undeclared workload until the TypeScript framework serves it (FEAT-096). The bullet now says so, and notes that both deployment modes resolve it identically since BUG-056.
+- The rest of the document matched the code and is unchanged.
+- `AGENTS.md`'s comment policy now also records what is *not* enforced: dune files and Dockerfiles are policy-covered but absent from `check_no_comments.sh`'s file list, which the CI and tooling work owns.
+
 ## Latest: REFAC-143 — no comments in dune files or Dockerfiles (2026-09-27)
 
 - The policy is now written down: `AGENTS.md` gains a *Comments: none in covered formats* section — covered formats, tool directives as the only exception, invariants to types/shared definitions/guards/tests, durable rationale to the docs or the record that owns it, user-facing explanation to the documentation that ships with the artifact, and the categories deliberately left uncovered. Finding this by failing CI (as happened on BUG-063) was the weakest possible discovery path for an agent writing code here.
