@@ -60,12 +60,11 @@ let at_root path =
 ;;
 
 let workspace_name ~root = Filename.basename root
-
-let current_name () =
-  match find_root ~dir:(Sys.getcwd ()) with
-  | Some root -> workspace_name ~root
-  | None -> Filename.basename (Sys.getcwd ())
-;;
+let root_or_dir ~dir = Option.value (find_root ~dir) ~default:dir
+let name_from ~dir = workspace_name ~root:(root_or_dir ~dir)
+let current_name () = name_from ~dir:(Sys.getcwd ())
+let migrations_dir ~dir = Filename.concat (root_or_dir ~dir) Sol_cli_migration.default_dir
+let migrations_table ~dir = Sol_cli_migration.table_name ~workspace:(name_from ~dir)
 
 let ignored_dir name =
   name = "_build" || name = "node_modules" || name = "vendor" || name = "dist"

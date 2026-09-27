@@ -234,10 +234,36 @@ let test_symlinked_checkout_is_not_nested () =
     | Error e -> Alcotest.fail (Sol_cli_workspace.workspace_error_to_string e))
 ;;
 
+let test_migration_defaults_from_a_subdirectory () =
+  with_tmpdir (fun tmpdir ->
+    let root = Filename.concat tmpdir "shop" in
+    let sub = Filename.concat root "app/payments" in
+    mkdir_p sub;
+    write_file (Filename.concat root "sol.yml") "";
+    check_string
+      "the workspace's migrations"
+      (Filename.concat root "db/migrations")
+      (Sol_cli_workspace.migrations_dir ~dir:sub);
+    check_string
+      "the table the deploy gate reads"
+      (Sol_cli_migration.table_name ~workspace:(Sol_cli_workspace.workspace_name ~root))
+      (Sol_cli_workspace.migrations_table ~dir:sub);
+    check_string
+      "named for the workspace, not the directory"
+      "sol_shop_schema_migrations"
+      (Sol_cli_workspace.migrations_table ~dir:sub))
+;;
+
 let () =
   Alcotest.run
     "workspace"
-    [ ( "find_root (DEC-024)"
+    [ ( "migration defaults"
+      , [ Alcotest.test_case
+            "from a subdirectory"
+            `Quick
+            test_migration_defaults_from_a_subdirectory
+        ] )
+    ; ( "find_root (DEC-024)"
       , [ Alcotest.test_case
             "workspace with no dune marker"
             `Quick
