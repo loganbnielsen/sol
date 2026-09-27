@@ -867,10 +867,38 @@ let test_generated_workload_declares_its_language () =
     (read_file "sol.yml")
 ;;
 
+let test_workspace_report_points_at_its_readme () =
+  in_temp_dir
+  @@ fun () ->
+  let (), reported =
+    Sol_cli_report.collect (fun () ->
+      Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok)
+  in
+  let text =
+    reported
+    |> List.filter_map (fun (level, text) ->
+      match level with
+      | Logs.App -> Some text
+      | _ -> None)
+    |> String.concat "\n"
+  in
+  assert_contains "new workspace report" text "README.md";
+  check_bool
+    "the README it names exists in the generated workspace"
+    true
+    (Sys.file_exists "testapp/README.md")
+;;
+
 let () =
   Alcotest.run
     "scaffold"
-    [ ( "ci_workflow"
+    [ ( "generated workspace report"
+      , [ Alcotest.test_case
+            "names the README it generated"
+            `Quick
+            test_workspace_report_points_at_its_readme
+        ] )
+    ; ( "ci_workflow"
       , [ Alcotest.test_case "sol-ci.yml created" `Quick test_ci_workflow_created
         ; Alcotest.test_case
             "deploy.yml still created"
