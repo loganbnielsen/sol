@@ -133,23 +133,50 @@ let apply_service
        pid/log/script files collide on disk (and made `is_running` report the other
        workspace's forward) independently of the :8080 bind conflict. *)
     let pf_name = Printf.sprintf "%s-%s" exec.namespace exec.k8s_name in
+    let target = "svc/" ^ exec.k8s_name in
     if not (Sol_cli_port_forward.is_running pf_name)
     then (
-      if
-        Sol_cli_port_forward.detect_stale
+      let replaced =
+        Sol_cli_port_forward.replace_conflicting
           ~local_port
           ~namespace:exec.namespace
-          ~target:("svc/" ^ exec.k8s_name)
-      then Unix.sleepf 0.4;
+          ~target
+      in
+      replaced
+      |> List.iter (fun (old : Sol_cli_port_forward.spec) ->
+        Printf.printf
+          "  [sol up] replacing stale port-forward for %s/%s on port %d\n%!"
+          old.namespace
+          old.target
+          local_port);
+      if replaced <> [] then Unix.sleepf 0.4;
       Sol_cli_port_forward.start
         ~ctx:Sol_cli_kube_destination.local_context
         { name = pf_name
         ; namespace = exec.namespace
-        ; target = "svc/" ^ exec.k8s_name
+        ; target
         ; local_port
         ; remote_port = 80
-        });
-    let pf_alive = Sol_cli_port_forward.check_alive ~name:pf_name ~local_port in
+        }
+      |> Result.iter_error (Printf.eprintf "  warning: port-forward not started: %s\n%!"));
+    let pf_alive =
+      match Sol_cli_port_forward.check_alive ~name:pf_name with
+      | Alive -> true
+      | Dead { log; log_tail } ->
+        Printf.printf
+          "  warning: port-forward for %s failed (port %d may be in use by another \
+           workspace).\n"
+          pf_name
+          local_port;
+        Printf.printf "           See %s for details.\n" log;
+        if log_tail <> []
+        then
+          Printf.printf
+            "           Last log lines:\n             %s\n"
+            (String.concat "\n             " log_tail);
+        Printf.printf "           Run: kill $(lsof -ti:%d) && sol up\n%!" local_port;
+        false
+    in
     Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
     if pf_alive
     then

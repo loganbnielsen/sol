@@ -28,6 +28,7 @@
   test_logs
   test_process
   test_tool_adapters
+  test_port_forward
   test_deployment_state
   test_dev_observability
   test_change_set

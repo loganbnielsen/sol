@@ -542,6 +542,8 @@ let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
       pf_spec.target
       pf_spec.remote_port;
     Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context pf_spec
+    |> Result.iter_error
+         (Printf.eprintf "  warning: port-forward %s not started: %s\n%!" pf_spec.name)
   in
   if req.kafka
   then (
@@ -732,33 +734,22 @@ let dev_status () =
        print_char '\n'
      | Error _ -> ());
     Printf.printf "\nPort-forwards:\n%!";
-    if Sys.file_exists Sol_cli_state.dir
-    then (
-      let entries =
-        try Sys.readdir Sol_cli_state.dir with
-        | _ -> [||]
-      in
-      let pids =
-        Array.to_list entries |> List.filter (fun f -> Filename.check_suffix f ".pid")
-      in
-      if pids = []
-      then Printf.printf "  none\n"
-      else
-        List.iter
-          (fun f ->
-             let name = Filename.chop_suffix f ".pid" in
-             let path = Printf.sprintf "%s/%s" Sol_cli_state.dir f in
-             let pid_s =
-               try
-                 let ic = open_in path in
-                 let s = String.trim (In_channel.input_all ic) in
-                 close_in ic;
-                 s
-               with
-               | _ -> "?"
-             in
-             Printf.printf "  %-12s  pid %s\n" name pid_s)
-          pids));
+    (* REFAC-126: what Sol recorded starting, and whether each is still up. *)
+    let recorded, unreadable = Sol_cli_port_forward.records () in
+    (match recorded with
+     | [] -> Printf.printf "  none\n"
+     | recorded ->
+       recorded
+       |> List.iter (fun (pf : Sol_cli_port_forward.spec) ->
+         Printf.printf
+           "  %-12s  localhost:%d → %s/%s  %s\n"
+           pf.name
+           pf.local_port
+           pf.namespace
+           pf.target
+           (if Sol_cli_port_forward.is_running pf.name then "running" else "stopped")));
+    unreadable
+    |> List.iter (Printf.eprintf "  warning: unreadable port-forward record: %s\n"));
   Printf.printf "\n";
   Ok ()
 ;;
