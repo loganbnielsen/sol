@@ -819,6 +819,10 @@ let dev_run workspace_dir scope =
   (* Change to workspace dir if given explicitly so the workspace resolves *)
   workspace_dir |> Option.iter Unix.chdir;
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
+  (* The loop is workspace-root relative -- every path in the plan is -- and the
+     workspace resolves from any descendant directory, so act from its root. *)
+  if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
+  then Unix.chdir facts.Sol_cli_workspace_model.root;
   let inventory = Sol_cli_workspace_model.services facts in
   let* { services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
@@ -829,41 +833,87 @@ let dev_run workspace_dir scope =
       inventory
     |> Sol_cli_exit.of_msg
   in
-  Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
-  services
-  |> List.iter (fun svc ->
-    Printf.printf
-      "    [%s] %s/%s → %s/bin/main.exe\n"
-      (primitive_label svc.primitive)
-      svc.domain
-      svc.name
-      svc.dir);
-  Printf.printf "\n%!";
-  (* Build all services first with a single dune invocation so that parallel
-     dune exec calls below don't fight over the _build/.lock file. *)
-  Printf.printf "  Building...\n%!";
-  let build_targets = List.map (fun svc -> svc.dir ^ "/bin/main.exe") services in
-  let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
-  let build_cmd =
-    Printf.sprintf
-      "%sdune build %s"
-      opam_eval
-      (String.concat " " (List.map Filename.quote build_targets))
+  (* FEAT-103: the declared language selects the adapter that builds and launches
+     each unit, so the loop drives a TypeScript unit through npm and node exactly
+     as it drives an OCaml one through dune. Every adapter is resolved before
+     anything is built or started: a loop that quietly ran half a selection would
+     be worse than one that refused. *)
+  let* plan =
+    Sol_cli_local_run.plan ~root:facts.Sol_cli_workspace_model.root ~facts services
+    |> function
+    | Ok plan -> Ok plan
+    | Error errors ->
+      errors
+      |> List.iter (fun (label, message) ->
+        Printf.eprintf "error: %s %s\n%!" label message);
+      Error (Sol_cli_exit.reported ())
   in
+  Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
+  plan.launches
+  |> List.iter (fun (recipe : Sol_cli_local_run.recipe) ->
+    let svc =
+      List.find
+        (fun svc -> String.equal (Sol_cli_local_run.label svc) recipe.label)
+        services
+    in
+    Printf.printf
+      "    [%s] %s → %s\n"
+      (primitive_label svc.primitive)
+      recipe.label
+      recipe.artifact);
+  Printf.printf "\n%!";
+  Printf.printf "  Building...\n%!";
+  (* The OCaml units are one dune invocation (concurrent dune calls fight over
+     the build lock); each TypeScript unit builds in its own npm project. *)
+  let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
   let* () =
-    match Sys.command build_cmd with
-    | 0 -> Ok ()
-    | rc -> Error (Sol_cli_exit.error (Printf.sprintf "dune build failed (exit %d)" rc))
+    plan.builds
+    |> List.fold_left
+         (fun acc (build : Sol_cli_local_run.command) ->
+            match acc with
+            | Error _ as e -> e
+            | Ok () ->
+              let in_dir =
+                match build.cwd with
+                | "" | "." -> ""
+                | cwd -> "cd " ^ Filename.quote cwd ^ " && "
+              in
+              let cmd =
+                Printf.sprintf
+                  "%s%s%s"
+                  opam_eval
+                  in_dir
+                  (String.concat " " (List.map Filename.quote build.argv))
+              in
+              (match Sys.command cmd with
+               | 0 -> Ok ()
+               | rc ->
+                 Error
+                   (Sol_cli_exit.error
+                      (Printf.sprintf
+                         "%s failed (exit %d)"
+                         (String.concat " " build.argv)
+                         rc))))
+         (Ok ())
   in
   Printf.printf "  Build done.\n\n%!";
   let env = build_env () in
-  (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
+  (* Run the built artifact directly, avoiding dune exec lock contention and
+     keeping npm out of the supervised process: [sol local run] kills what it
+     started, so it must start the service itself. *)
   let children =
-    services
-    |> List.filter_map (fun svc ->
-      let label = svc.domain ^ "/" ^ svc.name in
-      let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
-      let cmd_str = Filename.quote exe_path in
+    plan.launches
+    |> List.filter_map (fun (recipe : Sol_cli_local_run.recipe) ->
+      let label = recipe.label in
+      let cmd_str =
+        match recipe.launch.cwd with
+        | "" | "." -> String.concat " " (List.map Filename.quote recipe.launch.argv)
+        | cwd ->
+          Printf.sprintf
+            "cd %s && %s"
+            (Filename.quote cwd)
+            (String.concat " " (List.map Filename.quote recipe.launch.argv))
+      in
       let pipe_read, pipe_write = Unix.pipe () in
       try
         let pid =
