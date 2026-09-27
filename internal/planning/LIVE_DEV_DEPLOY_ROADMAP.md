@@ -10,6 +10,11 @@ deploys without hiding cost, state, or rollback risk.
   Kubernetes manifests.
 - `sol cloud plan/apply` creates customer-cloud substrate with Terraform.
 - `sol cloud destroy` tears that substrate down with Terraform.
+- `sol local run` runs a workspace's workloads as native processes. The declared
+  language picks the adapter: `dune build` plus the compiled binary for OCaml,
+  `npm run build` plus `node <entry>` for TypeScript (FEAT-103). Both languages
+  are driven; a workload that declares no language is refused rather than
+  guessed, and a plan with any undrivable unit starts nothing.
 - `sol deploy` applies pre-built image tags or emits GitOps manifests.
 - Changed-service detection is manual today: pass a service path, or all
   services are deployed.

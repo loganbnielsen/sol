@@ -42,38 +42,37 @@ user is free to organise their workspace however they like, including a root
 
 ## Run it locally
 
-From this directory (`examples/pluto/app/demo_ts`):
+Both units run through Sol, from the workspace root (`examples/pluto`), once
+their npm dependencies are installed:
 
 ```bash
-npm install
-npm run build -w order-svc -w fulfillment-worker
+cd examples/pluto
+(cd app/demo_ts && npm ci)      # the units' dependencies; the loop needs them
+sol local infra up              # k3d cluster + broker, schema registry, Postgres, Loki, Tempo, Prometheus
+sol local run --scope=demo_ts
+```
 
-# bring up local infra (broker, schema registry, Postgres, Loki, Tempo, Prometheus)
-bash platform/local/scripts/ensure-broker.sh
-bash platform/local/scripts/ensure-postgres.sh
-bash platform/local/scripts/ensure-loki.sh
-bash platform/local/scripts/ensure-tempo.sh
-bash platform/local/scripts/ensure-prometheus.sh
+`sol local run` builds each unit with `npm run build` in `app/demo_ts` — the npm
+project that owns both packages — and runs the built entry with `node`, prefixed
+`[demo_ts/<unit>]` so you can follow both in one terminal. Sol starts them
+itself, so Ctrl-C stops both. It also injects the local substrate's addresses
+(`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `POSTGRES_URL`, `LOKI_URL`, `TEMPO_URL`,
+`KAFKA_SECURITY_PROTOCOL=plaintext`), which is what the units read.
 
-KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
-  LOKI_URL=http://localhost:3100 TEMPO_URL=http://localhost:4318 \
-  node order_svc/dist/index.js &
+In another terminal, send one order through the whole path:
 
-KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 \
-  TEMPO_URL=http://localhost:4318 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-  node fulfillment_worker/dist/index.js &
-
+```bash
 curl -X POST localhost:8080/orders -H 'content-type: application/json' \
   -d '{"order_id":"demo-1","item":"widget","quantity":3}'
 ```
 
-The `ensure-*.sh` scripts live in the Sol repository, so this walkthrough needs a
-Sol checkout. What it does *not* need is a Sol **npm workspace** — the package
-dependencies resolve purely from npm.
-
 Then check Grafana (Loki logs + Prometheus metrics) and Tempo — the
 `receive_order` span from `order_svc` and `fulfill_order` span from
 `fulfillment_worker` link into a single trace across the Kafka boundary.
+
+A unit whose `sol.yml` entry declares no language is refused by the loop rather
+than guessed at, and a unit with no installed dependencies is reported with the
+`npm ci` to run — Sol never decides a workload's language from its files.
 
 ## Docker
 

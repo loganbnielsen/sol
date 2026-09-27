@@ -103,7 +103,7 @@ Once the cluster is up and you have a workspace (see Part 2), use `sol local run
 sol local run
 ```
 
-`sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
+`sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile` and runs each one as a **native process** — no Docker image rebuild required. The workload's declared language (above) picks how it is built and launched: an OCaml unit is built with a single `dune build` across all of them and its compiled binary is spawned; a TypeScript unit is built with `npm run build` in its npm project and its built entry is run with `node`. Both are started by Sol itself, so Ctrl-C cleanly kills everything. Each service's stdout and stderr is prefixed with `[domain/name]`, so you can follow several in one terminal.
 
 The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
@@ -120,8 +120,8 @@ The environment variables your services expect are inherited directly from the s
 
 | | `sol local run` | `sol up` |
 |---|---|---|
-| How services run | Native OCaml binaries | Docker containers in k3d |
-| On code change | `dune build` + re-run (~seconds) | `docker build` + redeploy (~minutes) |
+| How services run | Native processes — the compiled binary (OCaml) or `node` on the built entry (TypeScript) | Docker containers in k3d |
+| On code change | Rebuild + re-run (~seconds) | `docker build` + redeploy (~minutes) |
 | Uses k3d infra | Yes (via port-forwards from `sol local infra up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 

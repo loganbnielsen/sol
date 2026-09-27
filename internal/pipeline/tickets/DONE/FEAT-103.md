@@ -3,7 +3,7 @@ id: FEAT-103
 type: feature
 severity: medium
 title: TypeScript has an end-to-end path but no Sol inner loop - sol local run builds OCaml units only
-source: operator review (2026-09-27) of the TypeScript path - "TypeScript has an E2E path but not a real Sol inner loop: users still have to run Node manually, and the live-dev roadmap is OCaml-only"
+source: operator review 2026-09-27 of the TypeScript path, who put it as "TypeScript has an E2E path but not a real Sol inner loop" -- users still run Node by hand, and the live-dev roadmap only ever described OCaml
 ---
 
 **Depends on:** FEAT-104.
@@ -160,3 +160,112 @@ Any faithful implementation of the decision above (build through npm, launch the
 built artifact) contains one of those strings. If a future implementation drives
 the toolchain another way the probe will not match, which reports the ticket as
 actionable rather than stale — the safe direction.
+
+## Completion notes
+
+**Premise re-verified (2026-09-27, `origin/main` `2fff2cef`).** `dev_run` still
+built `dune build <unit>/bin/main.exe` and launched that path for every selected
+workload, whatever its declared language, and the roadmap had no dev-loop entry.
+The failure the ticket recorded reproduces verbatim.
+
+**What landed.**
+
+- `cli/lib/local/sol_cli_local_run.{ml,mli}` decides, per workload, what to build
+  and what to run. It starts nothing, so every adapter is testable without a
+  cluster: `plan ~root ~facts services` either returns a whole plan or the list
+  of per-unit refusals.
+  - OCaml: one merged `dune build <units>/bin/main.exe` (concurrent dune
+    invocations fight over the build lock, which is why the loop always built
+    them together), then the compiled binary as the supervised process.
+  - TypeScript: `npm run build --workspace <package>` in the npm project that
+    owns the unit (the nearest ancestor whose `package.json` lists it — for
+    Pluto, `app/demo_ts`; the package name is `order-svc` while the directory is
+    `order_svc`, so the name is read from the unit's own `package.json`), then
+    `node <entry>` with the entry from `main` or `<outDir>/index.js`. npm is
+    never the supervised process: the loop kills the pid it started, so killing
+    npm would leave the service behind.
+  - A workload that declares nothing, a `language: typescript` unit with no
+    readable `package.json`/`name`, and a unit whose dependencies are not
+    installed (the error names the `npm ci` to run) each fail naming the unit.
+- `cli/bin/cmd_local.ml`'s `dev_run` now resolves the whole plan, prints it, runs
+  the builds, and supervises the launches — the same prefixing, `build_env`
+  injection and Ctrl-C handling as before, now over `plan.launches`. It acts from
+  the workspace root, so the loop works from a descendant directory.
+- Docs: `docs/guides/TUTORIAL.md`'s local-iteration prose and comparison table
+  are language-aware, `examples/pluto/app/demo_ts/README.md`'s "Run it locally"
+  is now the Sol command instead of a manual `node … &` walkthrough (its
+  `ensure-*.sh` steps were the AGENTS.md "`sol` commands only" violation), and
+  `internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md` records the loop and its
+  per-language verdict.
+
+**Evidence (real runs on a copy of `examples/pluto`, `npm ci` then the loop).**
+
+```text
+$ sol local run --scope=demo_ts
+  Starting 2 service(s) from .
+    [svc] demo_ts/order_svc → app/demo_ts/order_svc/dist/index.js
+    [worker] demo_ts/fulfillment_worker → app/demo_ts/fulfillment_worker/dist/index.js
+
+  Building...
+  > build
+  > tsc                 # twice, once per unit, in app/demo_ts
+  Build done.
+
+  Services running — press Ctrl-C to stop all.
+[demo_ts/fulfillment_worker] … at fulfillment_worker/dist/index.js:94  # the worker runs and reaches Postgres
+```
+
+With dependencies not installed the loop refuses both units, naming the remedy:
+
+```text
+$ sol local run --scope=demo_ts
+error: demo_ts/order_svc has no installed dependencies; run `npm ci` in app/demo_ts
+error: demo_ts/fulfillment_worker has no installed dependencies; run `npm ci` in app/demo_ts
+```
+
+The OCaml path is unchanged — `sol local run --scope=payments` prints the same
+plan line (`app/payments/charge_svc/bin/main.exe`) and runs the same merged dune
+build — and a mixed selection (`sol local run`, no scope) plans all five units
+with each one's own artifact before building anything.
+
+**Behaviour changes, stated rather than discovered later.**
+
+- The loop acts from the workspace root, so `sol local run` now works from a
+  descendant directory (before, the root-relative dune targets failed there).
+- A build failure now names the command that failed (`dune build … failed (exit
+  1)` rather than `dune build failed (exit 1)`).
+- The plan for every selected unit is resolved before anything is built or
+  started: one undrivable unit refuses the whole run rather than starting a
+  partial system.
+
+**Tests.** `cli/test/test_local_run.ml` (8 cases): the OCaml adapter's merged
+build and binary launch; the TypeScript adapter's npm build by package name in
+the npm project root, its `node` launch and entry, the `tsconfig` `outDir` being
+honoured by a standalone unit; a mixed selection using both adapters in selection
+order; and four refusals (undeclared, no `package.json`, dependencies not
+installed, one bad unit refusing the whole plan). The whole CLI suite, `dune
+build`, `check_ocamlformat.sh --all` and the offline guards pass.
+
+**Also in this PR:** `internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-060.md`
+— a defect found while starting this ticket. This ticket's own frontmatter was
+not valid YAML (a plain `source:` scalar containing `": "`), which made `soldev`
+report it unreadable and silently omit it from `pipeline ls` while CI's
+ticket-transitions guard passed; the guard never parses frontmatter. The
+frontmatter is corrected here, and BUG-060 carries the reproduced evidence and
+the fix.
+
+**Demo/example:** the demo *is* the example, and this ticket updated it — the
+`demo_ts` README now runs the units through Sol, and the tutorial documents the
+same. No new example Dockerfile, so the `example-dockerfile-smoke` matrix is
+untouched.
+
+**Language parity: this is the parity work.** The dev-loop capability now has a
+per-language verdict for both languages, recorded in the roadmap; `sol.toml`'s
+schema, deployment identity, and what `sol up`/`sol deploy` do are unchanged, and
+no wire-format, retry/DLQ, metric-vocabulary, lifecycle or secrets contract
+changes.
+
+**Deliberate non-goals (as the ticket states):** no `tsx`, watch or hot-reload —
+that is a new capability, not parity — and REFAC-134 had not landed when this
+merged, so whoever lands it second rebases `dev_run`'s spawn, which this PR
+rewrote to carry a per-unit command.
