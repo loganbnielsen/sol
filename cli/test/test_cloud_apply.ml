@@ -15,6 +15,7 @@ type calls =
     (** INFRA-090: what ran, in order, so the disk-quota check's *placement* can be asserted --
         after the substrate is ready and before the platform asks for anything. *)
   ; mutable prerequisites_applied : bool
+  ; mutable planned : bool
   }
 
 let fresh () =
@@ -25,6 +26,7 @@ let fresh () =
   ; reports = []
   ; events = []
   ; prerequisites_applied = false
+  ; planned = false
   }
 ;;
 
@@ -36,7 +38,10 @@ let guarded_kind = "test_guarded_kind"
 (* A fake whose every step succeeds; a test overrides the step it is about. *)
 let deps calls : (unit, unit, unit) A.deps =
   { substrate_exists = (fun () -> Ok true)
-  ; plan = (fun () -> Ok [])
+  ; plan =
+      (fun () ->
+        calls.planned <- true;
+        Ok [])
   ; guarded_removals = [ guarded_kind ]
   ; confirm_guarded_removal = false
   ; confirmation_flag = "--confirm-test-removal"
@@ -48,6 +53,10 @@ let deps calls : (unit, unit, unit) A.deps =
   ; outputs = (fun () -> Ok (Some ()))
   ; open_window = (fun () -> Ok (Some ()))
   ; platform_vars = (fun () -> Ok [ "x=1" ])
+  ; substrate_supported =
+      (fun () ->
+        calls.events <- "substrate_supported" :: calls.events;
+        Ok ())
   ; cloud_ready =
       (fun () ->
         calls.events <- "cloud_ready" :: calls.events;
@@ -265,6 +274,30 @@ let test_fresh_target_reports_bootstrap () =
     (List.mem "  lifecycle phase: CloudBootstrap" calls.reports)
 ;;
 
+(* INFRA-093 / FND-0064. The refusal has to happen before a plan exists to apply: the point is
+   that Sol never asks Terraform to touch a cluster whose substrate it does not support. *)
+let test_unsupported_substrate_refuses_before_the_plan () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with
+      substrate_supported =
+        (fun () ->
+          calls.events <- "substrate_supported" :: calls.events;
+          Error (A.Refused Sol_cli_cluster_substrate.support_contract))
+    }
+  in
+  (match A.execute ~deps with
+   | A.Applied -> Alcotest.fail "an Autopilot substrate was accepted"
+   | A.Apply_failed { failure; _ } ->
+     let message = A.failure_to_string failure in
+     Alcotest.(check bool)
+       "the refusal carries the support contract"
+       true
+       (Sol_cli_string.contains ~needle:"GKE Autopilot is not supported" message));
+  Alcotest.(check bool) "no plan was ever made" false calls.planned;
+  Alcotest.(check bool) "nothing was applied" false calls.applied_cloud
+;;
+
 (* INFRA-090 / FND-0062. Before the platform installs anything that needs a persistent disk,
    the *observed* available provider quota must cover Sol's *declared* minimum. Where the check
    runs is as much the point as what it decides: Attempt 12 showed a pre-cloud read is useless
@@ -297,7 +330,7 @@ let test_disk_quota_insufficient_refuses_before_the_platform () =
     calls.prerequisites_applied;
   Alcotest.(check (list string))
     "the observation is the last thing that ran"
-    [ "cloud_ready"; "observe_disk_quota" ]
+    [ "substrate_supported"; "cloud_ready"; "observe_disk_quota" ]
     (List.rev calls.events)
 ;;
 
@@ -307,8 +340,13 @@ let test_disk_quota_sufficient_proceeds_in_order () =
    | A.Applied -> ()
    | A.Apply_failed _ -> Alcotest.fail "expected the apply to succeed with room to spare");
   Alcotest.(check (list string))
-    "cloud ready, then the observation, then the platform"
-    [ "cloud_ready"; "observe_disk_quota"; "apply_prerequisites"; "apply_platform" ]
+    "substrate, cloud ready, observation, then the platform"
+    [ "substrate_supported"
+    ; "cloud_ready"
+    ; "observe_disk_quota"
+    ; "apply_prerequisites"
+    ; "apply_platform"
+    ]
     (List.rev calls.events)
 ;;
 
@@ -386,6 +424,10 @@ let () =
             "fresh target reports CloudBootstrap"
             `Quick
             test_fresh_target_reports_bootstrap
+        ; Alcotest.test_case
+            "an unsupported substrate refuses before any plan exists"
+            `Quick
+            test_unsupported_substrate_refuses_before_the_plan
         ; Alcotest.test_case
             "insufficient disk quota refuses before the platform"
             `Quick

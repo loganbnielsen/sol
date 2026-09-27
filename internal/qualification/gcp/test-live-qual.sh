@@ -236,6 +236,7 @@ case "$*" in
       discovery) printf 'error: no matches for kind "Certificate" in version "cert-manager.io/v1"\n' ;;
       dial)      printf 'error: context deadline exceeded: dial tcp 10.0.0.1:10250: i/o timeout\n' ;;
       quota)     : ;;  # delivered through the events capture below, as the provider delivers it
+      warden)    : ;;  # ditto: an admission denial arrives in the apply log, not from kubectl
       *)         : ;;
     esac
     ;;
@@ -248,6 +249,12 @@ case "$*" in
     esac
     ;;
   *"get events"*)
+    if [ "${STUB_APPLY_ERROR:-none}" = "warden" ]; then
+      printf '│ Error: admission webhook "warden-validating.common-webhooks.networking.gke.io" denied'
+      printf ' the request: GKE Warden rejected the request because it violates the following'
+      printf ' Violations details: {"[denied by autogke-disallow-hostnamespaces]":["enabling'
+      printf ' hostNetwork is not allowed in Autopilot."]}\n'
+    fi
     if [ "${STUB_KUBE_SIGNATURE:-none}" = "quota" ]; then
       printf 'LAST SEEN   TYPE      REASON               OBJECT               MESSAGE\n'
       printf '5m          Warning   ProvisioningFailed   persistentvolumeclaim/storage-loki-0   rpc error: code = Unavailable desc = CreateVolume failed: failed to insert zonal disk: (QUOTA_EXCEEDED): Quota '"'"'SSD_TOTAL_GB'"'"' exceeded\n'
@@ -465,6 +472,14 @@ run_case class-exists cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists STUB
   STUB_KUBE_SIGNATURE=stale-scheduling
 has "a Terraform already-exists failure classifies as TERRAFORM_ALREADY_EXISTS, not scheduling" \
   "classification: TERRAFORM_ALREADY_EXISTS" "$TMP/class-exists.logs/fnd0010-classification.txt"
+# INFRA-092: an admission denial is a direct provider refusal, and must outrank the ambient
+# scheduling symptoms that happen to be present in a partially installed cluster -- Attempt 14's
+# failure was classified SCHEDULING_AMBIENT for exactly that reason.
+run_case class-warden cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_APPLY_ERROR=warden \
+  STUB_KUBE_SIGNATURE=stale-scheduling
+has "an admission denial outranks ambient scheduling symptoms" \
+  "classification: ADMISSION_DENIED" "$TMP/class-warden.logs/fnd0010-classification.txt"
+
 # The provider's own refusal names the cause; pod symptoms are downstream of it.
 run_case class-quota cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=quota
 has "a provider CreateVolume quota refusal classifies as PROVIDER_DISK_QUOTA_EXCEEDED" \
@@ -602,6 +617,16 @@ fi
 # Attempt 13 stopped before the platform root was ever initialised, and its bundle was reported
 # INCOMPLETE because the platform state -- which could not exist -- was demanded. A bundle is
 # judged against the phases the run reached, and no weaker for a phase it did reach.
+# INFRA-092: the provisioner bindings exist from the prerequisites phase onward, so a run that
+# fails later must still carry them -- Attempt 14's prerequisites succeeded and its platform apply
+# did not, and the objects went unrecorded because the read was attached to success.
+if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
+    "$TMP/class-warden.argv" 2>/dev/null; then
+  ok "a failed install still reads the provisioner bindings it had established"
+else
+  no "a failed install still reads the provisioner bindings it had established" "the kubectl read" "none"
+fi
+
 printf '\nscenario: a stop before the platform is a complete bundle\n'
 run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
 # The requirement is what is phase-aware, not the capture: the harness reads whatever it can, but

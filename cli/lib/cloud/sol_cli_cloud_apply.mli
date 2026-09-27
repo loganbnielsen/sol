@@ -21,6 +21,9 @@ type outcome =
 type ('outputs, 'env, 'control) deps =
   { substrate_exists : unit -> (bool, string) result
     (** Whether the cloud substrate exists before this run; an error is unknown. *)
+  ; substrate_supported : unit -> (unit, failure) result
+    (** Called before the plan: refuse a substrate the profile does not support, and refuse an
+        unreadable one, before anything is planned or applied. *)
   ; plan : unit -> (Sol_cli_terraform_plan.change list, failure) result
     (** Save the cloud plan (bootstrap window enabled) and read its changes. *)
   ; guarded_removals : string list

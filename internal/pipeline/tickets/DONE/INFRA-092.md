@@ -41,3 +41,17 @@ were live. Capture them after the prerequisites phase, where they first exist.
   denial, not as ambient scheduling.
 - A run that completes the prerequisites but fails later still carries the binding objects in its
   bundle, with both subjects visible on the single objects.
+
+## Completion notes (2026-09-26)
+
+Both gaps closed. The classifier now answers `ADMISSION_DENIED` for the cluster's own admission
+webhook refusing a manifest (`warden-validating`, `GKE Warden rejected`, `autogke-`), ordered ahead
+of the ambient scheduling fallback it used to fall through to — Attempt 14's direct provider refusal
+was classified `SCHEDULING_AMBIENT`. The provisioner bindings are now captured on the *failure* path
+as well as on success (`capture_provisioner_bindings` runs with the failure captures), because those
+objects exist from the prerequisites phase onward and Attempt 14's prerequisites succeeded while its
+platform apply did not.
+
+Evidence: `test-live-qual.sh` grows to **144 assertions, 0 failures**, including a stub case where an
+admission denial coexists with ambient scheduling symptoms and must classify as the denial, and an
+assertion that a failed install still reads the binding objects.

@@ -826,6 +826,39 @@ let apply_deps
           Result.map Option.some (window.observe ())
         | No_role_declared | Closed_by_platform_root -> Ok None)
   ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
+  ; substrate_supported =
+      (fun () ->
+        match
+          (Sol_cli_provider_capabilities.capabilities_of provider).cluster_substrate
+        with
+        | None -> Ok ()
+        | Some observe ->
+          (match cluster_of ~target_cfg provider infra_dir with
+           | Ok None ->
+             (* No cluster yet: a fresh target, which is exactly what Sol is about to provision
+                Standard into. *)
+             Ok ()
+           | Ok (Some cluster) ->
+             (* The project is named from the root's own outputs, as the quota read does. *)
+             let outputs_json =
+               match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+               | Ok result -> result.Sol_cli_process.stdout
+               | Error _ -> ""
+             in
+             (match
+                Result.bind
+                  (observe
+                     ~outputs_json
+                     ~region:target_cfg.region
+                     ~cluster_name:cluster.Sol_cli_cluster.name)
+                  Sol_cli_cluster_substrate.acceptable
+              with
+              | Ok () -> Ok ()
+              | Error message -> Error (Sol_cli_cloud_apply.Refused message))
+           | Error _ ->
+             (* An unreadable cloud root is `substrate_exists`'s refusal to make, and that runs
+                first, so there is no cluster here for this check to reconcile with. *)
+             Ok ()))
   ; observe_disk_quota =
       (fun _ ->
         match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with

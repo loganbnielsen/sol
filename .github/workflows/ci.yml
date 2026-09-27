@@ -233,6 +233,15 @@ jobs:
           internal/ci/check_platform_storage_requirement.sh .
           internal/ci/test_platform_storage_requirement_check.sh
 
+      - name: GCP substrate (INFRA-093)
+        # FND-0064: the GCP driver provisions GKE Standard. The guard holds the product contract --
+        # no Autopilot request, a pool Sol owns, sizing owned by driver defaults rather than the
+        # target -- without freezing today's numbers into the definition of GCP support.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          internal/ci/check_gcp_standard_substrate.sh .
+          internal/ci/test_gcp_standard_substrate_check.sh
+
       - name: Terraform output contract (INFRA-091)
         # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
         # what `terraform output -json` publishes. Attempt 13's defect was two artefacts agreeing

@@ -364,3 +364,75 @@ let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) 
          project
          (Sol_cli_process.error_to_string error))
 ;;
+
+(* INFRA-093: what an existing cluster's mode is, read-only, before anything is planned or applied.
+   `autopilot.enabled` is GKE's own field for the mode, and the tri-state is deliberate: a cluster
+   that is not there is a fresh target, and a read that fails for any other reason is *unknown*. *)
+let autopilot_of_describe_json text : (bool, string) result =
+  let open Yojson.Safe.Util in
+  match Yojson.Safe.from_string text with
+  | exception Yojson.Json_error message ->
+    Error (Printf.sprintf "the describe output is not JSON: %s" message)
+  | json ->
+    (* Yojson's accessors *raise* on a missing field, so a describe that simply does not carry
+       `autopilot` must be read as "no mode here" rather than escaping as an exception: the caller
+       turns a refusal into `Unknown`, and an exception would be a crash instead. *)
+    (match
+       try Some (json |> member "autopilot" |> member "enabled" |> to_bool) with
+       | _ -> None
+     with
+     | Some enabled -> Ok enabled
+     | None -> Error "the cluster describe carries no autopilot.enabled field")
+;;
+
+let substrate_of_describe ~outputs_json ~region ~cluster_name
+  : (Sol_cli_cluster_substrate.t, string) result
+  =
+  let open Sol_cli_cluster_substrate in
+  (* The project comes from the cloud root's own outputs, never from whatever gcloud happens to have
+     active: the mode of a cluster in some other project is not the question being asked. *)
+  let project =
+    match project_id_of_outputs_json outputs_json with
+    | Ok project -> project
+    | Error _ -> ""
+  in
+  if project = ""
+  then Ok (Unknown "the cloud root's outputs carry no project to read the cluster from")
+  else (
+    let cmd =
+      Sol_cli_process.cmd
+        [ "gcloud"
+        ; "container"
+        ; "clusters"
+        ; "describe"
+        ; cluster_name
+        ; "--region"
+        ; region
+        ; "--project"
+        ; project
+        ; "--format=json(autopilot.enabled)"
+        ]
+    in
+    match Sol_cli_process.run ~echo:false cmd with
+    | Ok output ->
+      (match autopilot_of_describe_json output.Sol_cli_process.stdout with
+       | Ok true -> Ok Autopilot
+       | Ok false -> Ok Standard
+       | Error message -> Ok (Unknown message))
+    | Error (Sol_cli_process.Non_zero failure) ->
+      let said =
+        String.trim (failure.Sol_cli_process.stderr ^ failure.Sol_cli_process.stdout)
+      in
+      if absent_wording said
+      then Ok Absent
+      else
+        Ok
+          (Unknown
+             (if said = ""
+              then
+                Printf.sprintf
+                  "the provider reported exit %d"
+                  failure.Sol_cli_process.exit_code
+              else said))
+    | Error error -> Ok (Unknown (Sol_cli_process.error_to_string error)))
+;;

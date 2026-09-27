@@ -726,6 +726,18 @@ case "$1 $2" in
     exit 0
     ;;
   "container clusters")
+    # INFRA-093: Sol reads the cluster's mode before it plans anything. Keyed on the format so
+    # the other cluster reads this stub serves are untouched.
+    case " $* " in
+      *autopilot.enabled*)
+        if [ "${STUB_AUTOPILOT:-0}" = "1" ]; then
+          printf '{"autopilot":{"enabled":true}}\n'
+        else
+          printf '{"autopilot":{"enabled":false}}\n'
+        fi
+        exit 0
+        ;;
+    esac
     case " $* " in
       *" get-credentials "*)
         # The stub models the interface gcloud actually has (Attempt 2):
@@ -1741,6 +1753,30 @@ fi
 if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
   echo "the bootstrap window was not closed by an apply after the failed get-credentials:" >&2
   grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
+  exit 1
+fi
+
+# INFRA-093 / FND-0064: a target whose cluster is Autopilot is refused *before a plan exists*.
+# That ordering is the whole point: the refusal is not allowed to cost a Terraform run, let alone a
+# cluster, and the harness proves it from the log rather than from the exit status.
+autopilot_log="$tmp/gcp-autopilot.log"
+rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && STUB_AUTOPILOT=1 LIFECYCLE_LOG="$autopilot_log" \
+      "$sol" cloud apply prod/gcp/us-central1) >"$autopilot_log.out" 2>&1
+then
+  cat "$autopilot_log.out" >&2
+  echo "GCP apply continued onto an Autopilot cluster" >&2
+  exit 1
+fi
+grep -F 'GKE Autopilot is not supported by the standard Sol platform profile' "$autopilot_log.out" \
+  >/dev/null || {
+  echo "the refusal did not carry the support contract:" >&2
+  cat "$autopilot_log.out" >&2
+  exit 1
+}
+if grep -qE -- 'terraform.* plan |terraform.* apply ' "$autopilot_log"; then
+  echo "an Autopilot substrate was refused only after Terraform had run:" >&2
+  grep -nE -- 'terraform.* (plan|apply) ' "$autopilot_log" | head -3 >&2
   exit 1
 fi
 

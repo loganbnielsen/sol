@@ -27,6 +27,12 @@ type t =
       -> (string list, string) result
   ; cluster_access_role_arn : Sol_cli_config.target -> (string option, string) result
   ; platform_storage : platform_storage
+  ; cluster_substrate :
+      (outputs_json:string
+       -> region:string
+       -> cluster_name:string
+       -> (Sol_cli_cluster_substrate.t, string) result)
+        option
   ; disk_quota :
       (outputs_json:string
        -> region:string
@@ -106,7 +112,10 @@ let aws =
        rather than one regional GB allowance Sol could compare against a declared minimum the
        way GCP's SSD_TOTAL_GB can. Declaring [None] says exactly that: the observation is not
        implemented here, and the check reports "not observed" rather than "sufficient". *)
-    disk_quota = None
+    (* AWS has no managed alternative whose admission policy would refuse the platform's
+       manifests, so there is no substrate question for this provider to answer. *)
+    cluster_substrate = None
+  ; disk_quota = None
   ; own_vars =
       (fun target ~workspace shared ->
         shared
@@ -223,7 +232,11 @@ let gcp =
        the region's SSD_TOTAL_GB -- the quota the provider named when it refused Attempt 12's
        volumes. The region is the scope: that quota is per region, so a zonal reading would be
        the wrong number. *)
-    disk_quota =
+    cluster_substrate =
+      Some
+        (fun ~outputs_json ~region ~cluster_name ->
+          Sol_cli_gcp_cluster.substrate_of_describe ~outputs_json ~region ~cluster_name)
+  ; disk_quota =
       Some
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)

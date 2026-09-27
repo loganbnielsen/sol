@@ -1,0 +1,125 @@
+(* INFRA-093 / FND-0064: the substrate contract, and the observation that feeds it.
+
+   What matters here is the pair the two halves keep apart: the *product* statement (the standard
+   profile provisions and supports GKE Standard, and refuses Autopilot before anything is planned)
+   and the *observation* (what mode a cluster that already exists is in -- including the case where
+   Sol cannot read it, which is never treated as absence). *)
+
+open Sol_cli_cluster_substrate
+
+let test_standard_and_fresh_targets_are_accepted () =
+  Alcotest.(check bool)
+    "standard is the profile's substrate"
+    true
+    (Result.is_ok (acceptable Standard));
+  Alcotest.(check bool)
+    "a fresh target is what Sol provisions Standard into"
+    true
+    (Result.is_ok (acceptable Absent))
+;;
+
+let test_autopilot_is_refused_by_the_support_contract () =
+  match acceptable Autopilot with
+  | Ok () -> Alcotest.fail "Autopilot was accepted"
+  | Error message ->
+    (* The contract names the profile and the substrate to use; the restrictions are the reason,
+       not the definition, so the message must not read as a list of today's components. *)
+    Alcotest.(check bool)
+      "names Autopilot"
+      true
+      (Sol_cli_string.contains ~needle:"Autopilot" message);
+    Alcotest.(check bool)
+      "names GKE Standard as what to use"
+      true
+      (Sol_cli_string.contains ~needle:"GKE Standard" message);
+    Alcotest.(check bool)
+      "gives the profile's reason"
+      true
+      (Sol_cli_string.contains ~needle:"SYS_RESOURCE" message);
+    Alcotest.(check bool)
+      "and does not make one component the contract"
+      false
+      (Sol_cli_string.contains ~needle:"helm_release" message)
+;;
+
+let test_an_unreadable_cluster_is_never_absence () =
+  (match acceptable (Unknown "the provider said nothing") with
+   | Ok () -> Alcotest.fail "an unreadable cluster was accepted"
+   | Error message ->
+     Alcotest.(check bool)
+       "the refusal says why it could not tell"
+       true
+       (Sol_cli_string.contains ~needle:"could not establish" message));
+  Alcotest.(check bool)
+    "and it is not read as a fresh target"
+    false
+    (Result.is_ok (acceptable (Unknown "timeout")))
+;;
+
+let test_absence_wording () =
+  List.iter
+    (fun wording ->
+       Alcotest.(check bool)
+         (Printf.sprintf "%S reads as absent" wording)
+         true
+         (absent_wording wording))
+    [ "NOT_FOUND: Resource was not found"
+    ; "ERROR: (gcloud.container.clusters.describe) ResponseError: code=404, message=Not \
+       found: projects/p/locations/r/clusters/c."
+    ; "Could not fetch resource: - The resource 'x' was not found"
+    ; "the cluster does not exist"
+    ];
+  List.iter
+    (fun wording ->
+       Alcotest.(check bool)
+         (Printf.sprintf "%S is not absence" wording)
+         false
+         (absent_wording wording))
+    [ "PERMISSION_DENIED: caller does not have permission"
+    ; "Throttling: rate exceeded"
+    ; "There was a problem refreshing your current auth tokens"
+    ]
+;;
+
+let test_the_describe_field_is_read () =
+  let check description json expected =
+    match Sol_cli_gcp_cluster.autopilot_of_describe_json json with
+    | Ok value -> Alcotest.(check bool) description expected value
+    | Error message -> Alcotest.failf "%s: %s" description message
+  in
+  check "autopilot on" {|{"autopilot":{"enabled":true}}|} true;
+  check "autopilot off" {|{"autopilot":{"enabled":false}}|} false;
+  (match Sol_cli_gcp_cluster.autopilot_of_describe_json {|{"name":"c"}|} with
+   | Ok _ -> Alcotest.fail "a describe with no autopilot field was read as a mode"
+   | Error _ -> ());
+  match Sol_cli_gcp_cluster.autopilot_of_describe_json "not json" with
+  | Ok _ -> Alcotest.fail "an unparseable describe was read as a mode"
+  | Error _ -> ()
+;;
+
+let () =
+  Alcotest.run
+    "cluster_substrate"
+    [ ( "contract"
+      , [ Alcotest.test_case
+            "standard and a fresh target are accepted"
+            `Quick
+            test_standard_and_fresh_targets_are_accepted
+        ; Alcotest.test_case
+            "Autopilot is refused by the support contract"
+            `Quick
+            test_autopilot_is_refused_by_the_support_contract
+        ; Alcotest.test_case
+            "an unreadable cluster is never absence"
+            `Quick
+            test_an_unreadable_cluster_is_never_absence
+        ; Alcotest.test_case "the absence vocabulary" `Quick test_absence_wording
+        ] )
+    ; ( "observation"
+      , [ Alcotest.test_case
+            "the describe field is read, and only when present"
+            `Quick
+            test_the_describe_field_is_read
+        ] )
+    ]
+;;

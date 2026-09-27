@@ -21,6 +21,15 @@ type t =
   ; cluster_access_role_arn : Sol_cli_config.target -> (string option, string) result
     (** The role a caller assumes to reach the cluster, where the provider has one. *)
   ; platform_storage : platform_storage
+  ; cluster_substrate :
+      (outputs_json:string
+       -> region:string
+       -> cluster_name:string
+       -> (Sol_cli_cluster_substrate.t, string) result)
+        option
+    (** INFRA-093 / FND-0064: the mode of a cluster that already exists, read-only, observed
+        before anything is planned. The profile supports GKE Standard; Autopilot is refused, and an
+        unreadable cluster is never read as absence. [None] for a provider with no such concept. *)
   ; disk_quota :
       (outputs_json:string
        -> region:string
