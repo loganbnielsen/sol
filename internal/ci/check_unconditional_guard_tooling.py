@@ -13,11 +13,6 @@ SCRIPT_NAME = re.compile(r"[A-Za-z0-9_.-]+\.(?:sh|py)")
 REQUIRED_TOOL = re.compile(r"command -v ([a-z0-9_.-]+)")
 PROVIDED_BY_A_STEP = {
     "kubectl",
-    "terraform",
-    "gcloud",
-    "helm",
-    "docker",
-    "rpk",
     "shfmt",
     "ocamlformat",
 }
