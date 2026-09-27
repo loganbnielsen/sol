@@ -52,7 +52,7 @@ reject autopilot-requested <<'PY'
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]) / 'platform/cloud/gcp/cluster/main.tf'
 s = p.read_text()
-s2, n = re.subn(r'enable_autopilot\s*=\s*false', 'enable_autopilot = true', s, count=1)
+s2, n = re.subn(r'^(\s*)remove_default_node_pool\s*=\s*true\s*$', r'\1enable_autopilot = true\n\1remove_default_node_pool = true', s, count=1)
 assert n == 1, 'the mutation anchor did not match'
 p.write_text(s2)
 PY

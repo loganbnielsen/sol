@@ -61,15 +61,12 @@ while depth and i < len(text):
 body = text[body_start:i]
 code = '\n'.join(l for l in body.splitlines() if not l.strip().startswith('#'))
 problems = []
-if not re.search(r'^\s*enable_autopilot\s*=\s*false\s*$', code, re.M):
+if re.search(r'^\s*enable_autopilot\s*=', code, re.M):
     problems.append(
-        'the cluster must declare enable_autopilot = false: the profile provisions and supports '
-        'GKE Standard, and Autopilot refuses the node-level capabilities its components require '
-        '(FND-0064)')
-if re.search(r'enable_autopilot\s*=\s*var\.', code):
-    problems.append(
-        'enable_autopilot must not be a variable: the substrate is a property of the driver, not '
-        'a user knob')
+        'the cluster must not carry an enable_autopilot attribute at all: the google provider '
+        "refuses it alongside remove_default_node_pool, and Sol states its substrate by not "
+        'requesting Autopilot. Declaring the attribute -- even as false -- is a plan-time error '
+        '(Attempt 15)')
 if not re.search(r'^\s*remove_default_node_pool\s*=\s*true\s*$', code, re.M):
     problems.append(
         "the cluster's default node pool must be removed: Sol owns the pool it runs on")
@@ -112,5 +109,5 @@ if [ -d "$root/cli/lib/config" ] \
   fail "node sizing must not appear in the target contract: what should control sizing is a design decision, and not one to infer from a qualification run"
 fi
 
-echo "GCP substrate: the driver provisions GKE Standard (enable_autopilot = false, no knob), owns a"
+echo "GCP substrate: the driver provisions GKE Standard (no Autopilot request, no knob), owns a"
 echo "               node pool with driver-defaulted sizing, and keeps its control plane regional"

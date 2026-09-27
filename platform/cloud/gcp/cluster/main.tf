@@ -113,9 +113,14 @@ resource "google_container_cluster" "main" {
   # lifts it.
   deletion_protection = var.gke_deletion_protection
 
-  # Standard: Sol owns the node pool below, because the platform needs node-level capabilities
-  # Autopilot denies.
-  enable_autopilot         = false
+  # Standard, stated by *not* requesting Autopilot. The google provider refuses
+  # `remove_default_node_pool` alongside an `enable_autopilot` attribute at all -- not merely
+  # alongside `true` -- which GCP qualification Attempt 15 hit as a plan-time error:
+  #
+  #   "remove_default_node_pool": conflicts with enable_autopilot
+  #
+  # `enable_autopilot` defaults to false, so omitting it is the same request without the conflict,
+  # and the more honest statement: Sol does not ask for Autopilot.
   remove_default_node_pool = true
   initial_node_count       = 1
 
