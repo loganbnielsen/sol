@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: DOCS-025 — the readiness path depends on the declared language (2026-09-27)
+
+- `docs/deployment/workload-availability.md` said an HTTP service is probed on `/healthz` for startup, readiness and liveness. True before INFRA-073: readiness is now `/readyz` for a declared OCaml `-svc`, and stays `/healthz` for a TypeScript or undeclared workload until the TypeScript framework serves it (FEAT-096). The bullet now says so, and notes that both deployment modes resolve it identically since BUG-056.
+- The rest of the document matched the code and is unchanged.
+- `AGENTS.md`'s comment policy now also records what is *not* enforced: dune files and Dockerfiles are policy-covered but absent from `check_no_comments.sh`'s file list, which the CI and tooling work owns.
+
 ## Latest: UX-003 — sol new workspace names the README it generated (2026-09-27)
 
 - The scaffold's next-steps report gave the commands, the framework dependency and the CI/CD notes, but never named `README.md` — the file it had just written, and (since REFAC-143) the only place the generated Dockerfile's rationale lives. Two lines now name it after the command list.
