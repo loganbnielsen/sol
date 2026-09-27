@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-#
-#
-#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -68,19 +65,13 @@ mkdir -p "$TMP/bin"
 cat >"$TMP/bin/sol" <<'STUB'
 #!/usr/bin/env bash
 printf 'sol %s\n' "$*" >>"$ARGV_LOG"
-# A knob to make a case outlast a probe interval, so temporal assertions have rows to read.
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 case "$1 $2" in
   "cloud apply")
-    # Sol echoes each terraform invocation into its run log, and the bundle's phase awareness is
-    # derived from exactly that evidence (INFRA-091) -- so the stub has to echo it too, or the
-    # rule would be untested here.
     printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-cluster-stub/platform/cloud/gcp/cluster' 'apply'\n" \
       "${XDG_DATA_HOME:-/tmp}"
     printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
     if [ "${STUB_APPLY_FAILS_AT:-}" = "bootstrap" ]; then
-      # INFRA-091: a run that stops before the platform root is ever initialised -- Attempt
-      # 13's shape -- so the bundle rule can be tested in both directions.
       printf '[cloud-bootstrap-apply] FAILED (8.0s)\n'
       printf 'Error: the provider refused the bootstrap\n'
       exit "${STUB_APPLY_RC:-1}"
@@ -107,26 +98,18 @@ STUB
 cat >"$TMP/bin/terraform" <<'STUB'
 #!/usr/bin/env bash
 printf 'terraform %s\n' "$*" >>"$ARGV_LOG"
-# A destructive reconcile: -detailed-exitcode reports "changes", and `show` renders the plan
-# the harness must refuse rather than apply.
 if [ "${STUB_PLAN_DESTROYS:-0}" = "1" ]; then
   for a in "$@"; do
     [ "$a" = "plan" ] && exit 2
     [ "$a" = "show" ] && { printf '# google_storage_bucket.state must be replaced\n'; exit 0; }
   done
 fi
-# init/apply succeed; a -detailed-exitcode plan reports "no changes" so reconciliation is a
-# no-op and the run does not depend on plan diffing for these assertions.
 for a in "$@"; do [ "$a" = "plan" ] && exit "${STUB_PLAN_RC:-0}"; done
 exit 0
 STUB
 
 cat >"$TMP/bin/gcloud" <<'STUB'
 #!/usr/bin/env bash
-# Two observation channels. Lifecycle calls log to $ARGV_LOG, which the lifecycle assertions
-# inspect; the readiness probe's own reads log to $API_PROBE_LOG, so the probe can never contaminate
-# an assertion about what Sol did. This is routing at the source -- filtering it back out of
-# $ARGV_LOG downstream would make every lifecycle assertion quietly conditional on the probe.
 gcloud_log_to="$ARGV_LOG"
 case " $* " in *"value(endpoint)"*) gcloud_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf "gcloud %s" "$*" >>"$gcloud_log_to"; printf "\n" >>"$gcloud_log_to"
@@ -137,18 +120,14 @@ case "$*" in
       printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
     fi
     printf '{"version":4,"serial":7,"resources":[]}\n'; exit 0 ;;
-  # INFRA-090: the region's disk quota, as the provider reports it. STUB_SSD_USAGE exhausts it.
   *"compute regions describe"*"--format=json"*|*"--format=json"*"compute regions describe"*)
     printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'
     printf '{"metric":"DISKS_TOTAL_GB","limit":4096.0,"usage":0.0},'
     printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
       "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
     exit 0 ;;
-  # The endpoint the probe compares against the kubeconfig's; a case can make them diverge.
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
-  # Real gcloud warns on stderr when a filtered list is empty; its stdout stays empty. The
-  # probe must read that as ABSENT, not as an answer.
   *"compute addresses list"*)
     if [ "${STUB_FILTER_WARNING:-0}" = "1" ]; then
       printf "WARNING: The following filter keys were not present in any resource : name\n" >&2
@@ -160,19 +139,7 @@ case "$*" in
     printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
   *"compute networks list"*)    printf "default\n"; exit 0 ;;
 esac
-# ── the IAM observables (INFRA-080) ─────────────────────────────────────────────
-# These are the questions the harness asks now, and the wording below is what GCP actually
-# answered in Attempts 8 and 9: an authoritative active-account list, the identity's own
-# policy, and the custom role's own deletion marker.
-#
-# `STUB_PROVISIONER_SA` is run_case's CLUSTER ("test-cluster") at the project the harness
-# defaults to; the scenarios assert the harness asked about exactly this identity, so the
-# fixture cannot drift away from it silently.
 case "$*" in
-  # The provisioner's own describe, in both worlds, with the wording Attempt 9 captured: an
-  # active account answers with itself, and a provider-deleted one answers PERMISSION_DENIED
-  # -- which establishes nothing, and is exactly why this class asks an authoritative list
-  # instead. Other identities keep the generic not-found fallthrough below.
   *"iam service-accounts describe"*)
     case "$*" in
       *"$STUB_PROVISIONER_SA"*)
@@ -206,8 +173,6 @@ case "$*" in
       *)        printf "ERROR: (gcloud.iam.roles.describe) PERMISSION_DENIED: The caller does not have permission\n" >&2; exit 1 ;;
     esac ;;
 esac
-# STUB_CLUSTER_EXISTS=1 is the world where the cloud apply reached the cluster (so the
-# discriminator probes have something to read) without claiming the target still exists.
 if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
   case "$*" in
   *"value(status)"*)
@@ -225,9 +190,6 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
     exit 0 ;;
   *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
     *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
-    # get-credentials generates an entry; it does NOT necessarily switch the current context, which
-    # is what Attempt 15d measured. The generated file therefore looks like the one that misled it:
-    # a *deleted* cluster's context first and still current, this run's cluster second.
     *"container clusters get-credentials"*)
       if [ -n "${STUB_GET_CREDENTIALS_RC:-}" ]; then
         printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403, message=credential generation refused\n' >&2
@@ -249,15 +211,9 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
       exit 0 ;;
   esac
 fi
-# STUB_TARGET_PRESENT=1 is the world where teardown did not finish.
 if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
   case "$*" in *list* | *describe*) printf "test-cluster\n"; exit 0 ;; esac
 fi
-# Only the provider's own not-found vocabulary means ABSENT; everything else is UNKNOWN and
-# must fail the verification. These strings are the provider's **captured** output, verbatim --
-# a paraphrase is how the underscore form went unnoticed (`NOT_FOUND: resource does not exist`
-# matched the pattern through its `does not exist` alternative while the real
-# `NOT_FOUND: Unknown service account` did not).
 case "${STUB_PROBE_MODE:-notfound}" in
   permission)
     printf 'ERROR: (gcloud.projects.get-iam-policy) [lbendtlynielsen@gmail.com] does not have permission to access projects instance [cloud-sdk-dev:getIamPolicy] (or it may not exist): The caller does not have permission. This command is authenticated as lbendtlynielsen@gmail.com which is the active account specified by the [core/account] property\n' >&2
@@ -279,9 +235,6 @@ STUB
 
 cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
-# A single argument containing spaces is one argv token, not a command. This is what kubectl said
-# when the failure capture passed "get pods -A -o wide" as one string, and the stub says it the same
-# way so the regression cannot pass by accident.
 case "${1:-}" in
   *" "*)
     printf 'error: unknown command "%s" for "kubectl"\n' "$1" >&2
@@ -300,10 +253,6 @@ kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
 case "$*" in
-  # The readiness probe's read. Its own alternative of this case, placed here rather than nested
-  # inside another branch's body (which orphaned that branch's terminator once already).
-  # The failure-capture reads: plausible, non-empty fixtures. They exist so the capture's *plumbing*
-  # is provable; they are not a claim about any candidate cause.
   "get pods -A -o wide"*)
     printf 'NAMESPACE   NAME          READY   STATUS    RESTARTS   AGE   IP   NODE\n'
     printf 'platform    redpanda-0    0/1     Pending   0          9m    <none>  <none>\n'
@@ -678,7 +627,6 @@ else
   ok "an unparsable usage read fails the verification"
 fi
 
-#
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
     "$TMP/class-warden.argv" 2>/dev/null; then
   ok "a failed install still reads the provisioner bindings it had established"
