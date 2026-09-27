@@ -46,6 +46,10 @@ Provider-native settings — the lock table here, the role ARNs below — live i
 target's `aws:` block, so a target on another provider cannot carry them. A flat
 `state_lock_table:` is refused with the key's new location.
 
+Each field inside the block is a single value. A nested block (say `aws.vpc.id`) is
+refused, naming the key, rather than silently ignored (REFAC-129): a typo that nests
+one used to be indistinguishable from not writing the field at all.
+
 `sol cloud` fails closed before Terraform initialization when either is missing.
 It supplies this configuration at runtime and uses deterministic, distinct
 `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` objects. Do not

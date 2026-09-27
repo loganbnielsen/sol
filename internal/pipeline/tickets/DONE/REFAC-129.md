@@ -33,3 +33,27 @@ The decoder is correct, but it names its error constructor `fail`, which reads l
 - Error messages are unchanged. The existing config tests pass as they are, except the nested-provider-value case, whose new behaviour has a test.
 - Demo/example: not applicable (internal), unless the nested-value decision changes accepted config, in which case the docs say so.
 - Language parity: no impact.
+
+## Completion notes
+
+- **The decoder reads as a chain.** The local helper is `error` / `error_at` (no
+  `fail` that returns a value); `Option.to_result` and `Result.map_error` replace the
+  hand-rolled re-matching, and the decoded fields are a `let*` chain. `assert false`
+  is gone: target keys are classified by a type first, so each match is total over its
+  own type.
+- **`members` is a fold with named steps** (`key_of`, `no_alias`, `add`), so a
+  duplicate check, an alias refusal and key extraction read top to bottom.
+- **The nested-provider-value case is decided, not ignored.** A nested value under a
+  provider field was dropped silently, so a typo was indistinguishable from not
+  writing the field; it is now refused with `aws.vpc must be a single value, not a
+  nested block`. Checked first, as the ticket required: **no config in `sol.yml`
+  examples, `examples/pluto` or `internal/fixtures/` nests one**, so nothing in the
+  repository changes meaning. Because accepted config does change for such a file,
+  `docs/deployment/production-bootstrap.md` now states the rule, and the test that
+  asserted the old tolerance asserts the refusal instead.
+- **Tests:** `test_config` 87 cases pass, including the rewritten nested-value case;
+  error messages are otherwise unchanged. `dune build` clean;
+  `internal/ci/check_ocamlformat.sh --all` clean.
+- **Demo/example:** not applicable — no generated or example config carries a nested
+  provider field; the docs sentence above is the whole user-visible change.
+- **Language parity:** no impact (deployment config is language-neutral).

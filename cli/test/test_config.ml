@@ -423,6 +423,10 @@ services:
 ;;
 
 let test_nested_provider_box_still_tolerated () =
+  (* REFAC-129: a nested value under a provider field used to be dropped
+     silently, so a typo was indistinguishable from not writing the field. It is
+     refused now and the message names the key; no config in the repo, the
+     examples or the fixtures nests one. *)
   with_temp_dir (fun () ->
     write
       "sol.yml"
@@ -433,11 +437,7 @@ target:
       id: vpc-123
   registry: registry.example.com
 |};
-    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
-    | Ok cfg ->
-      let target = cfg.target in
-      check_str_opt "registry" (Some "registry.example.com") target.registry)
+    expect_load_error "aws.vpc must be a single value, not a nested block")
 ;;
 
 let test_target_provider_box_ends_before_generic_key () =
@@ -2085,7 +2085,7 @@ let () =
             `Quick
             test_service_key_after_scale_parses
         ; Alcotest.test_case
-            "nested provider box tolerated"
+            "nested provider field is refused, naming the key"
             `Quick
             test_nested_provider_box_still_tolerated
         ; Alcotest.test_case
