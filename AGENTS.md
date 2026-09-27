@@ -281,8 +281,10 @@ You must maintain and consult the project's source-of-truth markdown files:
 ## Comments: none in covered formats
 
 Covered source and config formats carry **no comments**: `.ml`/`.mli`, shell,
-Terraform and TypeScript (REFAC-142, enforced by
-`internal/ci/check_no_comments.sh`), and dune files and Dockerfiles (REFAC-143).
+Terraform, TypeScript and Python (REFAC-142, enforced by
+`internal/ci/check_no_comments.sh`), and dune files and Dockerfiles (REFAC-143,
+not yet in the guard's file list — extending it belongs with the CI and tooling
+work).
 A directive a tool genuinely needs is the one exception: `#!`, `# shellcheck`,
 `// @ts-…`, `/// <reference`.
 

@@ -47,9 +47,14 @@ declared.
 
 ## Probes: what "healthy" means per workload
 
-- **HTTP service** — `startupProbe` and readiness/liveness on `/healthz:8080`.
-  The startup probe means a slow start is not killed by liveness before it can
-  become ready.
+- **HTTP service** — `startupProbe` and `livenessProbe` on `/healthz:8080`, and
+  `readinessProbe` on `/readyz:8080` when the workload declares OCaml, since
+  `sol-svc` serves `/readyz` (INFRA-073). A TypeScript `-svc`, and a workload
+  whose language is undeclared, stays on `/healthz:8080` until the TypeScript
+  framework serves `/readyz` (FEAT-096) — an undeclared language is unknown,
+  never assumed OCaml (DEC-022 §7). Both deployment modes resolve this the same
+  way (BUG-056). The startup probe means a slow start is not killed by liveness
+  before it can become ready.
 - **Kafka consumer worker** — readiness on `/readyz` and liveness on `/livez`,
   both on the metrics port (`9090`), plus a startup probe.
   - *Readiness* is the consumer-join state: the broker has assigned partitions.
