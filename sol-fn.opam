@@ -20,7 +20,7 @@ depends: [
   "sol-env" "sol-obs" "sol-runtime"
 ]
 pin-depends: [
-  [ "lambda-eio.0.1.0" "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
+  [ "lambda-eio.0.1.0" "git+https://github.com/loganbnielsen/lambda-eio.git#4a0cf964238fbef87e4b691c067b958f4cfe35bd" ]
 ]
 build: [
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
