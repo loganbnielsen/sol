@@ -4,6 +4,15 @@ let check_int = Alcotest.(check int)
 
 module D = Sol_cli_rollout_diagnosis
 
+(* Fixtures are well-formed, so their decode is expected to succeed. *)
+let ok what = function
+  | Ok v -> v
+  | Error e -> Alcotest.failf "%s: unexpected decode error: %s" what e
+;;
+
+let pods_of json = D.parse_pods_json json |> ok "pods"
+let events_of json = D.parse_events_json json |> ok "events"
+
 (* DEC-038 §7: the diagnosis functions now return a three-valued verdict. These
    helpers keep the existing assertions about *this* question -- "did it report a
    problem?" -- readable, and make the mapping explicit rather than incidental. *)
@@ -144,7 +153,7 @@ let events_json =
 (* ── parse_pods_json ─────────────────────────────────────────────────── *)
 
 let test_parse_healthy_pod () =
-  match D.parse_pods_json healthy_pod_json with
+  match pods_of healthy_pod_json with
   | [ p ] ->
     check_string "name" "charge-svc-abc" p.name;
     check_string "phase" "Running" p.phase;
@@ -155,7 +164,7 @@ let test_parse_healthy_pod () =
 ;;
 
 let test_parse_image_pull_backoff () =
-  match D.parse_pods_json image_pull_backoff_json with
+  match pods_of image_pull_backoff_json with
   | [ p ] ->
     check_bool "is_healthy" false (D.is_healthy p);
     (match p.state with
@@ -165,7 +174,7 @@ let test_parse_image_pull_backoff () =
 ;;
 
 let test_parse_crash_loop_last_termination () =
-  match D.parse_pods_json crash_loop_json with
+  match pods_of crash_loop_json with
   | [ p ] ->
     check_int "restarts" 6 p.restarts;
     check_string
@@ -176,7 +185,7 @@ let test_parse_crash_loop_last_termination () =
 ;;
 
 let test_parse_pod_with_no_container_statuses () =
-  match D.parse_pods_json pending_no_containers_json with
+  match pods_of pending_no_containers_json with
   | [ p ] ->
     check_string "phase" "Pending" p.phase;
     check_bool "is_healthy" false (D.is_healthy p)
@@ -184,7 +193,7 @@ let test_parse_pod_with_no_container_statuses () =
 ;;
 
 let test_parse_pod_with_missing_status_keeps_list () =
-  match D.parse_pods_json missing_status_pod_json with
+  match pods_of missing_status_pod_json with
   | [ missing; healthy ] ->
     check_string "missing name" "charge-svc-missing-status" missing.name;
     check_string "missing phase" "Unknown" missing.phase;
@@ -197,14 +206,14 @@ let test_parse_pod_with_missing_status_keeps_list () =
 (* ── parse_events_json / events_for_pod ─────────────────────────────── *)
 
 let test_events_for_pod_filters_and_orders () =
-  let events = D.parse_events_json events_json in
+  let events = events_of events_json in
   let for_xyz = D.events_for_pod ~pod_name:"charge-svc-xyz" events in
   check_int "two events for charge-svc-xyz" 2 (List.length for_xyz);
   check_string "most recent first" "BackOff" (List.hd for_xyz).D.reason
 ;;
 
 let test_events_for_pod_excludes_other_pods () =
-  let events = D.parse_events_json events_json in
+  let events = events_of events_json in
   let for_other = D.events_for_pod ~pod_name:"charge-svc-abc" events in
   check_int "no events for unrelated pod" 0 (List.length for_other)
 ;;
@@ -212,7 +221,7 @@ let test_events_for_pod_excludes_other_pods () =
 (* ── format_service_diagnosis ───────────────────────────────────────── *)
 
 let test_format_service_diagnosis_none_when_healthy () =
-  let pods = D.parse_pods_json healthy_pod_json in
+  let pods = pods_of healthy_pod_json in
   check_bool
     "no diagnosis for healthy service"
     true
@@ -221,8 +230,8 @@ let test_format_service_diagnosis_none_when_healthy () =
 ;;
 
 let test_format_service_diagnosis_includes_events_and_reason () =
-  let pods = D.parse_pods_json image_pull_backoff_json in
-  let events = D.parse_events_json events_json in
+  let pods = pods_of image_pull_backoff_json in
+  let events = events_of events_json in
   match D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events events) with
   | D.Healthy -> Alcotest.fail "expected a diagnosis"
   | D.Undetermined why ->
@@ -260,7 +269,7 @@ let test_format_service_diagnosis_reports_empty_pod_list () =
 ;;
 
 let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous () =
-  let pods = D.parse_pods_json succeeded_pod_json in
+  let pods = pods_of succeeded_pod_json in
   check_bool
     "a Succeeded pod is still a finding for Continuous (Svc/Worker)"
     true
@@ -271,17 +280,12 @@ let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous ()
 (* ── format_cronjob_diagnosis (Ephemeral/Fn) ────────────────────────────── *)
 
 let never_scheduled : D.cronjob_status =
-  { last_schedule_time = None
-  ; last_successful_time = None
-  ; active_count = 0
-  ; active_job_names = []
-  }
+  { last_schedule_time = None; last_successful_time = None; active_job_names = [] }
 ;;
 
 let idle_last_run_succeeded : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
   ; last_successful_time = Some "2026-09-02T10:00:05Z"
-  ; active_count = 0
   ; active_job_names = []
   }
 ;;
@@ -289,7 +293,6 @@ let idle_last_run_succeeded : D.cronjob_status =
 let idle_last_run_failed : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
   ; last_successful_time = Some "2026-09-01T10:00:05Z" (* stale, from an earlier run *)
-  ; active_count = 0
   ; active_job_names = []
   }
 ;;
@@ -297,7 +300,6 @@ let idle_last_run_failed : D.cronjob_status =
 let idle_success_at_schedule_boundary : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
   ; last_successful_time = Some "2026-09-02T10:00:00Z"
-  ; active_count = 0
   ; active_job_names = []
   }
 ;;
@@ -305,7 +307,6 @@ let idle_success_at_schedule_boundary : D.cronjob_status =
 let idle_never_succeeded : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
   ; last_successful_time = None
-  ; active_count = 0
   ; active_job_names = []
   }
 ;;
@@ -313,7 +314,6 @@ let idle_never_succeeded : D.cronjob_status =
 let run_currently_active : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
   ; last_successful_time = None
-  ; active_count = 1
   ; active_job_names = [ "invoice-fn-29384710-abcde" ]
   }
 ;;
@@ -420,7 +420,7 @@ let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
 (* ── format_active_run_diagnosis (Ephemeral/Fn active run) ──────────────── *)
 
 let test_format_active_run_diagnosis_running_pod_is_ok () =
-  let pods = D.parse_pods_json healthy_pod_json in
+  let pods = pods_of healthy_pod_json in
   check_bool
     "a Running, ready pod is not a finding"
     true
@@ -431,7 +431,7 @@ let test_format_active_run_diagnosis_running_pod_is_ok () =
 (* Unlike a Continuous pod, Succeeded is expected here: an active run
    finishing is not a failure. *)
 let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
-  let pods = D.parse_pods_json succeeded_pod_json in
+  let pods = pods_of succeeded_pod_json in
   check_bool
     "a Succeeded active-run pod is not a finding"
     true
@@ -440,7 +440,7 @@ let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
 ;;
 
 let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
-  let pods = D.parse_pods_json image_pull_backoff_json in
+  let pods = pods_of image_pull_backoff_json in
   check_bool
     "a stuck (ImagePullBackOff) active-run pod is a finding"
     true
@@ -451,7 +451,7 @@ let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
 (* Every invocation passes through this state en route to Running; it must
    not be a finding or every startup would false-positive. *)
 let test_format_active_run_diagnosis_pending_startup_is_ok () =
-  let pods = D.parse_pods_json pending_no_containers_json in
+  let pods = pods_of pending_no_containers_json in
   check_bool
     "a freshly-scheduled pod with no container status yet is not a finding"
     true
@@ -462,8 +462,8 @@ let test_format_active_run_diagnosis_pending_startup_is_ok () =
 (* Otherwise indistinguishable from normal startup -- FailedScheduling is
    the signal that it's actually stuck. *)
 let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
-  let pods = D.parse_pods_json pending_no_containers_json in
-  let events = D.parse_events_json events_json in
+  let pods = pods_of pending_no_containers_json in
+  let events = events_of events_json in
   check_bool
     "a FailedScheduling pod is still a finding despite looking like normal startup"
     true
@@ -472,7 +472,7 @@ let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
 ;;
 
 let test_format_active_run_diagnosis_container_creating_is_ok () =
-  let pods = D.parse_pods_json container_creating_json in
+  let pods = pods_of container_creating_json in
   check_bool
     "ContainerCreating with no restarts is not a finding"
     true
@@ -483,7 +483,7 @@ let test_format_active_run_diagnosis_container_creating_is_ok () =
 (* Leniency covers zero restarts only -- after a restart, the same state
    could be a crash-loop retry. *)
 let test_format_active_run_diagnosis_container_creating_after_restart_is_flagged () =
-  let pods = D.parse_pods_json container_creating_after_restart_json in
+  let pods = pods_of container_creating_after_restart_json in
   check_bool
     "ContainerCreating after a restart is still a finding"
     true
@@ -496,8 +496,8 @@ let test_parse_cronjob_status () =
     {|{"status": {"lastScheduleTime": "2026-09-02T10:00:00Z", "lastSuccessfulTime": "2026-09-02T10:00:05Z", "active": [{"name": "invoice-fn-1"}]}}|}
   in
   match D.parse_cronjob_status json with
-  | None -> Alcotest.fail "expected Some cronjob_status"
-  | Some (status : D.cronjob_status) ->
+  | Error e -> Alcotest.fail ("expected a cronjob_status: " ^ e)
+  | Ok (status : D.cronjob_status) ->
     check_string
       "lastScheduleTime"
       "2026-09-02T10:00:00Z"
@@ -506,7 +506,6 @@ let test_parse_cronjob_status () =
       "lastSuccessfulTime"
       "2026-09-02T10:00:05Z"
       (Option.value ~default:"" status.last_successful_time);
-    check_int "active_count" 1 status.active_count;
     check_string
       "active_job_names"
       "invoice-fn-1"
@@ -517,23 +516,67 @@ let test_parse_cronjob_status () =
 
 let test_parse_cronjob_status_never_scheduled () =
   match D.parse_cronjob_status {|{"status": {}}|} with
-  | None -> Alcotest.fail "expected Some cronjob_status"
-  | Some (status : D.cronjob_status) ->
+  | Error e -> Alcotest.fail ("expected a cronjob_status: " ^ e)
+  | Ok (status : D.cronjob_status) ->
     check_bool "no lastScheduleTime" true (status.last_schedule_time = None);
-    check_int "active_count defaults to 0" 0 status.active_count
+    check_int "no active jobs" 0 (List.length status.active_job_names)
 ;;
 
-(* Yojson.Safe.Util.member returns `Null for an absent key rather than
-   raising, but member on `Null itself raises -- a CronJob JSON with no
-   "status" key at all (not even an empty object) must still parse to
-   Some with the "never happened" defaults, not fall through the raise
-   into None (Unavailable). *)
+(* A CronJob JSON with no "status" key at all (not even an empty object) is a
+   CronJob that has never run, not a malformed read. *)
 let test_parse_cronjob_status_status_key_absent () =
   match D.parse_cronjob_status {|{}|} with
-  | None -> Alcotest.fail "expected Some cronjob_status, got None (Unavailable)"
-  | Some (status : D.cronjob_status) ->
+  | Error e -> Alcotest.fail ("expected a cronjob_status, got Unavailable: " ^ e)
+  | Ok (status : D.cronjob_status) ->
     check_bool "no lastScheduleTime" true (status.last_schedule_time = None);
-    check_int "active_count defaults to 0" 0 status.active_count
+    check_int "no active jobs" 0 (List.length status.active_job_names)
+;;
+
+(* ── REFAC-127: a malformed read is an error, never "nothing there" ────────── *)
+
+let is_error = function
+  | Ok _ -> false
+  | Error _ -> true
+;;
+
+let test_malformed_reads_are_errors () =
+  check_bool "pods: not JSON" true (is_error (D.parse_pods_json "not json"));
+  check_bool "pods: no items" true (is_error (D.parse_pods_json {|{"kind": "Status"}|}));
+  check_bool
+    "pods: item not an object"
+    true
+    (is_error (D.parse_pods_json {|{"items": [1]}|}));
+  check_bool "events: not JSON" true (is_error (D.parse_events_json "<html>"));
+  check_bool
+    "events: items not a list"
+    true
+    (is_error (D.parse_events_json {|{"items": {}}|}));
+  check_bool "cronjob: not JSON" true (is_error (D.parse_cronjob_status ""));
+  check_bool
+    "cronjob: active not a list"
+    true
+    (is_error (D.parse_cronjob_status {|{"status": {"active": "x"}}|}));
+  check_bool
+    "cronjob: active job with no name"
+    true
+    (is_error (D.parse_cronjob_status {|{"status": {"active": [{}]}}|}))
+;;
+
+(* The positive controls: an empty list is an answer. *)
+let test_empty_lists_are_answers () =
+  check_int "no pods" 0 (List.length (pods_of {|{"items": []}|}));
+  check_int "no events" 0 (List.length (events_of {|{"items": []}|}))
+;;
+
+(* A pod whose metadata is missing still parses: absent fields default, only the
+   response's shape is required. Before REFAC-127 this raised inside a catch-all
+   and the whole list read as empty. *)
+let test_pod_without_metadata_parses () =
+  match pods_of {|{"items": [{"status": {"phase": "Pending"}}]}|} with
+  | [ p ] ->
+    check_string "name defaults" "unknown" p.name;
+    check_string "phase" "Pending" p.phase
+  | _ -> Alcotest.fail "expected one pod"
 ;;
 
 (* ── INFRA-057 / DEC-038 §5: a failed read is not an absent result ─────────── *)
@@ -547,7 +590,7 @@ let test_unavailable_events_are_named_not_empty () =
   match
     D.format_service_diagnosis
       ~service_name:"charge-svc"
-      (D.parse_pods_json crash_loop_json)
+      (pods_of crash_loop_json)
       (D.Events_unavailable
          "Error from server (Forbidden): events is forbidden: cannot list resource \
           \"events\"")
@@ -574,7 +617,7 @@ let test_zero_events_are_reported_as_zero () =
   match
     D.format_service_diagnosis
       ~service_name:"charge-svc"
-      (D.parse_pods_json crash_loop_json)
+      (pods_of crash_loop_json)
       (D.Events [])
   with
   | D.Healthy -> Alcotest.fail "an unhealthy pod must be diagnosed"
@@ -823,6 +866,14 @@ let () =
             "status key absent entirely"
             `Quick
             test_parse_cronjob_status_status_key_absent
+        ] )
+    ; ( "malformed reads are errors (REFAC-127)"
+      , [ Alcotest.test_case "malformed is Error" `Quick test_malformed_reads_are_errors
+        ; Alcotest.test_case "empty list is an answer" `Quick test_empty_lists_are_answers
+        ; Alcotest.test_case
+            "pod without metadata parses"
+            `Quick
+            test_pod_without_metadata_parses
         ] )
     ; ( "failed reads are not absent evidence (INFRA-057)"
       , [ Alcotest.test_case

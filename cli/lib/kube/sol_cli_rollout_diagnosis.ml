@@ -36,14 +36,15 @@ type event =
   ; involved_name : string
   }
 
-let member_opt key j =
-  try Some (J.member key j) with
-  | _ -> None
-;;
-
-let is_null = function
-  | None | Some `Null -> true
-  | Some _ -> false
+(* REFAC-127: field access is total -- an absent field, or a path through a
+   non-object, is [`Null] -- so nothing below the decode boundary can raise, and
+   there is no catch-all turning a malformed read into "nothing there". *)
+let rec field path (j : Yojson.Safe.t) : Yojson.Safe.t =
+  match path, j with
+  | [], j -> j
+  | key :: rest, `Assoc fields ->
+    field rest (Option.value (List.assoc_opt key fields) ~default:`Null)
+  | _ :: _, _ -> `Null
 ;;
 
 let to_string_opt = function
@@ -61,66 +62,66 @@ let to_bool_opt = function
   | _ -> None
 ;;
 
+let string_field path j = field path j |> to_string_opt
+
+(* The decode boundary: the text is JSON, and a list resource's [items] is a list
+   of objects. Anything else is an error that names what was being read. *)
+let decode ~what s =
+  match Yojson.Safe.from_string s with
+  | json -> Ok json
+  | exception Yojson.Json_error msg -> Error (Printf.sprintf "%s: not JSON (%s)" what msg)
+;;
+
+let items ~what s =
+  let open Result.Syntax in
+  let* json = decode ~what s in
+  match field [ "items" ] json with
+  | `List items ->
+    Sol_cli_result.map_list
+      (function
+        | `Assoc _ as item -> Ok item
+        | _ -> Error (Printf.sprintf "%s: an item is not an object" what))
+      items
+  | _ -> Error (Printf.sprintf "%s: the response has no items list" what)
+;;
+
 let parse_container_state (c : Yojson.Safe.t) : container_state =
-  match member_opt "state" c with
-  | None -> Unknown_state
-  | Some state ->
-    let waiting = member_opt "waiting" state in
-    let running = member_opt "running" state in
-    let terminated = member_opt "terminated" state in
-    if not (is_null waiting)
-    then (
-      let w = Option.get waiting in
-      let reason =
-        J.member "reason" w |> to_string_opt |> Option.value ~default:"Unknown"
-      in
-      let message = J.member "message" w |> to_string_opt in
-      Waiting { reason; message })
-    else if not (is_null running)
-    then Running
-    else if not (is_null terminated)
-    then (
-      let t = Option.get terminated in
-      let reason =
-        J.member "reason" t |> to_string_opt |> Option.value ~default:"Unknown"
-      in
-      let exit_code = J.member "exitCode" t |> to_int_opt |> Option.value ~default:0 in
-      let message = J.member "message" t |> to_string_opt in
-      Terminated { reason; exit_code; message })
-    else Unknown_state
+  let reason j = string_field [ "reason" ] j |> Option.value ~default:"Unknown" in
+  let message j = string_field [ "message" ] j in
+  match field [ "state"; "waiting" ] c, field [ "state"; "running" ] c with
+  | (`Assoc _ as w), _ -> Waiting { reason = reason w; message = message w }
+  | _, `Assoc _ -> Running
+  | _ ->
+    (match field [ "state"; "terminated" ] c with
+     | `Assoc _ as t ->
+       let exit_code = field [ "exitCode" ] t |> to_int_opt |> Option.value ~default:0 in
+       Terminated { reason = reason t; exit_code; message = message t }
+     | _ -> Unknown_state)
 ;;
 
 let parse_last_terminated_reason (c : Yojson.Safe.t) : string option =
-  match member_opt "lastState" c with
-  | None -> None
-  | Some ls ->
-    (match member_opt "terminated" ls with
-     | Some t when not (is_null (Some t)) -> J.member "reason" t |> to_string_opt
-     | _ -> None)
+  string_field [ "lastState"; "terminated"; "reason" ] c
 ;;
 
 let parse_pod (item : Yojson.Safe.t) : pod_status =
   let name =
-    J.member "metadata" item
-    |> J.member "name"
-    |> to_string_opt
-    |> Option.value ~default:"unknown"
-  in
-  let status =
-    match member_opt "status" item with
-    | Some (`Assoc _ as status) -> status
-    | _ -> `Assoc []
+    string_field [ "metadata"; "name" ] item |> Option.value ~default:"unknown"
   in
   let phase =
-    J.member "phase" status |> to_string_opt |> Option.value ~default:"Unknown"
+    string_field [ "status"; "phase" ] item |> Option.value ~default:"Unknown"
   in
-  let container_statuses =
-    match member_opt "containerStatuses" status with
-    | Some (`List l) -> l
-    | _ -> []
-  in
-  match container_statuses with
-  | [] ->
+  match field [ "status"; "containerStatuses" ] item with
+  | `List (c :: _) ->
+    { name
+    ; phase
+    ; ready = field [ "ready" ] c |> to_bool_opt |> Option.value ~default:false
+    ; restarts = field [ "restartCount" ] c |> to_int_opt |> Option.value ~default:0
+    ; image = string_field [ "image" ] c
+    ; state = parse_container_state c
+    ; last_terminated_reason = parse_last_terminated_reason c
+    }
+  (* No container has reported yet (a pending pod). *)
+  | _ ->
     { name
     ; phase
     ; ready = false
@@ -129,51 +130,26 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
     ; state = Unknown_state
     ; last_terminated_reason = None
     }
-  | c :: _ ->
-    let ready = J.member "ready" c |> to_bool_opt |> Option.value ~default:false in
-    let restarts = J.member "restartCount" c |> to_int_opt |> Option.value ~default:0 in
-    let image = J.member "image" c |> to_string_opt in
-    let state = parse_container_state c in
-    let last_terminated_reason = parse_last_terminated_reason c in
-    { name; phase; ready; restarts; image; state; last_terminated_reason }
 ;;
 
-let parse_pods_json (s : string) : pod_status list =
-  try
-    match member_opt "items" (Yojson.Safe.from_string s) with
-    | Some (`List items) -> List.map parse_pod items
-    | _ -> []
-  with
-  | _ -> []
+(* [Ok []] only when the API answered with an empty list. *)
+let parse_pods_json (s : string) : (pod_status list, string) result =
+  items ~what:"pods" s |> Result.map (List.map parse_pod)
 ;;
 
-let parse_event (item : Yojson.Safe.t) : event option =
-  try
-    let involved_name =
-      J.member "involvedObject" item
-      |> J.member "name"
-      |> to_string_opt
-      |> Option.value ~default:""
-    in
-    let ev_type =
-      J.member "type" item |> to_string_opt |> Option.value ~default:"Normal"
-    in
-    let reason = J.member "reason" item |> to_string_opt |> Option.value ~default:"" in
-    let message = J.member "message" item |> to_string_opt |> Option.value ~default:"" in
-    let count = J.member "count" item |> to_int_opt |> Option.value ~default:1 in
-    let last_timestamp = J.member "lastTimestamp" item |> to_string_opt in
-    Some { ev_type; reason; message; count; last_timestamp; involved_name }
-  with
-  | _ -> None
+let parse_event (item : Yojson.Safe.t) : event =
+  { ev_type = string_field [ "type" ] item |> Option.value ~default:"Normal"
+  ; reason = string_field [ "reason" ] item |> Option.value ~default:""
+  ; message = string_field [ "message" ] item |> Option.value ~default:""
+  ; count = field [ "count" ] item |> to_int_opt |> Option.value ~default:1
+  ; last_timestamp = string_field [ "lastTimestamp" ] item
+  ; involved_name =
+      string_field [ "involvedObject"; "name" ] item |> Option.value ~default:""
+  }
 ;;
 
-let parse_events_json (s : string) : event list =
-  try
-    match member_opt "items" (Yojson.Safe.from_string s) with
-    | Some (`List items) -> List.filter_map parse_event items
-    | _ -> []
-  with
-  | _ -> []
+let parse_events_json (s : string) : (event list, string) result =
+  items ~what:"events" s |> Result.map (List.map parse_event)
 ;;
 
 let events_for_pod ?(limit = 5) ~pod_name (events : event list) : event list =
@@ -209,34 +185,27 @@ type events_fetch_result =
 
 let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : string =
   let buf = Buffer.create 256 in
-  let headline =
+  let with_message = function
+    | Some m -> " — " ^ m
+    | None -> ""
+  in
+  (* The headline and its detail line, from one look at the state. *)
+  let headline, detail =
     match p.state with
-    | Waiting { reason; _ } -> reason
-    | Terminated { reason; _ } -> reason
-    | Running | Unknown_state -> p.phase
+    | Waiting { reason; message } ->
+      reason, Some (Printf.sprintf "Reason: %s%s\n" reason (with_message message))
+    | Terminated { reason; exit_code; message } ->
+      ( reason
+      , Some
+          (Printf.sprintf
+             "Reason: %s (exit code %d)%s\n"
+             reason
+             exit_code
+             (with_message message)) )
+    | Running | Unknown_state -> p.phase, None
   in
   Buffer.add_string buf (Printf.sprintf "Pod %s: %s\n" p.name headline);
-  (match p.state with
-   | Waiting { reason; message } ->
-     Buffer.add_string
-       buf
-       (Printf.sprintf
-          "Reason: %s%s\n"
-          reason
-          (match message with
-           | Some m -> " — " ^ m
-           | None -> ""))
-   | Terminated { reason; exit_code; message } ->
-     Buffer.add_string
-       buf
-       (Printf.sprintf
-          "Reason: %s (exit code %d)%s\n"
-          reason
-          exit_code
-          (match message with
-           | Some m -> " — " ^ m
-           | None -> ""))
-   | Running | Unknown_state -> ());
+  Option.iter (Buffer.add_string buf) detail;
   (match p.last_terminated_reason with
    | Some r when p.restarts > 0 ->
      Buffer.add_string buf (Printf.sprintf "Last termination: %s\n" r)
@@ -362,37 +331,35 @@ let format_active_run_diagnosis
   else Unhealthy (render_unhealthy_pods ~service_name unhealthy events)
 ;;
 
+(* Kubernetes omits [status.active] when no job is running (omitempty), so an
+   absent list is the answer "none active", not a missing value. *)
 type cronjob_status =
   { last_schedule_time : string option
   ; last_successful_time : string option
-  ; active_count : int
   ; active_job_names : string list
   }
 
-let parse_cronjob_status (s : string) : cronjob_status option =
-  try
-    let j = Yojson.Safe.from_string s in
-    match J.member "status" j with
-    | `Null ->
-      Some
-        { last_schedule_time = None
-        ; last_successful_time = None
-        ; active_count = 0
-        ; active_job_names = []
-        }
-    | status ->
-      let last_schedule_time = J.member "lastScheduleTime" status |> to_string_opt in
-      let last_successful_time = J.member "lastSuccessfulTime" status |> to_string_opt in
-      let active_count, active_job_names =
-        match member_opt "active" status with
-        | Some (`List l) ->
-          ( List.length l
-          , List.filter_map (fun item -> J.member "name" item |> to_string_opt) l )
-        | _ -> 0, []
-      in
-      Some { last_schedule_time; last_successful_time; active_count; active_job_names }
-  with
-  | _ -> None
+let parse_cronjob_status (s : string) : (cronjob_status, string) result =
+  let open Result.Syntax in
+  let* j = decode ~what:"the CronJob" s in
+  let status = field [ "status" ] j in
+  let* active_job_names =
+    match field [ "active" ] status with
+    | `Null -> Ok []
+    | `List active ->
+      Sol_cli_result.map_list
+        (fun item ->
+           Option.to_result
+             ~none:"the CronJob: an active job has no name"
+             (string_field [ "name" ] item))
+        active
+    | _ -> Error "the CronJob: status.active is not a list"
+  in
+  Ok
+    { last_schedule_time = string_field [ "lastScheduleTime" ] status
+    ; last_successful_time = string_field [ "lastSuccessfulTime" ] status
+    ; active_job_names
+    }
 ;;
 
 type cronjob_fetch_result =
@@ -427,7 +394,7 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : dia
          "%s rollout failed\n\nCronJob not found for this service.\n"
          service_name)
   | Found status ->
-    if status.active_count > 0
+    if status.active_job_names <> []
     then Healthy
     else (
       match status.last_schedule_time with
@@ -453,7 +420,10 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   match
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
   with
-  | Ok r -> Events (parse_events_json r.Sol_cli_process.stdout)
+  | Ok r ->
+    (match parse_events_json r.Sol_cli_process.stdout with
+     | Ok events -> Events events
+     | Error why -> Events_unavailable why)
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
     Events_unavailable
@@ -481,7 +451,7 @@ let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
-  | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -498,7 +468,7 @@ let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
-  | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -544,8 +514,8 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
   with
   | Ok r ->
     (match parse_cronjob_status r.Sol_cli_process.stdout with
-     | Some status -> Found status
-     | None -> Unavailable "its status could not be parsed")
+     | Ok status -> Found status
+     | Error why -> Unavailable why)
   | Error (Sol_cli_process.Non_zero r) ->
     if Sol_cli_string.contains ~needle:"NotFound" r.stderr
     then Missing

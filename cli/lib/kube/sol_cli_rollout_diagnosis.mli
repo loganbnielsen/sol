@@ -36,11 +36,15 @@ type event =
   ; involved_name : string
   }
 
-(** Parse the output of [kubectl get pods -n <ns> -l <selector> -o json]. *)
-val parse_pods_json : string -> pod_status list
+(** Parse the output of [kubectl get pods -n <ns> -l <selector> -o json]. [Ok []]
+    only when the API answered with an empty list; text that is not JSON, or has
+    no [items] list, is an [Error] naming what was wrong (REFAC-127), never "no
+    pods". *)
+val parse_pods_json : string -> (pod_status list, string) result
 
-(** Parse the output of [kubectl get events -n <ns> -o json]. *)
-val parse_events_json : string -> event list
+(** Parse the output of [kubectl get events -n <ns> -o json], on the same terms
+    as {!parse_pods_json}. *)
+val parse_events_json : string -> (event list, string) result
 
 (** Most recent [limit] events (default 5) involving the given pod name, newest
     first. *)
@@ -107,15 +111,17 @@ val format_service_diagnosis
 type cronjob_status =
   { last_schedule_time : string option
   ; last_successful_time : string option
-  ; active_count : int (** Number of currently-running Jobs for this CronJob. *)
   ; active_job_names : string list
-    (** Active Job names from [status.active], for targeting current-run pods
-          without scanning history. *)
+    (** The currently-running Jobs, from [status.active], for targeting
+        current-run pods without scanning history. Kubernetes omits the field
+        when none is running, so [[]] is that answer. *)
   }
 
 (** Parse [kubectl get cronjob <name> -n <ns> -o json]. A CronJob with no
-    [status] object parses to defaults, not [None]. *)
-val parse_cronjob_status : string -> cronjob_status option
+    [status] yet has no schedule times and no active jobs. Text that is not
+    JSON, a [status.active] that is not a list, or an active job with no name is
+    an [Error]. *)
+val parse_cronjob_status : string -> (cronjob_status, string) result
 
 (** CronJob fetch result. [Missing] is confirmed NotFound and should be reported;
     [Unavailable] is a fetch/parse failure and carries why, so the verdict can say
