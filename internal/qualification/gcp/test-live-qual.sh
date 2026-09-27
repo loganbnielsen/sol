@@ -64,9 +64,23 @@ cat >"$TMP/bin/sol" <<'STUB'
 printf 'sol %s\n' "$*" >>"$ARGV_LOG"
 case "$1 $2" in
   "cloud apply")
+    # Sol echoes each terraform invocation into its run log, and the bundle's phase awareness is
+    # derived from exactly that evidence (INFRA-091) -- so the stub has to echo it too, or the
+    # rule would be untested here.
+    printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-cluster-stub/platform/cloud/gcp/cluster' 'apply'\n" \
+      "${XDG_DATA_HOME:-/tmp}"
     printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
+    if [ "${STUB_APPLY_FAILS_AT:-}" = "bootstrap" ]; then
+      # INFRA-091: a run that stops before the platform root is ever initialised -- Attempt
+      # 13's shape -- so the bundle rule can be tested in both directions.
+      printf '[cloud-bootstrap-apply] FAILED (8.0s)\n'
+      printf 'Error: the provider refused the bootstrap\n'
+      exit "${STUB_APPLY_RC:-1}"
+    fi
     printf 'lifecycle phase: PlatformInstalling\n'
     if [ "${STUB_APPLY_ERROR:-none}" = "already-exists" ]; then
+    printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\n" \
+        "${XDG_DATA_HOME:-/tmp}"
       printf '[platform-prerequisites-apply] ok (12.0s)\n'
       printf '[platform-apply] FAILED (31.0s)\n'
       printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
@@ -582,6 +596,30 @@ if [ "$(cat "$TMP/quota-garbage.rc")" = "0" ]; then
 else
   ok "an unparsable usage read fails the verification"
 fi
+
+# ── 11b. phase-aware bundle completeness (INFRA-091) ──
+#
+# Attempt 13 stopped before the platform root was ever initialised, and its bundle was reported
+# INCOMPLETE because the platform state -- which could not exist -- was demanded. A bundle is
+# judged against the phases the run reached, and no weaker for a phase it did reach.
+printf '\nscenario: a stop before the platform is a complete bundle\n'
+run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
+# The requirement is what is phase-aware, not the capture: the harness reads whatever it can, but
+# it must not *demand* the platform root's state of a run that never initialised that root. That is
+# the whole of INFRA-091's bundle rule, stated as the thing it is.
+lacks "a root the run never reached is not demanded of the bundle" \
+  "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-pre-platform.out"
+present "$TMP/bundle-pre-platform.logs/state/cloud.tfstate" \
+  "the root the run reached still has its state in the bundle"
+has "the pre-platform stop is recorded as such" \
+  "the platform root was never initialised" "$TMP/bundle-pre-platform.logs/evidence-manifest.txt" \
+  || true
+
+printf '\nscenario: a bundle that reached the platform still requires its state\n'
+run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists \
+  STUB_STATE_UNREADABLE=1
+has "a bundle whose platform state could not be captured is incomplete" \
+  "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-platform-reached.out"
 
 # ── 12. the bundle check has teeth: a member that could not be read fails the run ──
 # The state read failing is the interesting shape: the file exists but is empty, which is
