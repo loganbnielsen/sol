@@ -996,6 +996,7 @@ destroy() {
 
 cleanup() {
   local rc=$?
+  stop_cluster_kubeconfig_waiter
   api_readiness_probe_stop
   if [ "$KEEP" = "1" ]; then
     say "not tearing down: ${KEEP_REASON:-the delegation boundary is deliberate, not a leak}"
@@ -1059,6 +1060,7 @@ phase_cloud() {
   CLOUD_APPLIED=1
   INSTALL_STATE=succeeded
   start_ns_watcher
+  start_cluster_kubeconfig_waiter
   api_readiness_probe_start
   if ! run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}"; then
     INSTALL_STATE=failed
@@ -1236,6 +1238,62 @@ api_readiness_probe_stop() {
   API_PROBE_PID=""
 }
 
+kubeconfig_has_cluster() { # <kubeconfig> <cluster name substring>
+  python3 - "$1" "$2" <<'PY' 2>/dev/null
+import re, sys
+path, cluster = sys.argv[1], sys.argv[2]
+try:
+    text = open(path).read()
+except OSError:
+    raise SystemExit(1)
+for name, body in re.findall(r'-\s*name:\s*(\S+)\s*\n\s*cluster:\n((?:\s+\S+:.*\n)+)', text):
+    if cluster in name and re.search(r'server:\s*\S+', body):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+# Credentials for this run exist as soon as the cluster does, before any Kubernetes observation --
+# not at the first failure, which is where Attempt 15e needed them and did not have them. The
+# waiter is a child of this run and exits when it has done its job or when the run is gone.
+cluster_kubeconfig_waiter() {
+  local parent=$$ status
+  while :; do
+    if ! kill -0 "$parent" 2>/dev/null; then
+      exit 0
+    fi
+    if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+      say "run kubeconfig: ready ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+      exit 0
+    fi
+    status="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
+      --format='value(status)' 2>/dev/null | tr -d '\r')"
+    if [ "$status" = "RUNNING" ]; then
+      kubeconfig_for_cluster
+      if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+        say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+        exit 0
+      fi
+      say "run kubeconfig: generation did not produce this run's cluster yet — will retry"
+    fi
+    sleep "${CLUSTER_KUBECONFIG_POLL_S:-10}"
+  done
+}
+
+start_cluster_kubeconfig_waiter() {
+  cluster_kubeconfig_waiter &
+  KUBECONFIG_WAITER_PID=$!
+  say "run kubeconfig waiter: pid $KUBECONFIG_WAITER_PID, polling every ${CLUSTER_KUBECONFIG_POLL_S:-10}s"
+}
+
+stop_cluster_kubeconfig_waiter() {
+  if [ -n "${KUBECONFIG_WAITER_PID:-}" ] && kill -0 "$KUBECONFIG_WAITER_PID" 2>/dev/null; then
+    kill -TERM "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
+    wait "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
+  fi
+  KUBECONFIG_WAITER_PID=""
+}
+
 # Read-only Kubernetes evidence for the first unexpected platform-apply failure. The kubeconfig is
 # the run's own (exported above), so these reads target the run's cluster by construction. Bounded
 # evidence collection only: nothing here interprets, classifies or recovers, and a failed read is
@@ -1262,14 +1320,14 @@ capture_platform_failure_evidence() {
     return 0
   fi
   say "capturing read-only Kubernetes evidence for the platform-apply failure"
-  kube_capture_evidence "$dir" pods "get pods -A -o wide"
-  kube_capture_evidence "$dir" pod-states "get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}"
-  kube_capture_evidence "$dir" events "get events -A --sort-by=.lastTimestamp"
-  kube_capture_evidence "$dir" pvc "get pvc -A -o wide"
-  kube_capture_evidence "$dir" pv "get pv -o wide"
-  kube_capture_evidence "$dir" nodes "get nodes -o wide"
-  kube_capture_evidence "$dir" node-capacity "get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}"
-  kube_capture_evidence "$dir" helm-release-secrets "get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type"
+  kube_capture_evidence "$dir" pods get pods -A -o wide
+  kube_capture_evidence "$dir" pod-states get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}
+  kube_capture_evidence "$dir" events get events -A --sort-by=.lastTimestamp
+  kube_capture_evidence "$dir" pvc get pvc -A -o wide
+  kube_capture_evidence "$dir" pv get pv -o wide
+  kube_capture_evidence "$dir" nodes get nodes -o wide
+  kube_capture_evidence "$dir" node-capacity get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}
+  kube_capture_evidence "$dir" helm-release-secrets get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type
   say "  platform-failure evidence: $dir"
 }
 
