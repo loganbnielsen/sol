@@ -320,7 +320,7 @@ let project_id_of_outputs_json text : (string, string) result =
    The observation is deliberately thin -- the provider's limit and usage -- and the comparison
    against Sol's declared minimum happens in the lifecycle, not here. *)
 let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) result =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* project = project_id_of_outputs_json outputs_json in
   match
     Sol_cli_process.run
