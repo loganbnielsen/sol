@@ -295,25 +295,25 @@ let check_migration_prerequisite ~ctx ~plan ~live =
           ~namespaces:(Sol_cli_substrate.namespaces plan)
         |> Sol_cli_exit.of_msg
       in
-      Cmd_migrate.reconcile_operator_bindings_warn
+      Sol_cli_migration_gate.reconcile_operator_bindings
         ~ctx:ctx.execution.cluster
         ~workspace:ctx.execution.workspace
         ~services:ctx.inventory;
       (match
-         Cmd_migrate.verify_migration_prerequisite
+         Sol_cli_migration_gate.verify
            ~ctx:ctx.execution.cluster
            ~target:ctx.target_name
            ~workspace:ctx.execution.workspace
            ~dir
            ~services:ctx.inventory
        with
-       | Cmd_migrate.No_migrations -> Ok ()
-       | Cmd_migrate.Satisfied applied ->
+       | Sol_cli_migration_gate.No_migrations -> Ok ()
+       | Sol_cli_migration_gate.Satisfied applied ->
          Printf.printf
            "Migrations: OK -- %d declared migration(s) present in schema_migrations\n%!"
            (List.length applied);
          Ok ()
-       | Cmd_migrate.Unsatisfied missing ->
+       | Sol_cli_migration_gate.Unsatisfied missing ->
          Error
            (Sol_cli_exit.failure
               (Printf.sprintf
@@ -324,7 +324,7 @@ let check_migration_prerequisite ~ctx ~plan ~live =
                   again."
                  (String.concat ", " (List.map Sol_cli_migration.to_string missing))
                  ctx.target_name))
-       | Cmd_migrate.Unavailable reason ->
+       | Sol_cli_migration_gate.Unavailable reason ->
          Error
            (Sol_cli_exit.failure
               (Printf.sprintf
