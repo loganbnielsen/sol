@@ -496,7 +496,7 @@ let service_uses_resource_type resolved_config service_name typ =
 
 let derive_consumer_groups ?resolved_config workspace services =
   List.filter_map
-    (fun (s : service_spec) ->
+    (fun s ->
        match
          s.primitive, service_uses_resource_type resolved_config s.source_name "kafka"
        with
@@ -659,8 +659,7 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
   | Some cfg ->
     (match
        cfg.Sol_cli_config.services
-       |> List.find_opt (fun (s : Sol_cli_config.service) ->
-         s.Sol_cli_config.name = service_name)
+       |> List.find_opt (fun s -> s.Sol_cli_config.name = service_name)
      with
      | None -> None
      | Some { Sol_cli_config.scale_max = Some _ as scale_max; _ } -> scale_max
@@ -675,8 +674,7 @@ let sol_yml_language ~resolved_config ~service_name =
   | Some cfg ->
     (match
        cfg.Sol_cli_config.services
-       |> List.find_opt (fun (s : Sol_cli_config.service) ->
-         s.Sol_cli_config.name = service_name)
+       |> List.find_opt (fun s -> s.Sol_cli_config.name = service_name)
      with
      | None -> None
      | Some s -> s.Sol_cli_config.language)
@@ -696,7 +694,7 @@ let workload_capabilities ~resolved_config ~services ~topics ~migrations =
   in
   let long_running =
     services
-    |> List.exists (fun (s : service_spec) ->
+    |> List.exists (fun s ->
       match s.primitive with
       | Svc | Worker -> true
       | Fn -> false)
@@ -730,7 +728,7 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
       in
       let service_uses typ =
         List.exists
-          (fun (service : service_spec) ->
+          (fun service ->
              service_uses_resource_type resolved_config service.source_name typ)
           services
       in
@@ -797,7 +795,7 @@ let of_services_result
     | Some units ->
       let seen = Hashtbl.create 16 in
       List.filter
-        (fun (svc : Sol_cli_manifest.service) ->
+        (fun svc ->
            let key = svc.Sol_cli_manifest.domain ^ "/" ^ svc.Sol_cli_manifest.name in
            if Hashtbl.mem seen key
            then false
@@ -1036,10 +1034,10 @@ let of_services_result
   let* resolved_services = collect [] deployable in
   let resolved_services =
     resolved_services
-    |> List.map (fun (svc : service_spec) ->
+    |> List.map (fun svc ->
       let called_by =
         List.filter_map
-          (fun (caller : service_spec) ->
+          (fun caller ->
              if
                List.exists
                  (fun c ->

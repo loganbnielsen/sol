@@ -170,8 +170,7 @@ let services () =
 
 let service_names selected =
   selected.Sol_cli_workload_selection.services
-  |> List.map (fun (s : Sol_cli_manifest.service) ->
-    s.Sol_cli_manifest.domain ^ "/" ^ s.Sol_cli_manifest.name)
+  |> List.map (fun s -> s.Sol_cli_manifest.domain ^ "/" ^ s.Sol_cli_manifest.name)
 ;;
 
 let test_bridge_carries_requested_scope_and_resolved_set () =

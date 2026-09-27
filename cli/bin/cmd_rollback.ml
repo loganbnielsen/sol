@@ -44,7 +44,7 @@ let wait_s = Sol_cli_boundary_lease.rollback_wait_s
 let apply_specs ~ctx ~local ~release ~release_id_t specs =
   try
     specs
-    |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    |> List.iter (fun spec ->
       (* SEC-006: a local rollback re-renders what `sol up` recorded, which
             does not carry the local-only Unverified_dev_only opt-in (only
             [Sol_cli_executor.local] adds it); restore it here, locally only. *)

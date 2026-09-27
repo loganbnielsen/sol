@@ -19,14 +19,9 @@ open Result.Syntax
    service_doc for Http_service shapes), so this naturally excludes
    worker/fn services without needing to thread primitive info through. *)
 let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
-  let deployed_names =
-    List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.name) results
-  in
+  let deployed_names = List.map (fun r -> r.Sol_cli_executor.name) results in
   let namespaces =
-    List.sort_uniq
-      compare
-      (results
-       |> List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.namespace))
+    List.sort_uniq compare (results |> List.map (fun r -> r.Sol_cli_executor.namespace))
   in
   namespaces
   |> List.iter (fun ns ->
@@ -543,7 +538,7 @@ let report_surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
 
 let report_apply_success ctx plan results =
   results
-  |> List.iter (fun (r : Sol_cli_executor.result) ->
+  |> List.iter (fun r ->
     Printf.printf
       "  ✓  namespace %s  image %s\n\n%!"
       r.Sol_cli_executor.namespace
@@ -635,8 +630,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
           match
             execute_deployment_attempt
               ctx
-              ~before_apply:(fun (_ : Sol_cli_deployment_plan.service_spec) ->
-                Sol_cli_boundary_lease.ensure_held lease)
+              ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
               ~loki_push_url
               plan
           with
@@ -692,7 +686,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
      reference fails before the target or registry is even resolved. *)
   let* image_refs =
     Sol_cli_image_ref.resolve
-      ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
+      ~service_names:(List.map (fun s -> s.name) services)
       req.image_refs
     |> Sol_cli_exit.of_msg
   in
@@ -744,7 +738,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
      resolved config known, and it is the config that declares `omit` at all. *)
   let omission =
     Sol_cli_workload_selection.apply_omission
-      ~is_omitted:(fun (s : Sol_cli_manifest.service) ->
+      ~is_omitted:(fun s ->
         Sol_cli_config.is_omitted_service resolved_config ~name:s.Sol_cli_manifest.name)
       selected
   in
@@ -767,8 +761,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let omitted_ref =
     image_refs
     |> List.find_map (fun (name, _) ->
-      omission.excluded
-      |> List.find_opt (fun (s : Sol_cli_manifest.service) -> String.equal s.name name))
+      omission.excluded |> List.find_opt (fun s -> String.equal s.name name))
   in
   let* () =
     match omitted_ref with

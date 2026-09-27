@@ -229,7 +229,7 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
   : string list
   =
   services
-  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+  |> List.filter_map (fun s ->
     match
       Sol_cli_deployment_plan.namespace_result
         ~workspace
@@ -249,7 +249,7 @@ let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
   in
   let namespaces =
     services
-    |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+    |> List.filter_map (fun s ->
       match
         Sol_cli_deployment_plan.namespace_result
           ~workspace

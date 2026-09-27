@@ -314,7 +314,7 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
 let format_table (records : t list) : string =
   let sorted =
     records
-    |> List.sort (fun (a : t) (b : t) ->
+    |> List.sort (fun a b ->
       let by_time = String.compare b.created_at a.created_at in
       if by_time <> 0
       then by_time
@@ -325,7 +325,7 @@ let format_table (records : t list) : string =
   in
   let rows =
     sorted
-    |> List.map (fun (r : t) ->
+    |> List.map (fun r ->
       [ Sol_cli_deployment_id.to_string r.deployment_id
       ; Sol_cli_release_id.to_string r.release_id
       ; r.created_at

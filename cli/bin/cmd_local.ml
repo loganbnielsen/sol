@@ -846,9 +846,7 @@ let dev_run workspace_dir scope =
   (* Build all services first with a single dune invocation so that parallel
      dune exec calls below don't fight over the _build/.lock file. *)
   Printf.printf "  Building...\n%!";
-  let build_targets =
-    List.map (fun (svc : Sol_cli_manifest.service) -> svc.dir ^ "/bin/main.exe") services
-  in
+  let build_targets = List.map (fun svc -> svc.dir ^ "/bin/main.exe") services in
   let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
   let build_cmd =
     Printf.sprintf
@@ -866,7 +864,7 @@ let dev_run workspace_dir scope =
   (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
   let children =
     services
-    |> List.filter_map (fun (svc : Sol_cli_manifest.service) ->
+    |> List.filter_map (fun svc ->
       let label = svc.domain ^ "/" ^ svc.name in
       let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
       let cmd_str = Filename.quote exe_path in

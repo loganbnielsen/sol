@@ -287,7 +287,7 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
     | Ok ctx_dir ->
       (try
          plan.Sol_cli_deployment_plan.services
-         |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+         |> List.iter (fun spec ->
            (match Sol_cli_boundary_lease.ensure_held lease with
             | Ok () -> ()
             | Error msg -> raise (Deploy_failed msg));

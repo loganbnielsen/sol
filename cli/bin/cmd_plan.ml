@@ -50,7 +50,7 @@ let run target_name =
   Printf.printf "\nServices:\n";
   if services = [] then Printf.printf "  (none)\n";
   services
-  |> List.iter (fun (s : Sol_cli_config.service) ->
+  |> List.iter (fun s ->
     Printf.printf
       "  - %s%s\n"
       s.Sol_cli_config.name

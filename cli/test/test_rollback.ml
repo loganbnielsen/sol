@@ -376,10 +376,7 @@ let bad_workload_release update : Sol_cli_release.t =
    mutation is possible on this path -- [service_specs_of_release] returning
    [Error] is the only way out. *)
 let test_gate_failure_unknown_rollout_encoding () =
-  let release =
-    bad_workload_release (fun (w : Sol_cli_release.workload) ->
-      { w with rollout = "canary:bogus" })
-  in
+  let release = bad_workload_release (fun w -> { w with rollout = "canary:bogus" }) in
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Alcotest.fail "expected reconstruction to fail on an unknown rollout encoding"
   | Error msg ->
@@ -389,10 +386,7 @@ let test_gate_failure_unknown_rollout_encoding () =
 ;;
 
 let test_gate_failure_invalid_cpu () =
-  let release =
-    bad_workload_release (fun (w : Sol_cli_release.workload) ->
-      { w with cpu = "not-a-cpu-quantity" })
-  in
+  let release = bad_workload_release (fun w -> { w with cpu = "not-a-cpu-quantity" }) in
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Alcotest.fail "expected reconstruction to fail on an invalid cpu quantity"
   | Error msg ->

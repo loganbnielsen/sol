@@ -120,7 +120,7 @@ let test_the_predicate_sees_domain_and_name () =
   let services = all @ [ billing_invoices ] in
   let o =
     Sol_cli_workload_selection.apply_omission
-      ~is_omitted:(fun (s : Sol_cli_manifest.service) ->
+      ~is_omitted:(fun s ->
         String.equal s.domain "payments" && String.equal s.name "invoice_svc")
       (resolve None services)
   in

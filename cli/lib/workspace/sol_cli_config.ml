@@ -1351,8 +1351,8 @@ let resolve ~base ~envs (target : target) =
     in
     let unknown_service =
       layer.services
-      |> List.find_opt (fun (sv : service) ->
-        not (List.exists (fun (b : service) -> b.name = sv.name) base.services))
+      |> List.find_opt (fun sv ->
+        not (List.exists (fun b -> b.name = sv.name) base.services))
     in
     let fail kind name =
       Error
@@ -1517,12 +1517,12 @@ let load_for_target ~target =
 ;;
 
 let resources (cfg : t) = List.filter (fun (r : resource) -> not r.omit) cfg.resources
-let services (cfg : t) = List.filter (fun (s : service) -> not s.omit) cfg.services
+let services (cfg : t) = List.filter (fun s -> not s.omit) cfg.services
 
 (* Reads the raw declarations, not [active_services]: the caller is asking about a
    unit it reached by another route, to decide whether this target omits it. *)
 let is_omitted_service (cfg : t) ~name =
-  List.exists (fun (s : service) -> s.omit && String.equal s.name name) cfg.services
+  List.exists (fun s -> s.omit && String.equal s.name name) cfg.services
 ;;
 
 (* Every service in the workspace gets an ECR repository, regardless of
@@ -1552,7 +1552,7 @@ let ecr_repositories_var () =
   | Ok services ->
     Ok
       (services
-       |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+       |> List.filter_map (fun s ->
          match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
          | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
          | Error _ -> None)

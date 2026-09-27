@@ -819,7 +819,7 @@ let apply_deps
        capability *permitted*, because a later denial is not a transition unless
        the capability was shown to work first. *)
     open_window =
-      (fun (cluster : Sol_cli_cluster.t) ->
+      (fun cluster ->
         match cluster.bootstrap_window with
         | Verified window ->
           let* () = window.gate () in
@@ -827,7 +827,7 @@ let apply_deps
         | No_role_declared | Closed_by_platform_root -> Ok None)
   ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
   ; observe_disk_quota =
-      (fun (_ : Sol_cli_cluster.t) ->
+      (fun _ ->
         match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
         | None -> Ok None
         | Some observe ->
@@ -841,7 +841,7 @@ let apply_deps
                Option.some
                (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
   ; cloud_ready =
-      (fun (cluster : Sol_cli_cluster.t) ->
+      (fun cluster ->
         if cluster.ready ()
         then Ok ()
         else
@@ -901,7 +901,7 @@ let apply_deps
        window lives in the platform root and is closed by applying that root, so
        there is no Sol-side revocation to verify. *)
     verify_deescalation =
-      (fun (cluster : Sol_cli_cluster.t) _control ->
+      (fun cluster _control ->
         match cluster.bootstrap_window with
         | Verified window ->
           (match window.deescalated () with

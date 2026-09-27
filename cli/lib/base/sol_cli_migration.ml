@@ -145,7 +145,7 @@ let parse_status_json text =
 (* required \ applied -- the migrations the revision requires but the
    authoritative table does not have. *)
 let unsatisfied ~required ~applied =
-  List.filter (fun (p : prerequisite) -> not (List.mem p.version applied)) required
+  List.filter (fun p -> not (List.mem p.version applied)) required
 ;;
 
 (* The machine-readable status the deploy's read-only Job consumes. Emitted by

@@ -587,12 +587,10 @@ let parse_kubectl_list json =
 ;;
 
 let format_table (records : t list) : string =
-  let sorted =
-    List.sort (fun (a : t) (b : t) -> String.compare a.release_id b.release_id) records
-  in
+  let sorted = List.sort (fun a b -> String.compare a.release_id b.release_id) records in
   let rows =
     sorted
-    |> List.map (fun (r : t) ->
+    |> List.map (fun r ->
       [ r.release_id
       ; (match r.environment with
          | None -> "-"

@@ -127,7 +127,7 @@ let canonical_string (content : content) =
      change the identity), so sort before encoding. *)
   let workloads =
     content.workloads
-    |> List.sort (fun (a : workload) (c : workload) ->
+    |> List.sort (fun a c ->
       let by_domain = String.compare a.domain c.domain in
       if by_domain <> 0
       then by_domain
@@ -137,7 +137,7 @@ let canonical_string (content : content) =
   in
   enc_int b (List.length workloads);
   workloads
-  |> List.iter (fun (w : workload) ->
+  |> List.iter (fun w ->
     enc_string b w.domain;
     enc_string b w.name;
     enc_string b w.primitive;
