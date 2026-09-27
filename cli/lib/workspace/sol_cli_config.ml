@@ -1374,6 +1374,21 @@ type t =
   ; services : service list
   }
 
+type declared =
+  { services : service list
+  ; resources : resource list
+  ; profile : Sol_cli_profile.t option
+  }
+
+let declared_of_config (cfg : t) =
+  { services = cfg.services; resources = cfg.resources; profile = cfg.target.profile }
+;;
+
+let load_declared ~root =
+  let* layer = load (Filename.concat root "sol.yml") in
+  Ok { services = layer.services; resources = layer.resources; profile = None }
+;;
+
 let load_for_target ~target =
   let* target = target_of_path target in
   let* root =

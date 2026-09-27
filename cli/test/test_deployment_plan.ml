@@ -765,7 +765,7 @@ let test_consumer_groups_derived () =
   let worker = make_worker_spec "notify_worker" "comms" in
   let groups =
     Sol_cli_deployment_plan.derive_consumer_groups
-      ~resolved_config:(kafka_config [ "notify_worker" ])
+      ~declared:(Sol_cli_config.declared_of_config (kafka_config [ "notify_worker" ]))
       "myworkspace"
       [ worker ]
   in
@@ -781,7 +781,9 @@ let test_consumer_groups_excludes_svc () =
   let svc = make_svc_spec "charge_svc" "payments" in
   let groups =
     Sol_cli_deployment_plan.derive_consumer_groups
-      ~resolved_config:(kafka_config [ "notify_worker"; "charge_svc" ])
+      ~declared:
+        (Sol_cli_config.declared_of_config
+           (kafka_config [ "notify_worker"; "charge_svc" ]))
       "ws"
       [ worker; svc ]
   in
@@ -793,7 +795,8 @@ let test_consumer_groups_sorted () =
   let w2 = make_worker_spec "a_worker" "comms" in
   let groups =
     Sol_cli_deployment_plan.derive_consumer_groups
-      ~resolved_config:(kafka_config [ "a_worker"; "b_worker" ])
+      ~declared:
+        (Sol_cli_config.declared_of_config (kafka_config [ "a_worker"; "b_worker" ]))
       "ws"
       [ w1; w2 ]
   in
@@ -1114,7 +1117,7 @@ let test_sol_yml_scale_overrides_toml_replicas_on_resolved_target () =
         ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
-        ~resolved_config
+        ~declared:(Sol_cli_config.declared_of_config resolved_config)
         [ charge_svc_service ]
     with
     | Ok plan ->
@@ -1135,7 +1138,7 @@ let test_sol_yml_scale_falls_back_to_scale_min_when_no_max () =
         ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
-        ~resolved_config
+        ~declared:(Sol_cli_config.declared_of_config resolved_config)
         [ charge_svc_service ]
     with
     | Ok plan ->
@@ -1176,7 +1179,7 @@ let test_no_matching_sol_yml_service_uses_toml_replicas () =
         ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
-        ~resolved_config
+        ~declared:(Sol_cli_config.declared_of_config resolved_config)
         [ charge_svc_service ]
     with
     | Ok plan ->
@@ -1236,7 +1239,7 @@ let test_multi_replica_volume_fails_after_scale_resolution () =
         ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
-        ~resolved_config
+        ~declared:(Sol_cli_config.declared_of_config resolved_config)
         [ charge_svc_service ]
     with
     | Ok _ -> Alcotest.fail "expected a multi-replica volume to fail"

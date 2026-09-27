@@ -8,7 +8,7 @@ let plan_of_services
       ~env
       ~facts
       ?requested_scope
-      ?resolved_config
+      ?declared
       ?image_refs
       ?inventory
       services
@@ -18,7 +18,7 @@ let plan_of_services
     ~env
     ~facts
     ?requested_scope
-    ?resolved_config
+    ?declared
     ?image_refs
     ?inventory
     services
@@ -32,7 +32,7 @@ let execute execution ~mode ?secret_backend ?before_apply plan =
 type request =
   { env : Sol_cli_deployment_plan.env_config
   ; requested_scope : string option
-  ; resolved_config : Sol_cli_config.t option
+  ; declared : Sol_cli_config.declared option
   }
 
 let run execution ~(request : request) ~mode ~facts services =
@@ -42,7 +42,7 @@ let run execution ~(request : request) ~mode ~facts services =
       ~env:request.env
       ~facts
       ?requested_scope:request.requested_scope
-      ?resolved_config:request.resolved_config
+      ?declared:request.declared
       services
   with
   | Error msg -> Error msg

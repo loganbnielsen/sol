@@ -443,13 +443,13 @@ let resource_name_of_ref ref =
   | [] -> None
 ;;
 
-let service_uses_resource_type resolved_config service_name typ =
-  match resolved_config with
+let service_uses_resource_type declared service_name typ =
+  match declared with
   | None -> false
   | Some cfg ->
-    let resources = Sol_cli_config.resources cfg in
+    let resources = cfg.Sol_cli_config.resources in
     (match
-       Sol_cli_config.services cfg
+       cfg.Sol_cli_config.services
        |> List.find_opt (fun (service : Sol_cli_config.service) ->
          service.name = service_name)
      with
@@ -465,12 +465,10 @@ let service_uses_resource_type resolved_config service_name typ =
              resource.name = name && resource.typ = Some typ)))
 ;;
 
-let derive_consumer_groups ?resolved_config workspace services =
+let derive_consumer_groups ?declared workspace services =
   List.filter_map
     (fun s ->
-       match
-         s.primitive, service_uses_resource_type resolved_config s.source_name "kafka"
-       with
+       match s.primitive, service_uses_resource_type declared s.source_name "kafka" with
        | Worker, true -> Some (s.domain, s.source_name)
        | _ -> None)
     services
@@ -587,8 +585,8 @@ let primitive_of_manifest = function
 
 let call_env_var = Sol_cli_kubernetes_name.call_env_var
 
-let sol_yml_replicas_override ~resolved_config ~service_name =
-  match resolved_config with
+let sol_yml_replicas_override ~declared ~service_name =
+  match declared with
   | None -> None
   | Some cfg ->
     (match
@@ -600,8 +598,8 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
 ;;
 
-let sol_yml_language ~resolved_config ~service_name =
-  match resolved_config with
+let sol_yml_language ~declared ~service_name =
+  match declared with
   | None -> None
   | Some cfg ->
     (match
@@ -612,12 +610,12 @@ let sol_yml_language ~resolved_config ~service_name =
      | Some s -> s.language)
 ;;
 
-let workload_capabilities ~resolved_config ~services ~topics ~migrations =
+let workload_capabilities ~declared ~services ~topics ~migrations =
   let declares typ =
-    match resolved_config with
+    match declared with
     | None -> false
     | Some cfg ->
-      Sol_cli_config.resources cfg
+      cfg.Sol_cli_config.resources
       |> List.exists (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
   in
   let long_running =
@@ -635,29 +633,29 @@ let workload_capabilities ~resolved_config ~services ~topics ~migrations =
     ]
 ;;
 
-let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspace =
-  match Option.map (fun (cfg : Sol_cli_config.t) -> cfg.target) resolved_config with
+let profile_claim ~declared ~services ~topics ~migrations ~whole_workspace =
+  match declared with
   | None -> None
-  | Some target ->
-    target.profile
+  | Some cfg ->
+    cfg.Sol_cli_config.profile
     |> Option.map (fun profile ->
       let requirements =
         Sol_cli_profile.requirements
           profile
-          (workload_capabilities ~resolved_config ~services ~topics ~migrations)
+          (workload_capabilities ~declared ~services ~topics ~migrations)
       in
       let declares typ =
-        match resolved_config with
+        match declared with
         | None -> false
         | Some cfg ->
-          Sol_cli_config.resources cfg
+          cfg.Sol_cli_config.resources
           |> List.exists (fun (resource : Sol_cli_config.resource) ->
             resource.typ = Some typ)
       in
       let service_uses typ =
         services
         |> List.exists (fun service ->
-          service_uses_resource_type resolved_config service.source_name typ)
+          service_uses_resource_type declared service.source_name typ)
       in
       { profile
       ; requirements
@@ -683,7 +681,7 @@ let of_services_result
       ~env
       ~facts
       ?(requested_scope = "workspace")
-      ?resolved_config
+      ?declared
       ?(image_refs = [])
       ?inventory
       services
@@ -831,22 +829,22 @@ let of_services_result
       | _ -> Ok None
     in
     let replicas =
-      match sol_yml_replicas_override ~resolved_config ~service_name:svc.name with
+      match sol_yml_replicas_override ~declared ~service_name:svc.name with
       | Some replicas -> replicas
       | None -> Option.value toml.replicas ~default:1
     in
     let kafka_durability_config =
-      match resolved_config with
+      match declared with
       | Some cfg
-        when cfg.target.profile = Some Sol_cli_profile.Production_single_region
-             && service_uses_resource_type resolved_config svc.name "kafka" ->
+        when cfg.Sol_cli_config.profile = Some Sol_cli_profile.Production_single_region
+             && service_uses_resource_type declared svc.name "kafka" ->
         [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
       | _ -> []
     in
     let service_config = List.remove_assoc "SOL_KAFKA_DURABILITY" toml.env_config in
-    let language = sol_yml_language ~resolved_config ~service_name:svc.name in
+    let language = sol_yml_language ~declared ~service_name:svc.name in
     let consumes_kafka =
-      toml.topics <> [] || service_uses_resource_type resolved_config svc.name "kafka"
+      toml.topics <> [] || service_uses_resource_type declared svc.name "kafka"
     in
     let spec =
       { domain = svc.domain
@@ -944,12 +942,11 @@ let of_services_result
     ; topics
     ; migrations
     ; schema_subjects
-    ; consumer_groups =
-        derive_consumer_groups ?resolved_config workspace resolved_services
+    ; consumer_groups = derive_consumer_groups ?declared workspace resolved_services
     ; requested_scope
     ; profile =
         profile_claim
-          ~resolved_config
+          ~declared
           ~services:resolved_services
           ~topics
           ~migrations

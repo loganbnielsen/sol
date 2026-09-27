@@ -20,6 +20,7 @@ val local_plan
   -> workspace:string
   -> sha:string
   -> facts:Sol_cli_workspace_model.t
+  -> declared:Sol_cli_config.declared
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, Sol_cli_deployment_plan.plan_error) result
 

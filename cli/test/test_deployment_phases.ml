@@ -580,7 +580,7 @@ let test_plan_consumer_groups_derived_from_workers () =
     { (make_plan [ svc_spec; worker_spec ]) with
       consumer_groups =
         Sol_cli_deployment_plan.derive_consumer_groups
-          ~resolved_config
+          ~declared:(Sol_cli_config.declared_of_config resolved_config)
           "myapp"
           (make_plan [ svc_spec; worker_spec ]).Sol_cli_deployment_plan.services
     }

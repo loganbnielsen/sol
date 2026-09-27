@@ -8,7 +8,7 @@ val plan_of_services
   -> env:Sol_cli_deployment_plan.env_config
   -> facts:Sol_cli_workspace_model.t
   -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
+  -> ?declared:Sol_cli_config.declared
   -> ?image_refs:(string * string) list
   -> ?inventory:Sol_cli_manifest.service list
   -> Sol_cli_manifest.service list
@@ -25,7 +25,7 @@ val execute
 type request =
   { env : Sol_cli_deployment_plan.env_config
   ; requested_scope : string option
-  ; resolved_config : Sol_cli_config.t option
+  ; declared : Sol_cli_config.declared option
   }
 
 val run

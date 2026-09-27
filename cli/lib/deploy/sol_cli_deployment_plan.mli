@@ -108,7 +108,7 @@ type plan_error =
       }
 
 val derive_consumer_groups
-  :  ?resolved_config:Sol_cli_config.t
+  :  ?declared:Sol_cli_config.declared
   -> string
   -> service_spec list
   -> Sol_cli_plan_ids.Consumer_group.t list
@@ -143,7 +143,7 @@ val of_services_result
   -> env:env_config
   -> facts:Sol_cli_workspace_model.t
   -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
+  -> ?declared:Sol_cli_config.declared
   -> ?image_refs:(string * string) list
   -> ?inventory:Sol_cli_manifest.service list
   -> Sol_cli_manifest.service list

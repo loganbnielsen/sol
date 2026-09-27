@@ -69,6 +69,15 @@ type error =
 val error_to_string : error -> string
 val sol_yml_services_of_string : path:string -> string -> (service list, error) result
 val load_for_target : target:string -> (t, error) result
+
+type declared =
+  { services : service list
+  ; resources : resource list
+  ; profile : Sol_cli_profile.t option
+  }
+
+val declared_of_config : t -> declared
+val load_declared : root:string -> (declared, error) result
 val parse_target : string -> (target, error) result
 val target_declared : target -> bool
 val target_source : target -> string
