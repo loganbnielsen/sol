@@ -1,9 +1,3 @@
-(* Writes and reads deployment-event records through kubectl (FEAT-070).
-
-   Unlike the release store there is no pointer: one immutable ConfigMap per
-   event, appended. FEAT-063: records live in the cluster the target names, so
-   the entry points take the destination-side context. *)
-
 let with_temp_json json f =
   Sol_cli_fs.with_temp_file ~prefix:"sol-deployment-" ~suffix:".json" json f
   |> Result.join

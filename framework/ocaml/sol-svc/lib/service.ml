@@ -2,8 +2,6 @@ module type HANDLER = sig
   val routes : Route.t list
 end
 
-(* ── Routing ───────────────────────────────────────────────────────────── *)
-
 type route_match =
   | Found of Route.t * (string * string) list
   | Method_not_allowed
@@ -23,8 +21,6 @@ let find_route routes meth path =
   loop routes
 ;;
 
-(* ── HTTP status conversion ────────────────────────────────────────────── *)
-
 let http_status_of_int = function
   | 200 -> `OK
   | 201 -> `Created
@@ -40,8 +36,6 @@ let http_status_of_int = function
   | 501 -> `Not_implemented
   | n -> `Code n
 ;;
-
-(* ── Body reading ──────────────────────────────────────────────────────── *)
 
 let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
   let too_large_from_header =
@@ -61,8 +55,6 @@ let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
     | exception Eio.Buf_read.Buffer_limit_exceeded -> None
     | s -> Some s)
 ;;
-
-(* ── Dispatch ──────────────────────────────────────────────────────────── *)
 
 open Result.Syntax
 
@@ -113,10 +105,6 @@ let dispatch_unguarded
         | `GET, "/healthz" ->
           observe "/healthz";
           Some (Response.json {|{"status":"ok"}|})
-        (* INFRA-073 / FND-0041(c): readiness, distinct from liveness. It turns 503
-           as soon as shutdown begins, while the listener keeps serving for
-           [shutdown_delay_s], so Kubernetes removes the endpoint before the pod
-           stops accepting instead of refusing requests routed to it. *)
         | `GET, "/readyz" ->
           observe "/readyz";
           Some
@@ -190,10 +178,6 @@ let dispatch_unguarded
             | Ok r | Error r -> r)))
 ;;
 
-(* BUG-053 / FND-0050: every request gets a response. The handler has its own
-   boundary above, but authentication and body reading ran outside it, so an
-   exception there escaped into cohttp-eio, which closes the connection without
-   a response -- and the request was never counted. *)
 let respond_or_500 f =
   try f () with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
@@ -245,8 +229,6 @@ module For_testing = struct
   ;;
 end
 
-(* ── Make functor ──────────────────────────────────────────────────────── *)
-
 exception Drain_timeout
 
 type run_error = [ `Config of string ]
@@ -263,10 +245,6 @@ let api_key_required routes metrics_auth =
   || List.exists (fun route -> auth_uses_api_key route.Route.auth) routes
 ;;
 
-(* SEC-006 / FND-0037: [Unverified_dev_only] trusts any token without checking its
-   signature. Its name was the only thing keeping it off a real route, so a service
-   that uses it refuses to start unless the environment opts in explicitly.
-   [sol up] renders the opt-in for the local cluster only; [sol deploy] never does. *)
 let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
 
 let auth_is_unverified_jwt = function
@@ -292,10 +270,6 @@ let refuse_unverified_jwt routes metrics_auth =
   else Ok ()
 ;;
 
-(* SEC-009 / FND-0053: [Jwks_url] is documented as fetched over TLS, but the
-   HTTP client falls back to plain HTTP for any other scheme, and the keys it
-   returns are trusted to verify signatures. An http:// JWKS lets anyone on the
-   path substitute them, so it is a startup error, not a runtime surprise. *)
 let jwks_url_of = function
   | `Jwt { Auth.verification = Auth.Verified_signature_required { key_source; _ }; _ } ->
     (match key_source with
@@ -367,11 +341,7 @@ module Make (H : HANDLER) = struct
         ?on_listen
         ()
     =
-    (* BUG-046: a PORT that is set but is not a port number is a configuration
-       error. Falling back to the default made the service listen somewhere the
-       Service and its probes do not point, with nothing naming the bad value. *)
     let* port =
-      (* Set-but-blank is treated as unset, like every other setting. *)
       match Sol_runtime.setting "PORT" with
       | None -> Ok port
       | Some raw ->
@@ -382,7 +352,6 @@ module Make (H : HANDLER) = struct
     in
     let ot_eio = Option.map Sol_obs.obs_eio ot in
     let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
-    (* Register per-request metrics once at startup, reuse emitters per request *)
     let metrics_fns =
       match ot_eio with
       | None -> None
@@ -492,22 +461,13 @@ module Make (H : HANDLER) = struct
              ()
          in
          let server = Cohttp_eio.Server.make ~callback () in
-         (* BUG-046: the server stops accepting on a signal *or* on the caller's
-              [stop]. It used to watch only the signal, so an external stop kept it
-              accepting for the whole drain window and then reported a drain
-              timeout even with nothing in flight. *)
          let server_stop, server_stop_r = Eio.Promise.create () in
-         (* INFRA-073: on stop, readiness goes 503 first; the listener keeps
-              serving for [shutdown_delay_s] so endpoint removal can propagate,
-              then stops accepting and drains. *)
          Eio.Fiber.fork_daemon ~sw (fun () ->
            await_stop ();
            Atomic.set ready false;
            if shutdown_delay_s > 0.0 then Eio.Time.sleep env#clock shutdown_delay_s;
            ignore (Eio.Promise.try_resolve server_stop_r ());
            `Stop_daemon);
-         (* Race: serve exits naturally when connections drain, or drain guard fires
-         after drain_timeout_s and raises Drain_timeout to force cancellation. *)
          Eio.Fiber.first
            (fun () ->
               Cohttp_eio.Server.run
@@ -523,8 +483,6 @@ module Make (H : HANDLER) = struct
      with
      | Drain_timeout ->
        Printf.eprintf "sol-svc: drain timeout reached, forcing shutdown\n%!");
-    (* OBS-048: flush the asynchronous Loki/Tempo export on the way out, drained
-       or not. *)
     Option.iter (fun o -> Sol_obs.flush o) ot;
     Ok ()
   ;;

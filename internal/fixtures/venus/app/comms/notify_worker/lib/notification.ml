@@ -1,6 +1,3 @@
-(** Notification storage — owned by the comms team. Records a charge
-    notification in the database once per Charged event. *)
-
 module Schema = struct
   let table = "notifications"
   let id_column = "charge_id"

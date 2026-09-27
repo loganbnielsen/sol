@@ -1,11 +1,5 @@
-(* FEAT-072 / DEC-018: bounded release-history retention. See the .mli. *)
-
 let default_keep = 20
 
-(* The protection input, explicitly three-valued. A failed read of the pointer
-   must not become "there is no previous release": that silently drops the
-   protection `--keep-releases` promises, precisely when the read failed
-   (FND-0025). *)
 type previous_release =
   | Known of string
   | None_yet
@@ -14,13 +8,8 @@ type previous_release =
 let select ~keep ~current ~previous entries =
   match previous with
   | Unreadable why ->
-    (* Pruning on a guess could delete the record `sol rollback` restores. Under-
-       pruning is safe; skip and say why, so the skip is diagnosed rather than
-       silent. *)
     Error (Printf.sprintf "could not determine the previous release: %s" why)
   | Known _ | None_yet ->
-    (* Collapse duplicate deploys of one release to its newest appearance, so the
-       window counts distinct releases rather than deploy events. *)
     let latest =
       List.fold_left
         (fun acc (release_id, created_at) ->
@@ -30,8 +19,6 @@ let select ~keep ~current ~previous entries =
         []
         entries
     in
-    (* Newest first; tie-break on id so the result is a function of the input set
-       and not of the order the cluster happened to return. *)
     let newest_first =
       latest
       |> List.sort (fun (id_a, at_a) (id_b, at_b) ->

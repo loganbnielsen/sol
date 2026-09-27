@@ -1,21 +1,3 @@
-(* AUDIT-080: the application-declared availability semantic.
-
-   A workload admitted to [production-single-region] declares the failure it must
-   tolerate; Sol renders and validates the minimum native controls that make the
-   claim true. A replica count alone is not an availability guarantee.
-
-   The valid matrix (DEC-026 §3, FEAT-083):
-
-   - services and workers may be [single] or [node-failure-tolerant];
-   - functions are scheduled jobs — availability is not applicable;
-   - a persistent volume pins a workload to a single writable attachment, so a
-     volume-backed workload can only be [single] (FEAT-083 already forces
-     [replicas = 1] there).
-
-   This is deliberately the only availability input. PodDisruptionBudget,
-   affinity/topology, probe timing and termination-grace are rendered *from* the
-   semantic, never exposed as the application contract. *)
-
 type t =
   | Single
   | Node_failure_tolerant

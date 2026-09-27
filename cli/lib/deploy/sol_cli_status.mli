@@ -1,64 +1,29 @@
-(* Workspace-level status rollup for 'sol status' (OBS-009). *)
-
-(** DEC-038 §7: a verdict is a claim about evidence.
-
-    [Healthy] and [Degraded] both require that sufficient evidence was *obtained*;
-    they differ only in what it says. [Unknown] means it could not be obtained, and
-    carries why. [Not_deployed] is a positive finding — the namespace is confirmed
-    absent — not an inability to observe. *)
 type domain_status =
   | Healthy
   | Degraded
   | Unknown of string
   | Not_deployed
 
-(** Whether a namespace exists, as *observed*. Absence is a fact; a failed read is
-    not absence, and [Ns_unreadable] carries why. *)
 type namespace_presence =
   | Ns_present
   | Ns_absent
   | Ns_unreadable of string
 
-(** [rollup_domain_status ~ns_presence diagnoses] aggregates one domain's
-    per-service verdicts (as returned by
-    [Sol_cli_rollout_diagnosis.diagnose_service_live]) into a single domain-level
-    status:
-    - [Not_deployed] when the namespace is confirmed absent;
-    - [Unknown why] when it could not be read, or when a service's evidence could
-      not be obtained and nothing obtained contradicts that;
-    - [Degraded] when the namespace was read and any service is unhealthy;
-    - [Healthy] when the namespace was read and every service is healthy.
-
-    [Healthy] therefore always means "evidence was obtained and it indicates
-    health". It must never be produced by reads that did not happen — which is
-    what the previous [ns_exists:bool] + [string option list] signature allowed,
-    because [None] meant both "nothing wrong" and "could not read". *)
 val rollup_domain_status
   :  ns_presence:namespace_presence
   -> Sol_cli_rollout_diagnosis.diagnosis list
   -> domain_status
 
-(** The first line of a reason, for rendering it inside a verdict line. The full
-    text belongs where the diagnosis itself is printed. *)
 val first_line : string -> string
-
-(** Display label. Non-healthy states are upper-cased so they stand out in
-    plain-text output without needing ANSI colors. *)
 val domain_status_to_string : domain_status -> string
-
-(* Observability reachability (OBS-018). *)
 
 type reachability =
   | Healthy
-  | Unreachable of string (** what the probe said, kept rather than summarised *)
+  | Unreachable of string
   | Not_checked
 
 val reachability_to_string : reachability -> string
 
-(** [probe_url ~backend ~explicit_url ~default_local_url ~probe_path] decides
-    which URL, if any, is safe to check: [explicit_url] always wins; otherwise
-    only [Local]'s hardcoded default is meaningful to guess at -- [None] ("don't
-    check") for any other backend. *)
 val probe_url
   :  backend:Sol_cli_observability_url.backend
   -> explicit_url:string option
@@ -66,45 +31,22 @@ val probe_url
   -> probe_path:string
   -> string option
 
-(** [reachability_of_probe ~probe_url ~is_reachable] classifies the result of
-    [probe_url]: [Not_checked] when there's nothing to check, otherwise
-    [Healthy]/[Unreachable] per [is_reachable url]. *)
 val reachability_of_probe
   :  probe_url:string option
   -> is_reachable:(string -> (unit, string) result)
   -> reachability
 
-(* OBS-031: distinguishes "no URL configured" from "URL configured but the
-   request failed" -- shared message builders for `sol status` and
-   `sol logs` so both commands say the same thing for the same failure. *)
-
 type observability_signal =
   | Loki
   | Prometheus
 
-(** Message for the "no URL configured" case: no
-    [--loki-base-url]/[--prometheus-base-url] flag was given and [backend] isn't
-    [Local], so there's no default URL to guess at. Explains why, and gives the
-    exact `kubectl port-forward` command plus the flag needed to point the CLI
-    at a real cluster. No trailing period, like [unreachable_message] -- the
-    caller owns the surrounding sentence. *)
 val not_configured_message
   :  signal:observability_signal
   -> backend:Sol_cli_observability_url.backend
   -> string
 
-(** Message for the "URL configured but the request failed" case -- deliberately
-    distinct text from [not_configured_message] so a real outage or a wrong URL
-    doesn't hide behind wording that looks like the normal unconfigured case. *)
 val unreachable_message : url:string -> error:string -> string
 
-(** [reachability_line ~signal ~backend ~probe_url ~is_reachable] renders the
-    full message body for one observability signal's status-line entry:
-    [not_configured_message] when [probe_url] is [None], ["healthy"] when
-    [is_reachable url] succeeds, otherwise [unreachable_message]. [is_reachable]
-    is injected (as in [reachability_of_probe] above) so this is directly
-    unit-testable without a real curl call -- the I/O stays in [cmd_status.ml].
-*)
 val reachability_line
   :  signal:observability_signal
   -> backend:Sol_cli_observability_url.backend
@@ -112,20 +54,8 @@ val reachability_line
   -> is_reachable:(string -> (unit, string) result)
   -> string
 
-(** [service_is_declared ~k8s_name declared_k8s_names] is [true] when [k8s_name]
-    is one of [declared_k8s_names] -- the pure decision behind `sol status
-    <domain>/<service>` rejecting an undeclared service (OBS-022). Discovering
-    [declared_k8s_names] itself is a filesystem scan and stays in
-    [cmd_status.ml]; this is just the set-membership check, pulled out so it's
-    directly testable. *)
 val service_is_declared : k8s_name:string -> string list -> bool
 
-(** Which health model a declared service's primitive implies: [Fn] is
-    [Ephemeral] (CronJob-status diagnosis), [Svc]/[Worker] are [Continuous]
-    (live-pod diagnosis). Swapping this mapping would silently reintroduce the
-    OBS-024/026 regression (a zero-pod Fn reported as failed), so it's pulled
-    out of `cmd_status.ml` to be directly unit-tested rather than left as
-    untested glue. *)
 val pod_expectation_of_primitive
   :  Sol_cli_manifest.primitive
   -> Sol_cli_rollout_diagnosis.pod_expectation

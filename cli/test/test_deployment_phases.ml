@@ -2,14 +2,6 @@ let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
 
-(* Phase-oriented tests for the Sol deployment compiler.
-   Documents the contract at each phase boundary so infra contributors can
-   reason about plan generation, artifact rendering, GitOps emit, executor
-   dispatch, and state update in isolation — no Docker or Kubernetes required. *)
-
-(* ── shared helpers ──────────────────────────────────────────────────────── *)
-
-(* REFAC-133: the executors return their failure instead of raising it. *)
 let ok = function
   | Ok r -> r
   | Error e -> Alcotest.fail e
@@ -54,8 +46,6 @@ let assert_absent label haystack needle =
     false
     (contains haystack needle)
 ;;
-
-(* ── fixtures ────────────────────────────────────────────────────────────── *)
 
 let svc_spec : Sol_cli_deployment_plan.service_spec =
   { domain = "payments"
@@ -190,8 +180,6 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   }
 ;;
 
-(* ── Phase 1: request validation ────────────────────────────────────────── *)
-
 let test_up_request_uses_explicit_tag () =
   let r =
     Sol_cli_command_request.make_up_request
@@ -223,7 +211,6 @@ let test_up_request_falls_back_to_git_sha () =
   | Error msg -> Alcotest.fail msg
 ;;
 
-(* BUG-058: an unresolvable SHA. A local run falls back loudly; a deploy refuses. *)
 let git_unavailable () = Error "fatal: not a git repository"
 
 let test_up_request_warns_on_fallback_tag () =
@@ -297,7 +284,6 @@ let test_deploy_request_refuses_unresolvable_sha () =
       (Sol_cli_string.contains ~needle:"not a git repository" msg)
 ;;
 
-(* Positive control: the same request with a resolvable SHA is accepted. *)
 let test_deploy_request_tags_with_resolved_sha () =
   match deploy_without_tag ~git_sha:(fun () -> Ok "abc1234") with
   | Error msg -> Alcotest.fail msg
@@ -431,9 +417,6 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
   | Error msg -> Alcotest.fail msg
 ;;
 
-(* FEAT-026: target is required — make_deploy_request rejects an empty one
-   even though cmdliner's `required` positional should already prevent
-   this from reaching here in practice. *)
 let test_deploy_request_rejects_empty_target () =
   let r =
     Sol_cli_command_request.make_deploy_request
@@ -454,9 +437,6 @@ let test_deploy_request_rejects_empty_target () =
   Alcotest.(check bool) "empty target rejected" true (Result.is_error r)
 ;;
 
-(* --registry omitted stores None, not a hardcoded default — the
-   resolution (target file, or fail if it has none too) happens in
-   cmd_deploy.ml once the target loads, not in this constructor. *)
 let test_deploy_request_registry_omitted_stays_none () =
   let r =
     Sol_cli_command_request.make_deploy_request
@@ -479,8 +459,6 @@ let test_deploy_request_registry_omitted_stays_none () =
   | Error msg -> Alcotest.fail msg
 ;;
 
-(* FEAT-050: --image-ref values are carried as parsed (service, digest) pairs
-   and a mutable reference is rejected before any deploy logic runs. *)
 let test_deploy_request_accepts_image_refs () =
   let digest = "reg.example.com/ws/svc@sha256:" ^ String.make 64 'a' in
   let r =
@@ -523,8 +501,6 @@ let test_deploy_request_rejects_mutable_image_ref () =
   in
   Alcotest.(check bool) "mutable reference rejected" true (Result.is_error r)
 ;;
-
-(* ── Phase 2: plan construction ─────────────────────────────────────────── *)
 
 let test_plan_local_mode_fields () =
   let plan = make_plan ~env:local_env [ svc_spec ] in
@@ -651,8 +627,6 @@ let run_plan_ok ~mode ?secret_backend plan =
   | Error e -> Alcotest.fail ("run_plan failed: " ^ e)
 ;;
 
-(* ── Phase 3: render artifacts ──────────────────────────────────────────── *)
-
 let test_render_svc_produces_deployment_and_service () =
   let _, workload_yaml = render_ok svc_spec in
   assert_contains "svc workload has Deployment" workload_yaml "kind: Deployment";
@@ -697,8 +671,6 @@ let test_render_no_docker_or_k8s_calls () =
   let results = run_plan_ok ~mode:Sol_cli_executor.Dry_run plan in
   Alcotest.(check bool) "renders without side effects" true (List.length results = 3)
 ;;
-
-(* ── Phase 4: GitOps emit ───────────────────────────────────────────────── *)
 
 let with_temp_dir f =
   let dir = Filename.temp_file "sol-phases-test-" "" in
@@ -780,8 +752,6 @@ let test_gitops_emit_one_file_per_service () =
     let plan = make_plan [ svc_spec; worker_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let files = Sys.readdir dir |> Array.to_list in
-    (* FEAT-069: the bundle also carries the release artifact — the immutable
-       record named by the plan's release id, plus the current-release pointer. *)
     Alcotest.(check int) "two service files + two release files" 4 (List.length files);
     let record =
       Sol_cli_release.(
@@ -794,9 +764,6 @@ let test_gitops_emit_one_file_per_service () =
       (List.mem "sol-current-release.yaml" files))
 ;;
 
-(* The release artifact is a pure function of the plan's content: re-emitting an
-   identical plan leaves the record byte-identical, which is what keeps a GitOps
-   bundle an empty diff. *)
 let test_gitops_release_artifact_is_deterministic () =
   with_temp_dir (fun dir_a ->
     with_temp_dir (fun dir_b ->
@@ -823,8 +790,6 @@ let test_gitops_release_artifact_is_deterministic () =
         (read dir_a "sol-current-release.yaml")
         (read dir_b "sol-current-release.yaml")))
 ;;
-
-(* ── Phase 5: executor commands ─────────────────────────────────────────── *)
 
 let test_local_executor_result_fields () =
   let r =
@@ -909,8 +874,6 @@ let test_direct_fn_executor_result_fields () =
   Alcotest.(check string) "direct fn name" "invoice-fn" r.name
 ;;
 
-(* ── Phase 6: state update ──────────────────────────────────────────────── *)
-
 let test_state_dry_run_is_noop () =
   Alcotest.(check bool)
     "no-op outcome is Ok"
@@ -962,13 +925,6 @@ let test_state_no_removal_when_stable () =
   in
   Alcotest.(check (list string)) "stable plan: no removals" [] removed
 ;;
-
-(* ── Phase 7: path consistency ──────────────────────────────────────────── *)
-
-(* All four deployment paths take a Sol_cli_deployment_plan.t as input.
-   These tests assert that local, direct, gitops, and hosted-stub paths all
-   start from the same plan type and produce executor results with the same
-   namespace/name/image shape. *)
 
 let test_local_and_direct_share_plan_type () =
   let plan = make_plan ~env:local_env [ svc_spec ] in
@@ -1038,7 +994,6 @@ let test_gitops_shares_plan_type () =
 
 let test_change_set_build_is_path_agnostic () =
   with_temp_dir (fun dir ->
-    (* Identity fields (namespace, name, image) are mode-independent. *)
     let plan = make_plan [ svc_spec ] in
     let id r =
       r.Sol_cli_executor.namespace, r.Sol_cli_executor.name, r.Sol_cli_executor.image
@@ -1091,10 +1046,6 @@ let test_up_execution_descriptor_uses_host_push_image () =
     exec.dockerfile
 ;;
 
-(* ── entry point ─────────────────────────────────────────────────────────── *)
-
-(* FEAT-072: the retention window must be at least 1; a zero/negative value would
-   silently mean "prune everything prunable", which is not what a typo intended. *)
 let test_up_request_rejects_nonpositive_keep () =
   let r =
     Sol_cli_command_request.make_up_request

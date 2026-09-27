@@ -1,5 +1,3 @@
-(* REFAC-130: the workspace a fixture describes, read once through the loader
-   under test -- the same value the commands pass into the plan. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -36,8 +34,6 @@ let namespace_string ~workspace ~domain =
   namespace ~workspace ~domain |> Sol_cli_deployment_plan.namespace_to_string
 ;;
 
-(* ── plan_ids newtype helpers ───────────────────────────────────────────── *)
-
 let topic_name_exn s =
   match Sol_cli_plan_ids.Topic_name.of_string s with
   | Ok t -> t
@@ -62,7 +58,6 @@ let consumer_group_exn s =
   | Error e -> Alcotest.fail (Printf.sprintf "invalid consumer group %S: %s" s e)
 ;;
 
-(** Compare a list of typed identifiers by their string representation. *)
 let check_ids label stringify expected got =
   let expected_strs = List.map stringify expected in
   let got_strs = List.map stringify got in
@@ -258,9 +253,6 @@ let test_image_ref_push_registry () =
        ~tag:"dev")
 ;;
 
-(* ── to_json tests ─────────────────────────────────────────────────────── *)
-
-(** Build a small but complete plan for use across serialization tests. *)
 let sample_plan () : Sol_cli_deployment_plan.t =
   let env : Sol_cli_deployment_plan.env_config =
     { name = "production"
@@ -321,7 +313,6 @@ let test_to_json_valid_json () =
   let plan = sample_plan () in
   let json = Sol_cli_deployment_plan.to_json plan in
   let s = Yojson.Safe.to_string json in
-  (* round-trip: must parse without raising *)
   let _ = Yojson.Safe.from_string s in
   ()
 ;;
@@ -336,7 +327,6 @@ let test_to_json_deterministic () =
 let test_to_json_no_secret_values () =
   let plan = sample_plan () in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
-  (* Neither secret value must appear in the output *)
   if
     String.length (Str.global_replace (Str.regexp "super-secret-value") "" s)
     < String.length s
@@ -345,8 +335,6 @@ let test_to_json_no_secret_values () =
   then Alcotest.fail "secret value 'also-secret' leaked into plan JSON"
 ;;
 
-(* FEAT-026: sample_plan's environment.env = Some "prod" must reach
-   --emit-plan-to's JSON output, same as region/base_domain already did. *)
 let test_to_json_env_present () =
   let plan = sample_plan () in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
@@ -358,7 +346,6 @@ let test_to_json_env_present () =
 let test_to_json_secret_keys_present () =
   let plan = sample_plan () in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
-  (* Secret keys must appear *)
   assert (
     let re = Str.regexp "DB_PASSWORD" in
     contains re s);
@@ -370,7 +357,6 @@ let test_to_json_secret_keys_present () =
 let test_to_json_config_values_present () =
   let plan = sample_plan () in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
-  (* Config values (not secrets) must appear in full *)
   assert (
     let re = Str.regexp "us-east-1" in
     contains re s)
@@ -413,17 +399,12 @@ let test_to_json_mode_strings () =
   check_mode Sol_cli_deployment_plan.Sol_hosted "sol_hosted"
 ;;
 
-(* ── discover_topics / discover_migrations tests ────────────────────────── *)
-
-(** Run [f ()] with cwd temporarily changed to [dir]. *)
 let with_cwd dir f =
   let orig = Sys.getcwd () in
   Sys.chdir dir;
   Fun.protect f ~finally:(fun () -> Sys.chdir orig)
 ;;
 
-(** Create a directory (and intermediate parents) if it does not already exist.
-*)
 let mkdirs path =
   let parts = String.split_on_char '/' path in
   let _ =
@@ -444,9 +425,6 @@ let write_file path content =
   close_out oc
 ;;
 
-(* REFAC-130: the plan's topics, migrations and schema subjects are projections
-   of the workspace model the command reads. These discover-* tests now exercise
-   that loader, which is where the read happens. *)
 let loaded_facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -455,7 +433,6 @@ let loaded_facts () =
 
 let discover_topics_ok () = (loaded_facts ()).Sol_cli_workspace_model.topics
 
-(* BUG-042: a misspelled key in an event sol.toml used to drop its topics silently. *)
 let test_discover_topics_rejects_misspelled_event_toml () =
   let tmp = Filename.temp_dir "sol_test_topics" "" in
   with_cwd tmp (fun () ->
@@ -472,7 +449,6 @@ topic = ["payments.charged"]
         "names the unknown key"
         true
         (Sol_cli_string.contains ~needle:"\"topic\"" e);
-      (* The loader's error names the file it could not read. *)
       Alcotest.(check bool)
         "names the file"
         true
@@ -525,7 +501,6 @@ let test_discover_topics_deduplicates () =
   with_cwd tmp (fun () ->
     mkdirs "events/a";
     mkdirs "events/b";
-    (* Same topic listed in two different event sol.toml files *)
     write_file
       "events/a/sol.toml"
       {|[service]
@@ -609,19 +584,15 @@ topics = ["orders.placed"]
       topics)
 ;;
 
-(** Comments and unrelated strings in .ml files must NOT create false positives,
-    because discover_topics no longer scans .ml source files at all. *)
 let test_discover_topics_no_false_positives_from_ml_files () =
   let tmp = Filename.temp_dir "sol_test_topics_fp" "" in
   with_cwd tmp (fun () ->
     mkdirs "events/payments";
-    (* Write .ml files with topic_name patterns — these must be ignored *)
     write_file
       "events/payments/charged.ml"
       "(* let topic_name = \"commented.out.topic\" *)\n\
        let topic_name = Kafka_service.topic_name_exn \"payments.charged\"\n\
        let s = \"let topic_name = not-a-real-topic\"\n";
-    (* No sol.toml — so discover_topics should return [] *)
     let topics = discover_topics_ok () in
     Alcotest.(check int)
       "ml files are not scanned — no false positives from comments or strings"
@@ -682,8 +653,6 @@ let test_discover_migrations_ignores_non_sql () =
       migs)
 ;;
 
-(* ── schema_subjects tests ──────────────────────────────────────────────── *)
-
 let test_schema_subjects_derived () =
   let tmp = Filename.temp_dir "sol_test_subjects" "" in
   with_cwd tmp (fun () ->
@@ -728,8 +697,6 @@ let test_schema_subjects_empty_when_no_dir () =
     let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     Alcotest.(check int) "empty without events dir" 0 (List.length subjects))
 ;;
-
-(* ── consumer_groups tests ──────────────────────────────────────────────── *)
 
 let make_worker_spec name domain =
   { Sol_cli_deployment_plan.domain
@@ -839,8 +806,6 @@ let test_consumer_groups_sorted () =
     [ consumer_group_exn "ws.comms.a_worker"; consumer_group_exn "ws.comms.b_worker" ]
     groups
 ;;
-
-(* ── to_json v2 field tests ─────────────────────────────────────────────── *)
 
 let test_to_json_secret_backend () =
   let plan = sample_plan () in
@@ -1012,9 +977,6 @@ let test_to_json_schema_subjects_present () =
     contains re s)
 ;;
 
-(* FEAT-065: the emitted plan carries both facts -- the requested scope (intent)
-   and the resolved workloads (exact membership) -- because DEC-018's release
-   record needs both. *)
 let test_to_json_requested_scope_and_resolved_workloads () =
   let plan = { (sample_plan ()) with requested_scope = "payments" } in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
@@ -1079,11 +1041,6 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error
         (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Validation { path; message }))
       ->
-      (* REFAC-130: the plan takes the workload's parsed sol.toml from the
-         workspace model, which reads it through the workspace root -- so the
-         path it names is that root's, not the relative spelling [at_root] used
-         to fall back to when the fixture was not a workspace. It still names
-         the offending file. *)
       Alcotest.(check bool)
         "error path names the workload's sol.toml"
         true
@@ -1101,8 +1058,6 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
       Alcotest.fail "expected TOML error, got availability error")
 ;;
-
-(* ── BUG-004: sol.yml scale overrides sol.toml replicas ──────────────────── *)
 
 let deploy_env : Sol_cli_deployment_plan.env_config =
   { name = "local"
@@ -1199,7 +1154,6 @@ let test_no_resolved_config_uses_toml_replicas () =
   with_cwd tmp (fun () ->
     mkdirs "app/payments/charge_svc";
     write_file "app/payments/charge_svc/sol.toml" "[infra.scale]\nreplicas = 2\n";
-    (* Simulates `sol up`, which never has a resolved target/sol.yml. *)
     match
       Sol_cli_deployment_plan.of_services_result
         ~facts:(facts ())
@@ -1321,8 +1275,6 @@ let test_zero_replica_volume_fails () =
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
-(* ── -fn schedule (BUG-048) ───────────────────────────────────────────── *)
-
 let plan_for_fn toml =
   let tmp = Filename.temp_dir "sol_test_fn_sched" "" in
   with_cwd tmp (fun () ->
@@ -1353,8 +1305,6 @@ let test_fn_schedule_comes_from_sol_toml () =
        |> List.map (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule))
 ;;
 
-(* The old behaviour: a -fn with no schedule (no sol.toml, or no key) deployed
-   hourly. A schedule is what defines a -fn, so its absence is an error. *)
 let test_fn_without_schedule_is_a_plan_error toml () =
   match plan_for_fn toml with
   | Ok _ ->
@@ -1463,10 +1413,6 @@ calls = ["checkout/missing_svc"]
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
-(* DEC-036 / INFRA-053, case 1: a scoped deploy whose call graph leaves the scope
-   must still resolve the callee -- from the workspace inventory, not from the
-   selection -- and must deploy exactly the selection. This is the live Run 8
-   failure: `--scope payments/charge_svc` reported its healthy callee as missing. *)
 let test_scoped_call_resolves_from_the_inventory () =
   let tmp = Filename.temp_dir "sol_test_plan_inventory_call" "" in
   with_cwd tmp (fun () ->
@@ -1510,9 +1456,6 @@ calls = ["checkout/checkout_svc"]
        | _ -> Alcotest.fail "expected exactly one service spec"))
 ;;
 
-(* DEC-036 / INFRA-053, case 2: resolution stays fail-closed, and the message now
-   names the reference and what the workspace does contain -- rather than implying
-   the callee merely was not selected. *)
 let test_unknown_service_call_fails_and_names_the_units () =
   let tmp = Filename.temp_dir "sol_test_plan_inventory_bad_call" "" in
   with_cwd tmp (fun () ->
@@ -1540,8 +1483,6 @@ calls = ["checkout/checkout_svcc"]
         [ charge_svc_service ]
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { ref; message; _ }) ->
-      (* The raw reference is preserved in the error, and the message names both
-         what was referenced and what the workspace actually contains. *)
       Alcotest.(check string) "the reference as written" "checkout/checkout_svcc" ref;
       assert (contains (Str.regexp_string "target service not found") message);
       assert (contains (Str.regexp_string "checkout_svcc") message);
@@ -1584,8 +1525,6 @@ config = { CHECKOUT_SVC_URL = "http://example.invalid" }
     | Ok _ -> Alcotest.fail "expected invalid service call"
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
-
-(* ── plan_ids newtype unit tests ────────────────────────────────────────── *)
 
 let test_topic_name_valid () =
   match Sol_cli_plan_ids.Topic_name.of_string "payments.charged" with

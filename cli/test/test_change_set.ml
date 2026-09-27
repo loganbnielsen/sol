@@ -2,11 +2,6 @@ let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
 
-(* Tests for Sol_cli_executor.run_plan ~ctx:Sol_cli_kube_destination.local_context (formerly Sol_cli_change_set).
-   Verifies that run_plan renders all specs and dispatches correctly per mode. *)
-
-(* ── fixtures ────────────────────────────────────────────────────────────── *)
-
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
@@ -135,8 +130,6 @@ let run_ok ~mode ?secret_backend plan =
   | Error e -> Alcotest.fail ("run_plan unexpectedly failed: " ^ e)
 ;;
 
-(* ── dry-run ─────────────────────────────────────────────────────────────── *)
-
 let test_dry_run_result_count () =
   let plan = make_plan [ svc_spec; worker_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
@@ -158,8 +151,6 @@ let test_dry_run_worker () =
   Alcotest.(check string) "worker namespace" "myapp-comms" r.namespace;
   Alcotest.(check string) "worker name" "notify-worker" r.name
 ;;
-
-(* ── emit-to ─────────────────────────────────────────────────────────────── *)
 
 let test_emit_to_writes_file () =
   let dir = Filename.temp_file "sol-cs-test-" "" in
@@ -192,8 +183,6 @@ let test_emit_to_result_fields () =
   Alcotest.(check string) "namespace" "myapp-comms" r.namespace;
   Alcotest.(check string) "name" "notify-worker" r.name
 ;;
-
-(* ── entry point ──────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

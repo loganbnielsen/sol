@@ -1,7 +1,3 @@
-(* FEAT-103: which adapter `sol local run` picks for each workload, and what it
-   runs. [Sol_cli_local_run.plan] decides and starts nothing, so every case here
-   is a plain fixture on disk -- no cluster, no process, no npm. *)
-
 let check_bool = Alcotest.(check bool)
 let check_string = Alcotest.(check string)
 let check_strings = Alcotest.(check (list string))
@@ -20,7 +16,6 @@ let write_file path content =
   close_out oc
 ;;
 
-(* A workspace with the given files, cleaned up afterwards. *)
 let with_workspace files f =
   let root = Filename.temp_file "sol-local-run-test-" "" in
   Sys.remove root;
@@ -37,12 +32,8 @@ let facts_of root =
 ;;
 
 let services_of facts = Sol_cli_workspace_model.services facts
-
-(* A declared language is what the adapter reads. *)
 let sol_yml ~services = services
 let dockerfile = "FROM scratch\n"
-
-(* ── the OCaml adapter ───────────────────────────────────────────────────── *)
 
 let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
   with_workspace
@@ -79,8 +70,6 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
        Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
-(* ── the TypeScript adapter ──────────────────────────────────────────────── *)
-
 let typescript_unit =
   [ ( "app/demo_ts/package.json"
     , {|{"name": "demo-ts", "private": true, "workspaces": ["order_svc", "fulfillment_worker"]}|}
@@ -109,8 +98,6 @@ let test_typescript_unit_builds_through_npm_and_runs_node () =
     Alcotest.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
-    (* The package name is `order-svc` while the directory is `order_svc`, and
-       the npm project root is the directory above the unit. *)
     (match plan.builds with
      | [ build ] ->
        check_strings
@@ -165,8 +152,6 @@ let test_a_standalone_typescript_unit_is_its_own_project () =
        Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
-(* ── mixed selections ────────────────────────────────────────────────────── *)
-
 let test_a_mixed_selection_uses_both_adapters () =
   let files =
     [ ( "sol.yml"
@@ -201,16 +186,12 @@ let test_a_mixed_selection_uses_both_adapters () =
          npm_build.argv
      | builds ->
        Alcotest.fail (Printf.sprintf "expected two builds, got %d" (List.length builds)));
-    (* The launches follow the selection: however discovery ordered the two,
-       every selected unit is launched, in that same order. *)
     let services = services_of facts in
     check_strings
       "both units are launched, in selection order"
       (List.map Sol_cli_local_run.label services)
       (List.map (fun (r : Sol_cli_local_run.recipe) -> r.label) plan.launches)
 ;;
-
-(* ── refusals ────────────────────────────────────────────────────────────── *)
 
 let expect_error ~needle = function
   | Ok _ -> Alcotest.fail "expected the plan to refuse"
@@ -259,8 +240,6 @@ let test_typescript_dependencies_that_are_not_installed_are_refused () =
   |> expect_error ~needle:"run `npm ci` in app/demo_ts"
 ;;
 
-(* The plan refuses as a whole: a loop that started half a selection would leave
-   the user looking at a partially running system. *)
 let test_one_bad_unit_refuses_the_whole_plan () =
   with_workspace
     [ ( "sol.yml"
@@ -275,8 +254,6 @@ let test_one_bad_unit_refuses_the_whole_plan () =
     ; "app/comms/ledger_worker/sol.toml", ""
     ]
   @@ fun root ->
-  (* Drop one unit's declaration, so it cannot be driven, and read the model as
-     it then stands. *)
   write_file
     (Filename.concat root "sol.yml")
     "services:\n  charge_svc:\n    language: ocaml\n";
@@ -285,7 +262,6 @@ let test_one_bad_unit_refuses_the_whole_plan () =
   |> expect_error ~needle:"ledger_worker declares no language"
 ;;
 
-(* REFAC-139 part F: the shell lines the loop runs. *)
 let test_shell_lines () =
   let command argv cwd = { Sol_cli_local_run.argv; cwd } in
   Alcotest.(check string)

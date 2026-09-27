@@ -1,19 +1,11 @@
-(* Tests for typed tool adapter modules: kubectl, docker, helm, terraform, git.
-   Tests verify argv construction by checking cmd.argv (no external tools needed)
-   and failure propagation by spawning a known-failing process. *)
-
 let check_str = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 
-(* Run a command that always fails (spawn a missing binary) and check the error
-   propagates as Spawn_failed or Non_zero — never silently swallowed. *)
 let assert_error result =
   match result with
   | Error _ -> ()
   | Ok _ -> Alcotest.fail "expected error but got Ok"
 ;;
-
-(* ── Sol_cli_kubectl ──────────────────────────────────────────────────────── *)
 
 let test_kubectl_apply_argv () =
   let c = Sol_cli_process.cmd [ "kubectl"; "apply"; "-f"; "/tmp/foo.yaml" ] in
@@ -74,9 +66,6 @@ let test_kubectl_rollout_restart_argv () =
   check_str "action" "restart" (List.nth c.argv 2)
 ;;
 
-(* FEAT-079: `sol fn run`'s primitive -- copies the deployed CronJob's
-   jobTemplate into a new ad-hoc Job via --from=cronjob, rather than Sol
-   reconstructing the job spec itself. *)
 let test_kubectl_create_job_from_cronjob_argv () =
   let c =
     Sol_cli_process.cmd
@@ -116,8 +105,6 @@ let test_kubectl_patch_argv () =
   check_str "patch_data" "[{}]" (List.nth c.argv 9)
 ;;
 
-(* REFAC-125: kubectl's own messages, verbatim, and what each classifies as. The
-   classifier reads the status reason; the prose after it may change freely. *)
 let test_kubectl_classify () =
   let failed ?(stdout = "") stderr =
     Sol_cli_process.Non_zero { exit_code = 1; stdout; stderr }
@@ -158,8 +145,6 @@ let test_kubectl_classify () =
     "forbidden"
     (failed
        {|Error from server (Forbidden): secrets is forbidden: User "x" cannot list resource "secrets"|});
-  (* Positive controls the other way: an unrelated failure stays whole, and prose
-     that merely mentions a reason word is not that reason. *)
   let unrelated =
     failed "Unable to connect to the server: net/http: TLS handshake timeout"
   in
@@ -168,7 +153,6 @@ let test_kubectl_classify () =
   is Sol_cli_kubectl.Other "a reason word in prose is not a reason" prose;
   let timeout = Sol_cli_process.Timeout 15. in
   is Sol_cli_kubectl.Other "timeout is Other" timeout;
-  (* The classification is a view: the message is still kubectl's own. *)
   let forbidden =
     failed {|Error from server (Forbidden): secrets is forbidden: User "x" cannot get|}
   in
@@ -180,8 +164,6 @@ let test_kubectl_classify () =
        (Sol_cli_process.error_to_string forbidden))
 ;;
 
-(* FND-0024: the point of the classifier is that an unrunnable kubectl is not a
-   negative answer. Pure, so it needs no cluster and no kubectl on PATH. *)
 let test_kubectl_presence_classification () =
   let failed stderr =
     Sol_cli_kubectl.Failed { Sol_cli_process.exit_code = 1; stdout = ""; stderr }
@@ -218,7 +200,6 @@ let test_kubectl_presence_classification () =
     false
     (is_absent
        (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
-  (* The reason must survive into the verdict, or the operator cannot act on it. *)
   match
     Sol_cli_kubectl.presence_of_probe_result
       (Ok (failed "Error from server (NotFound): deployments not found"))
@@ -227,8 +208,6 @@ let test_kubectl_presence_classification () =
     check_bool "the reason carries what kubectl said" true (String.length reason > 0)
   | _ -> Alcotest.fail "expected Absent for a non-zero exit"
 ;;
-
-(* ── Sol_cli_docker ───────────────────────────────────────────────────────── *)
 
 let test_docker_build_argv () =
   let c =
@@ -265,8 +244,6 @@ let test_docker_inspect_digest_fallback () =
   check_str "fallback is image_ref" "nonexistent:image" fallback
 ;;
 
-(* ── Sol_cli_helm ─────────────────────────────────────────────────────────── *)
-
 let test_helm_repo_add_argv () =
   let c =
     Sol_cli_process.cmd
@@ -300,15 +277,6 @@ let test_helm_upgrade_install_argv () =
   check_bool "has --wait" true (List.mem "--wait" c.argv)
 ;;
 
-(* CODE_LAYER-008: Sol_cli_helm.upgrade_install's ?version places --version
-   between --create-namespace and --set/-f (see sol_cli_helm.ml) -- this
-   documents that shape, same as the sibling argv tests above; the real
-   `upgrade_install` function itself is exercised end to end by live
-   cluster verification (all 7 helm_install call sites in cmd_local.ml,
-   CODE_LAYER-008), not by this suite, same as every other _argv test in
-   this file (none call the real Sol_cli_kubectl/Sol_cli_docker/Sol_cli_helm
-   functions -- see the module comment at the top of this file if that
-   changes for one of them). *)
 let test_helm_upgrade_install_version_argv () =
   let c =
     Sol_cli_process.cmd
@@ -342,8 +310,6 @@ let test_helm_set_flags_str () =
   in
   check_bool "has --set-string" true (List.mem "--set-string" c.argv)
 ;;
-
-(* ── Sol_cli_terraform ────────────────────────────────────────────────────── *)
 
 let test_terraform_init_argv () =
   let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/some/dir"; "init" ] in
@@ -405,8 +371,6 @@ let test_terraform_which_check_returns_bool () =
   let result = Sol_cli_terraform.which_check () in
   check_bool "returns a bool (true or false)" true (result || not result)
 ;;
-
-(* ── suite ───────────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

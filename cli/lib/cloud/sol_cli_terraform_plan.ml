@@ -1,67 +1,19 @@
-(* One plan-classification and assertion mechanism for destructive applies
-   (HARDEN-004 step 3, REFAC-091).
-
-   The problem this exists for: a destructive lifecycle must not perform an
-   unapproved constructive operation merely to make the target destroyable. A
-   whole-root `terraform apply` creates anything in configuration and absent from
-   state, so on a half-built target the step that is supposed to make destruction
-   possible can create the very cluster it was asked to remove (FND-0044), and a
-   `-target` still pulls in dependencies and reconciles the whole resource, so an
-   unasserted targeted apply can create too (FND-0030).
-
-   So every apply reachable from destroy is planned first, the plan is classified
-   from Terraform's own resource changes -- addresses and actions, never log text
-   -- and the apply only runs when every change is inside that phase's allowlist.
-
-   The classification is deliberately strict: a plan that cannot be read, or that
-   contains an action string we do not recognise, is REFUSED rather than allowed.
-   "We could not tell" must never mean "fine". *)
-
 type action =
   | Create
   | Update
   | Delete
   | Replace
-    (* ForceNew drift: Terraform reports ["delete","create"] or
-       ["create","delete"]. Either ordering is a replacement -- a create on the
-       destroy path -- so both collapse here. *)
   | Read
   | No_op
-  | Unknown of string list (* an action list we do not recognise: always refused *)
+  | Unknown of string list
 
 type change =
   { address : string
   ; resource_type : string
-  ; mode : string (* "managed" or "data" *)
+  ; mode : string
   ; action : action
   }
 
-(** How a rule identifies the resources it governs. A matcher answers only "does
-    this change refer to what the rule governs?" -- never "is this action
-    allowed?", which is the rule's [allows].
-
-    - [Exact address] is one address, exactly as Terraform wrote it: no
-      interpretation at all.
-    - [Resource address] is one resource, **any instance** of it: the address
-      itself, or that address followed by exactly one Terraform instance key
-      ([resource[0]], [resource[37]], [resource["key"]]). A `count`/`for_each`
-      resource has no single plan address -- Terraform emits `resource[0]` --
-      while the capability that declares it names a stable resource, so a rule
-      written with [Exact] can never match the plan it exists for. That is
-      FND-0058: the destroy refused the very create its own authority rule
-      permitted, skipped the platform teardown, and left stale platform state.
-      Use [Resource] for a declared mechanism with an instance count.
-    - [Type kind] exists for a mechanism Terraform owns inside a module whose
-      internal address is module-version-dependent (the AWS bootstrap
-      access-policy association); the rule is still narrow -- it names one
-      resource type in a root that has exactly one such resource -- but it
-      cannot be an address, and the plan assertion is what enforces the boundary
-      there.
-
-    [Resource] is one resource and nothing else: it does not match a longer
-    name, a dotted path, a module prefix or a sibling resource of the same type.
-    An instance key containing `[` (a `for_each` map key may be any string) is
-    *refused* rather than guessed at, which fails closed. *)
 type matcher =
   | Exact of string
   | Resource of string
@@ -98,14 +50,9 @@ let action_to_string = function
   | Unknown raw -> "unrecognised action [" ^ String.concat "," raw ^ "]"
 ;;
 
-(* Parse `terraform show -json <saved plan>` into the resource changes it holds.
-   A plan that does not carry a `resource_changes` array is not a plan we can
-   assert on, so it is an error -- and the caller refuses. *)
 let changes_of_plan_json json : (change list, string) result =
   let text path item = Sol_cli_json.field path item |> Sol_cli_json.string in
   let change item =
-    (* A change with no readable actions is [Unknown []], which the plan policy
-       refuses -- never a no-op. *)
     let raw_actions =
       Sol_cli_json.field [ "change"; "actions" ] item
       |> Sol_cli_json.list
@@ -128,11 +75,6 @@ let changes_of_plan_json json : (change list, string) result =
      | _ -> Error "the plan JSON carries no `resource_changes` array")
 ;;
 
-(* The address with one trailing Terraform instance key removed, if it has one.
-   [resource[0]] -> [resource], [resource["key"]] -> [resource], [resource] ->
-   [resource]. Only the last bracket pair is removed, and only when it closes the
-   address: [resource[0][1]] and a key containing `[` keep an address that
-   matches nothing declared, which refuses rather than guesses. *)
 let without_instance_key address =
   match String.rindex_opt address '[' with
   | Some open_bracket
@@ -148,8 +90,6 @@ let matches matcher change =
   | Type kind -> change.resource_type = kind
 ;;
 
-(* [no-op] anywhere is fine; a data-source [read] is fine. Everything else needs
-   a rule whose matcher covers the change and whose allowlist holds the action. *)
 let permitted policy change =
   match change.action with
   | No_op -> true
@@ -192,10 +132,10 @@ let violations policy changes =
 ;;
 
 type apply_failure =
-  | Plan_failed of string (* the plan command itself failed: refuse *)
-  | Plan_unreadable of string (* show/parse/classification failure: refuse *)
-  | Refused of string list (* classified changes outside the allowlist *)
-  | Apply_failed of string (* the apply ran and failed *)
+  | Plan_failed of string
+  | Plan_unreadable of string
+  | Refused of string list
+  | Apply_failed of string
 
 let apply_failure_to_string = function
   | Plan_failed message -> message
@@ -209,9 +149,6 @@ let was_refused = function
   | Plan_failed _ | Plan_unreadable _ | Apply_failed _ -> false
 ;;
 
-(* plan -> read the plan -> classify -> refuse or apply the saved plan. The apply
-   receives the *saved plan file*, so what ran is what was asserted; an apply
-   that re-planned with the same arguments could differ from the asserted plan. *)
 let guarded_apply ~policy ~plan ~show_plan ~apply_plan () =
   match plan () with
   | Error message ->
@@ -237,9 +174,6 @@ let guarded_apply ~policy ~plan ~show_plan ~apply_plan () =
            | violations -> Error (Refused violations))))
 ;;
 
-(* INFRA-074: the addresses of [resource_type] a plan deletes or replaces. A
-   replace destroys the resource first, so for a repository it loses the images
-   as surely as a delete does. *)
 let removed_of_type ~resource_type changes =
   changes
   |> List.filter_map (fun c ->
@@ -248,10 +182,6 @@ let removed_of_type ~resource_type changes =
     | _ -> None)
 ;;
 
-(* SEC-008: `terraform show -json <plan>` carries sensitive values (e.g. a
-   [sensitive] db_password passed through TF_VAR_) in plain text, so it must never
-   pass through [Sol_cli_run_log.run_phase], which writes a phase's full stdout to
-   disk. It is read here, and only the classified changes are recorded. *)
 let show_and_record ~run_log ~phase ~show =
   match show () with
   | Error message -> Error message

@@ -1,32 +1,3 @@
-(* AWS credentials for a lifecycle operation (INFRA-039, named by AUDIT-POST-007).
-
-   This is the AWS mechanism and nothing here is generic -- `aws configure
-   export-credentials`, the `AWS_*` variables it installs, and an
-   `aws sts get-caller-identity` principal. GCP impersonates a service account and
-   lives in Sol_cli_gcp_cluster; the generic selection point is
-   Sol_cli_provider_registry.credentials.
-
-   Sol inherits the ambient environment, which is right for a short command and
-   wrong for an operation that runs for hours. HARDEN-002 Run 5 Attempt 5 lost its
-   SSO session mid-run: `sol cloud destroy` could not authenticate against a
-   billable target, while `aws sts get-caller-identity` still answered for the same
-   profile -- the CLI held usable cached role credentials and terraform, which
-   needed to refresh, could not.
-
-   Two things follow, and neither is "use longer-lived credentials":
-
-   - credentials are resolved again *per operation*, rather than assuming whatever
-     was in the environment when Sol started still works;
-   - the resolved principal is reported, so a stage is attributable to an identity
-     instead of to whatever the operator's shell happened to hold.
-
-   Resolution goes through `aws configure export-credentials`, which asks the CLI to
-   resolve the chain -- including refreshing an SSO session that the CLI can refresh
-   and terraform cannot. The result is installed into Sol's own environment, so
-   every child (terraform, aws, kubectl) inherits credentials known to be valid now;
-   the platform's provider blocks pin no profile, so environment credentials are
-   what the AWS SDK uses. *)
-
 type t =
   { access_key_id : string
   ; secret_access_key : string
@@ -34,8 +5,6 @@ type t =
   ; principal : string
   }
 
-(* `--format env` rather than `--format json`: the CLI already prints exactly the
-   three variables to install, so there is nothing to parse but `export K=V`. *)
 let parse_env_format output =
   let lines = String.split_on_char '\n' output in
   let value key =
@@ -97,9 +66,6 @@ let install t =
   | None -> ()
 ;;
 
-(* The safety-critical message. A destroy that cannot authenticate leaves billable
-   infrastructure standing *and* disables the only supported path to remove it, so
-   that has to be said, not implied by a failed stage. *)
 let unresolved_message ~operation ~profile ~leaves_target_standing ~detail =
   Printf.sprintf
     "cannot resolve AWS credentials before %s: %s\n%s\n%s"

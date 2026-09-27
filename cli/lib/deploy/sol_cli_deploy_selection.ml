@@ -30,10 +30,6 @@ type deployed =
 let unit_id (s : Sol_cli_manifest.service) = Printf.sprintf "%s/%s" s.domain s.name
 
 let apply_target ~target ~(config : Sol_cli_config.t) selection =
-  (* `sol deploy` always mutates a real cluster, so unlike `sol plan` (read-only,
-     where Sol_cli_config.load_for_target's permissive overlay is fine) it needs
-     the target to have been deliberately declared, not just shaped like
-     <env>/<provider>/<region>. `sol cloud apply/destroy` carry the same check. *)
   let* () =
     if Sol_cli_config.target_declared config.target
     then Ok ()
@@ -46,9 +42,6 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
            target
            (Sol_cli_config.target_source config.target))
   in
-  (* DEC-041: `omit` means "not in this target's default set". An explicit
-     unit-level --scope names one back in (and says so); a domain-level or
-     whole-workspace selection drops it (and says so). *)
   let omission =
     Sol_cli_workload_selection.apply_omission
       ~is_omitted:(fun s -> Sol_cli_config.is_omitted_service config ~name:s.name)
@@ -70,9 +63,6 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
              target)
         omission.excluded
   in
-  (* An --image-ref naming a unit the target omits would otherwise be resolved
-     against the pre-omission selection and then silently dropped: the operator
-     pinned bytes for a workload and got a run without it. *)
   let* () =
     match
       selection.image_refs
@@ -90,9 +80,6 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
            target
            (unit_id s))
   in
-  (* The selection was non-empty, so an empty one here was emptied by omission --
-     a different situation from a workspace with no services, and the operator's
-     next action is different too. *)
   match omission.selected with
   | [] ->
     Error
@@ -126,10 +113,6 @@ let plan
     Sol_cli_env_target.customer_cloud_defaults ~registry ~image_tag:sha ~emit_to ()
     |> refused
   in
-  (* Kubernetes_live is never allowed with a GitOps target: the two together would
-     write plaintext secret values into the GitOps repository, leaking them to
-     everyone with read access. [secret_backend] is already resolved (INFRA-050),
-     so this fires only on an explicit --secret-backend kubernetes-live. *)
   let* () =
     match env_target, secret_backend with
     | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->

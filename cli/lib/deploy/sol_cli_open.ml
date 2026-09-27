@@ -1,19 +1,8 @@
-(* URL construction for 'sol open logs|metrics|dashboard' (OBS-010).
-   Pure functions here so scope parsing and URL building can be unit-tested
-   without a live Grafana instance. *)
-
 type scope =
   | Workspace
   | Domain of string
   | Service of string * string
   | Resource of string * string
-  (** [Resource (resource_type, resource_name)] -- a managed infrastructure
-          resource dashboard (OBS-044), e.g. an RDS instance. Deliberately
-          generic over [resource_type] rather than a hardcoded "Rds" case: the
-          CLI never validates [resource_type] against a known list, matching
-          platform/cloud's own generic-by-resource-type Terraform shape
-          (local.managed_resources in platform/cloud/aws/cluster/main.tf) -- adding
-          a future managed datastore needs no CLI change here. *)
 
 type kind =
   | Logs
@@ -36,24 +25,6 @@ let parse_scope = function
             s))
 ;;
 
-(* Deep-links into OBS-011's provisioned dashboards: the workspace overview
-   at workspace scope, the service template (with $workspace/$domain/
-   $service preset via query params) once scoped. 'metrics' and
-   'dashboard' share this target -- OBS-011 provisions one dashboard per
-   scope covering both, there's no separate metrics-only dashboard to
-   link to.
-
-   $workspace/$domain/$service are matched against the actual label
-   values. service always matches (both this and manifest rendering use
-   k8s_name_result). workspace/domain must go through the exact same
-   sanitizer manifest rendering uses (Sol_cli_kubernetes_name
-   .sanitize_label_value, not the narrower [normalize]) -- two different
-   transforms for the same conceptual value is exactly how a rendered
-   label and this dashboard link's query param end up disagreeing
-   (OBS-021), so the dashboard opens empty. $workspace matters most once a
-   Prometheus/Grafana instance is shared across more than one Sol
-   workspace (OBS-020): without it, two workspaces using the same domain
-   name would blend in these dashboards. *)
 let dashboard_url ~base_url ~workspace scope =
   let workspace = Sol_cli_kubernetes_name.sanitize_label_value workspace in
   match scope with
@@ -81,13 +52,6 @@ let dashboard_url ~base_url ~workspace scope =
             domain
             service))
   | Resource (resource_type, resource_name) ->
-    (* No $workspace var here -- a managed resource dashboard (OBS-044) is
-       account/cluster-scoped in CloudWatch, not partitioned by Sol
-       workspace the way app-level Loki/Prometheus labels are. Dashboard
-       uid matches platform/cloud/modules/platform's per-resource_type ConfigMap
-       (dashboards/managed-resource.json.tftpl's "sol-managed-resource-
-       ${resource_type}" uid); "resource" is that dashboard's own
-       CloudWatch dimension_values() template variable. *)
     if Sol_cli_string.is_blank resource_type
     then Error "resource type must not be empty (expected 'resource/<type>/<name>')"
     else if Sol_cli_string.is_blank resource_name
@@ -104,25 +68,6 @@ let dashboard_url ~base_url ~workspace scope =
 ;;
 
 let logs_url ~base_url ~workspace scope =
-  (* OBS-046: select on Sol's identity labels, not on the Kubernetes namespace
-     convention. `namespace` is an implementation detail by the identity model's
-     own rule (docs/architecture/observability-design.md §Identity), and
-     `<workspace>-<domain>` is not guaranteed to hold -- a GitOps-emitted or
-     renamed namespace opened an Explore view that was simply empty, telling the
-     reader nothing about whether that meant "no logs" or "wrong query".
-
-     The labels are on real streams: Alloy promotes the taxonomy pod labels
-     (platform/shared/observability/alloy/logs.alloy.tftpl). Verified against a running
-     local substrate, where the deployed units' series carry
-     workspace/domain/service/primitive/release alongside namespace, so
-     `{workspace="pluto"}` and `{workspace="pluto", domain="demo-ts"}` select
-     them.
-
-     Values are sanitized with the same function the manifest renderer uses for
-     the label value itself (Sol_cli_kubernetes_name.sanitize_label_value); a
-     second, weaker transform for the same conceptual value is how a rendered
-     label and this query end up disagreeing (OBS-021), which opens an empty
-     view. *)
   let label_value = Sol_cli_kubernetes_name.sanitize_label_value in
   match scope with
   | Workspace ->
@@ -131,9 +76,6 @@ let logs_url ~base_url ~workspace scope =
          ~base_url
          ~logql:(Printf.sprintf {|{workspace="%s"}|} (label_value workspace)))
   | Domain domain ->
-    (* The domain is still validated as a name by the same path every other
-       command uses, so an invalid domain fails here exactly as it does
-       elsewhere; the query itself is built from labels either way. *)
     (match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
      | Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
      | Ok _ ->
@@ -155,9 +97,6 @@ let logs_url ~base_url ~workspace scope =
        let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
        Ok (Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name))
   | Resource (resource_type, _) ->
-    (* Managed resources don't ship through Sol's own Loki pipeline -- no
-       guessed logs view, matching Sol_cli_observability_url's philosophy
-       of returning an explanation instead of a broken/misleading link. *)
     Error
       (Printf.sprintf
          "no logs view for managed resource type %S -- managed resources don't ship \

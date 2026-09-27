@@ -20,12 +20,7 @@ type t =
 val parse_pattern : string -> (pattern, string) result
 val pattern : string -> pattern
 val pattern_to_string : pattern -> string
-
-(** Validate and split a request path. Returns [None] for malformed paths
-    (consecutive slashes). Returns [Some (segments, has_trailing_slash)] for
-    valid paths. *)
 val parse_request_path : string -> (string list * bool) option
-
 val get : string -> auth:Auth.level -> handler -> t
 val post : string -> auth:Auth.level -> handler -> t
 val put : string -> auth:Auth.level -> handler -> t

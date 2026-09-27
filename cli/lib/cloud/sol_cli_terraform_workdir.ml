@@ -1,6 +1,3 @@
-(* DEC-050: Terraform runs in a per-state working directory materialized from the
-   immutable platform assets. See the interface for the contract. *)
-
 module A = Sol_cli_platform_assets
 
 let role_name : A.cloud_role -> string = function
@@ -44,8 +41,6 @@ let is_runtime_artifact name =
   || Filename.check_suffix name ".tfstate.backup"
 ;;
 
-(* Every asset file under [rel] (a directory relative to [root]), skipping
-   runtime artifacts a checkout may hold from Terraform runs before DEC-050. *)
 let rec source_files root rel =
   let path = Filename.concat root rel in
   if Sys.is_directory path
@@ -64,11 +59,6 @@ let read_lines path =
   | exception Sys_error _ -> []
 ;;
 
-(* REFAC-134: every step returns its error, through Sol_cli_fs -- no catch-all
-   around the whole preparation. Files are written via a temporary file and
-   renamed, so a crash never leaves a torn one, and owner-writable whatever the
-   source's mode: a read-only bundle's files are 0444, and Terraform may rewrite
-   the lock file it finds here. *)
 let materialize ~assets ~provider ~role ~backend_config =
   let open Result.Syntax in
   let root = dir ~provider ~role ~backend_config in
@@ -94,8 +84,6 @@ let materialize ~assets ~provider ~role ~backend_config =
   in
   let prepare sources =
     let* () = Sol_cli_fs.mkdir_p root in
-    (* Only files Sol wrote are ever removed: the previous manifest's, when the
-       assets no longer have them. *)
     let* _ =
       read_lines manifest
       |> List.filter (fun rel -> not (List.mem rel sources))

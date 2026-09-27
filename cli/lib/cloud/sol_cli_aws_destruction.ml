@@ -1,28 +1,12 @@
-(* REFAC-097: how an AWS target honours `destroy_retention`, and the residue of an
-   AWS destroy that Terraform does not own.
-
-   Retention on AWS is the RDS final snapshot: preparation lowers the instance's
-   deletion protection and settles a unique snapshot identity, and after the
-   destroy the snapshot must exist and be available -- or, for a target that keeps
-   nothing, no snapshot of its instance may remain. Residue is what the in-cluster
-   cloud controller and PVCs create outside Terraform: tagged load balancers and
-   EBS volumes. Moved verbatim from `cmd_cloud_tf.ml` and
-   `Sol_cli_destroy_verification`; the lifecycle sees only [destruction]. *)
-
 open Sol_cli_destroy_verification
 open Sol_cli_destruction
 open Sol_cli_terraform_steps
 open Result.Syntax
 
-(* [Pending] is the provider saying "not yet": the snapshot exists and has not
-   reached the state the retention contract requires. The caller keeps observing
-   for a bounded time; it is never reported as success. *)
 type retention_probe =
   | Settled of retention
   | Pending of string
 
-(* The retention queries are stated here too, so "what was actually asked" is one
-   readable thing per promise rather than a flag list assembled at the edge. *)
 let final_snapshot_query ~snapshot_id ~region =
   [ "aws"
   ; "rds"
@@ -49,7 +33,6 @@ let instance_snapshots_query ~instance ~region =
   ]
 ;;
 
-(* `{"DBSnapshots":[{"DBSnapshotIdentifier":..,"SnapshotType":..,"Status":..}]}`. *)
 let snapshots_of_json stdout =
   let text key item = Sol_cli_json.field [ key ] item |> Sol_cli_json.string in
   match Yojson.Safe.from_string stdout with
@@ -81,10 +64,6 @@ let snapshot_label (id, kind, _) =
      | None -> "")
 ;;
 
-(* The promised final snapshot must exist *and* reach the state the retention
-   contract requires -- `available`, not merely "a record exists". The identifier
-   is the one established before destroy; a provider answer about a different
-   identifier is not evidence about this one. *)
 let classify_final_snapshot ~declared ~snapshot_id lookup =
   let policy = Sol_cli_cloud_lifecycle.destroy_retention_to_string declared in
   match lookup with
@@ -180,12 +159,6 @@ let classify_final_snapshot ~declared ~snapshot_id lookup =
                (abbreviate stderr))))
 ;;
 
-(* Retain-nothing: no manual or automated snapshot attributable to this
-   destruction may remain. The query is scoped by the *captured* database
-   instance identifier -- the identity from the destruction transaction -- rather
-   than by a broad name prefix, which is exactly the ambiguity to avoid. AWS
-   documents that omitting `--snapshot-type` returns automated and manual
-   snapshots (not shared/public/AWS-Backup ones), and that is what is checked. *)
 let classify_instance_snapshots lookup =
   match lookup with
   | Unavailable reason ->
@@ -235,19 +208,6 @@ let classify_instance_snapshots lookup =
             (abbreviate stderr)))
 ;;
 
-(* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
-   cloud-controller tags every load balancer it creates for a Service with
-   kubernetes.io/cluster/<cluster-name>, regardless of LB type. Only
-   covers that in-tree tagging convention -- a load balancer created by the
-   standalone AWS Load Balancer Controller instead tags primarily with
-   elbv2.k8s.aws/cluster, which this does not check. Not a gap today
-   (platform/cloud/modules/platform/main.tf only installs ingress-nginx, which uses
-   the in-tree cloud-controller path), but would need extending if Sol
-   ever supports the standalone LBC.
-
-   Returns None (not a bool) on a query failure so callers can tell "no
-   load balancers" apart from "couldn't check" -- the two calling sites
-   below need to react differently to each. *)
 let load_balancers_gone ~region ~cluster_name =
   let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
   match
@@ -285,10 +245,6 @@ let aws_load_balancer_probe ~region ~cluster_name =
       "AWS load balancers could not be checked: the aws CLI is unavailable or errored"
 ;;
 
-(* The platform destroy removes the ingress Service through the named
-   provisioner. AWS deprovisions its load balancer asynchronously, so wait
-   before Terraform removes the VPC. The final absence check remains the hard
-   gate if this best-effort wait times out. *)
 let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
   if attempts = 0
   then
@@ -303,8 +259,6 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
       wait_for_load_balancers_gone ~region ~cluster_name (attempts - 1))
 ;;
 
-(* INFRA-047: Terraform state being empty is not an absence proof for resources
-   created indirectly by the VPC module or by Kubernetes. *)
 let aws_list_probe ~region ~kind ~argv =
   match
     Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
@@ -345,12 +299,6 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
     | Some _ as name -> name
     | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
   in
-  (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
-     balancers the in-cluster cloud controller creates, and volumes created for
-     PersistentVolumeClaims. Elastic IPs, NAT gateways and ECR repositories are
-     Terraform-managed (the VPC module and the root); a successful destroy plus the
-     empty-state check is the authority for them. The region is the target path's,
-     which is never blank (REFAC-123). *)
   let cluster_probes, cluster_gap =
     match cluster_name with
     | Some cluster_name ->
@@ -368,19 +316,8 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
   orphan_sweep ~gaps:cluster_gap cluster_probes
 ;;
 
-(* How long to keep observing a final snapshot that the provider reports as still
-   being created. A snapshot that never reaches `available` is reported unknown --
-   never as a met guarantee -- and this only bounds how long that takes to say.
-
-   The interval is an operator knob (`SOL_DESTROY_SNAPSHOT_INTERVAL_S`), because a
-   large database's final snapshot takes longer than a small one's. The offline
-   harness sets it to 0 so the pending path is exercised without sleeping, and an
-   unparseable value is refused loudly rather than silently replaced. *)
 let final_snapshot_attempts = 12
 
-(* REFAC-115: read when a destroy needs it, and refused there. As a top-level
-   value it was evaluated at program start, so a malformed setting made every `sol`
-   command -- `sol --version` included -- exit 2. *)
 let final_snapshot_interval_s () =
   match Sol_cli_string.env "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
   | None -> Ok 10.
@@ -419,19 +356,12 @@ let rec observe_final_snapshot ~interval ~declared ~snapshot_id ~region ~attempt
 let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
 
 let unique_rds_snapshot_id cluster_name =
-  (* Millisecond resolution: a `.0f` second timestamp could collide if a
-     destroy were retried within the same second. AWS snapshot identifiers
-     disallow `.`, hence the truncated int rather than a raw float. *)
   Printf.sprintf
     "%s-postgres-final-%d"
     cluster_name
     (int_of_float (Unix.gettimeofday () *. 1000.))
 ;;
 
-(* The RDS instance, by its real declared address. Finding it by address rather
-   than by type is the FND-0048 correction: a second [aws_db_instance] (a read
-   replica) is a different address and is never mistaken for this one. An
-   unreadable state is UNKNOWN, never "no instance". *)
 let rds_of_state state =
   let open Sol_cli_cloud_destroy in
   match find_address state "aws_db_instance.postgres" with
@@ -455,30 +385,12 @@ let rds_of_state state =
      | Substrate_present | Substrate_absent -> Ok None)
 ;;
 
-(* ADR 0002 / HARDEN-002 finding 9b: lifting RDS deletion protection is a
-   state transition (ModifyDBInstance), and a destroy plan contains only
-   deletes -- a `-var` passed to `terraform destroy` never reaches the
-   provider, which is handed prior state (see the now-resolved comment this
-   replaced). Preparation is therefore its own targeted apply against just
-   the RDS resource, with a snapshot identity unique to this destroy attempt
-   so re-running destroy after a fresh apply can never collide with a prior
-   attempt's final snapshot. *)
-(* HARDEN-004 step 4: the preparation declares the consequence of its own failure,
-   and the policy is a function of the *target's* own declaration rather than a
-   provider special case inside the execution core. AWS's final-snapshot mode is the
-   canonical [Block_destroy] -- its failure stands for the declared retention
-   guarantee (DEC-033). A disposable target that retains nothing has no such
-   guarantee to lose, so a failure there is best-effort and destruction continues.
-   GCP's analogue of the guarantee ("Sol cannot retain anything on GCP yet") carries
-   [Block_destroy] where it is produced, in [Sol_cli_gcp_destruction.prepare]. *)
 let aws_preparation_policy ~retention =
   match retention with
   | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> Sol_cli_cloud_lifecycle.Block_destroy
   | Sol_cli_cloud_lifecycle.Retain_nothing -> Sol_cli_cloud_lifecycle.Continue_to_destroy
 ;;
 
-(* A blocked preparation must name the guarantee that blocked it, so the operator
-   reads *why* the target was left standing rather than a bare apply failure. *)
 let aws_preparation_reason ~retention reason =
   match retention with
   | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
@@ -492,8 +404,6 @@ let aws_preparation_reason ~retention reason =
 let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~retention state
   : string Sol_cli_cloud_lifecycle.preparation_outcome
   =
-  (* Qualified deliberately: `Sol_cli_cloud_lifecycle` also exports a
-     `cluster_name` function, and opening it would shadow this parameter. *)
   let failed reason =
     Sol_cli_cloud_lifecycle.Preparation_failed
       { reason = aws_preparation_reason ~retention reason
@@ -540,17 +450,6 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
      | Ok () -> Sol_cli_cloud_lifecycle.Prepared snapshot_id)
 ;;
 
-(* DEC-033: what "prepared" means depends on what the target selected, so the
-   verification is driven by the policy rather than by a single expected value.
-
-     final-snapshot -> deletion protection disabled, snapshot creation ENABLED,
-                       and the identifier is the one this run prepared
-     none           -> deletion protection disabled, snapshot creation DISABLED,
-                       and no identifier is required
-
-   Deliberately not `if actual <> "" then check_identifier`: that would let a
-   missing identifier pass for a target that explicitly asked to keep its snapshot,
-   which is the production guarantee this must not weaken. *)
 let verify_destroy_preparation_result infra_dir ~retention ~prepared =
   match prepared with
   | None ->
@@ -609,9 +508,6 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
          (match retention with
           | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> snapshot_id ^ " confirmed"
           | Sol_cli_cloud_lifecycle.Retain_nothing ->
-            (* Say what will happen, not just the setting: `skip_final_snapshot=true`
-               reads as "enabled" to anyone skimming, which is the opposite of what
-               it means. *)
             Printf.sprintf
               "skipped (skip_final_snapshot=%s)"
               (match skip_final_snapshot with
@@ -621,14 +517,7 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
        Ok ())
 ;;
 
-(* Retention, observed. What is checked is stated for each mode rather than
-   inferred: the promised snapshot must exist *and* be available, and a target that
-   keeps nothing must have no manual or automated snapshot attributable to its own
-   captured database identity. *)
 let observe_retention ~region ~retention ~pre_destroy ~preparation =
-  (* REFAC-094: the database this destruction owned, from Terraform state -- its
-     `identifier` is what a retain-nothing target must leave no snapshot of. The
-     region is the target's declared one, which the AWS root is configured in. *)
   let database =
     Sol_cli_cloud_destroy.resources pre_destroy
     |> List.find_opt (fun (resource : Sol_cli_cloud_destroy.resource) ->
@@ -654,9 +543,7 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
             ~snapshot_id
             ~region
             ~attempts:final_snapshot_attempts
-        | Error reason ->
-          (* [prepare] refuses this before destroying; kept total, not trusted. *)
-          Retention_unknown reason)
+        | Error reason -> Retention_unknown reason)
      | Sol_cli_cloud_lifecycle.Retain_nothing ->
        (match database with
         | None ->
@@ -674,16 +561,9 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
                 identifier")))
 ;;
 
-(* The verification is part of the preparation: a snapshot identity that could not
-   be confirmed is not a preparation. *)
 let prepare { run_log; infra_dir; var_files; vars; _ } ~retention ~cluster_name ~state =
-  (* The verification is part of the preparation: a snapshot identity that could
-     not be confirmed is not a preparation, and it fails with the same
-     consequence the preparation would have (final-snapshot blocks). *)
   match retention, final_snapshot_interval_s () with
   | Sol_cli_cloud_lifecycle.Retain_final_snapshot, Error reason ->
-    (* The interval polls for the promised final snapshot: refuse before anything
-       is destroyed rather than after. *)
     Sol_cli_cloud_lifecycle.Preparation_failed
       { reason; policy = Sol_cli_cloud_lifecycle.Block_destroy }
   | _ ->
@@ -718,8 +598,6 @@ let prepare { run_log; infra_dir; var_files; vars; _ } ~retention ~cluster_name 
        Sol_cli_cloud_lifecycle.Preparation_failed failure)
 ;;
 
-(* The platform destroy removes the ingress Service; AWS deprovisions its load
-   balancer asynchronously, so wait before Terraform removes the VPC. *)
 let before_substrate_destroy ctx () =
   ctx.resolved_var "cluster_name"
   |> Option.iter (fun cluster_name ->

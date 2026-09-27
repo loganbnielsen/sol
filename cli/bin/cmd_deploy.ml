@@ -1,18 +1,10 @@
-(* sol deploy — CI/CD integration.
-   Like sol up but skips the build step: images are already in a registry.
-   Designed to run in CI after the build pipeline has pushed images. *)
-
 open Cmdliner
 open Sol_cli_manifest
 
-(* DEC-024: the workspace name comes from the resolved root, so it is the same
-   from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
 
-(* A port-forward hint for each, so the engineer doesn't need a separate
-   'sol status' call to discover the endpoint. *)
 let print_service_urls names =
   names |> List.iter (Printf.printf "  →  http://localhost:8080  (%s)\n%!")
 ;;
@@ -99,7 +91,6 @@ let write_plan_if_requested ~emit_plan_to plan =
       print_char '\n';
       Ok ())
     else
-      (* REFAC-134's rule: written through Sol_cli_fs, a failure is the command's. *)
       Sol_cli_fs.write_atomic path (json_str ^ "\n")
       |> Result.map (fun () -> Printf.printf "Plan written to %s\n%!" path)
       |> Sol_cli_exit.of_msg
@@ -128,15 +119,12 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-(* A failed plan run's message stands apart from the progress output above it. *)
 let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
 
-(* The dry-run/emit paths, which mutate no cluster. *)
 let run_plan ctx ~phase ~mode plan =
   Sol_cli_deploy_run.run_plan_result ctx ~phase ~mode plan |> Result.map_error run_failed
 ;;
 
-(* AUDIT-069, rendered: the gate lives in Sol_cli_deploy_run. *)
 let check_migration_prerequisite ~ctx ~plan ~live =
   Sol_cli_deploy_run.migration_prerequisite ctx ~plan ~live
   |> Result.map_error (function
@@ -144,8 +132,6 @@ let check_migration_prerequisite ~ctx ~plan ~live =
     | Failed report -> Sol_cli_exit.failure report)
 ;;
 
-(* FEAT-071's markers go to Loki from here, where Eio runs. Best effort: a push
-   that fails warns and never fails the deploy. *)
 let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
   let backend =
     Option.bind
@@ -167,8 +153,6 @@ let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to =
   let* plan = build_plan ctx ~emit_to in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
-  (* AUDIT-069: side-effect free, so the prerequisite is reported as not
-     verified rather than checked against the cluster. *)
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
   let* _ = run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan in
@@ -184,8 +168,6 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
   let* plan = build_plan ctx ~emit_to:(Some dir) in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
-  (* AUDIT-069: emitting manifests is side-effect free for this cluster, so the
-     live prerequisite is not established here. *)
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
   let* results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
@@ -228,9 +210,6 @@ let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
   report_surplus_workloads (Sol_cli_deploy_run.surplus_workloads ctx plan)
 ;;
 
-(* The apply path, all under the workspace boundary lease. Returns a result; the
-   command edge turns an [Error] into the exit, so nothing here needs [exit] (or
-   the [at_exit] that used to compensate for it). *)
 let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_push_url =
   let* () = check_apply_environment ~facts:ctx.facts ~services:ctx.services in
   let* () =
@@ -248,8 +227,6 @@ let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_pus
   in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
-  (* AUDIT-069: static preflight -> live migration-status verification ->
-     workload mutation. This is the last gate before the lease and any apply. *)
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
@@ -267,22 +244,8 @@ let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_pus
 let run (req : Sol_cli_command_request.deploy_request) =
   let workspace = workspace_name () in
   let sha = req.image_tag in
-  (* Resolve the scope first: a bad selector must fail before any deploy logic
-     (target loading, contract check, registry resolution) can report a
-     downstream cause for it. *)
-  (* DEC-036: discovery once, then two different things from it. [inventory] is
-     everything that exists -- what a call reference may name. [services] is the
-     selection -- what this invocation deploys. They are deliberately not the same
-     list, and the selection is never widened to close a call graph.
-
-     REFAC-130: that one read is the workspace model, loaded here at the
-     command's edge and threaded through as [ctx.facts]. [sol deploy] keeps the
-     invocation cwd (its [--emit-to] paths are relative to it), so the root is
-     resolved rather than assumed. *)
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
   let inventory = Sol_cli_workspace_model.services facts in
-  (* REFAC-139, part C: what this deploy runs on is Sol_cli_deploy_selection's
-     decision, in two steps so a bad selector fails before the target is read. *)
   let* selection =
     Sol_cli_deploy_selection.select ~scope:req.scope ~image_refs:req.image_refs inventory
     |> Sol_cli_exit.of_msg
@@ -302,11 +265,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
   List.iter print_endline deployed.notes;
   let { Sol_cli_deploy_selection.requested_scope; image_refs; _ } = selection in
   let services = deployed.services in
-  (* No hardcoded local-registry fallback here, deliberately: sol deploy is
-     always a customer-cluster path (it never constructs
-     Sol_cli_env_target.Local, unlike sol up) -- an unresolvable registry
-     must reach customer_cloud_defaults's empty-registry check below and
-     fail loudly, not silently point a real deploy at a k3d-only address. *)
   let registry =
     match req.registry with
     | Some r -> r
@@ -320,12 +278,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     "\nRun: %s\n  log: %s/\n"
     (Sol_cli_run_log.run_id run_log)
     (Sol_cli_run_log.dir run_log);
-  (* INFRA-050: resolve the secret backend once, here, where the emit intent is
-     known -- not in the flag parser, and not again downstream. An explicit
-     --secret-backend wins; otherwise the destination decides (a direct deploy
-     writes real values, a GitOps target writes a redacted placeholder). The CLI
-     used to carry its own default, which always won and made a direct deploy
-     emit an empty Secret. *)
   let emit_intent =
     match req.action with
     | Sol_cli_command_request.Deploy_dry_run { emit_to } -> emit_to
@@ -378,8 +330,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
       ~confirm_group_change:req.confirm_group_change
       ~loki_push_url:req.loki_push_url
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let target_arg =
   Arg.(
@@ -546,8 +496,6 @@ let refresh_interval_arg =
 let secret_backend_term =
   let build str store_ref store_kind key_prefix refresh_interval emit_to =
     match str with
-    (* INFRA-050: no flag means the *destination* decides, not the CLI. A CLI
-       default here is what made a direct deploy emit an empty Secret. *)
     | None -> `Ok None
     | Some "kubernetes-placeholder" -> `Ok (Some Sol_cli_manifest.Kubernetes_placeholder)
     | Some "kubernetes-live" -> `Ok (Some Sol_cli_manifest.Kubernetes_live)

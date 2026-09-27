@@ -202,8 +202,6 @@ let rendered_manifests_of_service
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       (service : Sol_cli_deployment_plan.service_spec)
   =
-  (* Default to Kubernetes_placeholder for diagnostics so that
-     rendered_manifests_of_plan can be called without live env vars. *)
   Sol_cli_deployment_render.render_spec
     ~workspace
     ?env
@@ -220,8 +218,6 @@ let rendered_manifests_of_service
       }))
 ;;
 
-(* A service that does not render is the plan's error, reported for the first
-   such service in order; nothing is raised. *)
 let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
   let open Result.Syntax in
   plan.services

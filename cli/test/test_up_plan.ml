@@ -1,12 +1,3 @@
-(* BUG-056: `sol up` plans from the same declared facts `sol deploy` does.
-
-   A local plan used to be built with no declared configuration at all, so the
-   same workspace rendered with fewer facts locally than against a target: no
-   declared language (INFRA-073's readiness probe was the visible symptom), no
-   `sol.yml` scale override, and no resource uses, so a Kafka-consuming worker
-   got no consumer group. These tests plan one fixture workspace both ways and
-   compare what a reader of the plan sees. *)
-
 let check_bool = Alcotest.(check bool)
 let check_string = Alcotest.(check string)
 let check_int = Alcotest.(check int)
@@ -36,8 +27,6 @@ let write_file path body =
   close_out oc
 ;;
 
-(* A fixture workspace, entered for the duration of [f] because the config and
-   workspace readers resolve against the current directory. *)
 let with_workspace files f =
   let dir = Filename.temp_file "sol_test_up_plan" "" in
   Sys.remove dir;
@@ -53,8 +42,6 @@ let with_workspace files f =
        f ())
 ;;
 
-(* The workspace both plans are built from: an OCaml `-svc` with a scale floor,
-   and an OCaml worker that uses the declared kafka resource. *)
 let sol_yml =
   {|project: ws
 
@@ -104,9 +91,6 @@ let fail_on_error what = function
   | Error message -> Alcotest.fail (Printf.sprintf "%s: %s" what message)
 ;;
 
-(* The two plans, each the way its own command builds them: local resolves
-   `sol.yml` alone (there is no local target), a target resolves sol.yml ->
-   environment -> target. *)
 let plans () =
   let facts =
     Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) |> fail_on_error "workspace model"
@@ -133,8 +117,6 @@ let plans () =
     |> Result.map_error Sol_cli_config.error_to_string
     |> fail_on_error "load_for_target"
   in
-  (* The same execution environment for both, so the only difference between the
-     two plans is the configuration each command resolves. *)
   let env =
     Sol_cli_env_target.to_env_config
       ~name:"ws"
@@ -169,8 +151,6 @@ let spec_named plan name =
   | None -> Alcotest.fail (Printf.sprintf "no spec for %s" name)
 ;;
 
-(* The acceptance: the two plans agree on the three facts a declared
-   configuration supplies -- language, replicas and consumer groups. *)
 let test_up_and_target_plans_agree () =
   with_workspace workspace (fun () ->
     let local, target = plans () in
@@ -203,9 +183,6 @@ let test_up_and_target_plans_agree () =
          local.Sol_cli_deployment_plan.consumer_groups))
 ;;
 
-(* The declared facts are really there, which is what makes the parity above
-   non-vacuous: `scale: { min: 3 }` has to beat sol.toml's `replicas = 2`, and a
-   worker that uses the kafka resource has to get a consumer group. *)
 let test_local_plan_carries_the_declared_facts () =
   with_workspace workspace (fun () ->
     let local, _ = plans () in
@@ -231,10 +208,6 @@ let test_local_plan_carries_the_declared_facts () =
          local.Sol_cli_deployment_plan.consumer_groups))
 ;;
 
-(* Acceptance, second half: a plan `sol up` builds renders the readiness probe
-   its declared language implies. INFRA-073 puts an OCaml `-svc` on /readyz, so
-   the rendered manifest must say so -- the local TypeScript golden path failed
-   on exactly this. *)
 let test_local_plan_renders_readyz () =
   with_workspace workspace (fun () ->
     let local, _ = plans () in
@@ -265,9 +238,6 @@ let test_local_plan_renders_readyz () =
          rendered))
 ;;
 
-(* A malformed sol.yml must still fail closed for `sol up`: the declared facts
-   are now an input, so the error has to reach the caller rather than be read as
-   "nothing declared". *)
 let test_undeclared_workloads_still_plan () =
   with_workspace
     [ "sol.yml", "resources:\n  events:\n    type: kafka\n"

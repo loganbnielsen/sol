@@ -1,11 +1,3 @@
-(** Validated newtypes for deployment-plan artifact identifiers. Each module
-    wraps a string and enforces domain-specific invariants so that topics,
-    migration files, schema subjects, and consumer groups cannot be accidentally
-    mixed in function signatures or record fields. *)
-
-(** A validated Kafka topic name. Rules: non-empty, at most 249 characters, only
-    alphanumeric characters, hyphens, underscores, and dots (Kafka's own naming
-    constraints). *)
 module Topic_name : sig
   type t
 
@@ -40,8 +32,6 @@ end = struct
   let to_string t = t
 end
 
-(** A validated SQL migration filename. Must be non-empty and end with [.sql].
-*)
 module Migration_file : sig
   type t
 
@@ -61,8 +51,6 @@ end = struct
   let to_string t = t
 end
 
-(** A validated Schema Registry subject name. Convention:
-    ["<domain>.<EventName>"] or just ["<EventName>"]. Must be non-empty. *)
 module Schema_subject : sig
   type t
 
@@ -78,8 +66,6 @@ end = struct
   let to_string t = t
 end
 
-(** A validated consumer group identifier. Convention:
-    ["<workspace>.<domain>.<worker_name>"]. Must be non-empty. *)
 module Consumer_group : sig
   type t
 

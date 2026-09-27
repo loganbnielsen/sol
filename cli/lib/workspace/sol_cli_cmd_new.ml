@@ -1,26 +1,11 @@
 open Cmdliner
 
-(* REFAC-128: the files `sol new` generates live in
-   platform/shared/templates/<kind>/, laid out exactly as they are generated,
-   and are resolved as Sol assets (DEC-049). This module keeps the orchestration
-   -- which kind, where it goes, and which variables it carries -- and no
-   content: adding a generated file is adding a file to the tree. *)
-
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
 module Tree = Sol_cli_scaffold_tree
 module Assets = Sol_cli_platform_assets
 open Result.Syntax
-
-(* DEC-025: `sol new` used to symlink the framework source into the generated
-   workspace (vendor/framework). That made the framework's Dune files part of the
-   *consumer's* Dune project, which is precisely the coupling DEC-024 forbids --
-   and which is provably incompatible with the framework being an installed
-   package at all (any `public_name` requires a package at the project root).
-   The workspace now declares its framework dependency in its own .opam file
-   instead, and the switch provides it. See
-   platform/local/scripts/prepare-framework-deps.sh. *)
 
 let always_write _ = Tree.Write
 
@@ -36,11 +21,6 @@ let copy ~kind ~dest ~vars ~rule =
   Tree.copy ~root ~kind ~dest ~vars ~rule
 ;;
 
-(* ── `sol new workspace` ──────────────────────────────────────────────────── *)
-
-(* The workspace tree is one tree with two units in it, so the variables are
-   per file: the two Dockerfiles name their own registry repository and binary,
-   and the payments event names the team that owns it. *)
 let workspace_vars ~name rel =
   let v = [ "name", name; "Name", cap name; "basename", Filename.basename name ] in
   match rel with
@@ -105,8 +85,6 @@ Done. %d files generated.
   Ok ()
 ;;
 
-(* ── `sol new svc|worker|fn` ──────────────────────────────────────────────── *)
-
 let parse_domain_name arg =
   match String.split_on_char '/' arg with
   | [ domain; name ] when domain <> "" && name <> "" -> Ok (norm domain, norm name)
@@ -133,8 +111,6 @@ let component_module kind name =
   | Function -> cap name ^ "_fn"
 ;;
 
-(* The template kind is the suffix: platform/shared/templates/svc, .../worker,
-   .../fn. *)
 let component_vars kind ~ws ~domain ~name =
   let suffix = component_suffix kind in
   let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
@@ -146,9 +122,6 @@ let component_vars kind ~ws ~domain ~name =
   ; "domain", domain
   ; "Mod", component_module kind name
   ; "binary", name ^ "-" ^ suffix
-    (* DEC-025: the workspace's dependency declaration is <workspace>.opam at the
-       workspace root, which is the Docker build context. `ws` may be a path, so
-       the basename is what names the file. *)
   ; "basename", Filename.basename ws
   ]
 ;;
@@ -158,18 +131,10 @@ let new_component kind ~label arg =
   let* domain, name = parse_domain_name arg in
   let suffix = component_suffix kind in
   let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
-  (* FEAT-104: a generated workload declares its language, and Sol knows it
-     because it is writing the unit. Planning the manifest edit first means a
-     sol.yml that cannot record the declaration refuses before any file is
-     created; committing it last means the declaration only lands once the
-     workload it describes is on disk. *)
   let* root =
     Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
     |> Result.map_error Sol_cli_workspace.workspace_error_to_string
   in
-  (* The manifest keys a service by the name discovery reports, which is the
-     unit directory's basename (`charge_svc` for `sol new svc payments/charge`),
-     not the argument the user typed. *)
   let unit_name = Filename.basename dir in
   let* declaration =
     Sol_cli_sol_yml.plan ~root ~name:unit_name ~dir ~language:Sol_cli_compat.Ocaml
@@ -208,15 +173,10 @@ let new_fn arg =
   Ok ()
 ;;
 
-(* ── `sol new event` ──────────────────────────────────────────────────────── *)
-
 let event_vars ~ws ~team ~name =
   [ "team", team; "name", name; "Mod", cap name; "lib", ws ^ "_" ^ team ^ "_events" ]
 ;;
 
-(* An event joins a team's events library: its dune gains the module rather than
-   being replaced, and an existing sol.toml stays as it is -- it may list topics
-   the operator added. *)
 let event_rule module_ = function
   | "events/{{team}}/dune" -> Tree.Patch_modules module_
   | "events/{{team}}/sol.toml" -> Tree.Skip_if_exists
@@ -242,10 +202,7 @@ let new_event arg =
   Ok ()
 ;;
 
-(* The command edge: a scaffold's error becomes [error: <message>], exit 1. *)
 let run scaffold arg = Sol_cli_exit.exit_on (scaffold arg |> Sol_cli_exit.of_msg)
-
-(* ── Cmdliner terms ───────────────────────────────────────────────────────── *)
 
 let name_arg docv doc =
   Arg.(required & pos 0 (some Sol_cli_args.text) None & info [] ~docv ~doc)

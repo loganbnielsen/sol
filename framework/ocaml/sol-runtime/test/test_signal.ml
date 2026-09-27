@@ -1,10 +1,4 @@
-(* REFAC-081: assert shutdown *behaviour*, not the helper's internals. Once the
-   handler is installed, a real signal must resolve the promise a consumer
-   awaits — that is the contract the three primitives depend on. *)
-
 let await_resolved env promise =
-  (* Raises Eio.Time.Timeout if the handler's byte never reaches the pipe, so a
-     broken implementation fails the test instead of hanging it. *)
   Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await promise) |> ignore
 ;;
 
@@ -30,9 +24,6 @@ let test_sigint_resolves_promise () =
   await_resolved env promise
 ;;
 
-(* BUG-047: a process hosting several primitives (the local demo runs svc, worker
-   and jobs together) must deliver one SIGTERM to every one of them. With a
-   handler per install, the last one installed won. *)
 let test_one_signal_reaches_every_registration () =
   Eio_main.run
   @@ fun env ->
@@ -47,8 +38,6 @@ let test_one_signal_reaches_every_registration () =
   await_resolved env second
 ;;
 
-(* Once no primitive is running, SIGTERM means what it meant before: the handler
-   (and its pipes, now closed) must not linger. *)
 let test_disposition_restored_after_the_switch_ends () =
   Eio_main.run (fun _env ->
     Eio.Switch.run (fun sw ->
@@ -61,8 +50,6 @@ let test_disposition_restored_after_the_switch_ends () =
     (now = Sys.Signal_default)
 ;;
 
-(* A second signal while the first is being handled terminates the process. Run
-   in a child: success means the child is killed by SIGTERM. *)
 let double_signal_child () =
   Eio_main.run
   @@ fun env ->

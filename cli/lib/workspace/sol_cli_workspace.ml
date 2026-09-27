@@ -6,11 +6,6 @@ type infra_requirements =
   ; tempo : bool
   }
 
-(* ── Workspace identity (DEC-024) ────────────────────────────────────────── *)
-
-(** The manifest whose *presence* establishes a workspace boundary. Its
-    contents define optional workspace configuration; existence alone is what
-    makes the directory a Sol workspace. *)
 let workspace_file = "sol.yml"
 
 type workspace_error =
@@ -41,9 +36,6 @@ let has_workspace_file dir =
   Sys.file_exists path && not (Sys.is_directory path)
 ;;
 
-(* Cheap, deterministic upward walk: the first ancestor whose sol.yml is the
-   workspace root. No ecosystem marker is consulted -- not dune-project, not
-   package.json, not .git (DEC-024 clause 5). *)
 let find_root ~dir =
   let rec go dir =
     if has_workspace_file dir
@@ -61,12 +53,6 @@ let resolve ~dir =
   | None -> Error Not_in_workspace
 ;;
 
-(* Join a workspace-root-relative path to the resolved workspace root, so a
-   command that did not chdir (e.g. `sol deploy`, which must keep the
-   invocation cwd for `--emit-to` paths) still reads workspace files from the
-   same place regardless of where it was invoked. Falls back to the path as
-   given when there is no workspace: callers either fail closed first or are
-   operating on explicitly supplied paths (e.g. tests under _build). *)
 let at_root path =
   match find_root ~dir:(Sys.getcwd ()) with
   | Some root -> Filename.concat root path
@@ -75,21 +61,12 @@ let at_root path =
 
 let workspace_name ~root = Filename.basename root
 
-(* The workspace name for the process cwd. Commands that key deployments by
-   workspace use this instead of [Filename.basename (Sys.getcwd ())], so a
-   command run in a descendant directory names the same workspace as one run
-   from the root (DEC-024 clause 4). When there is no workspace at all this
-   falls back to the cwd basename; commands that must fail closed do so through
-   [resolve]/[load_for_target] before the name matters. *)
 let current_name () =
   match find_root ~dir:(Sys.getcwd ()) with
   | Some root -> workspace_name ~root
   | None -> Filename.basename (Sys.getcwd ())
 ;;
 
-(* Directories that are never part of the workspace's own application tree.
-   Skipping [vendor] avoids walking a vendored copy of another project whose
-   own sol.yml would be a false nested-boundary report. *)
 let ignored_dir name =
   name = "_build" || name = "node_modules" || name = "vendor" || name = "dist"
 ;;
@@ -101,18 +78,6 @@ let is_symlink path =
   | exception Unix.Unix_error _ -> false
 ;;
 
-(* Nested-boundary validation (DEC-024 clause 2): walk *down* from the root and
-   refuse a second sol.yml below it, because a command run inside the inner
-   workspace would otherwise bind to it silently. Deliberately separate from
-   [find_root], which walks *up* from the current directory to the nearest sol.yml
-   (cheap, like git finding .git): only discovery and the command boundary pay for
-   this recursive scan, where the invariant must hold.
-
-   Symlinks are never followed. A symlinked checkout inside the workspace -- say
-   `vendor/sol -> ~/Code/sol` -- contains sol.yml files of its own (Sol's
-   examples/pluto/sol.yml) that would read as nested workspaces, and a symlink
-   that points back up the tree would make this walk recurse forever.
-   Reports both boundaries rather than silently shadowing. *)
 let validate ~root =
   let rec go dir =
     let entries =
@@ -147,11 +112,6 @@ let resolve_validated ~dir =
      | Error _ as e -> e)
 ;;
 
-(* Resolve the workspace and make it the process cwd, so every relative path
-   inside the workspace (discovery, sol.toml, the build context) is workspace
-   root relative no matter which descendant directory the command started in.
-   [sol up]/[sol check]/[sol logs] run from any descendant and act on the
-   workspace, per DEC-024 clause 4. *)
 let enter ~dir =
   match resolve_validated ~dir with
   | Error _ as e -> e
@@ -160,11 +120,6 @@ let enter ~dir =
     Ok root
 ;;
 
-(* REFAC-108: the one way a command establishes its workspace. Every command that
-   acts on the workspace calls this at its edge, so the boundary is always
-   validated (DEC-024 clause 2), absence always fails closed, and the cwd is the
-   root for the rest of the command. The root is returned for callers that need
-   it by name; a caller that only needs the cwd to be the root may ignore it. *)
 type t =
   { root : string
   ; name : string

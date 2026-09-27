@@ -1,8 +1,3 @@
-(* REFAC-130: the check is a projection of the workspace model. It used to walk
-   [app/] itself and re-read every workload's [sol.toml] -- the third reader of
-   the same facts -- while the command that called it had already read them. The
-   findings below are now derived from the model the caller loaded once. *)
-
 module Severity = struct
   type t =
     | Error
@@ -39,17 +34,10 @@ let unexpected_finding ((_domain, _name, dir) : Sol_cli_manifest.unexpected) =
   }
 ;;
 
-(* The workload's own files. [paths] stay workspace-root relative, which is what
-   the command's cwd has been since [Sol_cli_workspace.enter_cwd]. *)
 let check_workload ~manifest (workload : Sol_cli_workspace_model.workload) =
   let svc = workload.Sol_cli_workspace_model.service in
   let findings = ref [] in
   let add severity path message = findings := { severity; path; message } :: !findings in
-  (* FEAT-104: every workload has a declared language, and Sol never guesses one.
-     A workload without one is a warning rather than an error -- the workspace
-     still loads, and a command that needs a language (the local dev loop)
-     refuses it itself -- and the line to add is named, so the fix is one copy
-     away. *)
   (match workload.Sol_cli_workspace_model.language with
    | Some _ -> ()
    | None ->
@@ -93,11 +81,6 @@ let same_unit (a : Sol_cli_manifest.service) (b : Sol_cli_manifest.service) =
   String.equal a.domain b.domain && String.equal a.name b.name
 ;;
 
-(* Check exactly the workloads a command resolved. Selection has already
-   happened by the time a command calls this (FEAT-065), so a scoped [sol up]
-   inspects the same set it is about to mutate. The selection was resolved from
-   [facts], so this is a filter over the model rather than a lookup that could
-   disagree with it. *)
 let run_services ~facts services =
   facts.Sol_cli_workspace_model.workloads
   |> List.filter (fun (w : Sol_cli_workspace_model.workload) ->
@@ -105,9 +88,6 @@ let run_services ~facts services =
   |> List.concat_map (check_workload ~manifest:"sol.yml")
 ;;
 
-(* The whole-workspace check: report unexpected directories as warnings, and fail
-   when the workspace has no workload directory at all. An [app/] that is not
-   there is named as such rather than reported as an empty one. *)
 let run ~facts =
   match facts.Sol_cli_workspace_model.app_dir with
   | None ->

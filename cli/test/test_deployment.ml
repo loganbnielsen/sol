@@ -1,5 +1,3 @@
-(* REFAC-130: the workspace a fixture describes, read once through the loader
-   under test -- the same value the commands pass into the plan. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -41,8 +39,6 @@ let sample : D.t =
   ; outcome = D.Applied
   }
 ;;
-
-(* ── record shape ────────────────────────────────────────────────────────── *)
 
 let test_json_round_trip () =
   match D.of_json (D.to_json sample) with
@@ -108,8 +104,6 @@ let test_json_is_deterministic () =
     (Yojson.Safe.to_string (D.to_json sample))
 ;;
 
-(* ── validating the read path ────────────────────────────────────────────── *)
-
 let test_validate_accepts_canonical_event () =
   D.validate ~name:(D.configmap_name sample) sample
   |> Result.iter_error (fun msg -> Alcotest.fail ("canonical event rejected: " ^ msg))
@@ -128,8 +122,6 @@ let with_field key value json =
   | other -> other
 ;;
 
-(* FEAT-071: ids are parsed at the boundary, so a malformed one is an error here
-   rather than a string that later reaches a name or a label. *)
 let test_of_json_rejects_a_bad_deployment_id () =
   let bad = with_field "deployment_id" (`String "not-an-id") (D.to_json sample) in
   match D.of_json bad with
@@ -150,8 +142,6 @@ let test_of_json_rejects_unknown_outcome () =
   | Ok _ -> Alcotest.fail "expected an unknown outcome to be rejected"
   | Error msg -> check_bool "names the outcome" true (contains "outcome" msg)
 ;;
-
-(* ── reading back ────────────────────────────────────────────────────────── *)
 
 let item ?(name = D.configmap_name sample) json =
   `Assoc
@@ -178,8 +168,6 @@ let test_parse_kubectl_list_reads_valid_items () =
   | Ok records -> check_int "both events" 2 (List.length records)
 ;;
 
-(* FEAT-071: the store is authoritative, so a corrupt record is an error naming
-   it, never something silently dropped. *)
 let test_parse_kubectl_list_fails_closed_on_corrupt () =
   let json =
     `Assoc
@@ -222,8 +210,6 @@ let test_format_table_newest_first_with_status () =
   | Some a, Some b -> check_bool "newest first" true (a < b)
   | _ -> Alcotest.fail "both ids must appear in the table"
 ;;
-
-(* ── of_plan: the acceptance criterion ───────────────────────────────────── *)
 
 let mkdirs path =
   let rec go p =
@@ -312,9 +298,6 @@ let test_event_points_at_the_plans_release () =
     check_string "requested scope from the plan" "payments" event.requested_scope)
 ;;
 
-(* FEAT-071: an attempt and a failed attempt are both events. Two attempts of
-   identical content produce one release_id and two deployment_ids; only the
-   outcome distinguishes them. *)
 let test_two_attempts_one_release () =
   with_plan (fun plan ->
     let applied = of_plan plan ~outcome:D.Applied () in

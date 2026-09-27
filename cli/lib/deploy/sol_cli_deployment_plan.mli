@@ -9,12 +9,6 @@ type env_config =
   ; registry : string
   ; image_tag : string
   ; env : string option
-    (** Resolved deployment environment (e.g. ["dev"], ["prod"]) from a
-          [sol deploy <env>/<provider>/<region>] target. [None] when no target
-          was resolved (e.g. [sol up], which is local-only and has no target
-          concept). Threaded into generated manifest labels alongside
-          [workspace]/[domain]/[service]/[primitive]/[release] — see
-          [docs/architecture/observability-design.md]'s Identity table. *)
   ; region : string option
   ; base_domain : string option
   ; cluster_issuer : string
@@ -60,9 +54,6 @@ type service_spec =
   ; replicas : int
   ; availability : Sol_cli_availability.t
   ; consumes_kafka : bool
-    (** Whether this workload consumes Kafka (AUDIT-080/AUDIT-078): readiness is
-        its consumer-join state and liveness its poll cadence, so only a real
-        consumer gets those probes. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -76,11 +67,6 @@ type service_spec =
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
 
-(** A target's profile claim as carried through the plan (FEAT-089): the
-    selected profile and the guarantees it requires for this plan's workloads —
-    the evidence a conformant deploy must establish. It is not part of release
-    identity: two targets may deploy the same release while only one claims a
-    profile. *)
 type profile_claim =
   { profile : Sol_cli_profile.t
   ; requirements : Sol_cli_profile.capability list
@@ -90,9 +76,6 @@ type profile_claim =
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
-    (** The content-addressed identity of the desired released state (FEAT-069).
-        Attached to the plan, so rendering and recording consume it rather than
-        deriving it again. *)
   ; environment : env_config
   ; services : service_spec list
   ; topics : Sol_cli_plan_ids.Topic_name.t list
@@ -100,12 +83,7 @@ type t =
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
-    (** What the user asked for, before discovery narrowed it (FEAT-065):
-          ["workspace"], a domain, or ["domain/unit"]. [services] is the
-          concrete resolved set; [to_json] emits both, because intent and exact
-          membership are different facts (DEC-018's release record needs both). *)
   ; profile : profile_claim option
-    (** [Some] only when the resolved target selects a profile. *)
   }
 
 type plan_error =
@@ -129,10 +107,6 @@ type plan_error =
       ; message : string
       }
 
-(** [derive_consumer_groups ~declared workspace services] returns validated
-    {!Sol_cli_plan_ids.Consumer_group.t} values for [Worker] entries that
-    declare use of a Kafka resource, sorted and deduplicated. Convention:
-    ["<workspace>.<domain>.<worker_name>"]. *)
 val derive_consumer_groups
   :  ?declared:Sol_cli_config.declared
   -> string
@@ -141,66 +115,22 @@ val derive_consumer_groups
 
 val mode_to_string : deployment_mode -> string
 val primitive_to_string : primitive -> string
-
-(** Inverse of {!primitive_to_string} (FEAT-066): rollback reconstructs a
-    recorded release's specs from the release record, which stores this value
-    in its canonical string form. Fails closed on anything else. *)
 val primitive_of_string : string -> (primitive, string) result
-
-(** Resolve the deployment strategy that applies after progressive delivery
-    settings have taken precedence over Deployment rollout settings. *)
 val effective_rollout_strategy : service_spec -> effective_rollout_strategy
-
-(** Render an [effective_rollout_strategy] for deployment plan JSON and
-    summaries. *)
 val effective_rollout_strategy_to_string : effective_rollout_strategy -> string
-
-(** [release_workload_of_spec spec] is [spec]'s contribution to the release
-    identity (BUG-026). It is the single projection: [Sol_cli_release] calls it
-    rather than mirroring the fields, so the record's rewritten identity always
-    matches the plan's. Every input that changes the rendered manifests must
-    appear here — otherwise a real change keeps the previous [release_id]. *)
 val release_workload_of_spec : service_spec -> Sol_cli_release_id.workload
-
-(** Serialize a deployment plan to JSON (experimental format — schema not
-    frozen). Config values are included; secret keys are included but secret
-    values are omitted. *)
 val to_json : t -> Yojson.Safe.t
-
-(** Print a human-readable deployment plan summary. *)
 val pp_summary : Format.formatter -> t -> unit
-
-(** Render a deployment-plan construction error for CLI output. *)
 val plan_error_to_string : plan_error -> string
-
-(** Reject persistence combinations whose semantics Sol does not define. *)
 val validate_persistence : service_spec -> (unit, plan_error) result
-
-(** Reject an availability claim the workload cannot satisfy (AUDIT-080): a
-    node-failure-tolerant function, a volume-backed workload, or fewer than two
-    replicas. Names a supported alternative. *)
 val validate_availability : service_spec -> (unit, plan_error) result
-
-(** Normalize and validate a service source name as a Kubernetes DNS label. *)
 val k8s_name_result : string -> (k8s_name, plan_error) result
-
 val k8s_name_to_string : k8s_name -> string
-
-(** Normalize workspace/domain into a namespace and validate it as a Kubernetes
-    DNS label. *)
 val namespace_result : workspace:string -> domain:string -> (namespace, plan_error) result
-
 val namespace_to_string : namespace -> string
-
-(** [namespace_name ~workspace ~domain] is {!namespace_result} as the string a
-    command passes to kubectl, or the rendered error: a command's [let*] step. *)
 val namespace_name : workspace:string -> domain:string -> (string, string) result
-
-(** [k8s_name name] is {!k8s_name_result} the same way. *)
 val k8s_name : string -> (string, string) result
 
-(** [image_ref ~registry ~workspace ~k8s_name ~tag] returns
-    ["<registry>/<workspace>/<k8s_name>:<tag>"]. *)
 val image_ref
   :  registry:string
   -> workspace:string
@@ -208,35 +138,6 @@ val image_ref
   -> tag:string
   -> string
 
-(** Build a deployment plan from a discovered service list and an environment
-    config. Returns a typed error when a Kubernetes artifact name is invalid or
-    a service [sol.toml] cannot be parsed or validated.
-
-    REFAC-130: [facts] is the workspace the command already read once. Its
-    workspace-level inputs -- topics, migrations, schema subjects -- and each
-    unit's [sol.toml] come from there, so building a plan reads no workspace
-    file the command has not already read. A unit that is not part of [facts]
-    (a synthetic list, a hosted-mode caller) falls back to reading its own
-    [sol.toml].
-
-    [requested_scope] records what the user asked for (default ["workspace"]),
-    alongside the resolved [services] (FEAT-065).
-
-    [declared], when given, is what [sol.yml] declares (BUG-056): a service's
-    [sol.yml] [scale_max] (falling back to [scale_min]) overrides its [sol.toml]
-    [replicas]; its declared [language] and resource [uses] reach the spec; and
-    the profile a resolved target selects becomes the plan's profile claim. Both
-    deployment modes supply it — [sol deploy] from its resolved configuration,
-    [sol up] from the manifest alone ({!Sol_cli_config.load_declared}) — so
-    neither renders from less information than the other. A service with no
-    matching [sol.yml] entry keeps [sol.toml]'s [replicas] unchanged. Omitting
-    [declared] is for a caller with no manifest at all (a fixture, the hosted
-    entry point); a deployment mode passing it nothing is exactly the divergence
-    this type exists to prevent.
-
-    [image_refs], when given, maps a service name to the fully-qualified
-    immutable reference to deploy for it (FEAT-050). A service with no entry
-    keeps the registry/workspace/tag image. *)
 val of_services_result
   :  workspace:string
   -> env:env_config
@@ -245,9 +146,5 @@ val of_services_result
   -> ?declared:Sol_cli_config.declared
   -> ?image_refs:(string * string) list
   -> ?inventory:Sol_cli_manifest.service list
-       (** DEC-036: the set a call reference may *name* — the workspace
-           inventory. Defaults to the selected [services], which is the previous
-           behaviour. Never changes what is deployed: that is the final
-           positional argument, unchanged. *)
   -> Sol_cli_manifest.service list
   -> (t, plan_error) result

@@ -1,10 +1,3 @@
-(* Offline tests for the destroy-path plan assertion (HARDEN-004 step 3).
-
-   Every fixture is a Terraform *plan* representation (the shape `terraform show
-   -json <saved plan>` emits) and every apply is a fake, so nothing here needs
-   terraform or a cloud. The property that matters most is pinned twice: a plan
-   the assertion refuses must never reach the apply. *)
-
 open Sol_cli_terraform_plan
 
 let plan_of changes =
@@ -29,20 +22,8 @@ let delete address kind = change address kind [ "delete" ]
 let replace address kind = change address kind [ "delete"; "create" ]
 let no_op address kind = change address kind [ "no-op" ]
 let data_read address kind = change ~mode:"data" address kind [ "read" ]
-
-(* ── Policy fixtures ─────────────────────────────────────────────────────── *)
-
-(* The authority mechanism exactly as the GCP capability declares it. It is a
-   `count`-indexed root-level resource, so Terraform's plan address for it is
-   always `...[0]` -- never the bare declaration. Every authority fixture below
-   therefore exercises the *index-qualified* addresses a real plan carries; the
-   un-indexed form is included only for completeness. A fixture built from the
-   declaration's own string, as this file used to do, cannot detect the defect
-   that made Attempt 8's destroy refuse its own authority create (FND-0058). *)
 let authority = "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
 
-(* Every address shape a real plan can carry for the declared resource, plus the
-   shapes it must *not* match. *)
 let authority_instances =
   [ authority; authority ^ "[0]"; authority ^ "[37]"; authority ^ "[\"key\"]" ]
 ;;
@@ -68,8 +49,6 @@ let allowlist policy json =
   | Error _ -> Alcotest.fail "fixture is not valid plan JSON"
   | Ok changes -> List.length (violations policy changes) = 0
 ;;
-
-(* ── Parsing and classification ──────────────────────────────────────────── *)
 
 let test_actions () =
   let check raw expected =
@@ -102,7 +81,6 @@ let test_malformed_is_error () =
     ; {|{"values":{}}|}
     ; {|{"resource_changes":{}}|}
     ; {|{"resource_changes":[{"type":"z","mode":"managed","change":{"actions":["create"]}}]}|}
-      (* no address *)
     ]
 ;;
 
@@ -123,10 +101,7 @@ let test_empty_and_read_only_are_allowed () =
     (allowlist policy (plan_of [ data_read "data.x" "google_compute_network" ]))
 ;;
 
-(* ── The phase allowlists ────────────────────────────────────────────────── *)
-
 let test_whole_root_missing_cluster_create_is_refused () =
-  (* Fixture 1: a whole-root-shaped plan whose missing cluster is a CREATE. *)
   let policy =
     Sol_cli_cloud_destroy.reconciliation_policy
       ~bootstrap:[ binding ]
@@ -139,7 +114,6 @@ let test_whole_root_missing_cluster_create_is_refused () =
 ;;
 
 let test_unrepresented_guarded_create_is_refused () =
-  (* Fixture 2: preparing a guarded resource the inventory does not represent. *)
   let policy = Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster ] in
   Alcotest.(check bool)
     "configured-but-unrepresented guarded create is refused"
@@ -148,7 +122,6 @@ let test_unrepresented_guarded_create_is_refused () =
 ;;
 
 let test_unexpected_target_resource_create_is_refused () =
-  (* Fixture 3: an unrelated target resource created by a destructive apply. *)
   let policy =
     Sol_cli_cloud_destroy.reconciliation_policy
       ~bootstrap:[ binding ]
@@ -161,7 +134,6 @@ let test_unexpected_target_resource_create_is_refused () =
 ;;
 
 let test_unexpected_replace_is_refused () =
-  (* Fixture 4: ForceNew drift plans a replacement -- a create on the destroy path. *)
   let policy = Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster ] in
   Alcotest.(check bool)
     "replacement is refused"
@@ -170,8 +142,6 @@ let test_unexpected_replace_is_refused () =
 ;;
 
 let test_bootstrap_create_is_allowed () =
-  (* Fixture 5: the one constructive action destruction is allowed, and its plan
-     must still be asserted. *)
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
   Alcotest.(check bool)
     "bootstrap create is allowed"
@@ -185,11 +155,6 @@ let test_bootstrap_create_is_allowed () =
           ]))
 ;;
 
-(* FND-0058. The declaration names a resource; the plan names an instance. Both
-   halves are tested separately -- the matcher decides identity, the policy
-   decides permission -- and the first test is the regression Attempt 8 needs:
-   the index-qualified create must be *accepted* by the reconciliation that
-   exists to acquire the authority. *)
 let test_declared_authority_matches_every_instance () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
   authority_instances
@@ -211,9 +176,6 @@ let test_declared_authority_matches_nothing_else () =
 ;;
 
 let test_attempt8_authority_create_is_accepted () =
-  (* The exact Attempt-8 plan: one CREATE, on the index-qualified authority
-     resource, asserted by the reconciliation policy. This is the assertion the
-     old `Exact` declaration could never satisfy. *)
   let policy =
     Sol_cli_cloud_destroy.reconciliation_policy
       ~bootstrap:[ binding ]
@@ -240,9 +202,6 @@ let test_attempt8_authority_create_is_accepted () =
 ;;
 
 let test_attempt8_authority_create_is_refused_where_the_action_is_forbidden () =
-  (* Identity is not permission: the same instance-qualified change is refused by
-     the *removal* policy, whose rule for the same resource allows Update/Delete
-     only. *)
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
   Alcotest.(check bool)
     "removal may not create the authority it just removed"
@@ -259,9 +218,6 @@ let test_attempt8_authority_create_is_refused_where_the_action_is_forbidden () =
 ;;
 
 let test_indexed_sibling_create_is_still_refused () =
-  (* The precision that makes the fix safe: another ClusterRoleBinding, indexed
-     or not, is not the declared authority and stays refused. This is the
-     negative control a `Type` matcher would fail. *)
   let policy =
     Sol_cli_cloud_destroy.reconciliation_policy
       ~bootstrap:[ binding ]
@@ -279,7 +235,6 @@ let test_indexed_sibling_create_is_still_refused () =
 ;;
 
 let test_guarded_update_is_allowed () =
-  (* Fixture 6: lowering a represented guarded resource's protection. *)
   let policy =
     Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster; sql ]
   in
@@ -295,7 +250,6 @@ let test_guarded_update_is_allowed () =
 ;;
 
 let test_removal_with_unexpected_create_is_refused () =
-  (* Fixture 9: the bootstrap-access removal's plan is asserted too. *)
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
   Alcotest.(check bool)
     "removal may not create target resources"
@@ -331,8 +285,6 @@ let test_removal_with_unexpected_create_is_refused () =
 ;;
 
 let test_out_of_scope_delete_is_refused () =
-  (* A delete of a resource outside the phase's scope is refused, so a plan can
-     never quietly destroy something the phase does not own. *)
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
   Alcotest.(check bool)
     "out-of-scope delete is refused"
@@ -341,9 +293,6 @@ let test_out_of_scope_delete_is_refused () =
 ;;
 
 let test_attempt6_inventory_prunes_the_scope () =
-  (* Fixture 10: an Attempt-6-shaped inventory (network represented, cluster not)
-     yields an empty guarded set, so a plan that reconstructs the missing cluster
-     has no rule that could permit it. *)
   let inventory =
     {|{"values":{"root_module":{"resources":[{"address":"google_compute_network.main","type":"google_compute_network","values":{}}]}}}|}
   in
@@ -383,8 +332,6 @@ let test_unknown_action_is_refused () =
           ]))
 ;;
 
-(* ── guarded_apply: refusal must never reach the apply ───────────────────── *)
-
 let guarded_apply_case ~plan_result ~plan_json =
   let applied = ref 0 in
   let policy =
@@ -407,7 +354,6 @@ let guarded_apply_case ~plan_result ~plan_json =
 ;;
 
 let test_guarded_apply_refusal_never_applies () =
-  (* Fixtures 1/4/9's property, at the mechanism: refused means not applied. *)
   let outcome, applied =
     guarded_apply_case
       ~plan_result:(Ok "/tmp/plan")
@@ -420,7 +366,6 @@ let test_guarded_apply_refusal_never_applies () =
 ;;
 
 let test_guarded_apply_malformed_never_applies () =
-  (* Fixture 7: malformed/unreadable plan evidence. *)
   let outcome, applied =
     guarded_apply_case ~plan_result:(Ok "/tmp/plan") ~plan_json:"not json"
   in
@@ -431,7 +376,6 @@ let test_guarded_apply_malformed_never_applies () =
 ;;
 
 let test_guarded_apply_plan_failure_never_applies () =
-  (* Fixture 8: the plan command itself failed. *)
   let outcome, applied =
     guarded_apply_case ~plan_result:(Error "terraform exited 1") ~plan_json:(plan_of [])
   in
@@ -454,8 +398,6 @@ let test_guarded_apply_permitted_applies_once () =
     Alcotest.failf "expected success: %s" (apply_failure_to_string failure)
 ;;
 
-(* INFRA-074: the ECR repositories a cloud-apply plan would remove. A replace
-   destroys the repository first, so it counts as a removal in both orderings. *)
 let test_removed_of_type () =
   let changes =
     match
@@ -484,8 +426,6 @@ let test_removed_of_type () =
     (removed_of_type ~resource_type:"aws_ecr_repository" changes)
 ;;
 
-(* SEC-008: `terraform show -json <plan>` carries sensitive values in plain text.
-   show_and_record must record only the classified changes, never the JSON. *)
 let secret = "s3cr3t-db-password-7f1c"
 
 let plan_with_secret =

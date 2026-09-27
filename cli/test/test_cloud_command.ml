@@ -1,8 +1,3 @@
-(* REFAC-139 part D: the decisions `sol cloud plan|apply|destroy` made inline,
-   now in cli/lib/cloud -- which var a Terraform run resolves, which target a
-   mutation accepts, what a previous operation permits, and which platform
-   resources INFRA-042's recovery may forget. *)
-
 let temp_dir () =
   let dir = Filename.temp_file "sol-cloud-command-test-" "" in
   Sys.remove dir;
@@ -15,8 +10,6 @@ let write path content =
 ;;
 
 let check_opt = Alcotest.(check (option string))
-
-(* ── Sol_cli_terraform_vars.resolved ─────────────────────────────────────── *)
 
 let test_last_flag_wins () =
   check_opt
@@ -62,8 +55,6 @@ let test_unreadable_var_file_assigns_nothing () =
        ~var_files:[ "/nonexistent/sol.tfvars" ]
        ~vars:[])
 ;;
-
-(* ── Sol_cli_terraform_vars.of_target ────────────────────────────────────── *)
 
 let with_workspace ~declared f =
   let dir = temp_dir () in
@@ -118,8 +109,6 @@ let test_strict_accepts_declared_target () =
         (List.assoc_opt "cluster_name" vars)
     | Error message -> Alcotest.fail message)
 ;;
-
-(* ── Sol_cli_state_guard.verdict ─────────────────────────────────────────── *)
 
 let running =
   Sol_cli_supervised.Running { pid = 1; host = "h"; started_at = 0.; dir = "/d" }
@@ -183,8 +172,6 @@ let test_guard_matrix () =
     ~accept_unresolved:true
     unresolved
 ;;
-
-(* ── Sol_cli_platform_teardown ───────────────────────────────────────────── *)
 
 let test_kinds_are_the_last_column () =
   Alcotest.(check (list string))

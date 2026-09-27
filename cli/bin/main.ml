@@ -1,21 +1,11 @@
 let () =
-  (* REFAC-135: library code reports through Logs; this is where it reaches the
-     terminal. First, so the supervisor child reports the same way. *)
   Sol_cli_report.install_terminal ();
-  (* INFRA-076: this binary is also Terraform's supervisor. *)
   Sol_cli_supervised.dispatch_if_supervisor ();
-  (* Root-discovery chdir (OBS-013) is scoped to sol status/logs/open's own
-     workspace_name(), not done here globally -- a global chdir here would
-     also change relative-path resolution for sol deploy --emit-to/
-     --emit-plan-to, sol migrate --dir, and sol cloud tf --var-file, none
-     of which asked for workspace-root-relative behavior (OBS-017). *)
   let cmd =
     Cmdliner.Cmd.group
       (Cmdliner.Cmd.info
          "sol"
-         ~version:
-           (* FEAT-101: a release names itself; a development build, its commit. *)
-           (Option.value Sol_cli_build_info.release_version ~default:Version.v)
+         ~version:(Option.value Sol_cli_build_info.release_version ~default:Version.v)
          ~doc:"Sol platform CLI — scaffold, run, and deploy Sol services")
       [ Sol_cli_cmd_new.cmd
       ; Cmd_check.cmd

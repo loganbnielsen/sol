@@ -1,16 +1,3 @@
-(* Remote state for one root. A backend's *type* is part of a Terraform root's own
-   configuration -- `-backend-config` sets attributes, never the type -- so each
-   provider's roots declare their own backend and this supplies the attributes
-   that root expects. The two are therefore not the same shape:
-
-     * S3 addresses an object by `key` and needs a separate lock resource
-       (`dynamodb_table`), because S3 has no native locking.
-     * GCS addresses an object by `prefix` and locks natively, so there is no lock
-       resource to name. A GCP target that declares a `state_lock_table` is not
-       wrong -- the field is simply not what serializes applies there.
-
-   What Sol actually requires of a target is the same for both, and is the one
-   declaration checked here: the durable, encrypted, versioned bucket. *)
 let backend_config (target : Sol_cli_config.target) ~root =
   let layer =
     match root with
@@ -28,13 +15,6 @@ let backend_config (target : Sol_cli_config.target) ~root =
     Error "target must declare state_bucket before `sol cloud` can use durable state"
 ;;
 
-(* The provider-neutral facts a cloud lifecycle operation needs from a target,
-   plus the backend config each provider's roots expect. Provider-specific
-   *identity* is deliberately absent: an AWS target names a role ARN because that
-   is how an AWS caller assumes the provisioner, while a GCP target names nothing
-   because the caller impersonates a service account through short-lived
-   credentials instead. Making both carry a role-shaped field would invent a
-   concept GCP does not have. *)
 type cloud_target =
   { target : Sol_cli_config.target
   ; cloud_backend : string list
@@ -67,14 +47,6 @@ let cloud_target target =
     }
 ;;
 
-(* REFAC-100 / DEC-046 rule 4: every provider reaches the shared platform module
-   (`platform/cloud/modules/platform`) through a thin root of its own,
-   `platform/cloud/<provider>/platform`, which exists because a Terraform root's
-   backend type is part of its own configuration. The root and the address prefix
-   are therefore one rule for every provider, not per-provider capabilities. Where
-   that root lives is Sol_cli_platform_assets.cloud_root's (REFAC-114). *)
-(* A resource address inside a platform root: every root calls the shared
-   definition as `module.platform`. *)
 let platform_address address = "module.platform." ^ address
 let target config = config.target
 let cloud_backend config = config.cloud_backend
@@ -94,9 +66,6 @@ type platform_inputs =
   }
 
 let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
-  (* The cloud root reports the identity the platform root will act as; the
-     target's declaration is what authorized it, so the cluster checks one against
-     the other. Providers without a role-shaped identity have nothing to compare. *)
   match
     cluster.check_identity ~cluster_access_role_arn:target.cluster_access_role_arn
   with
@@ -116,63 +85,10 @@ let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
       }
 ;;
 
-(* The platform definition's variables for one provider's target. Fallible,
-   because a target can ask for a capability the provider's root cannot wire yet,
-   and the honest answer there is a refusal naming the gap rather than a variable
-   set that silently omits it.
-
-   What is shared is genuinely shared -- the domain, the ACME contact, and the
-   fact that a cloud database means no in-cluster Postgres. What differs is the
-   provider's own inputs: AWS passes the region and the IRSA roles and buckets its
-   definition branch reads, GCP passes its GCS buckets and Workload Identity
-   service accounts. Neither set is emitted for the other provider, because a
-   variable a provider's root does not declare is an error rather than a no-op. *)
-(* Whether these variables are being computed to INSTALL the platform or to REMOVE
-   it. It matters because some of what this function checks is a capability guarantee
-   for installation -- "if you ask for this, the platform must be able to deliver it"
-   -- and a destruction is not an installation.
-
-   FND-0029: evaluating an install-time guarantee while destroying a target that was
-   already created made the only supported destruction path refuse a target that
-   `apply` had accepted, which stranded billable infrastructure until the declaration
-   was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
-   from every phase; a creation-time requirement must not be what closes that edge.
-   Install-time validation stays exactly as strict. *)
-(* Whether these variables are being computed to INSTALL the platform or to REMOVE
-   it. It matters because some of what this function checks is a capability guarantee
-   for installation -- "if you ask for this, the platform must be able to deliver it"
-   -- and a destruction is not an installation.
-
-   FND-0029: evaluating an install-time guarantee while destroying a target that was
-   already created made the only supported destruction path refuse a target that
-   `apply` had accepted, which stranded billable infrastructure until the declaration
-   was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
-   from every phase; a creation-time requirement must not be what closes that edge.
-   Install-time validation stays exactly as strict. *)
-(* What happens to destruction when a preparation fails.
-
-   A preparation is not one kind of thing. Most of it is best-effort: it lowers a deletion
-   guard or reconciles a setting so that destruction can proceed, and if it fails the honest
-   response is to say so and attempt the destruction anyway, because destruction is an abort
-   edge available from every phase (ADR 0003 invariant 6) and the destroy's own error is the
-   accurate signal.
-
-   Some of it is a destruction precondition. An AWS target that declares
-   `destroy_retention: final-snapshot` is promised that its recovery data survives the
-   destroy; if the preparation that sets that up fails, proceeding would silently discard
-   the data the target asked to keep (DEC-033). That must block.
-
-   The preparation declares which it is, so the destruction path carries no list of
-   provider-and-feature exceptions that grows every time a new guarantee appears. That is
-   also the honest reading of the invariant: destruction remains available from a half-built
-   target UNLESS proceeding would violate an explicit destruction-time safety guarantee that
-   the target itself declared. *)
 type failure_policy =
   | Continue_to_destroy
   | Block_destroy
 
-(* [Prepared] carries whatever the caller needs from a successful preparation -- the AWS
-   final-snapshot identifier, [()] where there is nothing to carry. *)
 type 'a preparation_outcome =
   | Nothing_to_prepare
   | Prepared of 'a
@@ -181,49 +97,21 @@ type 'a preparation_outcome =
       ; policy : failure_policy
       }
 
-(* The reason to report, for a failure of either policy: a failure that permits destruction
-   must still be visible in the result rather than swallowed by it. *)
 let preparation_failure = function
   | Nothing_to_prepare | Prepared _ -> None
   | Preparation_failed { reason; _ } -> Some reason
 ;;
 
-(* [Some reason] only when destruction must not proceed. Nothing else blocks. *)
 let destruction_blocked = function
   | Nothing_to_prepare | Prepared _ -> None
   | Preparation_failed { policy = Continue_to_destroy; _ } -> None
   | Preparation_failed { reason; policy = Block_destroy } -> Some reason
 ;;
 
-(* Which resources a DESTRUCTIVE preparation may target.
-
-   The preparation lowers deletion guards so that destruction can proceed, and it does so
-   with `terraform apply -target=<address>`. Terraform's targeted apply *creates* a target
-   that is in the configuration but absent from state -- so preparing a resource the target
-   does not have makes the destroy path the thing that creates it, which is the opposite of
-   its purpose. Attempt 6 hit exactly that: the cluster existed in the provider, was absent
-   from state, and the preparation failed with `409 Already exists` while trying to create
-   the cluster it had been asked to remove (FND-0030).
-
-   So eligibility is `configuration INTERSECT state`. A resource absent from state is not a
-   resource to prepare, and for a half-built target the eligible set is empty.
-
-   What this does NOT do, on its own: bound what Terraform plans. `-target` includes
-   everything the target depends on, so a targeted apply can still plan to create an
-   unrepresented network or private-IP range; and a targeted apply reconciles the WHOLE
-   resource against configuration, so drift on a ForceNew attribute plans a replacement,
-   which creates on the destroy path. The intersection bounds what may be targeted; the
-   guarantee that nothing is created has to be asserted on the plan itself, before applying
-   it (FND-0030). *)
 let preparations_eligible ~state ~desired =
   List.filter (fun address -> List.mem address state) desired
 ;;
 
-(* The addresses the target's configuration declares and its state does not hold. These are
-   the ones a destroy cannot reach: Terraform destroys what its state knows about, so a
-   resource in this set may still exist in the provider after a successful destroy -- and
-   still be billable. Reporting them is the minimum: staying quiet turns a loud failure into
-   a quiet one (FND-0030). *)
 let preparations_unrepresented ~state ~desired =
   List.filter (fun address -> not (List.mem address state)) desired
 ;;
@@ -269,10 +157,6 @@ type plan_phase =
   | Plannable
   | Deferred of string
 
-(* [rbac_established] is a plan-only prerequisite: establishing the provisioner's
-   steady-state RBAC requires an apply, and plan must not mutate to unlock its own
-   later phases, so a cluster without it defers both platform phases (ADR 0002).
-   [crds_established] only matters once RBAC makes the prerequisites plannable. *)
 let platform_plan_phases ~cluster_exists ~rbac_established ~crds_established =
   let requires_cloud = "requires cloud substrate to exist" in
   let requires_rbac =
@@ -319,28 +203,6 @@ type readiness =
   | Established
   | Unmet of string
 
-(* Readiness: is the platform converged? ------------------------------------
-   [Ready] is what licenses `PlatformInstalling -> Ready` (ADR 0003), so it
-   asserts that the platform reached its defined operational state according to
-   authoritative Kubernetes state. Two things it deliberately does NOT do, both
-   learned from a real target:
-
-   * It does not probe the platform across the network. The five checks that read
-     service endpoints through the API server's `/proxy/` path needed a route this
-     platform never creates — the EKS module admits the control plane to nodes
-     only on the admission-webhook ports — so a fully converged platform reported
-     `Unmet`. Whether a capability *works* is HARDEN's question, and HARDEN
-     answers it with behaviour (a known log reaches Loki and can be queried), not
-     with a route.
-   * It does not require an external ACME round trip. A ClusterIssuer's only
-     condition is `Ready`, and for an ACME issuer cert-manager sets it only after
-     registering with the external CA, so an unreachable Let's Encrypt would make
-     a converged platform "not ready". Real issuance is qualified in HARDEN.
-
-   What is left is convergence: Kubernetes' own statement about its own objects.
-   Workloads are read per kind because kinds differ in what they declare — a
-   DaemonSet's desired count is derived from the node set, so zero means nothing
-   matched, while a StatefulSet's replicas are declared by its owner. *)
 type readiness_check =
   { name : string
   ; reason : string
@@ -350,7 +212,6 @@ type readiness_check =
 
 let check ?(accept = fun _ -> true) name reason argv = { name; reason; accept; argv }
 
-(* Deployments state their own availability through their own condition. *)
 let available_deployments namespace =
   [ "wait"
   ; "--for=condition=Available"
@@ -362,8 +223,6 @@ let available_deployments namespace =
   ]
 ;;
 
-(* DaemonSets and StatefulSets have no condition [kubectl wait] understands, so
-   convergence comes from status, as ready/desired pairs. *)
 let converged_workload ~kind ~namespace ~ready_field ~desired_field =
   [ "get"
   ; kind
@@ -412,12 +271,6 @@ let ready_nodes =
   ]
 ;;
 
-(* Every workload reports as many ready replicas as it declares. An empty result
-   is never "converged": it means there was nothing to look at, so a query that
-   matched nothing would otherwise pass silently. [require_desired] additionally
-   rejects a desired count of zero — right for DaemonSets, where zero means the
-   node set matched nothing, and wrong for StatefulSets, where a declared zero is
-   its owner's choice. *)
 let replicas_converged ?(require_desired = true) output =
   let pairs =
     String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
@@ -437,7 +290,6 @@ let replicas_converged ?(require_desired = true) output =
 let daemonsets_converged output = replicas_converged output
 let statefulsets_converged output = replicas_converged ~require_desired:false output
 
-(* Every volume is Bound, and there is at least one to look at. *)
 let all_pvcs_bound output =
   let phases =
     String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
@@ -452,29 +304,6 @@ let all_nodes_ready output =
   states <> [] && List.for_all (fun state -> state = "True") states
 ;;
 
-(* ── The target's Kubernetes storage contract ────────────────────────────────
-
-   The platform's durable components -- Redpanda's log, Loki's chunks, the
-   Prometheus TSDB, Tempo's blocks -- bind PersistentVolumeClaims against the
-   cluster's *default* StorageClass, because that is what an unqualified claim
-   resolves to. The platform therefore depends on two facts that are the cloud
-   provider's, not Sol's: which block-storage CSI driver backs the cluster, and
-   which class is the one default.
-
-   They differ in kind between providers, and the difference is real rather than
-   cosmetic: EKS ships no default StorageClass at all, so Sol creates one (`gp3`,
-   `ebs.csi.aws.com`); GKE ships `standard-rwo` (`pd.csi.storage.gke.io`) already
-   annotated as the default, so Sol *adopts* it -- creating a second default class
-   would leave the cluster with two, which Kubernetes accepts with a warning and
-   then resolves arbitrarily.
-
-   What is provider-neutral is the assertion, so it is expressed once against
-   this table: the provider's class exists, is the *only* default, and is
-   provided by the provider's block-storage CSI driver. Naming the class in the
-   table keeps the assertion as strong as it was when it was spelled out for AWS:
-   a cluster whose default is some unrelated class backed by the same driver
-   still fails, because the platform's volumes are then not on the class Sol
-   established. *)
 type platform_storage = Sol_cli_provider_capabilities.platform_storage =
   { storage_class : string
   ; csi_driver : string
@@ -484,13 +313,6 @@ let platform_storage provider =
   (Sol_cli_provider_capabilities.capabilities_of provider).platform_storage
 ;;
 
-(* `name|provisioner|is-default` per StorageClass, then space-separated. A CSI
-   StorageClass's `provisioner` is the driver's registered name -- that is the
-   contract, not a naming convention -- so one field of the table covers both.
-
-   Assembled rather than written as one literal so the jsonpath is on one logical
-   line: a `\`-newline inside a string literal is elided by the lexer, which makes
-   the printed argv depend on where the formatter chose to wrap. *)
 let storage_class_entries =
   let jsonpath =
     "jsonpath={range .items[*]}"
@@ -533,11 +355,6 @@ let storage_checks provider =
   ]
 ;;
 
-(* Parameterised by provider only: the checks still depend on neither the
-   observability backend nor the configured issuer. Those were once
-   backend-shaped distinctions inside a gate whose only job is to state "the
-   platform converged", and the namespace-wide workload checks hold for whatever
-   a backend installed. *)
 let readiness_checks ~provider =
   let before_storage =
     [ check
@@ -558,10 +375,7 @@ let readiness_checks ~provider =
   in
   before_storage
   @ storage_checks provider
-  @ [ (* Monitoring is checked namespace-wide: the assertion is "everything
-       installed here has converged", which holds for whatever the configured
-       observability backend installs and needs no per-chart list to drift. *)
-      check
+  @ [ check
         "monitoring deployments"
         "a monitoring deployment is not available"
         (available_deployments "monitoring")
@@ -580,12 +394,7 @@ let readiness_checks ~provider =
         "monitoring PVCs"
         "a monitoring PersistentVolumeClaim is not Bound"
         (bound_pvcs "monitoring")
-    ; (* The one behavioural check kept in [Ready]. Redpanda is the platform's own
-       broker, so this is the platform's own health API rather than a third
-       party's, it needs no route beyond the API server -> kubelet path that
-       `kubectl exec` already uses, and "the brokers agree they are healthy" is
-       what makes the data plane operable rather than merely scheduled. *)
-      check
+    ; check
         "Redpanda"
         "Redpanda broker-native cluster health is not healthy"
         [ "exec"
@@ -631,10 +440,6 @@ let readiness_checks ~provider =
     ]
 ;;
 
-(* Run every readiness check and report the ones that are not established. A check
-   is established only when its invocation succeeds *and* its output satisfies
-   [accept]: a command that exits zero while saying nothing useful is not
-   evidence. *)
 let readiness ~provider ~run =
   readiness_checks ~provider
   |> List.map (fun check ->
@@ -644,14 +449,6 @@ let readiness ~provider ~run =
       | _ -> Unmet check.reason ))
 ;;
 
-(* The kubectl invocations the checks above run, exposed so CI can validate them
-   against a real kubectl. Nothing calls this in production — it exists because
-   the invocations are otherwise only reachable through [readiness], which needs
-   a live cluster, so an argv kubectl rejects could ship unnoticed.
-
-   Per provider, because the storage assertion is provider-specific: CI
-   validates every provider's set, so a new one cannot ship an invocation nobody
-   checked. *)
 let readiness_invocations ~provider =
   List.map (fun check -> check.name, check.argv) (readiness_checks ~provider)
 ;;
@@ -668,23 +465,6 @@ let readiness_summary checks =
   | unmet -> "Unmet — " ^ String.concat "; " unmet
 ;;
 
-(* ── Lifecycle phases: authority and desired-state policy (ADR 0003) ──────────
-
-   HARDEN-002 run 4 (findings 13, 14, 15) showed that the lifecycle needs an
-   explicit notion of *which operation Sol is performing*, because that decides
-   both the authority it may use and which desired-state policy applies. Two
-   individually-correct rules contradicted each other only because no phase said
-   which one was in force:
-
-     BUG-039      production-single-region/v1 -> RDS deletion protection = true
-     INFRA-023    PrepareDestroy              -> RDS deletion protection = false
-
-   A [phase] is NOT infrastructure truth: Terraform state remains authoritative
-   for managed resources and AWS/Kubernetes provide observed reality. It names
-   the operation/transition, and therefore the authority and policy, Sol is
-   applying right now; it is derived from the command and its verified
-   preparation, never persisted as a second state database. *)
-
 type phase =
   | Absent
   | Cloud_bootstrap
@@ -694,8 +474,6 @@ type phase =
   | Preparing_destroy
   | Destroying
 
-(* The desired-state policy a phase applies. [Installation] and [Production]
-   differ in authority even where their substitution vars coincide today. *)
 type phase_policy =
   | Bootstrap
   | Installation
@@ -709,16 +487,6 @@ let policy_of_phase = function
   | Preparing_destroy | Destroying -> Destroy
 ;;
 
-(* The forward lifecycle relation: the edges of ADR 0003's diagram. Anything not
-   listed is illegal; the operations in cmd_cloud_tf.ml perform only listed
-   transitions, and the tests assert the illegal ones are rejected.
-
-   This is deliberately NOT the whole story about how a phase can be entered. It
-   describes *progressive establishment* -- each edge moves the target further
-   along the diagram, so reversing one is illegal (invariant 5). Teardown is a
-   different class of move and is described separately by [destruction_available];
-   keeping the two apart is what lets this relation keep saying exactly what the
-   diagram says. *)
 let transition_allowed ~from ~to_ =
   match from, to_ with
   | Absent, Cloud_bootstrap -> true
@@ -732,18 +500,6 @@ let transition_allowed ~from ~to_ =
   | _ -> false
 ;;
 
-(* The abort edge (ADR 0003 invariant 6).
-
-   Destruction is not a forward lifecycle transition, so it is not in the relation
-   above -- which is why `Platform_installing -> Preparing_destroy` is correctly
-   *rejected* there. It is nonetheless available from every phase that can hold
-   infrastructure, including a half-built one, because lifecycle enforcement must
-   never strand infrastructure: a run that fails midway (a partial install, an
-   interrupted privileged update, a destroy that died before finishing) has to
-   remain destructible through Sol's public lifecycle, or the only way out is
-   manual console surgery on live cloud resources.
-
-   [Absent] is the post-destroy state and has nothing to tear down. *)
 let destruction_available = function
   | Absent -> false
   | Cloud_bootstrap
@@ -754,71 +510,12 @@ let destruction_available = function
   | Destroying -> true
 ;;
 
-(* The phase a destroy operation proceeds in. Total by construction: destroying an
-   already-absent target yields [Absent], the post-destroy state itself, which is
-   why destroy is idempotent rather than an error.
-
-   Note what this does *not* need: the answer is [Preparing_destroy] for every
-   phase except [Absent], so a destroy has to decide only Absent-ness -- which is
-   observable from the substrate Sol is about to tear down. It deliberately does
-   not probe the platform: a probe that can fail must never be able to block
-   teardown, and would strand exactly the half-built target this exists to
-   protect. *)
 let enter_destruction ~from =
   if destruction_available from then Preparing_destroy else Absent
 ;;
 
-(* Ready-state invariants apply only in [Ready]. Once [Preparing_destroy] has
-   succeeded no later reconciliation may re-apply them (finding 15) -- BUG-039
-   stays exactly correct throughout [Ready] and is deliberately left behind when
-   the target leaves it. *)
 let ready_policy_applies phase = policy_of_phase phase = Production
 
-(* The desired-state overrides a phase imposes. Callers append these AFTER their
-   own variables so the phase policy wins. [Destroy] deliberately contradicts the
-   Production invariant for RDS deletion protection. *)
-(* The Destroy policy is provider-shaped, because the levers are: AWS lifts RDS
-   deletion protection and names the final snapshot it will take, while GCP lifts
-   Cloud SQL's and the GKE cluster's. What is provider-neutral is that a Destroy
-   policy exists, that the phase names it, and that it is what decides whether a
-   target can reach [Absent].
-
-   This is not a cosmetic split. `-var` for a variable a root does not declare is
-   an error, not a no-op, so handing the GCP cloud root AWS's three would fail the
-   first GCP destroy with "Value for undeclared variable" instead of lifting
-   anything -- the failure would arrive as a destroy that cannot start.
-
-   Three things are deliberately kept separate here, because two of them had already
-   been conflated:
-
-   - *deletion protection* is a safety guard on a resource that exists. Lifting it is
-     what makes the target destructible, and it says nothing about what survives.
-   - *retention* (DEC-033) is what a destroy deliberately keeps. AWS expresses it
-     with the final snapshot; GCP cannot express it at all yet, which is why
-     [prepare_destruction] refuses a GCP target whose retention is the default rather
-     than discarding its recovery data quietly.
-   - *preparation* is the applied-and-verified semantic transition that makes the
-     destruction legal under both of the above.
-
-   Both providers' guards have to be *forwarded to every apply from [Preparing_destroy]
-   on*, not only to the destroy itself: each root's default is protection-on, so any
-   apply in that window which omits the override silently turns protection back on and
-   the teardown then fails on something the target still owns. Live attempt 1 was
-   exactly that shape, one guard deeper than expected -- Cloud SQL's was lifted and the
-   GKE cluster's, a provider default the root never mentioned, was not, so a target Sol
-   had provisioned could not be deleted. *)
-(* DEC-033: what a destroy deliberately keeps, and the fact that it is a choice.
-
-   Two postconditions were being conflated. A production destroy means "nothing
-   running, with recovery explicitly retained"; a disposable qualification
-   target's means "Absent, with nothing billable left behind". Both are legitimate;
-   neither is the default for the other. The default here stays [Retain_final_snapshot]
-   -- a qualification run retaining nothing must not quietly become "Sol destroys
-   every recovery artifact".
-
-   Retention is named by the target (see [Sol_cli_config.destroy_retention]) and
-   reported by the destroy that performed it, so an operator never has to infer
-   what survived. *)
 type destroy_retention =
   | Retain_final_snapshot
   | Retain_nothing
@@ -840,13 +537,6 @@ let destroy_retention_of_string = function
          other)
 ;;
 
-(* HARDEN-004 step 5: there is deliberately no [retention_report] here any more.
-   It rendered the retention *policy* -- "final snapshot X", or "destroyed to
-   Absent with no residual billable artifacts" -- with nothing observing whether
-   either was true (FND-0046 / INFRA-072). Retention is now reported from
-   evidence, by [Sol_cli_destroy_verification], so the sentence an operator reads
-   is the one a provider query supports. *)
-
 let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
@@ -858,8 +548,6 @@ let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
          | Retain_nothing -> None)
 ;;
 
-(* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a
-   report, an error message and a test label cannot drift from the model. *)
 let phase_to_string = function
   | Absent -> "Absent"
   | Cloud_bootstrap -> "CloudBootstrap"
@@ -870,16 +558,6 @@ let phase_to_string = function
   | Destroying -> "Destroying"
 ;;
 
-(* The phase a target is actually in, recomputed from observation on every run --
-   the phase is never persisted and is never infrastructure truth (ADR 0003).
-   [cloud_exists] is what Terraform reports for the substrate. [platform_installed]
-   is a cheap, privilege-independent observation that an *earlier* run completed
-   the platform install (the cert-manager CRDs are cluster objects, so unlike a
-   `kubectl auth can-i` probe they are unaffected by the bootstrap-admin
-   escalation the current run performs itself). An installed-but-not-fully-Ready
-   target observes as [Ready] here because the operation it admits is the same
-   privileged re-establishment; the transition is still verified to [Ready] before
-   the run may leave it. *)
 let observed_phase ~cloud_exists ~platform_installed =
   if not cloud_exists
   then Absent
@@ -888,67 +566,22 @@ let observed_phase ~cloud_exists ~platform_installed =
   else Platform_installing
 ;;
 
-(* The only way an operation may move between phases. A call site cannot express
-   an edge the relation does not admit (ADR 0003 invariant 5), so
-   `Preparing_destroy -> Ready` and `Ready -> Platform_installing` are refused
-   here rather than by an operator or a call site remembering to check. Remaining
-   in the same phase is not a transition and is deliberately not routed through
-   this. *)
-(* DEC-040 / FND-0021: a control-plane acknowledgement is not evidence that an
-   authorization boundary has moved.
-
-   Live, an EKS access-policy disassociation was accepted and `describe-access-entry`
-   reported no access policies, while the cluster's authorizer went on granting
-   cluster-admin for over five minutes -- established by reading an application's
-   Secrets from a principal confirmed at the time of the read. Deleting the access
-   *entry* propagated in under 45 seconds; the policy disassociation did not.
-
-   So de-escalation is decided from the *effective* authorization surface: the
-   capabilities only the bootstrap authority held, asked of the component that
-   enforces the boundary. [Deescalated] is the only verdict that permits `Ready`. *)
-(** Which principal answered the probe. The probe must be run as the principal whose
-    elevation is being removed; a different principal answering proves nothing about
-    that one, which is why it is [Unexpected] rather than a pass. *)
 type deescalation_principal =
   | Principal_confirmed of string
-  (** The intended principal answered, so its refusals are evidence. *)
   | Principal_refused_by_cluster of string
-  (** The intended principal reached the cluster and the cluster's own authorizer
-          refused it -- the expected result of removing its access. The elevated
-          capability needs authentication, so its absence is its revocation. *)
   | Principal_probe_failed of string
-  (** The probe obtained no evidence -- credentials, token generation, network, API, or
-          any error that is not the cluster refusing an identified principal. A
-          measurement failure must never read as de-escalation. *)
   | Principal_unexpected of string
-  (** Some other principal answered. The probe establishes nothing. *)
 
 type deescalation_verdict =
   | Deescalated
   | Still_elevated of string list
-  (** Capabilities the de-escalated principal is still permitted. *)
   | Undetermined of string
-  (** The surface could not be established -- never treated as de-escalated. *)
 
-(* DEC-040 / FND-0021: a `kubectl auth can-i` answer is three-valued, not a bool.
-
-   [false] used to mean "denied", but the same non-zero exit is what an unreachable
-   API, a token that could not be minted, or a transient failure produce. Folding
-   those into "denied" made every capability read as removed, the principal read as
-   confirmed, and the verdict read as [Deescalated] -- absence of evidence turned
-   into evidence of removal in the one verdict that has to mean something. So the
-   probe's answer is named, and only an explicit `no` is a denial. *)
 type capability_answer =
   | Permitted
   | Denied
   | Indeterminate of string
-  (** The probe obtained no usable answer: a transport, token or process failure, or
-      an answer the caller could not classify. Never treated as [Denied]. *)
 
-(* The first whitespace-delimited token of the first non-empty line. `kubectl auth
-   can-i` prints `yes`/`no` as that token, and newer versions append a reason after a
-   denial (`no - no RBAC policy matched`), so matching the whole line would read every
-   real denial as indeterminate and make the verification unusable. *)
 let first_token text =
   let text = String.trim text in
   let line_end =
@@ -967,11 +600,6 @@ let first_token text =
   String.sub text 0 (scan 0)
 ;;
 
-(* Classify a `kubectl auth can-i` result. Pure on purpose: this is the decision that
-   turns a probe into evidence, it has cases a shell stub cannot produce by hand, and it
-   is where FND-0021's fail-open lived. The token and the exit code must agree --
-   `yes`/0 and `no`/1 -- because a mismatch means the process is not answering the
-   question that was asked, which is [Indeterminate] rather than an answer. *)
 let capability_answer_of_can_i_output ~exit_code ~stdout ~stderr =
   let describe () =
     let text = String.trim (stderr ^ " " ^ stdout) in
@@ -1031,8 +659,6 @@ let deescalation_verdict
   | Principal_probe_failed why -> Undetermined why
   | Principal_refused_by_cluster _why -> Deescalated
   | Principal_confirmed _ ->
-    (* A capability that is definitely permitted is hard evidence of elevation and is
-       more actionable than another capability's indeterminate probe, so it wins. *)
     let still = still_permitted probes in
     if still <> []
     then Still_elevated still
@@ -1051,12 +677,6 @@ let deescalation_verdict
         else Deescalated)
 ;;
 
-(* DEC-040's positive control. A final denial is not evidence of a transition: a
-   credential that never worked, a principal that was never the elevated one, or a
-   capability that was never granted all produce the same "denied" afterwards. What the
-   security claim needs is the same principal and the same capabilities, observed
-   *permitted* inside the bootstrap window and *denied* after it. Anything less is
-   [Undetermined], which is not a licence to announce Ready. *)
 let deescalation_transition
       ~(before : (capability * capability_answer) list)
       ~after_principal
@@ -1073,9 +693,6 @@ let deescalation_transition
     Undetermined ("the post-de-escalation probe obtained no evidence: " ^ why)
   | Principal_refused_by_cluster _ -> Deescalated
   | Principal_confirmed _ ->
-    (* A capability that is definitely permitted after de-escalation is hard evidence
-       that the surface is still elevated -- more actionable than an indeterminate probe
-       elsewhere -- so it is decided first. *)
     let still = still_permitted after in
     if still <> []
     then Still_elevated still
@@ -1094,8 +711,6 @@ let deescalation_transition
           before_permitted
           |> List.filter (fun capability -> not (List.mem_assoc capability after))
         in
-        (* A capability observed permitted in the window must still be *covered* by the
-           after-probe. Its absence from the after list is not its removal. *)
         if uncovered <> []
         then
           Undetermined

@@ -1,8 +1,3 @@
-(** E2E golden workflow tests — asserts the full svc→Kafka→worker→Postgres path.
-*)
-
-(* ── Helpers ─────────────────────────────────────────────────────────────── *)
-
 let str_contains haystack needle =
   let h = String.length haystack
   and n = String.length needle in
@@ -101,7 +96,6 @@ let http_post env ~sw ~port ~path ?(headers = []) ~body () =
   | _ -> 0
 ;;
 
-(* ── DB schema (matches demo.ml) ─────────────────────────────────────────── *)
 module FulfilledOrderSchema = struct
   let table = "fulfilled_orders"
   let id_column = "order_id"
@@ -131,7 +125,6 @@ end
 
 module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 
-(* ── Confirmation-email job (sol-jobs, FEAT-077 -- matches demo.ml) ──────── *)
 module EmailJobCodec = struct
   type t = { order_id : string }
 
@@ -149,7 +142,6 @@ module EmailJobCodec = struct
   ;;
 end
 
-(* ── Golden path result ───────────────────────────────────────────────────── *)
 type result =
   { http_statuses : int list
   ; metrics_text : string
@@ -160,7 +152,6 @@ type result =
   ; jobs_processed : int
   }
 
-(* ── Run golden path ──────────────────────────────────────────────────────── *)
 let run_golden_path () =
   let loki_url = Sys.getenv_opt "LOKI_URL" in
   let postgres_url = Sys.getenv_opt "POSTGRES_URL" in
@@ -187,7 +178,6 @@ let run_golden_path () =
   @@ fun env ->
   Eio.Switch.run
   @@ fun sw ->
-  (* Observability *)
   let svc_obs =
     Sol_obs.of_env
       ~sw
@@ -215,16 +205,12 @@ let run_golden_path () =
       ~service:"jobs-worker"
       ()
   in
-  (* Each carries its own Prometheus registry (like three real, separately
-     scraped services) — this test's own assertions render and stitch them
-     together, same as internal/fixtures/local-demo/bin/demo.ml. *)
   let render () =
     Sol_obs.metrics_renderer svc_obs ()
     ^ Sol_obs.metrics_renderer worker_obs ()
     ^ Sol_obs.metrics_renderer jobs_obs ()
   in
   let svc_ot = Sol_obs.obs_eio svc_obs in
-  (* Storage *)
   let db_pool =
     match postgres_url with
     | None -> None
@@ -238,9 +224,6 @@ let run_golden_path () =
           | Error _ -> None
           | Ok () -> Some pool))
   in
-  (* Confirmation-email jobs worker (sol-jobs, FEAT-077 -- matches demo.ml).
-     Defined before W below, since W's handler enqueues into this via
-     Jobs.enqueue. *)
   let jobs_done_p, jobs_done_r = Eio.Promise.create () in
   let jobs_processed = ref 0 in
   let module EmailJob = struct
@@ -262,7 +245,6 @@ let run_golden_path () =
    | None ->
      (try Eio.Promise.resolve jobs_done_r () with
       | _ -> ()));
-  (* Kafka *)
   let svc =
     match Kafka_service.create kafka_config ~sw with
     | Ok s -> s
@@ -275,7 +257,6 @@ let run_golden_path () =
     | Ok t -> t
     | Error e -> failwith ("Kafka register: " ^ Kafka_service.error_to_string e)
   in
-  (* Worker *)
   let worker_ready_p, worker_ready_r = Eio.Promise.create () in
   let worker_done_p, worker_done_r = Eio.Promise.create () in
   let module W = struct
@@ -351,7 +332,6 @@ let run_golden_path () =
         | Failure _ -> ());
        try Eio.Promise.resolve jobs_done_r () with
        | _ -> ()));
-  (* Service *)
   let handle_order req =
     let corr_id =
       Option.value (Request.header req "x-correlation-id") ~default:"test-corr"
@@ -408,14 +388,12 @@ let run_golden_path () =
      | Error e -> failwith e);
     `Stop_daemon);
   let port = Eio.Promise.await svc_port_p in
-  (* Wait for worker ready *)
   (match
      Eio.Time.with_timeout env#clock 15.0 (fun () ->
        Ok (Eio.Promise.await worker_ready_p))
    with
    | Error `Timeout -> failwith "timed out waiting for worker partition assignment"
    | Ok () -> ());
-  (* Send 3 orders *)
   let orders =
     [ "order-e2e-001", "Mechanical Keyboard", 1
     ; "order-e2e-002", "USB-C Hub", 2
@@ -466,19 +444,16 @@ let run_golden_path () =
        ~headers:[ "x-correlation-id", "test-order-e2e-stop" ]
        ~body:stop_body
        ());
-  (* Wait for worker done *)
   (match
      Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await worker_done_p))
    with
    | Error `Timeout -> failwith "timed out waiting for worker to process messages"
    | Ok () -> ());
-  (* Wait for jobs-worker done (sol-jobs, FEAT-077) *)
   (match
      Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await jobs_done_p))
    with
    | Error `Timeout -> failwith "timed out waiting for jobs-worker to process jobs"
    | Ok () -> ());
-  (* Collect results *)
   let metrics_text = render () in
   let loki_resp =
     match loki_url with
@@ -497,9 +472,6 @@ let run_golden_path () =
       let ts_ns =
         Int64.to_string (Int64.of_float (Unix.gettimeofday () *. 1_000_000_000.))
       in
-      (* FRIC-029: the fixture stream carries the "service" label sol_cli_loki's
-         selector actually matches on -- Sol's real Loki streams never carry
-         "namespace"/"app". *)
       let body =
         Printf.sprintf
           {|{"streams":[{"stream":{"service":"sol-e2e-auth-read"},"values":[[%S,%S]]}]}|}
@@ -552,7 +524,6 @@ let run_golden_path () =
   }
 ;;
 
-(* ── Tests ────────────────────────────────────────────────────────────────── *)
 let () =
   let r = run_golden_path () in
   Alcotest.run
@@ -581,14 +552,14 @@ let () =
               then Alcotest.fail "worker /metrics did not include worker metrics")
         ; Alcotest.test_case "sol_jobs_processed_total > 0" `Quick (fun () ->
             if r.jobs_processed = 0
-            then () (* POSTGRES_URL not set — skip *)
+            then ()
             else if not (metric_nonzero r.metrics_text "sol_jobs_processed_total")
             then Alcotest.fail "metric absent or zero")
         ] )
     ; ( "loki"
       , [ Alcotest.test_case "logs received for service=order-svc" `Quick (fun () ->
             match r.loki_resp with
-            | None -> () (* LOKI_URL not set — skip *)
+            | None -> ()
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
               then Alcotest.fail "no log streams in Loki response")
@@ -597,16 +568,14 @@ let () =
             `Quick
             (fun () ->
                match r.loki_cli_lines with
-               | None -> () (* LOKI_URL not set — skip *)
+               | None -> ()
                | Some n ->
                  if n = 0
                  then Alcotest.fail "Sol_cli_loki.query returned no pushed log lines")
         ] )
     ; ( "postgres"
       , [ Alcotest.test_case "fulfilled orders persisted" `Quick (fun () ->
-            if r.db_rows = 0
-            then () (* POSTGRES_URL not set — skip *)
-            else Alcotest.(check int) "3 rows stored" 3 r.db_rows)
+            if r.db_rows = 0 then () else Alcotest.(check int) "3 rows stored" 3 r.db_rows)
         ] )
     ; ( "jobs"
       , [ Alcotest.test_case
@@ -614,7 +583,7 @@ let () =
             `Quick
             (fun () ->
                if r.db_rows = 0
-               then () (* POSTGRES_URL not set — skip *)
+               then ()
                else Alcotest.(check int) "3 jobs processed" 3 r.jobs_processed)
         ] )
     ]

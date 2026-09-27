@@ -35,9 +35,6 @@ let validate_retry_policy (policy : retry_policy) =
   else Ok ()
 ;;
 
-(* Same self-seeded, mutex-protected Random.State.t discipline kafka-eio's
-   Kafka_consumer uses for its own backoff jitter -- never the bare global
-   Random module, and never a fresh unseeded state per call. *)
 let default_rng = Random.State.make_self_init ()
 let default_rng_mutex = Mutex.create ()
 
@@ -58,8 +55,6 @@ let locked_backoff_s policy attempt =
     (fun () -> backoff_s ~rng:default_rng policy attempt)
 ;;
 
-(* BUG-044: kinds are joined with ',' into one claim parameter, so the character
-   set is restricted to one that cannot contain the separator. *)
 let is_kind_char = function
   | 'a' .. 'z' | '0' .. '9' | '_' | '.' | '-' -> true
   | _ -> false
@@ -85,15 +80,8 @@ module For_testing = struct
   let validate_kinds = validate_kinds
 end
 
-(* ── SQL (fixed table name -- sol-jobs owns "sol_jobs", not configurable;
-   see sol-jobs.md for the exact DDL an app's own migration must create) ── *)
-
 let table = "sol_jobs"
 
-(* BUG-044: the claim takes only kinds this poller handles ([$2], a
-   comma-joined J.kinds). Without it, two Make instances sharing the table
-   claimed -- and failed to decode, and eventually marked 'failed' -- each
-   other's jobs. *)
 let claim_q =
   Caqti_request.Infix.(
     Caqti_type.(t2 float string) ->? Caqti_type.(t4 int string string int))
@@ -116,11 +104,6 @@ let claim_q =
        table)
 ;;
 
-(* BUG-050 / FND-0036: every finalize is fenced on the attempt the claim
-   returned. A lease is never renewed, so a handler that outlives [lease_s] can
-   see its job re-claimed (which increments [attempts]); the stale holder's
-   write then matches no row instead of deleting or unlocking the new holder's
-   claim. [RETURNING id] makes "matched no row" observable. *)
 let complete_q =
   Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
     (Printf.sprintf "DELETE FROM %s WHERE id = ? AND attempts = ? RETURNING id" table)
@@ -147,10 +130,6 @@ let fail_q =
        table)
 ;;
 
-(* ── Shared runtime harness (mirrors Worker.with_runtime's shape) ──────── *)
-
-(* BUG-044: a missing table (the app's migration was never written or run) or
-   an unreadable one is a startup error, not an idle-looking poll loop. *)
 let table_check_q =
   Caqti_request.Infix.(Caqti_type.unit ->? Caqti_type.int)
     (Printf.sprintf "SELECT 1 FROM %s LIMIT 1" table)
@@ -203,9 +182,6 @@ let with_runtime_unflushed
     | Some r -> !r <= 0
     | None -> false
   in
-  (* Called once per job that reaches a terminal outcome (completed or
-     permanently failed) -- a retried job is not "done" yet, so it does not
-     count against max_jobs. *)
   let record_terminal () = Option.iter (fun r -> decr r) remaining in
   Eio.Switch.run (fun sw ->
     Sol_runtime.install_signal_handler ~sw signal_stop_r;
@@ -220,7 +196,6 @@ let with_runtime_unflushed
     body ~sw ~ot:obs_eio_t ~job_count ~job_duration ~should_stop ~record_terminal)
 ;;
 
-(* OBS-048: flush the asynchronous Loki/Tempo export before [run] returns. *)
 let with_runtime ~env ~ot ~metrics_port ~stop ~max_jobs ~body =
   let result = with_runtime_unflushed ~env ~ot ~metrics_port ~stop ~max_jobs ~body in
   Option.iter (fun o -> Sol_obs.flush o) ot;
@@ -239,8 +214,6 @@ module Make (J : JOB) = struct
     let kind = J.kind job in
     if not (List.mem kind J.kinds)
     then
-      (* No poller of this module would ever claim it, so the row would sit in
-         the table forever. Refused here, inside the caller's transaction. *)
       Error
         (Pg_error.Query_error
            (Printf.sprintf
@@ -287,7 +260,6 @@ module Make (J : JOB) = struct
       ~max_jobs
       ~body:(fun ~sw:_ ~ot ~job_count ~job_duration ~should_stop ~record_terminal ->
         Option.iter (fun f -> f ()) on_ready;
-        (* BUG-044: without [ot] these used to go nowhere at all. *)
         let log_warn fields msg =
           match ot with
           | Some o -> Obs_eio.log_standalone o Obs_eio.Warn ~fields msg
@@ -302,8 +274,6 @@ module Make (J : JOB) = struct
           | Some c -> c ~labels:[ "status", status; "kind", kind ] 1
           | None -> ()
         in
-        (* BUG-050: the stale holder's finalize matched no row -- the job was
-           re-claimed after this lease expired, so it may have run twice. *)
         let lease_lost id ~attempts ~action =
           log_warn
             [ "job_id", string_of_int id
@@ -388,9 +358,6 @@ module Make (J : JOB) = struct
                 | Error msg -> Error msg
                 | Ok job -> J.handle job
               in
-              (* BUG-050: leases are not renewed, so a handler that outran its
-                 lease may have run concurrently with a re-claim. Say so even
-                 when the fenced finalize below still wins. *)
               let elapsed = Eio.Time.now env#clock -. t0 in
               if elapsed > lease_s
               then

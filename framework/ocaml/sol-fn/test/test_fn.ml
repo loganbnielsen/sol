@@ -1,5 +1,3 @@
-(* ── Fixtures ───────────────────────────────────────────────────────────── *)
-
 module Ok_fn = struct
   let trigger = Fn.Cron
   let run () = Ok ()
@@ -47,16 +45,12 @@ let contains needle haystack =
     !found)
 ;;
 
-(* ── Test: run_ok ───────────────────────────────────────────────────────── *)
-
 let test_run_ok () =
   Eio_main.run
   @@ fun env ->
   let module M = Fn.Make (Ok_fn) in
   Alcotest.(check bool) "returns Ok" true (M.run ~env () = Ok ())
 ;;
-
-(* ── Test: run_error ────────────────────────────────────────────────────── *)
 
 let test_run_error () =
   Eio_main.run
@@ -67,8 +61,6 @@ let test_run_error () =
     true
     (M.run ~env () = Error (`Run "something went wrong"))
 ;;
-
-(* ── Test: run_exception ────────────────────────────────────────────────── *)
 
 let test_run_exception () =
   Eio_main.run
@@ -88,8 +80,6 @@ let test_external_stop_before_cron_run () =
   Eio.Promise.resolve stop_r ();
   Alcotest.(check bool) "returns signalled" true (M.run ~env ~stop () = Error `Signalled)
 ;;
-
-(* ── Test: metrics_ok_counter ───────────────────────────────────────────── *)
 
 let test_metrics_ok_counter () =
   Eio_main.run
@@ -116,8 +106,6 @@ let test_metrics_ok_counter () =
   Alcotest.(check bool) "status=ok label present" true (contains {|status="ok"|} output)
 ;;
 
-(* ── Test: metrics_error_counter ────────────────────────────────────────── *)
-
 let test_metrics_error_counter () =
   Eio_main.run
   @@ fun env ->
@@ -141,8 +129,6 @@ let test_metrics_error_counter () =
     true
     (contains {|status="error"|} output)
 ;;
-
-(* ── Test: metrics_duration ─────────────────────────────────────────────── *)
 
 let test_metrics_duration () =
   Eio_main.run
@@ -168,10 +154,6 @@ let test_metrics_duration () =
     (contains "sol_fn_duration_seconds" output)
 ;;
 
-(* ── Test: push_error_no_raise ──────────────────────────────────────────── *)
-
-(* Port 1 refuses connections — push_metrics must swallow the error and
-   still return normally (or raise Failure for error runs, never hang). *)
 let test_push_error_no_raise () =
   Eio_main.run
   @@ fun env ->
@@ -182,12 +164,6 @@ let test_push_error_no_raise () =
     (M.run ~env ~pushgateway_url:"http://127.0.0.1:1" () = Ok ())
 ;;
 
-(* ── Test: env-configured push (BUG-048 / EXP-022) ─────────────────────── *)
-
-(* Generated -fn mains call [F.run ~env ~ot ()] with no URL and no job. The
-   manifest renders PUSHGATEWAY_URL and SOL_PUSHGATEWAY_JOB, so with only the
-   environment set the function must push, to its own workload's group. A stub
-   Pushgateway records the request line. *)
 let with_env name value f =
   let old = Sys.getenv_opt name in
   Unix.putenv name value;
@@ -234,13 +210,6 @@ let test_push_uses_env_url_and_workload_job () =
     (contains "/metrics/job/myapp-billing.invoice-fn" line)
 ;;
 
-(* ── Test: lambda_trigger_requires_runtime_api ──────────────────────────── *)
-
-(* Lambda_runtime.run_loop itself is tested in lambda-eio; here we only verify
-   sol-fn's marginal surface — read AWS_LAMBDA_RUNTIME_API and fail fast when
-   unset — since re-testing the loop would mean racy real OS signals. *)
-(* Assumes AWS_LAMBDA_RUNTIME_API is unset, as on any normal dev/CI machine.
-   OCaml's Unix has no unsetenv to force-clear it, so skip if it's somehow set. *)
 let test_lambda_trigger_requires_runtime_api () =
   if Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" <> None
   then
@@ -258,8 +227,6 @@ let test_lambda_trigger_requires_runtime_api () =
         (contains "AWS_LAMBDA_RUNTIME_API is not set" msg)
     | _ -> Alcotest.fail "expected config error"
 ;;
-
-(* ── Runner ─────────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

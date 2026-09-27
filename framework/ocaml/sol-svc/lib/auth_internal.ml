@@ -1,7 +1,5 @@
 open Auth
 
-(* ── Internal validation ───────────────────────────────────────────────── *)
-
 let constant_time_equal s1 s2 =
   let len1 = String.length s1
   and len2 = String.length s2 in
@@ -98,9 +96,6 @@ let decode_jwt_payload parts =
   |> Option.to_result ~none:(`Unauthorized "Malformed JWT: cannot decode payload")
 ;;
 
-(* BUG-053: claims are read with [Yojson.Safe.Util.member], which raises on a
-   non-object. A token whose payload is, say, a JSON array must be a 401, not an
-   exception out of authentication. *)
 let require_claims_object = function
   | `Assoc _ as json -> Ok json
   | _ -> Error (`Unauthorized "Malformed JWT: payload is not a JSON object")
@@ -150,8 +145,6 @@ let validate_unverified_jwt config headers =
   Ok { principal = User { sub = token_sub json; scopes; claims = json } }
 ;;
 
-(* ── Verified JWT (JOSE/JWKS) ──────────────────────────────────────────── *)
-
 type jwks_cache_entry =
   { url : string
   ; fetched_at : float
@@ -159,33 +152,12 @@ type jwks_cache_entry =
   }
 
 let jwks_cache : jwks_cache_entry option Atomic.t = Atomic.make None
-
-(* BUG-053 / FND-0050: an Eio mutex, not [Stdlib.Mutex]. The fetch it guards
-   suspends the fiber; another request fiber on the same domain that took a
-   [Stdlib.Mutex] held by its own thread raised [Sys_error "Resource deadlock
-   avoided"], which surfaced as an empty reply. An Eio mutex suspends the second
-   fiber instead, and it then finds the refreshed cache (single flight).
-   [use_ro], not [use_rw]: a cancelled or failed fetch must release the mutex,
-   not poison it for every later request. *)
 let jwks_refresh_mutex = Eio.Mutex.create ()
 let jwks_ttl_s = 300.0
-(* ponytail: fixed rotation window; make configurable if a real IdP needs faster/slower *)
-
-(* A token signed with a key the IdP has just rotated in names a [kid] the cached
-   set lacks. Refetch for it, but at most once per this interval, so tokens with
-   made-up [kid]s cannot drive a fetch per request. *)
 let jwks_unknown_kid_refetch_interval_s = 30.0
-
-(* A failed fetch is remembered for this long and returned to every request that
-   would otherwise fetch again: without it, requests queued behind the mutex each
-   ran their own fetch in turn during an IdP outage, so the Nth waited about N
-   request timeouts. *)
 let jwks_failure_backoff_s = 5.0
 let jwks_last_failure : (string * float * string) option Atomic.t = Atomic.make None
 
-(* Real transport for [Jwks_url]. [Service.Make.run] builds this once, closing
-   over [env], and passes it into [validate] as the injected [fetch_jwks]
-   capability — [validate] itself stays Eio-free. *)
 let fetch_jwks_over_https ~env url =
   match
     Https_eio.request
@@ -207,9 +179,6 @@ let fetch_jwks_over_https ~env url =
      | exn -> Error ("JWKS parse failed: " ^ Printexc.to_string exn))
 ;;
 
-(* [~max_age_s] is how old a cached set may be and still be used: the TTL
-   normally, and the refetch interval when the caller is looking for an unknown
-   [kid]. *)
 let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
   let usable entry =
     entry.url = url && Unix.gettimeofday () -. entry.fetched_at < max_age_s
@@ -218,8 +187,6 @@ let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
   | Some entry when usable entry -> Ok entry.jwks
   | _ ->
     Eio.Mutex.use_ro jwks_refresh_mutex (fun () ->
-      (* Another fiber may have refreshed -- or failed to -- while this one
-         waited. *)
       match Atomic.get jwks_cache, Atomic.get jwks_last_failure with
       | Some entry, _ when usable entry -> Ok entry.jwks
       | _, Some (u, at, msg)
@@ -241,8 +208,6 @@ let now_ptime () =
   | None -> Ptime.epoch
 ;;
 
-(* [Jose.Jwk.t] is a GADT, so a function can't return "the jwk" across
-   branches at one monomorphic type — verify inline in each branch instead. *)
 let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
   let with_jwk jwk =
     match Jose.Jwt.validate ~jwk ~now:(now_ptime ()) parsed with
@@ -262,9 +227,6 @@ let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
          (match refetch with
           | None -> not_found
           | Some refetch ->
-            (* The cached set is authoritative within its TTL; the refetch is
-               best effort. If it fails, the key is simply not known: 401, not
-               a 500 an attacker could trigger with made-up kids. *)
             (match refetch () with
              | Error _ -> not_found
              | Ok jwks ->

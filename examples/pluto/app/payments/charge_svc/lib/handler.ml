@@ -1,10 +1,3 @@
-(* POST /charges         — write notification to DB
-   GET  /checkout-quote — call checkout_svc through declared service wiring
-   GET  /health         — liveness probe
-   GET  /notifications  — list recent charges from DB *)
-
-(* FRIC-026: seed the RNG once. Without this the charge id is a fixed
-   sequence per process start, so ids repeat across restarts. *)
 let () = Random.self_init ()
 
 let checkout_quote ~env ~sw ~obs req =

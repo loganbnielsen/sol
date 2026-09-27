@@ -16,30 +16,15 @@ module Make (H : HANDLER) : sig
     -> ?port:int
     -> ?metrics_auth:Auth.level
     -> ?ot:Sol_obs.t
-         (** Observability handle. When provided, [sol_svc_requests_total] and
-          [sol_svc_request_duration_seconds] are emitted automatically, and the
-          built-in [/metrics] endpoint renders from the same handle. *)
     -> ?max_body_bytes:int
     -> ?drain_timeout_s:float
     -> ?shutdown_delay_s:float
-         (** On a stop (SIGTERM/SIGINT or [stop]), [GET /readyz] turns 503 at once
-          and the listener keeps serving for this long before it stops accepting,
-          so Kubernetes removes the endpoint first (INFRA-073). Default [5.0];
-          keep [shutdown_delay_s + drain_timeout_s] under the pod's
-          [terminationGracePeriodSeconds] (Sol renders 45). Tests pass [0.0]. *)
     -> ?stop:unit Eio.Promise.t
-         (** External stop signal. Resolve to request graceful shutdown: readiness
-          turns 503, then after [shutdown_delay_s] the listener closes and
-          in-flight requests get up to [drain_timeout_s] before forced
-          cancellation. *)
     -> ?on_listen:(int -> unit)
     -> unit
     -> (unit, run_error) result
 end
 
-(** Functional alternative to [Make(H).run]. Equivalent to
-    [Make(struct let routes = routes end).run]. Use when routes are defined
-    inline or captured from a closure, avoiding the module boilerplate. *)
 val run
   :  Route.t list
   -> env:
@@ -58,13 +43,9 @@ val run
   -> unit
   -> (unit, run_error) result
 
-(** Test-only access to the request boundary (BUG-053): runs [f] and turns any
-    exception other than cancellation and fatal ones into a logged 500, so every
-    request gets a response. *)
 module For_testing : sig
   val respond_or_500 : (unit -> Response.t) -> Response.t
 
-  (** The request path as the server runs it, with the JWKS fetch injectable. *)
   val dispatch
     :  ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
     -> routes:Route.t list

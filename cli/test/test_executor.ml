@@ -1,9 +1,3 @@
-(* Tests for Sol_cli_executor.
-   The local and direct executors call Sol_cli_manifest.apply which in
-   dry_run=true mode only prints the YAML — no kubectl is invoked.
-   The gitops executor writes a file to a temp directory. *)
-
-(* REFAC-133: the executors return their failure instead of raising it. *)
 let ok = function
   | Ok r -> r
   | Error e -> Alcotest.fail e
@@ -12,8 +6,6 @@ let ok = function
 let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
-
-(* ── fixtures ────────────────────────────────────────────────────────────── *)
 
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
@@ -103,10 +95,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
 
 let check_string = Alcotest.(check string)
 
-(* ── local executor ──────────────────────────────────────────────────────── *)
-
 let test_local_result_fields () =
-  (* dry_run=true exercises render+apply without invoking kubectl *)
   let r =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
@@ -134,8 +123,6 @@ let test_local_worker_result () =
   check_string "local worker namespace" "myapp-comms" r.namespace;
   check_string "local worker name" "notify-worker" r.name
 ;;
-
-(* ── direct executor ─────────────────────────────────────────────────────── *)
 
 let test_direct_result_fields () =
   let r =
@@ -166,11 +153,8 @@ let test_direct_worker_result () =
   check_string "direct worker name" "notify-worker" r.name
 ;;
 
-(* ── gitops executor ─────────────────────────────────────────────────────── *)
-
 let test_gitops_result_fields () =
   let dir = Filename.temp_file "sol-gitops-test-" "" in
-  (* temp_file creates a regular file; we need a directory *)
   Sys.remove dir;
   Unix.mkdir dir 0o755;
   let r =
@@ -185,7 +169,6 @@ let test_gitops_result_fields () =
   check_string "gitops namespace" "myapp-payments" r.namespace;
   check_string "gitops name" "charge-svc" r.name;
   check_string "gitops image" "sol-registry:5000/myapp/charge-svc:abc123" r.image;
-  (* clean up *)
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
   (try Sys.remove path with
    | _ -> ());
@@ -206,7 +189,6 @@ let test_gitops_writes_file () =
        svc_spec);
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
   let exists = Sys.file_exists path in
-  (* read and check content before cleanup *)
   let content =
     if exists
     then (
@@ -257,8 +239,6 @@ let test_gitops_worker () =
   check_string "gitops worker name" "notify-worker" r.name;
   Alcotest.(check bool) "gitops worker file created" true exists
 ;;
-
-(* ── entry point ─────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

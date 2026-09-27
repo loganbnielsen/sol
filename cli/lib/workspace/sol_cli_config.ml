@@ -12,19 +12,7 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
-    (* DEC-033: what `sol cloud destroy` deliberately keeps. Absent means the
-     production default (retain the final snapshot); a disposable qualification
-     target sets `destroy_retention: none`, so its postcondition is Absent with
-     nothing billable left behind. *)
   ; destroy_retention : string option
-    (* The identity allowed to enter this target's install window, by impersonating
-       the platform provisioner. GCP requires that grant explicitly -- creating the
-       identity does not let anyone use it (Attempt 2) -- and AWS's equivalent is the
-       provisioner role's trust policy, so this is routed to the GCP root only.
-
-       Declared rather than inferred, deliberately: "no caller named" must mean "no
-       impersonation grant", not "grant whoever is running Sol". Inferring it is the
-       ambient-authority escape hatch this field exists to close. *)
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
@@ -60,14 +48,9 @@ type service =
   ; scale_min : int option
   ; scale_max : int option
   ; language : Sol_cli_compat.language option
-    (** FEAT-088: the framework language implementing this workload, declared in
-          [sol.yml]. The production profile qualifies only OCaml; this is an
-          explicit input, never inferred from build metadata. *)
   ; omit : bool
   }
 
-(* What one file contributes: sol.yml, an environment, or a target (REFAC-109).
-   Its target is optional because a layer need not say anything about one. *)
 type layer =
   { project : string option
   ; target : target option
@@ -167,7 +150,6 @@ let service_empty name =
   }
 ;;
 
-(* A target's own settings -- one text value each. *)
 type target_field =
   | Target_registry
   | Target_base_domain
@@ -188,17 +170,10 @@ type target_field =
   | Target_node_failure_headroom_nodes
   | Target_profile
 
-(* What a key in a target body is (REFAC-129): one of the target's own fields, a
-   provider's block, a key a provider owns, or not a target key at all. Split so
-   each is decoded by a match total over its own cases. *)
 type target_key =
   | Target_field of target_field
   | Target_provider_box of Sol_cli_provider.t
   | Target_provider_owned of string * Sol_cli_provider.t
-  (** A key a provider owns (REFAC-098): [(key, provider)]. The provider is a constructor,
-      not a spelling: the knowledge is a data list in the provider tier
-      ([Sol_cli_provider.owned_legacy_keys]), where the boundary guard can see it
-      (AUDIT-POST-003). *)
   | Target_unknown of string
 
 let target_key_of_string s =
@@ -221,9 +196,6 @@ let target_key_of_string s =
   | "cluster_endpoint_cidr" -> Target_field Target_cluster_endpoint_cidr
   | "node_failure_headroom_nodes" -> Target_field Target_node_failure_headroom_nodes
   | "profile" -> Target_field Target_profile
-  (* REFAC-098: provider-native identity lives in the provider's own block, so a
-     target on one provider can never carry another's. Which keys those are is the
-     provider tier's to say (AUDIT-POST-003). *)
   | _ ->
     (match Sol_cli_provider.owned_legacy_key s with
      | Some provider -> Target_provider_owned (s, provider)
@@ -254,18 +226,8 @@ let target_field_name = function
   | Target_profile -> "profile"
 ;;
 
-(* REFAC-106: sol.yml and target files are YAML, parsed by libyaml (the `yaml`
-   package) and decoded here against the key table above. The decoder walks
-   [Yaml.yaml] rather than [Yaml.value] because a scalar there keeps the exact text
-   the user wrote: `1.10`, `012` and an account id stay strings, where the value API
-   would have made numbers of them. Errors name the key path, and a YAML syntax
-   error names its line. *)
-
-(* A decode error naming its file; [Error (error_at ~path m)] fails with it. *)
 let error_at ~path message = { path; line = 0; message }
 
-(* libyaml's own error message carries no usable position, so the line comes from
-   the event stream: the last event parsed before the failure. *)
 let syntax_error_line text =
   match Yaml.Stream.parser text with
   | Error _ -> 0
@@ -280,7 +242,6 @@ let syntax_error_line text =
 ;;
 
 let yaml_problem message =
-  (* "error calling parser: <problem> character 0 position 0 returned: 0" *)
   let prefix = "error calling parser: " in
   let m =
     if
@@ -318,10 +279,6 @@ let parse_yaml ~path text =
       }
 ;;
 
-(* The text of a scalar, trimmed; [None] for a null or blank one, which every key
-   treats as a missing value. REFAC-123: blank is decided here, once, quoted or
-   not -- `key: ""` and `key: "  "` are missing values too -- so nothing that reads
-   a decoded field has to ask whether [Some s] is really there. *)
 let scalar_text : Yaml.yaml -> string option = function
   | `Scalar { Yaml.value; style; _ } ->
     let quoted =
@@ -341,9 +298,6 @@ let is_null : Yaml.yaml -> bool = function
   | _ -> false
 ;;
 
-(* A mapping's members as (key, value), rejecting a non-scalar key, an alias and a
-   duplicate key: YAML leaves duplicates to the application, and a second value
-   silently winning is exactly the ambiguity a config file must not have. *)
 let members
       ~path
       ~where
@@ -371,10 +325,6 @@ let members
   | _ -> Error (error_at ~path (Printf.sprintf "expected a mapping%s" where))
 ;;
 
-(* One layer's keys. [~top_level:true] is sol.yml's shape (project, target,
-   resources, services). Otherwise it is an environment or a target body in
-   sol/environments.yml (FEAT-100): target keys sit directly in the body, next to
-   resources and services, and errors name the [context] they came from. *)
 let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) =
   let error message =
     error_at ~path (if context = "" then message else context ^ ": " ^ message)
@@ -410,9 +360,6 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
         ~duplicate:(Printf.sprintf "duplicate %s target field %S" provider)
         v
     in
-    (* Every provider field is one text value. A nested value used to be dropped
-       silently; it is refused, naming the key (REFAC-129: no config in the repo
-       nests one). *)
     fields
     |> Sol_cli_result.map_list (fun (k, v) ->
       match v with
@@ -687,9 +634,6 @@ let load path =
   else load_string ~path (In_channel.with_open_bin path In_channel.input_all)
 ;;
 
-(* REFAC-130: the sol.yml layer on its own, for callers that need a declaration
-   sol.yml makes without resolving an environment or a target. The workspace
-   model reads each workload's declared language this way. *)
 let sol_yml_services_of_string ~path text =
   let* layer = load_string ~path text in
   Ok layer.services
@@ -736,10 +680,6 @@ let merge_provider_fields a b =
     b
 ;;
 
-(* REFAC-098: a value from the target's own provider block. Provider-native
-   configuration (role ARNs, the state lock table, the GCP impersonator) lives
-   there, read by that provider's code, so a target on one provider has no field
-   for another's. *)
 let provider_field (target : target) key =
   List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
   |> Option.value ~default:[]
@@ -756,15 +696,7 @@ let merge_target a b =
   ; kube_context = prefer a.kube_context b.kube_context
   ; kubeconfig = prefer a.kubeconfig b.kubeconfig
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
-  ; observability_backend =
-      prefer a.observability_backend b.observability_backend
-      (* DEC-033 added the field but not this line, so the setting was dropped on the
-     only path a real target is resolved through: `{ a with ... }` keeps the
-     *base*'s value and discards the target file's, which meant a disposable
-     target's `destroy_retention: none` was silently ignored and every destroy took
-     the production default. DEC-033's own tests construct [target_empty] directly
-     and so never crossed the merge, which is the shape of gap that a test has to
-     cross on purpose rather than by accident. *)
+  ; observability_backend = prefer a.observability_backend b.observability_backend
   ; destroy_retention = prefer a.destroy_retention b.destroy_retention
   ; alert_receiver_type = prefer a.alert_receiver_type b.alert_receiver_type
   ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
@@ -833,10 +765,6 @@ let merge base overlay =
   }
 ;;
 
-(* `local` names Sol's own ephemeral substrate, not an environment — it is the
-   absence of a target, which is why `SOL_ENV` is deliberately unset there
-   (DEC-016). Reserving the word keeps it from also meaning an environment the
-   user can select, and keeps one word for one thing (REFAC-083). *)
 let reserved_env_name = "local"
 
 let target_of_path s =
@@ -902,12 +830,6 @@ let target_of_path s =
       { path = s; line = 0; message = "target must look like <env>/<provider>/<region>" }
 ;;
 
-(* Config and target paths resolve relative to the resolved workspace root, not
-   the invocation cwd, so `sol plan`/`sol deploy` work from any descendant
-   directory (DEC-024 clause 4). [find_root] is cheap and marker-free; when
-   there is no workspace the command has already failed closed in
-   [load_for_target], so target-name-only formatting falls back to a
-   root-relative path. *)
 let workspace_root () =
   match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
   | Some root -> root
@@ -915,19 +837,13 @@ let workspace_root () =
 ;;
 
 let rooted path = Filename.concat (workspace_root ()) path
-
-(* FEAT-100 / DEC-047: deployment config is sol.yml -> environment -> target.
-   Environments and their targets live in sol/environments.yml; an optional,
-   gitignored sol/environments.local.yml supplies account-specific values the
-   tracked file leaves unset, and may add whole environments or targets (the
-   2026-09-26 amendment). A key comes from exactly one of the two files. *)
 let environments_file = "sol/environments.yml"
 let environments_local_file = "sol/environments.local.yml"
 
 type environment =
   { env_name : string
   ; layer : layer
-  ; targets : (string * layer) list (** keyed ["<provider>/<region>"] *)
+  ; targets : (string * layer) list
   }
 
 let rec fold_result f acc = function
@@ -946,7 +862,6 @@ let target_key_ok key =
   | _ -> Error "a target must look like <provider>/<region>"
 ;;
 
-(* DEC-047's placement table: keys that identify one cluster or region. *)
 let target_only_keys (t : target) =
   List.filter_map
     (fun (name, set) -> if set then Some name else None)
@@ -958,8 +873,6 @@ let target_only_keys (t : target) =
     ]
 ;;
 
-(* ... and keys that describe the application's shape, which only sol.yml may set:
-   an environment or target adjusts size, scale and omit, nothing else. *)
 let app_shape_keys (l : layer) =
   List.concat_map
     (fun (r : resource) ->
@@ -1069,7 +982,6 @@ let load_environments_file path =
     decode_environments ~path doc)
 ;;
 
-(* Every key a layer sets, as a path, for the disjoint rule. *)
 let layer_keys (l : layer) =
   let opt name o = if o = None then [] else [ name ] in
   let target_keys =
@@ -1131,8 +1043,6 @@ let disjoint ~path ~context tracked local =
       }
 ;;
 
-(* The union of the tracked and local files: whole environments and targets the
-   local file adds are appended; keys it adds to a tracked one must be disjoint. *)
 let union_environments ~local_path ~tracked ~local =
   fold_result
     (fun acc (l : environment) ->
@@ -1161,8 +1071,6 @@ let union_environments ~local_path ~tracked ~local =
     local
 ;;
 
-(* FEAT-100 is a clean break (pre-alpha, no compat shim): the old per-target
-   layout is refused rather than silently ignored, naming where each file goes. *)
 let refuse_per_target_files ~root =
   let sol_dir = Filename.concat root "sol" in
   let names select path =
@@ -1242,17 +1150,12 @@ let discover_targets envs =
   |> List.sort String.compare
 ;;
 
-(* REFAC-130: [~root] names the workspace to read; without it the root is
-   resolved from the current directory, as every caller did before. *)
 let discover_target_paths ?root () =
   let root = Option.value root ~default:(workspace_root ()) in
   let* envs = load_environments ~root in
   Ok (discover_targets envs)
 ;;
 
-(* Matches the only providers sol.yml's target-provider boxes recognize — no
-   third value invented here that nothing else in the codebase
-   (platform/cloud/) can actually provision against. *)
 let known_provider = Sol_cli_provider.is_known
 
 let format_use_ref ref =
@@ -1274,9 +1177,6 @@ let validate_use_ref ~(target : target) ~resources service_name ref =
             Printf.sprintf "service %S uses undeclared resource %S" service_name ref
         }
   else (
-    (* Every branch below requires every segment non-empty, so a ref with
-       a blank segment (e.g. "/foo//bar") falls through to the generic
-       parse-error case instead of being misclassified as cross-env. *)
     match String.split_on_char '/' ref with
     | [ ""; seg1; seg2 ] when seg1 <> "" && seg2 <> "" ->
       if known_provider seg1
@@ -1338,9 +1238,6 @@ let validate_uses cfg =
     validate_services (active_services cfg)
 ;;
 
-(* A profile is a claim one target makes about itself (DEC-026). sol.yml's
-   target section is inherited by every target, so a profile there would opt
-   every environment in without any target file saying so. *)
 let reject_shared_profile ~path (base : layer) =
   match base.target with
   | Some { profile = Some _; _ } ->
@@ -1354,10 +1251,6 @@ let reject_shared_profile ~path (base : layer) =
   | _ -> Ok ()
 ;;
 
-(* sol.yml -> environment -> target, through [merge], which implements DEC-047's
-   key table (lowest layer wins; scale and provider blocks deep-merge; lists
-   replace; omit is sticky). An environment or target may only adjust services
-   and resources sol.yml declares. *)
 let resolve ~base ~envs (target : target) =
   let base_target =
     match base.target with
@@ -1414,28 +1307,9 @@ let resolve ~base ~envs (target : target) =
 let resolved_target ~base ~envs target_path =
   let* target = target_of_path target_path in
   let* cfg = resolve ~base ~envs target in
-  (* [resolve] starts from [Some] and merging never drops it; the path's own
-     target is what that merge is based on. *)
   Ok (Option.value cfg.target ~default:target)
 ;;
 
-(** Where this target deploys. Fails closed when it names no context, and when it
-    names Sol's own cluster.
-
-    REFAC-086: the reservation of the *name* [reserved_env_name] stops a target
-    being called "local"; this stops one being pointed at the same cluster, which
-    would hand target semantics — credentials, [SOL_ENV], target identity, release
-    history — to Sol's ephemeral substrate and recreate a synthetic local target
-    through the back door.
-
-    Compared through the destination abstraction rather than a repeated literal, so
-    changing the local context cannot silently disarm the check. Structural
-    equality is deliberate: a field added to the destination type keeps this
-    correct, where a hand-written [equal] could drift.
-
-    Deliberately not folded into [validate_no_same_cluster]: that one is about
-    relationships among configured environments, this is about a reserved
-    execution mode. *)
 let destination_of_target (target : target) =
   let* destination =
     Sol_cli_kube_destination.of_context
@@ -1454,15 +1328,6 @@ let destination_of_target (target : target) =
   else Ok destination
 ;;
 
-(* The same-cluster lint compares the destination Sol will actually use, not the
-   descriptive [cluster_name]. Two fields describing the same property would be
-   two sources of truth for exactly what this check protects — the lint could
-   verify one field while the deploy landed via the other. Contexts are compared
-   together with the kubeconfig they came from, because the same context name in
-   two different kubeconfigs can be two different clusters.
-
-   [None] means the destination cannot be resolved, so there is nothing to
-   compare; such a target fails closed at deploy time instead. *)
 let destination_identity target =
   match destination_of_target target with
   | Error _ -> None
@@ -1477,9 +1342,6 @@ let validate_no_same_cluster ~base ~envs (selected : target) =
       if path = selected.name
       then loop rest
       else (
-        (* A target that cannot be read or resolved is an environment whose
-           cluster we cannot check. Failing here is the point: an unverified
-           environment must not pass as a verified one. *)
         match resolved_target ~base ~envs path with
         | Error error -> Error error
         | Ok (other : target) ->
@@ -1505,10 +1367,6 @@ let validate_no_same_cluster ~base ~envs (selected : target) =
   loop paths
 ;;
 
-(* REFAC-109: a resolved configuration always has its target -- [load_for_target]
-   builds one from sol.yml, the environment and the target -- so its type says so,
-   and callers read [cfg.target] instead of unwrapping an option that is never
-   [None]. *)
 type t =
   { project : string option
   ; target : target
@@ -1516,9 +1374,6 @@ type t =
   ; services : service list
   }
 
-(* BUG-056: the facts a deployment plan reads, which every deployment mode can
-   supply -- a resolved configuration carries them alongside its target, and
-   local has no target to resolve while sol.yml still declares them. *)
 type declared =
   { services : service list
   ; resources : resource list
@@ -1531,16 +1386,11 @@ let declared_of_config (cfg : t) =
 
 let load_declared ~root =
   let* layer = load (Filename.concat root "sol.yml") in
-  (* No environment or target layer is read, so no profile is claimed: a profile
-     is selected by an environment or a target, never by sol.yml (DEC-026). *)
   Ok { services = layer.services; resources = layer.resources; profile = None }
 ;;
 
 let load_for_target ~target =
   let* target = target_of_path target in
-  (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and sol.yml and
-     the environments files resolve relative to that root -- not the invocation
-     cwd. Absence fails closed and names the fix. *)
   let* root =
     match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
     | Ok root -> Ok root
@@ -1557,8 +1407,6 @@ let load_for_target ~target =
   let* envs = load_environments ~root in
   let* cfg = resolve ~base ~envs target in
   let* cfg = validate_uses cfg in
-  (* [resolve] starts from a Some target and [merge] keeps it, so the default is
-     never taken; it keeps this total without an assertion. *)
   let target = Option.value cfg.target ~default:target in
   let* () = validate_no_same_cluster ~base ~envs target in
   Ok { project = cfg.project; target; resources = cfg.resources; services = cfg.services }
@@ -1567,8 +1415,6 @@ let load_for_target ~target =
 let resources (cfg : t) = List.filter (fun (r : resource) -> not r.omit) cfg.resources
 let services (cfg : t) = List.filter (fun s -> not s.omit) cfg.services
 
-(* Reads the raw declarations, not [active_services]: the caller is asking about a
-   unit it reached by another route, to decide whether this target omits it. *)
 let is_omitted_service (cfg : t) ~name =
   List.exists (fun s -> s.omit && String.equal s.name name) cfg.services
 ;;
@@ -1577,10 +1423,6 @@ let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =
   if has_profile then cli_vars @ config_vars else config_vars @ cli_vars
 ;;
 
-(* REFAC-107: which local infrastructure `sol local infra up` starts, decided from
-   what sol.yml declares rather than inferred from build files. Kafka and Postgres
-   follow the declared resources; the observability stack is always on, because
-   every platform install has it ("dev mirrors prod"). *)
 let local_infra ~root =
   let* cfg = load (Filename.concat root "sol.yml") in
   let declares typ =
@@ -1595,6 +1437,4 @@ let local_infra ~root =
     }
 ;;
 
-(* REFAC-109: the bare target a <env>/<provider>/<region> address names, with no
-   settings; for callers that build a resolved configuration directly. *)
 let parse_target = target_of_path

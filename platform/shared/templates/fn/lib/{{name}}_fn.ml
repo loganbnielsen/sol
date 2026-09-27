@@ -1,4 +1,3 @@
-(* The schedule lives in this workload's sol.toml ([service] schedule). *)
 let trigger = Fn.Cron
 
 let run () =

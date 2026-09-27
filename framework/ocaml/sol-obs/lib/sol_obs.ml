@@ -13,9 +13,6 @@ type t =
   ; flushers : (float -> unit) list
   }
 
-(* REFAC-137: the same rule as [Sol_runtime.setting] -- trimmed, blank is unset.
-   A copy rather than a call, because sol-obs is its own package and does not
-   depend on sol-runtime. *)
 let setting name =
   match Sys.getenv_opt name with
   | None -> None
@@ -25,19 +22,10 @@ let setting name =
      | trimmed -> Some trimmed)
 ;;
 
-(* OBS-048 / FND-0051: log lines always reach stdout, Loki or not. With Loki as
-   the only log backend, `kubectl logs` showed no application lines, and a Loki
-   outage lost them outright (a failed push is reported without its content).
-   Spans only: metrics already have Prometheus, and a line per counter increment
-   would drown the log. Stdout goes first, so the line is written before any
-   wait on Loki. *)
 let stdout_logs =
   { Obs_eio.stdout with emit_metric = (fun _ -> ()); declare_metric = (fun _ -> ()) }
 ;;
 
-(* OBS-048 part B: Loki and Tempo export asynchronously on [sw], so a slow or
-   unreachable backend no longer blocks the fiber that logs. The price is
-   [flush]: lines still queued when the process exits are lost unless it runs. *)
 let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
   let log_backend, loki_flush =
     match setting "LOKI_URL" with

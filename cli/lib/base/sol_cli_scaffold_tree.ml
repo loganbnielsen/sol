@@ -1,11 +1,3 @@
-(* REFAC-128: copy one scaffold template tree into a destination.
-
-   The walk is deliberately dumb: it reads a directory listing, sorts it, and
-   writes (or merges) each file. Everything that decides *what* a generated
-   project says lives in the template files under
-   platform/shared/templates/<kind>/; everything that decides *where it goes and
-   with which variables* lives in Sol_cli_cmd_new. *)
-
 open Result.Syntax
 
 type rule =
@@ -24,9 +16,6 @@ let read_file path =
 
 let dir_of ~root ~kind = Filename.concat root kind
 
-(* Every template of [kind], relative to its kind directory, sorted. A [Sys_error]
-   is an [Error] naming the directory: a kind with no tree is a broken install,
-   not an empty scaffold. *)
 let plan ~root ~kind =
   let base = dir_of ~root ~kind in
   let rec walk rel acc =
@@ -57,10 +46,6 @@ let plan ~root ~kind =
 
 let text ~root ~kind ~rel = read_file (Filename.concat (dir_of ~root ~kind) rel)
 
-(* Append [new_mod] to the "(modules ...)" stanza in [path]. Handles the standard
-   single-line form "(modules Foo Bar)". A file whose stanza cannot be found is
-   reported and left alone, as it always was: the alternative is refusing an
-   event because a hand-edited dune file does not look like the template. *)
 let patch_modules_stanza path new_mod =
   let ic = open_in path in
   let content = In_channel.input_all ic in

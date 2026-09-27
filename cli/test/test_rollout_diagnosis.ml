@@ -4,7 +4,6 @@ let check_int = Alcotest.(check int)
 
 module D = Sol_cli_rollout_diagnosis
 
-(* Fixtures are well-formed, so their decode is expected to succeed. *)
 let ok what = function
   | Ok v -> v
   | Error e -> Alcotest.failf "%s: unexpected decode error: %s" what e
@@ -12,10 +11,6 @@ let ok what = function
 
 let pods_of json = D.parse_pods_json json |> ok "pods"
 let events_of json = D.parse_events_json json |> ok "events"
-
-(* DEC-038 §7: the diagnosis functions now return a three-valued verdict. These
-   helpers keep the existing assertions about *this* question -- "did it report a
-   problem?" -- readable, and make the mapping explicit rather than incidental. *)
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 let reports_healthy = function
@@ -150,8 +145,6 @@ let events_json =
 |}
 ;;
 
-(* ── parse_pods_json ─────────────────────────────────────────────────── *)
-
 let test_parse_healthy_pod () =
   match pods_of healthy_pod_json with
   | [ p ] ->
@@ -203,8 +196,6 @@ let test_parse_pod_with_missing_status_keeps_list () =
   | pods -> Alcotest.failf "expected two pods, got %d" (List.length pods)
 ;;
 
-(* ── parse_events_json / events_for_pod ─────────────────────────────── *)
-
 let test_events_for_pod_filters_and_orders () =
   let events = events_of events_json in
   let for_xyz = D.events_for_pod ~pod_name:"charge-svc-xyz" events in
@@ -217,8 +208,6 @@ let test_events_for_pod_excludes_other_pods () =
   let for_other = D.events_for_pod ~pod_name:"charge-svc-abc" events in
   check_int "no events for unrelated pod" 0 (List.length for_other)
 ;;
-
-(* ── format_service_diagnosis ───────────────────────────────────────── *)
 
 let test_format_service_diagnosis_none_when_healthy () =
   let pods = pods_of healthy_pod_json in
@@ -252,7 +241,6 @@ let test_format_service_diagnosis_includes_events_and_reason () =
 ;;
 
 let test_format_service_diagnosis_reports_empty_pod_list () =
-  (* Empty here means kubectl confirmed zero pods, not a fetch failure. *)
   match D.format_service_diagnosis ~service_name:"charge-svc" [] (D.Events []) with
   | D.Healthy -> Alcotest.fail "expected a diagnosis for zero pods, not a healthy verdict"
   | D.Undetermined why ->
@@ -277,8 +265,6 @@ let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous ()
        (D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events [])))
 ;;
 
-(* ── format_cronjob_diagnosis (Ephemeral/Fn) ────────────────────────────── *)
-
 let never_scheduled : D.cronjob_status =
   { last_schedule_time = None; last_successful_time = None; active_job_names = [] }
 ;;
@@ -292,7 +278,7 @@ let idle_last_run_succeeded : D.cronjob_status =
 
 let idle_last_run_failed : D.cronjob_status =
   { last_schedule_time = Some "2026-09-02T10:00:00Z"
-  ; last_successful_time = Some "2026-09-01T10:00:05Z" (* stale, from an earlier run *)
+  ; last_successful_time = Some "2026-09-01T10:00:05Z"
   ; active_job_names = []
   }
 ;;
@@ -375,7 +361,6 @@ let test_format_cronjob_diagnosis_never_succeeded_is_flagged () =
 ;;
 
 let test_format_cronjob_diagnosis_active_run_is_ok () =
-  (* Active-run pod failures are bounded by the CronJob backoff/failure state. *)
   check_bool
     "a currently-active run is not (yet) a diagnosis"
     true
@@ -400,11 +385,6 @@ let test_format_cronjob_diagnosis_missing_is_flagged () =
       (Sol_cli_string.contains ~needle:"not found" diagnosis)
 ;;
 
-(* DEC-038 §7 / FND-0019. This test used to assert *silence* -- the expectation
-   was the old `None`, which the rollup read as healthy. It was asserting the bug.
-
-   An unavailable fetch is still not a rollout failure, and that intent is kept.
-   But it is not health either: it is Undetermined, and it carries why. *)
 let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
   match
     D.format_cronjob_diagnosis
@@ -417,8 +397,6 @@ let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
   | D.Unhealthy _ -> Alcotest.fail "a failed read is not a rollout failure either"
 ;;
 
-(* ── format_active_run_diagnosis (Ephemeral/Fn active run) ──────────────── *)
-
 let test_format_active_run_diagnosis_running_pod_is_ok () =
   let pods = pods_of healthy_pod_json in
   check_bool
@@ -428,8 +406,6 @@ let test_format_active_run_diagnosis_running_pod_is_ok () =
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
-(* Unlike a Continuous pod, Succeeded is expected here: an active run
-   finishing is not a failure. *)
 let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
   let pods = pods_of succeeded_pod_json in
   check_bool
@@ -448,8 +424,6 @@ let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
-(* Every invocation passes through this state en route to Running; it must
-   not be a finding or every startup would false-positive. *)
 let test_format_active_run_diagnosis_pending_startup_is_ok () =
   let pods = pods_of pending_no_containers_json in
   check_bool
@@ -459,8 +433,6 @@ let test_format_active_run_diagnosis_pending_startup_is_ok () =
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
-(* Otherwise indistinguishable from normal startup -- FailedScheduling is
-   the signal that it's actually stuck. *)
 let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
   let pods = pods_of pending_no_containers_json in
   let events = events_of events_json in
@@ -480,8 +452,6 @@ let test_format_active_run_diagnosis_container_creating_is_ok () =
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
-(* Leniency covers zero restarts only -- after a restart, the same state
-   could be a crash-loop retry. *)
 let test_format_active_run_diagnosis_container_creating_after_restart_is_flagged () =
   let pods = pods_of container_creating_after_restart_json in
   check_bool
@@ -522,8 +492,6 @@ let test_parse_cronjob_status_never_scheduled () =
     check_int "no active jobs" 0 (List.length status.active_job_names)
 ;;
 
-(* A CronJob JSON with no "status" key at all (not even an empty object) is a
-   CronJob that has never run, not a malformed read. *)
 let test_parse_cronjob_status_status_key_absent () =
   match D.parse_cronjob_status {|{}|} with
   | Error e -> Alcotest.fail ("expected a cronjob_status, got Unavailable: " ^ e)
@@ -531,8 +499,6 @@ let test_parse_cronjob_status_status_key_absent () =
     check_bool "no lastScheduleTime" true (status.last_schedule_time = None);
     check_int "no active jobs" 0 (List.length status.active_job_names)
 ;;
-
-(* ── REFAC-127: a malformed read is an error, never "nothing there" ────────── *)
 
 let is_error = function
   | Ok _ -> false
@@ -562,15 +528,11 @@ let test_malformed_reads_are_errors () =
     (is_error (D.parse_cronjob_status {|{"status": {"active": [{}]}}|}))
 ;;
 
-(* The positive controls: an empty list is an answer. *)
 let test_empty_lists_are_answers () =
   check_int "no pods" 0 (List.length (pods_of {|{"items": []}|}));
   check_int "no events" 0 (List.length (events_of {|{"items": []}|}))
 ;;
 
-(* A pod whose metadata is missing still parses: absent fields default, only the
-   response's shape is required. Before REFAC-127 this raised inside a catch-all
-   and the whole list read as empty. *)
 let test_pod_without_metadata_parses () =
   match pods_of {|{"items": [{"status": {"phase": "Pending"}}]}|} with
   | [ p ] ->
@@ -579,13 +541,8 @@ let test_pod_without_metadata_parses () =
   | _ -> Alcotest.fail "expected one pod"
 ;;
 
-(* ── INFRA-057 / DEC-038 §5: a failed read is not an absent result ─────────── *)
-
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
-(* A denied events read must be named, and must never render as "none". This is
-   the state the live Run 8 diagnosis was in: the deploy identity may not read
-   events, and the output said nothing about it. *)
 let test_unavailable_events_are_named_not_empty () =
   match
     D.format_service_diagnosis
@@ -610,9 +567,6 @@ let test_unavailable_events_are_named_not_empty () =
       (contains "No events recorded" text)
 ;;
 
-(* The other state: the read worked and there is genuinely nothing. It must be
-   distinguishable from the one above -- otherwise the operator cannot tell
-   "nothing happened" from "I was not allowed to look". *)
 let test_zero_events_are_reported_as_zero () =
   match
     D.format_service_diagnosis
@@ -634,8 +588,6 @@ let test_zero_events_are_reported_as_zero () =
       (contains "Events unavailable:" text)
 ;;
 
-(* End to end through the real fetch: the collapse happened in
-   [fetch_namespace_events], so a rendering test alone would not have caught it. *)
 let with_fake_kubectl ?(deny = "events") f =
   let dir = Filename.temp_file "sol-fake-kubectl-" "" in
   Sys.remove dir;
@@ -718,10 +670,6 @@ let test_the_fetch_distinguishes_a_denied_read () =
         (contains "No events recorded" text))
 ;;
 
-(* DEC-038 §7 / FND-0019, the exact live regression: an identity that cannot read
-   the workload at all. `sol status` reported "healthy" for this, because
-   `diagnose_service_live` returned the same `None` for "nothing wrong" and
-   "could not read". It must be Undetermined, and it must say why. *)
 let test_an_unreadable_workload_is_undetermined_not_healthy () =
   with_fake_kubectl ~deny:"pods" (fun () ->
     match

@@ -1,15 +1,7 @@
-(* Parser for sol.toml (otoml-backed, TOML 1.0.0). Malformed TOML, a wrong value
-   type, and an unknown key or table are all errors (BUG-042): a misspelled key used
-   to load as if it had not been written, so the setting silently took its default. *)
-
 type rollout_strategy =
   | Recreate
   | RollingUpdate
 
-(* FEAT-079: named for exactly what it constrains -- overlap between the
-   CronJob controller's own scheduled runs (Kubernetes' concurrencyPolicy).
-   A manual invocation (`sol fn run`) is not a scheduled run and is never
-   constrained by this value; do not let this type's name imply otherwise. *)
 type scheduled_concurrency =
   | Allow
   | Forbid
@@ -51,12 +43,6 @@ let volume_access_mode_to_string = function
   | ReadWriteMany -> "ReadWriteMany"
 ;;
 
-(* Canonical inverses (FEAT-066). Rollback reconstructs a recorded release's
-   service_specs from the release record, which stores these values in their
-   canonical string forms. Decoding must be exact: an unparsable value fails
-   closed rather than guessing, because a wrong decode would restore a state the
-   release never had. *)
-
 let volume_access_mode_of_string = function
   | "ReadWriteOnce" -> Ok ReadWriteOnce
   | "ReadOnlyMany" -> Ok ReadOnlyMany
@@ -69,10 +55,6 @@ let volume_access_mode_of_string = function
          s)
 ;;
 
-(* The release record stores one canonical *effective* rollout string; decode it
-   back into the (rollout_strategy, progressive_delivery) pair the renderer
-   takes. "rolling_update" is the effective default, so it decodes to no explicit
-   strategy -- the same state the default renders. *)
 let effective_rollout_of_string s =
   match s with
   | "rolling_update" -> Ok (None, None)
@@ -176,8 +158,6 @@ let parse_error_to_string = function
 let validation_error path message = Error (Validation { path; message })
 
 open Result.Syntax
-
-(* ── Validation ──────────────────────────────────────────────────────────── *)
 
 let is_digit c = c >= '0' && c <= '9'
 let is_lower_alnum c = (c >= 'a' && c <= 'z') || is_digit c
@@ -370,8 +350,6 @@ let validate_opt path parse = function
     |> Result.map_error (fun message -> Validation { path; message })
 ;;
 
-(* ── [infra.volumes.<name>] ─────────────────────────────────────────────── *)
-
 let parse_volume_access_mode path ~volume_name = function
   | "ReadWriteOnce" -> Ok ReadWriteOnce
   | "ReadOnlyMany" -> Ok ReadOnlyMany
@@ -474,7 +452,6 @@ let parse_volumes path doc =
     |> Result.map List.rev
 ;;
 
-(* Guard: keys starting with "sol.dev/" are reserved for Sol internals. *)
 let validate_extra_label_key k =
   let prefix = "sol.dev/" in
   if String.starts_with ~prefix k
@@ -515,11 +492,6 @@ let validate_canary_step = function
   | Pause (Some d) -> validate_duration d
 ;;
 
-(* ── Canary step parsing ─────────────────────────────────────────────────── *)
-
-(* Parse a single step TOML value (an inline table).
-   Accepts: {weight = 10}, {pause = {}}, {pause = {duration = 60}}.
-   The weight-only shorthand [10, 40, 100] is handled at the array level below. *)
 let parse_canary_step_value path v =
   let* pairs =
     try Otoml.get_table v |> Result.ok with
@@ -578,10 +550,6 @@ let parse_canary_step_value path v =
           {pause = {...}}")
 ;;
 
-(* Parse the steps array. Supports:
-   - Integer shorthand: steps = [10, 40, 100]  (each int → Weight n)
-   - Table steps: steps = [{weight = 10}, {pause = {}}, ...]
-   Mixed arrays (some ints, some tables) are rejected by the TOML parser. *)
 let parse_steps path doc =
   match Otoml.find_opt doc Otoml.get_value [ "infra"; "rollout"; "steps" ] with
   | None -> Ok []
@@ -608,11 +576,6 @@ let parse_steps path doc =
     in
     loop [] items
 ;;
-
-(* ── Known keys (BUG-042 / FND-0033) ─────────────────────────────────────────
-   The schema, table by table. [User_table] marks a table whose keys are the
-   author's own data (env config, extra labels, volume names), which is not
-   checked further here; each value is validated by its own parser below. *)
 
 type key_schema =
   | Leaf
@@ -717,12 +680,6 @@ let check_known_keys path doc =
   | _ -> Ok ()
 ;;
 
-(* ── Loader ──────────────────────────────────────────────────────────────── *)
-
-(* REFAC-131: every value decoded here can end up in a manifest, and YAML (like
-   the C library that writes it) cannot carry a NUL character. TOML can, as
-   [\u0000]; refuse it here, naming where, rather than let it truncate a value
-   downstream. *)
 let refuse_nul path doc =
   let has_nul s = String.contains s '\000' in
   let rec find keys = function
@@ -758,13 +715,9 @@ let load_result path =
       in
       let* () = check_known_keys path doc in
       let* () = refuse_nul path doc in
-      (* [infra.scale] *)
       let replicas =
         Otoml.Helpers.find_integer_opt doc [ "infra"; "scale"; "replicas" ]
       in
-      (* AUDIT-080: the app-declared failure tolerance. The error names the
-         supported values; the matrix (which primitives/volumes may claim what)
-         is enforced by the plan and preflight, not here. *)
       let* availability =
         Otoml.Helpers.find_string_opt doc [ "infra"; "scale"; "availability" ]
         |> validate_opt path Sol_cli_availability.of_string
@@ -777,7 +730,6 @@ let load_result path =
         Otoml.Helpers.find_string_opt doc [ "infra"; "scale"; "memory" ]
         |> validate_opt path memory_quantity_of_string
       in
-      (* [infra.env] *)
       let* env_config =
         match Otoml.find_opt doc Otoml.get_value [ "infra"; "env"; "config" ] with
         | None -> Ok []
@@ -800,9 +752,6 @@ let load_result path =
                "sol.toml: [infra.env] secrets must be an array of strings, e.g. secrets \
                 = [\"KEY1\", \"KEY2\"]")
       in
-      (* SEC-006: SOL_ALLOW_UNVERIFIED_JWT is the runtime opt-in for a JWT mode that
-         does not check signatures. Only `sol up` renders it, on the local cluster;
-         accepting it here would let one line of sol.toml carry it into a deploy. *)
       let* () =
         if
           List.mem_assoc "SOL_ALLOW_UNVERIFIED_JWT" env_config
@@ -815,9 +764,7 @@ let load_result path =
              and `sol up` sets it on the local cluster only"
         else Ok ()
       in
-      (* [infra.volumes.<name>] *)
       let* volumes = parse_volumes path doc in
-      (* [infra.deploy] *)
       let* rollout_strategy =
         match
           Otoml.Helpers.find_string_opt doc [ "infra"; "deploy"; "rollout_strategy" ]
@@ -835,7 +782,6 @@ let load_result path =
         Otoml.Helpers.find_string_opt doc [ "infra"; "deploy"; "ingress_path" ]
         |> validate_opt path ingress_path_of_string
       in
-      (* [infra.labels] *)
       let* extra_labels =
         match
           Otoml.find_opt doc Otoml.get_value [ "infra"; "labels"; "extra_labels" ]
@@ -861,7 +807,6 @@ let load_result path =
           in
           validate_keys pairs
       in
-      (* [infra.rollout] — progressive delivery *)
       let* progressive_delivery =
         match Otoml.Helpers.find_string_opt doc [ "infra"; "rollout"; "strategy" ] with
         | None -> Ok None
@@ -883,7 +828,6 @@ let load_result path =
                 \"canary\" and \"blue-green\""
                other)
       in
-      (* [service] *)
       let schedule = Otoml.Helpers.find_string_opt doc [ "service"; "schedule" ] in
       let* scheduled_concurrency =
         match

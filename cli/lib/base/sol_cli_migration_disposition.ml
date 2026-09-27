@@ -9,8 +9,6 @@ let to_string = function
 
 let header_prefix = "-- sol:disposition"
 
-(* The tag is a narrowly-scoped header directive, not a substring anywhere in
-   the file: only the first non-blank line is ever consulted. *)
 let first_nonblank_line content =
   content
   |> String.split_on_char '\n'

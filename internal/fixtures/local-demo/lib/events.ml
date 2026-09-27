@@ -1,13 +1,9 @@
-(** Event contracts for the Sol demo. In a real Sol workspace these would live
-    in events/<team>/<name>.ml, owned by the team that publishes them and
-    imported by consuming workers. *)
-
 module OrderPlaced = struct
   type t =
     { order_id : string
     ; item : string
     ; quantity : int
-    ; correlation_id : string (* propagated from the HTTP X-Correlation-Id header *)
+    ; correlation_id : string
     }
 
   let topic_name = Kafka_service.topic_name_exn "sol-demo-orders"

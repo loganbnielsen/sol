@@ -1,49 +1,8 @@
-(* The provider root's variables for a target (REFAC-095: moved out of
-   [Sol_cli_config], whose provider matches it replaced with
-   [Sol_cli_provider_capabilities]).
-
-   HARDEN-002 (run 1): these are the variables of the *provider* root
-   (`platform/cloud/<provider>/cluster`), which is what `sol cloud plan/apply/destroy`
-   drives. A target field must only appear here if that root declares it --
-   otherwise terraform fails the whole command with "a variable named X was
-   assigned on the command line, but the root module does not declare a variable
-   of that name", which is what `cluster_issuer` used to do. `cluster_issuer` (and
-   the other base-platform settings) belong to `platform/cloud/modules/platform`, applied
-   separately with its own variables; the Renderer consumes the target value for
-   ingress annotations, so the field stays meaningful without being routed to the
-   provider root.
-
-   GCP (first live attempt): the rule was stated correctly but applied to only one
-   provider. `create_rds`, `rds_multi_az`, `ecr_repositories` and `workspace_name`
-   were routed to *every* target's root, and the GCP root declares none of them --
-   so the first live GCP attempt died with four "Value for undeclared variable"
-   errors before terraform could plan anything at all. Routing a variable a root
-   does not declare is an error, not a no-op, which is why which root declares
-   what is a provider capability rather than a detail of this function.
-
-   Order matters, because Terraform's last `-var` wins and
-   [Sol_cli_config.vars_with_profile_precedence] decides which side comes last:
-   the shared and provider-own fields, then the target's provider block (so a
-   target can override them), then the profile-derived variables and the
-   root-declared ones ahead of everything. *)
-
 let add_opt k = function
   | None -> Fun.id
   | Some v -> fun xs -> (k, v) :: xs
 ;;
 
-(* Every service in the workspace gets an ECR repository, regardless of which
-   target is currently being planned/applied -- a service omitted from one target
-   may still be deployed to another and needs its own repository either way.
-
-   REFAC-130: the inventory comes from the workspace model, read once, rather
-   than a second discovery from inside the config layer (which is why this
-   function lives here and not in [Sol_cli_config]: the config layer is below
-   the model and must not read the workspace itself). A workspace with no
-   [app/] has no repositories; anything else that fails to load is an error,
-   never "no repositories" (INFRA-074) -- the list drives [for_each] over
-   repositories with [force_delete], so an empty list is an instruction to
-   delete every image the target holds. *)
 let ecr_repositories_var () =
   match Sol_cli_workspace_model.load_cwd () with
   | Error e -> Error ("cannot determine the workspace's ECR repositories: " ^ e)
@@ -85,16 +44,7 @@ let of_config ~workspace cfg =
   in
   let production = target.profile = Some Sol_cli_profile.Production_single_region in
   let production_postgres = has_postgres && production in
-  (* Profile-derived, so they are placed where [vars_with_profile_precedence]
-       makes them win over any provider-field or --var value: the profile's claims
-       (the cluster shape INFRA-030 sized, a production database that stays
-       protected) must not be weakened by a caller. sol cloud destroy lowers the
-       deletion guard deliberately, later in the argument list. *)
   let vars = capabilities.profile_vars ~production ~production_postgres @ vars in
-  (* A provider that declares a database and needs a credential is not silently
-       skipped: `TF_VAR_db_password` is what carries it, the root itself refuses a
-       missing one, and [Sol_cli_sensitive_vars] refuses it on the command line
-       (SEC-010). *)
   Result.map
     (fun declared -> declared @ vars)
     (capabilities.root_declared_vars
@@ -103,12 +53,6 @@ let of_config ~workspace cfg =
        ~ecr_repositories:ecr_repositories_var)
 ;;
 
-(* BUG-057: which var file a cloud command passes to Terraform, and relative to
-   what. A `--var-file` typed on the command line is relative to the shell's
-   directory, as any path argument is. A target's `terraform_var_file` is config,
-   and config paths resolve from the workspace root (DEC-024 clause 4), so the same
-   target means the same file from any directory. The flag wins when both are
-   given; an absolute path is used as written. *)
 let var_file ~cwd ~workspace_root ~flag ~target =
   let absolute base path =
     if Filename.is_relative path then Filename.concat base path else path
@@ -119,12 +63,6 @@ let var_file ~cwd ~workspace_root ~flag ~target =
   | None, None -> None
 ;;
 
-(* REFAC-139: the target a cloud command names, as Terraform variables. Only apply
-   and destroy mutate infrastructure; a plan is a preview, with `sol plan`'s
-   permissive contract. A mutation needs the target to have been declared, not just
-   shaped like <env>/<provider>/<region>, so a typo'd or unintended target cannot
-   inherit sol.yml's shared defaults and change infrastructure anyway -- the same
-   check `sol deploy` makes. *)
 let of_target ~strict ~workspace target_path =
   let open Result.Syntax in
   let* cfg =
@@ -153,7 +91,6 @@ let trim_quotes s =
   if len >= 2 && s.[0] = '"' && s.[len - 1] = '"' then String.sub s 1 (len - 2) else s
 ;;
 
-(* [key = value] on one line, with the value's surrounding quotes dropped. *)
 let assignment key line =
   match String.index_opt line '=' with
   | Some i when String.equal (String.trim (String.sub line 0 i)) key ->

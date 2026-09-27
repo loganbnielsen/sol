@@ -1,7 +1,3 @@
-(* ------------------------------------------------------------------ *)
-(* Mock ingestion server (cohttp-eio) — shared by the Loki/Tempo tests  *)
-(* ------------------------------------------------------------------ *)
-
 let with_mock_server env f =
   Eio.Switch.run
   @@ fun sw ->
@@ -48,10 +44,6 @@ let contains haystack needle =
     go 0)
 ;;
 
-(* Env vars are process-global; every test restores them so tests don't
-   leak state into each other. Sol_obs.env_nonempty treats "" as absent,
-   so clearing to "" is a sufficient "unset" here — this switch has no
-   Unix.unsetenv. *)
 let with_env pairs f =
   let saved =
     List.map (fun (k, _) -> k, Option.value (Sys.getenv_opt k) ~default:"") pairs
@@ -59,10 +51,6 @@ let with_env pairs f =
   List.iter (fun (k, v) -> Unix.putenv k v) pairs;
   Fun.protect ~finally:(fun () -> List.iter (fun (k, v) -> Unix.putenv k v) saved) f
 ;;
-
-(* ------------------------------------------------------------------ *)
-(* Defaults: no LOKI_URL/TEMPO_URL set                                  *)
-(* ------------------------------------------------------------------ *)
 
 let test_default_env_logs_and_counts_without_network () =
   Eio_main.run
@@ -124,10 +112,6 @@ let test_gauge_and_histogram_round_trip () =
        Alcotest.(check bool) "histogram present" true (contains rendered "op_seconds"))
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* LOKI_URL / TEMPO_URL wire the respective backend in                 *)
-(* ------------------------------------------------------------------ *)
-
 let test_loki_url_wires_loki_backend () =
   Eio_main.run
   @@ fun env ->
@@ -154,7 +138,6 @@ let test_loki_url_wires_loki_backend () =
            (contains body "pushed to loki")))
 ;;
 
-(* OBS-048: with LOKI_URL set, the line still reaches stdout. *)
 let capture_stdout f =
   let path = Filename.temp_file "sol-obs-stdout-" ".log" in
   let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
@@ -210,7 +193,6 @@ let test_loki_url_keeps_a_stdout_copy () =
            (contains (Eio.Promise.await body_promise) "also on stdout")))
 ;;
 
-(* OBS-048 part B: export is asynchronous; [flush] delivers what is queued. *)
 let test_flush_delivers_queued_lines () =
   Eio_main.run
   @@ fun env ->
@@ -293,10 +275,6 @@ let test_tempo_url_wires_tempo_backend () =
          Alcotest.(check bool) "OTLP push body is non-empty" true (String.length body > 0)))
 ;;
 
-(* ------------------------------------------------------------------ *)
-(* Accessors                                                            *)
-(* ------------------------------------------------------------------ *)
-
 let test_metrics_renderer_matches_backend_and_renderer () =
   Eio_main.run
   @@ fun env ->
@@ -341,8 +319,6 @@ let test_with_context_does_not_mutate_original () =
            ()
        in
        let derived = Sol_obs.with_context obs [ "req", "r-1" ] in
-       (* Both handles still work independently; obs_eio gives access to the
-         lower-level handle for a direct sanity check that they differ. *)
        Alcotest.(check bool)
          "obs_eio handles are distinct values"
          true

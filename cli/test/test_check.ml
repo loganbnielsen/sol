@@ -21,9 +21,6 @@ let with_tmp f =
          ~finally:(fun () -> Sys.chdir cwd)
          (fun () ->
             Sys.chdir root;
-            (* DEC-024: a fixture is a Sol workspace only once it has the
-               boundary marker; discovery resolves the root instead of the
-               invocation cwd. *)
             write "sol.yml" "";
             f root))
 ;;
@@ -34,8 +31,6 @@ let has_msg needle findings =
     Sol_cli_string.contains ~needle f.message)
 ;;
 
-(* REFAC-130: the check's input is the workspace model, so a fixture is read
-   once through the loader under test. *)
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
@@ -51,8 +46,6 @@ let test_missing_app_result () =
     | Ok _ -> Alcotest.fail "expected missing app error")
 ;;
 
-(* DEC-024: outside a workspace, discovery fails closed with the
-   workspace-identity error, not a missing-app-dir one. *)
 let test_not_in_workspace_result () =
   with_tmp (fun _ ->
     Sys.remove "sol.yml";
@@ -91,9 +84,6 @@ let test_typed_scan_reports_missing_dockerfile_and_unexpected_dirs () =
       Alcotest.(check string) "unexpected name" "helpers" unexpected_name)
 ;;
 
-(* Framework-backed services do not need /healthz or /metrics in their own
-   source; the shared pre-deploy phase is static and must not require those
-   strings. Runtime probing is CODE_LAYER-022. *)
 let test_check_valid_service () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
@@ -127,8 +117,6 @@ let test_check_missing_dockerfile () =
       (has_msg "Dockerfile is missing" findings))
 ;;
 
-(* FEAT-065: a command that resolved a scope checks exactly that set, so a bad
-   workload outside the selection cannot fail a scoped run. *)
 let test_run_services_scopes_the_check () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
@@ -148,9 +136,6 @@ let test_run_services_scopes_the_check () =
       (Sol_cli_check.has_errors findings))
 ;;
 
-(* FEAT-104: every workload has a declared language, and Sol never guesses one.
-   A workspace whose workload has not declared yet still loads and still checks
-   -- it gets a warning naming the line to add, not an error. *)
 let test_undeclared_workload_warns () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";

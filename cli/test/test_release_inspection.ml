@@ -174,11 +174,6 @@ let test_rendered_manifest_diagnostics () =
       manifests
   in
   check_string "rollout kind" "Rollout" rollout.kind;
-  (* FEAT-026: rollout_doc (progressive-delivery path) gets ?env too, and
-     rendered_manifests_of_plan threads it from plan.environment.env -- the
-     only other render paths tested for this are deployment_doc/cronjob_doc
-     (test_manifest_render.ml), not rollout_doc, and this is also the one
-     place that previously dropped plan.environment.env entirely. *)
   check_bool
     "rollout carries env label"
     true

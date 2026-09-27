@@ -1,9 +1,3 @@
-(* FEAT-061: the scope vocabulary.
-
-   Resolution is tested against [named] values rather than discovered services,
-   so these cases describe the *rules* (a name resolves, an unknown name fails
-   closed and says what exists) instead of the repo's current contents. *)
-
 open Sol_cli_deployment_scope
 
 let unit_ ~domain ~name ~kind = { domain; name; kind }
@@ -15,9 +9,6 @@ let units () =
   ]
 ;;
 
-(* Requests are compared through their user-facing spelling: it is what a person
-   types and what an error quotes, so a test that reads in those terms is
-   checking the thing that matters rather than the constructor names. *)
 let request_to_string = function
   | Whole_workspace -> "workspace"
   | Whole_domain domain -> domain
@@ -26,8 +17,6 @@ let request_to_string = function
 
 let parsed value = Result.map request_to_string (parse_request value)
 
-(* A test that expected matches asserts it: the exhaustive match is the compiler
-   making sure emptiness is considered rather than overlooked. *)
 let expect_selected what = function
   | Selected selected -> selected
   | Empty -> Alcotest.fail (what ^ ": expected a non-empty selection, got Empty")
@@ -50,9 +39,6 @@ let test_parses_domain_and_unit () =
 ;;
 
 let test_rejects_what_it_cannot_understand () =
-  (* A three-segment value is a *path*, which is what the positional argument is
-     for. Accepting it here would make the escape hatch and the scope the same
-     thing. *)
   match parse_request (Some "app/payments/charge_svc") with
   | Ok _ -> Alcotest.fail "a path must not parse as a scope"
   | Error message ->
@@ -82,8 +68,6 @@ let test_domain_selects_its_units () =
 ;;
 
 let test_unit_takes_its_kind_from_discovery () =
-  (* The user says a name; discovery says what it is. Getting the kind from the
-     request would mean asking the user to remember the filesystem. *)
   match resolve (Unit_named ("payments", "settle_worker")) (units ()) with
   | Error message -> Alcotest.fail message
   | Ok (scope, selection) ->
@@ -108,7 +92,6 @@ let test_unknown_unit_names_what_exists () =
   | Ok _ -> Alcotest.fail "an unknown unit must not resolve"
   | Error message ->
     assert (Sol_cli_string.contains ~needle:"payments/refund_svc" message);
-    (* What it asked for, and what is there: the whole point of failing closed. *)
     assert (Sol_cli_string.contains ~needle:"payments/charge_svc" message);
     assert (Sol_cli_string.contains ~needle:"payments/settle_worker" message)
 ;;
@@ -128,9 +111,6 @@ let test_kind_mapping () =
 ;;
 
 let test_hyphenated_spelling_resolves_the_same_unit () =
-  (* `settle-worker` is what a user sees in the cluster; `settle_worker` is the
-     repository name and stays canonical. Neither spelling becomes a second
-     identity. *)
   match resolve (Unit_named ("payments", "settle-worker")) (units ()) with
   | Error message -> Alcotest.fail message
   | Ok (scope, Selected [ unit ]) ->
@@ -146,9 +126,6 @@ let test_nothing_discovered_is_empty_not_selected () =
   | Ok (_, Selected _) -> Alcotest.fail "an empty workspace cannot be a selection"
 ;;
 
-(* FEAT-065: the bridge is the one place discovery meets the vocabulary. It
-   resolves once and carries both facts callers need: the requested scope
-   (intent) and the discovered services (exact membership). *)
 let services () =
   [ { Sol_cli_manifest.domain = "payments"
     ; name = "charge_svc"
@@ -215,14 +192,12 @@ let test_bridge_empty_workspace () =
     Alcotest.(check bool) "empty" true (Sol_cli_workload_selection.is_empty selected)
 ;;
 
-(* REFAC-111: a deploying command refuses an empty selection while resolving it. *)
 let test_nonempty_refuses_empty_workspace () =
   match Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None [] with
   | Ok _ -> Alcotest.fail "an empty selection was accepted"
   | Error message -> Alcotest.(check string) "the caller's message" "nothing here" message
 ;;
 
-(* Positive control: the same call over real services resolves. *)
 let test_nonempty_accepts_a_selection () =
   match
     Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None (services ())
@@ -232,7 +207,6 @@ let test_nonempty_accepts_a_selection () =
     Alcotest.(check string) "whole workspace" "workspace" selected.requested_scope
 ;;
 
-(* A bad selector still reports the selector error, not the empty message. *)
 let test_nonempty_keeps_selector_errors () =
   match
     Sol_cli_workload_selection.resolve_nonempty

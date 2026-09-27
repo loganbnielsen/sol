@@ -1,11 +1,3 @@
-(* Helpers for the 'sol logs' command.
-   Pure utility functions are kept here (no I/O) so they can be unit-tested
-   without pulling in Cmdliner or Sys. *)
-
-(* Percent-encode characters that are not safe inside a LogQL expression
-   embedded as a query-parameter value.  We only encode the small set of
-   characters that actually appear in a LogQL label-selector literal so the
-   output stays readable. *)
 let url_encode_logql s =
   let buf = Buffer.create (String.length s * 2) in
   s
@@ -28,7 +20,6 @@ let url_encode_logql s =
   Buffer.contents buf
 ;;
 
-(* Build a Grafana Explore URL for the given raw LogQL query. *)
 let explore_url ~base_url ~logql =
   let encoded = url_encode_logql logql in
   Printf.sprintf
@@ -37,20 +28,10 @@ let explore_url ~base_url ~logql =
     encoded
 ;;
 
-(* Build a Grafana Explore URL scoped to one service.
-   base_url: e.g. "http://localhost:3000"
-   k8s_name: service k8s name (hyphens, lowercase)
-   Returns a URL the operator can paste directly into a browser.
-   FRIC-029: matches on "service" (a substring match, since the emitted value
-   is "<workspace>_<unit>"-shaped), not "namespace"/"app" -- Sol's Loki
-   streams never carry that label pair. *)
 let grafana_explore_url ~base_url ~k8s_name =
   explore_url ~base_url ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
 ;;
 
-(* FEAT-069: a release-scoped query. The release id is workspace-unique by
-   construction (the workspace and environment are part of the hashed content),
-   so the exact [release] label is the whole selector when no unit narrows it. *)
 let release_logql ~release_id = Printf.sprintf {|{release="%s"}|} release_id
 
 let unit_release_logql ~k8s_name ~release_id =
@@ -68,16 +49,6 @@ type release_query =
       ; logql : string
       }
 
-(** [release_query ~release ~target ~known ?scope ()] classifies a [--release]
-    argument. The order is the contract: the id is validated first, so a
-    malformed value returns [Release_invalid] *without* [known] ever being
-    called — the release store must not be consulted for input that is not an
-    id. [Release_unknown] and [Release_logs] stay distinct because "no such
-    release" is an error while "a known release with no logs" is an empty
-    success, and collapsing them would misreport a real release.
-
-    [~scope] is the already-validated [(namespace, k8s_name)] of a unit, when
-    one was given; it narrows the selector to that workload. *)
 let release_query ~release ~target ~known ?scope () =
   match Sol_cli_release_id.of_string release with
   | Error msg -> Release_invalid msg

@@ -1,23 +1,5 @@
-(* The workspace's non-workload facts: topics, schema subjects and migrations.
-
-   REFAC-130: each reader takes the workspace [root] it reads under, so
-   [Sol_cli_workspace_model.load] can read a workspace that is not the current
-   directory -- and so a caller that only has a root (a fixture under test) need
-   not chdir the process. Without [~root] the readers keep their original
-   behaviour: paths are cwd relative and spelled exactly as before, so existing
-   callers and diagnostics are unchanged.
-
-   These scans and [Sol_cli_manifest.scan_workspace] are the only readers of
-   their respective facts; [Sol_cli_workspace_model] is their only caller. *)
-
-(* The path of [path] inside [root]. [root = ""] is the current directory, and
-   keeps the legacy spelling ("events/sol.toml", not "./events/sol.toml"). *)
 let in_root root path = if root = "" then path else Filename.concat root path
 
-(* Fold over entries in [dir]. Absence yields [init] quietly -- a workspace with
-   no [events/] simply has no topics. A directory that *exists but cannot be
-   read* is different, and is reported rather than silently producing "no
-   facts": the traversal no longer decides that policy, so it is stated here. *)
 let fold_dir dir ~init ~f =
   match Sol_cli_fs_walk.entries dir with
   | Ok names ->
@@ -28,8 +10,6 @@ let fold_dir dir ~init ~f =
     init
 ;;
 
-(** Convert a string through a newtype constructor, printing a warning and
-    returning [None] when validation fails. *)
 let filter_validated ~kind of_string strings =
   strings
   |> List.filter_map (fun s ->
@@ -40,10 +20,6 @@ let filter_validated ~kind of_string strings =
       None)
 ;;
 
-(** Scan [root/events/<domain>/] subdirectories for [*.ml] files and derive
-    schema subject names as ["<domain>.<EventName>"]. Also handles top-level
-    [root/events/<event>.ml] files (no domain prefix). Returns a sorted,
-    deduplicated list. *)
 let discover_schema_subjects ?root () =
   let root = Option.value root ~default:"" in
   let subjects =
@@ -66,9 +42,6 @@ let discover_schema_subjects ?root () =
   filter_validated ~kind:"schema subject" Sol_cli_plan_ids.Schema_subject.of_string sorted
 ;;
 
-(** Derive consumer group identifiers for worker identities. Convention:
-    ["<workspace>.<domain>.<worker_name>"]. Not a filesystem read: it names the
-    groups a plan's already-resolved workers share. *)
 let derive_consumer_groups workspace workers =
   let strings =
     List.map
@@ -83,17 +56,10 @@ let derive_consumer_groups workspace workers =
     strings
 ;;
 
-(** Topics declared by the [sol.toml] at [path]; [Ok []] when the file does not
-    exist. A malformed or misspelled event [sol.toml] is an error (BUG-042): skipping
-    it used to drop its topics from the deploy without a word. *)
 let topics_of_toml path =
   Sol_cli_toml.load_result path |> Result.map (fun t -> t.Sol_cli_toml.topics)
 ;;
 
-(** Discover topics from [sol.toml]'s [[service] topics = [...]] array in
-    [root/events/] subdirectories and [root/events/sol.toml]; sorted,
-    deduplicated. Never scans [*.ml] source, to avoid false positives from string
-    literals. *)
 let discover_topics ?root () =
   let root = Option.value root ~default:"" in
   let open Result.Syntax in
@@ -113,7 +79,6 @@ let discover_topics ?root () =
   Ok (filter_validated ~kind:"topic name" Sol_cli_plan_ids.Topic_name.of_string sorted)
 ;;
 
-(** Scan [root/db/migrations/] for SQL files, sorted by filename. *)
 let discover_migrations ?root () =
   let root = Option.value root ~default:"" in
   let files =

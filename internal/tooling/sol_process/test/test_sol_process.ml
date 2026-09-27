@@ -11,8 +11,6 @@ let check_status =
          | Stopped n -> Format.fprintf fmt "Stopped %d" n)))
 ;;
 
-(* ── run / structured result ─────────────────────────────────────────────── *)
-
 let test_run_success () =
   let r = Sol_process.run_shell ~echo:false "echo hello" in
   check_status "status" (Sol_process.Exited 0) r.status;
@@ -33,8 +31,6 @@ let test_status_shell_codes () =
 ;;
 
 let test_run_signaled () =
-  (* ponytail: WSL2 mis-translates signal numbers in waitpid, so we only verify
-     the process was signaled (not the exact number) and that exit_code = 128+n. *)
   let r = Sol_process.run_argv ~echo:false [ "sh"; "-c"; "kill -TERM $$" ] in
   match r.status with
   | Sol_process.Signaled n ->
@@ -61,8 +57,6 @@ let test_run_command_not_found () =
   check_bool "exit code non-zero" true (Sol_process.exit_code r <> 0)
 ;;
 
-(* ── run_argv ────────────────────────────────────────────────────────────── *)
-
 let test_run_argv_basic () =
   let r = Sol_process.run_argv ~echo:false [ "echo"; "hello world" ] in
   check_status "status" (Sol_process.Exited 0) r.status;
@@ -71,7 +65,6 @@ let test_run_argv_basic () =
 ;;
 
 let test_run_argv_special_chars () =
-  (* Argument with a space must arrive as one token, not two *)
   let r = Sol_process.run_argv ~echo:false [ "printf"; "%s"; "a b" ] in
   check_str "stdout with space" "a b" r.stdout
 ;;
@@ -91,8 +84,6 @@ let test_run_argv_command_not_found () =
   check_str "stdout empty" "" r.stdout
 ;;
 
-(* ── lines ──────────────────────────────────────────────────────────────── *)
-
 let test_lines_basic () =
   let ls = Sol_process.lines_shell ~echo:false "printf 'a\\nb\\nc'" in
   check_bool "three lines" true (List.length ls = 3);
@@ -101,26 +92,20 @@ let test_lines_basic () =
 ;;
 
 let test_lines_empty_filtered () =
-  (* Blank lines should be omitted from the result *)
   let ls = Sol_process.lines_shell ~echo:false "printf 'a\\n\\nb'" in
   check_bool "blank line filtered" true (List.length ls = 2)
 ;;
 
 let test_lines_stderr_not_captured () =
-  (* stderr must not bleed into the stdout lines *)
   let ls = Sol_process.lines_shell ~echo:false "echo out; echo err >&2" in
   check_bool "only one line" true (List.length ls = 1);
   check_str "line is from stdout" "out" (List.nth ls 0)
 ;;
 
-(* ── output ─────────────────────────────────────────────────────────────── *)
-
 let test_output_trimmed () =
   let s = Sol_process.output_shell ~echo:false "printf '  hello  '" in
   check_str "trimmed" "hello" s
 ;;
-
-(* ── run_rc ─────────────────────────────────────────────────────────────── *)
 
 let test_run_rc_success () =
   check_int "rc 0" 0 (Sol_process.run_shell_rc ~echo:false "true")
@@ -130,12 +115,7 @@ let test_run_rc_failure () =
   check_bool "rc non-zero" true (Sol_process.run_shell_rc ~echo:false "false" <> 0)
 ;;
 
-(* ── run_ok ─────────────────────────────────────────────────────────────── *)
-
-let test_run_ok_success () =
-  (* Should not raise *)
-  Sol_process.run_shell_ok ~echo:false "true"
-;;
+let test_run_ok_success () = Sol_process.run_shell_ok ~echo:false "true"
 
 let test_run_ok_failure () =
   let raised =
@@ -147,8 +127,6 @@ let test_run_ok_failure () =
   in
   check_bool "raises Failure on non-zero" true raised
 ;;
-
-(* ── entry point ─────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run

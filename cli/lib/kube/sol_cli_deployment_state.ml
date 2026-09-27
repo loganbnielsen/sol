@@ -12,16 +12,10 @@ type execution_outcome =
       ; message : string
       }
 
-(* BUG-025: the name embeds the workspace, and '_' or uppercase are illegal in
-   a Kubernetes object name — so a workspace like [ci_smoke] produced
-   "sol-deploy-state-ci_smoke", which the API server rejects. Because the apply
-   result used to be ignored below, that failure was silent. *)
 let deploy_state_configmap_name workspace =
   Printf.sprintf "sol-deploy-state-%s" (Sol_cli_kubernetes_name.sanitize_name workspace)
 ;;
 
-(* FEAT-063: the state ConfigMap lives in the cluster the target names, so every
-   entry point takes the destination-side context and passes it to kubectl. *)
 let load_deployed_groups ~ctx workspace =
   let name = deploy_state_configmap_name workspace in
   match
@@ -38,9 +32,6 @@ let load_deployed_groups ~ctx workspace =
         ]
   with
   | Ok groups ->
-    (* BUG-045 / FND-0038: only "no record yet" (a first deploy) means no previous
-       groups. Any other failure used to read the same way, so the removal guard
-       passed silently exactly when the cluster could not be asked. *)
     Ok
       (Option.value groups ~default:""
        |> String.split_on_char '\n'
@@ -53,8 +44,6 @@ let load_deployed_groups ~ctx workspace =
          (Sol_cli_process.error_to_string e))
 ;;
 
-(* The hazard the removal guard exists for, stated for Sol's own consumers:
-   they all use [offset_reset = Earliest]. *)
 let removed_groups_message removed =
   String.concat
     ""
@@ -75,9 +64,6 @@ let removed_groups_message removed =
 let save_deployed_groups ~ctx workspace groups =
   let name = deploy_state_configmap_name workspace in
   let value = String.concat "\n" groups in
-  (* REFAC-131: built as a value. [String.escaped] is OCaml's escaping, not
-     JSON's -- a non-ASCII byte became a decimal [\ddd], which no JSON reader
-     accepts. *)
   let apply_json =
     Yojson.Safe.to_string
       (`Assoc
@@ -87,9 +73,6 @@ let save_deployed_groups ~ctx workspace groups =
           ; "data", `Assoc [ "consumer_groups", `String value ]
           ])
   in
-  (* BUG-025 reported a failed write; BUG-045 makes it an error. The next deploy's
-     consumer-group removal check reads this record, so a failed write is a
-     deploy whose safety check the next deploy cannot run. *)
   Sol_cli_fs.with_temp_file ~prefix:"sol-state-" ~suffix:".json" apply_json (fun path ->
     match Sol_cli_kubectl.apply ~ctx ~file:path with
     | Ok () -> Ok ()
@@ -115,9 +98,6 @@ let removed_consumer_groups ~prev ~next =
   List.filter (fun g -> not (List.mem g next)) prev
 ;;
 
-(* The consumer-group removal guard shared by [sol deploy] and [sol up]. An
-   unreadable record is not "no previous groups" (BUG-045): it refuses unless the
-   operator already acknowledges group changes, in which case it warns. *)
 let check_removed_groups ~ctx ~workspace ~confirm_group_change ~next =
   match load_deployed_groups ~ctx workspace with
   | Error msg when confirm_group_change ->

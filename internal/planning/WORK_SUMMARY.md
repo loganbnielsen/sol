@@ -14,6 +14,11 @@
 - CI: `internal/ci/test_pipeline_validate.sh` runs the validator over the repository's own tree, unconditionally, and is its own mutation test — a readable control tree passes, then malformed frontmatter, a no-frontmatter ticket in DONE and a missing field are each rejected by name, and the listing goes green again when the plants are removed. Disabling the rule fails the guard at its first mutated case, so it tests the fix rather than the harness.
 - Content corrections kept separate: `DONE/INFRA-042.md` (2026-09-19) gained the frontmatter its siblings have. Filed `BACKLOG/BUG-061.md`: `DEC-049.md` and `DEC-049-gke-standard-is-the-supported-gcp-substrate.md` are two different decisions sharing one id, so the GKE decision is unreachable by id — blocked on the live GCP stream, because the fix moves references in it.
 
+## Latest: no code comments (2026-09-27)
+
+- Every comment is gone from the OCaml tree (426 files, about 14,500 lines): names carry the meaning, and an invariant belongs in the code. `check_no_comments.sh` holds it, and AGENTS.md states the rule. The code is token-identical to before, verified by stripping comments from both trees.
+- What the comments had been holding up is filed: **BUG-062** (`sol migrate` and `sol deploy` name the migrations table differently from a subdirectory), **REFAC-141** (14 prose-only invariants to enforce in code), **REFAC-140** (split the 75 files that used section banners), **REFAC-142** (the same removal for shell, Terraform and TypeScript).
+
 ## Latest: refactoring-pattern audit, REFAC-131..139 (2026-09-27)
 
 - An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593): text-built manifests, ad-hoc JSON decoding, exceptions as control flow, spawns outside `Sol_cli_process`, library printing, per-tool error classifiers, `framework/` + soldev, the pinned `*-eio` libraries, and thin `cli/bin`.

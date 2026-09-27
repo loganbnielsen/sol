@@ -1,51 +1,15 @@
-(* sol rollback — restore a recorded release boundary (FEAT-066, DEC-018).
-
-   Boring orchestration on top of already-proven pieces: resolve the release
-   record, refuse a controller-owned release, refuse on a contracting migration
-   since that release, reconstruct and re-render its own workloads, apply them,
-   verify the live workload set, and only then move the current-release pointer
-   and verify it. Never `kubectl rollout undo`, which cannot restore config,
-   volumes or ingress -- restoration comes from the release record.
-
-   A refused rollback (GitOps-owned, migration boundary, a corrupt/missing
-   record) leaves the cluster untouched: every check before "apply" only reads.
-   The pointer moves only after the live workload set agrees with the restored
-   release, so a verification failure never leaves the pointer claiming a
-   transition that did not happen. *)
-
 open Cmdliner
 
-(* DEC-024: the workspace name comes from the resolved root, so it is the same
-   from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 let migrations_dir = "db/migrations"
 
 open Result.Syntax
 
-(* FEAT-072: the mutation lease. Rollback first establishes quiescence: it
-   acquires the workspace's boundary lease, aborting and waiting out an in-flight
-   deploy rather than racing it (DEC-018: "abort, establish quiescence, then
-   restore"). The restoration runs under the lease, which the bracket releases
-   however this returns.
-
-   The sequence below returns a result rather than calling [exit]: only the
-   command edge turns a refusal into a process exit, so the lease is released by
-   [Fun.protect] on every path and no [at_exit] is needed. The ordering itself
-   is [Sol_cli_rollback.execute] (FEAT-075) -- this module only wires the
-   concrete deps and turns the result into process exit / stdout. *)
 let ttl_s = Sol_cli_boundary_lease.default_ttl_s
 let wait_s = Sol_cli_boundary_lease.rollback_wait_s
 
-(* render + apply. Kubernetes_live: a real apply to a live cluster reads secret
-   values from this process's environment, exactly as sol up/sol deploy do for
-   a direct (non-GitOps) apply -- the release record only ever carries secret
-   key names, never values. GitOps-mode rollback (content and pointer
-   travelling in one emitted commit) is not this pass's concern. *)
 let apply_specs ~ctx ~local ~release ~release_id_t specs =
   let apply_spec spec =
-    (* SEC-006: a local rollback re-renders what `sol up` recorded, which does not
-       carry the local-only Unverified_dev_only opt-in (only
-       [Sol_cli_executor.local] adds it); restore it here, locally only. *)
     let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
     let* yaml =
       Sol_cli_deployment_render.render_spec
@@ -74,15 +38,10 @@ let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result 
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
   let* release_id_t = Sol_cli_release_id.of_string release.release_id in
-  (* REFAC-130: the workspace's migrations come from the model the caller read,
-     in the same order the plan carries them. *)
   let current_migrations =
     Sol_cli_workspace_model.migration_files facts
     |> List.map Sol_cli_plan_ids.Migration_file.to_string
   in
-  (* FEAT-075: the ordering itself -- refusal before mutation, pointer move
-     only once the live set agrees -- lives in Sol_cli_rollback.execute, where
-     it's tested. This wires the concrete, cluster-touching deps. *)
   let deps : Sol_cli_rollback.transaction_deps =
     { apply = apply_specs ~ctx ~local ~release ~release_id_t
     ; live_workloads =
@@ -99,9 +58,6 @@ let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result 
   Ok ()
 ;;
 
-(* FEAT-073: resolves RELEASE_ID/--commit/--scope down to one release id.
-   Always echoed before [run_locked] does anything, including the
-   unambiguous --commit case, so an operator can confirm before mutation. *)
 let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
   : (string, string) result
   =
@@ -158,8 +114,6 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
        ~wait_s
        (fun _lease -> run_locked ~ctx ~local ~workspace ~facts release_id))
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let release_id_arg =
   Arg.(
@@ -222,8 +176,6 @@ let cmd =
       $ Cmd_destination.target_arg)
 ;;
 
-(* FEAT-063: the local form -- the same operation with the destination named
-   literally as Sol's own cluster instead of resolved from --target. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")

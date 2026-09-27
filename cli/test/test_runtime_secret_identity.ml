@@ -1,25 +1,3 @@
-(* INFRA-040: the substrate's Secret and the migration Job's reference are two
-   renderings of one identity, and in Attempt 6 they disagreed.
-
-   The substrate created `sol-secrets-secrets` -- because [secret_doc]'s template
-   appended `-secrets` to the name it was handed, and the substrate handed it the
-   already-final [runtime_secret_name] -- while every consumer asked for
-   `sol-secrets`:
-
-     Pod sol-migrate-...: CreateContainerConfigError
-       waiting message: secret "sol-secrets" not found
-       container envFrom: secretRef{name: sol-secrets}
-
-   Every migration Job's container therefore failed to start, the migration gate
-   could never pass, and no workload could be deployed to a cloud target at all.
-
-   This renders the producer and asserts the consumer's source, deliberately rather
-   than only asserting that [secret_doc] renders its argument: the helper's own
-   behaviour was never in doubt, and a test of it alone would have passed while the
-   deployment path created a Secret nobody referenced. The consumer arm is pinned
-   structurally by internal/ci/check_runtime_secret_identity.sh, because the
-   migration Job's renderer lives in the CLI binary rather than the library. *)
-
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
@@ -54,8 +32,6 @@ let test_substrate_secret_carries_the_runtime_identity () =
     "the substrate Secret lands in the workload's namespace"
     substrate
     ("  namespace: " ^ namespace ^ "\n");
-  (* The defect, stated as a property: the shared runtime Secret is not
-     workload-suffixed, and nothing may render it as though it were. *)
   assert_absent
     "the shared runtime Secret is not suffixed a second time"
     substrate
@@ -87,9 +63,6 @@ let test_workload_secrets_keep_their_own_convention () =
     "charge-svc-secrets-secrets"
 ;;
 
-(* The consumer half, rendered: the migration Job reads the Secret by the same
-   identity the substrate creates (REFAC-131 moved its builder into the library,
-   so this is now a rendered assertion rather than a source grep). *)
 let test_migration_job_reads_the_runtime_identity () =
   let job =
     Sol_cli_yaml.render

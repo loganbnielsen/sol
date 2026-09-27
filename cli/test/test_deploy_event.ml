@@ -17,8 +17,6 @@ let sample =
   }
 ;;
 
-(* ── fields ──────────────────────────────────────────────────────────────── *)
-
 let test_fields_includes_event_deploy () =
   let fields = E.fields sample in
   check_bool "event=deploy present" true (List.mem ("event", "deploy") fields)
@@ -42,8 +40,6 @@ let test_fields_matches_taxonomy_label_set () =
   check_bool "release" true (List.mem ("release", "r-0123456789abcdef") fields)
 ;;
 
-(* ── message ─────────────────────────────────────────────────────────────── *)
-
 let test_message_mentions_domain_service_and_release () =
   let msg = E.message sample in
   let contains needle s = Sol_cli_string.contains ~needle s in
@@ -51,8 +47,6 @@ let test_message_mentions_domain_service_and_release () =
   check_bool "mentions service" true (contains "invoicer" msg);
   check_bool "mentions release" true (contains "r-0123456789abcdef" msg)
 ;;
-
-(* ── resolve_push_url ────────────────────────────────────────────────────── *)
 
 let test_explicit_url_always_wins =
   [ U.Local; U.Self_hosted_durable; U.External ]

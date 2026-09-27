@@ -1,5 +1,3 @@
-(* INFRA-076. See the interface for the failure this removes and the contract. *)
-
 type outcome =
   | Exited of int
   | Signaled of int
@@ -59,7 +57,6 @@ let classify f =
       ; dir = f.dir
       }
   | None when not f.same_host ->
-    (* Liveness cannot be checked across hosts: never read that as abandoned. *)
     Running { pid = f.pid; host = f.host; started_at = f.started_at; dir = f.dir }
   | None when f.alive ->
     Running { pid = f.pid; host = f.host; started_at = f.started_at; dir = f.dir }
@@ -78,8 +75,6 @@ let outcome_to_string = function
   | Signaled n -> Printf.sprintf "signaled %d" n
 ;;
 
-(* OCaml reports signals in its own (negative) numbering; the record uses POSIX
-   numbers, which is what an operator reading "signal 9" expects. *)
 let posix_signal n =
   match n with
   | n when n = Sys.sighup -> 1
@@ -110,11 +105,6 @@ let status_to_string = function
   | Unresolved { reason; dir } -> Printf.sprintf "unresolved: %s (record: %s)" reason dir
 ;;
 
-(* ── Files of one operation record ─────────────────────────────────────────── *)
-
-(* Always absolute: the supervisor changes into Terraform's working directory
-   before it writes, so a relative data home (XDG_DATA_HOME may be relative) would
-   put the record somewhere the next command never looks. *)
 let operations_dir ~key =
   let base = Filename.concat Sol_cli_state.dir "operations" in
   let base =
@@ -132,7 +122,6 @@ let read_file path =
   | exception Sys_error _ -> None
 ;;
 
-(* Write-then-rename, so a reader never sees half a record. *)
 let write_atomic path contents =
   let tmp = path ^ ".tmp" in
   Out_channel.with_open_gen
@@ -159,9 +148,6 @@ let meta_field meta name =
     | _ -> None)
 ;;
 
-(* A process's start time (clock ticks since boot, field 22 of /proc/<pid>/stat),
-   so a recycled pid is not mistaken for the process we launched. [None] where
-   /proc does not exist; there, liveness rests on the pid alone. *)
 let start_time pid =
   match read_file (Printf.sprintf "/proc/%d/stat" pid) with
   | None -> None
@@ -172,7 +158,6 @@ let start_time pid =
        let fields =
          String.sub stat (i + 2) (String.length stat - i - 2) |> String.split_on_char ' '
        in
-       (* After "pid (comm) ", field 3 is the first here; field 22 is index 19. *)
        List.nth_opt fields 19)
 ;;
 
@@ -200,8 +185,6 @@ let facts_of_dir dir =
   in
   let host = Option.value ~default:"" (meta_field meta "host") in
   let supervisor_pid = int_field "supervisor_pid" in
-  (* An empty start time means it could not be read (no /proc), not a value to
-     compare against: liveness then rests on the pid. *)
   let supervisor_start = Sol_cli_string.non_empty (meta_field meta "supervisor_start") in
   let tf_pid, tf_start =
     match read_file (file dir "terraform.pid") with
@@ -257,8 +240,6 @@ let acknowledge ~key =
     write_atomic (file dir "acknowledged") (Printf.sprintf "%f\n" (Unix.gettimeofday ())))
 ;;
 
-(* ── The supervisor (this binary, re-invoked) ──────────────────────────────── *)
-
 let supervise ~dir = function
   | [] ->
     Sol_cli_report.err "sol __supervise: no command";
@@ -270,9 +251,6 @@ let supervise ~dir = function
     let out = open_out "stdout"
     and err = open_out "stderr"
     and devnull = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
-    (* The supervisor keeps default signal dispositions: whatever it ignored, the
-       exec'd Terraform would inherit. It needs none -- it has no controlling
-       terminal (its own session), and nothing signals it by design. *)
     let pid =
       try Unix.create_process prog (Array.of_list argv) devnull out err with
       | Unix.Unix_error (e, _, _) ->
@@ -319,8 +297,6 @@ let dispatch_if_supervisor () =
        exit 125)
   | _ -> ()
 ;;
-
-(* ── The parent: launch, forward interrupts, wait ──────────────────────────── *)
 
 let operation_counter = ref 0
 
@@ -382,8 +358,6 @@ let run
        flush_all ();
        (match Unix.fork () with
         | 0 ->
-          (* Child: its own session, so a terminal's Ctrl-C or hangup, or a signal to
-          Sol's process group, never reaches Terraform or its provider plugins. *)
           (try
              ignore (Unix.setsid ());
              Option.iter Unix.chdir c.cwd;
@@ -408,9 +382,6 @@ let run
                ]
              ^ "\n");
           write_atomic (Filename.concat base "latest") (name ^ "\n");
-          (* Interrupts: forward one SIGINT to Terraform's pid only, then a second as
-          Terraform's own "cancel now"; ignore the rest. Never the provider
-          plugins, never the process group, never SIGKILL. *)
           let interrupts = ref 0 in
           let forwarded = ref 0 in
           let rec forward () =

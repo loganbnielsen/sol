@@ -1,11 +1,3 @@
-(* Regression tests for Sol_cli_deployment_render.render_spec.
-   Constructs service_spec values directly (no filesystem required) and checks
-   that the rendered YAML contains the expected resource names, image
-   references, namespaces, and primitive-specific resources. *)
-
-(* FEAT-069: rendering takes the plan's release identity, so these direct
-   render calls supply one explicitly. The exact value does not matter to the
-   YAML-shape tests; the release-label tests below pin it. *)
 let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
@@ -17,7 +9,6 @@ let expected_release_label =
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 
-(** Unwrap a [render_spec] result, failing the test on [Error]. *)
 let render_spec_ok
       ?(workspace = "myapp")
       ?env
@@ -38,8 +29,6 @@ let render_spec_ok
   | Ok v -> v
   | Error e -> Alcotest.fail ("render_spec unexpectedly failed: " ^ e)
 ;;
-
-(* ── helpers ─────────────────────────────────────────────────────────────── *)
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
@@ -100,11 +89,7 @@ let namespace ~workspace ~domain =
   | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
-(* Extract the YAML document block that contains [kind_marker] (e.g. "kind: ConfigMap").
-   Splits the full YAML on "---" separators and returns the first block that
-   contains the marker, or the empty string if none is found. *)
 let extract_kind_block yaml kind_marker =
-  (* Split on "\n---" or start-of-string "---" boundaries *)
   let sep = "\n---" in
   let sl = String.length sep in
   let yl = String.length yaml in
@@ -114,7 +99,7 @@ let extract_kind_block yaml kind_marker =
     if String.sub yaml i sl = sep
     then (
       blocks := String.sub yaml !start (i - !start) :: !blocks;
-      start := i + 1 (* keep the "---" at the start of the next block *))
+      start := i + 1)
   done;
   blocks := String.sub yaml !start (yl - !start) :: !blocks;
   let result = ref "" in
@@ -122,8 +107,6 @@ let extract_kind_block yaml kind_marker =
   |> List.iter (fun b -> if !result = "" && contains b kind_marker then result := b);
   !result
 ;;
-
-(* ── fixtures ────────────────────────────────────────────────────────────── *)
 
 let svc_spec : Sol_cli_deployment_plan.service_spec =
   { domain = "payments"
@@ -230,8 +213,6 @@ let with_volumes volumes (spec : Sol_cli_deployment_plan.service_spec) =
   { spec with volumes }
 ;;
 
-(* ── volume tests ────────────────────────────────────────────────────────── *)
-
 let test_svc_volumes () =
   let _, workload = render_spec_ok (with_volumes [ test_volume ] svc_spec) in
   assert_contains "svc PVC" workload "kind: PersistentVolumeClaim";
@@ -247,8 +228,6 @@ let test_worker_volumes () =
   assert_contains "worker mountPath" workload "mountPath: /var/lib/data";
   assert_contains "worker claimName" workload "claimName: notify-worker-data"
 ;;
-
-(* ── Svc tests ───────────────────────────────────────────────────────────── *)
 
 let test_svc_namespace () =
   let ns_yaml, _workload = render_spec_ok svc_spec in
@@ -266,7 +245,6 @@ let test_svc_image () =
 ;;
 
 let test_svc_has_service_resource () =
-  (* "kind: Service\n" matches the Service resource, not ServiceAccount *)
   let _ns, workload = render_spec_ok svc_spec in
   assert_contains "svc Service resource" workload "kind: Service\n"
 ;;
@@ -275,26 +253,12 @@ let test_svc_has_ingress () =
   let _ns, workload = render_spec_ok svc_spec in
   let ingress_block = extract_kind_block workload "kind: Ingress" in
   assert_contains "svc Ingress resource" workload "kind: Ingress";
-  (* FEAT-042: pin the class explicitly. k3s/k3d ships Traefik as its own
-     IngressClass, so a classless Ingress is claimed by Traefik locally and by
-     nothing once ingress-nginx's class is not the cluster default. `nginx`
-     matches platform/cloud/modules/platform's own `ingress_class_name`. *)
   assert_contains
     "ingress pins the nginx IngressClass"
     ingress_block
     "ingressClassName: nginx"
 ;;
 
-(* Regression test: the NetworkPolicy's egress already allowed pods to reach
-   Prometheus/Loki/Tempo in the monitoring namespace, but ingress had no
-   matching allowance -- Prometheus's own scrape requests into the pod were
-   silently dropped, so every freshly-deployed service's metrics panel (and
-   any dashboard template variable backed by those labels) stayed empty
-   with no error anywhere in the chain. Confirmed live against a real k3d
-   cluster: wget from Prometheus's own pod to the target pod's IP got
-   "connection refused" on the exact port kubelet's own probes and
-   `sol status`'s port-forward could reach fine -- the NetworkPolicy, not
-   the app, was the blocker. *)
 let test_svc_networkpolicy_allows_monitoring_ingress () =
   let _ns, workload = render_spec_ok svc_spec in
   let netpol_block = extract_kind_block workload "kind: NetworkPolicy" in
@@ -347,9 +311,6 @@ let test_svc_calls_peer_env_and_network_policy () =
     {|CHECKOUT_SVC_URL: "http://checkout-svc.myapp-checkout.svc.cluster.local"|};
   assert_contains "egress peer namespace" caller_netpol "myapp-checkout";
   assert_contains "egress peer app" caller_netpol "app: checkout-svc";
-  (* Egress is evaluated before the Service DNAT, so it must not be pinned to
-     the target's container port (see network_policy_doc's comment); ingress
-     is post-DNAT and does keep the real container port. *)
   let egress_block =
     match Str.bounded_split_delim (Str.regexp_string "\n  egress:") caller_netpol 2 with
     | _ :: rest -> String.concat "\n  egress:" rest
@@ -373,12 +334,6 @@ let test_svc_replicas () =
   assert_contains "svc replicas=2" workload "replicas: 2"
 ;;
 
-(* CODE_LAYER-009: svc_spec above uses non-default replicas/cpu/memory so
-   test_svc_replicas has something to assert against; nothing else in this
-   file exercises render_spec's defaults (replicas=1, cpu=100m, memory=128Mi
-   — see Sol_cli_deployment_plan's Option.value ~default:... plan-building)
-   end to end. This was previously covered incidentally by a parity test
-   against the (now-deleted) legacy render path. *)
 let test_svc_default_resources () =
   let default_spec =
     { svc_spec with replicas = 1; cpu = cpu "100m"; memory = memory "128Mi" }
@@ -394,9 +349,6 @@ let test_svc_extra_config () =
   assert_contains "svc extra configmap key" workload {|APP_ENV: "staging"|}
 ;;
 
-(* FEAT-026: sol deploy's resolved target's env is threaded through to a
-   real env taxonomy label — omitted (not a fake default) when no target
-   resolved one, e.g. sol up. *)
 let test_svc_env_label_present_when_resolved () =
   let _ns, workload = render_spec_ok ~env:"prod" svc_spec in
   assert_contains "svc env label" workload {|env: "prod"|}
@@ -438,21 +390,18 @@ let test_fn_env_label_present_when_resolved () =
 ;;
 
 let test_svc_default_postgres_url () =
-  (* POSTGRES_URL must be in the Secret with an empty value (no hardcoded cred) *)
   let _ns, workload = render_spec_ok svc_spec in
   let secret_block = extract_kind_block workload "kind: Secret" in
   assert_contains "svc default postgres url in secret" secret_block {|POSTGRES_URL: ""|}
 ;;
 
 let test_postgres_url_not_in_configmap () =
-  (* POSTGRES_URL must never appear in the ConfigMap — it contains an embedded password *)
   let _ns, workload = render_spec_ok svc_spec in
   let cm_block = extract_kind_block workload "kind: ConfigMap" in
   assert_absent "POSTGRES_URL absent from ConfigMap" cm_block "POSTGRES_URL"
 ;;
 
 let test_postgres_url_in_secret () =
-  (* A Secret resource must be emitted and must contain POSTGRES_URL in stringData with empty value *)
   let _ns, workload = render_spec_ok svc_spec in
   assert_contains "Secret resource present" workload "kind: Secret";
   assert_contains "stringData section" workload "stringData:";
@@ -480,8 +429,6 @@ let test_svc_default_redpanda_admin_url () =
     {|REDPANDA_ADMIN_URL: "http://redpanda.redpanda.svc.cluster.local:9644"|}
 ;;
 
-(* SEC-007 / FND-0039: config_of_env refuses an unstated protocol, so every
-   rendered workload must declare it. *)
 let test_svc_declares_kafka_security_protocol () =
   let _ns, workload = render_spec_ok svc_spec in
   assert_contains
@@ -491,9 +438,6 @@ let test_svc_declares_kafka_security_protocol () =
 ;;
 
 let test_svc_secret_refs_without_values () =
-  (* Use Kubernetes_placeholder so the test does not require DATABASE_URL and
-     API_TOKEN to be set in the environment.  We are checking for structural
-     YAML (key refs in the Deployment, no values), not live env-var reading. *)
   let spec =
     { svc_spec with
       secrets = [ "DATABASE_URL", "postgres://secret"; "API_TOKEN", "token-value" ]
@@ -514,11 +458,6 @@ let test_svc_namespace_in_workload () =
   assert_contains "svc workload namespace" workload "namespace: myapp-payments"
 ;;
 
-(* ── AUDIT-016: user-defined secret_keys emitted as Secret resource ───────── *)
-
-(* When secrets = [("STRIPE_KEY", "")] the rendered workload must include a
-   Secret resource (kind: Secret) that carries STRIPE_KEY in its stringData
-   section.  The value is empty — operators fill it in at apply time. *)
 let test_user_secret_key_in_secret_resource () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload =
@@ -528,7 +467,6 @@ let test_user_secret_key_in_secret_resource () =
   assert_contains "STRIPE_KEY present in Secret resource" secret_block "STRIPE_KEY:"
 ;;
 
-(* The key reference in the Deployment env block must also be present. *)
 let test_user_secret_key_ref_in_deployment () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload =
@@ -537,7 +475,6 @@ let test_user_secret_key_ref_in_deployment () =
   assert_contains "STRIPE_KEY secretKeyRef" workload "key: STRIPE_KEY"
 ;;
 
-(* Multiple user-defined secret keys must all appear in the Secret resource. *)
 let test_multiple_user_secret_keys_in_secret_resource () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", ""; "SENDGRID_API_KEY", "" ] } in
   let _ns, workload =
@@ -548,7 +485,6 @@ let test_multiple_user_secret_keys_in_secret_resource () =
   assert_contains "SENDGRID_API_KEY in Secret" secret_block "SENDGRID_API_KEY:"
 ;;
 
-(* The default POSTGRES_URL must still be present alongside user secrets. *)
 let test_default_secrets_preserved_with_user_secrets () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload =
@@ -559,7 +495,6 @@ let test_default_secrets_preserved_with_user_secrets () =
   assert_contains "STRIPE_KEY also in Secret" secret_block "STRIPE_KEY:"
 ;;
 
-(* GitOps output must carry the required secret keys but no values. *)
 let test_gitops_redacts_all_secret_values () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "sk_live_should_not_render" ] } in
   let _ns, workload =
@@ -576,7 +511,6 @@ let test_gitops_redacts_all_secret_values () =
   assert_absent "user secret value redacted" secret_block "sk_live_should_not_render"
 ;;
 
-(* Worker with secret_keys also emits Secret resource with those keys. *)
 let test_worker_user_secret_key_in_secret_resource () =
   let spec = { worker_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload =
@@ -586,7 +520,6 @@ let test_worker_user_secret_key_in_secret_resource () =
   assert_contains "worker STRIPE_KEY in Secret" secret_block "STRIPE_KEY:"
 ;;
 
-(* Fn/CronJob with secret_keys also emits Secret resource with those keys. *)
 let test_fn_user_secret_key_in_secret_resource () =
   let spec = { fn_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload =
@@ -596,7 +529,6 @@ let test_fn_user_secret_key_in_secret_resource () =
   assert_contains "fn STRIPE_KEY in Secret" secret_block "STRIPE_KEY:"
 ;;
 
-(* image override: dry-run uses push_image *)
 let test_svc_image_override () =
   let push_image = "localhost:5000/myapp/charge-svc:abc123" in
   let _ns, workload = render_spec_ok ~image:push_image svc_spec in
@@ -610,8 +542,6 @@ let test_svc_image_override () =
     "sol-registry:5000/myapp/charge-svc:abc123"
 ;;
 
-(* ── Worker tests ────────────────────────────────────────────────────────── *)
-
 let test_worker_namespace () =
   let ns_yaml, _ = render_spec_ok worker_spec in
   assert_contains "worker ns" ns_yaml "name: myapp-comms"
@@ -623,8 +553,6 @@ let test_worker_image () =
 ;;
 
 let test_worker_no_service_resource () =
-  (* Workers don't expose HTTP — no Service or Ingress resource.
-     Check for "kind: Service\n" to avoid matching "kind: ServiceAccount". *)
   let _ns, workload = render_spec_ok worker_spec in
   assert_absent "worker no Service resource" workload "kind: Service\n";
   assert_absent "worker no Ingress" workload "kind: Ingress"
@@ -642,9 +570,6 @@ let test_worker_has_deployment () =
   assert_contains "worker Deployment" workload "kind: Deployment"
 ;;
 
-(* SEC-004: no workload gets an ambient Kubernetes credential. The
-   ServiceAccount disables token automount, and nothing re-enables it on the
-   pod spec. *)
 let test_service_account_disables_token_automount () =
   let ns_yaml, workload = render_spec_ok worker_spec in
   let rendered = ns_yaml ^ workload in
@@ -673,8 +598,6 @@ let test_fn_service_account_disables_token_automount () =
   assert_contains "fn ServiceAccount rendered" rendered "kind: ServiceAccount";
   assert_contains "fn automount disabled" rendered "automountServiceAccountToken: false"
 ;;
-
-(* ── AUDIT-080: the availability contract's rendered controls ─────────────── *)
 
 let test_termination_grace_is_explicit () =
   let _ns, workload = render_spec_ok svc_spec in
@@ -724,8 +647,6 @@ let test_single_has_no_pdb () =
     "PodDisruptionBudget"
 ;;
 
-(* ── Fn tests ────────────────────────────────────────────────────────────── *)
-
 let test_fn_namespace () =
   let ns_yaml, _ = render_spec_ok fn_spec in
   assert_contains "fn ns" ns_yaml "name: myapp-billing"
@@ -751,31 +672,20 @@ let test_fn_no_deployment () =
   assert_absent "fn no Deployment" workload "kind: Deployment"
 ;;
 
-(* AUDIT-040: CronJob pod template must carry app: <k8s_name> so that the
-   generated NetworkPolicy (which selects on app: <name>) matches fn pods. *)
 let test_fn_cronjob_pod_template_has_app_label () =
   let _ns, workload = render_spec_ok fn_spec in
   let cronjob_block = extract_kind_block workload "kind: CronJob" in
   assert_contains "fn cronjob pod template app label" cronjob_block "app: invoice-fn"
 ;;
 
-(* BUG-031: sol.toml's cpu/memory were parsed for every primitive, including
-   Fn, but Render_fn discarded them and rendered a hardcoded resource shape
-   regardless of what was configured. A function asking for far more (or
-   less) than the hardcoded 100m/128Mi got silently overridden. *)
 let test_fn_cpu_memory_configurable () =
   let spec = { fn_spec with cpu = cpu "2"; memory = memory "4Gi" } in
   let _ns, workload = render_spec_ok spec in
   let cronjob_block = extract_kind_block workload "kind: CronJob" in
-  (* REFAC-131: a bare 2 is a YAML integer, so the emitter quotes it; a Kubernetes
-     quantity accepts the string form. *)
   assert_contains "fn configured cpu request" cronjob_block {|cpu: "2"|};
   assert_contains "fn configured memory request" cronjob_block "memory: 4Gi"
 ;;
 
-(* Request and limit are rendered equal, the same convention
-   deployment_doc/rollout_doc already use for -svc/-worker -- no
-   Sol-invented limit multiplier on top of a configured value. *)
 let test_fn_cpu_memory_request_equals_limit () =
   let spec = { fn_spec with cpu = cpu "500m"; memory = memory "1Gi" } in
   let _ns, workload = render_spec_ok spec in
@@ -799,9 +709,6 @@ let test_fn_cpu_memory_request_equals_limit () =
     (count_occurrences "memory: 1Gi" cronjob_block)
 ;;
 
-(* FEAT-079: concurrencyPolicy/backoffLimit were previously unset by Sol at
-   all (silently defaulting to Kubernetes' Allow) or hardcoded (backoffLimit:
-   3 regardless of configuration). Both are now explicit fields. *)
 let test_fn_scheduled_concurrency_configurable () =
   let spec = { fn_spec with scheduled_concurrency = Sol_cli_toml.Forbid } in
   let _ns, workload = render_spec_ok spec in
@@ -831,10 +738,7 @@ let test_fn_backoff_limit_default_is_three () =
   assert_contains "fn default backoffLimit: 3" cronjob_block "backoffLimit: 3"
 ;;
 
-(* ── Escape-hatch tests ──────────────────────────────────────────────────── *)
-
 let test_rollout_recreate () =
-  (* rollout_strategy = Recreate must produce "type: Recreate" in the Deployment spec *)
   let spec = { svc_spec with rollout_strategy = Some Sol_cli_toml.Recreate } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "recreate strategy" workload "type: Recreate";
@@ -842,7 +746,6 @@ let test_rollout_recreate () =
 ;;
 
 let test_rollout_rolling_update () =
-  (* rollout_strategy = RollingUpdate (explicit) must produce "type: RollingUpdate" *)
   let spec = { svc_spec with rollout_strategy = Some Sol_cli_toml.RollingUpdate } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "rolling strategy" workload "type: RollingUpdate";
@@ -850,7 +753,6 @@ let test_rollout_rolling_update () =
 ;;
 
 let test_rollout_default_is_rolling_update () =
-  (* Default (None) must also produce RollingUpdate *)
   let spec = { svc_spec with rollout_strategy = None } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "default is RollingUpdate" workload "type: RollingUpdate"
@@ -917,10 +819,6 @@ let test_progressive_blue_green_rollout () =
   assert_absent "no Deployment" workload "kind: Deployment"
 ;;
 
-(* ── AUDIT-039: Argo Rollout uses <name>-secrets, not sol-secrets ─────────── *)
-
-(* Canary Rollout with secrets must reference charge-svc-secrets (not sol-secrets)
-   in the secretKeyRef block. *)
 let test_rollout_canary_secrets_use_sol_secrets () =
   let spec =
     { svc_spec with
@@ -944,7 +842,6 @@ let test_rollout_canary_secrets_use_sol_secrets () =
   assert_absent "no global sol-secrets name" rollout_block "name: sol-secrets"
 ;;
 
-(* Blue-green Rollout with secrets must also reference charge-svc-secrets. *)
 let test_rollout_blue_green_secrets_use_sol_secrets () =
   let spec =
     { svc_spec with
@@ -997,9 +894,6 @@ let test_ingress_host_override () =
 let test_undeclared_ingress_host_gets_dev_host () =
   let _ns, workload = render_spec_ok svc_spec in
   let ingress_block = extract_kind_block workload "kind: Ingress" in
-  (* BUG-021: a service with no ingress_host still gets a host, so two of them
-     cannot collide on host "" + path "/" (which ingress-nginx's admission
-     webhook rejects cluster-wide). It stays HTTP-only. *)
   assert_contains
     "dev host rule"
     ingress_block
@@ -1026,21 +920,18 @@ let test_blue_green_ingress_tls_secret_matches_plan () =
 ;;
 
 let test_ingress_path_override () =
-  (* ingress_path override must appear in the path field *)
   let spec = { svc_spec with ingress_path = Some (ingress_path "/api/v2") } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "ingress path" workload "path: /api/v2"
 ;;
 
 let test_ingress_default_path () =
-  (* Default path is "/" *)
   let spec = { svc_spec with ingress_path = None } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "default path" workload "path: /"
 ;;
 
 let test_extra_labels_appear_in_pod_template () =
-  (* extra_labels must appear in the pod template metadata.labels block *)
   let spec = { svc_spec with extra_labels = [ "team", "platform"; "tier", "backend" ] } in
   let _ns, workload = render_spec_ok spec in
   assert_contains "extra label team" workload {|team: "platform"|};
@@ -1048,14 +939,12 @@ let test_extra_labels_appear_in_pod_template () =
 ;;
 
 let test_extra_labels_empty_by_default () =
-  (* No extra labels → no spurious keys in pod template *)
   let spec = { svc_spec with extra_labels = [] } in
   let _ns, workload = render_spec_ok spec in
   assert_absent "no team label" workload {|team:|}
 ;;
 
 let test_toml_invalid_rollout_strategy () =
-  (* load_result refuses unknown rollout_strategy values *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string oc "[infra.deploy]\nrollout_strategy = \"Blue/Green\"\n";
@@ -1066,7 +955,6 @@ let test_toml_invalid_rollout_strategy () =
 ;;
 
 let test_toml_reserved_label_key () =
-  (* extra_labels keys starting with "sol.dev/" must be rejected *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string
@@ -1081,7 +969,6 @@ extra_labels = { "sol.dev/owner" = "platform" }
 ;;
 
 let test_toml_valid_rollout_recreate () =
-  (* Parsing Recreate from sol.toml should populate rollout_strategy correctly *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string oc "[infra.deploy]\nrollout_strategy = \"Recreate\"\n";
@@ -1095,7 +982,6 @@ let test_toml_valid_rollout_recreate () =
 ;;
 
 let test_toml_valid_ingress_overrides () =
-  (* Parsing ingress_host and ingress_path from sol.toml *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string
@@ -1302,14 +1188,10 @@ steps = [10, 120]
   check_bool "invalid canary weight raises" true raised
 ;;
 
-(* ── otoml-backed parser: standard TOML shapes the old parser couldn't handle *)
-
 let test_toml_rejects_malformed () =
-  (* otoml raises on malformed TOML; old parser silently returned empty *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string oc "replicas = \n";
-  (* missing value *)
   close_out oc;
   let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
@@ -1347,7 +1229,6 @@ let test_toml_load_result_syntax_error () =
 ;;
 
 let test_toml_multiline_array_secrets () =
-  (* Standard TOML multi-line array — old line-oriented parser couldn't handle this *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string
@@ -1368,7 +1249,6 @@ secrets = [
 ;;
 
 let test_toml_dotted_section_headers () =
-  (* TOML allows [infra.scale] as a dotted key table header — verify otoml handles it *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string
@@ -1393,7 +1273,6 @@ memory = "256Mi"
 ;;
 
 let test_toml_canary_pause_steps () =
-  (* Canary steps with pause = {} and pause = {duration = 60} inline tables *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string
@@ -1418,9 +1297,6 @@ steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
   | _ -> Alcotest.fail "expected canary steps with pause from [infra.rollout]"
 ;;
 
-(* ── ExternalSecret backend tests ────────────────────────────────────────── *)
-
-(* Helper: build an ESO backend value *)
 let eso_backend =
   Sol_cli_manifest.External_secrets
     { store_ref = "aws-secrets-manager"
@@ -1430,8 +1306,6 @@ let eso_backend =
     }
 ;;
 
-(* external_secret_doc should emit ExternalSecret kind and remoteRef fields,
-   and must NOT contain stringData. *)
 let test_external_secret_doc_no_stringdata () =
   let doc =
     Sol_cli_manifest.external_secret_doc
@@ -1450,7 +1324,6 @@ let test_external_secret_doc_no_stringdata () =
   assert_absent "no stringData" doc "stringData"
 ;;
 
-(* All provided secret keys must appear as secretKey entries *)
 let test_external_secret_doc_keys_present () =
   let doc =
     Sol_cli_manifest.external_secret_doc
@@ -1468,7 +1341,6 @@ let test_external_secret_doc_keys_present () =
   assert_contains "SENDGRID_API_KEY secretKey" doc "secretKey: SENDGRID_API_KEY"
 ;;
 
-(* The target.name must be "<name>-secrets" *)
 let test_external_secret_doc_target_name () =
   let doc =
     Sol_cli_manifest.external_secret_doc
@@ -1484,7 +1356,6 @@ let test_external_secret_doc_target_name () =
   assert_contains "target name is charge-svc-secrets" doc "name: charge-svc-secrets"
 ;;
 
-(* render_spec with External_secrets backend must emit ExternalSecret, not Secret *)
 let test_render_spec_eso_backend_no_k8s_secret () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
@@ -1492,7 +1363,6 @@ let test_render_spec_eso_backend_no_k8s_secret () =
   assert_absent "no plain Secret kind" workload "kind: Secret"
 ;;
 
-(* render_spec with ESO backend must include all keys (default + user) in data: *)
 let test_render_spec_eso_backend_all_keys () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
@@ -1500,24 +1370,18 @@ let test_render_spec_eso_backend_all_keys () =
   assert_contains "STRIPE_KEY in ESO data" workload "secretKey: STRIPE_KEY"
 ;;
 
-(* render_spec with ESO backend must NOT contain stringData *)
 let test_render_spec_eso_backend_no_stringdata () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
   let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
   assert_absent "no stringData in ESO output" workload "stringData"
 ;;
 
-(* Kubernetes_placeholder backend (default) still emits a regular Secret *)
 let test_render_spec_k8s_placeholder_default () =
   let _ns, workload = render_spec_ok svc_spec in
   assert_contains "kind Secret present" workload "kind: Secret";
   assert_absent "no ExternalSecret" workload "kind: ExternalSecret"
 ;;
 
-(* ── Config parsing policy: Kubernetes_live fails closed on missing env vars ── *)
-
-(* When Kubernetes_live is used and a user-declared secret key is absent from
-   the process environment, render_spec must return Error — not Ok with "". *)
 let test_live_backend_missing_user_secret_returns_error () =
   (try Unix.putenv "MISSING_SECRET_KEY_FOR_TEST" "" with
    | _ -> ());
@@ -1535,7 +1399,6 @@ let test_live_backend_missing_user_secret_returns_error () =
    | Ok _ -> ()
    | Error e -> Alcotest.fail ("Expected Ok when env var set, got Error: " ^ e));
   Unix.putenv "MISSING_SECRET_KEY_FOR_TEST" "";
-  (* Unix.putenv cannot unset a var, so use a key that was never set. *)
   let absent_key = "__SOL_TEST_ABSENT_KEY_XQ9Z2__" in
   let spec_missing = { svc_spec with secrets = [ absent_key, "" ] } in
   match
@@ -1550,7 +1413,6 @@ let test_live_backend_missing_user_secret_returns_error () =
   | Ok _ -> Alcotest.fail "Expected Error when required secret env var is absent, got Ok"
 ;;
 
-(* Multiple missing secret keys should all be reported in the error message. *)
 let test_live_backend_multiple_missing_secrets_all_reported () =
   let absent1 = "__SOL_TEST_ABSENT_A_XQ9Z2__" in
   let absent2 = "__SOL_TEST_ABSENT_B_XQ9Z2__" in
@@ -1569,8 +1431,6 @@ let test_live_backend_multiple_missing_secrets_all_reported () =
     Alcotest.fail "Expected Error when required secret env vars are absent, got Ok"
 ;;
 
-(* When no user-declared secrets, Kubernetes_live must still succeed even if
-   the platform-default env vars (e.g. POSTGRES_URL) are absent. *)
 let test_live_backend_no_user_secrets_always_succeeds () =
   let spec = { svc_spec with secrets = [] } in
   match
@@ -1584,21 +1444,6 @@ let test_live_backend_no_user_secrets_always_succeeds () =
   | Error e -> Alcotest.fail ("Expected Ok with no user secrets, got Error: " ^ e)
 ;;
 
-(* ── artifact_invariants ─────────────────────────────────────────────────── *)
-
-(* Checks the security and operational invariants every Sol-generated artifact
-   must satisfy.  Call with the full workload YAML string returned by
-   [render_spec_ok].  The [label] prefix appears in failure messages so you can
-   tell which primitive violated the invariant.
-
-   Invariants checked here:
-   - runAsNonRoot: true            (pod-level securityContext)
-   - allowPrivilegeEscalation: false  (container-level securityContext)
-   - readOnlyRootFilesystem: true  (container-level securityContext)
-
-   Invariants documented but NOT yet enforced in YAML output:
-   - sol.dev/workspace label  (tracked in CODEX_STYLE_AUDIT-072)
-   - sol.dev/domain label     (tracked in CODEX_STYLE_AUDIT-072) *)
 let assert_k8s_invariants label yaml =
   assert_contains (label ^ ": runAsNonRoot") yaml "runAsNonRoot: true";
   assert_contains
@@ -1643,7 +1488,6 @@ let test_rollout_blue_green_satisfies_invariants () =
 ;;
 
 let test_gitops_secret_redacted () =
-  (* Kubernetes_placeholder must not emit real secret values in the YAML output. *)
   let spec = { svc_spec with secrets = [ "SECRET_KEY", "real-value-must-not-appear" ] } in
   let _ns, workload =
     render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
@@ -1653,8 +1497,6 @@ let test_gitops_secret_redacted () =
     workload
     "real-value-must-not-appear"
 ;;
-
-(* ── workload_shape: direct deployment_doc / rollout_doc coverage ─────────── *)
 
 let test_shape_http_service_deployment_has_ports () =
   let doc =
@@ -1766,8 +1608,6 @@ let test_shape_rollout_background_worker_metrics_port () =
   assert_absent "rollout Background_worker no readinessProbe" doc "readinessProbe:"
 ;;
 
-(* ── OBS-008: label taxonomy ──────────────────────────────────────────────── *)
-
 let test_taxonomy_labels_svc () =
   let _, workload = render_spec_ok svc_spec in
   assert_contains "workspace label" workload {|workspace: "myapp"|};
@@ -1795,15 +1635,8 @@ let test_taxonomy_labels_fn () =
   assert_contains "release label" workload expected_release_label
 ;;
 
-(* FEAT-066: rollback's verifier reads the `release` label through a fixed
-   jsonpath per kind (Sol_cli_rollback.live_resource_and_jsonpath). This pins the
-   renderer's half of that contract: the label must sit at exactly the YAML
-   nesting the verifier's own jsonpath implies. The substring tests above would
-   all still pass if the renderer moved the label out of the pod template, which
-   would make every rollback verification read "" and report a false mismatch. *)
 let assert_release_label_at_verifier_path label kind workload release_id =
   let _, jsonpath = Sol_cli_rollback.live_resource_and_jsonpath kind in
-  (* "{.spec.template.metadata.labels.release}" -> 5 keys -> 2*(5-1) = 8 spaces. *)
   let inner = String.sub jsonpath 2 (String.length jsonpath - 3) in
   let depth = List.length (String.split_on_char '.' inner) in
   let expected =
@@ -1850,14 +1683,6 @@ let test_release_label_lives_at_the_verifier_jsonpath () =
     release_id
 ;;
 
-(* matchLabels/selector must stay app-only -- changing selector labels would
-   orphan running pods on the next rollout. The taxonomy labels only belong
-   in the pod template's own labels block, rendered separately below this. *)
-(* OBS-021 regression: a mixed-case/underscore workspace or domain used to
-   render as-is in the manifest label while sol open's dashboard link
-   normalized it differently (lowercase + hyphens only) -- the two
-   permanently disagreed, so the dashboard opened empty. Both now go
-   through the same Sol_cli_kubernetes_name.sanitize_label_value. *)
 let test_taxonomy_labels_match_dashboard_link_normalization () =
   let spec =
     { svc_spec with
@@ -1903,9 +1728,6 @@ let test_taxonomy_labels_not_in_selector () =
     "matchLabels:\n      app: charge-svc\n  template:"
 ;;
 
-(* FEAT-069: the taxonomy `release` label carries the plan's content-addressed
-   release id, not the image tag. The image tag remains available as
-   container.image -- a build/artifact fact, not a release identity. *)
 let test_release_label_is_release_id () =
   let _, workload = render_spec_ok svc_spec in
   assert_contains "release label is the release id" workload expected_release_label
@@ -1921,9 +1743,6 @@ let test_release_label_does_not_leak_image_tag () =
     "image: sol-registry:5000/myapp/charge-svc:abc123"
 ;;
 
-(* The render path only ever sees the abstract [Release_id.t], so it cannot
-   substitute an image tag or a bare string for the label: whatever identity
-   the caller supplies is the label, byte for byte. *)
 let test_release_label_is_the_supplied_identity () =
   let other =
     Sol_cli_release_id.of_content
@@ -1937,14 +1756,6 @@ let test_release_label_is_the_supplied_identity () =
   assert_absent "not the default id" workload expected_release_label
 ;;
 
-(* OBS-019: sanitize_label_value still applies to every non-release taxonomy
-   label value. workspace/domain/service are already bounded before
-   render_spec ever reaches label rendering (namespace_result validates
-   their combined length/charset upstream, and service is always a validated
-   k8s_name here), so those can't be exercised through the full render
-   pipeline -- test the exposed sanitizer directly instead. `release` is
-   deliberately exempt (FEAT-069): it is label-safe by construction and is
-   written verbatim, so there is nothing here to sanitize. *)
 let test_sanitize_label_value_bounds_length () =
   let long = String.make 90 'a' in
   check_string
@@ -1974,10 +1785,6 @@ let test_sanitize_label_value_empty_falls_back_to_unknown () =
     (Sol_cli_manifest.sanitize_label_value "")
 ;;
 
-(* OBS-021: sanitize_label_value now guarantees a genuinely valid
-   Kubernetes label value, not just a bounded one -- lowercases, replaces
-   every invalid character (not just underscore), and strips a leading
-   invalid character entirely rather than only fixing the trailing one. *)
 let test_sanitize_label_value_lowercases_and_replaces_underscores () =
   check_string
     "mixed case + underscores normalized"
@@ -1999,9 +1806,6 @@ let test_sanitize_label_value_strips_leading_non_alnum () =
     (Sol_cli_manifest.sanitize_label_value "---app")
 ;;
 
-(* ── workload selection over discovery (FEAT-065) ───────────────────────── *)
-
-(* Run [f] inside a fresh temp workspace root, then restore cwd and delete it. *)
 let in_temp_workspace f =
   let orig_cwd = Sys.getcwd () in
   let tmpdir = Filename.temp_file "sol-manifest-test-" "" in
@@ -2018,7 +1822,6 @@ let in_temp_workspace f =
 let with_charge_svc_workspace f =
   in_temp_workspace
   @@ fun () ->
-  (* DEC-024: the temp directory becomes a Sol workspace with sol.yml. *)
   let marker = open_out "sol.yml" in
   close_out marker;
   let dir = "app/payments/charge_svc" in
@@ -2031,9 +1834,6 @@ let with_charge_svc_workspace f =
 
 let names services = List.map (fun (s : Sol_cli_manifest.service) -> s.name) services
 
-(* Discovery is unfiltered; selection happens once, after it, through the one
-   bridge. charge_svc is the on-disk (underscored) directory name, and the
-   resolver canonicalises the hyphenated spelling to it. *)
 let test_selection_hyphenated_unit_resolves_to_discovered_name () =
   with_charge_svc_workspace
   @@ fun () ->
@@ -2067,9 +1867,6 @@ let test_selection_unknown_unit_fails_closed () =
     Alcotest.(check bool) "error names what exists" true (String.length message > 0)
 ;;
 
-(* ── an environment labels, but never re-addresses (DEC-016) ─────────────── *)
-
-(** Every occurrence of [needle] replaced by [replacement]. *)
 let replace_all haystack needle replacement =
   let hl = String.length haystack
   and nl = String.length needle in
@@ -2096,7 +1893,6 @@ let render_for ?(workspace = "myapp") env spec =
   ns, workload
 ;;
 
-(** Resource names — every [name:] value in a rendered document. *)
 let resource_names yaml =
   String.split_on_char '\n' yaml
   |> List.filter_map (fun line ->
@@ -2108,21 +1904,8 @@ let resource_names yaml =
     else None)
 ;;
 
-(** Keys whose values may legitimately differ between environments, each for a
-    reason DEC-016 states:
-
-    - [env] — the taxonomy label: how you tell which environment a workload
-      belongs to;
-    - [SOL_ENV] — the runtime variable handed to application code;
-    - [sol.dev/config-hash] — derived, not independent: the hash covers the
-      ConfigMap that contains [SOL_ENV], and that is precisely why moving a
-      workload between environments restarts it.
-
-    Anything else that differs is a leak — which is the point of the test. *)
 let environment_dependent_keys = [ "env"; "SOL_ENV"; "sol.dev/config-hash" ]
 
-(** The key of a YAML line, for allowlist purposes: the text before the first
-    colon, handling both [key: value] and [- key: value]. *)
 let line_key line =
   let trimmed = String.trim line in
   let trimmed =
@@ -2135,7 +1918,6 @@ let line_key line =
   | None -> trimmed
 ;;
 
-(** Every value of [key] in a rendered document. *)
 let values_of_key key yaml =
   String.split_on_char '\n' yaml
   |> List.filter_map (fun line ->
@@ -2149,17 +1931,12 @@ let values_of_key key yaml =
       | None -> None))
 ;;
 
-(** Internal addresses — every line that resolves inside the cluster. *)
 let internal_addresses yaml =
   String.split_on_char '\n' yaml
   |> List.filter (fun line -> contains line ".svc.cluster.local")
   |> List.map String.trim
 ;;
 
-(** Nothing may depend on the environment except the keys above, and those keys
-    must carry the environment's name and nothing else. The config hash is the
-    one exception, because it is derived from a ConfigMap that legitimately
-    contains [SOL_ENV]. *)
 let check_no_unexplained_differences label a b ~env_a ~env_b =
   let la = String.split_on_char '\n' a
   and lb = String.split_on_char '\n' b in
@@ -2190,28 +1967,15 @@ let check_no_unexplained_differences label a b ~env_a ~env_b =
     lb
 ;;
 
-(* DEC-016: the same service must promote unchanged. An environment may *label* a
-   workload — that is how you tell which environment it belongs to — but it must
-   not change what the workload is called, where it lives, or how it is
-   addressed. Anything that has to be rewritten to move between environments is
-   somewhere dev and prod can silently diverge. *)
 let test_environment_labels_but_does_not_re_address () =
-  (* "alpha"/"beta" rather than "staging"/"prod": svc_spec carries a config value
-     of "staging", so an environment name that also occurs in fixture data would
-     make the comparison below pass for the wrong reason. *)
   let ns_alpha, workload_alpha = render_for "alpha" svc_spec in
   let ns_beta, workload_beta = render_for "beta" svc_spec in
-  (* Guard against a vacuous test: the environment must genuinely be represented,
-     or the equality checks below would hold because it is being ignored. *)
   assert_contains "the environment is represented" workload_alpha "alpha";
   assert_contains "the environment is represented" workload_beta "beta";
   check_bool
     "the two environments do not render identically"
     false
     (workload_alpha = workload_beta);
-  (* Identity and addressing are environment-independent, asserted directly on
-     the fields rather than inferred from text: a leaked environment would
-     otherwise pass simply by mentioning its own name. *)
   check_string "the namespace document is identical" ns_alpha ns_beta;
   Alcotest.(check (list string))
     "resource names are identical"
@@ -2225,24 +1989,17 @@ let test_environment_labels_but_does_not_re_address () =
     "internal addresses are identical"
     (internal_addresses workload_alpha)
     (internal_addresses workload_beta);
-  (* And nothing else may differ. *)
   check_no_unexplained_differences
     "workload"
     workload_alpha
     workload_beta
     ~env_a:"alpha"
     ~env_b:"beta";
-  (* The other half of "promotes unchanged": rendering the same spec for the same
-     environment twice is byte-identical. A difference here would mean the output
-     depends on something other than its inputs — traversal order, the clock, the
-     filesystem — which no amount of re-deploying would stabilise. *)
   let ns_again, workload_again = render_for "alpha" svc_spec in
   check_string "the namespace document is stable across renders" ns_alpha ns_again;
   check_string "the workload is stable across renders" workload_alpha workload_again
 ;;
 
-(* The rule stated directly on addressing: no environment identifier in a
-   namespace. *)
 let test_environment_absent_from_the_namespace () =
   let ns_alpha, _ = render_for "alpha" svc_spec in
   let ns_beta, _ = render_for "beta" svc_spec in
@@ -2250,11 +2007,6 @@ let test_environment_absent_from_the_namespace () =
   assert_absent "namespace" ns_beta "beta"
 ;;
 
-(* FEAT-060: SOL_ENV reaches every primitive, not just services. All three render
-   through the same [configmap_doc] path, so these assert the shared path — but
-   they are the assertions that would fail if a primitive were ever split off it.
-   Postgres URL, secrets and the env label are asserted per primitive elsewhere
-   in this file; SOL_ENV was the exception. *)
 let test_worker_sol_env_configmap_present_when_resolved () =
   let _ns, workload = render_spec_ok ~env:"staging" worker_spec in
   let cm_block = extract_kind_block workload "kind: ConfigMap" in
@@ -2279,7 +2031,6 @@ let test_fn_sol_env_configmap_absent_by_default () =
   assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
-(* BUG-048: a -fn's Pushgateway group is its workload identity; only -fn gets it. *)
 let test_fn_render_carries_pushgateway_job () =
   let _, workload = render_spec_ok fn_spec in
   check_bool
@@ -2309,7 +2060,6 @@ let test_fn_without_schedule_is_refused_at_render () =
   | Error msg -> check_bool "names the schedule" true (contains msg "schedule")
 ;;
 
-(* SEC-006: only the local executor renders the Unverified_dev_only opt-in. *)
 let test_local_executor_renders_unverified_jwt_opt_in () =
   let _, workload = render_spec_ok (Sol_cli_executor.local_development_spec svc_spec) in
   check_bool
@@ -2318,8 +2068,6 @@ let test_local_executor_renders_unverified_jwt_opt_in () =
     (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
 ;;
 
-(* SEC-006 review: [infra.env] config is the only author-controlled path into a
-   workload's env, so the opt-in is refused there. *)
 let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
   let path = Filename.temp_file "sol-toml-optin-" ".toml" in
   let oc = open_out path in
@@ -2355,7 +2103,6 @@ let test_sol_secret_rejects_unverified_jwt_opt_in () =
     (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_UNVERIFIED_JWT"))
 ;;
 
-(* A secret already stored under the reserved name must still be removable. *)
 let test_sol_secret_delete_accepts_reserved_key_format () =
   check_bool
     "sol secret delete may remove the reserved key"
@@ -2371,8 +2118,6 @@ let test_deploy_render_has_no_unverified_jwt_opt_in () =
     (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
 ;;
 
-(* INFRA-073: -svc readiness is /readyz (it turns 503 as shutdown begins);
-   liveness and startup stay on /healthz. *)
 let test_svc_readiness_probe_uses_readyz () =
   let _, workload =
     render_spec_ok { svc_spec with language = Some Sol_cli_compat.Ocaml }
@@ -2387,13 +2132,6 @@ let test_svc_readiness_probe_uses_readyz () =
     (contains workload "livenessProbe:\n          httpGet:\n            path: /healthz")
 ;;
 
-(* A TypeScript -svc keeps /healthz for readiness until its framework serves
-   /readyz (FEAT-096); pointing it at a 404 would leave its pods never ready. *)
-(* An undeclared language is unknown, not OCaml: /healthz. `sol up` rendered
-   this for every service before BUG-056 -- it passed no declared configuration,
-   so an OCaml unit lost the /readyz probe its language implies and the local
-   TypeScript golden path (whose sol.yml declares typescript) was probed on a
-   path TS never serves. *)
 let test_undeclared_language_readiness_stays_on_healthz () =
   let _, workload = render_spec_ok { svc_spec with language = None } in
   check_bool
@@ -2412,9 +2150,6 @@ let test_ts_svc_readiness_stays_on_healthz () =
     (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
 ;;
 
-(* REFAC-131: every value reaches Kubernetes as exactly what sol.toml said. The
-   templates interpolated env values and labels into "%s" unescaped, so a value
-   with a quote and a newline could end its own scalar and inject a key. *)
 let parse_documents text =
   text
   |> String.split_on_char '\n'

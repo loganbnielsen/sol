@@ -1,6 +1,3 @@
-(* REFAC-134: filesystem chores without a shell, and failures that are returned
-   rather than swallowed. *)
-
 let check_bool = Alcotest.(check bool)
 
 let in_temp f =
@@ -21,7 +18,6 @@ let test_remove_if_present () =
       (Result.is_ok (Sol_cli_fs.remove_if_present file));
     check_bool "gone" false (Sys.file_exists file);
     check_bool "absent is Ok" true (Result.is_ok (Sol_cli_fs.remove_if_present file));
-    (* A directory is not a file to unlink: an error, not a silent success. *)
     check_bool
       "a directory is an Error"
       true
@@ -121,8 +117,6 @@ let test_spawn () =
      | () -> true
      | exception Unix.Unix_error _ -> false);
   Sol_cli_process.stop child;
-  (* [stop] reaps the child itself when it has already exited, so ECHILD here
-     means stopped, not an error -- the race that made this test flaky. *)
   let rec reaped attempts =
     attempts > 0
     &&

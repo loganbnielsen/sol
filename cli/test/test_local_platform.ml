@@ -1,6 +1,3 @@
-(* REFAC-139, part B: what `sol local infra up` installs is a decision, and now
-   a test can read it. *)
-
 let assets =
   { Sol_cli_local_platform.component_values =
       List.map (fun c -> c, c ^ "-values") Sol_cli_local_platform.components
@@ -46,8 +43,6 @@ let test_ingress_always () =
     (Sol_cli_local_platform.needs_any_chart (req ()))
 ;;
 
-(* REFAC-107's case: a workspace that declares postgres gets it, whatever its
-   language -- the decision reads the declaration, not build files. *)
 let test_declared_postgres () =
   Alcotest.(check (list string))
     "postgres and the ingress"
@@ -76,8 +71,6 @@ let test_values_come_from_the_assets () =
     (find "Redpanda").version
 ;;
 
-(* REFAC-139 part F: the forwards started and the endpoints reported are one
-   list, so they cannot disagree. *)
 let forwards req =
   Sol_cli_local_platform.endpoints ~req
   |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.name)
@@ -117,7 +110,6 @@ let test_endpoint_ports_are_distinct () =
   Alcotest.(check bool) "not sol up's 8080" false (List.mem 8080 ports)
 ;;
 
-(* FRIC-017: DOCKER_API_VERSION for k3d, never below its own 1.43 floor. *)
 let test_k3d_api_version () =
   let env daemon_min = Sol_cli_local_cluster.api_version_env ~daemon_min in
   Alcotest.(check (list (pair string string)))

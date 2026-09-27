@@ -1,10 +1,3 @@
-(* FEAT-062: rendering a target as a target.
-
-   The invariant worth asserting is the easy one to lose: the kube-context is a
-   mechanism, not the target's identity (DEC-020), so it must not appear in the
-   default rendering — only under --verbose. A "helper" that prints it "for
-   clarity" would undo the point of FEAT-059. *)
-
 open Sol_cli_target_report
 
 let provider () =
@@ -58,7 +51,6 @@ let test_configured_is_not_checked_and_hides_the_context () =
   in
   assert (Sol_cli_string.contains ~needle:"not checked" message);
   assert (Sol_cli_string.contains ~needle:"--check" message);
-  (* Not checked must also mean not revealed: this is the masking rule. *)
   assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" message))
 ;;
 
@@ -101,7 +93,6 @@ let test_rows_describe_the_target_not_a_cluster () =
     "provider present"
     true
     (Option.is_some (value_of rows "provider"));
-  (* The target path and env are details, not the summary. *)
   Alcotest.(check (option string))
     "no target path by default"
     None
@@ -125,8 +116,6 @@ let test_unreachable_carries_the_reason () =
   assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" quiet))
 ;;
 
-(* The JSON and text renderings share [rows], so this guards the claim rather
-   than trusting it: a second rendering path is how two output formats drift. *)
 let test_json_matches_rows () =
   let rows = Sol_cli_target_report.rows ~verbose:false (target ()) (Configured "c") in
   let json = Sol_cli_target_report.to_json ~verbose:false (target ()) (Configured "c") in
@@ -156,9 +145,6 @@ let () =
             `Quick
             test_configured_is_not_checked_and_hides_the_context
         ; Alcotest.test_case "the reason is filtered too" `Quick (fun () ->
-            (* kubectl quotes the context back — `error: context "X" does not
-               exist` — so filtering only the context field would satisfy the
-               masking rule in appearance while the reason leaked the name. *)
             let reason = "error: context \"prod-us-east-1\" does not exist" in
             let quiet =
               Sol_cli_target_report.describe

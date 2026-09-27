@@ -1,7 +1,3 @@
-(* REFAC-135: library code reports; it does not print. These hold that a report
-   reaches whoever installed the reporter, at its level, and that a warning which
-   used to be printed and dropped is now something a caller can see. *)
-
 let level_name = function
   | Logs.App -> "app"
   | Logs.Warning -> "warning"
@@ -28,8 +24,6 @@ let test_levels () =
     (List.map (fun (level, text) -> level_name level, text) reported)
 ;;
 
-(* The workspace scan's unreadable-directory warning used to go straight to
-   stderr, so nothing could assert on it. *)
 let test_scan_warning_is_reported () =
   let root = Filename.temp_dir "sol-report-" "" in
   let domain = Filename.concat (Filename.concat root "events") "payments" in

@@ -1,11 +1,3 @@
-(* INFRA-090 / FND-0062: the disk-quota observation and the policy that reads it.
-
-   The payloads here are the provider's own, taken from the Attempt 12 bundle: the region
-   reported SSD_TOTAL_GB limit=500, usage=500 while five Autopilot nodes' boot disks were the
-   entire consumption, and the CSI driver's refusal named the same quota. What this test pins is
-   that Sol reads that number, refuses with the numbers in hand, and never turns "the provider
-   did not report this quota" into "there is none of it". *)
-
 let contains haystack needle =
   let n = String.length needle
   and h = String.length haystack in
@@ -13,7 +5,6 @@ let contains haystack needle =
   n = 0 || at 0
 ;;
 
-(* `gcloud compute regions describe us-central1 --format=json`, trimmed to what matters. *)
 let attempt_12_payload =
   {|{"name":"us-central1","quotas":[
       {"metric":"CPUS","limit":200.0,"usage":22.0},
@@ -58,7 +49,6 @@ let test_sufficiency_is_the_declared_minimum () =
   let observation =
     { Sol_cli_disk_quota.quota_name = "SSD_TOTAL_GB"; limit_gb = 520; used_gb = 500 }
   in
-  (* exactly enough is enough *)
   Alcotest.(check bool)
     "exactly the minimum passes"
     true
@@ -92,9 +82,6 @@ let test_empty_quota_refuses_with_the_observed_numbers () =
          (string_of_int Sol_cli_platform_storage.minimum_gb))
 ;;
 
-(* The declaration is Sol's, and every part of it says where the number came from -- the CI
-   guard cross-checks the parts against the Terraform declarations; this keeps the shape
-   honest offline. *)
 let test_the_declaration_is_described () =
   Alcotest.(check bool)
     "a minimum is declared"

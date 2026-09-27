@@ -1,66 +1,3 @@
-(* Sol end-to-end demo
-   ─────────────────────────────────────────────────────────────────────────
-   Full stack in one binary. Both services get logs/metrics/traces through
-   the same `Sol_obs.t` facade (framework/ocaml/sol-obs, CODE_LAYER-003) — the
-   app-facing observability object generated scaffolds use, not raw
-   Obs_eio/Obs_loki/Obs_prometheus/Obs_tempo composition:
-
-     HTTP client
-         │  POST /orders  [order_id, item, quantity]  +  X-Correlation-Id
-         ▼
-     order-svc  (sol-svc, Sol_obs)
-         │  Loki span: "receive_order"  ·  Prometheus: svc request metrics
-         │  Tempo trace: "receive_order"
-         │  publishes OrderPlaced event with W3C traceparent header
-         ▼
-     Kafka  sol-demo-orders-<run-id>
-         │
-         ▼
-     fulfillment-worker  (sol-worker, Sol_obs)
-         │  Loki span: "fulfill_order"  ·  Prometheus: worker message metrics
-         │  Tempo trace: "fulfill_order", child of "receive_order"
-         │  one Postgres transaction (pg-eio):
-         │    records fulfilled order
-         │    + enqueues a send-confirmation-email job (sol-jobs, FEAT-077) --
-         │      transactional enqueue: the job exists iff the order does
-         ▼
-     sol_jobs table (PostgreSQL)
-         │
-         ▼
-     jobs-worker  (sol-jobs hosted by a -worker, Sol_obs)
-         │  claims the job (FOR UPDATE SKIP LOCKED), "sends" the email,
-         │  deletes the job row on success
-         ▼
-     Loki (logs) · Prometheus (metrics) · Tempo (traces) · PostgreSQL (storage)
-     Grafana  http://localhost:3000
-
-   Run:
-     bash platform/local/scripts/ensure-broker.sh
-     bash platform/local/scripts/ensure-postgres.sh       # optional — skipped if absent
-     bash platform/local/scripts/ensure-loki.sh           # optional — logs to stdout if absent
-     bash platform/local/scripts/ensure-tempo.sh          # optional — traces skipped if absent
-     bash platform/local/scripts/ensure-pushgateway.sh    # optional — metrics only printed if absent
-     bash platform/local/scripts/ensure-prometheus.sh     # optional — needs Pushgateway to see metrics
-     bash platform/local/scripts/ensure-grafana.sh        # optional — provisions the "Sol Demo Overview"
-                                                           # dashboard (logs, metrics, and a Tempo pointer)
-                                                           # once the above are up
-
-     KAFKA_SECURITY_PROTOCOL=plaintext \
-     KAFKA_BROKERS=localhost:9092 \
-     SCHEMA_REGISTRY_URL=http://localhost:8081 \
-     REDPANDA_ADMIN_URL=http://localhost:9644 \
-     POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-     LOKI_URL=http://localhost:3100 \
-     TEMPO_URL=http://localhost:4318 \
-     PUSHGATEWAY_URL=http://localhost:9091 \
-       dune exec internal/fixtures/local-demo/bin/demo.exe
-
-     Then open http://localhost:3000 (no login — anonymous admin) and
-     look for the "Sol Demo Overview" dashboard.
-*)
-
-(* ── Config from environment ────────────────────────────────────────────── *)
-
 let loki_url = Sys.getenv_opt "LOKI_URL"
 let pushgateway_url = Sys.getenv_opt "PUSHGATEWAY_URL"
 let postgres_url = Sys.getenv_opt "POSTGRES_URL"
@@ -75,13 +12,9 @@ let kafka_config : Kafka_service.config =
   { config with linger_ms = 5 }
 ;;
 
-(* ── Helpers ─────────────────────────────────────────────────────────────── *)
-
 let sep = String.make 60 '-'
 let say fmt = Printf.ksprintf (fun s -> Printf.printf "\n[demo] %s\n%!" s) fmt
 let new_corr_id () = Printf.sprintf "c-%06x" (Random.int 0xFFFFFF)
-
-(* ── Assertion helpers ────────────────────────────────────────────────────── *)
 
 let http_get env ~sw ~port ~path () =
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
@@ -89,8 +22,6 @@ let http_get env ~sw ~port ~path () =
   Eio.Flow.copy_string
     (Printf.sprintf "GET %s HTTP/1.0\r\nHost: localhost\r\n\r\n" path)
     flow;
-  (* No shutdown — HTTP/1.0 server closes after response; shutdown before
-     reading triggers 499 "client cancelled" on some proxied services. *)
   Eio.Buf_read.take_all (Eio.Buf_read.of_flow flow ~max_size:65536)
 ;;
 
@@ -160,8 +91,6 @@ let metric_nonzero render name =
     | [] -> false)
 ;;
 
-(* ── HTTP helper ──────────────────────────────────────────────────────────── *)
-
 let http_post env ~sw ~port ~path ?(headers = []) ~body () =
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
   let flow = Eio.Net.connect ~sw env#net addr in
@@ -193,8 +122,6 @@ let http_post env ~sw ~port ~path ?(headers = []) ~body () =
   | _ -> 0
 ;;
 
-(* ── Fulfilled order schema (pg-eio Pg_table.Make) ────────────────────── *)
-
 module FulfilledOrderSchema = struct
   let table = "fulfilled_orders"
   let id_column = "order_id"
@@ -224,15 +151,6 @@ end
 
 module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 
-(* ── Confirmation-email job (sol-jobs, FEAT-077/DEC-021) ─────────────────
-   Independent unit of work fanned out from the fulfillment worker's own
-   Kafka handler -- deliberately NOT another Kafka message: nothing about
-   "send order-123's confirmation email" needs stream/partition ordering
-   relative to any other order's email, it just needs to happen, durably,
-   with retry. Enqueued in the same Postgres transaction as the
-   fulfilled_orders insert below, demonstrating the one thing a Kafka
-   publish structurally cannot offer: the job exists if and only if the
-   fulfilled-order row does. *)
 module EmailJobCodec = struct
   type t = { order_id : string }
 
@@ -249,8 +167,6 @@ module EmailJobCodec = struct
     | _ | (exception _) -> Error ("invalid EmailJob payload: " ^ s)
   ;;
 end
-
-(* ── Main ───────────────────────────────────────────────────────────────── *)
 
 let () =
   Random.self_init ();
@@ -273,10 +189,6 @@ let () =
   @@ fun env ->
   Eio.Switch.run
   @@ fun sw ->
-  (* ── Observability ─────────────────────────────────────────────────────── *)
-  (* Sol_obs.of_env reads LOKI_URL/TEMPO_URL itself and composes whichever
-     backends are configured (Prometheus always on) — both services get the
-     same logs/metrics/traces wiring generated scaffolds get, for free. *)
   (match loki_url with
    | None -> Printf.printf "\n  Note: LOKI_URL not set — logs to stdout.\n%!"
    | Some url -> Printf.printf "\n  Logs -> Loki at %s\n%!" url);
@@ -310,10 +222,6 @@ let () =
       ~service:"jobs-worker"
       ()
   in
-  (* order-svc, fulfillment-worker, and jobs-worker each carry their own
-     Prometheus registry (like three real, separately-scraped services) —
-     the demo's own snapshot/assertions render all three and stitch them
-     together. *)
   let render () =
     Sol_obs.metrics_renderer svc_obs ()
     ^ Sol_obs.metrics_renderer worker_obs ()
@@ -334,7 +242,6 @@ let () =
   in
   let order_ids = List.map (fun (order_id, _, _) -> order_id) orders in
   let orders_count = List.length orders in
-  (* ── Storage (optional) ────────────────────────────────────────────────── *)
   let db_pool =
     match postgres_url with
     | None ->
@@ -352,14 +259,6 @@ let () =
             Printf.printf "\n  DB -> Postgres  (migrations applied)\n%!";
             Some pool))
   in
-  (* ── Confirmation-email jobs worker (sol-jobs, FEAT-077/DEC-021) ─────────
-     Defined before the fulfillment worker below, since its handler enqueues
-     into this via Jobs.enqueue. No on_ready-style race to guard against the
-     way the Kafka worker's partition assignment needs one -- sol-jobs is a
-     polling claim loop, so it simply picks up whatever is enqueued on its
-     next poll tick regardless of exactly when this fiber starts. (jobs_obs
-     itself is defined earlier, alongside svc_obs/worker_obs, so render()
-     can include it from the start.) *)
   let jobs_done_p, jobs_done_r = Eio.Promise.create () in
   let jobs_processed = Hashtbl.create orders_count in
   let module EmailJob = struct
@@ -382,11 +281,8 @@ let () =
   (match db_pool with
    | Some _ -> ()
    | None ->
-     (* Nothing will ever enqueue a job without Postgres -- resolve
-        immediately so the "wait for jobs" step below doesn't hang. *)
      (try Eio.Promise.resolve jobs_done_r () with
       | _ -> ()));
-  (* ── Shared Kafka handle ────────────────────────────────────────────────── *)
   say
     "registering topic %S ..."
     (Kafka_service.topic_name_to_string Demo_order.topic_name);
@@ -403,7 +299,6 @@ let () =
     | Error e -> failwith ("register: " ^ Kafka_service.error_to_string e)
   in
   say "topic ready.";
-  (* ── Fulfillment worker ────────────────────────────────────────────────── *)
   let worker_ready_p, worker_ready_r = Eio.Promise.create () in
   let worker_done_p, worker_done_r = Eio.Promise.create () in
   let current_processed = Hashtbl.create orders_count in
@@ -435,11 +330,6 @@ let () =
              ; correlation_id = msg.Message.correlation_id
              }
          in
-         (* One Postgres transaction: the fulfilled-order row and its
-            confirmation-email job are inserted together, or neither is --
-            the transactional-enqueue guarantee sol-jobs exists for
-            (FEAT-077). A Kafka publish here instead could never join this
-            transaction. *)
          let result =
            Pg_db.transaction pool (fun pool ->
              let open Result.Syntax in
@@ -509,7 +399,6 @@ let () =
        (try Eio.Promise.resolve jobs_done_r () with
         | _ -> ());
        `Stop_daemon));
-  (* ── Order svc ─────────────────────────────────────────────────────────── *)
   let handle_order req =
     let corr_id =
       Option.value (Request.header req "x-correlation-id") ~default:(new_corr_id ())
@@ -581,7 +470,6 @@ let () =
      | Error e -> failwith e);
     `Stop_daemon);
   let port = Eio.Promise.await svc_port_p in
-  (* ── Wait for worker partition assignment ───────────────────────────────── *)
   say "waiting for worker partition assignment (up to 15s) ...";
   (match
      Eio.Time.with_timeout env#clock 15.0 (fun () ->
@@ -589,7 +477,6 @@ let () =
    with
    | Error `Timeout -> failwith "timed out waiting for worker partition assignment"
    | Ok () -> ());
-  (* ── Send 3 orders ──────────────────────────────────────────────────────── *)
   Printf.printf "\n%s\n%!" sep;
   let http_statuses =
     List.map
@@ -617,7 +504,6 @@ let () =
       orders
   in
   Printf.printf "%s\n%!" sep;
-  (* ── Wait for worker to finish ──────────────────────────────────────────── *)
   say "waiting for worker to process all %d messages (up to 20s) ..." orders_count;
   (match
      Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await worker_done_p))
@@ -627,11 +513,6 @@ let () =
      exit 1
    | Ok () -> ());
   say "all %d messages processed." orders_count;
-  (* ── Wait for jobs-worker to finish ───────────────────────────────────────
-     Each confirmation-email job was enqueued transactionally as part of the
-     fulfillment worker's own handler above, so all of them already exist by
-     the time worker_done_p resolved -- this just waits for the sol-jobs
-     claim loop to drain them. *)
   say
     "waiting for jobs-worker to process all %d confirmation emails (up to 20s) ..."
     orders_count;
@@ -643,7 +524,6 @@ let () =
      exit 1
    | Ok () -> ());
   say "all %d confirmation email jobs processed." orders_count;
-  (* ── PostgreSQL results ─────────────────────────────────────────────────── *)
   (match db_pool with
    | None -> ()
    | Some pool ->
@@ -663,12 +543,10 @@ let () =
                r.correlation_id)
           rows;
         Printf.printf "%s\n%!" sep));
-  (* ── Prometheus metrics snapshot ────────────────────────────────────────── *)
   Printf.printf "\n%s\n" sep;
   Printf.printf "  Prometheus metrics snapshot\n";
   Printf.printf "%s\n" sep;
   Printf.printf "%s\n%!" (render ());
-  (* ── Optional Pushgateway push ──────────────────────────────────────────── *)
   (match pushgateway_url with
    | None -> ()
    | Some url ->
@@ -680,7 +558,6 @@ let () =
         Printf.eprintf
           "[demo] push failed: %s\n%!"
           (Obs_prometheus.push_error_to_string e)));
-  (* ── Assertions ─────────────────────────────────────────────────────────── *)
   Printf.printf "\n%s\n" sep;
   Printf.printf "  Assertions\n";
   Printf.printf "%s\n" sep;

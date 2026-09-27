@@ -1,24 +1,8 @@
-(* FEAT-104: recording a generated workload's declared language in sol.yml.
-
-   The manifest is hand-maintained, so this patches its text rather than
-   re-rendering it: comments, blank lines and entries Sol did not write survive
-   byte-for-byte, and only the lines Sol adds are emitted (by Sol_cli_yaml, so a
-   name needing quotes gets them). The full interface rationale is in the .mli.
-
-   Two rules keep that safe. The patcher only rewrites a shape it recognises --
-   a block mapping with plain keys -- and refuses anything else, naming the file.
-   And the text it is about to write is parsed back before it is written: if the
-   result would not say what it intended, nothing is written at all. *)
-
 open Result.Syntax
 
 let manifest_name = "sol.yml"
 let manifest_path root = Filename.concat root manifest_name
 
-(* ── the file as text ────────────────────────────────────────────────────── *)
-
-(* Lines plus whether the file ended with a newline, so a file Sol only adds to
-   keeps the exact ending it had. *)
 type doc =
   { lines : string list
   ; trailing_newline : bool
@@ -49,8 +33,6 @@ let leading_spaces line =
 
 let is_blank line = String.trim line = ""
 
-(* A key at this indentation, whatever follows it: [services:], [services: {}],
-   [charge_svc: {type: http}]. Used to *find* things. *)
 let key_prefix ~indent key line =
   let length = String.length line in
   leading_spaces line = indent
@@ -59,9 +41,6 @@ let key_prefix ~indent key line =
   && String.equal (String.sub line indent (String.length key + 1)) (key ^ ":")
 ;;
 
-(* A key alone on its line: [charge_svc:], with everything about it indented
-   below. Only this shape can be inserted into -- [charge_svc: {}] has nowhere to
-   put a child without rewriting the line the operator wrote. *)
 let block_key ~indent key line =
   key_prefix ~indent key line && String.equal (String.trim line) (key ^ ":")
 ;;
@@ -74,8 +53,6 @@ let split_at list n =
   in
   go 0 [] list
 ;;
-
-(* ── the lines Sol adds ──────────────────────────────────────────────────── *)
 
 let indent_by n body =
   let pad = String.make n ' ' in
@@ -91,14 +68,11 @@ let indent_by n body =
   ^ "\n"
 ;;
 
-(* `  <name>:\n    language: <language>\n` -- one entry, indented under a
-   top-level `services:`. *)
 let entry_fragment ~name ~language =
   Sol_cli_yaml.(to_string (map [ name, map [ "language", string language ] ]))
   |> indent_by 2
 ;;
 
-(* `    language: <language>\n` -- for an entry that already exists. *)
 let language_fragment ~language =
   Sol_cli_yaml.(to_string (map [ "language", string language ])) |> indent_by 4
 ;;
@@ -113,16 +87,11 @@ let insert_after ~doc ~after ~fragment =
   { doc with lines = before @ added @ rest }
 ;;
 
-(* ── the patch ───────────────────────────────────────────────────────────── *)
-
 type outcome =
   | Declared
   | Language_added
   | Already_declared
 
-(* Where the entry for [name] goes, given the text as it stands. Returns the new
-   text and what was done to it -- or a refusal, for a shape this cannot patch
-   without rewriting lines the operator wrote. *)
 let patch ~doc ~name ~language =
   let lines = Array.of_list doc.lines in
   let count = Array.length lines in
@@ -133,8 +102,6 @@ let patch ~doc ~name ~language =
     then Some from
     else find_first (from + 1) predicate
   in
-  (* Where the block opened at [from] ends: the next non-blank line at a column
-     <= [column] is a sibling or the next section. *)
   let block_end ~from ~column =
     let rec go i =
       if i >= count
@@ -156,7 +123,6 @@ let patch ~doc ~name ~language =
   in
   match find_first 0 (key_prefix ~indent:0 "services") with
   | None ->
-    (* No section at all: add one, keeping the file's own ending. *)
     let text = text_of doc in
     let text = if doc.trailing_newline then text else text ^ "\n" in
     Ok (text ^ "\nservices:\n" ^ entry_fragment ~name ~language, Declared)
@@ -192,15 +158,11 @@ let patch ~doc ~name ~language =
          , Declared ))
 ;;
 
-(* ── reading and writing the file ────────────────────────────────────────── *)
-
 let read_file path =
   try Ok (In_channel.with_open_bin path In_channel.input_all) with
   | Sys_error msg -> Error msg
 ;;
 
-(* REFAC-134: Sol_cli_fs's atomic write, keeping the mode the operator chose for
-   sol.yml rather than the umask default. *)
 let write_atomic path text =
   let perm =
     match Unix.stat path with
@@ -210,19 +172,14 @@ let write_atomic path text =
   Sol_cli_fs.write_atomic ?perm path text
 ;;
 
-(* ── the interface ───────────────────────────────────────────────────────── *)
-
 type plan =
   { path : string
-  ; text : string option (* None when the manifest already says exactly this *)
+  ; text : string option
   ; outcome : outcome
   }
 
 let outcome plan = plan.outcome
 
-(* What the text says about [name], or a refusal. This is the proof-read that
-   makes the patcher safe: it can only ever be wrong in the direction of "write
-   nothing". *)
 let verify ~path ~text ~name ~language =
   let* services =
     Sol_cli_config.sol_yml_services_of_string ~path text
@@ -285,8 +242,6 @@ let plan ~root ~name ~dir ~language =
   in
   match existing with
   | Some { Sol_cli_config.language = Some _; _ } ->
-    (* The declaration is already there. Rewriting the file would change a file
-       for nothing -- not even its modification time. *)
     Ok { path; text = None; outcome = Already_declared }
   | _ ->
     let* text, outcome = patch ~doc:(doc_of text) ~name ~language:lang in

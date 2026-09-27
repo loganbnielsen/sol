@@ -1,7 +1,3 @@
-(* REFAC-132: the JSON boundary, and the decoders moved onto it. Each pair holds
-   the rule both ways: malformed or missing structure is an Error, and the empty
-   answer -- the one the tool actually gave -- is Ok. *)
-
 let is_error label = function
   | Ok _ -> Alcotest.failf "%s: a malformed read was accepted" label
   | Error (_ : string) -> ()

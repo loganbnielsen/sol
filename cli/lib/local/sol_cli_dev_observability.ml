@@ -1,7 +1,5 @@
 module Y = Sol_cli_yaml
 
-(* REFAC-131: built as a value and rendered once; each [data] entry is a whole
-   file (a dashboard's JSON, a provisioning YAML) carried as a literal block. *)
 let configmap_yaml ~name ~namespace ~labels ~data =
   Y.render
     [ Y.document
@@ -19,14 +17,10 @@ let configmap_yaml ~name ~namespace ~labels ~data =
     ]
 ;;
 
-(* A Grafana provisioning file declaring one datasource. *)
 let datasource_yaml fields =
   Y.to_string (Y.map [ "apiVersion", Y.int 1; "datasources", Y.list [ Y.map fields ] ])
 ;;
 
-(* OBS-042: uid is pinned explicitly (rather than left for Grafana to derive
-   from the datasource name) so grafana_loki_datasource's derivedFields entry
-   below can reference it by a stable value. *)
 let tempo_datasource_uid = "tempo"
 
 let prometheus_datasource_yaml ~namespace =
@@ -41,19 +35,8 @@ let prometheus_datasource_yaml ~namespace =
     ]
 ;;
 
-(* CODE_LAYER-007: platform/shared/observability/dashboards/*.json is now the single
-   source of Sol's four generic Grafana dashboards -- both `sol local infra up`
-   (here) and platform/cloud/modules/platform/main.tf's `kubernetes_config_map.grafana_dashboards`
-   (via Terraform's own `file(...)`) load from the same files, instead of
-   a second, hand-synced OCaml copy per dashboard. The caller passes the
-   resolved assets (REFAC-115), and each real file is read, not a fixture.
-
-   Each file is carried byte for byte, its trailing newline included: the
-   emitter's literal block keeps the text exact (REFAC-131). *)
 open Result.Syntax
 
-(* REFAC-115: a Sol asset that cannot be read is an error for the caller to
-   report, not an exception or an exit. *)
 let read_asset path =
   match In_channel.with_open_bin path In_channel.input_all with
   | contents -> Ok contents
@@ -69,7 +52,6 @@ let dashboard_names =
 ;;
 
 let dashboard_configmap_yaml ~assets ~namespace =
-  (* In order, so the first unreadable dashboard is the one reported. *)
   let* data =
     List.fold_left
       (fun acc name ->
@@ -96,9 +78,6 @@ let prometheus_datasource_configmap_yaml ~namespace =
     ~data:[ "prometheus.yaml", prometheus_datasource_yaml ~namespace ]
 ;;
 
-(* OBS-042: Tempo query API (chart/service port 3200, distinct from the
-   OTLP/HTTP ingestion port 4318 obs-tempo-eio pushes spans to) exposed as a
-   Grafana datasource, mirroring prometheus_datasource_yaml above. *)
 let tempo_datasource_yaml =
   datasource_yaml
     [ "name", Y.string "Tempo"
@@ -118,19 +97,6 @@ let tempo_datasource_configmap_yaml ~namespace =
     ~data:[ "tempo.yaml", tempo_datasource_yaml ]
 ;;
 
-(* OBS-039: loki-stack's bundled Grafana subchart auto-provisioned a "Loki"
-   datasource itself (a chart-internal template, not just the generic
-   sidecar-ConfigMap convention). Now that `sol local infra up` installs the
-   standalone `grafana` chart instead, that auto-provisioning is gone and
-   must be replaced explicitly -- every dashboard above references a
-   datasource named exactly "Loki". Matches
-   platform/cloud/modules/platform's helm_release.grafana bundle:
-   kubernetes_config_map.grafana_loki_datasource. *)
-(* OBS-042: derivedFields turns a trace_id in a Loki log line into a click-
-   through to its Tempo waterfall. matcherRegex must match obs-loki-eio's
-   real logfmt output -- trace_id is an unquoted 32-hex-char field
-   (Obs_loki.trace_id_hex, "%016Lx%016Lx"), never quoted since hex digits
-   never trigger Obs_loki.logfmt_val's quoting rule. *)
 let loki_datasource_yaml =
   datasource_yaml
     [ "name", Y.string "Loki"
@@ -160,19 +126,6 @@ let loki_datasource_configmap_yaml ~namespace =
     ~labels:[ "grafana_datasource", "1" ]
     ~data:[ "loki.yaml", loki_datasource_yaml ]
 ;;
-
-(* CODE_LAYER-006: platform/shared/observability/alloy/logs.alloy.tftpl is now the
-   single source of Alloy's River log-shipping config -- both `sol local infra up`
-   (here) and platform/cloud/modules/platform/main.tf's `helm_release.alloy` (via
-   Terraform's own `templatefile()`) render from that one file. This is a
-   minimal, literal-substring templater for exactly the three constructs
-   that file uses: `${var}` interpolation, one
-   `%{ for x in taxonomy_labels ~}...%{ endfor ~}` loop, and one
-   `%{ if cond ~}...%{ endif ~}` conditional gated on whether
-   loki_push_basic_auth_username is non-empty -- not a general HCL
-   template engine. If logs.alloy.tftpl grows a construct this doesn't
-   handle, this function needs a matching update, the same way any second
-   reader of a file format does when the format changes. *)
 
 let find_substring ~needle haystack =
   let hn = String.length haystack
@@ -209,11 +162,6 @@ let replace_all ~pattern ~replacement s =
     Buffer.contents buf)
 ;;
 
-(* Splits [content] into the text before [marker_start], the text strictly
-   between the two markers, and the text after [marker_end] (both markers
-   themselves excluded from all three parts). A missing or out-of-order marker
-   is an [Error] -- a malformed/changed .tftpl must fail loudly at render time,
-   not silently produce wrong River config (REFAC-133: returned, not raised). *)
 let slice_between ~marker_start ~marker_end content =
   match find_substring ~needle:marker_start content with
   | None -> Error (Printf.sprintf "alloy template: marker not found: %S" marker_start)
@@ -276,11 +224,6 @@ let render_alloy_config
           ~replacement:loki_push_basic_auth_password)
 ;;
 
-(* `sol local infra up`'s local profile: push straight to the in-cluster Loki, no
-   basic auth (`sol local infra up` has no "external backend" concept), the same
-   fixed taxonomy label set platform/cloud/modules/platform/main.tf's
-   local.observability_taxonomy_labels passes for every profile. The caller
-   resolves the platform assets once and passes them (REFAC-115). *)
 let alloy_values_yaml ~assets =
   let* config =
     render_alloy_config

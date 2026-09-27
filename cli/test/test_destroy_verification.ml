@@ -1,17 +1,5 @@
-(* Offline tests for destruction verification, as narrowed by DEC-045 / REFAC-094.
-
-   For resources Terraform is configured to delete, a successful destroy plus an
-   empty state is the authority, so what is verified here is what Terraform cannot
-   speak for: the post-destroy state itself, residue Terraform does not own, and
-   retention. The epistemic rule is unchanged: failure to obtain evidence is not
-   evidence of the postcondition, and UNKNOWN never becomes absence.
-
-   Every provider call is injected, so none of this needs terraform, gcloud, aws or
-   a network. *)
-
 open Sol_cli_destroy_verification
 
-(* REFAC-097: the provider-evidence classifiers live with their providers. *)
 let gcp_absence_message = Sol_cli_gcloud.says_not_found
 let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
 let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
@@ -27,9 +15,6 @@ let observation
   { state; sweep; retention }
 ;;
 
-(* ── The Terraform-state postcondition ─────────────────────────────────────── *)
-
-(* Case 7: an empty read is state-absence evidence. *)
 let test_state_empty () =
   Alcotest.(check bool)
     "an empty read is absent"
@@ -37,7 +22,6 @@ let test_state_empty () =
     (state_evidence (Ok []) = State_absent)
 ;;
 
-(* Case 8: a state that still represents the target is a verification failure. *)
 let test_state_residue () =
   let state = state_evidence (Ok [ "google_container_cluster.main" ]) in
   Alcotest.(check bool)
@@ -54,7 +38,6 @@ let test_state_residue () =
     (contains "google_container_cluster.main" (List.hd verdict.violations))
 ;;
 
-(* Case 9: a state that could not be read is UNKNOWN, not absence. *)
 let test_state_unreadable () =
   let verdict =
     classify (observation ~state:(state_evidence (Error "terraform show exited 1")) ())
@@ -64,9 +47,6 @@ let test_state_unreadable () =
   Alcotest.(check bool) "not verified" false (is_verified verdict)
 ;;
 
-(* ── Combining the evidence ────────────────────────────────────────────────── *)
-
-(* Empty state, no residue, retention settled: the postcondition is established. *)
 let test_combined_verified () =
   let verdict = classify (observation ()) in
   Alcotest.(check bool) "verified" true (is_verified verdict);
@@ -76,8 +56,6 @@ let test_combined_verified () =
     (verdict_message verdict)
 ;;
 
-(* Residue Terraform does not own is a violation; an inconclusive check is reported
-   but is not itself a violation, and does not verify anything either. *)
 let test_sweep () =
   let verdict =
     classify
@@ -116,8 +94,6 @@ let test_sweep () =
              ())))
 ;;
 
-(* The GCP not-found subject rule, still used by the peering check: a 404 about
-   another project is not absence (finding C). *)
 let test_gcp_not_found_subject_must_match () =
   Alcotest.(check bool)
     "a not-found naming our project is absence"
@@ -143,12 +119,9 @@ let test_gcp_not_found_subject_must_match () =
     (gcp_absence_message ~project:"captured-project" "ERROR: PERMISSION_DENIED")
 ;;
 
-(* ── Retention, observed ───────────────────────────────────────────────────── *)
-
 let final_snapshot stdout = answered ~stdout 0 ""
 let declared = Sol_cli_cloud_lifecycle.Retain_final_snapshot
 
-(* Case 17: the promised snapshot exists and is available. *)
 let test_retention_final_snapshot_observed () =
   match
     classify_final_snapshot
@@ -168,7 +141,6 @@ let test_retention_final_snapshot_observed () =
     Alcotest.failf "an available snapshot is not pending: %s" message
 ;;
 
-(* Case 18: the snapshot explicitly does not exist. *)
 let test_retention_final_snapshot_missing () =
   let lookup =
     answered
@@ -184,7 +156,6 @@ let test_retention_final_snapshot_missing () =
        (contains "snap-1" reason && contains "final-snapshot" reason)
    | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Alcotest.fail "a missing promised snapshot must fail");
-  (* A provider answer about a *different* snapshot is not evidence about this one. *)
   (match
      classify_final_snapshot
        ~declared
@@ -195,7 +166,6 @@ let test_retention_final_snapshot_missing () =
    | Sol_cli_aws_destruction.Settled (Retention_violated _) -> ()
    | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Alcotest.fail "an answer about another snapshot must not establish this one");
-  (* A snapshot the provider reports as failed is not a met guarantee either. *)
   match
     classify_final_snapshot
       ~declared
@@ -208,8 +178,6 @@ let test_retention_final_snapshot_missing () =
     Alcotest.fail "a failed snapshot must not read as retained"
 ;;
 
-(* Case 19: an unobservable final snapshot is a failure, and a snapshot still being
-   created is reported as not-yet, never as retained. *)
 let test_retention_final_snapshot_unknown () =
   (match
      classify_final_snapshot
@@ -229,7 +197,6 @@ let test_retention_final_snapshot_unknown () =
    | Sol_cli_aws_destruction.Settled (Retention_unknown _) -> ()
    | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Alcotest.fail "a timeout is UNKNOWN, not success");
-  (* Still being created: "not yet", and the caller keeps observing. *)
   (match
      classify_final_snapshot
        ~declared
@@ -244,14 +211,12 @@ let test_retention_final_snapshot_unknown () =
        (contains "creating" message)
    | Sol_cli_aws_destruction.Settled _ ->
      Alcotest.fail "a snapshot still being created is not a met guarantee");
-  (* And an UNKNOWN retention is a failure when combined, not a degraded success. *)
   let verdict =
     classify (observation ~retention:(Retention_unknown "the snapshot query failed") ())
   in
   Alcotest.(check bool) "retention UNKNOWN is not verified" false (is_verified verdict)
 ;;
 
-(* Case 20: retain-nothing with no attributable artifact. *)
 let test_retention_none_observed () =
   (match classify_instance_snapshots (final_snapshot {|{"DBSnapshots":[]}|}) with
    | Retention_required_and_observed evidence ->
@@ -261,7 +226,6 @@ let test_retention_none_observed () =
        (contains "none observed" evidence)
    | retention ->
      Alcotest.failf "no residue must be observed, got %s" (retention_to_string retention));
-  (* A database the provider reports as gone has no snapshot of it left. *)
   match
     classify_instance_snapshots
       (answered 254 "An error occurred (DBInstanceNotFound) when calling the operation")
@@ -273,7 +237,6 @@ let test_retention_none_observed () =
       (retention_to_string retention)
 ;;
 
-(* Case 21: retain-nothing with residual snapshots. *)
 let test_retention_none_residual () =
   match
     classify_instance_snapshots
@@ -291,7 +254,6 @@ let test_retention_none_residual () =
     Alcotest.failf "residual snapshots must fail, got %s" (retention_to_string retention)
 ;;
 
-(* Case 22: retain-nothing that could not be observed. *)
 let test_retention_none_unknown () =
   (match classify_instance_snapshots (Unavailable "aws CLI missing") with
    | Retention_unknown msg ->
@@ -309,8 +271,6 @@ let test_retention_none_unknown () =
     Alcotest.failf "a failed query is UNKNOWN, got %s" (retention_to_string retention)
 ;;
 
-(* The report answers what an operator needs: what state says, what residue was
-   found or could not be checked, and what retention was observed. *)
 let test_report_is_diagnostic () =
   let obs =
     observation

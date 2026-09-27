@@ -1,8 +1,3 @@
-(* REFAC-139 part C: what `sol deploy` selects, and what the target does to that
-   selection. Scope and --image-ref resolve before the target is read; the target
-   must be declared, and its [omit] list decides what the deploy keeps (DEC-041).
-   Pure apart from loading the target config from a temporary workspace. *)
-
 let svc domain name =
   { Sol_cli_manifest.domain; name; primitive = Sol_cli_manifest.Svc; dir = "" }
 ;;

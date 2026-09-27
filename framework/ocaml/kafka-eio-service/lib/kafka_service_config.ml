@@ -1,6 +1,3 @@
-(* REFAC-137: the same rule as [Sol_runtime.setting] -- trimmed, blank is unset.
-   A copy rather than a call: kafka-eio-service is its own package and does not
-   depend on sol-runtime. *)
 let setting name =
   match Sys.getenv_opt name with
   | None -> None
@@ -12,10 +9,6 @@ let setting name =
 
 let of_env () =
   let env_or name default = Option.value (setting name) ~default in
-  (* BUG-055 / FND-0054: the substrate addresses are stated, never defaulted to
-     localhost. In a pod nothing listens there, so a config that omitted one used
-     to fail later with an error naming localhost instead of the missing variable.
-     Sol-rendered manifests and [sol local run] set all three. *)
   let required = [ "KAFKA_BROKERS"; "SCHEMA_REGISTRY_URL"; "REDPANDA_ADMIN_URL" ] in
   let addresses =
     match List.filter (fun name -> Option.is_none (setting name)) required with
@@ -41,10 +34,6 @@ let of_env () =
             single-broker-loss)"
            value)
   in
-  (* SEC-007 / FND-0039: the transport posture is stated, never defaulted.
-     [Kafka.Security.of_env] reads an absent protocol as plaintext, which let
-     every environment ship plaintext without saying so; Sol-rendered manifests
-     now always set it, and anything else must too (plaintext locally). *)
   let declared_protocol =
     match setting "KAFKA_SECURITY_PROTOCOL" with
     | Some _ -> Ok ()

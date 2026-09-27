@@ -1,17 +1,3 @@
-(** Sol_cli_command_request — typed CLI input records for [sol up] and
-    [sol deploy].
-
-    Each command's Cmdliner terms produce raw strings and option values. The
-    [make] constructors below validate those raw values and return a typed
-    request record (or an error) before any deployment logic runs.
-
-    The command body pattern is:
-    {[
-      parse raw Cmdliner args
-      → Sol_cli_command_request.{up,deploy}_request.make ...
-      → call pipeline
-    ]} *)
-
 type execution_mode =
   | Dry_run
   | Apply
@@ -21,72 +7,31 @@ type deploy_action =
   | Deploy_emit_to of string
   | Deploy_apply
 
-(** A validated request for [sol up]: build images and deploy to a local
-    cluster. *)
 type up_request =
   { scope : string option
-    (** Raw [--scope] value: a domain or ["domain/unit"], resolved once in
-          [cmd_up.ml] via [Sol_cli_workload_selection]. *)
   ; mode : execution_mode
   ; image_tag : string
   ; image_tag_warning : string option
-    (** BUG-058: [Some msg] when no [--image-tag] was given and the git commit
-          could not be resolved, so [image_tag] is the local fallback. The
-          caller prints it; a local run continues, loudly. *)
   ; confirm_group_change : bool
   ; keep_releases : int
-    (** FEAT-072 retention window: how many distinct release records to keep
-          after a successful deploy. The current and the previous release are
-          never pruned. Validated as [>= 1]. *)
   }
 
-(** A validated request for [sol deploy]: deploy pre-built images (CI/CD path).
-*)
 type deploy_request =
   { target : string
-    (** Deployment target path, [<env>/<provider>/<region>] — resolved via
-          [Sol_cli_config.load_for_target]. Required: [sol deploy]'s positional
-          target argument, matching [sol plan]'s existing convention. *)
   ; scope : string option
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
   ; image_refs : (string option * string) list
-    (** FEAT-050: raw [--image-ref] values, validated as digest references. Each
-          entry is [Some service, ref] for [<service>=<ref>] or [None, ref] for
-          a bare reference; resolution against the selected services happens in
-          [cmd_deploy.ml] once the scope is known. *)
   ; registry : string option
-    (** Raw [--registry] value, unresolved. [None] means "use the target
-          file's registry, or fail if it has none" — that resolution (no
-          hardcoded local-registry fallback; [sol deploy] is always the
-          customer-cluster path) happens in [cmd_deploy.ml] once the target
-          loads, not here, since this constructor never touches
-          [Sol_cli_config]. *)
   ; secret_backend : Sol_cli_manifest.secret_backend option
-    (** INFRA-050: [None] means the operator did not choose, so the resolved
-          destination decides. The CLI must carry no default of its own. *)
   ; confirm_group_change : bool
   ; loki_push_url : string option
-    (** Raw [--loki-push-url] value (OBS-037). [None] means "resolve the push
-          URL from the target's observability backend" -- see
-          [Sol_cli_deploy_event.resolve_push_url]. Only meaningful for a real
-          apply (not [--dry-run]/[--emit-to], which push no deploy event at
-          all). *)
   ; keep_releases : int
-    (** FEAT-072 retention window: how many distinct release records to keep
-          after a successful deploy. The current and the previous release are
-          never pruned. Validated as [>= 1]. *)
   }
 
-(** BUG-058: the short SHA of [HEAD] in the current directory, or git's
-    reason for not having one. Pass it as the [git_sha] argument below. *)
 val git_sha : unit -> (string, string) result
 
-(** Validate raw Cmdliner values for [sol up] into an [up_request]. [git_sha] is
-    a thunk so callers can inject a real or stub implementation. Without
-    [--image-tag], an unresolvable SHA falls back to a fixed local tag and sets
-    [image_tag_warning]. Returns [Error msg] if validation fails. *)
 val make_up_request
   :  scope:string option
   -> dry_run:bool
@@ -96,14 +41,6 @@ val make_up_request
   -> git_sha:(unit -> (string, string) result)
   -> (up_request, string) result
 
-(** Validate raw Cmdliner values for [sol deploy] into a [deploy_request].
-    [git_sha] is a thunk so callers can inject a real or stub implementation.
-    Returns [Error msg] if validation fails — including [target] being empty
-    (cmdliner's [required] should already prevent this, but this constructor
-    doesn't assume its caller enforced that) and any [image_refs] entry not
-    being a digest reference (FEAT-050). Without [image_tag], an unresolvable
-    SHA is an error naming [--image-tag]: a deploy never falls back to a
-    shared, mutable tag (BUG-058). *)
 val make_deploy_request
   :  target:string
   -> scope:string option

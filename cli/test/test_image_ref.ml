@@ -1,5 +1,3 @@
-(* FEAT-050: immutable artifact reference parsing and resolution. *)
-
 let check_bool = Alcotest.(check bool)
 let check_str = Alcotest.(check string)
 let digest hex = "registry.example.com/pluto/charge-svc@sha256:" ^ hex

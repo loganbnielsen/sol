@@ -1,5 +1,3 @@
-(* FEAT-072: the deploy-attempt unit's pure projection. *)
-
 let test_outcome_of () =
   Alcotest.(check bool)
     "Ok is Applied"

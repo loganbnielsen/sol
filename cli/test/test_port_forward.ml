@@ -1,7 +1,3 @@
-(* REFAC-126: port-forwards are records plus a lock. These tests hold the lock
-   with a real [flock] in a background process instead of starting kubectl. The
-   state directory is the test's own ($XDG_DATA_HOME, set for every action here). *)
-
 module P = Sol_cli_port_forward
 
 let spec ?(name = "t") ?(target = "svc/a") ?(local_port = 18080) () : P.spec =
@@ -31,8 +27,6 @@ let alive pid =
 
 let write path text = Out_channel.with_open_text path (fun oc -> output_string oc text)
 
-(* A stand-in for a running forward: a session leader holding its lock, with its
-   pid recorded where the wrapper would write it. *)
 let hold_lock name =
   Sol_cli_state.ensure () |> Result.get_ok;
   let pid =
@@ -86,8 +80,6 @@ let test_liveness_is_the_lock () =
   reap pid
 ;;
 
-(* The pid-reuse case: a record whose pid now belongs to an unrelated process.
-   The lock is not held, so the process is never signalled. *)
 let test_reused_pid_is_never_signalled () =
   let name = "reused" in
   ok (P.write_record (spec ~name ()));
@@ -140,9 +132,6 @@ let test_dead_forward_reports_its_log () =
   Sys.remove (Sol_cli_state.log_file name)
 ;;
 
-(* The real wrapper script, with a fake kubectl that stays up the way a working
-   forward does: [start] takes the lock, and [stop] ends the wrapper *and* its
-   kubectl -- which the old per-pid kill could leave holding the port. *)
 let test_start_and_stop_end_to_end () =
   let bin = Filename.concat (Sys.getcwd ()) "fake-kubectl-bin" in
   (try Unix.mkdir bin 0o755 with
@@ -182,9 +171,6 @@ let test_start_and_stop_end_to_end () =
 ;;
 
 let () =
-  (* These tests write and stop forwards in Sol's state directory, so they refuse to
-     run against the operator's own: dune gives every action here a private
-     XDG_DATA_HOME. *)
   if Sys.getenv_opt "XDG_DATA_HOME" = None
   then (
     prerr_endline

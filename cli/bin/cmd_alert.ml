@@ -1,20 +1,5 @@
-(* sol alert — OBS-043's alert-to-owner response loop.
-
-   `sol alert test` sends one synthetic alert through the target's configured
-   route so the team can prove delivery without triggering a real incident. It
-   validates the same provider-neutral contract `sol deploy`'s preflight does
-   (receiver type, endpoint, owner, runbook), then injects the alert into
-   Alertmanager's v2 API, which routes it exactly like a fired rule.
-
-   What this proves is that the *mechanism* works: the Alertmanager route is
-   reachable and accepts the alert. Whether it reaches and is acknowledged by the
-   named human is HARDEN-002's live evidence — DEC-026 §8 and OBS-043 both insist
-   a delivered-and-acknowledged test is the only thing that satisfies the
-   guarantee, and a CLI invocation alone cannot assert someone was paged. *)
-
 open Result.Syntax
 
-(* What the send said, for the operator. Kept apart from sending it. *)
 let report_outcome : Sol_cli_alert_test.outcome -> (unit, Sol_cli_exit.failure) result =
   function
   | Accepted ->

@@ -1,7 +1,3 @@
-(* Tests for Sol_cli_kube_destination: the fail-closed rule that keeps the
-   ambient context out of the picture, and the argument shapes every Kubernetes
-   invocation is scoped with. *)
-
 let check_string = Alcotest.(check string)
 
 let ok_or_fail = function
@@ -9,9 +5,6 @@ let ok_or_fail = function
   | Error message -> Alcotest.fail ("unexpected error: " ^ message)
 ;;
 
-(* The property this module exists for: an unspecified destination is an error,
-   not a licence to use whatever kubectl happens to be pointing at. An empty
-   context is precisely the shape that would silently mean "ambient". *)
 let test_empty_context_fails_closed () =
   match Sol_cli_kube_destination.of_context "" with
   | Ok _ -> Alcotest.fail "an empty context must not produce a destination"
@@ -89,13 +82,6 @@ let test_to_string_mentions_the_kubeconfig () =
     (String.length (Sol_cli_kube_destination.to_string destination) > 3)
 ;;
 
-(* FEAT-063's acceptance test: the invariant, made executable.
-
-   Point the machine's ambient kubeconfig at one cluster (a deliberately wrong
-   current-context), then show that an operation bound to a *different*
-   destination still builds an invocation naming that destination's context and
-   kubeconfig. Nothing in the path reads the ambient context, so it cannot leak
-   in -- which is what turns DEC-020 from prose into a checked property. *)
 let test_ambient_context_cannot_leak () =
   let ambient = Filename.temp_file "sol-ambient-" ".kubeconfig" in
   let oc = open_out ambient in

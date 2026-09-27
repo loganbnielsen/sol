@@ -19,8 +19,6 @@ let contains needle s =
     !found)
 ;;
 
-(* ── Test handler fixtures ───────────────────────────────────────────── *)
-
 let get_json _req = Response.json {|{"ok":true}|}
 let echo_body req = Response.ok req.Request.body
 let jwt_cfg scopes = `Jwt Auth.{ scopes; verification = Unverified_dev_only }
@@ -50,8 +48,6 @@ module H = struct
     ]
   ;;
 end
-
-(* ── Test server helpers ─────────────────────────────────────────────── *)
 
 let with_server env ~sw f =
   let port_p, port_r = Promise.create () in
@@ -113,7 +109,6 @@ let with_server_obs env ~sw f =
       | _ -> ())
 ;;
 
-(* Make an HTTP request and return (status_code, body_string). *)
 let http_call env ~sw ~port ~meth ~path ?(headers = []) ?(body = "") () =
   let client = Cohttp_eio.Client.make ~https:None env#net in
   let uri = Uri.of_string (Printf.sprintf "http://127.0.0.1:%d%s" port path) in
@@ -126,8 +121,6 @@ let http_call env ~sw ~port ~meth ~path ?(headers = []) ?(body = "") () =
   let body_str = Eio.Buf_read.(parse_exn take_all) resp_body ~max_size:65536 in
   status, body_str
 ;;
-
-(* ── Tests ───────────────────────────────────────────────────────────── *)
 
 let test_healthz env () =
   Switch.run (fun sw ->
@@ -147,7 +140,6 @@ let test_not_found env () =
 let test_method_not_allowed env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
-      (* /hello is GET only *)
       let status, _ = http_call env ~sw ~port ~meth:`DELETE ~path:"/hello" () in
       Alcotest.(check int) "status 405" 405 status))
 ;;
@@ -315,8 +307,6 @@ let test_metrics_duration env () =
 ;;
 
 let test_metrics_route_pattern_label env () =
-  (* Route label must use the pattern ("/users/:id"), not the actual path
-     value ("/users/42"), so label cardinality stays bounded. *)
   Switch.run (fun sw ->
     with_server_obs env ~sw (fun port render ->
       let _ = http_call env ~sw ~port ~meth:`GET ~path:"/users/42" () in
@@ -335,8 +325,6 @@ let test_metrics_route_pattern_label env () =
         false
         (contains {|route="/users/999"|} output)))
 ;;
-
-(* ── Auth-before-body-read tests ────────────────────────────────────────── *)
 
 module Hauth = struct
   let routes =
@@ -369,9 +357,6 @@ let test_api_key_file_error_is_startup_error env () =
       | Ok () -> Alcotest.fail "expected API key file config error"))
 ;;
 
-(* SEC-006: a service using Unverified_dev_only refuses to start unless the
-   environment opts in. The test binary opts in globally (it is a development
-   environment); these cases take the opt-in away. *)
 module Hunverified = struct
   let routes = [ Route.get "/jwt" ~auth:(jwt_cfg [ "read" ]) get_json ]
 end
@@ -386,8 +371,6 @@ let expect_unverified_refused result =
   | Ok () -> Alcotest.fail "expected Unverified_dev_only to be refused without the opt-in"
 ;;
 
-(* An already-resolved [stop] and a short drain make a missing guard return
-   [Ok ()] promptly instead of serving forever, so the test fails, not hangs. *)
 let stopped () =
   let p, r = Promise.create () in
   Promise.resolve r ();
@@ -417,7 +400,6 @@ let test_unverified_metrics_auth_refused_without_opt_in env () =
          ()))
 ;;
 
-(* SEC-009: a Jwks_url that is not https:// is a startup error. *)
 let jwks_url_auth url =
   `Jwt
     Auth.
@@ -466,8 +448,6 @@ let test_https_jwks_url_starts env () =
   | Error e -> Alcotest.fail (Service.run_error_to_string e)
 ;;
 
-(* BUG-046: an external [stop] must reach the server. With nothing in flight it
-   used to wait out the whole drain window and then report a drain timeout. *)
 let test_external_stop_is_prompt env () =
   let module S = Service.Make (H) in
   let stop, stop_r = Promise.create () in
@@ -494,8 +474,6 @@ let test_external_stop_is_prompt env () =
 let test_malformed_port_is_config_error env () =
   with_env "PORT" "80800x" (fun () ->
     let module S = Service.Make (H) in
-    (* An already-resolved stop on an OS-assigned port makes a missing check return
-       [Ok ()] promptly, so the test fails instead of serving forever on 8080. *)
     let stop, stop_r = Promise.create () in
     Promise.resolve stop_r ();
     match S.run ~env ~port:0 ~stop ~shutdown_delay_s:0.0 ~drain_timeout_s:0.1 () with
@@ -504,9 +482,6 @@ let test_malformed_port_is_config_error env () =
     | Ok () -> Alcotest.fail "expected a malformed PORT to be a startup Config error")
 ;;
 
-(* INFRA-073: on stop, readiness turns 503 at once while the listener keeps
-   serving for [shutdown_delay_s], so Kubernetes can drop the endpoint before the
-   pod stops accepting. *)
 let test_readyz_flips_before_listener_closes env () =
   Switch.run (fun sw ->
     let port_p, port_r = Promise.create () in
@@ -569,7 +544,6 @@ let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
 ;;
 
 let test_unauth_large_body_gets_401 env () =
-  (* Without valid auth, a large body should be rejected as 401 before reading. *)
   Switch.run (fun sw ->
     with_small_body_server env ~sw (fun port ->
       let big_body = String.make 200 'x' in
@@ -580,7 +554,6 @@ let test_unauth_large_body_gets_401 env () =
 ;;
 
 let test_auth_oversized_body_gets_413 env () =
-  (* With valid auth, an oversized body should return 413. *)
   Switch.run (fun sw ->
     with_small_body_server env ~sw (fun port ->
       let tok = make_jwt ~scopes:[ "write" ] () in
@@ -600,7 +573,6 @@ let test_auth_oversized_body_gets_413 env () =
 ;;
 
 let test_public_oversized_body_gets_413 env () =
-  (* Public routes still enforce body size limits. *)
   Switch.run (fun sw ->
     with_small_body_server env ~sw (fun port ->
       let big_body = String.make 200 'x' in
@@ -610,8 +582,6 @@ let test_public_oversized_body_gets_413 env () =
       Alcotest.(check int) "413 on oversized public upload" 413 status))
 ;;
 
-(* BUG-053: an exception outside the handler used to close the connection with
-   no response. A non-object JWT payload was one real trigger. *)
 let test_non_object_jwt_payload_gets_401 env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
@@ -642,7 +612,6 @@ let test_boundary_turns_exceptions_into_500 _env () =
     (Service.For_testing.respond_or_500 (fun () -> Response.created "x")).Response.status
 ;;
 
-(* BUG-053: an exception raised in authentication, through dispatch itself. *)
 let test_dispatch_turns_auth_exception_into_500 _env () =
   let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
   let tok = enc {|{"alg":"RS256","kid":"k1"}|} ^ "." ^ enc "{}" ^ "." ^ enc "sig" in

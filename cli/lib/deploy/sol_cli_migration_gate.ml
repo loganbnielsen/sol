@@ -1,8 +1,3 @@
-(* REFAC-139: the deploy's migration gate (AUDIT-069), and the pieces of the
-   in-cluster runner it shares with `sol migrate apply`. It lived in
-   `cmd_migrate.ml`, which made `sol deploy` depend on another command's module;
-   the gate is a library rule, and both commands render its outcome. *)
-
 open Result.Syntax
 
 let migration_files dir =
@@ -10,8 +5,6 @@ let migration_files dir =
   match Sys.readdir dir with
   | exception Sys_error msg -> Error ("cannot read migrations dir: " ^ msg)
   | arr ->
-    (* REFAC-131: a file is carried into a ConfigMap, and YAML cannot hold a NUL
-       character; refuse the file by name rather than let it be truncated. *)
     let read fname =
       let content =
         In_channel.with_open_text (Filename.concat dir fname) In_channel.input_all
@@ -36,14 +29,6 @@ let migration_files dir =
     |> Result.map List.rev
 ;;
 
-(* DEC-038 §6 / INFRA-058: the operator's diagnostic grant follows the workload,
-   not this command's scope, so reconcile it across every namespace that holds a
-   Sol-managed workload. RBAC only -- it writes RoleBindings and nothing else.
-
-   A failure here is a warning, not fatal: a deployment must not be blocked by a
-   read-only grant. But it is never silent -- the warning names what could not be
-   established and what it costs, because a diagnostic capability that quietly
-   did not appear is the failure mode this whole line of work exists to remove. *)
 let reconcile_operator_bindings ~ctx ~workspace ~services =
   Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace ~services
   |> Result.iter_error (fun msg ->
@@ -59,24 +44,12 @@ let registry_of ~configured ~override ~how_to_set =
   | None, None -> Error ("no registry configured for this target -- " ^ how_to_set)
 ;;
 
-(* ── AUDIT-069: the deploy's read-only migration prerequisite ─────────────── *)
-
-(* The result of the live prerequisite check. [Unavailable] and [Unsatisfied]
-   both stop the deploy before workload mutation; [Unavailable] is the
-   fail-closed answer when the check itself could not be performed. *)
 type verification =
   | No_migrations
   | Satisfied of int list
   | Unsatisfied of Sol_cli_migration.prerequisite list
   | Unavailable of string
 
-(* Read the authoritative applied set from the target cluster with a
-   short-lived, read-only Job. The Job runs `migrate status --json`, which only
-   reads schema_migrations. Any failure to run the Job or read the table is an
-   [Error] the caller treats as [Unavailable] -- never a reason to assume the
-   schema is compatible. *)
-(* REFAC-130: [services] is the workspace inventory the caller already read, so
-   this does not read the workspace again to pick a namespace. *)
 let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
   let* cfg =
     Sol_cli_config.load_for_target ~target
@@ -91,7 +64,6 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
   let* namespace, k8s_name =
     Sol_cli_migration_job.namespace_and_repository ~workspace ~services
   in
-  (* HARDEN-002 run 2, finding 8: as for `apply`, the Job reads the runtime Secret. *)
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] in
   let* image = Sol_cli_migration_job.runner_image ~registry ~workspace ~k8s_name in
   let* files = migration_files dir in
@@ -120,8 +92,6 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
       (match Sol_cli_migration_job.logs ~ctx job with
        | Error e -> Error ("could not read migration-status Job logs: " ^ e)
        | Ok logs ->
-         (* The Job prints only the JSON body, but take the first `{`..last `}` so
-            a stray log line cannot break the parse of an otherwise valid report. *)
          let text = String.trim logs in
          let text =
            match String.index_opt text '{', String.rindex_opt text '}' with
@@ -130,9 +100,6 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
          in
          Sol_cli_migration.parse_status_json text)
   in
-  (* INFRA-040: this check is read-only, so a success tidies up after itself. A
-     failure must not delete the only record of why it failed: the evidence goes
-     into the deploy's own output, and the Job is kept so it can still be read. *)
   (match result with
    | Ok _ -> Sol_cli_migration_job.cleanup ~ctx job
    | Error _ ->
@@ -151,9 +118,6 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
   result
 ;;
 
-(* The prerequisite check the deploy path runs after the static preflight and
-   before any workload mutation. [services] is the workspace inventory the
-   deploying command already read (REFAC-130). *)
 let verify ~ctx ~target ~workspace ~dir ~services =
   match Sol_cli_migration.required ~dir with
   | Error e -> Unavailable e

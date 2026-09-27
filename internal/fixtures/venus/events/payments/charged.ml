@@ -1,7 +1,3 @@
-(** Emitted by charge-svc when a payment charge is processed. Owned by the
-    payments team. Consumers import this module; they never import from the
-    service that publishes it. *)
-
 type t =
   { charge_id : string
   ; amount_cents : int

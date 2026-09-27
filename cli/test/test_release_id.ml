@@ -1,12 +1,3 @@
-(* FEAT-069: release identity semantics.
-
-   These tests are the contract, not a smoke check. The hard failures in content
-   addressing are not "the hash is wrong" -- they are "two things that mean the
-   same thing hash differently" (ordering) and "two things that mean different
-   things hash the same" (encoding ambiguity, or a field that should have counted
-   and did not). Both are covered here, and the secret rule is pinned so that a
-   later "fix" to the hash cannot silently change what a release identity means. *)
-
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 
@@ -57,8 +48,6 @@ let content ?(workspace = "acme") ?(environment = Some "prod") workloads =
   { Sol_cli_release_id.workspace; environment; workloads }
 ;;
 
-(* [t] is abstract on purpose; the tests compare the rendered id, which is what
-   a label carries. *)
 let id c = Sol_cli_release_id.to_string (Sol_cli_release_id.of_content c)
 
 let test_deterministic () =
@@ -66,8 +55,6 @@ let test_deterministic () =
   check_string "same content, same id" (id c) (id c)
 ;;
 
-(* Discovery order is not semantic. If this failed, every release identity would
-   depend on filesystem enumeration order. *)
 let test_workload_order_is_not_semantic () =
   let a = wl "charge_svc" "acme/charge:1" in
   let b = wl "settle_worker" "acme/settle:1" in
@@ -104,8 +91,6 @@ let test_extra_label_order_is_not_semantic () =
     (id (content [ wl ~extra_labels:b "charge_svc" "acme/charge:1" ]))
 ;;
 
-(* The other half: things that *do* mean a different running release must change
-   the identity, or the join key silently merges two different releases. *)
 let test_image_change_changes_identity () =
   check_bool
     "a different image is a different release"
@@ -148,9 +133,6 @@ let test_workspace_and_environment_change_identity () =
      <> id (content ~environment:(Some "") [ wl "charge_svc" "acme/charge:1" ]))
 ;;
 
-(* The deliberate rule, pinned as a test rather than left as prose: secrets enter
-   the identity as *references*. Rotating db-prod's value is operational state
-   and must not mint a new release; pointing at a different secret must. *)
 let test_secret_references_count_and_values_do_not () =
   check_bool
     "a different secret reference is a different release"
@@ -162,10 +144,6 @@ let test_secret_references_count_and_values_do_not () =
           (content
              [ wl ~secrets:[ "DATABASE_URL", "db-other" ] "charge_svc" "acme/charge:1" ])
     );
-  (* A rotation cannot even be expressed: the projection has no field for secret
-     material, so "same reference, new value" is the same identity by
-     construction. This asserts the *shape* of the rule, which is the part a
-     future change could break. *)
   let with_reference =
     wl ~secrets:[ "DATABASE_URL", "db-prod" ] "charge_svc" "acme/charge:1"
   in
@@ -177,8 +155,6 @@ let test_secret_references_count_and_values_do_not () =
      contains "DATABASE_URL" && contains "db-prod")
 ;;
 
-(* A bare separator would encode ("ab", "c") and ("a", "bc") identically. This is
-   the classic canonicalisation bug, so it gets its own test. *)
 let test_encoding_is_unambiguous () =
   check_bool
     "adjacent fields cannot bleed into each other"
@@ -228,18 +204,9 @@ let test_of_string_round_trips_and_validates () =
     ]
 ;;
 
-(* The encoding is an identity function with a version tag, so it gets a known
-   vector. Not because this particular hash is sacred, but because the canonical
-   encoder changing must be an explicit migration event: if this fails, either
-   [encoding_version] was bumped deliberately (then update the vector) or the
-   encoding drifted by accident (then fix the encoding). Content-addressed
-   identifiers become durable API quickly, so this is cheap insurance. *)
 let test_known_vector () =
   check_string
     "known id for a fixed content"
-    (* BUG-026: sol-release-v2 widens the projection to every manifest-affecting
-       input, so the vector moved deliberately. AUDIT-080 adds the declared
-       availability, moving it again to sol-release-v3. *)
     "r-41a1291ca74157ee"
     (id
        (content
@@ -251,15 +218,6 @@ let test_known_vector () =
           ]))
 ;;
 
-(* The deliberate choice, named: environment identity is part of release identity
-   (model A), not merely whatever the resolved workload state happens to be
-   (model B). The two contents below resolve to byte-identical workload state and
-   still differ, because a release is "this release of this workspace in this
-   environment" -- [r-x] is a join key inside an environment-aware operational
-   system, not a generic OCI/Nix-style content hash.
-
-   Pinned because "content-addressed" reads as though environment names ought to
-   be excluded, so somebody could reasonably "simplify" this away. *)
 let test_environment_identity_counts_not_just_resolved_state () =
   let same_state =
     [ wl ~config:[ "FOO", "1" ] ~replicas:2 "charge_svc" "acme/charge:1" ]
@@ -269,15 +227,10 @@ let test_environment_identity_counts_not_just_resolved_state () =
     true
     (id (content ~environment:(Some "staging") same_state)
      <> id (content ~environment:(Some "prod") same_state));
-  (* The other half, and the one that keeps deploys idempotent: within one
-     environment, identical resolved state is the *same* release, so re-running
-     a deploy is not a new identity and does not churn the pod template. *)
   check_string
     "identical resolved state in one environment is one release"
     (id (content ~environment:(Some "prod") same_state))
     (id (content ~environment:(Some "prod") same_state));
-  (* Local (no target) is its own environment rather than "unknown": [sol up]
-     releases must not collide with a target's releases. *)
   check_bool
     "no environment is its own identity, not a wildcard"
     true
@@ -285,9 +238,6 @@ let test_environment_identity_counts_not_just_resolved_state () =
      <> id (content ~environment:(Some "prod") same_state))
 ;;
 
-(* BUG-026: every input the renderer turns into manifest content must move the
-   identity. Each of these was previously invisible to it, so a real change kept
-   the previous [release] label. *)
 let test_manifest_affecting_fields_change_identity () =
   let base = id (content [ wl "charge_svc" "acme/charge:1" ]) in
   let moved label other = check_bool label true (base <> id (content [ other ])) in
@@ -313,8 +263,6 @@ let test_manifest_affecting_fields_change_identity () =
     (wl ~calls:[ "X_URL", "x", "x-svc", "ns-x" ] "charge_svc" "acme/charge:1")
 ;;
 
-(* A canary's step *sequence* is the strategy, so it is semantic — unlike the
-   set-like tables below. *)
 let test_canary_step_order_is_semantic () =
   check_bool
     "canary step order changes identity"
@@ -323,7 +271,6 @@ let test_canary_step_order_is_semantic () =
      <> id (content [ wl ~rollout:"canary:w100,w10" "charge_svc" "acme/charge:1" ]))
 ;;
 
-(* Volume and call order is not semantic, so it must be canonicalised away. *)
 let test_volume_and_call_order_is_not_semantic () =
   let v1 = "a", "/a", "1Gi", "read_write_once"
   and v2 = "b", "/b", "2Gi", "read_only_many" in

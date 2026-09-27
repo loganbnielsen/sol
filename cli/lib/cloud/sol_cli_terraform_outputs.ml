@@ -31,8 +31,6 @@ let shown (name, output) =
   | _ -> None
 ;;
 
-(* REFAC-132: `terraform output -json` is an object of outputs; anything else is
-   unreadable, not "no outputs". *)
 let displayable json =
   match Yojson.Safe.from_string json with
   | `Assoc outputs -> Ok (List.filter_map shown outputs)

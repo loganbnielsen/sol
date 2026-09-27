@@ -1,5 +1,3 @@
-(* Only three persisted states remain (see REFAC-077) — see the .mli for the
-   full rationale. *)
 type ticket_state =
   | Backlog
   | Ready_for_engineering
@@ -20,12 +18,6 @@ let state_of_dir = function
 
 let all_states = [ Backlog; Ready_for_engineering; Done ]
 
-(* REFAC-137: frontmatter is YAML, and is read with the yaml library (as
-   REFAC-106 did for sol.yml) rather than split on the first ':' of each line. The
-   hand-split read quoted values with their quotes and left YAML escapes
-   un-decoded, so a probe written `"\\("` ran with doubled backslashes and matched
-   nothing. Values are the scalars' own text, trimmed; a blank or null value is
-   absent, so no caller asks again whether a field is empty. *)
 let frontmatter_block content =
   match String.split_on_char '\n' content with
   | "---" :: rest ->
@@ -56,7 +48,6 @@ let frontmatter content =
                | (Error _ as e), _, _ -> e
                | Ok fields, Some key, `Scalar { Yaml.value; style; _ } ->
                  let value = String.trim value in
-                 (* An unquoted "~"/"null", or nothing at all, is YAML's null. *)
                  let null = style = `Plain && List.mem value [ ""; "~"; "null" ] in
                  if null || value = "" then Ok fields else Ok ((key, value) :: fields)
                | Ok _, Some key, _ ->
@@ -67,24 +58,7 @@ let frontmatter content =
      | Ok _ -> Error "frontmatter must be a mapping of fields")
 ;;
 
-(* For the readers that only want a field: an invalid block reads as having none.
-   [pipeline ls] and [check] call [unreadable] themselves and report it. *)
 let fields content = Result.value (frontmatter content) ~default:[]
-
-(* BUG-060: what makes a ticket *unreadable* to this pipeline, in one place.
-
-   The failure this exists for is a ticket that is not refused but degraded: a
-   frontmatter that does not parse used to be listed as if it had no fields, and
-   a ticket with no frontmatter block at all reads as id-, type- and
-   severity-less while [`check`] still reported a status. Nothing said the
-   metadata was missing, so a worker saw a queue entry it could not act on and
-   CI stayed green.
-
-   The rule is deliberately about *reading the metadata* — the block exists, it
-   parses with [frontmatter] above (the same parser every other command uses),
-   and the fields the pipeline reads are there. It does not police ticket
-   content: the body, the dependency prose and any extra fields are the
-   author's. *)
 let required_fields = [ "id"; "type"; "severity"; "source" ]
 
 let unreadable ~path content =
@@ -147,12 +121,6 @@ let is_ticket_id_token_char c =
   || c = '-'
 ;;
 
-(* A ticket ID looks like PREFIX-NUMBER, where PREFIX is uppercase
-   letters/underscores (FEAT, AUDIT, CODEX_STYLE_AUDIT, ...) and NUMBER is
-   digits (FEAT-033, CODEX_STYLE_AUDIT-006). Reject anything else so prose
-   words in an annotated "Depends on:" line (e.g. "(done — merged as the
-   evidence base for this ticket)", "conceptually", "in practice") never get
-   mistaken for a dependency. *)
 let is_ticket_id_token s =
   match String.rindex_opt s '-' with
   | None -> false
@@ -169,12 +137,6 @@ let is_ticket_id_token s =
     && String.for_all is_digit suffix
 ;;
 
-(* Extract every ticket-ID-shaped token from a raw "Depends on:" value,
-   ignoring parenthetical annotations, prose ("and", "in practice", "not a
-   hard dependency"), and punctuation — a "Depends on:" line in this repo is
-   free-form prose, not a structured list (e.g.
-   "FEAT-034 (done), FEAT-035 (done)." or
-   "FEAT-034 in practice — ... Not a hard code dependency."). *)
 let dedup_preserve_order tokens =
   let seen = Hashtbl.create (List.length tokens) in
   List.filter
@@ -206,10 +168,6 @@ let extract_ticket_ids raw =
   go 0 [] |> dedup_preserve_order
 ;;
 
-(* "None." always means zero dependencies in this repo's convention, even
-   when followed by an unrelated parenthetical aside that happens to mention
-   another ticket (e.g. "None. (BUG-008's fix already unblocked this.)") —
-   that mention is context, not a second dependency. *)
 let starts_with_none raw =
   let raw = String.trim raw in
   let n = String.length raw in
@@ -300,17 +258,6 @@ let human_decision_details content =
   String.concat "\n\n" (sections @ marker_hits)
 ;;
 
-(* ── the title ───────────────────────────────────────────────────────────── *)
-
-(* A line that is a bold-labelled field, e.g. `**Depends on:** None.` or
-   `**Related:** DEC-016`. Recognising the *shape* rather than listing labels is
-   the point: `**Status:**` first became a displayed summary, then `**Related:**`
-   and `**Replaces:**` did — each a new label the old hardcoded skip list did not
-   know, and each noticed only after it showed up in `pipeline ls`.
-
-   Note the shape: the bold span *closes around the colon* (`**Label:**`), so the
-   marker to look for sits immediately after it, not before. Getting that
-   backwards makes the rule match nothing, which is how this was first written. *)
 let is_bold_field_line line =
   let line = String.trim line in
   match String.index_opt line ':' with
@@ -337,17 +284,6 @@ let strip_heading_markers line =
   String.trim (String.sub line start (n - start))
 ;;
 
-(* ── premise probes (INFRA-010) ──────────────────────────────────────────── *)
-
-(* A ticket's premise is the claim that its finding is still unfixed. Most name a
-   symbol, file or command that would not exist if the work had been done, so a
-   probe is written in the *inverted* form: it SUCCEEDS when the premise no
-   longer holds, i.e. when the ticket may already be done.
-
-   The inversion is deliberate. The natural form — "succeeds when the premise
-   still holds" — needs every probe wrapped in a negation, and a mis-negated
-   probe then fails silently in the direction of "still actionable", which is the
-   exact failure this exists to catch. *)
 type premise_verdict =
   | Premise_holds
   | Premise_stale
@@ -355,9 +291,6 @@ type premise_verdict =
 
 let premise_of content = fm_get (fields content) "premise"
 
-(* [exit_code] is passed in rather than obtained here, so the classification is
-   testable without executing anything. A probe that cannot be run at all is
-   "unverified" rather than "holds": failing open in the useful direction. *)
 let premise_verdict ~exit_code =
   if exit_code = 0
   then Premise_stale
@@ -369,9 +302,6 @@ let premise_verdict ~exit_code =
 ;;
 
 let ticket_title content =
-  (* An explicit title wins, always. Intent stated beats intent inferred, and it
-     survives editing the body — every other rule here is a guess about which
-     line the author meant. *)
   match fm_get (fields content) "title" with
   | Some title -> title
   | None ->
@@ -386,11 +316,6 @@ let ticket_title content =
         skip rest
       | lines -> lines
     in
-    (* The first line that is not metadata. If it is a heading, drop the markers:
-       a summary should read as a title, not as Markdown. Note this takes the
-       first content line rather than the first *heading* anywhere in the body —
-       a ticket that opens with prose and later has `## Problem` would otherwise
-       be titled "Problem". *)
     after_frontmatter lines
     |> List.find_opt (fun line ->
       let line = String.trim line in
@@ -422,25 +347,7 @@ let dependency_summary deps =
   | deps -> String.concat ", " deps
 ;;
 
-(* ── dependency cycles ───────────────────────────────────────────────────── *)
-
-(* [find_dependency_cycle_from ~deps_of start] follows [deps_of] from [start]
-   and returns the first cycle it closes, as a path such as
-   ["DEC-020"; "FEAT-063"; "DEC-020"], or [None].
-
-   A cycle is the failure mode this exists to surface. Every member reports only
-   "blocked by <the other>" — which is indistinguishable from waiting on real
-   work — so the queue reads as idle rather than broken. It happened: a prose
-   mention on a `Depends on:` line became a dependency (`Implemented by
-   FEAT-059`), and DEC-020 and FEAT-063 each named the other while neither was
-   actionable, with nothing saying why.
-
-   [deps_of] is injected so the walk is testable without the filesystem. *)
 let find_dependency_cycle_from ~deps_of start =
-  (* [path] is newest-first. On detection the repeated id heads [id :: path],
-     and the earlier occurrence is somewhere behind it; trimming to the first
-     occurrence drops any prefix walked before the cycle was entered, so a cycle
-     reached from outside does not report the approach path as part of it. *)
   let cycle_from rev_path repeated =
     let rec drop = function
       | [] -> []
@@ -466,9 +373,6 @@ let find_dependency_cycle ticket_id =
     ticket_id
 ;;
 
-(* A cycle only matters when it actually blocks. If any member is already done,
-   the chain is satisfied and what remains is ordinary waiting — reporting a
-   cycle there would be noise. *)
 let cycle_blocks cycle = List.for_all (fun id -> dependency_status id <> `Done) cycle
 
 let readiness_label ~ticket_id state content =

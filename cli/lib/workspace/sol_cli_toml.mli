@@ -2,26 +2,15 @@ type rollout_strategy =
   | Recreate
   | RollingUpdate
 
-(** [-fn]'s [CronJob.spec.concurrencyPolicy] (FEAT-079). Named for exactly
-    what it constrains: overlap between the CronJob controller's own
-    scheduled runs. A manual invocation ([sol fn run]) is not a scheduled
-    run and is never constrained by this value. *)
 type scheduled_concurrency =
   | Allow
   | Forbid
   | Replace
 
-(** A single step in an Argo Rollouts canary strategy. [Weight n] sets the
-    traffic weight percentage to [n]. [Pause None] pauses indefinitely (requires
-    manual promotion). [Pause (Some s)] pauses for [s] seconds then
-    auto-promotes. *)
 type canary_step =
   | Weight of int
   | Pause of int option
 
-(** Progressive delivery strategy for Argo Rollouts. [Canary] uses weighted
-    traffic-shifting steps. [Blue_green] uses two Services (active + preview)
-    with manual promotion. *)
 type progressive_delivery =
   | Canary of { steps : canary_step list }
   | Blue_green
@@ -44,11 +33,7 @@ type volume_access_mode =
   | ReadWriteOnce
   | ReadOnlyMany
   | ReadWriteMany
-  (** PersistentVolumeClaim access modes supported for application volumes.
-      *)
 
-(** A named persistent volume requested by a workload via
-    [[infra.volumes.<name>]]. *)
 type volume =
   { name : string
   ; mount_path : string
@@ -57,17 +42,8 @@ type volume =
   }
 
 val volume_access_mode_to_string : volume_access_mode -> string
-
-(** Inverse canonical decoders (FEAT-066). Rollback reconstructs a recorded
-    release's specs from the release record, which stores these values in their
-    canonical string forms; each decoder is the exact inverse of the
-    corresponding encoder and fails closed on anything it does not recognise. *)
 val volume_access_mode_of_string : string -> (volume_access_mode, string) result
 
-(** [effective_rollout_of_string s] decodes the record's single canonical
-    effective-rollout string back into the [(rollout_strategy,
-    progressive_delivery)] pair the renderer takes. [rolling_update] decodes to
-    no explicit strategy, which renders identically to the default. *)
 val effective_rollout_of_string
   :  string
   -> (rollout_strategy option * progressive_delivery option, string) result
@@ -85,29 +61,15 @@ type t =
   ; ingress_path : ingress_path option
   ; extra_labels : (string * string) list
   ; progressive_delivery : progressive_delivery option
-    (** Cron schedule for [-fn] services, e.g. ["0 * * * *"]. Read from
-          [[service] schedule] in sol.toml. [None] means "use default". *)
   ; schedule : string option
-    (** [-fn]'s [CronJob.spec.concurrencyPolicy] (FEAT-079). Read from
-          [[service] scheduled_concurrency] in sol.toml. [None] means "use
-          default" ([Allow], preserving pre-FEAT-079 behavior). *)
   ; scheduled_concurrency : scheduled_concurrency option
-    (** [-fn]'s retry-count limit (FEAT-079), rendered as
-          [jobTemplate.spec.backoffLimit]. Read from [[service]
-          backoff_limit] in sol.toml. [None] means "use default" ([3],
-          preserving pre-FEAT-079 behavior). *)
   ; backoff_limit : int option
-    (** Kafka topic names owned by this event/service directory. Read from
-          [[service] topics] in sol.toml. Used by [discover_topics] to collect
-          topics without scanning OCaml source files. *)
   ; calls : string list
-    (** Synchronous service dependencies as ["domain/service_name"] refs. *)
   ; topics : string list
   }
 
 val empty : t
 
-(** Typed errors returned by [load_result]. *)
 type parse_error =
   | Toml_syntax of
       { path : string
@@ -119,13 +81,4 @@ type parse_error =
       }
 
 val parse_error_to_string : parse_error -> string
-
-(** Load and parse a sol.toml file. Returns [Ok empty] if the file does not
-    exist, and [Error _] for malformed TOML or a validation error, including:
-    - Unknown rollout_strategy values (only "Recreate" and "RollingUpdate"
-      accepted).
-    - extra_labels keys starting with "sol.dev/" (reserved namespace).
-    - Unknown [infra.rollout] strategy values (only "canary" and "blue-green"
-      accepted).
-    - Canary strategy with an empty steps list or weights outside 0..100. *)
 val load_result : string -> (t, parse_error) result

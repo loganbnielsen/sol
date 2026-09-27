@@ -1,17 +1,3 @@
-(* INFRA-055 / DEC-037: the release record must be written with the verbs the
-   deploy identity actually holds.
-
-   [kubectl apply] degrades to a *patch* when the object exists, and the
-   boundary-lease grant withholds `patch` on ConfigMaps in `default` -- so the
-   release pointer silently stayed on an older release. The writer must therefore
-   use only `create` (absent), `replace` (present, different) or nothing at all
-   (present, identical), and must never treat a *permission* failure as absence.
-
-   The fake kubectl behaves like the restricted cluster: it answers `get` from a
-   state file, and records every verb it was asked for, so the assertions are
-   about what Sol actually invoked rather than about what the code appears to
-   say. *)
-
 let write_file path contents =
   let oc = open_out path in
   output_string oc contents;
@@ -117,7 +103,6 @@ let verbs log =
   List.filter (fun l -> not (String.equal (String.trim l) "")) lines
 ;;
 
-(* Absent object -> create, with no resourceVersion, and never apply/patch. *)
 let test_absent_object_is_created () =
   with_fake_kubectl ~mode:"missing" ~live_json:"" (fun log ->
     Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
@@ -138,9 +123,6 @@ let test_absent_object_is_created () =
       (Sol_cli_string.contains ~needle:"patch" all))
 ;;
 
-(* Identical content -> no write at all. This is the common case for the
-   content-addressed record, and it is why a repeated deploy succeeds without
-   needing any write verb. *)
 let test_identical_object_is_left_alone () =
   let live_json =
     {|{"kind":"ConfigMap","metadata":{"name":"sol-release-current-pluto","resourceVersion":"42"},"data":{"release_id":"r-aaaabbbbccccdddd"}}|}
@@ -151,8 +133,6 @@ let test_identical_object_is_left_alone () =
     Alcotest.(check (list string)) "only a get" [ "get rv=no" ] (verbs log))
 ;;
 
-(* Different content -> replace, carrying the live resourceVersion so a
-   concurrent writer conflicts rather than being silently overwritten. *)
 let test_changed_object_is_replaced_with_a_precondition () =
   let live_json =
     {|{"kind":"ConfigMap","metadata":{"name":"sol-release-current-pluto","resourceVersion":"42"},"data":{"release_id":"r-1111222233334444"}}|}
@@ -176,8 +156,6 @@ let test_changed_object_is_replaced_with_a_precondition () =
       (Sol_cli_string.contains ~needle:"patch" all))
 ;;
 
-(* A permission failure is not absence: it must fail, and must not be answered
-   with a create that would then fail differently. *)
 let test_permission_failure_is_not_absence () =
   with_fake_kubectl ~mode:"forbidden" ~live_json:"" (fun log ->
     (match
@@ -197,10 +175,6 @@ let test_permission_failure_is_not_absence () =
       (Sol_cli_string.contains ~needle:"create" (String.concat "\n" calls)))
 ;;
 
-(* REFAC-116: [Sol_cli_kubectl.get] reports a failed kubectl as [Error Non_zero],
-   so the NotFound branch has to match there. It used to match
-   [Ok r when exit_code <> 0], which that function never returns, so a missing
-   release read as a generic kubectl failure. *)
 let test_missing_release_is_not_found () =
   with_fake_kubectl ~mode:"missing" ~live_json:"" (fun _log ->
     match
@@ -214,7 +188,6 @@ let test_missing_release_is_not_found () =
         (Sol_cli_string.contains ~needle:"release r-aaaabbbbccccdddd not found" e))
 ;;
 
-(* ...while a failure that is not absence stays a failure. *)
 let test_forbidden_release_read_is_not_absence () =
   with_fake_kubectl ~mode:"forbidden" ~live_json:"" (fun _log ->
     match

@@ -1,16 +1,6 @@
-(* sol cloud plan/apply/destroy — manage cloud infrastructure via Terraform.
-   Requires: terraform binary in PATH, cloud credentials in environment. *)
-
 open Cmdliner
-
-(* The destroy execution core (Sol_cli_cloud_destroy) and the result-returning
-   helpers below carry failures as values rather than exiting: only the command
-   edge turns an outcome into a process exit (REFAC-091). *)
 open Result.Syntax
 
-(* ── Terraform output parsing ───────────────────────────────────────────── *)
-
-(* REFAC-118: the root's non-sensitive outputs, or why they could not be shown. *)
 let print_outputs infra_dir =
   match
     Sol_cli_terraform.output_json ~chdir:infra_dir ()
@@ -28,9 +18,6 @@ let print_outputs infra_dir =
      | Error reason -> Printf.printf "  (could not read terraform outputs: %s)\n%!" reason)
 ;;
 
-(* ── cloud apply/plan ───────────────────────────────────────────────────── *)
-
-(* A refusal before anything ran: [error: <message>], exit 1. *)
 let refuse message = Error (Sol_cli_exit.error message)
 
 let provider_of_target_path target =
@@ -54,15 +41,11 @@ let check_terraform () =
          "https://developer.hashicorp.com/terraform/install")
 ;;
 
-(* REFAC-115: Sol's platform assets, resolved once per command and passed down. *)
 let resolve_assets () =
   Sol_cli_platform_assets.resolve ()
   |> Sol_cli_exit.of_error Sol_cli_platform_assets.error_to_string
 ;;
 
-(* DEC-050: the Terraform roots in Sol's assets are immutable and only read here,
-   for the variables a root declares; Terraform runs in a per-state working
-   directory materialized from them (Sol_cli_cloud_wiring.init). *)
 let asset_root ~assets provider role =
   let dir = Sol_cli_platform_assets.cloud_root assets provider role in
   if Sys.file_exists dir then Ok dir else refuse ("Terraform module not found: " ^ dir)
@@ -80,16 +63,12 @@ let action_of_flags plan apply =
   | true, true -> `Error (false, "--plan and --apply are mutually exclusive")
 ;;
 
-(* BUG-057: the flag is relative to the shell, a target's var file to the
-   workspace root. *)
 let resolve_var_file ~flag ~target =
   let cwd = Sys.getcwd () in
   let workspace_root = Option.value (Sol_cli_workspace.find_root ~dir:cwd) ~default:cwd in
   Sol_cli_terraform_vars.var_file ~cwd ~workspace_root ~flag ~target
 ;;
 
-(* The target's own variables, and the target. [strict] for the commands that
-   mutate infrastructure (see [Sol_cli_terraform_vars.of_target]). *)
 let target_vars ~strict target =
   Sol_cli_terraform_vars.of_target
     ~strict
@@ -104,20 +83,11 @@ let guard_previous_operation ~constructive ~accept_unresolved ~chdir ~backend_co
   |> Sol_cli_exit.of_msg
 ;;
 
-(* INFRA-039: resolve provider credentials for this operation, report the
-   principal they belong to, and fail closed if they cannot be resolved -- per
-   mutating stage, because a platform stage runs many minutes after the cloud
-   stage and a run can lose its session in between. [leaves_target_standing] says
-   the part that matters: a destroy that cannot authenticate leaves billable
-   infrastructure running and disables the only supported path to remove it. The
-   token itself is never printed. *)
 let require_credentials ~provider ~operation ~leaves_target_standing =
   Sol_cli_provider_registry.credentials provider ~operation ~leaves_target_standing
   |> Sol_cli_exit.of_msg
 ;;
 
-(* Sol's refusal is [error: <message>]; Terraform's failure is its own
-   classification, printed as given. *)
 let of_apply_failure r =
   Result.map_error
     (function
@@ -127,12 +97,6 @@ let of_apply_failure r =
     r
 ;;
 
-(* SEC-010: before terraform runs at all, refuse any variable the root declares
-   [sensitive] when it would reach the argv -- the run log records the terraform
-   command line. Which variables are secrets is read from the root itself, so no
-   provider is special-cased; whether a required secret was supplied at all is
-   Terraform's to enforce. Checked for destroy as well as apply: a root whose
-   secret is a required variable needs it on every command. *)
 let refuse_sensitive_vars ~infra_dir ~vars =
   match
     Result.bind (Sol_cli_sensitive_vars.declared ~root:infra_dir) (fun sensitive ->
@@ -142,9 +106,6 @@ let refuse_sensitive_vars ~infra_dir ~vars =
   | Error msg -> Error (Sol_cli_exit.failure ("\nerror: " ^ msg))
 ;;
 
-(* Cleanup is independent evidence: a removal failure is reported alongside whatever
-   else the run did, never replaced by it and never replacing it (HARDEN-004 step 4,
-   preserving steps 2 and 3). *)
 let report_cleanup_evidence = function
   | Sol_cli_cloud_destroy.Cleanup_failed message ->
     Printf.eprintf
@@ -179,9 +140,6 @@ let cloud_init
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
-  (* Check the target before terraform-init, same order cloud_destroy
-     already uses -- a typo'd target should fail fast, not after a
-     terraform init that does nothing wrong but wastes the run. *)
   let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars =
@@ -273,9 +231,6 @@ let cloud_init
              ~cloud_target
              ~target_cfg)
     in
-    (* One place maps the typed outcome to a process exit (REFAC-091): 0 once the
-       target is Ready, 1 for any failure -- after the bootstrap-window cleanup, if
-       the run needed one, has been reported alongside it. *)
     (match outcome with
      | Sol_cli_cloud_apply.Applied ->
        Printf.printf "\nProvisioned endpoints:\n%!";
@@ -287,8 +242,6 @@ let cloud_init
        Error failure |> of_apply_failure)
 ;;
 
-(* A preparation that failed but permitted destruction does not change the exit
-   code, so it is said out loud rather than left to be inferred. *)
 let report_degradations = function
   | [] -> ()
   | degradations ->
@@ -313,10 +266,6 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars = config_vars @ vars in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
-  (* DEC-033: what this destroy deliberately keeps, named by the target. Absent
-     means the production default -- retain the final snapshot -- so a
-     qualification target opting out never changes what destroy promises by
-     default. *)
   let* retention =
     match target_cfg.destroy_retention with
     | None -> Ok Sol_cli_cloud_lifecycle.default_destroy_retention
@@ -338,13 +287,6 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~chdir:infra_dir
       ~backend_config:cloud_backend
   in
-  (* AUDIT-POST-004: the platform root is a second Terraform state, and destroy works
-     in it (init, the destroy preview, the platform teardown). Apply guards both roots
-     (above, in [cloud_init]); destroy guarded only the cloud root, so a platform
-     operation still running produced Terraform's backend-lock error instead of Sol's
-     own report. Same non-constructive policy as the cloud root: [Running] refuses,
-     [Unresolved] is reported and destruction proceeds, because nothing here constructs
-     from the gap. *)
   let* () =
     guard_previous_operation
       ~constructive:false
@@ -367,10 +309,6 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~vars
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
-  (* The command edge: the destroy sequence itself lives in
-     [Sol_cli_cloud_destroy.execute], which never exits; this function resolves
-     the request (user input) and turns the typed outcome into a process exit.
-     REFAC-091 / HARDEN-004 step 2. *)
   match action with
   | Plan ->
     let* () =
@@ -402,28 +340,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
         ~retention
         ~destruction
     in
-    (* One place maps the typed outcome to a process exit: 0 when absence was
-       reached and verified (a degraded preparation is the warning above, not a
-       different code); 1 for a blocked or failed destroy. 2 stays reserved for this
-       CLI's refusal / cannot-proceed-as-requested semantics. Success *means* every
-       required postcondition was positively established; an UNKNOWN observation is
-       a failure. *)
     let outcome = Sol_cli_cloud_destroy.execute ~deps in
     (match outcome with
      | Sol_cli_cloud_destroy.Destroy_succeeded { degradations; cleanup; verification; _ }
        ->
        report_cleanup_evidence cleanup;
        report_degradations degradations;
-       (* The evidence report carries the retention statement, because retention is
-          now observed rather than rendered from the policy (DEC-033 / FND-0046). *)
        report_verification verification;
        Printf.printf
          (if degradations = []
           then "\nDone.\n%!"
           else "\nDone, with a degraded preparation.\n%!")
      | Sol_cli_cloud_destroy.Destroy_blocked { guarantee } ->
-       (* Destruction did not happen, so there is no postcondition to verify and the
-          step-5 observation deliberately never ran. *)
        Printf.eprintf
          "error: destruction is blocked -- proceeding would violate a destruction-time \
           guarantee this target declared: %s\n\
@@ -431,21 +359,14 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
          guarantee
      | Sol_cli_cloud_destroy.Destroy_failed
          { failure; degradations; cleanup; verification } ->
-       (* A cleanup failure is evidence, not silence: it is reported alongside the
-          failure that stopped the run, never replaced by it. The verification
-          evidence is reported too when the run reached it -- what was observed is
-          part of why the run failed. *)
        report_cleanup_evidence cleanup;
        report_degradations degradations;
        verification |> Option.iter report_verification;
        Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
-    (* Everything was reported above; only the code is left to say. *)
     (match Sol_cli_cloud_destroy.exit_code outcome with
      | 0 -> Ok ()
      | code -> Error (Sol_cli_exit.reported ~code ()))
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let var_file_arg =
   Arg.(
@@ -506,7 +427,6 @@ let confirm_ecr_removal_flag =
            refused before anything changes.")
 ;;
 
-(* INFRA-076 *)
 let accept_unresolved_flag =
   Arg.(
     value
@@ -558,8 +478,6 @@ let destroy_cmd =
     "Destroy cloud infrastructure via Terraform. Requires the same target/provider used \
      with apply."
   in
-  (* HARDEN-004 step 4's exit-code contract, in the interface an operator or a script
-     actually reads. *)
   let man =
     [ `S Manpage.s_description
     ; `P

@@ -1,9 +1,3 @@
-(* Inject pool and observability handle via functor so there's no mutable state.
-   Worker.Make_with_retry requires module Message, group_id, and handle inside
-   the functor. This worker can return Worker.Retry on a DB failure, so it
-   satisfies Worker.RETRYABLE_WORKER (not the Ack-only Worker.WORKER) and must
-   be run via Worker.Make_with_retry with an explicit ~retry_strategy
-   (FEAT-078: no implicit fallback). *)
 module Make (Config : sig
     val pool : Pg_db.pool
     val ot : Obs_eio.t

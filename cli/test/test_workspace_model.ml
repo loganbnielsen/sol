@@ -1,15 +1,3 @@
-(* REFAC-130: the workspace model loaded over the real fixture workspaces.
-
-   [examples/pluto] is the canonical reference application (OCaml and
-   TypeScript workloads, events, migrations, declared targets); [venus] is the
-   OCaml fixture whose layout the deployment tests use; [local-demo] is a
-   fixture with no [sol.yml] and no [app/] at all, which the loader must read as
-   "no workloads", not as an error.
-
-   These tests are also where "the errors name the file" is pinned: a malformed
-   [sol.yml], [sol/environments.yml] or event [sol.toml] fails the load with the
-   offending path in the message. *)
-
 let fixture rel = if Sys.file_exists rel then rel else Filename.concat "../../../../" rel
 
 let tmpdir () =
@@ -68,19 +56,13 @@ let subject_strings facts =
   |> List.map Sol_cli_plan_ids.Schema_subject.to_string
 ;;
 
-(* ── examples/pluto: every fact the model carries ───────────────────────── *)
-
 let test_pluto_services_carry_their_primitive_and_language () =
   let facts = load "examples/pluto" in
   Alcotest.(check (list string))
     "services"
     [ "charge_svc"; "checkout_svc"; "fulfillment_worker"; "notify_worker"; "order_svc" ]
     (service_names facts);
-  (* The model names the root it read, so a caller holding only the value can
-     say which workspace it describes. *)
   Alcotest.(check string) "root" (fixture "examples/pluto") facts.root;
-  (* The declared language comes from each workload's sol.yml entry; nothing is
-     inferred from build metadata (DEC-022 §7). *)
   Alcotest.(check (list string))
     "declared languages"
     [ "charge_svc=ocaml"
@@ -105,8 +87,6 @@ let test_pluto_services_carry_their_primitive_and_language () =
     ; "order_svc=svc"
     ]
     primitives;
-  (* Every workload with a Dockerfile is a service; the workload list is the
-     same set here, since pluto's five workloads all have one. *)
   Alcotest.(check int)
     "workload count"
     (List.length (Sol_cli_workspace_model.services facts))
@@ -131,7 +111,6 @@ let test_pluto_events_migrations_and_targets () =
     ; "prod/aws/us-east-1"
     ]
     facts.Sol_cli_workspace_model.targets;
-  (* The migration is typed: its version and name come from the filename. *)
   (match facts.Sol_cli_workspace_model.migrations with
    | [ migration ] ->
      Alcotest.(check string)
@@ -140,8 +119,6 @@ let test_pluto_events_migrations_and_targets () =
        (Sol_cli_plan_ids.Migration_file.to_string migration.file);
      Alcotest.(check (option int)) "version" (Some 1) migration.version;
      Alcotest.(check (option string)) "name" (Some "notifications") migration.name;
-     (* This file declares no disposition header, which the rollback gate
-        reports. It is carried as a finding, not a load failure. *)
      (match migration.disposition with
       | Ok _ -> Alcotest.fail "expected pluto's migration to declare no disposition"
       | Error _ -> ())
@@ -152,8 +129,6 @@ let test_pluto_events_migrations_and_targets () =
     1
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
-
-(* ── internal/fixtures/venus ────────────────────────────────────────────── *)
 
 let test_venus_reads_both_domains () =
   let facts = load "internal/fixtures/venus" in
@@ -179,23 +154,16 @@ let test_venus_reads_both_domains () =
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
-(* A fixture with no sol.yml and no app/: an empty workspace, not an error.
-   [app_dir] is what keeps "there is no app/" distinguishable from "app/ is
-   empty", which sol check reports differently. *)
 let test_local_demo_is_an_empty_workspace () =
   let facts = load "internal/fixtures/local-demo" in
   Alcotest.(check (option string)) "no app dir" None facts.Sol_cli_workspace_model.app_dir;
   Alcotest.(check (list string)) "no services" [] (service_names facts);
   Alcotest.(check (list string)) "no targets" [] facts.Sol_cli_workspace_model.targets;
-  (* Its migrations live in [migrations/], not [db/migrations/], so the workspace
-     has none -- the loader reads the workspace's own layout, not a guessed one. *)
   Alcotest.(check int)
     "no migrations"
     0
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
-
-(* ── malformed content: the error names the file ────────────────────────── *)
 
 let expect_error_mentioning ~needle = function
   | Ok _ -> Alcotest.fail "expected the load to fail"
@@ -230,8 +198,6 @@ let test_malformed_event_toml_names_it () =
       (Sol_cli_workspace_model.load ~root:dir))
 ;;
 
-(* A malformed workload [sol.toml] is a *finding*, not a load failure: [sol
-   check] exists to report it, so the model carries it. *)
 let test_malformed_workload_toml_is_carried_not_fatal () =
   with_tmp (fun dir ->
     write dir "sol.yml" "";
@@ -256,8 +222,6 @@ let test_malformed_workload_toml_is_carried_not_fatal () =
          Alcotest.fail
            (Printf.sprintf "expected one workload, got %d" (List.length other))))
 ;;
-
-(* ── app dir presence, and a workspace with no app/ ─────────────────────── *)
 
 let test_empty_app_dir_is_not_a_missing_app_dir () =
   with_tmp (fun dir ->

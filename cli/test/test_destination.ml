@@ -1,11 +1,3 @@
-(* REFAC-088: the resolution seam between `sol local <command>` and
-   `sol <command> --target <t>`.
-
-   The two surfaces are free to differ in how they present a workload operation;
-   what must agree is the core's inputs -- destination and scope. This file
-   pins the destination half: one policy, total over the two spellings, with no
-   third ambient case. *)
-
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 let context_name (ctx : Sol_cli_kube_destination.context) = ctx.destination.context
@@ -40,8 +32,6 @@ let with_temp_dir f =
 
 let write_base () = write "sol.yml" "project: pluto\n"
 
-(* The target overlay names the cluster it deploys to; `kube_context` is what
-   makes it reachable (FEAT-063). *)
 let write_target kube_context =
   mkdir_p "sol/prod/aws";
   Targets_fixture.write
@@ -63,8 +53,6 @@ let error_or_fail = function
   | Ok _ -> Alcotest.fail "expected the resolution to fail closed"
 ;;
 
-(* The local entry point names Sol's own cluster literally -- it does not load a
-   target, and it does not consult anything ambient. *)
 let test_local_entry_point_is_the_literal_local_cluster () =
   let ctx =
     ok_or_fail (Sol_cli_destination.resolve ~command:"status" ~local:true ~target:None)
@@ -72,8 +60,6 @@ let test_local_entry_point_is_the_literal_local_cluster () =
   check_string "local destination" "k3d-sol-local" (context_name ctx)
 ;;
 
-(* A local invocation is local by construction: if a target were somehow also
-   present it must not silently become the destination. *)
 let test_local_wins_even_if_a_target_is_supplied () =
   let ctx =
     ok_or_fail
@@ -85,8 +71,6 @@ let test_local_wins_even_if_a_target_is_supplied () =
   check_string "local destination" "k3d-sol-local" (context_name ctx)
 ;;
 
-(* The fail-closed case, and the load-bearing part of the message: it names the
-   local spelling of *this* command, so the refusal states the fix. *)
 let test_top_level_without_target_fails_closed_naming_local_form () =
   let message =
     error_or_fail
@@ -110,7 +94,6 @@ let test_local_form_message_is_command_specific () =
     (Sol_cli_string.contains ~needle:"sol local rollback" message)
 ;;
 
-(* The named entry point takes its destination from the target's configuration. *)
 let test_top_level_target_supplies_the_destination () =
   with_temp_dir (fun () ->
     write_base ();
@@ -142,8 +125,6 @@ let test_target_without_context_fails_closed () =
       (Sol_cli_string.contains ~needle:"kube_context" message))
 ;;
 
-(* The reserved execution mode is not reachable through the named entry point:
-   a target pointed at Sol's own cluster is refused and redirected. *)
 let test_reserved_local_target_points_at_local_form () =
   with_temp_dir (fun () ->
     write_base ();
@@ -161,8 +142,6 @@ let test_reserved_local_target_points_at_local_form () =
       (Sol_cli_string.contains ~needle:"sol local <command>" message))
 ;;
 
-(* Same inputs, same destination: resolution is a function of how the command
-   was spelled and nothing else. *)
 let test_resolution_is_deterministic () =
   let resolve () =
     Sol_cli_destination.resolve ~command:"logs" ~local:false ~target:None

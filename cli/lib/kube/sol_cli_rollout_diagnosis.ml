@@ -1,7 +1,3 @@
-(* Pure parsing/summarizing of kubectl pod + event JSON, used by 'sol status'
-   to explain a failed rollout directly from Kubernetes state. This is the
-   layer that works even when the app never started and Loki has nothing. *)
-
 type container_state =
   | Waiting of
       { reason : string
@@ -34,9 +30,6 @@ type event =
   ; involved_name : string
   }
 
-(* REFAC-127 built this module's decode boundary; REFAC-132 made it the shared
-   one (Sol_cli_json), so field access is total and a malformed read is an error
-   here exactly as it is everywhere else. *)
 let field = Sol_cli_json.field
 let string_field path j = field path j |> Sol_cli_json.string
 
@@ -77,7 +70,6 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
     ; state = parse_container_state c
     ; last_terminated_reason = parse_last_terminated_reason c
     }
-  (* No container has reported yet (a pending pod). *)
   | _ ->
     { name
     ; phase
@@ -89,7 +81,6 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
     }
 ;;
 
-(* [Ok []] only when the API answered with an empty list. *)
 let parse_pods_json (s : string) : (pod_status list, string) result =
   Sol_cli_json.items ~what:"pods" s |> Result.map (List.map parse_pod)
 ;;
@@ -125,17 +116,6 @@ type pod_expectation =
   | Continuous
   | Ephemeral
 
-(* INFRA-057 / DEC-038 §5: a *failed* read is not an empty result.
-
-   The two states must never collapse into one another:
-
-   - [Events []] -- the read succeeded and there is nothing to report;
-   - [Events_unavailable why] -- Sol could not look, and says so.
-
-   The status contract stays best-effort (one denied read must not deny the
-   operator the rest of the diagnosis), but it must never present a part it did
-   not obtain as though it had. [cronjob_fetch_result] below already had this
-   shape; this is the same discipline for events. *)
 type events_fetch_result =
   | Events of event list
   | Events_unavailable of string
@@ -146,7 +126,6 @@ let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : strin
     | Some m -> " — " ^ m
     | None -> ""
   in
-  (* The headline and its detail line, from one look at the state. *)
   let headline, detail =
     match p.state with
     | Waiting { reason; message } ->
@@ -179,14 +158,10 @@ let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : strin
      |> List.iter (fun e ->
        Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
    | Events_unavailable why ->
-     (* Named, never silent: this is the difference between "nothing happened"
-        and "I was not allowed to look". *)
      Buffer.add_string buf (Printf.sprintf "Events unavailable: %s\n" why));
   Buffer.contents buf
 ;;
 
-(* The events for one pod, keeping the unavailable state intact so the caller
-   cannot accidentally render a failed read as "none". *)
 let events_for_pod_result ~pod_name (result : events_fetch_result) : events_fetch_result =
   match result with
   | Events l -> Events (events_for_pod ~pod_name l)
@@ -210,20 +185,11 @@ let render_unhealthy_pods
   Buffer.contents buf
 ;;
 
-(* DEC-038 §7: the evidence behind a verdict.
-
-   [Healthy] and [Unhealthy] both mean the evidence was *obtained*; they differ
-   only in what it says. [Undetermined] means it could not be obtained, and carries
-   why. The old [string option] used [None] for [Healthy] *and* for "could not
-   read", so an unreadable workload was reported as healthy -- absence and
-   inability to observe sharing one representation. They no longer do. *)
 type diagnosis =
   | Healthy
   | Unhealthy of string
   | Undetermined of string
 
-(* Continuous workloads should always have a pod; an empty confirmed pod
-   list means the workload never started. *)
 let format_service_diagnosis
       ~service_name
       (pods : pod_status list)
@@ -243,21 +209,11 @@ let format_service_diagnosis
     else Unhealthy (render_unhealthy_pods ~service_name unhealthy events))
 ;;
 
-(* Beyond [is_healthy]: [Succeeded] is OK (a finishing run is expected, and
-   status.active can lag one reconcile behind). A pod with zero restarts
-   that's merely starting (Pending, or Waiting on ContainerCreating /
-   PodInitializing) is also OK -- unless a [FailedScheduling] event names it
-   (genuinely unschedulable) or it has already restarted (no longer a first
-   start). *)
 let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool =
   is_healthy p
   || p.phase = "Succeeded"
   || (p.restarts = 0
       && (match events with
-          (* DEC-038 §5: with no evidence, a merely-starting pod is not assumed
-             fine. An unreadable event stream cannot rule out FailedScheduling,
-             so it makes a pod need explanation rather than letting it pass --
-             and the renderer then says the events were unavailable. *)
           | Events_unavailable _ -> false
           | Events l ->
             not
@@ -272,8 +228,6 @@ let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool
       | Running | Terminated _ -> false)
 ;;
 
-(* Scoped to exactly the Job(s) in [cronjob_status.active_job_names] -- never
-   a broader/historical pod list. *)
 let format_active_run_diagnosis
       ~service_name
       (pods : pod_status list)
@@ -286,8 +240,6 @@ let format_active_run_diagnosis
   else Unhealthy (render_unhealthy_pods ~service_name unhealthy events)
 ;;
 
-(* Kubernetes omits [status.active] when no job is running (omitempty), so an
-   absent list is the answer "none active", not a missing value. *)
 type cronjob_status =
   { last_schedule_time : string option
   ; last_successful_time : string option
@@ -320,13 +272,7 @@ let parse_cronjob_status (s : string) : (cronjob_status, string) result =
 type cronjob_fetch_result =
   | Found of cronjob_status
   | Missing
-  (** Confirmed via kubectl's own NotFound response -- not a transient
-          failure. *)
   | Unavailable of string
-  (** The kubectl call itself failed, or its output couldn't be parsed, and this
-          carries why -- a failed read is not an absent CronJob (DEC-038 §7).
-          (transient error, timeout, RBAC, ...) -- stays silent, same as other
-          transient-failure handling in this module. *)
 
 let is_at_or_after ~reference candidate =
   match Ptime.of_rfc3339 candidate, Ptime.of_rfc3339 reference with
@@ -335,12 +281,8 @@ let is_at_or_after ~reference candidate =
   | _ -> false
 ;;
 
-(* Ephemeral diagnosis uses CronJob status, not historical pod lists.
-   Active-run pod health is tracked separately. *)
 let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : diagnosis =
   match result with
-  (* DEC-038 §7: a failed read is not a verdict. This arm used to be [None] --
-     which the rollup read as healthy. *)
   | Unavailable why ->
     Undetermined (Printf.sprintf "the CronJob's status could not be read: %s" why)
   | Missing ->
@@ -388,8 +330,6 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   | Error e -> Events_unavailable (Sol_cli_process.error_to_string e)
 ;;
 
-(* DEC-038 §7: the reason travels with the failure, so a verdict can say it could
-   not look rather than implying it looked and found nothing. *)
 let kubectl_read_failure ~what ~exit_code ~stdout ~stderr =
   let detail = String.trim (stderr ^ " " ^ stdout) in
   Printf.sprintf
@@ -434,8 +374,6 @@ let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-(* Best-effort per job: one failed fetch doesn't block the others. An error only
-   when every fetch fails, and then it carries the reason. *)
 let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) result =
   let results =
     List.map (fun job_name -> fetch_job_pod_statuses ~ctx ~ns ~job_name) job_names
@@ -484,14 +422,11 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
      | _, e -> Unavailable (Sol_cli_process.error_to_string e))
 ;;
 
-(* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches
-   every fetch through [ctx]. *)
 let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name () : diagnosis
   =
   match pod_expectation with
   | Continuous ->
     (match fetch_pod_statuses ~ctx ~ns ~k8s_name with
-     (* Could not look: [Undetermined], never [Healthy]. *)
      | Error why -> Undetermined why
      | Ok pods ->
        let events = fetch_namespace_events ~ctx ~ns in

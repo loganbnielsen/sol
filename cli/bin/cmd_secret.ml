@@ -1,22 +1,9 @@
 open Cmdliner
 
-(* DEC-024: the workspace name comes from the resolved root, so it is the same
-   from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
 
-(* Secrets are addressed by Kubernetes namespace, not by workload, so this
-   command deliberately does not accept [--scope]: a secret operation does not
-   consume a *deployment* scope, and shipping [--scope payments/charge_svc] here
-   would imply a unit granularity that the underlying object cannot honour
-   (FEAT-065's invariant). [--domain] is the honest vocabulary.
-
-   Namespaces are still derived from discovery (the same mechanism sol up/sol
-   deploy use), because a domain directory with no deployable service should
-   never produce a namespace target -- but the command owns that derivation.
-   A [--domain] that matches no workload fails closed and names the domains that
-   exist, rather than silently touching no namespace. *)
 let discover_namespaces ~facts ~domain =
   let workspace = workspace_name () in
   let domains =
@@ -55,8 +42,6 @@ let print_result result =
   Ok ()
 ;;
 
-(* REFAC-130: [sol secret] keeps the invocation cwd (it addresses namespaces,
-   not paths), so the workspace is resolved rather than entered. *)
 let load_facts () = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg
 
 let run_set ~ctx env value key domain =

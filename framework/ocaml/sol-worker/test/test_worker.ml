@@ -1,8 +1,3 @@
-(** Unit tests for sol-worker. No Kafka broker required. Integration tests are
-    gated on KAFKA_BROKERS — see test_worker_integration.ml. *)
-
-(* ── Test message module ─────────────────────────────────────────────── *)
-
 module TestMsg = struct
   type t = { id : string }
 
@@ -23,8 +18,6 @@ module TestMsg = struct
   ;;
 end
 
-(* ── Fake config (unreachable endpoints — never used with test_consume_loop) *)
-
 let fake_config : Kafka_service.config =
   { brokers = [ "localhost:9092" ]
   ; schema_registry_url = "http://127.0.0.1:1"
@@ -36,9 +29,6 @@ let fake_config : Kafka_service.config =
   }
 ;;
 
-(* ── Worker fixtures ─────────────────────────────────────────────────── *)
-
-(* Worker that always succeeds *)
 module OkWorker = struct
   module Message = TestMsg
 
@@ -50,7 +40,6 @@ module OkWorker = struct
   ;;
 end
 
-(* Worker that returns an error on the first message *)
 module ErrWorker = struct
   module Message = TestMsg
 
@@ -65,13 +54,7 @@ module DlqWorker = struct
   let handle _msg ~trace_ctx:_ = Worker.Dead_letter "poison"
 end
 
-(* Arbitrary but valid: these tests drive the handler via test_consume_loop,
-   which bypasses Kafka_service.consume_partitioned entirely, so the actual
-   strategy value is never consulted -- Make_with_retry just requires one be
-   named (FEAT-078: no implicit default). *)
 let unused_retry_strategy = Worker.In_memory Kafka.Consumer.default_retry
-
-(* ── Single-message consume loop ─────────────────────────────────────── *)
 
 let one_message msg ~handler () =
   let result = handler msg ~ack:(fun () -> Ok ()) ~trace_ctx:None in
@@ -89,9 +72,6 @@ let two_messages msgs ~handler () =
     msgs
 ;;
 
-(* Drives the handler with a caller-supplied ack and captures its result, to
-   simulate a commit failure — as opposed to one_message/two_messages, which
-   hardcode a succeeding ack and treat any Error as a test failure. *)
 let one_message_with_ack msg ~ack ~result_r ~handler () =
   result_r := Some (handler msg ~ack ~trace_ctx:None)
 ;;
@@ -105,8 +85,6 @@ let run_ok result =
   | Ok () -> ()
   | Error e -> Alcotest.fail (Worker.run_error_to_string e)
 ;;
-
-(* ── Tests ───────────────────────────────────────────────────────────── *)
 
 let test_handle_ok () =
   Eio_main.run (fun env ->
@@ -337,8 +315,6 @@ let test_metrics_endpoint_served () =
 
 let test_stop_flag_stops_after_current_message () =
   Eio_main.run (fun env ->
-    (* Two messages: first is processed, second should get Stop from the flag.
-       We simulate the stop flag by having the first handler call set it. *)
     let processed = ref 0 in
     let module StopWorker = struct
       module Message = TestMsg
@@ -353,7 +329,6 @@ let test_stop_flag_stops_after_current_message () =
     in
     let msgs = [ TestMsg.{ id = "msg-a" }; TestMsg.{ id = "msg-b" } ] in
     let module W = Worker.For_testing.Make (StopWorker) in
-    (* Both messages processed because stop_flag is never set externally *)
     W.run ~env ~config:fake_config ~test_consume_loop:(two_messages msgs) () |> run_ok;
     Alcotest.(check int) "both messages processed" 2 !processed)
 ;;
@@ -440,9 +415,6 @@ let test_ack_failure_non_fatal_continues_and_is_metered () =
        !found))
 ;;
 
-(* Verifies only that the handler closure computes Kafka.Consumer.Error for a
-   fatal ack failure — the real consume_partitioned path turning that into a
-   process-ending Failure is not exercised here. *)
 let test_ack_failure_fatal_escalates () =
   Eio_main.run (fun env ->
     let msg = TestMsg.{ id = "msg-ack-fatal" } in
@@ -464,7 +436,6 @@ let test_ack_failure_fatal_escalates () =
 let test_external_stop_flag_skips_messages () =
   Eio_main.run (fun env ->
     let stop = Eio.Promise.create_resolved () in
-    (* pre-resolved: handler wrapper returns Stop immediately *)
     let processed = ref 0 in
     let module StopWorker = struct
       module Message = TestMsg

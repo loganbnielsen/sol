@@ -2,8 +2,6 @@ open Cmdliner
 open Sol_cli_manifest
 open Result.Syntax
 
-(* ── Pipeline ────────────────────────────────────────────────────────────── *)
-
 let print_header ~workspace ~sha ~dry_run =
   Printf.printf "\nWorkspace: %s  tag: %s\n" workspace sha;
   if dry_run then Printf.printf "(dry-run)\n";
@@ -28,11 +26,6 @@ let check_contract ~facts ~services =
   if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
 ;;
 
-(* FEAT-063: `sol up` is the local deploy path — its destination is the literal
-   local cluster, named explicitly rather than inferred from ambient state. So
-   there is no "is the current context the local one?" question to ask any more:
-   set the local default, and let the explicit `--context` fail if the cluster
-   is gone. *)
 let ensure_postgres_url () =
   match Sol_cli_string.env "POSTGRES_URL" with
   | None ->
@@ -88,7 +81,6 @@ let dry_run_service
   |> Result.map ignore
 ;;
 
-(* Build, push, apply and wait: the steps whose failure fails the run. *)
 let deploy_service
       ~workspace
       ~ctx_dir
@@ -123,8 +115,6 @@ let deploy_service
   Ok exec
 ;;
 
-(* Reach a deployed -svc from the host. A failed port-forward is reported and
-   noted in [pf_failed]; it does not fail the release that was applied. *)
 let expose_service
       ~pf_failed
       (spec : Sol_cli_deployment_plan.service_spec)
@@ -133,10 +123,6 @@ let expose_service
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
-    (* FRIC-025: key port-forward state by namespace+service, not by service name
-       alone. Two workspaces both expose a `charge-svc`, so the old key made their
-       pid/log/script files collide on disk (and made `is_running` report the other
-       workspace's forward) independently of the :8080 bind conflict. *)
     let pf_name = Printf.sprintf "%s-%s" exec.namespace exec.k8s_name in
     let target = "svc/" ^ exec.k8s_name in
     if not (Sol_cli_port_forward.is_running pf_name)
@@ -209,7 +195,6 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-(* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
 let prepare_plan
       ~run_log
       ~dry_run
@@ -226,7 +211,6 @@ let prepare_plan
   Ok plan
 ;;
 
-(* A failed run's message stands apart from the progress output above it. *)
 let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
 
 let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~services =
@@ -251,13 +235,8 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~serv
          (Ok ()))
 ;;
 
-(* `sol up` is a deploy of the local cluster, so these mirror cmd_deploy's
-   helpers but always target the local destination. *)
 let cluster = Sol_cli_kube_destination.local_context
 
-(* Three-valued, for the same reason as cmd_deploy.ml's twin: this value is
-   retention's "protect the previous release" input, so a failed read must not
-   become "no previous release" (FND-0025). *)
 let read_previous_release ~workspace =
   match Sol_cli_release_store.current ~ctx:cluster ~workspace with
   | Ok (Some release_id) -> Sol_cli_release_retention.Known release_id
@@ -265,9 +244,6 @@ let read_previous_release ~workspace =
   | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
-(* DEC-037: see cmd_deploy.ml's twin. The release state is part of the outcome of
-   a deployment, not bookkeeping after it, so a failure to write it fails the
-   deployment. Pruning stays best-effort. *)
 let record_release_and_prune ~workspace ~keep ~previous plan =
   match
     Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
@@ -300,16 +276,11 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
     Ok ()
 ;;
 
-(* Build the image context and apply every workload, refreshing the lease
-   between workloads and stopping cleanly if a rollback asks this up to abort.
-   Returns a result; a failed port-forward is tracked separately in [pf_failed]
-   because it does not invalidate the release that was applied. *)
 let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
     match prepare_context ~repo_root with
     | Error msg -> Error msg
     | Ok ctx_dir ->
-      (* Stops at the first service that fails; the build context goes either way. *)
       let applied =
         plan.services
         |> List.fold_left
@@ -329,13 +300,6 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
       applied)
 ;;
 
-(* FEAT-074: report-only, and only for a whole-workspace deploy -- a scoped
-   deploy's [plan.services] is a subset of the workspace, so comparing it
-   against every live Sol-owned workload would flag out-of-scope services as
-   false surplus. Never deletes: unlike [sol rollback], a deploy has no
-   recorded release boundary backing the claim "this is exactly what should
-   exist", only what it was asked to deploy this run. Best-effort -- a
-   failure here must not fail an otherwise-successful deploy. *)
 let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
   if String.equal plan.requested_scope "workspace"
   then (
@@ -375,8 +339,6 @@ let report_apply_success ~workspace ~facts plan =
   report_surplus_workloads ~workspace plan
 ;;
 
-(* The apply path, under the workspace boundary lease. Returns a result; the
-   command edge turns [Error] into the exit, so nothing here exits. *)
 let run_apply
       ~run_log
       ~requested_scope
@@ -427,14 +389,11 @@ let run_apply
          match applied with
          | Error msg -> Error msg
          | Ok () ->
-           (* DEC-037: record before reporting success. *)
            Sol_cli_release.finish_deployment
              ~record_release:(fun () ->
                let* () =
                  record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
                in
-               (* BUG-045: the next deploy's consumer-group guard reads this record,
-                  so failing to write it is a failure, reported before "Done". *)
                Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
              ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
   in
@@ -446,23 +405,14 @@ let run_apply
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =
-  (* DEC-024: enter the workspace (the nearest ancestor with a sol.yml) from any
-     descendant directory; a missing or nested boundary fails closed (BUG-034). *)
   let* { root = repo_root; name = workspace } = Sol_cli_workspace.enter_cwd () in
   let sha = req.image_tag in
-  (* REFAC-130: the workspace is read once, here, and everything below projects
-     it: the inventory, the plan's topics/migrations/schema subjects, the
-     contract check, and the pending-migration count. *)
   let* facts = Sol_cli_workspace_model.load ~root:repo_root |> Sol_cli_exit.of_msg in
-  (* BUG-056: `sol up` plans from what sol.yml declares, the same facts
-     `sol deploy` resolves for a target -- so a local plan carries the declared
-     language, scale and resource uses, instead of planning blind. *)
   let* declared =
     Sol_cli_config.load_declared ~root:repo_root
     |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
   in
   let inventory = Sol_cli_workspace_model.services facts in
-  (* Mutating command: an empty selection is an error, never a silent success. *)
   let* { requested_scope; services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:"no services found in app/ with a Dockerfile"
@@ -491,8 +441,6 @@ let run (req : Sol_cli_command_request.up_request) =
       ~confirm_group_change:req.confirm_group_change
       ~keep_releases:req.keep_releases
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let scope_arg =
   Arg.(

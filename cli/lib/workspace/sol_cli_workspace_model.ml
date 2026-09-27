@@ -1,17 +1,3 @@
-(* REFAC-130: the workspace, read once.
-
-   Every fact a command needs about a workspace is read here, in one pass, and
-   the command works from the value. Before this module each question re-read
-   the disk its own way -- services via [Sol_cli_manifest], topics / schema
-   subjects / migrations via [Sol_cli_workspace_scan], targets via
-   [Sol_cli_config] -- so a command that asked two of them walked the
-   workspace twice and could see two different workspaces.
-
-   The scanners still own their individual reads (and their policies: a missing
-   [events/] is not the same as an unreadable one); this loader is the only
-   caller of them, and the only place that turns their strings into typed
-   facts. *)
-
 type workload =
   { service : Sol_cli_manifest.service
   ; has_dockerfile : bool
@@ -44,9 +30,6 @@ let services t =
 
 let migration_files t = List.map (fun m -> m.file) t.migrations
 
-(* "Count unapplied migrations". A [.down.sql] file is the reversal of a
-   migration, not a migration of its own, so it does not add to the count; the
-   rule lives here, once, rather than in an anonymous fold at the call site. *)
 let count_unapplied_migrations t =
   t.migrations
   |> List.filter (fun m ->
@@ -57,9 +40,6 @@ let count_unapplied_migrations t =
   |> List.length
 ;;
 
-(* The declared language comes from the workload's [sol.yml] entry, matched by
-   name -- the same key [Sol_cli_deployment_plan] uses. Nothing infers it from
-   build metadata (DEC-022 §7). *)
 let language_of_services (declared : Sol_cli_config.service list) name =
   match
     List.find_opt (fun (s : Sol_cli_config.service) -> String.equal s.name name) declared
@@ -92,9 +72,6 @@ let migration_of_file ~root file =
 
 let load ~root =
   let open Result.Syntax in
-  (* [Missing_app_dir] is not a failure here: an infra-first workspace with no
-     [app/] yet is a workspace with no workloads. [app_dir] keeps the
-     distinction so a caller that reports on it ([sol check]) still can. *)
   let* scanned =
     match Sol_cli_manifest.scan_workspace ~root () with
     | Ok scan -> Ok (Some scan)
@@ -141,11 +118,6 @@ let load ~root =
     }
 ;;
 
-(* The entered workspace for a caller that has not entered one: the boundary is
-   resolved and validated exactly as [Sol_cli_manifest.scan_workspace] did, so a
-   command that used to fail closed outside a workspace still does. A caller
-   that already has a root ([Sol_cli_workspace.enter_cwd]) should pass it to
-   {!load} instead -- it has paid for the resolution already. *)
 let load_cwd () =
   match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
   | Error e -> Error (Sol_cli_workspace.workspace_error_to_string e)

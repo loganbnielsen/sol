@@ -51,8 +51,5 @@ let connection_error ~url text =
   | None -> text
   | Some (password_start, password_end) ->
     let password = String.sub url password_start (password_end - password_start) in
-    (* Replace the credential value, not just the complete URI.  libpq/caqti may
-       wrap or normalize the URL before reporting it; the secret itself is the
-       invariant that must never cross stderr or a Job-log boundary. *)
     replace_all ~needle:password ~replacement:"<redacted>" text
 ;;

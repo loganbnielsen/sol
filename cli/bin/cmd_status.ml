@@ -1,10 +1,6 @@
 open Cmdliner
 open Result.Syntax
 
-(* REFAC-130: the domains under [app/] are a projection of the workspace the
-   command already read, not a fifth walk of that directory. Order is preserved
-   (first appearance wins) because the workspace index prints domains in the
-   order discovery found them. *)
 let discover_domains (facts : Sol_cli_workspace_model.t) =
   let domains =
     List.map
@@ -29,10 +25,6 @@ let namespace ~workspace ~domain =
   Sol_cli_deployment_plan.namespace_name ~workspace ~domain |> Sol_cli_exit.of_msg
 ;;
 
-(* Status projects a resolved selection into its own addressing model: the
-   discovery list is passed down rather than re-read per domain, and [run] is
-   what resolved the scope (through the same function every other command uses).
-   Nothing here re-interprets a selector string. *)
 let services_of_domain services domain =
   List.filter (fun (s : Sol_cli_manifest.service) -> s.domain = domain) services
 ;;
@@ -40,9 +32,6 @@ let services_of_domain services domain =
 let service_diagnoses_named ~ctx ~ns (services : Sol_cli_manifest.service list)
   : (string * Sol_cli_rollout_diagnosis.diagnosis) list
   =
-  (* DEC-038 §7: this was a [filter_map], so a service whose Kubernetes name could
-     not be resolved disappeared from the rollup entirely -- and a rollup with
-     nothing in it reads as healthy. Every input service now produces a verdict. *)
   services
   |> List.map (fun (s : Sol_cli_manifest.service) ->
     match Sol_cli_deployment_plan.k8s_name_result s.name with
@@ -69,9 +58,6 @@ let service_diagnoses ~ctx ~ns services =
   service_diagnoses_named ~ctx ~ns services |> List.map snd
 ;;
 
-(* DEC-038 §7: absence is a fact; a failed read is not absence. This used to
-   return [false] on [Error _], so a namespace that exists but could not be read
-   -- permissions, an API error -- rendered as NOT DEPLOYED. *)
 let namespace_presence ~ctx ns : Sol_cli_status.namespace_presence =
   match Sol_cli_kubectl.get_if_present ~ctx ~args:[ "get"; "ns"; ns ] with
   | Ok (Some _) -> Ns_present
@@ -79,11 +65,6 @@ let namespace_presence ~ctx ns : Sol_cli_status.namespace_presence =
   | Error e -> Ns_unreadable (Sol_cli_process.error_to_string e)
 ;;
 
-(* The outer process-level timeout must give curl's own [--max-time] room
-   to actually fire, write its [-w] output, and exit before the harness
-   SIGKILLs it -- otherwise a borderline-slow connection races curl's own
-   timeout handling and reports "timed out" instead of "connection failed".
-   Same [timeout_s +. <buffer>] pattern as Sol_cli_loki.query. *)
 let curl_status_code url ~timeout_s : (int, string) result =
   match
     Sol_cli_process.run
@@ -100,8 +81,6 @@ let curl_status_code url ~timeout_s : (int, string) result =
          ; url
          ])
   with
-  (* The answer is the code curl printed, whatever curl exited with: a refused
-     connection exits 7 and prints "000", which callers read as "no response". *)
   | Ok { stdout; _ } | Error (Sol_cli_process.Non_zero { stdout; _ }) ->
     (match int_of_string_opt (String.trim stdout) with
      | Some code -> Ok code
@@ -109,10 +88,6 @@ let curl_status_code url ~timeout_s : (int, string) result =
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-(* Any 1xx-4xx response means *something* answered at this URL -- used for
-   the dashboard link, a general Grafana base URL that may legitimately 3xx
-   (e.g. to a login page) or 4xx (no default route at "/"); only "no
-   response at all" (curl's "000") or a 5xx server error count as down. *)
 let http_reachable url : (unit, string) result =
   match curl_status_code url ~timeout_s:2.0 with
   | Error e -> Error e
@@ -121,10 +96,6 @@ let http_reachable url : (unit, string) result =
   | Ok code -> Error (Printf.sprintf "HTTP %d" code)
 ;;
 
-(* OBS-031: Loki's /ready and Prometheus's /-/healthy return 200
-   specifically when genuinely up -- unlike the dashboard's generic
-   base-URL probe above, a 4xx (wrong path, auth required) or 3xx here is a
-   real problem to surface via unreachable_message, not "healthy". *)
 let health_check_reachable url : (unit, string) result =
   match curl_status_code url ~timeout_s:2.0 with
   | Error e -> Error e
@@ -132,8 +103,6 @@ let health_check_reachable url : (unit, string) result =
   | Ok 0 -> Error "connection failed"
   | Ok code -> Error (Printf.sprintf "HTTP %d" code)
 ;;
-
-(* ── Observability reachability ─────────────────────────────────────────── *)
 
 let dashboard_reachability ~backend ~base_domain =
   match Sol_cli_observability_url.resolve ~backend ?base_domain () with
@@ -144,13 +113,6 @@ let dashboard_reachability ~backend ~base_domain =
   | Sol_cli_observability_url.No_url _ -> Sol_cli_status.Not_checked
 ;;
 
-(* OBS-031: prints the "not configured"/"unreachable" detail message
-   in-line rather than the plain reachability word, so a self_hosted_durable/
-   external target says why it isn't checking and what to pass instead of
-   silently reading as the same "not checked" as everything else. The
-   message selection itself ([Sol_cli_status.reachability_line]) is a pure
-   function of [probe_url] and the injected [is_reachable] result -- only
-   deciding the probe URL and running curl stays here. *)
 let signal_line ~signal ~backend ~explicit_url ~default_local_url ~probe_path =
   let probe_url =
     Sol_cli_status.probe_url ~backend ~explicit_url ~default_local_url ~probe_path
@@ -205,11 +167,6 @@ let print_open_block ~scope =
   Printf.printf "  logs       sol open logs%s\n" suffix;
   Printf.printf "  metrics    sol open metrics%s\n" suffix;
   Printf.printf "  dashboard  sol open dashboard%s\n" suffix;
-  (* Managed resource dashboards (OBS-044, e.g. RDS) are workspace-wide
-     infrastructure, not domain/service-scoped -- only hinted at the
-     workspace view, and as a generic command form (sol has no manifest of
-     which managed resources are actually deployed to enumerate a real
-     one here). *)
   if scope = ""
   then
     Printf.printf
@@ -218,13 +175,8 @@ let print_open_block ~scope =
   flush stdout
 ;;
 
-(* ── Raw Kubernetes Diagnostics ─────────────────────────────────────────── *)
-
 let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
   Printf.printf "\nNamespace: %s\n%!" ns;
-  (* DEC-038 §7: when the namespace could not be read, say so. Silence here reads
-     as "there is nothing to show", which is a different claim from "I could not
-     look", and this block is the evidence an operator is looking for. *)
   (match namespace_presence ~ctx ns with
    | Ns_unreadable why ->
      Printf.printf
@@ -243,10 +195,6 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
        print_string r.stdout;
        print_char '\n'
      | Error _ -> ());
-    (* EXP-029: which image tag is actually live, without kubectl knowledge.
-       Deployments rather than pods -- svc/worker are the only primitives
-       with a live image tag worth confirming (Fn is a CronJob with no
-       standing Deployment; this section is simply empty for it). *)
     let deploy_args =
       match only_k8s_name with
       | None -> [ "get"; "deployments"; "-n"; ns ]
@@ -272,17 +220,10 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
       | Some only when only <> k8s_name -> ()
       | _ ->
         (match diagnosis with
-         (* DEC-038 §7: an unhealthy workload prints its evidence, an
-            undetermined one prints why it is undetermined, and only a healthy
-            one is silent -- which is now a claim backed by a read that
-            happened. *)
          | Sol_cli_rollout_diagnosis.Unhealthy d -> Printf.printf "%s\n%!" d
          | Sol_cli_rollout_diagnosis.Undetermined why ->
            Printf.printf "diagnosis unavailable: %s\n%!" why
          | Sol_cli_rollout_diagnosis.Healthy -> ()));
-    (* Port-forward hint for ClusterIP HTTP services in this namespace.
-       Filter out internal services: names ending in "-headless" or equal
-       to "kubernetes". *)
     let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
     let svc_names_raw =
       match
@@ -328,8 +269,6 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
   Printf.printf "\n%!"
 ;;
 
-(* ── Workspace Scope ────────────────────────────────────────────────────── *)
-
 let print_workspace_index
       ~ctx
       ~workspace
@@ -339,8 +278,6 @@ let print_workspace_index
       ~explicit_loki_url
       ~explicit_prometheus_url
   =
-  (* Every namespace is resolved before the table is printed, so a bad name
-     fails the command rather than half of its output. *)
   let* namespaces =
     domains
     |> Sol_cli_result.map_list (fun domain ->
@@ -353,9 +290,6 @@ let print_workspace_index
     let diagnoses =
       match presence with
       | Ns_present -> service_diagnoses ~ctx ~ns (services_of_domain services domain)
-      (* Not readable or confirmed absent: nothing was read, so there are no
-            per-service verdicts to roll up. The rollup decides the verdict from
-            the presence itself rather than from an empty list. *)
       | Ns_absent | Ns_unreadable _ -> []
     in
     let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
@@ -366,8 +300,6 @@ let print_workspace_index
   print_open_block ~scope:"";
   Ok ()
 ;;
-
-(* ── Domain Scope ───────────────────────────────────────────────────────── *)
 
 let print_domain_status
       ~ctx
@@ -417,8 +349,6 @@ let print_domain_status
   Ok ()
 ;;
 
-(* ── Service Scope ──────────────────────────────────────────────────────── *)
-
 let print_service_status
       ~ctx
       ~workspace
@@ -431,8 +361,6 @@ let print_service_status
       ~explicit_prometheus_url
   =
   let* ns = namespace ~workspace ~domain in
-  (* [services] is the resolver's selection for this scope: exactly the services
-     whose canonical name matched [service_name]. *)
   let* svc =
     services
     |> List.find_opt (fun (s : Sol_cli_manifest.service) ->
@@ -459,9 +387,6 @@ let print_service_status
           ~k8s_name
           ()
       ]
-    (* Nothing was read, so there is no per-service verdict: the rollup decides
-       from the presence. Synthesising a healthy one here is exactly how an
-       unreadable workload came to be reported healthy. *)
     | Ns_absent | Ns_unreadable _ -> []
   in
   let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
@@ -480,8 +405,6 @@ let print_service_status
   Ok ()
 ;;
 
-(* REFAC-089: status's inputs travel together too -- the selection, the target
-   they are read against, and where the telemetry lives. *)
 type status_options =
   { scope : string option
   ; target : string option
@@ -497,8 +420,6 @@ let run ~ctx (options : status_options) =
   let explicit_loki_url = options.observability.loki_base_url in
   let explicit_prometheus_url = options.prometheus_base_url in
   let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
-  (* REFAC-130: one read of the workspace; domains and services are both
-     projections of it. *)
   let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
   let* all_domains =
     match discover_domains facts with
@@ -533,12 +454,6 @@ let run ~ctx (options : status_options) =
       ~explicit_loki_url
       ~explicit_prometheus_url
   | Sol_cli_open.Resource (resource_type, resource_name) ->
-    (* Managed resources (OBS-044, e.g. RDS) have no Kubernetes namespace to
-       probe and sol has no AWS SDK dependency to query CloudWatch's own
-       health directly (aws-eio is pinned into this switch but nothing in
-       Sol consumes it yet) -- 'sol status resource/...' points at the
-       dashboard rather than fabricating a health rollup it can't actually
-       check. *)
     Printf.printf "\n%s/%s  (managed resource)\n" resource_type resource_name;
     Printf.printf "\nOpen\n";
     Printf.printf
@@ -572,8 +487,6 @@ let run ~ctx (options : status_options) =
       ~explicit_loki_url
       ~explicit_prometheus_url
 ;;
-
-(* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let domain_arg =
   Arg.(
@@ -630,8 +543,6 @@ let status_observability_term =
     $ loki_base_url_arg)
 ;;
 
-(* REFAC-089: the two entry points differ only in how they produce the
-   destination and in whether --target is declared at all. *)
 let status_term ~local ~target_term =
   Term.(
     const (fun scope observability prometheus_base_url target ->
@@ -656,7 +567,6 @@ let cmd =
     (status_term ~local:false ~target_term:Cmd_destination.target_arg)
 ;;
 
-(* FEAT-063: the local form -- workload status against Sol's own cluster. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show local workload health and observability status")

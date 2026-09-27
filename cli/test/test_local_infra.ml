@@ -1,17 +1,3 @@
-(* Bounded-concurrency installs for `sol local infra up`.
-
-   Seven independent Helm releases were installed strictly one after another --
-   ~290s in every golden path, in both languages. The property that matters when
-   they stop being serialized is the bound: a k3d cluster is one node, so what
-   must not happen is seven `helm --wait` installs fighting over it (or a failed
-   component leaving siblings half-installed and unreported).
-
-   The installs run in forked children, so "how many were in flight" cannot be a
-   shared in-memory counter -- each child records its own start and end in a file
-   and the test reconstructs the overlap from that. That is also why the
-   assertions are about observable events rather than about the parent's private
-   bookkeeping. *)
-
 let record path line =
   let oc = open_out_gen [ Open_append; Open_creat ] 0o600 path in
   output_string oc (line ^ "\n");
@@ -30,8 +16,6 @@ let read_lines path =
   go []
 ;;
 
-(* The peak number of installs that were running at the same time, from the
-   start/end events they recorded. *)
 let peak_concurrency lines =
   let rec go concurrent peak = function
     | [] -> peak

@@ -1,6 +1,3 @@
-(* DEC-050: Terraform runs in a per-state working directory materialized from the
-   immutable platform assets. The data home is isolated by cli/test/dune (INFRA-075). *)
-
 module A = Sol_cli_platform_assets
 module W = Sol_cli_terraform_workdir
 
@@ -11,9 +8,6 @@ let write path text =
 
 let read path = In_channel.with_open_bin path In_channel.input_all
 
-(* `chmod -R`, in OCaml: [f] maps each entry's mode. Directories are changed
-   after their contents when removing write access, so the walk can still read
-   them; before, when adding it. *)
 let rec chmod_tree f path =
   match Unix.lstat path with
   | { Unix.st_kind = Unix.S_DIR; st_perm; _ } ->
@@ -36,7 +30,6 @@ let with_tmpdir f =
     (fun () -> f (Unix.realpath dir))
 ;;
 
-(* A checkout-shaped asset root with one provider's roots and the shared tree. *)
 let fake_assets root =
   write (Filename.concat root "framework/ocaml/sol-svc/lib/dune") "";
   write (Filename.concat root "framework/ocaml/kafka-eio-service/lib/dune") "";
@@ -141,11 +134,9 @@ let test_rematerialize_is_authoritative_and_preserves () =
   with_tmpdir (fun root ->
     let assets = fake_assets root in
     let chdir = materialize assets ~target:"recover/aws/us-east-1" () in
-    (* What Terraform and the operator leave behind. *)
     write (Filename.concat chdir "errored.tfstate") "the only record";
     write (Filename.concat chdir ".terraform/fake") "plugins";
     write (Filename.concat chdir "notes.txt") "mine";
-    (* The assets change: one file edited, one added, one removed. *)
     write (Filename.concat root "platform/cloud/aws/cluster/main.tf") "# cluster v2\n";
     write (Filename.concat root "platform/cloud/aws/cluster/added.tf") "# new\n";
     let chdir' = materialize assets ~target:"recover/aws/us-east-1" () in
@@ -178,7 +169,6 @@ let test_rematerialize_is_authoritative_and_preserves () =
       (read (Filename.concat chdir "notes.txt")))
 ;;
 
-(* A read-only bundle's files are 0444, in 0555 directories. *)
 let test_read_only_assets () =
   with_tmpdir (fun root ->
     let assets = fake_assets root in
@@ -186,7 +176,6 @@ let test_read_only_assets () =
     let chdir = materialize assets ~target:"readonly/aws/us-east-1" () in
     let perm = (Unix.stat (Filename.concat chdir "main.tf")).Unix.st_perm in
     Alcotest.(check bool) "the copy is owner-writable" true (perm land 0o200 <> 0);
-    (* and a second run can rewrite it *)
     ignore (materialize assets ~target:"readonly/aws/us-east-1" ());
     Alcotest.(check bool)
       "the assets stayed read-only"

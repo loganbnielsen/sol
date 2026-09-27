@@ -15,9 +15,6 @@ type post_deploy_summary =
 val push_registry : string
 val build_context_dir : repo_root:string -> string
 
-(** BUG-056: [declared] is what the workspace's [sol.yml] declares
-    ({!Sol_cli_config.load_declared}), so a local plan carries the same declared
-    language, scale and resource uses a target's plan does. *)
 val local_plan
   :  requested_scope:string
   -> workspace:string
@@ -55,16 +52,12 @@ val apply_service_manifest
   -> Sol_cli_deployment_plan.service_spec
   -> (Sol_cli_executor.result, string) result
 
-(** FEAT-063: the rollout is watched in the cluster the target names. *)
 val wait_for_service_rollout
   :  ctx:Sol_cli_kube_destination.context
   -> Sol_cli_deployment_plan.service_spec
   -> service_execution
   -> (unit, string) result
 
-(** REFAC-130: the pending-migration count is a projection of the workspace the
-    command already read ([Sol_cli_workspace_model.count_unapplied_migrations]),
-    not a second walk of [db/migrations]. *)
 val post_deploy_summary
   :  facts:Sol_cli_workspace_model.t
   -> Sol_cli_deployment_plan.t

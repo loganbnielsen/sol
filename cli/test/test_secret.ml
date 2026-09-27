@@ -35,9 +35,6 @@ let test_mode_of_env_accepts_local_aliases () =
     [ "local" ]
 ;;
 
-(* REFAC-086: `dev` was accepted here until it was retired. Asserting the
-   rejection, not merely deleting the value, is what keeps a retired word from
-   quietly returning — a deleted list entry proves nothing about the parser. *)
 let test_mode_of_env_rejects_the_retired_dev_alias () =
   match Sol_cli_secret.mode_of_env "dev" with
   | Ok _ -> Alcotest.fail "\"dev\" must no longer select the local secret mode"

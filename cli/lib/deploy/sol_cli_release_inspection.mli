@@ -1,9 +1,3 @@
-(** Read-only release inspection and diagnostics models.
-
-    This module defines Sol-facing release facts for hosted and customer-cloud
-    inspection surfaces. It intentionally does not expose Argo CD or Kubernetes
-    write APIs. *)
-
 type rollout_status =
   | Rollout_not_started
   | Rollout_progressing
@@ -48,8 +42,6 @@ type affected_service =
   ; health_status : health_status
   ; error_reason : string option
   ; default_url : string option
-    (** Sol-managed default URL; [Some] for [-svc] workloads with a hosted
-          base domain, [None] for [-worker] and [-fn] primitives. *)
   }
 
 type release_summary =
@@ -109,8 +101,6 @@ val release_summary
   -> services:affected_service list
   -> release_summary
 
-(** Render inspectable manifest facts from the deployment plan. The YAML is a
-    read-only diagnostic artifact. *)
 val rendered_manifests_of_plan
   :  Sol_cli_deployment_plan.t
   -> (rendered_manifest list, string) result

@@ -1,14 +1,3 @@
-(* Only three persisted states remain (see REFAC-077): [Backlog] is a
-   pre-work human-judgment gate, [Ready_for_engineering] covers everything
-   from "not started" through "PR open, in review" (GitHub's own open-PR/
-   review/CI state IS that information — no local directory duplicates it),
-   and [Done] is committed on the ticket's own PR branch as part of the
-   worker's implementation commit, so it rides into `main` inside the same
-   squashed merge commit as the code. There is no persisted "in review" or
-   "ready to merge" directory, and no "blocked by performance" directory: a
-   post-merge revert undoes the code and the ticket's DONE move atomically,
-   since they were always the same commit — it lands back in
-   [Ready_for_engineering] for free. *)
 type ticket_state =
   | Backlog
   | Ready_for_engineering
@@ -17,29 +6,9 @@ type ticket_state =
 val state_to_dir : ticket_state -> string
 val state_of_dir : string -> ticket_state option
 val all_states : ticket_state list
-
-(** The ticket's frontmatter fields, parsed as YAML (REFAC-137): each value is
-    its scalar's text, trimmed, and a blank or null value is absent. [Ok []] when
-    there is no frontmatter; [Error] names what is wrong with an invalid block. *)
 val frontmatter : string -> ((string * string) list, string) result
-
-(** [frontmatter], with an invalid block read as no fields -- for readers that
-    only want one field. *)
 val fields : string -> (string * string) list
-
-(** Why the pipeline cannot read this ticket's metadata, with [path] prefixed so
-    the report names the file — or [None] when it can. The reasons are a missing
-    frontmatter block, a block that does not parse ([frontmatter] above), or a
-    missing/blank field from the set the pipeline reads ([id], [type],
-    [severity], [source]); everything else about a ticket is the author's.
-
-    This is the one rule the listing, the per-ticket gate and
-    `soldev pipeline validate` share, so a ticket cannot be rejected by one and
-    accepted by another. BUG-060: a ticket that cannot be read is an error naming
-    the file, never a row with empty columns, an "actionable" verdict, or an
-    omission. *)
 val unreadable : path:string -> string -> string option
-
 val fm_get : (string * string) list -> string -> string option
 val parse_depends : string -> string list
 val has_human_decision_gate : string -> bool
@@ -49,37 +18,19 @@ val find_ticket : string -> (ticket_state * string) option
 val dependency_status : string -> [ `Done | `Unknown | `Blocked of ticket_state ]
 val dependency_summary : string list -> string
 
-(** The outcome of evaluating a ticket's [premise:] probe (INFRA-010). *)
 type premise_verdict =
   | Premise_holds
   | Premise_stale
   | Premise_unverified of string
 
-(** The probe a ticket declares, if any. *)
 val premise_of : string -> string option
-
-(** [premise_verdict ~exit_code] classifies a probe run. A probe succeeds when
-    the premise is *stale* — see the implementation for why that inversion is
-    deliberate. The exit code is injected so this is testable without running
-    anything; a probe that cannot be run is [Premise_unverified], never
-    [Premise_holds]. A blank probe never reaches here: [premise_of] reads a blank
-    [premise:] as none. *)
 val premise_verdict : exit_code:int -> premise_verdict
 
-(** [find_dependency_cycle_from ~deps_of start] walks [deps_of] from [start] and
-    returns the first cycle it closes, as a path like
-    [["DEC-020"; "FEAT-063"; "DEC-020"]]. [deps_of] is injected so the walk is
-    testable without the filesystem. *)
 val find_dependency_cycle_from
   :  deps_of:(string -> string list)
   -> string
   -> string list option
 
-(** The same walk over the tickets on disk. *)
 val find_dependency_cycle : string -> string list option
-
-(** Whether a cycle actually blocks: false when any member is already [Done],
-    since a satisfied chain is ordinary waiting rather than a deadlock. *)
 val cycle_blocks : string list -> bool
-
 val readiness_label : ticket_id:string -> ticket_state -> string -> string

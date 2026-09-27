@@ -1,4 +1,3 @@
-(* REFAC-115: the readers return results; a test fails with the reason. *)
 let ok = function
   | Ok x -> x
   | Error e -> Alcotest.fail e
@@ -14,12 +13,6 @@ let check_bool = Alcotest.(check bool)
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let assert_contains msg s needle = check_bool msg true (contains needle s)
 
-(* CODE_LAYER-007: dashboard_configmap_yaml reads the real
-   platform/shared/observability/dashboards/*.json files (via the same SOL_HOME
-   ancestor-walk resolution proven out for render_alloy_config), the same
-   files platform/cloud/modules/platform/main.tf's kubernetes_config_map.grafana_dashboards
-   loads via file(...) -- not a fixture, so this exercises production
-   content end to end. *)
 let test_dashboard_configmap () =
   let yaml =
     ok
@@ -55,13 +48,6 @@ let test_prometheus_datasource_configmap () =
     "url: http://prometheus-server.monitoring.svc.cluster.local:80"
 ;;
 
-(* OBS-039: no longer auto-provisioned by a bundled loki-stack Grafana
-   subchart -- see sol_cli_dev_observability.ml's comment on
-   loki_datasource_configmap_yaml. Every dashboard above references a
-   datasource named exactly "Loki", so a missing/misnamed datasource here
-   silently breaks every Loki panel.
-   OBS-042: also asserts the derivedFields link to Tempo -- a trace_id in a
-   Loki log line must be clickable through to its Tempo waterfall. *)
 let test_loki_datasource_configmap () =
   let yaml =
     Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring"
@@ -79,11 +65,6 @@ let test_loki_datasource_configmap () =
   assert_contains "derivedFields url" yaml "url: \"${__value.raw}\""
 ;;
 
-(* OBS-042: Tempo query API (port 3200, distinct from the OTLP/HTTP
-   ingestion port 4318 obs-tempo-eio's -svc backend pushes spans to)
-   exposed as a Grafana datasource, mirroring Loki/Prometheus above. uid is
-   pinned so the Loki datasource's derivedFields entry above can reference
-   it by a stable value. *)
 let test_tempo_datasource_configmap () =
   let yaml =
     Sol_cli_dev_observability.tempo_datasource_configmap_yaml ~namespace:"monitoring"
@@ -95,15 +76,6 @@ let test_tempo_datasource_configmap () =
   assert_contains "url" yaml "url: http://tempo:3200"
 ;;
 
-(* CODE_LAYER-006: render_alloy_config is a hermetic templater over
-   platform/shared/observability/alloy/logs.alloy.tftpl (${var}/for/if substitution)
-   -- exercised here against a synthetic fixture, not the real file, so
-   this test doesn't depend on the .tftpl being reachable inside dune's
-   build sandbox (it isn't -- only directories a dune stanza references
-   get copied into _build/default, and platform/ has none). Builds a
-   throwaway "Sol home" containing just the two marker files
-   Sol_cli_platform_assets.is_checkout checks for plus the synthetic template,
-   same pattern as test_platform_component.ml's with_fake_sol_home. *)
 let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
 ;;
@@ -194,8 +166,6 @@ let test_alloy_render_expands_taxonomy_loop () =
     assert_contains "workspace rule" river "__meta_kubernetes_pod_label_workspace";
     assert_contains "domain rule" river "__meta_kubernetes_pod_label_domain";
     assert_contains "service rule" river "__meta_kubernetes_pod_label_service";
-    (* Not present in the fixture's taxonomy_labels arg -- proves the loop
-       renders exactly the given list, not a hardcoded fallback. *)
     check_bool
       "primitive rule absent"
       false
@@ -233,13 +203,6 @@ let test_alloy_render_includes_basic_auth_when_set () =
     assert_contains "password" river "password = \"secret\"")
 ;;
 
-(* OBS-039: `sol local infra up`'s own local-profile call -- reads the real
-   platform/shared/observability/alloy/logs.alloy.tftpl (CODE_LAYER-006: the same
-   file platform/cloud/modules/platform/main.tf's helm_release.alloy renders from).
-   Sol_cli_platform_assets.resolve's ancestor walk from the test
-   executable's own path escapes dune's _build sandbox and lands on the
-   real checkout root (confirmed: this test passes under plain `dune
-   test`), so this exercises the actual production file, not a fixture. *)
 let test_alloy_values_yaml_against_real_file () =
   match Sol_cli_platform_assets.resolve () with
   | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
@@ -261,10 +224,6 @@ let test_alloy_values_yaml_against_real_file () =
       (contains "basic_auth" yaml)
 ;;
 
-(* CODE_LAYER-006 found `content: |-`'s body rendered at its key's own indent,
-   which no parser accepts, and no substring test caught. REFAC-131: the values
-   file is now emitted, not templated, so the check is the real one -- it
-   parses, and the content it carries is exactly the rendered River config. *)
 let test_alloy_values_yaml_carries_the_config_exactly () =
   let a = assets () in
   let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:a) in

@@ -4,8 +4,6 @@ let check_bool = Alcotest.(check bool)
 
 module L = Sol_cli_loki
 
-(* ── split_body_and_status ──────────────────────────────────────────── *)
-
 let test_split_body_and_status_normal () =
   let body, code = L.split_body_and_status "{\"a\":1}\n200" in
   check_string "body" "{\"a\":1}" body;
@@ -17,8 +15,6 @@ let test_split_body_and_status_no_newline () =
   check_string "whole string is body" "no newline here" body;
   Alcotest.(check (option int)) "no code" None code
 ;;
-
-(* ── parse_query_range_body ─────────────────────────────────────────── *)
 
 let success_body =
   {|
@@ -65,8 +61,6 @@ let test_parse_malformed_json_is_error () =
   | Error _ -> ()
 ;;
 
-(* ── classify_process_error ─────────────────────────────────────────── *)
-
 let test_classify_timeout () =
   match L.classify_process_error (Sol_cli_process.Timeout 5.0) with
   | L.Timeout -> ()
@@ -101,11 +95,6 @@ let test_classify_other () =
   | _ -> Alcotest.fail "expected Other"
 ;;
 
-(* ── query_range_argv ───────────────────────────────────────────────── *)
-
-(* FRIC-029: the selector matches on "service" (a substring regex against
-   k8s_name), not "namespace"/"app" -- Sol's Loki streams never carry that
-   label pair. *)
 let test_query_range_argv_contains_logql_labels () =
   let argv =
     L.query_range_argv
@@ -180,8 +169,6 @@ let test_query_range_argv_logql_carries_exact_selector () =
      | Not_found -> false)
 ;;
 
-(* ── resolve_credentials ─────────────────────────────────────────────── *)
-
 let test_resolve_credentials_neither_set_is_ok_none () =
   match
     L.resolve_credentials
@@ -248,9 +235,6 @@ let test_resolve_credentials_flag_wins_over_env () =
 ;;
 
 let test_resolve_credentials_flag_username_wins_env_password_fills_in () =
-  (* Fields are resolved independently: a flag username paired with only an
-     env password still yields both, since flag wins per-field, not as an
-     all-or-nothing pair. *)
   match
     L.resolve_credentials
       ~flag_username:(Some "flag-user")

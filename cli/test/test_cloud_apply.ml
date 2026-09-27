@@ -1,8 +1,3 @@
-(* REFAC-091: the cloud apply sequence, replayed offline through fakes. What is
-   asserted is the part that used to be hand-threaded: the bootstrap window is
-   removed on every failure while it is open, exactly once, and never when it was
-   not opened or already removed. *)
-
 module A = Sol_cli_cloud_apply
 
 type calls =
@@ -12,8 +7,6 @@ type calls =
   ; mutable discarded : bool
   ; mutable reports : string list
   ; mutable events : string list
-    (** INFRA-090: what ran, in order, so the disk-quota check's *placement* can be asserted --
-        after the substrate is ready and before the platform asks for anything. *)
   ; mutable prerequisites_applied : bool
   ; mutable planned : bool
   }
@@ -30,12 +23,8 @@ let fresh () =
   }
 ;;
 
-(* AUDIT-POST-002: the guarded-removal policy is data the provider supplies, so this
-   fake declares its own type rather than an AWS one -- the sequence must not know which
-   Terraform resource type means "removing this discards something". *)
 let guarded_kind = "test_guarded_kind"
 
-(* A fake whose every step succeeds; a test overrides the step it is about. *)
 let deps calls : (unit, unit, unit) A.deps =
   { substrate_exists = (fun () -> Ok true)
   ; plan =
@@ -64,7 +53,6 @@ let deps calls : (unit, unit, unit) A.deps =
   ; observe_disk_quota =
       (fun () ->
         calls.events <- "observe_disk_quota" :: calls.events;
-        (* Plenty of room unless the test says otherwise. *)
         Ok
           (Some
              { Sol_cli_disk_quota.quota_name = "TEST_QUOTA"
@@ -137,10 +125,6 @@ let test_failure_in_window_removes_it () =
   Alcotest.(check int) "removed exactly once" 1 calls.removals
 ;;
 
-(* ADR 0003 invariant 3: an installed platform is re-entered as PlatformUpdating.
-   (The phases the sequence refuses are unreachable from [observed_phase], so their
-   refusal -- which now removes the window like any failure inside it -- has no
-   input that reaches it here.) *)
 let test_installed_platform_reenters_as_updating () =
   let calls = fresh () in
   let deps = { (deps calls) with platform_installed = (fun () -> true) } in
@@ -220,9 +204,6 @@ let test_guarded_removal_refused_before_apply () =
      | A.Apply_failed _ -> false)
 ;;
 
-(* A provider that declares no guarded removal inherits nothing: the same destructive
-   plan is applied, because Sol refuses only what the provider says is irreversible. This
-   is what keeps a new provider from silently acquiring AWS's list. *)
 let test_unguarded_provider_is_unaffected () =
   let calls = fresh () in
   let change =
@@ -274,8 +255,6 @@ let test_fresh_target_reports_bootstrap () =
     (List.mem "  lifecycle phase: CloudBootstrap" calls.reports)
 ;;
 
-(* INFRA-093 / FND-0064. The refusal has to happen before a plan exists to apply: the point is
-   that Sol never asks Terraform to touch a cluster whose substrate it does not support. *)
 let test_unsupported_substrate_refuses_before_the_plan () =
   let calls = fresh () in
   let deps =
@@ -297,13 +276,6 @@ let test_unsupported_substrate_refuses_before_the_plan () =
   Alcotest.(check bool) "no plan was ever made" false calls.planned;
   Alcotest.(check bool) "nothing was applied" false calls.applied_cloud
 ;;
-
-(* INFRA-090 / FND-0062. Before the platform installs anything that needs a persistent disk,
-   the *observed* available provider quota must cover Sol's *declared* minimum. Where the check
-   runs is as much the point as what it decides: Attempt 12 showed a pre-cloud read is useless
-   (the cluster's own footprint is not there yet) and a platform-time read is too late (the
-   volumes are already asked for). The numbers and the refusal's text are pinned in
-   test_disk_quota.ml; here it is placement and outcome. *)
 
 let test_disk_quota_insufficient_refuses_before_the_platform () =
   let calls = fresh () in

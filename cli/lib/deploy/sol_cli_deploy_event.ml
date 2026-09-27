@@ -1,15 +1,3 @@
-(* Structured Loki release-event line for `sol deploy` (OBS-037). Field set
-   mirrors Sol_cli_manifest_yaml.render_taxonomy_labels's taxonomy labels
-   (workspace/env/domain/service/primitive/release) so a deployed release's
-   manifest labels and its deploy-event log line describe the same release
-   consistently, plus a fixed `event=deploy` field OBS-038's dashboard query
-   filters on to separate deploy markers from ordinary application log
-   lines. Pure/testable; the actual HTTP push and Loki-reachability I/O live
-   in cli/bin/cmd_deploy_event.ml. *)
-
-(* Both identities stay typed (TYPE_AUDIT-078): this record is a domain object,
-   and the serialization edge is [fields]/[message] plus the stream labels the
-   pusher builds — not the record itself. *)
 type t =
   { workspace : string
   ; env : string
@@ -44,21 +32,6 @@ let message t =
     t.env
 ;;
 
-(* Push URL resolution (OBS-037). Same explicit-always-wins precedence as
-   Sol_cli_status.probe_url, but for a push target instead of a query
-   target:
-   - an explicit [--loki-push-url] always wins.
-   - [Local]/[Self_hosted_durable] both have an in-cluster Loki
-     (platform/cloud/modules/platform/main.tf's [loki_install_local]) that isn't
-     Ingress-exposed -- [Auto_detect] tells the caller it's safe to probe
-     the live cluster for it (unlike Sol_cli_status's read-only reachability
-     check, [sol deploy]'s direct-apply mode already has kubectl/cluster
-     access for its own [kubectl apply], so a live probe is strictly more
-     useful here than guessing a static default).
-   - [External] never has an in-cluster Loki to find (same
-     [loki_install_local] condition excludes it) and no existing
-     [Sol_cli_config] target field carries an external push URL --
-     [Skip reason] explains why nothing was pushed. *)
 type push_url_decision =
   | Explicit of string
   | Auto_detect

@@ -42,12 +42,6 @@ let contains re s =
   | Not_found -> false
 ;;
 
-(* ── FEAT-066 reconstruction gate ─────────────────────────────────────────
-   A -> B -> C: decode correctness, identity correctness, render correctness.
-   A fixture exercising rollout/canary, volumes + access modes, calls,
-   called_by, ingress, config, secrets and namespace/name-derived URLs — the
-   full manifest-affecting surface a release record must be able to restore. *)
-
 let gate_env : Sol_cli_deployment_plan.env_config =
   { name = "production"
   ; mode = Sol_cli_deployment_plan.Customer_cloud
@@ -66,7 +60,6 @@ let ledger_name = k8s_name "ledger-svc"
 let billing_namespace = namespace ~workspace:"myapp" ~domain:"payments"
 let billing_name = k8s_name "billing-svc"
 
-(* billing_svc -> ledger_svc *)
 let billing_call : Sol_cli_deployment_plan.service_call =
   { env_var = Sol_cli_kubernetes_name.call_env_var "ledger_svc"
   ; url =
@@ -79,9 +72,6 @@ let billing_call : Sol_cli_deployment_plan.service_call =
   }
 ;;
 
-(* ledger_svc's view of the same edge: called_by describes the CALLER
-   (billing_svc), not a copy of the forward edge above -- this is exactly the
-   FEAT-066 finding under test. *)
 let billing_as_caller : Sol_cli_deployment_plan.service_call =
   { env_var = Sol_cli_kubernetes_name.call_env_var "billing_svc"
   ; url =
@@ -222,8 +212,6 @@ let call_eq
 
 let calls_eq a b = List.length a = List.length b && List.for_all2 call_eq a b
 
-(* A: decode correctness -- field-by-field, so a failure names the divergent
-   fact rather than "specs differ". *)
 let assert_spec_equal ~label (expected : Sol_cli_deployment_plan.service_spec) got =
   let k8s = Sol_cli_deployment_plan.k8s_name_to_string in
   let ns = Sol_cli_deployment_plan.namespace_to_string in
@@ -291,8 +279,6 @@ let test_gate_a_decode_correctness () =
   | specs -> Alcotest.failf "expected 2 reconstructed specs, got %d" (List.length specs)
 ;;
 
-(* B: identity correctness -- reconstructed facts, run back through the same
-   canonical projection, must rederive the record's own release_id. *)
 let test_gate_b_identity_correctness () =
   let specs = reconstruct_ok () in
   let reconstructed_id =
@@ -308,10 +294,6 @@ let test_gate_b_identity_correctness () =
     (Sol_cli_release_id.to_string reconstructed_id)
 ;;
 
-(* C: render correctness -- plan -> render and record -> reconstruct -> render
-   must produce byte-identical output per workload. Compare by (namespace,
-   k8s_name) identity first so a missing/extra workload doesn't cascade into
-   misleading per-line diffs. *)
 let render_by_identity ~release_id specs =
   List.map
     (fun (s : Sol_cli_deployment_plan.service_spec) ->
@@ -359,9 +341,6 @@ let test_gate_c_render_correctness () =
     reconstructed
 ;;
 
-(* Failure semantics: a semantically invalid recorded fact must fail closed in
-   the domain decoder, before any render or mutation -- naming the release, the
-   workload and the offending fact. *)
 let bad_workload_release update : Sol_cli_release.t =
   { release_id = "r-0000000000000000"
   ; workspace = "myapp"
@@ -372,11 +351,6 @@ let bad_workload_release update : Sol_cli_release.t =
   }
 ;;
 
-(* A failure here proves fail-closed lives in the domain decoder, not only in
-   JSON parsing: the record is valid JSON and structurally parseable (it went
-   through [release_workload_of_spec]), but semantically invalid. No render or
-   mutation is possible on this path -- [service_specs_of_release] returning
-   [Error] is the only way out. *)
 let test_gate_failure_unknown_rollout_encoding () =
   let release = bad_workload_release (fun w -> { w with rollout = "canary:bogus" }) in
   match Sol_cli_rollback.service_specs_of_release release with
@@ -395,8 +369,6 @@ let test_gate_failure_invalid_cpu () =
     assert (contains (Str.regexp "ledger_svc") msg);
     assert (contains (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
 ;;
-
-(* ── DEC-018 migration boundary check ─────────────────────────────────────── *)
 
 let with_migrations_dir files f =
   let dir = Filename.temp_file "sol-migrations-" "" in
@@ -504,9 +476,6 @@ let test_migration_boundary_undeclared_new_migration_blocks () =
            (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
-(* An already-recorded contracting migration (present in release.migrations)
-   never re-triggers the check -- only migrations *new since the release*
-   matter, per the whole point of expand/contract discipline. *)
 let test_migration_boundary_ignores_already_recorded_contract () =
   with_migrations_dir
     [ "0001_drop_col.sql", contract_sql ]
@@ -521,13 +490,6 @@ let test_migration_boundary_ignores_already_recorded_contract () =
        | Ok () -> ()
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
-
-(* ── live_kind_of_service / live_resource_and_jsonpath ────────────────────
-   Pure and deterministic -- no kubectl call -- so wrong here would make
-   every verify call report a false workload mismatch, silently, the moment
-   sol_cli_manifest_yaml.ml's label placement ever changed. Table-driven
-   against every primitive/progressive_delivery combination so a renderer
-   change that moves the `release` label has something to break. *)
 
 let progressive_canary = Some (Sol_cli_toml.Canary { steps = [] })
 let progressive_blue_green = Some Sol_cli_toml.Blue_green
@@ -557,8 +519,7 @@ let live_kind_cases =
     , Sol_cli_deployment_plan.Fn
     , None
     , Sol_cli_rollback.Live_cronjob )
-  ; (* Fn ignores progressive_delivery entirely -- always a CronJob. *)
-    ( "fn, canary (ignored)"
+  ; ( "fn, canary (ignored)"
     , Sol_cli_deployment_plan.Fn
     , progressive_canary
     , Sol_cli_rollback.Live_cronjob )
@@ -579,11 +540,6 @@ let live_kind_label = function
   | Sol_cli_rollback.Live_cronjob -> "cronjob"
 ;;
 
-(* Cross-checked by hand against sol_cli_manifest_yaml.ml: deployment_doc and
-   rollout_doc both put the `release` label at spec.template.metadata.labels
-   (8-space indent, same as extra_labels); cronjob_doc nests one level deeper
-   under spec.jobTemplate.spec.template.metadata.labels. If either renderer
-   ever moves that label, this table must move with it. *)
 let test_live_resource_and_jsonpath_table () =
   List.iter
     (fun (kind, expected_resource, expected_jsonpath) ->
@@ -605,10 +561,6 @@ let test_live_resource_and_jsonpath_table () =
       , "{.spec.jobTemplate.spec.template.metadata.labels.release}" )
     ]
 ;;
-
-(* ── apply_mode refusal ─────────────────────────────────────────────────────
-   A GitOps/controller-owned release must never be rolled back by direct apply,
-   so [check_apply_mode] refuses it before anything is touched. *)
 
 let verify_release : Sol_cli_release.t =
   { release_id = "r-2222222222222222"
@@ -636,19 +588,11 @@ let test_check_apply_mode_refuses_gitops () =
     assert (contains (Str.regexp release.release_id) msg)
 ;;
 
-(* ── workload set verification ──────────────────────────────────────────────
-   Pure comparison of the restored release's expected workloads against the
-   live set, plus the wire-path extraction of a listed object's pod-template
-   labels. No cluster required. *)
-
 let id kind namespace name : Sol_cli_rollback.workload_identity =
   { kind; namespace; name }
 ;;
 
 let expected_specs = [ ledger_spec; billing_spec ]
-
-(* ledger_spec is a Deployment at myapp-payments/ledger-svc; billing_spec is a
-   Rollout (canary) at myapp-payments/billing-svc. *)
 let ledger_id = id Sol_cli_rollback.Live_deployment "myapp-payments" "ledger-svc"
 let billing_id = id Sol_cli_rollback.Live_rollout "myapp-payments" "billing-svc"
 
@@ -668,8 +612,6 @@ let test_verify_workloads_ok_when_set_matches () =
     (Sol_cli_rollback.workload_report_ok report)
 ;;
 
-(* The finding: a live workload the restored release does not contain (a
-   service added between releases, left running) must be reported, not ignored. *)
 let test_verify_workloads_reports_unexpected () =
   let stale_id = id Sol_cli_rollback.Live_deployment "myapp-payments" "fraud-svc" in
   let live =
@@ -718,9 +660,6 @@ let test_verify_workloads_reports_label_mismatch () =
   assert (contains (Str.regexp "r-9999999999999999") msg)
 ;;
 
-(* A release that switched a service from Deployment to Rollout keeps the
-   namespace/name; the old object is a different identity and must be reported,
-   not matched against the Rollout's label. *)
 let test_verify_workloads_distinguishes_kind () =
   let ledger_as_rollout =
     id Sol_cli_rollback.Live_rollout "myapp-payments" "ledger-svc"
@@ -742,11 +681,6 @@ let test_verify_workloads_distinguishes_kind () =
   assert (contains (Str.regexp "unexpected workload") msg)
 ;;
 
-(* FEAT-072 premise check, pinned: Fn and recreate workloads are not skipped by
-   rollback. FEAT-066 slice 2 replaced `kubectl rollout undo` with re-rendering
-   and re-applying every reconstructed spec, so a CronJob is restored and
-   verified like any other workload -- there is no native "previous revision"
-   concept it lacks. This test is the regression guard for that claim. *)
 let fn_spec : Sol_cli_deployment_plan.service_spec =
   { ledger_spec with
     source_name = "invoice_fn"
@@ -819,9 +753,6 @@ let test_reconstruction_rejects_invalid_persistence () =
   | Error msg -> assert (contains (Str.regexp "set replicas = 1") msg)
 ;;
 
-(* The other half of the same premise: a `recreate` Deployment's strategy
-   survives reconstruction (the gate's render equality covers the bytes; this
-   names the fact). *)
 let test_recreate_strategy_reconstructs () =
   let specs = reconstruct_ok () in
   let ledger =
@@ -835,9 +766,6 @@ let test_recreate_strategy_reconstructs () =
     (ledger.rollout_strategy = Some Sol_cli_toml.Recreate)
 ;;
 
-(* The wire-path half: the pod-template label path [live_workloads] walks must
-   agree with where the renderer puts the taxonomy labels. Two items, one
-   workspace-matching and one not, plus one with no labels at all. *)
 let deployment_payload =
   `Assoc
     [ ( "items"
@@ -908,8 +836,6 @@ let test_workload_rows_of_payload_deployment () =
   Alcotest.(check string) "release label" "r-1" release
 ;;
 
-(* A CronJob puts its pod template one level deeper; querying the Deployment
-   payload as a CronJob must therefore find nothing -- the path is load-bearing. *)
 let test_workload_rows_of_payload_cronjob_path () =
   let as_deployment =
     Sol_cli_rollback.workload_rows_of_payload
@@ -924,11 +850,6 @@ let test_workload_rows_of_payload_cronjob_path () =
     (List.length as_deployment)
 ;;
 
-(* The renderer writes `workspace` through sanitize_label_value, so the raw
-   workspace passed to the lister must be matched the same way -- otherwise a
-   mixed-case workspace matches nothing and every workload looks missing. *)
-(* REFAC-132: a payload with no items list is unreadable, never "no live
-   workloads" -- the empty list is the answer only when kubectl said so. *)
 let test_workload_rows_of_payload_requires_items () =
   (match
      Sol_cli_rollback.workload_rows_of_payload
@@ -1036,8 +957,6 @@ let test_workload_rows_of_payload_cronjob () =
   Alcotest.(check string) "release label" "r-2" release
 ;;
 
-(* ── pointer report ───────────────────────────────────────────────────────── *)
-
 let test_pointer_report_ok () =
   Alcotest.(check bool)
     "ok"
@@ -1050,8 +969,6 @@ let test_pointer_report_ok () =
     (Sol_cli_rollback.pointer_report_ok { pointer_actual = "r-x"; pointer_ok = false })
 ;;
 
-(* The message must name the ConfigMap as it actually is: the pointer name goes
-   through the name sanitizer, so a raw workspace in the message is a bug. *)
 let test_pointer_report_to_string_uses_canonical_name () =
   let report = { Sol_cli_rollback.pointer_actual = ""; pointer_ok = false } in
   let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
@@ -1062,13 +979,6 @@ let test_pointer_report_to_string_uses_canonical_name () =
   assert (contains (Str.regexp "sol-release-current-ci-smoke") msg);
   assert (not (contains (Str.regexp_string "CI_Smoke") msg))
 ;;
-
-(* ── FEAT-075: [execute]'s ordering ────────────────────────────────────────
-   The library owns the sequence, not the command: a recording [deps] lets
-   these assert both "no mutation on refusal" and "the pointer moves only
-   after workloads verify" without a cluster. [workloads = []] keeps the
-   reconstructed [specs] empty, so a bogus [live_workloads] entry is enough
-   to make the workload-set comparison disagree. *)
 
 let transaction_release ~apply_mode : Sol_cli_release.t =
   { release_id = "r-3333333333333333"
@@ -1169,9 +1079,6 @@ let test_execute_migration_boundary_refusal_calls_no_deps () =
          Alcotest.(check (list string)) "no dep was ever called" [] !calls)
 ;;
 
-(* FEAT-074: a purely-[unexpected] live workload (no mismatched/missing) is no
-   longer a hard refusal -- [prune] gets a chance to remove it, and a
-   successful prune lets the rollback complete. *)
 let test_execute_unexpected_workload_triggers_prune_then_completes () =
   let bogus_live : Sol_cli_rollback.workload_identity * string =
     ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
@@ -1206,8 +1113,6 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
        Alcotest.(check string) "pruned name" "ghost-svc" id.name)
 ;;
 
-(* A prune failure must not move the pointer -- pruning failed, so the cluster
-   does not yet match the restored release. *)
 let test_execute_prune_failure_skips_pointer_move () =
   let bogus_live : Sol_cli_rollback.workload_identity * string =
     ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
@@ -1237,16 +1142,12 @@ let test_execute_prune_failure_skips_pointer_move () =
       (List.rev !calls)
 ;;
 
-(* A release with a real recorded workload, for the missing/mismatched cases
-   below -- [transaction_release]'s empty [workloads] can never produce either,
-   since both are computed against the reconstructed [expected] set. *)
 let transaction_release_with_ledger ~apply_mode : Sol_cli_release.t =
   { (transaction_release ~apply_mode) with
     workloads = [ Sol_cli_deployment_plan.release_workload_of_spec ledger_spec ]
   }
 ;;
 
-(* Missing is not fixable by deleting anything -- pruning must never run. *)
 let test_execute_missing_workload_skips_prune_and_pointer_move () =
   let calls, pruned, deps = recording_deps ~live:[] () in
   let release = transaction_release_with_ledger ~apply_mode:Sol_cli_release.Direct in
@@ -1268,8 +1169,6 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
 
-(* Neither is a label mismatch -- the object exists but claims the wrong
-   release, so pruning (which only deletes surplus) cannot fix it either. *)
 let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
   let calls, pruned, deps = recording_deps ~live:[ ledger_id, "r-9999999999999999" ] () in
   let release = transaction_release_with_ledger ~apply_mode:Sol_cli_release.Direct in
@@ -1290,8 +1189,6 @@ let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
-
-(* ── FEAT-073: --commit / --scope release selection ───────────────────────── *)
 
 let test_commit_matches_exact () =
   Alcotest.(check bool)
@@ -1392,9 +1289,6 @@ let test_resolve_commit_unambiguous_resolves () =
   | _ -> Alcotest.fail "expected Commit_resolved"
 ;;
 
-(* Two distinct events for the same commit/target but different release ids
-   (e.g. deployed to both `payments` and the whole workspace) must refuse to
-   guess -- FEAT-073's central invariant. *)
 let test_resolve_commit_ambiguous_lists_candidates () =
   match
     Sol_cli_rollback.resolve_commit
@@ -1422,8 +1316,6 @@ let test_resolve_commit_ambiguous_lists_candidates () =
   | _ -> Alcotest.fail "expected Commit_ambiguous"
 ;;
 
-(* Repeated deploys of the same commit to the same release must dedup to one
-   candidate, not be reported as ambiguous. *)
 let test_resolve_commit_repeated_deploys_dedup () =
   match
     Sol_cli_rollback.resolve_commit

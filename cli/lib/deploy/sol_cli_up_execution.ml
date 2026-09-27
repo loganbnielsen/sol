@@ -13,21 +13,8 @@ type post_deploy_summary =
   }
 
 let push_registry = "localhost:5000"
-
-(* [repo_root] is the workspace root resolved by DEC-024's [find_root] (the
-   directory containing sol.yml), not the invocation cwd and not a Dune
-   project root. The context is a sibling of the workspace so the rsync below
-   can never copy the context into itself. *)
 let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
-(* BUG-056: `sol up` plans from the same declared facts `sol deploy` does. There
-   is no local target -- a target names a provider, and local is not one -- so
-   the command resolves them from the workspace's sol.yml instead: the declared
-   language, scale range and resource uses a plan reads. Passing none rendered a
-   local workspace from less information than the same workspace deployed to a
-   target, which is what broke "dev mirrors prod exactly" (INFRA-073 saw the
-   symptom: an OCaml unit rendered without the /readyz probe its language
-   implies). *)
 let local_plan ~requested_scope ~workspace ~sha ~facts ~declared services =
   let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
   let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
@@ -73,9 +60,6 @@ let dry_run_spec ~workspace ~sha spec =
   { spec with Sol_cli_deployment_plan.image = push_image_ref ~workspace ~sha spec }
 ;;
 
-(* REFAC-134: in OCaml rather than `rm -rf` and `rsync` through a shell. The copy
-   follows symlinks and skips [_build] and [.git] at any depth, as the rsync
-   (`-a --copy-links --exclude=_build --exclude=.git`) did. *)
 let prepare_build_context ~repo_root =
   let open Result.Syntax in
   let ctx_dir = build_context_dir ~repo_root in
@@ -127,8 +111,6 @@ let apply_service_manifest ~ctx ~workspace ~release_id ~dry_run spec =
   Sol_cli_executor.local ~ctx ~workspace ~release_id ~dry_run spec
 ;;
 
-(* FEAT-063: the rollout is watched in the cluster the target names, so the
-   destination reaches kubectl through [ctx]. *)
 let wait_for_service_rollout ~ctx spec exec =
   match spec.Sol_cli_deployment_plan.primitive with
   | Sol_cli_deployment_plan.Fn -> Ok ()
@@ -153,10 +135,6 @@ let wait_for_service_rollout ~ctx spec exec =
             ~k8s_name:exec.k8s_name
             ()
         with
-        (* DEC-038 §7: [Unhealthy] carries the evidence. [Undetermined] does not
-           mean the rollout failed -- it means Sol could not tell, and reporting
-           "rollout failed" from a read that did not happen is the same
-           unsupported verdict one layer down. *)
         | Sol_cli_rollout_diagnosis.Unhealthy d -> Error d
         | Sol_cli_rollout_diagnosis.Undetermined why ->
           Error
@@ -169,9 +147,6 @@ let wait_for_service_rollout ~ctx spec exec =
           Error (Printf.sprintf "rollout failed: %s/%s" exec.namespace exec.k8s_name)))
 ;;
 
-(* REFAC-130: the count comes off the workspace the command already read, so
-   [db/migrations] has one reader and the count is the named function over the
-   model's migrations rather than a second walk of the directory. *)
 let post_deploy_summary ~facts plan =
   { deployed_count = List.length plan.Sol_cli_deployment_plan.services
   ; pending_migrations = Sol_cli_workspace_model.count_unapplied_migrations facts

@@ -1,11 +1,3 @@
-(* INFRA-076: Terraform survives Sol, a graceful interrupt reaches Terraform only,
-   and every run leaves an operation record the next command can classify.
-
-   Hermetic: "terraform" is a shell script that records the signals it receives and
-   runs a child standing in for a provider plugin, which records its own. "Sol" is a
-   forked copy of this test that calls [Sol_cli_supervised.run], so the test can kill
-   it, interrupt it, or signal its process group -- the failures being fixed. *)
-
 module S = Sol_cli_supervised
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
@@ -82,8 +74,6 @@ let make name =
   { mark; root; key = "test-" ^ name ^ "-" ^ Filename.basename mark; script }
 ;;
 
-(* Fork an emulated Sol: its own process group (so the test can signal "Sol's
-   group" without signalling itself), running one supervised Terraform. *)
 let spawn_sol ?(mode = "") ?(ticks = 30) c =
   match Unix.fork () with
   | 0 ->
@@ -172,10 +162,7 @@ let meta_field c name =
   |> Option.get
 ;;
 
-(* Terraform's process group is its supervisor's session, led by the supervisor. *)
 let terraform_group c = int_of_string (meta_field c "supervisor_pid")
-
-(* ── Cases ─────────────────────────────────────────────────────────────────── *)
 
 let test_clean_run () =
   let c = make "clean" in
@@ -200,7 +187,6 @@ let test_sol_death_does_not_kill_terraform () =
    | S.Running _ -> ()
    | other ->
      Alcotest.failf "expected Running mid-apply, got %s" (S.status_to_string other));
-  (* The failure being removed: Sol dies mid-apply. *)
   Unix.kill sol Sys.sigkill;
   wait_child sol;
   wait_until ~tries:400 "terraform to finish on its own" (not_running c.key);
@@ -219,7 +205,6 @@ let test_sol_death_does_not_kill_terraform () =
 
 let test_interrupt_reaches_terraform_only () =
   let c = make "interrupt" in
-  (* An unrelated process that must not be touched. *)
   let bystander =
     Sol_cli_process.spawn (Sol_cli_process.cmd [ "sleep"; "30" ])
     |> Result.get_ok
@@ -228,8 +213,6 @@ let test_interrupt_reaches_terraform_only () =
   let sol = spawn_sol ~ticks:60 c in
   wait_until "terraform to start" (tf_started c);
   Unix.sleepf 0.3;
-  (* A terminal Ctrl-C: SIGINT to Sol's whole process group. Terraform runs in a
-     session of its own, so only Sol's forwarding can reach it. *)
   Unix.kill (-sol) Sys.sigint;
   wait_child sol;
   check
@@ -252,17 +235,13 @@ let test_interrupt_reaches_terraform_only () =
   wait_child bystander
 ;;
 
-(* Positive control: the fake provider does record a group-wide signal, so
-   "received nothing" above is an observation that could have failed. *)
 let test_positive_control_group_kill_reaches_provider () =
   let c = make "control" in
   let sol = spawn_sol ~ticks:60 c in
   wait_until "terraform to start" (tf_started c);
-  (* The provider writes its pid after installing its TERM trap. *)
   wait_until "the provider to start" (fun () ->
     Sys.file_exists (Filename.concat c.mark "provider.pid"));
   Unix.sleepf 0.3;
-  (* What Attempt 6 did: SIGTERM to Terraform's process group, provider included. *)
   Unix.kill (-terraform_group c) Sys.sigterm;
   wait_child sol;
   check
@@ -308,7 +287,6 @@ let test_supervisor_killed_is_unresolved () =
   let tf =
     int_of_string (String.trim (Option.get (read (Filename.concat c.mark "tf.pid"))))
   in
-  (* The machine-level failures: supervisor and Terraform both gone, no outcome. *)
   Unix.kill supervisor Sys.sigkill;
   (try Unix.kill tf Sys.sigkill with
    | Unix.Unix_error _ -> ());
@@ -321,8 +299,6 @@ let test_supervisor_killed_is_unresolved () =
     true
     (is_unresolved (S.latest ~key:c.key))
 ;;
-
-(* ── Pure classification ───────────────────────────────────────────────────── *)
 
 let facts
       ?(outcome = None)

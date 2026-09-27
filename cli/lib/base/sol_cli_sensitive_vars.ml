@@ -1,37 +1,9 @@
-(* SEC-010. Replaces the HARDEN-002 run-1 [Sol_cli_db_credential], which asked
-   "does this provider create Postgres?" through a wildcard provider match
-   ([Aws -> true | _ -> false]) and so never guarded GCP, whose root creates Cloud
-   SQL from the same [db_password]. The two concerns it conflated now live where
-   they belong: Terraform refuses a missing required secret (the AWS root's
-   precondition on the database, the GCP root's required variable), and Sol
-   refuses to put any secret the root declares into the argv it logs.
-
-   AUDIT-POST-006: the reader below is deliberately small -- a whole HCL parser is
-   not warranted for "which of this root's variables are secrets". It must not,
-   however, assume one layout and then answer "no secrets" when the layout differs,
-   because that answer is indistinguishable from a root that declares none. So it
-   tolerates what a valid root may contain (a trailing comment, a single-line block,
-   any whitespace) and, when it meets a [sensitive] assignment it cannot classify,
-   it fails closed instead of skipping it.
-
-   The layouts it must tolerate were checked against Terraform 1.9.8 rather than
-   assumed: `variable "x" { sensitive = true }` on one line is valid and
-   `terraform fmt` leaves it alone, and `sensitive = true # comment` is fmt-clean.
-   A `{` on the line after the header is *invalid* HCL ("Invalid block definition"),
-   so no root can contain one and this reader does not pretend to accept it. *)
-
-(* Every space and tab removed, so `sensitive=true`, `sensitive = true` and a
-   tab-indented form all compare equal. *)
 let squeeze line =
   String.to_seq line
   |> Seq.filter (fun c -> c <> ' ' && c <> '\t' && c <> '\r')
   |> String.of_seq
 ;;
 
-(* An HCL comment runs from an unquoted `#` or `//` to the end of the line. Quotes
-   matter: an error_message string can contain either character, and cutting there
-   would truncate the line the fixture uses to prove a brace inside a string does
-   not end a block. *)
 let strip_comment line =
   let n = String.length line in
   let rec scan i quoted =
@@ -52,10 +24,6 @@ let drop_trailing_cr line =
   if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1) else line
 ;;
 
-(* A top-level `variable "name" {` opens a block. HCL requires the `{` on the same
-   line as the header, so a header without one is not a block and a root containing
-   it does not parse. The part of the line after the header is the body when the
-   block closes on the same line. *)
 let variable_header line =
   let line = String.trim line in
   let prefix = "variable \"" in
@@ -76,12 +44,6 @@ let sensitive_prefix = "sensitive="
 let sensitive_true = "sensitive=true"
 let sensitive_false = "sensitive=false"
 
-(* Walk one file: which of its variables declare [sensitive = true], or an error
-   naming the line whose [sensitive] declaration could not be read.
-
-   A variable block ends at a `}` in the first column, which is what separates a
-   top-level block from a nested one: a `validation { ... }` block is indented, and
-   both providers write it that way. *)
 let declared_in_one ~file contents =
   let lines = String.split_on_char '\n' contents in
   let sensitive = ref [] in
@@ -101,8 +63,6 @@ let declared_in_one ~file contents =
               line_no
               name)
   in
-  (* A body line: the whole line is one argument, so it is either exactly a
-     classified `sensitive` assignment or something else. *)
   let classify name line_no line =
     match squeeze (strip_comment line) with
     | squeezed when String.equal squeezed sensitive_true ->
@@ -114,10 +74,6 @@ let declared_in_one ~file contents =
       unreadable name line_no
     | _ -> ()
   in
-  (* A one-line block body carries the assignment inside other text, so the value
-     cannot be delimited the way a whole line can. Searching for the assignment is
-     the conservative side: a body that mentions `sensitive` but not
-     `sensitive = true` is reported rather than assumed harmless. *)
   let classify_inline name line_no body =
     let squeezed = squeeze body in
     if Sol_cli_string.contains ~needle:sensitive_true squeezed
@@ -144,7 +100,6 @@ let declared_in_one ~file contents =
   | None -> Ok (List.sort_uniq String.compare !sensitive)
 ;;
 
-(* Names from several files, without duplicates. *)
 let declared_in files =
   let rec go acc = function
     | [] -> Ok (List.sort_uniq String.compare acc)

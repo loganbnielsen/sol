@@ -1,8 +1,3 @@
-(* FEAT-072: the per-boundary mutation lease, shared by deploy and rollback.
-   See the .mli for the design. This is a thin, fail-closed coordination layer:
-   the decision of what to do with a lease is pure and tested; the kubectl writes
-   are the only impure part. *)
-
 type holder =
   | Deploy
   | Rollback
@@ -32,16 +27,7 @@ type t =
   ; abort_reason : string option
   }
 
-(* Five minutes without a heartbeat is long enough that a slow but living apply
-   is not mistaken for a crash, and short enough that a killed process does not
-   strand the boundary for the rest of the day. Deploy refreshes before each
-   workload apply; a single apply that itself blocks longer than this is outside
-   the guarantee, which is why the value is exposed rather than hardcoded. *)
 let default_ttl_s = 300.0
-
-(* Rollback asks an in-flight deploy to stop and waits this long for it to
-   release the boundary. If the holder is genuinely alive but not honouring the
-   abort, refusing is the whole point (DEC-018): better to stop than to race. *)
 let rollback_wait_s = 300.0
 let poll_interval_s = 2.0
 let max_cas_attempts = 8
@@ -85,8 +71,6 @@ let describe t =
     (Sol_cli_deployment.rfc3339_utc t.started_at)
 ;;
 
-(* ── pure decisions ───────────────────────────────────────────────────────── *)
-
 type decision =
   | Proceed
   | Request_abort of string
@@ -124,8 +108,6 @@ let rollback_decision ~now ~ttl = function
             (describe t)))
 ;;
 
-(* ── serialization ────────────────────────────────────────────────────────── *)
-
 let mem key = function
   | `Assoc kvs -> List.assoc_opt key kvs
   | _ -> None
@@ -159,10 +141,6 @@ let to_data_json t =
     ]
 ;;
 
-(* [resource_version], when given, is written into the object's metadata so the
-   API server rejects the write if the stored version has moved (FEAT-072's
-   optimistic take-over). The compare-and-swap lives in the object rather than in
-   a kubectl flag, because not every kubectl has [replace --resource-version]. *)
 let to_configmap_json ?resource_version t =
   let metadata =
     [ "name", `String (configmap_name ~workspace:t.boundary)
@@ -224,8 +202,6 @@ let of_configmap_item item =
          | _ -> Error "boundary lease is missing a valid started_at/heartbeat_at"))
 ;;
 
-(* ── cluster writes ───────────────────────────────────────────────────────── *)
-
 type write_error =
   | Already_exists
   | Conflict
@@ -284,12 +260,6 @@ let refetch ~ctx ~workspace =
   | Error e -> Error e
 ;;
 
-(* ── the held lease: acquire / heartbeat / release / bracket ───────────────── *)
-
-(* A lease this process owns, plus everything its holder needs to refresh or
-   release it. Returning this rather than a bare lease and a run id the caller
-   must keep in step lets a call site write [heartbeat lease] / [release lease]
-   instead of threading the context and run id by hand. *)
 type held =
   { ctx : Sol_cli_kube_destination.context
   ; lease : t
@@ -298,8 +268,6 @@ type held =
 
 let acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s =
   let deadline = Unix.gettimeofday () +. max wait_s 0.0 in
-  (* An abort-and-wait is a sequence of polls, so the attempt budget must cover
-     the whole window; a plain CAS race needs only a handful. *)
   let attempts_budget =
     max
       max_cas_attempts
@@ -419,9 +387,6 @@ let heartbeat_raw ~ctx t ~run_id =
 
 let heartbeat (h : held) = heartbeat_raw ~ctx:h.ctx h.lease ~run_id:h.run_id
 
-(* The shape a caller wants between one mutation and the next: [Ok ()] while the
-   lease is still this process's and no abort was requested, an [Error] that
-   explains why otherwise. *)
 let ensure_held h =
   match heartbeat h with
   | Ok Held -> Ok ()
@@ -456,8 +421,6 @@ let release_with_warning h =
     Sol_cli_report.warn "warning: could not release the boundary lease: %s" msg)
 ;;
 
-(* [f] returns a result rather than calling [exit], so [Fun.protect] releases the
-   lease exactly once on every path and no [at_exit] hook is needed. *)
 let with_boundary_lease ~ctx ~workspace ~holder ~ttl ~wait_s f =
   match acquire ~ctx ~workspace ~holder ~ttl ~wait_s with
   | Error msg -> Error msg

@@ -1,10 +1,3 @@
-(** Shared types and topic/decode-error helpers underlying [Kafka_service].
-    Split out from [kafka_service.ml] so [Kafka_service_schema] and
-    [Kafka_service_retry_topics] can depend on the shared [t]/[topic]/ [config]
-    types without a circular dependency on [Kafka_service] itself.
-    [Kafka_service] re-exports the public pieces of this module directly — see
-    its [.mli] for the documented, stable API. *)
-
 type topic_name
 
 val topic_name : string -> (topic_name, string) result
@@ -60,13 +53,10 @@ type handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
-(** What happens to a source-topic record that cannot be decoded (BUG-051). *)
 type decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
 
-(** Provision [topic_name] via the producer's admin client if it doesn't already
-    exist. *)
 val ensure_topic
   :  Kafka.Producer.t
   -> topic_name:string
@@ -74,7 +64,6 @@ val ensure_topic
   -> topic_durability:topic_durability
   -> (unit, Kafka.Error.t) result
 
-(** Partition count for an existing topic, or [Topic_not_found] (HTTP 404). *)
 type topic_partition_metadata =
   | Topic_not_found
   | Topic_partitions of
@@ -84,19 +73,14 @@ type topic_partition_metadata =
 
 val topic_has_required_replication : topic_durability -> topic_partition_metadata -> bool
 
-(** Opaque — every case is a distinct admin-API failure shape; callers only ever
-    need [topic_partition_error_to_string], never to match a specific case. *)
 type topic_partition_error
 
 val topic_partition_error_to_string : topic_partition_error -> string
 
-(** Parse a Redpanda admin API topic-metadata response body. *)
 val decode_topic_partitions
   :  string
   -> (topic_partition_metadata, topic_partition_error) result
 
-(** [GET {admin_url}/v1/partitions/kafka/{topic_name}], then
-    [decode_topic_partitions]. *)
 val query_topic_partitions
   :  _ Eio.Net.t
   -> clock:_ Eio.Time.clock
@@ -104,8 +88,6 @@ val query_topic_partitions
   -> topic_name:string
   -> (topic_partition_metadata, topic_partition_error) result
 
-(** Count ([sol_worker_decode_errors_total]) and log through [ot] (when given)
-    one source-topic decode failure, whose record is next [disposition]. *)
 val observe_decode_error
   :  ot:Obs_eio.t option
   -> topic_name:string
@@ -114,16 +96,12 @@ val observe_decode_error
   -> disposition:[ `Dropped | `Dead_lettered ]
   -> unit
 
-(** The [Ack_and_drop] disposition: log to stderr, ack, continue. *)
 val ack_and_drop_decode_error
   :  string
   -> raw_bytes:bytes option
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> Kafka.Error.t Kafka.Consumer.handler_result
 
-(** Wrap a caller-supplied [on_decode_error] so every decode error also
-    increments a counter and logs through [ot] (when given) before delegating to
-    the caller's handler. *)
 val wrap_on_decode_error
   :  ot:Obs_eio.t option
   -> topic_name:string

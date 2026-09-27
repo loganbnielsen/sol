@@ -7,8 +7,6 @@ let to_string = function
   | Unreadable (path, reason) -> Printf.sprintf "%s: %s" path reason
 ;;
 
-(* Absence is separated from unreadability deliberately, and a read failure is
-   never allowed to look like an empty directory. *)
 let entries path =
   if not (Sys.file_exists path)
   then Error (Absent path)

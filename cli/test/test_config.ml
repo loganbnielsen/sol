@@ -60,7 +60,6 @@ let expect_load_error expected =
   | Error e -> check_str "message" expected e.message
 ;;
 
-(* REFAC-106: a YAML syntax error is libyaml's, prefixed, and names its line. *)
 let expect_yaml_error () =
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
   | Ok _ -> Alcotest.fail "expected a YAML syntax error"
@@ -175,7 +174,6 @@ services:
     expect_load_error "unknown service key \"typo\"")
 ;;
 
-(* FEAT-088: the explicit, language-neutral compatibility input. *)
 let test_service_language_parses () =
   with_temp_dir (fun () ->
     write "sol.yml" "services:\n  api:\n    language: ocaml\n";
@@ -423,10 +421,6 @@ services:
 ;;
 
 let test_nested_provider_box_still_tolerated () =
-  (* REFAC-129: a nested value under a provider field used to be dropped
-     silently, so a typo was indistinguishable from not writing the field. It is
-     refused now and the message names the key; no config in the repo, the
-     examples or the fixtures nests one. *)
   with_temp_dir (fun () ->
     write
       "sol.yml"
@@ -477,7 +471,6 @@ resources:
 target:
   registry: registry.example.com
 |};
-    (* REFAC-106: key order is not meaningful in YAML. *)
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
@@ -600,7 +593,6 @@ target:
         (Option.get target.observability_backend))
 ;;
 
-(* OBS-043: the provider-neutral alert-delivery declaration. *)
 let test_target_alert_delivery_parsed () =
   with_temp_dir (fun () ->
     write_base ();
@@ -631,7 +623,6 @@ target:
         (Option.get target.alert_runbook_url))
 ;;
 
-(* AUDIT-072: recoverable state and scoped identities are target declarations. *)
 let test_target_recoverable_state_and_identities_parsed () =
   with_temp_dir (fun () ->
     write_base ();
@@ -723,14 +714,8 @@ let test_parent_target_path_fails () =
     | Error e -> check_str "message" "target path must not contain '..'" e.message)
 ;;
 
-(* DEC-024 supersedes FEAT-026's "at least one of sol.yml or the target file"
-   rule: a sol.yml is now the workspace boundary, so there is no such thing as
-   a real target outside a workspace. Absence fails closed and names the fix;
-   inside a workspace a target may legitimately rely on sol.yml alone
-   (test_target_with_only_sol_yml_succeeds). *)
 let test_target_outside_a_workspace_fails_closed () =
   with_temp_dir (fun () ->
-    (* deliberately no write_base (), no sol.yml, no target file *)
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-west-2" with
     | Ok _ -> Alcotest.fail "expected load_for_target to fail outside a workspace"
     | Error e ->
@@ -743,10 +728,6 @@ let test_target_outside_a_workspace_fails_closed () =
 let test_target_with_only_sol_yml_succeeds () =
   with_temp_dir (fun () ->
     write_base ();
-    (* prod/aws/us-east-1 has no sol/prod/aws/us-east-1.yml overlay --
-       load_for_target itself stays permissive about that (only
-       cmd_deploy.ml enforces the file must exist, for its own stronger
-       mutating-cluster guarantee). *)
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail e.message
     | Ok _ -> ())
@@ -779,10 +760,6 @@ target:
       assert (Sol_cli_string.contains ~needle:"shared" e.message))
 ;;
 
-(* The lint compares the destination Sol will use, not the descriptive
-   cluster_name. Here both targets *say* the same cluster_name while pointing at
-   different contexts, which is two clusters — so this must succeed, and it is
-   the case that would break if the lint went back to reading cluster_name. *)
 let test_different_destinations_succeed () =
   with_temp_dir (fun () ->
     write_base ();
@@ -807,9 +784,6 @@ target:
     | Ok _ -> ())
 ;;
 
-(* The destination is a function of the target. Nothing consults the machine's
-   kubectl state, and the arguments the deploy will use come straight from the
-   configured context. *)
 let test_destination_comes_from_the_target () =
   with_temp_dir (fun () ->
     write_base ();
@@ -865,9 +839,6 @@ target:
            (Sol_cli_kube_destination.environment destination)))
 ;;
 
-(* An unconfigured destination fails closed rather than falling back to whatever
-   kubectl is pointed at — the reason the field exists at all, and the property
-   that keeps the ambient context out of the deploy path. *)
 let test_destination_missing_fails_closed () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1022,13 +993,6 @@ target:
          check_bool "gcp var absent" false (List.mem ("project_id", "pluto-dev") vars)))
 ;;
 
-(* DEC-033's `destroy_retention` reaches a target through `merge_target`, and the
-   field was added to the type and the parser but not to the merge -- so a target
-   file's `destroy_retention: none` was silently discarded and every destroy took
-   the production default (retain the final snapshot). DEC-033's own tests build
-   `target_empty` directly, so they never crossed the merge; this one does, on
-   purpose, because "the setting is parsed" and "the setting arrives" are different
-   claims and only the second one is the feature. *)
 let test_destroy_retention_survives_the_merge () =
   with_temp_dir (fun () ->
     write
@@ -1054,18 +1018,6 @@ target:
         target.destroy_retention)
 ;;
 
-(* GCP, first live attempt (2026-09-19): `create_rds`, `rds_multi_az`,
-   `ecr_repositories` and `workspace_name` were routed to *every* target's root,
-   and the GCP cloud root declares none of them -- so the first live GCP command
-   died with four "Value for undeclared variable" errors before terraform could
-   plan anything. A variable a root does not declare is an error, not a no-op, so
-   which root declares what is part of the mapping. *)
-(* Attempt 2: creating the provisioner identity does not let anyone use it. Sol
-   reaches the cluster by impersonating it, so the root has to grant the *declared*
-   caller roles/iam.serviceAccountTokenCreator on that one identity -- and a target
-   that names no caller must produce no grant, rather than defaulting to whoever ran
-   Sol. Inferring the caller is the ambient-authority escape hatch the field exists
-   to close, so "absent" and "named" have to differ observably. *)
 let test_provisioner_impersonator_reaches_the_gcp_root () =
   with_temp_dir (fun () ->
     write
@@ -1109,9 +1061,6 @@ target:
            (List.mem_assoc "provisioner_impersonators" vars)))
 ;;
 
-(* REFAC-098: provider-native identity lives in the provider's own block. A flat
-   key is refused with the place it moved to, never silently ignored -- a dropped
-   lock table would be a concurrent-apply hazard. *)
 let test_flat_provider_key_is_refused () =
   with_temp_dir (fun () ->
     write
@@ -1130,9 +1079,6 @@ target:
         (Sol_cli_string.contains ~needle:"aws.provisioner_role_arn" message))
 ;;
 
-(* A workspace declares both providers' identity in one shared file; each target
-   reads only its own provider's block, so a GCP target cannot carry AWS role ARNs.
-   The AWS target is the positive control: the same file does give it the role. *)
 let test_gcp_target_cannot_carry_aws_identity () =
   with_temp_dir (fun () ->
     write
@@ -1170,9 +1116,6 @@ target:
          || List.mem_assoc "state_lock_table" vars))
 ;;
 
-(* The keys Sol consumes from a provider block are not Terraform variables: the
-   lock table is backend configuration, and passing it as a `-var` would fail the
-   command on an undeclared variable. The role it routes is still there. *)
 let test_sol_owned_keys_are_not_passed_through () =
   with_temp_dir (fun () ->
     write
@@ -1230,10 +1173,6 @@ target:
         (Sol_cli_config.provider_field target "provisioner_impersonator"))
 ;;
 
-(* INFRA-074: the ECR repository list is derived from the workloads with a
-   Dockerfile. A workspace with no [app/] yet has no repositories; a workload
-   without a Dockerfile has none either (and the cloud-apply plan guard is what
-   stops that from silently deleting an existing one). *)
 let ecr_repositories_of_workspace () =
   write "sol.yml" "target:\n  aws:\n    vpc_cidr: \"10.42.0.0/16\"\n";
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
@@ -1263,9 +1202,6 @@ let test_ecr_repositories_follow_dockerfiles () =
       (ecr_repositories_of_workspace ()))
 ;;
 
-(* INFRA-077 / FND-0057: a `destroy_retention: none` GCP target creates its
-   observability buckets with soft delete off, so its destroy leaves nothing billed;
-   any other target declares GCS's 7 days explicitly; the AWS root never sees it. *)
 let test_gcs_soft_delete_follows_destroy_retention () =
   let soft_delete ~target ~retention =
     with_temp_dir (fun () ->
@@ -1347,8 +1283,6 @@ target:
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     mkdir_p "app/comms/notify_worker";
     write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
-    (* No Dockerfile here -- discover_services skips it, so it must not
-       appear in ecr_repositories either. *)
     mkdir_p "app/comms/spike_fn";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
@@ -1393,14 +1327,6 @@ let test_production_profile_enables_rds_multi_az () =
          check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
 ;;
 
-(* Reviewer-prompted (2026-09-18): rds_multi_az's Terraform default is
-   already false, so stating it explicitly changes nothing for a
-   non-production target. rds_deletion_protection's default is true, so the
-   analogous mistake -- forcing a value for every target rather than only
-   the one that must not be weakened -- would have silently disabled
-   protection for every target without a production profile. This asserts
-   the asymmetry directly: the key is present, forced true, only for a
-   production target using Postgres. *)
 let test_production_profile_enables_rds_deletion_protection () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1433,24 +1359,12 @@ let test_non_production_target_leaves_rds_deletion_protection_unset () =
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
-         (* Absent, not "false": a target with no profile must keep relying
-            on the Terraform variable's own protective default, exactly as
-            it did before this variable was ever named here. Emitting
-            "false" would be the regression the asymmetry above guards
-            against. *)
          check_str_opt
            "no forced value without a production profile"
            None
            (List.assoc_opt "rds_deletion_protection" vars)))
 ;;
 
-(* The invariant a --var/var-file override cannot be allowed to defeat: for a
-   production-profile target, Terraform resolves a repeated -var by taking
-   the *last* occurrence, so vars_with_profile_precedence's ordering is the
-   entire enforcement mechanism, independent of any one variable's value.
-   Simulates Terraform's own resolution rather than only asserting order,
-   so a change that reordered but still "looked right" would still be
-   caught if it stopped actually working. *)
 let effective_value key vars =
   List.fold_left
     (fun acc v ->
@@ -1485,12 +1399,6 @@ let test_profile_precedence_defeats_a_conflicting_override () =
           ~config_vars))
 ;;
 
-(* HARDEN-002 (run 1): cluster_issuer is a platform/cloud/modules/platform variable. It
-   used to be sent to the provider root too, and terraform aborts the whole
-   command when a variable is assigned that the root does not declare:
-   "A variable named \"cluster_issuer\" was assigned on the command line, but the
-   root module does not declare a variable of that name." A documented target
-   using it must still provision through sol cloud apply. *)
 let test_terraform_vars_route_cluster_issuer_to_the_base_layer () =
   with_temp_dir (fun () ->
     write
@@ -1516,17 +1424,6 @@ target:
            (List.assoc_opt "cluster_endpoint_cidr" vars)))
 ;;
 
-(* HARDEN-002 run 3, finding 11: the AWS provider root declares
-   `deploy_role_arn` and uses it to create the deploy identity's EKS access
-   entry (INFRA-025), but Sol_cli_terraform_vars.of_config never routed the
-   target's value there -- so the entry was never created and the module's
-   deploy_kubeconfig_command/deploy_kube_context outputs stayed null.
-
-   DEC-038 changed the other half of this: the AWS root now *does* declare
-   operator_role_arn (the operator's read-only EKS access entry), so it is routed
-   too. It used to be excluded precisely because the root did not declare it --
-   which was the reason the operator identity Sol documents could not exist. Same
-   bug class, so the same assertion. *)
 let test_terraform_vars_route_deploy_role_arn () =
   with_temp_dir (fun () ->
     write
@@ -1597,10 +1494,6 @@ let test_example_pluto_prod_target_parses () =
       check_str_opt "size" (Some "small") resource.size)
 ;;
 
-(* `local` is not an environment: it names Sol's own ephemeral substrate, and
-   reserving the word keeps it from also meaning a selectable one. A cluster
-   someone runs themselves is still a cluster, and gets named for itself
-   (DEC-016, REFAC-083). *)
 let test_local_env_is_reserved () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1611,10 +1504,6 @@ let test_local_env_is_reserved () =
       assert (Sol_cli_string.contains ~needle:"sol local infra up" e.message))
 ;;
 
-(* REFAC-086: the name `local` is reserved, and so is the cluster behind it. A
-   target pointed at the local substrate would hand target semantics to Sol's
-   ephemeral cluster — the synthetic local target the reservation exists to
-   prevent, arriving through the back door. *)
 let test_target_cannot_resolve_to_the_local_destination () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1636,7 +1525,6 @@ target:
          assert (String.length message > 0 && message <> "")))
 ;;
 
-(* REFAC-106: what a real YAML parser adds. *)
 let test_yaml_flow_map_and_exact_text () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1651,7 +1539,6 @@ let test_yaml_flow_map_and_exact_text () =
     | Ok cfg ->
       let t = cfg.target in
       check_str "registry" "r.example.com" (Option.value t.registry ~default:"");
-      (* numeric-looking text stays the text the user wrote *)
       check_str "cluster_name" "012" (Option.value t.cluster_name ~default:"");
       check_str "base_domain" "1.10" (Option.value t.base_domain ~default:""))
 ;;
@@ -1678,8 +1565,6 @@ let test_yaml_syntax_error_names_its_line () =
     | Error e -> Alcotest.(check int) "line" 4 e.line)
 ;;
 
-(* BUG-057: the flag is relative to the shell, a target's var file to the workspace
-   root; the flag wins; absolute paths pass through. *)
 let test_var_file_resolution () =
   let resolve =
     Sol_cli_terraform_vars.var_file ~cwd:"/ws/app/deep" ~workspace_root:"/ws"
@@ -1704,7 +1589,6 @@ let test_var_file_resolution () =
   check "no var file" None (resolve ~flag:None ~target:None)
 ;;
 
-(* FEAT-100 / DEC-047: sol.yml -> environment -> target, and the local file. *)
 let write_envs ?local text =
   mkdir_p "sol";
   write "sol/environments.yml" text;
@@ -1818,9 +1702,6 @@ let test_omit_is_sticky () =
        |> List.exists (fun (s : Sol_cli_config.service) -> s.name = "api")))
 ;;
 
-(* REFAC-123: blank is decided in the decoder, quoted or not. A blank value is a
-   missing value, refused with the key's name, and a present one is trimmed, so no
-   reader of a decoded field sees [Some ""]. *)
 let test_blank_values_are_missing () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1834,7 +1715,6 @@ let test_blank_values_are_missing () =
       "quoted empty"
       ~needle:"missing value for registry"
       (resolve_error "prod/aws/us-east-1");
-    (* The positive control: a present value survives, trimmed. *)
     write_envs "prod:\n  targets:\n    aws/us-east-1:\n      registry: \" r.example \"\n";
     let cfg = resolve_ok "prod/aws/us-east-1" in
     Alcotest.(check (option string)) "trimmed" (Some "r.example") cfg.target.registry)

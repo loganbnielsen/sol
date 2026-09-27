@@ -1,12 +1,3 @@
-(* BUG-044 / FND-0036, against a real Postgres (POSTGRES_URL; skipped when unset).
-
-   (a) The claim ignored [kind], so two [Make] instances sharing the one
-       [sol_jobs] table claimed, failed to decode, and eventually marked 'failed'
-       each other's jobs.
-   (c) Every database failure went through a logger that was a no-op without
-       [?ot], and a failing claim looped forever -- a missing table looked exactly
-       like an idle queue. *)
-
 let postgres_url = Sys.getenv_opt "POSTGRES_URL"
 
 let ddl =
@@ -48,8 +39,6 @@ let rows pool =
   | Error e -> Alcotest.failf "select: %s" (Pg_error.to_string e)
 ;;
 
-(* Two job types that decode only their own payload, as two independent
-   modules sharing the table would. *)
 module Job (K : sig
     val kind : string
   end) =
@@ -125,8 +114,6 @@ let test_make_instances_do_not_cross_claim () =
 let test_missing_table_is_a_startup_error () =
   with_pool (fun env pool ->
     exec_sql pool "DROP TABLE IF EXISTS sol_jobs";
-    (* A high failure limit and a short timeout: only the startup check, not the
-       consecutive-failure limit, can produce `Database in time. *)
     match
       Eio.Time.with_timeout env#clock 5.0 (fun () ->
         Ok (Emails.run ~env ~pool ~poll_interval_s:0.05 ~max_claim_failures:1000 ()))
@@ -177,7 +164,6 @@ let test_persistent_claim_failure_ends_run () =
               (Eio.Time.with_timeout env#clock 20.0 (fun () ->
                  Ok (Emails.run ~env ~pool ~poll_interval_s:0.05 ~max_claim_failures:3 ()))))
       (fun () ->
-         (* The table disappears after the startup check passed. *)
          Eio.Time.sleep env#clock 0.3;
          exec_sql pool "DROP TABLE sol_jobs");
     match !result with
@@ -188,10 +174,6 @@ let test_persistent_claim_failure_ends_run () =
     | None -> Alcotest.fail "run did not report")
 ;;
 
-(* ── BUG-050: finalize is fenced on the claimed attempt ────────────────── *)
-
-(* Set by each test: the pool, so [Slow.handle] can re-claim its own job the way
-   a second poller would once the lease expired. *)
 let current_pool = ref None
 
 let reclaim_now () =
@@ -231,7 +213,6 @@ let lease_state pool =
   | Error e -> Alcotest.failf "select: %s" (Pg_error.to_string e)
 ;;
 
-(* Run [f] with fd 2 redirected to a file; return what was written. *)
 let capture_stderr f =
   let path = Filename.temp_file "sol-jobs-stderr-" ".log" in
   let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
