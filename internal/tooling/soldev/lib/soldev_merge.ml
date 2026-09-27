@@ -847,49 +847,52 @@ let run_ls include_done =
                 let deps =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
-                let ready = Soldev_ticket.readiness_label ~ticket_id:id state content in
+                let path = Filename.concat state_dir filename in
                 (* BUG-060: an unreadable ticket is named in the listing exactly as
                    `check` and `validate` would refuse it -- one rule, so a ticket
                    cannot be rejected by one command and listed as ordinary by
-                   another. *)
-                let path = Filename.concat state_dir filename in
+                   another. Nothing else is asked of it: no premise probe, no PR
+                   lookup, no worktree lookup, because a row that says
+                   "premise-stale" would read as a ticket the pipeline understands. *)
                 let ready =
                   match Soldev_ticket.unreadable ~path content with
-                  | None -> ready
                   | Some reason ->
                     unreadable := reason :: !unreadable;
                     reason
-                in
-                (* INFRA-010: a stale premise must not read as actionable, and the
-                   listing is exactly where it silently did. Echo is off here
-                   because `ls` is a summary; `check` is where the probe is shown
-                   before it runs. *)
-                let ready =
-                  match Soldev_ticket.premise_of content with
-                  | None -> ready
-                  | Some probe ->
-                    (match
-                       Soldev_ticket.premise_verdict
-                         ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
-                     with
-                     | Soldev_ticket.Premise_holds -> ready
-                     | Soldev_ticket.Premise_stale ->
-                       "premise-stale — the probe succeeded, so this may be done already"
-                     | Soldev_ticket.Premise_unverified reason ->
-                       "premise-unverified: " ^ reason)
-                in
-                let ready =
-                  if state = Soldev_ticket.Ready_for_engineering
-                  then (
-                    match find_pr_for_ticket id with
-                    | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
-                    | None -> ready)
-                  else ready
-                in
-                let ready =
-                  match worktree_annotation_for_ticket id with
-                  | Some annotation -> ready ^ " " ^ annotation
-                  | None -> ready
+                  | None ->
+                    let ready =
+                      Soldev_ticket.readiness_label ~ticket_id:id state content
+                    in
+                    (* INFRA-010: a stale premise must not read as actionable, and
+                       the listing is exactly where it silently did. Echo is off
+                       here because `ls` is a summary; `check` is where the probe is
+                       shown before it runs. *)
+                    let ready =
+                      match Soldev_ticket.premise_of content with
+                      | None -> ready
+                      | Some probe ->
+                        (match
+                           Soldev_ticket.premise_verdict
+                             ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
+                         with
+                         | Soldev_ticket.Premise_holds -> ready
+                         | Soldev_ticket.Premise_stale ->
+                           "premise-stale — the probe succeeded, so this may be done \
+                            already"
+                         | Soldev_ticket.Premise_unverified reason ->
+                           "premise-unverified: " ^ reason)
+                    in
+                    let ready =
+                      if state = Soldev_ticket.Ready_for_engineering
+                      then (
+                        match find_pr_for_ticket id with
+                        | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
+                        | None -> ready)
+                      else ready
+                    in
+                    (match worktree_annotation_for_ticket id with
+                     | Some annotation -> ready ^ " " ^ annotation
+                     | None -> ready)
                 in
                 let title = Soldev_ticket.ticket_title content in
                 Printf.printf

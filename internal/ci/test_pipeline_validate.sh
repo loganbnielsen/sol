@@ -129,4 +129,25 @@ run_in "$WORK" pipeline ls
 [ "$RC" = 0 ] || fail "a tree of readable tickets failed the listing: $OUT"
 ok "the listing is green again once the unreadable tickets are gone"
 
+# ── a rejected ticket is not acted on ─────────────────────────────────────────
+# Its row must not be decorated as if the pipeline understood it, and its premise
+# probe (a command the ticket supplies) must not run. The control right after
+# proves the assertion is not vacuous: the same probe does run for a readable one.
+probe_marker="$WORK/probe-ran"
+printf -- '---\nid: BUG-904\ntype: bug\nsource: planted fixture\npremise: "touch %s"\n---\n\nMissing severity.\n' "$probe_marker" > "$TREE/BACKLOG/BUG-904.md"
+rm -f "$probe_marker"
+run_in "$WORK" pipeline ls
+expect_rejected "ls, a rejected ticket that declares a premise probe" "BACKLOG/BUG-904.md"
+case "$OUT" in
+  *premise-*) fail "the listing decorated a rejected ticket as readable ($OUT)" ;;
+esac
+[ ! -e "$probe_marker" ] || fail "a premise probe ran for a ticket the listing rejected"
+ok "a rejected ticket is not decorated, and its probe does not run"
+
+printf -- '---\nid: BUG-905\ntype: bug\nseverity: low\nsource: planted fixture\npremise: "touch %s"\n---\n\nReadable.\n' "$probe_marker" > "$TREE/BACKLOG/BUG-905.md"
+rm -f "$probe_marker"
+run_in "$WORK" pipeline ls
+[ -e "$probe_marker" ] || fail "the control probe did not run for a readable ticket"
+ok "the control probe does run for a readable ticket (so the check above is not vacuous)"
+
 echo "pipeline ticket validation guard: all expectations hold."
