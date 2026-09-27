@@ -625,7 +625,6 @@ let worktree_snapshot_of_entry = function
       shell_output_trim (Printf.sprintf "git -C %s status --porcelain" qpath)
     in
     let dirty = status <> "" in
-    let local_sha = shell_output_trim (Printf.sprintf "git -C %s rev-parse HEAD" qpath) in
     let upstream = "origin/" ^ branch in
     let upstream_rc =
       Sol_process.run_shell_rc
@@ -635,17 +634,20 @@ let worktree_snapshot_of_entry = function
            qpath
            (Filename.quote upstream))
     in
+    let commits_ahead_of ref =
+      let count =
+        shell_output_trim
+          (Printf.sprintf
+             "git -C %s rev-list --count %s..HEAD"
+             qpath
+             (Filename.quote ref))
+      in
+      match int_of_string_opt count with
+      | Some count -> count > 0
+      | None -> true
+    in
     let unpushed =
-      if upstream_rc = 0
-      then (
-        let remote_sha =
-          shell_output_trim
-            (Printf.sprintf "git -C %s rev-parse %s" qpath (Filename.quote upstream))
-        in
-        local_sha <> remote_sha)
-      else (
-        let main_sha = shell_output_trim "git rev-parse origin/main" in
-        local_sha <> main_sha)
+      commits_ahead_of (if upstream_rc = 0 then upstream else "origin/main")
     in
     Some { ws_path = path; ws_branch = branch; ws_dirty = dirty; ws_unpushed = unpushed }
 ;;

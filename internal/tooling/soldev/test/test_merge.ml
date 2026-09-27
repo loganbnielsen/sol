@@ -203,6 +203,53 @@ let test_post_merge_action_of_rc () =
     (show (Soldev_merge.post_merge_action_of_rc 3))
 ;;
 
+let git args = Sys.command (Printf.sprintf "git %s >/dev/null 2>&1" args) = 0
+let git_ok args = check_bool (Printf.sprintf "git %s succeeds" args) true (git args)
+
+let rev_parse ref =
+  let ic = Unix.open_process_in (Printf.sprintf "git rev-parse %s 2>/dev/null" ref) in
+  let line = In_channel.input_line ic |> Option.value ~default:"" in
+  ignore (Unix.close_process_in ic);
+  String.trim line
+;;
+
+let unpushed_of branch =
+  match Soldev_merge.worktree_snapshot_of_entry (Sys.getcwd (), Some branch) with
+  | Some (snapshot : Soldev_merge.worktree_snapshot) -> snapshot.ws_unpushed
+  | None -> Alcotest.fail "expected a worktree snapshot"
+;;
+
+let test_unpushed_annotation_asks_git () =
+  in_temp_dir (fun () ->
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    write_file "f.txt" "a\n";
+    git_ok "add f.txt";
+    git_ok "commit -qm a";
+    let a = rev_parse "HEAD" in
+    git_ok (Printf.sprintf "update-ref refs/remotes/origin/main %s" a);
+    check_bool "at origin/main is not unpushed" false (unpushed_of "work");
+    write_file "f.txt" "b\n";
+    git_ok "add f.txt";
+    git_ok "commit -qm b";
+    let b = rev_parse "HEAD" in
+    check_bool "ahead of origin/main is unpushed" true (unpushed_of "work");
+    git_ok (Printf.sprintf "update-ref refs/remotes/origin/main %s" b);
+    git_ok (Printf.sprintf "checkout -q -B work %s" a);
+    check_bool "behind origin/main is not unpushed" false (unpushed_of "work");
+    git_ok (Printf.sprintf "update-ref refs/remotes/origin/work %s" a);
+    check_bool "equal to its upstream is not unpushed" false (unpushed_of "work");
+    git_ok (Printf.sprintf "checkout -q -B work %s" b);
+    check_bool "ahead of its upstream is unpushed" true (unpushed_of "work");
+    git_ok (Printf.sprintf "update-ref refs/remotes/origin/work %s" b);
+    git_ok (Printf.sprintf "checkout -q -B work %s" a);
+    check_bool "behind its upstream is not unpushed" false (unpushed_of "work");
+    git_ok "update-ref -d refs/remotes/origin/main";
+    git_ok "update-ref -d refs/remotes/origin/work";
+    check_bool "an unresolvable ref stays unpushed" true (unpushed_of "work"))
+;;
+
 let () =
   Alcotest.run
     "soldev_merge"
@@ -231,6 +278,12 @@ let () =
             "parses paths and branches"
             `Quick
             test_parse_worktree_porcelain
+        ] )
+    ; ( "worktree unpushed annotation (BUG-063)"
+      , [ Alcotest.test_case
+            "asks git for commits, not shas"
+            `Quick
+            test_unpushed_annotation_asks_git
         ] )
     ; ( "mentions_id"
       , [ Alcotest.test_case "exact token match" `Quick test_mentions_id_exact
