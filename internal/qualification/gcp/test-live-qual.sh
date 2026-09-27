@@ -66,6 +66,8 @@ mkdir -p "$TMP/bin"
 cat >"$TMP/bin/sol" <<'STUB'
 #!/usr/bin/env bash
 printf 'sol %s\n' "$*" >>"$ARGV_LOG"
+# A knob to make a case outlast a probe interval, so temporal assertions have rows to read.
+if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 case "$1 $2" in
   "cloud apply")
     # Sol echoes each terraform invocation into its run log, and the bundle's phase awareness is
@@ -141,6 +143,7 @@ case "$*" in
       "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
     exit 0 ;;
   # The endpoint the probe compares against the kubeconfig's; a case can make them diverge.
+  *"value(status)"*) printf "%s\n" "${STUB_CLUSTER_STATUS:-RUNNING}"; exit 0 ;;
   *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
@@ -218,7 +221,7 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
         printf 'current-context: gke_old-project_us-central1_sol-qual-gcp-15c\n'
         printf 'clusters:\n'
         printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  cluster:\n    server: https://136.65.210.170\n'
-        printf -- '- name: gke_sol-qualification_us-central1_%s\n  cluster:\n    server: https://136.111.139.249\n' "$CLUSTER"
+        printf -- '- name: gke_sol-qualification_us-central1_%s\n  cluster:\n    server: https://136.115.125.189\n' "$CLUSTER"
         printf 'contexts:\n'
         printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  context:\n    cluster: gke_old-project_us-central1_sol-qual-gcp-15c\n    user: u\n'
         printf -- '- name: gke_sol-qualification_us-central1_%s\n  context:\n    cluster: gke_sol-qualification_us-central1_%s\n    user: u\n' "$CLUSTER" "$CLUSTER"
@@ -258,12 +261,55 @@ STUB
 
 cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
+# A single argument containing spaces is one argv token, not a command. This is what kubectl said
+# when the failure capture passed "get pods -A -o wide" as one string, and the stub says it the same
+# way so the regression cannot pass by accident.
+case "${1:-}" in
+  *" "*)
+    printf 'error: unknown command "%s" for "kubectl"\n' "$1" >&2
+    exit 1
+    ;;
+esac
 kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
 case "$*" in
   # The readiness probe's read. Its own alternative of this case, placed here rather than nested
   # inside another branch's body (which orphaned that branch's terminator once already).
+  # The failure-capture reads: plausible, non-empty fixtures. They exist so the capture's *plumbing*
+  # is provable; they are not a claim about any candidate cause.
+  "get pods -A -o wide"*)
+    printf 'NAMESPACE   NAME          READY   STATUS    RESTARTS   AGE   IP   NODE\n'
+    printf 'platform    redpanda-0    0/1     Pending   0          9m    <none>  <none>\n'
+    printf 'monitoring  loki-0        0/1     Pending   0          9m    <none>  <none>\n'
+    exit 0 ;;
+  *jsonpath*containerStatuses*)
+    printf 'platform/redpanda-0\tPending\t\tredpanda=waiting{reason=ContainerCreating} restarts=0 \n'
+    printf 'monitoring/loki-0\tPending\t\tloki=waiting{reason=ContainerCreating} restarts=0 \n'
+    exit 0 ;;
+  "get events -A"*)
+    printf 'platform   Warning   FailedScheduling   pod/redpanda-0  0/3 nodes are available: 3 Insufficient cpu.\n'
+    exit 0 ;;
+  "get pvc -A"*)
+    printf 'NAMESPACE   NAME              STATUS   VOLUME                                     CAPACITY\n'
+    printf 'platform    data-redpanda-0   Bound    pvc-2120bdaa-3cfd-4873-a04c-cf4fdfa4499d   10Gi\n'
+    exit 0 ;;
+  "get pv"*)
+    printf 'NAME                                       CAPACITY   STATUS   CLAIM\n'
+    printf 'pvc-2120bdaa-3cfd-4873-a04c-cf4fdfa4499d   10Gi       Bound    platform/data-redpanda-0\n'
+    exit 0 ;;
+  "get nodes -o wide"*)
+    printf 'NAME                            STATUS   ROLES    AGE   VERSION\n'
+    printf 'gke-sol-qual-gcp-15f-nodes-abc  Ready    <none>   12m   v1.29\n'
+    exit 0 ;;
+  *jsonpath*allocatable*)
+    printf 'gke-sol-qual-gcp-15f-nodes-abc\tallocatable=2/8Gi\tReady=True \n'
+    exit 0 ;;
+  *"get secrets -A -l owner=helm"*)
+    printf 'NS          NAME                             TYPE\n'
+    printf 'platform    sh.helm.release.v1.redpanda.v1   helm.sh/release.v1\n'
+    printf 'monitoring  sh.helm.release.v1.loki.v1        helm.sh/release.v1\n'
+    exit 0 ;;
   *"config get-contexts"*)
     printf 'gke_old-project_us-central1_sol-qual-gcp-15c\ngke_sol-qualification_us-central1_test-cluster\n'
     exit 0
@@ -674,6 +720,55 @@ if [ -n "$probe_pid" ] && kill -0 "$probe_pid" 2>/dev/null; then
 else
   ok "the probe leaves no orphan process (recorded pid ${probe_pid:-none} is gone)"
 fi
+
+amb="$TMP/ambient-kubeconfig.yaml"
+{
+  printf 'apiVersion: v1\nkind: Config\ncurrent-context: eks-stale\n'
+  printf 'clusters:\n'
+  printf -- '- name: eks-stale\n  cluster:\n    server: https://9F5AAA970F948E45A7AE0807DA893DCE.gr7.us-east-1.eks.amazonaws.com\n'
+  printf -- '- name: gke_old_us-central1_sol-qual-gcp-15c\n  cluster:\n    server: https://136.115.125.189\n'
+  printf 'contexts:\n- name: eks-stale\n  context:\n    cluster: eks-stale\n    user: u\n'
+  printf 'users:\n- name: u\n  user:\n    token: x\n'
+} >"$amb"
+
+run_case "e2e-credentials" cloud KUBECONFIG="$amb" API_PROBE_INTERVAL_S=1 STUB_SOL_SLEEP=4 \
+  STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
+
+est="$(grep -n 'run kubeconfig: established' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+fail_line="$(grep -n 'cloud apply failed' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+if [ -n "$est" ] && [ -n "$fail_line" ] && [ "$est" -lt "$fail_line" ]; then
+  ok "run credentials are established before the failure, not by it (line $est < $fail_line)"
+else
+  no "run credentials are established before the failure, not by it" "established before the failure" \
+    "established at line ${est:-never}, failure at ${fail_line:-never}"
+fi
+has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
+  "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
+
+is "the probe resolves this run's configured endpoint" \
+  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "136.115.125.189"
+if grep -qF '9F5AAA970F948E45A7AE0807DA893DCE' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
+  no "the ambient EKS cluster never appears" "no ambient cluster" "EKS hostname present"
+else
+  ok "the ambient EKS cluster never appears"
+fi
+if grep -qF 'localhost:8080' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
+  no "kubectl never falls back to localhost:8080" "no localhost fallback" "localhost:8080 present"
+else
+  ok "kubectl never falls back to localhost:8080"
+fi
+
+if grep -qF "kubeconfig=$TMP/e2e-credentials.logs/run-kubeconfig.yaml" "$TMP/e2e-credentials.argv"; then
+  ok "every kubectl read is bound to the run's kubeconfig"
+else
+  no "every kubectl read is bound to the run's kubeconfig" "the run kubeconfig in the argv log" \
+    "$(grep -m1 kubectl "$TMP/e2e-credentials.argv" 2>/dev/null | cut -c1-90)"
+fi
+
+lacks "no capture command was malformed" "unknown command" "$TMP/e2e-credentials.out"
+for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
+  present "$TMP/e2e-credentials.logs/platform-failure/$artifact.log" "the failure capture produced $artifact"
+done
 
 printf '\nscenario: a stop before the platform is a complete bundle\n'
 run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
