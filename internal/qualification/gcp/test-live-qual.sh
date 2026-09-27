@@ -192,21 +192,11 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
     *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
     *"container clusters get-credentials"*)
       if [ -n "${STUB_GET_CREDENTIALS_RC:-}" ]; then
-        printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403, message=credential generation refused\n' >&2
+        printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403\n' >&2
         exit "$STUB_GET_CREDENTIALS_RC"
       fi
       kc="${KUBECONFIG:-$HOME/.kube/config}"
-      {
-        printf 'apiVersion: v1\nkind: Config\n'
-        printf 'current-context: gke_old-project_us-central1_sol-qual-gcp-15c\n'
-        printf 'clusters:\n'
-        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  cluster:\n    server: https://136.65.210.170\n'
-        printf -- '- name: gke_sol-qualification_us-central1_%s\n  cluster:\n    server: https://136.115.125.189\n' "$CLUSTER"
-        printf 'contexts:\n'
-        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  context:\n    cluster: gke_old-project_us-central1_sol-qual-gcp-15c\n    user: u\n'
-        printf -- '- name: gke_sol-qualification_us-central1_%s\n  context:\n    cluster: gke_sol-qualification_us-central1_%s\n    user: u\n' "$CLUSTER" "$CLUSTER"
-        printf 'users:\n- name: u\n  user:\n    token: x\n'
-      } >"$kc" 2>/dev/null || true
+      sed "s/sol-qual-gcp-15g/$CLUSTER/g" "$STUB_KUBECONFIG_FIXTURE" >"$kc" 2>/dev/null || true
       printf 'kubeconfig entry generated for %s.\n' "$CLUSTER"
       exit 0 ;;
   esac
@@ -371,6 +361,8 @@ run_case() {
   export LOG_DIR="$TMP/$name.logs"
   export WORKSPACE="$SCRATCH_WS"
   export XDG_DATA_HOME="$TMP/data"
+  export STUB_KUBECONFIG_FIXTURE="$REPO_ROOT/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
+  export STUB_KUBECONFIG_FIXTURE="$REPO_ROOT/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
