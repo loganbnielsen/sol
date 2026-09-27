@@ -20,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 
+import observer
+
 ROOT = pathlib.Path(__file__).resolve().parent
 OBSERVER = ROOT / "observer.py"
 FIXTURE = ROOT / "fixtures" / "kubeconfig-gcloud-real.yaml"
@@ -151,6 +153,8 @@ def main() -> int:
         reads_by_name = {r["artifact"]: r for r in summary["reads"]}
         check("the designed read set is exactly what the summary reports",
               sorted(reads_by_name) == sorted(designed))
+        check("and the module declares exactly that set, in that order",
+              [name for name, _ in observer.CAPTURE_READS] == designed)
         check("pod demand is attempted by name", "pod-demand" in reads_by_name)
         check("node taints are attempted by name", "node-taints" in reads_by_name)
         records: list[list[str]] = []
