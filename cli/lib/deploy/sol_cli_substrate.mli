@@ -41,9 +41,11 @@ val operator_binding_docs
   -> Sol_cli_manifest.service list
   -> string list
 
-(** [reconcile_operator_bindings ~ctx ~workspace] establishes the operator's
-    read-only diagnostic grant in every workload namespace, independent of whether
-    that namespace participated in the current operation.
+(** [reconcile_operator_bindings ~ctx ~workspace ~services] establishes the
+    operator's read-only diagnostic grant in every workload namespace,
+    independent of whether that namespace participated in the current
+    operation. [services] is the workspace inventory the caller already read
+    (REFAC-130), so this step does not discover it again.
 
     RBAC only: it must not write runtime Secrets and must not apply workload
     documents, which is why it does not go through {!ensure}. Safe to run
@@ -52,4 +54,5 @@ val operator_binding_docs
 val reconcile_operator_bindings
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
+  -> services:Sol_cli_manifest.service list
   -> (unit, string) result

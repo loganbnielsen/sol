@@ -1,3 +1,11 @@
+(* REFAC-130: the workspace a fixture describes, read once through the loader
+   under test -- the same value the commands pass into the plan. *)
+let facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
 let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
@@ -434,11 +442,16 @@ let write_file path content =
   close_out oc
 ;;
 
-let discover_topics_ok () =
-  match Sol_cli_deployment_plan.discover_topics () with
-  | Ok topics -> topics
-  | Error e -> Alcotest.fail (Sol_cli_toml.parse_error_to_string e)
+(* REFAC-130: the plan's topics, migrations and schema subjects are projections
+   of the workspace model the command reads. These discover-* tests now exercise
+   that loader, which is where the read happens. *)
+let loaded_facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
 ;;
+
+let discover_topics_ok () = (loaded_facts ()).Sol_cli_workspace_model.topics
 
 (* BUG-042: a misspelled key in an event sol.toml used to drop its topics silently. *)
 let test_discover_topics_rejects_misspelled_event_toml () =
@@ -450,15 +463,18 @@ let test_discover_topics_rejects_misspelled_event_toml () =
       {|[service]
 topic = ["payments.charged"]
 |};
-    match Sol_cli_deployment_plan.discover_topics () with
+    match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
     | Ok _ -> Alcotest.fail "expected a misspelled event sol.toml to be an error"
     | Error e ->
       Alcotest.(check bool)
         "names the unknown key"
         true
-        (Sol_cli_string.contains
-           ~needle:"\"topic\""
-           (Sol_cli_toml.parse_error_to_string e)))
+        (Sol_cli_string.contains ~needle:"\"topic\"" e);
+      (* The loader's error names the file it could not read. *)
+      Alcotest.(check bool)
+        "names the file"
+        true
+        (Sol_cli_string.contains ~needle:"events/payments/sol.toml" e))
 ;;
 
 let test_discover_topics_finds_topic () =
@@ -616,7 +632,7 @@ let test_discover_migrations_finds_sql () =
   with_cwd tmp (fun () ->
     mkdirs "db/migrations";
     write_file "db/migrations/001_init.sql" "CREATE TABLE foo (id INT);";
-    let migs = Sol_cli_deployment_plan.discover_migrations () in
+    let migs = Sol_cli_workspace_model.migration_files (loaded_facts ()) in
     check_ids
       "migration found"
       Sol_cli_plan_ids.Migration_file.to_string
@@ -627,7 +643,7 @@ let test_discover_migrations_finds_sql () =
 let test_discover_migrations_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_mig_nodir" "" in
   with_cwd tmp (fun () ->
-    let migs = Sol_cli_deployment_plan.discover_migrations () in
+    let migs = Sol_cli_workspace_model.migration_files (loaded_facts ()) in
     Alcotest.(check int) "empty without db/migrations dir" 0 (List.length migs))
 ;;
 
@@ -638,7 +654,7 @@ let test_discover_migrations_sorted () =
     write_file "db/migrations/003_add_index.sql" "";
     write_file "db/migrations/001_init.sql" "";
     write_file "db/migrations/002_add_col.sql" "";
-    let migs = Sol_cli_deployment_plan.discover_migrations () in
+    let migs = Sol_cli_workspace_model.migration_files (loaded_facts ()) in
     check_ids
       "migrations sorted"
       Sol_cli_plan_ids.Migration_file.to_string
@@ -656,7 +672,7 @@ let test_discover_migrations_ignores_non_sql () =
     write_file "db/migrations/001_init.sql" "";
     write_file "db/migrations/README.md" "";
     write_file "db/migrations/seed.sh" "";
-    let migs = Sol_cli_deployment_plan.discover_migrations () in
+    let migs = Sol_cli_workspace_model.migration_files (loaded_facts ()) in
     check_ids
       "only sql files"
       Sol_cli_plan_ids.Migration_file.to_string
@@ -671,7 +687,7 @@ let test_schema_subjects_derived () =
   with_cwd tmp (fun () ->
     mkdirs "events/payments";
     write_file "events/payments/charged.ml" "(* stub *)";
-    let subjects = Sol_cli_deployment_plan.discover_schema_subjects () in
+    let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     let strs = List.map Sol_cli_plan_ids.Schema_subject.to_string subjects in
     Alcotest.(check bool)
       "payments.Charged present"
@@ -686,7 +702,7 @@ let test_schema_subjects_multiple_domains () =
     mkdirs "events/comms";
     write_file "events/payments/charged.ml" "(* stub *)";
     write_file "events/comms/notification.ml" "(* stub *)";
-    let subjects = Sol_cli_deployment_plan.discover_schema_subjects () in
+    let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     check_ids
       "sorted multi-domain"
       Sol_cli_plan_ids.Schema_subject.to_string
@@ -699,7 +715,7 @@ let test_schema_subjects_top_level_ml () =
   with_cwd tmp (fun () ->
     mkdirs "events";
     write_file "events/order.ml" "(* stub *)";
-    let subjects = Sol_cli_deployment_plan.discover_schema_subjects () in
+    let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     let strs = List.map Sol_cli_plan_ids.Schema_subject.to_string subjects in
     Alcotest.(check bool) "top-level file as stem" true (List.mem "order" strs))
 ;;
@@ -707,7 +723,7 @@ let test_schema_subjects_top_level_ml () =
 let test_schema_subjects_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_subjects_nodir" "" in
   with_cwd tmp (fun () ->
-    let subjects = Sol_cli_deployment_plan.discover_schema_subjects () in
+    let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     Alcotest.(check int) "empty without events dir" 0 (List.length subjects))
 ;;
 
@@ -1049,12 +1065,24 @@ let test_of_services_result_surfaces_toml_parse_error () =
       }
     in
     match
-      Sol_cli_deployment_plan.of_services_result ~workspace:"myworkspace" ~env [ service ]
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env
+        ~facts:(facts ())
+        [ service ]
     with
     | Error
         (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Validation { path; message }))
       ->
-      Alcotest.(check string) "error path" "app/payments/charge_svc/sol.toml" path;
+      (* REFAC-130: the plan takes the workload's parsed sol.toml from the
+         workspace model, which reads it through the workspace root -- so the
+         path it names is that root's, not the relative spelling [at_root] used
+         to fall back to when the fixture was not a workspace. It still names
+         the offending file. *)
+      Alcotest.(check bool)
+        "error path names the workload's sol.toml"
+        true
+        (Sol_cli_string.contains ~needle:"app/payments/charge_svc/sol.toml" path);
       assert (contains (Str.regexp "unsupported rollout_strategy") message)
     | Ok _ -> Alcotest.fail "expected deployment-plan construction to return TOML error"
     | Error (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Toml_syntax _)) ->
@@ -1126,6 +1154,7 @@ let test_sol_yml_scale_overrides_toml_replicas_on_resolved_target () =
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~resolved_config
@@ -1146,6 +1175,7 @@ let test_sol_yml_scale_falls_back_to_scale_min_when_no_max () =
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~resolved_config
@@ -1167,6 +1197,7 @@ let test_no_resolved_config_uses_toml_replicas () =
     (* Simulates `sol up`, which never has a resolved target/sol.yml. *)
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service ]
@@ -1186,6 +1217,7 @@ let test_no_matching_sol_yml_service_uses_toml_replicas () =
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~resolved_config
@@ -1211,6 +1243,7 @@ let test_toml_volumes_carry_into_service_spec () =
        access_mode = \"ReadWriteOnce\"\n";
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service ]
@@ -1244,6 +1277,7 @@ let test_multi_replica_volume_fails_after_scale_resolution () =
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~resolved_config
@@ -1272,6 +1306,7 @@ let test_zero_replica_volume_fails () =
        size = \"10Gi\"\n";
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service ]
@@ -1296,6 +1331,7 @@ let plan_for_fn toml =
       }
     in
     Sol_cli_deployment_plan.of_services_result
+      ~facts:(facts ())
       ~workspace:"myworkspace"
       ~env:deploy_env
       [ fn ])
@@ -1346,6 +1382,7 @@ let test_function_volume_fails () =
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ fn ]
@@ -1379,6 +1416,7 @@ calls = ["checkout/checkout_svc"]
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service; checkout_service ]
@@ -1409,6 +1447,7 @@ calls = ["checkout/missing_svc"]
 |};
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service ]
@@ -1443,6 +1482,7 @@ calls = ["checkout/checkout_svc"]
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~inventory:[ charge_svc_service; checkout_service ]
@@ -1488,6 +1528,7 @@ calls = ["checkout/checkout_svcc"]
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         ~inventory:[ charge_svc_service; checkout_service ]
@@ -1528,6 +1569,7 @@ config = { CHECKOUT_SVC_URL = "http://example.invalid" }
     in
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:deploy_env
         [ charge_svc_service; checkout_service ]

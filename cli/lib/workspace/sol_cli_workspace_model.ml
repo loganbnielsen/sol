@@ -141,11 +141,13 @@ let load ~root =
     }
 ;;
 
+(* The entered workspace for a caller that has not entered one: the boundary is
+   resolved and validated exactly as [Sol_cli_manifest.scan_workspace] did, so a
+   command that used to fail closed outside a workspace still does. A caller
+   that already has a root ([Sol_cli_workspace.enter_cwd]) should pass it to
+   {!load} instead -- it has paid for the resolution already. *)
 let load_cwd () =
-  let root =
-    match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
-    | Some root -> root
-    | None -> Sys.getcwd ()
-  in
-  load ~root
+  match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
+  | Error e -> Error (Sol_cli_workspace.workspace_error_to_string e)
+  | Ok root -> load ~root
 ;;

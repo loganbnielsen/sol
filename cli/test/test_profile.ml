@@ -4,6 +4,14 @@
 module P = Sol_cli_profile
 module Pre = Sol_cli_profile_preflight
 
+(* REFAC-130: the workspace a fixture describes, read once through the loader
+   under test -- the same value the commands pass into the plan. *)
+let facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
 let check_str = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 let check_strs = Alcotest.(check (list string))
@@ -197,6 +205,7 @@ let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
     write (Filename.concat s.dir "sol.toml") "");
   match
     Sol_cli_deployment_plan.of_services_result
+      ~facts:(facts ())
       ~workspace:"pluto"
       ~env
       ~resolved_config:(load target)
@@ -235,6 +244,7 @@ let node_failure_tolerant_plan target =
     "[infra.scale]\nreplicas = 2\navailability = \"node-failure-tolerant\"\n";
   match
     Sol_cli_deployment_plan.of_services_result
+      ~facts:(facts ())
       ~workspace:"pluto"
       ~env
       ~resolved_config:(load target)
@@ -251,6 +261,7 @@ let availability_rejection service ~toml =
   write (Filename.concat service.dir "sol.toml") toml;
   match
     Sol_cli_deployment_plan.of_services_result
+      ~facts:(facts ())
       ~workspace:"pluto"
       ~env
       ~resolved_config:(load "prod/aws/us-east-1")

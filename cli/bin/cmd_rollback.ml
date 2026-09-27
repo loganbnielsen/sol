@@ -69,14 +69,15 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
   | Sol_cli_manifest.Deploy_failed msg -> Error msg
 ;;
 
-let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
+let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
   let* release_id_t = Sol_cli_release_id.of_string release.release_id in
+  (* REFAC-130: the workspace's migrations come from the model the caller read,
+     in the same order the plan carries them. *)
   let current_migrations =
-    List.map
-      Sol_cli_plan_ids.Migration_file.to_string
-      (Sol_cli_deployment_plan.discover_migrations ())
+    Sol_cli_workspace_model.migration_files facts
+    |> List.map Sol_cli_plan_ids.Migration_file.to_string
   in
   (* FEAT-075: the ordering itself -- refusal before mutation, pointer move
      only once the live set agrees -- lives in Sol_cli_rollback.execute, where
@@ -144,7 +145,8 @@ let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
 let run ~ctx ?(local = false) ~target_string release_id commit scope =
   let workspace = workspace_name () in
   Sol_cli_exit.of_msg
-    (let* release_id =
+    (let* facts = Sol_cli_workspace_model.load_cwd () in
+     let* release_id =
        resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
      in
      Sol_cli_boundary_lease.with_boundary_lease
@@ -153,7 +155,7 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
        ~holder:Sol_cli_boundary_lease.Rollback
        ~ttl:ttl_s
        ~wait_s
-       (fun _lease -> run_locked ~ctx ~local ~workspace release_id))
+       (fun _lease -> run_locked ~ctx ~local ~workspace ~facts release_id))
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)

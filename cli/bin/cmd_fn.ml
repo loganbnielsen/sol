@@ -23,13 +23,12 @@ open Result.Syntax
    argument rather than --scope, and the resolved workload must additionally
    be a -fn -- `sol fn run` on a -svc/-worker name is a usage error, not a
    silent no-op. *)
-let resolve_fn selector =
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+let resolve_fn ~facts selector =
   let* selected =
-    Sol_cli_workload_selection.resolve ~what:"DOMAIN/NAME" (Some selector) services
+    Sol_cli_workload_selection.resolve
+      ~what:"DOMAIN/NAME"
+      (Some selector)
+      (Sol_cli_workspace_model.services facts)
     |> Sol_cli_exit.of_msg
   in
   match selected.request, selected.services with
@@ -75,8 +74,9 @@ let require_deployed ~ctx ~domain ~name ~ns ~k8s_name =
 ;;
 
 let run ~ctx selector =
-  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
-  let* svc = resolve_fn selector in
+  let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
+  let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
+  let* svc = resolve_fn ~facts selector in
   let domain = svc.domain in
   let name = svc.name in
   let* ns =

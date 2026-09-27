@@ -1,3 +1,11 @@
+(* REFAC-130: the workspace a fixture describes, read once through the loader
+   under test -- the same value the commands pass into the plan. *)
+let facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
 let write path content =
   let oc = open_out path in
   output_string oc content;
@@ -63,6 +71,7 @@ let test_run_without_cmdliner () =
           ; resolved_config = None
           }
         ~mode:(Sol_cli_executor.Emit_to emit_dir)
+        ~facts:(facts ())
         services
     with
     | Error msg -> Alcotest.fail ("factory run failed: " ^ msg)

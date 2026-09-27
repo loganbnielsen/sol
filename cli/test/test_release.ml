@@ -1,3 +1,11 @@
+(* REFAC-130: the workspace a fixture describes, read once through the loader
+   under test -- the same value the commands pass into the plan. *)
+let facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
 let check_string = Alcotest.(check string)
 let check_int = Alcotest.(check int)
 let check_bool = Alcotest.(check bool)
@@ -463,6 +471,7 @@ let with_plan ~requested_scope f =
     write_file "app/payments/charge_svc/sol.toml" "";
     match
       Sol_cli_deployment_plan.of_services_result
+        ~facts:(facts ())
         ~workspace:"myworkspace"
         ~env:test_env
         ~requested_scope

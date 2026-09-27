@@ -7,15 +7,21 @@
 
 (* FEAT-100: the declared targets, read from sol/environments.yml (and the local
    file) at the workspace root, so `sol target show` lists the same targets from
-   any descendant directory (DEC-024). *)
-let available_target_paths () =
-  match Sol_cli_config.discover_target_paths () with
-  | Ok paths -> paths
-  | Error _ -> []
+   any descendant directory (DEC-024).
+
+   REFAC-130: the list is a projection of the workspace model, read at most once
+   per process. A load failure degrades to "no targets found", which is what
+   this listing did before; the command's own target lookup reports the real
+   error. *)
+let available_target_paths =
+  lazy
+    (match Sol_cli_workspace_model.load_cwd () with
+     | Ok facts -> facts.Sol_cli_workspace_model.targets
+     | Error _ -> [])
 ;;
 
 let available_targets () =
-  match available_target_paths () with
+  match Lazy.force available_target_paths with
   | [] -> "no targets found: declare them in sol/environments.yml"
   | paths -> "available targets:\n  " ^ String.concat "\n  " paths
 ;;

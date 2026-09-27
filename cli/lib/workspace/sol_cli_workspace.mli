@@ -78,7 +78,3 @@ val workspace_name : root:string -> string
     same workspace as one at the root. Falls back to the cwd basename when
     there is no workspace. *)
 val current_name : unit -> string
-
-(** Count [.sql] files in [dir/db/migrations]. Returns 0 if the directory does
-    not exist. Used by [sol up] to warn users about unapplied migrations. *)
-val pending_migration_count : dir:string -> int

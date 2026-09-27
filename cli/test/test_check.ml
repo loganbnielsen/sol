@@ -37,6 +37,14 @@ let has_msg needle findings =
     Sol_cli_string.contains ~needle f.message)
 ;;
 
+(* REFAC-130: the check's input is the workspace model, so a fixture is read
+   once through the loader under test. *)
+let facts () =
+  match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
 let test_missing_app_result () =
   with_tmp (fun _ ->
     match Sol_cli_manifest.discover_services () with
@@ -94,7 +102,7 @@ let test_check_valid_service () =
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
-    let findings = Sol_cli_check.run () in
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
     Alcotest.(check bool) "no errors" false (Sol_cli_check.has_errors findings))
 ;;
 
@@ -103,7 +111,7 @@ let test_check_bad_secret_key () =
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"bad-key\"]\n";
-    let findings = Sol_cli_check.run () in
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
     Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
     Alcotest.(check bool)
       "mentions invalid secret"
@@ -114,7 +122,7 @@ let test_check_bad_secret_key () =
 let test_check_missing_dockerfile () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
-    let findings = Sol_cli_check.run () in
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
     Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
     Alcotest.(check bool)
       "mentions Dockerfile"
@@ -136,7 +144,7 @@ let test_run_services_scopes_the_check () =
     let charge =
       List.filter (fun (s : Sol_cli_manifest.service) -> s.name = "charge_svc") services
     in
-    let findings = Sol_cli_check.run_services charge in
+    let findings = Sol_cli_check.run_services ~facts:(facts ()) charge in
     Alcotest.(check bool)
       "only the selected workload is checked"
       false

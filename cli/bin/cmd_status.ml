@@ -1,20 +1,28 @@
 open Cmdliner
 open Result.Syntax
 
-let discover_domains () =
-  let app_dir = "app" in
-  if not (Sys.file_exists app_dir && Sys.is_directory app_dir)
-  then []
-  else (
-    let domains = ref [] in
-    (try
-       Sys.readdir app_dir
-       |> Array.iter (fun entry ->
-         let path = Filename.concat app_dir entry in
-         if entry.[0] <> '.' && Sys.is_directory path then domains := entry :: !domains)
-     with
-     | _ -> ());
-    List.rev !domains)
+(* REFAC-130: the domains under [app/] are a projection of the workspace the
+   command already read, not a fifth walk of that directory. Order is preserved
+   (first appearance wins) because the workspace index prints domains in the
+   order discovery found them. *)
+let discover_domains (facts : Sol_cli_workspace_model.t) =
+  let domains =
+    List.map
+      (fun (w : Sol_cli_workspace_model.workload) -> w.service.Sol_cli_manifest.domain)
+      facts.Sol_cli_workspace_model.workloads
+    @ List.map
+        (fun ((domain, _, _) : Sol_cli_manifest.unexpected) -> domain)
+        facts.Sol_cli_workspace_model.unexpected
+  in
+  let seen = Hashtbl.create 16 in
+  List.filter
+    (fun domain ->
+       if Hashtbl.mem seen domain
+       then false
+       else (
+         Hashtbl.add seen domain ();
+         true))
+    domains
 ;;
 
 let namespace ~workspace ~domain =
@@ -488,20 +496,18 @@ let run ~ctx (options : status_options) =
   let target = options.target in
   let explicit_loki_url = options.observability.loki_base_url in
   let explicit_prometheus_url = options.prometheus_base_url in
-  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
+  (* REFAC-130: one read of the workspace; domains and services are both
+     projections of it. *)
+  let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
   let* all_domains =
-    match discover_domains () with
+    match discover_domains facts with
     | [] ->
       Error
         (Sol_cli_exit.failure "No domains found in app/. Run from the workspace root.")
     | domains -> Ok domains
   in
-  (* Discovery happens once; scope resolution then projects it into status's own
-     addressing model (workspace / domain / unit / managed resource). *)
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+  let services = Sol_cli_workspace_model.services facts in
   let* scope = Sol_cli_open.parse_scope scope_str |> Sol_cli_exit.of_msg in
   let resolve_status_scope request =
     Sol_cli_workload_selection.resolve ~what:"status scope" request services

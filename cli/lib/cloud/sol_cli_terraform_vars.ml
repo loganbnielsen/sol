@@ -32,6 +32,33 @@ let add_opt k = function
   | Some v -> fun xs -> (k, v) :: xs
 ;;
 
+(* Every service in the workspace gets an ECR repository, regardless of which
+   target is currently being planned/applied -- a service omitted from one target
+   may still be deployed to another and needs its own repository either way.
+
+   REFAC-130: the inventory comes from the workspace model, read once, rather
+   than a second discovery from inside the config layer (which is why this
+   function lives here and not in [Sol_cli_config]: the config layer is below
+   the model and must not read the workspace itself). A workspace with no
+   [app/] has no repositories; anything else that fails to load is an error,
+   never "no repositories" (INFRA-074) -- the list drives [for_each] over
+   repositories with [force_delete], so an empty list is an instruction to
+   delete every image the target holds. *)
+let ecr_repositories_var () =
+  match Sol_cli_workspace_model.load_cwd () with
+  | Error e -> Error ("cannot determine the workspace's ECR repositories: " ^ e)
+  | Ok facts ->
+    Ok
+      (Sol_cli_workspace_model.services facts
+       |> List.filter_map (fun s ->
+         match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
+         | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
+         | Error _ -> None)
+       |> List.map (Printf.sprintf "%S")
+       |> String.concat ","
+       |> Printf.sprintf "[%s]")
+;;
+
 let of_config ~workspace cfg =
   let (target : Sol_cli_config.target) = cfg.Sol_cli_config.target in
   let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
@@ -73,7 +100,7 @@ let of_config ~workspace cfg =
     (capabilities.root_declared_vars
        ~has_postgres
        ~production_postgres
-       ~ecr_repositories:Sol_cli_config.ecr_repositories_var)
+       ~ecr_repositories:ecr_repositories_var)
 ;;
 
 (* BUG-057: which var file a cloud command passes to Terraform, and relative to

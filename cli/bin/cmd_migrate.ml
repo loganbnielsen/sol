@@ -469,8 +469,8 @@ let render_status_job ~name ~namespace ~image ~table ~configmap_name =
    read-only grant. But it is never silent -- the warning names what could not be
    established and what it costs, because a diagnostic capability that quietly
    did not appear is the failure mode this whole line of work exists to remove. *)
-let reconcile_operator_bindings_warn ~ctx ~workspace =
-  Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace
+let reconcile_operator_bindings_warn ~ctx ~workspace ~services =
+  Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace ~services
   |> Result.iter_error (fun msg ->
     Printf.eprintf
       "warning: could not establish the operator's diagnostic RoleBindings: %s\n\
@@ -479,11 +479,9 @@ let reconcile_operator_bindings_warn ~ctx ~workspace =
       msg)
 ;;
 
-let pick_namespace_and_service ~workspace =
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Result.map_error Sol_cli_manifest.discover_error_to_string
-  in
+(* REFAC-130: the workspace is read once by the caller ([load_cwd]) and the
+   inventory is passed in, rather than re-discovered here. *)
+let pick_namespace_and_service ~workspace ~services =
   let by_domain_and_name (a : Sol_cli_manifest.service) (b : Sol_cli_manifest.service) =
     compare (a.domain, a.name) (b.domain, b.name)
   in
@@ -570,12 +568,14 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   in
   let* runner = runner_source () in
   let workspace = Filename.basename (Sys.getcwd ()) in
-  let* namespace, k8s_name = pick_namespace_and_service ~workspace in
+  let* facts = Sol_cli_workspace_model.load_cwd () in
+  let services = Sol_cli_workspace_model.services facts in
+  let* namespace, k8s_name = pick_namespace_and_service ~workspace ~services in
   (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
           the runtime Secret, so establish both before submitting it. Doing it here
           is what makes a fresh target's first `sol migrate apply` possible. *)
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] in
-  reconcile_operator_bindings_warn ~ctx ~workspace;
+  reconcile_operator_bindings_warn ~ctx ~workspace ~services;
   let* files = read_migration_files dir in
   if files = []
   then (
@@ -757,7 +757,12 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
     (match runner_source () with
      | Error _ as e -> e
      | Ok runner ->
-       let* namespace, k8s_name = pick_namespace_and_service ~workspace in
+       let* facts = Sol_cli_workspace_model.load_cwd () in
+       let* namespace, k8s_name =
+         pick_namespace_and_service
+           ~workspace
+           ~services:(Sol_cli_workspace_model.services facts)
+       in
        (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
           the runtime Secret, so establish both before submitting it. Doing it here
           is what makes a fresh target's first `sol migrate apply` possible. *)

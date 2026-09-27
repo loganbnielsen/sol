@@ -25,6 +25,8 @@ type execution =
 val plan_of_services
   :  workspace:string
   -> env:Sol_cli_deployment_plan.env_config
+  -> facts:Sol_cli_workspace_model.t
+       (** REFAC-130: the workspace, read once by the command. *)
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> ?image_refs:(string * string) list
@@ -68,6 +70,7 @@ val run
   :  Sol_cli_execution.context
   -> request:request
   -> mode:Sol_cli_executor.mode
+  -> facts:Sol_cli_workspace_model.t
   -> Sol_cli_manifest.service list
   -> (execution, string) result
 

@@ -135,11 +135,6 @@ val is_omitted_service : t -> name:string -> bool
     AUDIT-072 / DEC-034 role ARNs, and the GCP provisioner impersonator. *)
 val provider_field : target -> string -> string option
 
-(** The workspace's ECR repositories as a Terraform list literal, derived from
-    every service under [app/]; ["[]"] when the workspace has no [app/]. A
-    discovery failure is an error, never "no repositories" (INFRA-074). *)
-val ecr_repositories_var : unit -> (string, string) result
-
 (** Merges a target's profile-derived Terraform vars (e.g. [rds_multi_az],
     [rds_deletion_protection]) with the caller's own `-var`/var-file values,
     in the order the two lists must be handed to Terraform.

@@ -659,7 +659,16 @@ let test_worker_has_no_ack_param () =
   assert_contains "worker lib" lib "Worker.Ack"
 ;;
 
-(* ── pending_migration_count tests ──────────────────────────────────────── *)
+(* ── count_unapplied_migrations tests ───────────────────────────────────── *)
+
+(* REFAC-130: the count is a named function over the workspace model's
+   migrations, so a bare directory is loaded through the same loader a command
+   uses. *)
+let count_unapplied ~root =
+  match Sol_cli_workspace_model.load ~root with
+  | Ok facts -> Sol_cli_workspace_model.count_unapplied_migrations facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
 
 (* No db/migrations directory → count is 0 *)
 let test_pending_migrations_no_dir () =
@@ -669,11 +678,7 @@ let test_pending_migrations_no_dir () =
   Fun.protect
     ~finally:(fun () ->
       ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
-    (fun () ->
-       check_bool
-         "no mig dir → 0"
-         true
-         (Sol_cli_workspace.pending_migration_count ~dir:tmpdir = 0))
+    (fun () -> check_bool "no mig dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
 (* db/migrations exists but is empty → count is 0 *)
@@ -688,10 +693,7 @@ let test_pending_migrations_empty_dir () =
        ignore
          (Sys.command
             (Printf.sprintf "mkdir -p %s/db/migrations" (Filename.quote tmpdir)));
-       check_bool
-         "empty dir → 0"
-         true
-         (Sol_cli_workspace.pending_migration_count ~dir:tmpdir = 0))
+       check_bool "empty dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
 (* db/migrations with two .sql files → count is 2 *)
@@ -715,10 +717,29 @@ let test_pending_migrations_counts_sql_files () =
        touch "0002_add_column.sql";
        touch "README.md";
        (* non-.sql — must not be counted *)
-       check_bool
-         "two sql files → 2"
-         true
-         (Sol_cli_workspace.pending_migration_count ~dir:tmpdir = 2))
+       check_bool "two sql files → 2" true (count_unapplied ~root:tmpdir = 2))
+;;
+
+(* A [.down.sql] reversal is not a migration of its own, so it is not counted. *)
+let test_pending_migrations_ignores_down_migrations () =
+  let tmpdir = Filename.temp_file "sol-mig-test-" "" in
+  Sys.remove tmpdir;
+  Unix.mkdir tmpdir 0o755;
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    (fun () ->
+       ignore
+         (Sys.command
+            (Printf.sprintf "mkdir -p %s/db/migrations" (Filename.quote tmpdir)));
+       let touch name =
+         let path = Printf.sprintf "%s/db/migrations/%s" tmpdir name in
+         let oc = open_out path in
+         close_out oc
+       in
+       touch "0001_init.sql";
+       touch "0001_init.down.sql";
+       check_bool "down files are not migrations" true (count_unapplied ~root:tmpdir = 1))
 ;;
 
 (* workspace scaffold generates one .sql file → count is 1 *)
@@ -729,7 +750,7 @@ let test_pending_migrations_workspace_scaffold () =
   check_bool
     "scaffold workspace → 1 migration file"
     true
-    (Sol_cli_workspace.pending_migration_count ~dir:"testapp" = 1)
+    (count_unapplied ~root:"testapp" = 1)
 ;;
 
 (* ── golden tests ────────────────────────────────────────────────────────── *)
@@ -1059,6 +1080,10 @@ let () =
             "counts only .sql files"
             `Quick
             test_pending_migrations_counts_sql_files
+        ; Alcotest.test_case
+            "a .down.sql reversal is not counted"
+            `Quick
+            test_pending_migrations_ignores_down_migrations
         ; Alcotest.test_case
             "scaffold workspace → 1 migration"
             `Quick

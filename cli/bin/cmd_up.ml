@@ -10,13 +10,13 @@ let print_header ~workspace ~sha ~dry_run =
   Printf.printf "\n%!"
 ;;
 
-let build_plan ~requested_scope ~workspace ~sha ~services =
-  Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services
+let build_plan ~requested_scope ~workspace ~sha ~facts ~services =
+  Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha ~facts services
   |> Sol_cli_exit.of_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let check_contract ~services =
-  let findings = Sol_cli_check.run_services services in
+let check_contract ~facts ~services =
+  let findings = Sol_cli_check.run_services ~facts services in
   findings
   |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
   if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
@@ -194,9 +194,9 @@ let record_plan run_log plan =
 ;;
 
 (* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
-let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~services =
+let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~facts ~services =
   print_header ~workspace ~sha ~dry_run;
-  let* plan = build_plan ~requested_scope ~workspace ~sha ~services in
+  let* plan = build_plan ~requested_scope ~workspace ~sha ~facts ~services in
   record_plan run_log plan;
   Ok plan
 ;;
@@ -204,9 +204,9 @@ let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~services =
 (* A failed run's message stands apart from the progress output above it. *)
 let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
 
-let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
+let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~services =
   let* plan =
-    prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~services
+    prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~facts ~services
   in
   Result.map_error run_failed
   @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
@@ -330,8 +330,8 @@ let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
            %!"))
 ;;
 
-let report_apply_success ~workspace plan =
-  let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
+let report_apply_success ~workspace ~facts plan =
+  let summary = Sol_cli_up_execution.post_deploy_summary ~facts plan in
   Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
   Printf.printf "Run 'sol local status' to check pod health.\n";
   if summary.pending_migrations > 0
@@ -350,15 +350,16 @@ let run_apply
       ~requested_scope
       ~workspace
       ~sha
+      ~facts
       ~services
       ~repo_root
       ~confirm_group_change
       ~keep_releases
   =
-  let* () = check_contract ~services in
+  let* () = check_contract ~facts ~services in
   ensure_postgres_url ();
   let* plan =
-    prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~services
+    prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~facts ~services
   in
   let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
   let pf_failed = ref false in
@@ -394,7 +395,7 @@ let run_apply
                (* BUG-045: the next deploy's consumer-group guard reads this record,
                   so failing to write it is a failure, reported before "Done". *)
                Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
-             ~report_success:(fun () -> report_apply_success ~workspace plan))
+             ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
   in
   Result.map_error run_failed
   @@
@@ -408,10 +409,11 @@ let run (req : Sol_cli_command_request.up_request) =
      descendant directory; a missing or nested boundary fails closed (BUG-034). *)
   let* { root = repo_root; name = workspace } = Sol_cli_workspace.enter_cwd () in
   let sha = req.image_tag in
-  let* inventory =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+  (* REFAC-130: the workspace is read once, here, and everything below projects
+     it: the inventory, the plan's topics/migrations/schema subjects, the
+     contract check, and the pending-migration count. *)
+  let* facts = Sol_cli_workspace_model.load ~root:repo_root |> Sol_cli_exit.of_msg in
+  let inventory = Sol_cli_workspace_model.services facts in
   (* Mutating command: an empty selection is an error, never a silent success. *)
   let* { requested_scope; services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
@@ -427,13 +429,14 @@ let run (req : Sol_cli_command_request.up_request) =
     (Sol_cli_run_log.dir run_log);
   match req.mode with
   | Sol_cli_command_request.Dry_run ->
-    run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services
+    run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~services
   | Apply ->
     run_apply
       ~run_log
       ~requested_scope
       ~workspace
       ~sha
+      ~facts
       ~services
       ~repo_root
       ~confirm_group_change:req.confirm_group_change

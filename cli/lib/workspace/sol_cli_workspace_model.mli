@@ -69,8 +69,10 @@ val count_unapplied_migrations : t -> int
     that could not be read. *)
 val load : root:string -> (t, string) result
 
-(** [load] for the workspace containing the current directory. Commands that
-    call {!Sol_cli_workspace.enter_cwd} already have the root and should pass it
-    to {!load} instead; this is for the ones that deliberately keep the
-    invocation cwd (e.g. [sol deploy]'s relative [--emit-to] paths). *)
+(** [load] for the workspace containing the current directory: the boundary is
+    resolved and validated, so this fails closed outside a workspace, exactly as
+    discovery did. Commands that call {!Sol_cli_workspace.enter_cwd} already have
+    the root and should pass it to {!load} instead; this is for the ones that
+    deliberately keep the invocation cwd (e.g. [sol deploy]'s relative
+    [--emit-to] paths). *)
 val load_cwd : unit -> (t, string) result

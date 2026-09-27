@@ -20,10 +20,15 @@ let push_registry = "localhost:5000"
    can never copy the context into itself. *)
 let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
-let local_plan ~requested_scope ~workspace ~sha services =
+let local_plan ~requested_scope ~workspace ~sha ~facts services =
   let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
   let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
-  Sol_cli_deployment_plan.of_services_result ~requested_scope ~workspace ~env services
+  Sol_cli_deployment_plan.of_services_result
+    ~requested_scope
+    ~workspace
+    ~env
+    ~facts
+    services
 ;;
 
 let manifest_primitive = function
@@ -151,9 +156,12 @@ let wait_for_service_rollout ~ctx spec exec =
           Error (Printf.sprintf "rollout failed: %s/%s" exec.namespace exec.k8s_name)))
 ;;
 
-let post_deploy_summary ~cwd plan =
+(* REFAC-130: the count comes off the workspace the command already read, so
+   [db/migrations] has one reader and the count is the named function over the
+   model's migrations rather than a second walk of the directory. *)
+let post_deploy_summary ~facts plan =
   { deployed_count = List.length plan.Sol_cli_deployment_plan.services
-  ; pending_migrations = Sol_cli_workspace.pending_migration_count ~dir:cwd
+  ; pending_migrations = Sol_cli_workspace_model.count_unapplied_migrations facts
   }
 ;;
 
