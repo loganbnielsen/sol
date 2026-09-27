@@ -38,3 +38,23 @@ REFAC-116 made "the process succeeded" expressible, but left five entry points: 
 - `git grep -n 'Sol_cli_process\.\(check\|run_success\|run_ok\)' -- cli` prints nothing.
 - The existing tests pass. The behaviour of every command is unchanged; `failure_output` still gives the stderr-else-stdout text.
 - Demo/example: not applicable (internal). Language parity: no impact (CLI-internal).
+
+## Completion notes
+
+**Premise verified (2026-09-26):** `git grep -c` over `cli` on origin/main found `Sol_cli_process.check` 48 times, `run_success` 16, `run_ok` 14 and `output` 3, next to a raw `run` that was `Ok` for any exit.
+
+- **`Sol_cli_process` exports one runner.** `run : ?echo -> cmd -> (output, error) result` is `Ok { stdout; stderr }` only on exit 0. `run_shell` has the same contract. `completed ~exit_code ~stdout ~stderr` builds that result for the supervisor, which waits on terraform itself. `check`, `run_success`, `run_ok` and `output` are gone.
+  - `git grep -n 'Sol_cli_process\.\(check\|run_success\|run_ok\)\b' -- cli` prints nothing.
+  - The `output` matches that remain are the type name, not the removed function.
+- **`Sol_cli_kubectl`:**
+  - One local `kubectl ?timeout_s ~ctx args`; every adapter is a one-liner over it.
+  - `probe_result` keeps the underlying process error ("kubectl could not be run: …") instead of replacing it.
+- **Sites where a non-zero exit was an answer** now match `Error (Non_zero _)`:
+  - the destroy verification's provider query;
+  - `kubectl auth can-i`, whose "no" is exit 1;
+  - the kubectl probe;
+  - `sol status`'s curl probe. curl exits 7 on a refused connection and prints `000`; confirmed with `curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:1` → `000 rc=7`. Without this, "connection failed" would have become "exited with code 7".
+- **Sites that silently change meaning.** The compiler can't see a site that matched `Ok` without reading the exit code, so I listed them with a script over origin/main: every call to a raw-result wrapper with no success check within a few lines. Each flagged site was read by hand. Apart from curl, a non-zero exit there now reads as the failure it was (a failing `terraform output`, a failing `kubectl get pods` or `logs`) instead of as empty output.
+- **One dead arm removed:** the whoami retry in `Sol_cli_aws_cluster` had an unreachable `Ok (Ok r)` arm since REFAC-116. The nested result is flattened first, so a kubectl exit now renders as the intended "kubectl exited N (…)".
+- **Tests:** the REFAC-116 regressions are rewritten to the new shape. Non-zero is `Non_zero` with the code and both streams, for `run` and `run_shell`, and `completed` has its own test. 66 CLI suites pass; format is clean; the offline lifecycle harness passes.
+- **Demo/example:** not applicable (internal). **Language parity:** no impact (CLI-internal).

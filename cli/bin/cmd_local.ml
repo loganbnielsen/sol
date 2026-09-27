@@ -4,7 +4,7 @@ open Sol_cli_helm
 open Result.Syntax
 
 let check_tool name install_url =
-  match Sol_cli_process.run_success (Sol_cli_process.cmd [ "which"; name ]) with
+  match Sol_cli_process.run (Sol_cli_process.cmd [ "which"; name ]) with
   | Ok _ -> Ok ()
   | Error _ ->
     Error
@@ -39,7 +39,7 @@ let version_gt a b =
 
 let k3d_env () =
   match
-    Sol_cli_process.run_success
+    Sol_cli_process.run
       (Sol_cli_process.cmd
          [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
@@ -93,15 +93,7 @@ let helm_install ~label release chart ~namespace ?version ?(values = []) ?values
      ; run =
          (fun () ->
            match
-             Sol_cli_process.check
-               (upgrade_install
-                  ~release
-                  ~chart
-                  ~namespace
-                  ?version
-                  ~values
-                  ?values_yaml
-                  ())
+             upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml ()
            with
            | Ok _ -> Ok ()
            | Error (Sol_cli_process.Non_zero r) ->
@@ -193,7 +185,7 @@ let values_of local component = List.assoc component local.component_values
 (* Sol's local cluster, created unless it already exists. *)
 let provision_cluster () =
   let cluster_exists =
-    Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
+    Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]))
   in
   if cluster_exists
   then (
@@ -212,7 +204,7 @@ let provision_cluster () =
     let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
       Result.is_ok
-        (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; pre_rename_cluster_name ]))
+        (Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename_cluster_name ]))
     in
     let* () =
       if pre_rename_cluster_exists
@@ -249,7 +241,7 @@ let provision_cluster () =
     (* FRIC-006: k3d's own output is the actual diagnosis (e.g. "port is already
        allocated") -- surface it instead of leaving the user to re-run k3d by hand
        to find out why. *)
-    Sol_cli_process.check create_result
+    create_result
     |> Result.map (fun _ -> ())
     |> Result.map_error (fun failure ->
       let detail =
@@ -726,7 +718,7 @@ let dev_down delete_cluster =
 let dev_status () =
   let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
   let cluster_running =
-    Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
+    Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]))
   in
   Printf.printf
     "\nCluster:  %s  %s\n"

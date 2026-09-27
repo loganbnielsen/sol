@@ -76,7 +76,7 @@ let gcp_absence_message ?project stderr =
 
 let gcp_peering_probe ~project ~network =
   match
-    Sol_cli_process.run_success
+    Sol_cli_process.run
       (Sol_cli_process.cmd
          [ "gcloud"
          ; "services"

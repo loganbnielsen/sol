@@ -469,11 +469,10 @@ let run
             | Exited n -> n
             | Signaled n -> 128 + n
           in
-          Ok
-            { Sol_cli_process.exit_code
-            ; stdout = String.trim (read "stdout")
-            ; stderr = String.trim (read "stderr")
-            }
+          Sol_cli_process.completed
+            ~exit_code
+            ~stdout:(String.trim (read "stdout"))
+            ~stderr:(String.trim (read "stderr"))
         | None ->
           Error
             (Sol_cli_process.Spawn_failed

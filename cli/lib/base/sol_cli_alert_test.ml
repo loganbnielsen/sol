@@ -38,7 +38,7 @@ type outcome =
 
 let send ~url ~body =
   match
-    Sol_cli_process.run_ok
+    Sol_cli_process.run
       (Sol_cli_process.cmd
          [ "curl"
          ; "-sS"
@@ -52,7 +52,7 @@ let send ~url ~body =
          ; url
          ])
   with
-  | Ok () -> Accepted
+  | Ok _ -> Accepted
   | Error (Sol_cli_process.Non_zero r) ->
     Rejected { exit_code = r.exit_code; stderr = String.trim r.stderr }
   | Error e -> Unreachable (Sol_cli_process.error_to_string e)

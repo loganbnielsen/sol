@@ -6,9 +6,8 @@ type cmd =
   ; redact : string list
   }
 
-type result =
-  { exit_code : int
-  ; stdout : string
+type output =
+  { stdout : string
   ; stderr : string
   }
 
@@ -22,6 +21,13 @@ type error =
   | Timeout of float
 
 let cmd ?cwd ?env ?timeout_s ?(redact = []) argv = { argv; cwd; env; timeout_s; redact }
+
+(* REFAC-124: Ok means the command succeeded, not merely that it ran. *)
+let completed ~exit_code ~stdout ~stderr =
+  if exit_code = 0
+  then Ok { stdout; stderr }
+  else Error (Non_zero { exit_code; stdout; stderr })
+;;
 
 let error_to_string = function
   | Spawn_failed msg -> Printf.sprintf "spawn failed: %s" msg
@@ -226,27 +232,14 @@ let run ?(echo = false) c =
             Error (Timeout (Option.get c.timeout_s)))
           else (
             let exit_code = status_to_exit_code (Unix.waitpid [] pid |> snd) in
-            Ok { exit_code; stdout = String.trim stdout; stderr = String.trim stderr })))
+            completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr))))
 ;;
-
-(* REFAC-116: Ok means the command succeeded, not merely that it ran. *)
-let check = function
-  | Error _ as e -> e
-  | Ok r when r.exit_code = 0 -> Ok r
-  | Ok r ->
-    Error (Non_zero { exit_code = r.exit_code; stdout = r.stdout; stderr = r.stderr })
-;;
-
-let run_success ?(echo = false) c = check (run ~echo c)
 
 let failure_output ~stdout ~stderr =
   match String.trim stderr with
   | "" -> String.trim stdout
   | e -> e
 ;;
-
-let output ?echo c = Result.map (fun r -> r.stdout) (run_success ?echo c)
-let run_ok ?echo c = Result.map ignore (run_success ?echo c)
 
 let run_shell ?(echo = false) cmd_str =
   if echo then Printf.printf "  $ %s\n%!" cmd_str;
@@ -257,7 +250,7 @@ let run_shell ?(echo = false) cmd_str =
     let stderr = In_channel.input_all ec in
     let status = Unix.close_process_full (ic, oc, ec) in
     let exit_code = status_to_exit_code status in
-    Ok { exit_code; stdout = String.trim stdout; stderr = String.trim stderr }
+    completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr)
   with
   | Unix.Unix_error (e, fn, _) ->
     Error (Spawn_failed (Printf.sprintf "%s: %s" fn (Unix.error_message e)))

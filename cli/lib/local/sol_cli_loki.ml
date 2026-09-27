@@ -216,7 +216,7 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
        failure, so connection failures and timeouts read as such rather than as
        raw curl stderr. *)
     (match
-       Sol_cli_process.run_success
+       Sol_cli_process.run
          (Sol_cli_process.cmd ~timeout_s:(timeout_s +. 2.0) ~redact argv)
      with
      | Error e -> Error (classify_process_error e)

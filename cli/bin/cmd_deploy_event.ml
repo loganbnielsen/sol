@@ -13,13 +13,12 @@ let loki_service = "loki"
    guess, since sol deploy's direct-apply mode already has cluster access. *)
 let cluster_loki_exists ~ctx () =
   Result.is_ok
-    (Sol_cli_process.check
-       (Sol_cli_kubectl.get
-          ~ctx
-          ~resource:"svc"
-          ~name:loki_service
-          ~namespace:loki_namespace
-          ~output:"name"))
+    (Sol_cli_kubectl.get
+       ~ctx
+       ~resource:"svc"
+       ~name:loki_service
+       ~namespace:loki_namespace
+       ~output:"name")
 ;;
 
 (* Mirrors cmd_migrate.ml's auto_forward_pg: spawn a temporary kubectl

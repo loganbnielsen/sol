@@ -90,7 +90,7 @@ val run
   -> key:string
   -> root:string
   -> Sol_cli_process.cmd
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** If this process was started as a supervisor ([argv.(1) = "__supervise"]),
     run the supervision and exit; otherwise return. Call it first thing in any

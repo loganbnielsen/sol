@@ -13,7 +13,7 @@ open Result.Syntax
 (* REFAC-118: the root's non-sensitive outputs, or why they could not be shown. *)
 let print_outputs infra_dir =
   match
-    Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir:infra_dir ())
+    Sol_cli_terraform.output_json ~chdir:infra_dir ()
     |> Result.map (fun r -> r.Sol_cli_process.stdout)
   with
   | Error e ->
@@ -193,7 +193,7 @@ let workspace_name = Sol_cli_workspace.current_name
    residue and are never asserted about here. *)
 let post_destroy_state ~infra_dir =
   Sol_cli_destroy_verification.state_evidence
-    (match Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir:infra_dir ()) with
+    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
      | Ok result ->
        (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
         | Sol_cli_cloud_destroy.State_empty -> Ok []
@@ -529,7 +529,7 @@ let bootstrap_access_vars ~enabled =
  * has actually failed. *)
 let served_api_kinds env =
   match
-    Sol_cli_process.run_success
+    Sol_cli_process.run
       (Sol_cli_process.cmd
          ~env
          [ "kubectl"; "api-resources"; "--verbs=delete"; "--no-headers" ])
@@ -560,7 +560,7 @@ let served_api_kinds env =
 (* The resources whose kind the cluster does not serve, each with the kind that
    proves it -- the proof travels with the decision. *)
 let unserved_manifest_resources ~served ~chdir =
-  match Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir ()) with
+  match Sol_cli_terraform.show_json ~chdir () with
   | Ok result ->
     (try
        let open Yojson.Safe.Util in
@@ -1388,7 +1388,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           then Error "platform absence verification failed after destroy"
           else Ok ()
         in
-        match Sol_cli_process.check destroy with
+        match destroy with
         | Ok _ -> verify_absent ()
         | _ ->
           (* INFRA-042. Terraform's destroy has been attempted first, in full, with
@@ -1453,7 +1453,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                     ~name:"platform-destroy-retry"
                     destroy_once
                 in
-                (match Sol_cli_process.check retry with
+                (match retry with
                  | Ok _ -> verify_absent ()
                  | _ -> terraform_outcome retry))))
     in
@@ -1477,9 +1477,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               cloud_backend)
       ; observe_state =
           (fun () ->
-            match
-              Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir:infra_dir ())
-            with
+            match Sol_cli_terraform.show_json ~chdir:infra_dir () with
             | Ok result ->
               state_ref := Sol_cli_cloud_destroy.inventory_of_show_json result.stdout;
               Ok result.stdout

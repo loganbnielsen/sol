@@ -30,10 +30,9 @@ let list ~ctx ~(workspace : string) : (Sol_cli_deployment.t list, string) result
       (Sol_cli_release.sanitize_label workspace)
   in
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in

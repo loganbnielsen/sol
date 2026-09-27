@@ -178,8 +178,8 @@ let append_phase_log t ~phase text =
 let run_phase
       t
       ~name
-      (thunk : unit -> (Sol_cli_process.result, Sol_cli_process.error) result)
-  : (Sol_cli_process.result, Sol_cli_process.error) result
+      (thunk : unit -> (Sol_cli_process.output, Sol_cli_process.error) result)
+  : (Sol_cli_process.output, Sol_cli_process.error) result
   =
   let start = Unix.gettimeofday () in
   let result = thunk () in
@@ -187,7 +187,7 @@ let run_phase
   let ok, contents =
     match result with
     | Ok r ->
-      ( Result.is_ok (Sol_cli_process.check result)
+      ( Result.is_ok result
       , phase_log_content
           ~stdout:r.Sol_cli_process.stdout
           ~stderr:r.Sol_cli_process.stderr )
