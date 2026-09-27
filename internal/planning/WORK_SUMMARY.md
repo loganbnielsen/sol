@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: UX-003 — sol new workspace names the README it generated (2026-09-27)
+
+- The scaffold's next-steps report gave the commands, the framework dependency and the CI/CD notes, but never named `README.md` — the file it had just written, and (since REFAC-143) the only place the generated Dockerfile's rationale lives. Two lines now name it after the command list.
+- The test asserts the report names README.md *and* that the file exists in the generated workspace, so the pointer cannot dangle.
+- Local note: running `test_scaffold.exe` directly (outside dune) fails two `existing_files` build cases because this switch lacks the framework packages; under dune they pass, and CI installs them. `test_destroy_completeness_check.sh` needs `python-hcl2`, which is not installed here — both are this machine, not the branch.
+
 ## Latest: REFAC-143 — no comments in dune files or Dockerfiles (2026-09-27)
 
 - The policy is now written down: `AGENTS.md` gains a *Comments: none in covered formats* section — covered formats, tool directives as the only exception, invariants to types/shared definitions/guards/tests, durable rationale to the docs or the record that owns it, user-facing explanation to the documentation that ships with the artifact, and the categories deliberately left uncovered. Finding this by failing CI (as happened on BUG-063) was the weakest possible discovery path for an agent writing code here.
