@@ -133,10 +133,9 @@ let entry_in_unit ~root ~unit_dir ~package_json =
     let out_dir =
       match read_json (Filename.concat (join root unit_dir) "tsconfig.json") with
       | Ok json ->
-        (match Yojson.Safe.Util.member "compilerOptions" json with
-         | `Assoc _ as compiler ->
-           Option.value (string_member "outDir" compiler) ~default:"dist"
-         | _ -> "dist")
+        Sol_cli_json.field [ "compilerOptions"; "outDir" ] json
+        |> Sol_cli_json.string
+        |> Option.value ~default:"dist"
       | Error _ -> "dist"
     in
     Filename.concat out_dir "index.js"

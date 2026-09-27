@@ -561,35 +561,34 @@ let served_api_kinds env =
 let unserved_manifest_resources ~served ~chdir =
   match Sol_cli_terraform.show_json ~chdir () with
   | Ok result ->
-    (try
-       let open Yojson.Safe.Util in
-       Yojson.Safe.from_string result.stdout
-       |> member "values"
-       |> member "root_module"
-       |> member "resources"
-       |> to_list
-       |> List.filter_map (fun resource ->
-         if member "type" resource <> `String "kubernetes_manifest"
-         then None
-         else (
-           let values = member "values" resource in
-           let kind =
-             match member "manifest" values |> member "kind" with
-             | `String kind when kind <> "" -> Some kind
-             | _ ->
-               (match member "object" values |> member "kind" with
-                | `String kind when kind <> "" -> Some kind
-                | _ -> None)
-           in
-           match kind, member "address" resource with
-           | Some kind, `String address when not (List.mem kind served) ->
-             Some (address, kind)
-           | _ -> None))
-       |> Result.ok
-     with
-     | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
-     | Yojson.Safe.Util.Type_error (message, _) ->
-       Error ("unexpected `terraform show -json` shape: " ^ message))
+    let text path json =
+      Sol_cli_json.field path json
+      |> Sol_cli_json.string
+      |> Fun.flip Option.bind Sol_cli_string.non_blank
+    in
+    let unserved resource =
+      if text [ "type" ] resource <> Some "kubernetes_manifest"
+      then None
+      else (
+        let kind =
+          match text [ "values"; "manifest"; "kind" ] resource with
+          | Some _ as kind -> kind
+          | None -> text [ "values"; "object"; "kind" ] resource
+        in
+        match kind, text [ "address" ] resource with
+        | Some kind, Some address when not (List.mem kind served) -> Some (address, kind)
+        | _ -> None)
+    in
+    (match Yojson.Safe.from_string result.stdout with
+     | exception Yojson.Json_error message ->
+       Error ("invalid `terraform show -json`: " ^ message)
+     | json ->
+       Sol_cli_json.require
+         ~what:"unexpected `terraform show -json` shape"
+         [ "values"; "root_module"; "resources" ]
+         Sol_cli_json.list
+         json
+       |> Result.map (List.filter_map unserved))
   | Error (Sol_cli_process.Non_zero result) ->
     Error (Printf.sprintf "terraform show exited %d" result.exit_code)
   | Error error -> Error (Sol_cli_process.error_to_string error)

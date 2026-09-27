@@ -65,24 +65,20 @@ let instance_snapshots_query ~instance ~region =
 
 (* `{"DBSnapshots":[{"DBSnapshotIdentifier":..,"SnapshotType":..,"Status":..}]}`. *)
 let snapshots_of_json stdout =
-  try
-    match Yojson.Safe.from_string stdout with
-    | `Assoc _ as document ->
-      (match Yojson.Safe.Util.member "DBSnapshots" document with
-       | `List items ->
-         Ok
-           (items
-            |> List.map (fun item ->
-              let open Yojson.Safe.Util in
-              ( member "DBSnapshotIdentifier" item |> to_string_option
-              , member "SnapshotType" item |> to_string_option
-              , member "Status" item |> to_string_option )))
-       | _ -> Error "the provider's answer carries no `DBSnapshots` array")
-    | _ -> Error "the provider's answer is not a JSON object"
-  with
-  | Yojson.Json_error message -> Error ("the provider's answer is not JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("the provider's answer has an unexpected shape: " ^ message)
+  let text key item = Sol_cli_json.field [ key ] item |> Sol_cli_json.string in
+  match Yojson.Safe.from_string stdout with
+  | exception Yojson.Json_error message ->
+    Error ("the provider's answer is not JSON: " ^ message)
+  | `Assoc _ as document ->
+    (match Sol_cli_json.field [ "DBSnapshots" ] document with
+     | `List items ->
+       Ok
+         (items
+          |> List.map (fun item ->
+            text "DBSnapshotIdentifier" item, text "SnapshotType" item, text "Status" item)
+         )
+     | _ -> Error "the provider's answer carries no `DBSnapshots` array")
+  | _ -> Error "the provider's answer is not a JSON object"
 ;;
 
 let transient_snapshot_status = function

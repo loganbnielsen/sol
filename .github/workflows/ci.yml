@@ -349,6 +349,11 @@ jobs:
       - name: Result.Syntax mutation test
         run: bash internal/ci/test_result_syntax.sh
 
+      - name: JSON is read through Sol_cli_json (REFAC-132)
+        run: bash internal/ci/check_json_decode_boundary.sh
+
+      - name: JSON-decode-boundary mutation test
+        run: bash internal/ci/test_json_decode_boundary.sh
       - name: Runtime failures are returned, not raised (REFAC-133)
         run: bash internal/ci/check_no_exception_control_flow.sh
 

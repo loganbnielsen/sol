@@ -82,7 +82,8 @@
   test_fs
   test_report
   test_sol_yml
-  test_local_run)
+  test_local_run
+  test_json)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable

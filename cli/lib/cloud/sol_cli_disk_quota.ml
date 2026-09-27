@@ -36,37 +36,33 @@ let free_gb observation = observation.limit_gb - observation.used_gb
    this quota" and "the region has none of it left" are different facts, and only one of them
    is safe to read as "not enough". *)
 let observation_of_json ?(quota = governing_quota) json : (observation, string) result =
-  let open Yojson.Safe.Util in
-  match Yojson.Safe.from_string json with
-  | exception Yojson.Json_error message ->
-    Error (Printf.sprintf "%s is not JSON: %s" quota message)
-  | parsed ->
-    let quotas =
-      try member "quotas" parsed |> to_list with
-      | Type_error _ -> []
+  let open Result.Syntax in
+  let what = quota in
+  let* parsed = Sol_cli_json.decode ~what json in
+  let quotas =
+    Sol_cli_json.field [ "quotas" ] parsed
+    |> Sol_cli_json.list
+    |> Option.value ~default:[]
+  in
+  let metric entry = Sol_cli_json.field [ "metric" ] entry |> Sol_cli_json.string in
+  match List.find_opt (fun entry -> metric entry = Some quota) quotas with
+  | None ->
+    Error
+      (Printf.sprintf
+         "the region reports no %s: the quota that governs %s is not present in this \
+          provider's response, so Sol cannot say whether the platform's volumes fit"
+         quota
+         "the platform's storage class")
+  | Some entry ->
+    (* REFAC-132: both numbers are required. A missing [usage] read as 0 used to
+       overstate the free space -- the fail-open direction for a capacity check. *)
+    let gb name =
+      Sol_cli_json.require ~what [ name ] Sol_cli_json.float entry
+      |> Result.map int_of_float
     in
-    let metric entry =
-      try member "metric" entry |> to_string with
-      | Type_error _ -> ""
-    in
-    (match List.find_opt (fun entry -> String.equal (metric entry) quota) quotas with
-     | None ->
-       Error
-         (Printf.sprintf
-            "the region reports no %s: the quota that governs %s is not present in this \
-             provider's response, so Sol cannot say whether the platform's volumes fit"
-            quota
-            "the platform's storage class")
-     | Some entry ->
-       let int_of member_name =
-         match member member_name entry with
-         | `Float value -> int_of_float value
-         | `Int value -> value
-         | `Intlit value -> int_of_string value
-         | _ -> 0
-         | exception Type_error _ -> 0
-       in
-       Ok { quota_name = quota; limit_gb = int_of "limit"; used_gb = int_of "usage" })
+    let* limit_gb = gb "limit" in
+    let* used_gb = gb "usage" in
+    Ok { quota_name = quota; limit_gb; used_gb }
 ;;
 
 let describe observation =
