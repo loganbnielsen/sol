@@ -634,13 +634,6 @@ let worktree_snapshot_of_entry = function
            qpath
            (Filename.quote upstream))
     in
-    (* BUG-063: "unpushed" means commits this checkout has that the ref does not
-       -- not "HEAD differs from the ref", which is equally true of a worktree
-       that is merely *behind* it. A worktree created before the last few merges
-       was annotated "unpushed commits" while holding nothing, which is what a
-       reader uses to decide whether a ticket has work in flight. When git cannot
-       answer at all (a missing ref, a shallow clone) this stays in the noisy
-       direction: the annotation exists to warn about work that might be lost. *)
     let commits_ahead_of ref =
       let count =
         shell_output_trim
@@ -654,9 +647,7 @@ let worktree_snapshot_of_entry = function
       | None -> true
     in
     let unpushed =
-      if upstream_rc = 0
-      then commits_ahead_of upstream
-      else commits_ahead_of "origin/main"
+      commits_ahead_of (if upstream_rc = 0 then upstream else "origin/main")
     in
     Some { ws_path = path; ws_branch = branch; ws_dirty = dirty; ws_unpushed = unpushed }
 ;;

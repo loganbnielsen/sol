@@ -203,11 +203,6 @@ let test_post_merge_action_of_rc () =
     (show (Soldev_merge.post_merge_action_of_rc 3))
 ;;
 
-(* ── the "unpushed commits" annotation (BUG-063) ─────────────────────────── *)
-
-(* A real repository, because the defect was in what git was asked: whether a
-   checkout has commits a ref does not is only answerable against refs. Each case
-   sets up (HEAD, origin/main, origin/<branch>) and asserts the annotation. *)
 let git args = Sys.command (Printf.sprintf "git %s >/dev/null 2>&1" args) = 0
 let git_ok args = check_bool (Printf.sprintf "git %s succeeds" args) true (git args)
 
@@ -240,8 +235,6 @@ let test_unpushed_annotation_asks_git () =
     git_ok "commit -qm b";
     let b = rev_parse "HEAD" in
     check_bool "ahead of origin/main is unpushed" true (unpushed_of "work");
-    (* The regression this ticket is about: origin/main moves past HEAD, so the
-       shas differ while there is nothing to push. *)
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/main %s" b);
     git_ok (Printf.sprintf "checkout -q -B work %s" a);
     check_bool "behind origin/main is not unpushed" false (unpushed_of "work");
@@ -249,12 +242,9 @@ let test_unpushed_annotation_asks_git () =
     check_bool "equal to its upstream is not unpushed" false (unpushed_of "work");
     git_ok (Printf.sprintf "checkout -q -B work %s" b);
     check_bool "ahead of its upstream is unpushed" true (unpushed_of "work");
-    (* The same wrong direction on the upstream branch: behind it, not ahead. *)
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/work %s" b);
     git_ok (Printf.sprintf "checkout -q -B work %s" a);
     check_bool "behind its upstream is not unpushed" false (unpushed_of "work");
-    (* A ref git cannot resolve stays in the noisy direction rather than reading
-       as clean: the annotation exists to warn about work that might be lost. *)
     git_ok "update-ref -d refs/remotes/origin/main";
     git_ok "update-ref -d refs/remotes/origin/work";
     check_bool "an unresolvable ref stays unpushed" true (unpushed_of "work"))
