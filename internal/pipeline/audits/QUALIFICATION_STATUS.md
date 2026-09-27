@@ -777,3 +777,16 @@ The next authorized live run is a fresh target whose discriminator is: the quota
 the numbers printed, the observability PVCs bind, loki and the monitoring stack become ready, and the
 install continues toward `Ready` and Ready-state destruction. The run also captures the provisioner
 bindings on success, closing FND-0061's last inference.
+
+## INFRA-091 landed — the Terraform output contract, offline only (2026-09-26)
+
+`FND-0063` is `FIXED_UNQUALIFIED`. The project id is read through `Sol_cli_cluster.outputs_reader`
+(the reader every other output already uses), the regression fixture is a real
+`terraform output -json` payload built from Attempt 13's captured state, and the lifecycle harness
+renders that fixture instead of declaring a shape of its own. `verify_bundle` is phase-aware, so a
+supported pre-platform stop is a complete bundle — Attempt 13's evidence was complete for where it
+stopped.
+
+**Nothing here is QUALIFIED.** No live run has crossed the fixed parser. The next authorized GCP
+attempt is the discriminator, and it is the first run in this program that would exercise
+`Ready` and Ready-state destruction if the platform installs.

@@ -8,6 +8,9 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/qualification_assertions.sh"
 
 root="$(git rev-parse --show-toplevel)"
+# The stubs run as subprocesses, so the fixture's location has to be in their environment: the
+# fake terraform renders Terraform's own output payload from it (INFRA-091).
+export REPO_ROOT="$root"
 sol="$(realpath "${1:-$root/_build/default/cli/bin/main.exe}")"
 tmp="$(mktemp -d)"
 # DEC-040: a green exit code must not be able to mean a fixture is corrupt. If a splice
@@ -115,9 +118,20 @@ case "$*" in
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
     case " $* " in
       *cloud/gcp/cluster*)
-        cat <<'JSON'
-{"cluster_name":{"value":"sol-qual"},"project_id":{"value":"sol-qualification"},"region":{"value":"us-central1"},"artifact_registry":{"value":"us-central1-docker.pkg.dev/sol-qualification/sol-qual"},"provisioner_service_account":{"value":"sol-qual-provisioner@sol-qualification.iam.gserviceaccount.com"}}
-JSON
+        # INFRA-091 / FND-0063: Terraform's own payload shape, rendered from the fixture that GCP
+        # qualification Attempt 13's captured state produced -- not a shape invented here. The
+        # stub used to serve `{"project_id":{"value":...}}`, and the parser accepted exactly that,
+        # so the stub and the product were wrong together: this scenario stayed green while every
+        # real run stopped at the parser. The fixture is checked by
+        # internal/ci/check_terraform_output_fixture.sh, which also forbids the invented shape
+        # from reappearing in this file.
+        if [ "${OUTPUT_NO_PROJECT:-}" = 1 ]; then
+          # Terraform's record shape, minus project_id: an output set that does not carry it.
+          printf '{"cluster_name":{"sensitive":false,"type":"string","value":"sol-qual"}}\n'
+          exit 0
+        fi
+        sed -e 's#sol-qual-gcp-13#sol-qual#g' \
+          "$REPO_ROOT/cli/test/fixtures/terraform-output-gcp-cloud.json"
         exit 0
         ;;
     esac
@@ -1730,6 +1744,30 @@ if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
   exit 1
 fi
 
+# INFRA-091 / FND-0063: the parser boundary is crossed before the quota is read, so an output
+# set that does not carry project_id in Terraform's shape must refuse *there* -- not silently
+# proceed with an unknown project, and not reach the provider at all.
+no_project_log="$tmp/gcp-no-project.log"
+rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && OUTPUT_NO_PROJECT=1 LIFECYCLE_LOG="$no_project_log" \
+      "$sol" cloud apply prod/gcp/us-central1) >"$no_project_log.out" 2>&1
+then
+  cat "$no_project_log.out" >&2
+  echo "GCP apply succeeded although the cloud root published no project_id" >&2
+  exit 1
+fi
+grep -F 'GCP Terraform output "project_id" is missing or not a string' "$no_project_log.out" \
+  >/dev/null || {
+  echo "the missing project_id was not the reason the apply stopped:" >&2
+  cat "$no_project_log.out" >&2
+  exit 1
+}
+if grep -qF 'compute regions describe' "$no_project_log"; then
+  echo "the quota was read although the project was never parsed:" >&2
+  grep -nF 'compute regions describe' "$no_project_log" >&2
+  exit 1
+fi
+
 # INFRA-090 / FND-0062: an exhausted disk quota is a refusal, and it happens after the
 # substrate is ready and before anything is installed -- no cluster access is even attempted,
 # because nothing needs it to know that the platform's volumes cannot exist. Attempt 12
@@ -1743,6 +1781,19 @@ then
   echo "GCP apply succeeded although the region's disk quota was exhausted" >&2
   exit 1
 fi
+# The refusal can only be reached through the parser: `terraform output` -> project_id parsed ->
+# the region read -> the policy. If the stub's payload and the parser disagreed, this scenario
+# would stop earlier with "the cloud root published no project_id" and fail here instead.
+if grep -qF 'is missing or not a string' "$quota_log.out"; then
+  echo "the quota scenario never crossed the parser: the stub's payload was not accepted" >&2
+  cat "$quota_log.out" >&2
+  exit 1
+fi
+grep -F 'compute regions describe' "$quota_log" >/dev/null || {
+  echo "the quota scenario refused without ever reading the provider's quota:" >&2
+  cat "$quota_log" >&2
+  exit 1
+}
 grep -F 'SSD_TOTAL_GB 500/500' "$quota_log.out" >/dev/null || {
   echo "the refusal did not name the observed quota and its usage:" >&2
   cat "$quota_log.out" >&2
