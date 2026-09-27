@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-063 — `pipeline ls` asks git for commits, not shas (2026-09-27)
+
+- `worktree_snapshot_of_entry` reported "unpushed commits" whenever HEAD differed from the branch's upstream sha (or from `origin/main` when it has none), which is equally true of a worktree that is merely *behind* -- the ordinary state of one created before the last few merges. Found while resolving BUG-056, whose spent worktree was annotated that way while holding 0 commits ahead of main.
+- It now asks `git rev-list --count <ref>..HEAD`: zero is clean whatever the shas are, and an unreadable count stays in the noisy direction because the flag exists to warn about work that might be lost. Squash-merged commits still read as unpushed, the same signal `git log main..HEAD` gives.
+- `internal/tooling/soldev/test/test_merge.ml` covers it against a real repository in a temp dir -- seven assertions across behind/ahead of `origin/main` and of the branch's own upstream, plus an unresolvable ref -- and the test fails at `behind origin/main is not unpushed` when the old comparison is restored.
+
 ## Latest: BUG-056 — `sol up` plans from the same declared facts `sol deploy` does (2026-09-27)
 
 - The divergence: `local_plan` called `of_services_result` with no declared configuration at all, while `sol deploy` passed its resolved `sol.yml`. Visible in rendered output from a copy of pluto — `charge-svc`/`checkout-svc` (declared OCaml) was probed on `/healthz` locally and `/readyz` against a target — and it was the cause of the TypeScript golden path's readiness failure INFRA-073 worked around.
