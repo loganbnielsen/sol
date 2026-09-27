@@ -6,6 +6,13 @@
 - The test asserts the report names README.md *and* that the file exists in the generated workspace, so the pointer cannot dangle.
 - Local note: running `test_scaffold.exe` directly (outside dune) fails two `existing_files` build cases because this switch lacks the framework packages; under dune they pass, and CI installs them. `test_destroy_completeness_check.sh` needs `python-hcl2`, which is not installed here — both are this machine, not the branch.
 
+## Latest: BUG-064 — the unconditional guards get their tooling without the product build (2026-09-27)
+
+- The `test` job's toolchain prefix is gated `!= 'docs-only'` and the guards below it are deliberately unconditional (a ticket-only change is what several of them check), so a docs-only PR failed the required check with the build skipped: `[FAIL] soldev is not built`. A second instance was latent behind it — `check_readiness_invocations.sh` requires kubectl, whose install step was gated.
+- The toolchain steps that the guards' tooling needs (system deps, the OCaml switch, the opam cache, the pin action) are unconditional, a new unconditional step installs `--deps-only ./sol.opam` and builds exactly the three targets the guards invoke (`soldev`, the CLI, `print_providers`), and the pinned kubectl install is unconditional too. On a change that already ran the full build the new step rebuilds nothing.
+- `internal/ci/check_unconditional_guard_tooling.py` asserts the invariant, derived from the workflow rather than hard-coded: every unconditional step whose reached scripts need an artifact or require a tool has an earlier unconditional step that provides it. Its six-case mutation test caught two false negatives in the guard's own first version (an exemption for the ticket guard, and treating a mention of a tool as installing it).
+- Local contract: `bash internal/tooling/scripts/prepare-guard-tools.sh` installs the pinned Python guard deps (with a PEP 668 fallback this machine needed) and pinned shfmt, the same way CI does; CONTRIBUTING and AGENTS.md name it. All 77 `internal/ci` guards and mutation tests pass locally afterwards.
+
 ## Latest: REFAC-143 — no comments in dune files or Dockerfiles (2026-09-27)
 
 - The policy is now written down: `AGENTS.md` gains a *Comments: none in covered formats* section — covered formats, tool directives as the only exception, invariants to types/shared definitions/guards/tests, durable rationale to the docs or the record that owns it, user-facing explanation to the documentation that ships with the artifact, and the categories deliberately left uncovered. Finding this by failing CI (as happened on BUG-063) was the weakest possible discovery path for an agent writing code here.
