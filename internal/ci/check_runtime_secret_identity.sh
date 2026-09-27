@@ -10,7 +10,7 @@
 #
 # Both halves are rendered assertions (cli/test/test_runtime_secret_identity.ml):
 # the substrate's Secret, and -- since REFAC-131 moved the migration Job's builder
-# into the library -- the Job's secretRef. What this adds is that the code paths
+# into the library, and REFAC-139 the runner that submits it, -- the Job's secretRef. What this adds is that the code paths
 # the binary runs are the ones those tests render: the substrate names the Secret
 # from the shared constant, and `sol migrate` renders its Job through the tested
 # builder rather than a template of its own.
@@ -18,7 +18,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 substrate="$root/cli/lib/deploy/sol_cli_substrate.ml"
-migrate="$root/cli/bin/cmd_migrate.ml"
+migrate="$root/cli/lib/deploy/sol_cli_migration_job.ml"
 manifest="$root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
 
 fail=0
@@ -38,7 +38,7 @@ require "the substrate does not name the runtime Secret from the shared constant
 
 # The consumer renders its Job through the tested builder, whose secretRef is that
 # same constant, so the two cannot diverge.
-require "sol migrate does not render its Job through Sol_cli_manifest.migration_job_doc" \
+require "the migration Job runner does not render its Job through Sol_cli_manifest.migration_job_doc" \
   "$migrate" 'Sol_cli_manifest\.migration_job_doc'
 require "the migration Job builder does not reference the shared runtime Secret" \
   "$manifest" '"secretRef", Y\.map \[ "name", Y\.string runtime_secret_name \]'

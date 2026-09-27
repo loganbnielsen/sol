@@ -72,7 +72,7 @@ let component_checks assets =
 let runner_check () =
   check
     "migration runner"
-    (Cmd_migrate.runner_source ()
+    (Sol_cli_migration_job.runner_source ()
      |> Result.map (function
        | A.Published image -> image ^ " (published)"
        | A.Build_from_source { context } -> "built from " ^ context))
