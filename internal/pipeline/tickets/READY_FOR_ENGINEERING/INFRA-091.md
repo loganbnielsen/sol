@@ -22,6 +22,10 @@ harness stub shared the parser's assumption, so all three agreed with each other
 Terraform. See `FND-0063` and the run record
 `internal/qualification/records/2026-09-26-gcp-attempt13-infra090-outputs-shape.md`.
 
+## Status
+
+Promoted on 2026-09-26 with the fix's shape established by the failure itself.
+
 ## Remediation
 
 1. Parse `value` out of the output wrapper (the documented shape); the bare-string case is not a
