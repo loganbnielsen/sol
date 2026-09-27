@@ -10,7 +10,7 @@ module Message = struct
     | Some (`String value) -> Ok value
     | Some _              -> Error (name ^ " must be a string")
     | None                -> Error (name ^ " is required")
-  let ( let* ) = Result.bind
+  open Result.Syntax
   let decode = function
     | `Assoc fields ->
       let* id = required_string fields "id" in

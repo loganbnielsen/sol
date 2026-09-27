@@ -298,7 +298,7 @@ let consume
       ~handler
       ()
   =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let config_error msg =
     Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg)
   in

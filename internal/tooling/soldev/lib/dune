@@ -1,5 +1,5 @@
 (library
  (name soldev_lib)
  (wrapped false)
- (libraries sol_process yojson)
- (modules Soldev_shell Soldev_ticket Soldev_merge))
+ (libraries sol_process yojson yaml)
+ (modules Soldev_exit Soldev_shell Soldev_ticket Soldev_merge))

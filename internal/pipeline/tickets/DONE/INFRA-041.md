@@ -3,8 +3,7 @@ id: INFRA-041
 type: bug
 severity: medium
 title: DEC-033's retention never reaches the destroy, so a disposable target still retains
-source: HARDEN Run 6 / Attempt 6 — destroy_retention: none was ignored and the
-  operator deleted the snapshot by hand, which is what DEC-033 existed to remove
+source: "HARDEN Run 6 / Attempt 6 — destroy_retention: none was ignored and the operator deleted the snapshot by hand, which is what DEC-033 existed to remove"
 ---
 
 **Related:** DEC-033 (the feature this completes), ADR 0004 (retention semantics),

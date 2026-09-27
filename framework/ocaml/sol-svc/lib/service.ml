@@ -64,7 +64,7 @@ let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
 
 (* ── Dispatch ──────────────────────────────────────────────────────────── *)
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let auth_result ?read_api_key ?fetch_jwks auth_cfg headers =
   match Auth_internal.validate ?read_api_key ?fetch_jwks auth_cfg headers with
@@ -280,7 +280,7 @@ let refuse_unverified_jwt routes metrics_auth =
     auth_is_unverified_jwt metrics_auth
     || List.exists (fun route -> auth_is_unverified_jwt route.Route.auth) routes
   in
-  if used && Sys.getenv_opt unverified_jwt_opt_in <> Some "1"
+  if used && Sol_runtime.setting unverified_jwt_opt_in <> Some "1"
   then
     Error
       (`Config
@@ -329,14 +329,8 @@ let refuse_non_https_jwks routes metrics_auth =
              url))
 ;;
 
-let env_nonempty name =
-  match Sys.getenv_opt name with
-  | Some value when String.trim value <> "" -> Some value
-  | _ -> None
-;;
-
 let api_key_reader ~env ~required =
-  match env_nonempty "SOL_API_KEY_FILE", env_nonempty "SOL_API_KEY" with
+  match Sol_runtime.setting "SOL_API_KEY_FILE", Sol_runtime.setting "SOL_API_KEY" with
   | Some path, _ ->
     (try
        let key = String.trim (Eio.Path.load Eio.Path.(env#fs / path)) in
@@ -350,9 +344,7 @@ let api_key_reader ~env ~required =
        Error
          (`Config
              ("could not read SOL_API_KEY_FILE " ^ path ^ ": " ^ Printexc.to_string exn)))
-  | None, Some key when String.trim key <> "" ->
-    let key = String.trim key in
-    Ok (fun () -> Some key)
+  | None, Some key -> Ok (fun () -> Some key)
   | None, _ when required ->
     Error (`Config "API key auth configured but SOL_API_KEY/SOL_API_KEY_FILE is not set")
   | None, _ -> Ok (fun () -> None)
@@ -379,11 +371,11 @@ module Make (H : HANDLER) = struct
        error. Falling back to the default made the service listen somewhere the
        Service and its probes do not point, with nothing naming the bad value. *)
     let* port =
-      (* Set-but-empty is treated as unset, like every other variable here. *)
-      match env_nonempty "PORT" with
+      (* Set-but-blank is treated as unset, like every other setting. *)
+      match Sol_runtime.setting "PORT" with
       | None -> Ok port
       | Some raw ->
-        (match int_of_string_opt (String.trim raw) with
+        (match int_of_string_opt raw with
          | Some p when p >= 0 && p <= 65535 -> Ok p
          | _ ->
            Error (`Config (Printf.sprintf "PORT=%S is not a port number (0-65535)" raw)))

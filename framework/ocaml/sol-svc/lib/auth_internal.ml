@@ -66,7 +66,7 @@ let token_scopes json =
   | _ -> []
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 type jwt_parts =
   { header_b64 : string
