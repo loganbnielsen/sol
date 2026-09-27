@@ -50,7 +50,25 @@ trap cleanup EXIT
 pass=0
 fail=0
 ok() { printf '  [OK]   %s\n' "$1"; pass=$((pass + 1)); }
-no() { printf '  [FAIL] %s\n           expected: %s\n           actual:   %s\n' "$1" "$2" "$3"; fail=$((fail + 1)); }
+# On the first failure in a case, show the harness's own output for it. Every case's output is
+# captured to $TMP/<name>.out and was never printed, so a failing case in CI reported only that it
+# failed -- which is how a one-line refusal message cost a whole debugging round trip.
+dump_case_output() {
+  local case_name="${CURRENT_CASE:-}"
+  case "${DUMPED:-} ${case_name}" in
+    *" $case_name"*) return 0 ;;
+  esac
+  DUMPED="${DUMPED:-} $case_name"
+  if [ -n "$case_name" ] && [ -s "$TMP/$case_name.out" ]; then
+    printf '           --- %s output (last 12 lines) ---\n' "$case_name"
+    tail -12 "$TMP/$case_name.out" | sed 's/^/           /'
+  fi
+}
+no() {
+  printf '  [FAIL] %s\n           expected: %s\n           actual:   %s\n' "$1" "$2" "$3"
+  fail=$((fail + 1))
+  dump_case_output
+}
 is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "$3" "$2"; fi; }
 has() { if grep -qF -- "$2" "$3"; then ok "$1"; else no "$1" "contains: $2" "$(tr '\n' '|' <"$3" | cut -c1-160)"; fi; }
 lacks() { if grep -qF -- "$2" "$3"; then no "$1" "absent: $2" "present"; else ok "$1"; fi; }
@@ -322,6 +340,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   shift 2
   export ARGV_LOG="$TMP/$name.argv"
   export API_PROBE_LOG="$TMP/$name.probe.argv"
+  CURRENT_CASE="$name"
   export LOG_DIR="$TMP/$name.logs"
   # Scratch workspace: the harness writes the target file into it, so the repository is never
   # touched and "nothing was left behind" is an assertion about scratch, not a hope.
