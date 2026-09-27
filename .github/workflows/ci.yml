@@ -201,7 +201,9 @@ jobs:
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_platform_component_drift.sh
+        run: |
+          python3 internal/ci/check_platform_component_drift.py
+          python3 internal/ci/test_platform_component_drift.py
 
       - name: cert-manager readiness contract (FND-0010)
         # Every GCP attempt failed the platform apply on cert-manager's post-install
@@ -233,8 +235,8 @@ jobs:
         # floor, so this pins the parts to the module's own declarations.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_platform_storage_requirement.sh .
-          internal/ci/test_platform_storage_requirement_check.sh
+          python3 internal/ci/check_platform_storage_requirement.py .
+          python3 internal/ci/test_platform_storage_requirement_check.py
 
       - name: GCP substrate (INFRA-093)
         # FND-0064: the GCP driver provisions GKE Standard. The guard holds the product contract --
@@ -252,8 +254,8 @@ jobs:
         # Terraform itself produced and forbids the invented shape from returning.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_terraform_output_fixture.sh .
-          internal/ci/test_terraform_output_fixture_check.sh
+          python3 internal/ci/check_terraform_output_fixture.py .
+          python3 internal/ci/test_terraform_output_fixture_check.py
 
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
@@ -318,7 +320,7 @@ jobs:
       - name: Workflow paths-filter guard (REFAC-099)
         # Unconditional: a stale `paths:` entry makes its workflow stop triggering
         # silently, and the change that stales it can be any kind of move.
-        run: bash internal/ci/check_workflow_paths.sh
+        run: python3 internal/ci/check_workflow_paths.py
 
       - name: Workflow paths-filter guard mutation test
         run: bash internal/ci/test_workflow_paths.sh
@@ -393,11 +395,11 @@ jobs:
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.
-        run: internal/ci/check_framework_doc_signatures.sh
+        run: python3 internal/ci/check_framework_doc_signatures.py
 
       - name: Framework spec signature guard mutation test
         # Python 3 is what the guard uses to parse declarations; the runner has it.
-        run: bash internal/ci/test_framework_doc_signatures.sh
+        run: python3 internal/ci/test_framework_doc_signatures.py
 
       - name: Worktree/authority preflight (REFAC-090)
         # Cheap and offline, and deliberately unconditional: the semantics it
@@ -491,7 +493,7 @@ jobs:
       # DEC-039: the qualification transport is harness-only. No production root may
       # reference it, and it may not carry a verb beyond transport and addressing.
       - name: Qualification transport boundary (DEC-039 / INFRA-060)
-        run: internal/ci/check_qualification_transport.sh
+        run: python3 internal/ci/check_qualification_transport.py
       - name: Qualification transport guard mutation test (INFRA-060)
         run: internal/ci/test_qualification_transport_check.sh
 

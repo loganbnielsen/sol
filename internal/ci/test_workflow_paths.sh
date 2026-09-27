@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHECK="$ROOT/internal/ci/check_workflow_paths.sh"
+CHECK="$ROOT/internal/ci/check_workflow_paths.py"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -31,7 +31,7 @@ pass() {
   shift
   mkrepo
   workflow "$@"
-  if ! "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
+  if ! python3 "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
     echo "  [FAIL] $name"
     exit 1
   fi
@@ -43,7 +43,7 @@ fail() {
   shift
   mkrepo
   workflow "$@"
-  if "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
+  if python3 "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
     echo "  [FAIL] $name"
     exit 1
   fi
@@ -76,7 +76,7 @@ EOF
   git -C "$tmp/repo" add -A
   git -C "$tmp/repo" -c user.email=t@t -c user.name=t commit -qm script
   local rc=0
-  "$CHECK" "$tmp/repo" >/dev/null 2>&1 || rc=$?
+  python3 "$CHECK" "$tmp/repo" >/dev/null 2>&1 || rc=$?
   case "$expect" in
     fail) [ "$rc" -ne 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
     pass) [ "$rc" -eq 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
@@ -100,7 +100,7 @@ echo 'echo hi' >"$tmp/repo/internal/ci/guard.sh"
 chmod 644 "$tmp/repo/internal/ci/guard.sh"
 git -C "$tmp/repo" add -A
 git -C "$tmp/repo" -c user.email=t@t -c user.name=t commit -qm sourced
-if "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
+if python3 "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
   echo "  [OK]   a script invoked through bash needs no executable bit"
 else
   echo "  [FAIL] a script invoked through bash needs no executable bit"
@@ -123,7 +123,7 @@ EOF
   git -C "$tmp/repo" add -A
   git -C "$tmp/repo" -c user.email=t@t -c user.name=t commit -qm tool
   local rc=0
-  "$CHECK" "$tmp/repo" >/dev/null 2>&1 || rc=$?
+  python3 "$CHECK" "$tmp/repo" >/dev/null 2>&1 || rc=$?
   case "$expect" in
     fail) [ "$rc" -ne 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
     pass) [ "$rc" -eq 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
@@ -135,5 +135,5 @@ tool_case "a CI-invoked script that calls rg" 'rg -n pattern file' fail
 tool_case "a CI-invoked script that calls grep" 'grep -n pattern file' pass
 tool_case "a CI-invoked script that merely mentions rg in a word" 'echo argos' pass
 
-"$CHECK" "$ROOT" >/dev/null
+python3 "$CHECK" "$ROOT" >/dev/null
 echo "  [OK]   the repository's own workflows"
