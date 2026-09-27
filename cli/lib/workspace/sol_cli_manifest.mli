@@ -272,8 +272,6 @@ val migration_job_doc
   -> configmap_name:string
   -> Sol_cli_yaml.document
 
-val write_tmp : string -> string
-
 (** INFRA-048: establishes an object with [kubectl create], treating
     "AlreadyExists" as success. This is how a Sol-created namespace is
     established: the deploy identity's bootstrap grant is deliberately
@@ -291,4 +289,9 @@ val apply
   -> dry_run:bool
   -> (unit, string) result
 
-val emit_to_dir : string -> string * string -> ns:string -> name:string -> string
+val emit_to_dir
+  :  string
+  -> string * string
+  -> ns:string
+  -> name:string
+  -> (string, string) result

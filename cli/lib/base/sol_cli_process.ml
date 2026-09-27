@@ -238,6 +238,45 @@ let run ?(echo = false) c =
             completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr))))
 ;;
 
+type background = { pid : int }
+
+let spawn ?output c =
+  match c.argv with
+  | [] -> Error (Spawn_failed "empty argv")
+  | prog :: _ ->
+    let env_arr =
+      match c.env with
+      | None -> Unix.environment ()
+      | Some extras -> merge_env extras
+    in
+    let devnull_in = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
+    let out, close_out_fd =
+      match output with
+      | Some fd -> fd, false
+      | None -> Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0, true
+    in
+    let spawned =
+      match
+        Unix.create_process_env prog (Array.of_list c.argv) env_arr devnull_in out out
+      with
+      | pid -> Ok { pid }
+      | exception Unix.Unix_error (e, fn, _) ->
+        Error (Spawn_failed (Printf.sprintf "%s: %s" fn (Unix.error_message e)))
+    in
+    close_noerr devnull_in;
+    if close_out_fd then close_noerr out;
+    spawned
+;;
+
+let pid { pid } = pid
+
+let stop { pid } =
+  (try Unix.kill pid Sys.sigterm with
+   | Unix.Unix_error _ -> ());
+  try ignore (Unix.waitpid [ Unix.WNOHANG ] pid) with
+  | Unix.Unix_error _ -> ()
+;;
+
 let failure_message { exit_code; stdout; stderr } =
   match String.trim stderr, String.trim stdout with
   | "", "" -> Printf.sprintf "exited with code %d" exit_code

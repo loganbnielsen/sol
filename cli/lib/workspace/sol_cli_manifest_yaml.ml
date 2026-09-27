@@ -1,4 +1,4 @@
-(* Pure manifest builders -- no Sys.command, open_out, or Sys.readdir. Every
+(* Pure manifest builders -- no processes, open_out, or Sys.readdir. Every
    manifest is a [Sol_cli_yaml] value, rendered once by the caller (REFAC-131);
    no YAML is assembled from text here. *)
 

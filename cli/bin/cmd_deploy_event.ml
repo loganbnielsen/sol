@@ -31,86 +31,26 @@ let cluster_loki_exists ~ctx () =
    deploy). *)
 let auto_forward_loki ~ctx () =
   Printf.eprintf "Forwarding loki (cluster) -> localhost:%d ...\n%!" loki_local_port;
-  let devnull_w = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
-  let context_name = ctx.Sol_cli_kube_destination.destination.context in
-  (* FEAT-063: the temporary forward is scoped like every other invocation --
-     [--context] in the argv and the destination's [KUBECONFIG] in the child env
-     ([create_process_env], since this path does not go through the adapter). *)
   match
-    Unix.create_process_env
-      "kubectl"
-      [| "kubectl"
-       ; "--context"
-       ; context_name
-       ; "port-forward"
-       ; Printf.sprintf "svc/%s" loki_service
-       ; "-n"
-       ; loki_namespace
-       ; Printf.sprintf "%d:%d" loki_local_port loki_remote_port
-      |]
-      (Sol_cli_kube_destination.child_environment ctx)
-      Unix.stdin
-      devnull_w
-      devnull_w
+    Sol_cli_kubectl.temporary_port_forward
+      ~ctx
+      ~service:loki_service
+      ~namespace:loki_namespace
+      ~local_port:loki_local_port
+      ~remote_port:loki_remote_port
   with
-  | exception Unix.Unix_error (e, fn, _) ->
-    Unix.close devnull_w;
+  | Ok () -> Some (Printf.sprintf "http://localhost:%d" loki_local_port)
+  | Error (Not_started e) ->
     Printf.eprintf
-      "warning: could not start kubectl port-forward for loki: %s: %s\n%!"
-      fn
-      (Unix.error_message e);
+      "warning: could not start kubectl port-forward for loki: %s\n%!"
+      (Sol_cli_process.error_to_string e);
     None
-  | pid ->
-    Unix.close devnull_w;
-    at_exit (fun () ->
-      (try Unix.kill pid Sys.sigterm with
-       | _ -> ());
-      try ignore (Unix.waitpid [ Unix.WNOHANG ] pid) with
-      | _ -> ());
-    let is_not_listening_yet = function
-      | Unix.ECONNREFUSED
-      | Unix.ETIMEDOUT
-      | Unix.ENETUNREACH
-      | Unix.EHOSTUNREACH
-      | Unix.ECONNRESET -> true
-      | _ -> false
-    in
-    let check_connect () =
-      match Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 with
-      | exception Unix.Unix_error (e, fn, _) ->
-        `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
-      | s ->
-        let addr = Unix.ADDR_INET (Unix.inet_addr_loopback, loki_local_port) in
-        (match Unix.connect s addr with
-         | () ->
-           Unix.close s;
-           `Ready
-         | exception Unix.Unix_error (e, _, _) when is_not_listening_yet e ->
-           Unix.close s;
-           `Not_listening_yet
-         | exception Unix.Unix_error (e, fn, _) ->
-           Unix.close s;
-           `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
-         | exception exn ->
-           Unix.close s;
-           `Failed (Printexc.to_string exn))
-    in
-    let rec wait n =
-      if n = 0
-      then (
-        Printf.eprintf "warning: loki port-forward did not become ready in time\n%!";
-        false)
-      else (
-        match check_connect () with
-        | `Ready -> true
-        | `Not_listening_yet ->
-          Unix.sleepf 0.5;
-          wait (n - 1)
-        | `Failed msg ->
-          Printf.eprintf "warning: loki port-forward readiness check failed: %s\n%!" msg;
-          false)
-    in
-    if wait 10 then Some (Printf.sprintf "http://localhost:%d" loki_local_port) else None
+  | Error Not_ready ->
+    Printf.eprintf "warning: loki port-forward did not become ready in time\n%!";
+    None
+  | Error (Readiness_check_failed msg) ->
+    Printf.eprintf "warning: loki port-forward readiness check failed: %s\n%!" msg;
+    None
 ;;
 
 (* Resolves Sol_cli_deploy_event.resolve_push_url's decision into an actual

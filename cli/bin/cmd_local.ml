@@ -110,15 +110,11 @@ let run_local_infra_installs () =
 ;;
 
 let apply_yaml yaml =
-  let tmp = Sol_cli_manifest.write_tmp yaml in
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove tmp with
-      | _ -> ())
-    (fun () ->
-       Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp
-       |> Result.map_error (fun e ->
-         Sol_cli_exit.error ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e)))
+  Sol_cli_fs.with_temp_file ~prefix:"sol-local-" ~suffix:".yaml" yaml (fun file ->
+    Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file
+    |> Result.map_error Sol_cli_process.error_to_string)
+  |> Result.join
+  |> Result.map_error (fun msg -> Sol_cli_exit.error ("kubectl apply failed: " ^ msg))
 ;;
 
 let install_local_grafana_config ~dashboards ~prometheus ~tempo =
@@ -531,7 +527,7 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
 ;;
 
 let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
-  ignore (Sys.command "sleep 2");
+  Unix.sleepf 2.;
   (* brief pause for service endpoints to settle *)
   let pf pf_spec =
     Printf.printf
@@ -671,7 +667,7 @@ let print_summary ~(req : Sol_cli_workspace.infra_requirements) =
 
 let dev_up () =
   let* () = require_tools () in
-  Sol_cli_state.ensure ();
+  let* () = Sol_cli_state.ensure () |> Result.map_error Sol_cli_exit.error in
   (* Kill stale port-forwards from previous sessions, else re-running after a
      crash silently fails to bind ports while reporting success. *)
   Sol_cli_port_forward.stop_all ();
@@ -771,25 +767,6 @@ let dev_env_vars =
   ]
 ;;
 
-(** [dev_env_vars] merged on top of the current environment, overriding any
-    matching keys so every service reaches the local broker/database. *)
-let build_env () =
-  let current = Unix.environment () in
-  let dev_keys = List.map fst dev_env_vars in
-  let filtered =
-    Array.to_list current
-    |> List.filter (fun entry ->
-      let key =
-        match String.index_opt entry '=' with
-        | Some i -> String.sub entry 0 i
-        | None -> entry
-      in
-      not (List.mem key dev_keys))
-  in
-  let extras = List.map (fun (k, v) -> k ^ "=" ^ v) dev_env_vars in
-  Array.of_list (filtered @ extras)
-;;
-
 (** Read lines from [fd] and write them to stdout, prefixed with [label].
     Returns when EOF is reached (the child process closed the pipe end). *)
 let prefix_lines_thread fd label =
@@ -851,42 +828,37 @@ let dev_run workspace_dir scope =
       (String.concat " " (List.map Filename.quote build_targets))
   in
   let* () =
-    match Sys.command build_cmd with
-    | 0 -> Ok ()
-    | rc -> Error (Sol_cli_exit.error (Printf.sprintf "dune build failed (exit %d)" rc))
+    Sol_cli_process.run_shell build_cmd
+    |> Result.map ignore
+    |> Result.map_error (fun e ->
+      Sol_cli_exit.error ("dune build failed: " ^ Sol_cli_process.error_to_string e))
   in
   Printf.printf "  Build done.\n\n%!";
-  let env = build_env () in
-  (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
+  (* Run the pre-built executable directly, avoiding dune exec lock contention.
+     REFAC-134: spawned through Sol_cli_process, with the dev settings merged over
+     the environment. *)
   let children =
     services
     |> List.filter_map (fun svc ->
       let label = svc.domain ^ "/" ^ svc.name in
       let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
-      let cmd_str = Filename.quote exe_path in
       let pipe_read, pipe_write = Unix.pipe () in
-      try
-        let pid =
-          Unix.create_process_env
-            "sh"
-            [| "sh"; "-c"; cmd_str |]
-            env
-            Unix.stdin
-            pipe_write
-            pipe_write
-        in
-        Unix.close pipe_write;
+      let spawned =
+        Sol_cli_process.spawn
+          ~output:pipe_write
+          (Sol_cli_process.cmd ~env:dev_env_vars [ exe_path ])
+      in
+      Unix.close pipe_write;
+      match spawned with
+      | Ok child ->
         let _t = Thread.create (fun () -> prefix_lines_thread pipe_read label) () in
-        Some { pid; label }
-      with
-      | Unix.Unix_error (e, fn, _) ->
+        Some { pid = Sol_cli_process.pid child; label }
+      | Error e ->
         Unix.close pipe_read;
-        Unix.close pipe_write;
         Printf.eprintf
-          "error: failed to spawn [%s]: %s in %s\n"
+          "error: failed to spawn [%s]: %s\n"
           label
-          (Unix.error_message e)
-          fn;
+          (Sol_cli_process.error_to_string e);
         None)
   in
   let* children =

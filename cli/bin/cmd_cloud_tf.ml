@@ -752,11 +752,7 @@ let apply_deps
      first, and what is applied is the plan that was read. *)
   let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
   let discard_plan () =
-    List.iter
-      (fun f ->
-         try Sys.remove f with
-         | Sys_error _ -> ())
-      [ plan_file; plan_file ^ ".args" ]
+    List.iter Sol_cli_fs.remove_reporting [ plan_file; plan_file ^ ".args" ]
   in
   (* An interrupt still ends the process through [exit]; the sequence's own
      bracket covers every other path. *)

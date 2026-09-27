@@ -48,26 +48,28 @@ let in_temp_dir f =
   Fun.protect
     ~finally:(fun () ->
       Sys.chdir orig_cwd;
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+      ignore (Sol_cli_fs.remove_tree tmpdir))
     f
 ;;
 
 (* ── mkdir_p ──────────────────────────────────────────────────────────────── *)
 
 (* Regression test: mkdir_p used to shell out to `mkdir -p` and discard the
-   exit code, so a blocked path silently proceeded as if it had succeeded. *)
+   exit code, so a blocked path silently proceeded as if it had succeeded.
+   REFAC-134: the implementation is Sol_cli_fs.mkdir_p, and a failure is its
+   Error rather than an exception. *)
 let test_mkdir_p_creates_nested_dirs () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_scaffold.mkdir_p "a/b/c";
+  Sol_cli_fs.mkdir_p "a/b/c" |> Result.get_ok;
   check_bool "nested directories created" true (Sys.is_directory "a/b/c")
 ;;
 
 let test_mkdir_p_tolerates_existing_dir () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_scaffold.mkdir_p "a/b";
-  Sol_cli_scaffold.mkdir_p "a/b" (* must not raise *)
+  Sol_cli_fs.mkdir_p "a/b" |> Result.get_ok;
+  check_bool "an existing directory is Ok" true (Result.is_ok (Sol_cli_fs.mkdir_p "a/b"))
 ;;
 
 let test_mkdir_p_raises_on_blocked_path () =
@@ -76,9 +78,10 @@ let test_mkdir_p_raises_on_blocked_path () =
   let oc = open_out "blocker" in
   output_string oc "not a directory";
   close_out oc;
-  match Sol_cli_scaffold.mkdir_p "blocker/child" with
-  | () -> Alcotest.fail "expected mkdir_p to raise when a path component is a file"
-  | exception Failure _ -> ()
+  check_bool
+    "a file in the way is an Error"
+    true
+    (Result.is_error (Sol_cli_fs.mkdir_p "blocker/child"))
 ;;
 
 (* Regression test: Sys.file_exists returns false for a broken symlink (it
@@ -90,9 +93,10 @@ let test_mkdir_p_raises_on_broken_symlink () =
   in_temp_dir
   @@ fun () ->
   Unix.symlink "does-not-exist" "broken-link";
-  match Sol_cli_scaffold.mkdir_p "broken-link" with
-  | () -> Alcotest.fail "expected mkdir_p to raise for a broken symlink"
-  | exception Failure _ -> ()
+  check_bool
+    "a broken symlink is an Error"
+    true
+    (Result.is_error (Sol_cli_fs.mkdir_p "broken-link"))
 ;;
 
 let test_mkdir_p_tolerates_symlink_to_real_directory () =
@@ -100,7 +104,10 @@ let test_mkdir_p_tolerates_symlink_to_real_directory () =
   @@ fun () ->
   Unix.mkdir "real" 0o755;
   Unix.symlink "real" "link-to-real";
-  Sol_cli_scaffold.mkdir_p "link-to-real" (* must not raise *)
+  check_bool
+    "a symlink to a directory is Ok"
+    true
+    (Result.is_ok (Sol_cli_fs.mkdir_p "link-to-real"))
 ;;
 
 (* ── scaffold tests ───────────────────────────────────────────────────────── *)
@@ -375,8 +382,14 @@ let test_scaffold_compiles () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
-  let rc = Sys.command "cd testapp && dune build 2>&1" in
-  check_bool "freshly scaffolded workspace builds with `dune build`" true (rc = 0)
+  let built =
+    Sol_cli_process.run (Sol_cli_process.cmd ~cwd:"testapp" [ "dune"; "build" ])
+  in
+  built |> Result.iter_error (fun e -> prerr_endline (Sol_cli_process.error_to_string e));
+  check_bool
+    "freshly scaffolded workspace builds with `dune build`"
+    true
+    (Result.is_ok built)
 ;;
 
 (* Regression test for BUG-007/BUG-011: `test_scaffold_compiles` above does
@@ -393,9 +406,16 @@ let test_bare_fn_library_compiles () =
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   Sys.chdir "testapp";
   Sol_cli_cmd_new.new_fn "billing/invoice" |> Result.get_ok;
-  let rc = Sys.command "dune build app/billing/invoice_fn/lib/ 2>&1" in
+  let built =
+    Sol_cli_process.run
+      (Sol_cli_process.cmd [ "dune"; "build"; "app/billing/invoice_fn/lib/" ])
+  in
   Sys.chdir "..";
-  check_bool "generic fn's own library target builds in isolation" true (rc = 0)
+  built |> Result.iter_error (fun e -> prerr_endline (Sol_cli_process.error_to_string e));
+  check_bool
+    "generic fn's own library target builds in isolation"
+    true
+    (Result.is_ok built)
 ;;
 
 let test_charge_svc_publishes_kafka_event () =
@@ -492,13 +512,10 @@ let test_bundle_layout_resolves_sol_home () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
        (* Create the bundle directory structure *)
-       let mkdir_p path =
-         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-       in
+       let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
        mkdir_p (Filename.concat tmpdir "bin");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
@@ -533,12 +550,9 @@ let test_incomplete_bundle_rejected () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       let mkdir_p path =
-         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-       in
+       let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
        (* Only create the sol-svc sentinel, not the kafka-eio-service one *)
        mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        let touch path =
@@ -571,12 +585,9 @@ let test_ancestor_walk_finds_bundle_root () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       let mkdir_p path =
-         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-       in
+       let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
        let touch path =
          let oc = open_out path in
          close_out oc
@@ -613,12 +624,9 @@ let test_ancestor_walk_skips_build_context () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       let mkdir_p path =
-         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-       in
+       let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path) in
        let touch path =
          let oc = open_out path in
          close_out oc
@@ -676,8 +684,7 @@ let test_pending_migrations_no_dir () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () -> check_bool "no mig dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
@@ -687,12 +694,9 @@ let test_pending_migrations_empty_dir () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       ignore
-         (Sys.command
-            (Printf.sprintf "mkdir -p %s/db/migrations" (Filename.quote tmpdir)));
+       Sol_cli_fs.mkdir_p (Filename.concat tmpdir "db/migrations") |> Result.get_ok;
        check_bool "empty dir → 0" true (count_unapplied ~root:tmpdir = 0))
 ;;
 
@@ -702,12 +706,9 @@ let test_pending_migrations_counts_sql_files () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       ignore
-         (Sys.command
-            (Printf.sprintf "mkdir -p %s/db/migrations" (Filename.quote tmpdir)));
+       Sol_cli_fs.mkdir_p (Filename.concat tmpdir "db/migrations") |> Result.get_ok;
        let touch name =
          let path = Printf.sprintf "%s/db/migrations/%s" tmpdir name in
          let oc = open_out path in
@@ -726,12 +727,9 @@ let test_pending_migrations_ignores_down_migrations () =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () ->
-       ignore
-         (Sys.command
-            (Printf.sprintf "mkdir -p %s/db/migrations" (Filename.quote tmpdir)));
+       Sol_cli_fs.mkdir_p (Filename.concat tmpdir "db/migrations") |> Result.get_ok;
        let touch name =
          let path = Printf.sprintf "%s/db/migrations/%s" tmpdir name in
          let oc = open_out path in

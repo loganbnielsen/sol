@@ -12,22 +12,6 @@ type child =
   ; child_log : string
   }
 
-let read_file path =
-  try
-    let ic = open_in_bin path in
-    let n = in_channel_length ic in
-    let s = really_input_string ic n in
-    close_in ic;
-    s
-  with
-  | _ -> ""
-;;
-
-let remove_quietly path =
-  try Sys.remove path with
-  | _ -> ()
-;;
-
 (* A child writes its own stdout and stderr to its own file, so three concurrent
    installs never interleave in a way the reader has to disentangle, and the
    output survives a failure. [Unix._exit] rather than [exit]: the parent's
@@ -139,13 +123,23 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
   let failures = List.sort (fun (_, _, a) (_, _, b) -> compare a b) !failures in
   failures
   |> List.iter (fun (label, log, _) ->
-    let output = read_file log in
-    if output <> ""
-    then Sol_cli_report.err_block (Printf.sprintf "\n--- %s output ---\n%s" label output)
-    else Sol_cli_report.err "\n--- %s failed with no output ---" label);
+    (* REFAC-134: a log that cannot be read says so, rather than reading as a
+       failure with no output. *)
+    match In_channel.with_open_bin log In_channel.input_all with
+    | exception Sys_error message ->
+      Sol_cli_report.err
+        "\n--- %s failed; its log could not be read: %s ---"
+        label
+        message
+    | "" -> Sol_cli_report.err "\n--- %s failed with no output ---" label
+    | output ->
+      Sol_cli_report.err_block (Printf.sprintf "\n--- %s output ---\n%s" label output));
   (* Every log is temporary: the failing ones have just been printed, and the
      successful ones said all they had to say in their progress line. *)
-  List.iter remove_quietly !logs;
+  !logs
+  |> List.iter (fun log ->
+    Sol_cli_fs.remove_if_present log
+    |> Result.iter_error (Sol_cli_report.warn "warning: could not remove %s"));
   let failed_labels = List.map (fun (label, _, _) -> label) failures in
   if failed_labels = [] && not_started = []
   then Ok ()

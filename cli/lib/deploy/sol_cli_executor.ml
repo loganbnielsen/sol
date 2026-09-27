@@ -36,8 +36,7 @@ let dispatch_rendered ~ctx ~mode spec yaml =
         Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace
       in
       let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
-      ignore (Sol_cli_manifest.emit_to_dir dir yaml ~ns ~name);
-      Ok ()
+      Sol_cli_manifest.emit_to_dir dir yaml ~ns ~name |> Result.map ignore
   in
   Result.map (fun () -> make_result spec) dispatched
 ;;
@@ -77,15 +76,12 @@ let gitops
    [bundle_files] is pure in the plan's release identity, so re-emitting
    identical content is an empty diff. *)
 let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
-  (try Unix.mkdir dir 0o755 with
-   | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  let open Result.Syntax in
+  let* () = Sol_cli_fs.mkdir_p dir in
   Sol_cli_release.bundle_files (Sol_cli_release.of_plan ~apply_mode plan)
-  |> List.iter (fun (name, contents) ->
-    let path = Filename.concat dir name in
-    let oc = open_out path in
-    Fun.protect
-      ~finally:(fun () -> close_out_noerr oc)
-      (fun () -> output_string oc contents))
+  |> Sol_cli_result.map_list (fun (name, contents) ->
+    Sol_cli_fs.write_atomic (Filename.concat dir name) contents)
+  |> Result.map ignore
 ;;
 
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
@@ -150,8 +146,10 @@ let run_plan
       execute (result :: acc) rest
   in
   let* results = execute [] pairs in
-  (match mode with
-   | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
-   | Dry_run | Apply -> ());
+  let* () =
+    match mode with
+    | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
+    | Dry_run | Apply -> Ok ()
+  in
   Ok results
 ;;

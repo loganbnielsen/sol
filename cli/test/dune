@@ -79,6 +79,7 @@
   test_migration
   test_workspace_model
   test_yaml
+  test_fs
   test_report)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 

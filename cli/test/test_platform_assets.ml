@@ -3,9 +3,7 @@
 
 module A = Sol_cli_platform_assets
 
-let mkdir_p path =
-  ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-;;
+let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path)
 
 let touch path =
   mkdir_p (Filename.dirname path);
@@ -17,8 +15,7 @@ let with_tmpdir f =
   Sys.remove dir;
   Unix.mkdir dir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree dir))
     (fun () -> f (Unix.realpath dir))
 ;;
 

@@ -170,63 +170,50 @@ let curl_config_quote s =
   Buffer.contents buf
 ;;
 
-let write_curl_auth_config { username; password } =
-  let path = Filename.temp_file "sol-loki-curl-" ".conf" in
-  try
-    Unix.chmod path 0o600;
-    let user = curl_config_quote (username ^ ":" ^ password) in
-    Out_channel.with_open_text path (fun oc ->
-      output_string oc ("user = \"" ^ user ^ "\"\n"));
-    Ok path
-  with
-  | exn ->
-    (try Sys.remove path with
-     | _ -> ());
-    Error (Printexc.to_string exn)
+(* curl reads the credentials from a 0600 file, so they never appear in argv. *)
+let curl_auth_config { username; password } =
+  "user = \"" ^ curl_config_quote (username ^ ":" ^ password) ^ "\"\n"
 ;;
 
 let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) ()
   : (line list, fetch_error) result
   =
-  let curl_config =
+  let with_curl_config f =
     match credentials with
-    | None -> Ok None
-    | Some credentials -> Result.map Option.some (write_curl_auth_config credentials)
+    | None -> f None
+    | Some credentials ->
+      Sol_cli_fs.with_temp_file
+        ~prefix:"sol-loki-curl-"
+        ~suffix:".conf"
+        (curl_auth_config credentials)
+        (fun path -> f (Some path))
+      |> Result.map_error (fun msg ->
+        Other ("could not prepare Loki credentials: " ^ msg))
+      |> Result.join
   in
-  match curl_config with
-  | Error msg -> Error (Other ("could not prepare Loki credentials: " ^ msg))
-  | Ok curl_config ->
-    Fun.protect ~finally:(fun () ->
-      match curl_config with
-      | None -> ()
-      | Some path ->
-        (try Sys.remove path with
-         | _ -> ()))
-    @@ fun () ->
-    let argv =
-      query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
-    in
-    let redact =
-      match credentials with
-      | None -> []
-      | Some { password; _ } -> [ password ]
-    in
-    (* OBS-031: a non-zero curl exit goes through the same classifier as a spawn
+  with_curl_config
+  @@ fun curl_config ->
+  let argv = query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config () in
+  let redact =
+    match credentials with
+    | None -> []
+    | Some { password; _ } -> [ password ]
+  in
+  (* OBS-031: a non-zero curl exit goes through the same classifier as a spawn
        failure, so connection failures and timeouts read as such rather than as
        raw curl stderr. *)
-    (match
-       Sol_cli_process.run
-         (Sol_cli_process.cmd ~timeout_s:(timeout_s +. 2.0) ~redact argv)
-     with
-     | Error e -> Error (classify_process_error e)
-     | Ok r ->
-       let body, code = split_body_and_status r.stdout in
-       (match code with
-        | Some c when c < 200 || c >= 300 -> Error (Http_error c)
-        | _ ->
-          (match parse_query_range_body body with
-           | Ok lines -> Ok lines
-           | Error msg -> Error (Other msg))))
+  match
+    Sol_cli_process.run (Sol_cli_process.cmd ~timeout_s:(timeout_s +. 2.0) ~redact argv)
+  with
+  | Error e -> Error (classify_process_error e)
+  | Ok r ->
+    let body, code = split_body_and_status r.stdout in
+    (match code with
+     | Some c when c < 200 || c >= 300 -> Error (Http_error c)
+     | _ ->
+       (match parse_query_range_body body with
+        | Ok lines -> Ok lines
+        | Error msg -> Error (Other msg)))
 ;;
 
 let query ~base_url ~k8s_name ?credentials ?limit ?timeout_s () =

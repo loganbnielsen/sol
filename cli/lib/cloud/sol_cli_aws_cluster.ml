@@ -60,10 +60,7 @@ let cluster_access_role_arn (outputs : aws_outputs) = outputs.cluster_access_rol
 
 let provisioner_kubeconfig ?role_arn ~region outputs f =
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
+  let cleanup () = Sol_cli_fs.remove_reporting path in
   (* A run can still end through [exit] while this is held -- an interrupt, or a
      command edge -- which does not unwind the stack, so [Fun.protect]'s finalizer
      alone could leak this privileged kubeconfig. Register the same cleanup with
@@ -528,25 +525,28 @@ let persist_whoami_capture ~run_id json =
     Sol_cli_report.app
       "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)"
   | Some path ->
-    (try
-       let dir = Filename.dirname path in
-       (* The raw capture holds real ARNs and account ids, so the directory is 0700 and the
-          file 0600 -- created or tightened, since an existing directory may be looser. *)
-       if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
-       (try Unix.chmod dir 0o700 with
-        | _ -> ());
-       let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-       let oc = Unix.out_channel_of_descr fd in
-       output_string oc json;
-       close_out oc;
-       (try Unix.chmod path 0o600 with
-        | _ -> ());
-       Sol_cli_report.app "  whoami capture: %s" path
-     with
-     | _ ->
+    (* The raw capture holds real ARNs and account ids, so the directory is 0700 and
+       the file 0600 -- created or tightened, since an existing directory may be
+       looser. *)
+    let dir = Filename.dirname path in
+    let written =
+      let open Result.Syntax in
+      let* () = Sol_cli_fs.mkdir_p ~perm:0o700 dir in
+      let* () =
+        match Unix.chmod dir 0o700 with
+        | () -> Ok ()
+        | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
+      in
+      Sol_cli_fs.write_atomic ~perm:0o600 path json
+    in
+    (match written with
+     | Ok () -> Sol_cli_report.app "  whoami capture: %s" path
+     | Error reason ->
        Sol_cli_report.app
-         "  whoami capture: could not write %s -- the raw response is in this log above"
-         path)
+         "  whoami capture: could not write %s (%s) -- the raw response is in this log \
+          above"
+         path
+         reason)
 ;;
 
 let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =

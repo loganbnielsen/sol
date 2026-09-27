@@ -4,16 +4,9 @@
    event, appended. FEAT-063: records live in the cluster the target names, so
    the entry points take the destination-side context. *)
 
-let with_temp_json json (f : string -> 'a) : 'a =
-  let path = Filename.temp_file "sol-deployment-" ".json" in
-  let oc = open_out path in
-  output_string oc json;
-  close_out oc;
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove path with
-      | _ -> ())
-    (fun () -> f path)
+let with_temp_json json f =
+  Sol_cli_fs.with_temp_file ~prefix:"sol-deployment-" ~suffix:".json" json f
+  |> Result.join
 ;;
 
 let record ~ctx (t : Sol_cli_deployment.t) : (unit, string) result =

@@ -64,22 +64,27 @@ let dry_run_spec ~workspace ~sha spec =
   { spec with Sol_cli_deployment_plan.image = push_image_ref ~workspace ~sha spec }
 ;;
 
+(* REFAC-134: in OCaml rather than `rm -rf` and `rsync` through a shell. The copy
+   follows symlinks and skips [_build] and [.git] at any depth, as the rsync
+   (`-a --copy-links --exclude=_build --exclude=.git`) did. *)
 let prepare_build_context ~repo_root =
+  let open Result.Syntax in
   let ctx_dir = build_context_dir ~repo_root in
-  ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
-  let rsync_cmd =
-    Printf.sprintf
-      "rsync -a --copy-links --exclude='_build' --exclude='.git' %s/ %s"
-      (Filename.quote repo_root)
-      (Filename.quote ctx_dir)
+  let failed reason =
+    Printf.sprintf "failed to copy workspace for docker build context: %s" reason
   in
-  if Sys.command rsync_cmd = 0
-  then Ok ctx_dir
-  else Error "failed to copy workspace for docker build context"
+  let* () = Sol_cli_fs.remove_tree ctx_dir |> Result.map_error failed in
+  let* () =
+    Sol_cli_fs.copy_tree ~exclude:[ "_build"; ".git" ] ~src:repo_root ~dst:ctx_dir
+    |> Result.map_error failed
+  in
+  Ok ctx_dir
 ;;
 
 let remove_build_context ~ctx_dir =
-  ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)))
+  Sol_cli_fs.remove_tree ctx_dir
+  |> Result.iter_error
+       (Sol_cli_report.warn "warning: could not remove the build context: %s")
 ;;
 
 let build_image exec =

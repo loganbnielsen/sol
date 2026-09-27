@@ -7,7 +7,7 @@ let dir =
      | None -> Filename.concat (Sys.getcwd ()) ".sol")
 ;;
 
-let ensure () = Sol_cli_scaffold.mkdir_p dir
+let ensure () = Sol_cli_fs.mkdir_p dir
 let pid_file name = Printf.sprintf "%s/pf-%s.pid" dir name
 let log_file name = Printf.sprintf "/tmp/sol-pf-%s.log" name
 let script_file name = Printf.sprintf "/tmp/sol-pf-%s.sh" name

@@ -197,3 +197,65 @@ let presence_of_probe_result = function
 ;;
 
 let presence ~ctx ~args = presence_of_probe_result (probe_result ~ctx ~args)
+
+type forward_error =
+  | Not_started of Sol_cli_process.error
+  | Not_ready
+  | Readiness_check_failed of string
+
+(* Only the connect failures that mean "nothing listens yet" are retried; any
+   other failure (fd exhaustion, permissions) is reported at once rather than
+   hidden behind "not ready in time". *)
+let accepts_connections ~local_port =
+  let is_not_listening_yet = function
+    | Unix.ECONNREFUSED
+    | Unix.ETIMEDOUT
+    | Unix.ENETUNREACH
+    | Unix.EHOSTUNREACH
+    | Unix.ECONNRESET -> true
+    | _ -> false
+  in
+  match Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 with
+  | exception Unix.Unix_error (e, fn, _) ->
+    `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
+  | s ->
+    let result =
+      match Unix.connect s (Unix.ADDR_INET (Unix.inet_addr_loopback, local_port)) with
+      | () -> `Ready
+      | exception Unix.Unix_error (e, _, _) when is_not_listening_yet e ->
+        `Not_listening_yet
+      | exception Unix.Unix_error (e, fn, _) ->
+        `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
+    in
+    Unix.close s;
+    result
+;;
+
+let temporary_port_forward ~ctx ~service ~namespace ~local_port ~remote_port =
+  let open Result.Syntax in
+  let* forward =
+    Sol_cli_process.spawn
+      (invocation
+         ~ctx
+         [ "port-forward"
+         ; "svc/" ^ service
+         ; "-n"
+         ; namespace
+         ; Printf.sprintf "%d:%d" local_port remote_port
+         ])
+    |> Result.map_error (fun e -> Not_started e)
+  in
+  at_exit (fun () -> Sol_cli_process.stop forward);
+  let rec wait attempts =
+    if attempts = 0
+    then Error Not_ready
+    else (
+      match accepts_connections ~local_port with
+      | `Ready -> Ok ()
+      | `Not_listening_yet ->
+        Unix.sleepf 0.5;
+        wait (attempts - 1)
+      | `Failed reason -> Error (Readiness_check_failed reason))
+  in
+  wait 10
+;;

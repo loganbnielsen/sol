@@ -58,70 +58,63 @@ let rec source_files root rel =
   else [ rel ]
 ;;
 
-let rec mkdir_p path =
-  if not (Sys.file_exists path)
-  then (
-    mkdir_p (Filename.dirname path);
-    try Unix.mkdir path 0o755 with
-    | Unix.Unix_error (Unix.EEXIST, _, _) -> ())
-;;
-
 let read_lines path =
   match In_channel.with_open_bin path In_channel.input_all with
   | s -> String.split_on_char '\n' s |> List.filter (fun l -> l <> "")
   | exception Sys_error _ -> []
 ;;
 
-(* Write via a temporary file and rename, so a crash never leaves a torn file.
-   Owner-writable whatever the source's mode: a read-only bundle's files are
-   0444, and Terraform may rewrite the lock file it finds here. *)
-let write_atomic ~perm path contents =
-  let tmp = path ^ ".sol-tmp" in
-  Out_channel.with_open_gen
-    [ Open_wronly; Open_creat; Open_trunc; Open_binary ]
-    perm
-    tmp
-    (fun oc -> Out_channel.output_string oc contents);
-  Unix.chmod tmp perm;
-  Unix.rename tmp path
-;;
-
+(* REFAC-134: every step returns its error, through Sol_cli_fs -- no catch-all
+   around the whole preparation. Files are written via a temporary file and
+   renamed, so a crash never leaves a torn one, and owner-writable whatever the
+   source's mode: a read-only bundle's files are 0444, and Terraform may rewrite
+   the lock file it finds here. *)
 let materialize ~assets ~provider ~role ~backend_config =
+  let open Result.Syntax in
   let root = dir ~provider ~role ~backend_config in
   let manifest = Filename.concat root manifest_name in
-  try
-    mkdir_p root;
-    let source_root = A.dir assets in
-    let sources = List.concat_map (source_files source_root) source_trees in
-    if sources = []
-    then Error (Printf.sprintf "no Terraform assets under %s" source_root)
-    else (
-      (* Only files Sol wrote are ever removed: the previous manifest's, when the
-         assets no longer have them. *)
+  let source_root = A.dir assets in
+  let read path =
+    match In_channel.with_open_bin path In_channel.input_all with
+    | content -> Ok content
+    | exception Sys_error message -> Error message
+  in
+  let copy rel =
+    let src = Filename.concat source_root rel in
+    let dst = Filename.concat root rel in
+    let* () = Sol_cli_fs.mkdir_p (Filename.dirname dst) in
+    let* perm =
+      match Unix.stat src with
+      | { Unix.st_perm; _ } -> Ok (st_perm lor 0o600)
+      | exception Unix.Unix_error (e, _, _) ->
+        Error (Printf.sprintf "%s: %s" src (Unix.error_message e))
+    in
+    let* content = read src in
+    Sol_cli_fs.write_atomic ~perm dst content
+  in
+  let prepare sources =
+    let* () = Sol_cli_fs.mkdir_p root in
+    (* Only files Sol wrote are ever removed: the previous manifest's, when the
+       assets no longer have them. *)
+    let* _ =
       read_lines manifest
-      |> List.iter (fun rel ->
-        if not (List.mem rel sources)
-        then (
-          try Sys.remove (Filename.concat root rel) with
-          | Sys_error _ -> ()));
-      sources
-      |> List.iter (fun rel ->
-        let src = Filename.concat source_root rel in
-        let dst = Filename.concat root rel in
-        mkdir_p (Filename.dirname dst);
-        let perm = (Unix.stat src).Unix.st_perm lor 0o600 in
-        write_atomic ~perm dst (In_channel.with_open_bin src In_channel.input_all));
-      write_atomic ~perm:0o644 manifest (String.concat "\n" sources ^ "\n");
-      Ok (chdir ~provider ~role ~backend_config))
-  with
-  | Sys_error msg | Failure msg ->
-    Error (Printf.sprintf "cannot prepare Terraform's working directory %s: %s" root msg)
-  | Unix.Unix_error (e, fn, arg) ->
+      |> List.filter (fun rel -> not (List.mem rel sources))
+      |> Sol_cli_result.map_list (fun rel ->
+        Sol_cli_fs.remove_if_present (Filename.concat root rel))
+    in
+    let* _ = Sol_cli_result.map_list copy sources in
+    let* () =
+      Sol_cli_fs.write_atomic ~perm:0o644 manifest (String.concat "\n" sources ^ "\n")
+    in
+    Ok (chdir ~provider ~role ~backend_config)
+  in
+  match List.concat_map (source_files source_root) source_trees with
+  | exception Sys_error message ->
     Error
-      (Printf.sprintf
-         "cannot prepare Terraform's working directory %s: %s %s: %s"
-         root
-         fn
-         arg
-         (Unix.error_message e))
+      (Printf.sprintf "cannot read the Terraform assets under %s: %s" source_root message)
+  | [] -> Error (Printf.sprintf "no Terraform assets under %s" source_root)
+  | sources ->
+    prepare sources
+    |> Result.map_error
+         (Printf.sprintf "cannot prepare Terraform's working directory %s: %s" root)
 ;;

@@ -34,14 +34,13 @@ let write path text = Out_channel.with_open_text path (fun oc -> output_string o
 (* A stand-in for a running forward: a session leader holding its lock, with its
    pid recorded where the wrapper would write it. *)
 let hold_lock name =
-  Sol_cli_state.ensure ();
+  Sol_cli_state.ensure () |> Result.get_ok;
   let pid =
-    Unix.create_process
-      "setsid"
-      [| "setsid"; "flock"; Sol_cli_state.lock_file name; "sleep"; "30" |]
-      Unix.stdin
-      Unix.stdout
-      Unix.stderr
+    Sol_cli_process.spawn
+      (Sol_cli_process.cmd
+         [ "setsid"; "flock"; Sol_cli_state.lock_file name; "sleep"; "30" ])
+    |> Result.get_ok
+    |> Sol_cli_process.pid
   in
   write (Sol_cli_state.pid_file name) (string_of_int pid);
   if not (wait_until (fun () -> P.is_running name)) then Alcotest.fail "lock not taken";
@@ -66,7 +65,7 @@ let test_record_round_trip () =
 ;;
 
 let test_corrupt_record_is_reported () =
-  Sol_cli_state.ensure ();
+  Sol_cli_state.ensure () |> Result.get_ok;
   write (Sol_cli_state.record_file "corrupt") "{not json";
   let _, unreadable = P.records () in
   Alcotest.(check bool) "reported, not skipped" true (unreadable <> []);
@@ -93,7 +92,9 @@ let test_reused_pid_is_never_signalled () =
   let name = "reused" in
   ok (P.write_record (spec ~name ()));
   let bystander =
-    Unix.create_process "sleep" [| "sleep"; "30" |] Unix.stdin Unix.stdout Unix.stderr
+    Sol_cli_process.spawn (Sol_cli_process.cmd [ "sleep"; "30" ])
+    |> Result.get_ok
+    |> Sol_cli_process.pid
   in
   write (Sol_cli_state.pid_file name) (string_of_int bystander);
   P.stop name;

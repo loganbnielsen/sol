@@ -115,10 +115,7 @@ let gcp_provisioner_kubeconfig_result
   =
   let* () = gcp_platform_toolchain_result () in
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
+  let cleanup () = Sol_cli_fs.remove_reporting path in
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
     let env = Sol_cli_cluster.provisioner_kube_env path in

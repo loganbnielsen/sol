@@ -331,6 +331,12 @@ jobs:
       - name: Manifest-values mutation test
         run: bash internal/ci/test_manifests_are_values.sh
 
+      - name: One process runner, one filesystem helper (REFAC-134)
+        run: bash internal/ci/check_single_runner.sh
+
+      - name: Single-runner mutation test
+        run: bash internal/ci/test_single_runner.sh
+
       - name: Library code does not print (REFAC-135)
         run: bash internal/ci/check_library_output.sh
 

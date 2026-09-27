@@ -55,9 +55,7 @@ let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars (
   =
   let plan_file = Filename.temp_file "sol-destroy-" ".tfplan" in
   Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove plan_file with
-      | Sys_error _ -> ())
+    ~finally:(fun () -> Sol_cli_fs.remove_if_present plan_file |> ignore)
     (fun () ->
        match
          Sol_cli_terraform_plan.guarded_apply

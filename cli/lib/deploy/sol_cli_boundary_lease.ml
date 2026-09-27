@@ -226,22 +226,16 @@ let of_configmap_item item =
 
 (* ── cluster writes ───────────────────────────────────────────────────────── *)
 
-let with_temp_json json (f : string -> 'a) : 'a =
-  let path = Filename.temp_file "sol-lease-" ".json" in
-  let oc = open_out path in
-  output_string oc json;
-  close_out oc;
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove path with
-      | _ -> ())
-    (fun () -> f path)
-;;
-
 type write_error =
   | Already_exists
   | Conflict
   | Other of string
+
+let with_temp_json json f =
+  Sol_cli_fs.with_temp_file ~prefix:"sol-lease-" ~suffix:".json" json f
+  |> Result.map_error (fun message -> Other message)
+  |> Result.join
+;;
 
 let create_object ~ctx t =
   with_temp_json (to_configmap_json t) (fun path ->

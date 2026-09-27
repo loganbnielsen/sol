@@ -86,9 +86,16 @@ type t =
   ; dir : string
   }
 
+(* INFRA-033: a run log is diagnostics; failing to keep one is reported and the
+   command carries on (REFAC-134: reported, where it used to raise). *)
+let mkdir_reporting dir =
+  Sol_cli_fs.mkdir_p dir
+  |> Result.iter_error (Sol_cli_report.warn "warning: run log unavailable: %s")
+;;
+
 let create ?(base = base_dir) ?(keep = 20) ~prefix () : t =
   let base_dir = base in
-  Sol_cli_scaffold.mkdir_p base_dir;
+  mkdir_reporting base_dir;
   let run_id =
     generate_run_id ~prefix ~now:(Unix.gettimeofday ()) ~pid:(Unix.getpid ())
   in
@@ -104,18 +111,11 @@ let create ?(base = base_dir) ?(keep = 20) ~prefix () : t =
     try Array.to_list (Sys.readdir base_dir) with
     | Sys_error _ -> []
   in
-  Sol_cli_scaffold.mkdir_p dir;
+  mkdir_reporting dir;
   List.iter
     (fun stale_id ->
-       let stale_dir = Filename.concat base_dir stale_id in
-       try
-         Sys.readdir stale_dir
-         |> Array.iter (fun f ->
-           try Sys.remove (Filename.concat stale_dir f) with
-           | _ -> ());
-         Unix.rmdir stale_dir
-       with
-       | _ -> ())
+       Sol_cli_fs.remove_tree (Filename.concat base_dir stale_id)
+       |> Result.iter_error (Sol_cli_report.warn "warning: could not prune a run log: %s"))
     (runs_to_prune
      (* INFRA-033: exclude every run whose process is still alive, not just
           this one. A long command writes to its phase logs throughout its life,
@@ -139,15 +139,22 @@ let dir t = t.dir
    false negative, a shared run directory), and an uncaught [Sys_error] here used
    to kill a [cloud destroy] mid-teardown with the target still provisioned. So
    recreate the run directory if it is gone and keep going. *)
-let ensure_parent path = Sol_cli_scaffold.mkdir_p (Filename.dirname path)
+let ensure_parent path = mkdir_reporting (Filename.dirname path)
 
 (* SEC-008: 0600. A phase log is a subprocess's full output, which can carry
    credentials a tool echoes; other local users have no reason to read it. *)
 let write_file path contents =
   ensure_parent path;
-  let oc = open_out_gen [ Open_wronly; Open_creat; Open_trunc; Open_text ] 0o600 path in
-  output_string oc contents;
-  close_out oc
+  match
+    Out_channel.with_open_gen
+      [ Open_wronly; Open_creat; Open_trunc; Open_text ]
+      0o600
+      path
+      (fun oc -> Out_channel.output_string oc contents)
+  with
+  | () -> ()
+  | exception Sys_error message ->
+    Sol_cli_report.warn "warning: run log unavailable: %s" message
 ;;
 
 (* Shared finish for every phase kind: write the log, print the compact line
