@@ -19,7 +19,6 @@ variable "base_domain" {
   type        = string
 }
 
-# VPC CIDRs
 variable "nodes_cidr" {
   type    = string
   default = "10.0.0.0/20"
@@ -41,7 +40,6 @@ variable "master_cidr" {
   default     = "172.16.0.0/28"
 }
 
-# Cloud SQL
 variable "sql_tier" {
   description = "Cloud SQL machine tier"
   type        = string
@@ -59,11 +57,6 @@ variable "sql_high_availability" {
   default     = false
 }
 
-# The GKE provider's own guard. See the resource: it defaults to true, so a
-# target that never mentions it cannot be destroyed. Default true keeps a destroy
-# driven directly against Terraform failing rather than deleting a cluster by
-# surprise; `sol cloud destroy`'s Destroy policy sets it false for the teardown,
-# exactly as it does for Cloud SQL.
 variable "gke_deletion_protection" {
   description = "Enable the GKE provider's deletion protection on the cluster. Default true (a direct destroy fails rather than deleting a cluster); `sol cloud destroy` sets it false for the Destroy phase."
   type        = bool
@@ -76,22 +69,12 @@ variable "sql_deletion_protection" {
   default     = true
 }
 
-# The identity allowed to enter this target's install window, declared by the target
-# (`provisioner_impersonator`). Naming the caller is a requirement rather than a
-# convenience: an empty list means no impersonation grant at all, because inferring
-# the caller from the running process is the ambient-authority escape hatch this
-# model exists to close.
 variable "provisioner_impersonators" {
   description = "IAM members (for example `user:ops@example.com`, or a service account) allowed to impersonate the platform provisioner and enter the install window. Each receives roles/iam.serviceAccountTokenCreator on that one identity."
   type        = list(string)
   default     = []
 }
 
-# The install window itself. Both provider roots declare it -- the object differs (an
-# EKS access entry on AWS, an in-cluster ClusterRoleBinding here) -- and Sol opens it
-# for the applies that install and closes it before reporting one. On GCP the binding
-# is created here, in the cloud root, because the platform applies run *as* the
-# provisioner and so cannot be the thing that grants the provisioner its authority.
 variable "provisioner_bootstrap_admin" {
   description = "Temporarily grant the platform provisioner the in-cluster authority the install needs. Sol opens this for the install window and closes it before Ready."
   type        = bool
@@ -104,14 +87,12 @@ variable "db_password" {
   sensitive   = true
 }
 
-# DNS
 variable "create_dns_zone" {
   description = "Create a new Cloud DNS managed zone for base_domain."
   type        = bool
   default     = true
 }
 
-# Durable observability (OBS-006/OBS-007, GCP side of the AWS S3+IRSA pair — INFRA-003)
 variable "enable_durable_observability" {
   description = "Provision GCS buckets + Workload Identity service accounts for durable Loki (OBS-006) and Thanos-backed Prometheus (OBS-007) storage. Pair with platform/cloud/modules/platform's observability_backend = \"self_hosted_durable\". Mirrors platform/cloud/aws/cluster's enable_durable_observability."
   type        = bool
@@ -128,10 +109,6 @@ variable "loki_retention_days" {
   }
 }
 
-# ── Alerting (OBS-043) ──────────────────────────────────────────────────────
-# Consumed by platform/cloud/modules/platform; declared here too so a target passing the
-# alert_* contract through `sol cloud tf` does not fail on an undeclared
-# variable in this layer. This layer ignores them.
 variable "alert_receiver_type" {
   type    = string
   default = ""
@@ -152,10 +129,6 @@ variable "alert_runbook_url" {
   default = ""
 }
 
-# INFRA-077 / FND-0057: Cloud Storage soft delete, declared rather than defaulted.
-# GCS retains soft-deleted objects (and a deleted bucket) for the policy's duration and
-# bills them at storage rates. Sol routes 0 for a `destroy_retention: none` target, so
-# its destroy leaves nothing billable behind, and an explicit 7 days otherwise.
 variable "gcs_soft_delete_retention_seconds" {
   description = "Soft-delete retention for the observability buckets, in seconds: 0 (disabled) or 7-90 days."
   type        = number
@@ -167,13 +140,6 @@ variable "gcs_soft_delete_retention_seconds" {
   }
 }
 
-
-# ── The Standard substrate's initial topology (DEC-049) ───────────────────── #
-#
-# Driver-owned defaults, deliberately not target keys: the profile needs a supported Standard
-# substrate, and this is the shape Sol intends to qualify. If a real need for different sizing
-# appears, the abstraction for it is a decision of its own -- not something inferred from a
-# qualification run.
 
 variable "node_count" {
   description = "Nodes in the platform's node pool. Three gives the platform's observability and Kafka components room, and keeps the node footprint well inside the project's disk quota."

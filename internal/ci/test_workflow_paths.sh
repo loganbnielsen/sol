@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_workflow_paths.sh (REFAC-099): a filter entry naming
-# something that is gone must fail, and live literal and glob entries must pass.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -8,7 +6,6 @@ CHECK="$ROOT/internal/ci/check_workflow_paths.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# A throwaway repository: one tracked file under examples/, one script.
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/.github/workflows" "$tmp/repo/examples/app" "$tmp/repo/scripts"
@@ -62,9 +59,7 @@ fail "a glob whose directory is gone" 'cli/platform/**'
 fail "a glob whose directory exists but matches nothing tracked" 'examples/**/*.ml'
 fail "one dead entry among live ones" 'examples/**' 'scripts/gone.sh'
 
-# A script the workflow invokes directly must be executable: this is the exit-126 bounce, which a
-# local sweep that runs everything as `bash <script>` cannot see.
-mode_case() { # mode_case <name> <mode> <expected: pass|fail>
+mode_case() {
   local name="$1" mode="$2" expect="$3"
   mkrepo
   cat >"$tmp/repo/.github/workflows/w.yml" <<'EOF'
@@ -92,7 +87,6 @@ EOF
 mode_case "a directly invoked script that is not executable" 644 fail
 mode_case "a directly invoked script that is executable" 755 pass
 
-# `bash <script>` needs no bit: only a direct invocation does.
 mkrepo
 cat >"$tmp/repo/.github/workflows/w.yml" <<'EOF'
 on: pull_request
@@ -113,10 +107,7 @@ else
   exit 1
 fi
 
-# A CI-invoked script must not reach for a tool the runners do not have. ripgrep is installed on
-# some developer machines and not on the runner image, and the failure it produces there looks
-# like the check's own findings rather than a missing dependency.
-tool_case() { # tool_case <name> <body> <expected: pass|fail>
+tool_case() {
   local name="$1" body="$2" expect="$3"
   mkrepo
   cat >"$tmp/repo/.github/workflows/w.yml" <<'EOF'
@@ -144,6 +135,5 @@ tool_case "a CI-invoked script that calls rg" 'rg -n pattern file' fail
 tool_case "a CI-invoked script that calls grep" 'grep -n pattern file' pass
 tool_case "a CI-invoked script that merely mentions rg in a word" 'echo argos' pass
 
-# The real repository must pass as it stands.
 "$CHECK" "$ROOT" >/dev/null
 echo "  [OK]   the repository's own workflows"

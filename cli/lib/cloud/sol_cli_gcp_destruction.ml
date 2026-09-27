@@ -43,6 +43,10 @@ let gcp_peering_probe ~project ~network =
       "the service-networking peering could not be checked: gcloud is unavailable"
 ;;
 
+let relinquished_residue_probes =
+  [ "google_service_networking_connection.sql", gcp_peering_probe ]
+;;
+
 let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
   let project =
     List.assoc_opt "gcp" target_cfg.provider_fields
@@ -53,7 +57,9 @@ let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
     |> List.find_opt (fun project -> project <> "")
   in
   match state_name pre_destroy "google_compute_network", project with
-  | Some network, Some project -> orphan_sweep [ gcp_peering_probe ~project ~network ]
+  | Some network, Some project ->
+    orphan_sweep
+      (List.map (fun (_, probe) -> probe ~project ~network) relinquished_residue_probes)
   | None, _ ->
     orphan_sweep
       ~gaps:

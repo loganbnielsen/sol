@@ -1,14 +1,3 @@
-// Metric names come from @sol-fab/obs, which owns Sol's naming convention —
-// @prometheus-io/client is the ecosystem exposition library, the naming is Sol's.
-//
-// Real status vocabulary is exactly {ok, error, retry, ack_failed} —
-// decode/validation failures are NOT a messages_total status at all.
-// They're intercepted before the handler ever runs (@sol-fab/kafka's
-// wrapEachMessage) and counted on their own counter,
-// sol_worker_decode_errors_total. Mirror both here rather than inventing
-// extra status label values that would make a cross-language Grafana panel
-// disagree between an OCaml and a TS worker.
-
 import { Counter, Histogram, Registry } from "@prometheus-io/client";
 import {
   SOL_WORKER_MESSAGES_TOTAL,

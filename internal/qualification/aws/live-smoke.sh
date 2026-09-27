@@ -2,26 +2,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-# The smoke target is generated, not committed (REFAC-105, FEAT-100): pluto's own
-# environments are user examples and must not reach into internal/. The smoke
-# environment is written into the workspace's gitignored sol/environments.local.yml,
-# which check_no_account_artifacts.sh refuses tracked, and removed on exit. The
-# harness only ever writes or removes a local file it owns (its first line says so).
-# Overridable so a run can point at a scratch workspace or another target.
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TARGET="${TARGET:-qual2/aws/us-east-1}"
 TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
 TFVARS="$ROOT/internal/qualification/aws/smoke-test.tfvars"
-# No personal defaults: the qualification run must name the account profile and
-# the target's actual cluster explicitly, so a clean clone cannot accidentally
-# point at someone else's account or an old cluster name.
 PROFILE="${AWS_PROFILE:?Set AWS_PROFILE to a profile that can reach the target AWS account}"
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="${CLUSTER:?Set CLUSTER to the EKS cluster name for this run}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-live-smoke-$(date +%Y%m%d-%H%M%S)}"
 SOL="$ROOT/_build/default/cli/bin/main.exe"
 
-PHASE_TIMEOUT="${PHASE_TIMEOUT:-900}" # ponytail: single knob, tune per-phase if one step needs more
+PHASE_TIMEOUT="${PHASE_TIMEOUT:-900}"
 
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
@@ -51,8 +42,6 @@ cleanup() {
   exit "$rc"
 }
 
-# The smoke shape: cluster and platform only, sized by the smoke var file. The var
-# file path is absolute, so it does not depend on where `sol` is invoked from.
 write_target() {
   if [ -e "$TARGET_FILE" ]; then
     say "using existing $TARGET_FILE (not written by this run; left in place)"
@@ -92,12 +81,6 @@ run kubeconfig aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER"
 run nodes kubectl get nodes -o wide
 run pods kubectl get pods -A
 run loki-ready bash -lc "kubectl -n monitoring port-forward svc/loki 3100:3100 >/tmp/sol-loki-pf.log 2>&1 & pid=\$!; sleep 5; curl -fsS http://127.0.0.1:3100/ready; kill \$pid"
-# /ready only proves Loki itself is up, not that anything is being ingested.
-# This proves Alloy (OBS-004, OBS-039 — Promtail's successor) is really
-# scraping pod stdout by querying a namespace Sol's own app-push logging
-# (obs-loki-eio) never touches (kube-system) — a non-empty result here can
-# only have come from Alloy's cluster-wide DaemonSet scrape, not from any Sol
-# service pushing its own logs.
 run alloy-ingest bash -lc "kubectl -n monitoring port-forward svc/loki 3100:3100 >/tmp/sol-loki-pf2.log 2>&1 & pid=\$!; sleep 5; body=\$(curl -fsS --get 'http://127.0.0.1:3100/loki/api/v1/query_range' --data-urlencode 'query={namespace=\"kube-system\"}' --data-urlencode limit=1); kill \$pid; echo \"\$body\"; echo \"\$body\" | grep -q '\"result\":\[{' "
 run prom-ready bash -lc "kubectl -n monitoring port-forward svc/prometheus-server 9090:80 >/tmp/sol-prom-pf.log 2>&1 & pid=\$!; sleep 5; curl -fsS http://127.0.0.1:9090/-/ready; kill \$pid"
 run grafana-ready bash -lc "kubectl -n monitoring port-forward svc/grafana 3000:80 >/tmp/sol-grafana-pf.log 2>&1 & pid=\$!; sleep 5; curl -fsS http://127.0.0.1:3000/api/health; kill \$pid"

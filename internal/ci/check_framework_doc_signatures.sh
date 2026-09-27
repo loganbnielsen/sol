@@ -1,30 +1,6 @@
 #!/usr/bin/env bash
-# Every public signature shown in a framework package's spec must still exist in
-# that package's .mli (DOCS-017).
-#
-# The specs (framework/ocaml/<pkg>/<pkg>.md) are where a reader learns the API, and
-# they are hand-written copies of declarations that only the .mli can be right
-# about. They had drifted: `config_of_env` had lost its `result`,
-# `Response.not_implemented` was documented but not public, `Request.t` omitted
-# `trace_ctx`, `Service.run` had the wrong env shape and no `?stop`, and old flat
-# Kafka module names remained. Nothing made a stale block fail, so nothing noticed.
-#
-# What this checks, and deliberately does not:
-#
-#   - Declaration *text*, not English. Comments are stripped and whitespace is
-#     collapsed, so a block may carry richer prose than the .mli; it must not
-#     carry a different signature.
-#   - Declarations shown must exist in the mapped .mli. A spec that shows a subset
-#     is fine — it is a spec, not a transcription. A spec that shows a declaration
-#     the .mli no longer has, or a different signature for one it does, is not.
-#   - Sections are mapped to modules explicitly below, so an example that happens to
-#     contain a `type` (the kafka doc's message-contract sample) is not mistaken for
-#     a framework signature, and `type t` is not compared against the wrong module.
-#
-# Exit: 0 clean, 1 drift found, 2 the checker could not run.
 set -uo pipefail
 
-# The repository root, or a scratch copy of it for the mutation test.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "${1:-}" = "--root" ]; then
   ROOT="${2:?--root needs a directory}"

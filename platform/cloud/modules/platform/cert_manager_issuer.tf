@@ -1,7 +1,3 @@
-# ClusterIssuer resources for cert-manager.
-# These are applied after cert-manager is running.
-# Switch between letsencrypt-staging (testing) and letsencrypt-prod.
-
 variable "letsencrypt_email" {
   description = "Email address for Let's Encrypt certificate notifications"
   type        = string
@@ -26,8 +22,7 @@ resource "kubernetes_manifest" "letsencrypt_staging" {
         solvers = [{
           dns01 = {
             route53 = {
-              region = "us-east-1"
-              # roleArn is only needed on AWS; cert-manager ignores it on GCP
+              region  = "us-east-1"
               roleArn = var.cert_manager_irsa_role_arn != "" ? var.cert_manager_irsa_role_arn : null
             }
           }

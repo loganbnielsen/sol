@@ -1,11 +1,3 @@
-// Same OTel setup as order_svc; SDK bootstrap is app-specific wiring. The
-// W3C traceparent glue (turning an inbound header back into an OTel remote
-// parent context) has moved to @sol-fab/obs — the shared owner now that this
-// is a real dogfooded consumer, not a one-off hand port (see FEAT-038).
-// startChildSpan stays here: it's this service's own OTel usage pattern
-// (nest "fulfill_order" under the producer's remote context), not a Sol
-// naming/shape convention.
-
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";

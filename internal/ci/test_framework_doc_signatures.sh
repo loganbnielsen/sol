@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for internal/ci/check_framework_doc_signatures.sh (DOCS-017).
-#
-# The guard's value is that a *stale* spec fails and an *honest* one does not, so
-# both directions are asserted against a scratch copy of the two spec trees:
-#
-#   - the tree as committed passes;
-#   - each drift the ticket named fails: a missing record field, a dropped
-#     `result`, a member that is no longer public, and an old flat module path;
-#   - and a spec that simply shows *less* than the .mli still passes, because that
-#     is what these documents are — specs, not transcriptions. A check that
-#     demanded full transcription would be turned off within a week.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,7 +13,6 @@ cp -r "$ROOT/framework/ocaml/kafka-eio-service" "$work/framework/ocaml/"
 SVC="$work/framework/ocaml/sol-svc/sol-svc.md"
 KAFKA="$work/framework/ocaml/kafka-eio-service/kafka-eio-service.md"
 
-# Keep pristine copies so each mutation starts from the committed state.
 cp "$SVC" "$work/svc.orig"
 cp "$KAFKA" "$work/kafka.orig"
 restore() {
@@ -51,10 +39,8 @@ expect_fail() {
   echo "  [OK]   $what is refused"
 }
 
-# ── the committed state is clean ─────────────────────────────────────────────
 expect_pass "the committed specs"
 
-# ── drift 1: a record field the .mli has, missing from the doc ───────────────
 python3 - "$SVC" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -65,7 +51,6 @@ PY
 expect_fail "a dropped Request.t field"
 restore
 
-# ── drift 2: a signature that lost its result ────────────────────────────────
 python3 - "$KAFKA" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -76,7 +61,6 @@ PY
 expect_fail "a signature missing its result"
 restore
 
-# ── drift 3: a member that is documented but not public ──────────────────────
 python3 - "$SVC" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -88,7 +72,6 @@ PY
 expect_fail "a member the .mli does not export"
 restore
 
-# ── drift 4: an old flat module path ─────────────────────────────────────────
 python3 - "$KAFKA" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -99,7 +82,6 @@ PY
 expect_fail "an old flat module name"
 restore
 
-# ── drift 5: a signature whose shape changed (optional argument) ─────────────
 python3 - "$KAFKA" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -109,7 +91,6 @@ PY
 expect_fail "a changed argument shape"
 restore
 
-# ── not drift: showing a subset ──────────────────────────────────────────────
 python3 - "$SVC" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])

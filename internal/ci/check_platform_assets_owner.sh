@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-# REFAC-114 / DEC-049: Sol_cli_platform_assets is the only code that decides
-# where Sol's own assets come from. A command that finds Sol's source tree
-# itself -- reading SOL_HOME, walking up from its own executable, or
-# hand-building a path into the platform/ tree -- bypasses the resolution order
-# (SOL_HOME > installed bundle > source checkout) and works only from a
-# checkout.
-#
-# Flags, in CLI code outside cli/lib/base/sol_cli_platform_assets.{ml,mli}:
-#   "SOL_HOME"              the environment variable, as a string literal
-#   /proc/self/exe          locating the running binary
-#   "platform/              a string literal into the platform/ tree
-#   Sol_cli_platform_assets.is_checkout / .find_ancestor   the resolver's discovery
-# Tests (cli/test/) exercise the resolver and are out of scope.
-#
-# Usage: check_platform_assets_owner.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"

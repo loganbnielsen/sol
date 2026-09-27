@@ -12,10 +12,6 @@ if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   docker network create "$NETWORK"
 fi
 
-# ------------------------------------------------------------------ #
-# Prometheus                                                          #
-# ------------------------------------------------------------------ #
-
 if docker ps --format '{{.Names}}' | grep -q '^prometheus$'; then
   echo "Prometheus already running at http://localhost:${PROMETHEUS_PORT}"
 else
@@ -46,10 +42,6 @@ else
   done
   echo ""
 fi
-
-# ------------------------------------------------------------------ #
-# Provision Prometheus datasource in Grafana (idempotent)            #
-# ------------------------------------------------------------------ #
 
 if curl -sf "http://localhost:${GRAFANA_PORT}/api/health" > /dev/null 2>&1; then
   EXISTING=$(curl -sf \

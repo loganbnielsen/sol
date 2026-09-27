@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_destroy_completeness.sh (ADR 0004).
-#
-# A structural guard that cannot fail is decoration. This feeds it a target root
-# holding each defect the audit actually found, and asserts it refuses -- and
-# then feeds it the repaired shape and asserts it accepts. The AWS and GCP
-# providers are exercised separately because the guard claims to hold the
-# invariant across both, not the AWS spelling of it.
 
 set -u
 
@@ -23,9 +16,6 @@ trap 'rm -rf "$tmp"' EXIT
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 
 mk() {
-  # mk <dir> <provider> <contents> <file>; the provider list comes from
-  # SOL_PROVIDERS here, which is where the guard learns its target roots
-  # (HARDEN-005, REFAC-100).
   mkdir -p "$tmp/$1/platform/cloud/$2/cluster"
   printf '%s\n' "$3" >"$tmp/$1/platform/cloud/$2/cluster/$4"
 }
@@ -46,23 +36,17 @@ expect_accept() {
   fi
 }
 
-# 0. HARDEN-005: a provider added to the provider list has its root checked
-#    without the guard being edited. The list names `azure`, and the azure root
-#    carries the defect rule 1 rejects.
 mk newprovider azure 'resource "aws_ecr_repository" "services" {
   name = "x"
 }' main.tf
 SOL_PROVIDERS="aws gcp azure" expect_reject newprovider "a new provider's root that the hard-coded list never named"
 
-# 0b. REFAC-100: an unreadable provider list fails closed rather than checking
-#     nothing. No SOL_PROVIDERS and no built printer in the fake repository.
 mk noprinter aws '' empty.tf
 if env -u SOL_PROVIDERS "$guard" "$tmp/noprinter" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard PASSED with no provider list." >&2
   fail=1
 fi
 
-# 1. The defect that actually stranded a live target: ECR without force_delete.
 mk ecr aws 'resource "aws_ecr_repository" "services" {
   name                 = "x"
   image_tag_mutability = "MUTABLE"
@@ -70,7 +54,6 @@ mk ecr aws 'resource "aws_ecr_repository" "services" {
 mk ecr gcp '' empty.tf
 expect_reject ecr "an ECR repository lacking force_delete"
 
-# 2. The latent, worse one: prevent_destroy in a target root.
 mk pd aws 'resource "aws_s3_bucket" "loki" {
   bucket        = "x"
   force_destroy = true
@@ -82,7 +65,6 @@ mk pd aws 'resource "aws_s3_bucket" "loki" {
 mk pd gcp '' empty.tf
 expect_reject pd "prevent_destroy in a target root"
 
-# 3. The GCP spelling: a bucket that is not forcibly destroyable.
 mk gcpbucket aws '' empty.tf
 mk gcpbucket gcp 'resource "google_storage_bucket" "loki" {
   name          = "x"
@@ -90,7 +72,6 @@ mk gcpbucket gcp 'resource "google_storage_bucket" "loki" {
 }' main.tf
 expect_reject gcpbucket "a GCP bucket with force_destroy = false"
 
-# 4. Each provider accepts the repaired shape.
 mk fixed aws 'resource "aws_ecr_repository" "services" {
   name         = "x"
   force_delete = true
@@ -110,35 +91,43 @@ mk fixed gcp 'resource "google_storage_bucket" "loki" {
 }' main.tf
 expect_accept fixed "both providers repaired"
 
-# 5. DEC-045: a relinquished deletion with no residue owner is refused...
 mk abandon aws '' empty.tf
 mk abandon gcp 'resource "google_service_networking_connection" "sql" {
   network = "x"
 
   deletion_policy = "ABANDON"
 }' main.tf
-expect_reject abandon "an ABANDON deletion_policy with no residue annotation"
+expect_reject abandon "an ABANDON deletion_policy with no residue probe"
 
 mk skip aws 'resource "aws_cloudwatch_log_group" "x" {
   name         = "x"
   skip_destroy = true
 }' main.tf
 mk skip gcp '' empty.tf
-expect_reject skip "a skip_destroy with no residue annotation"
+expect_reject skip "a skip_destroy with no residue probe"
 
-# ...and accepted once it names who handles what it leaves behind.
 mk abandonok aws '' empty.tf
 mk abandonok gcp 'resource "google_service_networking_connection" "sql" {
   network = "x"
 
-  # residue: released by deleting the network; the destroy residue check asks for it.
   deletion_policy = "ABANDON"
 }' main.tf
-expect_accept abandonok "an annotated ABANDON"
+mkdir -p "$tmp/abandonok/cli/lib/cloud"
+printf '%s\n' 'let relinquished_residue_probes = [ "google_service_networking_connection.sql", probe ]' \
+  >"$tmp/abandonok/cli/lib/cloud/sol_cli_gcp_destruction.ml"
+expect_accept abandonok "an ABANDON its provider's residue code probes for"
 
-# 5b. AUDIT-POST-005. `deletion_policy = "PREVENT"` is the Google provider's
-#     `prevent_destroy` -- the target can never be torn down through the lifecycle,
-#     which is what ADR 0004 forbids. Rule 1 cannot see it, so it has its own case.
+mk abandonother aws '' empty.tf
+mk abandonother gcp 'resource "google_service_networking_connection" "other" {
+  network = "x"
+
+  deletion_policy = "ABANDON"
+}' main.tf
+mkdir -p "$tmp/abandonother/cli/lib/cloud"
+printf '%s\n' 'let relinquished_residue_probes = [ "google_service_networking_connection.sql", probe ]' \
+  >"$tmp/abandonother/cli/lib/cloud/sol_cli_gcp_destruction.ml"
+expect_reject abandonother "an ABANDON whose address no residue probe names"
+
 mk prevent aws '' empty.tf
 mk prevent gcp 'resource "google_compute_address" "x" {
   name            = "x"
@@ -146,9 +135,6 @@ mk prevent gcp 'resource "google_compute_address" "x" {
 }' main.tf
 expect_reject prevent "deletion_policy = \"PREVENT\""
 
-# A delegation the guard cannot evaluate must not pass as "not relinquishing": a
-# variable could resolve to true, and the object would survive a successful destroy
-# with nobody named for it.
 mk skipvar aws '' empty.tf
 mk skipvar gcp 'resource "google_compute_address" "x" {
   name         = "x"
@@ -163,18 +149,14 @@ mk dpvar gcp 'resource "google_compute_address" "x" {
 }' main.tf
 expect_reject dpvar "a variable-driven deletion_policy"
 
-# skip_delete is the same semantic spelled differently; only `true` relinquishes.
 mk skipdel aws 'resource "aws_s3_bucket" "loki" {
   bucket        = "x"
   force_destroy = true
   skip_delete   = true
 }' main.tf
 mk skipdel gcp '' empty.tf
-expect_reject skipdel "an unannotated skip_delete = true"
+expect_reject skipdel "a skip_delete = true with no residue probe"
 
-# ...and the classifying values are accepted, so the guard is not merely rejecting
-# every mention: DELETE destroys normally, and an explicit `false` does not
-# relinquish anything.
 mk dpdelete aws '' empty.tf
 mk dpdelete gcp 'resource "google_compute_address" "x" {
   name            = "x"
@@ -190,7 +172,6 @@ mk skipfalse aws 'resource "aws_s3_bucket" "loki" {
 mk skipfalse gcp '' empty.tf
 expect_accept skipfalse "skip_delete = false"
 
-# 6. INFRA-077: a GCS bucket without a declared soft-delete policy, or with a literal one.
 mk softnone aws '' empty.tf
 mk softnone gcp 'resource "google_storage_bucket" "loki" {
   name          = "x"
@@ -209,7 +190,6 @@ mk softlit gcp 'resource "google_storage_bucket" "loki" {
 }' main.tf
 expect_reject softlit "a GCS bucket with a literal soft-delete retention"
 
-# 7. A missing target root is not silently a pass.
 if "$guard" "$tmp/does-not-exist" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard ACCEPTED a nonexistent root." >&2
   fail=1
@@ -219,4 +199,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, deletion_policy = \"PREVENT\", GCP force_destroy = false, unannotated or unclassifiable relinquished deletion (ABANDON, skip_destroy, skip_delete, variable-driven forms) and undeclared or literal GCS soft delete; accepts the repaired shapes."
+echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, deletion_policy = \"PREVENT\", GCP force_destroy = false, unprobed or unclassifiable relinquished deletion (ABANDON, skip_destroy, skip_delete, variable-driven forms) and undeclared or literal GCS soft delete; accepts the repaired shapes."

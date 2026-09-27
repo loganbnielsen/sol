@@ -1,33 +1,8 @@
 #!/usr/bin/env bash
-# Resolve and verify the actor's context before a commit or push (REFAC-090).
-#
-# The repository cannot tell an agent from a human, and cannot verify an
-# "expected base" that the actor never declared. So the behaviour splits:
-#
-#   * With a declared context (any of SOL_AUTHORITY_WORKTREE / _BRANCH / _BASE),
-#     reality is compared against the declaration and a mismatch is REFUSED
-#     (exit 1). This is the check that would have caught a commit made from the
-#     canonical checkout while it happened to be on another engineer's branch.
-#   * With no declaration, only signals that are unambiguous are reported as
-#     warnings, and the exit stays 0. A warning is never a gate, because a human
-#     legitimately commits from the canonical checkout.
-#
-# It never requires a branch to have an upstream, and never inspects merge state,
-# so it cannot block a merge commit or a rebase.
-#
-# Usage:
-#   internal/ci/check_authority.sh
-#
-# Declaring a context (one line, and the same variables work for a push):
-#   SOL_AUTHORITY_WORKTREE=/abs/path \
-#   SOL_AUTHORITY_BRANCH=REFAC-090/slug \
-#   SOL_AUTHORITY_BASE=main \
-#   git commit ...
 
 set -uo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  # Not in a worktree at all: nothing to verify, and nothing to refuse.
   exit 0
 }
 
@@ -48,7 +23,6 @@ WARNINGS=()
 DECLARED=0
 [ -n "${SOL_AUTHORITY_WORKTREE:-}${SOL_AUTHORITY_BRANCH:-}${SOL_AUTHORITY_BASE:-}" ] && DECLARED=1
 
-# ── Declared context: fail closed on any disagreement ─────────────────────────
 if [ -n "${SOL_AUTHORITY_WORKTREE:-}" ]; then
   declared_wt="$(cd "$SOL_AUTHORITY_WORKTREE" 2>/dev/null && pwd || true)"
   if [ "$declared_wt" != "$ROOT" ]; then
@@ -68,11 +42,7 @@ if [ -n "${SOL_AUTHORITY_BASE:-}" ]; then
   fi
 fi
 
-# ── No declaration: advisory on the two signals the incident actually produced ─
 if [ "$DECLARED" = 0 ]; then
-  # Committing from the canonical checkout is the human's prerogative — and the
-  # only checkout in a plain clone. It is only a signal when *other* worktrees
-  # exist, which is the situation concurrent actors create.
   if [ "$WORKTREE_COUNT" -gt 1 ] && [ -n "$CANONICAL" ] && [ "$ROOT" = "$CANONICAL" ]; then
     WARNINGS+=("committing from the canonical checkout ($ROOT) while other worktrees exist — concurrent actors should each own a worktree (CONTRIBUTING.md § Isolation and ownership)")
   fi

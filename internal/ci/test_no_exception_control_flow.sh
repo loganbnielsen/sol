@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_no_exception_control_flow.sh (REFAC-133).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -12,11 +11,9 @@ mkrepo() {
   mkdir -p "$tmp/repo/cli/lib/deploy" "$tmp/repo/cli/lib/base" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
   git -C "$tmp/repo" init -q
   printf 'let f x = match x with Ok v -> Ok v | Error e -> Error e\n' >"$tmp/repo/cli/lib/deploy/a.ml"
-  # A named invariant, cancellation re-raised, and prose that says "raise".
   printf 'let t s = invalid_arg "Sol_cli_time: x is not a representable time"\n' >"$tmp/repo/cli/lib/base/sol_cli_time.ml"
   printf 'let g f = try f () with Eio.Cancel.Cancelled _ as exn -> raise exn\n(* this can raise, and *)\n' \
     >"$tmp/repo/cli/bin/cmd_ok.ml"
-  # Tests may raise.
   printf 'let () = failwith "test"\n' >"$tmp/repo/cli/test/test_x.ml"
 }
 

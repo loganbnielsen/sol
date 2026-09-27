@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DEC-038 / INFRA-057: proves check_operator_diagnostics.sh can fail.
-#
-# A guard that cannot fail is decoration. Each case below breaks exactly one
-# property the operator identity is supposed to have, in a copy of the real files,
-# and requires the guard to reject it -- including the case that matters most for
-# "derived from actual evidence": a diagnostic command starting to read something
-# the operator's grant does not cover.
-
 repo="${1:-$(git rev-parse --show-toplevel)}"
 guard="$repo/internal/ci/check_operator_diagnostics.sh"
 
@@ -52,29 +44,24 @@ expect_fail() {
   fi
 }
 
-# ── the pristine copy passes ────────────────────────────────────────────────
 seed
 expect_pass
 
-# ── a mutating verb ─────────────────────────────────────────────────────────
 seed
 sed -i 's/    verbs      = \["get", "list"\]/    verbs      = ["get", "list", "delete"]/' \
   "$work/root/platform/cloud/modules/platform/platform_operator_rbac.tf"
 expect_fail "a mutating verb"
 
-# ── secrets ─────────────────────────────────────────────────────────────────
 seed
 sed -i 's/resources  = \["pods", "pods\/log", "services", "events"\]/resources  = ["pods", "pods\/log", "services", "events", "secrets"]/' \
   "$work/root/platform/cloud/modules/platform/platform_operator_rbac.tf"
 expect_fail "secrets in the grant"
 
-# ── interactive debugging ───────────────────────────────────────────────────
 seed
 sed -i 's/resources  = \["pods", "pods\/log", "services", "events"\]/resources  = ["pods", "pods\/log", "services", "events", "pods\/portforward"]/' \
   "$work/root/platform/cloud/modules/platform/platform_operator_rbac.tf"
 expect_fail "pods/portforward"
 
-# ── the identity loses its access entry ─────────────────────────────────────
 seed
 python3 - "$work/root/platform/cloud/aws/cluster/main.tf" <<'PY'
 import sys
@@ -86,7 +73,6 @@ open(p, "w").write(s[:start] + s[end:])
 PY
 expect_fail "a missing access entry"
 
-# ── the entry carries a broad managed policy instead of the role ────────────
 seed
 python3 - "$work/root/platform/cloud/aws/cluster/main.tf" <<'PY'
 import sys
@@ -99,13 +85,11 @@ open(p, "w").write(s.replace(old, new, 1))
 PY
 expect_fail "a managed access policy on the operator entry"
 
-# ── the binding is never applied ────────────────────────────────────────────
 seed
 sed -i 's/operator_role_binding_doc ~ns/operator_role_binding_doc_DISABLED ~ns/g' \
   "$work/root/cli/lib/deploy/sol_cli_substrate.ml"
 expect_fail "a ClusterRole that is never bound"
 
-# ── the binding names another ClusterRole, or another group ─────────────────
 seed
 sed -i 's/~cluster_role:"sol-operator-diagnostics"/~cluster_role:"cluster-admin"/' \
   "$work/root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
@@ -116,9 +100,6 @@ sed -i 's/~group:"sol:operators"/~group:"system:authenticated"/' \
   "$work/root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
 expect_fail "the operator binding granted to another group"
 
-# ── the diagnostic path reads something the grant does not cover ────────────
-# The property the whole exercise is about: the grant must follow the evidence
-# Sol's read-only commands actually consume.
 seed
 python3 - "$work/root/cli/bin/cmd_status.ml" <<'PY'
 import sys
@@ -131,16 +112,11 @@ open(p, "w").write(s.replace(old, new, 1))
 PY
 expect_fail "a new read the operator cannot perform"
 
-# ── the declared ARN never reaches the provider root ────────────────────────
 seed
 sed -i 's/(Sol_cli_config.provider_field target "operator_role_arn")/None/' \
   "$work/root/cli/lib/cloud/sol_cli_provider_capabilities.ml"
 expect_fail "an ARN that never reaches the provider root"
 
-# ── the substrate identity cannot bind what the substrate creates ───────────
-# The condition a live run failed on: the operator's RoleBinding is created by the
-# runtime substrate (as the deploy identity), so sol-operator-diagnostics must be
-# in that identity's enumerated bind allowlist.
 seed
 python3 - "$work/root/platform/cloud/modules/platform/platform_deploy_rbac.tf" <<'PY'
 import sys
@@ -152,9 +128,6 @@ open(p, "w").write(s.replace(old, "", 1))
 PY
 expect_fail "an operator RoleBinding the substrate identity cannot bind"
 
-# ── the reconciliation stops being RBAC only ────────────────────────────────
-# The failure mode this guards: "simplifying" it to reuse the substrate path, which
-# also writes runtime Secrets.
 seed
 python3 - "$work/root/cli/lib/deploy/sol_cli_substrate.ml" <<'PY'
 import sys

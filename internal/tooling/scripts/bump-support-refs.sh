@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# BUG-059: move support packages to the current commit of their main branch, by
-# rewriting support-refs.txt -- and, in lockstep, the framework packages'
-# pin-depends that name the same package, which check_support_refs.sh requires
-# to agree. The result is a diff to review and commit; nothing consumes a branch
-# directly.
-#
-# Usage: bump-support-refs.sh [package...]   (no packages: bump all of them)
-#        SUPPORT_ROOT=<dir> overrides the repository root (tests).
 set -uo pipefail
 
 root="${SUPPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"

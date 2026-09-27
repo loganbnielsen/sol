@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-# FEAT-101 / DEC-049: build the Sol release archive.
-#
-#   sol-<version>/
-#     bin/sol                               the release binary (SOL_RELEASE_VERSION=<version>)
-#     share/sol/<version>/VERSION           the release this bundle belongs to
-#     share/sol/<version>/platform/         every tracked file under platform/
-#     share/sol/<version>/migration-runner-image
-#                                           the runner published with this release,
-#                                           by digest (<image>@sha256:<64 hex>)
-#     share/sol/<version>/SUPPORT_REFS      the support-library commits it was built
-#                                           against, when given (--support-refs)
-#
-# The archive's top directory is an installation prefix: put sol-<version>/bin on
-# PATH, or copy bin/ and share/ into an existing prefix. The binary finds its
-# assets at <its dir>/../share/sol/<version>/ and nowhere else.
-#
-# Usage:
-#   build-release-bundle.sh --version <v> --runner-image <image@sha256:...> --out <dir>
-#     [--binary <path>]   use an already-built release binary instead of building one
-#     [--support-refs <file>]  record the build's support-package snapshot
-#
-# Only tracked files are bundled (git ls-files), so local Terraform state,
-# .terraform/ directories and other scratch never ship.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../../.." && pwd)"

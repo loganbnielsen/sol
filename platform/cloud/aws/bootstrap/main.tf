@@ -13,14 +13,6 @@ provider "aws" {
   region = var.region
 }
 
-# ── AUDIT-072: the conformant remote state backend ─────────────────────────
-#
-# Sol provisions this by default; an operator may bring an equivalent backend
-# (encrypted, versioned, locked) and declare it in the target file instead.
-# This root is separate from platform/cloud/aws/cluster because a Terraform
-# configuration cannot create its own backend: run this once, record the
-# bucket/table in the target, and configure the backend there.
-
 resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket
 }
@@ -51,8 +43,6 @@ resource "aws_s3_bucket_public_access_block" "state" {
   restrict_public_buckets = true
 }
 
-# The lock table serializes concurrent infrastructure mutations: two applies
-# either serialize or one is rejected, without corrupting state.
 resource "aws_dynamodb_table" "lock" {
   name         = var.state_lock_table
   billing_mode = "PAY_PER_REQUEST"
@@ -63,14 +53,6 @@ resource "aws_dynamodb_table" "lock" {
     type = "S"
   }
 }
-
-# ── AUDIT-072: IAM policy contracts ────────────────────────────────────────
-#
-# Sol generates the contracts; the operator creates the roles and supplies their
-# ARNs in the target file. Sol does not manage role lifecycle. These documents
-# are a least-privilege starting point: tighten resource ARNs to the account
-# before use, and note the boundary they encode — the deploy identity may not
-# mutate infrastructure or grant itself administrative access.
 
 data "aws_iam_policy_document" "provisioner" {
   statement {
@@ -87,11 +69,6 @@ data "aws_iam_policy_document" "provisioner" {
       "rds:*",
       "dynamodb:*",
       "s3:*",
-      # Repository *lifecycle* only (platform/cloud/aws/cluster's aws_ecr_repository
-      # resources are part of the substrate this identity already reconciles) --
-      # never the data-plane actions that would let it publish an image. See the
-      # explicit deny below: ADR 0002 states "provisioner must not publish
-      # images" as a boundary, not merely an omission.
       "ecr:CreateRepository",
       "ecr:DeleteRepository",
       "ecr:DescribeRepositories",
@@ -106,11 +83,6 @@ data "aws_iam_policy_document" "provisioner" {
     resources = ["*"]
   }
 
-  # HARDEN-002 finding 6 / ADR 0002: the provisioner creates the ECR
-  # repositories but must never be the identity that publishes into them --
-  # that is the publisher identity's job (see data.aws_iam_policy_document.publisher
-  # below). An explicit deny makes this a structural boundary rather than an
-  # absence that a future broader policy attachment could silently restore.
   statement {
     sid    = "NoImagePublish"
     effect = "Deny"
@@ -128,11 +100,6 @@ data "aws_iam_policy_document" "provisioner" {
   }
 }
 
-# DEC-034 / INFRA-046: cloud provisioning and steady-state cluster access are
-# separate identities. This policy permits only discovery and credential
-# retrieval for the EKS cluster. Kubernetes RBAC supplies the scoped platform
-# authorization; explicit denies ensure this identity cannot create or mutate
-# its own EKS access entry/policy association or any IAM identity.
 data "aws_iam_policy_document" "cluster_access" {
   statement {
     sid       = "DiscoverCluster"
@@ -164,8 +131,6 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["*"]
   }
 
-  # The deploy identity reaches the cluster through an EKS access entry scoped to
-  # the namespaces it deploys; it holds no infrastructure or IAM authority.
   statement {
     sid    = "NoInfrastructureOrIdentityMutation"
     effect = "Deny"
@@ -182,20 +147,6 @@ data "aws_iam_policy_document" "deploy" {
   }
 }
 
-# HARDEN-002 finding 6: the provisioner creates the workspace's ECR
-# repositories, and FEAT-050 requires a published digest before deploy, but
-# before this identity existed nothing in the contract could publish one --
-# the provisioner is explicitly denied it above, and deploy only reads
-# (LocateTheCluster). This is the fourth identity ADR 0002's table already
-# names ("publisher: publish/replace application images; must not provision
-# substrate or deploy workloads") but the bootstrap root never generated a
-# contract for. `sol up` never uses this -- it is local-only and never
-# touches AWS (cli/bin/cmd_up.ml: "Local-only -- no target concept"); a
-# CI pipeline authenticates as this identity before its own `docker push`,
-# entirely outside Sol's own execution, then calls `sol deploy` with the
-# resulting digest. Sol therefore has no runtime code path that resolves this
-# ARN -- there is deliberately no `publisher_role_arn` target field to match;
-# this is a policy-generation contract only, same spirit as the other three.
 data "aws_iam_policy_document" "publisher" {
   statement {
     sid    = "PublishWorkspaceImages"
@@ -213,8 +164,6 @@ data "aws_iam_policy_document" "publisher" {
     resources = ["*"]
   }
 
-  # Publishing an image must not also grant the power to provision substrate
-  # or to deploy/replace a running workload (ADR 0002).
   statement {
     sid    = "NoProvisionOrDeploy"
     effect = "Deny"

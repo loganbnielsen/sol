@@ -1,16 +1,7 @@
-// pg is the ecosystem Postgres client (TS equivalent of pg-eio) — plain
-// SQL, nothing Sol-specific here. Separate table name (`fulfilled_orders_ts`)
-// so this spike never collides with rows the OCaml internal/fixtures/local-demo
-// writes to the same POSTGRES_URL.
-
 import pg from "pg";
 
 export async function makeDb(postgresUrl: string) {
   const pool = new pg.Pool({ connectionString: postgresUrl });
-  // pg emits 'error' on an idle client that dies underneath it (Postgres
-  // restart, failover, network blip) — with no listener, that's an
-  // unhandled event and Node crashes the whole process even with no query
-  // in flight. Log and let the pool reconnect on next use.
   pool.on("error", (err) => {
     console.error(`[fulfillment-worker-ts] idle pg client error: ${String(err)}`);
   });

@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-# FEAT-101 / DEC-049: an installed Sol release works outside a checkout.
-#
-# Extracts the real release archive and runs its binary in a container that can
-# see nothing but that installation and the documented runtime libraries: no
-# checkout mounted, a read-only root and install, no network, no SOL_HOME. It
-# then runs `sol assets`, which executes the real consumers (component values,
-# dashboards, Alloy, every Terraform root, the migration runner) against
-# whatever root the binary resolves.
-#
-# It also runs `sol cloud plan` there with a stand-in Terraform (DEC-050): Terraform
-# must work in a directory under Sol's state, never in the read-only bundle.
-#
-# Positive controls, so a pass means something:
-#   1. a development build in the same container finds no assets -- there is no
-#      checkout in there to find;
-#   2. the release with a bundled asset removed fails -- the check reads the bundle;
-#   3. the release binary placed inside a checkout, without its bundle, refuses
-#      rather than reaching back to the checkout's assets.
-#
-# Usage: smoke_installed_release.sh <archive> <version> <runner-image> <dev-binary>
 set -euo pipefail
 
 archive="$1" version="$2" runner="$3" dev_binary="$4"
@@ -32,7 +12,6 @@ install="$work/sol-$version"
 mkdir -p "$work/dev"
 cp "$dev_binary" "$work/dev/sol"
 
-# The documented runtime dependencies, and nothing of Sol's.
 image=sol-installed-smoke-runtime
 docker build -q -t "$image" - >/dev/null <<'DOCKERFILE'
 FROM ubuntu:24.04
@@ -69,10 +48,6 @@ if in_container "$install" env SOL_HOME=/nonexistent /opt/sol/bin/sol assets >/d
 fi
 pass "an invalid SOL_HOME is an error, not a fall-through"
 
-# DEC-050: `sol cloud` from the read-only install. Terraform (a stand-in that records
-# its arguments, creates .terraform where it is told to run, and reports no outputs)
-# must run in a working directory under Sol's state, never in the bundle; the bundle
-# mount is read-only, so any write there fails the command.
 cloud="$work/cloud"
 mkdir -p "$cloud/ws/sol" "$cloud/tools"
 printf 'project: installed-smoke\n' >"$cloud/ws/sol.yml"
@@ -124,14 +99,12 @@ if in_container "$install" sh -c "touch /opt/sol/share/sol/$version/platform/pro
 fi
 pass "control: the install really is read-only there"
 
-# Control 1: nothing in the container is a checkout.
 if out="$(in_container "$work/dev" /opt/sol/sol assets 2>&1)"; then
   echo "$out"; die "control: a development build found assets -- the container can see a checkout"
 fi
 grep -q "no Sol checkout above this binary" <<<"$out" || { echo "$out"; die "control: unexpected failure"; }
 pass "control: a development build finds nothing to reach back to"
 
-# Control 2: the check reads the bundle.
 cp -a "$install" "$work/damaged"
 rm -rf "$work/damaged/share/sol/$version/platform/shared/observability/dashboards"
 if in_container "$work/damaged" /opt/sol/bin/sol assets >/dev/null 2>&1; then
@@ -139,7 +112,6 @@ if in_container "$work/damaged" /opt/sol/bin/sol assets >/dev/null 2>&1; then
 fi
 pass "control: a bundle missing an asset fails"
 
-# Control 3: a release binary inside a checkout, without its bundle, refuses.
 mkdir -p "$root/.smoke-reachback/bin"
 cp "$install/bin/sol" "$root/.smoke-reachback/bin/sol"
 if out="$(env -u SOL_HOME "$root/.smoke-reachback/bin/sol" assets 2>&1)"; then

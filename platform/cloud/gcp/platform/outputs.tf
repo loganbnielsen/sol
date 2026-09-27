@@ -1,6 +1,3 @@
-# The shared definition's outputs, passed through unchanged. `sol cloud`
-# reports them for the target it just converged.
-
 output "argocd_url" {
   description = "Argo CD UI URL"
   value       = module.platform.argocd_url

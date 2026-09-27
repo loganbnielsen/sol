@@ -1,9 +1,3 @@
-// OpenTelemetry gives us spans + OTLP export "for free" (the ecosystem
-// library, not a Sol convention). SDK bootstrap is app-specific wiring;
-// the W3C traceparent glue that used to live here has moved to @sol-fab/obs,
-// the shared owner now that this is a real dogfooded consumer, not a
-// one-off hand port (see FEAT-038).
-
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";

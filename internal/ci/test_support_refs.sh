@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_support_refs.sh and bump-support-refs.sh (BUG-059).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -63,7 +62,6 @@ expect fail "pin-depends disagreeing with support-refs.txt"
 mkrepo; printf 'see https://github.com/loganbnielsen/foo-eio.git#%s\n' "$A" >"$tmp/repo/doc.md"; commit
 expect pass "a reference at an exact commit"
 
-# bump: moves the declaration and the matching pin-depends together.
 mkrepo
 for n in foo-eio bar-eio; do
   git init -q -b main "$tmp/src-$n"
@@ -79,8 +77,6 @@ grep -q "bar-eio file://$tmp/src-bar-eio $B" "$tmp/repo/support-refs.txt" || { e
 grep -q "foo-eio.git#$new_foo" "$tmp/repo/sol-x.opam" || { echo "  [FAIL] bump left pin-depends behind"; exit 1; }
 echo "  [OK]   bump moves the named package and its pin-depends, and nothing else"
 
-# pin: every declared package, in order, at exactly its commit; a malformed
-# declaration pins nothing further.
 mkdir -p "$tmp/bin"
 printf '#!/bin/sh\necho "$*" >>"%s/opam.log"\n' "$tmp" >"$tmp/bin/opam"
 chmod +x "$tmp/bin/opam"

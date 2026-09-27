@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# REFAC-105 / DEC-046 rule 1: an example must run from a copy of its own directory.
-# Nothing a user-facing example *executes or loads* may reach into internal/, which is
-# maintainer machinery and is not part of what a user copies.
-#
-# Scope is the files that decide whether a copied example runs: configuration and
-# build inputs (YAML, JSON, TOML, tfvars, dune/opam, Dockerfiles, shell). Prose and
-# source comments that *mention* internal/ -- a README pointing maintainers at
-# fixtures, a port comment naming where code came from -- cannot break a copy, so
-# they are out of scope.
-#
-# Usage: check_examples_self_contained.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"

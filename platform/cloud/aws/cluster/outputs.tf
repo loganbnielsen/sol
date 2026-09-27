@@ -23,10 +23,6 @@ output "kube_context" {
   value       = module.eks.cluster_name
 }
 
-# INFRA-025: a distinct alias from kubeconfig_command's, not
-# module.eks.cluster_name -- both commands may be run against the same local
-# kubeconfig file (provisioner for debugging, deploy for normal use), and
-# --alias collisions overwrite the earlier context entry.
 output "deploy_kubeconfig_command" {
   description = "Command to configure kubectl as the deploy identity. Not run automatically -- print only; add the resulting context name as this target's kube_context (AUDIT-072: Sol owns the IAM policy contract, not the operator's local kubeconfig)."
   value = (

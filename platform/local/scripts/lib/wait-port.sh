@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-# wait_for_port PORT [MAX_ATTEMPTS] [SLEEP_SECS]
-# Returns 0 when localhost:PORT accepts TCP connections; returns 1 on timeout.
 wait_for_port() {
   local port="${1:?port required}"
   local max="${2:-30}"

@@ -1,8 +1,4 @@
 #!/bin/sh
-# FEAT-101 / DEC-049: a release build is one built with SOL_RELEASE_VERSION set,
-# and only that. The value names the release's bundle directory
-# (share/sol/<version>/) and its migration runner, so it must be a plain
-# version: reject anything else rather than embed it.
 v="${SOL_RELEASE_VERSION:-}"
 if [ -z "$v" ]; then
   echo 'let release_version = None'
