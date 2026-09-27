@@ -197,6 +197,48 @@ def python(src):
     return found
 
 
+DOCKER_DIRECTIVE = re.compile(r"#\s*(syntax|escape|check)\s*=", re.I)
+
+
+def dune(src):
+    found = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            i += 1
+            while i < n and src[i] != '"':
+                i += 2 if src[i] == "\\" else 1
+            i += 1
+        elif c == ";" or src.startswith("#;", i) or src.startswith("#|", i):
+            found.append(line_of(src, i))
+            if src.startswith("#|", i):
+                end = src.find("|#", i + 2)
+                i = n if end < 0 else end + 2
+            else:
+                nl = src.find("\n", i)
+                i = n if nl < 0 else nl
+        else:
+            i += 1
+    return found
+
+
+def dockerfile(src):
+    found = []
+    in_preamble = True
+    for number, line in enumerate(src.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            if stripped:
+                in_preamble = False
+            continue
+        if in_preamble and DOCKER_DIRECTIVE.match(stripped):
+            continue
+        in_preamble = False
+        found.append(number)
+    return found
+
+
 def language(path):
     name = os.path.basename(path)
     if path.endswith((".ml", ".mli")):
@@ -209,6 +251,10 @@ def language(path):
         return typescript
     if path.endswith(".py"):
         return python
+    if name in ("dune", "dune-project", "dune-workspace"):
+        return dune
+    if name == "Dockerfile" or name.endswith(".Dockerfile"):
+        return dockerfile
     return None
 
 

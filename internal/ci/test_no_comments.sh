@@ -75,3 +75,17 @@ y = """
 run fail "python: a comment line" tools/a.py '# why
 x = 1'
 run fail "python: a trailing comment" tools/a.py 'x = 1  # why'
+
+run pass "dune: ; inside a string" test/dune '(rule (action (run echo "a ; b")))'
+run fail "dune: a line comment" test/dune '; why
+(rule (action (run echo a)))'
+run fail "dune: a block comment" dune-project '#| why |#
+(lang dune 3.0)'
+run fail "dune: a datum comment" test/dune '(rule #;(deps x) (action (run echo a)))'
+run pass "Dockerfile: a parser directive" app/Dockerfile '# syntax=docker/dockerfile:1
+FROM scratch'
+run fail "Dockerfile: a comment" app/Dockerfile 'FROM scratch
+# why
+USER 65534'
+run fail "Dockerfile: a named Dockerfile" tools/runner.Dockerfile '# why
+FROM scratch'

@@ -4,6 +4,12 @@ set -euo pipefail
 root="${1:-$(git rev-parse --show-toplevel)}"
 cd "$root"
 
+if [ -z "$(git ls-files | head -1)" ]; then
+  echo "FAIL: git tracks no files under $root; a check of nothing is not a pass." >&2
+  echo "      Run this on a checkout (CI runs it as a step), not on a build tree." >&2
+  exit 1
+fi
+
 status=0
 
 placeholders='111122223333|123456789012|000000000000'
