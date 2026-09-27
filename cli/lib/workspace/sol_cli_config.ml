@@ -167,7 +167,8 @@ let service_empty name =
   }
 ;;
 
-type target_key =
+(* A target's own settings -- one text value each. *)
+type target_field =
   | Target_registry
   | Target_base_domain
   | Target_cluster_issuer
@@ -186,6 +187,12 @@ type target_key =
   | Target_cluster_endpoint_cidr
   | Target_node_failure_headroom_nodes
   | Target_profile
+
+(* What a key in a target body is (REFAC-129): one of the target's own fields, a
+   provider's block, a key a provider owns, or not a target key at all. Split so
+   each is decoded by a match total over its own cases. *)
+type target_key =
+  | Target_field of target_field
   | Target_provider_box of Sol_cli_provider.t
   | Target_provider_owned of string * Sol_cli_provider.t
   (** A key a provider owns (REFAC-098): [(key, provider)]. The provider is a constructor,
@@ -196,24 +203,24 @@ type target_key =
 
 let target_key_of_string s =
   match s with
-  | "registry" -> Target_registry
-  | "base_domain" -> Target_base_domain
-  | "cluster_issuer" -> Target_cluster_issuer
-  | "letsencrypt_email" -> Target_letsencrypt_email
-  | "cluster_name" -> Target_cluster_name
-  | "kube_context" -> Target_kube_context
-  | "kubeconfig" -> Target_kubeconfig
-  | "terraform_var_file" -> Target_terraform_var_file
-  | "observability_backend" -> Target_observability_backend
-  | "destroy_retention" -> Target_destroy_retention
-  | "alert_receiver_type" -> Target_alert_receiver_type
-  | "alert_receiver_url" -> Target_alert_receiver_url
-  | "alert_owner" -> Target_alert_owner
-  | "alert_runbook_url" -> Target_alert_runbook_url
-  | "state_bucket" -> Target_state_bucket
-  | "cluster_endpoint_cidr" -> Target_cluster_endpoint_cidr
-  | "node_failure_headroom_nodes" -> Target_node_failure_headroom_nodes
-  | "profile" -> Target_profile
+  | "registry" -> Target_field Target_registry
+  | "base_domain" -> Target_field Target_base_domain
+  | "cluster_issuer" -> Target_field Target_cluster_issuer
+  | "letsencrypt_email" -> Target_field Target_letsencrypt_email
+  | "cluster_name" -> Target_field Target_cluster_name
+  | "kube_context" -> Target_field Target_kube_context
+  | "kubeconfig" -> Target_field Target_kubeconfig
+  | "terraform_var_file" -> Target_field Target_terraform_var_file
+  | "observability_backend" -> Target_field Target_observability_backend
+  | "destroy_retention" -> Target_field Target_destroy_retention
+  | "alert_receiver_type" -> Target_field Target_alert_receiver_type
+  | "alert_receiver_url" -> Target_field Target_alert_receiver_url
+  | "alert_owner" -> Target_field Target_alert_owner
+  | "alert_runbook_url" -> Target_field Target_alert_runbook_url
+  | "state_bucket" -> Target_field Target_state_bucket
+  | "cluster_endpoint_cidr" -> Target_field Target_cluster_endpoint_cidr
+  | "node_failure_headroom_nodes" -> Target_field Target_node_failure_headroom_nodes
+  | "profile" -> Target_field Target_profile
   (* REFAC-098: provider-native identity lives in the provider's own block, so a
      target on one provider can never carry another's. Which keys those are is the
      provider tier's to say (AUDIT-POST-003). *)
@@ -226,7 +233,7 @@ let target_key_of_string s =
         | None -> Target_unknown s))
 ;;
 
-let target_key_name = function
+let target_field_name = function
   | Target_registry -> "registry"
   | Target_base_domain -> "base_domain"
   | Target_cluster_issuer -> "cluster_issuer"
@@ -245,9 +252,6 @@ let target_key_name = function
   | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
   | Target_node_failure_headroom_nodes -> "node_failure_headroom_nodes"
   | Target_profile -> "profile"
-  | Target_provider_box provider -> Sol_cli_provider.to_string provider
-  | Target_provider_owned (s, _) -> s
-  | Target_unknown s -> s
 ;;
 
 (* REFAC-106: sol.yml and target files are YAML, parsed by libyaml (the `yaml`
@@ -257,7 +261,8 @@ let target_key_name = function
    would have made numbers of them. Errors name the key path, and a YAML syntax
    error names its line. *)
 
-let fail_at ~path message = Error { path; line = 0; message }
+(* A decode error naming its file; [Error (error_at ~path m)] fails with it. *)
+let error_at ~path message = { path; line = 0; message }
 
 (* libyaml's own error message carries no usable position, so the line comes from
    the event stream: the last event parsed before the failure. *)
@@ -345,21 +350,25 @@ let members
       ?(duplicate = fun k -> Printf.sprintf "duplicate key %S%s" k where)
   = function
   | `O { Yaml.m_members; _ } ->
-    let rec go seen acc = function
-      | [] -> Ok (List.rev acc)
-      | (`Scalar { Yaml.value = k; _ }, v) :: rest ->
-        if List.mem k seen
-        then fail_at ~path (duplicate k)
-        else (
-          match v with
-          | `Alias _ ->
-            fail_at ~path (Printf.sprintf "YAML aliases are not supported (%S%s)" k where)
-          | _ -> go (k :: seen) ((k, v) :: acc) rest)
-      | _ :: _ -> fail_at ~path (Printf.sprintf "expected text keys%s" where)
+    let refuse message = Error (error_at ~path message) in
+    let key_of = function
+      | `Scalar { Yaml.value; _ } -> Ok value
+      | _ -> refuse (Printf.sprintf "expected text keys%s" where)
     in
-    go [] [] m_members
+    let no_alias k = function
+      | `Alias _ ->
+        refuse (Printf.sprintf "YAML aliases are not supported (%S%s)" k where)
+      | _ -> Ok ()
+    in
+    let add seen (key, v) =
+      let* seen = seen in
+      let* k = key_of key in
+      let* () = no_alias k v in
+      if List.mem_assoc k seen then refuse (duplicate k) else Ok ((k, v) :: seen)
+    in
+    List.fold_left add (Ok []) m_members |> Result.map List.rev
   | y when is_null y -> Ok []
-  | _ -> fail_at ~path (Printf.sprintf "expected a mapping%s" where)
+  | _ -> Error (error_at ~path (Printf.sprintf "expected a mapping%s" where))
 ;;
 
 (* One layer's keys. [~top_level:true] is sol.yml's shape (project, target,
@@ -367,28 +376,24 @@ let members
    sol/environments.yml (FEAT-100): target keys sit directly in the body, next to
    resources and services, and errors name the [context] they came from. *)
 let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) =
-  let fail message =
-    fail_at ~path (if context = "" then message else context ^ ": " ^ message)
+  let error message =
+    error_at ~path (if context = "" then message else context ^ ": " ^ message)
   in
+  let refuse message = Error (error message) in
   let value name v =
     match v with
     | `Scalar _ ->
-      (match scalar_text v with
-       | Some s -> Ok s
-       | None -> fail (Printf.sprintf "missing value for %s" name))
-    | _ -> fail (Printf.sprintf "expected a single value for %s" name)
+      scalar_text v
+      |> Option.to_result ~none:(error (Printf.sprintf "missing value for %s" name))
+    | _ -> refuse (Printf.sprintf "expected a single value for %s" name)
   in
   let int_value name v =
     let* s = value name v in
-    match parse_int s with
-    | Ok n -> Ok n
-    | Error msg -> fail (msg ^ " for " ^ name)
+    parse_int s |> Result.map_error (fun msg -> error (msg ^ " for " ^ name))
   in
   let bool_value name v =
     let* s = value name v in
-    match parse_bool s with
-    | Ok b -> Ok b
-    | Error msg -> fail (msg ^ " for " ^ name)
+    parse_bool s |> Result.map_error (fun msg -> error (msg ^ " for " ^ name))
   in
   let rec fold f acc = function
     | [] -> Ok acc
@@ -405,8 +410,45 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
         ~duplicate:(Printf.sprintf "duplicate %s target field %S" provider)
         v
     in
-    (* A nested value under a provider field is ignored, as it always was. *)
-    Ok (List.filter_map (fun (k, v) -> Option.map (fun t -> k, t) (scalar_text v)) fields)
+    (* Every provider field is one text value. A nested value used to be dropped
+       silently; it is refused, naming the key (REFAC-129: no config in the repo
+       nests one). *)
+    fields
+    |> Sol_cli_result.map_list (fun (k, v) ->
+      match v with
+      | `Scalar _ -> Ok (Option.map (fun t -> k, t) (scalar_text v))
+      | _ ->
+        refuse
+          (Printf.sprintf "%s.%s must be a single value, not a nested block" provider k))
+    |> Result.map (List.filter_map Fun.id)
+  in
+  let set_field (current : target) field s =
+    match field with
+    | Target_registry -> Ok { current with registry = Some s }
+    | Target_base_domain -> Ok { current with base_domain = Some s }
+    | Target_cluster_issuer -> Ok { current with cluster_issuer = Some s }
+    | Target_letsencrypt_email -> Ok { current with letsencrypt_email = Some s }
+    | Target_cluster_name -> Ok { current with cluster_name = Some s }
+    | Target_kube_context -> Ok { current with kube_context = Some s }
+    | Target_kubeconfig -> Ok { current with kubeconfig = Some s }
+    | Target_terraform_var_file -> Ok { current with terraform_var_file = Some s }
+    | Target_observability_backend -> Ok { current with observability_backend = Some s }
+    | Target_destroy_retention -> Ok { current with destroy_retention = Some s }
+    | Target_alert_receiver_type -> Ok { current with alert_receiver_type = Some s }
+    | Target_alert_receiver_url -> Ok { current with alert_receiver_url = Some s }
+    | Target_alert_owner -> Ok { current with alert_owner = Some s }
+    | Target_alert_runbook_url -> Ok { current with alert_runbook_url = Some s }
+    | Target_state_bucket -> Ok { current with state_bucket = Some s }
+    | Target_cluster_endpoint_cidr -> Ok { current with cluster_endpoint_cidr = Some s }
+    | Target_node_failure_headroom_nodes ->
+      parse_int s
+      |> Result.map (fun n -> { current with node_failure_headroom_nodes = n })
+      |> Result.map_error (fun _ ->
+        error "expected integer for node_failure_headroom_nodes")
+    | Target_profile ->
+      Sol_cli_profile.of_selection s
+      |> Result.map (fun profile -> { current with profile = Some profile })
+      |> Result.map_error error
   in
   let decode_target_fields fields =
     fold
@@ -421,12 +463,12 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
              }
          | Target_unknown k ->
            (match v with
-            | `O _ -> fail (Printf.sprintf "unsupported provider %S" k)
-            | _ when is_null v -> fail (Printf.sprintf "unsupported provider %S" k)
-            | _ -> fail (Printf.sprintf "unknown target key %S" k))
+            | `O _ -> refuse (Printf.sprintf "unsupported provider %S" k)
+            | _ when is_null v -> refuse (Printf.sprintf "unsupported provider %S" k)
+            | _ -> refuse (Printf.sprintf "unknown target key %S" k))
          | Target_provider_owned (k, provider) ->
            let provider = Sol_cli_provider.to_string provider in
-           fail
+           refuse
              (Printf.sprintf
                 "target key %S belongs to the %s provider: declare it as `%s.%s` inside \
                  the target block (REFAC-098)"
@@ -434,39 +476,9 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
                 provider
                 provider
                 k)
-         | key ->
-           let name = target_key_name key in
-           let* s = value name v in
-           (match key with
-            | Target_registry -> Ok { current with registry = Some s }
-            | Target_base_domain -> Ok { current with base_domain = Some s }
-            | Target_cluster_issuer -> Ok { current with cluster_issuer = Some s }
-            | Target_letsencrypt_email -> Ok { current with letsencrypt_email = Some s }
-            | Target_cluster_name -> Ok { current with cluster_name = Some s }
-            | Target_kube_context -> Ok { current with kube_context = Some s }
-            | Target_kubeconfig -> Ok { current with kubeconfig = Some s }
-            | Target_terraform_var_file -> Ok { current with terraform_var_file = Some s }
-            | Target_observability_backend ->
-              Ok { current with observability_backend = Some s }
-            | Target_destroy_retention -> Ok { current with destroy_retention = Some s }
-            | Target_alert_receiver_type ->
-              Ok { current with alert_receiver_type = Some s }
-            | Target_alert_receiver_url -> Ok { current with alert_receiver_url = Some s }
-            | Target_alert_owner -> Ok { current with alert_owner = Some s }
-            | Target_alert_runbook_url -> Ok { current with alert_runbook_url = Some s }
-            | Target_state_bucket -> Ok { current with state_bucket = Some s }
-            | Target_cluster_endpoint_cidr ->
-              Ok { current with cluster_endpoint_cidr = Some s }
-            | Target_node_failure_headroom_nodes ->
-              (match parse_int s with
-               | Ok n -> Ok { current with node_failure_headroom_nodes = n }
-               | Error _ -> fail "expected integer for node_failure_headroom_nodes")
-            | Target_profile ->
-              (match Sol_cli_profile.of_selection s with
-               | Ok profile -> Ok { current with profile = Some profile }
-               | Error msg -> fail msg)
-            | Target_provider_box _ | Target_provider_owned _ | Target_unknown _ ->
-              assert false))
+         | Target_field field ->
+           let* s = value (target_field_name field) v in
+           set_field current field s)
       target_empty
       fields
   in
@@ -495,7 +507,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
          | "sort_key" ->
            let* s = value k v in
            Ok { i with sort_key = Some s }
-         | _ -> fail (Printf.sprintf "unknown key %S" k))
+         | _ -> refuse (Printf.sprintf "unknown key %S" k))
       (index_empty name)
       fields
   in
@@ -536,7 +548,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
                indexes
            in
            Ok { r with indexes }
-         | _ -> fail (Printf.sprintf "unknown resource key %S" k))
+         | _ -> refuse (Printf.sprintf "unknown resource key %S" k))
       (resource_empty name)
       fields
   in
@@ -547,12 +559,12 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
         (fun acc item ->
            match scalar_text item with
            | Some s -> Ok (acc @ [ s ])
-           | None -> fail "expected a list of names for uses")
+           | None -> refuse "expected a list of names for uses")
         []
         s_members
     | _ when is_null v -> Ok []
     | `Scalar _ -> Ok (Option.to_list (scalar_text v))
-    | _ -> fail "expected a list of names for uses"
+    | _ -> refuse "expected a list of names for uses"
   in
   let decode_service (name, v) =
     let* fields = members ~path ~where:(Printf.sprintf " in service %S" name) v in
@@ -572,7 +584,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
            let* s = value k v in
            (match Sol_cli_compat.of_string s with
             | Ok language -> Ok { sv with language = Some language }
-            | Error msg -> fail (msg ^ " for language"))
+            | Error msg -> refuse (msg ^ " for language"))
          | "omit" ->
            let* omit = bool_value k v in
            Ok { sv with omit }
@@ -589,19 +601,19 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
                 | "max" ->
                   let* n = int_value k v in
                   Ok { sv with scale_max = n }
-                | _ -> fail (Printf.sprintf "unknown scale key %S" k))
+                | _ -> refuse (Printf.sprintf "unknown scale key %S" k))
              sv
              scale
-         | _ -> fail (Printf.sprintf "unknown service key %S" k))
+         | _ -> refuse (Printf.sprintf "unknown service key %S" k))
       (service_empty name)
       fields
   in
   let section cfg (k, v) =
     match k with
     | "project" when not top_level ->
-      fail "project belongs in sol.yml, not in an environment or target"
+      refuse "project belongs in sol.yml, not in an environment or target"
     | "target" when not top_level ->
-      fail "put target keys directly here, not in a target: block"
+      refuse "put target keys directly here, not in a target: block"
     | "project" ->
       let* p = value "project" v in
       Ok { cfg with project = Some p }
@@ -642,7 +654,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
           named
       in
       Ok { cfg with services }
-    | _ -> fail (Printf.sprintf "unknown top-level key %S" k)
+    | _ -> refuse (Printf.sprintf "unknown top-level key %S" k)
   in
   if top_level
   then fold section empty fields
@@ -960,14 +972,14 @@ let app_shape_keys (l : layer) =
 ;;
 
 let check_placement ~path (e : environment) =
-  let fail context message =
+  let refuse context message =
     Error { path; line = 0; message = context ^ ": " ^ message }
   in
   let app_shape context layer =
     match app_shape_keys layer with
     | [] -> Ok ()
     | key :: _ ->
-      fail
+      refuse
         context
         (Printf.sprintf
            "%s belongs in sol.yml: an environment or target may only adjust size, scale \
@@ -977,7 +989,7 @@ let check_placement ~path (e : environment) =
   let* () =
     match Option.map target_only_keys e.layer.target with
     | Some (key :: _) ->
-      fail
+      refuse
         e.env_name
         (Printf.sprintf
            "%s is target-only: set it under %s.targets.<provider>/<region> (DEC-047)"
@@ -1354,7 +1366,7 @@ let resolve ~base ~envs (target : target) =
       |> List.find_opt (fun sv ->
         not (List.exists (fun b -> b.name = sv.name) base.services))
     in
-    let fail kind name =
+    let refuse kind name =
       Error
         { path = environments_file
         ; line = 0
@@ -1368,8 +1380,8 @@ let resolve ~base ~envs (target : target) =
         }
     in
     match unknown_resource, unknown_service with
-    | Some r, _ -> fail "resource" r.name
-    | None, Some sv -> fail "service" sv.name
+    | Some r, _ -> refuse "resource" r.name
+    | None, Some sv -> refuse "service" sv.name
     | None, None -> Ok ()
   in
   let apply context cfg = function
@@ -1386,9 +1398,9 @@ let resolve ~base ~envs (target : target) =
 let resolved_target ~base ~envs target_path =
   let* target = target_of_path target_path in
   let* cfg = resolve ~base ~envs target in
-  match cfg.target with
-  | Some target -> Ok target
-  | None -> assert false
+  (* [resolve] starts from [Some] and merging never drops it; the path's own
+     target is what that merge is based on. *)
+  Ok (Option.value cfg.target ~default:target)
 ;;
 
 (** Where this target deploys. Fails closed when it names no context, and when it
