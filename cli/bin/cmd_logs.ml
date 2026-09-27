@@ -132,8 +132,9 @@ let loki_credentials (observability : observability_options) =
   Sol_cli_loki.resolve_credentials
     ~flag_username:observability.loki_username
     ~flag_password:observability.loki_password
-    ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-    ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
+    ~env_username:(Sol_cli_string.env "SOL_LOKI_USERNAME")
+      (* A password's whitespace is data, so only an empty one is unset. *)
+    ~env_password:(Sol_cli_string.non_empty (Sys.getenv_opt "SOL_LOKI_PASSWORD"))
   |> Sol_cli_exit.of_msg
 ;;
 
@@ -342,7 +343,7 @@ let run ~ctx ~target (options : log_options) =
 let scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN/UNIT"
@@ -356,7 +357,7 @@ let scope_arg =
 let release_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "release" ]
         ~docv:"RELEASE_ID"
@@ -402,7 +403,7 @@ let tail_arg =
 let grafana_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "grafana-base-url" ]
         ~docv:"URL"
@@ -435,7 +436,7 @@ let observability_backend_arg =
 let base_domain_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "base-domain" ]
         ~docv:"DOMAIN"
@@ -448,7 +449,7 @@ let base_domain_arg =
 let target_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "target" ]
         ~docv:"ENV/PROVIDER/REGION"
@@ -462,7 +463,7 @@ let target_arg =
 let loki_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-base-url" ]
         ~docv:"URL"
@@ -477,7 +478,7 @@ let loki_base_url_arg =
 let loki_username_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-username" ]
         ~docv:"USERNAME"
@@ -492,7 +493,7 @@ let loki_username_arg =
 let loki_password_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-password" ]
         ~docv:"PASSWORD"

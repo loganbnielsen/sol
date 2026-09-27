@@ -58,15 +58,6 @@ let test_resolve_self_hosted_durable_without_base_domain () =
     (String.length (reason_of (U.resolve ~backend:U.Self_hosted_durable ())) > 0)
 ;;
 
-let test_resolve_self_hosted_durable_blank_base_domain () =
-  check_bool
-    "blank base_domain -> No_url"
-    true
-    (String.length
-       (reason_of (U.resolve ~backend:U.Self_hosted_durable ~base_domain:"   " ()))
-     > 0)
-;;
-
 let test_resolve_external_never_guesses () =
   check_bool
     "external -> No_url even with base_domain"
@@ -262,10 +253,6 @@ let () =
             "self_hosted_durable without base_domain"
             `Quick
             test_resolve_self_hosted_durable_without_base_domain
-        ; Alcotest.test_case
-            "self_hosted_durable blank base_domain"
-            `Quick
-            test_resolve_self_hosted_durable_blank_base_domain
         ; Alcotest.test_case
             "external never guesses"
             `Quick

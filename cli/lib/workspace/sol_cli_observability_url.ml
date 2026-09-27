@@ -50,7 +50,7 @@ let resolve ~backend ?base_domain ?override () =
     (match backend with
      | Local -> Url "http://localhost:3000"
      | Self_hosted_durable ->
-       (match Sol_cli_string.non_blank_opt base_domain with
+       (match base_domain with
         | Some d -> Url (Printf.sprintf "https://grafana.%s" d)
         | None ->
           No_url "self_hosted_durable requires --base-domain to resolve the Grafana URL")

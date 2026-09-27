@@ -44,7 +44,7 @@ let run kind scope_str links explicit_backend explicit_base_domain target grafan
 let scope_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"SCOPE"

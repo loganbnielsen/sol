@@ -29,7 +29,7 @@ let record ~ctx ~target plan (t : t) outcome =
          ~now:t.now
          ~git_commit:(Sol_cli_deployment.git_commit ())
          ~git_dirty:(Sol_cli_deployment.git_dirty ())
-         ~actor:(Sys.getenv_opt "SOL_ACTOR")
+         ~actor:(Sol_cli_string.env "SOL_ACTOR")
          ~target
          ~outcome
          plan)

@@ -226,12 +226,18 @@ let test_invalid_sol_home_never_falls_through () =
            ~release_version:(Some "v1.2.3"))))
 ;;
 
+(* REFAC-123: [resolve] reads SOL_HOME through [Sol_cli_string.env], so an empty
+   one ([Unix.putenv] cannot unset) is unset before [resolve_from] sees it. *)
 let test_empty_sol_home_is_unset () =
-  with_layout (fun ~root:_ ~bin ~bundle ->
-    check_form
-      "SOL_HOME=\"\" is unset"
-      ("installed:v1.2.3:" ^ bundle)
-      (A.resolve_from ~sol_home:(Some "") ~exe_dir:bin ~release_version:(Some "v1.2.3")))
+  let saved = Sys.getenv_opt "SOL_HOME" in
+  Unix.putenv "SOL_HOME" "";
+  let read = Sol_cli_string.env "SOL_HOME" in
+  Unix.putenv "SOL_HOME" (Option.value saved ~default:"");
+  Alcotest.(check (option string)) "SOL_HOME=\"\" reads as unset" None read;
+  Unix.putenv "SOL_HOME" "  ";
+  let read = Sol_cli_string.env "SOL_HOME" in
+  Unix.putenv "SOL_HOME" (Option.value saved ~default:"");
+  Alcotest.(check (option string)) "blank reads as unset" None read
 ;;
 
 let installed_runner ~file =

@@ -84,7 +84,7 @@ let run_delete ~ctx env key domain =
 let env_arg =
   Arg.(
     required
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "env" ]
         ~docv:"ENV"
@@ -107,14 +107,14 @@ let value_arg =
 let key_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info [] ~docv:"KEY" ~doc:"Secret key, e.g. DATABASE_URL.")
 ;;
 
 let domain_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "domain" ]
         ~docv:"DOMAIN"

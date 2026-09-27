@@ -230,8 +230,10 @@ let test_passwordless_and_non_uri_inputs_are_unchanged () =
 let test_evidence_report_unstartable_names_the_reason () =
   let report =
     M.evidence_report
-      ~waiting:(Some ("CreateContainerConfigError", "secret \"sol-secrets\" not found"))
-      ~logs:""
+      ~waiting:
+        (Some ("CreateContainerConfigError", Some "secret \"sol-secrets\" not found"))
+      ~logs:None
+    |> Option.get
   in
   Alcotest.(check bool)
     "waiting reason"
@@ -249,7 +251,8 @@ let test_evidence_report_unstartable_names_the_reason () =
 
 let test_evidence_report_failed_job_carries_its_logs () =
   let report =
-    M.evidence_report ~waiting:None ~logs:"error: migration 003 failed\nline two"
+    M.evidence_report ~waiting:None ~logs:(Some "error: migration 003 failed\nline two")
+    |> Option.get
   in
   Alcotest.(check bool) "first line" true (contains report "migration 003 failed");
   Alcotest.(check bool) "second line" true (contains report "line two");
@@ -260,17 +263,21 @@ let test_evidence_report_failed_job_carries_its_logs () =
 ;;
 
 let test_evidence_report_carries_both () =
-  let report = M.evidence_report ~waiting:(Some ("CrashLoopBackOff", "")) ~logs:"boom" in
+  let report =
+    M.evidence_report ~waiting:(Some ("CrashLoopBackOff", None)) ~logs:(Some "boom")
+    |> Option.get
+  in
   Alcotest.(check bool) "reason" true (contains report "CrashLoopBackOff");
   Alcotest.(check bool) "logs" true (contains report "boom")
 ;;
 
 let test_evidence_report_is_empty_without_observations () =
-  Alcotest.(check string) "no observations" "" (M.evidence_report ~waiting:None ~logs:"");
-  Alcotest.(check string)
-    "blank logs are not an observation"
-    ""
-    (M.evidence_report ~waiting:None ~logs:"   \n")
+  (* Blank output is decided at the kubectl adapter (REFAC-123); the report only
+     sees what was observed. *)
+  Alcotest.(check bool)
+    "no observations, no report"
+    true
+    (M.evidence_report ~waiting:None ~logs:None = None)
 ;;
 
 let () =

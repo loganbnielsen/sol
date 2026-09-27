@@ -35,7 +35,7 @@ let list ~ctx ~(workspace : string) : (Sol_cli_deployment.t list, string) result
       ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error (Sol_cli_process.Non_zero r) ->
-    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+    let detail = Sol_cli_process.failure_message r in
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->

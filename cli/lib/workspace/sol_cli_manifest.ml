@@ -155,7 +155,7 @@ let create_idempotent ~ctx ~file =
   match Sol_cli_kubectl.create ~ctx ~file with
   | Ok _ -> Ok ()
   | Error (Sol_cli_process.Non_zero r) ->
-    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+    let detail = Sol_cli_process.failure_message r in
     if Sol_cli_string.contains ~needle:"AlreadyExists" detail then Ok () else Error detail
   | Error err -> Error (Sol_cli_process.error_to_string err)
 ;;

@@ -1481,12 +1481,6 @@ let test_resolve_commit_invalid_scope () =
   | _ -> Alcotest.fail "expected Commit_invalid: malformed --scope"
 ;;
 
-let test_resolve_commit_empty_commit_invalid () =
-  match Sol_cli_rollback.resolve_commit ~commit:"" ~target:"prod/aws/us-east-1" [] with
-  | Sol_cli_rollback.Commit_invalid _ -> ()
-  | _ -> Alcotest.fail "expected Commit_invalid: empty --commit"
-;;
-
 let () =
   Alcotest.run
     "rollback"
@@ -1677,10 +1671,6 @@ let () =
             `Quick
             test_resolve_commit_apply_failed_excluded
         ; Alcotest.test_case "invalid --scope" `Quick test_resolve_commit_invalid_scope
-        ; Alcotest.test_case
-            "empty --commit"
-            `Quick
-            test_resolve_commit_empty_commit_invalid
         ] )
     ]
 ;;

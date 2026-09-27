@@ -13,7 +13,7 @@ let resolve = Sol_cli_destination.resolve
 let target_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "target" ]
         ~docv:"ENV/PROVIDER/REGION"
@@ -33,7 +33,7 @@ let local = Sol_cli_kube_destination.local_context
 let required_target_arg =
   Arg.(
     required
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "target" ]
         ~docv:"ENV/PROVIDER/REGION"

@@ -97,7 +97,7 @@ let helm_install ~label release chart ~namespace ?version ?(values = []) ?values
            with
            | Ok _ -> Ok ()
            | Error (Sol_cli_process.Non_zero r) ->
-             Error (Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr)
+             Error (Sol_cli_process.failure_message r)
            | Error e -> Error (Sol_cli_process.error_to_string e))
      }
      :: !pending_installs
@@ -246,10 +246,7 @@ let provision_cluster () =
     |> Result.map_error (fun failure ->
       let detail =
         match failure with
-        | Sol_cli_process.Non_zero r ->
-          (match Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr with
-           | "" -> ""
-           | output -> "\n" ^ output)
+        | Sol_cli_process.Non_zero r -> "\n" ^ Sol_cli_process.failure_message r
         | e -> "\n" ^ Sol_cli_process.error_to_string e
       in
       Sol_cli_exit.error ("cluster creation failed" ^ detail)))
@@ -987,7 +984,7 @@ let status_cmd =
 let run_workspace_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "workspace"; "C" ]
         ~docv:"DIR"
@@ -997,7 +994,7 @@ let run_workspace_arg =
 let run_scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN[/UNIT]"

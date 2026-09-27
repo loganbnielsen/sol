@@ -186,18 +186,14 @@ let status_json ~table rows =
    Either half may be absent: a container that never started has no logs, and a
    Job that ran and failed has no waiting reason. *)
 let evidence_report ~waiting ~logs =
-  let waiting_lines =
-    match waiting with
-    | Some (reason, detail) when not (Sol_cli_string.is_blank reason) ->
-      let detail = String.trim detail in
-      [ Printf.sprintf
-          "container waiting: %s%s"
-          (String.trim reason)
-          (if detail = "" then "" else " -- " ^ detail)
-      ]
-    | _ -> []
+  let waiting_line (reason, detail) =
+    Printf.sprintf
+      "container waiting: %s%s"
+      reason
+      (Option.fold detail ~none:"" ~some:(fun d -> " -- " ^ d))
   in
-  let logs = String.trim logs in
-  let log_lines = if logs = "" then [] else [ "job logs:\n" ^ logs ] in
-  String.concat "\n\n" (waiting_lines @ log_lines)
+  match Option.map waiting_line waiting, Option.map (fun l -> "job logs:\n" ^ l) logs with
+  | None, None -> None
+  | waiting, logs ->
+    Some (String.concat "\n\n" (Option.to_list waiting @ Option.to_list logs))
 ;;

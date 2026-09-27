@@ -77,22 +77,11 @@ let fetch_live ~ctx ~name ~namespace =
      | _ ->
        Error (Printf.sprintf "could not parse the live ConfigMap %s/%s" namespace name))
   | Error (Sol_cli_process.Non_zero r) ->
-    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
+    let detail = Sol_cli_process.failure_message r in
     if Sol_cli_string.contains ~needle:"NotFound" detail
     then Ok None
-    else
-      Error
-        (Printf.sprintf
-           "kubectl get configmap %s failed: %s"
-           name
-           (if String.equal detail "" then "no output" else detail))
+    else Error (Printf.sprintf "kubectl get configmap %s failed: %s" name detail)
   | Error e -> Error (Sol_cli_process.error_to_string e)
-;;
-
-let failure_detail ~stdout ~stderr =
-  match Sol_cli_process.failure_output ~stdout ~stderr with
-  | "" -> "no output"
-  | output -> output
 ;;
 
 let with_resource_version json (resource_version : string option) =
@@ -133,7 +122,7 @@ let write_one ~ctx ~verb ~name json =
             | `Create -> "create"
             | `Replace -> "replace")
            name
-           (failure_detail ~stdout:r.stdout ~stderr:r.stderr))
+           (Sol_cli_process.failure_message r))
     | Error e -> Error (Sol_cli_process.error_to_string e))
 ;;
 
@@ -195,7 +184,7 @@ let list_with_creation ~ctx ~(workspace : string)
       ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error (Sol_cli_process.Non_zero r) ->
-    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+    let detail = Sol_cli_process.failure_message r in
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
@@ -227,7 +216,7 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
          ~output:"json"
      with
      | Error (Sol_cli_process.Non_zero r) ->
-       let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+       let detail = Sol_cli_process.failure_message r in
        if Sol_cli_string.contains ~needle:"NotFound" detail
        then
          Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))

@@ -170,7 +170,7 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
 let release_id_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"RELEASE_ID"
@@ -181,7 +181,7 @@ let release_id_arg =
 let commit_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "commit" ]
         ~docv:"SHA"
@@ -194,7 +194,7 @@ let commit_arg =
 let scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN[/UNIT]"

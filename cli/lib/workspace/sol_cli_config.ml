@@ -313,8 +313,10 @@ let parse_yaml ~path text =
       }
 ;;
 
-(* The text of a scalar; [None] for an empty/null one, which every key treats as a
-   missing value. *)
+(* The text of a scalar, trimmed; [None] for a null or blank one, which every key
+   treats as a missing value. REFAC-123: blank is decided here, once, quoted or
+   not -- `key: ""` and `key: "  "` are missing values too -- so nothing that reads
+   a decoded field has to ask whether [Some s] is really there. *)
 let scalar_text : Yaml.yaml -> string option = function
   | `Scalar { Yaml.value; style; _ } ->
     let quoted =
@@ -322,9 +324,10 @@ let scalar_text : Yaml.yaml -> string option = function
       | `Single_quoted | `Double_quoted -> true
       | _ -> false
     in
-    if (not quoted) && (value = "" || value = "~" || value = "null")
-    then None
-    else Some value
+    (match String.trim value with
+     | "" -> None
+     | ("~" | "null") when not quoted -> None
+     | text -> Some text)
   | _ -> None
 ;;
 

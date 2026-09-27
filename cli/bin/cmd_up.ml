@@ -429,7 +429,7 @@ let run (req : Sol_cli_command_request.up_request) =
 let scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN[/UNIT]"
@@ -451,7 +451,7 @@ let dry_run_flag =
 let tag_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info [ "tag" ] ~docv:"TAG" ~doc:"Docker image tag (default: short git SHA)")
 ;;
 

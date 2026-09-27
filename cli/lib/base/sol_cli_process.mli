@@ -6,6 +6,13 @@ type cmd =
   ; redact : string list
   }
 
+(** A command that ran and exited non-zero: the code and both streams, trimmed. *)
+type failure =
+  { exit_code : int
+  ; stdout : string
+  ; stderr : string
+  }
+
 (** What a successful command printed, trimmed. *)
 type output =
   { stdout : string
@@ -14,11 +21,7 @@ type output =
 
 type error =
   | Spawn_failed of string
-  | Non_zero of
-      { exit_code : int
-      ; stdout : string
-      ; stderr : string
-      }
+  | Non_zero of failure
   | Timeout of float
 
 val cmd
@@ -42,9 +45,10 @@ val run_shell : ?echo:bool -> string -> (output, error) result
     that exited with [exit_code]: for runners that wait on a process themselves. *)
 val completed : exit_code:int -> stdout:string -> stderr:string -> (output, error) result
 
-(** What a failed command said: its trimmed stderr, or its trimmed stdout when
-    stderr is empty ("" when both are). For the [Non_zero] branch. *)
-val failure_output : stdout:string -> stderr:string -> string
+(** What a failed command said: its stderr, or its stdout when stderr is empty,
+    or -- when it said nothing -- its exit code. Never empty (REFAC-123), so a
+    caller never has to decide what a blank reason means. *)
+val failure_message : failure -> string
 
 val error_to_string : error -> string
 

@@ -165,14 +165,14 @@ let test_completed () =
   | _ -> Alcotest.fail "exit 2 is Non_zero with the code and both streams"
 ;;
 
-let test_failure_output () =
-  let f = Sol_cli_process.failure_output in
-  Alcotest.(check string) "stderr first" "boom" (f ~stdout:"out" ~stderr:" boom\n");
-  Alcotest.(check string)
-    "stdout when stderr is empty"
-    "out"
-    (f ~stdout:"out\n" ~stderr:"  ");
-  Alcotest.(check string) "empty" "" (f ~stdout:"" ~stderr:"")
+(* REFAC-123: never empty -- a command that said nothing is described by its code. *)
+let test_failure_message () =
+  let f stdout stderr =
+    Sol_cli_process.failure_message { exit_code = 4; stdout; stderr }
+  in
+  Alcotest.(check string) "stderr first" "boom" (f "out" " boom\n");
+  Alcotest.(check string) "stdout when stderr is blank" "out" (f "out\n" "  ");
+  Alcotest.(check string) "the code when both are blank" "exited with code 4" (f "" " ")
 ;;
 
 let () =
@@ -186,7 +186,7 @@ let () =
             `Quick
             test_run_is_success
         ; Alcotest.test_case "completed shares run's contract" `Quick test_completed
-        ; Alcotest.test_case "failure_output" `Quick test_failure_output
+        ; Alcotest.test_case "failure_message" `Quick test_failure_message
         ; Alcotest.test_case "captured stderr" `Quick test_captured_stderr
         ; Alcotest.test_case
             "stdout stderr separate"
