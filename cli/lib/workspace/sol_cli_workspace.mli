@@ -31,3 +31,5 @@ val enter_cwd : unit -> (t, Sol_cli_exit.failure) result
 val at_root : string -> string
 val workspace_name : root:string -> string
 val current_name : unit -> string
+val migrations_dir : dir:string -> string
+val migrations_table : dir:string -> string

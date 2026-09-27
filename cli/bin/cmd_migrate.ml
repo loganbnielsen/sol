@@ -1,19 +1,6 @@
 open Cmdliner
 open Result.Syntax
 
-let default_table_name =
-  let cwd_name = Filename.basename (Sys.getcwd ()) in
-  let buf = Buffer.create (String.length cwd_name) in
-  cwd_name
-  |> String.iter (fun c ->
-    if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-    then Buffer.add_char buf c
-    else if c >= 'A' && c <= 'Z'
-    then Buffer.add_char buf (Char.lowercase_ascii c)
-    else Buffer.add_char buf '_');
-  Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
-;;
-
 let cluster_pg_exists ~ctx () =
   Result.is_ok
     (Sol_cli_kubectl.get
@@ -119,7 +106,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
       ~override:registry_override
       ~how_to_set:"pass --registry or set target.registry in sol.yml."
   in
-  let workspace = Filename.basename (Sys.getcwd ()) in
+  let workspace = Sol_cli_workspace.current_name () in
   let* facts = Sol_cli_workspace_model.load_cwd () in
   let services = Sol_cli_workspace_model.services facts in
   let* namespace, k8s_name =
@@ -240,25 +227,41 @@ let run_apply_term dir table dry_run target registry =
 ;;
 
 let dir_arg =
-  Arg.(
-    value
-    & opt Sol_cli_args.text "db/migrations"
-    & info
-        [ "dir" ]
-        ~docv:"DIR"
-        ~doc:"Directory containing migration SQL files (default: db/migrations)")
+  let explicit =
+    Arg.(
+      value
+      & opt (some Sol_cli_args.text) None
+      & info
+          [ "dir" ]
+          ~docv:"DIR"
+          ~doc:
+            "Directory containing migration SQL files (default: db/migrations at the \
+             workspace root)")
+  in
+  Term.(
+    const (fun dir ->
+      Option.value dir ~default:(Sol_cli_workspace.migrations_dir ~dir:(Sys.getcwd ())))
+    $ explicit)
 ;;
 
 let table_arg =
-  Arg.(
-    value
-    & opt Sol_cli_args.text default_table_name
-    & info
-        [ "table" ]
-        ~docv:"TABLE"
-        ~doc:
-          "Migration tracking table name (default: sol_<workspace>_schema_migrations; \
-           override with this flag to share a table across workspaces)")
+  let explicit =
+    Arg.(
+      value
+      & opt (some Sol_cli_args.text) None
+      & info
+          [ "table" ]
+          ~docv:"TABLE"
+          ~doc:
+            "Migration tracking table name (default: sol_<workspace>_schema_migrations; \
+             override with this flag to share a table across workspaces)")
+  in
+  Term.(
+    const (fun table ->
+      Option.value
+        table
+        ~default:(Sol_cli_workspace.migrations_table ~dir:(Sys.getcwd ())))
+    $ explicit)
 ;;
 
 let dry_run_flag =
