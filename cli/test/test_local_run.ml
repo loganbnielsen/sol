@@ -27,10 +27,7 @@ let with_workspace files f =
   Unix.mkdir root 0o755;
   write_file (Filename.concat root "sol.yml") "";
   List.iter (fun (rel, content) -> write_file (Filename.concat root rel) content) files;
-  Fun.protect
-    ~finally:(fun () ->
-      ignore (Sol_cli_fs.remove_tree root))
-    (fun () -> f root)
+  Fun.protect ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree root)) (fun () -> f root)
 ;;
 
 let facts_of root =
