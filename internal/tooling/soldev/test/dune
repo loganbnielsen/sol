@@ -1,6 +1,3 @@
-; REFAC-137: test_ticket reads every ticket in the repository, to hold that each
-; frontmatter is valid YAML.
-
 (tests
  (names test_ticket test_merge)
  (libraries soldev_lib alcotest unix)

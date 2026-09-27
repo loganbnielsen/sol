@@ -61,6 +61,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install the CI guards' Python dependencies
+        run: python3 -m pip install --user --no-deps -r internal/ci/requirements.txt
+
       # The required check must be VISIBLY intentional when the suite is
       # skipped -- not a job that merely looks like every step failed to run.
       - name: Docs-only change -- full suite deliberately not run
@@ -220,8 +223,8 @@ jobs:
         # mutation self-test includes the collision that failed the live apply.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_kubernetes_object_ownership.sh .
-          internal/ci/test_kubernetes_object_ownership_check.sh
+          python3 internal/ci/check_kubernetes_object_ownership.py .
+          python3 internal/ci/test_kubernetes_object_ownership_check.py
 
       - name: Platform storage requirement (INFRA-090)
         # The lifecycle compares a provider's *observed* disk quota against Sol's *declared*
@@ -460,7 +463,7 @@ jobs:
         # Reads the provider list from the built printer (REFAC-100), so it runs
         # where Build ran; a docs-only change cannot touch a Terraform root.
         if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_destroy_completeness.sh .
+        run: python3 internal/ci/check_destroy_completeness.py .
 
       - name: Provider roots mirror by role (DEC-046 rule 4, REFAC-100)
         if: needs.classify.outputs.kind != 'docs-only'

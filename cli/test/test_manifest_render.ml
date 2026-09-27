@@ -2210,10 +2210,59 @@ let test_hostile_values_round_trip () =
      = Some (`String "yes"))
 ;;
 
+let prefix_value ~prefix text =
+  text
+  |> String.split_on_char '\n'
+  |> List.filter_map (fun line ->
+    let trimmed = String.trim line in
+    let n = String.length prefix in
+    if String.length trimmed >= n && String.sub trimmed 0 n = prefix
+    then Some (String.trim (String.sub trimmed n (String.length trimmed - n)))
+    else None)
+  |> function
+  | first :: _ -> first
+  | [] -> Alcotest.fail (Printf.sprintf "no line starts with %S" prefix)
+;;
+
+let template_dockerfile kind =
+  let root =
+    match Sol_cli_platform_assets.resolve () with
+    | Ok assets -> Sol_cli_platform_assets.templates_root assets
+    | Error error ->
+      Alcotest.fail
+        ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
+  in
+  match Sol_cli_scaffold_tree.text ~root ~kind ~rel:"Dockerfile" with
+  | Ok text -> text
+  | Error message -> Alcotest.fail message
+;;
+
+let test_image_user_matches_pod_security () =
+  List.iter
+    (fun (kind, spec) ->
+       let _, workload = render_spec_ok spec in
+       let user = prefix_value ~prefix:"USER " (template_dockerfile kind) in
+       check_string
+         (kind ^ " manifest runAsUser")
+         user
+         (prefix_value ~prefix:"runAsUser:" workload);
+       check_string
+         (kind ^ " manifest runAsGroup")
+         user
+         (prefix_value ~prefix:"runAsGroup:" workload))
+    [ "svc", svc_spec; "worker", worker_spec; "fn", fn_spec ]
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "values are written exactly (REFAC-131)"
+    [ ( "image user matches the rendered securityContext (REFAC-143)"
+      , [ Alcotest.test_case
+            "every primitive's image runs as the uid its manifest declares"
+            `Quick
+            test_image_user_matches_pod_security
+        ] )
+    ; ( "values are written exactly (REFAC-131)"
       , [ Alcotest.test_case
             "hostile env and label values round-trip"
             `Quick

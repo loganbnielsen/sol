@@ -307,6 +307,10 @@ For each service that has a `Dockerfile`, Sol:
 4. Validates them against the live API server (`kubectl apply --dry-run=server`)
 5. Applies them live
 
+> The generated `Dockerfile` is a two-stage build, and its rationale -- the glibc
+> pin, where its dependencies come from, and the uid it runs as -- is documented
+> in your workspace's `README.md`.
+
 The generated ConfigMap injects cluster-internal service addresses so pods communicate via k8s DNS, not localhost port-forwards:
 
 ```

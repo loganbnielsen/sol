@@ -28,3 +28,4 @@ override.tf.json
 
 # FEAT-101: installed-release smoke scratch (removed on exit)
 .smoke-reachback/
+__pycache__/

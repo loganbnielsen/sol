@@ -50,6 +50,42 @@ sol migrate     # apply database migrations
 sol rollback    # roll back all services to previous image
 ```
 
+## Container images
+
+Each unit's `Dockerfile` is a two-stage build:
+
+- **Builder** -- `ocaml/opam:ubuntu-24.04-ocaml-5.4`, so the binary links against
+  glibc 2.39, with the `librdkafka`/`libpq`/`libssl`/`libgmp` development packages
+  installed.
+- **Runtime** -- `ubuntu:24.04` with the matching runtime libraries only.
+
+Dependencies are not listed in the Dockerfile. The builder reproduces the
+environment this workspace declares in `{{basename}}.opam`
+(`opam install --deps-only .`), so the workspace owns its dependency choices and
+the Dockerfile only reconstructs them. That is why no Sol repository appears in
+it: the framework packages carry their own `pin-depends` for anything not yet in
+the public opam-repository (DEC-025; see Prerequisites above).
+
+Three details are deliberate:
+
+- `opam repository set-url default https://opam.ocaml.org` runs before the
+  install. The base image's default remote is a local snapshot frozen when the
+  image was built, which can predate a version a dependency needs (observed with
+  `https-eio` needing `tls-eio >= 2.1.0`, unsatisfiable against that snapshot even
+  after `opam update`). CI initialises a fresh index and never hits this.
+- `{{basename}}.opam` is copied before the source, so the dependency layer stays
+  cached independently of source changes.
+- The image runs as uid 65534 (`nobody`), matching the `securityContext` Sol
+  renders into the Kubernetes manifests. Change one without the other and the
+  running workload no longer matches what the manifests declare.
+
+The build context is the workspace root -- this directory, the one holding
+`sol.yml` -- which is what `sol up` uses. To build one image by hand:
+
+```bash
+docker build -f app/payments/charge_svc/Dockerfile -t charge-svc .
+```
+
 ## Project layout
 
 ```
