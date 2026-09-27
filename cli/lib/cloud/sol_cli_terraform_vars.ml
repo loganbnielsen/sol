@@ -118,3 +118,61 @@ let var_file ~cwd ~workspace_root ~flag ~target =
   | None, Some path -> Some (absolute workspace_root path)
   | None, None -> None
 ;;
+
+(* REFAC-139: the target a cloud command names, as Terraform variables. Only apply
+   and destroy mutate infrastructure; a plan is a preview, with `sol plan`'s
+   permissive contract. A mutation needs the target to have been declared, not just
+   shaped like <env>/<provider>/<region>, so a typo'd or unintended target cannot
+   inherit sol.yml's shared defaults and change infrastructure anyway -- the same
+   check `sol deploy` makes. *)
+let of_target ~strict ~workspace target_path =
+  let open Result.Syntax in
+  let* cfg =
+    Sol_cli_config.load_for_target ~target:target_path
+    |> Result.map_error Sol_cli_config.error_to_string
+  in
+  let* () =
+    if strict && not (Sol_cli_config.target_declared cfg.target)
+    then
+      Error
+        (Printf.sprintf
+           "target %S is not declared in %s -- terraform apply/destroy require an \
+            explicit target, even an empty one, so a typo'd or unintended target can't \
+            silently inherit sol.yml's shared defaults and mutate infrastructure anyway."
+           target_path
+           (Sol_cli_config.target_source cfg.target))
+    else Ok ()
+  in
+  let* vars = of_config ~workspace cfg in
+  Ok (vars, cfg.target)
+;;
+
+let trim_quotes s =
+  let s = String.trim s in
+  let len = String.length s in
+  if len >= 2 && s.[0] = '"' && s.[len - 1] = '"' then String.sub s 1 (len - 2) else s
+;;
+
+(* [key = value] on one line, with the value's surrounding quotes dropped. *)
+let assignment key line =
+  match String.index_opt line '=' with
+  | Some i when String.equal (String.trim (String.sub line 0 i)) key ->
+    Some (trim_quotes (String.sub line (i + 1) (String.length line - i - 1)))
+  | _ -> None
+;;
+
+let var_file_value key path =
+  match In_channel.with_open_text path In_channel.input_all with
+  | exception Sys_error _ -> None
+  | text ->
+    String.split_on_char '\n' text
+    |> List.find_map (fun line ->
+      let line = String.trim line in
+      if line = "" || line.[0] = '#' then None else assignment key line)
+;;
+
+let resolved key ~var_files ~vars =
+  match List.rev vars |> List.find_map (assignment key) with
+  | Some _ as value -> value
+  | None -> List.find_map (var_file_value key) var_files
+;;

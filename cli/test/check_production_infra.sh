@@ -448,7 +448,7 @@ fi
 # ordinary application verbs the provisioner deliberately does not hold, so the
 # steady-state provisioner CANNOT create it (Kubernetes RBAC escalation
 # prevention) -- it is created inside the temporary bootstrap-admin window
-# instead (see platform_prerequisite_targets in cmd_cloud_tf.ml). That
+# instead (see platform_prerequisite_targets in cli/lib/cloud/sol_cli_cloud_wiring.ml). That
 # sequencing is load-bearing: it only works while the provisioner holds no
 # escalate/bind verb. Guard the invariant structurally, so a future change
 # cannot "fix" a failing apply by widening the provisioner's steady-state RBAC.
