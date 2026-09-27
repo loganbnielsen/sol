@@ -89,7 +89,7 @@ snapshots**, and the operator's manual deletion is recorded as a deviation.
 - The invariant is cheaper to hold than to recover from. What Attempt 5 cost was
   not the failed command; it was that a healthy target became undeletable, which
   is the one failure mode that keeps billing.
-- A structural guard (`internal/ci/check_destroy_completeness.sh`) enforces the
+- A structural guard (`internal/ci/check_destroy_completeness.py`) enforces the
   mechanical half: no `prevent_destroy` in a target root, and every resource that
   ordinary activity populates carries the force attribute.
 

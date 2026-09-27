@@ -3,10 +3,10 @@
 set -u
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-guard="$root/internal/ci/check_destroy_completeness.sh"
+guard="$root/internal/ci/check_destroy_completeness.py"
 
-if [ ! -x "$guard" ]; then
-  echo "test_destroy_completeness_check: guard is not executable: $guard" >&2
+if [ ! -f "$guard" ]; then
+  echo "test_destroy_completeness_check: guard is missing: $guard" >&2
   exit 1
 fi
 
@@ -24,13 +24,13 @@ export SOL_PROVIDERS="aws gcp"
 
 fail=0
 expect_reject() {
-  if "$guard" "$tmp/$1" >/dev/null 2>&1; then
+  if python3 "$guard" "$tmp/$1" >/dev/null 2>&1; then
     echo "test_destroy_completeness_check: guard ACCEPTED a target root with $2." >&2
     fail=1
   fi
 }
 expect_accept() {
-  if ! "$guard" "$tmp/$1" >/dev/null 2>&1; then
+  if ! python3 "$guard" "$tmp/$1" >/dev/null 2>&1; then
     echo "test_destroy_completeness_check: guard REJECTED a repaired target root ($2)." >&2
     fail=1
   fi
@@ -42,7 +42,7 @@ mk newprovider azure 'resource "aws_ecr_repository" "services" {
 SOL_PROVIDERS="aws gcp azure" expect_reject newprovider "a new provider's root that the hard-coded list never named"
 
 mk noprinter aws '' empty.tf
-if env -u SOL_PROVIDERS "$guard" "$tmp/noprinter" >/dev/null 2>&1; then
+if env -u SOL_PROVIDERS python3 "$guard" "$tmp/noprinter" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard PASSED with no provider list." >&2
   fail=1
 fi
@@ -190,7 +190,7 @@ mk softlit gcp 'resource "google_storage_bucket" "loki" {
 }' main.tf
 expect_reject softlit "a GCS bucket with a literal soft-delete retention"
 
-if "$guard" "$tmp/does-not-exist" >/dev/null 2>&1; then
+if python3 "$guard" "$tmp/does-not-exist" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard ACCEPTED a nonexistent root." >&2
   fail=1
 fi
