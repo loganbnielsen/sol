@@ -65,3 +65,13 @@ run pass "typescript: tool directives" src/a.ts '/// <reference types="node" />
 const a: number = "x";'
 run fail "typescript: a line comment" src/a.ts 'const a = 1; // why'
 run fail "typescript: a block comment" src/a.ts '/* why */ const a = 1;'
+
+run pass "python: a shebang, # in strings, and tool directives" tools/a.py '#!/usr/bin/env python3
+import os  # noqa: F401
+x = "# not a comment"
+y = """
+# also a string
+"""'
+run fail "python: a comment line" tools/a.py '# why
+x = 1'
+run fail "python: a trailing comment" tools/a.py 'x = 1  # why'

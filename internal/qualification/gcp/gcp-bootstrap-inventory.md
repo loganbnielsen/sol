@@ -614,7 +614,7 @@ closed in `sol cloud`.
 - **A disposable target must be able to reach `Absent`** — landed independently as
   INFRA-037 / **ADR 0004**, and deliberately *not* duplicated here. `prevent_destroy`
   is gone from both providers' durable telemetry buckets, the ECR repositories take
-  `force_delete`, and `internal/ci/check_destroy_completeness.sh` asserts the rule
+  `force_delete`, and `internal/ci/check_destroy_completeness.py` asserts the rule
   rather than the resources that violated it. GCP inherits the invariant concretely
   (the same two buckets) instead of the AWS spelling of it. The retention toggle —
   whether `sol cloud destroy` discards a target's telemetry by default — is
@@ -995,7 +995,7 @@ above is the evidence behind it.
 6. **(Closed) GCP destruction preparation and the undeletability invariant.** Closed
    by #355/#358 and ADR 0004: both guards (Cloud SQL's and the GKE cluster's
    provider-default one) are lifted by a targeted applied transition that is then
-   verified, `check_destroy_completeness.sh` enforces "a routed guard must be
+   verified, `check_destroy_completeness.py` enforces "a routed guard must be
    liftable by the Destroy policy", and the peering is abandoned rather than deleted
    because GCP will not delete it while a producer is registered. **Still unqualified
    for GCP: retention.** Sol refuses a GCP target whose `destroy_retention` is the

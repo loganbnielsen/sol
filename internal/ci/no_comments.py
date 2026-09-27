@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import tokenize
 
 QUOTED = re.compile(r"\{([a-z_]*)\|")
 OCAML_CHAR = re.compile(r"'(\\([\\'\"ntbr ]|[0-9]{3}|x[0-9a-fA-F]{2}|o[0-7]{3})|[^\\\n])'")
@@ -178,6 +179,24 @@ def ts_template(src, i):
     return n
 
 
+PYTHON_DIRECTIVE = re.compile(r"#\s*(noqa\b|type:|pragma:|-\*-\s*coding)")
+
+
+def python(src):
+    found = []
+    lines = iter(src.splitlines(keepends=True))
+    for token in tokenize.generate_tokens(lambda: next(lines, "")):
+        if token.type != tokenize.COMMENT:
+            continue
+        line = token.start[0]
+        if line == 1 and token.string.startswith("#!"):
+            continue
+        if PYTHON_DIRECTIVE.match(token.string):
+            continue
+        found.append(line)
+    return found
+
+
 def language(path):
     name = os.path.basename(path)
     if path.endswith((".ml", ".mli")):
@@ -188,6 +207,8 @@ def language(path):
         return terraform
     if path.endswith(".ts"):
         return typescript
+    if path.endswith(".py"):
+        return python
     return None
 
 
