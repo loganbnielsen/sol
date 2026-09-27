@@ -59,9 +59,18 @@ dump_case_output() {
     *" $case_name"*) return 0 ;;
   esac
   DUMPED="${DUMPED:-} $case_name"
-  if [ -n "$case_name" ] && [ -s "$TMP/$case_name.out" ]; then
-    printf '           --- %s output (last 12 lines) ---\n' "$case_name"
+  if [ -z "$case_name" ]; then
+    return 0
+  fi
+  # rc first, and always: a case that exits non-zero while producing no output at all is the most
+  # confusing shape there is, and it must say so rather than silently showing nothing.
+  printf '           --- %s: rc %s, %s bytes of output ---\n' "$case_name" \
+    "$(cat "$TMP/$case_name.rc" 2>/dev/null || echo '?')" \
+    "$(wc -c <"$TMP/$case_name.out" 2>/dev/null || echo 0)"
+  if [ -s "$TMP/$case_name.out" ]; then
     tail -12 "$TMP/$case_name.out" | sed 's/^/           /'
+  else
+    printf '           (the harness produced no output at all for this case)\n'
   fi
 }
 no() {
