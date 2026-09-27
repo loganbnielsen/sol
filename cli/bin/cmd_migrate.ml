@@ -30,94 +30,24 @@ let cluster_pg_exists ~ctx () =
    Registers at_exit cleanup so the forward is killed when the process exits. *)
 let auto_forward_pg ~ctx () =
   Printf.printf "Forwarding postgresql (cluster) → localhost:15432 ...\n%!";
-  let devnull_w = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
-  let context_name = ctx.Sol_cli_kube_destination.destination.context in
-  (* FEAT-063: scoped like every other invocation -- [--context] in the argv and
-     the destination's [KUBECONFIG] in the child env. *)
-  let pid =
-    try
-      Result.ok
-      @@ Unix.create_process_env
-           "kubectl"
-           [| "kubectl"
-            ; "--context"
-            ; context_name
-            ; "port-forward"
-            ; "svc/postgresql"
-            ; "-n"
-            ; "postgresql"
-            ; "15432:5432"
-           |]
-           (Sol_cli_kube_destination.child_environment ctx)
-           Unix.stdin
-           devnull_w
-           devnull_w
-    with
-    | Unix.Unix_error (e, fn, _) ->
-      Unix.close devnull_w;
-      Error
-        (Printf.sprintf
-           "could not start kubectl port-forward: %s: %s"
-           fn
-           (Unix.error_message e))
-  in
-  let* pid = pid in
-  Unix.close devnull_w;
-  at_exit (fun () ->
-    (try Unix.kill pid Sys.sigterm with
-     | _ -> ());
-    try ignore (Unix.waitpid [ Unix.WNOHANG ] pid) with
-    | _ -> ());
-  (* Poll until localhost:15432 accepts a TCP connection, up to 5 s. Only
-     the connect-failure codes that genuinely mean "nothing is listening
-     yet" are treated as expected and retried silently; anything else
-     (fd exhaustion, permission issues, ...) is a real problem that ten
-     silent retries would otherwise mask behind a generic "did not become
-     ready in time" — surfaced immediately instead, without wasting the
-     remaining attempts on a failure that retrying can't fix. *)
-  let is_not_listening_yet = function
-    | Unix.ECONNREFUSED
-    | Unix.ETIMEDOUT
-    | Unix.ENETUNREACH
-    | Unix.EHOSTUNREACH
-    | Unix.ECONNRESET -> true
-    | _ -> false
-  in
-  let check_connect () =
-    match Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 with
-    | exception Unix.Unix_error (e, fn, _) ->
-      `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
-    | s ->
-      let addr = Unix.ADDR_INET (Unix.inet_addr_loopback, 15432) in
-      (match Unix.connect s addr with
-       | () ->
-         Unix.close s;
-         `Ready
-       | exception Unix.Unix_error (e, _, _) when is_not_listening_yet e ->
-         Unix.close s;
-         `Not_listening_yet
-       | exception Unix.Unix_error (e, fn, _) ->
-         Unix.close s;
-         `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message e))
-       | exception exn ->
-         Unix.close s;
-         `Failed (Printexc.to_string exn))
-  in
-  let max_attempts = 10 in
-  let rec wait n =
-    if n = 0
-    then Printf.eprintf "warning: port-forward did not become ready in time\n%!"
-    else (
-      match check_connect () with
-      | `Ready -> ()
-      | `Not_listening_yet ->
-        Unix.sleepf 0.5;
-        wait (n - 1)
-      | `Failed msg ->
-        Printf.eprintf "warning: port-forward readiness check failed: %s\n%!" msg)
-  in
-  wait max_attempts;
-  Ok "postgresql://postgres:dev@localhost:15432/dev"
+  let url = "postgresql://postgres:dev@localhost:15432/dev" in
+  match
+    Sol_cli_kubectl.temporary_port_forward
+      ~ctx
+      ~service:"postgresql"
+      ~namespace:"postgresql"
+      ~local_port:15432
+      ~remote_port:5432
+  with
+  | Ok () -> Ok url
+  | Error (Not_started e) ->
+    Error ("could not start kubectl port-forward: " ^ Sol_cli_process.error_to_string e)
+  | Error Not_ready ->
+    Printf.eprintf "warning: port-forward did not become ready in time\n%!";
+    Ok url
+  | Error (Readiness_check_failed msg) ->
+    Printf.eprintf "warning: port-forward readiness check failed: %s\n%!" msg;
+    Ok url
 ;;
 
 let get_postgres_url ~ctx () =
@@ -229,12 +159,13 @@ ENTRYPOINT ["/usr/local/bin/sol"]
 |docker}
 ;;
 
+(* REFAC-134: the file is removed by the caller once kubectl or docker has read
+   it (Sol_cli_fs.remove_reporting); a failure to write it is an error. *)
 let write_temp_file ~suffix content =
-  let path = Filename.temp_file "sol-migrate-" suffix in
-  let oc = open_out path in
-  output_string oc content;
-  close_out oc;
-  path
+  match Filename.temp_file "sol-migrate-" suffix with
+  | exception Sys_error message -> Error message
+  | path ->
+    Sol_cli_fs.write_atomic ~perm:0o600 path content |> Result.map (fun () -> path)
 ;;
 
 let read_migration_files dir =
@@ -466,7 +397,7 @@ let obtain_runner_image runner ~registry ~workspace ~k8s_name =
            ~tag:"sol-cli-migrate"
        in
        Printf.printf "Building migration runner image %s...\n%!" image;
-       let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
+       let* dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
        let result =
          match Sol_cli_docker.build ~tag:image ~dockerfile ~context with
          | Error e ->
@@ -478,8 +409,7 @@ let obtain_runner_image runner ~registry ~workspace ~k8s_name =
               Error (Printf.sprintf "docker push: %s" (Sol_cli_process.error_to_string e))
             | Ok () -> Ok image)
        in
-       (try Sys.remove dockerfile with
-        | _ -> ());
+       Sol_cli_fs.remove_reporting dockerfile;
        result)
 ;;
 
@@ -543,12 +473,12 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
            ; "--ignore-not-found"
            ])
     in
-    let configmap_yaml =
+    let* configmap_yaml =
       write_temp_file
         ~suffix:".yaml"
         (render_configmap ~name:configmap_name ~namespace files)
     in
-    let job_yaml =
+    let* job_yaml =
       write_temp_file
         ~suffix:".yaml"
         (render_job
@@ -572,10 +502,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
         ~on_fail:cleanup
         [ "apply"; "-f"; job_yaml ]
     in
-    (try Sys.remove configmap_yaml with
-     | _ -> ());
-    (try Sys.remove job_yaml with
-     | _ -> ());
+    List.iter Sol_cli_fs.remove_reporting [ configmap_yaml; job_yaml ];
     let* () = applied in
     (* kubectl wait's own --for=condition=complete never returns on a
            failed (not completed) Job -- it would sit out the full timeout
@@ -731,12 +658,12 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table ~services =
                  ; "--ignore-not-found"
                  ])
           in
-          let configmap_yaml =
+          let* configmap_yaml =
             write_temp_file
               ~suffix:".yaml"
               (render_configmap ~name:configmap_name ~namespace files)
           in
-          let job_yaml =
+          let* job_yaml =
             write_temp_file
               ~suffix:".yaml"
               (render_status_job ~name:job_name ~namespace ~image ~table ~configmap_name)
@@ -767,10 +694,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table ~services =
                    "kubectl apply (status configmap): %s"
                    (Sol_cli_process.error_to_string e))
           in
-          (try Sys.remove configmap_yaml with
-           | _ -> ());
-          (try Sys.remove job_yaml with
-           | _ -> ());
+          List.iter Sol_cli_fs.remove_reporting [ configmap_yaml; job_yaml ];
           let result =
             match applied with
             | Error _ as e -> e

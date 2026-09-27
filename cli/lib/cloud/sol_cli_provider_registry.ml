@@ -44,7 +44,12 @@ let of_root provider ~target ~chdir =
        Error (Printf.sprintf "invalid %s Terraform output JSON: %s" label message))
   | Error (Sol_cli_process.Non_zero result) ->
     Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
-  | Error _ -> Error (Printf.sprintf "could not read %s Terraform outputs" label)
+  | Error e ->
+    Error
+      (Printf.sprintf
+         "could not read %s Terraform outputs: %s"
+         label
+         (Sol_cli_process.error_to_string e))
 ;;
 
 let destruction provider context =

@@ -60,11 +60,9 @@ let read_json path =
   | exception Sys_error msg -> Error msg
 ;;
 
-let string_member key json =
-  match Yojson.Safe.Util.member key json with
-  | `String s -> Some s
-  | _ -> None
-;;
+(* Total: a package.json whose top level is not an object reads as having no such
+   field, rather than raising out of the reader (REFAC-132). *)
+let string_member key json = Sol_cli_json.field [ key ] json |> Sol_cli_json.string
 
 let string_list = function
   | `List entries ->
@@ -78,7 +76,7 @@ let string_list = function
 
 (* npm accepts either `workspaces: [ ... ]` or `workspaces: { packages: [ ... ] }`. *)
 let workspaces_of json =
-  match Yojson.Safe.Util.member "workspaces" json with
+  match Sol_cli_json.field [ "workspaces" ] json with
   | `Assoc fields ->
     (match List.assoc_opt "packages" fields with
      | Some packages -> string_list packages
@@ -133,10 +131,9 @@ let entry_in_unit ~root ~unit_dir ~package_json =
     let out_dir =
       match read_json (Filename.concat (join root unit_dir) "tsconfig.json") with
       | Ok json ->
-        (match Yojson.Safe.Util.member "compilerOptions" json with
-         | `Assoc _ as compiler ->
-           Option.value (string_member "outDir" compiler) ~default:"dist"
-         | _ -> "dist")
+        Sol_cli_json.field [ "compilerOptions"; "outDir" ] json
+        |> Sol_cli_json.string
+        |> Option.value ~default:"dist"
       | Error _ -> "dist"
     in
     Filename.concat out_dir "index.js"

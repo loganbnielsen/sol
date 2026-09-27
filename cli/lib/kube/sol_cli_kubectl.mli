@@ -164,3 +164,23 @@ val probe_result
   :  ctx:Sol_cli_kube_destination.context
   -> args:string list
   -> (probe, string) result
+
+(** Why a temporary port-forward is not usable. *)
+type forward_error =
+  | Not_started of Sol_cli_process.error
+  | Not_ready (** it never accepted a connection in the time allowed *)
+  | Readiness_check_failed of string
+  (** connecting failed for a reason retrying cannot fix *)
+
+(** [temporary_port_forward ~ctx ~service ~namespace ~local_port ~remote_port]
+    forwards [localhost:local_port] to [svc/service] until Sol exits (REFAC-134:
+    one implementation, where `sol migrate` and `sol deploy`'s event push had one
+    each), then waits up to 5s for it to accept a connection. The forward is
+    stopped at exit whatever this returns, once started. *)
+val temporary_port_forward
+  :  ctx:Sol_cli_kube_destination.context
+  -> service:string
+  -> namespace:string
+  -> local_port:int
+  -> remote_port:int
+  -> (unit, forward_error) result

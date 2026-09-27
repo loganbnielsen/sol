@@ -77,8 +77,8 @@ let patch_modules_stanza path new_mod =
   in
   match find_prefix 0 with
   | None ->
-    Printf.printf
-      "  note: could not locate (modules ...) in %s — add %s manually\n"
+    Sol_cli_report.app
+      "  note: could not locate (modules ...) in %s — add %s manually"
       path
       new_mod
   | Some pos ->
@@ -98,7 +98,7 @@ let patch_modules_stanza path new_mod =
     let oc = open_out path in
     output_string oc updated;
     close_out oc;
-    Printf.printf "  updated  %s\n" path
+    Sol_cli_report.app "  updated  %s" path
 ;;
 
 let copy ~root ~kind ~dest ~vars ~rule =
@@ -115,9 +115,11 @@ let copy ~root ~kind ~dest ~vars ~rule =
          iter (target :: written) rest
        | Write | Skip_if_exists | Patch_modules _ ->
          let* content = text ~root ~kind ~rel in
-         Sol_cli_scaffold.write_file
-           ~path:target
-           ~content:(Sol_cli_scaffold.subst v content);
+         let* () =
+           Sol_cli_scaffold.write_file
+             ~path:target
+             ~content:(Sol_cli_scaffold.subst v content)
+         in
          iter (target :: written) rest)
   in
   iter [] rels

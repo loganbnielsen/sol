@@ -443,26 +443,14 @@ let identity_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload_id
   }
 ;;
 
-let json_member key = function
-  | `Assoc kvs ->
-    (match List.assoc_opt key kvs with
-     | Some v -> v
-     | None -> `Null)
-  | _ -> `Null
-;;
-
-let json_at path json = List.fold_left (fun acc key -> json_member key acc) json path
-
 let string_at path json =
-  match json_at path json with
-  | `String s -> s
-  | _ -> ""
+  Sol_cli_json.field path json |> Sol_cli_json.string |> Option.value ~default:""
 ;;
 
 (* The pod template's labels for a listed object, as an assoc list; [] when the
    object has none (never a crash). *)
 let pod_template_labels kind item =
-  match json_at (snd (live_kind_path kind)) item with
+  match Sol_cli_json.field (snd (live_kind_path kind)) item with
   | `Assoc kvs ->
     kvs
     |> List.filter_map (fun (k, v) ->
@@ -481,24 +469,22 @@ let pod_template_labels kind item =
    nothing. *)
 let workload_rows_of_payload ~kind ~workspace (payload : Yojson.Safe.t) =
   let wanted = Sol_cli_kubernetes_name.sanitize_label_value workspace in
-  let items =
-    match json_member "items" payload with
-    | `List l -> l
-    | _ -> []
-  in
-  items
-  |> List.filter_map (fun item ->
-    let labels = pod_template_labels kind item in
-    match List.assoc_opt "workspace" labels with
-    | Some w when String.equal w wanted ->
-      let identity =
-        { kind
-        ; namespace = string_at [ "metadata"; "namespace" ] item
-        ; name = string_at [ "metadata"; "name" ] item
-        }
-      in
-      Some (identity, Option.value (List.assoc_opt "release" labels) ~default:"")
-    | _ -> None)
+  (* REFAC-132: a payload with no [items] list is unreadable, never "no live
+     workloads" -- that would read every stale workload as already gone. *)
+  Sol_cli_json.require ~what:"kubectl get output" [ "items" ] Sol_cli_json.list payload
+  |> Result.map
+     @@ List.filter_map (fun item ->
+       let labels = pod_template_labels kind item in
+       match List.assoc_opt "workspace" labels with
+       | Some w when String.equal w wanted ->
+         let identity =
+           { kind
+           ; namespace = string_at [ "metadata"; "namespace" ] item
+           ; name = string_at [ "metadata"; "name" ] item
+           }
+         in
+         Some (identity, Option.value (List.assoc_opt "release" labels) ~default:"")
+       | _ -> None)
 ;;
 
 (* List the live (identity, release-label) pairs for every Sol-owned workload in
@@ -516,13 +502,14 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
          Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
        with
        | Ok r ->
-         (match Yojson.Safe.from_string r.stdout with
-          | exception Yojson.Json_error msg ->
-            Error
-              (Printf.sprintf "could not parse kubectl get %s output: %s" resource msg)
-          | payload ->
-            let rows = workload_rows_of_payload ~kind ~workspace payload in
-            go (List.rev_append rows acc) rest)
+         (match
+            Sol_cli_json.decode
+              ~what:(Printf.sprintf "kubectl get %s output" resource)
+              r.stdout
+            |> Fun.flip Result.bind (workload_rows_of_payload ~kind ~workspace)
+          with
+          | Error msg -> Error msg
+          | Ok rows -> go (List.rev_append rows acc) rest)
        (* A cluster without the Rollouts CRD has no Rollout objects -- an empty set,
           not a failure. Any other failure fails closed: quietly treating an
           uncountable kind as empty could hide a stale workload. *)

@@ -4,9 +4,7 @@ let write path content =
   close_out oc
 ;;
 
-let mkdir_p path =
-  ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-;;
+let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path)
 
 let with_tmp f =
   let root =
@@ -16,8 +14,7 @@ let with_tmp f =
   in
   mkdir_p root;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree root))
     (fun () ->
        let cwd = Sys.getcwd () in
        Fun.protect

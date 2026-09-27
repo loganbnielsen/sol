@@ -178,12 +178,6 @@ let string_option key json =
   | _ -> None
 ;;
 
-let list key json =
-  match mem key json with
-  | Some (`List l) -> l
-  | _ -> []
-;;
-
 (* FEAT-071: ids are parsed here, at the boundary, and stay typed in [t]. A
    malformed id is an error, never a string that later reaches [configmap_name]
    or a label. *)
@@ -283,6 +277,7 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
     Error
       (Printf.sprintf "deployment history contains an invalid record: %s: %s" label msg)
   in
+  let open Result.Syntax in
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | item :: rest ->
@@ -293,9 +288,9 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
        | Some data ->
          (match mem "record" data with
           | Some (`String record) ->
-            (match Yojson.Safe.from_string record with
-             | exception _ -> corrupt label "data.record is not JSON"
-             | parsed ->
+            (match Sol_cli_json.decode ~what:"data.record" record with
+             | Error msg -> corrupt label msg
+             | Ok parsed ->
                (match of_json parsed with
                 | Error msg -> corrupt label msg
                 | Ok r ->
@@ -304,7 +299,11 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
                    | Ok () -> go (r :: acc) rest)))
           | _ -> corrupt label "has no data.record"))
   in
-  go [] (list "items" json)
+  (* REFAC-132: no [items] list is an unreadable response, not an empty history. *)
+  let* items =
+    Sol_cli_json.require ~what:"deployment list" [ "items" ] Sol_cli_json.list json
+  in
+  go [] items
 ;;
 
 (* Newest first. [created_at] is the authority; the id breaks ties (and is itself

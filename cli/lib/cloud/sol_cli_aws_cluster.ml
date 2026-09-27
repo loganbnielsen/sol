@@ -22,55 +22,47 @@ type aws_outputs =
   }
 
 let aws_outputs_of_json text =
-  try
-    let value, string, optional_string =
-      Sol_cli_cluster.outputs_reader ~provider:"AWS" text
-    in
-    let open Result.Syntax in
-    let* cluster_name = string "cluster_name" in
-    let* cluster_access_role_arn = string "cluster_access_role_arn" in
-    let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
-    let* loki_s3_bucket = optional_string "loki_s3_bucket" in
-    let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
-    let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
-    let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
-    let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
-    let managed_resource_dashboards = value "managed_resource_dashboards" in
-    match managed_resource_dashboards with
-    | `Assoc _ ->
-      Ok
-        { cluster_name
-        ; cluster_access_role_arn
-        ; cert_manager_irsa_role_arn
-        ; loki_s3_bucket
-        ; loki_irsa_role_arn
-        ; thanos_s3_bucket
-        ; thanos_irsa_role_arn
-        ; grafana_irsa_role_arn
-        ; managed_resource_dashboards
-        }
-    | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
-  with
-  | Yojson.Json_error message -> Error ("invalid AWS Terraform output JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("invalid AWS Terraform outputs: " ^ message)
+  let open Result.Syntax in
+  let* value, string, optional_string =
+    Sol_cli_cluster.outputs_reader ~provider:"AWS" text
+  in
+  let* cluster_name = string "cluster_name" in
+  let* cluster_access_role_arn = string "cluster_access_role_arn" in
+  let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
+  let* loki_s3_bucket = optional_string "loki_s3_bucket" in
+  let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
+  let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
+  let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
+  let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
+  let managed_resource_dashboards = value "managed_resource_dashboards" in
+  match managed_resource_dashboards with
+  | `Assoc _ ->
+    Ok
+      { cluster_name
+      ; cluster_access_role_arn
+      ; cert_manager_irsa_role_arn
+      ; loki_s3_bucket
+      ; loki_irsa_role_arn
+      ; thanos_s3_bucket
+      ; thanos_irsa_role_arn
+      ; grafana_irsa_role_arn
+      ; managed_resource_dashboards
+      }
+  | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
 ;;
 
 let cluster_access_role_arn (outputs : aws_outputs) = outputs.cluster_access_role_arn
 
 let provisioner_kubeconfig ?role_arn ~region outputs f =
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
+  let cleanup () = Sol_cli_fs.remove_reporting path in
   (* A run can still end through [exit] while this is held -- an interrupt, or a
      command edge -- which does not unwind the stack, so [Fun.protect]'s finalizer
      alone could leak this privileged kubeconfig. Register the same cleanup with
      [at_exit] as well; it is idempotent. *)
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
-    Printf.printf "  cluster access identity: %s\n%!" (cluster_access_role_arn outputs);
+    Sol_cli_report.app "  cluster access identity: %s" (cluster_access_role_arn outputs);
     (* Finding 12: the base providers resolve the kubeconfig from
        KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
     let env = Sol_cli_cluster.provisioner_kube_env path in
@@ -210,21 +202,12 @@ let single_string_of_json ~what = function
 
 let whoami_identity_of_json json : (whoami_identity, string) result =
   match Yojson.Safe.from_string json with
-  | exception _ -> Error "the whoami response was not JSON"
+  | exception Yojson.Json_error _ -> Error "the whoami response was not JSON"
   | json ->
-    (* Non-raising on purpose: Yojson's member raises when its parent is null, and a
-       response with no `extra` at all (any non-EKS authenticator, or a stub) would then
-       crash the probe instead of degrading to a stated reason. The fixtures caught
-       exactly that. *)
-    let member_opt key = function
-      | `Assoc fields -> List.assoc_opt key fields
-      | _ -> None
-    in
-    let sub key j =
-      match member_opt key j with
-      | Some v -> v
-      | None -> `Null
-    in
+    (* Total field access on purpose: a response with no `extra` at all (any non-EKS
+       authenticator, or a stub) degrades to a stated reason instead of crashing the
+       probe. The fixtures caught exactly that. *)
+    let sub key j = Sol_cli_json.field [ key ] j in
     let status = sub "status" json in
     let user = sub "userInfo" status in
     let extra = sub "extra" user in
@@ -525,29 +508,31 @@ let whoami_capture_path ~run_id =
 let persist_whoami_capture ~run_id json =
   match whoami_capture_path ~run_id with
   | None ->
-    Printf.printf
-      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)\n%!"
+    Sol_cli_report.app
+      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)"
   | Some path ->
-    (try
-       let dir = Filename.dirname path in
-       (* The raw capture holds real ARNs and account ids, so the directory is 0700 and the
-          file 0600 -- created or tightened, since an existing directory may be looser. *)
-       if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
-       (try Unix.chmod dir 0o700 with
-        | _ -> ());
-       let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-       let oc = Unix.out_channel_of_descr fd in
-       output_string oc json;
-       close_out oc;
-       (try Unix.chmod path 0o600 with
-        | _ -> ());
-       Printf.printf "  whoami capture: %s\n%!" path
-     with
-     | _ ->
-       Printf.printf
-         "  whoami capture: could not write %s -- the raw response is in this log above\n\
-          %!"
-         path)
+    (* The raw capture holds real ARNs and account ids, so the directory is 0700 and
+       the file 0600 -- created or tightened, since an existing directory may be
+       looser. *)
+    let dir = Filename.dirname path in
+    let written =
+      let open Result.Syntax in
+      let* () = Sol_cli_fs.mkdir_p ~perm:0o700 dir in
+      let* () =
+        match Unix.chmod dir 0o700 with
+        | () -> Ok ()
+        | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
+      in
+      Sol_cli_fs.write_atomic ~perm:0o600 path json
+    in
+    (match written with
+     | Ok () -> Sol_cli_report.app "  whoami capture: %s" path
+     | Error reason ->
+       Sol_cli_report.app
+         "  whoami capture: could not write %s (%s) -- the raw response is in this log \
+          above"
+         path
+         reason)
 ;;
 
 let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
@@ -603,7 +588,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
               json)
        | Ok identity ->
          let source = identity.source in
-         Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
+         Sol_cli_report.app "  whoami shape: parsed (identity source: %s)" source;
          let matched = principal_matches ~expected identity in
          let named =
            match identity.canonical_arn, identity.arn with
@@ -655,8 +640,8 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
               de-escalation."
              why)
       else (
-        Printf.printf
-          "  whoami shape: not reachable yet (%s); retrying in %.0fs\n%!"
+        Sol_cli_report.app
+          "  whoami shape: not reachable yet (%s); retrying in %.0fs"
           why
           interval_s;
         Unix.sleepf interval_s;
@@ -690,8 +675,8 @@ let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
     | Sol_cli_cloud_lifecycle.Deescalated -> verdict
     | _ when remaining <= 1 -> verdict
     | verdict ->
-      Printf.printf
-        "  awaiting effective de-escalation: %s\n%!"
+      Sol_cli_report.app
+        "  awaiting effective de-escalation: %s"
         (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict);
       Unix.sleepf interval_s;
       loop (remaining - 1)
@@ -759,8 +744,8 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
     in
     match permitted, indeterminate with
     | true, [] ->
-      Printf.printf
-        "  bootstrap window control: principal=%s; %s\n%!"
+      Sol_cli_report.app
+        "  bootstrap window control: principal=%s; %s"
         (deescalation_principal_to_string principal)
         (probes
          |> List.map (fun (capability, answer) ->
@@ -774,8 +759,8 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
       if remaining <= 1
       then Error (window_control_failure ~permitted indeterminate)
       else (
-        Printf.printf
-          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
+        Sol_cli_report.app
+          "  bootstrap window control: not yet permitted; retrying in %.0fs"
           interval_s;
         Unix.sleepf interval_s;
         attempt (remaining - 1))
@@ -912,6 +897,6 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
          ~detail)
   | Ok credentials ->
     Sol_cli_aws_credentials.install credentials;
-    Printf.printf "  credentials: %s\n%!" credentials.principal;
+    Sol_cli_report.app "  credentials: %s" credentials.principal;
     Ok ()
 ;;

@@ -2011,7 +2011,7 @@ let in_temp_workspace f =
   Fun.protect
     ~finally:(fun () ->
       Sys.chdir orig_cwd;
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+      ignore (Sol_cli_fs.remove_tree tmpdir))
     f
 ;;
 
@@ -2022,7 +2022,7 @@ let with_charge_svc_workspace f =
   let marker = open_out "sol.yml" in
   close_out marker;
   let dir = "app/payments/charge_svc" in
-  ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)));
+  Result.get_ok (Sol_cli_fs.mkdir_p dir);
   let oc = open_out (Filename.concat dir "Dockerfile") in
   output_string oc "FROM scratch\n";
   close_out oc;

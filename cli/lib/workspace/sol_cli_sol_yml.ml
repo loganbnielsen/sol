@@ -199,34 +199,15 @@ let read_file path =
   | Sys_error msg -> Error msg
 ;;
 
-(* REFAC-134 will move this into Sol_cli_fs (write_atomic); until then it lives
-   here, because this module is the only thing in the CLI that rewrites a file
-   the operator maintains. *)
+(* REFAC-134: Sol_cli_fs's atomic write, keeping the mode the operator chose for
+   sol.yml rather than the umask default. *)
 let write_atomic path text =
-  match Filename.temp_file ~temp_dir:(Filename.dirname path) ".sol-yml-" ".tmp" with
-  | exception Sys_error msg -> Error msg
-  | temp ->
-    let cleanup () =
-      try Sys.remove temp with
-      | _ -> ()
-    in
-    let write () =
-      let oc = open_out_bin temp in
-      Fun.protect
-        ~finally:(fun () -> close_out_noerr oc)
-        (fun () -> output_string oc text);
-      (* Keep the mode the operator chose rather than the umask default. *)
-      (try Unix.chmod temp (Unix.stat path).Unix.st_perm with
-       | _ -> ());
-      Sys.rename temp path
-    in
-    (match write () with
-     | () ->
-       cleanup ();
-       Ok ()
-     | exception Sys_error msg ->
-       cleanup ();
-       Error msg)
+  let perm =
+    match Unix.stat path with
+    | { Unix.st_perm; _ } -> Some st_perm
+    | exception Unix.Unix_error _ -> None
+  in
+  Sol_cli_fs.write_atomic ?perm path text
 ;;
 
 (* ── the interface ───────────────────────────────────────────────────────── *)

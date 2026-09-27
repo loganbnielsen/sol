@@ -5,12 +5,25 @@ module A = Sol_cli_platform_assets
 module W = Sol_cli_terraform_workdir
 
 let write path text =
-  ignore
-    (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote (Filename.dirname path))));
+  Result.get_ok (Sol_cli_fs.mkdir_p (Filename.dirname path));
   Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc text)
 ;;
 
 let read path = In_channel.with_open_bin path In_channel.input_all
+
+(* `chmod -R`, in OCaml: [f] maps each entry's mode. Directories are changed
+   after their contents when removing write access, so the walk can still read
+   them; before, when adding it. *)
+let rec chmod_tree f path =
+  match Unix.lstat path with
+  | { Unix.st_kind = Unix.S_DIR; st_perm; _ } ->
+    let after = f st_perm in
+    if after land 0o200 <> 0 then Unix.chmod path after;
+    Sys.readdir path |> Array.iter (fun e -> chmod_tree f (Filename.concat path e));
+    if after land 0o200 = 0 then Unix.chmod path after
+  | { Unix.st_kind = Unix.S_REG; st_perm; _ } -> Unix.chmod path (f st_perm)
+  | _ -> ()
+;;
 
 let with_tmpdir f =
   let dir = Filename.temp_file "sol-workdir-" "" in
@@ -18,12 +31,8 @@ let with_tmpdir f =
   Unix.mkdir dir 0o755;
   Fun.protect
     ~finally:(fun () ->
-      ignore
-        (Sys.command
-           (Printf.sprintf
-              "chmod -R u+w %s; rm -rf %s"
-              (Filename.quote dir)
-              (Filename.quote dir))))
+      chmod_tree (fun perm -> perm lor 0o200) dir;
+      ignore (Sol_cli_fs.remove_tree dir))
     (fun () -> f (Unix.realpath dir))
 ;;
 
@@ -173,11 +182,7 @@ let test_rematerialize_is_authoritative_and_preserves () =
 let test_read_only_assets () =
   with_tmpdir (fun root ->
     let assets = fake_assets root in
-    ignore
-      (Sys.command
-         (Printf.sprintf
-            "chmod -R a-w %s"
-            (Filename.quote (Filename.concat root "platform"))));
+    chmod_tree (fun perm -> perm land lnot 0o222) (Filename.concat root "platform");
     let chdir = materialize assets ~target:"readonly/aws/us-east-1" () in
     let perm = (Unix.stat (Filename.concat chdir "main.tf")).Unix.st_perm in
     Alcotest.(check bool) "the copy is owner-writable" true (perm land 0o200 <> 0);

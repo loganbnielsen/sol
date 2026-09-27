@@ -261,7 +261,7 @@ let acknowledge ~key =
 
 let supervise ~dir = function
   | [] ->
-    prerr_endline "sol __supervise: no command";
+    Sol_cli_report.err "sol __supervise: no command";
     exit 2
   | prog :: _ as argv ->
     let open_out name =
@@ -315,7 +315,7 @@ let dispatch_if_supervisor () =
   | _ :: "__supervise" :: dir :: argv ->
     (try supervise ~dir argv with
      | e ->
-       Printf.eprintf "sol __supervise: %s\n%!" (Printexc.to_string e);
+       Sol_cli_report.err "sol __supervise: %s" (Printexc.to_string e);
        exit 125)
   | _ -> ()
 ;;
@@ -335,8 +335,7 @@ let new_operation_dir ~key =
       !operation_counter
   in
   let dir = Filename.concat base name in
-  Sol_cli_scaffold.mkdir_p dir;
-  base, name, dir
+  Sol_cli_fs.mkdir_p dir |> Result.map (fun () -> base, name, dir)
 ;;
 
 let tf_pid_of dir =
@@ -359,125 +358,127 @@ let run
   | [] -> Error (Sol_cli_process.Spawn_failed "empty argv")
   | _ :: _ ->
     if echo then Sol_cli_process.echo_cmd c.argv c.redact;
-    let base, name, dir = new_operation_dir ~key in
-    let env =
-      match c.env with
-      | None -> Unix.environment ()
-      | Some extras ->
-        let keys = List.map fst extras in
-        let kept =
-          Array.to_list (Unix.environment ())
-          |> List.filter (fun entry ->
-            let k =
-              match String.index_opt entry '=' with
-              | Some i -> String.sub entry 0 i
-              | None -> entry
-            in
-            not (List.mem k keys))
-        in
-        Array.of_list (kept @ List.map (fun (k, v) -> k ^ "=" ^ v) extras)
-    in
-    flush_all ();
-    (match Unix.fork () with
-     | 0 ->
-       (* Child: its own session, so a terminal's Ctrl-C or hangup, or a signal to
+    (match new_operation_dir ~key with
+     | Error message ->
+       Error (Sol_cli_process.Spawn_failed ("cannot record the operation: " ^ message))
+     | Ok (base, name, dir) ->
+       let env =
+         match c.env with
+         | None -> Unix.environment ()
+         | Some extras ->
+           let keys = List.map fst extras in
+           let kept =
+             Array.to_list (Unix.environment ())
+             |> List.filter (fun entry ->
+               let k =
+                 match String.index_opt entry '=' with
+                 | Some i -> String.sub entry 0 i
+                 | None -> entry
+               in
+               not (List.mem k keys))
+           in
+           Array.of_list (kept @ List.map (fun (k, v) -> k ^ "=" ^ v) extras)
+       in
+       flush_all ();
+       (match Unix.fork () with
+        | 0 ->
+          (* Child: its own session, so a terminal's Ctrl-C or hangup, or a signal to
           Sol's process group, never reaches Terraform or its provider plugins. *)
-       (try
-          ignore (Unix.setsid ());
-          Option.iter Unix.chdir c.cwd;
-          Unix.execve
-            supervisor
-            (Array.of_list (supervisor :: "__supervise" :: dir :: c.argv))
-            env
-        with
-        | _ -> Unix._exit 127)
-     | supervisor_pid ->
-       write_atomic
-         (file dir "meta")
-         (String.concat
-            "\n"
-            [ "host=" ^ hostname ()
-            ; Printf.sprintf "supervisor_pid=%d" supervisor_pid
-            ; "supervisor_start=" ^ Option.value ~default:"" (start_time supervisor_pid)
-            ; Printf.sprintf "sol_pid=%d" (Unix.getpid ())
-            ; Printf.sprintf "started_at=%f" (Unix.gettimeofday ())
-            ; "root=" ^ root
-            ]
-          ^ "\n");
-       write_atomic (Filename.concat base "latest") (name ^ "\n");
-       (* Interrupts: forward one SIGINT to Terraform's pid only, then a second as
+          (try
+             ignore (Unix.setsid ());
+             Option.iter Unix.chdir c.cwd;
+             Unix.execve
+               supervisor
+               (Array.of_list (supervisor :: "__supervise" :: dir :: c.argv))
+               env
+           with
+           | _ -> Unix._exit 127)
+        | supervisor_pid ->
+          write_atomic
+            (file dir "meta")
+            (String.concat
+               "\n"
+               [ "host=" ^ hostname ()
+               ; Printf.sprintf "supervisor_pid=%d" supervisor_pid
+               ; "supervisor_start="
+                 ^ Option.value ~default:"" (start_time supervisor_pid)
+               ; Printf.sprintf "sol_pid=%d" (Unix.getpid ())
+               ; Printf.sprintf "started_at=%f" (Unix.gettimeofday ())
+               ; "root=" ^ root
+               ]
+             ^ "\n");
+          write_atomic (Filename.concat base "latest") (name ^ "\n");
+          (* Interrupts: forward one SIGINT to Terraform's pid only, then a second as
           Terraform's own "cancel now"; ignore the rest. Never the provider
           plugins, never the process group, never SIGKILL. *)
-       let interrupts = ref 0 in
-       let forwarded = ref 0 in
-       let rec forward () =
-         if !forwarded < min !interrupts 2
-         then (
-           match tf_pid_of dir with
-           | None -> ()
-           | Some pid ->
-             incr forwarded;
-             (try Unix.kill pid Sys.sigint with
-              | Unix.Unix_error _ -> ());
-             if !forwarded = 1
-             then
-               Printf.eprintf
-                 "\n\
-                  interrupt: sent one SIGINT to terraform (pid %d) only; it is stopping \
-                  itself safely (persisting state, releasing the lock). Waiting for it. \
-                  Interrupt again to ask Terraform to cancel immediately -- Terraform \
-                  warns that this may lose data.\n\
-                  %!"
-                 pid
-             else
-               Printf.eprintf
-                 "\n\
-                  interrupt: sent a second SIGINT to terraform (pid %d): Terraform will \
-                  cancel immediately and data loss may occur. Still waiting for it to \
-                  exit.\n\
-                  %!"
-                 pid;
-             forward ())
-       in
-       let handler = Sys.Signal_handle (fun _ -> incr interrupts) in
-       let previous =
-         List.map
-           (fun s -> s, Sys.signal s handler)
-           [ Sys.sigint; Sys.sigterm; Sys.sighup ]
-       in
-       let restore () = List.iter (fun (s, b) -> Sys.set_signal s b) previous in
-       let rec wait () =
-         forward ();
-         match Unix.waitpid [ Unix.WNOHANG ] supervisor_pid with
-         | 0, _ ->
-           (try Unix.sleepf 0.1 with
-            | Unix.Unix_error (Unix.EINTR, _, _) -> ());
-           wait ()
-         | _, status -> status
-         | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
-       in
-       let status = Fun.protect ~finally:restore wait in
-       let read name = Option.value ~default:"" (read_file (file dir name)) in
-       (match Option.bind (read_file (file dir "exit")) outcome_of_string with
-        | Some outcome ->
-          let exit_code =
-            match outcome with
-            | Exited n -> n
-            | Signaled n -> 128 + n
+          let interrupts = ref 0 in
+          let forwarded = ref 0 in
+          let rec forward () =
+            if !forwarded < min !interrupts 2
+            then (
+              match tf_pid_of dir with
+              | None -> ()
+              | Some pid ->
+                incr forwarded;
+                (try Unix.kill pid Sys.sigint with
+                 | Unix.Unix_error _ -> ());
+                if !forwarded = 1
+                then
+                  Sol_cli_report.err
+                    "\n\
+                     interrupt: sent one SIGINT to terraform (pid %d) only; it is \
+                     stopping itself safely (persisting state, releasing the lock). \
+                     Waiting for it. Interrupt again to ask Terraform to cancel \
+                     immediately -- Terraform warns that this may lose data."
+                    pid
+                else
+                  Sol_cli_report.err
+                    "\n\
+                     interrupt: sent a second SIGINT to terraform (pid %d): Terraform \
+                     will cancel immediately and data loss may occur. Still waiting for \
+                     it to exit."
+                    pid;
+                forward ())
           in
-          Sol_cli_process.completed
-            ~exit_code
-            ~stdout:(String.trim (read "stdout"))
-            ~stderr:(String.trim (read "stderr"))
-        | None ->
-          Error
-            (Sol_cli_process.Spawn_failed
-               (Printf.sprintf
-                  "terraform's supervisor ended (%s) without recording an outcome; the \
-                   operation record is %s"
-                  (match status with
-                   | Unix.WEXITED n -> Printf.sprintf "exit %d" n
-                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" (posix_signal n)
-                   | Unix.WSTOPPED n -> Printf.sprintf "stopped %d" (posix_signal n))
-                  dir))))
+          let handler = Sys.Signal_handle (fun _ -> incr interrupts) in
+          let previous =
+            List.map
+              (fun s -> s, Sys.signal s handler)
+              [ Sys.sigint; Sys.sigterm; Sys.sighup ]
+          in
+          let restore () = List.iter (fun (s, b) -> Sys.set_signal s b) previous in
+          let rec wait () =
+            forward ();
+            match Unix.waitpid [ Unix.WNOHANG ] supervisor_pid with
+            | 0, _ ->
+              (try Unix.sleepf 0.1 with
+               | Unix.Unix_error (Unix.EINTR, _, _) -> ());
+              wait ()
+            | _, status -> status
+            | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+          in
+          let status = Fun.protect ~finally:restore wait in
+          let read name = Option.value ~default:"" (read_file (file dir name)) in
+          (match Option.bind (read_file (file dir "exit")) outcome_of_string with
+           | Some outcome ->
+             let exit_code =
+               match outcome with
+               | Exited n -> n
+               | Signaled n -> 128 + n
+             in
+             Sol_cli_process.completed
+               ~exit_code
+               ~stdout:(String.trim (read "stdout"))
+               ~stderr:(String.trim (read "stderr"))
+           | None ->
+             Error
+               (Sol_cli_process.Spawn_failed
+                  (Printf.sprintf
+                     "terraform's supervisor ended (%s) without recording an outcome; \
+                      the operation record is %s"
+                     (match status with
+                      | Unix.WEXITED n -> Printf.sprintf "exit %d" n
+                      | Unix.WSIGNALED n -> Printf.sprintf "signal %d" (posix_signal n)
+                      | Unix.WSTOPPED n -> Printf.sprintf "stopped %d" (posix_signal n))
+                     dir)))))
 ;;

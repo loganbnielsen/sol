@@ -18,7 +18,7 @@ let fresh name =
       tmp_root
       (Printf.sprintf "%s-%d-%f" name (Unix.getpid ()) (Unix.gettimeofday ()))
   in
-  Sol_cli_scaffold.mkdir_p dir;
+  Sol_cli_fs.mkdir_p dir |> Result.get_ok;
   dir
 ;;
 
@@ -221,7 +221,9 @@ let test_interrupt_reaches_terraform_only () =
   let c = make "interrupt" in
   (* An unrelated process that must not be touched. *)
   let bystander =
-    Unix.create_process "sleep" [| "sleep"; "30" |] Unix.stdin Unix.stdout Unix.stderr
+    Sol_cli_process.spawn (Sol_cli_process.cmd [ "sleep"; "30" ])
+    |> Result.get_ok
+    |> Sol_cli_process.pid
   in
   let sol = spawn_sol ~ticks:60 c in
   wait_until "terraform to start" (tf_started c);

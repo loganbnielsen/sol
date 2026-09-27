@@ -55,19 +55,3 @@ let to_string = function
   | Absent -> "absent"
   | Unknown reason -> Printf.sprintf "unknown (%s)" reason
 ;;
-
-(* [gcloud container clusters describe] answers 404 for a cluster that is not there, which is a
-   fresh target rather than an unreadable one. The wording is matched only for *absence*: every
-   other failure is `Unknown`, because treating an unreadable cluster as absence is how a run
-   would go on to touch a cluster it never actually identified. *)
-let absent_wording text =
-  let lowered = String.lowercase_ascii text in
-  List.exists
-    (fun needle -> Sol_cli_string.contains ~needle lowered)
-    [ "not found"
-    ; "not_found"
-    ; "does not exist"
-    ; "was not found"
-    ; "could not fetch resource"
-    ]
-;;

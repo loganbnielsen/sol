@@ -1,9 +1,6 @@
 let check_bool = Alcotest.(check bool)
 let check_string = Alcotest.(check string)
-
-let mkdir_p path =
-  ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
-;;
+let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path)
 
 let write_file path content =
   let oc = open_out path in
@@ -16,8 +13,7 @@ let with_tmpdir f =
   Sys.remove tmpdir;
   Unix.mkdir tmpdir 0o755;
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree tmpdir))
     (fun () -> f tmpdir)
 ;;
 

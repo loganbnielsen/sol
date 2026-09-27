@@ -17,39 +17,30 @@ let upgrade_install ~release ~chart ~namespace ?version ?(values = []) ?values_y
       | Float f -> [ "--set"; Printf.sprintf "%s=%g" k f ]
       | Str s -> [ "--set-string"; Printf.sprintf "%s=%s" k s ])
   in
-  let values_file =
-    values_yaml
-    |> Option.map (fun content ->
-      let tmp = Filename.temp_file "sol-helm-values-" ".yaml" in
-      let oc = open_out tmp in
-      output_string oc content;
-      close_out oc;
-      tmp)
+  let version_flags =
+    match version with
+    | Some v -> [ "--version"; v ]
+    | None -> []
   in
-  Fun.protect
-    ~finally:(fun () ->
-      values_file
-      |> Option.iter (fun tmp ->
-        try Sys.remove tmp with
-        | _ -> ()))
-    (fun () ->
-       let file_flags =
-         match values_file with
-         | Some tmp -> [ "-f"; tmp ]
-         | None -> []
-       in
-       let version_flags =
-         match version with
-         | Some v -> [ "--version"; v ]
-         | None -> []
-       in
-       let argv =
-         [ "helm"; "upgrade"; "--install"; release; chart ]
-         @ [ "--namespace"; namespace; "--create-namespace" ]
-         @ version_flags
-         @ set_flags
-         @ file_flags
-         @ [ "--wait"; "--timeout"; "3m" ]
-       in
-       run ~echo:true (cmd argv))
+  let install file_flags =
+    run
+      ~echo:true
+      (cmd
+         ([ "helm"; "upgrade"; "--install"; release; chart ]
+          @ [ "--namespace"; namespace; "--create-namespace" ]
+          @ version_flags
+          @ set_flags
+          @ file_flags
+          @ [ "--wait"; "--timeout"; "3m" ]))
+  in
+  match values_yaml with
+  | None -> install []
+  | Some content ->
+    Sol_cli_fs.with_temp_file
+      ~prefix:"sol-helm-values-"
+      ~suffix:".yaml"
+      content
+      (fun tmp -> install [ "-f"; tmp ])
+    |> Result.map_error (fun message -> Sol_cli_process.Spawn_failed message)
+    |> Result.join
 ;;

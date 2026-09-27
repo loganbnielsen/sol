@@ -24,7 +24,7 @@ let fold_dir dir ~init ~f =
     List.fold_left (fun acc entry -> f acc entry (Filename.concat dir entry)) init names
   | Error (Sol_cli_fs_walk.Absent _) -> init
   | Error error ->
-    Printf.eprintf "sol: warning: %s\n%!" (Sol_cli_fs_walk.to_string error);
+    Sol_cli_report.warn "sol: warning: %s" (Sol_cli_fs_walk.to_string error);
     init
 ;;
 
@@ -36,7 +36,7 @@ let filter_validated ~kind of_string strings =
     match of_string s with
     | Ok v -> Some v
     | Error e ->
-      Printf.eprintf "sol: warning: skipping invalid %s %S: %s\n%!" kind s e;
+      Sol_cli_report.warn "sol: warning: skipping invalid %s %S: %s" kind s e;
       None)
 ;;
 

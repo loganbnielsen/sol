@@ -50,7 +50,7 @@ let with_fake_sol_home ~component ~files f =
   Unix.mkdir root 0o755;
   Fun.protect
     ~finally:(fun () ->
-      let _ = Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root)) in
+      let _ = Sol_cli_fs.remove_tree root in
       ())
     (fun () ->
        sol_home_markers

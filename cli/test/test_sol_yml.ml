@@ -44,7 +44,7 @@ let with_workspace sol_yml f =
     ~finally:(fun () ->
       (try Unix.chmod dir 0o755 with
        | _ -> ());
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir))))
+      ignore (Sol_cli_fs.remove_tree dir))
     (fun () -> f dir path)
 ;;
 

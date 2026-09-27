@@ -14,20 +14,6 @@ open Sol_cli_destruction
 open Sol_cli_terraform_steps
 open Result.Syntax
 
-(* `An error occurred (Code) when calling the Operation operation: ...`. The code
-   is what a caller is allowed to branch on; the prose around it is not. *)
-let aws_error_code stderr =
-  let open_ = String.index_opt stderr '(' in
-  match open_ with
-  | None -> None
-  | Some open_ ->
-    let close = String.index_from_opt stderr (open_ + 1) ')' in
-    (match close with
-     | Some close when close > open_ + 1 ->
-       Some (String.sub stderr (open_ + 1) (close - open_ - 1))
-     | _ -> None)
-;;
-
 (* [Pending] is the provider saying "not yet": the snapshot exists and has not
    reached the state the retention contract requires. The caller keeps observing
    for a bounded time; it is never reported as success. *)
@@ -65,24 +51,20 @@ let instance_snapshots_query ~instance ~region =
 
 (* `{"DBSnapshots":[{"DBSnapshotIdentifier":..,"SnapshotType":..,"Status":..}]}`. *)
 let snapshots_of_json stdout =
-  try
-    match Yojson.Safe.from_string stdout with
-    | `Assoc _ as document ->
-      (match Yojson.Safe.Util.member "DBSnapshots" document with
-       | `List items ->
-         Ok
-           (items
-            |> List.map (fun item ->
-              let open Yojson.Safe.Util in
-              ( member "DBSnapshotIdentifier" item |> to_string_option
-              , member "SnapshotType" item |> to_string_option
-              , member "Status" item |> to_string_option )))
-       | _ -> Error "the provider's answer carries no `DBSnapshots` array")
-    | _ -> Error "the provider's answer is not a JSON object"
-  with
-  | Yojson.Json_error message -> Error ("the provider's answer is not JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("the provider's answer has an unexpected shape: " ^ message)
+  let text key item = Sol_cli_json.field [ key ] item |> Sol_cli_json.string in
+  match Yojson.Safe.from_string stdout with
+  | exception Yojson.Json_error message ->
+    Error ("the provider's answer is not JSON: " ^ message)
+  | `Assoc _ as document ->
+    (match Sol_cli_json.field [ "DBSnapshots" ] document with
+     | `List items ->
+       Ok
+         (items
+          |> List.map (fun item ->
+            text "DBSnapshotIdentifier" item, text "SnapshotType" item, text "Status" item)
+         )
+     | _ -> Error "the provider's answer carries no `DBSnapshots` array")
+  | _ -> Error "the provider's answer is not a JSON object"
 ;;
 
 let transient_snapshot_status = function
@@ -169,7 +151,7 @@ let classify_final_snapshot ~declared ~snapshot_id lookup =
                    availability is not established"
                   snapshot_id))))
   | Answered { status; stderr; _ } ->
-    (match aws_error_code stderr with
+    (match Sol_cli_aws.error_code stderr with
      | Some "DBSnapshotNotFound" ->
        Settled
          (Retention_violated
@@ -231,7 +213,7 @@ let classify_instance_snapshots lookup =
             (List.length snapshots)
             (String.concat ", " (List.map snapshot_label snapshots))))
   | Answered { status; stderr; _ } ->
-    (match aws_error_code stderr with
+    (match Sol_cli_aws.error_code stderr with
      | Some ("DBInstanceNotFound" | "InvalidDBInstanceId.NotFound") ->
        Retention_required_and_observed
          "none observed (destroy_retention = none): the provider reports no such \
@@ -310,10 +292,9 @@ let aws_load_balancer_probe ~region ~cluster_name =
 let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
   if attempts = 0
   then
-    Printf.printf
+    Sol_cli_report.app
       "  (warning: load balancer(s) may still be deprovisioning; proceeding to cloud \
-       destroy and retaining the final absence check)\n\
-       %!"
+       destroy and retaining the final absence check)"
   else (
     match load_balancers_gone ~region ~cluster_name with
     | Some true -> ()
@@ -522,12 +503,12 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
   match rds_of_state state with
   | Error message -> failed message
   | Ok None ->
-    Printf.printf "  prepare: no RDS instance for this target, nothing to prepare.\n%!";
+    Sol_cli_report.app "  prepare: no RDS instance for this target, nothing to prepare.";
     Sol_cli_cloud_lifecycle.Nothing_to_prepare
   | Ok (Some _) ->
     let snapshot_id = unique_rds_snapshot_id cluster_name in
-    Printf.printf
-      "  prepare: disabling RDS deletion protection%s...\n%!"
+    Sol_cli_report.app
+      "  prepare: disabling RDS deletion protection%s..."
       (match retention with
        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
          ", final snapshot " ^ snapshot_id
@@ -573,7 +554,7 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
 let verify_destroy_preparation_result infra_dir ~retention ~prepared =
   match prepared with
   | None ->
-    Printf.printf "  verify preparation: nothing was prepared.\n%!";
+    Sol_cli_report.app "  verify preparation: nothing was prepared.";
     Ok ()
   | Some snapshot_id ->
     let* state = read_cloud_state infra_dir in
@@ -622,10 +603,9 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
                 "cannot establish that snapshot creation is disabled: \
                  skip_final_snapshot is absent from state")
        in
-       Printf.printf
+       Sol_cli_report.app
          "  verify preparation: RDS deletion protection disabled, final snapshot %s \
-          (target destroy_retention = %s)\n\
-          %!"
+          (target destroy_retention = %s)"
          (match retention with
           | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> snapshot_id ^ " confirmed"
           | Sol_cli_cloud_lifecycle.Retain_nothing ->

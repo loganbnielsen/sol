@@ -120,25 +120,26 @@ let to_string (p : prerequisite) = Printf.sprintf "%03d_%s" p.version p.name
 (* The applied versions the migration runner reports, from
    [sol migrate status --json]. Only the versions are needed: the contract is
    "is this migration applied", and [applied_at] is presentation. *)
+(* REFAC-132: an entry whose [applied] or [version] cannot be read is an error.
+   Dropping it read a malformed *applied* migration as "not applied". *)
 let parse_status_json text =
-  let open Yojson.Safe.Util in
+  let open Result.Syntax in
+  let what = "migration status" in
+  let applied_version item =
+    let* applied = Sol_cli_json.require ~what [ "applied" ] Sol_cli_json.bool item in
+    if applied
+    then
+      Sol_cli_json.require ~what [ "version" ] Sol_cli_json.int item
+      |> Result.map Option.some
+    else Ok None
+  in
   match Yojson.Safe.from_string text with
   | exception Yojson.Json_error msg -> Error (Printf.sprintf "invalid JSON: %s" msg)
   | json ->
-    (match member "migrations" json with
+    (match Sol_cli_json.field [ "migrations" ] json with
      | `List items ->
-       let versions =
-         items
-         |> List.filter_map (fun item ->
-           match to_bool (member "applied" item) with
-           | true ->
-             (match to_int (member "version" item) with
-              | v -> Some v
-              | exception Type_error _ -> None)
-           | false -> None
-           | exception Type_error _ -> None)
-       in
-       Ok versions
+       Sol_cli_result.map_list applied_version items
+       |> Result.map (List.filter_map Fun.id)
      | _ -> Error "missing \"migrations\" array")
 ;;
 

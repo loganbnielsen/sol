@@ -87,14 +87,10 @@ let save_deployed_groups ~ctx workspace groups =
           ; "data", `Assoc [ "consumer_groups", `String value ]
           ])
   in
-  let path = Filename.temp_file "sol-state-" ".json" in
-  let oc = open_out path in
-  output_string oc apply_json;
-  close_out oc;
   (* BUG-025 reported a failed write; BUG-045 makes it an error. The next deploy's
      consumer-group removal check reads this record, so a failed write is a
      deploy whose safety check the next deploy cannot run. *)
-  let result =
+  Sol_cli_fs.with_temp_file ~prefix:"sol-state-" ~suffix:".json" apply_json (fun path ->
     match Sol_cli_kubectl.apply ~ctx ~file:path with
     | Ok () -> Ok ()
     | Error e ->
@@ -105,11 +101,8 @@ let save_deployed_groups ~ctx workspace groups =
             The next deploy's consumer-group removal check will not know this deploy's \
             groups; fix access to that ConfigMap and deploy again."
            name
-           (Sol_cli_process.error_to_string e))
-  in
-  (try Sys.remove path with
-   | Sys_error _ -> ());
-  result
+           (Sol_cli_process.error_to_string e)))
+  |> Result.join
 ;;
 
 let record_outcome ~ctx workspace outcome =
@@ -128,11 +121,10 @@ let removed_consumer_groups ~prev ~next =
 let check_removed_groups ~ctx ~workspace ~confirm_group_change ~next =
   match load_deployed_groups ~ctx workspace with
   | Error msg when confirm_group_change ->
-    Printf.eprintf
+    Sol_cli_report.warn
       "warning: %s\n\
        The consumer-group removal check could not run; proceeding because \
-       --confirm-group-change was passed.\n\
-       %!"
+       --confirm-group-change was passed."
       msg;
     Ok ()
   | Error msg ->

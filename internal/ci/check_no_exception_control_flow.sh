@@ -22,7 +22,6 @@ allowed=(
   "cli/lib/deploy/sol_cli_deployment_plan.ml|Error message -> invalid_arg message|a literal default quantity that fails its own parser"
   "cli/lib/deploy/sol_cli_factory.ml|length mismatch|plan and results are built one-to-one"
   "cli/lib/local/sol_cli_local_infra.ml|max_in_flight < 1|a literal concurrency bound"
-  "cli/lib/base/sol_cli_scaffold.ml|raise|REFAC-134 replaces this mkdir_p with a result-returning Sol_cli_fs"
 )
 
 is_allowed() {

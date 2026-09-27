@@ -331,12 +331,29 @@ jobs:
       - name: Manifest-values mutation test
         run: bash internal/ci/test_manifests_are_values.sh
 
+      - name: One process runner, one filesystem helper (REFAC-134)
+        run: bash internal/ci/check_single_runner.sh
+
+      - name: Single-runner mutation test
+        run: bash internal/ci/test_single_runner.sh
+
+      - name: Library code does not print (REFAC-135)
+        run: bash internal/ci/check_library_output.sh
+
+      - name: Library-output mutation test
+        run: bash internal/ci/test_library_output.sh
+
       - name: let* is Result.Syntax, repository-wide (REFAC-137)
         run: bash internal/ci/check_result_syntax.sh
 
       - name: Result.Syntax mutation test
         run: bash internal/ci/test_result_syntax.sh
 
+      - name: JSON is read through Sol_cli_json (REFAC-132)
+        run: bash internal/ci/check_json_decode_boundary.sh
+
+      - name: JSON-decode-boundary mutation test
+        run: bash internal/ci/test_json_decode_boundary.sh
       - name: Runtime failures are returned, not raised (REFAC-133)
         run: bash internal/ci/check_no_exception_control_flow.sh
 

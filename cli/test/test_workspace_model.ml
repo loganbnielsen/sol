@@ -21,10 +21,7 @@ let tmpdir () =
 
 let with_tmp f =
   let dir = tmpdir () in
-  Fun.protect
-    ~finally:(fun () ->
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir))))
-    (fun () -> f dir)
+  Fun.protect ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree dir)) (fun () -> f dir)
 ;;
 
 let write dir rel content =

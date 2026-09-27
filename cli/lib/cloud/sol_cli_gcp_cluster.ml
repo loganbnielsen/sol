@@ -31,42 +31,35 @@ type gcp_outputs =
   }
 
 let gcp_outputs_of_json text =
-  try
-    let _, string, optional_string =
-      Sol_cli_cluster.outputs_reader ~provider:"GCP" text
-    in
-    let open Result.Syntax in
-    let* cluster_name = string "cluster_name" in
-    let* project_id = string "project_id" in
-    let* region = string "region" in
-    let* artifact_registry = string "artifact_registry" in
-    let* loki_gcs_bucket = optional_string "loki_gcs_bucket" in
-    let* loki_workload_identity_sa_email =
-      optional_string "loki_workload_identity_sa_email"
-    in
-    let* thanos_gcs_bucket = optional_string "thanos_gcs_bucket" in
-    let* thanos_workload_identity_sa_email =
-      optional_string "thanos_workload_identity_sa_email"
-    in
-    (* Required, not optional: without it the platform would be installed as
+  let open Result.Syntax in
+  let* _, string, optional_string = Sol_cli_cluster.outputs_reader ~provider:"GCP" text in
+  let* cluster_name = string "cluster_name" in
+  let* project_id = string "project_id" in
+  let* region = string "region" in
+  let* artifact_registry = string "artifact_registry" in
+  let* loki_gcs_bucket = optional_string "loki_gcs_bucket" in
+  let* loki_workload_identity_sa_email =
+    optional_string "loki_workload_identity_sa_email"
+  in
+  let* thanos_gcs_bucket = optional_string "thanos_gcs_bucket" in
+  let* thanos_workload_identity_sa_email =
+    optional_string "thanos_workload_identity_sa_email"
+  in
+  (* Required, not optional: without it the platform would be installed as
        whatever identity happened to call Sol, which is the thing Attempt 1 did
        and the review named as not being an authority model. *)
-    let* provisioner_service_account = string "provisioner_service_account" in
-    Ok
-      { cluster_name
-      ; project_id
-      ; region
-      ; artifact_registry
-      ; loki_gcs_bucket
-      ; loki_workload_identity_sa_email
-      ; thanos_gcs_bucket
-      ; thanos_workload_identity_sa_email
-      ; provisioner_service_account
-      }
-  with
-  | Yojson.Json_error message -> Error ("invalid GCP Terraform output JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("invalid GCP Terraform outputs: " ^ message)
+  let* provisioner_service_account = string "provisioner_service_account" in
+  Ok
+    { cluster_name
+    ; project_id
+    ; region
+    ; artifact_registry
+    ; loki_gcs_bucket
+    ; loki_workload_identity_sa_email
+    ; thanos_gcs_bucket
+    ; thanos_workload_identity_sa_email
+    ; provisioner_service_account
+    }
 ;;
 
 (* The GCP counterpart of [provisioner_kubeconfig], and the same semantic: an
@@ -115,10 +108,7 @@ let gcp_provisioner_kubeconfig_result
   =
   let* () = gcp_platform_toolchain_result () in
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
+  let cleanup () = Sol_cli_fs.remove_reporting path in
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
     let env = Sol_cli_cluster.provisioner_kube_env path in
@@ -284,7 +274,7 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
       [ "gcloud"; "auth"; "application-default"; "print-access-token" ]
   with
   | Some _ ->
-    Printf.printf "  credentials: Google Application Default Credentials resolved\n%!";
+    Sol_cli_report.app "  credentials: Google Application Default Credentials resolved";
     Ok ()
   | None ->
     Error
@@ -326,10 +316,8 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
    Reading it through this module also keeps the error a *provider* error, naming GCP, which is
    what an operator sees when the cloud root's outputs are not what they should be. *)
 let project_id_of_outputs_json text : (string, string) result =
-  match Sol_cli_cluster.outputs_reader ~provider:"GCP" text with
-  | exception Yojson.Json_error message ->
-    Error (Printf.sprintf "invalid outputs JSON: %s" message)
-  | _raw, string, _optional_string -> string "project_id"
+  Sol_cli_cluster.outputs_reader ~provider:"GCP" text
+  |> Fun.flip Result.bind (fun (_raw, string, _optional_string) -> string "project_id")
 ;;
 
 (* INFRA-090: the region's own disk-quota reading, for the lifecycle check that runs after the
@@ -369,20 +357,15 @@ let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) 
    `autopilot.enabled` is GKE's own field for the mode, and the tri-state is deliberate: a cluster
    that is not there is a fresh target, and a read that fails for any other reason is *unknown*. *)
 let autopilot_of_describe_json text : (bool, string) result =
-  let open Yojson.Safe.Util in
   match Yojson.Safe.from_string text with
   | exception Yojson.Json_error message ->
     Error (Printf.sprintf "the describe output is not JSON: %s" message)
   | json ->
-    (* Yojson's accessors *raise* on a missing field, so a describe that simply does not carry
-       `autopilot` must be read as "no mode here" rather than escaping as an exception: the caller
-       turns a refusal into `Unknown`, and an exception would be a crash instead. *)
-    (match
-       try Some (json |> member "autopilot" |> member "enabled" |> to_bool) with
-       | _ -> None
-     with
-     | Some enabled -> Ok enabled
-     | None -> Error "the cluster describe carries no autopilot.enabled field")
+    (* A describe that does not carry `autopilot` is "no mode here", which the caller turns
+       into `Unknown`; field access is total, so it cannot escape as an exception. *)
+    Sol_cli_json.field [ "autopilot"; "enabled" ] json
+    |> Sol_cli_json.bool
+    |> Option.to_result ~none:"the cluster describe carries no autopilot.enabled field"
 ;;
 
 let substrate_of_describe ~outputs_json ~region ~cluster_name
@@ -423,7 +406,10 @@ let substrate_of_describe ~outputs_json ~region ~cluster_name
       let said =
         String.trim (failure.Sol_cli_process.stderr ^ failure.Sol_cli_process.stdout)
       in
-      if absent_wording said
+      (* A cluster that is not there is a fresh target; every other failure is
+         Unknown, because reading an unreadable cluster as absent is how a run would
+         go on to touch a cluster it never identified. *)
+      if Sol_cli_gcloud.says_not_found said
       then Ok Absent
       else
         Ok

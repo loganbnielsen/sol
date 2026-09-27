@@ -38,6 +38,21 @@ val cmd
     branch. *)
 val run : ?echo:bool -> cmd -> (output, error) result
 
+(** A process Sol started and did not wait for (REFAC-134): a port-forward, a
+    browser, a local service. *)
+type background
+
+(** [spawn ?output c]: start [c] without waiting. stdin is [/dev/null]; stdout
+    and stderr go to [output] (default [/dev/null]). [c]'s [env] is merged over
+    the environment as for {!run}; its [cwd] and [timeout_s] do not apply. *)
+val spawn : ?output:Unix.file_descr -> cmd -> (background, error) result
+
+val pid : background -> int
+
+(** [stop b]: SIGTERM, then reap it if it has exited. Never raises: a process
+    that is already gone is stopped. *)
+val stop : background -> unit
+
 (** [run_shell s] is {!run} for a shell command line. *)
 val run_shell : ?echo:bool -> string -> (output, error) result
 

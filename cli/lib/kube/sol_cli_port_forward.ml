@@ -59,7 +59,7 @@ let write_file path content =
 ;;
 
 let write_record (pf : spec) =
-  Sol_cli_state.ensure ();
+  let* () = Sol_cli_state.ensure () in
   write_file (Sol_cli_state.record_file pf.name) (Yojson.Safe.to_string (record_json pf))
 ;;
 
@@ -102,8 +102,8 @@ let read_pid name =
 let remove_files name =
   [ Sol_cli_state.record_file name; Sol_cli_state.pid_file name ]
   |> List.iter (fun path ->
-    try Sys.remove path with
-    | Sys_error _ -> ())
+    Sol_cli_fs.remove_if_present path
+    |> Result.iter_error (Sol_cli_report.warn "warning: could not remove %s"))
 ;;
 
 (* Stops the forward's whole process group -- the wrapper and the kubectl it
@@ -198,7 +198,7 @@ let wrapper_script ~ctx (pf : spec) =
     gives up after [max_fail_streak] consecutive fast failures instead of
     retrying forever against a context/cluster that is gone. *)
 let start ~ctx (pf : spec) =
-  Sol_cli_state.ensure ();
+  let* () = Sol_cli_state.ensure () in
   let script = Sol_cli_state.script_file pf.name in
   let* () = write_record pf in
   let* () = write_file script (wrapper_script ~ctx pf) in

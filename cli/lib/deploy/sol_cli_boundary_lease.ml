@@ -226,22 +226,16 @@ let of_configmap_item item =
 
 (* ── cluster writes ───────────────────────────────────────────────────────── *)
 
-let with_temp_json json (f : string -> 'a) : 'a =
-  let path = Filename.temp_file "sol-lease-" ".json" in
-  let oc = open_out path in
-  output_string oc json;
-  close_out oc;
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove path with
-      | _ -> ())
-    (fun () -> f path)
-;;
-
 type write_error =
   | Already_exists
   | Conflict
   | Other of string
+
+let with_temp_json json f =
+  Sol_cli_fs.with_temp_file ~prefix:"sol-lease-" ~suffix:".json" json f
+  |> Result.map_error (fun message -> Other message)
+  |> Result.join
+;;
 
 let create_object ~ctx t =
   with_temp_json (to_configmap_json t) (fun path ->
@@ -269,13 +263,9 @@ let fetch ~ctx ~workspace =
   | Ok None -> Ok None
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok (Some body) ->
-    (match Yojson.Safe.from_string body with
-     | exception Yojson.Json_error msg ->
-       Error (Printf.sprintf "could not parse boundary lease: %s" msg)
-     | json ->
-       (match of_configmap_item json with
-        | Error msg -> Error msg
-        | Ok (t, resource_version) -> Ok (Some (t, resource_version))))
+    Sol_cli_json.decode ~what:"boundary lease" body
+    |> Fun.flip Result.bind of_configmap_item
+    |> Result.map Option.some
 ;;
 
 let remove ~ctx ~workspace =
@@ -362,7 +352,7 @@ let acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s =
                   workspace
                   (describe existing))
            else (
-             Printf.eprintf "warning: %s\n%!" reason;
+             Sol_cli_report.warn "warning: %s" reason;
              let aborted = with_abort_requested existing ~reason in
              match replace_object ~ctx aborted ~resource_version with
              | Error Conflict -> go (attempts - 1)
@@ -463,7 +453,7 @@ let release (h : held) = release_raw ~ctx:h.ctx h.lease
 let release_with_warning h =
   release h
   |> Result.iter_error (fun msg ->
-    Printf.eprintf "warning: could not release the boundary lease: %s\n%!" msg)
+    Sol_cli_report.warn "warning: could not release the boundary lease: %s" msg)
 ;;
 
 (* [f] returns a result rather than calling [exit], so [Fun.protect] releases the

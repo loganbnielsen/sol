@@ -138,15 +138,10 @@ let redacted_result = function
    destination-side context and passes it to kubectl. Nothing here reads the
    ambient context. *)
 let apply_manifest ~ctx yaml =
-  let path = Sol_cli_manifest.write_tmp yaml in
-  let result =
-    match Sol_cli_kubectl.apply ~ctx ~file:path with
-    | Ok () -> Ok ()
-    | Error e -> Error (Sol_cli_process.error_to_string e)
-  in
-  (try Sys.remove path with
-   | _ -> ());
-  result
+  Sol_cli_fs.with_temp_file ~prefix:"sol-secret-" ~suffix:".yaml" yaml (fun path ->
+    Sol_cli_kubectl.apply ~ctx ~file:path
+    |> Result.map_error Sol_cli_process.error_to_string)
+  |> Result.join
 ;;
 
 (* BUG-040 / FND-0031: only kubectl's own NotFound means the Secret is absent.
@@ -161,9 +156,8 @@ let get_named_secret_json ~ctx ~name namespace =
   with
   | Ok None -> Ok None
   | Ok (Some json) ->
-    (try Ok (Some (Yojson.Safe.from_string json)) with
-     | Yojson.Json_error message ->
-       Error (Printf.sprintf "could not parse Secret %s/%s: %s" namespace name message))
+    Sol_cli_json.decode ~what:(Printf.sprintf "Secret %s/%s" namespace name) json
+    |> Result.map Option.some
   | Error e ->
     Error
       (Printf.sprintf

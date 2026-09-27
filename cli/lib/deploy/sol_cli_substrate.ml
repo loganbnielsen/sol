@@ -118,12 +118,6 @@ let docs ?secrets (plan : Sol_cli_deployment_plan.t)
   docs_for_namespaces ?secrets (namespaces plan)
 ;;
 
-let write_file path contents =
-  let oc = open_out path in
-  output_string oc contents;
-  close_out oc
-;;
-
 (* INFRA-025: the deploy identity's namespace-bootstrap grant is deliberately
    create-only (see platform/cloud/modules/platform/platform_deploy_rbac.tf's
    sol-deploy-bootstrap ClusterRole) -- it can never patch/update a namespace
@@ -137,20 +131,26 @@ let write_file path contents =
    the defect this sharing removes. *)
 let create_idempotent = Sol_cli_manifest.create_idempotent
 
-let write_doc_to_temp_file doc =
-  let path = Filename.temp_file "sol-substrate-" ".yaml" in
-  write_file path (Sol_cli_yaml.render [ doc ]);
-  path
+(* REFAC-134: each document goes through a temporary file that is removed
+   afterwards; these used to be left behind in the temp directory. *)
+let with_doc_file doc f =
+  Sol_cli_fs.with_temp_file
+    ~prefix:"sol-substrate-"
+    ~suffix:".yaml"
+    (Sol_cli_yaml.render [ doc ])
+    f
+  |> Result.map_error (fun message -> Sol_cli_process.Spawn_failed message)
+  |> Result.join
 ;;
 
-let create_doc ~ctx doc = create_idempotent ~ctx ~file:(write_doc_to_temp_file doc)
+let create_doc ~ctx doc = with_doc_file doc (fun file -> create_idempotent ~ctx ~file)
 
 let create_failure e =
   "kubectl create (workspace substrate): " ^ Sol_cli_process.error_to_string e
 ;;
 
 let apply_doc ~ctx doc =
-  Sol_cli_kubectl.apply ~ctx ~file:(write_doc_to_temp_file doc)
+  with_doc_file doc (fun file -> Sol_cli_kubectl.apply ~ctx ~file)
   |> Result.map_error (fun err ->
     Printf.sprintf
       "kubectl apply (workspace substrate): %s"

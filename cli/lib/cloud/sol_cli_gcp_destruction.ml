@@ -13,67 +13,8 @@ open Sol_cli_destruction
 open Sol_cli_terraform_steps
 open Result.Syntax
 
-(* The name that follows a literal marker, lowercased text assumed. Used to read
-   the *subject* out of a gcloud message. *)
-let names_after ~marker text =
-  let marker_length = String.length marker in
-  let text_length = String.length text in
-  let is_name_char c =
-    (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-' || c = '_' || c = '.'
-  in
-  let rec scan i acc =
-    if i + marker_length > text_length
-    then acc
-    else if String.sub text i marker_length = marker
-    then (
-      let start = i + marker_length in
-      let rec take j =
-        if j < text_length && is_name_char text.[j] then take (j + 1) else j
-      in
-      let stop = take start in
-      let name = String.sub text start (stop - start) in
-      scan (max (i + 1) stop) (if name = "" then acc else name :: acc))
-    else scan (i + 1) acc
-  in
-  List.rev (scan 0 [])
-;;
-
-(* The project(s) a gcloud message names. Both shapes are real: the resource path
-   (`projects/<p>/locations/...`) and the quoted subject (`The project '<p>' was
-   not found`). *)
-let gcp_mentioned_projects stderr =
-  let text = String.lowercase_ascii stderr in
-  names_after ~marker:"projects/" text @ names_after ~marker:"project '" text
-;;
-
-(* Finding C, closed. GCP answers 404 both for "the object is gone" and for "that
-   project is not visible to you", so a not-found is evidence about the object we
-   asked for *only when the answer's subject matches*: if the message names a
-   project that is not the one this identity was captured in, the answer is about
-   something else, and reading it as absence is exactly how a wrong lookup becomes
-   a false postcondition. With no captured project to compare against there is
-   nothing to contradict, so the wording stands.
-
-   The wording list stays because gcloud publishes no structured result: Attempt 4
-   found a 404 the old check could not recognise, and a check that cannot recognise
-   absence makes Absent unreachable. *)
-let gcp_absence_message ?project stderr =
-  let text = String.lowercase_ascii stderr in
-  let absent_wording =
-    List.exists
-      (fun needle -> Sol_cli_string.contains ~needle text)
-      [ "code=404"; "httperror 404"; "not_found"; "not found"; "does not exist" ]
-  in
-  let subject_matches =
-    match project with
-    | None -> true
-    | Some project ->
-      let project = String.lowercase_ascii project in
-      List.for_all (fun mentioned -> mentioned = project) (gcp_mentioned_projects stderr)
-  in
-  absent_wording && subject_matches
-;;
-
+(* Finding C (a not-found about another project is not absence) and the absence
+   wording live in Sol_cli_gcloud, the one gcloud classifier (REFAC-136). *)
 let gcp_peering_probe ~project ~network =
   match
     Sol_cli_process.run
@@ -102,8 +43,8 @@ let gcp_peering_probe ~project ~network =
         (Printf.sprintf
            "the service-networking peering survived the destroy: %s"
            (String.concat ", " peerings))
-  | Error (Sol_cli_process.Non_zero result)
-    when gcp_absence_message ~project result.stderr -> Probe_gone
+  | Error (Sol_cli_process.Non_zero _ as error)
+    when Sol_cli_gcloud.classify ~project error = Not_found -> Probe_gone
   | Error (Sol_cli_process.Non_zero result) ->
     Probe_indeterminate
       (Printf.sprintf
@@ -168,11 +109,10 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
     match unrepresented with
     | [] -> ()
     | addresses ->
-      Printf.printf
+      Sol_cli_report.app
         "  WARNING: %d resource(s) this target declares are ABSENT from its state and \
          will therefore NOT be destroyed: %s\n\
-        \  They may still exist in the provider and remain billable (FND-0030).\n\
-         %!"
+        \  They may still exist in the provider and remain billable (FND-0030)."
         (List.length addresses)
         (String.concat ", " addresses)
   in
@@ -182,7 +122,7 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
        represented. That is a preparation that could not run -- deliberately
        distinct from "there was nothing to prepare" -- and it permits destruction
        to continue; UNKNOWN is never read as absence. *)
-    Printf.printf "  prepare: could not read this target's state; preparing nothing.\n%!";
+    Sol_cli_report.app "  prepare: could not read this target's state; preparing nothing.";
     failed
       "the target's Terraform state could not be read, so no deletion guard could be \
        lowered"
@@ -193,12 +133,12 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
       (Sol_cli_cloud_lifecycle.preparations_unrepresented ~state:represented ~desired);
     (match Sol_cli_cloud_lifecycle.preparations_eligible ~state:represented ~desired with
      | [] ->
-       Printf.printf
-         "  prepare: no guarded resource in this target's state, nothing is targeted.\n%!";
+       Sol_cli_report.app
+         "  prepare: no guarded resource in this target's state, nothing is targeted.";
        Nothing_to_prepare
      | first :: rest ->
-       Printf.printf
-         "  prepare: disabling the deletion guards on %s...\n%!"
+       Sol_cli_report.app
+         "  prepare: disabling the deletion guards on %s..."
          (String.concat ", " (first :: rest));
        (match
           apply_asserted
@@ -242,8 +182,8 @@ let verify_gcp_destroy_preparation_result infra_dir =
       | Some true -> Error "GKE deletion protection is still enabled after preparation"
       | Some false | None -> Ok ()
     in
-    Printf.printf
-      "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!";
+    Sol_cli_report.app
+      "  verify preparation: Cloud SQL and GKE deletion protection disabled.";
     Ok ()
 ;;
 
