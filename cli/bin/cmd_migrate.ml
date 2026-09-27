@@ -242,15 +242,30 @@ let read_migration_files dir =
   match Sys.readdir dir with
   | exception Sys_error msg -> Error ("cannot read migrations dir: " ^ msg)
   | arr ->
-    Ok
-      (Array.to_list arr
-       |> List.filter (fun f -> Filename.check_suffix f ext)
-       |> List.sort String.compare
-       |> List.map (fun fname ->
-         let content =
-           In_channel.with_open_text (Filename.concat dir fname) In_channel.input_all
-         in
-         fname, content))
+    (* REFAC-131: a file is carried into a ConfigMap, and YAML cannot hold a NUL
+       character; refuse the file by name rather than let it be truncated. *)
+    let read fname =
+      let content =
+        In_channel.with_open_text (Filename.concat dir fname) In_channel.input_all
+      in
+      if String.contains content '\000'
+      then
+        Error
+          (Printf.sprintf
+             "migration %s contains a NUL character, which a ConfigMap cannot carry"
+             fname)
+      else Ok (fname, content)
+    in
+    Array.to_list arr
+    |> List.filter (fun f -> Filename.check_suffix f ext)
+    |> List.sort String.compare
+    |> List.fold_left
+         (fun acc fname ->
+            let* files = acc in
+            let* file = read fname in
+            Ok (file :: files))
+         (Ok [])
+    |> Result.map List.rev
 ;;
 
 (* FEAT-063: the context args are prefixed here, so every migration kubectl call
@@ -276,14 +291,6 @@ let kubectl_apply ~ctx ~what ?(on_fail = fun () -> ()) argv =
     Error (Printf.sprintf "%s: %s" what (Sol_cli_process.error_to_string e))
 ;;
 
-(* Matches Sol_cli_secret's own yaml_quote exactly (that module can't be
-   reused directly here -- private to its own file -- but the escaping
-   rules for a YAML double-quoted scalar are the same regardless of what's
-   being embedded). Migration file *contents* are arbitrary SQL, not a
-   controlled value, so every C0 control character needs an escape, not
-   just the three most obvious ones -- an unescaped \r silently gets
-   YAML-folded into a space by the double-quoted-scalar line-folding rule,
-   corrupting CRLF-terminated SQL without so much as a parse error. *)
 (* INFRA-040: a Job whose container cannot start has already failed. Waiting the
    full timeout for an outcome that cannot come describes the symptom and hides the
    cause: Attempt 6 spent its entire migration gate on "did not complete within
@@ -352,93 +359,20 @@ let status_job_evidence ~ctx ~namespace ~job_name () =
     ~logs
 ;;
 
-let yaml_dq s =
-  let b = Buffer.create (String.length s + 2) in
-  Buffer.add_char b '"';
-  String.iter
-    (function
-      | '"' -> Buffer.add_string b "\\\""
-      | '\\' -> Buffer.add_string b "\\\\"
-      | '\n' -> Buffer.add_string b "\\n"
-      | '\r' -> Buffer.add_string b "\\r"
-      | '\t' -> Buffer.add_string b "\\t"
-      | c when Char.code c < 0x20 ->
-        Buffer.add_string b (Printf.sprintf "\\x%02X" (Char.code c))
-      | c -> Buffer.add_char b c)
-    s;
-  Buffer.add_char b '"';
-  Buffer.contents b
-;;
-
-(* ponytail: a ConfigMap has a 1MiB total size cap -- fine for typical
-   migration sets, but a workspace with unusually large SQL files could
-   exceed it. Move to a projected volume backed by multiple ConfigMaps (or
-   an init-container that fetches files another way) if that ever bites. *)
 let render_configmap ~name ~namespace files =
-  let entries =
-    files
-    |> List.map (fun (fname, content) ->
-      Printf.sprintf "  %s: %s" (yaml_dq fname) (yaml_dq content))
-    |> String.concat "\n"
-  in
-  Printf.sprintf
-    {|apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s
-  namespace: %s
-data:
-%s
-|}
-    name
-    namespace
-    entries
+  Sol_cli_yaml.render [ Sol_cli_manifest.migration_configmap_doc ~name ~namespace files ]
 ;;
-
-(* Args are rendered as a JSON list, so a value with a comma or quote cannot
-   change the argument structure. *)
-let render_job_args args = "[" ^ String.concat ", " (List.map yaml_dq args) ^ "]"
 
 let render_job ~name ~namespace ~image ~args ~configmap_name =
-  Printf.sprintf
-    {|apiVersion: batch/v1
-kind: Job
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  backoffLimit: 0
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: migrate
-          image: %s
-          args: %s
-          envFrom:
-            - secretRef:
-                name: %s
-          volumeMounts:
-            - name: migrations
-              mountPath: /migrations
-      volumes:
-        - name: migrations
-          configMap:
-            name: %s
-|}
-    name
-    namespace
-    image
-    (render_job_args args)
-    Sol_cli_manifest.runtime_secret_name
-    configmap_name
+  Sol_cli_yaml.render
+    [ Sol_cli_manifest.migration_job_doc ~name ~namespace ~image ~args ~configmap_name ]
 ;;
 
 (* AUDIT-069: the read-only sibling of the apply Job. It runs `migrate status`
    -- a SELECT against schema_migrations, never an apply -- so the deploy can
    learn the authoritative applied set without a second source of truth and
-   without mutating anything. [yaml_dq] already quotes/escapes the value, and
-   the args list is JSON, so the table name cannot break out of the arg. *)
+   without mutating anything. The emitter writes the table name as one quoted
+   argument, so it cannot break out of it. *)
 let render_status_job ~name ~namespace ~image ~table ~configmap_name =
   render_job
     ~name

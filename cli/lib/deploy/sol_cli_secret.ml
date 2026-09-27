@@ -75,50 +75,33 @@ type kubernetes_secret =
   ; string_data : (string * string) list
   }
 
-let yaml_quote s =
-  let b = Buffer.create (String.length s + 2) in
-  Buffer.add_char b '"';
-  String.iter
-    (function
-      | '"' -> Buffer.add_string b "\\\""
-      | '\\' -> Buffer.add_string b "\\\\"
-      | '\n' -> Buffer.add_string b "\\n"
-      | '\r' -> Buffer.add_string b "\\r"
-      | '\t' -> Buffer.add_string b "\\t"
-      | c when Char.code c < 0x20 ->
-        Buffer.add_string b (Printf.sprintf "\\x%02X" (Char.code c))
-      | c -> Buffer.add_char b c)
-    s;
-  Buffer.add_char b '"';
-  Buffer.contents b
-;;
-
-let render_mapping ~indent pairs =
-  pairs
-  |> List.map (fun (k, v) -> Printf.sprintf "%s%s: %s" indent k (yaml_quote v))
-  |> String.concat "\n"
-;;
-
-let render_optional_mapping ~name pairs =
-  match pairs with
-  | [] -> []
-  | _ -> [ name ^ ":"; render_mapping ~indent:"  " pairs ]
-;;
-
+(* REFAC-131: rendered by the emitter. A secret value is arbitrary text, so
+   every value is quoted, and [data] appears only when there is any. *)
 let render_secret_manifest secret =
-  let lines =
-    [ "---"
-    ; "apiVersion: " ^ secret.api_version
-    ; "kind: " ^ secret.kind
-    ; "metadata:"
-    ; "  name: " ^ secret.metadata.name
-    ; "  namespace: " ^ secret.metadata.namespace
-    ; "type: " ^ secret.secret_type
-    ]
-    @ render_optional_mapping ~name:"data" secret.data
-    @ [ "stringData:"; render_mapping ~indent:"  " secret.string_data ]
+  let quoted_map pairs =
+    Sol_cli_yaml.map (List.map (fun (k, v) -> k, Sol_cli_yaml.quoted v) pairs)
   in
-  String.concat "\n" lines ^ "\n"
+  let data =
+    match secret.data with
+    | [] -> []
+    | pairs -> [ "data", quoted_map pairs ]
+  in
+  Sol_cli_yaml.(
+    render
+      [ document
+          (map
+             ([ "apiVersion", string secret.api_version
+              ; "kind", string secret.kind
+              ; ( "metadata"
+                , map
+                    [ "name", string secret.metadata.name
+                    ; "namespace", string secret.metadata.namespace
+                    ] )
+              ; "type", string secret.secret_type
+              ]
+              @ data
+              @ [ "stringData", quoted_map secret.string_data ]))
+      ])
 ;;
 
 let named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value =

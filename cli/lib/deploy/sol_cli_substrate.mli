@@ -16,13 +16,13 @@ val namespaces : Sol_cli_deployment_plan.t -> string list
 val docs
   :  ?secrets:(string * string) list
   -> Sol_cli_deployment_plan.t
-  -> (string list, string) result
+  -> (Sol_cli_yaml.document list, string) result
 
 (** As {!docs}, for an explicit namespace list. *)
 val docs_for_namespaces
   :  ?secrets:(string * string) list
   -> string list
-  -> (string list, string) result
+  -> (Sol_cli_yaml.document list, string) result
 
 (** Establish the substrate against a cluster, idempotently. Fails closed, without
     applying anything, when a required secret value is missing from the
@@ -39,7 +39,7 @@ val ensure
 val operator_binding_docs
   :  workspace:string
   -> Sol_cli_manifest.service list
-  -> string list
+  -> Sol_cli_yaml.document list
 
 (** [reconcile_operator_bindings ~ctx ~workspace ~services] establishes the
     operator's read-only diagnostic grant in every workload namespace,

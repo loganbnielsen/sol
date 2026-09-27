@@ -1,36 +1,27 @@
-let indent_block s =
-  s
-  |> String.split_on_char '\n'
-  |> List.map (fun line -> "    " ^ line)
-  |> String.concat "\n"
+module Y = Sol_cli_yaml
+
+(* REFAC-131: built as a value and rendered once; each [data] entry is a whole
+   file (a dashboard's JSON, a provisioning YAML) carried as a literal block. *)
+let configmap_yaml ~name ~namespace ~labels ~data =
+  Y.render
+    [ Y.document
+        (Y.map
+           [ "apiVersion", Y.string "v1"
+           ; "kind", Y.string "ConfigMap"
+           ; ( "metadata"
+             , Y.map
+                 [ "name", Y.string name
+                 ; "namespace", Y.string namespace
+                 ; "labels", Y.map (List.map (fun (k, v) -> k, Y.quoted v) labels)
+                 ] )
+           ; "data", Y.map (List.map (fun (k, v) -> k, Y.literal v) data)
+           ])
+    ]
 ;;
 
-let configmap_yaml ~name ~namespace ~labels ~data =
-  let labels_yaml =
-    labels
-    |> List.map (fun (k, v) -> Printf.sprintf "    %s: %S" k v)
-    |> String.concat "\n"
-  in
-  let data_yaml =
-    data
-    |> List.map (fun (k, v) -> Printf.sprintf "  %s: |-\n%s" k (indent_block v))
-    |> String.concat "\n"
-  in
-  Printf.sprintf
-    {|apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s
-  namespace: %s
-  labels:
-%s
-data:
-%s
-|}
-    name
-    namespace
-    labels_yaml
-    data_yaml
+(* A Grafana provisioning file declaring one datasource. *)
+let datasource_yaml fields =
+  Y.to_string (Y.map [ "apiVersion", Y.int 1; "datasources", Y.list [ Y.map fields ] ])
 ;;
 
 (* OBS-042: uid is pinned explicitly (rather than left for Grafana to derive
@@ -39,15 +30,15 @@ data:
 let tempo_datasource_uid = "tempo"
 
 let prometheus_datasource_yaml ~namespace =
-  Printf.sprintf
-    {|apiVersion: 1
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus-server.%s.svc.cluster.local:80
-    isDefault: false|}
-    namespace
+  datasource_yaml
+    [ "name", Y.string "Prometheus"
+    ; "type", Y.string "prometheus"
+    ; "access", Y.string "proxy"
+    ; ( "url"
+      , Y.string
+          (Printf.sprintf "http://prometheus-server.%s.svc.cluster.local:80" namespace) )
+    ; "isDefault", Y.bool false
+    ]
 ;;
 
 (* CODE_LAYER-007: platform/shared/observability/dashboards/*.json is now the single
@@ -57,12 +48,8 @@ datasources:
    a second, hand-synced OCaml copy per dashboard. The caller passes the
    resolved assets (REFAC-115), and each real file is read, not a fixture.
 
-   The real files each carry a trailing newline the old OCaml string
-   literals didn't -- not byte-identical to what those literals held, but
-   equivalent post-render: configmap_yaml's `|-` (strip-chomped) block
-   scalar discards trailing newlines on parse either way, confirmed live
-   (`kubectl apply` on the new render came back "unchanged" against the
-   cluster's existing ConfigMap). *)
+   Each file is carried byte for byte, its trailing newline included: the
+   emitter's literal block keeps the text exact (REFAC-131). *)
 open Result.Syntax
 
 (* REFAC-115: a Sol asset that cannot be read is an error for the caller to
@@ -113,16 +100,14 @@ let prometheus_datasource_configmap_yaml ~namespace =
    OTLP/HTTP ingestion port 4318 obs-tempo-eio pushes spans to) exposed as a
    Grafana datasource, mirroring prometheus_datasource_yaml above. *)
 let tempo_datasource_yaml =
-  Printf.sprintf
-    {|apiVersion: 1
-datasources:
-  - name: Tempo
-    type: tempo
-    access: proxy
-    uid: %s
-    url: http://tempo:3200
-    isDefault: false|}
-    tempo_datasource_uid
+  datasource_yaml
+    [ "name", Y.string "Tempo"
+    ; "type", Y.string "tempo"
+    ; "access", Y.string "proxy"
+    ; "uid", Y.string tempo_datasource_uid
+    ; "url", Y.string "http://tempo:3200"
+    ; "isDefault", Y.bool false
+    ]
 ;;
 
 let tempo_datasource_configmap_yaml ~namespace =
@@ -147,21 +132,25 @@ let tempo_datasource_configmap_yaml ~namespace =
    (Obs_loki.trace_id_hex, "%016Lx%016Lx"), never quoted since hex digits
    never trigger Obs_loki.logfmt_val's quoting rule. *)
 let loki_datasource_yaml =
-  Printf.sprintf
-    {|apiVersion: 1
-datasources:
-  - name: Loki
-    type: loki
-    access: proxy
-    url: http://loki:3100
-    isDefault: false
-    jsonData:
-      derivedFields:
-        - datasourceUid: %s
-          matcherRegex: "trace_id=([0-9a-f]{32})"
-          name: TraceID
-          url: "${__value.raw}"|}
-    tempo_datasource_uid
+  datasource_yaml
+    [ "name", Y.string "Loki"
+    ; "type", Y.string "loki"
+    ; "access", Y.string "proxy"
+    ; "url", Y.string "http://loki:3100"
+    ; "isDefault", Y.bool false
+    ; ( "jsonData"
+      , Y.map
+          [ ( "derivedFields"
+            , Y.list
+                [ Y.map
+                    [ "datasourceUid", Y.string tempo_datasource_uid
+                    ; "matcherRegex", Y.quoted "trace_id=([0-9a-f]{32})"
+                    ; "name", Y.string "TraceID"
+                    ; "url", Y.quoted "${__value.raw}"
+                    ]
+                ] )
+          ] )
+    ]
 ;;
 
 let loki_datasource_configmap_yaml ~namespace =
@@ -296,16 +285,6 @@ let render_alloy_config
    local.observability_taxonomy_labels passes for every profile. The caller
    resolves the platform assets once and passes them (REFAC-115). *)
 let alloy_values_yaml ~assets =
-  (* CODE_LAYER-006: found along the way -- `content: |-`'s own indent here
-     is 4 spaces (nested under alloy/configMap), so indent_block's flat
-     4-space content indent left the block scalar body at the SAME column
-     as its key, which real YAML parsers reject (confirmed with PyYAML: a
-     block scalar's content must be indented strictly more than its key,
-     not equal). Pre-existing, not introduced by this change -- the prior
-     alloy_config_river went through the identical indent_block + template
-     shape. Indenting 6 spaces here (2 more than the key) instead of
-     reusing indent_block, which other configmap_yaml callers rely on at
-     their own, already-correct nesting depth. *)
   let* config =
     render_alloy_config
       ~assets
@@ -315,14 +294,6 @@ let alloy_values_yaml ~assets =
       ~loki_push_basic_auth_password:""
   in
   Ok
-    (Printf.sprintf
-       {|alloy:
-  configMap:
-    content: |-
-%s
-|}
-       (config
-        |> String.split_on_char '\n'
-        |> List.map (fun line -> "      " ^ line)
-        |> String.concat "\n"))
+    (Y.to_string
+       (Y.map [ "alloy", Y.map [ "configMap", Y.map [ "content", Y.literal config ] ] ]))
 ;;

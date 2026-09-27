@@ -69,10 +69,12 @@ fi
 grep -q 'let operator_role_binding_doc' "$rbac_doc" ||
   fail "no operator_role_binding_doc: the diagnostic ClusterRole would never be bound"
 
-grep -q 'name: sol-operator-diagnostics' "$rbac_doc" ||
+# REFAC-131: the RoleBinding is built as a value, so the checks read its
+# arguments rather than rendered YAML text.
+grep -q '~cluster_role:"sol-operator-diagnostics"' "$rbac_doc" ||
   fail "the operator's RoleBinding does not reference sol-operator-diagnostics"
 
-grep -q 'name: sol:operators' "$rbac_doc" ||
+grep -q '~group:"sol:operators"' "$rbac_doc" ||
   fail "the operator's RoleBinding does not bind the sol:operators group"
 
 grep -q 'Sol_cli_manifest.operator_role_binding_doc ~ns' "$substrate" ||

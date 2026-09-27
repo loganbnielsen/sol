@@ -66,6 +66,7 @@ let ingress_path s =
 ;;
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
+let render_doc doc = Sol_cli_yaml.render [ doc ]
 
 let assert_contains label haystack needle =
   check_bool
@@ -758,7 +759,9 @@ let test_fn_cpu_memory_configurable () =
   let spec = { fn_spec with cpu = cpu "2"; memory = memory "4Gi" } in
   let _ns, workload = render_spec_ok spec in
   let cronjob_block = extract_kind_block workload "kind: CronJob" in
-  assert_contains "fn configured cpu request" cronjob_block "cpu: 2";
+  (* REFAC-131: a bare 2 is a YAML integer, so the emitter quotes it; a Kubernetes
+     quantity accepts the string form. *)
+  assert_contains "fn configured cpu request" cronjob_block {|cpu: "2"|};
   assert_contains "fn configured memory request" cronjob_block "memory: 4Gi"
 ;;
 
@@ -1467,6 +1470,7 @@ let test_external_secret_doc_no_stringdata () =
       ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
+    |> render_doc
   in
   assert_contains "kind ExternalSecret" doc "kind: ExternalSecret";
   assert_contains "remoteRef present" doc "remoteRef:";
@@ -1485,6 +1489,7 @@ let test_external_secret_doc_keys_present () =
       ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY"; "SENDGRID_API_KEY" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
+    |> render_doc
   in
   assert_contains "POSTGRES_URL secretKey" doc "secretKey: POSTGRES_URL";
   assert_contains "STRIPE_KEY secretKey" doc "secretKey: STRIPE_KEY";
@@ -1502,6 +1507,7 @@ let test_external_secret_doc_target_name () =
       ~secret_keys:[ "POSTGRES_URL" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
+    |> render_doc
   in
   assert_contains "target name is charge-svc-secrets" doc "name: charge-svc-secrets"
 ;;
@@ -1681,6 +1687,7 @@ let test_gitops_secret_redacted () =
 let test_shape_http_service_deployment_has_ports () =
   let doc =
     Sol_cli_manifest.deployment_doc
+      ~config_hash:"test-hash"
       ~shape:Sol_cli_manifest.Http_service
       ~replicas:1
       ~cpu:"100m"
@@ -1693,6 +1700,7 @@ let test_shape_http_service_deployment_has_ports () =
       ~domain:"payments"
       ~primitive:"svc"
       ()
+    |> render_doc
   in
   assert_contains "Http_service containerPort" doc "containerPort: 8080";
   assert_contains "Http_service readinessProbe" doc "readinessProbe:";
@@ -1705,6 +1713,7 @@ let test_shape_http_service_deployment_has_ports () =
 let test_shape_background_worker_deployment_has_metrics_port () =
   let doc =
     Sol_cli_manifest.deployment_doc
+      ~config_hash:"test-hash"
       ~shape:Sol_cli_manifest.Background_worker
       ~replicas:1
       ~cpu:"100m"
@@ -1717,6 +1726,7 @@ let test_shape_background_worker_deployment_has_metrics_port () =
       ~domain:"comms"
       ~primitive:"worker"
       ()
+    |> render_doc
   in
   assert_contains "Background_worker metrics containerPort" doc "containerPort: 9090";
   assert_absent "Background_worker no readinessProbe" doc "readinessProbe:";
@@ -1730,6 +1740,7 @@ let test_shape_background_worker_deployment_has_metrics_port () =
 let test_shape_rollout_http_service_has_ports () =
   let doc =
     Sol_cli_manifest.rollout_doc
+      ~config_hash:"test-hash"
       ~shape:Sol_cli_manifest.Http_service
       ~replicas:1
       ~cpu:"100m"
@@ -1743,6 +1754,7 @@ let test_shape_rollout_http_service_has_ports () =
       ~domain:"payments"
       ~primitive:"svc"
       ()
+    |> render_doc
   in
   assert_contains "rollout Http_service containerPort" doc "containerPort: 8080";
   assert_contains "rollout Http_service readinessProbe" doc "readinessProbe:"
@@ -1751,6 +1763,7 @@ let test_shape_rollout_http_service_has_ports () =
 let test_shape_rollout_background_worker_metrics_port () =
   let doc =
     Sol_cli_manifest.rollout_doc
+      ~config_hash:"test-hash"
       ~shape:Sol_cli_manifest.Background_worker
       ~replicas:1
       ~cpu:"100m"
@@ -1764,6 +1777,7 @@ let test_shape_rollout_background_worker_metrics_port () =
       ~domain:"comms"
       ~primitive:"worker"
       ()
+    |> render_doc
   in
   assert_contains
     "rollout Background_worker metrics containerPort"
@@ -2424,10 +2438,79 @@ let test_ts_svc_readiness_stays_on_healthz () =
     (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
 ;;
 
+(* REFAC-131: every value reaches Kubernetes as exactly what sol.toml said. The
+   templates interpolated env values and labels into "%s" unescaped, so a value
+   with a quote and a newline could end its own scalar and inject a key. *)
+let parse_documents text =
+  text
+  |> String.split_on_char '\n'
+  |> List.fold_left
+       (fun (docs, current) line ->
+          if line = "---" then List.rev current :: docs, [] else docs, line :: current)
+       ([], [])
+  |> (fun (docs, current) -> List.rev (List.rev current :: docs))
+  |> List.map (String.concat "\n")
+  |> List.filter (fun doc -> String.trim doc <> "")
+  |> List.map (fun doc ->
+    match Yaml.of_string doc with
+    | Ok v -> v
+    | Error (`Msg m) -> Alcotest.failf "rendered document does not parse: %s\n%s" m doc)
+;;
+
+let rec lookup path (v : Yaml.value) =
+  match path, v with
+  | [], v -> Some v
+  | key :: rest, `O members -> Option.bind (List.assoc_opt key members) (lookup rest)
+  | _ -> None
+;;
+
+let find_kind kind docs =
+  match List.find_opt (fun d -> lookup [ "kind" ] d = Some (`String kind)) docs with
+  | Some d -> d
+  | None -> Alcotest.failf "no %s document" kind
+;;
+
+let test_hostile_values_round_trip () =
+  let hostile = "a \"quoted\" \\ value\n  INJECTED: \"yes\"\n# and: more" in
+  let spec =
+    { svc_spec with
+      config = [ "APP_NOTE", hostile; "APP_FLAG", "true"; "APP_VERSION", "1.10" ]
+    ; extra_labels = [ "team", "yes" ]
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
+  let docs = parse_documents workload in
+  let configmap = find_kind "ConfigMap" docs in
+  [ "APP_NOTE", hostile; "APP_FLAG", "true"; "APP_VERSION", "1.10" ]
+  |> List.iter (fun (key, expected) ->
+    Alcotest.(check (option string))
+      ("ConfigMap " ^ key)
+      (Some expected)
+      (match lookup [ "data"; key ] configmap with
+       | Some (`String s) -> Some s
+       | _ -> None));
+  Alcotest.(check bool)
+    "no injected key"
+    true
+    (lookup [ "data"; "INJECTED" ] configmap = None);
+  let deployment = find_kind "Deployment" docs in
+  Alcotest.(check bool)
+    "a label that YAML 1.1 reads as a boolean stays a string"
+    true
+    (lookup [ "spec"; "template"; "metadata"; "labels"; "team" ] deployment
+     = Some (`String "yes"))
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "fn Pushgateway job and schedule (BUG-048)"
+    [ ( "values are written exactly (REFAC-131)"
+      , [ Alcotest.test_case
+            "hostile env and label values round-trip"
+            `Quick
+            test_hostile_values_round_trip
+        ] )
+    ; ( "fn Pushgateway job and schedule (BUG-048)"
       , [ Alcotest.test_case
             "fn carries SOL_PUSHGATEWAY_JOB"
             `Quick

@@ -77,8 +77,9 @@
   test_terraform_plan
   test_substrate
   test_migration
-  test_workspace_model)
- (libraries sol_cli sol_cli_test_support alcotest unix yojson str))
+  test_workspace_model
+  test_yaml)
+ (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml))
 
 (executable
  (name print_readiness_invocations)

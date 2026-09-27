@@ -105,6 +105,17 @@ sed -i 's/operator_role_binding_doc ~ns/operator_role_binding_doc_DISABLED ~ns/g
   "$work/root/cli/lib/deploy/sol_cli_substrate.ml"
 expect_fail "a ClusterRole that is never bound"
 
+# ── the binding names another ClusterRole, or another group ─────────────────
+seed
+sed -i 's/~cluster_role:"sol-operator-diagnostics"/~cluster_role:"cluster-admin"/' \
+  "$work/root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
+expect_fail "the operator binding pointed at another ClusterRole"
+
+seed
+sed -i 's/~group:"sol:operators"/~group:"system:authenticated"/' \
+  "$work/root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
+expect_fail "the operator binding granted to another group"
+
 # ── the diagnostic path reads something the grant does not cover ────────────
 # The property the whole exercise is about: the grant must follow the evidence
 # Sol's read-only commands actually consume.

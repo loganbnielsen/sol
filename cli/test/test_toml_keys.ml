@@ -94,7 +94,13 @@ topics = ["payments-charges"]
 let () =
   Alcotest.run
     "toml_keys"
-    [ ( "unknown keys are errors"
+    [ ( "a value that cannot reach a manifest (REFAC-131)"
+      , [ rejects
+            "NUL in a config value"
+            "[infra.env]\nconfig = { NOTE = \"a\\u0000b\" }\n"
+            ~names:[ "infra.env.config.NOTE"; "NUL" ]
+        ] )
+    ; ( "unknown keys are errors"
       , [ rejects
             "misspelled key"
             "[infra.scale]\nreplica = 3\n"
