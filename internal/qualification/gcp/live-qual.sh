@@ -840,6 +840,21 @@ artifact_status() { if [ -s "$1" ]; then printf 'present (%s bytes)\n' "$(wc -c 
 
 # The bundle's own index, so "does this bundle contain what the runbook promised?" is a
 # readable answer rather than a directory listing someone has to interpret.
+# INFRA-091: the manifest states which phases the run reached, because that is what decides which
+# evidence is *required* of the bundle. A reader should not have to re-derive it from the log.
+bundle_phase_note() {
+  if root_reached platform; then
+    printf 'phases: the platform root was reached; its state is required\n'
+  else
+    printf 'phases: the platform root was never initialised; its state is not required\n'
+  fi
+  if root_reached cloud; then
+    printf 'phases: the cloud root was reached; its state is required\n'
+  else
+    printf 'phases: the cloud root was never initialised; its state is not required\n'
+  fi
+}
+
 bundle_manifest() {
   local m="$LOG_DIR/evidence-manifest.txt" f
   {
@@ -858,6 +873,7 @@ bundle_manifest() {
     printf '\nphase transcripts:\n'
     for f in "$LOG_DIR"/*.log; do [ -e "$f" ] || continue; printf '  %s\n' "$(basename "$f")"; done
   } >"$m"
+  bundle_phase_note >>"$m"
   say "evidence manifest: $m"
 }
 
@@ -866,10 +882,25 @@ bundle_manifest() {
 # Which members are required depends on what this invocation did -- the discriminator's
 # classification exists only where the install failed, the Ready-path evidence only where it
 # succeeded, and the post-teardown inventory only after a teardown.
+# INFRA-091: whether a Terraform root was ever reached, derived from Sol's own run log rather
+# than from a flag this script sets -- a bundle is judged against the phases the run actually
+# entered, and that is evidence, not bookkeeping.
+root_reached() { # root_reached <cloud|platform>
+  case "$1" in
+    cloud)    grep -qE -- '-chdir=[^ ]*/platform/cloud/[a-z]+/cluster' "$LOG_DIR/cloud-apply.log" 2>/dev/null ;;
+    platform) grep -qE -- '-chdir=[^ ]*/platform/cloud/[a-z]+/platform' "$LOG_DIR/cloud-apply.log" 2>/dev/null ;;
+  esac
+}
+
 verify_bundle() {
   local missing=0 member
-  local required=( "state/cloud.tfstate" "state/platform.tfstate" "inventory-pre.tsv"
-                   "evidence-manifest.txt" )
+  # INFRA-091: a supported stop before the platform root is ever initialised cannot produce the
+  # platform root's state, and demanding it reported Attempt 13's conformant STOPPED run as an
+  # incomplete bundle. The requirement follows the phases reached -- the same rule for both roots,
+  # and no weaker for a phase that *was* entered: once the root appears, its state must be there.
+  local required=( "inventory-pre.tsv" "evidence-manifest.txt" )
+  root_reached cloud && required+=( "state/cloud.tfstate" )
+  root_reached platform && required+=( "state/platform.tfstate" )
   [ "$TEARDOWN_ATTEMPTED" = "1" ] && required+=( "inventory-post.tsv" )
   # The two paths carry different evidence, and demanding both would report every run as
   # incomplete: a failed install produces the discriminator and no Ready-path lines.

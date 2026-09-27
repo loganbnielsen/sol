@@ -73,7 +73,7 @@ let decode ~what s =
 ;;
 
 let items ~what s =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* json = decode ~what s in
   match field [ "items" ] json with
   | `List items ->
@@ -338,7 +338,7 @@ type cronjob_status =
   }
 
 let parse_cronjob_status (s : string) : (cronjob_status, string) result =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* j = decode ~what:"the CronJob" s in
   let status = field [ "status" ] j in
   let* active_job_names =
