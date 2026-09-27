@@ -121,8 +121,19 @@ let test_spawn () =
      | () -> true
      | exception Unix.Unix_error _ -> false);
   Sol_cli_process.stop child;
-  Unix.sleepf 0.1;
-  ignore (Unix.waitpid [ Unix.WNOHANG ] (Sol_cli_process.pid child));
+  (* [stop] reaps the child itself when it has already exited, so ECHILD here
+     means stopped, not an error -- the race that made this test flaky. *)
+  let rec reaped attempts =
+    attempts > 0
+    &&
+    match Unix.waitpid [ Unix.WNOHANG ] (Sol_cli_process.pid child) with
+    | 0, _ ->
+      Unix.sleepf 0.05;
+      reaped (attempts - 1)
+    | _ -> true
+    | exception Unix.Unix_error (Unix.ECHILD, _, _) -> true
+  in
+  check_bool "stopped" true (reaped 100);
   check_bool
     "a missing program is a spawn failure"
     true
