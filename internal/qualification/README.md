@@ -127,5 +127,6 @@ cert-manager `startupapicheck` failure (FND-0010) — from the check's own outpu
 teardown — with platform `Ready` as the alternate outcome. The harness
 (`internal/qualification/gcp/live-qual.sh`) generates a target with no `cluster_issuer`, because a GCP
 target that asks for one is refused at install time and would stop the run before cert-manager; and it
-captures the discriminator in that same invocation. Read the harness header for the phase model and
-`evidence-manifest.txt` for what a bundle contains.
+captures the discriminator in that same invocation. Run it with a phase, or with none for the phase
+model and the environment it needs (`live-qual.sh`), and read `evidence-manifest.txt` for what a
+bundle contains. The harness writes its own narrative into the bundle as `harness.log`.

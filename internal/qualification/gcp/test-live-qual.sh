@@ -386,6 +386,24 @@ run_case() {
   sed -i 's/ //' "$TMP/$name.rc"
 }
 
+run_case_without_a_phase() {
+  export ARGV_LOG="$TMP/no-phase.argv"
+  export TMP
+  export API_PROBE_LOG="$TMP/no-phase.probe.argv"
+  CURRENT_CASE="no-phase"
+  export LOG_DIR="$TMP/no-phase.logs"
+  export XDG_DATA_HOME="$TMP/data"
+  : >"$ARGV_LOG"
+  : >"$API_PROBE_LOG"
+  rm -rf "$LOG_DIR"
+  env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
+    IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
+    PROJECT=sol-qualification REGION=us-central1 \
+    PATH="$TMP/bin:$PATH" "$HARNESS" >"$TMP/no-phase.out" 2>&1
+  echo "$? " >"$TMP/no-phase.rc"
+  sed -i 's/ //' "$TMP/no-phase.rc"
+}
+
 printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
@@ -402,6 +420,19 @@ else
 fi
 present "$TMP/cloud-ok.logs/inventory-pre.tsv" "a pre-teardown provider inventory is captured (H6)"
 present "$TMP/cloud-ok.logs/ready-phases.txt" "the Ready-path phase lines are captured"
+has "the harness's own narrative is part of the bundle" "phase: cloud-apply" \
+  "$TMP/cloud-ok.logs/harness.log"
+has "and it opens with the revision the attempt ran from" "environment: work tree" \
+  "$TMP/cloud-ok.logs/harness.log"
+
+printf '\nscenario: no phase given\n'
+run_case_without_a_phase
+is "a bare invocation exits 2" "$(cat "$TMP/no-phase.rc")" "2"
+has "and prints its phase model" "usage: live-qual.sh PHASE" "$TMP/no-phase.out"
+has "and the environment a run needs" "IMPERSONATOR" "$TMP/no-phase.out"
+lacks "and not its own source" "set -euo pipefail" "$TMP/no-phase.out"
+lacks "and tears nothing down" "cloud destroy" "$TMP/no-phase.argv"
+
 run_case ready-bindings cloud STUB_CLUSTER_EXISTS=1
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
     "$TMP/ready-bindings.argv" 2>/dev/null; then

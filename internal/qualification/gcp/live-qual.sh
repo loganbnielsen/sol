@@ -41,7 +41,14 @@ esac
 ZONE_NAME="$(printf '%s' "$BASE_DOMAIN" | tr '.' '-')"
 ZONE_LABEL="${BASE_DOMAIN%%.*}"
 
-say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+say() {
+  local line
+  printf -v line '[%(%H:%M:%S)T] %s' -1 "$*"
+  printf '%s\n' "$line"
+  if [ -n "${SAY_LOG:-}" ]; then
+    printf '%s\n' "$line" >>"$SAY_LOG" 2>/dev/null || true
+  fi
+}
 
 dns_ns() {
   local name="$1" out
@@ -69,7 +76,6 @@ assert_environment() {
     echo "  Run from a worktree, or set ALLOW_CANONICAL=1 if you own this checkout." >&2
     exit 2
   fi
-  say "environment: work tree $top, revision $(git -C "$ROOT" rev-parse --short HEAD)"
 }
 assert_environment
 
@@ -83,6 +89,8 @@ if [ "${1:-}" != "verify" ]; then
 fi
 
 mkdir -p "$LOG_DIR"
+SAY_LOG="$LOG_DIR/harness.log"
+say "environment: work tree $ROOT, revision $(git -C "$ROOT" rev-parse --short HEAD)"
 echo "$$" >"$LOG_DIR/run.pid"
 ps -o pgid= -p "$$" 2>/dev/null | tr -d " " >"$LOG_DIR/run.pgid" || true
 DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
@@ -1048,11 +1056,48 @@ phase_destroy() {
   destroy
 }
 
+usage() {
+  cat <<'USAGE'
+live-qual.sh — one GCP qualification specimen, and the evidence it produces
+
+usage: live-qual.sh PHASE
+
+phases
+  cloud     reconcile the durable root, start the run-kubeconfig waiter and the
+            API-readiness probe, run `sol cloud apply`, and on failure capture the
+            Kubernetes evidence, the cert-manager discriminator and the provider
+            inventory before any teardown. On success it continues to the delegation
+            hand-off and keeps the substrate for the TLS rows.
+  destroy   freeze and destroy an existing target, then verify absence
+  stop      stop the run recorded in LOG_DIR (by its own process group), then destroy
+  verify    read-only absence check; invokes no teardown
+
+required
+  CLUSTER        this run's cluster name (also the name every provider probe filters on)
+  IMPERSONATOR   user:<email> the provisioner is impersonated as
+  LE_EMAIL       ACME contact address, for the platform's certificates
+
+optional (defaults shown)
+  TARGET=qual/gcp/us-central1
+  PROJECT=sol-qualification   REGION=us-central1
+  BASE_DOMAIN=qual-gcp.sol-fab.dev
+  PHASE_TIMEOUT=1200          a full GCP attempt needs >= 1800; the runbook uses 2700
+  SOL=_build/default/cli/bin/main.exe
+  WORKSPACE=examples/pluto    TFVARS=internal/qualification/gcp/qual-gcp.tfvars
+  LOG_DIR=/tmp/sol-gcp-qual-<timestamp>   XDG_DATA_HOME
+
+The bundle is LOG_DIR: the harness's own narrative (harness.log), phase transcripts,
+the run kubeconfig and the waiter journal, the API-readiness samples, the failure
+capture and its summary, the provider inventory, the Terraform state snapshots, and
+evidence-manifest.txt.
+USAGE
+}
+
 case "${1:-}" in
   cloud)    phase_cloud ;;
   platform)
     say "no platform phase: 'sol cloud apply' installs the platform, and this harness captures"
-    say "FND-0010's discriminator in the cloud phase (see the header). Run: live-qual.sh cloud"
+    say "its discriminator in the cloud phase. Run: live-qual.sh cloud"
     exit 2
     ;;
   stop)
@@ -1076,7 +1121,9 @@ case "${1:-}" in
     if verify_absent; then say "verify: absent"; else say "verify: resources remain"; exit 1; fi
     ;;
   *)
-    sed -n '2,78p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    KEEP=1
+    KEEP_REASON="no phase was named, so nothing was attempted and nothing is torn down"
+    usage
     exit 2
     ;;
 esac
