@@ -1,36 +1,6 @@
 (lang dune 3.0)
 
-;; The framework's .opam files are HAND-WRITTEN, not generated (DEC-025).
-;;
-;; Dune's generator cannot express `pin-depends` (verified: "Unknown field
-;; pin-depends"), and four of the framework's dependencies -- obs-loki-eio,
-;; obs-tempo-eio, pg-eio, lambda-eio -- are not yet in the public
-;; opam-repository. Their pins are part of the packages' actual dependency
-;; contract, so the source of truth has to be able to state them. A generated
-;; file that silently under-describes the real graph is worse than a maintained
-;; one; RELEASE-005 removes the pin-depends entries when those packages are
-;; published.
 (generate_opam_files false)
-
-;; ── Framework packages (DEC-025) ─────────────────────────────────────────────
-;;
-;; Supported application-facing API: sol-svc, sol-worker, sol-fn, sol-jobs,
-;; sol-obs, kafka-eio-service.
-;;
-;; Installable internal framework packages: sol-runtime, sol-env. These are
-;; shared plumbing that public framework libraries link against, so they must be
-;; installed and resolvable -- but they are NOT supported for direct application
-;; use. "Internal" here means "not part of the supported API", not "not
-;; installed": Dune's no-public_name libraries implement the latter literally,
-;; which cannot work for a shared library consumed by sibling packages.
-;;
-;; All framework packages ride ONE coordinated release train (DEC-025): their
-;; versions move together, and consumers should never select sol-runtime/sol-env
-;; independently -- opam pulls the matching version transitively.
-;;
-;; The public library names are hyphenated (sol-svc, kafka-eio-service, ...).
-;; The underscore spellings (sol_svc, kafka_eio_service, ...) are monorepo-internal
-;; Dune library names and are not the external identity.
 
 (package
  (name kafka-eio-service)
@@ -141,11 +111,6 @@
   sol-env
   sol-obs
   sol-runtime))
-
-;; ── The CLI and everything else in this repository ───────────────────────────
-;; Not a framework package. FEAT-085 removes the example workspaces from this
-;; Dune project, at which point much of the depends list below becomes unnecessary
-;; for this package.
 
 (package
  (name sol)

@@ -1,13 +1,7 @@
-; REFAC-104: pure foundations every domain shares: names, ids, profiles, providers, process running.
-; Domains form a DAG (base <- kube <- workspace <- cloud <- deploy; local -> workspace),
-; so a module can only use another domain listed in (libraries) below.
-
 (library
  (name sol_cli_base)
  (wrapped false)
  (libraries unix yojson ptime yaml logs))
-
-; FEAT-101 / DEC-049: the release version, set only by a release build.
 
 (rule
  (targets sol_cli_build_info.ml)
