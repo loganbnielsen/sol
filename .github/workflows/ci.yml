@@ -212,8 +212,8 @@ jobs:
         # self-test includes the pre-fix configuration, which must be rejected.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_cert_manager_readiness.sh .
-          internal/ci/test_cert_manager_readiness_check.sh
+          python3 internal/ci/check_cert_manager_readiness.py .
+          python3 internal/ci/test_cert_manager_readiness_check.py
 
       - name: Kubernetes object ownership (FND-0061)
         # Two Terraform resources in the platform module wrote the same Kubernetes RoleBinding
@@ -242,8 +242,8 @@ jobs:
         # target -- without freezing today's numbers into the definition of GCP support.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_gcp_standard_substrate.sh .
-          internal/ci/test_gcp_standard_substrate_check.sh
+          python3 internal/ci/check_gcp_standard_substrate.py .
+          python3 internal/ci/test_gcp_standard_substrate_check.py
 
       - name: Terraform output contract (INFRA-091)
         # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
@@ -484,9 +484,9 @@ jobs:
       # DEC-038: the operator identity owns production observation and diagnosis,
       # and its grant must follow the evidence Sol's read-only commands consume.
       - name: Operator diagnostic grant (DEC-038 / INFRA-057)
-        run: internal/ci/check_operator_diagnostics.sh
+        run: python3 internal/ci/check_operator_diagnostics.py
       - name: Operator diagnostic guard mutation test (INFRA-057)
-        run: internal/ci/test_operator_diagnostics_check.sh
+        run: python3 internal/ci/test_operator_diagnostics_check.py
 
       # DEC-039: the qualification transport is harness-only. No production root may
       # reference it, and it may not carry a verb beyond transport and addressing.
