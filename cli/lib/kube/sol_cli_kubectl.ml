@@ -20,6 +20,7 @@ let invocation ?timeout_s ~ctx args =
 (* REFAC-124: every call below is one [kubectl] run, [Ok] only on exit 0; a caller
    for which a particular failure means something matches [Non_zero]. *)
 let kubectl ?timeout_s ~ctx args = Sol_cli_process.run (invocation ?timeout_s ~ctx args)
+let run = kubectl
 let succeeded r = Result.map ignore r
 let apply ~ctx ~file = kubectl ~ctx [ "apply"; "-f"; file ] |> succeeded
 
