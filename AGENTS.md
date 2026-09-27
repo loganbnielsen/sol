@@ -308,6 +308,8 @@ Sol is pre-alpha, and the goal is to get the architecture built and qualified qu
 
 The assurance stack for code is: compile, format and targeted tests locally; full required CI on the PR head; post-merge CI on `main` as the backstop for rare cross-PR interactions. A PR need not be retested solely because `main` advanced (see the protection bullet below).
 
+**Repair understood workflow friction in place; do not escalate it.** A failure whose mechanism is fully understood — a local checkout colliding with a worktree, a tool whose exit code does not reflect the remote outcome, an instruction that sequences a gate after the action it gates — is fixed in the instructions or the tooling directly, in the same session, without asking. Operator boundaries are for what the table above names: architectural decisions, live qualification, destructive actions and security ambiguity. "Say the word and I'll file it" is the wrong shape for a known local tooling defect; fix it and say what changed.
+
 ## Shepherding PRs to merge
 
 Merge readiness is a **PR comment**, not a review state (`gh` is always the PR's
@@ -340,6 +342,20 @@ own author here). The mechanics that are easy to get wrong:
   interaction; if it goes red, fix forward or revert that squash commit.
 - **Do not re-run the full local suite before pushing a branch update.** After
   merging `main`, run the build and the format check (seconds); CI runs the rest.
+- **The marker gates, so it is posted *before* the merge command runs — and the
+  merge command's exit code does not report the remote outcome.** From an agent
+  worktree the order is: CI green on the head → review → `SOLDEV-REVIEW: PASS
+  <head-sha>` on the PR → `gh pr merge <n> --squash --admin`, **without
+  `--delete-branch`** (`soldev pipeline merge` runs the same command, so this
+  applies wherever it is invoked from) → **verify the PR is `MERGED`** → delete the
+  remote branch (`git push origin --delete <branch>`) and clean up the worktree.
+  `--delete-branch` makes `gh` check out the default branch for its local cleanup,
+  which fails in an agent worktree with `fatal: 'main' is already used by worktree
+  at <canonical checkout>` — *after* the merge has already landed on GitHub. So the
+  command exits non-zero on a merge that succeeded, and anything sequenced after it
+  never runs: this is exactly how #585 merged with its marker step skipped. **Never
+  retry, and never report failure, from that exit code — read
+  `gh pr view <n> --json state,mergedAt,mergeCommit` first.**
 - **Merge dependent PRs by hand, in order.** `soldev pipeline merge` (no argument)
   sweeps in branch-label order (`[audit]`, `[dec]`, …), which can invert a
   dependency — e.g. merging a decision PR before the finding it cites.
