@@ -74,18 +74,17 @@ let parse_query_range_body (body : string) : (line list, string) result =
         | _ -> []
       in
       let lines =
-        List.concat_map
-          (fun stream ->
-             try
-               U.member "values" stream
-               |> U.to_list
-               |> List.filter_map (fun v ->
-                 match v with
-                 | `List [ `String ts_ns; `String text ] -> Some { ts_ns; text }
-                 | _ -> None)
-             with
-             | _ -> [])
-          streams
+        streams
+        |> List.concat_map (fun stream ->
+          try
+            U.member "values" stream
+            |> U.to_list
+            |> List.filter_map (fun v ->
+              match v with
+              | `List [ `String ts_ns; `String text ] -> Some { ts_ns; text }
+              | _ -> None)
+          with
+          | _ -> [])
       in
       Ok (List.sort (fun a b -> compare a.ts_ns b.ts_ns) lines)
     | Some other -> Error (Printf.sprintf "Loki returned status %S" other)
@@ -221,7 +220,7 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
      with
      | Error e -> Error (classify_process_error e)
      | Ok r ->
-       let body, code = split_body_and_status r.Sol_cli_process.stdout in
+       let body, code = split_body_and_status r.stdout in
        (match code with
         | Some c when c < 200 || c >= 300 -> Error (Http_error c)
         | _ ->

@@ -18,11 +18,10 @@ let with_tmp_dir f =
   Unix.mkdir dir 0o755;
   Fun.protect
     ~finally:(fun () ->
-      Array.iter
-        (fun entry ->
-           try Sys.remove (Filename.concat dir entry) with
-           | _ -> ())
-        (Sys.readdir dir);
+      Sys.readdir dir
+      |> Array.iter (fun entry ->
+        try Sys.remove (Filename.concat dir entry) with
+        | _ -> ());
       try Unix.rmdir dir with
       | _ -> ())
     (fun () -> f dir)

@@ -63,12 +63,11 @@ let namespace_to_string (Namespace value) = value
    dashboard link's query param end up disagreeing for the same value. *)
 let sanitize_label_value v =
   let buf = Buffer.create (String.length v) in
-  String.iter
-    (fun c ->
-       match Char.lowercase_ascii c with
-       | ('a' .. 'z' | '0' .. '9' | '-') as c -> Buffer.add_char buf c
-       | _ -> Buffer.add_char buf '-')
-    v;
+  v
+  |> String.iter (fun c ->
+    match Char.lowercase_ascii c with
+    | ('a' .. 'z' | '0' .. '9' | '-') as c -> Buffer.add_char buf c
+    | _ -> Buffer.add_char buf '-');
   let s = Buffer.contents buf in
   let s = if String.length s > 63 then String.sub s 0 63 else s in
   let len = String.length s in
@@ -93,13 +92,12 @@ let sanitize_label_value v =
    [Sol_cli_deployment_state] both build object names from a workspace. *)
 let sanitize_name (s : string) : string =
   let buf = Buffer.create (String.length s) in
-  String.iter
-    (fun c ->
-       match c with
-       | 'a' .. 'z' | '0' .. '9' | '-' | '.' -> Buffer.add_char buf c
-       | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
-       | _ -> Buffer.add_char buf '-')
-    s;
+  s
+  |> String.iter (fun c ->
+    match c with
+    | 'a' .. 'z' | '0' .. '9' | '-' | '.' -> Buffer.add_char buf c
+    | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
+    | _ -> Buffer.add_char buf '-');
   let out = Buffer.contents buf in
   let out = if String.length out > 253 then String.sub out 0 253 else out in
   let len = String.length out in

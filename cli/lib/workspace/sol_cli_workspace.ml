@@ -119,20 +119,19 @@ let validate ~root =
       try Sys.readdir dir with
       | Sys_error _ -> [||]
     in
-    Array.find_map
-      (fun entry ->
-         if entry = "" || entry.[0] = '.' || ignored_dir entry
-         then None
-         else (
-           let path = Filename.concat dir entry in
-           if is_symlink path
-           then None
-           else if has_workspace_file path
-           then Some path
-           else if Sys.is_directory path
-           then go path
-           else None))
-      entries
+    entries
+    |> Array.find_map (fun entry ->
+      if entry = "" || entry.[0] = '.' || ignored_dir entry
+      then None
+      else (
+        let path = Filename.concat dir entry in
+        if is_symlink path
+        then None
+        else if has_workspace_file path
+        then Some path
+        else if Sys.is_directory path
+        then go path
+        else None))
   in
   match go root with
   | None -> Ok ()

@@ -173,7 +173,7 @@ let push_event ~sw ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t)
     in
     let ot =
       Obs_eio.create
-        ~service:event.Sol_cli_deploy_event.service
+        ~service:event.service
         ~mono_clock
         ~backend:(Obs_loki.backend loki)
         ()
@@ -181,10 +181,10 @@ let push_event ~sw ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t)
     let ot =
       Obs_eio.with_context
         ot
-        [ "workspace", event.Sol_cli_deploy_event.workspace
-        ; "domain", event.Sol_cli_deploy_event.domain
-        ; "primitive", event.Sol_cli_deploy_event.primitive
-        ; "release", Sol_cli_release_id.to_string event.Sol_cli_deploy_event.release_id
+        [ "workspace", event.workspace
+        ; "domain", event.domain
+        ; "primitive", event.primitive
+        ; "release", Sol_cli_release_id.to_string event.release_id
         ]
     in
     Obs_eio.log_standalone
@@ -209,10 +209,9 @@ let push_event ~sw ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t)
    when there is nothing to push to, or no events. *)
 let push_all ~ctx ~backend ~explicit_url (events : Sol_cli_deploy_event.t list) =
   if events <> []
-  then (
-    match resolve_url ~ctx ~backend ~explicit_url with
-    | None -> ()
-    | Some url ->
+  then
+    resolve_url ~ctx ~backend ~explicit_url
+    |> Option.iter (fun url ->
       Eio_main.run (fun env ->
         Eio.Switch.run
         @@ fun sw ->

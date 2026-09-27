@@ -137,13 +137,12 @@ let classify observation =
   (match observation.state with
    | State_absent -> ()
    | State_residue addresses ->
-     List.iter
-       (fun address ->
-          violate
-            (Printf.sprintf
-               "Terraform still represents %s in this root's state after destroy"
-               address))
-       addresses
+     addresses
+     |> List.iter (fun address ->
+       violate
+         (Printf.sprintf
+            "Terraform still represents %s in this root's state after destroy"
+            address))
    | State_unreadable reason ->
      unknown
        (Printf.sprintf
@@ -191,12 +190,11 @@ let report observation =
         abandoned peering): none found\n"
    | Sweep_ran { residues; indeterminate } ->
      List.iter (fun reason -> line "    residue: %s\n" reason) residues;
-     List.iter
-       (fun reason ->
-          line
-            "    residue check inconclusive -- %s (reported, never read as absence)\n"
-            reason)
-       indeterminate);
+     indeterminate
+     |> List.iter (fun reason ->
+       line
+         "    residue check inconclusive -- %s (reported, never read as absence)\n"
+         reason));
   (match observation.retention with
    | Retention_required_and_observed evidence -> line "    retention: %s\n" evidence
    | Retention_not_required reason -> line "    retention: %s\n" reason

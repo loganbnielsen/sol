@@ -196,8 +196,7 @@ let test_up_request_uses_explicit_tag () =
         Alcotest.fail "git_sha should not be called when tag is explicit")
   in
   match r with
-  | Ok req ->
-    Alcotest.(check string) "explicit tag" "v1.2.3" req.Sol_cli_command_request.image_tag
+  | Ok req -> Alcotest.(check string) "explicit tag" "v1.2.3" req.image_tag
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -212,11 +211,7 @@ let test_up_request_falls_back_to_git_sha () =
       ~git_sha:(fun () -> Ok "sha-deadbeef")
   in
   match r with
-  | Ok req ->
-    Alcotest.(check string)
-      "git sha fallback"
-      "sha-deadbeef"
-      req.Sol_cli_command_request.image_tag
+  | Ok req -> Alcotest.(check string) "git sha fallback" "sha-deadbeef" req.image_tag
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -316,7 +311,7 @@ let test_up_request_preserves_mode () =
     Alcotest.(check bool)
       "dry-run mode"
       true
-      (match req.Sol_cli_command_request.mode with
+      (match req.mode with
        | Sol_cli_command_request.Dry_run -> true
        | Apply -> false)
   | Error msg -> Alcotest.fail msg
@@ -340,8 +335,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~git_sha:(fun () -> Alcotest.fail "git_sha should not be called")
   in
   match r with
-  | Ok req ->
-    Alcotest.(check string) "explicit tag" "sha-abc" req.Sol_cli_command_request.image_tag
+  | Ok req -> Alcotest.(check string) "explicit tag" "sha-abc" req.image_tag
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -367,7 +361,7 @@ let test_deploy_request_local_mode_builds_request () =
     Alcotest.(check bool)
       "deploy apply"
       true
-      (match req.Sol_cli_command_request.action with
+      (match req.action with
        | Sol_cli_command_request.Deploy_apply -> true
        | Deploy_dry_run _ | Deploy_emit_to _ -> false)
   | Error msg -> Alcotest.fail msg
@@ -395,7 +389,7 @@ let test_deploy_request_gitops_action () =
     Alcotest.(check bool)
       "gitops action"
       true
-      (match req.Sol_cli_command_request.action with
+      (match req.action with
        | Sol_cli_command_request.Deploy_emit_to "/tmp/gitops" -> true
        | Deploy_apply | Deploy_dry_run _ | Deploy_emit_to _ -> false)
   | Error msg -> Alcotest.fail msg
@@ -423,7 +417,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
     Alcotest.(check bool)
       "dry-run action preserves emit_to"
       true
-      (match req.Sol_cli_command_request.action with
+      (match req.action with
        | Sol_cli_command_request.Deploy_dry_run { emit_to = Some "/tmp/gitops" } -> true
        | Deploy_apply | Deploy_emit_to _ | Deploy_dry_run _ -> false)
   | Error msg -> Alcotest.fail msg
@@ -473,11 +467,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~git_sha:(fun () -> Ok "")
   in
   match r with
-  | Ok req ->
-    Alcotest.(check (option string))
-      "registry stays None"
-      None
-      req.Sol_cli_command_request.registry
+  | Ok req -> Alcotest.(check (option string)) "registry stays None" None req.registry
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -502,11 +492,7 @@ let test_deploy_request_accepts_image_refs () =
       ~git_sha:(fun () -> Ok "")
   in
   match r with
-  | Ok req ->
-    Alcotest.(check int)
-      "one reference carried"
-      1
-      (List.length req.Sol_cli_command_request.image_refs)
+  | Ok req -> Alcotest.(check int) "one reference carried" 1 (List.length req.image_refs)
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -534,16 +520,15 @@ let test_deploy_request_rejects_mutable_image_ref () =
 
 let test_plan_local_mode_fields () =
   let plan = make_plan ~env:local_env [ svc_spec ] in
-  Alcotest.(check string) "workspace" "myapp" plan.Sol_cli_deployment_plan.workspace;
+  Alcotest.(check string) "workspace" "myapp" plan.workspace;
   Alcotest.(check bool)
     "mode Local"
     true
-    (plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
-     = Sol_cli_deployment_plan.Local);
+    (plan.environment.Sol_cli_deployment_plan.mode = Sol_cli_deployment_plan.Local);
   Alcotest.(check string)
     "registry"
     "sol-registry:5000"
-    plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.registry
+    plan.environment.Sol_cli_deployment_plan.registry
 ;;
 
 let test_plan_customer_cloud_mode_fields () =
@@ -551,28 +536,23 @@ let test_plan_customer_cloud_mode_fields () =
   Alcotest.(check bool)
     "mode Customer_cloud"
     true
-    (plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
+    (plan.environment.Sol_cli_deployment_plan.mode
      = Sol_cli_deployment_plan.Customer_cloud);
   Alcotest.(check string)
     "ECR registry"
     "123456789.dkr.ecr.us-east-1.amazonaws.com"
-    plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.registry
+    plan.environment.Sol_cli_deployment_plan.registry
 ;;
 
 let test_plan_service_count () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
-  Alcotest.(check int)
-    "three services"
-    3
-    (List.length plan.Sol_cli_deployment_plan.services)
+  Alcotest.(check int) "three services" 3 (List.length plan.services)
 ;;
 
 let test_plan_service_primitives () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
   let primitives =
-    List.map
-      (fun s -> s.Sol_cli_deployment_plan.primitive)
-      plan.Sol_cli_deployment_plan.services
+    plan.services |> List.map (fun s -> s.Sol_cli_deployment_plan.primitive)
   in
   Alcotest.(check bool)
     "Svc present"
@@ -624,13 +604,11 @@ let test_plan_consumer_groups_derived_from_workers () =
   Alcotest.(check int)
     "one consumer group for one worker"
     1
-    (List.length plan.Sol_cli_deployment_plan.consumer_groups);
+    (List.length plan.consumer_groups);
   Alcotest.(check (list string))
     "group name"
     [ "myapp.comms.notify_worker" ]
-    (List.map
-       Sol_cli_plan_ids.Consumer_group.to_string
-       plan.Sol_cli_deployment_plan.consumer_groups)
+    (List.map Sol_cli_plan_ids.Consumer_group.to_string plan.consumer_groups)
 ;;
 
 let test_plan_svc_does_not_produce_consumer_group () =
@@ -703,7 +681,7 @@ let test_render_artifact_image_matches_spec () =
   Alcotest.(check string)
     "artifact image"
     "registry.example.com/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image
+    r.image
 ;;
 
 let test_render_no_docker_or_k8s_calls () =
@@ -722,11 +700,10 @@ let with_temp_dir f =
     (fun () -> f dir)
     ~finally:(fun () ->
       (try
-         Array.iter
-           (fun name ->
-              try Sys.remove (Filename.concat dir name) with
-              | _ -> ())
-           (Sys.readdir dir)
+         Sys.readdir dir
+         |> Array.iter (fun name ->
+           try Sys.remove (Filename.concat dir name) with
+           | _ -> ())
        with
        | _ -> ());
       try Unix.rmdir dir with
@@ -850,12 +827,12 @@ let test_local_executor_result_fields () =
       ~dry_run:true
       svc_spec
   in
-  Alcotest.(check string) "local namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "local name" "charge-svc" r.Sol_cli_executor.name;
+  Alcotest.(check string) "local namespace" "myapp-payments" r.namespace;
+  Alcotest.(check string) "local name" "charge-svc" r.name;
   Alcotest.(check string)
     "local image"
     "registry.example.com/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image
+    r.image
 ;;
 
 let test_direct_executor_result_fields () =
@@ -867,12 +844,12 @@ let test_direct_executor_result_fields () =
       ~dry_run:true
       svc_spec
   in
-  Alcotest.(check string) "direct namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "direct name" "charge-svc" r.Sol_cli_executor.name;
+  Alcotest.(check string) "direct namespace" "myapp-payments" r.namespace;
+  Alcotest.(check string) "direct name" "charge-svc" r.name;
   Alcotest.(check string)
     "direct image"
     "registry.example.com/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image
+    r.image
 ;;
 
 let test_gitops_executor_result_fields () =
@@ -885,15 +862,12 @@ let test_gitops_executor_result_fields () =
         ~dir
         svc_spec
     in
-    Alcotest.(check string)
-      "gitops namespace"
-      "myapp-payments"
-      r.Sol_cli_executor.namespace;
-    Alcotest.(check string) "gitops name" "charge-svc" r.Sol_cli_executor.name;
+    Alcotest.(check string) "gitops namespace" "myapp-payments" r.namespace;
+    Alcotest.(check string) "gitops name" "charge-svc" r.name;
     Alcotest.(check string)
       "gitops image"
       "registry.example.com/myapp/charge-svc:abc123"
-      r.Sol_cli_executor.image)
+      r.image)
 ;;
 
 let test_local_worker_executor_result_fields () =
@@ -905,11 +879,8 @@ let test_local_worker_executor_result_fields () =
       ~dry_run:true
       worker_spec
   in
-  Alcotest.(check string)
-    "local worker namespace"
-    "myapp-comms"
-    r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "local worker name" "notify-worker" r.Sol_cli_executor.name
+  Alcotest.(check string) "local worker namespace" "myapp-comms" r.namespace;
+  Alcotest.(check string) "local worker name" "notify-worker" r.name
 ;;
 
 let test_direct_fn_executor_result_fields () =
@@ -921,11 +892,8 @@ let test_direct_fn_executor_result_fields () =
       ~dry_run:true
       fn_spec
   in
-  Alcotest.(check string)
-    "direct fn namespace"
-    "myapp-billing"
-    r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "direct fn name" "invoice-fn" r.Sol_cli_executor.name
+  Alcotest.(check string) "direct fn namespace" "myapp-billing" r.namespace;
+  Alcotest.(check string) "direct fn name" "invoice-fn" r.name
 ;;
 
 (* ── Phase 6: state update ──────────────────────────────────────────────── *)
@@ -995,19 +963,19 @@ let test_local_and_direct_share_plan_type () =
     List.map
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
-         ~workspace:plan.Sol_cli_deployment_plan.workspace
-         ~release_id:plan.Sol_cli_deployment_plan.release_id
+         ~workspace:plan.workspace
+         ~release_id:plan.release_id
          ~dry_run:true)
-      plan.Sol_cli_deployment_plan.services
+      plan.services
   in
   let direct_results =
     List.map
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
-         ~workspace:plan.Sol_cli_deployment_plan.workspace
-         ~release_id:plan.Sol_cli_deployment_plan.release_id
+         ~workspace:plan.workspace
+         ~release_id:plan.release_id
          ~dry_run:true)
-      plan.Sol_cli_deployment_plan.services
+      plan.services
   in
   Alcotest.(check int)
     "same result count"
@@ -1015,18 +983,9 @@ let test_local_and_direct_share_plan_type () =
     (List.length direct_results);
   let lr = List.hd local_results
   and dr = List.hd direct_results in
-  Alcotest.(check string)
-    "local namespace = direct namespace"
-    lr.Sol_cli_executor.namespace
-    dr.Sol_cli_executor.namespace;
-  Alcotest.(check string)
-    "local name = direct name"
-    lr.Sol_cli_executor.name
-    dr.Sol_cli_executor.name;
-  Alcotest.(check string)
-    "local image = direct image"
-    lr.Sol_cli_executor.image
-    dr.Sol_cli_executor.image
+  Alcotest.(check string) "local namespace = direct namespace" lr.namespace dr.namespace;
+  Alcotest.(check string) "local name = direct name" lr.name dr.name;
+  Alcotest.(check string) "local image = direct image" lr.image dr.image
 ;;
 
 let test_gitops_shares_plan_type () =
@@ -1036,34 +995,28 @@ let test_gitops_shares_plan_type () =
       List.map
         (Sol_cli_executor.gitops
            ~ctx:Sol_cli_kube_destination.local_context
-           ~workspace:plan.Sol_cli_deployment_plan.workspace
-           ~release_id:plan.Sol_cli_deployment_plan.release_id
+           ~workspace:plan.workspace
+           ~release_id:plan.release_id
            ~dir)
-        plan.Sol_cli_deployment_plan.services
+        plan.services
     in
     let direct_results =
       List.map
         (Sol_cli_executor.local
            ~ctx:Sol_cli_kube_destination.local_context
-           ~workspace:plan.Sol_cli_deployment_plan.workspace
-           ~release_id:plan.Sol_cli_deployment_plan.release_id
+           ~workspace:plan.workspace
+           ~release_id:plan.release_id
            ~dry_run:true)
-        plan.Sol_cli_deployment_plan.services
+        plan.services
     in
     let gr = List.hd gitops_results
     and dr = List.hd direct_results in
     Alcotest.(check string)
       "gitops namespace = direct namespace"
-      gr.Sol_cli_executor.namespace
-      dr.Sol_cli_executor.namespace;
-    Alcotest.(check string)
-      "gitops name = direct name"
-      gr.Sol_cli_executor.name
-      dr.Sol_cli_executor.name;
-    Alcotest.(check string)
-      "gitops image = direct image"
-      gr.Sol_cli_executor.image
-      dr.Sol_cli_executor.image)
+      gr.namespace
+      dr.namespace;
+    Alcotest.(check string) "gitops name = direct name" gr.name dr.name;
+    Alcotest.(check string) "gitops image = direct image" gr.image dr.image)
 ;;
 
 let test_change_set_build_is_path_agnostic () =
@@ -1097,10 +1050,7 @@ let test_all_paths_start_from_same_plan_workspace () =
          "workspace consistent"
          "myapp"
          plan.Sol_cli_deployment_plan.workspace;
-       Alcotest.(check int)
-         "service count consistent"
-         1
-         (List.length plan.Sol_cli_deployment_plan.services))
+       Alcotest.(check int) "service count consistent" 1 (List.length plan.services))
     [ plan_local; plan_direct; plan_gitops; plan_hosted ]
 ;;
 

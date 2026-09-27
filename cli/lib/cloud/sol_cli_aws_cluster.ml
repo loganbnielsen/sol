@@ -405,7 +405,7 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r ->
-    (match whoami_identity_of_json r.Sol_cli_process.stdout with
+    (match whoami_identity_of_json r.stdout with
      | Ok identity ->
        let shown =
          match identity.canonical_arn, identity.arn with
@@ -478,9 +478,9 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
           (* Never interrogate another principal's capabilities and call it evidence. *)
           []
         | _ ->
-          List.map
-            (fun capability -> capability, capability_answer_of_can_i ~env capability)
-            bootstrap_only_capabilities
+          bootstrap_only_capabilities
+          |> List.map (fun capability ->
+            capability, capability_answer_of_can_i ~env capability)
       in
       principal, probes)
   with
@@ -586,7 +586,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
     in
     match outcome with
     | Ok r ->
-      let json = String.trim r.Sol_cli_process.stdout in
+      let json = String.trim r.stdout in
       (* Persisted before anything is asserted, on every attempt: the run that fails on a
          shape mismatch is the one whose capture matters most, and writing afterwards would
          leave nothing behind for exactly that case. *)
@@ -750,9 +750,9 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
     let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
     let principal, probes = control in
     let permitted =
-      List.exists
-        (fun (_, answer) -> Sol_cli_cloud_lifecycle.answer_is_permitted answer)
-        probes
+      probes
+      |> List.exists (fun (_, answer) ->
+        Sol_cli_cloud_lifecycle.answer_is_permitted answer)
     in
     let indeterminate =
       List.filter_map Sol_cli_cloud_lifecycle.indeterminate_reason probes

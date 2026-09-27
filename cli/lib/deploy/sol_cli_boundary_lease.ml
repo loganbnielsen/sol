@@ -461,10 +461,9 @@ let release_raw ~ctx t =
 let release (h : held) = release_raw ~ctx:h.ctx h.lease
 
 let release_with_warning h =
-  match release h with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf "warning: could not release the boundary lease: %s\n%!" msg
+  release h
+  |> Result.iter_error (fun msg ->
+    Printf.eprintf "warning: could not release the boundary lease: %s\n%!" msg)
 ;;
 
 (* [f] returns a result rather than calling [exit], so [Fun.protect] releases the

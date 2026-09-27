@@ -213,11 +213,10 @@ let run ?(echo = false) c =
        close_noerr devnull;
        close_noerr out_w;
        close_noerr err_w;
-       (match saved_cwd with
-        | Some d ->
-          (try Unix.chdir d with
-           | _ -> ())
-        | None -> ());
+       saved_cwd
+       |> Option.iter (fun d ->
+         try Unix.chdir d with
+         | _ -> ());
        (match spawn_result with
         | Error msg ->
           close_noerr out_r;

@@ -235,10 +235,9 @@ let component_scaffold kind ~ws ~domain ~name =
 ;;
 
 let write_component scaffold =
-  List.iter
-    (fun (rel_path, content) ->
-       write ~path:(Filename.concat scaffold.dir rel_path) ~content)
-    scaffold.files
+  scaffold.files
+  |> List.iter (fun (rel_path, content) ->
+    write ~path:(Filename.concat scaffold.dir rel_path) ~content)
 ;;
 
 let new_svc arg =

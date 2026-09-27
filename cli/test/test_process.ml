@@ -71,8 +71,8 @@ let test_stdout_and_stderr_separate () =
     ok_result
       (Sol_cli_process.run (Sol_cli_process.cmd [ "sh"; "-c"; "echo out; echo err >&2" ]))
   in
-  check_str "stdout" "out" r.Sol_cli_process.stdout;
-  check_str "stderr" "err" r.Sol_cli_process.stderr
+  check_str "stdout" "out" r.stdout;
+  check_str "stderr" "err" r.stderr
 ;;
 
 let test_spawn_failed () =
@@ -111,7 +111,7 @@ let test_redaction_in_echo () =
 
 let test_no_shell_expansion () =
   let r = ok_result (Sol_cli_process.run (Sol_cli_process.cmd [ "echo"; "$HOME" ])) in
-  check_str "no shell expansion" "$HOME" r.Sol_cli_process.stdout
+  check_str "no shell expansion" "$HOME" r.stdout
 ;;
 
 let test_run_shell_success () =

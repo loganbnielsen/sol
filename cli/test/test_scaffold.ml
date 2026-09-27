@@ -257,21 +257,20 @@ let test_existing_files_still_generated () =
     ; "testapp/.gitignore"
     ]
   in
-  List.iter
-    (fun path -> check_bool (Printf.sprintf "%s exists" path) true (Sys.file_exists path))
-    expected;
+  expected
+  |> List.iter (fun path ->
+    check_bool (Printf.sprintf "%s exists" path) true (Sys.file_exists path));
   (* quick count: at least 21 files *)
   let count = ref 0 in
   let rec walk dir =
-    Array.iter
-      (fun entry ->
-         let full = Filename.concat dir entry in
-         if full = "testapp/vendor"
-         then ()
-         else if Sys.is_directory full
-         then walk full
-         else incr count)
-      (Sys.readdir dir)
+    Sys.readdir dir
+    |> Array.iter (fun entry ->
+      let full = Filename.concat dir entry in
+      if full = "testapp/vendor"
+      then ()
+      else if Sys.is_directory full
+      then walk full
+      else incr count)
   in
   walk "testapp";
   check_bool "at least 21 files generated" true (!count >= 21)
@@ -291,7 +290,7 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
   | Error e ->
     Alcotest.fail ("load_for_target failed: " ^ Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    let target = cfg.Sol_cli_config.target in
+    let target = cfg.target in
     check_bool
       "prod/aws/us-east-1 is declared"
       true

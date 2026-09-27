@@ -109,9 +109,8 @@ let extract_kind_block yaml kind_marker =
   done;
   blocks := String.sub yaml !start (yl - !start) :: !blocks;
   let result = ref "" in
-  List.iter
-    (fun b -> if !result = "" && contains b kind_marker then result := b)
-    (List.rev !blocks);
+  List.rev !blocks
+  |> List.iter (fun b -> if !result = "" && contains b kind_marker then result := b);
   !result
 ;;
 
@@ -1093,7 +1092,7 @@ let test_toml_valid_rollout_recreate () =
   check_bool
     "rollout_strategy is Recreate"
     true
-    (toml.Sol_cli_toml.rollout_strategy = Some Sol_cli_toml.Recreate)
+    (toml.rollout_strategy = Some Sol_cli_toml.Recreate)
 ;;
 
 let test_toml_valid_ingress_overrides () =
@@ -1112,13 +1111,11 @@ ingress_path = "/v1"
   check_bool
     "ingress_host parsed"
     true
-    (Option.map Sol_cli_toml.hostname_to_string toml.Sol_cli_toml.ingress_host
-     = Some "api.example.com");
+    (Option.map Sol_cli_toml.hostname_to_string toml.ingress_host = Some "api.example.com");
   check_bool
     "ingress_path parsed"
     true
-    (Option.map Sol_cli_toml.ingress_path_to_string toml.Sol_cli_toml.ingress_path
-     = Some "/v1")
+    (Option.map Sol_cli_toml.ingress_path_to_string toml.ingress_path = Some "/v1")
 ;;
 
 let test_toml_valid_service_calls () =
@@ -1132,10 +1129,7 @@ calls = ["checkout/checkout_svc"]
   close_out oc;
   let toml = Sol_cli_toml.load path in
   Sys.remove path;
-  Alcotest.(check (list string))
-    "calls parsed"
-    [ "checkout/checkout_svc" ]
-    toml.Sol_cli_toml.calls
+  Alcotest.(check (list string)) "calls parsed" [ "checkout/checkout_svc" ] toml.calls
 ;;
 
 let test_toml_invalid_cpu_quantity () =
@@ -1225,10 +1219,7 @@ secrets = ["DATABASE_URL", "API_TOKEN"]
   close_out oc;
   let toml = Sol_cli_toml.load path in
   Sys.remove path;
-  check_bool
-    "secret keys parsed"
-    true
-    (toml.Sol_cli_toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
+  check_bool "secret keys parsed" true (toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
 ;;
 
 let test_toml_valid_canary_rollout () =
@@ -1243,7 +1234,7 @@ steps = [10, 40, 100]
   close_out oc;
   let toml = Sol_cli_toml.load path in
   Sys.remove path;
-  match toml.Sol_cli_toml.progressive_delivery with
+  match toml.progressive_delivery with
   | Some
       (Sol_cli_toml.Canary
          { steps =
@@ -1266,7 +1257,7 @@ strategy = "blue-green"
   check_bool
     "blue-green parsed"
     true
-    (toml.Sol_cli_toml.progressive_delivery = Some Sol_cli_toml.Blue_green)
+    (toml.progressive_delivery = Some Sol_cli_toml.Blue_green)
 ;;
 
 let test_toml_invalid_progressive_strategy () =
@@ -1398,7 +1389,7 @@ secrets = [
   check_bool
     "multi-line secrets array parsed"
     true
-    (toml.Sol_cli_toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
+    (toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
 ;;
 
 let test_toml_dotted_section_headers () =
@@ -1415,16 +1406,15 @@ memory = "256Mi"
   close_out oc;
   let toml = Sol_cli_toml.load path in
   Sys.remove path;
-  check_bool "replicas from dotted header" true (toml.Sol_cli_toml.replicas = Some 3);
+  check_bool "replicas from dotted header" true (toml.replicas = Some 3);
   check_bool
     "cpu from dotted header"
     true
-    (Option.map Sol_cli_toml.cpu_quantity_to_string toml.Sol_cli_toml.cpu = Some "250m");
+    (Option.map Sol_cli_toml.cpu_quantity_to_string toml.cpu = Some "250m");
   check_bool
     "memory from dotted header"
     true
-    (Option.map Sol_cli_toml.memory_quantity_to_string toml.Sol_cli_toml.memory
-     = Some "256Mi")
+    (Option.map Sol_cli_toml.memory_quantity_to_string toml.memory = Some "256Mi")
 ;;
 
 let test_toml_canary_pause_steps () =
@@ -1440,7 +1430,7 @@ steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
   close_out oc;
   let toml = Sol_cli_toml.load path in
   Sys.remove path;
-  match toml.Sol_cli_toml.progressive_delivery with
+  match toml.progressive_delivery with
   | Some
       (Sol_cli_toml.Canary
          { steps =

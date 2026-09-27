@@ -17,13 +17,12 @@ let rejects name contents ~names =
     match load contents with
     | Ok _ -> Alcotest.failf "expected %S to be rejected" contents
     | Error (Sol_cli_toml.Validation { message; _ }) ->
-      List.iter
-        (fun needle ->
-           Alcotest.(check bool)
-             ("error names " ^ needle)
-             true
-             (Sol_cli_string.contains ~needle message))
-        names
+      names
+      |> List.iter (fun needle ->
+        Alcotest.(check bool)
+          ("error names " ^ needle)
+          true
+          (Sol_cli_string.contains ~needle message))
     | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error")
 ;;
 

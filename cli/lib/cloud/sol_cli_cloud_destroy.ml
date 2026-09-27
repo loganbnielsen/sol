@@ -357,15 +357,14 @@ let with_elevated_access ~deps =
     match deps.reconcile_and_enable () with
     | Error message -> Protected_skipped message
     | Ok () ->
-      (match deps.observe_window_before () with
-       | Ok () -> ()
-       | Error message ->
-         deps.warn
-           (Printf.sprintf
-              "warning: the bootstrap window could not be observed before teardown (%s); \
-               its effective removal will not be verified. Teardown removes the access \
-               with the substrate anyway."
-              message));
+      deps.observe_window_before ()
+      |> Result.iter_error (fun message ->
+        deps.warn
+          (Printf.sprintf
+             "warning: the bootstrap window could not be observed before teardown (%s); \
+              its effective removal will not be verified. Teardown removes the access \
+              with the substrate anyway."
+             message));
       (match deps.destroy_platform () with
        | Error message -> Protected_failed message
        | Ok () -> Protected_ran)
@@ -416,9 +415,8 @@ let teardown ~deps ~substrate : (cleanup * string list, failure * cleanup) resul
        let operation, cleanup = with_elevated_access ~deps in
        (match cleanup with
         | Cleanup_succeeded ->
-          (match deps.verify_window_after () with
-           | Ok () -> ()
-           | Error message -> deps.warn ("warning: " ^ message))
+          deps.verify_window_after ()
+          |> Result.iter_error (fun message -> deps.warn ("warning: " ^ message))
         | Cleanup_not_needed | Cleanup_failed _ -> ());
        (match operation with
         | Protected_ran -> Ok (cleanup, [])
@@ -515,9 +513,8 @@ let execute ~deps =
          match Sol_cli_cloud_lifecycle.destruction_blocked preparation_outcome with
          | Some guarantee -> block guarantee
          | None ->
-           (match Sol_cli_cloud_lifecycle.preparation_failure preparation_outcome with
-            | Some reason -> degrade "preparation" reason
-            | None -> ());
+           Sol_cli_cloud_lifecycle.preparation_failure preparation_outcome
+           |> Option.iter (fun reason -> degrade "preparation" reason);
            let preparation =
              match preparation_outcome with
              | Sol_cli_cloud_lifecycle.Prepared preparation -> preparation
@@ -527,9 +524,8 @@ let execute ~deps =
            (match teardown ~deps ~substrate with
             | Error (failure, cleanup) -> fail ~cleanup failure
             | Ok (cleanup, teardown_degradations) ->
-              List.iter
-                (fun message -> degradations := message :: !degradations)
-                teardown_degradations;
+              teardown_degradations
+              |> List.iter (fun message -> degradations := message :: !degradations);
               (* A removal failure on the otherwise-successful path is fatal, the
                  same as the old `require_terraform_success (deescalate ())`; it
                  is carried as the failure rather than dropped. *)

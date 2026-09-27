@@ -6,14 +6,13 @@ open Result.Syntax
 let default_table_name =
   let cwd_name = Filename.basename (Sys.getcwd ()) in
   let buf = Buffer.create (String.length cwd_name) in
-  String.iter
-    (fun c ->
-       if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-       then Buffer.add_char buf c
-       else if c >= 'A' && c <= 'Z'
-       then Buffer.add_char buf (Char.lowercase_ascii c)
-       else Buffer.add_char buf '_')
-    cwd_name;
+  cwd_name
+  |> String.iter (fun c ->
+    if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+    then Buffer.add_char buf c
+    else if c >= 'A' && c <= 'Z'
+    then Buffer.add_char buf (Char.lowercase_ascii c)
+    else Buffer.add_char buf '_');
   Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
 ;;
 
@@ -307,7 +306,7 @@ let container_waiting_status ~ctx ~namespace ~job_name () =
   | Ok r ->
     (* The adapter's boundary: kubectl prints blanks for a container that is not
        waiting, and they are decided here, once. *)
-    (match String.split_on_char '|' r.Sol_cli_process.stdout with
+    (match String.split_on_char '|' r.stdout with
      | reason :: rest ->
        Sol_cli_string.non_blank reason
        |> Option.map (fun reason ->
@@ -343,7 +342,7 @@ let status_job_evidence ~ctx ~namespace ~job_name () =
         ~timeout_s:20.
         [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ]
     with
-    | Ok r -> Sol_cli_string.non_blank r.Sol_cli_process.stdout
+    | Ok r -> Sol_cli_string.non_blank r.stdout
     | Error (Sol_cli_process.Non_zero r) ->
       Some ("(kubectl logs failed: " ^ Sol_cli_process.failure_message r ^ ")")
     | Error _ -> None
@@ -557,12 +556,12 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
     Sol_cli_config.load_for_target ~target
     |> Result.map_error Sol_cli_config.error_to_string
   in
-  let target_cfg = cfg.Sol_cli_config.target in
+  let target_cfg = cfg.target in
   let registry =
     match registry_override with
     | Some r -> Ok r
     | None ->
-      (match target_cfg.Sol_cli_config.registry with
+      (match target_cfg.registry with
        | Some r -> Ok r
        | None ->
          Error
@@ -672,7 +671,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
           ; Printf.sprintf "jsonpath={.status.%s}" field
           ]
       with
-      | Ok r -> String.trim r.Sol_cli_process.stdout
+      | Ok r -> String.trim r.stdout
       | Error _ -> ""
     in
     let job_status () =
@@ -706,8 +705,8 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
      | Ok r ->
        let logs =
          match Sol_cli_string.env "POSTGRES_URL" with
-         | Some url -> Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
-         | None -> r.Sol_cli_process.stdout
+         | Some url -> Sol_cli_redaction.connection_error ~url r.stdout
+         | None -> r.stdout
        in
        print_string logs
      | Error e ->
@@ -747,9 +746,9 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> Error (Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    let target_cfg = cfg.Sol_cli_config.target in
+    let target_cfg = cfg.target in
     let registry =
-      match target_cfg.Sol_cli_config.registry with
+      match target_cfg.registry with
       | Some r -> Ok r
       | None ->
         (Error "no registry configured for this target -- set target.registry in sol.yml."
@@ -857,7 +856,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
                     ; Printf.sprintf "jsonpath={.status.%s}" field
                     ]
                 with
-                | Ok r -> String.trim r.Sol_cli_process.stdout
+                | Ok r -> String.trim r.stdout
                 | Error _ -> ""
               in
               let rec wait n =
@@ -906,7 +905,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
                     (* The Job prints only the JSON body, but take the first
                           `{`..last `}` so a stray log line cannot break the
                           parse of an otherwise valid report. *)
-                    let text = String.trim r.Sol_cli_process.stdout in
+                    let text = String.trim r.stdout in
                     let text =
                       match String.index_opt text '{', String.rindex_opt text '}' with
                       | Some i, Some j when j > i -> String.sub text i (j - i + 1)
@@ -973,20 +972,19 @@ let run_status ~ctx ?(json = false) dir table () =
          print_endline
            (Sol_cli_migration.status_json
               ~table
-              (List.map
-                 (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
-                 rows))
+              (rows
+               |> List.map (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
+              ))
        else (
          Printf.printf "%-6s  %-30s  %s\n" "VER" "NAME" "APPLIED AT";
          Printf.printf "%s\n" (String.make 60 '-');
-         List.iter
-           (fun (s : Migration.status) ->
-              Printf.printf
-                "%-6d  %-30s  %s\n"
-                s.version
-                s.name
-                (Option.value ~default:"(pending)" s.applied_at))
-           rows)))
+         rows
+         |> List.iter (fun (s : Migration.status) ->
+           Printf.printf
+             "%-6d  %-30s  %s\n"
+             s.version
+             s.name
+             (Option.value ~default:"(pending)" s.applied_at)))))
 ;;
 
 (* ── rollback ────────────────────────────────────────────────────────────── *)

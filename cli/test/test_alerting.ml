@@ -40,15 +40,12 @@ let test_url_is_routable () =
 ;;
 
 let test_validate_accepts_a_complete_declaration () =
-  match
-    Sol_cli_alerting.validate
-      ~receiver_type:(Some "webhook")
-      ~receiver_url:(Some "https://hooks.example.com/x")
-      ~owner:(Some "payments-oncall")
-      ~runbook_url:(Some "https://runbooks.example.com/sol")
-  with
-  | Ok () -> ()
-  | Error msg -> Alcotest.fail msg
+  Sol_cli_alerting.validate
+    ~receiver_type:(Some "webhook")
+    ~receiver_url:(Some "https://hooks.example.com/x")
+    ~owner:(Some "payments-oncall")
+    ~runbook_url:(Some "https://runbooks.example.com/sol")
+  |> Result.iter_error Alcotest.fail
 ;;
 
 let test_validate_requires_a_receiver () =

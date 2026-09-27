@@ -323,12 +323,11 @@ let test_disk_quota_unobserved_is_reported_not_passed () =
     true
     (List.exists
        (fun line -> String.length line > 0)
-       (List.filter
-          (fun line ->
-             String.length line >= 27
-             && String.sub line (String.length line - 27) 27
-                = "cannot say whether they fit")
-          calls.reports))
+       (calls.reports
+        |> List.filter (fun line ->
+          String.length line >= 27
+          && String.sub line (String.length line - 27) 27 = "cannot say whether they fit")
+       ))
 ;;
 
 let test_disk_quota_unreadable_refuses () =

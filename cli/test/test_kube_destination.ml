@@ -113,9 +113,7 @@ let test_ambient_context_cannot_leak () =
   Unix.putenv "KUBECONFIG" ambient;
   Fun.protect
     ~finally:(fun () ->
-      (match saved with
-       | Some v -> Unix.putenv "KUBECONFIG" v
-       | None -> ());
+      saved |> Option.iter (fun v -> Unix.putenv "KUBECONFIG" v);
       (try Sys.remove ambient with
        | _ -> ());
       try Sys.remove scoped with

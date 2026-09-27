@@ -14,10 +14,9 @@ type finding =
   }
 
 let qualified_providers =
-  List.filter
-    (fun provider ->
-       (Sol_cli_provider_capabilities.capabilities_of provider).production_qualified)
-    Sol_cli_provider.all
+  Sol_cli_provider.all
+  |> List.filter (fun provider ->
+    (Sol_cli_provider_capabilities.capabilities_of provider).production_qualified)
 ;;
 
 (* Every capability in the profile now has a real establishment branch: none is
@@ -56,9 +55,8 @@ let establish
        only content digests. This is the application's choice of reference, not
        a property of the target. *)
     let images =
-      List.map
-        (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.image)
-        plan.Sol_cli_deployment_plan.services
+      plan.services
+      |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.image)
     in
     if Sol_cli_image_ref.plan_is_immutable images
     then Established
@@ -97,25 +95,22 @@ let establish
        CLI/substrate/chart versions are recorded in
        docs/deployment/compatibility.md. *)
     let profile =
-      match plan.Sol_cli_deployment_plan.profile with
+      match plan.profile with
       | Some claim -> claim.profile
       | None -> Sol_cli_profile.Production_single_region
     in
-    let services = plan.Sol_cli_deployment_plan.services in
+    let services = plan.services in
     let unstated =
-      List.filter
-        (fun (s : Sol_cli_deployment_plan.service_spec) -> s.language = None)
-        services
+      services
+      |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) -> s.language = None)
     in
     let unsupported =
-      List.filter_map
-        (fun (s : Sol_cli_deployment_plan.service_spec) ->
-           match s.language with
-           | Some language
-             when not (Sol_cli_compat.is_supported_by_profile profile language) ->
-             Some (s.source_name, language)
-           | _ -> None)
-        services
+      services
+      |> List.filter_map (fun (s : Sol_cli_deployment_plan.service_spec) ->
+        match s.language with
+        | Some language when not (Sol_cli_compat.is_supported_by_profile profile language)
+          -> Some (s.source_name, language)
+        | _ -> None)
     in
     (match unstated, unsupported with
      | [], [] -> Established
@@ -215,10 +210,9 @@ let establish
        can be replaced inside the DEC-026 §3 bound. *)
     let required =
       List.length
-        (List.filter
-           (fun (s : Sol_cli_deployment_plan.service_spec) ->
-              Sol_cli_availability.is_node_failure_tolerant s.availability)
-           plan.Sol_cli_deployment_plan.services)
+        (plan.services
+         |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) ->
+           Sol_cli_availability.is_node_failure_tolerant s.availability))
     in
     if required = 0
     then Established
@@ -305,15 +299,13 @@ let establish
        that the provider implements the path. The zero-loss-on-broker-loss
        behaviour and the consumer-resume bound are HARDEN-002's live evidence. *)
     let consumers =
-      List.filter
-        (fun (s : Sol_cli_deployment_plan.service_spec) -> s.consumes_kafka)
-        plan.Sol_cli_deployment_plan.services
+      plan.services
+      |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) -> s.consumes_kafka)
     in
     let missing =
-      List.filter
-        (fun (s : Sol_cli_deployment_plan.service_spec) ->
-           not (List.mem_assoc "SOL_KAFKA_DURABILITY" s.config))
-        consumers
+      consumers
+      |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) ->
+        not (List.mem_assoc "SOL_KAFKA_DURABILITY" s.config))
     in
     if not (List.mem target.provider qualified_providers)
     then
@@ -352,14 +344,13 @@ let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deploymen
       | None -> None
     in
     let findings =
-      List.filter_map
-        (fun capability ->
-           match
-             Option.value (application_status capability) ~default:(establish capability)
-           with
-           | Established -> None
-           | Unmet (side, reason) -> Some { capability; side; reason })
-        claim.requirements
+      claim.requirements
+      |> List.filter_map (fun capability ->
+        match
+          Option.value (application_status capability) ~default:(establish capability)
+        with
+        | Established -> None
+        | Unmet (side, reason) -> Some { capability; side; reason })
     in
     if findings = [] then Ok () else Error (claim.profile, findings)
 ;;

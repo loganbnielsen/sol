@@ -44,7 +44,7 @@ let k3d_env () =
          [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
   | Ok r ->
-    let daemon_min = String.trim r.Sol_cli_process.stdout in
+    let daemon_min = String.trim r.stdout in
     if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
     then [ "DOCKER_API_VERSION", daemon_min ]
     else []
@@ -730,7 +730,7 @@ let dev_status () =
        Sol_cli_process.run (Sol_cli_process.cmd [ "kubectl"; "get"; "pods"; "-A" ])
      with
      | Ok r ->
-       print_string r.Sol_cli_process.stdout;
+       print_string r.stdout;
        print_char '\n'
      | Error _ -> ());
     Printf.printf "\nPort-forwards:\n%!";
@@ -817,9 +817,7 @@ let dev_run workspace_dir scope =
     | None -> "."
   in
   (* Change to workspace dir if given explicitly so discover_services works *)
-  (match workspace_dir with
-   | Some d -> Unix.chdir d
-   | None -> ());
+  workspace_dir |> Option.iter Unix.chdir;
   let* inventory =
     Sol_cli_manifest.discover_services ()
     |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
@@ -834,22 +832,19 @@ let dev_run workspace_dir scope =
     |> Sol_cli_exit.of_msg
   in
   Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
-  List.iter
-    (fun svc ->
-       Printf.printf
-         "    [%s] %s/%s → %s/bin/main.exe\n"
-         (primitive_label svc.primitive)
-         svc.domain
-         svc.name
-         svc.dir)
-    services;
+  services
+  |> List.iter (fun svc ->
+    Printf.printf
+      "    [%s] %s/%s → %s/bin/main.exe\n"
+      (primitive_label svc.primitive)
+      svc.domain
+      svc.name
+      svc.dir);
   Printf.printf "\n%!";
   (* Build all services first with a single dune invocation so that parallel
      dune exec calls below don't fight over the _build/.lock file. *)
   Printf.printf "  Building...\n%!";
-  let build_targets =
-    List.map (fun (svc : Sol_cli_manifest.service) -> svc.dir ^ "/bin/main.exe") services
-  in
+  let build_targets = List.map (fun svc -> svc.dir ^ "/bin/main.exe") services in
   let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
   let build_cmd =
     Printf.sprintf
@@ -866,36 +861,35 @@ let dev_run workspace_dir scope =
   let env = build_env () in
   (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
   let children =
-    List.filter_map
-      (fun (svc : Sol_cli_manifest.service) ->
-         let label = svc.domain ^ "/" ^ svc.name in
-         let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
-         let cmd_str = Filename.quote exe_path in
-         let pipe_read, pipe_write = Unix.pipe () in
-         try
-           let pid =
-             Unix.create_process_env
-               "sh"
-               [| "sh"; "-c"; cmd_str |]
-               env
-               Unix.stdin
-               pipe_write
-               pipe_write
-           in
-           Unix.close pipe_write;
-           let _t = Thread.create (fun () -> prefix_lines_thread pipe_read label) () in
-           Some { pid; label }
-         with
-         | Unix.Unix_error (e, fn, _) ->
-           Unix.close pipe_read;
-           Unix.close pipe_write;
-           Printf.eprintf
-             "error: failed to spawn [%s]: %s in %s\n"
-             label
-             (Unix.error_message e)
-             fn;
-           None)
-      services
+    services
+    |> List.filter_map (fun svc ->
+      let label = svc.domain ^ "/" ^ svc.name in
+      let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
+      let cmd_str = Filename.quote exe_path in
+      let pipe_read, pipe_write = Unix.pipe () in
+      try
+        let pid =
+          Unix.create_process_env
+            "sh"
+            [| "sh"; "-c"; cmd_str |]
+            env
+            Unix.stdin
+            pipe_write
+            pipe_write
+        in
+        Unix.close pipe_write;
+        let _t = Thread.create (fun () -> prefix_lines_thread pipe_read label) () in
+        Some { pid; label }
+      with
+      | Unix.Unix_error (e, fn, _) ->
+        Unix.close pipe_read;
+        Unix.close pipe_write;
+        Printf.eprintf
+          "error: failed to spawn [%s]: %s in %s\n"
+          label
+          (Unix.error_message e)
+          fn;
+        None)
   in
   let* children =
     match children with
@@ -906,18 +900,16 @@ let dev_run workspace_dir scope =
   (* On SIGINT (Ctrl-C), kill every child before exiting *)
   let kill_all () =
     Printf.printf "\n  Stopping services...\n%!";
-    List.iter
-      (fun c ->
-         try Unix.kill c.pid Sys.sigterm with
-         | _ -> ())
-      children;
+    children
+    |> List.iter (fun c ->
+      try Unix.kill c.pid Sys.sigterm with
+      | _ -> ());
     (* Brief grace period, then SIGKILL *)
     Unix.sleepf 0.5;
-    List.iter
-      (fun c ->
-         try Unix.kill c.pid Sys.sigkill with
-         | _ -> ())
-      children
+    children
+    |> List.iter (fun c ->
+      try Unix.kill c.pid Sys.sigkill with
+      | _ -> ())
   in
   Sys.set_signal
     Sys.sigint

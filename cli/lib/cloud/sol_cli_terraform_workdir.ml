@@ -98,21 +98,19 @@ let materialize ~assets ~provider ~role ~backend_config =
     else (
       (* Only files Sol wrote are ever removed: the previous manifest's, when the
          assets no longer have them. *)
-      List.iter
-        (fun rel ->
-           if not (List.mem rel sources)
-           then (
-             try Sys.remove (Filename.concat root rel) with
-             | Sys_error _ -> ()))
-        (read_lines manifest);
-      List.iter
-        (fun rel ->
-           let src = Filename.concat source_root rel in
-           let dst = Filename.concat root rel in
-           mkdir_p (Filename.dirname dst);
-           let perm = (Unix.stat src).Unix.st_perm lor 0o600 in
-           write_atomic ~perm dst (In_channel.with_open_bin src In_channel.input_all))
-        sources;
+      read_lines manifest
+      |> List.iter (fun rel ->
+        if not (List.mem rel sources)
+        then (
+          try Sys.remove (Filename.concat root rel) with
+          | Sys_error _ -> ()));
+      sources
+      |> List.iter (fun rel ->
+        let src = Filename.concat source_root rel in
+        let dst = Filename.concat root rel in
+        mkdir_p (Filename.dirname dst);
+        let perm = (Unix.stat src).Unix.st_perm lor 0o600 in
+        write_atomic ~perm dst (In_channel.with_open_bin src In_channel.input_all));
       write_atomic ~perm:0o644 manifest (String.concat "\n" sources ^ "\n");
       Ok (chdir ~provider ~role ~backend_config))
   with

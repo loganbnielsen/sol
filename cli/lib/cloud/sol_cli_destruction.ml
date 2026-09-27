@@ -68,10 +68,9 @@ let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
    a peering is on -- and take that name from state rather than rebuilding it from
    a naming convention. *)
 let state_name pre_destroy kind =
-  List.find_map
-    (fun (resource : Sol_cli_cloud_destroy.resource) ->
-       if String.equal resource.kind kind then resource.name else None)
-    (Sol_cli_cloud_destroy.resources pre_destroy)
+  Sol_cli_cloud_destroy.resources pre_destroy
+  |> List.find_map (fun (resource : Sol_cli_cloud_destroy.resource) ->
+    if String.equal resource.kind kind then resource.name else None)
 ;;
 
 (* ── HARDEN-004 step 5: the observation ────────────────────────────────────── *)
@@ -103,8 +102,7 @@ let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
    whether destruction is available (FND-0044 point 2). *)
 let read_cloud_state infra_dir : (Sol_cli_cloud_destroy.state_read, string) result =
   match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-  | Ok result ->
-    Ok (Sol_cli_cloud_destroy.inventory_of_show_json result.Sol_cli_process.stdout)
+  | Ok result -> Ok (Sol_cli_cloud_destroy.inventory_of_show_json result.stdout)
   | Error (Sol_cli_process.Non_zero result) ->
     Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
   | Error error ->

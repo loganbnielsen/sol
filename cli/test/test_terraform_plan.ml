@@ -192,24 +192,22 @@ let test_bootstrap_create_is_allowed () =
    exists to acquire the authority. *)
 let test_declared_authority_matches_every_instance () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
-  List.iter
-    (fun address ->
-       Alcotest.(check bool)
-         (Printf.sprintf "%s is the declared authority resource" address)
-         true
-         (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
-    authority_instances
+  authority_instances
+  |> List.iter (fun address ->
+    Alcotest.(check bool)
+      (Printf.sprintf "%s is the declared authority resource" address)
+      true
+      (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
 ;;
 
 let test_declared_authority_matches_nothing_else () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
-  List.iter
-    (fun address ->
-       Alcotest.(check bool)
-         (Printf.sprintf "%s is not the declared authority resource" address)
-         false
-         (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
-    not_the_authority
+  not_the_authority
+  |> List.iter (fun address ->
+    Alcotest.(check bool)
+      (Printf.sprintf "%s is not the declared authority resource" address)
+      false
+      (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
 ;;
 
 let test_attempt8_authority_create_is_accepted () =
@@ -528,17 +526,16 @@ let test_show_and_record_never_logs_plan_json () =
      Alcotest.(check int) "one change" 1 (List.length changes));
   let files = files_under base in
   Alcotest.(check bool) "a phase log was written" true (files <> []);
-  List.iter
-    (fun f ->
-       Alcotest.(check bool)
-         (Printf.sprintf "%s holds no secret" f)
-         false
-         (Sol_cli_string.contains ~needle:secret (read f));
-       Alcotest.(check int)
-         (Printf.sprintf "%s is 0600" f)
-         0o600
-         ((Unix.stat f).st_perm land 0o777))
-    files;
+  files
+  |> List.iter (fun f ->
+    Alcotest.(check bool)
+      (Printf.sprintf "%s holds no secret" f)
+      false
+      (Sol_cli_string.contains ~needle:secret (read f));
+    Alcotest.(check int)
+      (Printf.sprintf "%s is 0600" f)
+      0o600
+      ((Unix.stat f).st_perm land 0o777));
   Alcotest.(check bool)
     "the classified change is recorded"
     true

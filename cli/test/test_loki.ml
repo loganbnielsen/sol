@@ -40,8 +40,8 @@ let error_body = {|{"status": "error", "error": "parse error", "errorType": "bad
 let test_parse_success_orders_oldest_first () =
   match L.parse_query_range_body success_body with
   | Ok [ a; b ] ->
-    check_string "oldest first" "first" a.L.text;
-    check_string "then newest" "second" b.L.text
+    check_string "oldest first" "first" a.text;
+    check_string "then newest" "second" b.text
   | Ok _ -> Alcotest.fail "expected exactly two lines"
   | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
 ;;

@@ -376,10 +376,7 @@ let bad_workload_release update : Sol_cli_release.t =
    mutation is possible on this path -- [service_specs_of_release] returning
    [Error] is the only way out. *)
 let test_gate_failure_unknown_rollout_encoding () =
-  let release =
-    bad_workload_release (fun (w : Sol_cli_release.workload) ->
-      { w with rollout = "canary:bogus" })
-  in
+  let release = bad_workload_release (fun w -> { w with rollout = "canary:bogus" }) in
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Alcotest.fail "expected reconstruction to fail on an unknown rollout encoding"
   | Error msg ->
@@ -389,10 +386,7 @@ let test_gate_failure_unknown_rollout_encoding () =
 ;;
 
 let test_gate_failure_invalid_cpu () =
-  let release =
-    bad_workload_release (fun (w : Sol_cli_release.workload) ->
-      { w with cpu = "not-a-cpu-quantity" })
-  in
+  let release = bad_workload_release (fun w -> { w with cpu = "not-a-cpu-quantity" }) in
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Alcotest.fail "expected reconstruction to fail on an invalid cpu quantity"
   | Error msg ->
@@ -411,12 +405,11 @@ let with_migrations_dir files f =
       List.iter (fun (name, _) -> Sys.remove (Filename.concat dir name)) files;
       Unix.rmdir dir)
     (fun () ->
-       List.iter
-         (fun (name, content) ->
-            let oc = open_out (Filename.concat dir name) in
-            output_string oc content;
-            close_out oc)
-         files;
+       files
+       |> List.iter (fun (name, content) ->
+         let oc = open_out (Filename.concat dir name) in
+         output_string oc content;
+         close_out oc);
        f dir)
 ;;
 
@@ -571,12 +564,11 @@ let live_kind_cases =
 ;;
 
 let test_live_kind_of_service_table () =
-  List.iter
-    (fun (label, primitive, progressive_delivery, expected) ->
-       let spec = { ledger_spec with primitive; progressive_delivery } in
-       let got = Sol_cli_rollback.live_kind_of_service spec in
-       Alcotest.(check bool) label true (got = expected))
-    live_kind_cases
+  live_kind_cases
+  |> List.iter (fun (label, primitive, progressive_delivery, expected) ->
+    let spec = { ledger_spec with primitive; progressive_delivery } in
+    let got = Sol_cli_rollback.live_kind_of_service spec in
+    Alcotest.(check bool) label true (got = expected))
 ;;
 
 let live_kind_label = function
@@ -627,9 +619,9 @@ let verify_release : Sol_cli_release.t =
 ;;
 
 let test_check_apply_mode_allows_direct () =
-  match Sol_cli_rollback.check_apply_mode ~release:verify_release with
-  | Ok () -> ()
-  | Error e -> Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e)
+  Sol_cli_rollback.check_apply_mode ~release:verify_release
+  |> Result.iter_error (fun e ->
+    Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e))
 ;;
 
 let test_check_apply_mode_refuses_gitops () =
@@ -787,7 +779,7 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
     Alcotest.(check bool)
       "primitive is still Fn"
       true
-      (got.Sol_cli_deployment_plan.primitive = Sol_cli_deployment_plan.Fn);
+      (got.primitive = Sol_cli_deployment_plan.Fn);
     Alcotest.(check (option string)) "schedule preserved" fn_spec.schedule got.schedule;
     Alcotest.(check bool)
       "live kind is CronJob"
@@ -1183,7 +1175,7 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
          1
          (List.length surplus);
        let id, _ = List.hd surplus in
-       Alcotest.(check string) "pruned name" "ghost-svc" id.Sol_cli_rollback.name)
+       Alcotest.(check string) "pruned name" "ghost-svc" id.name)
 ;;
 
 (* A prune failure must not move the pointer -- pruning failed, so the cluster

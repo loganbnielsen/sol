@@ -77,7 +77,7 @@ let required name value =
    plan assertion is what keeps it narrow. *)
 let aws =
   { backend_config =
-      (fun (target : Sol_cli_config.target) ~bucket ~object_key ->
+      (fun target ~bucket ~object_key ->
         (* S3 has no native locking, so the DynamoDB lock table is part of what
            makes the state durable, not an option. *)
         match Sol_cli_config.provider_field target "state_lock_table" with
@@ -94,7 +94,7 @@ let aws =
             "an AWS target must declare aws.state_lock_table: S3 has no native state \
              locking, so two applies could corrupt the same state")
   ; cluster_access_role_arn =
-      (fun (target : Sol_cli_config.target) ->
+      (fun target ->
         Result.map
           Option.some
           (required
@@ -108,7 +108,7 @@ let aws =
        implemented here, and the check reports "not observed" rather than "sufficient". *)
     disk_quota = None
   ; own_vars =
-      (fun (target : Sol_cli_config.target) ~workspace shared ->
+      (fun target ~workspace shared ->
         shared
         |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
         |> add_opt
@@ -228,7 +228,7 @@ let gcp =
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
   ; own_vars =
-      (fun (target : Sol_cli_config.target) ~workspace:_ shared ->
+      (fun target ~workspace:_ shared ->
         (* The impersonation grant is GCP's, and only GCP's: the AWS equivalent is
            the provisioner role's trust policy, not a variable that root declares.
            A target that names no caller gets no grant at all, rather than the
@@ -236,9 +236,8 @@ let gcp =
         shared
         |> add_opt
              "provisioner_impersonators"
-             (Option.map
-                (fun member -> Printf.sprintf "[%S]" member)
-                (Sol_cli_config.provider_field target "provisioner_impersonator"))
+             (Sol_cli_config.provider_field target "provisioner_impersonator"
+              |> Option.map (fun member -> Printf.sprintf "[%S]" member))
         (* INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects
            for 7 days by default, so a `destroy_retention: none` destroy would leave
            the observability data billed. `none` creates the buckets with soft delete

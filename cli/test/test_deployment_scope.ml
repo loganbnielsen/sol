@@ -169,10 +169,8 @@ let services () =
 ;;
 
 let service_names selected =
-  List.map
-    (fun (s : Sol_cli_manifest.service) ->
-       s.Sol_cli_manifest.domain ^ "/" ^ s.Sol_cli_manifest.name)
-    selected.Sol_cli_workload_selection.services
+  selected.Sol_cli_workload_selection.services
+  |> List.map (fun s -> s.Sol_cli_manifest.domain ^ "/" ^ s.Sol_cli_manifest.name)
 ;;
 
 let test_bridge_carries_requested_scope_and_resolved_set () =
@@ -184,11 +182,11 @@ let test_bridge_carries_requested_scope_and_resolved_set () =
     Alcotest.(check string)
       "requested scope"
       "payments"
-      (request_to_string selected.Sol_cli_workload_selection.request);
+      (request_to_string selected.request);
     Alcotest.(check string)
       "requested_scope field matches the request (REFAC-111)"
       "payments"
-      selected.Sol_cli_workload_selection.requested_scope;
+      selected.requested_scope;
     Alcotest.(check (list string))
       "resolved set"
       [ "payments/charge_svc"; "payments/settle_worker" ]
@@ -231,10 +229,7 @@ let test_nonempty_accepts_a_selection () =
   with
   | Error message -> Alcotest.fail message
   | Ok selected ->
-    Alcotest.(check string)
-      "whole workspace"
-      "workspace"
-      selected.Sol_cli_workload_selection.requested_scope
+    Alcotest.(check string) "whole workspace" "workspace" selected.requested_scope
 ;;
 
 (* A bad selector still reports the selector error, not the empty message. *)

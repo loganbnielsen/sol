@@ -128,8 +128,8 @@ services:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      check_str "project" "pluto" (Option.get cfg.Sol_cli_config.project);
-      let target = cfg.Sol_cli_config.target in
+      check_str "project" "pluto" (Option.get cfg.project);
+      let target = cfg.target in
       check_str "target name" "prod/aws/us-east-1" target.name;
       check_str "env" "prod" target.env;
       check_provider "provider" "aws" target.provider;
@@ -183,10 +183,7 @@ let test_service_language_parses () =
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
-      check_bool
-        "language parsed"
-        true
-        (service.Sol_cli_config.language = Some Sol_cli_compat.Ocaml))
+      check_bool "language parsed" true (service.language = Some Sol_cli_compat.Ocaml))
 ;;
 
 let test_unknown_service_language_fails () =
@@ -439,7 +436,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str_opt "registry" (Some "registry.example.com") target.registry)
 ;;
 
@@ -487,7 +484,7 @@ target:
       check_str
         "registry"
         "registry.example.com"
-        (Option.value cfg.Sol_cli_config.target.registry ~default:"<none>"))
+        (Option.value cfg.target.registry ~default:"<none>"))
 ;;
 
 let test_quoted_hash_survives () =
@@ -596,7 +593,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str
         "observability_backend"
         "self_hosted_durable"
@@ -621,7 +618,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str "receiver type" "webhook" (Option.get target.alert_receiver_type);
       check_str
         "receiver url"
@@ -656,7 +653,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str "state_bucket" "acme-tfstate" (Option.get target.state_bucket);
       check_str
         "state_lock_table"
@@ -697,7 +694,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_bool "observability_backend absent" true (target.observability_backend = None))
 ;;
 
@@ -826,7 +823,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
        | Error message -> Alcotest.fail message
        | Ok destination ->
@@ -854,7 +851,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
        | Error message -> Alcotest.fail message
        | Ok destination ->
@@ -884,7 +881,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
        | Ok destination ->
          Alcotest.fail
@@ -920,7 +917,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str_opt "registry" (Some "registry.example.com") target.registry)
 ;;
 
@@ -944,7 +941,7 @@ resources:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str "env" "prod" target.env;
       let resource = List.hd (Sol_cli_config.resources cfg) in
       let index = only_index resource.indexes in
@@ -967,7 +964,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_strs
         "aws fields"
         [ "vpc_cidr=10.42.0.0/16" ]
@@ -1050,11 +1047,11 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str_opt
         "destroy_retention reaches the resolved target"
         (Some "none")
-        target.Sol_cli_config.destroy_retention)
+        target.destroy_retention)
 ;;
 
 (* GCP, first live attempt (2026-09-19): `create_rds`, `rds_multi_az`,
@@ -1151,7 +1148,7 @@ target:
     let target_of name =
       match Sol_cli_config.load_for_target ~target:name with
       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
-      | Ok cfg -> cfg, cfg.Sol_cli_config.target
+      | Ok cfg -> cfg, cfg.target
     in
     let gcp_cfg, gcp = target_of "prod/gcp/us-central1" in
     let _, aws = target_of "prod/aws/us-east-1" in
@@ -1226,7 +1223,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       check_str_opt
         "the declared caller survives the merge"
         (Some "user:ops@example.test")
@@ -1273,10 +1270,9 @@ let test_gcs_soft_delete_follows_destroy_retention () =
   let soft_delete ~target ~retention =
     with_temp_dir (fun () ->
       write "sol.yml" "target:\n  base_domain: example.test\n";
-      (match retention with
-       | None -> ()
-       | Some r ->
-         Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
+      retention
+      |> Option.iter (fun r ->
+        Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
       match Sol_cli_config.load_for_target ~target with
       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
       | Ok cfg ->
@@ -1632,7 +1628,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let target = cfg.Sol_cli_config.target in
+      let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
        | Ok _ -> Alcotest.fail "a configured target must not resolve to the local cluster"
        | Error message ->
@@ -1653,7 +1649,7 @@ let test_yaml_flow_map_and_exact_text () =
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      let t = cfg.Sol_cli_config.target in
+      let t = cfg.target in
       check_str "registry" "r.example.com" (Option.value t.registry ~default:"");
       (* numeric-looking text stays the text the user wrote *)
       check_str "cluster_name" "012" (Option.value t.cluster_name ~default:"");
@@ -1818,9 +1814,8 @@ let test_omit_is_sticky () =
     Alcotest.(check bool)
       "a target cannot bring back what its environment omitted"
       false
-      (List.exists
-         (fun (s : Sol_cli_config.service) -> s.name = "api")
-         (Sol_cli_config.services cfg)))
+      (Sol_cli_config.services cfg
+       |> List.exists (fun (s : Sol_cli_config.service) -> s.name = "api")))
 ;;
 
 (* REFAC-123: blank is decided in the decoder, quoted or not. A blank value is a

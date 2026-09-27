@@ -8,10 +8,7 @@
 
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
-
-let context_name (ctx : Sol_cli_kube_destination.context) =
-  ctx.Sol_cli_kube_destination.destination.context
-;;
+let context_name (ctx : Sol_cli_kube_destination.context) = ctx.destination.context
 
 let write path contents =
   let oc = open_out path in

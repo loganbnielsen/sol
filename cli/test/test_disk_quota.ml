@@ -103,12 +103,11 @@ let test_the_declaration_is_described () =
   Alcotest.(check bool)
     "every part carries its provenance"
     true
-    (List.for_all
-       (fun (part : Sol_cli_platform_storage.part) ->
-          String.trim part.component <> ""
-          && String.trim part.provenance <> ""
-          && part.gib > 0)
-       Sol_cli_platform_storage.parts);
+    (Sol_cli_platform_storage.parts
+     |> List.for_all (fun (part : Sol_cli_platform_storage.part) ->
+       String.trim part.component <> ""
+       && String.trim part.provenance <> ""
+       && part.gib > 0));
   Alcotest.(check bool)
     "and the parts are what the minimum sums"
     true

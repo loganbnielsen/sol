@@ -28,14 +28,13 @@ let default_dir = "db/migrations"
    cli/bin/cmd_migrate.ml's [default_table_name]. *)
 let table_name ~workspace =
   let buf = Buffer.create (String.length workspace) in
-  String.iter
-    (fun c ->
-       if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-       then Buffer.add_char buf c
-       else if c >= 'A' && c <= 'Z'
-       then Buffer.add_char buf (Char.lowercase_ascii c)
-       else Buffer.add_char buf '_')
-    workspace;
+  workspace
+  |> String.iter (fun c ->
+    if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+    then Buffer.add_char buf c
+    else if c >= 'A' && c <= 'Z'
+    then Buffer.add_char buf (Char.lowercase_ascii c)
+    else Buffer.add_char buf '_');
   Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
 ;;
 
@@ -129,16 +128,15 @@ let parse_status_json text =
     (match member "migrations" json with
      | `List items ->
        let versions =
-         List.filter_map
-           (fun item ->
-              match to_bool (member "applied" item) with
-              | true ->
-                (match to_int (member "version" item) with
-                 | v -> Some v
-                 | exception Type_error _ -> None)
-              | false -> None
+         items
+         |> List.filter_map (fun item ->
+           match to_bool (member "applied" item) with
+           | true ->
+             (match to_int (member "version" item) with
+              | v -> Some v
               | exception Type_error _ -> None)
-           items
+           | false -> None
+           | exception Type_error _ -> None)
        in
        Ok versions
      | _ -> Error "missing \"migrations\" array")
@@ -147,7 +145,7 @@ let parse_status_json text =
 (* required \ applied -- the migrations the revision requires but the
    authoritative table does not have. *)
 let unsatisfied ~required ~applied =
-  List.filter (fun (p : prerequisite) -> not (List.mem p.version applied)) required
+  List.filter (fun p -> not (List.mem p.version applied)) required
 ;;
 
 (* The machine-readable status the deploy's read-only Job consumes. Emitted by
@@ -158,18 +156,17 @@ let status_json ~table rows =
     [ "table", `String table
     ; ( "migrations"
       , `List
-          (List.map
-             (fun (version, name, applied_at) ->
-                `Assoc
-                  [ "version", `Int version
-                  ; "name", `String name
-                  ; "applied", `Bool (Option.is_some applied_at)
-                  ; ( "applied_at"
-                    , match applied_at with
-                      | Some s -> `String s
-                      | None -> `Null )
-                  ])
-             rows) )
+          (rows
+           |> List.map (fun (version, name, applied_at) ->
+             `Assoc
+               [ "version", `Int version
+               ; "name", `String name
+               ; "applied", `Bool (Option.is_some applied_at)
+               ; ( "applied_at"
+                 , match applied_at with
+                   | Some s -> `String s
+                   | None -> `Null )
+               ])) )
     ]
   |> Yojson.Safe.to_string
 ;;

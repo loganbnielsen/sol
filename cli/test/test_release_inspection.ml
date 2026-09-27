@@ -110,9 +110,7 @@ let release_for plan =
   let services =
     List.map2
       (fun service (image_ref : Sol_cli_release_inspection.image_ref) ->
-         Sol_cli_release_inspection.affected_service
-           ~image:image_ref.Sol_cli_release_inspection.image
-           service)
+         Sol_cli_release_inspection.affected_service ~image:image_ref.image service)
       plan.Sol_cli_deployment_plan.services
       image_refs
   in

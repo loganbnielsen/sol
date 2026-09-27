@@ -43,30 +43,27 @@ let wait_s = Sol_cli_boundary_lease.rollback_wait_s
    travelling in one emitted commit) is not this pass's concern. *)
 let apply_specs ~ctx ~local ~release ~release_id_t specs =
   try
-    List.iter
-      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         (* SEC-006: a local rollback re-renders what `sol up` recorded, which
+    specs
+    |> List.iter (fun spec ->
+      (* SEC-006: a local rollback re-renders what `sol up` recorded, which
             does not carry the local-only Unverified_dev_only opt-in (only
             [Sol_cli_executor.local] adds it); restore it here, locally only. *)
-         let spec =
-           if local then Sol_cli_executor.local_development_spec spec else spec
-         in
-         match
-           Sol_cli_deployment_render.render_spec
-             ~workspace:release.Sol_cli_release.workspace
-             ?env:release.Sol_cli_release.environment
-             ~release_id:release_id_t
-             ~secret_backend:Sol_cli_manifest.Kubernetes_live
-             spec
-         with
-         | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
-         | Ok yaml ->
-           Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
-           Printf.printf
-             "  applied %s/%s\n%!"
-             (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
-             (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
-      specs;
+      let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
+      match
+        Sol_cli_deployment_render.render_spec
+          ~workspace:release.Sol_cli_release.workspace
+          ?env:release.environment
+          ~release_id:release_id_t
+          ~secret_backend:Sol_cli_manifest.Kubernetes_live
+          spec
+      with
+      | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
+      | Ok yaml ->
+        Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
+        Printf.printf
+          "  applied %s/%s\n%!"
+          (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+          (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name));
     Ok ()
   with
   | Sol_cli_manifest.Deploy_failed msg -> Error msg
@@ -74,11 +71,8 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
 
 let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
-  Printf.printf
-    "Rolling back %s to release %s\n%!"
-    workspace
-    release.Sol_cli_release.release_id;
-  let* release_id_t = Sol_cli_release_id.of_string release.Sol_cli_release.release_id in
+  Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
+  let* release_id_t = Sol_cli_release_id.of_string release.release_id in
   let current_migrations =
     List.map
       Sol_cli_plan_ids.Migration_file.to_string
@@ -90,10 +84,7 @@ let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let deps : Sol_cli_rollback.transaction_deps =
     { apply = apply_specs ~ctx ~local ~release ~release_id_t
     ; live_workloads =
-        (fun () ->
-          Sol_cli_rollback.live_workloads
-            ~ctx
-            ~workspace:release.Sol_cli_release.workspace)
+        (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
     ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
@@ -102,7 +93,7 @@ let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let* () = Sol_cli_rollback.execute ~release ~migrations_dir ~current_migrations ~deps in
   Printf.printf
     "Verified: workloads and pointer both name release %s.\n%!"
-    release.Sol_cli_release.release_id;
+    release.release_id;
   Ok ()
 ;;
 

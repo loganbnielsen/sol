@@ -103,9 +103,8 @@ let test_json_is_deterministic () =
 (* ── validating the read path ────────────────────────────────────────────── *)
 
 let test_validate_accepts_canonical_event () =
-  match D.validate ~name:(D.configmap_name sample) sample with
-  | Ok () -> ()
-  | Error msg -> Alcotest.fail ("canonical event rejected: " ^ msg)
+  D.validate ~name:(D.configmap_name sample) sample
+  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical event rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =
@@ -297,7 +296,7 @@ let test_event_points_at_the_plans_release () =
     let event = of_plan plan ~outcome:D.Applied () in
     check_string
       "release_id is the plan's, consumed not rederived"
-      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string plan.release_id)
       (Sol_cli_release_id.to_string event.release_id);
     check_string "workspace from the plan" "myworkspace" event.workspace;
     check_string "mode from the plan" "local" event.mode;

@@ -135,15 +135,14 @@ let trim_quotes s =
 ;;
 
 let var_value key vars =
-  List.find_map
-    (fun v ->
-       match String.index_opt v '=' with
-       | None -> None
-       | Some i ->
-         if String.sub v 0 i |> String.trim = key
-         then Some (String.sub v (i + 1) (String.length v - i - 1) |> trim_quotes)
-         else None)
-    (List.rev vars)
+  List.rev vars
+  |> List.find_map (fun v ->
+    match String.index_opt v '=' with
+    | None -> None
+    | Some i ->
+      if String.sub v 0 i |> String.trim = key
+      then Some (String.sub v (i + 1) (String.length v - i - 1) |> trim_quotes)
+      else None)
 ;;
 
 let var_file_value key path =
@@ -536,7 +535,7 @@ let served_api_kinds env =
   with
   | Ok result ->
     Ok
-      (String.split_on_char '\n' result.Sol_cli_process.stdout
+      (String.split_on_char '\n' result.stdout
        |> List.filter_map (fun line ->
          (* The last column is KIND; SHORTNAMES is often empty, so the split is on
             runs of whitespace rather than on single spaces. *)
@@ -610,7 +609,7 @@ let config_vars ~strict target =
       Sol_cli_config.load_for_target ~target:target_path
       |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
     in
-    let resolved_target = cfg.Sol_cli_config.target in
+    let resolved_target = cfg.target in
     (* Only Apply/destroy mutate real infrastructure; Plan and
            plan-destroy are previews, matching sol plan's own permissive
            contract. Same reasoning as cmd_deploy.ml's check: a typo'd or
@@ -635,7 +634,7 @@ let config_vars ~strict target =
     in
     Ok
       ( Sol_cli_terraform.kv_args vars
-      , resolved_target.Sol_cli_config.terraform_var_file
+      , resolved_target.terraform_var_file
       , Some resolved_target )
 ;;
 
@@ -695,12 +694,11 @@ let await_platform_readiness ~provider ~env =
   in
   let unmet_count checks =
     List.length
-      (List.filter
-         (fun (_, state) ->
-            match state with
-            | Sol_cli_cloud_lifecycle.Established -> false
-            | Sol_cli_cloud_lifecycle.Unmet _ -> true)
-         checks)
+      (checks
+       |> List.filter (fun (_, state) ->
+         match state with
+         | Sol_cli_cloud_lifecycle.Established -> false
+         | Sol_cli_cloud_lifecycle.Unmet _ -> true))
   in
   let deadline_s =
     (* Generous because a fresh install's controllers need minutes. Overridable so
@@ -821,7 +819,7 @@ let apply_deps
        capability *permitted*, because a later denial is not a transition unless
        the capability was shown to work first. *)
     open_window =
-      (fun (cluster : Sol_cli_cluster.t) ->
+      (fun cluster ->
         match cluster.bootstrap_window with
         | Verified window ->
           let* () = window.gate () in
@@ -829,7 +827,7 @@ let apply_deps
         | No_role_declared | Closed_by_platform_root -> Ok None)
   ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
   ; observe_disk_quota =
-      (fun (_ : Sol_cli_cluster.t) ->
+      (fun _ ->
         match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
         | None -> Ok None
         | Some observe ->
@@ -843,7 +841,7 @@ let apply_deps
                Option.some
                (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
   ; cloud_ready =
-      (fun (cluster : Sol_cli_cluster.t) ->
+      (fun cluster ->
         if cluster.ready ()
         then Ok ()
         else
@@ -865,7 +863,7 @@ let apply_deps
         | Error message -> Error (Sol_cli_cloud_apply.Refused message)
         | Ok () ->
           terraform_failure (terraform_init run_log platform_dir platform_backend))
-  ; platform_installed = (fun env -> crds_established env)
+  ; platform_installed = crds_established
   ; apply_prerequisites =
       platform_apply
         ~name:"platform-prerequisites-apply"
@@ -903,7 +901,7 @@ let apply_deps
        window lives in the platform root and is closed by applying that root, so
        there is no Sol-side revocation to verify. *)
     verify_deescalation =
-      (fun (cluster : Sol_cli_cluster.t) _control ->
+      (fun cluster _control ->
         match cluster.bootstrap_window with
         | Verified window ->
           (match window.deescalated () with
@@ -1156,12 +1154,11 @@ let cloud_init
 let report_degradations = function
   | [] -> ()
   | degradations ->
-    List.iter
-      (fun message ->
-         Printf.eprintf
-           "warning: a preparation degraded and destruction continued -- %s\n%!"
-           message)
-      degradations;
+    degradations
+    |> List.iter (fun message ->
+      Printf.eprintf
+        "warning: a preparation degraded and destruction continued -- %s\n%!"
+        message);
     Printf.eprintf
       "warning: destruction reached absence with %d degraded preparation(s)\n%!"
       (List.length degradations)
@@ -1658,9 +1655,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           part of why the run failed. *)
        report_cleanup_evidence cleanup;
        report_degradations degradations;
-       (match verification with
-        | Some verification -> report_verification verification
-        | None -> ());
+       verification |> Option.iter report_verification;
        Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
     (* Everything was reported above; only the code is left to say. *)
     (match Sol_cli_cloud_destroy.exit_code outcome with

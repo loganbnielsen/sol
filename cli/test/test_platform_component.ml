@@ -53,9 +53,8 @@ let with_fake_sol_home ~component ~files f =
       let _ = Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root)) in
       ())
     (fun () ->
-       List.iter
-         (fun marker -> write_file (Filename.concat root marker) "")
-         sol_home_markers;
+       sol_home_markers
+       |> List.iter (fun marker -> write_file (Filename.concat root marker) "");
        let layers =
          List.map (fun (layer, content) -> layer, Yojson.Safe.from_string content) files
        in

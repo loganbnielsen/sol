@@ -101,13 +101,12 @@ let test_selected_and_excluded_partition_the_selection () =
          (names resolved.services)
          (names (o.selected @ o.excluded));
        let selected_names = names o.selected in
-       List.iter
-         (fun name ->
-            Alcotest.(check bool)
-              (Printf.sprintf "included %s is also selected" name)
-              true
-              (List.mem name selected_names))
-         (names o.included))
+       names o.included
+       |> List.iter (fun name ->
+         Alcotest.(check bool)
+           (Printf.sprintf "included %s is also selected" name)
+           true
+           (List.mem name selected_names)))
     [ None; Some "payments"; Some "payments/charge_svc" ]
 ;;
 
@@ -121,7 +120,7 @@ let test_the_predicate_sees_domain_and_name () =
   let services = all @ [ billing_invoices ] in
   let o =
     Sol_cli_workload_selection.apply_omission
-      ~is_omitted:(fun (s : Sol_cli_manifest.service) ->
+      ~is_omitted:(fun s ->
         String.equal s.domain "payments" && String.equal s.name "invoice_svc")
       (resolve None services)
   in

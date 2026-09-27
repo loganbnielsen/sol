@@ -74,22 +74,19 @@ let of_plan
   : t
   =
   { deployment_id
-  ; release_id = plan.Sol_cli_deployment_plan.release_id
-  ; workspace = plan.Sol_cli_deployment_plan.workspace
-  ; environment = plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.env
+  ; release_id = plan.release_id
+  ; workspace = plan.workspace
+  ; environment = plan.environment.Sol_cli_deployment_plan.env
   ; created_at = rfc3339_utc now
   ; git_commit
   ; git_dirty
   ; actor
   ; target
-  ; mode =
-      deployment_mode_to_string
-        plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
-  ; requested_scope = plan.Sol_cli_deployment_plan.requested_scope
+  ; mode = deployment_mode_to_string plan.environment.Sol_cli_deployment_plan.mode
+  ; requested_scope = plan.requested_scope
   ; profile =
-      Option.map
-        (fun (claim : Sol_cli_deployment_plan.profile_claim) -> claim.profile)
-        plan.Sol_cli_deployment_plan.profile
+      plan.profile
+      |> Option.map (fun (claim : Sol_cli_deployment_plan.profile_claim) -> claim.profile)
   ; outcome
   }
 ;;
@@ -98,7 +95,7 @@ let of_plan
    not a failure to deploy. *)
 let run_git args =
   match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
-  | Ok r -> String.trim r.Sol_cli_process.stdout
+  | Ok r -> String.trim r.stdout
   | _ -> ""
 ;;
 
@@ -314,37 +311,34 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
    time-prefixed, so the two agree unless a clock moved backwards). *)
 let format_table (records : t list) : string =
   let sorted =
-    List.sort
-      (fun (a : t) (b : t) ->
-         let by_time = String.compare b.created_at a.created_at in
-         if by_time <> 0
-         then by_time
-         else
-           String.compare
-             (Sol_cli_deployment_id.to_string b.deployment_id)
-             (Sol_cli_deployment_id.to_string a.deployment_id))
-      records
+    records
+    |> List.sort (fun a b ->
+      let by_time = String.compare b.created_at a.created_at in
+      if by_time <> 0
+      then by_time
+      else
+        String.compare
+          (Sol_cli_deployment_id.to_string b.deployment_id)
+          (Sol_cli_deployment_id.to_string a.deployment_id))
   in
   let rows =
-    List.map
-      (fun (r : t) ->
-         [ Sol_cli_deployment_id.to_string r.deployment_id
-         ; Sol_cli_release_id.to_string r.release_id
-         ; r.created_at
-         ; (if String.equal r.git_commit "" then "-" else r.git_commit)
-         ; outcome_to_string r.outcome
-         ])
-      sorted
+    sorted
+    |> List.map (fun r ->
+      [ Sol_cli_deployment_id.to_string r.deployment_id
+      ; Sol_cli_release_id.to_string r.release_id
+      ; r.created_at
+      ; (if String.equal r.git_commit "" then "-" else r.git_commit)
+      ; outcome_to_string r.outcome
+      ])
   in
   let headers = [ "DEPLOYMENT"; "RELEASE"; "TIME"; "COMMIT"; "STATUS" ] in
   let widths =
-    List.mapi
-      (fun i h ->
-         List.fold_left
-           (fun acc row -> max acc (String.length (List.nth row i)))
-           (String.length h)
-           rows)
-      headers
+    headers
+    |> List.mapi (fun i h ->
+      List.fold_left
+        (fun acc row -> max acc (String.length (List.nth row i)))
+        (String.length h)
+        rows)
   in
   let render_row row =
     List.mapi (fun i cell -> Printf.sprintf "%-*s" (List.nth widths i) cell) row

@@ -23,7 +23,7 @@ let run target_name =
     |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
   in
   let project = Option.value cfg.project ~default:(Filename.basename (Sys.getcwd ())) in
-  let target = cfg.Sol_cli_config.target in
+  let target = cfg.target in
   let resources = Sol_cli_config.resources cfg in
   let services = Sol_cli_config.services cfg in
   Printf.printf "Project: %s\n" project;
@@ -38,40 +38,38 @@ let run target_name =
   print_opt "cluster issuer" target.cluster_issuer;
   Printf.printf "\nResources:\n";
   if resources = [] then Printf.printf "  (none)\n";
-  List.iter
-    (fun (r : Sol_cli_config.resource) ->
-       Printf.printf
-         "  - %s%s\n"
-         r.Sol_cli_config.name
-         (match r.typ with
-          | None -> ""
-          | Some t -> " (" ^ t ^ ")");
-       List.iter print_index r.indexes)
-    resources;
+  resources
+  |> List.iter (fun (r : Sol_cli_config.resource) ->
+    Printf.printf
+      "  - %s%s\n"
+      r.name
+      (match r.typ with
+       | None -> ""
+       | Some t -> " (" ^ t ^ ")");
+    List.iter print_index r.indexes);
   Printf.printf "\nServices:\n";
   if services = [] then Printf.printf "  (none)\n";
-  List.iter
-    (fun (s : Sol_cli_config.service) ->
-       Printf.printf
-         "  - %s%s\n"
-         s.Sol_cli_config.name
-         (match s.typ with
-          | None -> ""
-          | Some t -> " (" ^ t ^ ")");
-       print_opt "path" s.path;
-       if s.uses <> []
-       then
-         Printf.printf
-           "    uses: %s\n"
-           (String.concat ", " (List.map Sol_cli_config.format_use_ref s.uses));
-       match s.scale_min, s.scale_max with
-       | None, None -> ()
-       | min, max ->
-         Printf.printf
-           "    scale: %s..%s\n"
-           (Option.fold ~none:"?" ~some:string_of_int min)
-           (Option.fold ~none:"?" ~some:string_of_int max))
-    services;
+  services
+  |> List.iter (fun s ->
+    Printf.printf
+      "  - %s%s\n"
+      s.Sol_cli_config.name
+      (match s.typ with
+       | None -> ""
+       | Some t -> " (" ^ t ^ ")");
+    print_opt "path" s.path;
+    if s.uses <> []
+    then
+      Printf.printf
+        "    uses: %s\n"
+        (String.concat ", " (List.map Sol_cli_config.format_use_ref s.uses));
+    match s.scale_min, s.scale_max with
+    | None, None -> ()
+    | min, max ->
+      Printf.printf
+        "    scale: %s..%s\n"
+        (Option.fold ~none:"?" ~some:string_of_int min)
+        (Option.fold ~none:"?" ~some:string_of_int max));
   Ok ()
 ;;
 

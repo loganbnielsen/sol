@@ -145,16 +145,16 @@ let test_dry_run_result_fields () =
   let plan = make_plan [ svc_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
   let r = List.hd results in
-  Alcotest.(check string) "namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "name" "charge-svc" r.Sol_cli_executor.name
+  Alcotest.(check string) "namespace" "myapp-payments" r.namespace;
+  Alcotest.(check string) "name" "charge-svc" r.name
 ;;
 
 let test_dry_run_worker () =
   let plan = make_plan [ worker_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
   let r = List.hd results in
-  Alcotest.(check string) "worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "worker name" "notify-worker" r.Sol_cli_executor.name
+  Alcotest.(check string) "worker namespace" "myapp-comms" r.namespace;
+  Alcotest.(check string) "worker name" "notify-worker" r.name
 ;;
 
 (* ── emit-to ─────────────────────────────────────────────────────────────── *)
@@ -187,8 +187,8 @@ let test_emit_to_result_fields () =
    | _ -> ());
   Alcotest.(check int) "result count" 1 (List.length results);
   let r = List.hd results in
-  Alcotest.(check string) "namespace" "myapp-comms" r.Sol_cli_executor.namespace;
-  Alcotest.(check string) "name" "notify-worker" r.Sol_cli_executor.name
+  Alcotest.(check string) "namespace" "myapp-comms" r.namespace;
+  Alcotest.(check string) "name" "notify-worker" r.name
 ;;
 
 (* ── entry point ──────────────────────────────────────────────────────────── *)

@@ -79,9 +79,9 @@ let report_phase deps phase =
    it. Which types those are is the provider's declaration; the policy is Sol's. *)
 let check_guarded_removals deps changes =
   let removed =
-    List.concat_map
-      (fun resource_type -> Sol_cli_terraform_plan.removed_of_type ~resource_type changes)
-      deps.guarded_removals
+    deps.guarded_removals
+    |> List.concat_map (fun resource_type ->
+      Sol_cli_terraform_plan.removed_of_type ~resource_type changes)
   in
   match removed with
   | [] -> Ok ()

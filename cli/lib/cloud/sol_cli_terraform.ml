@@ -171,7 +171,7 @@ let show_json_plan ?(env = []) ~chdir ~plan_file () =
    go through a [Sol_cli_terraform_plan] recorder, which enforces SEC-008. *)
 let saved_plan_json ?env ~chdir ~plan_file () =
   match show_json_plan ?env ~chdir ~plan_file () with
-  | Ok r -> Ok r.Sol_cli_process.stdout
+  | Ok r -> Ok r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim r.stderr in
     Error

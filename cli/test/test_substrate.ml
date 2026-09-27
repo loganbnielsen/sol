@@ -56,20 +56,19 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
     true
     (Sol_cli_string.contains ~needle:"kind: Secret" (List.nth docs 3)
      && Sol_cli_string.contains ~needle:"sol-secrets" (List.nth docs 3));
-  List.iter
-    (fun doc ->
-       List.iter
-         (fun kind ->
-            check_bool
-              (Printf.sprintf "substrate carries no %s" kind)
-              false
-              (Sol_cli_string.contains ~needle:kind doc))
-         [ "kind: Deployment"
-         ; "kind: Service"
-         ; "kind: PodDisruptionBudget"
-         ; "kind: Ingress"
-         ])
-    docs
+  docs
+  |> List.iter (fun doc ->
+    List.iter
+      (fun kind ->
+         check_bool
+           (Printf.sprintf "substrate carries no %s" kind)
+           false
+           (Sol_cli_string.contains ~needle:kind doc))
+      [ "kind: Deployment"
+      ; "kind: Service"
+      ; "kind: PodDisruptionBudget"
+      ; "kind: Ingress"
+      ])
 ;;
 
 (* Namespaces and RoleBindings all come before any Secret: a Secret in a
@@ -314,29 +313,28 @@ let test_operator_bindings_cover_every_workload_namespace () =
     true
     (has "namespace: pluto-comms");
   check_bool "so is the caller's own" true (has "namespace: pluto-checkout");
-  List.iter
-    (fun doc ->
-       check_bool
-         "every document is a RoleBinding"
-         true
-         (Sol_cli_string.contains ~needle:"kind: RoleBinding" doc);
-       check_bool
-         "bound to the operator group"
-         true
-         (Sol_cli_string.contains ~needle:"name: sol:operators" doc);
-       check_bool
-         "referencing the read-only role"
-         true
-         (Sol_cli_string.contains ~needle:"name: sol-operator-diagnostics" doc);
-       check_bool
-         "no Secret is written"
-         false
-         (Sol_cli_string.contains ~needle:"kind: Secret" doc);
-       check_bool
-         "no workload document is written"
-         false
-         (Sol_cli_string.contains ~needle:"kind: Deployment" doc))
-    docs
+  docs
+  |> List.iter (fun doc ->
+    check_bool
+      "every document is a RoleBinding"
+      true
+      (Sol_cli_string.contains ~needle:"kind: RoleBinding" doc);
+    check_bool
+      "bound to the operator group"
+      true
+      (Sol_cli_string.contains ~needle:"name: sol:operators" doc);
+    check_bool
+      "referencing the read-only role"
+      true
+      (Sol_cli_string.contains ~needle:"name: sol-operator-diagnostics" doc);
+    check_bool
+      "no Secret is written"
+      false
+      (Sol_cli_string.contains ~needle:"kind: Secret" doc);
+    check_bool
+      "no workload document is written"
+      false
+      (Sol_cli_string.contains ~needle:"kind: Deployment" doc))
 ;;
 
 let () =

@@ -147,9 +147,9 @@ let resolve ?(what = "scope") request units =
     else Ok (Domain domain, Selected selected)
   | Unit_named (domain, name) ->
     (match
-       List.find_opt
-         (fun unit -> equal_name unit.domain domain && equal_name unit.name name)
-         units
+       units
+       |> List.find_opt (fun unit ->
+         equal_name unit.domain domain && equal_name unit.name name)
      with
      | Some unit ->
        (* Canonical, from discovery — not the spelling that was typed. *)

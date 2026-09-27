@@ -109,11 +109,10 @@ let create ?(base = base_dir) ?(keep = 20) ~prefix () : t =
     (fun stale_id ->
        let stale_dir = Filename.concat base_dir stale_id in
        try
-         Array.iter
-           (fun f ->
-              try Sys.remove (Filename.concat stale_dir f) with
-              | _ -> ())
-           (Sys.readdir stale_dir);
+         Sys.readdir stale_dir
+         |> Array.iter (fun f ->
+           try Sys.remove (Filename.concat stale_dir f) with
+           | _ -> ());
          Unix.rmdir stale_dir
        with
        | _ -> ())
@@ -186,11 +185,7 @@ let run_phase
   let elapsed_s = Unix.gettimeofday () -. start in
   let ok, contents =
     match result with
-    | Ok r ->
-      ( Result.is_ok result
-      , phase_log_content
-          ~stdout:r.Sol_cli_process.stdout
-          ~stderr:r.Sol_cli_process.stderr )
+    | Ok r -> Result.is_ok result, phase_log_content ~stdout:r.stdout ~stderr:r.stderr
     | Error e ->
       false, phase_log_content ~stdout:"" ~stderr:(Sol_cli_process.error_to_string e)
   in

@@ -8,11 +8,10 @@ let discover_domains () =
   else (
     let domains = ref [] in
     (try
-       Array.iter
-         (fun entry ->
-            let path = Filename.concat app_dir entry in
-            if entry.[0] <> '.' && Sys.is_directory path then domains := entry :: !domains)
-         (Sys.readdir app_dir)
+       Sys.readdir app_dir
+       |> Array.iter (fun entry ->
+         let path = Filename.concat app_dir entry in
+         if entry.[0] <> '.' && Sys.is_directory path then domains := entry :: !domains)
      with
      | _ -> ());
     List.rev !domains)
@@ -144,37 +143,35 @@ let dashboard_reachability ~backend ~base_domain =
    message selection itself ([Sol_cli_status.reachability_line]) is a pure
    function of [probe_url] and the injected [is_reachable] result -- only
    deciding the probe URL and running curl stays here. *)
-let print_signal_line ~label ~signal ~backend ~explicit_url ~default_local_url ~probe_path
-  =
+let signal_line ~signal ~backend ~explicit_url ~default_local_url ~probe_path =
   let probe_url =
     Sol_cli_status.probe_url ~backend ~explicit_url ~default_local_url ~probe_path
   in
-  Printf.printf
-    "  %-8s %s\n"
-    label
-    (Sol_cli_status.reachability_line
-       ~signal
-       ~backend
-       ~probe_url
-       ~is_reachable:health_check_reachable)
+  Sol_cli_status.reachability_line
+    ~signal
+    ~backend
+    ~probe_url
+    ~is_reachable:health_check_reachable
 ;;
 
 let print_observability_lines ~backend ~explicit_loki_url ~explicit_prometheus_url =
-  print_signal_line
-    ~label:"logs"
-    ~signal:Sol_cli_status.Loki
-    ~backend
-    ~explicit_url:explicit_loki_url
-    ~default_local_url:"http://localhost:3100"
-    ~probe_path:"/ready";
-  print_signal_line
-    ~label:"metrics"
-    ~signal:Sol_cli_status.Prometheus
-    ~backend
-    ~explicit_url:explicit_prometheus_url
-    ~default_local_url:"http://localhost:9090"
-    ~probe_path:"/-/healthy";
-  flush stdout
+  let logs =
+    signal_line
+      ~signal:Sol_cli_status.Loki
+      ~backend
+      ~explicit_url:explicit_loki_url
+      ~default_local_url:"http://localhost:3100"
+      ~probe_path:"/ready"
+  in
+  let metrics =
+    signal_line
+      ~signal:Sol_cli_status.Prometheus
+      ~backend
+      ~explicit_url:explicit_prometheus_url
+      ~default_local_url:"http://localhost:9090"
+      ~probe_path:"/-/healthy"
+  in
+  Printf.printf "  %-8s %s\n  %-8s %s\n%!" "logs" logs "metrics" metrics
 ;;
 
 let print_observability_block
@@ -235,7 +232,7 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
     in
     (match Sol_cli_kubectl.get_raw ~ctx ~args:pod_args with
      | Ok r ->
-       print_string r.Sol_cli_process.stdout;
+       print_string r.stdout;
        print_char '\n'
      | Error _ -> ());
     (* EXP-029: which image tag is actually live, without kubectl knowledge.
@@ -252,9 +249,9 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
        .items[*]}{.metadata.name}{\"\\t\"}{.spec.template.spec.containers[0].image}{\"\\n\"}{end}"
     in
     (match Sol_cli_kubectl.get_raw ~ctx ~args:(deploy_args @ [ image_jsonpath ]) with
-     | Ok r when String.trim r.Sol_cli_process.stdout <> "" ->
+     | Ok r when String.trim r.stdout <> "" ->
        Printf.printf "Images\n";
-       String.split_on_char '\n' (String.trim r.Sol_cli_process.stdout)
+       String.split_on_char '\n' (String.trim r.stdout)
        |> List.iter (fun line ->
          match String.split_on_char '\t' line with
          | [ name; image ] -> Printf.printf "  %-20s %s\n" name image
@@ -285,7 +282,7 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
           ~ctx
           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
       with
-      | Ok r -> r.Sol_cli_process.stdout
+      | Ok r -> r.stdout
       | _ -> ""
     in
     if svc_names_raw <> ""
@@ -299,28 +296,26 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
       in
       let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
       let http_svcs =
-        List.filter
-          (fun name ->
-             (not (is_internal name))
-             && (match only_k8s_name with
-                 | Some only -> name = only
-                 | None -> true)
-             &&
-             match
-               Sol_cli_kubectl.get
-                 ~ctx
-                 ~resource:"svc"
-                 ~name
-                 ~namespace:ns
-                 ~output:("jsonpath=" ^ port80_jsonpath)
-             with
-             | Ok r -> r.Sol_cli_process.stdout <> ""
-             | _ -> false)
-          names
+        names
+        |> List.filter (fun name ->
+          (not (is_internal name))
+          && (match only_k8s_name with
+              | Some only -> name = only
+              | None -> true)
+          &&
+          match
+            Sol_cli_kubectl.get
+              ~ctx
+              ~resource:"svc"
+              ~name
+              ~namespace:ns
+              ~output:("jsonpath=" ^ port80_jsonpath)
+          with
+          | Ok r -> r.stdout <> ""
+          | _ -> false)
       in
-      List.iter
-        (fun name -> Printf.printf "  →  http://localhost:8080  (%s)\n%!" name)
-        http_svcs))
+      http_svcs
+      |> List.iter (fun name -> Printf.printf "  →  http://localhost:8080  (%s)\n%!" name)))
   else Printf.printf "  (not deployed — run 'sol up')\n%!";
   Printf.printf "\n%!"
 ;;
@@ -395,16 +390,15 @@ let print_domain_status
   if named = []
   then Printf.printf "  (none)\n"
   else
-    List.iter
-      (fun (k8s_name, diagnosis) ->
-         let service_status =
-           Sol_cli_status.rollup_domain_status ~ns_presence:Ns_present [ diagnosis ]
-         in
-         Printf.printf
-           "  %-12s %s\n"
-           k8s_name
-           (Sol_cli_status.domain_status_to_string service_status))
-      named;
+    named
+    |> List.iter (fun (k8s_name, diagnosis) ->
+      let service_status =
+        Sol_cli_status.rollup_domain_status ~ns_presence:Ns_present [ diagnosis ]
+      in
+      Printf.printf
+        "  %-12s %s\n"
+        k8s_name
+        (Sol_cli_status.domain_status_to_string service_status));
   print_observability_block
     ~backend
     ~base_domain
@@ -444,9 +438,7 @@ let print_service_status
                  domain))
   in
   let* k8s_name = Sol_cli_deployment_plan.k8s_name svc.name |> Sol_cli_exit.of_msg in
-  let pod_expectation =
-    Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
-  in
+  let pod_expectation = Sol_cli_status.pod_expectation_of_primitive svc.primitive in
   let presence = namespace_presence ~ctx ns in
   let diagnoses =
     match presence with
@@ -555,7 +547,7 @@ let run ~ctx (options : status_options) =
       ~ctx
       ~workspace
       ~domain
-      ~services:selected.Sol_cli_workload_selection.services
+      ~services:selected.services
       ~backend
       ~base_domain
       ~explicit_loki_url
@@ -568,7 +560,7 @@ let run ~ctx (options : status_options) =
       ~workspace
       ~domain
       ~service_name
-      ~services:selected.Sol_cli_workload_selection.services
+      ~services:selected.services
       ~backend
       ~base_domain
       ~explicit_loki_url

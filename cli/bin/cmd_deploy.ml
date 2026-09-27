@@ -11,50 +11,49 @@ let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
 
-(* EXP-029: after a real apply, print a port-forward hint for each HTTP
-   service so the engineer doesn't need a separate 'sol status' call to
-   discover the endpoint. Same ClusterIP+port-80 detection cmd_status.ml's
-   print_raw_diagnostics already uses -- only Svc-primitive services ever
-   get a Service resource (sol_cli_deployment_render.ml only emits
-   service_doc for Http_service shapes), so this naturally excludes
-   worker/fn services without needing to thread primitive info through. *)
-let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
-  let deployed_names =
-    List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.name) results
+(* EXP-029: the HTTP services this deploy created -- the ClusterIP Services
+   listening on port 80, the same detection cmd_status.ml's print_raw_diagnostics
+   uses. Only Svc-primitive services ever get a Service resource
+   (sol_cli_deployment_render.ml only emits service_doc for Http_service shapes),
+   so this naturally excludes worker/fn services. Best effort: it feeds a hint,
+   so a read that fails lists nothing rather than failing the deploy. *)
+let http_services ~ctx (results : Sol_cli_executor.result list) =
+  let deployed = results |> List.map (fun r -> r.Sol_cli_executor.name) in
+  let cluster_ip_services ns =
+    let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
+    match
+      Sol_cli_kubectl.get_raw
+        ~ctx
+        ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
+    with
+    | Ok r ->
+      String.split_on_char ' ' r.stdout |> List.filter_map Sol_cli_string.non_blank
+    | Error _ -> []
   in
-  let namespaces =
-    List.sort_uniq
-      compare
-      (List.map
-         (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.namespace)
-         results)
+  let serves_port_80 ns name =
+    match
+      Sol_cli_kubectl.get
+        ~ctx
+        ~resource:"svc"
+        ~name
+        ~namespace:ns
+        ~output:"jsonpath={.spec.ports[?(@.port==80)].port}"
+    with
+    | Ok r -> Option.is_some (Sol_cli_string.non_blank r.stdout)
+    | Error _ -> false
   in
-  List.iter
-    (fun ns ->
-       let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
-       match
-         Sol_cli_kubectl.get_raw
-           ~ctx
-           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
-       with
-       | Ok r when r.Sol_cli_process.stdout <> "" ->
-         let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
-         String.split_on_char ' ' r.Sol_cli_process.stdout
-         |> List.filter (fun name -> List.mem name deployed_names)
-         |> List.iter (fun name ->
-           match
-             Sol_cli_kubectl.get
-               ~ctx
-               ~resource:"svc"
-               ~name
-               ~namespace:ns
-               ~output:("jsonpath=" ^ port80_jsonpath)
-           with
-           | Ok gr when gr.Sol_cli_process.stdout <> "" ->
-             Printf.printf "  →  http://localhost:8080  (%s)\n%!" name
-           | _ -> ())
-       | _ -> ())
-    namespaces
+  results
+  |> List.map (fun r -> r.Sol_cli_executor.namespace)
+  |> List.sort_uniq String.compare
+  |> List.concat_map (fun ns ->
+    cluster_ip_services ns
+    |> List.filter (fun name -> List.mem name deployed && serves_port_80 ns name))
+;;
+
+(* A port-forward hint for each, so the engineer doesn't need a separate
+   'sol status' call to discover the endpoint. *)
+let print_service_urls names =
+  names |> List.iter (Printf.printf "  →  http://localhost:8080  (%s)\n%!")
 ;;
 
 let check_contract ~services =
@@ -101,9 +100,8 @@ let check_apply_environment ~services =
    --emit-to are offline paths that touch no registry. *)
 let verify_image_refs_exist ~image_refs =
   match
-    List.find_opt
-      (fun (_, ref) -> not (Sol_cli_docker.manifest_exists ~image_ref:ref))
-      image_refs
+    image_refs
+    |> List.find_opt (fun (_, ref) -> not (Sol_cli_docker.manifest_exists ~image_ref:ref))
   with
   | None -> Ok ()
   | Some (service, ref) ->
@@ -182,11 +180,9 @@ let build_plan ctx ~emit_to =
   let env =
     { (Sol_cli_env_target.to_env_config ~name:ctx.execution.workspace env_target) with
       Sol_cli_deployment_plan.secret_backend = ctx.secret_backend
-    ; env = Some ctx.target_cfg.Sol_cli_config.env
+    ; env = Some ctx.target_cfg.env
     ; cluster_issuer =
-        Option.value
-          ctx.target_cfg.Sol_cli_config.cluster_issuer
-          ~default:"letsencrypt-prod"
+        Option.value ctx.target_cfg.cluster_issuer ~default:"letsencrypt-prod"
     }
   in
   let* plan =
@@ -213,7 +209,7 @@ let build_plan ctx ~emit_to =
     |> Result.map_error (fun (profile, findings) ->
       Sol_cli_exit.failure (Sol_cli_profile_preflight.report profile findings))
   in
-  plan.Sol_cli_deployment_plan.profile
+  plan.profile
   |> Option.iter (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
     Printf.printf
       "Profile: %s (preflight passed)\n%!"
@@ -222,9 +218,8 @@ let build_plan ctx ~emit_to =
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =
-  match emit_plan_to with
-  | None -> ()
-  | Some path ->
+  emit_plan_to
+  |> Option.iter (fun path ->
     let json_str = Yojson.Safe.pretty_to_string (Sol_cli_deployment_plan.to_json plan) in
     if path = "-"
     then (
@@ -235,7 +230,7 @@ let write_plan_if_requested ~emit_plan_to plan =
       output_string oc json_str;
       output_char oc '\n';
       close_out oc;
-      Printf.printf "Plan written to %s\n%!" path)
+      Printf.printf "Plan written to %s\n%!" path))
 ;;
 
 let to_manifest_primitive = function
@@ -245,14 +240,13 @@ let to_manifest_primitive = function
 ;;
 
 let print_planned_services plan =
-  List.iter
-    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-       Printf.printf
-         "[%s] %s/%s\n%!"
-         (primitive_label (to_manifest_primitive spec.primitive))
-         spec.domain
-         spec.source_name)
-    plan.Sol_cli_deployment_plan.services
+  plan.Sol_cli_deployment_plan.services
+  |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    Printf.printf
+      "[%s] %s/%s\n%!"
+      (primitive_label (to_manifest_primitive spec.primitive))
+      spec.domain
+      spec.source_name)
 ;;
 
 let record_plan run_log plan =
@@ -425,17 +419,16 @@ let push_deploy_events
     |> Option.value ~default:Sol_cli_observability_url.Local
   in
   let deploy_events =
-    List.map
-      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         { Sol_cli_deploy_event.workspace
-         ; env = target_cfg.Sol_cli_config.env
-         ; domain = spec.domain
-         ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
-         ; primitive = primitive_label (to_manifest_primitive spec.primitive)
-         ; release_id = plan.Sol_cli_deployment_plan.release_id
-         ; deployment_id
-         })
-      plan.Sol_cli_deployment_plan.services
+    plan.services
+    |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+      { Sol_cli_deploy_event.workspace
+      ; env = target_cfg.env
+      ; domain = spec.domain
+      ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
+      ; primitive = primitive_label (to_manifest_primitive spec.primitive)
+      ; release_id = plan.Sol_cli_deployment_plan.release_id
+      ; deployment_id
+      })
   in
   try
     Cmd_deploy_event.push_all ~ctx ~backend ~explicit_url:loki_push_url deploy_events
@@ -496,7 +489,7 @@ let record_release_and_prune ctx ~previous plan =
          ~ctx:cluster
          ~workspace
          ~keep:ctx.keep_releases
-         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~current:(Sol_cli_release_id.to_string plan.release_id)
          ~previous
      with
      | Ok [] -> ()
@@ -532,14 +525,13 @@ let report_surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
         Printf.printf
           "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
           (List.length surplus);
-        List.iter
-          (fun ((id : Sol_cli_rollback.workload_identity), _) ->
-             Printf.printf
-               "  %s %s/%s\n"
-               (Sol_cli_rollback.kind_resource id.kind)
-               id.namespace
-               id.name)
-          surplus;
+        surplus
+        |> List.iter (fun ((id : Sol_cli_rollback.workload_identity), _) ->
+          Printf.printf
+            "  %s %s/%s\n"
+            (Sol_cli_rollback.kind_resource id.kind)
+            id.namespace
+            id.name);
         Printf.printf
           "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
            automatically when restoring a recorded release; delete them by hand if you \
@@ -548,15 +540,11 @@ let report_surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
 ;;
 
 let report_apply_success ctx plan results =
-  List.iter
-    (fun (r : Sol_cli_executor.result) ->
-       Printf.printf
-         "  ✓  namespace %s  image %s\n\n%!"
-         r.Sol_cli_executor.namespace
-         r.Sol_cli_executor.image)
-    results;
+  results
+  |> List.iter (fun r ->
+    Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.image);
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-  print_service_urls ~ctx:ctx.execution.cluster results;
+  print_service_urls (http_services ~ctx:ctx.execution.cluster results);
   Printf.printf "Run 'sol status' to check pod health.\n";
   report_surplus_workloads ctx plan
 ;;
@@ -642,8 +630,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
           match
             execute_deployment_attempt
               ctx
-              ~before_apply:(fun (_ : Sol_cli_deployment_plan.service_spec) ->
-                Sol_cli_boundary_lease.ensure_held lease)
+              ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
               ~loki_push_url
               plan
           with
@@ -667,7 +654,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
                      ; consumer_groups =
                          List.map
                            Sol_cli_plan_ids.Consumer_group.to_string
-                           plan.Sol_cli_deployment_plan.consumer_groups
+                           plan.consumer_groups
                      }))
               ~report_success:(fun () -> report_apply_success ctx plan results))
 ;;
@@ -699,7 +686,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
      reference fails before the target or registry is even resolved. *)
   let* image_refs =
     Sol_cli_image_ref.resolve
-      ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
+      ~service_names:(List.map (fun s -> s.name) services)
       req.image_refs
     |> Sol_cli_exit.of_msg
   in
@@ -739,7 +726,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     match req.registry with
     | Some r -> r
     | None ->
-      (match target_cfg.Sol_cli_config.registry with
+      (match target_cfg.registry with
        | Some r -> r
        | None -> "")
   in
@@ -751,33 +738,30 @@ let run (req : Sol_cli_command_request.deploy_request) =
      resolved config known, and it is the config that declares `omit` at all. *)
   let omission =
     Sol_cli_workload_selection.apply_omission
-      ~is_omitted:(fun (s : Sol_cli_manifest.service) ->
-        Sol_cli_config.is_omitted_service resolved_config ~name:s.Sol_cli_manifest.name)
+      ~is_omitted:(fun s ->
+        Sol_cli_config.is_omitted_service resolved_config ~name:s.name)
       selected
   in
   let unit_id (s : Sol_cli_manifest.service) = Printf.sprintf "%s/%s" s.domain s.name in
-  List.iter
-    (fun s ->
-       Printf.printf
-         "Note: %s is omitted by target %s, and --scope named it, so it is included.\n"
-         (unit_id s)
-         req.target)
-    omission.included;
-  List.iter
-    (fun s ->
-       Printf.printf
-         "Note: %s is omitted by target %s, so it is excluded from this deploy.\n"
-         (unit_id s)
-         req.target)
-    omission.excluded;
+  omission.included
+  |> List.iter (fun s ->
+    Printf.printf
+      "Note: %s is omitted by target %s, and --scope named it, so it is included.\n"
+      (unit_id s)
+      req.target);
+  omission.excluded
+  |> List.iter (fun s ->
+    Printf.printf
+      "Note: %s is omitted by target %s, so it is excluded from this deploy.\n"
+      (unit_id s)
+      req.target);
   (* An --image-ref naming a unit the target omits would otherwise be resolved
      against the pre-omission selection and then silently dropped: the operator
      pinned bytes for a workload and got a run without it. *)
   let omitted_ref =
     image_refs
     |> List.find_map (fun (name, _) ->
-      omission.excluded
-      |> List.find_opt (fun (s : Sol_cli_manifest.service) -> String.equal s.name name))
+      omission.excluded |> List.find_opt (fun s -> String.equal s.name name))
   in
   let* () =
     match omitted_ref with
@@ -843,7 +827,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         Sol_cli_execution.context
           ~cluster:(Sol_cli_kube_destination.context_of_destination destination)
           ~workspace
-          ~env:target_cfg.Sol_cli_config.env
+          ~env:target_cfg.env
           ()
     ; sha
     ; registry

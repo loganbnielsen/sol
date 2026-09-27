@@ -39,10 +39,7 @@ let list ~ctx ~(workspace : string) : (Sol_cli_deployment.t list, string) result
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
-    (try
-       Sol_cli_deployment.parse_kubectl_list
-         (Yojson.Safe.from_string r.Sol_cli_process.stdout)
-     with
+    (try Sol_cli_deployment.parse_kubectl_list (Yojson.Safe.from_string r.stdout) with
      | Yojson.Json_error msg ->
        Error (Printf.sprintf "could not parse kubectl output: %s" msg))
 ;;

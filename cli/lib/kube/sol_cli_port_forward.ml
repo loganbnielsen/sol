@@ -112,17 +112,16 @@ let remove_files name =
 let stop name =
   if is_running name
   then
-    Option.iter
-      (fun pid ->
-         try Unix.kill (-pid) Sys.sigterm with
-         | Unix.Unix_error _ -> ())
-      (read_pid name);
+    read_pid name
+    |> Option.iter (fun pid ->
+      try Unix.kill (-pid) Sys.sigterm with
+      | Unix.Unix_error _ -> ());
   remove_files name
 ;;
 
 let stop_all () =
   let recorded, _unreadable = records () in
-  recorded |> List.iter (fun (pf : spec) -> stop pf.name)
+  recorded |> List.iter (fun pf -> stop pf.name)
 ;;
 
 (* AUDIT-065 / FEAT-063: the wrapper script's retry loop must never let a later
@@ -248,11 +247,11 @@ let check_alive ~name =
 let replace_conflicting ~local_port ~namespace ~target =
   let recorded, _unreadable = records () in
   recorded
-  |> List.filter (fun (pf : spec) ->
+  |> List.filter (fun pf ->
     pf.local_port = local_port
     && (pf.namespace <> namespace || pf.target <> target)
     && is_running pf.name)
-  |> List.map (fun (pf : spec) ->
+  |> List.map (fun pf ->
     stop pf.name;
     pf)
 ;;

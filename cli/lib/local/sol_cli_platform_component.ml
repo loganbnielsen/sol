@@ -32,12 +32,11 @@ let rec deep_merge (base : Yojson.Safe.t) (over : Yojson.Safe.t) : Yojson.Safe.t
   match base, over with
   | `Assoc base_fields, `Assoc over_fields ->
     let merged =
-      List.map
-        (fun (k, v) ->
-           match List.assoc_opt k over_fields with
-           | Some v2 -> k, deep_merge v v2
-           | None -> k, v)
-        base_fields
+      base_fields
+      |> List.map (fun (k, v) ->
+        match List.assoc_opt k over_fields with
+        | Some v2 -> k, deep_merge v v2
+        | None -> k, v)
     in
     let added =
       List.filter (fun (k, _) -> not (List.mem_assoc k base_fields)) over_fields

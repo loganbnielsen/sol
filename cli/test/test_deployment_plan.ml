@@ -762,18 +762,17 @@ let kafka_config service_names : Sol_cli_config.t =
         }
       ]
   ; services =
-      List.map
-        (fun name ->
-           { Sol_cli_config.name
-           ; typ = None
-           ; path = None
-           ; uses = [ "events" ]
-           ; scale_min = None
-           ; scale_max = None
-           ; language = None
-           ; omit = false
-           })
-        service_names
+      service_names
+      |> List.map (fun name ->
+        { Sol_cli_config.name
+        ; typ = None
+        ; path = None
+        ; uses = [ "events" ]
+        ; scale_min = None
+        ; scale_max = None
+        ; language = None
+        ; omit = false
+        })
   }
 ;;
 
@@ -1113,7 +1112,7 @@ let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
 
 let replicas_of_sole_service plan =
   match plan.Sol_cli_deployment_plan.services with
-  | [ s ] -> s.Sol_cli_deployment_plan.replicas
+  | [ s ] -> s.replicas
   | _ -> Alcotest.fail "expected exactly one service in plan"
 ;;
 
@@ -1218,20 +1217,17 @@ let test_toml_volumes_carry_into_service_spec () =
     with
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     | Ok plan ->
-      (match plan.Sol_cli_deployment_plan.services with
+      (match plan.services with
        | [ spec ] ->
-         (match spec.Sol_cli_deployment_plan.volumes with
+         (match spec.volumes with
           | [ volume ] ->
-            Alcotest.(check string) "volume name" "data" volume.Sol_cli_toml.name;
-            Alcotest.(check string)
-              "mount path"
-              "/var/lib/data"
-              volume.Sol_cli_toml.mount_path;
-            Alcotest.(check string) "size" "10Gi" volume.Sol_cli_toml.size;
+            Alcotest.(check string) "volume name" "data" volume.name;
+            Alcotest.(check string) "mount path" "/var/lib/data" volume.mount_path;
+            Alcotest.(check string) "size" "10Gi" volume.size;
             Alcotest.(check bool)
               "access mode"
               true
-              (volume.Sol_cli_toml.access_mode = Sol_cli_toml.ReadWriteOnce)
+              (volume.access_mode = Sol_cli_toml.ReadWriteOnce)
           | _ -> Alcotest.fail "expected exactly one volume")
        | _ -> Alcotest.fail "expected exactly one service"))
 ;;
@@ -1312,9 +1308,8 @@ let test_fn_schedule_comes_from_sol_toml () =
     Alcotest.(check (list (option string)))
       "schedule from sol.toml"
       [ Some "30 6 * * 1" ]
-      (List.map
-         (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule)
-         plan.Sol_cli_deployment_plan.services)
+      (plan.services
+       |> List.map (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule))
 ;;
 
 (* The old behaviour: a -fn with no schedule (no sol.toml, or no key) deployed
@@ -1390,7 +1385,7 @@ calls = ["checkout/checkout_svc"]
     with
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     | Ok plan ->
-      (match plan.Sol_cli_deployment_plan.services with
+      (match plan.services with
        | [ caller; callee ] ->
          Alcotest.(check (list (pair string string)))
            "caller config"
@@ -1458,8 +1453,8 @@ calls = ["checkout/checkout_svc"]
       Alcotest.(check int)
         "the selection is deployed unchanged -- no transitive widening"
         1
-        (List.length plan.Sol_cli_deployment_plan.services);
-      (match plan.Sol_cli_deployment_plan.services with
+        (List.length plan.services);
+      (match plan.services with
        | [ caller ] ->
          Alcotest.(check (list (pair string string)))
            "the caller resolves the URL of the callee it did not select"

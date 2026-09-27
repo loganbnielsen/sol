@@ -196,7 +196,7 @@ let listed_names ~what (result : (Sol_cli_process.output, Sol_cli_process.error)
   match result with
   | Ok r ->
     Ok
-      (String.split_on_char '\n' r.Sol_cli_process.stdout
+      (String.split_on_char '\n' r.stdout
        |> List.map String.trim
        |> List.filter (fun name -> name <> ""))
   | Error (Sol_cli_process.Non_zero r) ->

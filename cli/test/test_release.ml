@@ -133,9 +133,8 @@ let test_current_pointer_is_minimal () =
 (* ── validating both directions ──────────────────────────────────────────── *)
 
 let test_validate_accepts_canonical_record () =
-  match R.validate ~name:(R.configmap_name sample_record) sample_record with
-  | Ok () -> ()
-  | Error msg -> Alcotest.fail ("canonical record rejected: " ^ msg)
+  R.validate ~name:(R.configmap_name sample_record) sample_record
+  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical record rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =
@@ -204,7 +203,7 @@ let test_parse_kubectl_list_with_creation () =
   match R.parse_kubectl_list_with_creation json with
   | Error msg -> Alcotest.fail msg
   | Ok [ (record, created_at) ] ->
-    check_string "record id" sample_record.R.release_id record.R.release_id;
+    check_string "record id" sample_record.release_id record.release_id;
     check_string "creation timestamp" "2026-01-01T00:00:00Z" created_at
   | Ok _ -> Alcotest.fail "expected exactly one record"
 ;;
@@ -275,10 +274,9 @@ let test_of_kubectl_item_rejects_tampered_body () =
    safety-relevant field is not the one the identity protects. *)
 let test_migrations_tampering_is_caught_by_digest_not_validate () =
   let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
-  (match R.validate ~name:(R.configmap_name tampered) tampered with
-   | Ok () -> ()
-   | Error msg ->
-     Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
+  R.validate ~name:(R.configmap_name tampered) tampered
+  |> Result.iter_error (fun msg ->
+    Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
   match
     R.of_kubectl_item
       (item ~digest:(R.record_digest sample_record) (R.record_json_string tampered))
@@ -394,9 +392,9 @@ let test_apply_mode_unknown_fails_closed () =
     match R.to_json sample_record with
     | `Assoc kvs ->
       `Assoc
-        (List.map
-           (fun (k, v) -> if k = "apply_mode" then k, `String "sideways" else k, v)
-           kvs)
+        (kvs
+         |> List.map (fun (k, v) ->
+           if k = "apply_mode" then k, `String "sideways" else k, v))
     | other -> other
   in
   match R.of_json json with
@@ -479,11 +477,11 @@ let test_of_plan_rederives_the_plan_identity () =
     let r = R.of_plan ~apply_mode:R.Direct plan in
     check_string
       "record id is the plan id"
-      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string plan.release_id)
       r.release_id;
     check_string
       "record content rederives the plan id"
-      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string plan.release_id)
       (Sol_cli_release_id.to_string (R.derived_release_id r));
     check_int "one resolved workload" 1 (List.length r.workloads);
     check_string "workload name" "charge_svc" (List.hd r.workloads).name;

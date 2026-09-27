@@ -39,12 +39,11 @@ let target : Sol_cli_config.target =
 let without_aws_field key (t : Sol_cli_config.target) =
   { t with
     provider_fields =
-      List.map
-        (fun (provider, fields) ->
-           if provider = "aws"
-           then provider, List.remove_assoc key fields
-           else provider, fields)
-        t.provider_fields
+      t.provider_fields
+      |> List.map (fun (provider, fields) ->
+        if provider = "aws"
+        then provider, List.remove_assoc key fields
+        else provider, fields)
   }
 ;;
 
@@ -162,12 +161,9 @@ let without_output name json =
 let test_gcp_outputs () =
   (match parse_gcp (valid_gcp_outputs ()) with
    | Ok outputs ->
-     Alcotest.(check string) "cluster" "sol-qual" outputs.Sol_cli_gcp_cluster.cluster_name;
-     Alcotest.(check string)
-       "project"
-       "sol-qualification"
-       outputs.Sol_cli_gcp_cluster.project_id;
-     Alcotest.(check string) "region" "us-central1" outputs.Sol_cli_gcp_cluster.region;
+     Alcotest.(check string) "cluster" "sol-qual" outputs.cluster_name;
+     Alcotest.(check string) "project" "sol-qualification" outputs.project_id;
+     Alcotest.(check string) "region" "us-central1" outputs.region;
      Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
    | Error message -> Alcotest.fail message);
   (* The project and region are contract, not incidental context: every GCP API
@@ -855,31 +851,29 @@ let converged_cluster provider =
 ;;
 
 let test_readiness_fails_each_predicate () =
-  List.iter
-    (fun p ->
-       let succeeds = converged_cluster p in
-       let all = L.readiness ~provider:p ~run:succeeds in
-       Alcotest.(check string)
-         (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
-         "Ready"
-         (L.readiness_summary all);
-       List.iteri
-         (fun failed _ ->
-            let index = ref (-1) in
-            let checks =
-              L.readiness ~provider:p ~run:(fun argv ->
-                incr index;
-                if !index = failed then None else succeeds argv)
-            in
-            Alcotest.(check bool)
-              (Printf.sprintf
-                 "predicate %d fails closed (%s)"
-                 failed
-                 (Sol_cli_provider.to_string p))
-              true
-              (L.readiness_summary checks <> "Ready"))
-         all)
-    Sol_cli_provider.all
+  Sol_cli_provider.all
+  |> List.iter (fun p ->
+    let succeeds = converged_cluster p in
+    let all = L.readiness ~provider:p ~run:succeeds in
+    Alcotest.(check string)
+      (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
+      "Ready"
+      (L.readiness_summary all);
+    all
+    |> List.iteri (fun failed _ ->
+      let index = ref (-1) in
+      let checks =
+        L.readiness ~provider:p ~run:(fun argv ->
+          incr index;
+          if !index = failed then None else succeeds argv)
+      in
+      Alcotest.(check bool)
+        (Printf.sprintf
+           "predicate %d fails closed (%s)"
+           failed
+           (Sol_cli_provider.to_string p))
+        true
+        (L.readiness_summary checks <> "Ready")))
 ;;
 
 let readiness_with_storage ~provider storage_output =
@@ -1581,7 +1575,7 @@ let test_ambiguous_array_does_not_proceed () =
 let test_identity_reports_its_source () =
   let source_of body =
     match Sol_cli_aws_cluster.whoami_identity_of_json body with
-    | Ok i -> i.Sol_cli_aws_cluster.source
+    | Ok i -> i.source
     | Error e -> Alcotest.fail e
   in
   Alcotest.(check string)
@@ -1650,14 +1644,13 @@ let test_effective_authorization () =
     "declared boundary"
     true
     (provisioner_authorization_established ~can_i);
-  List.iter
-    (fun (_, failed) ->
-       Alcotest.(check bool)
-         (String.concat " " failed)
-         false
-         (provisioner_authorization_established ~can_i:(fun args ->
-            if args = failed then not (can_i args) else can_i args)))
-    expected
+  expected
+  |> List.iter (fun (_, failed) ->
+    Alcotest.(check bool)
+      (String.concat " " failed)
+      false
+      (provisioner_authorization_established ~can_i:(fun args ->
+         if args = failed then not (can_i args) else can_i args)))
 ;;
 
 let test_terraform_scope () =

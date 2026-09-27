@@ -96,15 +96,14 @@ let test_unclassifiable_sensitive_is_an_error () =
       , "variable \"a\" { sensitive = var.s }\n" )
     ]
   in
-  List.iter
-    (fun (what, contents) ->
-       check
-         (what ^ " fails closed")
-         true
-         (match S.declared_in [ "vars.tf", contents ] with
-          | Error message -> contains message "vars.tf"
-          | Ok _ -> false))
-    cases
+  cases
+  |> List.iter (fun (what, contents) ->
+    check
+      (what ^ " fails closed")
+      true
+      (match S.declared_in [ "vars.tf", contents ] with
+       | Error message -> contains message "vars.tf"
+       | Ok _ -> false))
 ;;
 
 (* ...and the error names the file and line, so the operator can fix it. *)
@@ -156,13 +155,12 @@ let providers_with_roots () =
 let test_refused_on_every_provider () =
   let providers = providers_with_roots () in
   check "at least one provider has a cluster root" true (providers <> []);
-  List.iter
-    (fun provider ->
-       check
-         (provider ^ ": --var db_password is refused")
-         true
-         (refuses ~sensitive:(real_root provider) [ "region=r"; "db_password=hunter22" ]))
-    providers
+  providers
+  |> List.iter (fun provider ->
+    check
+      (provider ^ ": --var db_password is refused")
+      true
+      (refuses ~sensitive:(real_root provider) [ "region=r"; "db_password=hunter22" ]))
 ;;
 
 let test_message_names_the_fix_not_the_value () =

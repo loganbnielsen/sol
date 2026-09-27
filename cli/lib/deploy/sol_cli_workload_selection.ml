@@ -20,10 +20,10 @@ type resolved =
   }
 
 let named_of_service (svc : Sol_cli_manifest.service) : Sol_cli_deployment_scope.named =
-  { Sol_cli_deployment_scope.domain = svc.Sol_cli_manifest.domain
-  ; name = svc.Sol_cli_manifest.name
+  { Sol_cli_deployment_scope.domain = svc.domain
+  ; name = svc.name
   ; kind =
-      (match svc.Sol_cli_manifest.primitive with
+      (match svc.primitive with
        | Sol_cli_manifest.Svc -> Sol_cli_deployment_scope.Service
        | Sol_cli_manifest.Worker -> Sol_cli_deployment_scope.Worker
        | Sol_cli_manifest.Fn -> Sol_cli_deployment_scope.Function)
@@ -40,11 +40,10 @@ let service_is_selected
       (selected : Sol_cli_deployment_scope.named list)
       (svc : Sol_cli_manifest.service)
   =
-  List.exists
-    (fun (unit_ : Sol_cli_deployment_scope.named) ->
-       Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.domain unit_.domain
-       && Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.name unit_.name)
-    selected
+  selected
+  |> List.exists (fun (unit_ : Sol_cli_deployment_scope.named) ->
+    Sol_cli_deployment_scope.equal_name svc.domain unit_.domain
+    && Sol_cli_deployment_scope.equal_name svc.name unit_.name)
 ;;
 
 let services_of_selection services selected =

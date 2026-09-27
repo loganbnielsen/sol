@@ -33,11 +33,10 @@ let select ~keep ~current ~previous entries =
     (* Newest first; tie-break on id so the result is a function of the input set
        and not of the order the cluster happened to return. *)
     let newest_first =
-      List.sort
-        (fun (id_a, at_a) (id_b, at_b) ->
-           let by_time = String.compare at_b at_a in
-           if by_time <> 0 then by_time else String.compare id_a id_b)
-        latest
+      latest
+      |> List.sort (fun (id_a, at_a) (id_b, at_b) ->
+        let by_time = String.compare at_b at_a in
+        if by_time <> 0 then by_time else String.compare id_a id_b)
     in
     let protected release_id =
       String.equal release_id current
@@ -62,9 +61,9 @@ let prune ~ctx ~workspace ~keep ~current ~previous =
   | Error msg -> Error msg
   | Ok records ->
     let entries =
-      List.map
-        (fun ((record : Sol_cli_release.t), created_at) -> record.release_id, created_at)
-        records
+      records
+      |> List.map (fun ((record : Sol_cli_release.t), created_at) ->
+        record.release_id, created_at)
     in
     (match select ~keep ~current ~previous entries with
      | Error msg -> Error msg

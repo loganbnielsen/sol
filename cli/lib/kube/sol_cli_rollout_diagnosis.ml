@@ -212,16 +212,15 @@ let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : strin
    | _ -> ());
   if p.restarts > 0
   then Buffer.add_string buf (Printf.sprintf "Restarts: %d\n" p.restarts);
-  (match p.image with
-   | Some img -> Buffer.add_string buf (Printf.sprintf "Image: %s\n" img)
-   | None -> ());
+  p.image
+  |> Option.iter (fun img -> Buffer.add_string buf (Printf.sprintf "Image: %s\n" img));
   (match events with
    | Events [] -> Buffer.add_string buf "No events recorded for this pod.\n"
    | Events l ->
      Buffer.add_string buf "Last events:\n";
-     List.iter
-       (fun e -> Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
-       l
+     l
+     |> List.iter (fun e ->
+       Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
    | Events_unavailable why ->
      (* Named, never silent: this is the difference between "nothing happened"
         and "I was not allowed to look". *)
@@ -245,13 +244,12 @@ let render_unhealthy_pods
   =
   let buf = Buffer.create 512 in
   Buffer.add_string buf (Printf.sprintf "%s rollout failed\n\n" service_name);
-  List.iter
-    (fun p ->
-       Buffer.add_string
-         buf
-         (format_pod_diagnosis p (events_for_pod_result ~pod_name:p.name events));
-       Buffer.add_char buf '\n')
-    pods;
+  pods
+  |> List.iter (fun p ->
+    Buffer.add_string
+      buf
+      (format_pod_diagnosis p (events_for_pod_result ~pod_name:p.name events));
+    Buffer.add_char buf '\n');
   Buffer.contents buf
 ;;
 
@@ -306,9 +304,9 @@ let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool
           | Events_unavailable _ -> false
           | Events l ->
             not
-              (List.exists
-                 (fun e -> e.involved_name = p.name && e.reason = "FailedScheduling")
-                 l))
+              (l
+               |> List.exists (fun e ->
+                 e.involved_name = p.name && e.reason = "FailedScheduling")))
       &&
       match p.state with
       | Waiting { reason; _ } ->
@@ -421,7 +419,7 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
   with
   | Ok r ->
-    (match parse_events_json r.Sol_cli_process.stdout with
+    (match parse_events_json r.stdout with
      | Ok events -> Events events
      | Error why -> Events_unavailable why)
   | Error (Sol_cli_process.Non_zero r) ->
@@ -451,7 +449,7 @@ let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
-  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
+  | Ok r -> parse_pods_json r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -468,7 +466,7 @@ let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
-  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
+  | Ok r -> parse_pods_json r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -513,7 +511,7 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
       ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
   with
   | Ok r ->
-    (match parse_cronjob_status r.Sol_cli_process.stdout with
+    (match parse_cronjob_status r.stdout with
      | Ok status -> Found status
      | Error why -> Unavailable why)
   | Error e ->

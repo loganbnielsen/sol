@@ -96,13 +96,11 @@ let apply_service
   let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
   print_service_start spec;
   Printf.printf "  packaging %s...\n%!" exec.push_image;
-  (match Sol_cli_up_execution.build_image exec with
-   | Error msg -> raise (Deploy_failed msg)
-   | Ok () -> ());
+  Sol_cli_up_execution.build_image exec
+  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
   Printf.printf "  pushing...\n%!";
-  (match Sol_cli_up_execution.push_image exec with
-   | Error msg -> raise (Deploy_failed msg)
-   | Ok () -> ());
+  Sol_cli_up_execution.push_image exec
+  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
   (match
      Sol_cli_up_execution.apply_service_manifest
        ~ctx:Sol_cli_kube_destination.local_context
@@ -117,14 +115,11 @@ let apply_service
    | Sol_cli_deployment_plan.Fn -> ()
    | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
      Printf.printf "  waiting for rollout...\n%!";
-     (match
-        Sol_cli_up_execution.wait_for_service_rollout
-          ~ctx:Sol_cli_kube_destination.local_context
-          spec
-          exec
-      with
-      | Ok () -> ()
-      | Error msg -> raise (Deploy_failed msg)));
+     Sol_cli_up_execution.wait_for_service_rollout
+       ~ctx:Sol_cli_kube_destination.local_context
+       spec
+       exec
+     |> Result.iter_error (fun msg -> raise (Deploy_failed msg)));
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
@@ -217,11 +212,8 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
   @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
     try
       List.iter
-        (dry_run_service
-           ~workspace
-           ~sha
-           ~release_id:plan.Sol_cli_deployment_plan.release_id)
-        plan.Sol_cli_deployment_plan.services;
+        (dry_run_service ~workspace ~sha ~release_id:plan.release_id)
+        plan.services;
       Ok ()
     with
     | Deploy_failed msg -> Error msg)
@@ -263,7 +255,7 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
          ~ctx:cluster
          ~workspace
          ~keep
-         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~current:(Sol_cli_release_id.to_string plan.release_id)
          ~previous
      with
      | Ok [] -> ()
@@ -286,19 +278,17 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
     | Error msg -> Error msg
     | Ok ctx_dir ->
       (try
-         List.iter
-           (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-              (match Sol_cli_boundary_lease.ensure_held lease with
-               | Ok () -> ()
-               | Error msg -> raise (Deploy_failed msg));
-              apply_service
-                ~workspace
-                ~ctx_dir
-                ~sha
-                ~pf_failed
-                ~release_id:plan.Sol_cli_deployment_plan.release_id
-                spec)
-           plan.Sol_cli_deployment_plan.services;
+         plan.services
+         |> List.iter (fun spec ->
+           Sol_cli_boundary_lease.ensure_held lease
+           |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
+           apply_service
+             ~workspace
+             ~ctx_dir
+             ~sha
+             ~pf_failed
+             ~release_id:plan.Sol_cli_deployment_plan.release_id
+             spec);
          Sol_cli_up_execution.remove_build_context ~ctx_dir;
          Ok ()
        with
@@ -326,14 +316,13 @@ let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
         Printf.printf
           "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
           (List.length surplus);
-        List.iter
-          (fun ((id : Sol_cli_rollback.workload_identity), _) ->
-             Printf.printf
-               "  %s %s/%s\n"
-               (Sol_cli_rollback.kind_resource id.kind)
-               id.namespace
-               id.name)
-          surplus;
+        surplus
+        |> List.iter (fun ((id : Sol_cli_rollback.workload_identity), _) ->
+          Printf.printf
+            "  %s %s/%s\n"
+            (Sol_cli_rollback.kind_resource id.kind)
+            id.namespace
+            id.name);
         Printf.printf
           "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
            automatically when restoring a recorded release; delete them by hand if you \

@@ -83,9 +83,9 @@ let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain ~t
     (match Sol_cli_config.load_for_target ~target:target_path with
      | Error e -> Error (Sol_cli_config.error_to_string e)
      | Ok cfg ->
-       let t = cfg.Sol_cli_config.target in
+       let t = cfg.target in
        let target_backend =
-         match t.Sol_cli_config.observability_backend with
+         match t.observability_backend with
          | None -> Ok None
          | Some s ->
            (match backend_of_string s with
@@ -109,7 +109,7 @@ let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain ~t
           let base_domain =
             match explicit_base_domain with
             | Some _ -> explicit_base_domain
-            | None -> t.Sol_cli_config.base_domain
+            | None -> t.base_domain
           in
           Ok (backend, base_domain)))
 ;;

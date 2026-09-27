@@ -37,9 +37,9 @@ let test_id_is_lowercase_and_name_safe () =
   let id = mk t0 "x" in
   check_int "length" 35 (String.length id);
   let legal =
-    String.for_all
-      (fun c -> (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-')
-      id
+    id
+    |> String.for_all (fun c ->
+      (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-')
   in
   check_bool "only [a-z0-9-] (a legal object-name segment)" true legal;
   check_bool

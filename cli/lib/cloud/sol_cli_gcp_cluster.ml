@@ -355,7 +355,7 @@ let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) 
          ; "--format=json"
          ])
   with
-  | Ok result -> Sol_cli_disk_quota.observation_of_json result.Sol_cli_process.stdout
+  | Ok result -> Sol_cli_disk_quota.observation_of_json result.stdout
   | Error error ->
     Error
       (Printf.sprintf
