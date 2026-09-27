@@ -1270,10 +1270,9 @@ let test_gcs_soft_delete_follows_destroy_retention () =
   let soft_delete ~target ~retention =
     with_temp_dir (fun () ->
       write "sol.yml" "target:\n  base_domain: example.test\n";
-      (match retention with
-       | None -> ()
-       | Some r ->
-         Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
+      retention
+      |> Option.iter (fun r ->
+        Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
       match Sol_cli_config.load_for_target ~target with
       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
       | Ok cfg ->

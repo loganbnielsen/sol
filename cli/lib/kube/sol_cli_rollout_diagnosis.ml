@@ -212,9 +212,8 @@ let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : strin
    | _ -> ());
   if p.restarts > 0
   then Buffer.add_string buf (Printf.sprintf "Restarts: %d\n" p.restarts);
-  (match p.image with
-   | Some img -> Buffer.add_string buf (Printf.sprintf "Image: %s\n" img)
-   | None -> ());
+  p.image
+  |> Option.iter (fun img -> Buffer.add_string buf (Printf.sprintf "Image: %s\n" img));
   (match events with
    | Events [] -> Buffer.add_string buf "No events recorded for this pod.\n"
    | Events l ->

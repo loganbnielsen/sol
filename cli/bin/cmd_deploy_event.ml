@@ -209,10 +209,9 @@ let push_event ~sw ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t)
    when there is nothing to push to, or no events. *)
 let push_all ~ctx ~backend ~explicit_url (events : Sol_cli_deploy_event.t list) =
   if events <> []
-  then (
-    match resolve_url ~ctx ~backend ~explicit_url with
-    | None -> ()
-    | Some url ->
+  then
+    resolve_url ~ctx ~backend ~explicit_url
+    |> Option.iter (fun url ->
       Eio_main.run (fun env ->
         Eio.Switch.run
         @@ fun sw ->

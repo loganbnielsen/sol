@@ -103,9 +103,8 @@ let test_json_is_deterministic () =
 (* ── validating the read path ────────────────────────────────────────────── *)
 
 let test_validate_accepts_canonical_event () =
-  match D.validate ~name:(D.configmap_name sample) sample with
-  | Ok () -> ()
-  | Error msg -> Alcotest.fail ("canonical event rejected: " ^ msg)
+  D.validate ~name:(D.configmap_name sample) sample
+  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical event rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =

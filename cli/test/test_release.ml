@@ -133,9 +133,8 @@ let test_current_pointer_is_minimal () =
 (* ── validating both directions ──────────────────────────────────────────── *)
 
 let test_validate_accepts_canonical_record () =
-  match R.validate ~name:(R.configmap_name sample_record) sample_record with
-  | Ok () -> ()
-  | Error msg -> Alcotest.fail ("canonical record rejected: " ^ msg)
+  R.validate ~name:(R.configmap_name sample_record) sample_record
+  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical record rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =
@@ -275,10 +274,9 @@ let test_of_kubectl_item_rejects_tampered_body () =
    safety-relevant field is not the one the identity protects. *)
 let test_migrations_tampering_is_caught_by_digest_not_validate () =
   let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
-  (match R.validate ~name:(R.configmap_name tampered) tampered with
-   | Ok () -> ()
-   | Error msg ->
-     Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
+  R.validate ~name:(R.configmap_name tampered) tampered
+  |> Result.iter_error (fun msg ->
+    Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
   match
     R.of_kubectl_item
       (item ~digest:(R.record_digest sample_record) (R.record_json_string tampered))

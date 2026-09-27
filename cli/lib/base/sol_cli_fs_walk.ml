@@ -32,4 +32,4 @@ let selected path keep =
 ;;
 
 let dirs path = selected path (fun is_dir -> is_dir)
-let files path = selected path (fun is_dir -> not is_dir)
+let files path = selected path not

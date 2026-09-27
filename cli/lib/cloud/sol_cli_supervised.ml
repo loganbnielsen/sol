@@ -252,10 +252,9 @@ let latest ~key =
 ;;
 
 let acknowledge ~key =
-  match latest_dir ~key with
-  | None -> ()
-  | Some dir ->
-    write_atomic (file dir "acknowledged") (Printf.sprintf "%f\n" (Unix.gettimeofday ()))
+  latest_dir ~key
+  |> Option.iter (fun dir ->
+    write_atomic (file dir "acknowledged") (Printf.sprintf "%f\n" (Unix.gettimeofday ())))
 ;;
 
 (* ── The supervisor (this binary, re-invoked) ──────────────────────────────── *)

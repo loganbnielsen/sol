@@ -220,30 +220,29 @@ let with_called_by (specs : Sol_cli_deployment_plan.service_spec list) =
   specs
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
     let called_by =
-      List.filter_map
-        (fun (caller : Sol_cli_deployment_plan.service_spec) ->
-           if
-             List.exists
-               (fun (c : Sol_cli_deployment_plan.service_call) ->
-                  Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                  = Sol_cli_kubernetes_name.namespace_to_string spec.namespace
-                  && Sol_cli_kubernetes_name.k8s_name_to_string c.target_name
-                     = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name)
-               caller.calls
-           then
-             Some
-               { Sol_cli_deployment_plan.env_var =
-                   Sol_cli_kubernetes_name.call_env_var caller.source_name
-               ; url =
-                   Sol_cli_kubernetes_name.service_url
-                     ~namespace:caller.namespace
-                     ~k8s_name:caller.k8s_name
-               ; target_domain = caller.domain
-               ; target_name = caller.k8s_name
-               ; target_namespace = caller.namespace
-               }
-           else None)
-        specs
+      specs
+      |> List.filter_map (fun (caller : Sol_cli_deployment_plan.service_spec) ->
+        if
+          List.exists
+            (fun (c : Sol_cli_deployment_plan.service_call) ->
+               Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+               = Sol_cli_kubernetes_name.namespace_to_string spec.namespace
+               && Sol_cli_kubernetes_name.k8s_name_to_string c.target_name
+                  = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name)
+            caller.calls
+        then
+          Some
+            { Sol_cli_deployment_plan.env_var =
+                Sol_cli_kubernetes_name.call_env_var caller.source_name
+            ; url =
+                Sol_cli_kubernetes_name.service_url
+                  ~namespace:caller.namespace
+                  ~k8s_name:caller.k8s_name
+            ; target_domain = caller.domain
+            ; target_name = caller.k8s_name
+            ; target_namespace = caller.namespace
+            }
+        else None)
     in
     { spec with called_by })
 ;;

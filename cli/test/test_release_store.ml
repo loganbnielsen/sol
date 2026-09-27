@@ -120,11 +120,8 @@ let verbs log =
 (* Absent object -> create, with no resourceVersion, and never apply/patch. *)
 let test_absent_object_is_created () =
   with_fake_kubectl ~mode:"missing" ~live_json:"" (fun log ->
-    (match
-       Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-     with
-     | Ok () -> ()
-     | Error e -> Alcotest.fail ("expected success, got: " ^ e));
+    Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
+    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
     let calls = verbs log in
     Alcotest.(check (list string))
       "one get, then one create, both without a resourceVersion"
@@ -149,11 +146,8 @@ let test_identical_object_is_left_alone () =
     {|{"kind":"ConfigMap","metadata":{"name":"sol-release-current-pluto","resourceVersion":"42"},"data":{"release_id":"r-aaaabbbbccccdddd"}}|}
   in
   with_fake_kubectl ~mode:"present" ~live_json (fun log ->
-    (match
-       Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-     with
-     | Ok () -> ()
-     | Error e -> Alcotest.fail ("expected success, got: " ^ e));
+    Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
+    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
     Alcotest.(check (list string)) "only a get" [ "get rv=no" ] (verbs log))
 ;;
 
@@ -164,11 +158,8 @@ let test_changed_object_is_replaced_with_a_precondition () =
     {|{"kind":"ConfigMap","metadata":{"name":"sol-release-current-pluto","resourceVersion":"42"},"data":{"release_id":"r-1111222233334444"}}|}
   in
   with_fake_kubectl ~mode:"present" ~live_json (fun log ->
-    (match
-       Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-     with
-     | Ok () -> ()
-     | Error e -> Alcotest.fail ("expected success, got: " ^ e));
+    Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
+    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
     let calls = verbs log in
     Alcotest.(check (list string))
       "one get, then a replace carrying the live resourceVersion"

@@ -488,10 +488,9 @@ let service_uses_resource_type resolved_config service_name typ =
          match resource_name_of_ref ref with
          | None -> false
          | Some name ->
-           List.exists
-             (fun (resource : Sol_cli_config.resource) ->
-                resource.name = name && resource.typ = Some typ)
-             resources))
+           resources
+           |> List.exists (fun (resource : Sol_cli_config.resource) ->
+             resource.name = name && resource.typ = Some typ)))
 ;;
 
 let derive_consumer_groups ?resolved_config workspace services =
@@ -722,15 +721,14 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
         match resolved_config with
         | None -> false
         | Some cfg ->
-          List.exists
-            (fun (resource : Sol_cli_config.resource) -> resource.typ = Some typ)
-            (Sol_cli_config.resources cfg)
+          Sol_cli_config.resources cfg
+          |> List.exists (fun (resource : Sol_cli_config.resource) ->
+            resource.typ = Some typ)
       in
       let service_uses typ =
-        List.exists
-          (fun service ->
-             service_uses_resource_type resolved_config service.source_name typ)
-          services
+        services
+        |> List.exists (fun service ->
+          service_uses_resource_type resolved_config service.source_name typ)
       in
       { profile
       ; requirements
@@ -1012,29 +1010,25 @@ let of_services_result
     resolved_services
     |> List.map (fun svc ->
       let called_by =
-        List.filter_map
-          (fun caller ->
-             if
-               List.exists
-                 (fun c ->
-                    namespace_to_string c.target_namespace
-                    = namespace_to_string svc.namespace
-                    && k8s_name_to_string c.target_name = k8s_name_to_string svc.k8s_name)
-                 caller.calls
-             then
-               Some
-                 { env_var = call_env_var caller.source_name
-                 ; url =
-                     service_url
-                       ~workspace
-                       ~domain:caller.domain
-                       ~k8s_name:caller.k8s_name
-                 ; target_domain = caller.domain
-                 ; target_name = caller.k8s_name
-                 ; target_namespace = caller.namespace
-                 }
-             else None)
-          resolved_services
+        resolved_services
+        |> List.filter_map (fun caller ->
+          if
+            List.exists
+              (fun c ->
+                 namespace_to_string c.target_namespace
+                 = namespace_to_string svc.namespace
+                 && k8s_name_to_string c.target_name = k8s_name_to_string svc.k8s_name)
+              caller.calls
+          then
+            Some
+              { env_var = call_env_var caller.source_name
+              ; url =
+                  service_url ~workspace ~domain:caller.domain ~k8s_name:caller.k8s_name
+              ; target_domain = caller.domain
+              ; target_name = caller.k8s_name
+              ; target_namespace = caller.namespace
+              }
+          else None)
       in
       { svc with called_by })
   in

@@ -96,13 +96,11 @@ let apply_service
   let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
   print_service_start spec;
   Printf.printf "  packaging %s...\n%!" exec.push_image;
-  (match Sol_cli_up_execution.build_image exec with
-   | Error msg -> raise (Deploy_failed msg)
-   | Ok () -> ());
+  Sol_cli_up_execution.build_image exec
+  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
   Printf.printf "  pushing...\n%!";
-  (match Sol_cli_up_execution.push_image exec with
-   | Error msg -> raise (Deploy_failed msg)
-   | Ok () -> ());
+  Sol_cli_up_execution.push_image exec
+  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
   (match
      Sol_cli_up_execution.apply_service_manifest
        ~ctx:Sol_cli_kube_destination.local_context
@@ -117,14 +115,11 @@ let apply_service
    | Sol_cli_deployment_plan.Fn -> ()
    | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
      Printf.printf "  waiting for rollout...\n%!";
-     (match
-        Sol_cli_up_execution.wait_for_service_rollout
-          ~ctx:Sol_cli_kube_destination.local_context
-          spec
-          exec
-      with
-      | Ok () -> ()
-      | Error msg -> raise (Deploy_failed msg)));
+     Sol_cli_up_execution.wait_for_service_rollout
+       ~ctx:Sol_cli_kube_destination.local_context
+       spec
+       exec
+     |> Result.iter_error (fun msg -> raise (Deploy_failed msg)));
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
@@ -285,9 +280,8 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
       (try
          plan.services
          |> List.iter (fun spec ->
-           (match Sol_cli_boundary_lease.ensure_held lease with
-            | Ok () -> ()
-            | Error msg -> raise (Deploy_failed msg));
+           Sol_cli_boundary_lease.ensure_held lease
+           |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
            apply_service
              ~workspace
              ~ctx_dir

@@ -134,12 +134,11 @@ let declared_in_one ~file contents =
       then current := None
       else classify name line_no line
     | None ->
-      (match variable_header line with
-       | None -> ()
-       | Some (name, body) ->
-         if String.contains body '}'
-         then classify_inline name line_no body
-         else current := Some name));
+      variable_header line
+      |> Option.iter (fun (name, body) ->
+        if String.contains body '}'
+        then classify_inline name line_no body
+        else current := Some name));
   match !failure with
   | Some message -> Error message
   | None -> Ok (List.sort_uniq String.compare !sensitive)

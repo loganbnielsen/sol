@@ -619,9 +619,9 @@ let verify_release : Sol_cli_release.t =
 ;;
 
 let test_check_apply_mode_allows_direct () =
-  match Sol_cli_rollback.check_apply_mode ~release:verify_release with
-  | Ok () -> ()
-  | Error e -> Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e)
+  Sol_cli_rollback.check_apply_mode ~release:verify_release
+  |> Result.iter_error (fun e ->
+    Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e))
 ;;
 
 let test_check_apply_mode_refuses_gitops () =

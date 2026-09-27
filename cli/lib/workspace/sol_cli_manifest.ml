@@ -89,22 +89,21 @@ let scan_workspace () =
         let dp = Filename.concat app_dir domain in
         if domain.[0] <> '.' && Sys.is_directory dp
         then
-          Array.iter
-            (fun name ->
-               let full = Filename.concat dp name in
-               if name.[0] <> '.' && Sys.is_directory full
-               then (
-                 (* [dir] stays workspace-root relative: it becomes the
+          Sys.readdir dp
+          |> Array.iter (fun name ->
+            let full = Filename.concat dp name in
+            if name.[0] <> '.' && Sys.is_directory full
+            then (
+              (* [dir] stays workspace-root relative: it becomes the
                        plan's [source_dir], which is always combined with the
                        build context (itself derived from the root), never with
                        the invocation cwd. *)
-                 let dir = Filename.concat "app" (Filename.concat domain name) in
-                 match primitive_of_suffix name with
-                 | Some primitive ->
-                   let svc = { domain; name; primitive; dir } in
-                   workloads := (svc, has_dockerfile full) :: !workloads
-                 | None -> unexpected := (domain, name, dir) :: !unexpected))
-            (Sys.readdir dp));
+              let dir = Filename.concat "app" (Filename.concat domain name) in
+              match primitive_of_suffix name with
+              | Some primitive ->
+                let svc = { domain; name; primitive; dir } in
+                workloads := (svc, has_dockerfile full) :: !workloads
+              | None -> unexpected := (domain, name, dir) :: !unexpected)));
       Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 
@@ -131,10 +130,9 @@ let write_tmp content =
 ;;
 
 let kubectl_apply ~ctx tmp =
-  match Sol_cli_kubectl.apply ~ctx ~file:tmp with
-  | Ok () -> ()
-  | Error e ->
-    raise (Deploy_failed ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e))
+  Sol_cli_kubectl.apply ~ctx ~file:tmp
+  |> Result.iter_error (fun e ->
+    raise (Deploy_failed ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e)))
 ;;
 
 (* INFRA-048 / FND-0011: a namespace Sol created is established with [create],
@@ -170,20 +168,17 @@ let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   if dry_run
   then Printf.printf "%s\n%s\n" ns_yaml workload_yaml
   else (
-    (match create_idempotent_yaml ~ctx ns_yaml with
-     | Ok () -> ()
-     | Error e ->
-       raise
-         (Deploy_failed
-            ("kubectl create (namespace): " ^ Sol_cli_process.error_to_string e)));
+    create_idempotent_yaml ~ctx ns_yaml
+    |> Result.iter_error (fun e ->
+      raise
+        (Deploy_failed ("kubectl create (namespace): " ^ Sol_cli_process.error_to_string e)));
     let tmp = write_tmp workload_yaml in
     (try
-       (match Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp with
-        | Ok () -> ()
-        | Error e ->
-          raise
-            (Deploy_failed
-               ("kubectl server-side dry-run failed: " ^ Sol_cli_process.error_to_string e)));
+       Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp
+       |> Result.iter_error (fun e ->
+         raise
+           (Deploy_failed
+              ("kubectl server-side dry-run failed: " ^ Sol_cli_process.error_to_string e)));
        kubectl_apply ~ctx tmp
      with
      | e ->

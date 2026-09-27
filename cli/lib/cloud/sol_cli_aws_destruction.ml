@@ -741,11 +741,10 @@ let prepare { run_log; infra_dir; var_files; vars; _ } ~retention ~cluster_name 
 (* The platform destroy removes the ingress Service; AWS deprovisions its load
    balancer asynchronously, so wait before Terraform removes the VPC. *)
 let before_substrate_destroy ctx () =
-  match ctx.resolved_var "cluster_name" with
-  | None -> ()
-  | Some cluster_name ->
+  ctx.resolved_var "cluster_name"
+  |> Option.iter (fun cluster_name ->
     let region = Option.value (ctx.resolved_var "region") ~default:"us-east-1" in
-    wait_for_load_balancers_gone ~region ~cluster_name 24
+    wait_for_load_balancers_gone ~region ~cluster_name 24)
 ;;
 
 let destruction ctx : Sol_cli_destruction.t =

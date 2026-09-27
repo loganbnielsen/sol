@@ -863,7 +863,7 @@ let apply_deps
         | Error message -> Error (Sol_cli_cloud_apply.Refused message)
         | Ok () ->
           terraform_failure (terraform_init run_log platform_dir platform_backend))
-  ; platform_installed = (fun env -> crds_established env)
+  ; platform_installed = crds_established
   ; apply_prerequisites =
       platform_apply
         ~name:"platform-prerequisites-apply"
@@ -1655,9 +1655,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           part of why the run failed. *)
        report_cleanup_evidence cleanup;
        report_degradations degradations;
-       (match verification with
-        | Some verification -> report_verification verification
-        | None -> ());
+       verification |> Option.iter report_verification;
        Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
     (* Everything was reported above; only the code is left to say. *)
     (match Sol_cli_cloud_destroy.exit_code outcome with

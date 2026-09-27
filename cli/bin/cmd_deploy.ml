@@ -212,9 +212,8 @@ let build_plan ctx ~emit_to =
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =
-  match emit_plan_to with
-  | None -> ()
-  | Some path ->
+  emit_plan_to
+  |> Option.iter (fun path ->
     let json_str = Yojson.Safe.pretty_to_string (Sol_cli_deployment_plan.to_json plan) in
     if path = "-"
     then (
@@ -225,7 +224,7 @@ let write_plan_if_requested ~emit_plan_to plan =
       output_string oc json_str;
       output_char oc '\n';
       close_out oc;
-      Printf.printf "Plan written to %s\n%!" path)
+      Printf.printf "Plan written to %s\n%!" path))
 ;;
 
 let to_manifest_primitive = function

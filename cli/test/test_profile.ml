@@ -1151,16 +1151,13 @@ let test_event_with_unknown_profile_rejected () =
    the way HARDEN-002 Run 5 attempt 1 did. *)
 let test_recommended_shape_satisfies_the_envelope () =
   let shape = P.recommended_node_shape in
-  (match
-     P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
-   with
-   | Ok () -> ()
-   | Error reason ->
-     Alcotest.fail
-       (Printf.sprintf
-          "the profile's own recommended shape must satisfy its own capacity contract, \
-           but it does not: %s"
-          reason));
+  P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
+  |> Result.iter_error (fun reason ->
+    Alcotest.fail
+      (Printf.sprintf
+         "the profile's own recommended shape must satisfy its own capacity contract, \
+          but it does not: %s"
+         reason));
   (* And comfortably rather than barely: the platform must still fit after the
      one-node headroom a node-failure-tolerant workload requires, which is the
      margin attempt 1 did not have. *)

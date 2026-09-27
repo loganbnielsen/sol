@@ -188,9 +188,9 @@ let violations policy changes =
     else (
       let action = action_to_string change.action in
       let in_scope =
-        List.exists
-          (fun rule -> List.exists (fun matcher -> matches matcher change) rule.matches)
-          policy.rules
+        policy.rules
+        |> List.exists (fun rule ->
+          List.exists (fun matcher -> matches matcher change) rule.matches)
       in
       Some
         (if in_scope

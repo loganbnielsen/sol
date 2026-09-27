@@ -61,18 +61,16 @@ let render entries =
   envs
   |> List.iter (fun env ->
     Buffer.add_string buf (env ^ ":\n  targets:\n");
-    List.iter
-      (fun (target, text) ->
-         match String.split_on_char '/' target with
-         | [ e; provider; region ] when e = env ->
-           Buffer.add_string buf (Printf.sprintf "    %s/%s:\n" provider region);
-           List.iter
-             (fun line ->
-                if String.trim line <> ""
-                then Buffer.add_string buf ("      " ^ line ^ "\n"))
-             (body_of_target_file text)
-         | _ -> ())
-      entries);
+    entries
+    |> List.iter (fun (target, text) ->
+      match String.split_on_char '/' target with
+      | [ e; provider; region ] when e = env ->
+        Buffer.add_string buf (Printf.sprintf "    %s/%s:\n" provider region);
+        List.iter
+          (fun line ->
+             if String.trim line <> "" then Buffer.add_string buf ("      " ^ line ^ "\n"))
+          (body_of_target_file text)
+      | _ -> ()));
   Buffer.contents buf
 ;;
 

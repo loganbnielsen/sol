@@ -859,22 +859,21 @@ let test_readiness_fails_each_predicate () =
       (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
       "Ready"
       (L.readiness_summary all);
-    List.iteri
-      (fun failed _ ->
-         let index = ref (-1) in
-         let checks =
-           L.readiness ~provider:p ~run:(fun argv ->
-             incr index;
-             if !index = failed then None else succeeds argv)
-         in
-         Alcotest.(check bool)
-           (Printf.sprintf
-              "predicate %d fails closed (%s)"
-              failed
-              (Sol_cli_provider.to_string p))
-           true
-           (L.readiness_summary checks <> "Ready"))
-      all)
+    all
+    |> List.iteri (fun failed _ ->
+      let index = ref (-1) in
+      let checks =
+        L.readiness ~provider:p ~run:(fun argv ->
+          incr index;
+          if !index = failed then None else succeeds argv)
+      in
+      Alcotest.(check bool)
+        (Printf.sprintf
+           "predicate %d fails closed (%s)"
+           failed
+           (Sol_cli_provider.to_string p))
+        true
+        (L.readiness_summary checks <> "Ready")))
 ;;
 
 let readiness_with_storage ~provider storage_output =

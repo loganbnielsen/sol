@@ -817,9 +817,7 @@ let dev_run workspace_dir scope =
     | None -> "."
   in
   (* Change to workspace dir if given explicitly so discover_services works *)
-  (match workspace_dir with
-   | Some d -> Unix.chdir d
-   | None -> ());
+  workspace_dir |> Option.iter Unix.chdir;
   let* inventory =
     Sol_cli_manifest.discover_services ()
     |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
