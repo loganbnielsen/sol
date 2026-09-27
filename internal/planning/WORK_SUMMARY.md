@@ -4,6 +4,7 @@
 
 - An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593): text-built manifests, ad-hoc JSON decoding, exceptions as control flow, spawns outside `Sol_cli_process`, library printing, per-tool error classifiers, `framework/` + soldev, the pinned `*-eio` libraries, and thin `cli/bin`.
 - **REFAC-131:** every manifest Sol writes is a `Sol_cli_yaml` value rendered by libyaml; a hostile `sol.toml` value that broke the old ConfigMap now round-trips exactly, and pluto's 37 documents parse to identical values before and after. `check_manifests_are_values.sh` holds it.
+- **REFAC-138:** the pinned `*-eio` libraries use `Result.Syntax`, and aws-eio returns malformed responses as errors in their own words; six library PRs merged and `support-refs.txt` bumped.
 
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 

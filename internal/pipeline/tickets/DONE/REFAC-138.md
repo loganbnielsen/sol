@@ -38,3 +38,29 @@ Then in Sol: `internal/tooling/scripts/bump-support-refs.sh <packages>`, rebuild
 - `support-refs.txt` points at those commits; `internal/ci/check_support_refs.sh` passes; Sol's CI is green on the bump.
 - No public signature of a support library changes except where a raising function becomes result-returning; each such change and its Sol call sites are listed.
 - Demo/example: not applicable (library internals). Language parity: the blank-env rule is shared with REFAC-137's note.
+
+## Completion notes
+
+**Premise verified (2026-09-27)** at the commits `support-refs.txt` pinned, library code only: `rg -n 'let \( let\* \) =' */lib` listed the 12 hand-written `let*` sites above; `aws_http.ml` raised `failwith` in `read_response`/`do_once`.
+
+**Merged, one PR per repository (each repository's CI green on its head):**
+
+| Repository | PR | Merge commit | Change |
+|---|---|---|---|
+| aws-eio | #27 | `5a295443` | `read_response`/`do_once` return `Error` in the parser's own words; `request_once`'s catch-all is left for Eio's I/O exceptions. Before, a malformed status line surfaced as `network error: Failure("bad status line: …")`. New test `malformed status line is its own error`, shown failing on the old code. `aws_credentials` uses `Result.Syntax`. |
+| kafka-eio | #25 | `4b6d4204` | `Result.Syntax` (4 sites) |
+| pg-eio | #22 | `1cfc9b51` | `Result.Syntax` (2 lib sites + the test file) |
+| s3-eio | #20 | `7cca2fc1` | `Result.Syntax` |
+| dynamodb-eio | #18 | `3e4bbec6` | `Result.Syntax` (2 sites) |
+| lambda-eio | #21 | `4a0cf964` | `Result.Syntax` (2 sites) |
+
+`internal/tooling/scripts/bump-support-refs.sh` moved those six in `support-refs.txt` and, in lockstep, the pins in `sol-fn.opam`, `sol-jobs.opam`, pluto's and venus's opam files and the workspace template; `check_support_refs.sh` passes. CI on this PR pins and builds against them.
+
+**Examined and left, with the reason:**
+- `kafka-eio`'s `env_opt` treats `""` as unset without trimming. It reads `KAFKA_SASL_PASSWORD`, whose whitespace is data, so not trimming is correct for this library (Sol's framework decides blank for its own settings, REFAC-137).
+- `pg-eio`'s `Identifier.of_string_exn` validates a functor's static schema identifiers (a programmer error), `migration.ml`'s `failwith` is a documented unreachable case, and `pg_db`'s `App_error` is a local exception carried through Caqti's `use` callback and caught immediately.
+- `obs-eio`'s `of_traceparent` reads a malformed header as `None`, which is what W3C Trace Context requires (a malformed `traceparent` is treated as absent); its catch-all cannot fire after the hex checks.
+- Constructor argument checks raising `Invalid_argument` (`obs-eio` metric names, `obs-loki-eio`/`obs-tempo-eio` `create` options) are programmer errors on static configuration.
+- `https-eio`'s `None | Some ""` is a URI host check at its own parse boundary.
+
+No public signature changed. **Demo/example:** not applicable (library internals; pluto's and venus's pins move with the bump). **Language parity:** no impact.
