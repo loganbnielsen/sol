@@ -11,43 +11,49 @@ let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
 
-(* EXP-029: after a real apply, print a port-forward hint for each HTTP
-   service so the engineer doesn't need a separate 'sol status' call to
-   discover the endpoint. Same ClusterIP+port-80 detection cmd_status.ml's
-   print_raw_diagnostics already uses -- only Svc-primitive services ever
-   get a Service resource (sol_cli_deployment_render.ml only emits
-   service_doc for Http_service shapes), so this naturally excludes
-   worker/fn services without needing to thread primitive info through. *)
-let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
-  let deployed_names = List.map (fun r -> r.Sol_cli_executor.name) results in
-  let namespaces =
-    List.sort_uniq compare (results |> List.map (fun r -> r.Sol_cli_executor.namespace))
-  in
-  namespaces
-  |> List.iter (fun ns ->
+(* EXP-029: the HTTP services this deploy created -- the ClusterIP Services
+   listening on port 80, the same detection cmd_status.ml's print_raw_diagnostics
+   uses. Only Svc-primitive services ever get a Service resource
+   (sol_cli_deployment_render.ml only emits service_doc for Http_service shapes),
+   so this naturally excludes worker/fn services. Best effort: it feeds a hint,
+   so a read that fails lists nothing rather than failing the deploy. *)
+let http_services ~ctx (results : Sol_cli_executor.result list) =
+  let deployed = results |> List.map (fun r -> r.Sol_cli_executor.name) in
+  let cluster_ip_services ns =
     let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
     match
       Sol_cli_kubectl.get_raw
         ~ctx
         ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
     with
-    | Ok r when r.stdout <> "" ->
-      let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
-      String.split_on_char ' ' r.stdout
-      |> List.filter (fun name -> List.mem name deployed_names)
-      |> List.iter (fun name ->
-        match
-          Sol_cli_kubectl.get
-            ~ctx
-            ~resource:"svc"
-            ~name
-            ~namespace:ns
-            ~output:("jsonpath=" ^ port80_jsonpath)
-        with
-        | Ok gr when gr.stdout <> "" ->
-          Printf.printf "  →  http://localhost:8080  (%s)\n%!" name
-        | _ -> ())
-    | _ -> ())
+    | Ok r ->
+      String.split_on_char ' ' r.stdout |> List.filter_map Sol_cli_string.non_blank
+    | Error _ -> []
+  in
+  let serves_port_80 ns name =
+    match
+      Sol_cli_kubectl.get
+        ~ctx
+        ~resource:"svc"
+        ~name
+        ~namespace:ns
+        ~output:"jsonpath={.spec.ports[?(@.port==80)].port}"
+    with
+    | Ok r -> Option.is_some (Sol_cli_string.non_blank r.stdout)
+    | Error _ -> false
+  in
+  results
+  |> List.map (fun r -> r.Sol_cli_executor.namespace)
+  |> List.sort_uniq String.compare
+  |> List.concat_map (fun ns ->
+    cluster_ip_services ns
+    |> List.filter (fun name -> List.mem name deployed && serves_port_80 ns name))
+;;
+
+(* A port-forward hint for each, so the engineer doesn't need a separate
+   'sol status' call to discover the endpoint. *)
+let print_service_urls names =
+  names |> List.iter (Printf.printf "  →  http://localhost:8080  (%s)\n%!")
 ;;
 
 let check_contract ~services =
@@ -538,7 +544,7 @@ let report_apply_success ctx plan results =
   |> List.iter (fun r ->
     Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.image);
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-  print_service_urls ~ctx:ctx.execution.cluster results;
+  print_service_urls (http_services ~ctx:ctx.execution.cluster results);
   Printf.printf "Run 'sol status' to check pod health.\n";
   report_surplus_workloads ctx plan
 ;;

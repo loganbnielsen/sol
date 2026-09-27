@@ -172,7 +172,7 @@ let test_reachability_of_probe_unreachable () =
     true
     (S.reachability_of_probe ~probe_url:(Some "http://x") ~is_reachable:(fun _ ->
        Error "connection failed")
-     = S.Unreachable)
+     = S.Unreachable "connection failed")
 ;;
 
 let test_reachability_to_string () =
@@ -180,7 +180,7 @@ let test_reachability_to_string () =
   check_bool
     "Unreachable label"
     true
-    (S.reachability_to_string S.Unreachable = "unreachable");
+    (S.reachability_to_string (S.Unreachable "HTTP 503") = "unreachable (HTTP 503)");
   check_bool
     "Not_checked label"
     true

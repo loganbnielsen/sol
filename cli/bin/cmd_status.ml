@@ -143,37 +143,35 @@ let dashboard_reachability ~backend ~base_domain =
    message selection itself ([Sol_cli_status.reachability_line]) is a pure
    function of [probe_url] and the injected [is_reachable] result -- only
    deciding the probe URL and running curl stays here. *)
-let print_signal_line ~label ~signal ~backend ~explicit_url ~default_local_url ~probe_path
-  =
+let signal_line ~signal ~backend ~explicit_url ~default_local_url ~probe_path =
   let probe_url =
     Sol_cli_status.probe_url ~backend ~explicit_url ~default_local_url ~probe_path
   in
-  Printf.printf
-    "  %-8s %s\n"
-    label
-    (Sol_cli_status.reachability_line
-       ~signal
-       ~backend
-       ~probe_url
-       ~is_reachable:health_check_reachable)
+  Sol_cli_status.reachability_line
+    ~signal
+    ~backend
+    ~probe_url
+    ~is_reachable:health_check_reachable
 ;;
 
 let print_observability_lines ~backend ~explicit_loki_url ~explicit_prometheus_url =
-  print_signal_line
-    ~label:"logs"
-    ~signal:Sol_cli_status.Loki
-    ~backend
-    ~explicit_url:explicit_loki_url
-    ~default_local_url:"http://localhost:3100"
-    ~probe_path:"/ready";
-  print_signal_line
-    ~label:"metrics"
-    ~signal:Sol_cli_status.Prometheus
-    ~backend
-    ~explicit_url:explicit_prometheus_url
-    ~default_local_url:"http://localhost:9090"
-    ~probe_path:"/-/healthy";
-  flush stdout
+  let logs =
+    signal_line
+      ~signal:Sol_cli_status.Loki
+      ~backend
+      ~explicit_url:explicit_loki_url
+      ~default_local_url:"http://localhost:3100"
+      ~probe_path:"/ready"
+  in
+  let metrics =
+    signal_line
+      ~signal:Sol_cli_status.Prometheus
+      ~backend
+      ~explicit_url:explicit_prometheus_url
+      ~default_local_url:"http://localhost:9090"
+      ~probe_path:"/-/healthy"
+  in
+  Printf.printf "  %-8s %s\n  %-8s %s\n%!" "logs" logs "metrics" metrics
 ;;
 
 let print_observability_block

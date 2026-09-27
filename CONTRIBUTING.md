@@ -155,6 +155,20 @@ installer in a scratch repository, seeds a dangling symlink, and asserts every
 hook lands as a resolving, executable symlink. The test exists because a stale
 install is otherwise indistinguishable from a clean one.
 
+## Code conventions
+
+These are the rules review keeps coming back to, written down once (REFAC-120). Each is applied across `cli/`, and each has a reason.
+
+- **Lead with the data.** When the function argument is more than a line, pipe the data into it: `findings |> List.iter (fun f -> …)`, not `List.iter (fun f -> …) findings`. The reader learns *what* is being iterated before *how*, and a chain of steps reads top to bottom.
+- **Resolve, then print.** A function that computes something does not also print it: `http_services` finds the services, `print_service_urls` prints them. A value computed only to be consumed by the next line becomes a named function feeding a pipeline (`findings_for scope |> report`).
+- **No redundant annotations or qualifiers.** Write `fun r -> r.name`, not `fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.name`, whenever the type is already known -- a pipeline usually makes it known. Keep one only where the compiler needs it (a field name shared by an opened module, a record constructed before its use fixes the type).
+- **A no-op arm is `iter`.** `match r with Ok () -> () | Error e -> …` is `r |> Result.iter_error (fun e -> …)`; `match o with None -> () | Some x -> …` is `o |> Option.iter (fun x -> …)`. And `(fun x -> f x)` is `f`.
+- **`let*` is `open Result.Syntax`**, never a hand-written `let ( let* ) = Result.bind`; a test rule in `cli/test/dune` fails on one. Only the scaffold templates, which are code `sol new` writes into a user's workspace, are exempt.
+- **Nothing below a command's term exits.** Library code returns `result`; a command's `run` is a `let*` chain; its Cmdliner term converts the outcome to an exit once, with `Sol_cli_exit.exit_on` (REFAC-115).
+- **Decide blank at the boundary.** Decoders, argument converters (`Sol_cli_args.text`), environment reads (`Sol_cli_string.env`) and tool adapters turn blank into `None` or an error, so inside Sol an optional string is never `Some ""` and an empty list is an answer, not a sentinel (REFAC-123).
+- **Keep the original error text.** When handling a tool's or library's failure, pass its own words on; classification is a view for control flow (`Sol_cli_kubectl.classify`), never a replacement for the message. Adding context around it ("kubectl get configmap failed: <what kubectl said>") is fine; substituting Sol's own prose ("the cluster refused the request") loses what the operator needs to act on (REFAC-125).
+- **Ask the tool for a structured answer** before matching its prose; where there is none, classify in one place per tool, with a test holding the verbatim message (REFAC-125).
+
 ## Trademarks
 
 The "Sol" name and logo are **not** covered by the Apache-2.0 licence — see

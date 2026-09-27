@@ -79,12 +79,12 @@ let domain_status_to_string = function
 
 type reachability =
   | Healthy
-  | Unreachable
+  | Unreachable of string (* what the probe said *)
   | Not_checked
 
 let reachability_to_string = function
   | Healthy -> "healthy"
-  | Unreachable -> "unreachable"
+  | Unreachable why -> "unreachable (" ^ why ^ ")"
   | Not_checked -> "not checked"
 ;;
 
@@ -114,7 +114,7 @@ let reachability_of_probe ~probe_url ~is_reachable =
   | Some url ->
     (match is_reachable url with
      | Ok () -> Healthy
-     | Error _ -> Unreachable)
+     | Error why -> Unreachable why)
 ;;
 
 (* OBS-031: `sol logs`/`sol status` used to collapse two operationally

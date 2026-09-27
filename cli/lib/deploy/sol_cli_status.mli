@@ -50,7 +50,7 @@ val domain_status_to_string : domain_status -> string
 
 type reachability =
   | Healthy
-  | Unreachable
+  | Unreachable of string (** what the probe said, kept rather than summarised *)
   | Not_checked
 
 val reachability_to_string : reachability -> string
