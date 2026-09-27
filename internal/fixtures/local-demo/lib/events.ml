@@ -34,7 +34,7 @@ module OrderPlaced = struct
       ]
   ;;
 
-  let ( let* ) = Result.bind
+  open Result.Syntax
 
   let required_string fields name =
     match List.assoc_opt name fields with

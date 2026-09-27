@@ -3,7 +3,7 @@ id: REFAC-138
 type: refactor
 severity: low
 title: Carry the code conventions into the pinned support libraries (*-eio) and bump support-refs.txt
-source: pattern audit of the REFAC-104..130 series (2026-09-26); operator: "it's also possible that these need to be fixed for our *-eio ocaml libraries … perhaps we should consider updating there as well"
+source: "pattern audit of the REFAC-104..130 series (2026-09-26); operator: \"it's also possible that these need to be fixed for our *-eio ocaml libraries … perhaps we should consider updating there as well\""
 ---
 
 **Depends on:** None.

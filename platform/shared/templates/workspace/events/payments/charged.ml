@@ -40,7 +40,7 @@ let required_int fields name =
   | Some _            -> Error (name ^ " must be an integer")
   | None              -> Error (name ^ " is required")
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let decode = function
   | `Assoc fields ->

@@ -1,23 +1,24 @@
+(* REFAC-137: the same rule as [Sol_runtime.setting] -- trimmed, blank is unset.
+   A copy rather than a call: kafka-eio-service is its own package and does not
+   depend on sol-runtime. *)
+let setting name =
+  match Sys.getenv_opt name with
+  | None -> None
+  | Some value ->
+    (match String.trim value with
+     | "" -> None
+     | trimmed -> Some trimmed)
+;;
+
 let of_env () =
-  let env_or name default =
-    match Sys.getenv_opt name with
-    | Some v when String.length v > 0 -> v
-    | _ -> default
-  in
+  let env_or name default = Option.value (setting name) ~default in
   (* BUG-055 / FND-0054: the substrate addresses are stated, never defaulted to
      localhost. In a pod nothing listens there, so a config that omitted one used
      to fail later with an error naming localhost instead of the missing variable.
      Sol-rendered manifests and [sol local run] set all three. *)
   let required = [ "KAFKA_BROKERS"; "SCHEMA_REGISTRY_URL"; "REDPANDA_ADMIN_URL" ] in
   let addresses =
-    match
-      List.filter
-        (fun name ->
-           match Sys.getenv_opt name with
-           | Some v -> String.trim v = ""
-           | None -> true)
-        required
-    with
+    match List.filter (fun name -> Option.is_none (setting name)) required with
     | [] -> Ok ()
     | missing ->
       Error
@@ -45,9 +46,9 @@ let of_env () =
      every environment ship plaintext without saying so; Sol-rendered manifests
      now always set it, and anything else must too (plaintext locally). *)
   let declared_protocol =
-    match Sys.getenv_opt "KAFKA_SECURITY_PROTOCOL" with
-    | Some v when String.trim v <> "" -> Ok ()
-    | _ ->
+    match setting "KAFKA_SECURITY_PROTOCOL" with
+    | Some _ -> Ok ()
+    | None ->
       Error
         "KAFKA_SECURITY_PROTOCOL is not set: state the Kafka transport posture \
          explicitly (plaintext | ssl | sasl_plaintext | sasl_ssl). Sol-rendered \

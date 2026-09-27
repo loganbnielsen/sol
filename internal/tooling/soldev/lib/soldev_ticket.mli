@@ -17,9 +17,17 @@ type ticket_state =
 val state_to_dir : ticket_state -> string
 val state_of_dir : string -> ticket_state option
 val all_states : ticket_state list
-val parse_frontmatter : string -> (string * string) list
+
+(** The ticket's frontmatter fields, parsed as YAML (REFAC-137): each value is
+    its scalar's text, trimmed, and a blank or null value is absent. [Ok []] when
+    there is no frontmatter; [Error] names what is wrong with an invalid block. *)
+val frontmatter : string -> ((string * string) list, string) result
+
+(** [frontmatter], with an invalid block read as no fields -- for readers that
+    only want one field. *)
+val fields : string -> (string * string) list
+
 val fm_get : (string * string) list -> string -> string option
-val set_frontmatter_field : string -> string -> string -> string
 val parse_depends : string -> string list
 val has_human_decision_gate : string -> bool
 val human_decision_details : string -> string
@@ -37,12 +45,13 @@ type premise_verdict =
 (** The probe a ticket declares, if any. *)
 val premise_of : string -> string option
 
-(** [premise_verdict ~probe ~exit_code] classifies a probe run. A probe succeeds
-    when the premise is *stale* — see the implementation for why that inversion
-    is deliberate. The exit code is injected so this is testable without running
+(** [premise_verdict ~exit_code] classifies a probe run. A probe succeeds when
+    the premise is *stale* — see the implementation for why that inversion is
+    deliberate. The exit code is injected so this is testable without running
     anything; a probe that cannot be run is [Premise_unverified], never
-    [Premise_holds]. *)
-val premise_verdict : probe:string -> exit_code:int -> premise_verdict
+    [Premise_holds]. A blank probe never reaches here: [premise_of] reads a blank
+    [premise:] as none. *)
+val premise_verdict : exit_code:int -> premise_verdict
 
 (** [find_dependency_cycle_from ~deps_of start] walks [deps_of] from [start] and
     returns the first cycle it closes, as a path like

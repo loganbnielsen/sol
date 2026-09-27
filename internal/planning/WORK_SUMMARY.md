@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: refactoring-pattern audit, REFAC-131..139 (2026-09-27)
+
+- An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593).
+- **REFAC-137:** `let*` is `Result.Syntax` repository-wide (framework, fixtures, examples, scaffold templates), held by `check_result_syntax.sh`; the framework reads settings through `Sol_runtime.setting` (trimmed, blank is unset); soldev returns results and exits once, and reads ticket frontmatter with the yaml library -- every ticket's frontmatter must now be valid YAML.
+
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 
 - Attempt 14 measured the mismatch: on Autopilot the cloud root and prerequisites applied, then GKE's admission webhook refused `helm_release.prometheus` (hostNetwork/hostPID) and `helm_release.redpanda` (SYS_RESOURCE) — ten minutes and a billable cluster in, no path to `Ready` (FND-0064).

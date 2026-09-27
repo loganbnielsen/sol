@@ -324,6 +324,12 @@ jobs:
       - name: Platform-assets ownership mutation test
         run: bash internal/ci/test_platform_assets_owner.sh
 
+      - name: let* is Result.Syntax, repository-wide (REFAC-137)
+        run: bash internal/ci/check_result_syntax.sh
+
+      - name: Result.Syntax mutation test
+        run: bash internal/ci/test_result_syntax.sh
+
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.

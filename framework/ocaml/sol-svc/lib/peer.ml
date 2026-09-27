@@ -11,15 +11,9 @@ let env_var source_name =
   |> fun s -> s ^ "_URL"
 ;;
 
-let env_nonempty name =
-  match Sys.getenv_opt name with
-  | Some value when String.trim value <> "" -> Some (String.trim value)
-  | _ -> None
-;;
-
 let url peer =
   let name = env_var peer in
-  match env_nonempty name with
+  match Sol_runtime.setting name with
   | Some value ->
     let uri = Uri.of_string value in
     (match Uri.scheme uri, Uri.host uri with
@@ -35,7 +29,7 @@ let put_header name value headers =
 ;;
 
 let api_key ~env =
-  match env_nonempty "SOL_API_KEY_FILE", env_nonempty "SOL_API_KEY" with
+  match Sol_runtime.setting "SOL_API_KEY_FILE", Sol_runtime.setting "SOL_API_KEY" with
   | Some path, _ ->
     (try
        let key = String.trim (Eio.Path.load Eio.Path.(env#fs / path)) in

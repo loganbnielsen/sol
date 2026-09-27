@@ -20,7 +20,13 @@ let merge_ticket_arg =
            <TICKET-ID>/....")
 ;;
 
-let run_merge dry_run ticket_filter = Soldev_merge.run_merge ~dry_run ~ticket_filter
+(* REFAC-137: each command returns its outcome; this is the one place it becomes
+   a process exit. *)
+let exit_on = Soldev_exit.exit_on
+
+let run_merge dry_run ticket_filter =
+  Soldev_merge.run_merge ~dry_run ~ticket_filter |> exit_on
+;;
 
 let merge_cmd =
   Cmd.v
@@ -46,7 +52,7 @@ let merge_sha_arg =
 ;;
 
 let run_merge_finish ticket_id merge_sha =
-  Soldev_merge.run_merge_finish ~ticket_id ~merge_sha
+  Soldev_merge.run_merge_finish ~ticket_id ~merge_sha |> exit_on
 ;;
 
 let merge_finish_cmd =
@@ -70,7 +76,7 @@ let submit_cmd =
           moved the ticket file to DONE/ on that branch. Pushes the branch and opens a \
           PR (or reuses an existing one) — never touches internal/pipeline/tickets/ on \
           main.")
-    Term.(const Soldev_merge.run_submit $ ticket_arg)
+    Term.(const (fun id -> Soldev_merge.run_submit id |> exit_on) $ ticket_arg)
 ;;
 
 let result_file_arg =
@@ -92,7 +98,10 @@ let review_cmd =
           SOLDEV-REVIEW: PASS on pass (which `merge` checks for), an ordinary violations \
           comment on fail. Not a formal GitHub review: `gh` always runs as the PR's own \
           author here, and GitHub refuses self-approval. No ticket file moves.")
-    Term.(const Soldev_merge.run_review $ ticket_arg $ result_file_arg)
+    Term.(
+      const (fun id file -> Soldev_merge.run_review id file |> exit_on)
+      $ ticket_arg
+      $ result_file_arg)
 ;;
 
 let include_done_flag =
@@ -104,7 +113,7 @@ let ls_cmd =
     (Cmd.info
        "ls"
        ~doc:"List tickets grouped by pipeline stage. Pass --all to include DONE.")
-    Term.(const Soldev_merge.run_ls $ include_done_flag)
+    Term.(const (fun all -> Soldev_merge.run_ls all |> exit_on) $ include_done_flag)
 ;;
 
 let check_cmd =
@@ -114,7 +123,7 @@ let check_cmd =
        ~doc:
          "Check whether a ticket is actionable, including human-decision gates and \
           dependency status.")
-    Term.(const Soldev_merge.run_check $ ticket_arg)
+    Term.(const (fun id -> Soldev_merge.run_check id |> exit_on) $ ticket_arg)
 ;;
 
 let check_reverts_cmd =
@@ -125,7 +134,7 @@ let check_reverts_cmd =
          "Scan git history for a merge that was later reverted whose ticket still sits \
           in DONE/ — catches a fix that broke, got reverted, and was never refixed. \
           Exits 1 if any are found.")
-    Term.(const Soldev_merge.run_check_reverts $ const ())
+    Term.(const (fun () -> Soldev_merge.run_check_reverts () |> exit_on) $ const ())
 ;;
 
 let cmd =
