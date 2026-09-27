@@ -33,10 +33,12 @@ let completed ~exit_code ~stdout ~stderr =
 
 let error_to_string = function
   | Spawn_failed msg -> Printf.sprintf "spawn failed: %s" msg
-  | Non_zero { exit_code; stderr; stdout = _ } ->
-    if stderr = ""
-    then Printf.sprintf "exited with code %d" exit_code
-    else Printf.sprintf "exited with code %d: %s" exit_code stderr
+  (* What the command said is kept: stderr, else stdout (a tool that reports its
+     failure on stdout is not silenced). *)
+  | Non_zero { exit_code; stderr; stdout } ->
+    (match String.trim stderr, String.trim stdout with
+     | "", "" -> Printf.sprintf "exited with code %d" exit_code
+     | "", said | said, _ -> Printf.sprintf "exited with code %d: %s" exit_code said)
   | Timeout s -> Printf.sprintf "timed out after %.1fs" s
 ;;
 

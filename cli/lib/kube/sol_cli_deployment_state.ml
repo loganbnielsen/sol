@@ -25,23 +25,26 @@ let deploy_state_configmap_name workspace =
 let load_deployed_groups ~ctx workspace =
   let name = deploy_state_configmap_name workspace in
   match
-    Sol_cli_kubectl.get
+    Sol_cli_kubectl.get_if_present
       ~ctx
-      ~resource:"configmap"
-      ~name
-      ~namespace:"default"
-      ~output:"jsonpath={.data.consumer_groups}"
+      ~args:
+        [ "get"
+        ; "configmap"
+        ; name
+        ; "-n"
+        ; "default"
+        ; "-o"
+        ; "jsonpath={.data.consumer_groups}"
+        ]
   with
-  | Ok r ->
+  | Ok groups ->
+    (* BUG-045 / FND-0038: only "no record yet" (a first deploy) means no previous
+       groups. Any other failure used to read the same way, so the removal guard
+       passed silently exactly when the cluster could not be asked. *)
     Ok
-      (String.split_on_char '\n' r.Sol_cli_process.stdout
-       |> List.map String.trim
-       |> List.filter (fun s -> s <> ""))
-  (* BUG-045 / FND-0038: only "no record yet" (a first deploy) means no previous
-     groups. Any other failure used to read the same way, so the removal guard
-     passed silently exactly when the cluster could not be asked. *)
-  | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok []
+      (Option.value groups ~default:""
+       |> String.split_on_char '\n'
+       |> List.filter_map Sol_cli_string.non_blank)
   | Error e ->
     Error
       (Printf.sprintf

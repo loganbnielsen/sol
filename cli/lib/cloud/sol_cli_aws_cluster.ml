@@ -157,19 +157,6 @@ let whoami_retry_interval_s () =
 let cluster_propagation_attempts = 10
 let deescalation_attempts = 18
 
-(* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
-   de-escalation probe treats it as evidence of de-escalation while the shape gate treats it
-   as a reason to stop immediately: retrying cannot change an identity. *)
-let cluster_refused detail =
-  List.exists
-    (fun needle -> Sol_cli_string.contains ~needle detail)
-    [ "Unauthorized"
-    ; "You must be logged in"
-    ; "the server has asked for the client to provide credentials"
-    ; "is forbidden"
-    ]
-;;
-
 (* AUDIT-POST-001: AWS-native identity, moved here from [Sol_cli_cloud_lifecycle].
 
    `kubectl auth whoami -o json` answers with a SelfSubjectReview, and on EKS the AWS
@@ -437,7 +424,9 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
        else -- a credential that could not be assumed, a token that could not be
        generated, no reachable API -- is a measurement failure, and absence of evidence
        must not become evidence of de-escalation. Only the cluster's own answer counts. *)
-    if cluster_refused detail
+    (* A refusal from the cluster, as opposed to a failure to reach it: kubectl's
+       classification (REFAC-125), not a word list kept here. *)
+    if Sol_cli_kubectl.classify (Sol_cli_process.Non_zero r) = Refused
     then (
       (* A refusal is evidence of removal only if the credential is still good. "You must be
          logged in" is also what a working credential gets when the role's trust policy is
