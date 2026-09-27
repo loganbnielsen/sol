@@ -30,26 +30,26 @@ let check_state_option msg expected actual =
 (* ── parse_frontmatter ───────────────────────────────────────────────────── *)
 
 let test_parse_empty () =
-  let fm = Soldev_ticket.parse_frontmatter "no frontmatter here" in
+  let fm = Soldev_ticket.fields "no frontmatter here" in
   Alcotest.(check (list (pair string string))) "empty" [] fm
 ;;
 
 let test_parse_basic () =
   let content = "---\nid: FEAT-001\ntype: feature\nseverity: high\n---\n\nBody" in
-  let fm = Soldev_ticket.parse_frontmatter content in
+  let fm = Soldev_ticket.fields content in
   check_option_string "id" (Some "FEAT-001") (Soldev_ticket.fm_get fm "id");
   check_option_string "type" (Some "feature") (Soldev_ticket.fm_get fm "type");
   check_option_string "severity" (Some "high") (Soldev_ticket.fm_get fm "severity")
 ;;
 
 let test_fm_get_missing () =
-  let fm = Soldev_ticket.parse_frontmatter "---\nid: X-1\n---\n" in
+  let fm = Soldev_ticket.fields "---\nid: X-1\n---\n" in
   check_option_string "missing key" None (Soldev_ticket.fm_get fm "branch")
 ;;
 
 let test_fm_get_colon_in_value () =
   let content = "---\nurl: https://example.com/path\n---\n" in
-  let fm = Soldev_ticket.parse_frontmatter content in
+  let fm = Soldev_ticket.fields content in
   check_option_string
     "colon in value"
     (Some "https://example.com/path")
@@ -280,35 +280,62 @@ let test_states_no_longer_include_removed_states () =
   check_bool "only 3 states remain" true (List.length Soldev_ticket.all_states = 3)
 ;;
 
-(* ── set_frontmatter_field ───────────────────────────────────────────────── *)
+(* ── frontmatter is YAML (REFAC-137) ──────────────────────────────────────── *)
 
-let test_set_field_appends_when_absent () =
-  let content = "---\nid: FEAT-001\ntype: feature\n---\n\nBody" in
-  let updated =
-    Soldev_ticket.set_frontmatter_field content "pr" "https://github.com/x/y/pull/1"
+let test_yaml_quoting_is_decoded () =
+  let content =
+    "---\n\
+     premise: '! rg -q ''let \\( let\\* \\) ='' x'\n\
+     title: \"A \\\"quoted\\\" title\"\n\
+     ---\n"
   in
-  let fm = Soldev_ticket.parse_frontmatter updated in
   check_option_string
-    "pr added"
-    (Some "https://github.com/x/y/pull/1")
-    (Soldev_ticket.fm_get fm "pr");
-  check_option_string "id preserved" (Some "FEAT-001") (Soldev_ticket.fm_get fm "id");
-  check_bool "body preserved" true (contains_substring ~needle:"Body" updated)
-;;
-
-let test_set_field_overwrites_when_present () =
-  let content = "---\nid: FEAT-001\npr: https://old\n---\n\nBody" in
-  let updated = Soldev_ticket.set_frontmatter_field content "pr" "https://new" in
-  let fm = Soldev_ticket.parse_frontmatter updated in
-  check_option_string "pr overwritten" (Some "https://new") (Soldev_ticket.fm_get fm "pr")
-;;
-
-let test_set_field_no_frontmatter_is_noop () =
-  let content = "no frontmatter here" in
+    "a single-quoted probe keeps its backslashes and un-doubles its quotes"
+    (Some "! rg -q 'let \\( let\\* \\) =' x")
+    (Soldev_ticket.premise_of content);
   check_string
-    "unchanged"
-    content
-    (Soldev_ticket.set_frontmatter_field content "pr" "https://x")
+    "a double-quoted escape is decoded"
+    "A \"quoted\" title"
+    (Soldev_ticket.ticket_title content)
+;;
+
+let test_yaml_comment_and_null () =
+  let content = "---\nid: X-1  # a comment\nbranch: ~\npr:\n---\n" in
+  let fm = Soldev_ticket.fields content in
+  check_option_string
+    "a comment is not part of the value"
+    (Some "X-1")
+    (Soldev_ticket.fm_get fm "id");
+  check_option_string "null is absent" None (Soldev_ticket.fm_get fm "branch");
+  check_option_string "empty is absent" None (Soldev_ticket.fm_get fm "pr")
+;;
+
+let test_invalid_frontmatter_is_an_error () =
+  (* The shape two tickets filed with this change had: an unquoted ": " in a
+     value. The hand-split parser read it; YAML refuses it, and so does soldev. *)
+  match Soldev_ticket.frontmatter "---\nsource: operator: said so\n---\n" with
+  | Ok _ -> Alcotest.fail "an invalid frontmatter was accepted"
+  | Error message ->
+    check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" message)
+;;
+
+(* Every ticket in the repository has a frontmatter soldev can read. *)
+let test_every_ticket_parses () =
+  let root = "../../../pipeline/tickets" in
+  let failures =
+    [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ]
+    |> List.concat_map (fun state ->
+      Sys.readdir (Filename.concat root state)
+      |> Array.to_list
+      |> List.filter (fun f -> Filename.check_suffix f ".md")
+      |> List.map (fun f -> Filename.concat (Filename.concat root state) f))
+    |> List.filter_map (fun path ->
+      let content = In_channel.with_open_bin path In_channel.input_all in
+      match Soldev_ticket.frontmatter content with
+      | Ok _ -> None
+      | Error message -> Some (path ^ ": " ^ message))
+  in
+  Alcotest.(check (list string)) "every ticket's frontmatter is valid YAML" [] failures
 ;;
 
 let () =
@@ -373,19 +400,14 @@ let () =
             `Quick
             test_states_no_longer_include_removed_states
         ] )
-    ; ( "set_frontmatter_field"
-      , [ Alcotest.test_case
-            "appends when absent"
-            `Quick
-            test_set_field_appends_when_absent
+    ; ( "frontmatter is YAML (REFAC-137)"
+      , [ Alcotest.test_case "quoting is decoded" `Quick test_yaml_quoting_is_decoded
+        ; Alcotest.test_case "comments and null" `Quick test_yaml_comment_and_null
         ; Alcotest.test_case
-            "overwrites when present"
+            "invalid frontmatter is an error"
             `Quick
-            test_set_field_overwrites_when_present
-        ; Alcotest.test_case
-            "no frontmatter is noop"
-            `Quick
-            test_set_field_no_frontmatter_is_noop
+            test_invalid_frontmatter_is_an_error
+        ; Alcotest.test_case "every ticket parses" `Quick test_every_ticket_parses
         ] )
     ; ( "dependency cycles"
       , [ (* The walk takes [deps_of] injected, so these need no ticket files —
@@ -468,23 +490,17 @@ let () =
               None
               (Soldev_ticket.premise_of "---\nid: X\npremise: \"  \"\n---\n\nBody\n"))
         ; Alcotest.test_case "exit 0 means stale" `Quick (fun () ->
-            match
-              Soldev_ticket.premise_verdict ~probe:"rg -q foo bar.ml" ~exit_code:0
-            with
+            match Soldev_ticket.premise_verdict ~exit_code:0 with
             | Soldev_ticket.Premise_stale -> ()
             | Soldev_ticket.Premise_holds -> Alcotest.fail "exit 0 must mean stale"
             | Soldev_ticket.Premise_unverified reason ->
               Alcotest.fail ("unexpected unverified: " ^ reason))
         ; Alcotest.test_case "non-zero means the premise holds" `Quick (fun () ->
-            match
-              Soldev_ticket.premise_verdict ~probe:"rg -q foo bar.ml" ~exit_code:1
-            with
+            match Soldev_ticket.premise_verdict ~exit_code:1 with
             | Soldev_ticket.Premise_holds -> ()
             | _ -> Alcotest.fail "a failing probe means the premise still holds")
         ; Alcotest.test_case "127 is unverified, not holds" `Quick (fun () ->
-            match
-              Soldev_ticket.premise_verdict ~probe:"no-such-tool --x" ~exit_code:127
-            with
+            match Soldev_ticket.premise_verdict ~exit_code:127 with
             | Soldev_ticket.Premise_unverified _ -> ()
             | _ -> Alcotest.fail "a probe that cannot run must not read as holds")
         ] )

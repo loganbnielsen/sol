@@ -331,6 +331,12 @@ jobs:
       - name: Manifest-values mutation test
         run: bash internal/ci/test_manifests_are_values.sh
 
+      - name: let* is Result.Syntax, repository-wide (REFAC-137)
+        run: bash internal/ci/check_result_syntax.sh
+
+      - name: Result.Syntax mutation test
+        run: bash internal/ci/test_result_syntax.sh
+
       - name: JSON is read through Sol_cli_json (REFAC-132)
         run: bash internal/ci/check_json_decode_boundary.sh
 

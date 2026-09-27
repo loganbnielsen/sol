@@ -10,14 +10,23 @@ import { runService } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
-// service.ml:208-212 (the contract this ticket names by name) falls back
-// to the default on a malformed PORT rather than crashing at .listen() —
-// Number(undefined-ish-string) would silently become NaN otherwise.
+// DEC-022 parity with Sol_runtime.setting (REFAC-137): a setting is trimmed,
+// and a blank one reads as unset, so " " means what unset means everywhere.
+function setting(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+// Parity with sol-svc's PORT rule (BUG-046): a value that is set but is not a
+// number is a configuration error naming it, not a silent fallback.
 function intEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+  const raw = setting(name);
   if (raw === undefined) return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
+  if (!Number.isInteger(n)) {
+    throw new Error(`${name}=${JSON.stringify(raw)} is not a number`);
+  }
+  return n;
 }
 
 const PORT = intEnv("PORT", 8080);
@@ -26,7 +35,7 @@ const PORT = intEnv("PORT", 8080);
 // there, so a missing one must fail at startup naming the variable. `sol local
 // run` and Sol-rendered manifests set them.
 function requiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
+  const value = setting(name);
   if (!value) {
     throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
   }
@@ -35,9 +44,9 @@ function requiredEnv(name: string): string {
 
 const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
 const SCHEMA_REGISTRY_URL = requiredEnv("SCHEMA_REGISTRY_URL");
-const LOKI_URL = process.env.LOKI_URL;
-const TEMPO_URL = process.env.TEMPO_URL;
-const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";
+const LOKI_URL = setting("LOKI_URL");
+const TEMPO_URL = setting("TEMPO_URL");
+const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
 
 const ORDER_PLACED_SCHEMA = JSON.stringify({
   type: "object",
@@ -191,7 +200,7 @@ async function main() {
   // where prometheus.io/scrape annotations hit /metrics directly. Push
   // periodically since, unlike the OCaml demo, this is a long-running
   // service rather than a one-shot binary.
-  const pushgatewayUrl = process.env.PUSHGATEWAY_URL;
+  const pushgatewayUrl = setting("PUSHGATEWAY_URL");
   const pushInterval = pushgatewayUrl
     ? setInterval(() => {
         new Pushgateway(pushgatewayUrl, {}, metricsRegister)

@@ -218,7 +218,7 @@ let register
     -> (a topic, error) result
   =
   fun svc ~net ~clock (module M) ->
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let raw_topic_name = topic_name_to_string M.topic_name in
   let partition_guard () =
     match

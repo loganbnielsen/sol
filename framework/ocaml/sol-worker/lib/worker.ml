@@ -253,7 +253,7 @@ module Make_with_test_seam (W : WORKER) = struct
                   ~wrap_fatal:(fun e -> e)
                   ~ack)
           in
-          let ( let* ) = Result.bind in
+          let open Result.Syntax in
           match test_consume_loop with
           | Some f ->
             f ~handler ();
@@ -363,7 +363,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                   ~wrap_fatal:(fun e -> Kafka_service.Kafka_error e)
                   ~ack)
           in
-          let ( let* ) = Result.bind in
+          let open Result.Syntax in
           match test_consume_loop with
           | Some f ->
             f ~handler ();

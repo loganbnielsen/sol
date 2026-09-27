@@ -21,3 +21,9 @@
     resolved promise at a message boundary, so an in-flight message completes
     before shutdown. *)
 val install_signal_handler : sw:Eio.Switch.t -> unit Eio.Promise.u -> unit
+
+(** [setting name] is environment variable [name], trimmed, or [None] when it is
+    unset or blank (REFAC-137). The one way a primitive reads a setting, so
+    [" "] means what unset means everywhere; before, each package decided with
+    its own copy, and some trimmed while others did not. *)
+val setting : string -> string option

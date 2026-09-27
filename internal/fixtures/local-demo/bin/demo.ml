@@ -442,7 +442,7 @@ let () =
             transaction. *)
          let result =
            Pg_db.transaction pool (fun pool ->
-             let ( let* ) = Result.bind in
+             let open Result.Syntax in
              let* () = FulfilledOrders.insert pool row in
              Jobs.enqueue pool EmailJobCodec.{ order_id = msg.Message.order_id })
          in

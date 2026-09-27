@@ -263,7 +263,7 @@ module Make (J : JOB) = struct
         ?(max_claim_failures = default_max_claim_failures)
         ()
     =
-    let ( let* ) = Result.bind in
+    let open Result.Syntax in
     let* () = validate_retry_policy retry_policy in
     let* () = validate_kinds J.kinds in
     let* () =

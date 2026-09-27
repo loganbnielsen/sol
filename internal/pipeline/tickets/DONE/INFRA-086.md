@@ -2,7 +2,7 @@
 id: INFRA-086
 type: feature
 severity: medium
-title: `sol local infra up` installs its independent components with bounded concurrency
+title: "`sol local infra up` installs its independent components with bounded concurrency"
 source: measured golden-path CI timings — ~290s of sequential Helm releases in both languages
 ---
 
