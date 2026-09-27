@@ -326,9 +326,13 @@ case "$lease_binding" in
 esac
 
 lease_impl="$root/cli/lib/deploy/sol_cli_boundary_lease.ml"
+# The kubectl verbs the lease's calls issue: [get_if_present] is a get, and
+# [classify] reads an error without issuing a request (REFAC-125).
 issued_lease_operations="$(
   grep -o 'Sol_cli_kubectl\.[a-z_]*' "$lease_impl" \
     | sed 's/Sol_cli_kubectl\.//' \
+    | sed 's/^get_if_present$/get/' \
+    | grep -vx 'classify' \
     | sort -u \
     | tr '\n' ' ' \
     | sed 's/ $//'

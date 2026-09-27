@@ -875,7 +875,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
 let target_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"TARGET"
@@ -889,7 +889,7 @@ let target_arg =
 let scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN[/UNIT]"
@@ -909,7 +909,7 @@ let dry_run_flag =
 let emit_to_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "emit-to" ]
         ~docv:"DIR"
@@ -921,7 +921,7 @@ let emit_to_arg =
 let emit_plan_to_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "emit-plan-to" ]
         ~docv:"FILE"
@@ -933,7 +933,7 @@ let emit_plan_to_arg =
 let image_tag_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "image-tag" ]
         ~docv:"TAG"
@@ -945,7 +945,7 @@ let image_tag_arg =
 let image_ref_arg =
   Arg.(
     value
-    & opt_all string []
+    & opt_all Sol_cli_args.text []
     & info
         [ "image-ref" ]
         ~docv:"[SERVICE=]REPO@sha256:DIGEST"
@@ -959,7 +959,7 @@ let image_ref_arg =
 let registry_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "registry" ]
         ~docv:"URL"
@@ -972,7 +972,7 @@ let registry_arg =
 let secret_backend_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "secret-backend" ]
         ~docv:"BACKEND"
@@ -988,7 +988,7 @@ let secret_backend_arg =
 let secret_store_ref_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "secret-store-ref" ]
         ~docv:"NAME"
@@ -1000,7 +1000,7 @@ let secret_store_ref_arg =
 let secret_store_kind_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "secret-store-kind" ]
         ~docv:"KIND"
@@ -1012,7 +1012,7 @@ let secret_store_kind_arg =
 let key_prefix_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "key-prefix" ]
         ~docv:"PREFIX"
@@ -1025,7 +1025,7 @@ let key_prefix_arg =
 let refresh_interval_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "refresh-interval" ]
         ~docv:"INTERVAL"
@@ -1092,7 +1092,7 @@ let confirm_group_change_flag =
 let loki_push_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-push-url" ]
         ~docv:"URL"

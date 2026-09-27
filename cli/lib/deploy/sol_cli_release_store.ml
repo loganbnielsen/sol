@@ -65,34 +65,24 @@ let data_of_json json =
    failure must never be mistaken for absence and answered with a create. *)
 let fetch_live ~ctx ~name ~namespace =
   match
-    Sol_cli_kubectl.get_raw
+    Sol_cli_kubectl.get_if_present
       ~ctx
       ~args:[ "get"; "configmap"; name; "-n"; namespace; "-o"; "json" ]
   with
-  | Ok r ->
+  | Ok None -> Ok None
+  | Ok (Some body) ->
     (try
-       let json = Yojson.Safe.from_string r.Sol_cli_process.stdout in
+       let json = Yojson.Safe.from_string body in
        Ok (Some (data_of_json json, metadata_string json "resourceVersion"))
      with
      | _ ->
        Error (Printf.sprintf "could not parse the live ConfigMap %s/%s" namespace name))
-  | Error (Sol_cli_process.Non_zero r) ->
-    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
-    if Sol_cli_string.contains ~needle:"NotFound" detail
-    then Ok None
-    else
-      Error
-        (Printf.sprintf
-           "kubectl get configmap %s failed: %s"
-           name
-           (if String.equal detail "" then "no output" else detail))
-  | Error e -> Error (Sol_cli_process.error_to_string e)
-;;
-
-let failure_detail ~stdout ~stderr =
-  match Sol_cli_process.failure_output ~stdout ~stderr with
-  | "" -> "no output"
-  | output -> output
+  | Error e ->
+    Error
+      (Printf.sprintf
+         "kubectl get configmap %s failed: %s"
+         name
+         (Sol_cli_process.error_to_string e))
 ;;
 
 let with_resource_version json (resource_version : string option) =
@@ -133,7 +123,7 @@ let write_one ~ctx ~verb ~name json =
             | `Create -> "create"
             | `Replace -> "replace")
            name
-           (failure_detail ~stdout:r.stdout ~stderr:r.stderr))
+           (Sol_cli_process.failure_message r))
     | Error e -> Error (Sol_cli_process.error_to_string e))
 ;;
 
@@ -195,7 +185,7 @@ let list_with_creation ~ctx ~(workspace : string)
       ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error (Sol_cli_process.Non_zero r) ->
-    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+    let detail = Sol_cli_process.failure_message r in
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
@@ -219,23 +209,20 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
   | Ok id ->
     let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
     (match
-       Sol_cli_kubectl.get
+       Sol_cli_kubectl.get_if_present
          ~ctx
-         ~resource:"configmap"
-         ~name
-         ~namespace:"default"
-         ~output:"json"
+         ~args:[ "get"; "configmap"; name; "-n"; "default"; "-o"; "json" ]
      with
-     | Error (Sol_cli_process.Non_zero r) ->
-       let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
-       if Sol_cli_string.contains ~needle:"NotFound" detail
-       then
-         Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
-       else Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
-     | Error e -> Error (Sol_cli_process.error_to_string e)
-     | Ok r ->
+     | Ok None ->
+       Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
+     | Error e ->
+       Error
+         (Printf.sprintf
+            "kubectl get configmap failed: %s"
+            (Sol_cli_process.error_to_string e))
+     | Ok (Some body) ->
        (match
-          match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+          match Yojson.Safe.from_string body with
           | json -> Ok json
           | exception Yojson.Json_error msg ->
             Error (Printf.sprintf "could not parse kubectl output: %s" msg)
@@ -264,19 +251,13 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
 let current ~ctx ~(workspace : string) : (string option, string) result =
   let name = Sol_cli_release.current_configmap_name ~workspace in
   match
-    Sol_cli_kubectl.get
+    Sol_cli_kubectl.get_if_present
       ~ctx
-      ~resource:"configmap"
-      ~name
-      ~namespace:"default"
-      ~output:"jsonpath={.data.release_id}"
+      ~args:
+        [ "get"; "configmap"; name; "-n"; "default"; "-o"; "jsonpath={.data.release_id}" ]
   with
-  | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok None
+  | Ok release_id -> Ok (Option.bind release_id Sol_cli_string.non_blank)
   | Error e -> Error (Sol_cli_process.error_to_string e)
-  | Ok r ->
-    let value = String.trim r.Sol_cli_process.stdout in
-    if String.equal value "" then Ok None else Ok (Some value)
 ;;
 
 (* FEAT-072: delete one release record. Only the immutable per-release ConfigMap

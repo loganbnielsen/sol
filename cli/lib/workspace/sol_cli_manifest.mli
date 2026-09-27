@@ -248,11 +248,11 @@ val write_tmp : string -> string
     "AlreadyExists" as success. This is how a Sol-created namespace is
     established: the deploy identity's bootstrap grant is deliberately
     create-only, so idempotency cannot come from [kubectl apply]'s patch. Shared
-    with {!Sol_cli_substrate}. *)
+    with {!Sol_cli_substrate}. Any other failure is returned as kubectl's error. *)
 val create_idempotent
   :  ctx:Sol_cli_kube_destination.context
   -> file:string
-  -> (unit, string) result
+  -> (unit, Sol_cli_process.error) result
 
 (** FEAT-063: applies into the cluster [ctx] names. *)
 val apply

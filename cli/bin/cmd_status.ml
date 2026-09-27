@@ -66,14 +66,9 @@ let service_diagnoses ~ctx ~ns services =
    return [false] on [Error _], so a namespace that exists but could not be read
    -- permissions, an API error -- rendered as NOT DEPLOYED. *)
 let namespace_presence ~ctx ns : Sol_cli_status.namespace_presence =
-  match Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "ns"; ns ] with
-  | Ok _ -> Ns_present
-  | Error (Sol_cli_process.Non_zero r) ->
-    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
-    if Sol_cli_string.contains ~needle:"NotFound" detail
-    then Ns_absent
-    else
-      Ns_unreadable (if String.equal detail "" then "kubectl get ns failed" else detail)
+  match Sol_cli_kubectl.get_if_present ~ctx ~args:[ "get"; "ns"; ns ] with
+  | Ok (Some _) -> Ns_present
+  | Ok None -> Ns_absent
   | Error e -> Ns_unreadable (Sol_cli_process.error_to_string e)
 ;;
 
@@ -585,7 +580,7 @@ let run ~ctx (options : status_options) =
 let domain_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"SCOPE"
@@ -597,7 +592,7 @@ let domain_arg =
 let loki_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-base-url" ]
         ~docv:"URL"
@@ -611,7 +606,7 @@ let loki_base_url_arg =
 let prometheus_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "prometheus-base-url" ]
         ~docv:"URL"

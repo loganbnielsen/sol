@@ -141,6 +141,15 @@ let test_error_to_string_nonzero () =
   check_bool "Sol_cli_string.contains 5" true (Sol_cli_string.contains s ~needle:"5")
 ;;
 
+(* A tool that reports its failure on stdout is not silenced. *)
+let test_error_to_string_keeps_stdout () =
+  let s =
+    Sol_cli_process.error_to_string
+      (Sol_cli_process.Non_zero { exit_code = 1; stdout = "said on stdout"; stderr = "" })
+  in
+  check_bool "stdout kept" true (Sol_cli_string.contains s ~needle:"said on stdout")
+;;
+
 (* ── suite ───────────────────────────────────────────────────────────────── *)
 
 (* REFAC-116 / REFAC-124: Ok means the command succeeded, carrying its output. *)
@@ -165,14 +174,14 @@ let test_completed () =
   | _ -> Alcotest.fail "exit 2 is Non_zero with the code and both streams"
 ;;
 
-let test_failure_output () =
-  let f = Sol_cli_process.failure_output in
-  Alcotest.(check string) "stderr first" "boom" (f ~stdout:"out" ~stderr:" boom\n");
-  Alcotest.(check string)
-    "stdout when stderr is empty"
-    "out"
-    (f ~stdout:"out\n" ~stderr:"  ");
-  Alcotest.(check string) "empty" "" (f ~stdout:"" ~stderr:"")
+(* REFAC-123: never empty -- a command that said nothing is described by its code. *)
+let test_failure_message () =
+  let f stdout stderr =
+    Sol_cli_process.failure_message { exit_code = 4; stdout; stderr }
+  in
+  Alcotest.(check string) "stderr first" "boom" (f "out" " boom\n");
+  Alcotest.(check string) "stdout when stderr is blank" "out" (f "out\n" "  ");
+  Alcotest.(check string) "the code when both are blank" "exited with code 4" (f "" " ")
 ;;
 
 let () =
@@ -186,7 +195,11 @@ let () =
             `Quick
             test_run_is_success
         ; Alcotest.test_case "completed shares run's contract" `Quick test_completed
-        ; Alcotest.test_case "failure_output" `Quick test_failure_output
+        ; Alcotest.test_case "failure_message" `Quick test_failure_message
+        ; Alcotest.test_case
+            "error_to_string keeps stdout"
+            `Quick
+            test_error_to_string_keeps_stdout
         ; Alcotest.test_case "captured stderr" `Quick test_captured_stderr
         ; Alcotest.test_case
             "stdout stderr separate"

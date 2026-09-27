@@ -29,10 +29,33 @@ val get_raw
   -> args:string list
   -> (Sol_cli_process.output, Sol_cli_process.error) result
 
-(** [resource_type_absent output]: kubectl's failure [output] says the cluster does
-    not serve the resource type at all (e.g. no Argo Rollouts CRD) -- an empty set,
-    not an error, for a caller that lists that type. *)
-val resource_type_absent : string -> bool
+(** What kind of failure a kubectl error is (REFAC-125): a view onto the error for
+    the callers that act on it, never a replacement for it -- render messages from
+    the error, which keeps kubectl's own words. [No_resource_type]: the cluster
+    does not serve the type at all (no CRD), an empty set to a caller that lists
+    it. [Refused]: unauthenticated or forbidden. [Other]: nothing a caller acts
+    on. *)
+type reason =
+  | Not_found
+  | Already_exists
+  | Conflict
+  | No_resource_type
+  | Refused
+  | Other
+
+(** [classify e] reads kubectl's status reason ("Error from server (<Reason>)")
+    and the two client-side messages that have none. The one place kubectl's
+    wording is known. *)
+val classify : Sol_cli_process.error -> reason
+
+(** [get_if_present ~ctx ~args] is a [kubectl get] (args start with ["get"]):
+    [Ok None] when kubectl answers NotFound, [Ok (Some stdout)] when the object
+    exists, and [Error] for every other failure -- a failed read is never
+    absence (REFAC-125). *)
+val get_if_present
+  :  ctx:Sol_cli_kube_destination.context
+  -> args:string list
+  -> (string option, Sol_cli_process.error) result
 
 val logs
   :  ctx:Sol_cli_kube_destination.context
@@ -120,19 +143,24 @@ type presence =
   | Absent of string
   | Uncheckable of string
 
+(** What kubectl answered to a probe: it succeeded, or it ran and failed, with the
+    exit code and what it said. *)
+type probe =
+  | Succeeded
+  | Failed of Sol_cli_process.failure
+
 (** [presence ~ctx ~args] probes through [probe_result]. *)
 val presence : ctx:Sol_cli_kube_destination.context -> args:string list -> presence
 
 (** The pure classifier behind {!presence}, exposed so the distinction can be
     tested without a cluster. *)
-val presence_of_probe_result : (int * string, string) result -> presence
+val presence_of_probe_result : (probe, string) result -> presence
 
-(** The probe keeping what kubectl said: the exit code and the reason a human
-    should see (stderr when present, else stdout). [Error] means kubectl could
-    not be run at all, which is a different failure from running and failing.
+(** The probe keeping what kubectl said. [Error] means kubectl could not be run
+    at all, which is a different failure from running and failing.
     Bounded by a timeout, and non-interactive because the runner gives children
     /dev/null on stdin. *)
 val probe_result
   :  ctx:Sol_cli_kube_destination.context
   -> args:string list
-  -> (int * string, string) result
+  -> (probe, string) result

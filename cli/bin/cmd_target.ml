@@ -51,12 +51,10 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
           ~ctx:(Sol_cli_kube_destination.context_of_destination destination)
           ~args
       with
-      | Ok (0, _) -> Sol_cli_target_report.Reachable context
-      | Ok (_, reason) when not (Sol_cli_string.is_blank reason) ->
-        Sol_cli_target_report.Unreachable (context, first_line reason)
-      | Ok (code, _) ->
+      | Ok Sol_cli_kubectl.Succeeded -> Sol_cli_target_report.Reachable context
+      | Ok (Sol_cli_kubectl.Failed failure) ->
         Sol_cli_target_report.Unreachable
-          (context, Printf.sprintf "kubectl exited %d without saying why" code)
+          (context, first_line (Sol_cli_process.failure_message failure))
       | Error message -> Sol_cli_target_report.Unreachable (context, message))
 ;;
 
@@ -137,7 +135,7 @@ open Cmdliner
 let target_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "target" ]
         ~docv:"ENV/PROVIDER/REGION"

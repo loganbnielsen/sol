@@ -6,6 +6,12 @@ type cmd =
   ; redact : string list
   }
 
+type failure =
+  { exit_code : int
+  ; stdout : string
+  ; stderr : string
+  }
+
 type output =
   { stdout : string
   ; stderr : string
@@ -13,11 +19,7 @@ type output =
 
 type error =
   | Spawn_failed of string
-  | Non_zero of
-      { exit_code : int
-      ; stdout : string
-      ; stderr : string
-      }
+  | Non_zero of failure
   | Timeout of float
 
 let cmd ?cwd ?env ?timeout_s ?(redact = []) argv = { argv; cwd; env; timeout_s; redact }
@@ -31,10 +33,12 @@ let completed ~exit_code ~stdout ~stderr =
 
 let error_to_string = function
   | Spawn_failed msg -> Printf.sprintf "spawn failed: %s" msg
-  | Non_zero { exit_code; stderr; stdout = _ } ->
-    if stderr = ""
-    then Printf.sprintf "exited with code %d" exit_code
-    else Printf.sprintf "exited with code %d: %s" exit_code stderr
+  (* What the command said is kept: stderr, else stdout (a tool that reports its
+     failure on stdout is not silenced). *)
+  | Non_zero { exit_code; stderr; stdout } ->
+    (match String.trim stderr, String.trim stdout with
+     | "", "" -> Printf.sprintf "exited with code %d" exit_code
+     | "", said | said, _ -> Printf.sprintf "exited with code %d: %s" exit_code said)
   | Timeout s -> Printf.sprintf "timed out after %.1fs" s
 ;;
 
@@ -235,10 +239,11 @@ let run ?(echo = false) c =
             completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr))))
 ;;
 
-let failure_output ~stdout ~stderr =
-  match String.trim stderr with
-  | "" -> String.trim stdout
-  | e -> e
+let failure_message { exit_code; stdout; stderr } =
+  match String.trim stderr, String.trim stdout with
+  | "", "" -> Printf.sprintf "exited with code %d" exit_code
+  | "", out -> out
+  | err, _ -> err
 ;;
 
 let run_shell ?(echo = false) cmd_str =

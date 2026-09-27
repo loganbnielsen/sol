@@ -142,7 +142,7 @@ let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
    [Unix.sleepf] as an exception, and a negative would spend the whole retry budget in
    one pass. *)
 let whoami_retry_interval_s () =
-  match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
+  match Sol_cli_string.env "SOL_WHOAMI_RETRY_INTERVAL_S" with
   | None -> 10.
   | Some raw ->
     (match float_of_string_opt raw with
@@ -156,19 +156,6 @@ let whoami_retry_interval_s () =
    take over five minutes to propagate while a deletion took under 45 s. *)
 let cluster_propagation_attempts = 10
 let deescalation_attempts = 18
-
-(* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
-   de-escalation probe treats it as evidence of de-escalation while the shape gate treats it
-   as a reason to stop immediately: retrying cannot change an identity. *)
-let cluster_refused detail =
-  List.exists
-    (fun needle -> Sol_cli_string.contains ~needle detail)
-    [ "Unauthorized"
-    ; "You must be logged in"
-    ; "the server has asked for the client to provide credentials"
-    ; "is forbidden"
-    ]
-;;
 
 (* AUDIT-POST-001: AWS-native identity, moved here from [Sol_cli_cloud_lifecycle].
 
@@ -437,7 +424,9 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
        else -- a credential that could not be assumed, a token that could not be
        generated, no reachable API -- is a measurement failure, and absence of evidence
        must not become evidence of de-escalation. Only the cluster's own answer counts. *)
-    if cluster_refused detail
+    (* A refusal from the cluster, as opposed to a failure to reach it: kubectl's
+       classification (REFAC-125), not a word list kept here. *)
+    if Sol_cli_kubectl.classify (Sol_cli_process.Non_zero r) = Refused
     then (
       (* A refusal is evidence of removal only if the credential is still good. "You must be
          logged in" is also what a working credential gets when the role's trust policy is
@@ -525,10 +514,10 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
    evidence. *)
 let whoami_capture_path ~run_id =
   let name = Printf.sprintf "whoami-capture-%s.json" run_id in
-  match Sys.getenv_opt "SOL_QUALIFICATION_CAPTURE_DIR" with
+  match Sol_cli_string.env "SOL_QUALIFICATION_CAPTURE_DIR" with
   | Some dir -> Some (Filename.concat dir name)
   | None ->
-    (match Sys.getenv_opt "HOME" with
+    (match Sol_cli_string.env "HOME" with
      | Some home -> Some (Filename.concat (Filename.concat home ".sol-qual") name)
      | None -> None)
 ;;
@@ -912,7 +901,7 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
 (* INFRA-039: resolve this operation's AWS credentials (moved from `cmd_cloud_tf.ml`,
    HARDEN-005), report the principal they belong to, and fail closed. *)
 let credentials ~operation ~leaves_target_standing : (unit, string) result =
-  let profile = Sys.getenv_opt "AWS_PROFILE" in
+  let profile = Sol_cli_string.env "AWS_PROFILE" in
   match Sol_cli_aws_credentials.resolve ~run:Sol_cli_cluster.process_output ~profile with
   | Error detail ->
     Error

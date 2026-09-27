@@ -143,9 +143,10 @@ let write_doc_to_temp_file doc =
   path
 ;;
 
-let create_doc ~ctx doc =
-  create_idempotent ~ctx ~file:(write_doc_to_temp_file doc)
-  |> Result.map_error (Printf.sprintf "kubectl create (workspace substrate): %s")
+let create_doc ~ctx doc = create_idempotent ~ctx ~file:(write_doc_to_temp_file doc)
+
+let create_failure e =
+  "kubectl create (workspace substrate): " ^ Sol_cli_process.error_to_string e
 ;;
 
 let apply_doc ~ctx doc =
@@ -180,7 +181,7 @@ let ensure ~ctx ~namespaces : (unit, string) result =
     let rec create_all = function
       | [] -> Ok ()
       | doc :: rest ->
-        let* () = create_doc ~ctx doc in
+        let* () = create_doc ~ctx doc |> Result.map_error create_failure in
         create_all rest
     in
     let rec apply_all = function
@@ -276,8 +277,8 @@ let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
       (fun ns ->
          match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
          | Ok () -> None
-         | Error e when Sol_cli_string.contains ~needle:"NotFound" e -> None
-         | Error e -> Some (Printf.sprintf "%s: %s" ns e))
+         | Error e when Sol_cli_kubectl.classify e = Not_found -> None
+         | Error e -> Some (Printf.sprintf "%s: %s" ns (create_failure e)))
       namespaces
   in
   match failures with

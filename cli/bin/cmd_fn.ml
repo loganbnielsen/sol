@@ -107,7 +107,7 @@ let run ~ctx selector =
 let selector_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"DOMAIN/NAME"

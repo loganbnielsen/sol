@@ -7,7 +7,7 @@ let non_empty = function
   | Some _ as s -> s
 ;;
 
-let env name = non_empty (Sys.getenv_opt name)
+let env name = non_blank_opt (Sys.getenv_opt name)
 
 let contains ~needle haystack =
   let n = String.length needle

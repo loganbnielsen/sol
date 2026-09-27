@@ -365,36 +365,27 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
     | Some _ as name -> name
     | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
   in
-  let region = Sol_cli_string.non_blank region in
   (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
      balancers the in-cluster cloud controller creates, and volumes created for
      PersistentVolumeClaims. Elastic IPs, NAT gateways and ECR repositories are
      Terraform-managed (the VPC module and the root); a successful destroy plus the
-     empty-state check is the authority for them. *)
-  match region with
-  | None ->
-    orphan_sweep
-      ~gaps:
-        [ "the AWS residue checks could not establish the target's region, so they were \
-           not run"
+     empty-state check is the authority for them. The region is the target path's,
+     which is never blank (REFAC-123). *)
+  let cluster_probes, cluster_gap =
+    match cluster_name with
+    | Some cluster_name ->
+      ( [ aws_load_balancer_probe ~region ~cluster_name
+        ; aws_no_ebs_volumes ~region ~cluster_name
         ]
-      []
-  | Some region ->
-    let cluster_probes, cluster_gap =
-      match cluster_name with
-      | Some cluster_name ->
-        ( [ aws_load_balancer_probe ~region ~cluster_name
-          ; aws_no_ebs_volumes ~region ~cluster_name
-          ]
-        , [] )
-      | None ->
-        ( []
-        , [ "the AWS residue checks could not establish the target's cluster name from \
-             Terraform state or the install outputs, so its tag-derived checks were not \
-             run"
-          ] )
-    in
-    orphan_sweep ~gaps:cluster_gap cluster_probes
+      , [] )
+    | None ->
+      ( []
+      , [ "the AWS residue checks could not establish the target's cluster name from \
+           Terraform state or the install outputs, so its tag-derived checks were not \
+           run"
+        ] )
+  in
+  orphan_sweep ~gaps:cluster_gap cluster_probes
 ;;
 
 (* How long to keep observing a final snapshot that the provider reports as still
@@ -411,7 +402,7 @@ let final_snapshot_attempts = 12
    value it was evaluated at program start, so a malformed setting made every `sol`
    command -- `sol --version` included -- exit 2. *)
 let final_snapshot_interval_s () =
-  match Sys.getenv_opt "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
+  match Sol_cli_string.env "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
   | None -> Ok 10.
   | Some raw ->
     (match float_of_string_opt raw with
@@ -665,7 +656,6 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
          String.equal resource.kind "aws_db_instance")
       (Sol_cli_cloud_destroy.resources pre_destroy)
   in
-  let region = Sol_cli_string.non_blank region in
   match preparation with
   | Sol_cli_cloud_destroy.Nothing_prepared ->
     Retention_not_required
@@ -678,25 +668,17 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
   | Sol_cli_cloud_destroy.Prepared { retained = Some snapshot_id } ->
     (match retention with
      | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-       (match region with
-        | Some region ->
-          (match final_snapshot_interval_s () with
-           | Ok interval ->
-             observe_final_snapshot
-               ~interval
-               ~declared:retention
-               ~snapshot_id
-               ~region
-               ~attempts:final_snapshot_attempts
-           | Error reason ->
-             (* [prepare] refuses this before destroying; kept total, not trusted. *)
-             Retention_unknown reason)
-        | None ->
-          Retention_unknown
-            (Printf.sprintf
-               "the promised final snapshot %s could not be queried: the target declares \
-                no region"
-               snapshot_id))
+       (match final_snapshot_interval_s () with
+        | Ok interval ->
+          observe_final_snapshot
+            ~interval
+            ~declared:retention
+            ~snapshot_id
+            ~region
+            ~attempts:final_snapshot_attempts
+        | Error reason ->
+          (* [prepare] refuses this before destroying; kept total, not trusted. *)
+          Retention_unknown reason)
      | Sol_cli_cloud_lifecycle.Retain_nothing ->
        (match database with
         | None ->
@@ -704,14 +686,14 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
             "nothing to decide -- this target had no database whose retention a destroy \
              had to settle"
         | Some database ->
-          (match database.identifier, region with
-           | Some instance, Some region ->
+          (match database.identifier with
+           | Some instance ->
              classify_instance_snapshots
                (run_provider_query (instance_snapshots_query ~instance ~region))
-           | _ ->
+           | None ->
              Retention_unknown
                "no-residue could not be observed: Terraform state records no database \
-                identifier, or the target declares no region")))
+                identifier")))
 ;;
 
 (* The verification is part of the preparation: a snapshot identity that could not

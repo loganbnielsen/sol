@@ -33,9 +33,69 @@ let get ~ctx ~resource ~name ~namespace ~output =
 
 let get_raw ~ctx ~args = kubectl ~ctx args
 
-let resource_type_absent output =
-  Sol_cli_string.contains ~needle:"doesn't have a resource type" output
-  || Sol_cli_string.contains ~needle:"could not find the requested resource" output
+(* REFAC-125: what kind of failure a kubectl error is, for the callers that act on
+   it. A view onto the error, not a replacement for it: the error itself travels
+   on unchanged and every message is rendered from it, in kubectl's own words.
+
+   kubectl prints an API error as "Error from server (<Reason>): ...", where
+   <Reason> is the API server's status reason; that token, not the prose after
+   it, is what is read. A missing resource *type* (no CRD) and an unauthenticated
+   client are client-side messages with no reason token, so their wording is
+   named here -- the one place kubectl's wording is known. *)
+type reason =
+  | Not_found
+  | Already_exists
+  | Conflict
+  | No_resource_type
+  | Refused
+  | Other
+
+let status_reason text =
+  let prefix = "Error from server (" in
+  let n = String.length prefix in
+  let rec find i =
+    if i + n > String.length text
+    then None
+    else if String.sub text i n = prefix
+    then (
+      match String.index_from_opt text (i + n) ')' with
+      | Some j -> Some (String.sub text (i + n) (j - i - n))
+      | None -> None)
+    else find (i + 1)
+  in
+  find 0
+;;
+
+let classify (error : Sol_cli_process.error) =
+  match error with
+  | Non_zero f ->
+    let text = f.stderr ^ "\n" ^ f.stdout in
+    let says needle = Sol_cli_string.contains ~needle text in
+    if says "doesn't have a resource type" || says "could not find the requested resource"
+    then No_resource_type
+    else if
+      says "You must be logged in"
+      || says "the server has asked for the client to provide credentials"
+    then Refused
+    else (
+      match status_reason text with
+      | Some "NotFound" -> Not_found
+      | Some "AlreadyExists" -> Already_exists
+      | Some "Conflict" -> Conflict
+      | Some ("Unauthorized" | "Forbidden") -> Refused
+      | _ -> Other)
+  | Spawn_failed _ | Timeout _ -> Other
+;;
+
+(* REFAC-125: [get] for an object that may not exist -- [Ok None] when kubectl
+   answers NotFound. Absence is read from the API's status reason, the same
+   mechanism [classify] uses for every verb, rather than a second one
+   ([--ignore-not-found] exists only for get and delete). *)
+let get_if_present ~ctx ~args =
+  match kubectl ~ctx args with
+  | Ok (o : Sol_cli_process.output) -> Ok (Some o.stdout)
+  | Error e when classify e = Not_found -> Ok None
+  | Error e -> Error e
 ;;
 
 let logs ~ctx ~pod ~namespace ~container =
@@ -100,14 +160,17 @@ let delete ~ctx ~resource ~name ~namespace =
    input), and [timeout_s] bounds a network wait. *)
 let probe_timeout_s = 15.0
 
-(* Returns the exit code and the reason to show a human: stderr when kubectl
-   wrote any, else stdout, trimmed. An [Error] means kubectl could not be run at
-   all — distinct from running and failing. *)
+(* What kubectl answered: it succeeded, or it ran and failed, with what it said.
+   An [Error] means kubectl could not be run at all — distinct from running and
+   failing. *)
+type probe =
+  | Succeeded
+  | Failed of Sol_cli_process.failure
+
 let probe_result ~ctx ~args =
   match kubectl ~timeout_s:probe_timeout_s ~ctx args with
-  | Ok { stdout; stderr } -> Ok (0, Sol_cli_process.failure_output ~stdout ~stderr)
-  | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
-    Ok (exit_code, Sol_cli_process.failure_output ~stdout ~stderr)
+  | Ok _ -> Ok Succeeded
+  | Error (Sol_cli_process.Non_zero failure) -> Ok (Failed failure)
   | Error e -> Error ("kubectl could not be run: " ^ Sol_cli_process.error_to_string e)
 ;;
 
@@ -123,8 +186,13 @@ type presence =
   | Uncheckable of string
 
 let presence_of_probe_result = function
-  | Ok (0, _) -> Present
-  | Ok (code, reason) -> Absent (Printf.sprintf "kubectl exited %d: %s" code reason)
+  | Ok Succeeded -> Present
+  | Ok (Failed failure) ->
+    Absent
+      (Printf.sprintf
+         "kubectl exited %d: %s"
+         failure.exit_code
+         (Sol_cli_process.failure_message failure))
   | Error why -> Uncheckable why
 ;;
 

@@ -119,9 +119,76 @@ let test_kubectl_patch_argv () =
   check_str "patch_data" "[{}]" (List.nth c.Sol_cli_process.argv 9)
 ;;
 
+(* REFAC-125: kubectl's own messages, verbatim, and what each classifies as. The
+   classifier reads the status reason; the prose after it may change freely. *)
+let test_kubectl_classify () =
+  let failed ?(stdout = "") stderr =
+    Sol_cli_process.Non_zero { exit_code = 1; stdout; stderr }
+  in
+  let is expected message actual =
+    Alcotest.(check bool) message true (Sol_cli_kubectl.classify actual = expected)
+  in
+  is
+    Sol_cli_kubectl.Not_found
+    "NotFound"
+    (failed
+       {|Error from server (NotFound): configmaps "sol-release-current-pluto" not found|});
+  is
+    Sol_cli_kubectl.Already_exists
+    "AlreadyExists"
+    (failed
+       {|Error from server (AlreadyExists): namespaces "pluto-checkout" already exists|});
+  is
+    Sol_cli_kubectl.Conflict
+    "Conflict"
+    (failed
+       {|Error from server (Conflict): error when replacing "/tmp/lease.json": Operation cannot be fulfilled on configmaps "sol-boundary-lease-pluto": the object has been modified; please apply your changes to the latest version and try again|});
+  is
+    Sol_cli_kubectl.No_resource_type
+    "no CRD"
+    (failed {|error: the server doesn't have a resource type "rollouts"|});
+  is
+    Sol_cli_kubectl.No_resource_type
+    "no API group"
+    (failed
+       {|Error from server (NotFound): the server could not find the requested resource|});
+  is
+    Sol_cli_kubectl.Refused
+    "unauthenticated"
+    (failed {|error: You must be logged in to the server (Unauthorized)|});
+  is
+    Sol_cli_kubectl.Refused
+    "forbidden"
+    (failed
+       {|Error from server (Forbidden): secrets is forbidden: User "x" cannot list resource "secrets"|});
+  (* Positive controls the other way: an unrelated failure stays whole, and prose
+     that merely mentions a reason word is not that reason. *)
+  let unrelated =
+    failed "Unable to connect to the server: net/http: TLS handshake timeout"
+  in
+  is Sol_cli_kubectl.Other "unreachable is Other" unrelated;
+  let prose = failed "the configmap was NotFound in my notes" in
+  is Sol_cli_kubectl.Other "a reason word in prose is not a reason" prose;
+  let timeout = Sol_cli_process.Timeout 15. in
+  is Sol_cli_kubectl.Other "timeout is Other" timeout;
+  (* The classification is a view: the message is still kubectl's own. *)
+  let forbidden =
+    failed {|Error from server (Forbidden): secrets is forbidden: User "x" cannot get|}
+  in
+  Alcotest.(check bool)
+    "the message keeps kubectl's words"
+    true
+    (Sol_cli_string.contains
+       ~needle:{|secrets is forbidden: User "x" cannot get|}
+       (Sol_cli_process.error_to_string forbidden))
+;;
+
 (* FND-0024: the point of the classifier is that an unrunnable kubectl is not a
    negative answer. Pure, so it needs no cluster and no kubectl on PATH. *)
 let test_kubectl_presence_classification () =
+  let failed stderr =
+    Sol_cli_kubectl.Failed { Sol_cli_process.exit_code = 1; stdout = ""; stderr }
+  in
   let is_present = function
     | Sol_cli_kubectl.Present -> true
     | _ -> false
@@ -137,12 +204,13 @@ let test_kubectl_presence_classification () =
   check_bool
     "zero exit is present"
     true
-    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok (0, ""))));
+    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok Sol_cli_kubectl.Succeeded)));
   check_bool
     "non-zero exit is absent"
     true
     (is_absent
-       (Sol_cli_kubectl.presence_of_probe_result (Ok (1, "Error from server (NotFound)"))));
+       (Sol_cli_kubectl.presence_of_probe_result
+          (Ok (failed "Error from server (NotFound)"))));
   check_bool
     "an unrunnable kubectl is uncheckable"
     true
@@ -156,7 +224,7 @@ let test_kubectl_presence_classification () =
   (* The reason must survive into the verdict, or the operator cannot act on it. *)
   match
     Sol_cli_kubectl.presence_of_probe_result
-      (Ok (1, "Error from server (NotFound): deployments not found"))
+      (Ok (failed "Error from server (NotFound): deployments not found"))
   with
   | Sol_cli_kubectl.Absent reason ->
     check_bool "the reason carries what kubectl said" true (String.length reason > 0)
@@ -377,6 +445,7 @@ let () =
             "probe presence classification"
             `Quick
             test_kubectl_presence_classification
+        ; Alcotest.test_case "classify (REFAC-125)" `Quick test_kubectl_classify
         ] )
     ; ( "docker_argv"
       , [ Alcotest.test_case "build argv" `Quick test_docker_build_argv

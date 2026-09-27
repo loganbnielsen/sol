@@ -1,4 +1,8 @@
-(** Small string predicates Sol otherwise spells out by hand (REFAC-121, REFAC-122). *)
+(** Small string predicates Sol otherwise spells out by hand (REFAC-121, REFAC-122).
+
+    REFAC-123: the blank predicates belong at a boundary -- a decoder, an adapter
+    over a tool's output, an environment read -- which decides once that blank is
+    [None], so nothing reading a decoded value asks again. *)
 
 (** [is_blank s]: [s] is empty or only whitespace. *)
 val is_blank : string -> bool
@@ -14,8 +18,9 @@ val non_blank_opt : string option -> string option
     values where whitespace is data. *)
 val non_empty : string option -> string option
 
-(** [env name] is the environment variable [name], or [None] when it is unset
-    or set to [""]. [Unix.putenv] cannot unset, so Sol treats [""] as unset. *)
+(** [env name] is the setting in environment variable [name], trimmed, or [None]
+    when it is unset or blank. [Unix.putenv] cannot unset, so Sol treats [""] as
+    unset. For a value whose whitespace is data (a password), use [non_empty]. *)
 val env : string -> string option
 
 (** [contains ~needle haystack]: [needle] occurs in [haystack]. The empty needle

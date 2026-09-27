@@ -137,7 +137,7 @@ let installed_dir ~exe_dir ~version =
    checkout. *)
 let resolve_from ~sol_home ~exe_dir ~release_version =
   match sol_home with
-  | Some dir when dir <> "" ->
+  | Some dir ->
     if is_checkout dir
     then Ok { dir; form = Checkout }
     else (
@@ -147,7 +147,7 @@ let resolve_from ~sol_home ~exe_dir ~release_version =
       | Some bundle ->
         Error (Bundle_version_mismatch { dir; bundle; binary = release_version })
       | None -> Error (Invalid_sol_home dir))
-  | Some _ | None ->
+  | None ->
     (match release_version with
      | Some version ->
        let dir = installed_dir ~exe_dir ~version in
@@ -162,7 +162,7 @@ let resolve_from ~sol_home ~exe_dir ~release_version =
 
 let resolve () =
   resolve_from
-    ~sol_home:(Sys.getenv_opt "SOL_HOME")
+    ~sol_home:(Sol_cli_string.env "SOL_HOME")
     ~exe_dir:(running_binary_dir ())
     ~release_version:Sol_cli_build_info.release_version
 ;;

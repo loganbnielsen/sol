@@ -1,8 +1,8 @@
 let dir =
-  match Sys.getenv_opt "XDG_DATA_HOME" with
+  match Sol_cli_string.env "XDG_DATA_HOME" with
   | Some d -> Filename.concat d "sol"
   | None ->
-    (match Sys.getenv_opt "HOME" with
+    (match Sol_cli_string.env "HOME" with
      | Some h -> Filename.concat h ".local/share/sol"
      | None -> Filename.concat (Sys.getcwd ()) ".sol")
 ;;
