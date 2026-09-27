@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
+OBSERVER="${OBSERVER:-$ROOT/internal/qualification/gcp/observer.py}"
 
 TARGET="${TARGET:-qual/gcp/us-central1}"
 TARGET_ENV="${TARGET%%/*}"
@@ -791,18 +792,7 @@ api_readiness_probe_stop() {
 }
 
 kubeconfig_has_cluster() {
-  python3 - "$1" "$2" <<'PY' 2>/dev/null
-import re, sys
-path, cluster = sys.argv[1], sys.argv[2]
-try:
-    text = open(path).read()
-except OSError:
-    raise SystemExit(1)
-for name, body in re.findall(r'-\s*name:\s*(\S+)\s*\n\s*cluster:\n((?:\s+\S+:.*\n)+)', text):
-    if cluster in name and re.search(r'server:\s*\S+', body):
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
+  python3 "$OBSERVER" kubeconfig --file "${1:-}" --cluster "${2:-}" >/dev/null 2>&1
 }
 
 cluster_kubeconfig_waiter() {
@@ -876,16 +866,12 @@ stop_cluster_kubeconfig_waiter() {
 }
 
 kube_capture_evidence() {
-  local dir="$1" name="$2"
-  shift 2
-  local out="$dir/$name.log" rc
-  timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl "$@" >"$out" 2>&1
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    say "  $name: $(wc -l <"$out") lines"
-  else
-    say "  $name: CAPTURE FAILED (rc $rc) — recorded, not interpreted"
-    printf '\n[qualification capture: `kubectl %s` exited %s]\n' "$*" "$rc" >>"$out"
+  local dir="$1"
+  if ! python3 "$OBSERVER" capture --dir "$dir" --kubeconfig "$RUN_KUBECONFIG" \
+      --cluster "$CLUSTER" --bound "${KUBE_CAPTURE_TIMEOUT_S:-30}"; then
+    say "  platform-failure evidence: the observer could not run at all — recorded, not interpreted"
+    printf 'observer.py could not run: no Kubernetes evidence was collected for this failure.\n' \
+      >>"$dir/CAPTURE-UNAVAILABLE.txt" 2>/dev/null || true
   fi
   return 0
 }
@@ -902,33 +888,10 @@ capture_platform_failure_evidence() {
   local credentials=yes
   if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
     credentials=no
-    {
-      printf 'Qualification capture could not establish credentials for cluster %s.\n' "$CLUSTER"
-      printf 'Every Kubernetes read below ran without a context for this run and proves nothing about\n'
-      printf 'this cluster; they are recorded because a capture failure must be visible, not because\n'
-      printf 'their content is evidence.\n'
-    } >"$dir/NO-KUBECONFIG.txt"
-    say "  platform-failure evidence: NO CREDENTIALS for $CLUSTER — recorded in NO-KUBECONFIG.txt"
+    say "  platform-failure evidence: NO CREDENTIALS for $CLUSTER — every read is recorded, none is evidence"
   fi
   say "capturing read-only Kubernetes evidence for the platform-apply failure (credentials: $credentials)"
-  kube_capture_evidence "$dir" pods get pods -A -o wide
-  kube_capture_evidence "$dir" pod-states get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}
-  kube_capture_evidence "$dir" events get events -A --sort-by=.lastTimestamp
-  kube_capture_evidence "$dir" pvc get pvc -A -o wide
-  kube_capture_evidence "$dir" pv get pv -o wide
-  kube_capture_evidence "$dir" nodes get nodes -o wide
-  kube_capture_evidence "$dir" node-capacity get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}
-  kube_capture_evidence "$dir" helm-release-secrets get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type
-  {
-    printf 'credentials for %s: %s\n' "$CLUSTER" "$credentials"
-    for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
-      if [ -s "$dir/$artifact.log" ]; then
-        printf '%-22s %s lines\n' "$artifact" "$(wc -l <"$dir/$artifact.log")"
-      else
-        printf '%-22s MISSING OR EMPTY\n' "$artifact"
-      fi
-    done
-  } >"$dir/capture-summary.txt"
+  kube_capture_evidence "$dir"
   say "  platform-failure evidence: $dir ($(ls "$dir" 2>/dev/null | wc -l) files, summary in capture-summary.txt)"
 }
 
@@ -946,22 +909,7 @@ kubeconfig_for_cluster() {
 }
 
 kubeconfig_server_for_cluster() {
-  python3 - "$1" "$2" <<'PY' 2>/dev/null || printf -- '-\n'
-import re, sys
-path, cluster = sys.argv[1], sys.argv[2]
-try:
-    text = open(path).read()
-except OSError:
-    print('-')
-    raise SystemExit
-for name, body in re.findall(r'-\s*name:\s*(\S+)\s*\n\s*cluster:\n((?:\s+\S+:.*\n)+)', text):
-    if cluster in name:
-        server = re.search(r'server:\s*(\S+)', body)
-        if server:
-            print(server.group(1))
-            raise SystemExit
-print('-')
-PY
+  python3 "$OBSERVER" server --file "${1:-}" --cluster "${2:-}" 2>/dev/null || printf -- '-\n'
 }
 
 capture_fnd0010() {

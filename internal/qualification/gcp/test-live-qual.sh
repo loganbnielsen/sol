@@ -192,21 +192,11 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
     *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
     *"container clusters get-credentials"*)
       if [ -n "${STUB_GET_CREDENTIALS_RC:-}" ]; then
-        printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403, message=credential generation refused\n' >&2
+        printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403\n' >&2
         exit "$STUB_GET_CREDENTIALS_RC"
       fi
       kc="${KUBECONFIG:-$HOME/.kube/config}"
-      {
-        printf 'apiVersion: v1\nkind: Config\n'
-        printf 'current-context: gke_old-project_us-central1_sol-qual-gcp-15c\n'
-        printf 'clusters:\n'
-        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  cluster:\n    server: https://136.65.210.170\n'
-        printf -- '- name: gke_sol-qualification_us-central1_%s\n  cluster:\n    server: https://136.115.125.189\n' "$CLUSTER"
-        printf 'contexts:\n'
-        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  context:\n    cluster: gke_old-project_us-central1_sol-qual-gcp-15c\n    user: u\n'
-        printf -- '- name: gke_sol-qualification_us-central1_%s\n  context:\n    cluster: gke_sol-qualification_us-central1_%s\n    user: u\n' "$CLUSTER" "$CLUSTER"
-        printf 'users:\n- name: u\n  user:\n    token: x\n'
-      } >"$kc" 2>/dev/null || true
+      sed "s/sol-qual-gcp-15g/$CLUSTER/g" "$STUB_KUBECONFIG_FIXTURE" >"$kc" 2>/dev/null || true
       printf 'kubeconfig entry generated for %s.\n' "$CLUSTER"
       exit 0 ;;
   esac
@@ -262,6 +252,10 @@ case "$*" in
     printf 'platform/redpanda-0\tPending\t\tredpanda=waiting{reason=ContainerCreating} restarts=0 \n'
     printf 'monitoring/loki-0\tPending\t\tloki=waiting{reason=ContainerCreating} restarts=0 \n'
     exit 0 ;;
+  *jsonpath*resources.requests*)
+    printf 'platform/redpanda-0\tPending\t<none>\trequests=map[cpu:1 memory:2Gi]\tlimits=map[cpu:1 memory:2Gi]\tPodScheduled=False(Unschedulable) \n'
+    printf 'monitoring/loki-0\tPending\t<none>\trequests=map[cpu:1 memory:1Gi]\tlimits=map[cpu:1 memory:1Gi]\tPodScheduled=False(Unschedulable) \n'
+    exit 0 ;;
   "get events -A"*)
     printf 'platform   Warning   FailedScheduling   pod/redpanda-0  0/3 nodes are available: 3 Insufficient cpu.\n'
     exit 0 ;;
@@ -278,7 +272,10 @@ case "$*" in
     printf 'gke-sol-qual-gcp-15f-nodes-abc  Ready    <none>   12m   v1.29\n'
     exit 0 ;;
   *jsonpath*allocatable*)
-    printf 'gke-sol-qual-gcp-15f-nodes-abc\tallocatable=2/8Gi\tReady=True \n'
+    printf 'gke-sol-qual-gcp-15f-nodes-abc\tallocatable=2/8Gi\tReady=True(KubeletReady) \n'
+    exit 0 ;;
+  *jsonpath*spec.taints*)
+    printf 'gke-sol-qual-gcp-15f-nodes-abc\tmap[effect:NoSchedule key:node.kubernetes.io/not-ready]\n'
     exit 0 ;;
   *"get secrets -A -l owner=helm"*)
     printf 'NS          NAME                             TYPE\n'
@@ -371,6 +368,7 @@ run_case() {
   export LOG_DIR="$TMP/$name.logs"
   export WORKSPACE="$SCRATCH_WS"
   export XDG_DATA_HOME="$TMP/data"
+  export STUB_KUBECONFIG_FIXTURE="$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
@@ -647,12 +645,20 @@ probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-rea
 probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
 has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
 is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
-has "the run kubeconfig carries that stale cluster first, as the fixture intends" "sol-qual-gcp-15c" \
-  "$TMP/probe-sampling.logs/run-kubeconfig.yaml"
-if grep -qF "136.65.210.170" "$TMP/probe-sampling.logs/api-readiness.tsv"; then
-  no "the stale cluster is never the configured endpoint" "no stale endpoint" "136.65.210.170 present"
+sampling_kc="$TMP/probe-sampling.logs/run-kubeconfig.yaml"
+sampling_name_line="$(grep -n -m1 '^  name:' "$sampling_kc" | cut -d: -f1)"
+sampling_server_line="$(grep -n -m1 '^    server:' "$sampling_kc" | cut -d: -f1)"
+is "the run-owned kubeconfig is the gcloud shape the shell matcher could not read: name after the cluster block" \
+  "$sampling_name_line" "$(( ${sampling_server_line:-0} + 1 ))"
+has "and it names this run's cluster, at the fixture's endpoint" "server: https://34.0.0.1" "$sampling_kc"
+lacks "and no cluster of another run appears in it" "sol-qual-gcp-15c" "$sampling_kc"
+if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+    "$TMP/probe-sampling.logs/api-readiness.tsv"; then
+  no "the configured endpoint is never anything but this run's kubeconfig entry" \
+    "34.0.0.1 while credentials exist, '-' before that" \
+    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/probe-sampling.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
 else
-  ok "the stale cluster is never the configured endpoint"
+  ok "the configured endpoint is never anything but this run's kubeconfig entry"
 fi
 has "the probe's reads carry the run's own kubeconfig" "kubeconfig=$TMP/probe-sampling.logs" \
   "$TMP/probe-sampling.probe.argv"
@@ -673,7 +679,10 @@ else
 fi
 has "the context lookup asked for the run's cluster" "config get-contexts" \
   "$TMP/probe-multicontext.argv"
-has "and the context was pinned by name" "config use-context" "$TMP/probe-multicontext.argv"
+has "and the context was pinned by name" \
+  "config use-context gke_sol-qualification_us-central1_test-cluster" "$TMP/probe-multicontext.argv"
+lacks "and the stale context was never selected" \
+  "use-context gke_old-project_us-central1_sol-qual-gcp-15c" "$TMP/probe-multicontext.argv"
 
 probe_case unreachable 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
 has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
@@ -727,8 +736,16 @@ fi
 has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
   "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
 
-is "the probe resolves this run's configured endpoint" \
-  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "136.115.125.189"
+is "the probe resolves this run's configured endpoint from the run-owned kubeconfig once credentials exist" \
+  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "34.0.0.1"
+if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+    "$TMP/e2e-credentials.logs/api-readiness.tsv"; then
+  no "the ambient cluster is never the configured endpoint" \
+    "34.0.0.1 while credentials exist, '-' before that" \
+    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/e2e-credentials.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
+else
+  ok "the ambient cluster is never the configured endpoint"
+fi
 if grep -qF '9F5AAA970F948E45A7AE0807DA893DCE' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
   no "the ambient EKS cluster never appears" "no ambient cluster" "EKS hostname present"
 else
@@ -766,9 +783,20 @@ lacks "the bundle is complete on the failure path" "the evidence bundle is INCOM
   "$TMP/e2e-credentials.out"
 
 lacks "no capture command was malformed" "unknown command" "$TMP/e2e-credentials.out"
-for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
+for artifact in pods pod-states pod-demand events pvc pv nodes node-capacity node-taints \
+    helm-release-secrets; do
   present "$TMP/e2e-credentials.logs/platform-failure/$artifact.log" "the failure capture produced $artifact"
 done
+for artifact in pod-demand node-taints; do
+  has "the capture summary accounts for $artifact" "$artifact" \
+    "$TMP/e2e-credentials.logs/platform-failure/capture-summary.txt"
+done
+has "the pod demand capture keeps the requests an unschedulable pod asked for" \
+  "requests=map[cpu:1 memory:2Gi]" "$TMP/e2e-credentials.logs/platform-failure/pod-demand.log"
+has "and the scheduler's own verdict on it" "PodScheduled=False(Unschedulable)" \
+  "$TMP/e2e-credentials.logs/platform-failure/pod-demand.log"
+has "the node taint capture keeps a taint that can keep a pod off a node" "effect:NoSchedule" \
+  "$TMP/e2e-credentials.logs/platform-failure/node-taints.log"
 
 probe_case neverready 136.115.125.189 STUB_GET_CREDENTIALS_RC=1 STUB_APPLY_RC=1 \
   STUB_CLUSTER_EXISTS=1
