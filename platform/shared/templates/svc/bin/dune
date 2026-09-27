@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries {{lib}} sol-svc sol-obs eio_main))

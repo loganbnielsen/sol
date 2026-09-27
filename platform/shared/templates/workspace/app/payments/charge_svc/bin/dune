@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (libraries
+  {{name}}_payments_charge_svc
+  sol-svc kafka-eio-service sol-obs
+  pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
+  eio_main))

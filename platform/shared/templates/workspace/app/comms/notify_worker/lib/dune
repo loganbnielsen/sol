@@ -1,0 +1,7 @@
+(library
+ (name {{name}}_comms_notify)
+ (wrapped false)
+ (modules Notify_worker)
+ (libraries
+  {{name}}_storage {{name}}_payments_events
+  sol-worker kafka-eio-service sol-obs pg-eio))

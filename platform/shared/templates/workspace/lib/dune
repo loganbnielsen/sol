@@ -1,0 +1,5 @@
+(library
+ (name {{name}}_storage)
+ (wrapped false)
+ (modules Notification)
+ (libraries pg-eio caqti))

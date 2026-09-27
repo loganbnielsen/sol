@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries {{lib}} sol-worker kafka-eio-service sol-obs eio_main))
