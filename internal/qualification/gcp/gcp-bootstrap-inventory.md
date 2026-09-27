@@ -667,7 +667,7 @@ resolutions considered:
 
 The mirroring in option 1 introduces one liability — a variable added to the
 definition and forgotten in the GCP root — so
-`cli/test/check_production_infra.sh` now fails if the wrapper does not mirror
+`internal/ci/check_production_infra.py` now fails if the wrapper does not mirror
 every declared variable except the AWS-only ones, and fails if it declares one the
 definition does not.
 

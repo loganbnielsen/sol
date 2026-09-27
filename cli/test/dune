@@ -162,14 +162,6 @@
 
 (rule
  (alias runtest)
- (deps
-  check_production_infra.sh
-  (source_tree ../../platform/cloud))
- (action
-  (run bash %{dep:check_production_infra.sh} %{workspace_root})))
-
-(rule
- (alias runtest)
  (action
   (bash
    "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))

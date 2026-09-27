@@ -188,7 +188,7 @@ Regression coverage asserts the semantics, not just the original bugs:
   profile's `rds_deletion_protection=true`), and that a partially installed
   target -- substrate present, platform never fully installed -- is still
   destructible (invariant 6); and
-- `cli/test/check_production_infra.sh` asserts the steady-state cluster-access identity
+- `internal/ci/check_production_infra.py` asserts the steady-state cluster-access identity
   RBAC still grants no `escalate`/`bind`, preserving invariant 2 structurally.
 
 ## Consequences
