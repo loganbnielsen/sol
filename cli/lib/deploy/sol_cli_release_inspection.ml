@@ -227,9 +227,9 @@ let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
   List.concat_map
     (rendered_manifests_of_service
        ~workspace:plan.workspace
-       ?env:plan.environment.Sol_cli_deployment_plan.env
-       ~release_id:plan.Sol_cli_deployment_plan.release_id
-       ~secret_backend:plan.environment.Sol_cli_deployment_plan.secret_backend)
+       ?env:plan.environment.env
+       ~release_id:plan.release_id
+       ~secret_backend:plan.environment.secret_backend)
     plan.services
 ;;
 

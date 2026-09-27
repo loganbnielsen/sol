@@ -50,7 +50,7 @@ let cloud_target target =
   let open Result.Syntax in
   let* cloud_backend = backend_config target ~root:`Cloud in
   let* platform_backend = backend_config target ~root:`Platform in
-  let* base_domain = required "base_domain" target.Sol_cli_config.base_domain in
+  let* base_domain = required "base_domain" target.base_domain in
   let* letsencrypt_email = required "letsencrypt_email" target.letsencrypt_email in
   let* cluster_access_role_arn =
     (Sol_cli_provider_capabilities.capabilities_of target.provider)

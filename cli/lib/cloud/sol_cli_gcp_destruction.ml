@@ -91,7 +91,7 @@ let gcp_peering_probe ~project ~network =
   with
   | Ok result ->
     let peerings =
-      String.split_on_char '\n' result.Sol_cli_process.stdout
+      String.split_on_char '\n' result.stdout
       |> List.map String.trim
       |> List.filter (fun peering -> peering <> "" && peering <> "---")
     in

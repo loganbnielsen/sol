@@ -121,7 +121,7 @@ let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
 let of_plan ~(apply_mode : apply_mode) (plan : Sol_cli_deployment_plan.t) : t =
   { release_id = Sol_cli_release_id.to_string plan.release_id
   ; workspace = plan.workspace
-  ; environment = plan.environment.Sol_cli_deployment_plan.env
+  ; environment = plan.environment.env
   ; workloads = List.map workload_of_spec plan.services
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   ; apply_mode

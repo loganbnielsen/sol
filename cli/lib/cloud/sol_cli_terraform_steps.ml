@@ -30,7 +30,7 @@ let terraform_stdout (r : (Sol_cli_process.output, Sol_cli_process.error) result
   : (string, string) result
   =
   match r with
-  | Ok r -> Ok r.Sol_cli_process.stdout
+  | Ok r -> Ok r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim r.stderr in
     Error

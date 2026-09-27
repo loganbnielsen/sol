@@ -248,7 +248,7 @@ let node_failure_tolerant_plan target =
    before render, naming a supported alternative. *)
 let availability_rejection service ~toml =
   mkdir_p service.Sol_cli_manifest.dir;
-  write (Filename.concat service.Sol_cli_manifest.dir "sol.toml") toml;
+  write (Filename.concat service.dir "sol.toml") toml;
   match
     Sol_cli_deployment_plan.of_services_result
       ~workspace:"pluto"
@@ -695,8 +695,7 @@ let test_digest_plan_establishes_artifact_guarantee () =
       false
       (List.exists (fun (f : Pre.finding) -> f.capability = P.Immutable_artifacts) fs);
     match plan.services with
-    | [ spec ] ->
-      check_str "plan image is the digest" digest spec.Sol_cli_deployment_plan.image
+    | [ spec ] -> check_str "plan image is the digest" digest spec.image
     | _ -> Alcotest.fail "expected exactly one planned service")
 ;;
 

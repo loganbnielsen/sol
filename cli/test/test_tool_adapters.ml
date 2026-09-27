@@ -17,9 +17,9 @@ let assert_error result =
 
 let test_kubectl_apply_argv () =
   let c = Sol_cli_process.cmd [ "kubectl"; "apply"; "-f"; "/tmp/foo.yaml" ] in
-  check_str "argv[0]" "kubectl" (List.nth c.Sol_cli_process.argv 0);
-  check_str "argv[1]" "apply" (List.nth c.Sol_cli_process.argv 1);
-  check_str "argv[3]" "/tmp/foo.yaml" (List.nth c.Sol_cli_process.argv 3)
+  check_str "argv[0]" "kubectl" (List.nth c.argv 0);
+  check_str "argv[1]" "apply" (List.nth c.argv 1);
+  check_str "argv[3]" "/tmp/foo.yaml" (List.nth c.argv 3)
 ;;
 
 let test_kubectl_apply_failure () =
@@ -33,7 +33,7 @@ let test_kubectl_apply_dry_run_argv () =
   let c =
     Sol_cli_process.cmd [ "kubectl"; "apply"; "-f"; "x.yaml"; "--dry-run=server" ]
   in
-  check_bool "has dry-run flag" true (List.mem "--dry-run=server" c.Sol_cli_process.argv)
+  check_bool "has dry-run flag" true (List.mem "--dry-run=server" c.argv)
 ;;
 
 let test_kubectl_get_argv () =
@@ -41,9 +41,9 @@ let test_kubectl_get_argv () =
     Sol_cli_process.cmd
       [ "kubectl"; "get"; "secret"; "my-secret"; "-n"; "default"; "-o"; "json" ]
   in
-  check_str "resource" "secret" (List.nth c.Sol_cli_process.argv 2);
-  check_str "name" "my-secret" (List.nth c.Sol_cli_process.argv 3);
-  check_str "namespace" "default" (List.nth c.Sol_cli_process.argv 5)
+  check_str "resource" "secret" (List.nth c.argv 2);
+  check_str "name" "my-secret" (List.nth c.argv 3);
+  check_str "namespace" "default" (List.nth c.argv 5)
 ;;
 
 let test_kubectl_get_failure () =
@@ -61,17 +61,17 @@ let test_kubectl_rollout_status_argv () =
     Sol_cli_process.cmd
       [ "kubectl"; "rollout"; "status"; "deployment/my-svc"; "-n"; "staging" ]
   in
-  check_str "subcommand" "rollout" (List.nth c.Sol_cli_process.argv 1);
-  check_str "action" "status" (List.nth c.Sol_cli_process.argv 2);
-  check_str "kind_name" "deployment/my-svc" (List.nth c.Sol_cli_process.argv 3);
-  check_str "namespace" "staging" (List.nth c.Sol_cli_process.argv 5)
+  check_str "subcommand" "rollout" (List.nth c.argv 1);
+  check_str "action" "status" (List.nth c.argv 2);
+  check_str "kind_name" "deployment/my-svc" (List.nth c.argv 3);
+  check_str "namespace" "staging" (List.nth c.argv 5)
 ;;
 
 let test_kubectl_rollout_restart_argv () =
   let c =
     Sol_cli_process.cmd [ "kubectl"; "rollout"; "restart"; "deployment"; "-n"; "ns" ]
   in
-  check_str "action" "restart" (List.nth c.Sol_cli_process.argv 2)
+  check_str "action" "restart" (List.nth c.argv 2)
 ;;
 
 (* FEAT-079: `sol fn run`'s primitive -- copies the deployed CronJob's
@@ -89,14 +89,11 @@ let test_kubectl_create_job_from_cronjob_argv () =
       ; "myapp-billing"
       ]
   in
-  check_str "subcommand" "create" (List.nth c.Sol_cli_process.argv 1);
-  check_str "resource" "job" (List.nth c.Sol_cli_process.argv 2);
-  check_str "job name" "invoice-fn-manual-1700000000" (List.nth c.Sol_cli_process.argv 3);
-  check_str
-    "--from=cronjob/"
-    "--from=cronjob/invoice-fn"
-    (List.nth c.Sol_cli_process.argv 4);
-  check_str "namespace" "myapp-billing" (List.nth c.Sol_cli_process.argv 6)
+  check_str "subcommand" "create" (List.nth c.argv 1);
+  check_str "resource" "job" (List.nth c.argv 2);
+  check_str "job name" "invoice-fn-manual-1700000000" (List.nth c.argv 3);
+  check_str "--from=cronjob/" "--from=cronjob/invoice-fn" (List.nth c.argv 4);
+  check_str "namespace" "myapp-billing" (List.nth c.argv 6)
 ;;
 
 let test_kubectl_patch_argv () =
@@ -114,9 +111,9 @@ let test_kubectl_patch_argv () =
       ; "[{}]"
       ]
   in
-  check_str "resource" "secret" (List.nth c.Sol_cli_process.argv 2);
-  check_str "patch_type" "json" (List.nth c.Sol_cli_process.argv 7);
-  check_str "patch_data" "[{}]" (List.nth c.Sol_cli_process.argv 9)
+  check_str "resource" "secret" (List.nth c.argv 2);
+  check_str "patch_type" "json" (List.nth c.argv 7);
+  check_str "patch_data" "[{}]" (List.nth c.argv 9)
 ;;
 
 (* REFAC-125: kubectl's own messages, verbatim, and what each classifies as. The
@@ -238,20 +235,17 @@ let test_docker_build_argv () =
     Sol_cli_process.cmd
       [ "docker"; "build"; "-t"; "myimage:v1"; "-f"; "/ctx/svc/Dockerfile"; "/ctx" ]
   in
-  check_str "argv[0]" "docker" (List.nth c.Sol_cli_process.argv 0);
-  check_str "argv[1]" "build" (List.nth c.Sol_cli_process.argv 1);
-  check_str "tag" "myimage:v1" (List.nth c.Sol_cli_process.argv 3);
-  check_str "dockerfile" "/ctx/svc/Dockerfile" (List.nth c.Sol_cli_process.argv 5);
-  check_str "context" "/ctx" (List.nth c.Sol_cli_process.argv 6)
+  check_str "argv[0]" "docker" (List.nth c.argv 0);
+  check_str "argv[1]" "build" (List.nth c.argv 1);
+  check_str "tag" "myimage:v1" (List.nth c.argv 3);
+  check_str "dockerfile" "/ctx/svc/Dockerfile" (List.nth c.argv 5);
+  check_str "context" "/ctx" (List.nth c.argv 6)
 ;;
 
 let test_docker_push_argv () =
   let c = Sol_cli_process.cmd [ "docker"; "push"; "registry.example.com/myapp:v1" ] in
-  check_str "argv[1]" "push" (List.nth c.Sol_cli_process.argv 1);
-  check_str
-    "image_ref"
-    "registry.example.com/myapp:v1"
-    (List.nth c.Sol_cli_process.argv 2)
+  check_str "argv[1]" "push" (List.nth c.argv 1);
+  check_str "image_ref" "registry.example.com/myapp:v1" (List.nth c.argv 2)
 ;;
 
 let test_docker_build_failure () =
@@ -278,16 +272,16 @@ let test_helm_repo_add_argv () =
     Sol_cli_process.cmd
       [ "helm"; "repo"; "add"; "bitnami"; "https://charts.bitnami.com/bitnami" ]
   in
-  check_str "argv[0]" "helm" (List.nth c.Sol_cli_process.argv 0);
-  check_str "argv[1]" "repo" (List.nth c.Sol_cli_process.argv 1);
-  check_str "argv[2]" "add" (List.nth c.Sol_cli_process.argv 2);
-  check_str "name" "bitnami" (List.nth c.Sol_cli_process.argv 3);
-  check_str "url" "https://charts.bitnami.com/bitnami" (List.nth c.Sol_cli_process.argv 4)
+  check_str "argv[0]" "helm" (List.nth c.argv 0);
+  check_str "argv[1]" "repo" (List.nth c.argv 1);
+  check_str "argv[2]" "add" (List.nth c.argv 2);
+  check_str "name" "bitnami" (List.nth c.argv 3);
+  check_str "url" "https://charts.bitnami.com/bitnami" (List.nth c.argv 4)
 ;;
 
 let test_helm_repo_update_argv () =
   let c = Sol_cli_process.cmd [ "helm"; "repo"; "update" ] in
-  check_str "argv[2]" "update" (List.nth c.Sol_cli_process.argv 2)
+  check_str "argv[2]" "update" (List.nth c.argv 2)
 ;;
 
 let test_helm_upgrade_install_argv () =
@@ -298,15 +292,12 @@ let test_helm_upgrade_install_argv () =
        @ [ "--set"; "tls.enabled=false" ]
        @ [ "--wait"; "--timeout"; "3m" ])
   in
-  check_str "argv[1]" "upgrade" (List.nth c.Sol_cli_process.argv 1);
-  check_str "argv[2]" "--install" (List.nth c.Sol_cli_process.argv 2);
-  check_str "release" "redpanda" (List.nth c.Sol_cli_process.argv 3);
-  check_str "chart" "redpanda/redpanda" (List.nth c.Sol_cli_process.argv 4);
-  check_bool
-    "has --create-namespace"
-    true
-    (List.mem "--create-namespace" c.Sol_cli_process.argv);
-  check_bool "has --wait" true (List.mem "--wait" c.Sol_cli_process.argv)
+  check_str "argv[1]" "upgrade" (List.nth c.argv 1);
+  check_str "argv[2]" "--install" (List.nth c.argv 2);
+  check_str "release" "redpanda" (List.nth c.argv 3);
+  check_str "chart" "redpanda/redpanda" (List.nth c.argv 4);
+  check_bool "has --create-namespace" true (List.mem "--create-namespace" c.argv);
+  check_bool "has --wait" true (List.mem "--wait" c.argv)
 ;;
 
 (* CODE_LAYER-008: Sol_cli_helm.upgrade_install's ?version places --version
@@ -326,8 +317,8 @@ let test_helm_upgrade_install_version_argv () =
        @ [ "--version"; "18.12.1" ]
        @ [ "--wait"; "--timeout"; "3m" ])
   in
-  check_str "argv[8]" "--version" (List.nth c.Sol_cli_process.argv 8);
-  check_str "argv[9]" "18.12.1" (List.nth c.Sol_cli_process.argv 9)
+  check_str "argv[8]" "--version" (List.nth c.argv 8);
+  check_str "argv[9]" "18.12.1" (List.nth c.argv 9)
 ;;
 
 let test_helm_set_flags_bool () =
@@ -338,7 +329,7 @@ let test_helm_set_flags_bool () =
        @ [ "--set"; "tls.enabled=false" ]
        @ [ "--wait"; "--timeout"; "3m" ])
   in
-  check_bool "has --set" true (List.mem "--set" c.Sol_cli_process.argv)
+  check_bool "has --set" true (List.mem "--set" c.argv)
 ;;
 
 let test_helm_set_flags_str () =
@@ -349,16 +340,16 @@ let test_helm_set_flags_str () =
        @ [ "--set-string"; "auth.password=dev" ]
        @ [ "--wait"; "--timeout"; "3m" ])
   in
-  check_bool "has --set-string" true (List.mem "--set-string" c.Sol_cli_process.argv)
+  check_bool "has --set-string" true (List.mem "--set-string" c.argv)
 ;;
 
 (* ── Sol_cli_terraform ────────────────────────────────────────────────────── *)
 
 let test_terraform_init_argv () =
   let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/some/dir"; "init" ] in
-  check_str "argv[0]" "terraform" (List.nth c.Sol_cli_process.argv 0);
-  check_str "chdir" "-chdir=/some/dir" (List.nth c.Sol_cli_process.argv 1);
-  check_str "argv[2]" "init" (List.nth c.Sol_cli_process.argv 2)
+  check_str "argv[0]" "terraform" (List.nth c.argv 0);
+  check_str "chdir" "-chdir=/some/dir" (List.nth c.argv 1);
+  check_str "argv[2]" "init" (List.nth c.argv 2)
 ;;
 
 let test_terraform_plan_argv () =
@@ -371,46 +362,43 @@ let test_terraform_plan_argv () =
       ; "-var=cluster_name=sol-smoke"
       ]
   in
-  check_str "argv[2]" "plan" (List.nth c.Sol_cli_process.argv 2);
-  check_bool "has var-file" true (List.mem "-var-file=prod.tfvars" c.Sol_cli_process.argv);
-  check_bool
-    "has var"
-    true
-    (List.mem "-var=cluster_name=sol-smoke" c.Sol_cli_process.argv)
+  check_str "argv[2]" "plan" (List.nth c.argv 2);
+  check_bool "has var-file" true (List.mem "-var-file=prod.tfvars" c.argv);
+  check_bool "has var" true (List.mem "-var=cluster_name=sol-smoke" c.argv)
 ;;
 
 let test_terraform_plan_destroy_argv () =
   let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/some/dir"; "plan"; "-destroy" ] in
-  check_str "argv[2]" "plan" (List.nth c.Sol_cli_process.argv 2);
-  check_bool "has -destroy" true (List.mem "-destroy" c.Sol_cli_process.argv)
+  check_str "argv[2]" "plan" (List.nth c.argv 2);
+  check_bool "has -destroy" true (List.mem "-destroy" c.argv)
 ;;
 
 let test_terraform_apply_argv () =
   let c =
     Sol_cli_process.cmd [ "terraform"; "-chdir=/some/dir"; "apply"; "-auto-approve" ]
   in
-  check_str "argv[2]" "apply" (List.nth c.Sol_cli_process.argv 2);
-  check_bool "has -auto-approve" true (List.mem "-auto-approve" c.Sol_cli_process.argv)
+  check_str "argv[2]" "apply" (List.nth c.argv 2);
+  check_bool "has -auto-approve" true (List.mem "-auto-approve" c.argv)
 ;;
 
 let test_terraform_destroy_argv () =
   let c =
     Sol_cli_process.cmd [ "terraform"; "-chdir=/some/dir"; "destroy"; "-auto-approve" ]
   in
-  check_str "argv[2]" "destroy" (List.nth c.Sol_cli_process.argv 2);
-  check_bool "has -auto-approve" true (List.mem "-auto-approve" c.Sol_cli_process.argv)
+  check_str "argv[2]" "destroy" (List.nth c.argv 2);
+  check_bool "has -auto-approve" true (List.mem "-auto-approve" c.argv)
 ;;
 
 let test_terraform_output_json_argv () =
   let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/d"; "output"; "-json" ] in
-  check_str "argv[2]" "output" (List.nth c.Sol_cli_process.argv 2);
-  check_str "argv[3]" "-json" (List.nth c.Sol_cli_process.argv 3)
+  check_str "argv[2]" "output" (List.nth c.argv 2);
+  check_str "argv[3]" "-json" (List.nth c.argv 3)
 ;;
 
 let test_terraform_show_json_argv () =
   let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/d"; "show"; "-json" ] in
-  check_str "argv[2]" "show" (List.nth c.Sol_cli_process.argv 2);
-  check_str "argv[3]" "-json" (List.nth c.Sol_cli_process.argv 3)
+  check_str "argv[2]" "show" (List.nth c.argv 2);
+  check_str "argv[3]" "-json" (List.nth c.argv 3)
 ;;
 
 let test_terraform_which_check_returns_bool () =

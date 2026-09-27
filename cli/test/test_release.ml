@@ -204,7 +204,7 @@ let test_parse_kubectl_list_with_creation () =
   match R.parse_kubectl_list_with_creation json with
   | Error msg -> Alcotest.fail msg
   | Ok [ (record, created_at) ] ->
-    check_string "record id" sample_record.R.release_id record.R.release_id;
+    check_string "record id" sample_record.release_id record.release_id;
     check_string "creation timestamp" "2026-01-01T00:00:00Z" created_at
   | Ok _ -> Alcotest.fail "expected exactly one record"
 ;;
@@ -479,11 +479,11 @@ let test_of_plan_rederives_the_plan_identity () =
     let r = R.of_plan ~apply_mode:R.Direct plan in
     check_string
       "record id is the plan id"
-      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string plan.release_id)
       r.release_id;
     check_string
       "record content rederives the plan id"
-      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string plan.release_id)
       (Sol_cli_release_id.to_string (R.derived_release_id r));
     check_int "one resolved workload" 1 (List.length r.workloads);
     check_string "workload name" "charge_svc" (List.hd r.workloads).name;

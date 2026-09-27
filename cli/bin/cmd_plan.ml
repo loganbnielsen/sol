@@ -23,7 +23,7 @@ let run target_name =
     |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
   in
   let project = Option.value cfg.project ~default:(Filename.basename (Sys.getcwd ())) in
-  let target = cfg.Sol_cli_config.target in
+  let target = cfg.target in
   let resources = Sol_cli_config.resources cfg in
   let services = Sol_cli_config.services cfg in
   Printf.printf "Project: %s\n" project;
@@ -42,7 +42,7 @@ let run target_name =
   |> List.iter (fun (r : Sol_cli_config.resource) ->
     Printf.printf
       "  - %s%s\n"
-      r.Sol_cli_config.name
+      r.name
       (match r.typ with
        | None -> ""
        | Some t -> " (" ^ t ^ ")");

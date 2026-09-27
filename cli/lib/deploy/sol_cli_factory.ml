@@ -79,9 +79,7 @@ let affected_services ~plan ~results =
   then invalid_arg "Sol_cli_factory.affected_services: plan/results length mismatch";
   List.map2
     (fun spec (result : Sol_cli_executor.result) ->
-       Sol_cli_release_inspection.affected_service
-         ~image:result.Sol_cli_executor.image
-         spec)
-    plan.Sol_cli_deployment_plan.services
+       Sol_cli_release_inspection.affected_service ~image:result.image spec)
+    plan.services
     results
 ;;

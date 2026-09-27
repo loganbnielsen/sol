@@ -185,11 +185,7 @@ let run_phase
   let elapsed_s = Unix.gettimeofday () -. start in
   let ok, contents =
     match result with
-    | Ok r ->
-      ( Result.is_ok result
-      , phase_log_content
-          ~stdout:r.Sol_cli_process.stdout
-          ~stderr:r.Sol_cli_process.stderr )
+    | Ok r -> Result.is_ok result, phase_log_content ~stdout:r.stdout ~stderr:r.stderr
     | Error e ->
       false, phase_log_content ~stdout:"" ~stderr:(Sol_cli_process.error_to_string e)
   in

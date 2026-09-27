@@ -535,7 +535,7 @@ let served_api_kinds env =
   with
   | Ok result ->
     Ok
-      (String.split_on_char '\n' result.Sol_cli_process.stdout
+      (String.split_on_char '\n' result.stdout
        |> List.filter_map (fun line ->
          (* The last column is KIND; SHORTNAMES is often empty, so the split is on
             runs of whitespace rather than on single spaces. *)
@@ -609,7 +609,7 @@ let config_vars ~strict target =
       Sol_cli_config.load_for_target ~target:target_path
       |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
     in
-    let resolved_target = cfg.Sol_cli_config.target in
+    let resolved_target = cfg.target in
     (* Only Apply/destroy mutate real infrastructure; Plan and
            plan-destroy are previews, matching sol plan's own permissive
            contract. Same reasoning as cmd_deploy.ml's check: a typo'd or
@@ -634,7 +634,7 @@ let config_vars ~strict target =
     in
     Ok
       ( Sol_cli_terraform.kv_args vars
-      , resolved_target.Sol_cli_config.terraform_var_file
+      , resolved_target.terraform_var_file
       , Some resolved_target )
 ;;
 

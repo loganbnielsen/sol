@@ -190,8 +190,7 @@ let list_with_creation ~ctx ~(workspace : string)
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
     (try
-       Sol_cli_release.parse_kubectl_list_with_creation
-         (Yojson.Safe.from_string r.Sol_cli_process.stdout)
+       Sol_cli_release.parse_kubectl_list_with_creation (Yojson.Safe.from_string r.stdout)
      with
      | Yojson.Json_error msg ->
        Error (Printf.sprintf "could not parse kubectl output: %s" msg))
@@ -232,14 +231,14 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
           (match Sol_cli_release.of_kubectl_item json with
            | Error msg -> Error msg
            | Ok record ->
-             if String.equal record.Sol_cli_release.workspace workspace
+             if String.equal record.workspace workspace
              then Ok record
              else
                Error
                  (Printf.sprintf
                     "release %s belongs to workspace %S, not %S"
                     (Sol_cli_release_id.to_string id)
-                    record.Sol_cli_release.workspace
+                    record.workspace
                     workspace))))
 ;;
 

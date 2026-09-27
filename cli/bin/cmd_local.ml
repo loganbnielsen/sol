@@ -44,7 +44,7 @@ let k3d_env () =
          [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
   | Ok r ->
-    let daemon_min = String.trim r.Sol_cli_process.stdout in
+    let daemon_min = String.trim r.stdout in
     if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
     then [ "DOCKER_API_VERSION", daemon_min ]
     else []
@@ -730,7 +730,7 @@ let dev_status () =
        Sol_cli_process.run (Sol_cli_process.cmd [ "kubectl"; "get"; "pods"; "-A" ])
      with
      | Ok r ->
-       print_string r.Sol_cli_process.stdout;
+       print_string r.stdout;
        print_char '\n'
      | Error _ -> ());
     Printf.printf "\nPort-forwards:\n%!";

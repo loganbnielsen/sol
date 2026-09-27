@@ -34,9 +34,7 @@ let dispatch_rendered ~ctx ~mode spec yaml =
      let ns =
        Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace
      in
-     let name =
-       Sol_cli_deployment_plan.k8s_name_to_string spec.Sol_cli_deployment_plan.k8s_name
-     in
+     let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
      ignore (Sol_cli_manifest.emit_to_dir dir yaml ~ns ~name));
   make_result spec
 ;;
@@ -120,7 +118,7 @@ let run_plan
         Sol_cli_deployment_render.render_spec
           ~workspace
           ?env
-          ~release_id:plan.Sol_cli_deployment_plan.release_id
+          ~release_id:plan.release_id
           ~secret_backend:backend
           spec
       with

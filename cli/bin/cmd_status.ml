@@ -234,7 +234,7 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
     in
     (match Sol_cli_kubectl.get_raw ~ctx ~args:pod_args with
      | Ok r ->
-       print_string r.Sol_cli_process.stdout;
+       print_string r.stdout;
        print_char '\n'
      | Error _ -> ());
     (* EXP-029: which image tag is actually live, without kubectl knowledge.
@@ -251,9 +251,9 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
        .items[*]}{.metadata.name}{\"\\t\"}{.spec.template.spec.containers[0].image}{\"\\n\"}{end}"
     in
     (match Sol_cli_kubectl.get_raw ~ctx ~args:(deploy_args @ [ image_jsonpath ]) with
-     | Ok r when String.trim r.Sol_cli_process.stdout <> "" ->
+     | Ok r when String.trim r.stdout <> "" ->
        Printf.printf "Images\n";
-       String.split_on_char '\n' (String.trim r.Sol_cli_process.stdout)
+       String.split_on_char '\n' (String.trim r.stdout)
        |> List.iter (fun line ->
          match String.split_on_char '\t' line with
          | [ name; image ] -> Printf.printf "  %-20s %s\n" name image
@@ -284,7 +284,7 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
           ~ctx
           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
       with
-      | Ok r -> r.Sol_cli_process.stdout
+      | Ok r -> r.stdout
       | _ -> ""
     in
     if svc_names_raw <> ""
@@ -313,7 +313,7 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
               ~namespace:ns
               ~output:("jsonpath=" ^ port80_jsonpath)
           with
-          | Ok r -> r.Sol_cli_process.stdout <> ""
+          | Ok r -> r.stdout <> ""
           | _ -> false)
       in
       http_svcs
@@ -440,9 +440,7 @@ let print_service_status
                  domain))
   in
   let* k8s_name = Sol_cli_deployment_plan.k8s_name svc.name |> Sol_cli_exit.of_msg in
-  let pod_expectation =
-    Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
-  in
+  let pod_expectation = Sol_cli_status.pod_expectation_of_primitive svc.primitive in
   let presence = namespace_presence ~ctx ns in
   let diagnoses =
     match presence with
@@ -551,7 +549,7 @@ let run ~ctx (options : status_options) =
       ~ctx
       ~workspace
       ~domain
-      ~services:selected.Sol_cli_workload_selection.services
+      ~services:selected.services
       ~backend
       ~base_domain
       ~explicit_loki_url
@@ -564,7 +562,7 @@ let run ~ctx (options : status_options) =
       ~workspace
       ~domain
       ~service_name
-      ~services:selected.Sol_cli_workload_selection.services
+      ~services:selected.services
       ~backend
       ~base_domain
       ~explicit_loki_url

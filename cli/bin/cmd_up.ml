@@ -217,11 +217,8 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
   @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
     try
       List.iter
-        (dry_run_service
-           ~workspace
-           ~sha
-           ~release_id:plan.Sol_cli_deployment_plan.release_id)
-        plan.Sol_cli_deployment_plan.services;
+        (dry_run_service ~workspace ~sha ~release_id:plan.release_id)
+        plan.services;
       Ok ()
     with
     | Deploy_failed msg -> Error msg)
@@ -263,7 +260,7 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
          ~ctx:cluster
          ~workspace
          ~keep
-         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~current:(Sol_cli_release_id.to_string plan.release_id)
          ~previous
      with
      | Ok [] -> ()
@@ -286,7 +283,7 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
     | Error msg -> Error msg
     | Ok ctx_dir ->
       (try
-         plan.Sol_cli_deployment_plan.services
+         plan.services
          |> List.iter (fun spec ->
            (match Sol_cli_boundary_lease.ensure_held lease with
             | Ok () -> ()

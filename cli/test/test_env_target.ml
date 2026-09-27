@@ -120,13 +120,10 @@ let test_whitespace_registry_fails () =
 let test_to_env_config_local () =
   let t = Sol_cli_env_target.local_defaults ~image_tag:"abc123" in
   let cfg = Sol_cli_env_target.to_env_config ~name:"local" t in
-  check_string "name" "local" cfg.Sol_cli_deployment_plan.name;
-  check_string "registry" "sol-registry:5000" cfg.Sol_cli_deployment_plan.registry;
-  check_string "image_tag" "abc123" cfg.Sol_cli_deployment_plan.image_tag;
-  Alcotest.(check bool)
-    "mode Local"
-    true
-    (cfg.Sol_cli_deployment_plan.mode = Sol_cli_deployment_plan.Local)
+  check_string "name" "local" cfg.name;
+  check_string "registry" "sol-registry:5000" cfg.registry;
+  check_string "image_tag" "abc123" cfg.image_tag;
+  Alcotest.(check bool) "mode Local" true (cfg.mode = Sol_cli_deployment_plan.Local)
 ;;
 
 let test_to_env_config_customer () =
@@ -140,11 +137,11 @@ let test_to_env_config_customer () =
   | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
   | Ok t ->
     let cfg = Sol_cli_env_target.to_env_config ~name:"production" t in
-    check_string "name" "production" cfg.Sol_cli_deployment_plan.name;
+    check_string "name" "production" cfg.name;
     Alcotest.(check bool)
       "mode Customer_cloud"
       true
-      (cfg.Sol_cli_deployment_plan.mode = Sol_cli_deployment_plan.Customer_cloud)
+      (cfg.mode = Sol_cli_deployment_plan.Customer_cloud)
 ;;
 
 (* ── default_secret_backend ──────────────────────────────────────────────── *)
@@ -202,7 +199,7 @@ let test_to_env_config_local_backend () =
   check_backend
     "to_env_config Local → Kubernetes_live"
     Sol_cli_manifest.Kubernetes_live
-    cfg.Sol_cli_deployment_plan.secret_backend
+    cfg.secret_backend
 ;;
 
 let test_to_env_config_gitops_backend () =
@@ -219,7 +216,7 @@ let test_to_env_config_gitops_backend () =
     check_backend
       "to_env_config Customer_gitops → Kubernetes_placeholder"
       Sol_cli_manifest.Kubernetes_placeholder
-      cfg.Sol_cli_deployment_plan.secret_backend
+      cfg.secret_backend
 ;;
 
 (* ── resolve_secret_backend (INFRA-050) ───────────────────────────────────── *)

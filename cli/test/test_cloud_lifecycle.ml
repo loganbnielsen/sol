@@ -161,12 +161,9 @@ let without_output name json =
 let test_gcp_outputs () =
   (match parse_gcp (valid_gcp_outputs ()) with
    | Ok outputs ->
-     Alcotest.(check string) "cluster" "sol-qual" outputs.Sol_cli_gcp_cluster.cluster_name;
-     Alcotest.(check string)
-       "project"
-       "sol-qualification"
-       outputs.Sol_cli_gcp_cluster.project_id;
-     Alcotest.(check string) "region" "us-central1" outputs.Sol_cli_gcp_cluster.region;
+     Alcotest.(check string) "cluster" "sol-qual" outputs.cluster_name;
+     Alcotest.(check string) "project" "sol-qualification" outputs.project_id;
+     Alcotest.(check string) "region" "us-central1" outputs.region;
      Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
    | Error message -> Alcotest.fail message);
   (* The project and region are contract, not incidental context: every GCP API
@@ -1579,7 +1576,7 @@ let test_ambiguous_array_does_not_proceed () =
 let test_identity_reports_its_source () =
   let source_of body =
     match Sol_cli_aws_cluster.whoami_identity_of_json body with
-    | Ok i -> i.Sol_cli_aws_cluster.source
+    | Ok i -> i.source
     | Error e -> Alcotest.fail e
   in
   Alcotest.(check string)

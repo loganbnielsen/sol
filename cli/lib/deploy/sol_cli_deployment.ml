@@ -74,20 +74,18 @@ let of_plan
   : t
   =
   { deployment_id
-  ; release_id = plan.Sol_cli_deployment_plan.release_id
-  ; workspace = plan.Sol_cli_deployment_plan.workspace
-  ; environment = plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.env
+  ; release_id = plan.release_id
+  ; workspace = plan.workspace
+  ; environment = plan.environment.Sol_cli_deployment_plan.env
   ; created_at = rfc3339_utc now
   ; git_commit
   ; git_dirty
   ; actor
   ; target
-  ; mode =
-      deployment_mode_to_string
-        plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
-  ; requested_scope = plan.Sol_cli_deployment_plan.requested_scope
+  ; mode = deployment_mode_to_string plan.environment.Sol_cli_deployment_plan.mode
+  ; requested_scope = plan.requested_scope
   ; profile =
-      plan.Sol_cli_deployment_plan.profile
+      plan.profile
       |> Option.map (fun (claim : Sol_cli_deployment_plan.profile_claim) -> claim.profile)
   ; outcome
   }
@@ -97,7 +95,7 @@ let of_plan
    not a failure to deploy. *)
 let run_git args =
   match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
-  | Ok r -> String.trim r.Sol_cli_process.stdout
+  | Ok r -> String.trim r.stdout
   | _ -> ""
 ;;
 

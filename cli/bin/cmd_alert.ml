@@ -42,7 +42,7 @@ let run_test target alertmanager_url dry_run =
     Sol_cli_config.load_for_target ~target
     |> Result.map_error (fun e -> Sol_cli_exit.failure (Sol_cli_config.error_to_string e))
   in
-  let target_cfg = cfg.Sol_cli_config.target in
+  let target_cfg = cfg.target in
   let* () =
     Sol_cli_alerting.validate
       ~receiver_type:target_cfg.alert_receiver_type

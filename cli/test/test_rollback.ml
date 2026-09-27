@@ -779,7 +779,7 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
     Alcotest.(check bool)
       "primitive is still Fn"
       true
-      (got.Sol_cli_deployment_plan.primitive = Sol_cli_deployment_plan.Fn);
+      (got.primitive = Sol_cli_deployment_plan.Fn);
     Alcotest.(check (option string)) "schedule preserved" fn_spec.schedule got.schedule;
     Alcotest.(check bool)
       "live kind is CronJob"
@@ -1175,7 +1175,7 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
          1
          (List.length surplus);
        let id, _ = List.hd surplus in
-       Alcotest.(check string) "pruned name" "ghost-svc" id.Sol_cli_rollback.name)
+       Alcotest.(check string) "pruned name" "ghost-svc" id.name)
 ;;
 
 (* A prune failure must not move the pointer -- pruning failed, so the cluster

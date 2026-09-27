@@ -677,7 +677,7 @@ let sol_yml_language ~resolved_config ~service_name =
        |> List.find_opt (fun s -> s.Sol_cli_config.name = service_name)
      with
      | None -> None
-     | Some s -> s.Sol_cli_config.language)
+     | Some s -> s.language)
 ;;
 
 (* Only positive, language-neutral evidence counts. A worker may consume Kafka
@@ -711,7 +711,7 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
   match Option.map (fun (cfg : Sol_cli_config.t) -> cfg.target) resolved_config with
   | None -> None
   | Some target ->
-    target.Sol_cli_config.profile
+    target.profile
     |> Option.map (fun profile ->
       let requirements =
         Sol_cli_profile.requirements
@@ -843,7 +843,7 @@ let of_services_result
          |> List.find_opt (fun (svc, _) ->
            svc.Sol_cli_manifest.domain = domain
            && svc.Sol_cli_manifest.name = source_name
-           && svc.Sol_cli_manifest.primitive = Sol_cli_manifest.Svc)
+           && svc.primitive = Sol_cli_manifest.Svc)
        with
        | None ->
          Error
@@ -861,18 +861,12 @@ let of_services_result
                      | units -> String.concat ", " units)
               })
        | Some (target, _) ->
-         let* target_name = k8s_name_result target.Sol_cli_manifest.name in
-         let* target_namespace =
-           namespace_result ~workspace ~domain:target.Sol_cli_manifest.domain
-         in
+         let* target_name = k8s_name_result target.name in
+         let* target_namespace = namespace_result ~workspace ~domain:target.domain in
          Ok
-           { env_var = call_env_var target.Sol_cli_manifest.name
-           ; url =
-               service_url
-                 ~workspace
-                 ~domain:target.Sol_cli_manifest.domain
-                 ~k8s_name:target_name
-           ; target_domain = target.Sol_cli_manifest.domain
+           { env_var = call_env_var target.name
+           ; url = service_url ~workspace ~domain:target.domain ~k8s_name:target_name
+           ; target_domain = target.domain
            ; target_name
            ; target_namespace
            })
@@ -885,7 +879,7 @@ let of_services_result
     let* k8s_name = k8s_name_result svc.Sol_cli_manifest.name in
     let* namespace = namespace_result ~workspace ~domain:svc.Sol_cli_manifest.domain in
     let image =
-      match List.assoc_opt svc.Sol_cli_manifest.name image_refs with
+      match List.assoc_opt svc.name image_refs with
       | Some ref ->
         (* FEAT-050: a supplied artifact reference is used verbatim. It is a
            fully-qualified digest, so the registry/workspace/tag defaults do
@@ -893,26 +887,26 @@ let of_services_result
         ref
       | None -> image_ref ~registry:env.registry ~workspace ~k8s_name ~tag:env.image_tag
     in
-    let primitive = primitive_of_manifest svc.Sol_cli_manifest.primitive in
+    let primitive = primitive_of_manifest svc.primitive in
     let* calls =
       let rec collect acc = function
         | [] -> Ok (List.rev acc)
         | ref :: rest ->
-          let* call = lookup_call svc.Sol_cli_manifest.name ref in
+          let* call = lookup_call svc.name ref in
           collect (call :: acc) rest
       in
       collect [] toml.Sol_cli_toml.calls
     in
     let* () =
       match
-        toml.Sol_cli_toml.env_config
+        toml.env_config
         |> List.find_opt (fun (key, _) -> List.exists (fun c -> c.env_var = key) calls)
       with
       | None -> Ok ()
       | Some (key, _) ->
         Error
           (Invalid_service_call
-             { service = svc.Sol_cli_manifest.name
+             { service = svc.name
              ; ref = key
              ; message = "call URL env var conflicts with [infra.env] config"
              })
@@ -923,90 +917,74 @@ let of_services_result
     let* schedule =
       match primitive with
       | Fn ->
-        (match toml.Sol_cli_toml.schedule with
+        (match toml.schedule with
          | Some schedule -> Ok (Some schedule)
          | None ->
            Error
              (Toml_error
                 (Sol_cli_toml.Validation
-                   { path =
-                       Sol_cli_workspace.at_root
-                         (Filename.concat svc.Sol_cli_manifest.dir "sol.toml")
+                   { path = Sol_cli_workspace.at_root (Filename.concat svc.dir "sol.toml")
                    ; message =
                        Printf.sprintf
                          "sol.toml: [service] schedule is required for the -fn %S (e.g. \
                           schedule = \"0 3 * * *\")"
-                         svc.Sol_cli_manifest.name
+                         svc.name
                    })))
       | _ -> Ok None
     in
     let replicas =
-      match
-        sol_yml_replicas_override ~resolved_config ~service_name:svc.Sol_cli_manifest.name
-      with
+      match sol_yml_replicas_override ~resolved_config ~service_name:svc.name with
       | Some replicas -> replicas
-      | None -> Option.value toml.Sol_cli_toml.replicas ~default:1
+      | None -> Option.value toml.replicas ~default:1
     in
     let kafka_durability_config =
       match resolved_config with
       | Some cfg
-        when cfg.Sol_cli_config.target.profile
-             = Some Sol_cli_profile.Production_single_region
-             && service_uses_resource_type
-                  resolved_config
-                  svc.Sol_cli_manifest.name
-                  "kafka" -> [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
+        when cfg.target.profile = Some Sol_cli_profile.Production_single_region
+             && service_uses_resource_type resolved_config svc.name "kafka" ->
+        [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
       | _ -> []
     in
-    let service_config =
-      List.remove_assoc "SOL_KAFKA_DURABILITY" toml.Sol_cli_toml.env_config
-    in
-    let language =
-      sol_yml_language ~resolved_config ~service_name:svc.Sol_cli_manifest.name
-    in
+    let service_config = List.remove_assoc "SOL_KAFKA_DURABILITY" toml.env_config in
+    let language = sol_yml_language ~resolved_config ~service_name:svc.name in
     (* AUDIT-080: the Kafka-consumer declaration AUDIT-078 put in the plan, not a
        guess from the primitive. A declared `kafka` resource or `events/` topic
        makes this a consumer. *)
     let consumes_kafka =
-      toml.Sol_cli_toml.topics <> []
-      || service_uses_resource_type resolved_config svc.Sol_cli_manifest.name "kafka"
+      toml.topics <> [] || service_uses_resource_type resolved_config svc.name "kafka"
     in
     let spec =
-      { domain = svc.Sol_cli_manifest.domain
-      ; source_name = svc.Sol_cli_manifest.name
+      { domain = svc.domain
+      ; source_name = svc.name
       ; k8s_name
       ; namespace
       ; primitive
-      ; source_dir = svc.Sol_cli_manifest.dir
+      ; source_dir = svc.dir
       ; image
       ; config =
           kafka_durability_config
           @ service_config
           @ List.map (fun c -> c.env_var, c.url) calls
-      ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
-      ; volumes = toml.Sol_cli_toml.volumes
+      ; secrets = List.map (fun key -> key, "") toml.secret_keys
+      ; volumes = toml.volumes
       ; schedule
       ; scheduled_concurrency =
-          Option.value
-            toml.Sol_cli_toml.scheduled_concurrency
-            ~default:default_scheduled_concurrency
-      ; backoff_limit =
-          Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
+          Option.value toml.scheduled_concurrency ~default:default_scheduled_concurrency
+      ; backoff_limit = Option.value toml.backoff_limit ~default:default_backoff_limit
       ; replicas
-      ; availability =
-          Option.value toml.Sol_cli_toml.availability ~default:Sol_cli_availability.Single
+      ; availability = Option.value toml.availability ~default:Sol_cli_availability.Single
       ; consumes_kafka
       ; language
-      ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
-      ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory
-      ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
-      ; ingress_host = toml.Sol_cli_toml.ingress_host
-      ; ingress_path = toml.Sol_cli_toml.ingress_path
+      ; cpu = Option.value toml.cpu ~default:default_cpu
+      ; memory = Option.value toml.memory ~default:default_memory
+      ; rollout_strategy = toml.rollout_strategy
+      ; ingress_host = toml.ingress_host
+      ; ingress_path = toml.ingress_path
       ; cluster_issuer = env.cluster_issuer
       ; calls
       ; called_by = []
-      ; extra_labels = toml.Sol_cli_toml.extra_labels
-      ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
+      ; extra_labels = toml.extra_labels
+      ; progressive_delivery = toml.progressive_delivery
       }
     in
     let* () = validate_persistence spec in
@@ -1024,9 +1002,7 @@ let of_services_result
      is exactly what was asked for -- resolving a callee never pulls it into the
      release. This is the line that keeps DEC-036's "no transitive widening"
      clause true, so it is worth keeping adjacent to [resolution_units]. *)
-  let selection_key (svc : Sol_cli_manifest.service) =
-    svc.Sol_cli_manifest.domain ^ "/" ^ svc.Sol_cli_manifest.name
-  in
+  let selection_key (svc : Sol_cli_manifest.service) = svc.domain ^ "/" ^ svc.name in
   let selection_keys = List.map selection_key services in
   let deployable =
     List.filter (fun (svc, _) -> List.mem (selection_key svc) selection_keys) loaded

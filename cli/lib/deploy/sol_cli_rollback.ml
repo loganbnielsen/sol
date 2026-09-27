@@ -311,9 +311,7 @@ let check_migration_boundary
   : (unit, migration_check_error) result
   =
   let new_migrations =
-    List.filter
-      (fun m -> not (List.mem m release.Sol_cli_release.migrations))
-      current_migrations
+    List.filter (fun m -> not (List.mem m release.migrations)) current_migrations
     |> List.sort String.compare
   in
   let rec go = function
@@ -325,12 +323,9 @@ let check_migration_boundary
        with
        | Error reason ->
          Error
-           (Undeclared_disposition
-              { release_id = release.Sol_cli_release.release_id; migration; reason })
+           (Undeclared_disposition { release_id = release.release_id; migration; reason })
        | Ok Sol_cli_migration_disposition.Contract ->
-         Error
-           (Contracting_migration
-              { release_id = release.Sol_cli_release.release_id; migration })
+         Error (Contracting_migration { release_id = release.release_id; migration })
        | Ok Sol_cli_migration_disposition.Expand -> go rest)
   in
   go new_migrations
@@ -399,7 +394,7 @@ let live_resource_and_jsonpath kind =
    encodes "no kubectl-rollout-undo history", which is irrelevant here -- a
    CronJob still carries a `release` label worth verifying. *)
 let live_kind_of_service (s : Sol_cli_deployment_plan.service_spec) =
-  match s.Sol_cli_deployment_plan.primitive with
+  match s.primitive with
   | Sol_cli_deployment_plan.Fn -> Live_cronjob
   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
     (match s.progressive_delivery with
@@ -411,7 +406,7 @@ let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
   match
     Sol_cli_kubectl.get ~ctx ~resource ~name ~namespace ~output:("jsonpath=" ^ jsonpath)
   with
-  | Ok r -> String.trim r.Sol_cli_process.stdout
+  | Ok r -> String.trim r.stdout
   | _ -> ""
 ;;
 
@@ -522,7 +517,7 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
          Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
        with
        | Ok r ->
-         (match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+         (match Yojson.Safe.from_string r.stdout with
           | exception Yojson.Json_error msg ->
             Error
               (Printf.sprintf "could not parse kubectl get %s output: %s" resource msg)
@@ -590,7 +585,7 @@ let verify_workloads
          match List.find_opt (fun (i, _) -> same_identity i id) live with
          | None -> mismatched, id :: missing
          | Some (_, actual) ->
-           if String.equal actual release.Sol_cli_release.release_id
+           if String.equal actual release.release_id
            then mismatched, missing
            else
              ( { kind = id.kind; namespace = id.namespace; name = id.name; actual }
@@ -667,7 +662,7 @@ let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_repor
         m.namespace
         m.name
         (display_actual m.actual)
-        release.Sol_cli_release.release_id)
+        release.release_id)
   in
   let missing_lines =
     r.missing
@@ -687,7 +682,7 @@ let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_repor
         i.namespace
         i.name
         (display_actual actual)
-        release.Sol_cli_release.release_id)
+        release.release_id)
   in
   String.concat "\n" (mismatch_lines @ missing_lines @ unexpected_lines)
 ;;
@@ -713,9 +708,7 @@ let verify_pointer
       ~namespace:"default"
       ~jsonpath:"{.data.release_id}"
   in
-  { pointer_actual
-  ; pointer_ok = String.equal pointer_actual release.Sol_cli_release.release_id
-  }
+  { pointer_actual; pointer_ok = String.equal pointer_actual release.release_id }
 ;;
 
 let pointer_report_ok (r : pointer_report) = r.pointer_ok
@@ -725,7 +718,7 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
     "pointer mismatch: %s names %s, expected %s"
     (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
     (display_actual r.pointer_actual)
-    release.Sol_cli_release.release_id
+    release.release_id
 ;;
 
 (* FEAT-075: FEAT-066's load-bearing rollback ordering, extracted from
@@ -781,7 +774,7 @@ let execute
               rollback incomplete: live workloads do not match release %s; the \
               current-release pointer was left unchanged"
              (workload_report_to_string ~release report)
-             release.Sol_cli_release.release_id)
+             release.release_id)
       else (
         match deps.prune report.unexpected with
         | Ok () -> Ok ()

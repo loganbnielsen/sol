@@ -192,8 +192,8 @@ let test_declared_resources_decide_infra () =
   let req =
     local_infra "resources:\n  app_db:\n    type: postgres\n  events:\n    type: kafka\n"
   in
-  check_bool "postgres" true req.Sol_cli_workspace.postgres;
-  check_bool "kafka" true req.Sol_cli_workspace.kafka
+  check_bool "postgres" true req.postgres;
+  check_bool "kafka" true req.kafka
 ;;
 
 (* The defect REFAC-107 closes: a TypeScript unit has no dune file for a grep to
@@ -211,22 +211,22 @@ let test_typescript_workspace_gets_its_postgres () =
       \    language: typescript\n\
       \    uses: [app_db]\n"
   in
-  check_bool "postgres" true req.Sol_cli_workspace.postgres;
-  check_bool "no kafka declared" false req.Sol_cli_workspace.kafka
+  check_bool "postgres" true req.postgres;
+  check_bool "no kafka declared" false req.kafka
 ;;
 
 let test_observability_always_on () =
   let req = local_infra "project: bare\n" in
-  check_bool "no postgres" false req.Sol_cli_workspace.postgres;
-  check_bool "no kafka" false req.Sol_cli_workspace.kafka;
-  check_bool "loki" true req.Sol_cli_workspace.loki;
-  check_bool "prometheus" true req.Sol_cli_workspace.prometheus;
-  check_bool "tempo" true req.Sol_cli_workspace.tempo
+  check_bool "no postgres" false req.postgres;
+  check_bool "no kafka" false req.kafka;
+  check_bool "loki" true req.loki;
+  check_bool "prometheus" true req.prometheus;
+  check_bool "tempo" true req.tempo
 ;;
 
 let test_omitted_resource_starts_nothing () =
   let req = local_infra "resources:\n  app_db:\n    type: postgres\n    omit: true\n" in
-  check_bool "omitted postgres is not started" false req.Sol_cli_workspace.postgres
+  check_bool "omitted postgres is not started" false req.postgres
 ;;
 
 (* REFAC-108: the one entry point, from a subdirectory. *)

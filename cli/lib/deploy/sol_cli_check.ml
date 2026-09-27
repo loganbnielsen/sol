@@ -46,7 +46,7 @@ let check_service (svc : Sol_cli_manifest.service) =
   (match Sol_cli_toml.load_result toml_path with
    | Error err -> add Severity.Error toml_path (Sol_cli_toml.parse_error_to_string err)
    | Ok toml ->
-     toml.Sol_cli_toml.secret_keys
+     toml.secret_keys
      |> List.iter (fun key ->
        if not (valid_env_key key)
        then

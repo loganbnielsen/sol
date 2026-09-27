@@ -52,7 +52,7 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
       match
         Sol_cli_deployment_render.render_spec
           ~workspace:release.Sol_cli_release.workspace
-          ?env:release.Sol_cli_release.environment
+          ?env:release.environment
           ~release_id:release_id_t
           ~secret_backend:Sol_cli_manifest.Kubernetes_live
           spec
@@ -71,11 +71,8 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
 
 let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
-  Printf.printf
-    "Rolling back %s to release %s\n%!"
-    workspace
-    release.Sol_cli_release.release_id;
-  let* release_id_t = Sol_cli_release_id.of_string release.Sol_cli_release.release_id in
+  Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
+  let* release_id_t = Sol_cli_release_id.of_string release.release_id in
   let current_migrations =
     List.map
       Sol_cli_plan_ids.Migration_file.to_string
@@ -87,10 +84,7 @@ let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let deps : Sol_cli_rollback.transaction_deps =
     { apply = apply_specs ~ctx ~local ~release ~release_id_t
     ; live_workloads =
-        (fun () ->
-          Sol_cli_rollback.live_workloads
-            ~ctx
-            ~workspace:release.Sol_cli_release.workspace)
+        (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
     ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
@@ -99,7 +93,7 @@ let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let* () = Sol_cli_rollback.execute ~release ~migrations_dir ~current_migrations ~deps in
   Printf.printf
     "Verified: workloads and pointer both name release %s.\n%!"
-    release.Sol_cli_release.release_id;
+    release.release_id;
   Ok ()
 ;;
 

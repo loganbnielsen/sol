@@ -46,7 +46,7 @@ let reserved_platform_namespaces =
 ;;
 
 let namespaces (plan : Sol_cli_deployment_plan.t) : string list =
-  plan.Sol_cli_deployment_plan.services
+  plan.services
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
     Sol_cli_deployment_plan.namespace_to_string spec.namespace)
   |> List.sort_uniq String.compare

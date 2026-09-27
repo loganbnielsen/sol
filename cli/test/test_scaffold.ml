@@ -290,7 +290,7 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
   | Error e ->
     Alcotest.fail ("load_for_target failed: " ^ Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    let target = cfg.Sol_cli_config.target in
+    let target = cfg.target in
     check_bool
       "prod/aws/us-east-1 is declared"
       true

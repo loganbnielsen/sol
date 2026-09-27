@@ -420,7 +420,7 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
   with
   | Ok r ->
-    (match parse_events_json r.Sol_cli_process.stdout with
+    (match parse_events_json r.stdout with
      | Ok events -> Events events
      | Error why -> Events_unavailable why)
   | Error (Sol_cli_process.Non_zero r) ->
@@ -450,7 +450,7 @@ let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
-  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
+  | Ok r -> parse_pods_json r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -467,7 +467,7 @@ let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
-  | Ok r -> parse_pods_json r.Sol_cli_process.stdout
+  | Ok r -> parse_pods_json r.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (kubectl_read_failure
@@ -512,7 +512,7 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
       ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
   with
   | Ok r ->
-    (match parse_cronjob_status r.Sol_cli_process.stdout with
+    (match parse_cronjob_status r.stdout with
      | Ok status -> Found status
      | Error why -> Unavailable why)
   | Error e ->

@@ -31,9 +31,9 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
         ~ctx
         ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
     with
-    | Ok r when r.Sol_cli_process.stdout <> "" ->
+    | Ok r when r.stdout <> "" ->
       let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
-      String.split_on_char ' ' r.Sol_cli_process.stdout
+      String.split_on_char ' ' r.stdout
       |> List.filter (fun name -> List.mem name deployed_names)
       |> List.iter (fun name ->
         match
@@ -44,7 +44,7 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
             ~namespace:ns
             ~output:("jsonpath=" ^ port80_jsonpath)
         with
-        | Ok gr when gr.Sol_cli_process.stdout <> "" ->
+        | Ok gr when gr.stdout <> "" ->
           Printf.printf "  →  http://localhost:8080  (%s)\n%!" name
         | _ -> ())
     | _ -> ())
@@ -174,11 +174,9 @@ let build_plan ctx ~emit_to =
   let env =
     { (Sol_cli_env_target.to_env_config ~name:ctx.execution.workspace env_target) with
       Sol_cli_deployment_plan.secret_backend = ctx.secret_backend
-    ; env = Some ctx.target_cfg.Sol_cli_config.env
+    ; env = Some ctx.target_cfg.env
     ; cluster_issuer =
-        Option.value
-          ctx.target_cfg.Sol_cli_config.cluster_issuer
-          ~default:"letsencrypt-prod"
+        Option.value ctx.target_cfg.cluster_issuer ~default:"letsencrypt-prod"
     }
   in
   let* plan =
@@ -205,7 +203,7 @@ let build_plan ctx ~emit_to =
     |> Result.map_error (fun (profile, findings) ->
       Sol_cli_exit.failure (Sol_cli_profile_preflight.report profile findings))
   in
-  plan.Sol_cli_deployment_plan.profile
+  plan.profile
   |> Option.iter (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
     Printf.printf
       "Profile: %s (preflight passed)\n%!"
@@ -416,10 +414,10 @@ let push_deploy_events
     |> Option.value ~default:Sol_cli_observability_url.Local
   in
   let deploy_events =
-    plan.Sol_cli_deployment_plan.services
+    plan.services
     |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
       { Sol_cli_deploy_event.workspace
-      ; env = target_cfg.Sol_cli_config.env
+      ; env = target_cfg.env
       ; domain = spec.domain
       ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
       ; primitive = primitive_label (to_manifest_primitive spec.primitive)
@@ -486,7 +484,7 @@ let record_release_and_prune ctx ~previous plan =
          ~ctx:cluster
          ~workspace
          ~keep:ctx.keep_releases
-         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~current:(Sol_cli_release_id.to_string plan.release_id)
          ~previous
      with
      | Ok [] -> ()
@@ -539,10 +537,7 @@ let report_surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
 let report_apply_success ctx plan results =
   results
   |> List.iter (fun r ->
-    Printf.printf
-      "  ✓  namespace %s  image %s\n\n%!"
-      r.Sol_cli_executor.namespace
-      r.Sol_cli_executor.image);
+    Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.image);
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
   print_service_urls ~ctx:ctx.execution.cluster results;
   Printf.printf "Run 'sol status' to check pod health.\n";
@@ -654,7 +649,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
                      ; consumer_groups =
                          List.map
                            Sol_cli_plan_ids.Consumer_group.to_string
-                           plan.Sol_cli_deployment_plan.consumer_groups
+                           plan.consumer_groups
                      }))
               ~report_success:(fun () -> report_apply_success ctx plan results))
 ;;
@@ -726,7 +721,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     match req.registry with
     | Some r -> r
     | None ->
-      (match target_cfg.Sol_cli_config.registry with
+      (match target_cfg.registry with
        | Some r -> r
        | None -> "")
   in
@@ -739,7 +734,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let omission =
     Sol_cli_workload_selection.apply_omission
       ~is_omitted:(fun s ->
-        Sol_cli_config.is_omitted_service resolved_config ~name:s.Sol_cli_manifest.name)
+        Sol_cli_config.is_omitted_service resolved_config ~name:s.name)
       selected
   in
   let unit_id (s : Sol_cli_manifest.service) = Printf.sprintf "%s/%s" s.domain s.name in
@@ -827,7 +822,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         Sol_cli_execution.context
           ~cluster:(Sol_cli_kube_destination.context_of_destination destination)
           ~workspace
-          ~env:target_cfg.Sol_cli_config.env
+          ~env:target_cfg.env
           ()
     ; sha
     ; registry

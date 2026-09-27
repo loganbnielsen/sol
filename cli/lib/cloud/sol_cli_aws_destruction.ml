@@ -286,7 +286,7 @@ let load_balancers_gone ~region ~cluster_name =
          ; region
          ])
   with
-  | Ok r -> Some (String.trim r.Sol_cli_process.stdout = "")
+  | Ok r -> Some (String.trim r.stdout = "")
   | _ -> None
 ;;
 

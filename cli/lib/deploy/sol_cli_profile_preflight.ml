@@ -55,7 +55,7 @@ let establish
        only content digests. This is the application's choice of reference, not
        a property of the target. *)
     let images =
-      plan.Sol_cli_deployment_plan.services
+      plan.services
       |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.image)
     in
     if Sol_cli_image_ref.plan_is_immutable images
@@ -95,11 +95,11 @@ let establish
        CLI/substrate/chart versions are recorded in
        docs/deployment/compatibility.md. *)
     let profile =
-      match plan.Sol_cli_deployment_plan.profile with
+      match plan.profile with
       | Some claim -> claim.profile
       | None -> Sol_cli_profile.Production_single_region
     in
-    let services = plan.Sol_cli_deployment_plan.services in
+    let services = plan.services in
     let unstated =
       services
       |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) -> s.language = None)
@@ -210,7 +210,7 @@ let establish
        can be replaced inside the DEC-026 §3 bound. *)
     let required =
       List.length
-        (plan.Sol_cli_deployment_plan.services
+        (plan.services
          |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) ->
            Sol_cli_availability.is_node_failure_tolerant s.availability))
     in
@@ -299,7 +299,7 @@ let establish
        that the provider implements the path. The zero-loss-on-broker-loss
        behaviour and the consumer-resume bound are HARDEN-002's live evidence. *)
     let consumers =
-      plan.Sol_cli_deployment_plan.services
+      plan.services
       |> List.filter (fun (s : Sol_cli_deployment_plan.service_spec) -> s.consumes_kafka)
     in
     let missing =

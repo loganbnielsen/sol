@@ -220,7 +220,7 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
      with
      | Error e -> Error (classify_process_error e)
      | Ok r ->
-       let body, code = split_body_and_status r.Sol_cli_process.stdout in
+       let body, code = split_body_and_status r.stdout in
        (match code with
         | Some c when c < 200 || c >= 300 -> Error (Http_error c)
         | _ ->

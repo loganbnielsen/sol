@@ -107,12 +107,9 @@ let test_local_result_fields () =
       ~dry_run:true
       svc_spec
   in
-  check_string "local namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "local name" "charge-svc" r.Sol_cli_executor.name;
-  check_string
-    "local image"
-    "sol-registry:5000/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image
+  check_string "local namespace" "myapp-payments" r.namespace;
+  check_string "local name" "charge-svc" r.name;
+  check_string "local image" "sol-registry:5000/myapp/charge-svc:abc123" r.image
 ;;
 
 let test_local_worker_result () =
@@ -124,8 +121,8 @@ let test_local_worker_result () =
       ~dry_run:true
       worker_spec
   in
-  check_string "local worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
-  check_string "local worker name" "notify-worker" r.Sol_cli_executor.name
+  check_string "local worker namespace" "myapp-comms" r.namespace;
+  check_string "local worker name" "notify-worker" r.name
 ;;
 
 (* ── direct executor ─────────────────────────────────────────────────────── *)
@@ -139,12 +136,9 @@ let test_direct_result_fields () =
       ~dry_run:true
       svc_spec
   in
-  check_string "direct namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "direct name" "charge-svc" r.Sol_cli_executor.name;
-  check_string
-    "direct image"
-    "sol-registry:5000/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image
+  check_string "direct namespace" "myapp-payments" r.namespace;
+  check_string "direct name" "charge-svc" r.name;
+  check_string "direct image" "sol-registry:5000/myapp/charge-svc:abc123" r.image
 ;;
 
 let test_direct_worker_result () =
@@ -156,8 +150,8 @@ let test_direct_worker_result () =
       ~dry_run:true
       worker_spec
   in
-  check_string "direct worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
-  check_string "direct worker name" "notify-worker" r.Sol_cli_executor.name
+  check_string "direct worker namespace" "myapp-comms" r.namespace;
+  check_string "direct worker name" "notify-worker" r.name
 ;;
 
 (* ── gitops executor ─────────────────────────────────────────────────────── *)
@@ -175,12 +169,9 @@ let test_gitops_result_fields () =
       ~dir
       svc_spec
   in
-  check_string "gitops namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "gitops name" "charge-svc" r.Sol_cli_executor.name;
-  check_string
-    "gitops image"
-    "sol-registry:5000/myapp/charge-svc:abc123"
-    r.Sol_cli_executor.image;
+  check_string "gitops namespace" "myapp-payments" r.namespace;
+  check_string "gitops name" "charge-svc" r.name;
+  check_string "gitops image" "sol-registry:5000/myapp/charge-svc:abc123" r.image;
   (* clean up *)
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
   (try Sys.remove path with
@@ -248,8 +239,8 @@ let test_gitops_worker () =
    | _ -> ());
   (try Unix.rmdir dir with
    | _ -> ());
-  check_string "gitops worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
-  check_string "gitops worker name" "notify-worker" r.Sol_cli_executor.name;
+  check_string "gitops worker namespace" "myapp-comms" r.namespace;
+  check_string "gitops worker name" "notify-worker" r.name;
   Alcotest.(check bool) "gitops worker file created" true exists
 ;;
 

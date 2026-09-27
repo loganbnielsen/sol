@@ -67,11 +67,11 @@ let test_run_without_cmdliner () =
     with
     | Error msg -> Alcotest.fail ("factory run failed: " ^ msg)
     | Ok execution ->
-      Alcotest.(check int) "one result" 1 (List.length execution.Sol_cli_factory.results);
+      Alcotest.(check int) "one result" 1 (List.length execution.results);
       Alcotest.(check string)
         "requested scope recorded"
         "payments"
-        execution.plan.Sol_cli_deployment_plan.requested_scope;
+        execution.plan.requested_scope;
       let facts =
         Sol_cli_factory.affected_services ~plan:execution.plan ~results:execution.results
       in
