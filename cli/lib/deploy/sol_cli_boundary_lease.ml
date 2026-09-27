@@ -248,7 +248,7 @@ let create_object ~ctx t =
     match Sol_cli_kubectl.create ~ctx ~file:path with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero r) ->
-      let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+      let detail = Sol_cli_process.failure_message r in
       if Sol_cli_string.contains ~needle:"AlreadyExists" detail
       then Error Already_exists
       else Error (Other detail)
@@ -260,7 +260,7 @@ let replace_object ~ctx t ~resource_version =
     match Sol_cli_kubectl.replace ~ctx ~file:path with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero r) ->
-      let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+      let detail = Sol_cli_process.failure_message r in
       if
         Sol_cli_string.contains ~needle:"the object has been modified" detail
         || Sol_cli_string.contains ~needle:"Operation cannot be fulfilled" detail

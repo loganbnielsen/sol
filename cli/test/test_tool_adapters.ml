@@ -122,6 +122,9 @@ let test_kubectl_patch_argv () =
 (* FND-0024: the point of the classifier is that an unrunnable kubectl is not a
    negative answer. Pure, so it needs no cluster and no kubectl on PATH. *)
 let test_kubectl_presence_classification () =
+  let failed stderr =
+    Sol_cli_kubectl.Failed { Sol_cli_process.exit_code = 1; stdout = ""; stderr }
+  in
   let is_present = function
     | Sol_cli_kubectl.Present -> true
     | _ -> false
@@ -137,12 +140,13 @@ let test_kubectl_presence_classification () =
   check_bool
     "zero exit is present"
     true
-    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok (0, ""))));
+    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok Sol_cli_kubectl.Succeeded)));
   check_bool
     "non-zero exit is absent"
     true
     (is_absent
-       (Sol_cli_kubectl.presence_of_probe_result (Ok (1, "Error from server (NotFound)"))));
+       (Sol_cli_kubectl.presence_of_probe_result
+          (Ok (failed "Error from server (NotFound)"))));
   check_bool
     "an unrunnable kubectl is uncheckable"
     true
@@ -156,7 +160,7 @@ let test_kubectl_presence_classification () =
   (* The reason must survive into the verdict, or the operator cannot act on it. *)
   match
     Sol_cli_kubectl.presence_of_probe_result
-      (Ok (1, "Error from server (NotFound): deployments not found"))
+      (Ok (failed "Error from server (NotFound): deployments not found"))
   with
   | Sol_cli_kubectl.Absent reason ->
     check_bool "the reason carries what kubectl said" true (String.length reason > 0)

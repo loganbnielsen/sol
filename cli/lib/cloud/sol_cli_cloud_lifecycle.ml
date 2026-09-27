@@ -18,7 +18,7 @@ let backend_config (target : Sol_cli_config.target) ~root =
     | `Platform -> "platform"
   in
   let object_key = Printf.sprintf "sol/%s/%s.tfstate" target.name layer in
-  match Sol_cli_string.non_blank_opt target.state_bucket with
+  match target.state_bucket with
   | Some bucket ->
     (Sol_cli_provider_capabilities.capabilities_of target.provider).backend_config
       target

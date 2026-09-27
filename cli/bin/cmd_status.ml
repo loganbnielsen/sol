@@ -585,7 +585,7 @@ let run ~ctx (options : status_options) =
 let domain_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"SCOPE"
@@ -597,7 +597,7 @@ let domain_arg =
 let loki_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "loki-base-url" ]
         ~docv:"URL"
@@ -611,7 +611,7 @@ let loki_base_url_arg =
 let prometheus_base_url_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "prometheus-base-url" ]
         ~docv:"URL"

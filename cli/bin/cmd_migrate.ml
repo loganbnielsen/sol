@@ -122,7 +122,7 @@ let auto_forward_pg ~ctx () =
 ;;
 
 let get_postgres_url ~ctx () =
-  match Sys.getenv_opt "POSTGRES_URL" with
+  match Sol_cli_string.env "POSTGRES_URL" with
   | Some u -> Ok u
   | None ->
     if cluster_pg_exists ~ctx ()
@@ -305,11 +305,15 @@ let container_waiting_status ~ctx ~namespace ~job_name () =
       [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ]
   with
   | Ok r ->
-    (match String.split_on_char '|' (String.trim r.Sol_cli_process.stdout) with
-     | reason :: rest when not (Sol_cli_string.is_blank reason) ->
-       Some (String.trim reason, String.trim (String.concat "|" rest))
-     | _ -> None)
-  | _ -> None
+    (* The adapter's boundary: kubectl prints blanks for a container that is not
+       waiting, and they are decided here, once. *)
+    (match String.split_on_char '|' r.Sol_cli_process.stdout with
+     | reason :: rest ->
+       Sol_cli_string.non_blank reason
+       |> Option.map (fun reason ->
+         reason, Sol_cli_string.non_blank (String.concat "|" rest))
+     | [] -> None)
+  | Error _ -> None
 ;;
 
 (* Reasons that mean the container will never run without a change: waiting longer
@@ -339,12 +343,10 @@ let status_job_evidence ~ctx ~namespace ~job_name () =
         ~timeout_s:20.
         [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ]
     with
-    | Ok r -> String.trim r.Sol_cli_process.stdout
+    | Ok r -> Sol_cli_string.non_blank r.Sol_cli_process.stdout
     | Error (Sol_cli_process.Non_zero r) ->
-      (match String.trim r.stderr with
-       | "" -> ""
-       | e -> "(kubectl logs failed: " ^ e ^ ")")
-    | Error _ -> ""
+      Some ("(kubectl logs failed: " ^ Sol_cli_process.failure_message r ^ ")")
+    | Error _ -> None
   in
   Sol_cli_migration.evidence_report
     ~waiting:(container_waiting_status ~ctx ~namespace ~job_name ())
@@ -703,7 +705,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
      with
      | Ok r ->
        let logs =
-         match Sys.getenv_opt "POSTGRES_URL" with
+         match Sol_cli_string.env "POSTGRES_URL" with
          | Some url -> Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
          | None -> r.Sol_cli_process.stdout
        in
@@ -885,7 +887,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
                    (Printf.sprintf
                       "migration-status Job cannot start: %s%s"
                       reason
-                      (if detail = "" then "" else Printf.sprintf " (%s)" detail))
+                      (Option.fold detail ~none:"" ~some:(Printf.sprintf " (%s)")))
                | `Timed_out -> Error "migration-status Job did not complete within 120s"
                | `Failed -> Error "migration-status Job failed -- see the Job logs"
                | `Succeeded ->
@@ -919,9 +921,8 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
           (match result with
            | Ok _ -> cleanup ()
            | Error _ ->
-             let evidence = status_job_evidence ~ctx ~namespace ~job_name () in
-             if not (Sol_cli_string.is_blank evidence)
-             then Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!" evidence;
+             status_job_evidence ~ctx ~namespace ~job_name ()
+             |> Option.iter (Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!");
              Printf.eprintf
                "\n\
                 The failing Job is kept for inspection:\n\
@@ -1032,7 +1033,7 @@ let run_apply_term dir table dry_run target registry =
 let dir_arg =
   Arg.(
     value
-    & opt string "db/migrations"
+    & opt Sol_cli_args.text "db/migrations"
     & info
         [ "dir" ]
         ~docv:"DIR"
@@ -1042,7 +1043,7 @@ let dir_arg =
 let table_arg =
   Arg.(
     value
-    & opt string default_table_name
+    & opt Sol_cli_args.text default_table_name
     & info
         [ "table" ]
         ~docv:"TABLE"
@@ -1061,7 +1062,7 @@ let dry_run_flag =
 let target_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"TARGET"
@@ -1077,7 +1078,7 @@ let target_arg =
 let registry_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "registry" ]
         ~docv:"URL"

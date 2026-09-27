@@ -1823,6 +1823,28 @@ let test_omit_is_sticky () =
          (Sol_cli_config.services cfg)))
 ;;
 
+(* REFAC-123: blank is decided in the decoder, quoted or not. A blank value is a
+   missing value, refused with the key's name, and a present one is trimmed, so no
+   reader of a decoded field sees [Some ""]. *)
+let test_blank_values_are_missing () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs "prod:\n  targets:\n    aws/us-east-1:\n      registry: \"  \"\n";
+    check_contains
+      "quoted blank"
+      ~needle:"missing value for registry"
+      (resolve_error "prod/aws/us-east-1");
+    write_envs "prod:\n  targets:\n    aws/us-east-1:\n      registry: \"\"\n";
+    check_contains
+      "quoted empty"
+      ~needle:"missing value for registry"
+      (resolve_error "prod/aws/us-east-1");
+    (* The positive control: a present value survives, trimmed. *)
+    write_envs "prod:\n  targets:\n    aws/us-east-1:\n      registry: \" r.example \"\n";
+    let cfg = resolve_ok "prod/aws/us-east-1" in
+    Alcotest.(check (option string)) "trimmed" (Some "r.example") cfg.target.registry)
+;;
+
 let test_target_only_key_rejected_at_env_level () =
   with_temp_dir (fun () ->
     write_base ();
@@ -2203,6 +2225,10 @@ let () =
             `Quick
             test_scale_and_provider_blocks_deep_merge
         ; Alcotest.test_case "environments: omit is sticky" `Quick test_omit_is_sticky
+        ; Alcotest.test_case
+            "blank values are missing (REFAC-123)"
+            `Quick
+            test_blank_values_are_missing
         ; Alcotest.test_case
             "environments: target-only key rejected at env level"
             `Quick

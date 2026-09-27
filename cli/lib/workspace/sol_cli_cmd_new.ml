@@ -357,7 +357,9 @@ let run scaffold arg = Sol_cli_exit.exit_on (scaffold arg |> Sol_cli_exit.of_msg
 
 (* ── Cmdliner terms ───────────────────────────────────────────────────────── *)
 
-let name_arg docv doc = Arg.(required & pos 0 (some string) None & info [] ~docv ~doc)
+let name_arg docv doc =
+  Arg.(required & pos 0 (some Sol_cli_args.text) None & info [] ~docv ~doc)
+;;
 
 let workspace_cmd =
   Cmd.v

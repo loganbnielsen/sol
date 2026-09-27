@@ -37,4 +37,7 @@ val status_json : table:string -> (int * string * string option) list -> string
     logged (if it ran). Either half may be absent. INFRA-040: the Job is removed
     after the check, so this is what makes the failure diagnosable from the
     deploy's own output. *)
-val evidence_report : waiting:(string * string) option -> logs:string -> string
+val evidence_report
+  :  waiting:(string * string option) option
+  -> logs:string option
+  -> string option

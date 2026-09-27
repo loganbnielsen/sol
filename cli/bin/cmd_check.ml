@@ -55,7 +55,7 @@ let run scope =
 let scope_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "scope" ]
         ~docv:"DOMAIN[/UNIT]"

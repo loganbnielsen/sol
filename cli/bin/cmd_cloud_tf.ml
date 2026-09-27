@@ -705,7 +705,7 @@ let await_platform_readiness ~provider ~env =
   let deadline_s =
     (* Generous because a fresh install's controllers need minutes. Overridable so
        a harness can bound the wait rather than wait it out. *)
-    match Sys.getenv_opt "SOL_PLATFORM_READINESS_TIMEOUT_S" with
+    match Sol_cli_string.env "SOL_PLATFORM_READINESS_TIMEOUT_S" with
     | Some raw ->
       (match float_of_string_opt raw with
        | Some seconds when seconds >= 0. -> seconds
@@ -1673,7 +1673,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
 let var_file_arg =
   Arg.(
     value
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "var-file" ]
         ~docv:"PATH"
@@ -1683,14 +1683,14 @@ let var_file_arg =
 let target_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info [] ~docv:"TARGET" ~doc:"Deployment target path: <env>/<provider>/<region>.")
 ;;
 
 let var_arg =
   Arg.(
     value
-    & opt_all string []
+    & opt_all Sol_cli_args.text []
     & info
         [ "var" ]
         ~docv:"KEY=VALUE"

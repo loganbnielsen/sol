@@ -82,7 +82,7 @@ open Cmdliner
 let target_arg =
   Arg.(
     required
-    & opt (some string) None
+    & opt (some Sol_cli_args.text) None
     & info
         [ "target" ]
         ~docv:"ENV/PROVIDER/REGION"
@@ -95,7 +95,7 @@ let target_arg =
 let alertmanager_url_arg =
   Arg.(
     value
-    & opt string "http://127.0.0.1:9093"
+    & opt Sol_cli_args.text "http://127.0.0.1:9093"
     & info
         [ "alertmanager-url" ]
         ~docv:"URL"

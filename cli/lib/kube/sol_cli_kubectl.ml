@@ -100,14 +100,17 @@ let delete ~ctx ~resource ~name ~namespace =
    input), and [timeout_s] bounds a network wait. *)
 let probe_timeout_s = 15.0
 
-(* Returns the exit code and the reason to show a human: stderr when kubectl
-   wrote any, else stdout, trimmed. An [Error] means kubectl could not be run at
-   all — distinct from running and failing. *)
+(* What kubectl answered: it succeeded, or it ran and failed, with what it said.
+   An [Error] means kubectl could not be run at all — distinct from running and
+   failing. *)
+type probe =
+  | Succeeded
+  | Failed of Sol_cli_process.failure
+
 let probe_result ~ctx ~args =
   match kubectl ~timeout_s:probe_timeout_s ~ctx args with
-  | Ok { stdout; stderr } -> Ok (0, Sol_cli_process.failure_output ~stdout ~stderr)
-  | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
-    Ok (exit_code, Sol_cli_process.failure_output ~stdout ~stderr)
+  | Ok _ -> Ok Succeeded
+  | Error (Sol_cli_process.Non_zero failure) -> Ok (Failed failure)
   | Error e -> Error ("kubectl could not be run: " ^ Sol_cli_process.error_to_string e)
 ;;
 
@@ -123,8 +126,13 @@ type presence =
   | Uncheckable of string
 
 let presence_of_probe_result = function
-  | Ok (0, _) -> Present
-  | Ok (code, reason) -> Absent (Printf.sprintf "kubectl exited %d: %s" code reason)
+  | Ok Succeeded -> Present
+  | Ok (Failed failure) ->
+    Absent
+      (Printf.sprintf
+         "kubectl exited %d: %s"
+         failure.exit_code
+         (Sol_cli_process.failure_message failure))
   | Error why -> Uncheckable why
 ;;
 

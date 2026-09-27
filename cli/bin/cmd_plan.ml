@@ -78,7 +78,7 @@ let run target_name =
 let target_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & pos 0 (some Sol_cli_args.text) None
     & info [] ~docv:"TARGET" ~doc:"Deployment target path: <env>/<provider>/<region>.")
 ;;
 

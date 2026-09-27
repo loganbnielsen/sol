@@ -536,7 +536,7 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
           not a failure. Any other failure fails closed: quietly treating an
           uncountable kind as empty could hide a stale workload. *)
        | Error (Sol_cli_process.Non_zero r) ->
-         let output = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+         let output = Sol_cli_process.failure_message r in
          if kind = Live_rollout && Sol_cli_kubectl.resource_type_absent output
          then go acc rest
          else Error (Printf.sprintf "kubectl get %s failed: %s" resource output)
@@ -882,23 +882,20 @@ let resolve_matches ~commit ~target ~scope_string (events : Sol_cli_deployment.t
 let resolve_commit ~commit ?scope ~target (events : Sol_cli_deployment.t list)
   : commit_resolution
   =
-  if Sol_cli_string.is_blank commit
-  then Commit_invalid "--commit must not be empty"
-  else (
-    let parsed_scope =
-      Option.map
-        (fun s -> Sol_cli_deployment_scope.parse_request ~what:"--scope" (Some s))
-        scope
-    in
-    match parsed_scope with
-    | Some (Error msg) -> Commit_invalid msg
-    | None -> resolve_matches ~commit ~target ~scope_string:None events
-    | Some (Ok request) ->
-      resolve_matches
-        ~commit
-        ~target
-        ~scope_string:(Some (Sol_cli_deployment_scope.request_to_string request))
-        events)
+  let parsed_scope =
+    Option.map
+      (fun s -> Sol_cli_deployment_scope.parse_request ~what:"--scope" (Some s))
+      scope
+  in
+  match parsed_scope with
+  | Some (Error msg) -> Commit_invalid msg
+  | None -> resolve_matches ~commit ~target ~scope_string:None events
+  | Some (Ok request) ->
+    resolve_matches
+      ~commit
+      ~target
+      ~scope_string:(Some (Sol_cli_deployment_scope.request_to_string request))
+      events
 ;;
 
 let commit_resolution_to_string ~commit ~target ?scope resolution =

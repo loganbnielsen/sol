@@ -15,8 +15,6 @@ let url_is_routable url =
   && u.[scheme_len] <> '/'
 ;;
 
-let non_empty s = not (Sol_cli_string.is_blank s)
-
 let validate ~receiver_type ~receiver_url ~owner ~runbook_url =
   match receiver_type with
   | None ->
@@ -47,18 +45,11 @@ let validate ~receiver_type ~receiver_url ~owner ~runbook_url =
           Error
             "`alert_owner` is missing; every required alert must name an accountable \
              owner"
-        | Some o when not (non_empty o) ->
-          Error
-            "`alert_owner` is empty; every required alert must name an accountable owner"
         | Some _ ->
           (match runbook_url with
            | None ->
              Error
                "`alert_runbook_url` is missing; every required alert must link to its \
-                first-response runbook"
-           | Some r when not (non_empty r) ->
-             Error
-               "`alert_runbook_url` is empty; every required alert must link to its \
                 first-response runbook"
            | Some _ -> Ok ())))
 ;;
