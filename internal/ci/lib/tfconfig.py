@@ -78,6 +78,22 @@ def resources(path, kinds=("resource", "data")):
     return found
 
 
+def modules(path):
+    path = Path(path)
+    doc = load(path)
+    text = path.read_text(encoding="utf-8")
+    return [
+        Resource("module", "module", unquote(name), body, path, _header_line_module(text, unquote(name)))
+        for entry in doc.get("module", [])
+        for name, body in entry.items()
+    ]
+
+
+def _header_line_module(text, name):
+    match = re.search(rf'^\s*module\s+"{re.escape(name)}"', text, re.M)
+    return text.count("\n", 0, match.start()) + 1 if match else 0
+
+
 def variables(path):
     doc = load(path)
     return {

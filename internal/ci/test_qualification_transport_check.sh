@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="${1:-$(git rev-parse --show-toplevel)}"
-guard="$repo/internal/ci/check_qualification_transport.sh"
+guard="$repo/internal/ci/check_qualification_transport.py"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -22,7 +22,7 @@ seed() {
 }
 
 expect_pass() {
-  if ! bash "$guard" "$work/root" >"$work/out" 2>&1; then
+  if ! python3 "$guard" "$work/root" >"$work/out" 2>&1; then
     echo "test_qualification_transport: expected the guard to pass, but it failed:" >&2
     cat "$work/out" >&2
     exit 1
@@ -30,7 +30,7 @@ expect_pass() {
 }
 
 expect_fail() {
-  if bash "$guard" "$work/root" >"$work/out" 2>&1; then
+  if python3 "$guard" "$work/root" >"$work/out" 2>&1; then
     echo "test_qualification_transport: the guard accepted $1" >&2
     exit 1
   fi

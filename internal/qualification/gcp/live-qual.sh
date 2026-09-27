@@ -127,38 +127,16 @@ $TARGET_ENV:
       cluster_name: $CLUSTER
       base_domain: $BASE_DOMAIN
       profile: $PROFILE_NAME
-      # NO cluster_issuer, deliberately (H1 of the HARDEN-006 attempt-8 re-scope). Installing a
-      # GCP platform through the shared definition is still refused while its ClusterIssuers
-      # are Route 53-only (FND-0007), and that refusal is correct and stays: it stops Sol
-      # provisioning a platform that looks TLS-wired and cannot issue. INFRA-067 made
-      # *destruction* stop evaluating it; installation must keep refusing. This run is not
-      # asking the TLS question -- its job is to reach the cert-manager boundary and capture
-      # FND-0010's discriminator -- so it asks for a platform without an issuer rather than
-      # for one it cannot have.
       letsencrypt_email: $LE_EMAIL
-      # Absolute, so it does not depend on how relative paths resolve (BUG-057: from the
-      # workspace root).
       terraform_var_file: $TFVARS
 
-      # The durable state backend: provisioned once by ensure_state_bucket() and merely
-      # CONSUMED here. state_lock_table is deliberately absent -- GCS serializes state
-      # natively, and Sol's own backend_config sends a GCP target only bucket= and
-      # prefix=sol/<cloud|platform>/<target>.tfstate.
       state_bucket: $STATE_BUCKET
 
-      # GCP's identity declaration: who may enter the install window, by impersonation.
-      # Declared, never inferred, so that "no caller named" cannot come to mean "grant
-      # whoever is running Sol". Provider-owned, so it lives in the gcp block (REFAC-098).
       gcp:
         provisioner_impersonator: $IMPERSONATOR
 
-      # A disposable qualification target: the postcondition is Absent with nothing
-      # billable retained (DEC-033).
       destroy_retention: none
 
-      # The platform layer is what this attempt is about. Application resources and
-      # services are omitted so the attempt is cheap and the failure it is looking for
-      # cannot be confused with a workload failure.
       resources:
         app_db:
           omit: true
@@ -528,6 +506,18 @@ bundle_manifest() {
     printf 'platform failure evidence: platform-failure/ (%s files)\n' \
       "$(ls "$LOG_DIR/platform-failure" 2>/dev/null | wc -l)"
   fi
+  if [ -s "$LOG_DIR/kubeconfig-waiter.tsv" ]; then
+    printf 'run kubeconfig waiter: kubeconfig-waiter.tsv (%s polls; every transition and exit)\n' \
+      "$(($(wc -l <"$LOG_DIR/kubeconfig-waiter.tsv") - 1))"
+  fi
+  if [ -s "$RUN_KUBECONFIG" ]; then
+    printf 'run credentials: run-kubeconfig.yaml\n'
+  else
+    printf 'run credentials: NOT ESTABLISHED\n'
+  fi
+  if [ -s "$LOG_DIR/platform-failure/capture-summary.txt" ]; then
+    printf 'platform failure capture: platform-failure/capture-summary.txt\n'
+  fi
   if [ -s "$LOG_DIR/api-readiness.tsv" ]; then
     printf 'api readiness: api-readiness.tsv (%s samples across the platform apply)\n' \
       "$(($(wc -l <"$LOG_DIR/api-readiness.tsv") - 1))"
@@ -595,6 +585,9 @@ freeze_evidence() {
   capture_terraform_state
   capture_sol_runs "$(sol_data_dir)"
   bundle_manifest
+}
+
+finalise_bundle() {
   verify_bundle || true
 }
 
@@ -603,7 +596,6 @@ capture_pre_teardown_inventory() {
   inventory pre
   say "  pre-teardown inventory: $INVENTORY_TSV"
 }
-
 
 destroy() {
   TEARDOWN_ATTEMPTED=1
@@ -659,7 +651,6 @@ plan_only() { [ "${PLAN_ONLY:-0}" = "1" ]; }
 
 phase_cloud() {
   write_target
-  # shellcheck disable=SC2046
   local vars; mapfile -t vars < <(cloud_vars)
 
   reconcile_durable_root || return 1
@@ -678,10 +669,11 @@ phase_cloud() {
   if ! run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}"; then
     INSTALL_STATE=failed
     say "cloud apply failed -- capturing the discriminator before any teardown"
-    capture_platform_failure_evidence
-    capture_fnd0010
     capture_pre_teardown_inventory
     freeze_evidence
+    capture_platform_failure_evidence
+    capture_fnd0010
+    finalise_bundle
     return 1
   fi
 
@@ -692,6 +684,7 @@ phase_cloud() {
     say "could not read the zone's nameservers — the delegation half cannot proceed"
     capture_pre_teardown_inventory
     freeze_evidence
+    finalise_bundle
     return 1
   fi
   say "authoritative nameservers for $BASE_DOMAIN (paste these at Squarespace as NS records named 'qual-gcp'):"
@@ -699,6 +692,7 @@ phase_cloud() {
 
   capture_pre_teardown_inventory
   freeze_evidence
+  finalise_bundle
 
   local deadline=$(( $(date +%s) + DELEGATION_WAIT_MINUTES * 60 ))
   say "waiting up to ${DELEGATION_WAIT_MINUTES}m for the delegation to resolve (Ctrl-C to continue later)"
@@ -718,7 +712,6 @@ phase_cloud() {
   return 0
 }
 
-
 cluster_describable() {
   local name
   name="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
@@ -727,7 +720,7 @@ cluster_describable() {
 
 kube_capture() {
   local name="$1"; shift
-  "$@" >"$LOG_DIR/$name.log" 2>&1 || true
+  timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" "$@" >"$LOG_DIR/$name.log" 2>&1 || true
   say "  captured $name.log ($(wc -l <"$LOG_DIR/$name.log" | tr -d ' ') lines)"
 }
 
@@ -742,7 +735,7 @@ api_probe_sample() {
   configured="${configured#http://}"
   configured="${configured%%/*}"
   configured="${configured%%:*}"
-  if detail="$(kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
+  if detail="$(timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
     verdict=REACHABLE
   else
     verdict=UNREACHABLE
@@ -813,25 +806,50 @@ PY
 }
 
 cluster_kubeconfig_waiter() {
-  local parent=$$ status
+  local parent=$$ status polls=0
+  local journal="$LOG_DIR/kubeconfig-waiter.tsv"
+  local deadline
+  deadline=$(( $(date +%s) + ${CLUSTER_WAIT_TIMEOUT_S:-1800} ))
+  printf 'timestamp\tpoll\tcluster_status\taction\toutcome\n' >"$journal" 2>/dev/null || true
+  note() {
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$polls" "$1" "$2" "$3" \
+      >>"$journal" 2>/dev/null || true
+  }
   while :; do
+    polls=$((polls + 1))
     if ! kill -0 "$parent" 2>/dev/null; then
+      note "-" "parent-gone" "the run ended before credentials existed"
+      exit 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      note "-" "timeout" "no credentials after ${CLUSTER_WAIT_TIMEOUT_S:-1800}s"
+      say "run kubeconfig waiter: TIMEOUT after ${CLUSTER_WAIT_TIMEOUT_S:-1800}s ($journal)"
       exit 0
     fi
     if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+      note "-" "established" "credentials for $CLUSTER exist"
       say "run kubeconfig: ready ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
       exit 0
     fi
     status="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-      --format='value(status)' 2>/dev/null | tr -d '\r')"
-    if [ "$status" = "RUNNING" ]; then
-      kubeconfig_for_cluster
-      if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
-        say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
-        exit 0
-      fi
-      say "run kubeconfig: generation did not produce this run's cluster yet — will retry"
-    fi
+      --format='value(status)' 2>/dev/null | tr -d '\r' || true)"
+    case "$status" in
+      RUNNING)
+        kubeconfig_for_cluster || true
+        if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+          note "$status" "credentials-established" "context pinned to $CLUSTER"
+          say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          exit 0
+        fi
+        note "$status" "generation-incomplete" "will retry"
+        ;;
+      "")
+        note "unreadable" "poll-failed" "no status yet: cluster absent, or the read failed"
+        ;;
+      *)
+        note "$status" "waiting" "cluster not RUNNING yet"
+        ;;
+    esac
     sleep "${CLUSTER_KUBECONFIG_POLL_S:-10}"
   done
 }
@@ -846,6 +864,13 @@ stop_cluster_kubeconfig_waiter() {
   if [ -n "${KUBECONFIG_WAITER_PID:-}" ] && kill -0 "$KUBECONFIG_WAITER_PID" 2>/dev/null; then
     kill -TERM "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
     wait "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
+    if [ -s "$RUN_KUBECONFIG" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+      printf '%s\t-\t-\tstopped-by-run\tcredentials existed; the run ended\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
+    else
+      printf '%s\t-\t-\tSTOPPED-WITHOUT-CREDENTIALS\tthe run ended before credentials existed\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
+    fi
   fi
   KUBECONFIG_WAITER_PID=""
 }
@@ -854,7 +879,7 @@ kube_capture_evidence() {
   local dir="$1" name="$2"
   shift 2
   local out="$dir/$name.log" rc
-  kubectl "$@" >"$out" 2>&1
+  timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl "$@" >"$out" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "  $name: $(wc -l <"$out") lines"
@@ -871,7 +896,21 @@ capture_platform_failure_evidence() {
     say "  platform-failure evidence: DISABLED (cannot create $dir) — the run continues unobserved"
     return 0
   fi
-  say "capturing read-only Kubernetes evidence for the platform-apply failure"
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+    kubeconfig_for_cluster || true
+  fi
+  local credentials=yes
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+    credentials=no
+    {
+      printf 'Qualification capture could not establish credentials for cluster %s.\n' "$CLUSTER"
+      printf 'Every Kubernetes read below ran without a context for this run and proves nothing about\n'
+      printf 'this cluster; they are recorded because a capture failure must be visible, not because\n'
+      printf 'their content is evidence.\n'
+    } >"$dir/NO-KUBECONFIG.txt"
+    say "  platform-failure evidence: NO CREDENTIALS for $CLUSTER — recorded in NO-KUBECONFIG.txt"
+  fi
+  say "capturing read-only Kubernetes evidence for the platform-apply failure (credentials: $credentials)"
   kube_capture_evidence "$dir" pods get pods -A -o wide
   kube_capture_evidence "$dir" pod-states get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}
   kube_capture_evidence "$dir" events get events -A --sort-by=.lastTimestamp
@@ -880,7 +919,17 @@ capture_platform_failure_evidence() {
   kube_capture_evidence "$dir" nodes get nodes -o wide
   kube_capture_evidence "$dir" node-capacity get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}
   kube_capture_evidence "$dir" helm-release-secrets get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type
-  say "  platform-failure evidence: $dir"
+  {
+    printf 'credentials for %s: %s\n' "$CLUSTER" "$credentials"
+    for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
+      if [ -s "$dir/$artifact.log" ]; then
+        printf '%-22s %s lines\n' "$artifact" "$(wc -l <"$dir/$artifact.log")"
+      else
+        printf '%-22s MISSING OR EMPTY\n' "$artifact"
+      fi
+    done
+  } >"$dir/capture-summary.txt"
+  say "  platform-failure evidence: $dir ($(ls "$dir" 2>/dev/null | wc -l) files, summary in capture-summary.txt)"
 }
 
 kubeconfig_for_cluster() {
@@ -1047,9 +1096,9 @@ phase_destroy() {
   CLOUD_APPLIED=1
   capture_pre_teardown_inventory
   freeze_evidence
+  finalise_bundle
   destroy
 }
-
 
 case "${1:-}" in
   cloud)    phase_cloud ;;

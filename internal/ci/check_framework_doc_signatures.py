@@ -1,16 +1,12 @@
-#!/usr/bin/env bash
-set -uo pipefail
+import os
+import sys
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [ "${1:-}" = "--root" ]; then
-  ROOT="${2:?--root needs a directory}"
-fi
-cd "$ROOT" || exit 2
+if len(sys.argv) > 2 and sys.argv[1] == "--root":
+    os.chdir(sys.argv[2])
+else:
+    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-python3 - <<'PY'
 import re, sys, pathlib
-
-# (doc, section heading, mli files the section specifies)
 MANIFEST = [
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Auth`", ["framework/ocaml/sol-svc/lib/auth.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Peer`", ["framework/ocaml/sol-svc/lib/peer.mli"]),
@@ -117,4 +113,3 @@ if problems:
     print(f"✗ {problems} stale framework spec signature(s). Update the doc to match the .mli.")
     sys.exit(1)
 print("framework doc signatures: all spec declarations match their .mli.")
-PY

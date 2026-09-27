@@ -65,6 +65,9 @@ Done. %d files generated.
   sol migrate                          # apply DB migrations
   sol local status     # check pods + see port-forward hint for charge-svc
 
+  The workspace README.md documents the layout, the framework dependency and
+  what the generated Dockerfiles do.
+
   Framework dependency: this workspace declares the Sol framework packages in
   %s.opam and resolves them from your opam switch. Nothing is vendored here.
   In development, install the framework from your Sol checkout with:

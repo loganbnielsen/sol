@@ -61,15 +61,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install the CI guards' Python dependencies
-        run: python3 -m pip install --user --no-deps -r internal/ci/requirements.txt
+      - name: Install the CI guards' tooling
+        run: bash internal/tooling/scripts/prepare-guard-tools.sh
 
       # The required check must be VISIBLY intentional when the suite is
       # skipped -- not a job that merely looks like every step failed to run.
       - name: Docs-only change -- full suite deliberately not run
         if: needs.classify.outputs.kind == 'docs-only'
         run: |
-          echo "::notice::Classification: docs-only -- every changed path is in the safe allowlist, so the full suite was not run."
+          echo "::notice::Classification: docs-only -- every changed path is in the safe allowlist, so the product build and tests were not run."
           {
             echo "### Classification: docs-only"
             echo ""
@@ -77,22 +77,27 @@ jobs:
             echo "safe allowlist (\`docs/**\`, \`internal/pipeline/tickets/**\`, \`*.md\` outside"
             echo "\`.github/**\`, \`internal/tooling/perf/perf_baseline.json\`)."
             echo ""
-            echo "The full suite was deliberately not run. Classification semantics are pinned by"
+            echo "The product build, the test suites and the platform smoke jobs were deliberately not"
+            echo "run. The repository-shape guards do run, because a docs-only change -- a ticket, in"
+            echo "particular -- is exactly what several of them exist to check. Classification"
+            echo "semantics are pinned by"
             echo "\`internal/ci/test_classify_changes.sh\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # BUG-064: unconditional from here through the pin action -- the guards far below
+      # run on every change, including docs-only ones, and some of them invoke built
+      # binaries. The product build stays conditional; what they need is built in
+      # `Tooling for the unconditional guards` below, and
+      # internal/ci/check_unconditional_guard_tooling.py holds the whole shape.
       - name: Install system dependencies
-        if: needs.classify.outputs.kind != 'docs-only'
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 
       - name: Set up OCaml
-        if: needs.classify.outputs.kind != 'docs-only'
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5.4.1
 
       - name: Cache opam download cache
-        if: needs.classify.outputs.kind != 'docs-only'
         # INFRA-008: setup-ocaml caches the switch (~/.opam) keyed on the
         # switch files, so a key change — or a cold cache on a new branch —
         # re-fetches every source. The download cache is content-addressed and
@@ -108,7 +113,6 @@ jobs:
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
-        if: needs.classify.outputs.kind != 'docs-only'
         uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
@@ -147,6 +151,23 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune build
 
+      # BUG-064: the guards that run unconditionally below invoke built binaries --
+      # `soldev`, the ticket parser `pipeline validate` reads with, and the CLI
+      # (`print_providers`, the offline cloud lifecycle harness). A docs-only
+      # change can only move tickets, docs and the perf baseline, and the ticket
+      # guards exist because *that* is the shape their subject arrives in, so they
+      # cannot be gated on a build that docs-only skips. Build exactly what they
+      # need; on a change that already ran the full build this rebuilds nothing.
+      # internal/ci/check_unconditional_guard_tooling.py pins the shape.
+      - name: Tooling for the unconditional guards (BUG-064)
+        timeout-minutes: 20
+        run: |
+          opam install --deps-only --with-test -y ./sol.opam
+          opam exec -- dune build \
+            internal/tooling/soldev/bin/main.exe \
+            cli/bin/main.exe \
+            cli/test/print_providers.exe
+
       # INFRA-035: the unit-test step below runs cli/test's runtest rule that
       # validates the readiness checks' kubectl argv against a real kubectl (*), so
       # kubectl has to exist. Pinned to the version the dogfood job installs
@@ -158,7 +179,6 @@ jobs:
       # have — shipped and made four readiness checks unsatisfiable on every real
       # target, which read as nine unhealthy platform components.
       - name: Install pinned kubectl (readiness-probe argument validation)
-        if: needs.classify.outputs.kind != 'docs-only'
         run: |
           # Direct pinned-release download, not a curl-pipe-to-shell installer.
           curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
@@ -201,7 +221,9 @@ jobs:
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_platform_component_drift.sh
+        run: |
+          python3 internal/ci/check_platform_component_drift.py
+          python3 internal/ci/test_platform_component_drift.py
 
       - name: cert-manager readiness contract (FND-0010)
         # Every GCP attempt failed the platform apply on cert-manager's post-install
@@ -212,8 +234,8 @@ jobs:
         # self-test includes the pre-fix configuration, which must be rejected.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_cert_manager_readiness.sh .
-          internal/ci/test_cert_manager_readiness_check.sh
+          python3 internal/ci/check_cert_manager_readiness.py .
+          python3 internal/ci/test_cert_manager_readiness_check.py
 
       - name: Kubernetes object ownership (FND-0061)
         # Two Terraform resources in the platform module wrote the same Kubernetes RoleBinding
@@ -233,8 +255,8 @@ jobs:
         # floor, so this pins the parts to the module's own declarations.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_platform_storage_requirement.sh .
-          internal/ci/test_platform_storage_requirement_check.sh
+          python3 internal/ci/check_platform_storage_requirement.py .
+          python3 internal/ci/test_platform_storage_requirement_check.py
 
       - name: GCP substrate (INFRA-093)
         # FND-0064: the GCP driver provisions GKE Standard. The guard holds the product contract --
@@ -242,8 +264,8 @@ jobs:
         # target -- without freezing today's numbers into the definition of GCP support.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_gcp_standard_substrate.sh .
-          internal/ci/test_gcp_standard_substrate_check.sh
+          python3 internal/ci/check_gcp_standard_substrate.py .
+          python3 internal/ci/test_gcp_standard_substrate_check.py
 
       - name: Terraform output contract (INFRA-091)
         # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
@@ -252,8 +274,8 @@ jobs:
         # Terraform itself produced and forbids the invented shape from returning.
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
-          internal/ci/check_terraform_output_fixture.sh .
-          internal/ci/test_terraform_output_fixture_check.sh
+          python3 internal/ci/check_terraform_output_fixture.py .
+          python3 internal/ci/test_terraform_output_fixture_check.py
 
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
@@ -315,10 +337,16 @@ jobs:
         # expects each to be rejected, against a readable control tree that passes.
         run: bash internal/ci/test_pipeline_validate.sh
 
+      - name: Unconditional guards can run (BUG-064)
+        run: python3 internal/ci/check_unconditional_guard_tooling.py .
+
+      - name: Unconditional-guard-tooling mutation test
+        run: bash internal/ci/test_unconditional_guard_tooling.sh
+
       - name: Workflow paths-filter guard (REFAC-099)
         # Unconditional: a stale `paths:` entry makes its workflow stop triggering
         # silently, and the change that stales it can be any kind of move.
-        run: bash internal/ci/check_workflow_paths.sh
+        run: python3 internal/ci/check_workflow_paths.py
 
       - name: Workflow paths-filter guard mutation test
         run: bash internal/ci/test_workflow_paths.sh
@@ -358,15 +386,6 @@ jobs:
       - name: Library-output mutation test
         run: bash internal/ci/test_library_output.sh
 
-      - name: Install shfmt (the shell parser the comment check uses)
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL -o "$HOME/.local/bin/shfmt" \
-            https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64
-          chmod +x "$HOME/.local/bin/shfmt"
-          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
-          "$HOME/.local/bin/shfmt" --version
-
       - name: No code comments (OCaml, shell, Terraform, TypeScript)
         run: bash internal/ci/check_no_comments.sh
 
@@ -393,11 +412,11 @@ jobs:
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.
-        run: internal/ci/check_framework_doc_signatures.sh
+        run: python3 internal/ci/check_framework_doc_signatures.py
 
       - name: Framework spec signature guard mutation test
         # Python 3 is what the guard uses to parse declarations; the runner has it.
-        run: bash internal/ci/test_framework_doc_signatures.sh
+        run: python3 internal/ci/test_framework_doc_signatures.py
 
       - name: Worktree/authority preflight (REFAC-090)
         # Cheap and offline, and deliberately unconditional: the semantics it
@@ -484,14 +503,14 @@ jobs:
       # DEC-038: the operator identity owns production observation and diagnosis,
       # and its grant must follow the evidence Sol's read-only commands consume.
       - name: Operator diagnostic grant (DEC-038 / INFRA-057)
-        run: internal/ci/check_operator_diagnostics.sh
+        run: python3 internal/ci/check_operator_diagnostics.py
       - name: Operator diagnostic guard mutation test (INFRA-057)
-        run: internal/ci/test_operator_diagnostics_check.sh
+        run: python3 internal/ci/test_operator_diagnostics_check.py
 
       # DEC-039: the qualification transport is harness-only. No production root may
       # reference it, and it may not carry a verb beyond transport and addressing.
       - name: Qualification transport boundary (DEC-039 / INFRA-060)
-        run: internal/ci/check_qualification_transport.sh
+        run: python3 internal/ci/check_qualification_transport.py
       - name: Qualification transport guard mutation test (INFRA-060)
         run: internal/ci/test_qualification_transport_check.sh
 
