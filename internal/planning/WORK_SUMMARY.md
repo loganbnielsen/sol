@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: refactoring-pattern audit, REFAC-131..139 (2026-09-27)
+
+- An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593): text-built manifests, ad-hoc JSON decoding, exceptions as control flow, spawns outside `Sol_cli_process`, library printing, per-tool error classifiers, `framework/` + soldev, the pinned `*-eio` libraries, and thin `cli/bin`.
+- **REFAC-131:** every manifest Sol writes is a `Sol_cli_yaml` value rendered by libyaml; a hostile `sol.toml` value that broke the old ConfigMap now round-trips exactly, and pluto's 37 documents parse to identical values before and after. `check_manifests_are_values.sh` holds it.
+
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 
 - Attempt 14 measured the mismatch: on Autopilot the cloud root and prerequisites applied, then GKE's admission webhook refused `helm_release.prometheus` (hostNetwork/hostPID) and `helm_release.redpanda` (SYS_RESOURCE) — ten minutes and a billable cluster in, no path to `Ready` (FND-0064).

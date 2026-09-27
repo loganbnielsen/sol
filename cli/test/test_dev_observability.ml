@@ -246,7 +246,6 @@ let test_alloy_values_yaml_against_real_file () =
   | Ok _ ->
     let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:(assets ())) in
     assert_contains "helm values shape" yaml "configMap:";
-    assert_contains "content block" yaml "content: |-";
     assert_contains "pod discovery" yaml "discovery.kubernetes \"pods\"";
     assert_contains "kubernetes API tailing" yaml "loki.source.kubernetes \"pods\"";
     assert_contains "write component" yaml "loki.write \"default\"";
@@ -262,43 +261,27 @@ let test_alloy_values_yaml_against_real_file () =
       (contains "basic_auth" yaml)
 ;;
 
-(* CODE_LAYER-006: this is the exact regression class the "found along the
-   way" YAML indentation bug was -- alloy_config_river's old template put
-   the `content: |-` block scalar's body at the SAME indentation as its
-   own key, which no test caught (every assertion above only checks
-   substring presence, not YAML well-formedness). Not a full YAML parser
-   (no new dependency, consistent with this project's pure-OCaml test
-   suite) -- just the one structural invariant that actually broke: every
-   line of a `|-` block scalar's body must be indented strictly more than
-   its key. *)
-let leading_spaces line =
-  let n = String.length line in
-  let rec go i = if i < n && line.[i] = ' ' then go (i + 1) else i in
-  go 0
-;;
-
-let test_alloy_values_yaml_is_valid_block_scalar_shape () =
-  let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:(assets ())) in
-  let lines = String.split_on_char '\n' yaml in
-  let key_line = List.find (fun l -> contains "content: |-" l) lines in
-  let key_indent = leading_spaces key_line in
-  let rec check = function
-    | [] -> ()
-    | line :: rest when line == key_line ->
-      rest
-      |> List.iter (fun body_line ->
-        if String.trim body_line <> ""
-        then
-          check_bool
-            (Printf.sprintf
-               "body line more indented than key (key=%d): %S"
-               key_indent
-               body_line)
-            true
-            (leading_spaces body_line > key_indent))
-    | _ :: rest -> check rest
+(* CODE_LAYER-006 found `content: |-`'s body rendered at its key's own indent,
+   which no parser accepts, and no substring test caught. REFAC-131: the values
+   file is now emitted, not templated, so the check is the real one -- it
+   parses, and the content it carries is exactly the rendered River config. *)
+let test_alloy_values_yaml_carries_the_config_exactly () =
+  let a = assets () in
+  let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:a) in
+  let config =
+    ok
+      (Sol_cli_dev_observability.render_alloy_config
+         ~assets:a
+         ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
+         ~loki_push_url:"http://loki:3100/loki/api/v1/push"
+         ~loki_push_basic_auth_username:""
+         ~loki_push_basic_auth_password:"")
   in
-  check lines
+  match Yaml.of_string yaml with
+  | Ok (`O [ ("alloy", `O [ ("configMap", `O [ ("content", `String content) ]) ]) ]) ->
+    Alcotest.(check string) "content is the rendered config" config content
+  | Ok _ -> Alcotest.failf "unexpected values shape:\n%s" yaml
+  | Error (`Msg m) -> Alcotest.failf "values file does not parse: %s\n%s" m yaml
 ;;
 
 let () =
@@ -337,9 +320,9 @@ let () =
             `Quick
             test_alloy_values_yaml_against_real_file
         ; Alcotest.test_case
-            "values yaml is valid block scalar shape"
+            "values yaml carries the config exactly"
             `Quick
-            test_alloy_values_yaml_is_valid_block_scalar_shape
+            test_alloy_values_yaml_carries_the_config_exactly
         ] )
     ]
 ;;

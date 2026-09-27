@@ -101,7 +101,7 @@ let secret_docs ?(secrets = Sol_cli_manifest.default_secrets) namespaces =
     likewise not workload mutation -- it grants the deploy identity (not any
     workload) permission to act in this namespace, established once alongside
     the namespace itself rather than as a side effect of the first deploy. *)
-let docs_for_namespaces ?secrets namespaces : (string list, string) result =
+let docs_for_namespaces ?secrets namespaces : (Sol_cli_yaml.document list, string) result =
   match secret_docs ?secrets namespaces with
   | Error _ as e -> e
   | Ok secret_docs ->
@@ -112,7 +112,9 @@ let docs_for_namespaces ?secrets namespaces : (string list, string) result =
        @ secret_docs)
 ;;
 
-let docs ?secrets (plan : Sol_cli_deployment_plan.t) : (string list, string) result =
+let docs ?secrets (plan : Sol_cli_deployment_plan.t)
+  : (Sol_cli_yaml.document list, string) result
+  =
   docs_for_namespaces ?secrets (namespaces plan)
 ;;
 
@@ -137,7 +139,7 @@ let create_idempotent = Sol_cli_manifest.create_idempotent
 
 let write_doc_to_temp_file doc =
   let path = Filename.temp_file "sol-substrate-" ".yaml" in
-  write_file path doc;
+  write_file path (Sol_cli_yaml.render [ doc ]);
   path
 ;;
 
@@ -226,7 +228,7 @@ let ensure ~ctx ~namespaces : (unit, string) result =
    bootstrap grant holds get/list/watch/create on rolebindings but not patch, so an
    apply would silently become a patch as soon as the object exists (INFRA-048). *)
 let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
-  : string list
+  : Sol_cli_yaml.document list
   =
   services
   |> List.filter_map (fun s ->

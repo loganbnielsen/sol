@@ -75,11 +75,17 @@ let removed_groups_message removed =
 let save_deployed_groups ~ctx workspace groups =
   let name = deploy_state_configmap_name workspace in
   let value = String.concat "\n" groups in
+  (* REFAC-131: built as a value. [String.escaped] is OCaml's escaping, not
+     JSON's -- a non-ASCII byte became a decimal [\ddd], which no JSON reader
+     accepts. *)
   let apply_json =
-    Printf.sprintf
-      {|{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"%s","namespace":"default"},"data":{"consumer_groups":"%s"}}|}
-      (String.escaped name)
-      (String.escaped value)
+    Yojson.Safe.to_string
+      (`Assoc
+          [ "apiVersion", `String "v1"
+          ; "kind", `String "ConfigMap"
+          ; "metadata", `Assoc [ "name", `String name; "namespace", `String "default" ]
+          ; "data", `Assoc [ "consumer_groups", `String value ]
+          ])
   in
   let path = Filename.temp_file "sol-state-" ".json" in
   let oc = open_out path in

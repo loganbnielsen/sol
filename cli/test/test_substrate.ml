@@ -15,7 +15,7 @@ let check_int = Alcotest.(check int)
 
 let docs_or_fail ?secrets namespaces =
   match S.docs_for_namespaces ?secrets namespaces with
-  | Ok docs -> docs
+  | Ok docs -> List.map (fun doc -> Sol_cli_yaml.render [ doc ]) docs
   | Error msg -> Alcotest.fail msg
 ;;
 
@@ -251,7 +251,9 @@ let with_fake_kubectl f =
 
 let test_namespace_is_created_not_applied () =
   with_fake_kubectl (fun log ->
-    let ns_yaml = Sol_cli_manifest.namespace_doc ~ns:"pluto-checkout" in
+    let ns_yaml =
+      Sol_cli_yaml.render [ Sol_cli_manifest.namespace_doc ~ns:"pluto-checkout" ]
+    in
     let workload_yaml =
       "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout-svc\n"
     in
@@ -302,6 +304,7 @@ let test_operator_bindings_cover_every_workload_namespace () =
       ; svc "comms" "notify_worker"
       ; svc "checkout" "refunds"
       ]
+    |> List.map (fun doc -> Sol_cli_yaml.render [ doc ])
   in
   check_int
     "one binding per distinct namespace, whoever the caller is"
