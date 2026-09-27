@@ -406,7 +406,10 @@ let substrate_of_describe ~outputs_json ~region ~cluster_name
       let said =
         String.trim (failure.Sol_cli_process.stderr ^ failure.Sol_cli_process.stdout)
       in
-      if absent_wording said
+      (* A cluster that is not there is a fresh target; every other failure is
+         Unknown, because reading an unreadable cluster as absent is how a run would
+         go on to touch a cluster it never identified. *)
+      if Sol_cli_gcloud.says_not_found said
       then Ok Absent
       else
         Ok

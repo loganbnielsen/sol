@@ -16,6 +16,3 @@ val support_contract : string
 val acceptable : t -> (unit, string) result
 
 val to_string : t -> string
-
-(** Whether a provider error reads as "no such cluster" rather than as an unreadable one. *)
-val absent_wording : string -> bool

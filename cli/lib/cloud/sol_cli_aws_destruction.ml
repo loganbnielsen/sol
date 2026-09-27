@@ -14,20 +14,6 @@ open Sol_cli_destruction
 open Sol_cli_terraform_steps
 open Result.Syntax
 
-(* `An error occurred (Code) when calling the Operation operation: ...`. The code
-   is what a caller is allowed to branch on; the prose around it is not. *)
-let aws_error_code stderr =
-  let open_ = String.index_opt stderr '(' in
-  match open_ with
-  | None -> None
-  | Some open_ ->
-    let close = String.index_from_opt stderr (open_ + 1) ')' in
-    (match close with
-     | Some close when close > open_ + 1 ->
-       Some (String.sub stderr (open_ + 1) (close - open_ - 1))
-     | _ -> None)
-;;
-
 (* [Pending] is the provider saying "not yet": the snapshot exists and has not
    reached the state the retention contract requires. The caller keeps observing
    for a bounded time; it is never reported as success. *)
@@ -165,7 +151,7 @@ let classify_final_snapshot ~declared ~snapshot_id lookup =
                    availability is not established"
                   snapshot_id))))
   | Answered { status; stderr; _ } ->
-    (match aws_error_code stderr with
+    (match Sol_cli_aws.error_code stderr with
      | Some "DBSnapshotNotFound" ->
        Settled
          (Retention_violated
@@ -227,7 +213,7 @@ let classify_instance_snapshots lookup =
             (List.length snapshots)
             (String.concat ", " (List.map snapshot_label snapshots))))
   | Answered { status; stderr; _ } ->
-    (match aws_error_code stderr with
+    (match Sol_cli_aws.error_code stderr with
      | Some ("DBInstanceNotFound" | "InvalidDBInstanceId.NotFound") ->
        Retention_required_and_observed
          "none observed (destroy_retention = none): the provider reports no such \
