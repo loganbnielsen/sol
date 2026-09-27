@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-056 — `sol up` plans from the same declared facts `sol deploy` does (2026-09-27)
+
+- The divergence: `local_plan` called `of_services_result` with no declared configuration at all, while `sol deploy` passed its resolved `sol.yml`. Visible in rendered output from a copy of pluto — `charge-svc`/`checkout-svc` (declared OCaml) was probed on `/healthz` locally and `/readyz` against a target — and it was the cause of the TypeScript golden path's readiness failure INFRA-073 worked around.
+- `Sol_cli_config.declared` is now the plan's input: the services `sol.yml` declares (language, scale range, resource uses), the resources, and the profile a resolved target selects. `declared_of_config` is what `sol deploy` supplies (the same facts as before); `load_declared ~root` is what `sol up` supplies from the manifest alone, with no profile because a profile is never selected by `sol.yml` (DEC-026). The narrowed type is the fix: a deployment mode can no longer omit the facts silently, which is what a `Sol_cli_config.t` (always carrying a target) forced a local-only mode to do.
+- `cli/test/test_up_plan.ml` plans one fixture workspace both ways and asserts the acceptance: the plans agree on language, replicas and consumer groups; the local plan carries `scale: { min: 3 }` over sol.toml's `replicas = 2`, derives `ws.comms.notify_worker`, and renders `/readyz` for its declared OCaml `-svc`. Four tests, and non-vacuously so: dropping the declared facts makes three of them fail with `language: Expected "ocaml", Received "<none>"`.
+- Behaviour: a local workspace that declares a language, a scale range or resource uses now renders them locally, including the consumer-group guard's set.
+
 ## Latest: BUG-060 — pipeline tickets fail closed on unreadable metadata (2026-09-27)
 
 - The defect: a ticket whose frontmatter did not parse was visible but never *refused* — `pipeline ls` exited 0 with a marked row, a ticket with no frontmatter block at all read as a ticket with empty columns and `pipeline check` answered for it, and CI never parsed a ticket at all, so the ticket-transition guard (an `awk` over move rows that never opens a file) stayed green. Reproduced against the built binary before any change; REFAC-137 had already landed the "not silently omitted" half.

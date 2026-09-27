@@ -156,7 +156,7 @@ let plan
       ~env
       ~facts
       ~requested_scope
-      ~resolved_config:config
+      ~declared:(Sol_cli_config.declared_of_config config)
       ~image_refs
       ~inventory
       services

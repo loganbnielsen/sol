@@ -94,6 +94,31 @@ val sol_yml_services_of_string : path:string -> string -> (service list, error) 
 
 val load_for_target : target:string -> (t, error) result
 
+(** The part of a configuration a deployment *plan* reads (BUG-056): what
+    [sol.yml] declares — services, with the language, scale range and resource
+    uses they declare, and the resources themselves — plus the profile the
+    resolved target selects (only a target file may set one, DEC-026).
+
+    It is split out from {!t} because these are the same facts in every
+    deployment mode, while a resolved configuration always carries a target:
+    [sol deploy] has one, and [sol up] is local-only — there is no local
+    [provider] to put in a {!target} — so it supplies these facts from the
+    manifest alone with {!load_declared}. Before this existed [sol up] passed
+    nothing, and a local workspace was rendered from less information than the
+    same workspace deployed to a target. *)
+type declared =
+  { services : service list
+  ; resources : resource list
+  ; profile : Sol_cli_profile.t option
+  }
+
+(** What a resolved configuration declares. *)
+val declared_of_config : t -> declared
+
+(** What [sol.yml] declares on its own — no environment or target layer, so no
+    profile. This is what [sol up] plans from. *)
+val load_declared : root:string -> (declared, error) result
+
 (** [parse_target address] is the bare target an [<env>/<provider>/<region>]
     address names, with no settings, or the address error (REFAC-109). *)
 val parse_target : string -> (target, error) result

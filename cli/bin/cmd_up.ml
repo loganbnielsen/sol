@@ -10,8 +10,14 @@ let print_header ~workspace ~sha ~dry_run =
   Printf.printf "\n%!"
 ;;
 
-let build_plan ~requested_scope ~workspace ~sha ~facts ~services =
-  Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha ~facts services
+let build_plan ~requested_scope ~workspace ~sha ~facts ~declared ~services =
+  Sol_cli_up_execution.local_plan
+    ~requested_scope
+    ~workspace
+    ~sha
+    ~facts
+    ~declared
+    services
   |> Sol_cli_exit.of_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
@@ -204,9 +210,18 @@ let record_plan run_log plan =
 ;;
 
 (* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
-let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~facts ~services =
+let prepare_plan
+      ~run_log
+      ~dry_run
+      ~requested_scope
+      ~workspace
+      ~sha
+      ~facts
+      ~declared
+      ~services
+  =
   print_header ~workspace ~sha ~dry_run;
-  let* plan = build_plan ~requested_scope ~workspace ~sha ~facts ~services in
+  let* plan = build_plan ~requested_scope ~workspace ~sha ~facts ~declared ~services in
   record_plan run_log plan;
   Ok plan
 ;;
@@ -214,9 +229,17 @@ let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~facts ~serv
 (* A failed run's message stands apart from the progress output above it. *)
 let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
 
-let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~services =
+let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~services =
   let* plan =
-    prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~facts ~services
+    prepare_plan
+      ~run_log
+      ~dry_run:true
+      ~requested_scope
+      ~workspace
+      ~sha
+      ~facts
+      ~declared
+      ~services
   in
   Result.map_error run_failed
   @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
@@ -360,6 +383,7 @@ let run_apply
       ~workspace
       ~sha
       ~facts
+      ~declared
       ~services
       ~repo_root
       ~confirm_group_change
@@ -368,7 +392,15 @@ let run_apply
   let* () = check_contract ~facts ~services in
   ensure_postgres_url ();
   let* plan =
-    prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~facts ~services
+    prepare_plan
+      ~run_log
+      ~dry_run:false
+      ~requested_scope
+      ~workspace
+      ~sha
+      ~facts
+      ~declared
+      ~services
   in
   let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
   let pf_failed = ref false in
@@ -422,6 +454,13 @@ let run (req : Sol_cli_command_request.up_request) =
      it: the inventory, the plan's topics/migrations/schema subjects, the
      contract check, and the pending-migration count. *)
   let* facts = Sol_cli_workspace_model.load ~root:repo_root |> Sol_cli_exit.of_msg in
+  (* BUG-056: `sol up` plans from what sol.yml declares, the same facts
+     `sol deploy` resolves for a target -- so a local plan carries the declared
+     language, scale and resource uses, instead of planning blind. *)
+  let* declared =
+    Sol_cli_config.load_declared ~root:repo_root
+    |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
+  in
   let inventory = Sol_cli_workspace_model.services facts in
   (* Mutating command: an empty selection is an error, never a silent success. *)
   let* { requested_scope; services; _ } =
@@ -438,7 +477,7 @@ let run (req : Sol_cli_command_request.up_request) =
     (Sol_cli_run_log.dir run_log);
   match req.mode with
   | Sol_cli_command_request.Dry_run ->
-    run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~services
+    run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~services
   | Apply ->
     run_apply
       ~run_log
@@ -446,6 +485,7 @@ let run (req : Sol_cli_command_request.up_request) =
       ~workspace
       ~sha
       ~facts
+      ~declared
       ~services
       ~repo_root
       ~confirm_group_change:req.confirm_group_change

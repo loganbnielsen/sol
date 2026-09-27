@@ -15,11 +15,15 @@ type post_deploy_summary =
 val push_registry : string
 val build_context_dir : repo_root:string -> string
 
+(** BUG-056: [declared] is what the workspace's [sol.yml] declares
+    ({!Sol_cli_config.load_declared}), so a local plan carries the same declared
+    language, scale and resource uses a target's plan does. *)
 val local_plan
   :  requested_scope:string
   -> workspace:string
   -> sha:string
   -> facts:Sol_cli_workspace_model.t
+  -> declared:Sol_cli_config.declared
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, Sol_cli_deployment_plan.plan_error) result
 

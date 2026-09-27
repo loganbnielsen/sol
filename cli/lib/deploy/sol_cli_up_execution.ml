@@ -20,7 +20,15 @@ let push_registry = "localhost:5000"
    can never copy the context into itself. *)
 let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
-let local_plan ~requested_scope ~workspace ~sha ~facts services =
+(* BUG-056: `sol up` plans from the same declared facts `sol deploy` does. There
+   is no local target -- a target names a provider, and local is not one -- so
+   the command resolves them from the workspace's sol.yml instead: the declared
+   language, scale range and resource uses a plan reads. Passing none rendered a
+   local workspace from less information than the same workspace deployed to a
+   target, which is what broke "dev mirrors prod exactly" (INFRA-073 saw the
+   symptom: an OCaml unit rendered without the /readyz probe its language
+   implies). *)
+let local_plan ~requested_scope ~workspace ~sha ~facts ~declared services =
   let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
   let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
   Sol_cli_deployment_plan.of_services_result
@@ -28,6 +36,7 @@ let local_plan ~requested_scope ~workspace ~sha ~facts services =
     ~workspace
     ~env
     ~facts
+    ~declared
     services
 ;;
 

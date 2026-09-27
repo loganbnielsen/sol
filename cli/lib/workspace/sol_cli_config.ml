@@ -1516,6 +1516,26 @@ type t =
   ; services : service list
   }
 
+(* BUG-056: the facts a deployment plan reads, which every deployment mode can
+   supply -- a resolved configuration carries them alongside its target, and
+   local has no target to resolve while sol.yml still declares them. *)
+type declared =
+  { services : service list
+  ; resources : resource list
+  ; profile : Sol_cli_profile.t option
+  }
+
+let declared_of_config (cfg : t) =
+  { services = cfg.services; resources = cfg.resources; profile = cfg.target.profile }
+;;
+
+let load_declared ~root =
+  let* layer = load (Filename.concat root "sol.yml") in
+  (* No environment or target layer is read, so no profile is claimed: a profile
+     is selected by an environment or a target, never by sol.yml (DEC-026). *)
+  Ok { services = layer.services; resources = layer.resources; profile = None }
+;;
+
 let load_for_target ~target =
   let* target = target_of_path target in
   (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and sol.yml and
