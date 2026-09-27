@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export REPO_ROOT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$HERE/live-qual.sh"

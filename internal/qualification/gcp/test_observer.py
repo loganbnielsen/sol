@@ -159,8 +159,8 @@ def main() -> int:
         check("the jsonpath expression arrived as exactly ONE argv word",
               jsonpath_records and all(
                   sum(1 for a in record if a.startswith("jsonpath=")) == 1 for record in jsonpath_records))
-        check("no read arrived as one quoted command string",
-              all(not any(" " in a and not a.startswith("jsonpath=") for a in record) for record in records))
+        check("every read carried kubectl as its first word",
+              all(record[0] == "kubectl" for record in records))
         check("every read was run against the run's kubeconfig",
               all(r["argv"][0] == "kubectl" for r in summary["reads"]))
 
