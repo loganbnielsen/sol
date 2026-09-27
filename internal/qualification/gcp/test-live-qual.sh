@@ -246,7 +246,25 @@ esac
 # discriminator probes have something to read) without claiming the target still exists.
 if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
   case "$*" in
-    *"container clusters describe"* | *"container clusters get-credentials"*) printf "test-cluster\n"; exit 0 ;;
+    *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
+    # get-credentials generates an entry; it does NOT necessarily switch the current context, which
+    # is what Attempt 15d measured. The generated file therefore looks like the one that misled it:
+    # a *deleted* cluster's context first and still current, this run's cluster second.
+    *"container clusters get-credentials"*)
+      kc="${KUBECONFIG:-$HOME/.kube/config}"
+      {
+        printf 'apiVersion: v1\nkind: Config\n'
+        printf 'current-context: gke_old-project_us-central1_sol-qual-gcp-15c\n'
+        printf 'clusters:\n'
+        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  cluster:\n    server: https://136.65.210.170\n'
+        printf -- '- name: gke_sol-qualification_us-central1_%s\n  cluster:\n    server: https://136.111.139.249\n' "$CLUSTER"
+        printf 'contexts:\n'
+        printf -- '- name: gke_old-project_us-central1_sol-qual-gcp-15c\n  context:\n    cluster: gke_old-project_us-central1_sol-qual-gcp-15c\n    user: u\n'
+        printf -- '- name: gke_sol-qualification_us-central1_%s\n  context:\n    cluster: gke_sol-qualification_us-central1_%s\n    user: u\n' "$CLUSTER" "$CLUSTER"
+        printf 'users:\n- name: u\n  user:\n    token: x\n'
+      } >"$kc" 2>/dev/null || true
+      printf 'kubeconfig entry generated for %s.\n' "$CLUSTER"
+      exit 0 ;;
   esac
 fi
 # STUB_TARGET_PRESENT=1 is the world where teardown did not finish.
@@ -281,10 +299,15 @@ cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
-printf 'kubectl %s\n' "$*" >>"$kubectl_log_to"
+printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
 case "$*" in
   # The readiness probe's read. Its own alternative of this case, placed here rather than nested
   # inside another branch's body (which orphaned that branch's terminator once already).
+  *"config get-contexts"*)
+    printf 'gke_old-project_us-central1_sol-qual-gcp-15c\ngke_sol-qualification_us-central1_test-cluster\n'
+    exit 0
+    ;;
+  *"config use-context"*) exit 0 ;;
   *"get --raw /readyz"*)
     if [ "${STUB_API_UNREACHABLE:-0}" = "1" ]; then
       printf 'Unable to connect to the server: dial tcp 136.65.210.170:443: i/o timeout\n' >&2
@@ -384,6 +407,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   rm -rf "$LOG_DIR"
   env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
+    PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \
     "$HARNESS" "$sub" >"$TMP/$name.out" 2>&1
   echo "$? " >"$TMP/$name.rc"
@@ -709,7 +733,19 @@ probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-rea
 probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
 has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
 is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
-is "and the kubeconfig-configured endpoint" "$(probe_col sampling 3)" "136.115.125.189"
+# The run owns its kubeconfig, and it is the misleading shape Attempt 15d met: a *deleted*
+# cluster first and still current. Resolution is by name, so the stale entry can never be read
+# as the configured endpoint. (A stub case this short samples only before credentials exist, so
+# the configured column is legitimately `-` here; what is asserted is the invariant.)
+has "the run kubeconfig carries that stale cluster first, as the fixture intends" "sol-qual-gcp-15c" \
+  "$TMP/probe-sampling.logs/run-kubeconfig.yaml"
+if grep -qF "136.65.210.170" "$TMP/probe-sampling.logs/api-readiness.tsv"; then
+  no "the stale cluster is never the configured endpoint" "no stale endpoint" "136.65.210.170 present"
+else
+  ok "the stale cluster is never the configured endpoint"
+fi
+has "the probe's reads carry the run's own kubeconfig" "kubeconfig=$TMP/probe-sampling.logs" \
+  "$TMP/probe-sampling.probe.argv"
 has "the probe's gcloud endpoint read is on the probe channel" "value(endpoint)" "$TMP/probe-sampling.probe.argv"
 has "the probe's kubectl readiness read is on the probe channel" "get --raw /readyz" "$TMP/probe-sampling.probe.argv"
 if grep -qE '/readyz|value\(endpoint\)' "$TMP/probe-sampling.argv" 2>/dev/null; then
@@ -719,9 +755,15 @@ else
   ok "the lifecycle channel sees no probe traffic"
 fi
 
-probe_case divergence 136.65.210.170 STUB_CLUSTER_EXISTS=1
-is "a divergent kubeconfig endpoint is recorded as configured" "$(probe_col divergence 3)" "136.65.210.170"
-is "with the provider's reported endpoint recorded separately" "$(probe_col divergence 2)" "136.115.125.189"
+probe_case multicontext 136.115.125.189 STUB_CLUSTER_EXISTS=1
+if grep -qF "136.65.210.170" "$TMP/probe-multicontext.logs/api-readiness.tsv"; then
+  no "with many contexts, the stale endpoint is never read" "no stale endpoint" "136.65.210.170 present"
+else
+  ok "with many contexts, the stale endpoint is never read"
+fi
+has "the context lookup asked for the run's cluster" "config get-contexts" \
+  "$TMP/probe-multicontext.argv"
+has "and the context was pinned by name" "config use-context" "$TMP/probe-multicontext.argv"
 
 probe_case unreachable 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
 has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
