@@ -87,6 +87,14 @@ Pushgateway     localhost:9091
 
 These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local infra down` tears everything down. Running `sol local infra up` again clears any stale port-forwards first, so repeat runs are safe.
 
+### Workloads declare their language
+
+`sol.yml`'s `services:` block is where a workload says what it is implemented in. `sol new` records `language: ocaml` for the unit it just generated — it knows what it wrote — and nothing infers a language from a `package.json`, a `dune` file or a directory name (DEC-022 §7). A unit you authored by hand declares it once; `sol check` warns when one has not:
+
+```text
+warning: sol.yml: ledger_worker declares no language; add `language: ocaml` (or typescript) under services.ledger_worker in sol.yml
+```
+
 ### Local iteration with `sol local run`
 
 Once the cluster is up and you have a workspace (see Part 2), use `sol local run` for rapid code-change iteration:
@@ -136,7 +144,8 @@ This generates 29 files. Here is what was created and why:
 
 ```
 pluto/
-  sol.yml                         ← workspace manifest (identifies this directory as a Sol workspace)
+  sol.yml                         ← workspace manifest (identifies this directory as a Sol workspace,
+                                     and declares each workload's language)
   dune-project                    ← root dune project (required)
   .ocamlformat                    ← OCaml formatter config
   .dockerignore                   ← excludes _build/ and .git/ from Docker build context

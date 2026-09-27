@@ -151,6 +151,38 @@ let test_run_services_scopes_the_check () =
       (Sol_cli_check.has_errors findings))
 ;;
 
+(* FEAT-104: every workload has a declared language, and Sol never guesses one.
+   A workspace whose workload has not declared yet still loads and still checks
+   -- it gets a warning naming the line to add, not an error. *)
+let test_undeclared_workload_warns () =
+  with_tmp (fun _ ->
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    write "app/payments/charge_svc/sol.toml" "";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Alcotest.(check bool)
+      "warns that the workload declares no language"
+      true
+      (has_msg "declares no language" findings);
+    Alcotest.(check bool)
+      "a warning, not an error"
+      false
+      (Sol_cli_check.has_errors findings))
+;;
+
+let test_declared_workload_does_not_warn () =
+  with_tmp (fun _ ->
+    write "sol.yml" "services:\n  charge_svc:\n    language: ocaml\n";
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    write "app/payments/charge_svc/sol.toml" "";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Alcotest.(check bool)
+      "no declaration warning"
+      false
+      (has_msg "declares no language" findings))
+;;
+
 let () =
   Alcotest.run
     "sol_cli_check"
@@ -174,6 +206,14 @@ let () =
             "run_services checks only the selected set"
             `Quick
             test_run_services_scopes_the_check
+        ; Alcotest.test_case
+            "an undeclared workload warns"
+            `Quick
+            test_undeclared_workload_warns
+        ; Alcotest.test_case
+            "a declared workload does not warn"
+            `Quick
+            test_declared_workload_does_not_warn
         ] )
     ]
 ;;
