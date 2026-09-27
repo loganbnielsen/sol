@@ -53,6 +53,14 @@ ok() { printf '  [OK]   %s\n' "$1"; pass=$((pass + 1)); }
 # On the first failure in a case, show the harness's own output for it. Every case's output is
 # captured to $TMP/<name>.out and was never printed, so a failing case in CI reported only that it
 # failed -- which is how a one-line refusal message cost a whole debugging round trip.
+# Printed once, at the top: if a CI run behaves differently, this says which environment it was.
+suite_environment() {
+  printf 'suite: bash %s, cwd %s, scratch %s\n' "${BASH_VERSION:-?}" "$PWD" "$TMP"
+  printf 'suite: stubs %s, harness %s\n' \
+    "$(ls "$TMP"/bin 2>/dev/null | tr '\n' ',' )" "${HARNESS:-unset}"
+  printf 'suite: probe channel %s\n' "${API_PROBE_LOG:-unset}"
+}
+
 dump_case_output() {
   local case_name="${CURRENT_CASE:-}"
   case "${DUMPED:-} ${case_name}" in
@@ -82,6 +90,8 @@ is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "$3" "$2"; fi; }
 has() { if grep -qF -- "$2" "$3"; then ok "$1"; else no "$1" "contains: $2" "$(tr '\n' '|' <"$3" | cut -c1-160)"; fi; }
 lacks() { if grep -qF -- "$2" "$3"; then no "$1" "absent: $2" "present"; else ok "$1"; fi; }
 present() { if [ -s "$1" ]; then ok "$2"; else no "$2" "present and non-empty" "missing: $1"; fi; }
+
+suite_environment
 
 # ── stubs ────────────────────────────────────────────────────────────────────
 mkdir -p "$TMP/bin"
