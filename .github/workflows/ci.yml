@@ -337,6 +337,12 @@ jobs:
       - name: Result.Syntax mutation test
         run: bash internal/ci/test_result_syntax.sh
 
+      - name: Runtime failures are returned, not raised (REFAC-133)
+        run: bash internal/ci/check_no_exception_control_flow.sh
+
+      - name: Exception-control-flow mutation test
+        run: bash internal/ci/test_no_exception_control_flow.sh
+
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.

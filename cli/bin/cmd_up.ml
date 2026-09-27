@@ -73,53 +73,57 @@ let dry_run_service
       (spec : Sol_cli_deployment_plan.service_spec)
   =
   print_service_start spec;
-  match
-    Sol_cli_up_execution.apply_service_manifest
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~workspace
-      ~release_id
-      ~dry_run:true
-      (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec)
-  with
-  | Ok _ -> ()
-  | Error msg -> raise (Deploy_failed msg)
+  Sol_cli_up_execution.apply_service_manifest
+    ~ctx:Sol_cli_kube_destination.local_context
+    ~workspace
+    ~release_id
+    ~dry_run:true
+    (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec)
+  |> Result.map ignore
 ;;
 
-let apply_service
+(* Build, push, apply and wait: the steps whose failure fails the run. *)
+let deploy_service
       ~workspace
       ~ctx_dir
       ~sha
-      ~pf_failed
       ~release_id
       (spec : Sol_cli_deployment_plan.service_spec)
   =
   let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
   print_service_start spec;
   Printf.printf "  packaging %s...\n%!" exec.push_image;
-  Sol_cli_up_execution.build_image exec
-  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
+  let* () = Sol_cli_up_execution.build_image exec in
   Printf.printf "  pushing...\n%!";
-  Sol_cli_up_execution.push_image exec
-  |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
-  (match
-     Sol_cli_up_execution.apply_service_manifest
-       ~ctx:Sol_cli_kube_destination.local_context
-       ~workspace
-       ~release_id
-       ~dry_run:false
-       spec
-   with
-   | Ok _ -> ()
-   | Error msg -> raise (Deploy_failed msg));
-  (match spec.primitive with
-   | Sol_cli_deployment_plan.Fn -> ()
-   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
-     Printf.printf "  waiting for rollout...\n%!";
-     Sol_cli_up_execution.wait_for_service_rollout
-       ~ctx:Sol_cli_kube_destination.local_context
-       spec
-       exec
-     |> Result.iter_error (fun msg -> raise (Deploy_failed msg)));
+  let* () = Sol_cli_up_execution.push_image exec in
+  let* _ =
+    Sol_cli_up_execution.apply_service_manifest
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace
+      ~release_id
+      ~dry_run:false
+      spec
+  in
+  let* () =
+    match spec.primitive with
+    | Sol_cli_deployment_plan.Fn -> Ok ()
+    | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
+      Printf.printf "  waiting for rollout...\n%!";
+      Sol_cli_up_execution.wait_for_service_rollout
+        ~ctx:Sol_cli_kube_destination.local_context
+        spec
+        exec
+  in
+  Ok exec
+;;
+
+(* Reach a deployed -svc from the host. A failed port-forward is reported and
+   noted in [pf_failed]; it does not fail the release that was applied. *)
+let expose_service
+      ~pf_failed
+      (spec : Sol_cli_deployment_plan.service_spec)
+      (exec : Sol_cli_up_execution.service_execution)
+  =
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
@@ -186,6 +190,12 @@ let apply_service
     Printf.printf "\n%!"
 ;;
 
+let apply_service ~workspace ~ctx_dir ~sha ~pf_failed ~release_id spec =
+  let* exec = deploy_service ~workspace ~ctx_dir ~sha ~release_id spec in
+  expose_service ~pf_failed spec exec;
+  Ok ()
+;;
+
 let record_plan run_log plan =
   Sol_cli_run_log.append_phase_log
     run_log
@@ -210,13 +220,12 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~services =
   in
   Result.map_error run_failed
   @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
-    try
-      List.iter
-        (dry_run_service ~workspace ~sha ~release_id:plan.release_id)
-        plan.services;
-      Ok ()
-    with
-    | Deploy_failed msg -> Error msg)
+    plan.services
+    |> List.fold_left
+         (fun acc spec ->
+            let* () = acc in
+            dry_run_service ~workspace ~sha ~release_id:plan.release_id spec)
+         (Ok ()))
 ;;
 
 (* `sol up` is a deploy of the local cluster, so these mirror cmd_deploy's
@@ -277,24 +286,24 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
     match prepare_context ~repo_root with
     | Error msg -> Error msg
     | Ok ctx_dir ->
-      (try
-         plan.services
-         |> List.iter (fun spec ->
-           Sol_cli_boundary_lease.ensure_held lease
-           |> Result.iter_error (fun msg -> raise (Deploy_failed msg));
-           apply_service
-             ~workspace
-             ~ctx_dir
-             ~sha
-             ~pf_failed
-             ~release_id:plan.Sol_cli_deployment_plan.release_id
-             spec);
-         Sol_cli_up_execution.remove_build_context ~ctx_dir;
-         Ok ()
-       with
-       | Deploy_failed msg ->
-         Sol_cli_up_execution.remove_build_context ~ctx_dir;
-         Error msg))
+      (* Stops at the first service that fails; the build context goes either way. *)
+      let applied =
+        plan.services
+        |> List.fold_left
+             (fun acc spec ->
+                let* () = acc in
+                let* () = Sol_cli_boundary_lease.ensure_held lease in
+                apply_service
+                  ~workspace
+                  ~ctx_dir
+                  ~sha
+                  ~pf_failed
+                  ~release_id:plan.Sol_cli_deployment_plan.release_id
+                  spec)
+             (Ok ())
+      in
+      Sol_cli_up_execution.remove_build_context ~ctx_dir;
+      applied)
 ;;
 
 (* FEAT-074: report-only, and only for a whole-workspace deploy -- a scoped

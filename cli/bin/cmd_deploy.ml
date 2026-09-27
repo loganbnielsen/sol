@@ -268,15 +268,12 @@ let record_plan run_log plan =
    [deploy_context] only to repack it. *)
 let run_plan_result ctx ~phase ~mode ?before_apply plan =
   Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
-    try
-      Sol_cli_factory.execute
-        ctx.execution
-        ~mode
-        ~secret_backend:ctx.secret_backend
-        ?before_apply
-        plan
-    with
-    | Deploy_failed msg -> Error msg)
+    Sol_cli_factory.execute
+      ctx.execution
+      ~mode
+      ~secret_backend:ctx.secret_backend
+      ?before_apply
+      plan)
 ;;
 
 (* A failed plan run's message stands apart from the progress output above it. *)

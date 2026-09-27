@@ -521,23 +521,6 @@ let namespace_result ~workspace ~domain =
   |> Result.map_error (invalid_kubernetes_name ~field:"namespace" ~value)
 ;;
 
-let namespace_of_exn ~workspace ~domain =
-  match namespace_result ~workspace ~domain with
-  | Ok namespace -> namespace
-  | Error err ->
-    failwith
-      (match err with
-       | Invalid_kubernetes_name { field; value; message } ->
-         Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
-       | Invalid_service_call { service; ref; message } ->
-         Printf.sprintf "service %S calls %S: %s" service ref message
-       | Invalid_persistence { workload; message } ->
-         Printf.sprintf "workload %S has invalid persistence: %s" workload message
-       | Unsupported_availability { workload; message } ->
-         Printf.sprintf "workload %S has unsupported availability: %s" workload message
-       | Toml_error toml -> Sol_cli_toml.parse_error_to_string toml)
-;;
-
 let image_ref ~registry ~workspace ~k8s_name ~tag =
   Printf.sprintf "%s/%s/%s:%s" registry workspace (k8s_name_to_string k8s_name) tag
 ;;
@@ -635,14 +618,6 @@ let primitive_of_manifest = function
    definition, so the planner and rollback's decode of a recorded release
    cannot diverge. *)
 let call_env_var = Sol_cli_kubernetes_name.call_env_var
-
-(* Delegates to the shared helper (FEAT-066): the URL format has one definition,
-   so the planner and rollback's decode of a recorded release cannot diverge. *)
-let service_url ~workspace ~domain ~k8s_name =
-  Sol_cli_kubernetes_name.service_url
-    ~namespace:(namespace_of_exn ~workspace ~domain)
-    ~k8s_name
-;;
 
 (* sol.yml scale (a min/max range) and sol.toml's replicas (a fixed count)
    aren't the same shape -- no HorizontalPodAutoscaler is emitted anywhere
@@ -879,7 +854,10 @@ let of_services_result
          let* target_namespace = namespace_result ~workspace ~domain:target.domain in
          Ok
            { env_var = call_env_var target.name
-           ; url = service_url ~workspace ~domain:target.domain ~k8s_name:target_name
+           ; url =
+               Sol_cli_kubernetes_name.service_url
+                 ~namespace:target_namespace
+                 ~k8s_name:target_name
            ; target_domain = target.domain
            ; target_name
            ; target_namespace
@@ -1039,7 +1017,9 @@ let of_services_result
             Some
               { env_var = call_env_var caller.source_name
               ; url =
-                  service_url ~workspace ~domain:caller.domain ~k8s_name:caller.k8s_name
+                  Sol_cli_kubernetes_name.service_url
+                    ~namespace:caller.namespace
+                    ~k8s_name:caller.k8s_name
               ; target_domain = caller.domain
               ; target_name = caller.k8s_name
               ; target_namespace = caller.namespace
@@ -1087,12 +1067,4 @@ let of_services_result
           ~migrations
           ~whole_workspace:(String.equal requested_scope "workspace")
     }
-;;
-
-let of_services ~workspace ~env ~facts ?requested_scope ?resolved_config services =
-  match
-    of_services_result ~workspace ~env ~facts ?requested_scope ?resolved_config services
-  with
-  | Ok plan -> plan
-  | Error err -> failwith (plan_error_to_string err)
 ;;

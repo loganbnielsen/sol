@@ -34,7 +34,11 @@ let service
   ; source_name = name
   ; k8s_name = k8s_name name
   ; namespace =
-      Sol_cli_deployment_plan.namespace_of_exn ~workspace:"pluto" ~domain:"payments"
+      (match
+         Sol_cli_deployment_plan.namespace_result ~workspace:"pluto" ~domain:"payments"
+       with
+       | Ok namespace -> namespace
+       | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
   ; primitive
   ; source_dir = "payments/" ^ name
   ; image = "registry.sol.dev/acct_123/pluto/" ^ name ^ ":abc123"
@@ -157,7 +161,11 @@ let test_rendered_manifest_diagnostics () =
       (Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 10; Sol_cli_toml.Pause None ] })
   in
   let plan = hosted_plan ?progressive_delivery () in
-  let manifests = Sol_cli_release_inspection.rendered_manifests_of_plan plan in
+  let manifests =
+    match Sol_cli_release_inspection.rendered_manifests_of_plan plan with
+    | Ok manifests -> manifests
+    | Error msg -> Alcotest.fail msg
+  in
   check_int "manifest count" 14 (List.length manifests);
   let rollout =
     List.find

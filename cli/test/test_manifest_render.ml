@@ -68,6 +68,12 @@ let ingress_path s =
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let render_doc doc = Sol_cli_yaml.render [ doc ]
 
+let load_toml path =
+  match Sol_cli_toml.load_result path with
+  | Ok toml -> toml
+  | Error err -> Alcotest.fail (Sol_cli_toml.parse_error_to_string err)
+;;
+
 let assert_contains label haystack needle =
   check_bool
     (Printf.sprintf "%s: contains %S" label needle)
@@ -89,7 +95,9 @@ let k8s_name value =
 ;;
 
 let namespace ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_of_exn ~workspace ~domain
+  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
+  | Ok namespace -> namespace
+  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 (* Extract the YAML document block that contains [kind_marker] (e.g. "kind: ConfigMap").
@@ -1047,18 +1055,12 @@ let test_extra_labels_empty_by_default () =
 ;;
 
 let test_toml_invalid_rollout_strategy () =
-  (* load should raise Failure for unknown rollout_strategy values *)
+  (* load_result refuses unknown rollout_strategy values *)
   let path = Filename.temp_file "sol-toml-test-" ".toml" in
   let oc = open_out path in
   output_string oc "[infra.deploy]\nrollout_strategy = \"Blue/Green\"\n";
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "invalid rollout_strategy raises" true raised
 ;;
@@ -1073,13 +1075,7 @@ let test_toml_reserved_label_key () =
 extra_labels = { "sol.dev/owner" = "platform" }
 |};
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "reserved label key raises" true raised
 ;;
@@ -1090,7 +1086,7 @@ let test_toml_valid_rollout_recreate () =
   let oc = open_out path in
   output_string oc "[infra.deploy]\nrollout_strategy = \"Recreate\"\n";
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool
     "rollout_strategy is Recreate"
@@ -1109,7 +1105,7 @@ ingress_host = "api.example.com"
 ingress_path = "/v1"
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool
     "ingress_host parsed"
@@ -1130,7 +1126,7 @@ let test_toml_valid_service_calls () =
 calls = ["checkout/checkout_svc"]
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   Alcotest.(check (list string)) "calls parsed" [ "checkout/checkout_svc" ] toml.calls
 ;;
@@ -1220,7 +1216,7 @@ let test_toml_secret_keys () =
 secrets = ["DATABASE_URL", "API_TOKEN"]
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool "secret keys parsed" true (toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
 ;;
@@ -1235,7 +1231,7 @@ strategy = "canary"
 steps = [10, 40, 100]
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   match toml.progressive_delivery with
   | Some
@@ -1255,7 +1251,7 @@ let test_toml_valid_blue_green_rollout () =
 strategy = "blue-green"
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool
     "blue-green parsed"
@@ -1272,13 +1268,7 @@ let test_toml_invalid_progressive_strategy () =
 strategy = "rolling"
 |};
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "invalid progressive strategy raises" true raised
 ;;
@@ -1292,13 +1282,7 @@ let test_toml_canary_requires_steps () =
 strategy = "canary"
 |};
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "canary without steps raises" true raised
 ;;
@@ -1313,13 +1297,7 @@ strategy = "canary"
 steps = [10, 120]
 |};
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "invalid canary weight raises" true raised
 ;;
@@ -1333,13 +1311,7 @@ let test_toml_rejects_malformed () =
   output_string oc "replicas = \n";
   (* missing value *)
   close_out oc;
-  let raised =
-    try
-      let _ = Sol_cli_toml.load path in
-      false
-    with
-    | Failure _ -> true
-  in
+  let raised = Result.is_error (Sol_cli_toml.load_result path) in
   Sys.remove path;
   check_bool "malformed TOML raises Failure" true raised
 ;;
@@ -1387,7 +1359,7 @@ secrets = [
 ]
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool
     "multi-line secrets array parsed"
@@ -1407,7 +1379,7 @@ cpu = "250m"
 memory = "256Mi"
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   check_bool "replicas from dotted header" true (toml.replicas = Some 3);
   check_bool
@@ -1431,7 +1403,7 @@ strategy = "canary"
 steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
 |};
   close_out oc;
-  let toml = Sol_cli_toml.load path in
+  let toml = load_toml path in
   Sys.remove path;
   match toml.progressive_delivery with
   | Some

@@ -200,37 +200,44 @@ let rendered_manifests_of_service
       ?env
       ~release_id
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      service
+      (service : Sol_cli_deployment_plan.service_spec)
   =
   (* Default to Kubernetes_placeholder for diagnostics so that
      rendered_manifests_of_plan can be called without live env vars. *)
-  match
-    Sol_cli_deployment_render.render_spec
-      ~workspace
-      ?env
-      ~release_id
-      ~secret_backend
-      service
-  with
-  | Error msg -> failwith msg
-  | Ok (namespace_yaml, workload_yaml) ->
+  Sol_cli_deployment_render.render_spec
+    ~workspace
+    ?env
+    ~release_id
+    ~secret_backend
+    service
+  |> Result.map (fun (namespace_yaml, workload_yaml) ->
     split_manifest_docs (namespace_yaml ^ "\n" ^ workload_yaml)
     |> List.map (fun yaml ->
       { name = manifest_name yaml
       ; namespace = Sol_cli_deployment_plan.namespace_to_string service.namespace
       ; kind = manifest_kind yaml
       ; yaml
-      })
+      }))
 ;;
 
+(* A service that does not render is the plan's error, reported for the first
+   such service in order; nothing is raised. *)
 let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
-  List.concat_map
-    (rendered_manifests_of_service
-       ~workspace:plan.workspace
-       ?env:plan.environment.env
-       ~release_id:plan.release_id
-       ~secret_backend:plan.environment.secret_backend)
-    plan.services
+  let open Result.Syntax in
+  plan.services
+  |> List.fold_left
+       (fun acc service ->
+          let* rendered = acc in
+          let* manifests =
+            rendered_manifests_of_service
+              ~workspace:plan.workspace
+              ?env:plan.environment.env
+              ~release_id:plan.release_id
+              ~secret_backend:plan.environment.secret_backend
+              service
+          in
+          Ok (rendered @ manifests))
+       (Ok [])
 ;;
 
 let diagnostics

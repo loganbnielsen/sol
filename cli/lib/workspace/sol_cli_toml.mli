@@ -121,16 +121,11 @@ type parse_error =
 val parse_error_to_string : parse_error -> string
 
 (** Load and parse a sol.toml file. Returns [Ok empty] if the file does not
-    exist. Returns [Error _] for malformed TOML or validation errors. *)
-val load_result : string -> (t, parse_error) result
-
-(** Load and parse a sol.toml file. Returns [empty] if the file does not exist.
-    Compatibility wrapper around [load_result]. Raises [Failure] with a
-    descriptive message on parse or validation errors:
+    exist, and [Error _] for malformed TOML or a validation error, including:
     - Unknown rollout_strategy values (only "Recreate" and "RollingUpdate"
       accepted).
     - extra_labels keys starting with "sol.dev/" (reserved namespace).
     - Unknown [infra.rollout] strategy values (only "canary" and "blue-green"
       accepted).
     - Canary strategy with an empty steps list or weights outside 0..100. *)
-val load : string -> t
+val load_result : string -> (t, parse_error) result

@@ -3,6 +3,12 @@
    dry_run=true mode only prints the YAML — no kubectl is invoked.
    The gitops executor writes a file to a temp directory. *)
 
+(* REFAC-133: the executors return their failure instead of raising it. *)
+let ok = function
+  | Ok r -> r
+  | Error e -> Alcotest.fail e
+;;
+
 let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
@@ -16,7 +22,9 @@ let k8s_name value =
 ;;
 
 let namespace ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_of_exn ~workspace ~domain
+  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
+  | Ok namespace -> namespace
+  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
@@ -106,6 +114,7 @@ let test_local_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
+    |> ok
   in
   check_string "local namespace" "myapp-payments" r.namespace;
   check_string "local name" "charge-svc" r.name;
@@ -120,6 +129,7 @@ let test_local_worker_result () =
       ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
+    |> ok
   in
   check_string "local worker namespace" "myapp-comms" r.namespace;
   check_string "local worker name" "notify-worker" r.name
@@ -135,6 +145,7 @@ let test_direct_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
+    |> ok
   in
   check_string "direct namespace" "myapp-payments" r.namespace;
   check_string "direct name" "charge-svc" r.name;
@@ -149,6 +160,7 @@ let test_direct_worker_result () =
       ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
+    |> ok
   in
   check_string "direct worker namespace" "myapp-comms" r.namespace;
   check_string "direct worker name" "notify-worker" r.name
@@ -168,6 +180,7 @@ let test_gitops_result_fields () =
       ~release_id:release_id_of_test
       ~dir
       svc_spec
+    |> ok
   in
   check_string "gitops namespace" "myapp-payments" r.namespace;
   check_string "gitops name" "charge-svc" r.name;
@@ -232,6 +245,7 @@ let test_gitops_worker () =
       ~release_id:release_id_of_test
       ~dir
       worker_spec
+    |> ok
   in
   let path = Filename.concat dir "myapp-comms-notify-worker.yaml" in
   let exists = Sys.file_exists path in

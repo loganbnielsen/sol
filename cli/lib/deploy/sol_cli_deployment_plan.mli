@@ -186,10 +186,6 @@ val k8s_name_result : string -> (k8s_name, plan_error) result
 
 val k8s_name_to_string : k8s_name -> string
 
-(** [namespace_of_exn ~workspace ~domain] returns a validated namespace for
-    ["<workspace>-<domain>"]. Raises [Failure] if validation fails. *)
-val namespace_of_exn : workspace:string -> domain:string -> namespace
-
 (** Normalize workspace/domain into a namespace and validate it as a Kubernetes
     DNS label. *)
 val namespace_result : workspace:string -> domain:string -> (namespace, plan_error) result
@@ -211,17 +207,6 @@ val image_ref
   -> k8s_name:k8s_name
   -> tag:string
   -> string
-
-(** Compatibility wrapper around [of_services_result]. Raises [Failure] if a
-    service [sol.toml] cannot be parsed or validated. *)
-val of_services
-  :  workspace:string
-  -> env:env_config
-  -> facts:Sol_cli_workspace_model.t
-  -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
-  -> Sol_cli_manifest.service list
-  -> t
 
 (** Build a deployment plan from a discovered service list and an environment
     config. Returns a typed error when a Kubernetes artifact name is invalid or
