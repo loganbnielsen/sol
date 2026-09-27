@@ -54,8 +54,9 @@ val execute
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result
 
-(** The selection/config half of a {!run}: what to deploy, and with what
-    resolved configuration. The execution environment is separate. *)
+(** The selection/config half of a {!run}: what to deploy, and what the
+    workspace declares about it ({!Sol_cli_config.declared}). The execution
+    environment is separate. *)
 type request =
   { env : Sol_cli_deployment_plan.env_config
   ; requested_scope : string option
