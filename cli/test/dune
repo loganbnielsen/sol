@@ -85,7 +85,7 @@
   test_local_run
   test_json
   test_cloud_cli
-  test_local_platform)
+  test_local_platform
   test_migration_job)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
