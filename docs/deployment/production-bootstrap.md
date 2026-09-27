@@ -318,7 +318,7 @@ either:
   declares. The GCP root's only exceptions are the AWS-shaped ones — `aws_region`,
   the S3 buckets and their IRSA roles, and `cert_manager_irsa_role_arn` — which a
   GCP install cannot use. Adding a variable to the definition without adding it to
-  a root fails `cli/test/check_production_infra.sh` rather than silently defaulting.
+  a root fails `internal/ci/check_production_infra.py` rather than silently defaulting.
 - Until REFAC-100 the AWS root *was* the definition, so an AWS platform state from
   before it holds every resource at the top level. The AWS root's `moved` blocks
   relocate each one under `module.platform`, so such a state plans with no destroy

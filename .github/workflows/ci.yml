@@ -458,6 +458,11 @@ jobs:
       - name: Check steady-state cluster-access identity boundary
         run: internal/ci/test_cluster_access_identity.sh
 
+      - name: Production infrastructure guard, and its mutation test
+        run: |
+          python3 internal/ci/check_production_infra.py .
+          python3 internal/ci/test_production_infra_check.py
+
       - name: Destroy-completeness guard mutation test (INFRA-037)
         run: internal/ci/test_destroy_completeness_check.sh
 

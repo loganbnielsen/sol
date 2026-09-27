@@ -301,7 +301,7 @@ In practice, for every behavioural row:
 
 1. **Static/configuration evidence** — Terraform variable defaults, RBAC
    rule text, IAM policy JSON shape. This session's offline additions
-   (`cli/test/check_production_infra.sh`,
+   (`internal/ci/check_production_infra.py`,
    `internal/ci/test_cloud_lifecycle_offline.sh`,
    `internal/ci/test_publisher_deployer_boundary.sh`) are entirely this
    tier. Necessary, never sufficient.
