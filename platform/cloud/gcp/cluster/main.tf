@@ -161,7 +161,11 @@ resource "google_container_node_pool" "main" {
   cluster  = google_container_cluster.main.id
   location = var.region
 
-  node_locations = ["${var.region}-a"]
+  # The pool's zone is the driver's choice, and `-a` refused to host the pool during Attempt 15b
+  # (a zonal stockout: "Google Compute Engine does not have enough resources available"). Moving to
+  # `-b` is a capacity probe, not a policy: the stockout is provider-owned and transient, so this
+  # is a default the driver may change, and deliberately not zone fallback logic in provisioning.
+  node_locations = ["${var.region}-b"]
   node_count     = var.node_count
 
   node_config {
