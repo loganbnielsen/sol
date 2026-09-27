@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-060 — pipeline tickets fail closed on unreadable metadata (2026-09-27)
+
+- The defect: a ticket whose frontmatter did not parse was visible but never *refused* — `pipeline ls` exited 0 with a marked row, a ticket with no frontmatter block at all read as a ticket with empty columns and `pipeline check` answered for it, and CI never parsed a ticket at all, so the ticket-transition guard (an `awk` over move rows that never opens a file) stayed green. Reproduced against the built binary before any change; REFAC-137 had already landed the "not silently omitted" half.
+- `Soldev_ticket.unreadable ~path` is now the one rule — a frontmatter block, that it parses with the same parser `ls`/`check` read with, and `id`/`type`/`severity`/`source` present — used by both of those and by the new `soldev pipeline validate`, which reads the whole tree (DONE included). An unreadable ticket is an error naming the file; valid tickets are untouched (786 read across the three states).
+- CI: `internal/ci/test_pipeline_validate.sh` runs the validator over the repository's own tree, unconditionally, and is its own mutation test — a readable control tree passes, then malformed frontmatter, a no-frontmatter ticket in DONE and a missing field are each rejected by name, and the listing goes green again when the plants are removed. Disabling the rule fails the guard at its first mutated case, so it tests the fix rather than the harness.
+- Content corrections kept separate: `DONE/INFRA-042.md` (2026-09-19) gained the frontmatter its siblings have. Filed `BACKLOG/BUG-061.md`: `DEC-049.md` and `DEC-049-gke-standard-is-the-supported-gcp-substrate.md` are two different decisions sharing one id, so the GKE decision is unreachable by id — blocked on the live GCP stream, because the fix moves references in it.
+
 ## Latest: refactoring-pattern audit, REFAC-131..139 (2026-09-27)
 
 - An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593): text-built manifests, ad-hoc JSON decoding, exceptions as control flow, spawns outside `Sol_cli_process`, library printing, per-tool error classifiers, `framework/` + soldev, the pinned `*-eio` libraries, and thin `cli/bin`.

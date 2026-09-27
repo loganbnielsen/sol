@@ -100,6 +100,7 @@ The discipline, since relying on remembering the current directory has now faile
 
 **soldev roles (REFAC-079):** GitHub PRs/CI are the source of truth; `soldev` is an orchestration layer over GitHub, not a second authority.
 - `pipeline ls` / `pipeline check` — orchestration: queue view, preflight gates, PR and dirty-worktree annotations.
+- `pipeline validate` — validation: reads every ticket in the tree (BACKLOG, READY_FOR_ENGINEERING and DONE) with the same parser the other commands use, and exits 1 naming any it cannot read. CI runs it unconditionally, so a ticket with unreadable frontmatter fails its PR instead of disappearing from the queue view (BUG-060).
 - `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
 - `pipeline review` — orchestration: posts the structured `SOLDEV-REVIEW` verdict comment that `merge` trusts.
 - `pipeline merge` — orchestration: verifies review marker + CI directly on GitHub, then runs `gh pr merge --squash --delete-branch --admin`.

@@ -27,6 +27,19 @@ val frontmatter : string -> ((string * string) list, string) result
     only want one field. *)
 val fields : string -> (string * string) list
 
+(** Why the pipeline cannot read this ticket's metadata, with [path] prefixed so
+    the report names the file — or [None] when it can. The reasons are a missing
+    frontmatter block, a block that does not parse ([frontmatter] above), or a
+    missing/blank field from the set the pipeline reads ([id], [type],
+    [severity], [source]); everything else about a ticket is the author's.
+
+    This is the one rule the listing, the per-ticket gate and
+    `soldev pipeline validate` share, so a ticket cannot be rejected by one and
+    accepted by another. BUG-060: a ticket that cannot be read is an error naming
+    the file, never a row with empty columns, an "actionable" verdict, or an
+    omission. *)
+val unreadable : path:string -> string -> string option
+
 val fm_get : (string * string) list -> string -> string option
 val parse_depends : string -> string list
 val has_human_decision_gate : string -> bool
