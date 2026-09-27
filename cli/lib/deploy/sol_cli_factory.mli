@@ -28,7 +28,7 @@ val plan_of_services
   -> facts:Sol_cli_workspace_model.t
        (** REFAC-130: the workspace, read once by the command. *)
   -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
+  -> ?declared:Sol_cli_config.declared
   -> ?image_refs:(string * string) list
   -> ?inventory:Sol_cli_manifest.service list
        (** DEC-036: what a call reference may name. The positional list stays the
@@ -54,12 +54,13 @@ val execute
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result
 
-(** The selection/config half of a {!run}: what to deploy, and with what
-    resolved configuration. The execution environment is separate. *)
+(** The selection/config half of a {!run}: what to deploy, and what the
+    workspace declares about it ({!Sol_cli_config.declared}). The execution
+    environment is separate. *)
 type request =
   { env : Sol_cli_deployment_plan.env_config
   ; requested_scope : string option
-  ; resolved_config : Sol_cli_config.t option
+  ; declared : Sol_cli_config.declared option
   }
 
 (** [run] combines {!plan_of_services} and {!execute} into one call, returning

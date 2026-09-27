@@ -129,12 +129,12 @@ type plan_error =
       ; message : string
       }
 
-(** [derive_consumer_groups ~resolved_config workspace services] returns validated
+(** [derive_consumer_groups ~declared workspace services] returns validated
     {!Sol_cli_plan_ids.Consumer_group.t} values for [Worker] entries that
     declare use of a Kafka resource, sorted and deduplicated. Convention:
     ["<workspace>.<domain>.<worker_name>"]. *)
 val derive_consumer_groups
-  :  ?resolved_config:Sol_cli_config.t
+  :  ?declared:Sol_cli_config.declared
   -> string
   -> service_spec list
   -> Sol_cli_plan_ids.Consumer_group.t list
@@ -222,12 +222,17 @@ val image_ref
     [requested_scope] records what the user asked for (default ["workspace"]),
     alongside the resolved [services] (FEAT-065).
 
-    [resolved_config], when given (the [sol deploy]/target-resolved path;
-    [sol up] never has one), overrides a service's [sol.toml] [replicas] with
-    its [sol.yml] entry's [scale_max] (falling back to [scale_min]) when a
-    service of the same name sets either. A service with no matching [sol.yml]
-    entry, or no [resolved_config] at all, keeps [sol.toml]'s [replicas]
-    unchanged.
+    [declared], when given, is what [sol.yml] declares (BUG-056): a service's
+    [sol.yml] [scale_max] (falling back to [scale_min]) overrides its [sol.toml]
+    [replicas]; its declared [language] and resource [uses] reach the spec; and
+    the profile a resolved target selects becomes the plan's profile claim. Both
+    deployment modes supply it — [sol deploy] from its resolved configuration,
+    [sol up] from the manifest alone ({!Sol_cli_config.load_declared}) — so
+    neither renders from less information than the other. A service with no
+    matching [sol.yml] entry keeps [sol.toml]'s [replicas] unchanged. Omitting
+    [declared] is for a caller with no manifest at all (a fixture, the hosted
+    entry point); a deployment mode passing it nothing is exactly the divergence
+    this type exists to prevent.
 
     [image_refs], when given, maps a service name to the fully-qualified
     immutable reference to deploy for it (FEAT-050). A service with no entry
@@ -237,7 +242,7 @@ val of_services_result
   -> env:env_config
   -> facts:Sol_cli_workspace_model.t
   -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
+  -> ?declared:Sol_cli_config.declared
   -> ?image_refs:(string * string) list
   -> ?inventory:Sol_cli_manifest.service list
        (** DEC-036: the set a call reference may *name* — the workspace

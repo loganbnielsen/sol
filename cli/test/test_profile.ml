@@ -208,7 +208,7 @@ let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
       ~facts:(facts ())
       ~workspace:"pluto"
       ~env
-      ~resolved_config:(load target)
+      ~declared:(Sol_cli_config.declared_of_config (load target))
       ~image_refs
       ?requested_scope:scope
       services
@@ -247,7 +247,7 @@ let node_failure_tolerant_plan target =
       ~facts:(facts ())
       ~workspace:"pluto"
       ~env
-      ~resolved_config:(load target)
+      ~declared:(Sol_cli_config.declared_of_config (load target))
       [ charge_svc ]
   with
   | Ok plan -> plan
@@ -264,7 +264,7 @@ let availability_rejection service ~toml =
       ~facts:(facts ())
       ~workspace:"pluto"
       ~env
-      ~resolved_config:(load "prod/aws/us-east-1")
+      ~declared:(Sol_cli_config.declared_of_config (load "prod/aws/us-east-1"))
       [ service ]
   with
   | Ok _ -> Alcotest.fail "expected the availability claim to be refused"

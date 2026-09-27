@@ -2389,9 +2389,11 @@ let test_svc_readiness_probe_uses_readyz () =
 
 (* A TypeScript -svc keeps /healthz for readiness until its framework serves
    /readyz (FEAT-096); pointing it at a 404 would leave its pods never ready. *)
-(* An undeclared language is unknown, not OCaml: /healthz. This is what `sol up`
-   renders for every service today (BUG-056); the TypeScript golden path failed
-   with a /readyz probe on its order_svc. *)
+(* An undeclared language is unknown, not OCaml: /healthz. `sol up` rendered
+   this for every service before BUG-056 -- it passed no declared configuration,
+   so an OCaml unit lost the /readyz probe its language implies and the local
+   TypeScript golden path (whose sol.yml declares typescript) was probed on a
+   path TS never serves. *)
 let test_undeclared_language_readiness_stays_on_healthz () =
   let _, workload = render_spec_ok { svc_spec with language = None } in
   check_bool
