@@ -199,6 +199,14 @@ jobs:
       - name: Qualification harness state-machine test
         run: internal/qualification/gcp/test-live-qual.sh
 
+      # The observer owns the harness's structured parts: kubeconfig inspection by structure
+      # and the bounded, independently-attempted failure-time capture. Its regression covers
+      # the real gcloud kubeconfig shape and the failure modes that lost evidence in 15c-15g
+      # (a failed read ending the capture, a hang with no bound, a jsonpath split into words).
+      # Unconditional, like the harness test above: it stubs kubectl and spends nothing.
+      - name: Qualification observer test
+        run: python3 internal/qualification/gcp/test_observer.py
+
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
         run: |

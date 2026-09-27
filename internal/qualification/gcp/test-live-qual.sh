@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -uo pipefail
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-export REPO_ROOT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$HERE/live-qual.sh"
@@ -363,8 +361,7 @@ run_case() {
   export LOG_DIR="$TMP/$name.logs"
   export WORKSPACE="$SCRATCH_WS"
   export XDG_DATA_HOME="$TMP/data"
-  export STUB_KUBECONFIG_FIXTURE="$REPO_ROOT/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
-  export STUB_KUBECONFIG_FIXTURE="$REPO_ROOT/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
+  export STUB_KUBECONFIG_FIXTURE="$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
@@ -641,12 +638,20 @@ probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-rea
 probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
 has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
 is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
-has "the run kubeconfig carries that stale cluster first, as the fixture intends" "sol-qual-gcp-15c" \
-  "$TMP/probe-sampling.logs/run-kubeconfig.yaml"
-if grep -qF "136.65.210.170" "$TMP/probe-sampling.logs/api-readiness.tsv"; then
-  no "the stale cluster is never the configured endpoint" "no stale endpoint" "136.65.210.170 present"
+sampling_kc="$TMP/probe-sampling.logs/run-kubeconfig.yaml"
+sampling_name_line="$(grep -n -m1 '^  name:' "$sampling_kc" | cut -d: -f1)"
+sampling_server_line="$(grep -n -m1 '^    server:' "$sampling_kc" | cut -d: -f1)"
+is "the run-owned kubeconfig is the gcloud shape the shell matcher could not read: name after the cluster block" \
+  "$sampling_name_line" "$(( ${sampling_server_line:-0} + 1 ))"
+has "and it names this run's cluster, at the fixture's endpoint" "server: https://34.0.0.1" "$sampling_kc"
+lacks "and no cluster of another run appears in it" "sol-qual-gcp-15c" "$sampling_kc"
+if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+    "$TMP/probe-sampling.logs/api-readiness.tsv"; then
+  no "the configured endpoint is never anything but this run's kubeconfig entry" \
+    "34.0.0.1 while credentials exist, '-' before that" \
+    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/probe-sampling.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
 else
-  ok "the stale cluster is never the configured endpoint"
+  ok "the configured endpoint is never anything but this run's kubeconfig entry"
 fi
 has "the probe's reads carry the run's own kubeconfig" "kubeconfig=$TMP/probe-sampling.logs" \
   "$TMP/probe-sampling.probe.argv"
@@ -667,7 +672,10 @@ else
 fi
 has "the context lookup asked for the run's cluster" "config get-contexts" \
   "$TMP/probe-multicontext.argv"
-has "and the context was pinned by name" "config use-context" "$TMP/probe-multicontext.argv"
+has "and the context was pinned by name" \
+  "config use-context gke_sol-qualification_us-central1_test-cluster" "$TMP/probe-multicontext.argv"
+lacks "and the stale context was never selected" \
+  "use-context gke_old-project_us-central1_sol-qual-gcp-15c" "$TMP/probe-multicontext.argv"
 
 probe_case unreachable 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
 has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
@@ -721,8 +729,16 @@ fi
 has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
   "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
 
-is "the probe resolves this run's configured endpoint" \
-  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "136.115.125.189"
+is "the probe resolves this run's configured endpoint from the run-owned kubeconfig once credentials exist" \
+  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "34.0.0.1"
+if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+    "$TMP/e2e-credentials.logs/api-readiness.tsv"; then
+  no "the ambient cluster is never the configured endpoint" \
+    "34.0.0.1 while credentials exist, '-' before that" \
+    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/e2e-credentials.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
+else
+  ok "the ambient cluster is never the configured endpoint"
+fi
 if grep -qF '9F5AAA970F948E45A7AE0807DA893DCE' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
   no "the ambient EKS cluster never appears" "no ambient cluster" "EKS hostname present"
 else

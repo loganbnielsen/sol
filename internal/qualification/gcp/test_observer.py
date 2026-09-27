@@ -4,6 +4,10 @@
 The point of these tests is the failure modes that live evidence actually produced, so the
 fixture is the real gcloud-written kubeconfig shape (name AFTER the cluster block) and the
 stub kubectl can fail, hang, or succeed per read. Nothing here tests the shell.
+
+Two of those failure modes get their own file each: the same document with its keys reordered
+must resolve identically, because 15g's endpoint column depended on key order; and a stale
+unrelated cluster listed ahead of this run's must never be the one selected.
 """
 
 from __future__ import annotations
@@ -45,6 +49,13 @@ def run(*arguments: str) -> subprocess.CompletedProcess:
 def write_stub(directory: pathlib.Path, fail_reads: str = "", hang_reads: str = "") -> pathlib.Path:
     """A kubectl that records its argv and can fail or hang for named reads.
 
+    The record is one line per argv word, terminated by a marker, so words that contain
+    spaces stay distinguishable from words that were split.
+
+    The program name is recorded too, from `$0`: the kernel runs a shebang script as
+    `sh <script> <args>`, so `$@` never contains it and `$0` is the script's path. Its
+    basename is the program the observer invoked, which is what the fidelity checks assert.
+
     Explicit branches rather than a shell loop over a possibly-empty word list: an empty
     pattern matches everything, which silently made every read hang in the first draft.
     """
@@ -53,7 +64,7 @@ def write_stub(directory: pathlib.Path, fail_reads: str = "", hang_reads: str = 
     lines = [
         "#!/bin/sh",
         f'printf "%s\\n" "$*" >>"{argv_log}"',
-        f'printf "%s\\n" "$@" >>"{argv_binary}"',
+        f'printf "%s\\n" "${{0##*/}}" "$@" >>"{argv_binary}"',
         f'printf -- "--RECORD--\\n" >>"{argv_binary}"',
     ]
     for name in [n for n in fail_reads.split() if n]:
@@ -78,8 +89,6 @@ def main() -> int:
     check("and its configured endpoint is extracted", facts["server"] == "https://34.0.0.1")
     check("and the context is resolved by structure", facts["context"] == "gke_sol-qualification_us-central1_sol-qual-gcp-15g")
 
-    # The same document with its keys reordered must behave identically: this is the defect
-    # that cost 15g its endpoint column, where the match depended on key order.
     import yaml
 
     document = yaml.safe_load(FIXTURE.read_text())
@@ -93,7 +102,6 @@ def main() -> int:
         check("reordered keys are recognised identically", facts["has_cluster"] is True)
         check("and the endpoint still resolves", facts["server"] == "https://34.0.0.1")
 
-    # A stale unrelated cluster ahead of this run's must not be selected.
     with tempfile.TemporaryDirectory() as scratch:
         stale = pathlib.Path(scratch) / "stale.yaml"
         stale.write_text(

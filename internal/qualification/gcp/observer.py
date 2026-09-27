@@ -16,6 +16,14 @@ and owns the run's sequence. This module owns the stateful, structured parts -- 
 kubeconfig, running a bounded capture, and accounting for what each read did -- and it is
 written so that a failing read is recorded rather than fatal.
 
+Every capture read is declared as an argv vector rather than a command string. The two
+jsonpath expressions contain spaces and braces, and are meant to arrive as ONE argv word;
+building the vector at a call site by string interpolation is how 15g split them.
+
+`capture` exits 0 whenever the capture ran and accounted for every read. A read that
+failed on the cluster is data, not a process failure: exiting non-zero there is what ended
+the shell capture after one failed read and lost the other seven.
+
 Usage:
     observer.py kubeconfig --file F --cluster C [--json]
     observer.py capture --dir D --kubeconfig F --cluster C [--bound 30]
@@ -50,9 +58,6 @@ JSONPATH_NODE_CAPACITY = (
     '{range .status.conditions[*]}{.type}={.status} {end}{"\\n"}{end}'
 )
 
-# Each read is an argv vector. The jsonpath expressions above contain spaces and braces
-# on purpose: they must arrive as ONE argument, which is why they are not built by string
-# interpolation at a call site.
 CAPTURE_READS: list[tuple[str, list[str]]] = [
     ("pods", ["get", "pods", "-A", "-o", "wide"]),
     ("pod-states", ["get", "pods", "-A", "-o", JSONPATH_POD_STATES]),
@@ -200,7 +205,11 @@ def run_read(command: list[str], bound: float, env: dict[str, str]) -> tuple[int
 
 
 def capture(directory: str, kubeconfig: str, cluster: str, bound: float) -> int:
-    """Attempt every read, keep what each produced, and account for all of it."""
+    """Attempt every read, keep what each produced, and account for all of it.
+
+    Returns 0 whenever the capture ran and accounted for every read -- a read that failed
+    on the cluster is recorded in its artifact and in the summary, never fatal.
+    """
     os.makedirs(directory, exist_ok=True)
     facts = inspect(kubeconfig, cluster)
     credentials = "yes" if facts["has_cluster"] else "no"
@@ -278,9 +287,6 @@ def capture(directory: str, kubeconfig: str, cluster: str, bound: float) -> int:
         print(f"  {result['artifact']}: {state} ({result['lines']} lines)", flush=True)
     print(f"  capture summary: {summary['succeeded']}/{summary['attempted']} reads produced output", flush=True)
 
-    # Exit 0 whenever the capture ran and accounted for every read. A failed read is
-    # recorded, not fatal: exiting non-zero here is what truncated 15g's evidence under
-    # `set -e` in the shell version.
     return 0
 
 
