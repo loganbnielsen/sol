@@ -790,3 +790,26 @@ stopped.
 **Nothing here is QUALIFIED.** No live run has crossed the fixed parser. The next authorized GCP
 attempt is the discriminator, and it is the first run in this program that would exercise
 `Ready` and Ready-state destruction if the platform installs.
+
+## GCP Attempt 14 (2026-09-26, `ae47d777`) — past the storage boundary; Autopilot admission is the frontier
+
+`FND-0063` is **QUALIFIED**: the real `terraform output` payload was parsed, the project established and
+the quota observation performed, live, on a fresh target — the lifecycle continued past the check
+rather than merely failing to hit the old error.
+
+`FND-0062`'s **check is live-qualified**: `SSD_TOTAL_GB 100/1000 GiB used (900 GiB free)` against Sol's
+declared `20 GiB` minimum, policy passed, lifecycle continued into `platform-prerequisites-apply`
+(`ok (145.7s)`) — **past Attempt 12's stopping point**. The cluster's nodes then took usage to 500 GiB,
+exactly the wall Attempt 12 hit, with headroom to spare. The *volume-binding* claim is **not**
+qualified: the 10/8/2 GiB PVCs belong to components that never applied.
+
+The install then stopped at the **first new blocker**: GKE Autopilot's admission webhook refusing
+`helm_release.prometheus` (`hostNetwork`/`hostPID`) and `helm_release.redpanda` (`SYS_RESOURCE`).
+Recorded as `FND-0064` (a support-boundary decision, not a code defect) with `INFRA-092` for the two
+harness gaps it exposed.
+
+Evidence was frozen before teardown; destruction ran the supported path from a *partially installed*
+platform (262 KiB of platform state, `platform-destroy ok (136.7s)`, disposable root empty) with the
+authority bracket used exactly once each way. Independent verification: no clusters, SQL, disks,
+registries, addresses or `sol-qual-gcp-14` service accounts; `SSD_TOTAL_GB 0/1000`; both durable
+prerequisites standing. **No `Ready`, so no Ready-state destruction**: that claim is untouched.
