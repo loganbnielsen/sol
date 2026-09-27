@@ -18,11 +18,20 @@ mkcase() {
 }
 
 reject() {
-  local name="$1" root rc mutfile
+  local name="$1" root rc mutfile before after
   root="$(mkcase "$name")"
   mutfile="$scratch/$name.py"
   cat >"$mutfile"
+  # A mutation that does not change the tree is an accepted tree wearing a rejected case's name,
+  # which is how two of these cases first "passed". The digests make that impossible to miss, for
+  # every case, whatever its own assertions say.
+  before="$(find "$root" -type f -exec cat {} + | cksum)"
   python3 "$mutfile" "$root"
+  after="$(find "$root" -type f -exec cat {} + | cksum)"
+  if [ "$before" = "$after" ]; then
+    echo "FAIL: the '$name' mutation did not change the tree at all" >&2
+    exit 1
+  fi
   set +e
   "$guard" "$root" >"$scratch/$name.out" 2>&1
   rc=$?
@@ -52,7 +61,8 @@ reject autopilot-requested <<'PY'
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]) / 'platform/cloud/gcp/cluster/main.tf'
 s = p.read_text()
-s2, n = re.subn(r'^(\s*)remove_default_node_pool\s*=\s*true\s*$', r'\1enable_autopilot = true\n\1remove_default_node_pool = true', s, count=1)
+s2, n = re.subn(r'^(\s*)remove_default_node_pool\s*=\s*true\s*$',
+                r'\1enable_autopilot = true\n\1remove_default_node_pool = true', s, count=1, flags=re.M)
 assert n == 1, 'the mutation anchor did not match'
 p.write_text(s2)
 PY
@@ -61,8 +71,9 @@ reject autopilot-becomes-a-knob <<'PY'
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]) / 'platform/cloud/gcp/cluster/main.tf'
 s = p.read_text()
-s2, n = re.subn(r'enable_autopilot\s*=\s*false',
-                'enable_autopilot = var.enable_autopilot', s, count=1)
+s2, n = re.subn(r'^(\s*)remove_default_node_pool\s*=\s*true\s*$',
+                r'\1enable_autopilot = var.enable_autopilot\n\1remove_default_node_pool = true',
+                s, count=1, flags=re.M)
 assert n == 1, 'the mutation anchor did not match'
 p.write_text(s2)
 PY
