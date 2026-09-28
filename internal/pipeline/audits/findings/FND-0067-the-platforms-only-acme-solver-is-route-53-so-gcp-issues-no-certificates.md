@@ -9,9 +9,17 @@ source: GCP qualification Attempt 17 (2026-09-28), revision 30ad9835
 
 **Depends on:** None.
 
-**State:** `FIXED_UNQUALIFIED` — `DEC-055` decided on 2026-09-28 that GCP gets first-class TLS through
-Cloud DNS and Workload Identity, and the path is implemented offline with structural coverage. The live
-specimen (Attempt 18) is what observes a certificate issuing; until it does, this stays unqualified.
+**State:** `QUALIFIED` (GCP half) — `DEC-055` decided on 2026-09-28 that GCP gets first-class TLS
+through Cloud DNS and Workload Identity, and **GCP Attempt 19 observed the whole path**: both issuers
+deployed with `dns01.cloudDNS`, the cert-manager pod impersonating its service account through Workload
+Identity, both ACME orders `valid`, both platform certificates `Ready=True`, and the ingress serving a
+hostname-matching certificate issued by the ACME staging CA (verified by SNI against the LoadBalancer IP,
+not inferred from the certificate object). Attempt 18 is the specimen that did not get there — a manifest
+type error in the conditional-local version of this change, recorded below and in
+`internal/qualification/records/2026-09-28-gcp-attempt18-issuer-manifest-type-failure.md`. Record of the
+qualified run: `internal/qualification/records/2026-09-28-gcp-attempt19-tls-path-verified.md`.
+
+The AWS half remains unqualified: no AWS run has reached a platform install.
 
 ## Fix (DEC-055, 2026-09-28)
 
