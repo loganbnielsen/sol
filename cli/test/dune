@@ -96,6 +96,12 @@
  (name print_providers)
  (libraries sol_cli))
 
+(test
+ (name test_bounded_output)
+ (modules test_bounded_output)
+ (deps ../bin/main.exe)
+ (libraries sol_cli alcotest unix))
+
 (rule
  (alias runtest)
  (deps

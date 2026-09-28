@@ -108,28 +108,43 @@ let print_check { label; outcome } =
   | Error reason -> Printf.printf "  FAIL  %s  %s\n" label reason
 ;;
 
-let run () =
+type outcome =
+  { assets : A.t
+  ; checks : check list
+  ; result : (unit, Sol_cli_exit.failure) result
+  }
+
+let inspect () =
   let* assets =
     A.resolve () |> Result.map_error (fun e -> Sol_cli_exit.error (A.error_to_string e))
   in
+  let checks = checks assets in
+  let result =
+    match List.filter (fun c -> Result.is_error c.outcome) checks with
+    | [] -> Ok ()
+    | failed ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "%d of %d asset checks failed"
+              (List.length failed)
+              (List.length checks)))
+  in
+  Ok { assets; checks; result }
+;;
+
+let run () =
+  let* outcome = inspect () in
   Printf.printf
     "sol %s\nassets: %s\n  root: %s\n\n%!"
     (Option.value Sol_cli_build_info.release_version ~default:Version.v)
-    (form_to_string assets)
-    (A.dir assets);
-  let checks = checks assets in
-  checks |> List.iter print_check;
-  match List.filter (fun c -> Result.is_error c.outcome) checks with
-  | [] ->
-    Printf.printf "\nall assets present\n";
-    Ok ()
-  | failed ->
-    Error
-      (Sol_cli_exit.error
-         (Printf.sprintf
-            "%d of %d asset checks failed"
-            (List.length failed)
-            (List.length checks)))
+    (form_to_string outcome.assets)
+    (A.dir outcome.assets);
+  outcome.checks |> List.iter print_check;
+  (match outcome.result with
+   | Ok () -> Printf.printf "\nall assets present\n"
+   | Error _ -> ());
+  outcome.result
 ;;
 
 let cmd =

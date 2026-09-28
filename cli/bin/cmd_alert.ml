@@ -1,27 +1,5 @@
 open Result.Syntax
 
-let report_outcome : Sol_cli_alert_test.outcome -> (unit, Sol_cli_exit.failure) result =
-  function
-  | Accepted ->
-    Printf.printf
-      "Alertmanager accepted the synthetic alert.\n\n\
-       This proves the route is configured and reachable. Confirm the named owner \
-       received and acknowledged it: that delivered-and-acknowledged result is the \
-       HARDEN-002 evidence, not this command's exit status.\n";
-    Ok ()
-  | Rejected { exit_code; stderr } ->
-    Error
-      (Sol_cli_exit.error
-         (Printf.sprintf
-            "Alertmanager rejected the synthetic alert (curl exit %d).\n\
-             %s\n\
-             Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
-             svc/prometheus-alertmanager 9093:9093`."
-            exit_code
-            stderr))
-  | Unreachable reason -> Error (Sol_cli_exit.error ("could not run curl: " ^ reason))
-;;
-
 let run_test target alertmanager_url dry_run =
   let* cfg =
     Sol_cli_config.load_for_target ~target
@@ -59,7 +37,25 @@ let run_test target alertmanager_url dry_run =
     Ok ())
   else (
     Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
-    Sol_cli_alert_test.send ~url ~body |> report_outcome)
+    match Sol_cli_alert_test.send ~url ~body with
+    | Accepted ->
+      Printf.printf
+        "Alertmanager accepted the synthetic alert.\n\n\
+         This proves the route is configured and reachable. Confirm the named owner \
+         received and acknowledged it: that delivered-and-acknowledged result is the \
+         HARDEN-002 evidence, not this command's exit status.\n";
+      Ok ()
+    | Rejected { exit_code; stderr } ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "Alertmanager rejected the synthetic alert (curl exit %d).\n\
+               %s\n\
+               Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
+               svc/prometheus-alertmanager 9093:9093`."
+              exit_code
+              stderr))
+    | Unreachable reason -> Error (Sol_cli_exit.error ("could not run curl: " ^ reason)))
 ;;
 
 open Cmdliner
