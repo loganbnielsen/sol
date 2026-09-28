@@ -312,3 +312,11 @@
   initial isolated scaffold build failures. No runtime/API/language-contract changes.
 - REFAC-144 is queued on required CI; REFAC-145 waits for its shared-summary merge.
   REFAC-146/147 and the remaining generalized sweeps continue autonomously.
+
+## Parameter-lint findings review (2026-09-28)
+
+- Ran PR #672's AST checker over `cli framework internal examples` at main revision `1aaec96d`: 49 advisory locations (45 sprawl, four family), including implementation/interface pairs and test helpers. Reviewed candidates with signatures, callers, tests and prior REFAC-152 dispositions. Manually inspected examples, tooling and scaffold templates as well.
+- Filed one actionable ticket, CODEX_STYLE_AUDIT-078: reuse the existing observability options at `sol open`'s controller boundary. It is a contextual finding below the numeric threshold, with no new flags or abstraction required.
+- Consumer-hook warnings belong to REFAC-155 / PR #671. Constructors, independent runtime controls and focused test defaults were deliberately retained. Job claim knobs were considered but no new invariant justified reversing REFAC-152's recorded decision.
+- Full inventory and scope limitations are recorded in `internal/pipeline/audits/2026-09-28_parameter_lint.md`. No source refactor or external support-repo audit in this filing.
+- Validation: pipeline parser reads all 815 tickets; `pipeline check CODEX_STYLE_AUDIT-078` reports actionable with no dependencies. Whitespace checks pass; canonical checkout remains clean.
