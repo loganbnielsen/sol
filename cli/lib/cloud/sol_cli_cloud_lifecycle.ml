@@ -355,6 +355,27 @@ let storage_checks provider =
   ]
 ;;
 
+let platform_certificate_checks =
+  List.map
+    (fun (declared : Sol_cli_platform_tls.declared_certificate) ->
+       check
+         (Printf.sprintf "platform certificate %s" declared.certificate)
+         (Printf.sprintf
+            "the platform's declared certificate %s/%s is not Ready, so the platform \
+             cannot             serve the TLS it declares (DEC-056); an unpublished \
+             delegation or a failing ACME             challenge is the usual reason"
+            declared.namespace
+            declared.certificate)
+         [ "wait"
+         ; "--for=condition=Ready"
+         ; "certificate/" ^ declared.certificate
+         ; "-n"
+         ; declared.namespace
+         ; "--timeout=5s"
+         ])
+    Sol_cli_platform_tls.certificates
+;;
+
 let readiness_checks ~provider =
   let before_storage =
     [ check
@@ -438,6 +459,7 @@ let readiness_checks ~provider =
         "an Argo CD controller is unavailable"
         (available_deployments "argocd")
     ]
+  @ platform_certificate_checks
 ;;
 
 let readiness ~provider ~run =
