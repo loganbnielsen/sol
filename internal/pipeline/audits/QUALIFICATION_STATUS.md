@@ -932,6 +932,17 @@ gate it existed to be — so a GCP target declaring `cluster_issuer` installs th
 Workload Identity was **not enabled anywhere** (no cluster `workload_identity_config`, no pool
 `workload_metadata_config`, so GKE served node credentials), which is now set and guarded.
 
+**Attempt 19 qualified the path** (fresh `qual19/gcp/us-central1`, `cluster_issuer: letsencrypt-staging`
+declared — accepted, where the pre-DEC-055 refusal would have stopped the run): `platform-apply
+ok (180.5s)`, lifecycle `Ready`, 80 pods running and none pending; both issuers carrying
+`dns01.cloudDNS.project = sol-qualification`; the cert-manager pod annotated with its GSA; both ACME
+orders `valid`; both platform certificates `Ready=True`; and the ingress **serving** a hostname-matching
+certificate from the ACME staging CA, verified by SNI against the LoadBalancer IP rather than inferred
+from the certificate object. The least-privilege permission set was sufficient as designed — an
+eight-permission record role bound on the managed zone plus a two-permission discovery role — with no
+widening. **`FND-0067` → `QUALIFIED` (GCP half).** AWS remains unqualified. Full record:
+`internal/qualification/records/2026-09-28-gcp-attempt19-tls-path-verified.md`.
+
 **Also observed, and deliberately *not* settled:** Attempt 17's `Ready` was claimed while the platform's
 own certificates were unready → `FND-0068` / `DEC-056` (BACKLOG, decision required). `Ready`'s executable
 contract is component availability (`readiness_checks`), the module requests certificates
