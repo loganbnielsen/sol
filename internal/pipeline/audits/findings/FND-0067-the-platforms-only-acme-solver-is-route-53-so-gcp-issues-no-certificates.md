@@ -9,9 +9,52 @@ source: GCP qualification Attempt 17 (2026-09-28), revision 30ad9835
 
 **Depends on:** None.
 
-**State:** `OPEN` — a decision is required and no remediation was attempted: a Cloud DNS solver for GCP,
-an explicit statement that the profile's TLS row is unsupported there, or a refusal. This finding
-records the first live exercise of the boundary.
+**State:** `FIXED_UNQUALIFIED` — `DEC-055` decided on 2026-09-28 that GCP gets first-class TLS through
+Cloud DNS and Workload Identity, and the path is implemented offline with structural coverage. The live
+specimen (Attempt 18) is what observes a certificate issuing; until it does, this stays unqualified.
+
+## Fix (DEC-055, 2026-09-28)
+
+The shared module no longer knows an AWS-only solver. It selects the solver and the cert-manager pod's
+identity from `var.cloud_provider`, and each provider root supplies its own values — the shape the module
+already used for Thanos's object-store identity:
+
+| concern | AWS | GCP |
+|---|---|---|
+| solver | `dns01.route53`, with the endpoint region now passed by the AWS root (`us-east-1`, unchanged) instead of hardcoded in the shared module | `dns01.cloudDNS`, with the project passed by the GCP root |
+| identity input | `cert_manager_irsa_role_arn` (the cluster root's IRSA role) | `cert_manager_workload_identity_sa_email` (a new GSA) |
+| pod wiring | `eks.amazonaws.com/role-arn` on the cert-manager service account | `iam.gke.io/gcp-service-account`, bound to `cert-manager/cert-manager` through `roles/iam.workloadIdentityUser` |
+| least privilege | inline policy scoped to the workspace's hosted zone (unchanged) | two custom roles: record/changes authority bound **on the managed zone**, zone discovery at project level |
+
+Both ClusterIssuers carry a `precondition` that refuses an empty provider identity: a solver that runs
+without credentials must fail the apply rather than create certificates that can never issue.
+
+**Workload Identity itself is now enabled**, because none of it was: the repo declared
+`iam.gke.io/gcp-service-account` annotations and `roles/iam.workloadIdentityUser` bindings for Loki and
+Thanos but never set the cluster's `workload_identity_config` or the node pool's
+`workload_metadata_config`, so the pool served *node* credentials and every one of those annotations was
+dead. That is a prerequisite of the mechanism `DEC-055` chose, and it is guarded now: the check refuses a
+GCP cluster without the Workload Identity pool and a node pool that is not on `GKE_METADATA`. The Loki and
+Thanos paths were never exercised live (`enable_durable_observability = false` in qualification), which is
+why this had not surfaced.
+
+The GCP cluster root also reads the managed zone when it pre-exists (`create_dns_zone = false`, the
+qualification's case) so the record binding has a zone to scope to, and exports both the zone and the
+identity. The GCP driver's install-time refusal — *"Sol cannot yet wire a certificate issuer on GCP …
+or qualify the GCP issuer path first"* — is removed, which is the gate it existed to be: a GCP target that
+declares `cluster_issuer` now installs the issuer path instead of being refused.
+
+`internal/ci/check_provider_tls_path.py` and its twelve mutations hold the contract: each provider has a
+solver and an identity, each root supplies its own scope, each cluster root owns a zone-scoped permission
+set, the pod carries the provider's annotation, an empty identity fails closed, and no driver refuses a
+target that asks for TLS.
+
+**One observation from implementing this, recorded rather than acted on:** the AWS path declared an IRSA
+role for cert-manager but never annotated the pod, and that role's trust policy is the cluster's OIDC
+provider — so the declared identity was arguably unreachable there too (node instance credentials cannot
+assume an OIDC-scoped role). The annotation is now set for both providers, which completes the mechanism
+the AWS root already declared rather than changing its solver; the AWS path stays unqualified until an AWS
+run reaches a platform install and its certificates issue.
 
 ## Observed (GCP qualification Attempt 17, the first run to reach `Ready`)
 

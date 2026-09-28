@@ -135,6 +135,16 @@ resource "helm_release" "cert_manager" {
     value = "1"
   }
 
+  values = [
+    yamlencode({
+      serviceAccount = {
+        annotations = {
+          (local.cert_manager_identity_annotation) = local.cert_manager_identity
+        }
+      }
+    })
+  ]
+
   timeout = 1800
 
   wait = true

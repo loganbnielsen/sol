@@ -310,7 +310,25 @@ variable "letsencrypt_email" {
 }
 
 variable "cert_manager_irsa_role_arn" {
-  description = "IAM role ARN for cert-manager DNS01 Route53 access (AWS only). Leave empty on GCP."
+  description = "IAM role ARN cert-manager assumes to write Route 53 records (AWS only). From platform/cloud/aws/cluster's cert_manager_iam_role_arn output."
+  type        = string
+  default     = ""
+}
+
+variable "cert_manager_dns01_region" {
+  description = "Region of the Route 53 endpoint cert-manager authenticates against. The hosted zone is global, so this is an endpoint choice rather than the cluster's region, which is why it is not aws_region."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "cert_manager_dns01_project" {
+  description = "GCP project holding the Cloud DNS zone cert-manager writes into. Declared here as the mirror of the shared definition; empty on AWS, which solves DNS-01 through Route 53."
+  type        = string
+  default     = ""
+}
+
+variable "cert_manager_workload_identity_sa_email" {
+  description = "GCP service account cert-manager impersonates to write Cloud DNS challenge records. Declared here as the mirror of the shared definition; empty on AWS, which uses cert_manager_irsa_role_arn."
   type        = string
   default     = ""
 }

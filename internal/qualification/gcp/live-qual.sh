@@ -23,6 +23,7 @@ RUN_KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
 export KUBECONFIG="$RUN_KUBECONFIG"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
+CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
 BOOTSTRAP_ROOT="$ROOT/platform/cloud/gcp/bootstrap"
 
 case "${1:-}" in
@@ -137,6 +138,7 @@ $TARGET_ENV:
       base_domain: $BASE_DOMAIN
       profile: $PROFILE_NAME
       letsencrypt_email: $LE_EMAIL
+      cluster_issuer: $CLUSTER_ISSUER
       terraform_var_file: $TFVARS
 
       state_bucket: $STATE_BUCKET

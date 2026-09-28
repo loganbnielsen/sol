@@ -67,6 +67,18 @@ variable "gcp_provisioner_service_account" {
   default     = ""
 }
 
+variable "cert_manager_dns01_project" {
+  description = "GCP project holding the Cloud DNS zone cert-manager writes challenge records into. Sol passes the cloud root's own project_id here so the solver names the zone's project explicitly rather than inferring it from whichever credentials the pod happens to hold."
+  type        = string
+  default     = ""
+}
+
+variable "cert_manager_workload_identity_sa_email" {
+  description = "GCP service account cert-manager impersonates to write Cloud DNS challenge records. From platform/cloud/gcp/cluster's cert_manager_workload_identity_sa_email output; empty means an ACME challenge runs without credentials (FND-0067)."
+  type        = string
+  default     = ""
+}
+
 variable "install_postgresql" {
   description = "Install in-cluster PostgreSQL. Set false when using RDS or Cloud SQL."
   type        = bool

@@ -125,8 +125,8 @@ platform teardown (`FND-0058`). Record: `2026-09-25-gcp-attempt8.md`; stop that 
 Its harness was re-scoped on 2026-09-25 (HARDEN-006): it exists to establish the cause of the
 cert-manager `startupapicheck` failure (FND-0010) — from the check's own output, classified, before any
 teardown — with platform `Ready` as the alternate outcome. The harness
-(`internal/qualification/gcp/live-qual.sh`) generates a target with no `cluster_issuer`, because a GCP
-target that asks for one is refused at install time and would stop the run before cert-manager; and it
-captures the discriminator in that same invocation. Run it with a phase, or with none for the phase
+(`internal/qualification/gcp/live-qual.sh`) generates a target that declares `cluster_issuer`
+(`letsencrypt-staging` by default, overridable), so the run exercises the public-TLS path DEC-055 wired;
+and it captures the discriminator in that same invocation. Run it with a phase, or with none for the phase
 model and the environment it needs (`live-qual.sh`), and read `evidence-manifest.txt` for what a
 bundle contains. The harness writes its own narrative into the bundle as `harness.log`.

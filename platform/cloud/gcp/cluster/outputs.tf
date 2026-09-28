@@ -73,3 +73,13 @@ output "thanos_workload_identity_sa_email" {
   description = "GCP service account email for Thanos's GCS access — set in platform/cloud/modules/platform as thanos_workload_identity_sa_email (INFRA-003, GCP counterpart to aws/'s thanos_irsa_arn)"
   value       = var.enable_durable_observability ? google_service_account.thanos[0].email : null
 }
+
+output "dns_managed_zone" {
+  description = "Cloud DNS managed zone cert-manager writes ACME challenge records into — the zone the DNS-01 solver's record permissions are scoped to (DEC-055)"
+  value       = local.dns_managed_zone
+}
+
+output "cert_manager_workload_identity_sa_email" {
+  description = "GCP service account email for cert-manager's Cloud DNS DNS-01 solver — set in platform/cloud/modules/platform as cert_manager_workload_identity_sa_email (DEC-055, GCP counterpart to aws/'s cert_manager_irsa_role_arn)"
+  value       = google_service_account.cert_manager.email
+}

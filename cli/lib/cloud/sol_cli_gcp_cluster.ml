@@ -9,6 +9,7 @@ type gcp_outputs =
   ; loki_workload_identity_sa_email : string option
   ; thanos_gcs_bucket : string option
   ; thanos_workload_identity_sa_email : string option
+  ; cert_manager_workload_identity_sa_email : string option
   ; provisioner_service_account : string
   }
 
@@ -27,6 +28,9 @@ let gcp_outputs_of_json text =
   let* thanos_workload_identity_sa_email =
     optional_string "thanos_workload_identity_sa_email"
   in
+  let* cert_manager_workload_identity_sa_email =
+    optional_string "cert_manager_workload_identity_sa_email"
+  in
   let* provisioner_service_account = string "provisioner_service_account" in
   Ok
     { cluster_name
@@ -37,6 +41,7 @@ let gcp_outputs_of_json text =
     ; loki_workload_identity_sa_email
     ; thanos_gcs_bucket
     ; thanos_workload_identity_sa_email
+    ; cert_manager_workload_identity_sa_email
     ; provisioner_service_account
     }
 ;;
@@ -136,32 +141,20 @@ let gcp_cloud_ready outputs =
   | _ -> false
 ;;
 
-let platform_vars
-      outputs
-      (context : Sol_cli_cluster.platform_vars_context)
-      ~cluster_issuer
-      ~region:_
-  =
-  match cluster_issuer, context with
-  | Some _, Install ->
-    Error
-      "this GCP target declares cluster_issuer, but Sol cannot yet wire a certificate \
-       issuer on GCP: the shared platform definition's ClusterIssuers use the Route 53 \
-       DNS-01 solver and there is no qualified Cloud DNS solver or scoped Workload \
-       Identity for cert-manager yet. Remove cluster_issuer from the target to provision \
-       the platform without public TLS, or qualify the GCP issuer path first"
-  | Some _, Destruction | None, _ ->
-    Ok
-      { Sol_cli_cluster.fixed =
-          [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ]
-      ; optional =
-          [ "loki_gcs_bucket", outputs.loki_gcs_bucket
-          ; "loki_workload_identity_sa_email", outputs.loki_workload_identity_sa_email
-          ; "thanos_gcs_bucket", outputs.thanos_gcs_bucket
-          ; "thanos_workload_identity_sa_email", outputs.thanos_workload_identity_sa_email
-          ; "gcp_provisioner_service_account", Some outputs.provisioner_service_account
-          ]
-      }
+let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =
+  Ok
+    { Sol_cli_cluster.fixed = [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ]
+    ; optional =
+        [ "loki_gcs_bucket", outputs.loki_gcs_bucket
+        ; "loki_workload_identity_sa_email", outputs.loki_workload_identity_sa_email
+        ; "thanos_gcs_bucket", outputs.thanos_gcs_bucket
+        ; "thanos_workload_identity_sa_email", outputs.thanos_workload_identity_sa_email
+        ; ( "cert_manager_workload_identity_sa_email"
+          , outputs.cert_manager_workload_identity_sa_email )
+        ; "cert_manager_dns01_project", Some outputs.project_id
+        ; "gcp_provisioner_service_account", Some outputs.provisioner_service_account
+        ]
+    }
 ;;
 
 let label = "GCP"
