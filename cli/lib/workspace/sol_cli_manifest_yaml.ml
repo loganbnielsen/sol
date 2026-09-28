@@ -20,6 +20,30 @@ type workload_shape =
   | Http_service
   | Background_worker
 
+module Workload_spec = struct
+  type t =
+    { extra_labels : (string * string) list
+    ; secret_keys : string list
+    ; volumes : Sol_cli_toml.volume list
+    ; env : string option
+    ; config_hash : string
+    ; availability : Sol_cli_availability.t
+    ; consumes_kafka : bool
+    ; readiness_path : string
+    ; shape : workload_shape
+    ; replicas : int
+    ; cpu : string
+    ; memory : string
+    ; ns : string
+    ; name : string
+    ; image : string
+    ; workspace : string
+    ; domain : string
+    ; primitive : string
+    ; release_id : Sol_cli_release_id.t
+    }
+end
+
 let default_cluster_env =
   [ "KAFKA_SECURITY_PROTOCOL", "plaintext"
   ; "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
@@ -303,23 +327,25 @@ let non_empty_list key = function
 ;;
 
 let pod_template
-      ~extra_labels
-      ~secret_keys
-      ~volumes
-      ~env
-      ~config_hash
-      ~availability
-      ~consumes_kafka
-      ~readiness_path
-      ~shape
-      ~cpu
-      ~memory
-      ~name
-      ~image
-      ~workspace
-      ~domain
-      ~primitive
-      ~release_id
+      { Workload_spec.extra_labels
+      ; secret_keys
+      ; volumes
+      ; env
+      ; config_hash
+      ; availability
+      ; consumes_kafka
+      ; readiness_path
+      ; shape
+      ; cpu
+      ; memory
+      ; name
+      ; image
+      ; workspace
+      ; domain
+      ; primitive
+      ; release_id
+      ; _
+      }
   =
   let port = container_port shape in
   let labels =
@@ -392,29 +418,8 @@ let pod_template
     ]
 ;;
 
-let deployment_doc
-      ?(rollout_strategy = Sol_cli_toml.RollingUpdate)
-      ?(extra_labels = [])
-      ?(secret_keys = [])
-      ?(volumes = [])
-      ?env
-      ?(availability = Sol_cli_availability.Single)
-      ?(consumes_kafka = false)
-      ?(readiness_path = "/readyz")
-      ~config_hash
-      ~shape
-      ~replicas
-      ~cpu
-      ~memory
-      ~ns
-      ~name
-      ~image
-      ~workspace
-      ~domain
-      ~primitive
-      ~release_id
-      ()
-  =
+let deployment_doc ?(rollout_strategy = Sol_cli_toml.RollingUpdate) ~workload () =
+  let { Workload_spec.replicas; ns; name; _ } = workload in
   let strategy_type =
     match rollout_strategy with
     | Sol_cli_toml.Recreate -> "Recreate"
@@ -429,25 +434,7 @@ let deployment_doc
           [ "replicas", Y.int replicas
           ; "strategy", Y.map [ "type", Y.string strategy_type ]
           ; "selector", Y.map [ "matchLabels", app_selector name ]
-          ; ( "template"
-            , pod_template
-                ~extra_labels
-                ~secret_keys
-                ~volumes
-                ~env
-                ~config_hash
-                ~availability
-                ~consumes_kafka
-                ~readiness_path
-                ~shape
-                ~cpu
-                ~memory
-                ~name
-                ~image
-                ~workspace
-                ~domain
-                ~primitive
-                ~release_id )
+          ; "template", pod_template workload
           ] )
     ]
 ;;
@@ -485,29 +472,8 @@ let rollout_strategy ~name = function
       ]
 ;;
 
-let rollout_doc
-      ?(extra_labels = [])
-      ?(secret_keys = [])
-      ?(volumes = [])
-      ?env
-      ?(availability = Sol_cli_availability.Single)
-      ?(consumes_kafka = false)
-      ?(readiness_path = "/readyz")
-      ~config_hash
-      ~shape
-      ~replicas
-      ~cpu
-      ~memory
-      ~ns
-      ~name
-      ~image
-      ~pd
-      ~workspace
-      ~domain
-      ~primitive
-      ~release_id
-      ()
-  =
+let rollout_doc ~workload ~pd () =
+  let { Workload_spec.replicas; ns; name; _ } = workload in
   resource
     ~api_version:"argoproj.io/v1alpha1"
     ~kind:"Rollout"
@@ -516,25 +482,7 @@ let rollout_doc
       , Y.map
           [ "replicas", Y.int replicas
           ; "selector", Y.map [ "matchLabels", app_selector name ]
-          ; ( "template"
-            , pod_template
-                ~extra_labels
-                ~secret_keys
-                ~volumes
-                ~env
-                ~config_hash
-                ~availability
-                ~consumes_kafka
-                ~readiness_path
-                ~shape
-                ~cpu
-                ~memory
-                ~name
-                ~image
-                ~workspace
-                ~domain
-                ~primitive
-                ~release_id )
+          ; "template", pod_template workload
           ; "strategy", rollout_strategy ~name pd
           ] )
     ]

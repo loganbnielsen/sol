@@ -57,6 +57,36 @@ let ingress_path s =
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let render_doc doc = Sol_cli_yaml.render [ doc ]
 
+let workload
+      ?(shape = Sol_cli_manifest.Http_service)
+      ?(domain = "payments")
+      ?(name = "charge-svc")
+      ?(primitive = "svc")
+      ()
+  : Sol_cli_manifest.Workload_spec.t
+  =
+  { Sol_cli_manifest.Workload_spec.extra_labels = []
+  ; secret_keys = []
+  ; volumes = []
+  ; env = None
+  ; config_hash = "test-hash"
+  ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
+  ; readiness_path = "/readyz"
+  ; shape
+  ; replicas = 1
+  ; cpu = "100m"
+  ; memory = "128Mi"
+  ; ns = "myapp-" ^ domain
+  ; name
+  ; image = "sol-registry:5000/myapp/" ^ name ^ ":abc123"
+  ; workspace = "myapp"
+  ; domain
+  ; primitive
+  ; release_id = release_id_of_test
+  }
+;;
+
 let load_toml path =
   match Sol_cli_toml.load_result path with
   | Ok toml -> toml
@@ -1499,23 +1529,7 @@ let test_gitops_secret_redacted () =
 ;;
 
 let test_shape_http_service_deployment_has_ports () =
-  let doc =
-    Sol_cli_manifest.deployment_doc
-      ~config_hash:"test-hash"
-      ~shape:Sol_cli_manifest.Http_service
-      ~replicas:1
-      ~cpu:"100m"
-      ~memory:"128Mi"
-      ~ns:"myapp-payments"
-      ~name:"charge-svc"
-      ~image:"sol-registry:5000/myapp/charge-svc:abc123"
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~domain:"payments"
-      ~primitive:"svc"
-      ()
-    |> render_doc
-  in
+  let doc = Sol_cli_manifest.deployment_doc ~workload:(workload ()) () |> render_doc in
   assert_contains "Http_service containerPort" doc "containerPort: 8080";
   assert_contains "Http_service readinessProbe" doc "readinessProbe:";
   assert_contains
@@ -1527,18 +1541,13 @@ let test_shape_http_service_deployment_has_ports () =
 let test_shape_background_worker_deployment_has_metrics_port () =
   let doc =
     Sol_cli_manifest.deployment_doc
-      ~config_hash:"test-hash"
-      ~shape:Sol_cli_manifest.Background_worker
-      ~replicas:1
-      ~cpu:"100m"
-      ~memory:"128Mi"
-      ~ns:"myapp-comms"
-      ~name:"notify-worker"
-      ~image:"sol-registry:5000/myapp/notify-worker:abc123"
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~domain:"comms"
-      ~primitive:"worker"
+      ~workload:
+        (workload
+           ~shape:Sol_cli_manifest.Background_worker
+           ~domain:"comms"
+           ~name:"notify-worker"
+           ~primitive:"worker"
+           ())
       ()
     |> render_doc
   in
@@ -1554,19 +1563,8 @@ let test_shape_background_worker_deployment_has_metrics_port () =
 let test_shape_rollout_http_service_has_ports () =
   let doc =
     Sol_cli_manifest.rollout_doc
-      ~config_hash:"test-hash"
-      ~shape:Sol_cli_manifest.Http_service
-      ~replicas:1
-      ~cpu:"100m"
-      ~memory:"128Mi"
-      ~ns:"myapp-payments"
-      ~name:"charge-svc"
-      ~image:"sol-registry:5000/myapp/charge-svc:abc123"
+      ~workload:(workload ())
       ~pd:(Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 50 ] })
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~domain:"payments"
-      ~primitive:"svc"
       ()
     |> render_doc
   in
@@ -1577,19 +1575,14 @@ let test_shape_rollout_http_service_has_ports () =
 let test_shape_rollout_background_worker_metrics_port () =
   let doc =
     Sol_cli_manifest.rollout_doc
-      ~config_hash:"test-hash"
-      ~shape:Sol_cli_manifest.Background_worker
-      ~replicas:1
-      ~cpu:"100m"
-      ~memory:"128Mi"
-      ~ns:"myapp-comms"
-      ~name:"notify-worker"
-      ~image:"sol-registry:5000/myapp/notify-worker:abc123"
+      ~workload:
+        (workload
+           ~shape:Sol_cli_manifest.Background_worker
+           ~domain:"comms"
+           ~name:"notify-worker"
+           ~primitive:"worker"
+           ())
       ~pd:(Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 50 ] })
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~domain:"comms"
-      ~primitive:"worker"
       ()
     |> render_doc
   in
