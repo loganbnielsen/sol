@@ -2,14 +2,17 @@ open Cmdliner
 open Result.Syntax
 
 let discover_domains (facts : Sol_cli_workspace_model.t) =
-  let domains =
+  let workload_domains =
     List.map
       (fun (w : Sol_cli_workspace_model.workload) -> w.service.Sol_cli_manifest.domain)
       facts.Sol_cli_workspace_model.workloads
-    @ List.map
-        (fun ((domain, _, _) : Sol_cli_manifest.unexpected) -> domain)
-        facts.Sol_cli_workspace_model.unexpected
   in
+  let unexpected_domains =
+    List.map
+      (fun ((domain, _, _) : Sol_cli_manifest.unexpected) -> domain)
+      facts.Sol_cli_workspace_model.unexpected
+  in
+  let domains = workload_domains @ unexpected_domains in
   let seen = Hashtbl.create 16 in
   List.filter
     (fun domain ->
