@@ -1078,6 +1078,27 @@ app_helpers() {
     app_transaction
 }
 
+app_postgres_url() {
+  local state="$LOG_DIR/state/cloud.tfstate.json"
+  [ -s "$state" ] || state="$LOG_DIR/state/cloud.tfstate"
+  [ -s "$state" ] || return 1
+  jq -r '.outputs.postgres_url.value // empty' "$state" 2>/dev/null
+}
+
+app_redact_url() { printf '%s' "$1" | sed 's#://[^@]*@#://***@#'; }
+
+app_load_postgres_url() {
+  capture_state_object cloud "sol/$TARGET/cloud.tfstate/default.tfstate"
+  local url
+  if ! url="$(app_postgres_url)" || [ -z "$url" ]; then
+    say "could not read the cluster root's postgres_url output, so POSTGRES_URL cannot be established"
+    return 1
+  fi
+  export POSTGRES_URL="$url"
+  app_redact_url "$url" >"$LOG_DIR/app-postgres-url.txt"
+  say "POSTGRES_URL established from the cluster root's postgres_url output (redacted in the bundle)"
+}
+
 app_k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 
 app_context_path() {
@@ -1253,6 +1274,12 @@ phase_app() {
     finalise_bundle
     return 1
   fi
+  if ! app_load_postgres_url; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
   if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
     capture_app_evidence
     freeze_evidence
@@ -1293,6 +1320,8 @@ phases
             workspace's migrations, run `sol deploy`, and verify the application transaction
             (a charge accepted, the worker consuming it, and the service reading the worker's
             row back out of PostgreSQL) with the pods, events and logs captured either way.
+            POSTGRES_URL comes from the cluster root's postgres_url output, which is the
+            documented operator step; the bundle records it redacted, never in the clear.
             The target it writes selects no profile: this row qualifies the application path,
             and claims nothing the production profile's guarantees would promise.
   destroy   freeze and destroy an existing target, then verify absence
