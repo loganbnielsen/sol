@@ -46,6 +46,7 @@
   certificate issued, TLS verifiable by SNI, DNS resolves, an external client reaches it — remain
   distinct claims.
 
+## Latest: FEAT-105 CI-gated native auto-merge verified (2026-09-28)
 
 - Repository auto-merge is enabled; required test/admin enforcement remain, and
   approving-review count was already zero. PR #650 was queued through soldev while
