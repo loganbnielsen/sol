@@ -235,16 +235,21 @@ module Make_with_test_seam (W : WORKER) = struct
               Kafka_service.register svc ~net:env#net ~clock:env#clock (module W.Message)
               |> Result.map_error (fun msg -> `Register msg)
             in
+            let hooks : Kafka_service.consumer_hooks =
+              { Kafka_service.no_hooks with
+                on_ready = Option.value on_ready ~default:ignore
+              ; on_assigned = (fun () -> Worker_health.on_assigned health)
+              ; on_revoked = (fun () -> Worker_health.on_revoked health)
+              ; on_poll = (fun () -> Worker_health.on_poll health)
+              }
+            in
             Kafka_service.consume
               svc
               topic
               ~group_id:W.group_id
               ~sw
               ~clock:env#clock
-              ?on_ready
-              ~on_assigned:(fun () -> Worker_health.on_assigned health)
-              ~on_revoked:(fun () -> Worker_health.on_revoked health)
-              ~on_poll:(fun () -> Worker_health.on_poll health)
+              ~hooks
               ?ot
               ~handler
               ()
@@ -338,6 +343,15 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
               |> Result.map_error (fun msg -> `Register msg)
             in
             let result =
+              let hooks : Kafka_service.consumer_hooks =
+                { on_ready = Option.value on_ready ~default:ignore
+                ; on_assigned = (fun () -> Worker_health.on_assigned health)
+                ; on_revoked = (fun () -> Worker_health.on_revoked health)
+                ; on_poll = (fun () -> Worker_health.on_poll health)
+                ; on_retry
+                ; on_relay_publish
+                }
+              in
               Kafka_service.consume_partitioned
                 svc
                 topic
@@ -345,14 +359,9 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 ~sw
                 ~net:env#net
                 ~clock:env#clock
-                ?on_ready
-                ~on_assigned:(fun () -> Worker_health.on_assigned health)
-                ~on_revoked:(fun () -> Worker_health.on_revoked health)
-                ~on_poll:(fun () -> Worker_health.on_poll health)
+                ~hooks
                 ?decode_error_policy
                 ~retry_strategy
-                ~on_retry
-                ~on_relay_publish
                 ?ot
                 ~handler
                 ()
