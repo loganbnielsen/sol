@@ -82,51 +82,39 @@ type workload_shape =
   | Http_service
   | Background_worker
 
+module Workload_spec : sig
+  type t =
+    { extra_labels : (string * string) list
+    ; secret_keys : string list
+    ; volumes : Sol_cli_toml.volume list
+    ; env : string option
+    ; config_hash : string
+    ; availability : Sol_cli_availability.t
+    ; consumes_kafka : bool
+    ; readiness_path : string
+    ; shape : workload_shape
+    ; replicas : int
+    ; cpu : string
+    ; memory : string
+    ; ns : string
+    ; name : string
+    ; image : string
+    ; workspace : string
+    ; domain : string
+    ; primitive : string
+    ; release_id : Sol_cli_release_id.t
+    }
+end
+
 val deployment_doc
   :  ?rollout_strategy:Sol_cli_toml.rollout_strategy
-  -> ?extra_labels:(string * string) list
-  -> ?secret_keys:string list
-  -> ?volumes:Sol_cli_toml.volume list
-  -> ?env:string
-  -> ?availability:Sol_cli_availability.t
-  -> ?consumes_kafka:bool
-  -> ?readiness_path:string
-  -> config_hash:string
-  -> shape:workload_shape
-  -> replicas:int
-  -> cpu:string
-  -> memory:string
-  -> ns:string
-  -> name:string
-  -> image:string
-  -> workspace:string
-  -> domain:string
-  -> primitive:string
-  -> release_id:Sol_cli_release_id.t
+  -> workload:Workload_spec.t
   -> unit
   -> Sol_cli_yaml.document
 
 val rollout_doc
-  :  ?extra_labels:(string * string) list
-  -> ?secret_keys:string list
-  -> ?volumes:Sol_cli_toml.volume list
-  -> ?env:string
-  -> ?availability:Sol_cli_availability.t
-  -> ?consumes_kafka:bool
-  -> ?readiness_path:string
-  -> config_hash:string
-  -> shape:workload_shape
-  -> replicas:int
-  -> cpu:string
-  -> memory:string
-  -> ns:string
-  -> name:string
-  -> image:string
+  :  workload:Workload_spec.t
   -> pd:Sol_cli_toml.progressive_delivery
-  -> workspace:string
-  -> domain:string
-  -> primitive:string
-  -> release_id:Sol_cli_release_id.t
   -> unit
   -> Sol_cli_yaml.document
 

@@ -18,18 +18,20 @@ let reconciliation_scope provider guarded =
 let workspace_name = Sol_cli_workspace.current_name
 
 let post_destroy_state ~infra_dir =
-  Sol_cli_destroy_verification.state_evidence
-    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-     | Ok result ->
-       (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
-        | Sol_cli_cloud_destroy.State_empty -> Ok []
-        | Sol_cli_cloud_destroy.State_represented _ as state ->
-          Ok (Sol_cli_cloud_destroy.addresses state)
-        | Sol_cli_cloud_destroy.State_unreadable reason -> Error reason)
-     | Error (Sol_cli_process.Non_zero result) ->
-       Error (Printf.sprintf "terraform show exited %d" result.exit_code)
-     | Error error ->
-       Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error))
+  let observed_state =
+    match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+    | Ok result ->
+      (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
+       | Sol_cli_cloud_destroy.State_empty -> Ok []
+       | Sol_cli_cloud_destroy.State_represented _ as state ->
+         Ok (Sol_cli_cloud_destroy.addresses state)
+       | Sol_cli_cloud_destroy.State_unreadable reason -> Error reason)
+    | Error (Sol_cli_process.Non_zero result) ->
+      Error (Printf.sprintf "terraform show exited %d" result.exit_code)
+    | Error error ->
+      Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error)
+  in
+  Sol_cli_destroy_verification.state_evidence observed_state
 ;;
 
 let verification_observation

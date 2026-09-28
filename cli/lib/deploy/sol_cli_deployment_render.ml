@@ -189,33 +189,32 @@ let render
            in
            let cpu = Sol_cli_toml.cpu_quantity_to_string cpu in
            let memory = Sol_cli_toml.memory_quantity_to_string memory in
+           let workload : Sol_cli_manifest.Workload_spec.t =
+             { Sol_cli_manifest.Workload_spec.extra_labels
+             ; secret_keys = List.map fst secrets
+             ; volumes
+             ; env
+             ; config_hash = cfg_hash
+             ; availability
+             ; consumes_kafka
+             ; readiness_path
+             ; shape
+             ; replicas
+             ; cpu
+             ; memory
+             ; ns
+             ; name
+             ; image = img
+             ; workspace
+             ; domain
+             ; primitive
+             ; release_id
+             }
+           in
            let workload_resources =
              match progressive_delivery with
              | Some pd ->
-               let rollout =
-                 rollout_doc
-                   ~extra_labels
-                   ~secret_keys:(List.map fst secrets)
-                   ~volumes
-                   ~availability
-                   ~consumes_kafka
-                   ~readiness_path
-                   ~config_hash:cfg_hash
-                   ?env
-                   ~shape
-                   ~replicas
-                   ~cpu
-                   ~memory
-                   ~ns
-                   ~name
-                   ~image:img
-                   ~pd
-                   ~workspace
-                   ~domain
-                   ~primitive
-                   ~release_id
-                   ()
-               in
+               let rollout = rollout_doc ~workload ~pd () in
                (match pd with
                 | Sol_cli_toml.Blue_green ->
                   let ingress =
@@ -255,29 +254,7 @@ let render
                let rollout_strategy =
                  Option.value rollout_strategy ~default:Sol_cli_toml.RollingUpdate
                in
-               [ deployment_doc
-                   ~rollout_strategy
-                   ~extra_labels
-                   ~config_hash:cfg_hash
-                   ~secret_keys:(List.map fst secrets)
-                   ~volumes
-                   ~availability
-                   ~consumes_kafka
-                   ~readiness_path
-                   ?env
-                   ~shape
-                   ~replicas
-                   ~cpu
-                   ~memory
-                   ~ns
-                   ~name
-                   ~image:img
-                   ~workspace
-                   ~domain
-                   ~primitive
-                   ~release_id
-                   ()
-               ]
+               [ deployment_doc ~rollout_strategy ~workload () ]
            in
            let pdb =
              if Sol_cli_availability.is_node_failure_tolerant availability

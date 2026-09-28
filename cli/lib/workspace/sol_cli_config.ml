@@ -1300,8 +1300,7 @@ let resolve ~base ~envs (target : target) =
       Ok (merge cfg layer)
   in
   let* cfg = apply target.env { base with target = Some base_target } env_layer in
-  let* cfg = apply (target.env ^ ".targets." ^ target_address target) cfg target_layer in
-  Ok cfg
+  apply (target.env ^ ".targets." ^ target_address target) cfg target_layer
 ;;
 
 let resolved_target ~base ~envs target_path =

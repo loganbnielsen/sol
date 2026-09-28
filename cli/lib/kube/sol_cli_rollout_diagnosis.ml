@@ -323,21 +323,23 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
      | Error why -> Events_unavailable why)
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
-    Events_unavailable
-      (if String.equal detail ""
-       then Printf.sprintf "kubectl get events exited with code %d" r.exit_code
-       else detail)
+    let reason =
+      if String.equal detail ""
+      then Printf.sprintf "kubectl get events exited with code %d" r.exit_code
+      else detail
+    in
+    Events_unavailable reason
   | Error e -> Events_unavailable (Sol_cli_process.error_to_string e)
 ;;
 
 let kubectl_read_failure ~what ~exit_code ~stdout ~stderr =
   let detail = String.trim (stderr ^ " " ^ stdout) in
-  Printf.sprintf
-    "%s could not be read%s"
-    what
-    (if String.equal detail ""
-     then Printf.sprintf " (exit %d)" exit_code
-     else ": " ^ detail)
+  let suffix =
+    if String.equal detail ""
+    then Printf.sprintf " (exit %d)" exit_code
+    else ": " ^ detail
+  in
+  Printf.sprintf "%s could not be read%s" what suffix
 ;;
 
 let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =

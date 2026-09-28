@@ -327,13 +327,8 @@ let run_review ticket_id result_file =
     let* status, summary, violations = parse_result (String.trim json_str) in
     (match status with
      | Pass ->
-       let body =
-         Printf.sprintf
-           "%s %s\n\n%s"
-           review_pass_marker
-           p.pr_head_sha
-           (if summary = "" then "Automated review: pass." else summary)
-       in
+       let summary = if summary = "" then "Automated review: pass." else summary in
+       let body = Printf.sprintf "%s %s\n\n%s" review_pass_marker p.pr_head_sha summary in
        let rc =
          Soldev_shell.run_cmd
            ~echo:false

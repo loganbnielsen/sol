@@ -70,6 +70,8 @@ resource "google_container_cluster" "main" {
   remove_default_node_pool = true
   initial_node_count       = 1
 
+  node_locations = ["${var.region}-a"]
+
   network    = google_compute_network.main.id
   subnetwork = google_compute_subnetwork.main.id
 
