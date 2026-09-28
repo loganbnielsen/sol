@@ -44,11 +44,50 @@ let test_send_to_closed_port () =
   | T.Unreachable why -> Alcotest.fail ("curl could not run: " ^ why)
 ;;
 
+let test_operation () =
+  let cwd = Sys.getcwd () in
+  let workspace =
+    if Sys.file_exists "examples/pluto/sol.yml"
+    then "examples/pluto"
+    else "../../../../examples/pluto"
+  in
+  Fun.protect
+    ~finally:(fun () -> Sys.chdir cwd)
+    (fun () ->
+       Sys.chdir workspace;
+       let target = "pilot/aws/us-east-1" in
+       let url = "http://127.0.0.1:1" in
+       (match Sol_cli_alert_operation.test target url true with
+        | Ok (Dry_run { url; body }) ->
+          Alcotest.(check string) "destination" "http://127.0.0.1:1/api/v2/alerts" url;
+          Alcotest.(check string)
+            "configured owner"
+            "pluto-oncall"
+            J.(
+              Yojson.Safe.from_string body
+              |> index 0
+              |> member "labels"
+              |> member "owner"
+              |> to_string)
+        | _ -> Alcotest.fail "expected dry-run outcome without sending");
+       (match Sol_cli_alert_operation.test "invalid" url true with
+        | Error (Invalid_target _) -> ()
+        | _ -> Alcotest.fail "expected typed target error");
+       (match Sol_cli_alert_operation.test "dev/aws/us-east-1" url true with
+        | Error (Invalid_delivery _) -> ()
+        | _ -> Alcotest.fail "expected typed delivery error");
+       match Sol_cli_alert_operation.test target url false with
+       | Error (Rejected { exit_code; _ }) ->
+         Alcotest.(check int) "typed curl rejection" 7 exit_code
+       | _ -> Alcotest.fail "expected typed rejection")
+;;
+
 let () =
   Alcotest.run
     "alert_test"
     [ ( "alert_test"
-      , [ Alcotest.test_case "payload" `Quick test_payload
+      , [ Alcotest.test_case "operation outcomes" `Quick test_operation
+        ; Alcotest.test_case "payload" `Quick test_payload
         ; Alcotest.test_case "endpoint" `Quick test_endpoint
         ; Alcotest.test_case "send to a closed port" `Quick test_send_to_closed_port
         ] )
