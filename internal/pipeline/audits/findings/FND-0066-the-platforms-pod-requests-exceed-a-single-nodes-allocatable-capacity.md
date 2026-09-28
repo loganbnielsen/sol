@@ -67,6 +67,13 @@ node". (Three redpanda brokers ask `6000m` together against a pool total of `579
 the same statement from the pool's side.) The platform therefore cannot install on the substrate, and
 two of its nine releases time out rather than the apply reporting a resource-fit refusal.
 
+**And the pool is not full.** Summing the captured pods' requests by the node each is on: the 58
+scheduled pods commit **2.23 CPU of the pool's 5.79** and 3.74 GiB of its 17.65. Placing all four
+unschedulable pods would take the demand to **8.73 CPU / 25.34 GiB**, and the largest single pod needs
+**2.00 CPU / 9.60 GiB on one node** — so the required node shape follows from the largest pod, and
+`e2-standard-2` (1.93 CPU / 5.88 GiB allocatable) fails both requirements on its own. Per-node detail
+and the candidate shapes are in the run record, § *The pool is not full — the fit is per node*.
+
 ## Root cause
 
 Three declarations that were never reconciled:

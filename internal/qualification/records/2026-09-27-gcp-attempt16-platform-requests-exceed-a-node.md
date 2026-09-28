@@ -251,6 +251,32 @@ So the queue is not "the nodes are full": an *empty* node of this shape cannot s
 and adding nodes or replicas cannot change that. (Three redpanda brokers ask `6000m` together against
 a pool total of `5790m` allocatable, which is the same statement from the other side.)
 
+### The pool is not full — the fit is per node
+
+Summing the requests of the captured pods by the node each is on (`pod-demand.log` carries both the
+requests and `.spec.nodeName`):
+
+| node | pods | CPU committed | memory committed |
+|---|---|---|---|
+| `…-afe4e39e-0fb0` | 21 | 0.40 / 1.93 | 0.69 / 5.88 GiB |
+| `…-afe4e39e-5r8s` | 15 | 0.79 / 1.93 | 1.75 / 5.88 GiB |
+| `…-afe4e39e-8zhw` | 22 | 1.05 / 1.93 | 1.30 / 5.88 GiB |
+| **pool** | **62** | **2.23 / 5.79** | **3.74 / 17.65 GiB** |
+
+The platform's 58 scheduled pods commit **2.23 CPU of the pool's 5.79** and 3.74 GiB of its 17.65.
+With all four unschedulable pods placed, the demand would be **8.73 CPU / 25.34 GiB**, and the largest
+single pod needs **2.00 CPU / 9.60 GiB on one node**. So the node shape is decided by the *largest pod*,
+not by the pool total:
+
+| machine type | advertised | observed allocatable | fits the largest pod? |
+|---|---|---|---|
+| `e2-standard-2` (this run) | 2 vCPU / 8 GiB | 1.93 CPU / 5.88 GiB | **no** — 2.00 CPU and 9.60 GiB both exceed it |
+| `e2-standard-4` | 4 vCPU / 16 GiB | ≈ 3.9 CPU / ≈ 13 GiB (estimate) | yes; ≈ 3 GiB memory headroom on the cache's node |
+| `e2-standard-8` | 8 vCPU / 32 GiB | ≈ 7.9 CPU / ≈ 28 GiB (estimate) | yes, comfortably |
+
+The two estimates apply the observed reservation ratio (8 GiB → 5.88 GiB allocatable) to the larger
+shapes; they are the next specimen's `node-capacity` read to confirm, not an input to the decision.
+
 ### Where each request comes from
 
 - **Redpanda** — Sol's own declared platform defaults: `platform/cloud/modules/platform/variables.tf`
