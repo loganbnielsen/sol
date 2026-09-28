@@ -363,3 +363,12 @@
 - Consumer-hook warnings belong to REFAC-155 / PR #671. Constructors, independent runtime controls and focused test defaults were deliberately retained. Job claim knobs were considered but no new invariant justified reversing REFAC-152's recorded decision.
 - Full inventory and scope limitations are recorded in `internal/pipeline/audits/2026-09-28_parameter_lint.md`. No source refactor or external support-repo audit in this filing.
 - Validation: pipeline parser reads all 815 tickets; `pipeline check CODEX_STYLE_AUDIT-078` reports actionable with no dependencies. Whitespace checks pass; canonical checkout remains clean.
+
+## Advisory AST parameter linter (2026-09-28)
+
+- Added `internal/tooling/style_audit` using installed OCaml compiler libraries and existing Yojson. It scans `.ml`/`.mli` files for parameter sprawl and name families, reports source locations and counts in text/JSON, and leaves findings advisory. Parse and path errors remain failures.
+- The existing `consume_partitioned` is a positive control: 17 parameters, eight optional, six defaulted and six syntactic no-op defaults; its six `on_*` names are reported in both implementation and interface. No changes to the Kafka API or its ongoing refactor.
+- A scan of `cli`, `framework`, `internal/tooling` and `examples` completes with 49 advisory locations (45 sprawl, four family). Raw platform templates contain unrendered placeholders, so documentation directs scans to source directories or generated workspaces rather than treating template parse errors as absence of findings.
+- Documentation connects the tool to STYLE_AUDIT's candidate workflow. General callback-type inference, sibling-family repetition and other architecture detectors are deferred; semantic refactoring remains a human decision. Internal tooling only, no demo or language-parity impact.
+- Validation: full `dune build`, the executable's Dune `runtest` harness, and scans of the Sol code roots and external `~/Code/kafka-eio` succeed. The support-repo scan reports ten candidates, showing the checker does not require the scanned code to belong to Sol's Dune project.
+- CI runs the tool’s fixture harness alongside the existing unit suites; it does not scan application code or gate on advisory findings. Staged formatting, no-comments (682 files), and whitespace checks pass.
