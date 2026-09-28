@@ -205,7 +205,7 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         # framework/ocaml/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
-        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/
+        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
 
       # INFRA-006: formatting check runs after unit tests on purpose — running
       # `dune fmt --preview` first populates _build/default/framework, which

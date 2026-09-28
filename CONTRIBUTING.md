@@ -227,3 +227,24 @@ These are the rules review keeps coming back to, written down once (REFAC-120). 
 
 The "Sol" name and logo are **not** covered by the Apache-2.0 licence — see
 [`TRADEMARK.md`](TRADEMARK.md).
+
+### Post-merge cleanup
+
+GitHub automatically deletes remote PR branches after merging. Local cleanup is
+explicit because another actor may still own a worktree. From a different tree,
+preview a worktree you own and know is idle:
+
+```bash
+soldev pipeline cleanup 672 ../sol-parameter-style-lint
+soldev pipeline cleanup 672 ../sol-parameter-style-lint --apply
+```
+
+The command checks that the PR was merged into `main` in this repository, its
+branch and head still match, and the selected worktree is registered and clean.
+It refuses canonical/current trees, primary branches, locked trees, and tracked,
+untracked or ignored local files. Remove expendable build artifacts yourself;
+the command does not decide which ignored files are disposable. Lock a tree with
+`git worktree lock <path>` while an actor uses it. Selecting a path and `--apply`
+declares that you own it and have stopped work there; Git cannot detect idle
+editors or agent processes. Removal never uses force, and branch deletion checks
+the expected head atomically. Cleanup does not change the canonical checkout.
