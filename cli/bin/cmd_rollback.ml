@@ -162,14 +162,16 @@ let cmd =
           current-release pointer, then verifies both independently.")
     Term.(
       const (fun release_id commit scope target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"rollback" target in
-           run
-             ~ctx
-             ~target_string:(Option.value target ~default:"local")
-             release_id
-             commit
-             scope))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"rollback" target in
+          run
+            ~ctx
+            ~target_string:(Option.value target ~default:"local")
+            release_id
+            commit
+            scope
+        in
+        Sol_cli_exit.exit_on result)
       $ release_id_arg
       $ commit_arg
       $ scope_arg

@@ -122,6 +122,10 @@ case "$*" in
     if [ "${STUB_STATE_UNREADABLE:-0}" = "1" ]; then
       printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
     fi
+    if [ "${STUB_STATE_WITH_OUTPUTS:-0}" = "1" ]; then
+      printf '{"version":4,"serial":7,"resources":[],"outputs":{"postgres_url":{"value":"postgresql://postgres:qual-secret@10.172.0.3/app","type":"string","sensitive":true}}}\n'
+      exit 0
+    fi
     printf '{"version":4,"serial":7,"resources":[]}\n'; exit 0 ;;
   *"compute regions describe"*"--format=json"*|*"--format=json"*"compute regions describe"*)
     printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'
@@ -456,7 +460,7 @@ STUB
 chmod +x "$TMP/bin/curl"
 export DOCKER_LOG="$TMP/app-docker.argv"
 : >"$DOCKER_LOG"
-PRESEED_CREDENTIALS=1 run_case app-ok app
+STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-ok app
 mv "$TMP/bin/curl.delegation" "$TMP/bin/curl"
 is "the app phase exits 0 when every step succeeds" "$(cat "$TMP/app-ok.rc")" "0"
 has "it builds each image from that service's own Dockerfile" \
@@ -477,6 +481,10 @@ has "and so are the two TypeScript services" "fulfillment_worker:" "$TARGET_FILE
 present "$TMP/app-ok.logs/app-transaction.txt" "the transaction's evidence is in the bundle"
 has "the transaction records the worker's write-back, not just an accepted charge" \
   "the worker consumed the charge" "$TMP/app-ok.logs/app-transaction.txt"
+present "$TMP/app-ok.logs/app-postgres-url.txt" "the operator's database URL step is recorded"
+has "redacted, because the bundle must never carry the password" "://***@" \
+  "$TMP/app-ok.logs/app-postgres-url.txt"
+lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-postgres-url.txt"
 
 printf '\nscenario: the app phase refuses when the run has no credentials\n'
 run_case app-nocred app

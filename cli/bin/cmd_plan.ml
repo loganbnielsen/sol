@@ -36,25 +36,23 @@ let render ~project ~target_name (cfg : Sol_cli_config.t) =
   if resources = [] then Printf.bprintf out "  (none)\n";
   resources
   |> List.iter (fun (r : Sol_cli_config.resource) ->
-    Printf.bprintf
-      out
-      "  - %s%s\n"
-      r.name
-      (match r.typ with
-       | None -> ""
-       | Some t -> " (" ^ t ^ ")");
+    let type_suffix =
+      match r.typ with
+      | None -> ""
+      | Some t -> " (" ^ t ^ ")"
+    in
+    Printf.bprintf out "  - %s%s\n" r.name type_suffix;
     List.iter (render_index out) r.indexes);
   Printf.bprintf out "\nServices:\n";
   if services = [] then Printf.bprintf out "  (none)\n";
   services
   |> List.iter (fun s ->
-    Printf.bprintf
-      out
-      "  - %s%s\n"
-      s.Sol_cli_config.name
-      (match s.typ with
-       | None -> ""
-       | Some t -> " (" ^ t ^ ")");
+    let type_suffix =
+      match s.typ with
+      | None -> ""
+      | Some t -> " (" ^ t ^ ")"
+    in
+    Printf.bprintf out "  - %s%s\n" s.Sol_cli_config.name type_suffix;
     render_opt out "path" s.path;
     if s.uses <> []
     then
