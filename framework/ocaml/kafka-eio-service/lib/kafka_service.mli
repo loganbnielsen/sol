@@ -140,6 +140,22 @@ module Retry_topics : sig
     -> (unit, Kafka.Error.t) result
 
   val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
+
+  type record_stage =
+    | Source
+    | Retry of int
+
+  val process_handler_result
+    :  stage:record_stage
+    -> retry_topic:topic_name
+    -> dlq_topic:topic_name
+    -> retry_policy:Kafka.Consumer.retry_policy
+    -> group_id:string
+    -> raw_msg:Kafka.Consumer.message
+    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
+    -> ack:(unit -> (unit, Kafka.Error.t) result)
+    -> handler_error Kafka.Consumer.handler_result
+    -> Kafka.Error.t Kafka.Consumer.handler_result
 end
 
 module Admin : sig

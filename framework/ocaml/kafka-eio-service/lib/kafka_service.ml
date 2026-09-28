@@ -164,6 +164,12 @@ module Retry_topics = struct
   let execute_action = Kafka_service_retry_topics.execute_action
   let route_decode_error = Kafka_service_retry_topics.route_decode_error
   let relay_topic_name = Kafka_service_retry_topics.relay_topic_name
+
+  type record_stage = Kafka_service_retry_topics.record_stage =
+    | Source
+    | Retry of int
+
+  let process_handler_result = Kafka_service_retry_topics.process_handler_result
 end
 
 module Admin = struct
@@ -449,22 +455,19 @@ let consume_partitioned
        Kafka.Consumer.close consumer;
        result)
   | Retry_topics retry_policy, decode_error_policy ->
-    Kafka_service_retry_topics.consume
-      svc
-      topic
-      ~group_id
-      ~sw
-      ~net
-      ~clock
-      ~retry_policy
-      ~on_ready
-      ~on_assigned
-      ~on_revoked
-      ~on_poll
-      ~decode_error_policy:(Option.value decode_error_policy ~default:Route_to_dlq)
-      ~observe_decode_error
-      ~on_retry
-      ~on_relay_publish
-      ~handler
-      ()
+    let runtime : _ Kafka_service_retry_topics.runtime =
+      { group_id
+      ; retry_policy
+      ; on_ready
+      ; on_assigned
+      ; on_revoked
+      ; on_poll
+      ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
+      ; observe_decode_error
+      ; on_retry
+      ; on_relay_publish
+      ; handler
+      }
+    in
+    Kafka_service_retry_topics.consume svc topic ~sw ~net ~clock runtime ()
 ;;

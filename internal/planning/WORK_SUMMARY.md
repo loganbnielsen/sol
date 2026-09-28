@@ -1,13 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## REFAC-152 — Cohesive inputs rather than redundant fragments (2026-09-28)
+## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
 
-- Cloud wiring derives target/provider/backend/workdirs from one validated target,
-  and shares one Terraform input value across sibling operation paths.
-- Scheduled workloads and resolved deploy planning now have named input specs;
-  manifests and application contracts are unchanged.
-- The ticket inventories all 28 over-threshold public signatures with explicit
-  group/retain verdicts. Native options and independent lifecycle hooks stay explicit.
+- Retry consumption separates topic preparation, relay publication, and consumer
+  lifecycle; source/retry handlers use one record-policy path.
+- Named runtime inputs replace the loose controller arguments. Relay startup,
+  source execution, error reconciliation and shutdown remain explicit.
+- All 40 kafka-service unit tests and six focused live-broker integration tests pass;
+  retry budgets, DLQ routing, publish-before-ack, and fail-closed relay shutdown remain.
 
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
