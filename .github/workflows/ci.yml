@@ -292,6 +292,17 @@ jobs:
           python3 internal/ci/check_gcp_standard_substrate.py .
           python3 internal/ci/test_gcp_standard_substrate_check.py
 
+      - name: Platform TLS requirement (DEC-056 / FND-0068)
+        # Attempt 19 reported the lifecycle Ready while the platform's own certificates were unready,
+        # because nothing in the readiness gate covered them. Sol declares those certificates
+        # unconditionally, so they are platform resources: the gate now requires exactly the set the
+        # module's annotated ingresses declare, and this guard keeps the declaration and the module
+        # from drifting apart in either direction.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          python3 internal/ci/check_platform_tls_requirement.py .
+          python3 internal/ci/test_platform_tls_requirement_check.py
+
       - name: Node shape fits the platform (FND-0066)
         # Attempt 16 installed on the driver's own defaults -- 3 x e2-standard-2 -- and stopped with
         # four pods the scheduler could not place: a redpanda broker asks 2 CPU and the loki chunk

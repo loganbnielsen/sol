@@ -72,11 +72,7 @@ let ensure_topic producer ~topic_name ~partitions ~topic_durability =
     | Broker_default -> 1
     | Single_broker_loss -> 3
   in
-  match
-    Kafka.Producer.create_topic producer ~topic_name ~partitions ~replication_factor
-  with
-  | Ok () -> Ok ()
-  | Error e -> Error e
+  Kafka.Producer.create_topic producer ~topic_name ~partitions ~replication_factor
 ;;
 
 type topic_partition_metadata =

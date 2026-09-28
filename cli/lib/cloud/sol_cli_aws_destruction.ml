@@ -457,11 +457,11 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
     Ok ()
   | Some snapshot_id ->
     let* state = read_cloud_state infra_dir in
-    (match rds_of_state state with
-     | Error message -> Error message
-     | Ok None ->
+    let* rds = rds_of_state state in
+    (match rds with
+     | None ->
        Error "RDS destroy preparation ran but the instance is now absent from state"
-     | Ok (Some (deletion_protection, final_snapshot_identifier, skip_final_snapshot)) ->
+     | Some (deletion_protection, final_snapshot_identifier, skip_final_snapshot) ->
        let* () =
          if deletion_protection
          then Error "RDS deletion protection is still enabled after preparation"

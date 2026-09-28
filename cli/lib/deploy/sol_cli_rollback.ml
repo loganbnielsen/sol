@@ -401,14 +401,14 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
          Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
        with
        | Ok r ->
-         (match
-            Sol_cli_json.decode
-              ~what:(Printf.sprintf "kubectl get %s output" resource)
-              r.stdout
-            |> Fun.flip Result.bind (workload_rows_of_payload ~kind ~workspace)
-          with
-          | Error msg -> Error msg
-          | Ok rows -> go (List.rev_append rows acc) rest)
+         let open Result.Syntax in
+         let* rows =
+           Sol_cli_json.decode
+             ~what:(Printf.sprintf "kubectl get %s output" resource)
+             r.stdout
+           |> Fun.flip Result.bind (workload_rows_of_payload ~kind ~workspace)
+         in
+         go (List.rev_append rows acc) rest
        | Error e when kind = Live_rollout && Sol_cli_kubectl.classify e = No_resource_type
          -> go acc rest
        | Error e ->

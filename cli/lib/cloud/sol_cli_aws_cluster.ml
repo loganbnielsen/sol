@@ -620,10 +620,7 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
         | _ -> Ok ())
   ; platform_vars = platform_vars outputs
   ; with_access =
-      (fun f ->
-        match provisioner_kubeconfig ~region outputs (fun env -> f ~env) with
-        | Ok result -> result
-        | Error message -> Error message)
+      (fun f -> provisioner_kubeconfig ~region outputs (fun env -> f ~env) |> Result.join)
   ; ready = (fun () -> aws_cloud_ready ~region outputs)
   ; bootstrap_window =
       (match provisioner_role_arn with
@@ -635,17 +632,16 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
            ; gate = (fun () -> verify_whoami_shape ~region ~outputs ~provisioner_role_arn)
            ; observe =
                (fun () ->
-                 match
+                 let open Result.Syntax in
+                 let* _, probes =
                    observe_bootstrap_window_result
                      ~region
                      ~outputs
                      ~provisioner_role_arn
                      ()
-                 with
-                 | Ok (_, probes) ->
-                   before := probes;
-                   Ok ()
-                 | Error message -> Error message)
+                 in
+                 before := probes;
+                 Ok ())
            ; deescalated =
                (fun () ->
                  match

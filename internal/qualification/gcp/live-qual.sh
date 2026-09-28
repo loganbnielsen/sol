@@ -24,10 +24,12 @@ export KUBECONFIG="$RUN_KUBECONFIG"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
 CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
+APP_TAG="${APP_TAG:-qual-$(date -u +%Y%m%d-%H%M%S)}"
+export APP_TAG
 BOOTSTRAP_ROOT="$ROOT/platform/cloud/gcp/bootstrap"
 
 case "${1:-}" in
-  cloud | platform)
+  cloud | platform | app)
     CLUSTER="${CLUSTER:?Set CLUSTER to a unique cluster name for this run, e.g. sol-qual-gcp-5}"
     IMPERSONATOR="${IMPERSONATOR:?Set IMPERSONATOR to the calling identity, e.g. user:you@example.com}"
     LE_EMAIL="${LE_EMAIL:?Set LE_EMAIL to an ACME contact address}"
@@ -101,6 +103,7 @@ KEEP=0
 BUNDLE_ATTEMPTED=0
 BUNDLE_OK=0
 INSTALL_STATE=none
+APP_STATE=none
 CLOUD_APPLIED=0
 TEARDOWN_ATTEMPTED=0
 
@@ -569,6 +572,11 @@ verify_bundle() {
   case "$INSTALL_STATE" in
     failed)    required+=( "fnd0010-classification.txt" ) ;;
     succeeded) required+=( "ready-phases.txt" ) ;;
+    none) : ;;
+  esac
+  case "$APP_STATE" in
+    failed)    required+=( "app-pods-all.txt" ) ;;
+    succeeded) required+=( "app-transaction.txt" "app-deploy.log" "app-pods.txt" ) ;;
     none) : ;;
   esac
   for member in "${required[@]}"; do
@@ -1058,6 +1066,217 @@ phase_destroy() {
   destroy
 }
 
+app_registry() { printf '%s-docker.pkg.dev/%s/%s' "$REGION" "$PROJECT" "$CLUSTER"; }
+
+app_kube_context() { printf 'gke_%s_%s_%s' "$PROJECT" "$REGION" "$CLUSTER"; }
+
+app_services() { printf '%s\n' charge_svc notify_worker; }
+
+app_helpers() {
+  printf '%s\n' say app_registry app_kube_context app_services app_k8s_name app_context_path \
+    app_image_ref build_app_images push_app_images app_ingress_summary app_load_balancer_address \
+    app_transaction
+}
+
+app_k8s_name() { printf '%s' "$1" | tr '_' '-'; }
+
+app_context_path() {
+  case "$1" in
+    charge_svc) printf 'app/payments/charge_svc' ;;
+    notify_worker) printf 'app/comms/notify_worker' ;;
+    *) return 1 ;;
+  esac
+}
+
+app_image_ref() { printf '%s/pluto/%s:%s' "$(app_registry)" "$(app_k8s_name "$1")" "$APP_TAG"; }
+
+write_app_target() {
+  mkdir -p "$(dirname "$TARGET_FILE")"
+  if [ -f "$TARGET_FILE" ] && ! owns_target_file; then
+    say "REFUSING: $TARGET_FILE exists and was not written by this harness; move it aside first."
+    exit 2
+  fi
+  cat >"$TARGET_FILE" <<YAML
+$TARGET_MARK
+$TARGET_ENV:
+  targets:
+    $TARGET_KEY:
+      cluster_name: $CLUSTER
+      base_domain: $BASE_DOMAIN
+      letsencrypt_email: $LE_EMAIL
+      cluster_issuer: $CLUSTER_ISSUER
+      terraform_var_file: $TFVARS
+
+      state_bucket: $STATE_BUCKET
+
+      gcp:
+        provisioner_impersonator: $IMPERSONATOR
+
+      kube_context: $(app_kube_context)
+
+      destroy_retention: none
+
+      resources:
+        app_db:
+          size: small
+        events: {}
+
+      services:
+        charge_svc: {}
+        notify_worker: {}
+        checkout_svc:
+          omit: true
+        order_svc:
+          omit: true
+        fulfillment_worker:
+          omit: true
+YAML
+  say "wrote the app target $TARGET ($TARGET_FILE)"
+  say "  no profile is selected: this row qualifies the application path, and the profile's"
+  say "  guarantees are not claimed by it (the production profile refuses gcp today)"
+  say "  charge_svc and notify_worker are the pair whose transaction this row exercises;"
+  say "  checkout_svc (ingress_host outside any zone Sol can issue for) and the two TypeScript"
+  say "  services are omitted, so the omitted ones are not silently deployed and unverified"
+}
+
+build_app_images() {
+  local service path ref
+  for service in $(app_services); do
+    path="$(app_context_path "$service")" || return 1
+    ref="$(app_image_ref "$service")"
+    say "  docker build $ref (context: the workspace root)"
+    docker build -f "$path/Dockerfile" -t "$ref" . || return 1
+  done
+}
+
+push_app_images() {
+  gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet || return 1
+  local service
+  for service in $(app_services); do
+    say "  docker push $(app_image_ref "$service")"
+    docker push "$(app_image_ref "$service")" || return 1
+  done
+}
+
+app_ingress_summary() {
+  kubectl get ingress --all-namespaces -o wide >"$LOG_DIR/app-ingresses.txt" 2>&1 || true
+  kubectl get certificates --all-namespaces >"$LOG_DIR/app-certificates.txt" 2>&1 || true
+}
+
+app_load_balancer_address() {
+  kubectl -n ingress-nginx get svc ingress-nginx-controller \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true
+}
+
+app_transaction() {
+  local ns=pluto-payments port=18080
+  kubectl -n "$ns" get pods -o wide >"$LOG_DIR/app-pods.txt" 2>&1 || return 1
+  kubectl -n "$ns" get events --sort-by=.lastTimestamp >"$LOG_DIR/app-events.txt" 2>&1 || true
+  kubectl -n "$ns" logs -l app.kubernetes.io/component=svc --tail=80 --all-containers=true \
+    >"$LOG_DIR/app-charge-svc.log" 2>&1 || true
+  kubectl -n "$ns" logs -l app.kubernetes.io/component=worker --tail=80 --all-containers=true \
+    >"$LOG_DIR/app-notify-worker.log" 2>&1 || true
+  kubectl -n "$ns" port-forward "svc/$(app_k8s_name charge_svc)" "$port:80" \
+    >"$LOG_DIR/app-port-forward.log" 2>&1 &
+  local forwarder=$!
+  local attempt=0
+  until curl -fsS -m 5 "localhost:$port/health" >"$LOG_DIR/app-health.txt" 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 12 ]; then
+      say "  the service never answered /health over the port-forward"
+      kill "$forwarder" 2>/dev/null || true
+      return 1
+    fi
+    sleep 5
+  done
+  {
+    printf 'health: %s\n' "$(cat "$LOG_DIR/app-health.txt")"
+    printf 'charge: '
+    curl -fsS -m 30 -X POST "localhost:$port/charges" \
+      -H 'Content-Type: application/json' \
+      -d '{"customer_id":"cus_qualification","amount_cents":4999,"currency":"usd"}' \
+      >"$LOG_DIR/app-charge.txt" 2>&1 && cat "$LOG_DIR/app-charge.txt" || printf 'FAILED\n'
+    printf '\n'
+  } >"$LOG_DIR/app-transaction.txt" 2>&1
+  local charge_id
+  charge_id="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$LOG_DIR/app-charge.txt" 2>/dev/null | head -1)"
+  attempt=0
+  until [ -n "$charge_id" ] && grep -qF "$charge_id" "$LOG_DIR/app-notifications.txt" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 12 ]; then
+      say "  the worker never wrote the charge back within 60s: $charge_id absent from /notifications"
+      curl -sS -m 20 "localhost:$port/notifications" >"$LOG_DIR/app-notifications.txt" 2>&1 || true
+      printf 'notifications: %s\n' "$(cat "$LOG_DIR/app-notifications.txt" 2>/dev/null)" \
+        >>"$LOG_DIR/app-transaction.txt"
+      kill "$forwarder" 2>/dev/null || true
+      return 1
+    fi
+    sleep 5
+    curl -fsS -m 20 "localhost:$port/notifications" >"$LOG_DIR/app-notifications.txt" 2>&1 || true
+  done
+  {
+    printf 'notifications: %s\n' "$(cat "$LOG_DIR/app-notifications.txt")"
+    printf 'the worker consumed the charge and wrote it back: %s\n' "$charge_id"
+  } >>"$LOG_DIR/app-transaction.txt" 2>&1
+  kill "$forwarder" 2>/dev/null || true
+  wait "$forwarder" 2>/dev/null || true
+  app_ingress_summary
+  app_load_balancer_address >"$LOG_DIR/app-load-balancer.txt" 2>&1 || true
+  return 0
+}
+
+capture_app_evidence() {
+  kubectl get pods --all-namespaces >"$LOG_DIR/app-pods-all.txt" 2>&1 || true
+  kubectl get events --all-namespaces --sort-by=.lastTimestamp >"$LOG_DIR/app-events-all.txt" 2>&1 || true
+  app_ingress_summary
+  app_load_balancer_address >"$LOG_DIR/app-load-balancer.txt" 2>&1 || true
+}
+
+phase_app() {
+  KEEP=1
+  KEEP_REASON="the application row keeps its specimen: capture happens either way, and destroy is a deliberate separate phase"
+  APP_STATE=failed
+  if [ ! -s "$RUN_KUBECONFIG" ]; then
+    say "app: no run kubeconfig in $LOG_DIR — run the cloud phase first, which establishes it"
+    exit 2
+  fi
+  write_app_target
+  if ! run app-build bash -c "$(declare -f $(app_helpers)); build_app_images"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run app-push bash -c "$(declare -f $(app_helpers)); push_app_images"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run app-deploy "$SOL" deploy "$TARGET" --registry "$(app_registry)" --image-tag "$APP_TAG"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run app-transaction bash -c "$(declare -f $(app_helpers)); app_transaction"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  APP_STATE=succeeded
+  say "the application transaction completed: a charge was accepted, the worker consumed it, and"
+  say "the service read the worker's row back out of PostgreSQL"
+  finalise_bundle
+}
+
 usage() {
   cat <<'USAGE'
 live-qual.sh — one GCP qualification specimen, and the evidence it produces
@@ -1070,6 +1289,12 @@ phases
             Kubernetes evidence, the cert-manager discriminator and the provider
             inventory before any teardown. On success it continues to the delegation
             hand-off and keeps the substrate for the TLS rows.
+  app       build and push this row's two images into the target's Artifact Registry, apply the
+            workspace's migrations, run `sol deploy`, and verify the application transaction
+            (a charge accepted, the worker consuming it, and the service reading the worker's
+            row back out of PostgreSQL) with the pods, events and logs captured either way.
+            The target it writes selects no profile: this row qualifies the application path,
+            and claims nothing the production profile's guarantees would promise.
   destroy   freeze and destroy an existing target, then verify absence
   stop      stop the run recorded in LOG_DIR (by its own process group), then destroy
   verify    read-only absence check; invokes no teardown
@@ -1097,6 +1322,7 @@ USAGE
 
 case "${1:-}" in
   cloud)    phase_cloud ;;
+  app)      phase_app ;;
   platform)
     say "no platform phase: 'sol cloud apply' installs the platform, and this harness captures"
     say "its discriminator in the cloud phase. Run: live-qual.sh cloud"

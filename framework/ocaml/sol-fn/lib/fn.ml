@@ -141,9 +141,7 @@ module Make (F : FN) = struct
                       let result = run_body () in
                       record_and_push ~t0 (`Completed result);
                       flush_logs ();
-                      match result with
-                      | Ok () -> Ok {|{"status":"ok"}|}
-                      | Error msg -> Error msg)
+                      Result.map (fun () -> {|{"status":"ok"}|}) result)
                     ();
                   Ok ())
                (fun () ->

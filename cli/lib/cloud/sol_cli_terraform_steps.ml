@@ -47,22 +47,16 @@ let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars (
          Sol_cli_terraform_plan.guarded_apply
            ~policy
            ~plan:(fun () ->
-             match
-               terraform_stdout
-                 (Sol_cli_run_log.run_phase
-                    run_log
-                    ~name:(phase_name ^ "-plan")
-                    (fun () ->
-                       Sol_cli_terraform.plan_saved
-                         ~scope
-                         ~chdir
-                         ~var_files
-                         ~vars
-                         ~out:plan_file
-                         ()))
-             with
-             | Ok _ -> Ok plan_file
-             | Error message -> Error message)
+             terraform_stdout
+               (Sol_cli_run_log.run_phase run_log ~name:(phase_name ^ "-plan") (fun () ->
+                  Sol_cli_terraform.plan_saved
+                    ~scope
+                    ~chdir
+                    ~var_files
+                    ~vars
+                    ~out:plan_file
+                    ()))
+             |> Result.map (fun _ -> plan_file))
            ~show_plan:(fun file ->
              Sol_cli_terraform.show_saved_plan
                ~run_log

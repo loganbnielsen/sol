@@ -9,7 +9,43 @@
   the pod-template renderer consumes the same value directly.
 - All 156 manifest-render tests pass, including Deployment, Canary, Blue-green, worker,
   security, and parsed YAML invariants. Rendered behavior is unchanged.
-## Latest: FEAT-105 CI-gated native auto-merge verified (2026-09-28)
+
+## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
+
+- Component checking names its outcome and runs the fixed `local` and `durable` profile
+  set through one path, so the reason for the two renders is explicit.
+- Template planning errors propagate through `let*`, leaving its match to express only
+  the non-empty invariant; Terraform-root checks and observability checks are named
+  before the final report list.
+- Output and behavior stay under the existing real-command rule, which breaks two
+  independent assets and requires both failures plus the surviving provider result.
+## Latest: DEC-056 — `Ready` covers the platform's declared certificates (2026-09-28)
+
+- **The semantic**: Sol declares its platform certificates unconditionally and exposes no supported
+  no-TLS mode, so they are required platform resources — the lifecycle must not report `Ready` without
+  them. The boundary is equally explicit: `Ready` covers what Sol declares and controls, and **not**
+  external/public reachability.
+- **The implementation is the existing architecture**, not an ad hoc TLS wait: `Sol_cli_platform_tls`
+  declares the certificates (name, namespace, provenance) the way `Sol_cli_platform_storage` declares its
+  storage requirement, and `readiness_checks` derives one
+  `kubectl wait --for=condition=Ready certificate/<name> -n <ns>` predicate per declaration — so the gate
+  that `sol cloud apply` already refuses on now covers them, provider-neutrally. The AWS path gains the
+  same predicate; nothing is GCP-specific.
+- **Coverage**: `check_platform_tls_requirement.py` + five mutations hold the declaration against the
+  module in both directions (every annotated ingress must be declared, every declaration must exist) and
+  refuse a gate that stops deriving from the declaration;
+  `test_ready_requires_the_declared_certificates` reproduces the Attempt 19 sequence — all components
+  healthy, the declared certificates not — and requires that it no longer reads `Ready`. The
+  readiness-invocation rule validates the new argv with the pinned kubectl, as it did for the check that
+  caught `rollout status --all`.
+- **Recorded consequence**: an unpublished delegation now surfaces as a refused `Ready` naming the
+  certificate (after `SOL_PLATFORM_READINESS_TIMEOUT_S`, 900 s default) rather than as a `Ready` platform
+  that cannot serve its own endpoints.
+- **Not included, by the decision**: DNS record publication. The observation that neither provider
+  publishes A/alias records for platform ingress hostnames stands, and the five levels — ingress exists,
+  certificate issued, TLS verifiable by SNI, DNS resolves, an external client reaches it — remain
+  distinct claims.
+
 
 - Repository auto-merge is enabled; required test/admin enforcement remain, and
   approving-review count was already zero. PR #650 was queued through soldev while
@@ -51,6 +87,17 @@
 - All six tickets are readable; five are immediately actionable and REFAC-149 waits on
   REFAC-148 so the Result-specific normalization lands before the broader sweep.
 
+## REFAC-147 — charge examples expose their domain boundary (2026-09-28)
+
+- Pluto and generated charge services now name typed input, directly testable operation,
+  accepted result, and HTTP mapping; routes are declarative. Their different acceptance
+  mechanisms remain intact: Postgres in Pluto, Kafka publication in the scaffold.
+- Pluto and a freshly generated workspace build and run focused operation tests;
+  all 52 scaffold tests pass, including generated tests and golden expectations.
+  There is no new framework abstraction or language/runtime contract change.
+- Filing and merge-speed fixes are complete. REFAC-144 and REFAC-148 are queued on CI;
+  REFAC-145 awaits the shared-summary merge; remaining REFAC tickets continue.
+
 ## Latest: GCP Attempt 19 — the TLS path is qualified (2026-09-28)
 
 - **The whole path works, end to end, on a fresh target** (`352fd870`, `qual19/gcp/us-central1`,
@@ -76,6 +123,15 @@
   ingress hostnames (so name→address is outside Sol today), and the run's environment cannot resolve
   public DNS, so the certificate claim was verified by SNI against the IP, which is the stronger of the
   two for that claim.
+
+## REFAC-150 — named conceptual collection groups (2026-09-28)
+
+- Local platform release/endpoint lists now expose named component groups and their
+  ordered combination; status domain groups, log environment overrides, and deployment
+  inclusion/exclusion notes are similarly explicit.
+- Whole-tree review retained homogeneous literals and already named groups, with
+  reasons and folder coverage in the ticket. Existing order/selection tests, builds,
+  formatting and no-comments checks pass; no API/runtime/language contract changed.
 
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
@@ -242,3 +298,17 @@
 - `check_gcp_standard_substrate.py` + seven mutations hold the contract by *ownership*, never the numbers, so a deliberate sizing change is not a guard failure. Two of its own checks were repaired while building it (a control-plane check a sibling resource could satisfy; a declaration check whose nested quoting matched nothing).
 - INFRA-092: `ADMISSION_DENIED` classifies ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the failure path too. `test-live-qual` → 144 assertions, 0 failures.
 - FND-0064 → `FIXED_UNQUALIFIED`. Attempt 15 on a Standard cluster is the discriminator: install → `Ready` → supported Ready-state destruction.
+
+## REFAC queue continuation — Result propagation (2026-09-28)
+
+- Filing and BUG-066/FEAT-105 are merged; the refreshed docs-only validator was
+  verified with a 14-second required check. REFAC implementation has resumed.
+- REFAC-148 reviewed all 55 identity-error seeds across CLI/framework, plus copied
+  templates, examples and tooling. Linear Result composition replaces unchanged
+  forwarding; deliberate NotFound/AlreadyExists recovery and nested access/process
+  diagnostics remain explicit, with reasons in the ticket.
+- Focused CLI and framework tests, all 52 scaffold tests, builds, formatting,
+  no-comments and ticket-parser checks pass. Framework installation resolved the
+  initial isolated scaffold build failures. No runtime/API/language-contract changes.
+- REFAC-144 is queued on required CI; REFAC-145 waits for its shared-summary merge.
+  REFAC-146/147 and the remaining generalized sweeps continue autonomously.

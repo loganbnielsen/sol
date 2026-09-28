@@ -8,7 +8,13 @@ A Sol workspace with OCaml service examples (`charge_svc`, `checkout_svc`,
 ```bash
 eval $(opam env)
 dune build
+dune runtest test
 ```
+
+`test_charges` exercises the typed charge decoder and database operation boundary
+without HTTP or a database. The handler's routes only connect decoding, the operation,
+and response rendering; Pluto accepts through Postgres, while the workspace scaffold
+accepts by publishing a Kafka event.
 
 ## Run locally
 

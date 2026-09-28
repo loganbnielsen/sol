@@ -82,7 +82,8 @@ let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
             let name = String.sub entry 0 i in
             not (List.mem name keys))
       in
-      Array.of_list (base @ List.map (fun (k, v) -> k ^ "=" ^ v) overrides))
+      let override_entries = List.map (fun (k, v) -> k ^ "=" ^ v) overrides in
+      Array.of_list (base @ override_entries))
   in
   Unix.execvpe "kubectl" (Array.of_list argv) env
 ;;
