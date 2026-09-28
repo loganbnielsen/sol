@@ -29,6 +29,15 @@ already used for Thanos's object-store identity:
 Both ClusterIssuers carry a `precondition` that refuses an empty provider identity: a solver that runs
 without credentials must fail the apply rather than create certificates that can never issue.
 
+**Workload Identity itself is now enabled**, because none of it was: the repo declared
+`iam.gke.io/gcp-service-account` annotations and `roles/iam.workloadIdentityUser` bindings for Loki and
+Thanos but never set the cluster's `workload_identity_config` or the node pool's
+`workload_metadata_config`, so the pool served *node* credentials and every one of those annotations was
+dead. That is a prerequisite of the mechanism `DEC-055` chose, and it is guarded now: the check refuses a
+GCP cluster without the Workload Identity pool and a node pool that is not on `GKE_METADATA`. The Loki and
+Thanos paths were never exercised live (`enable_durable_observability = false` in qualification), which is
+why this had not surfaced.
+
 The GCP cluster root also reads the managed zone when it pre-exists (`create_dns_zone = false`, the
 qualification's case) so the record binding has a zone to scope to, and exports both the zone and the
 identity. The GCP driver's install-time refusal — *"Sol cannot yet wire a certificate issuer on GCP …

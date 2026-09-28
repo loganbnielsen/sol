@@ -78,6 +78,10 @@ resource "google_container_cluster" "main" {
     services_secondary_range_name = "services"
   }
 
+  workload_identity_config {
+    workload_pool = "${var.project_id}.svc.id.goog"
+  }
+
   private_cluster_config {
     enable_private_nodes    = true
     enable_private_endpoint = false
@@ -104,6 +108,10 @@ resource "google_container_node_pool" "main" {
     image_type   = "COS_CONTAINERD"
 
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
 
     shielded_instance_config {
       enable_secure_boot          = true

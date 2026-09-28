@@ -13,6 +13,12 @@
   `roles/iam.workloadIdentityUser` for `cert-manager/cert-manager`); and least privilege (the AWS inline
   policy scoped to the workspace's zone, unchanged; on GCP a custom role carrying only the record and
   change permissions, bound **on the managed zone**, plus a project-level zone-discovery role).
+- **Workload Identity was not enabled anywhere.** The repo declared `iam.gke.io/gcp-service-account`
+  annotations and `roles/iam.workloadIdentityUser` bindings for Loki and Thanos, but never set the
+  cluster's `workload_identity_config` nor the node pool's `workload_metadata_config` — so the pool served
+  *node* credentials and those annotations were dead. That is a prerequisite of the mechanism `DEC-055`
+  chose, so both are now set and guarded (two more mutations); the Loki/Thanos paths had never been
+  exercised live, which is why it had not surfaced.
 - **Fail closed:** both ClusterIssuers carry a plan-time `precondition`, so an empty provider identity
   fails the apply rather than deploying a solver with no credentials. The **GCP driver's install-time
   refusal is gone** — the gate it was built to be — so a GCP target declaring `cluster_issuer` now

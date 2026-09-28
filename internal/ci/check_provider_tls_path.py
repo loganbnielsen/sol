@@ -123,6 +123,28 @@ def gcp_cluster_problems(root):
             "serviceAccount:<project>.svc.id.goog[cert-manager/cert-manager]: the cert-manager pod cannot "
             "impersonate the service account that holds the DNS permissions"
         )
+    cluster = next((r for r in found if r.type == "google_container_cluster"), None)
+    pool = next((r for r in found if r.type == "google_container_node_pool"), None)
+    if cluster is None or not tfconfig.blocks(cluster.body, "workload_identity_config"):
+        problems.append(
+            "the GCP cluster declares no workload_identity_config: the Workload Identity pool the plugin "
+            "certificates are issued from does not exist, so every iam.gke.io/gcp-service-account "
+            "annotation in the platform is dead (GKE serves node credentials instead)"
+        )
+    if pool is None or not [
+        block
+        for block in tfconfig.blocks(pool.body, "node_config")
+        if any(
+            tfconfig.unquote(mode) == "GKE_METADATA"
+            for config in tfconfig.blocks(block, "workload_metadata_config")
+            for mode in tfconfig.attributes(config, "mode")
+        )
+    ]:
+        problems.append(
+            "the GCP node pool runs with the node metadata server (no GKE_METADATA workload metadata "
+            "config), so a pod annotated with iam.gke.io/gcp-service-account still receives the node's "
+            "identity rather than the service account's"
+        )
     if not [r for r in found if r.type == "google_dns_managed_zone"]:
         problems.append(
             "the GCP cluster root names no Cloud DNS managed zone: the record binding has no zone to scope to"

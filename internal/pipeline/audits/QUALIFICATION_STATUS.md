@@ -928,7 +928,9 @@ Route 53 and its own identity mechanism, and the shared module stops assuming AW
 Both issuers now carry a plan-time `precondition`: an empty provider identity fails the apply instead of
 deploying a solver that runs without credentials. The GCP driver's install-time refusal is removed — the
 gate it existed to be — so a GCP target declaring `cluster_issuer` installs the issuer path. New
-`check_provider_tls_path.py` + 12 mutations hold all of it.
+`check_provider_tls_path.py` + 14 mutations hold all of it — including the prerequisite this exposed:
+Workload Identity was **not enabled anywhere** (no cluster `workload_identity_config`, no pool
+`workload_metadata_config`, so GKE served node credentials), which is now set and guarded.
 
 **Also observed, and deliberately *not* settled:** Attempt 17's `Ready` was claimed while the platform's
 own certificates were unready → `FND-0068` / `DEC-056` (BACKLOG, decision required). `Ready`'s executable

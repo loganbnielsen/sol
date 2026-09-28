@@ -88,6 +88,10 @@ CASES = [
         count=1)),
     ("gcp-workload-identity-binding-removed", remove_block(
         GCP_CLUSTER, 'resource "google_service_account_iam_member" "cert_manager_workload_identity"')),
+    ("gcp-workload-identity-not-enabled", remove_block(
+        GCP_CLUSTER, 'workload_identity_config {')),
+    ("gcp-pool-uses-the-node-metadata-server", substitute(
+        GCP_CLUSTER, r'mode = "GKE_METADATA"', 'mode = "GCE_METADATA"')),
     ("gcp-driver-refuses-tls-again", substitute(
         GCP_DRIVER, r"let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =",
         'let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =\n  let _ = "Sol cannot yet wire a certificate issuer on GCP" in\n  ignore _ in')),
