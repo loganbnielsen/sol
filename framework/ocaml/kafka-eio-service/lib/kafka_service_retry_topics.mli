@@ -80,31 +80,54 @@ val route_decode_error
 
 val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
 
+type record_stage =
+  | Source
+  | Retry of int
+
+val process_handler_result
+  :  stage:record_stage
+  -> retry_topic:Kafka_service_intf.topic_name
+  -> dlq_topic:Kafka_service_intf.topic_name
+  -> retry_policy:Kafka.Consumer.retry_policy
+  -> group_id:string
+  -> raw_msg:Kafka.Consumer.message
+  -> publish:
+       (target_topic:Kafka_service_intf.topic_name
+        -> relay
+        -> (unit, Kafka.Error.t) result)
+  -> ack:(unit -> (unit, Kafka.Error.t) result)
+  -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result
+  -> Kafka.Error.t Kafka.Consumer.handler_result
+
+type 'a runtime =
+  { group_id : string
+  ; retry_policy : Kafka.Consumer.retry_policy
+  ; on_ready : unit -> unit
+  ; on_assigned : unit -> unit
+  ; on_revoked : unit -> unit
+  ; on_poll : unit -> unit
+  ; decode_error_policy : Kafka_service_intf.decode_error_policy
+  ; observe_decode_error :
+      string
+      -> raw_bytes:bytes option
+      -> disposition:[ `Dropped | `Dead_lettered ]
+      -> unit
+  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  ; on_relay_publish :
+      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
+  ; handler :
+      'a
+      -> ack:(unit -> (unit, Kafka.Error.t) result)
+      -> trace_ctx:Obs_trace.t option
+      -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result
+  }
+
 val consume
   :  Kafka_service_intf.t
   -> 'a Kafka_service_intf.topic
-  -> group_id:string
   -> sw:Eio.Switch.t
   -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
-  -> retry_policy:Kafka.Consumer.retry_policy
-  -> on_ready:(unit -> unit)
-  -> on_assigned:(unit -> unit)
-  -> on_revoked:(unit -> unit)
-  -> on_poll:(unit -> unit)
-  -> decode_error_policy:Kafka_service_intf.decode_error_policy
-  -> observe_decode_error:
-       (string
-        -> raw_bytes:bytes option
-        -> disposition:[ `Dropped | `Dead_lettered ]
-        -> unit)
-  -> on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
-  -> on_relay_publish:
-       (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)
-  -> handler:
-       ('a
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> trace_ctx:Obs_trace.t option
-        -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result)
+  -> 'a runtime
   -> unit
   -> (unit, Kafka_service_intf.consume_partitioned_error) result
