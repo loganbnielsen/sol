@@ -882,5 +882,33 @@ default, which this supersedes). `check_gcp_standard_substrate.py` still holds t
 
 Two residuals are recorded in `FND-0066` rather than closed: the AWS half is inference until an AWS run
 reaches a platform install, and the profile preflight's `Platform_capacity` check applies the envelope to
-`recommended_node_shape` — a constant — so it never read the substrate being provisioned. **Nothing here
-is QUALIFIED**: the next GCP specimen is what observes the four pods scheduling.
+`recommended_node_shape` — a constant — so it never read the substrate being provisioned. The next GCP
+specimen is what observes the four pods scheduling — Attempt 17, below.
+
+## GCP Attempt 17 (2026-09-28, `30ad9835`) — `Ready` on Standard, Ready-state destruction, and the TLS blocker
+
+Full record: `internal/qualification/records/2026-09-28-gcp-attempt17-ready-and-the-tls-blocker.md`
+(bundle `/tmp/sol-gcp-qual-17`, plus a `ready-state/` capture made while the platform was up). Fresh
+target `qual17/gcp/us-central1`, cluster `sol-qual-gcp-17`, **4 × e2-standard-4**.
+
+| Boundary | Result |
+|---|---|
+| Observer (second live run) | credentials at poll 38; 57 API samples, 30 reachable, **all 30 configured-endpoint-populated** |
+| CloudBootstrap / CloudReady | created — GKE `RUNNING`, Cloud SQL `RUNNABLE` (`terraform-apply ok (615.7s)`) |
+| Platform prerequisites | `ok (47.5s)` |
+| Full `platform-apply` | **`ok (166.6s)`** — Attempt 16 was `FAILED (695.0s)` on two Helm releases |
+| The four pods of `FND-0066` | **scheduled**: 72 of 73 pods `Running`, **0 `Pending`** (16: 58 / 4); all six PVCs `Bound`; nodes at `3920m / 13591676Ki` each, against a predicted ≈ 3.9 CPU / ≈ 13 GiB |
+| `PlatformInstalling → Ready` | **reached** — `lifecycle phase: Ready`, the first time on GKE Standard |
+| **Ready-state destruction** | **exercised**: `platform-destroy ok (131.7s)`, authority bracket removed, `terraform-destroy ok (583.6s)`, `teardown verified: absent` |
+| Independent verification | cluster, SQL, network, subnet, router, NAT, addresses, disks, Artifact Registry, role and bindings all ABSENT; `SSD_TOTAL_GB 0/1000` (480 at `Ready`); both durables PRESENT; no billable residue |
+| TLS rows | **blocked** — `FND-0067` |
+| Application rows | `NOT REACHED` |
+| Manual/emergency action | none |
+
+**`FND-0066` → `QUALIFIED` (GCP half)**: the change was the only difference between the two runs, and
+its effect is observed. **New frontier: `FND-0067`** / `DEC-055` (BACKLOG, decision required) — the
+platform's only ACME DNS-01 solver is `route53` with a hardcoded `us-east-1`, declared in the *shared*
+module, and on GCP the role ARN is empty (its own description says "AWS only … leave empty on GCP"), so
+every challenge dies at `PresentError … NoCredentialProviders` and no ingress — platform dashboard or
+application — can obtain a certificate. The platform is `Ready` while the cluster cannot serve TLS, which
+is exactly the state a `Ready`-only check would call success.

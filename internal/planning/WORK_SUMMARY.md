@@ -1,5 +1,27 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: GCP Attempt 17 — `Ready` on Standard, and the TLS blocker (2026-09-28)
+
+- **The platform installs and reaches `Ready`.** Attempt 17 (`30ad9835`, fresh `qual17/gcp/us-central1`,
+  4 × e2-standard-4) is the first run on GKE Standard to get past the platform apply:
+  `platform-apply ok (166.6s)` where Attempt 16 was `FAILED (695.0s)`, **72 of 73 pods `Running` with
+  none `Pending`**, all six PVCs `Bound`, and `lifecycle phase: Ready`. Nodes came up at
+  `3920m / 13591676Ki` allocatable each — the estimate in FND-0066 said ≈ 3.9 CPU / ≈ 13 GiB, within 1%.
+- **`FND-0066` → `QUALIFIED` (GCP half).** Nothing else changed between the two runs, so the driver-default
+  change is what made the difference. The AWS half stays inference until an AWS run reaches a platform
+  install.
+- **Ready-state destruction exercised for the first time**: a supported `sol cloud destroy` from the
+  `Ready` platform — `platform-destroy ok (131.7s)`, authority bracket removed, `terraform-destroy
+  ok (583.6s)`, `teardown verified: absent`, no billable residue, both durable prerequisites standing.
+- **New blocker: `FND-0067` / `DEC-055`.** The platform's only ACME DNS-01 solver is `route53` with a
+  hardcoded `us-east-1`, declared in the *shared* platform module, and `cert_manager_irsa_role_arn`'s own
+  description says "AWS only … leave empty on GCP". On GCP the role is empty, cert-manager falls back to
+  an AWS credential chain that does not exist, and every challenge ends in `PresentError … Route 53 …
+  NoCredentialProviders`. The platform is `Ready` while **no ingress — dashboard or application — can
+  obtain a certificate**; `argocd-tls` and `grafana-tls` were still `READY=False` after 14 minutes. The
+  decision space (a Cloud DNS solver + Workload Identity, a stated limitation on the profile, or a
+  refusal) is in `DEC-055`.
+
 ## Latest: FND-0066 / DEC-054 — the driver defaults adopt the shape the profile recommends (2026-09-27)
 
 - **GCP Attempt 16** (`c6d8a460`, fresh `qual16/gcp/us-central1`): the merged qualification observer was
