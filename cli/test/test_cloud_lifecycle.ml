@@ -795,6 +795,37 @@ let test_readiness_fails_each_predicate () =
         (L.readiness_summary checks <> "Ready")))
 ;;
 
+let readiness_with_unready_certificates ~provider =
+  L.readiness ~provider ~run:(fun argv ->
+    match argv with
+    | "wait" :: "--for=condition=Ready" :: certificate :: _
+      when String.starts_with ~prefix:"certificate/" certificate -> None
+    | other -> converged_cluster provider other)
+;;
+
+let test_ready_requires_the_declared_certificates () =
+  Sol_cli_provider.all
+  |> List.iter (fun provider ->
+    let label = Sol_cli_provider.to_string provider in
+    let summary = L.readiness_summary (readiness_with_unready_certificates ~provider) in
+    Alcotest.(check bool)
+      (Printf.sprintf
+         "a cluster whose declared certificates are unready is not Ready (%s)"
+         label)
+      false
+      (String.equal summary "Ready");
+    Sol_cli_platform_tls.certificates
+    |> List.iter (fun (declared : Sol_cli_platform_tls.declared_certificate) ->
+      Alcotest.(check bool)
+        (Printf.sprintf
+           "the unmet reason names %s/%s (%s)"
+           declared.namespace
+           declared.certificate
+           label)
+        true
+        (Sol_cli_string.contains ~needle:declared.certificate summary)))
+;;
+
 let readiness_with_storage ~provider storage_output =
   L.readiness ~provider ~run:(fun argv ->
     match argv with
@@ -1493,6 +1524,10 @@ let () =
             "readiness predicates"
             `Quick
             test_readiness_fails_each_predicate
+        ; Alcotest.test_case
+            "a declared certificate gates Ready (DEC-056)"
+            `Quick
+            test_ready_requires_the_declared_certificates
         ; Alcotest.test_case
             "provider-specific storage contract"
             `Quick

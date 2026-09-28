@@ -9,8 +9,31 @@ source: GCP qualification Attempt 17 (2026-09-28), revision 30ad9835
 
 **Depends on:** None.
 
-**State:** `OPEN` — the observation is established and the choice is put to `DEC-056`. Nothing was
-changed: the readiness contract is a product semantic, and this unit deliberately did not move it.
+**State:** `FIXED_UNQUALIFIED` — `DEC-056` decided on 2026-09-28 that the platform's declared
+certificates belong in `Ready`, and the gate now requires them. The live half is the next specimen: the
+run that reaches `Ready` only after its certificates are ready.
+
+## Fix (DEC-056, 2026-09-28)
+
+The chosen semantic, implemented through the existing readiness architecture rather than an ad hoc TLS
+wait:
+
+- `Sol_cli_platform_tls` declares the platform's certificates (name, namespace, provenance) the way
+  `Sol_cli_platform_storage` declares its storage requirement;
+- `readiness_checks` derives one predicate per declared certificate from that declaration —
+  `kubectl wait --for=condition=Ready certificate/<name> -n <ns>` — so the existing gate (and the refusal
+  that makes it load-bearing) covers them, provider-neutrally: the AWS path gains the same predicate, and
+  nothing in the lifecycle is GCP-specific;
+- `internal/ci/check_platform_tls_requirement.py` + five mutations hold the declaration against the
+  module in both directions and refuse a gate that stops deriving from the declaration;
+- `test_ready_requires_the_declared_certificates` reproduces this finding's sequence — every component
+  healthy, the declared certificates not — and requires that it no longer reads `Ready`.
+
+**Deliberately *not* included**, per the decision: global DNS resolution and Internet reachability are
+not prerequisites for `Ready`. `Ready` covers platform resources Sol declares and controls; the
+name→address publication this finding's sibling observation describes stays outside it, and the five
+levels (ingress exists, certificate issued, TLS verifiable by SNI, DNS resolves it, an external client
+reaches it) stay distinct claims.
 
 ## Observed (GCP qualification Attempt 17, 2026-09-28)
 
