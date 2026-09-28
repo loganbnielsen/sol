@@ -94,6 +94,22 @@ queue auto-merge. One satisfactory pass is enough; fresh-reviewer loops and
 SOLDEV-REVIEW markers are not universal requirements. Do not introduce a risk
 classifier or a second approval state machine for this judgment.
 
+### Ticket state moves land in order
+
+A ticket's directory is its state, and the transition guard
+(`internal/ci/check_ticket_transitions.sh`, also run by the pre-commit hook)
+holds the lifecycle: `BACKLOG ↔ READY_FOR_ENGINEERING`, `READY_FOR_ENGINEERING →
+DONE`, and `DONE → READY_FOR_ENGINEERING` for a revert. A new ticket must start
+in `BACKLOG` or `READY_FOR_ENGINEERING`; it can reach `DONE` only by moving
+there in the pull request that implements it.
+
+So file first, implement second — even when the finding is your own. A small
+filing pull request puts the ticket in the queue that `/work`, `soldev pipeline
+ls`, and the human-judgment gates read; the implementation pull request then
+shows a `READY_FOR_ENGINEERING → DONE` rename. Creating and completing a ticket
+in one pull request is refused: a ticket born in `DONE/` was never triaged and
+never appeared in the queue.
+
 ### Why there is no bookkeeping exception
 
 An earlier revision of this file allowed maintainers to commit
