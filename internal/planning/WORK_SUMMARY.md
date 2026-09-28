@@ -1,13 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## REFAC-153 — Visible local-run and migration phases (2026-09-28)
+## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
 
-- Local run now reads as resolve/report/build/launch/supervise; a controlled
-  real-command test proves build failure gates launch.
-- Cluster migration exposes wait/log/report/cleanup/finish using its existing
-  typed outcome. Effect order, cancellation and error priority remain unchanged.
-- Full CLI tests pass. The ticket records keep/refactor verdicts and actual
-  transitions for retry, jobs, rollout, authentication and cloud lifecycles.
+- Retry consumption separates topic preparation, relay publication, and consumer
+  lifecycle; source/retry handlers use one record-policy path.
+- Named runtime inputs replace the loose controller arguments. Relay startup,
+  source execution, error reconciliation and shutdown remain explicit.
+- All 40 kafka-service unit tests and six focused live-broker integration tests pass;
+  retry budgets, DLQ routing, publish-before-ack, and fail-closed relay shutdown remain.
 
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
