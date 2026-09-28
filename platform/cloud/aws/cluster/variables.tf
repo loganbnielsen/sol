@@ -38,9 +38,9 @@ variable "ha_nat_gateway" {
 }
 
 variable "node_instance_types" {
-  description = "EC2 instance types for the EKS managed node group"
+  description = "EC2 instance types for the EKS managed node group. It must hold the platform's own largest request on ONE node: a redpanda broker asks 2 CPU and the loki chart's chunks cache 9.6 GiB, against about 3.9 CPU / 13 GiB allocatable on m6i.xlarge and 1.93 CPU / 5.88 GiB on m6i.large. internal/ci/check_node_shape_fits_platform.py holds that fit (FND-0066); the AWS half is inference from the platform's shared requests until an AWS run reaches a platform install."
   type        = list(string)
-  default     = ["m6i.large"]
+  default     = ["m6i.xlarge"]
 }
 
 variable "node_min_size" {
@@ -54,8 +54,9 @@ variable "node_max_size" {
 }
 
 variable "node_desired_size" {
-  type    = number
-  default = 3
+  description = "Nodes the platform's node group runs. Four is the shape the profile recommends (Sol_cli_profile.recommended_node_shape): with one node held back for node-failure headroom, three of them still carry the platform's capacity envelope."
+  type        = number
+  default     = 4
 }
 
 variable "ecr_repositories" {

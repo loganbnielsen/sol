@@ -1,5 +1,34 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FND-0066 / DEC-054 — the driver defaults adopt the shape the profile recommends (2026-09-27)
+
+- **GCP Attempt 16** (`c6d8a460`, fresh `qual16/gcp/us-central1`): the merged qualification observer was
+  proven live on the code path that lost the evidence five attempts running — the run's credentials were
+  established while the cluster became `RUNNING` (poll 61), the API probe's configured endpoint matched
+  the provider's, and the failure capture completed **10 of 10** reads and let the run reach the
+  cert-manager discriminator and a verified teardown. Full bundle: `/tmp/sol-gcp-qual-16`.
+- The run then answered the Redpanda/Loki question. `platform-prerequisites-apply ok (52.4s)`, then the
+  full `platform-apply` failed on exactly two releases (`redpanda`, `loki[0]`) with 58 of 62 pods
+  `Running`. The four `Pending` pods are the finding: each redpanda broker asks **2.00 CPU** against
+  **1.93 CPU** allocatable per node, and the loki chunk cache asks **9.60 GiB** against **5.88 GiB** —
+  each larger than an entire node, so no node count and no autoscaler can schedule them. The pool was
+  nowhere near full (the 58 scheduled pods committed 2.23 of 5.79 CPU), which is why this looked like a
+  timeout rather than a fit failure.
+- **`FND-0066`** records it with the three declarations that never agreed, and rules out storage, disk
+  quota, taints, admission and the Helm timeout as causes. **`DEC-054`** was put to the operator with its
+  tradeoffs; the answer was to size the substrate, implemented as the driver defaults adopting what
+  `Sol_cli_profile` already declared: `min_vcpu_per_node = 4`, `largest_pod_vcpu = 2`,
+  `platform_vcpu = 10` with one node held back, and `recommended_node_shape = m6i.xlarge x 4`.
+- Concretely: GCP `node_machine_type` `e2-standard-2` → **`e2-standard-4`** and `node_count` 3 → **4**;
+  AWS `node_instance_types` `m6i.large` → **`m6i.xlarge`** and `node_desired_size` 3 → **4**.
+  `internal/ci/check_node_shape_fits_platform.py` + nine mutations read the requirements *out of the
+  profile* rather than restating them, and carry the one constraint the envelope does not yet encode:
+  the loki chart's 9.6 GiB chunk cache.
+- Two residuals are recorded, not closed: the AWS half is inference until an AWS run reaches a platform
+  install, and `Platform_capacity` in the profile preflight checks `recommended_node_shape` — a constant
+  — so it never saw the substrate being provisioned. `FND-0066` → `FIXED_UNQUALIFIED`; the next live
+  specimen is what observes the four pods scheduling.
+
 ## Latest: DOCS-025 — the readiness path depends on the declared language (2026-09-27)
 
 - `docs/deployment/workload-availability.md` said an HTTP service is probed on `/healthz` for startup, readiness and liveness. True before INFRA-073: readiness is now `/readyz` for a declared OCaml `-svc`, and stays `/healthz` for a TypeScript or undeclared workload until the TypeScript framework serves it (FEAT-096). The bullet now says so, and notes that both deployment modes resolve it identically since BUG-056.
@@ -70,7 +99,7 @@
 
 - Attempt 14 measured the mismatch: on Autopilot the cloud root and prerequisites applied, then GKE's admission webhook refused `helm_release.prometheus` (hostNetwork/hostPID) and `helm_release.redpanda` (SYS_RESOURCE) — ten minutes and a billable cluster in, no path to `Ready` (FND-0064).
 - `DEC-049`: the GCP driver provisions **GKE Standard**; Autopilot is not a supported substrate for the standard profile. The refusal is *defensive reconciliation* — for a Sol-managed target the driver's own configuration is Standard — and it happens read-only, **before any plan exists**, with a message about the profile's requirement rather than today's component list.
-- Sizing is a **driver-owned default**: 3 x e2-standard-2, 100 GiB pd-balanced, one zone, regional control plane. No target keys, no sizing profile, no generic restricted-Kubernetes capability model.
+- Sizing is a **driver-owned default**: 3 x e2-standard-2, 100 GiB pd-balanced, one zone, regional control plane. No target keys, no sizing profile, no generic restricted-Kubernetes capability model. (**Changed 2026-09-27** to 4 x e2-standard-4 by `DEC-054` / `FND-0066`: see the next section.)
 - `check_gcp_standard_substrate.py` + seven mutations hold the contract by *ownership*, never the numbers, so a deliberate sizing change is not a guard failure. Two of its own checks were repaired while building it (a control-plane check a sibling resource could satisfy; a declaration check whose nested quoting matched nothing).
 - INFRA-092: `ADMISSION_DENIED` classifies ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the failure path too. `test-live-qual` → 144 assertions, 0 failures.
 - FND-0064 → `FIXED_UNQUALIFIED`. Attempt 15 on a Standard cluster is the discriminator: install → `Ready` → supported Ready-state destruction.
