@@ -275,6 +275,18 @@ jobs:
           python3 internal/ci/check_gcp_standard_substrate.py .
           python3 internal/ci/test_gcp_standard_substrate_check.py
 
+      - name: Node shape fits the platform (FND-0066)
+        # Attempt 16 installed on the driver's own defaults -- 3 x e2-standard-2 -- and stopped with
+        # four pods the scheduler could not place: a redpanda broker asks 2 CPU and the loki chunk
+        # cache 9.6 GiB, against 1.93 CPU / 5.88 GiB allocatable per node. The requirements come from
+        # the profile's own capacity envelope, not from this guard, so the drivers cannot default to
+        # a shape the profile itself refuses, and a count that cannot carry the envelope after
+        # node-failure headroom is refused too.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          python3 internal/ci/check_node_shape_fits_platform.py .
+          python3 internal/ci/test_node_shape_fits_platform_check.py
+
       - name: Terraform output contract (INFRA-091)
         # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
         # what `terraform output -json` publishes. Attempt 13's defect was two artefacts agreeing

@@ -142,15 +142,15 @@ variable "gcs_soft_delete_retention_seconds" {
 
 
 variable "node_count" {
-  description = "Nodes in the platform's node pool. Three gives the platform's observability and Kafka components room, and keeps the node footprint well inside the project's disk quota."
+  description = "Nodes in the platform's node pool. Four is the shape the profile recommends (Sol_cli_profile.recommended_node_shape): with one node held back for node-failure headroom, three of them still carry the platform's capacity envelope. The node footprint stays well inside the project's disk quota at this size too."
   type        = number
-  default     = 3
+  default     = 4
 }
 
 variable "node_machine_type" {
-  description = "Machine type for the platform's nodes."
+  description = "Machine type for the platform's nodes. It must hold the platform's own largest request on ONE node: a redpanda broker asks 2 CPU and the loki chart's chunks cache 9.6 GiB, against about 3.9 CPU / 13 GiB allocatable on e2-standard-4 and 1.93 CPU / 5.88 GiB on e2-standard-2. internal/ci/check_node_shape_fits_platform.py holds that fit (FND-0066)."
   type        = string
-  default     = "e2-standard-2"
+  default     = "e2-standard-4"
 }
 
 variable "node_disk_gb" {

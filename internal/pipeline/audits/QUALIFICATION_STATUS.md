@@ -859,3 +859,28 @@ request is the upstream chart's default that the profile never overrides; the su
 driver's own defaults (3 x `e2-standard-2`). The failure presents as two Helm timeouts, which invites
 the wrong remedy — the arithmetic is the finding. Storage, disk quota, taints and admission are each
 recorded as *not* the cause.
+
+## `DEC-054` / `FND-0066` — the driver defaults adopt the shape the profile recommends (2026-09-27)
+
+Decided the same day, from the measurement above. `Sol_cli_profile` already declared the answer and
+nothing was reading it: `platform_capacity_envelope` has `min_vcpu_per_node = 4`, `largest_pod_vcpu = 2`
+and `platform_vcpu = 10` with one node held back, and `recommended_node_shape` is `m6i.xlarge` x 4. The
+drivers defaulted below both. So:
+
+| | before | after |
+|---|---|---|
+| GCP node shape | `e2-standard-2` (2 vCPU / 8 GiB) | `e2-standard-4` (4 vCPU / 16 GiB) |
+| GCP node count | 3 | 4 |
+| AWS node shape | `m6i.large` (2 vCPU / 8 GiB) | `m6i.xlarge` (4 vCPU / 16 GiB) |
+| AWS desired size | 3 | 4 |
+
+`internal/ci/check_node_shape_fits_platform.py` + nine mutations hold it, reading the requirements out of
+the profile rather than restating them, and adding the one the envelope does not yet carry: the loki
+chart's chunk cache needs 9.6 GiB allocatable per node (`INFRA-093`'s section above states the old
+default, which this supersedes). `check_gcp_standard_substrate.py` still holds the contract by
+*ownership*, never the numbers, so this sizing change is not a guard rewrite.
+
+Two residuals are recorded in `FND-0066` rather than closed: the AWS half is inference until an AWS run
+reaches a platform install, and the profile preflight's `Platform_capacity` check applies the envelope to
+`recommended_node_shape` — a constant — so it never read the substrate being provisioned. **Nothing here
+is QUALIFIED**: the next GCP specimen is what observes the four pods scheduling.

@@ -9,8 +9,22 @@ source: GCP qualification Attempt 16 (2026-09-27), revision c6d8a460
 
 **Depends on:** None.
 
-**State:** `OPEN` — no remediation, and none attempted. The remedy is a sizing or a request-profile
-decision and belongs to the operator: `DEC-054`.
+**State:** `FIXED_UNQUALIFIED` (GCP half) — decided and implemented 2026-09-27, not yet observed live.
+`DEC-054` chose sizing the substrate to the platform, and the drivers' defaults now adopt the shape
+`Sol_cli_profile.recommended_node_shape` already declared: GCP `node_machine_type = "e2-standard-4"`
+with `node_count = 4` (was `e2-standard-2` x 3), AWS `node_instance_types = ["m6i.xlarge"]` with
+`node_desired_size = 4` (was `m6i.large` x 3). `internal/ci/check_node_shape_fits_platform.py` and its
+mutation test hold the fit against the profile's own `platform_capacity_envelope`, with the loki cache's
+9.6 GiB as the one requirement the envelope does not yet carry. **Unqualified** means the next live
+specimen is what observes the four pods scheduling.
+
+Two residuals stay open and are recorded rather than closed:
+
+- the AWS half is inference from the platform's shared requests — no AWS run has reached a platform
+  install, so `m6i.xlarge` x 4 closing the same arithmetic there is arithmetic, not observation;
+- `Sol_cli_profile_preflight`'s `Platform_capacity` check applies the envelope to
+  `recommended_node_shape`, a constant, so it never read the substrate actually being provisioned. A
+  preflight that read the driver defaults would have refused this before an hour of Helm timeouts.
 
 ## Observed (GCP qualification Attempt 16, 2026-09-27)
 
