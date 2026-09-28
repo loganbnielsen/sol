@@ -45,3 +45,30 @@ reader must mentally execute several transformations to discover the structure.
 - Behavior and collection order are unchanged and covered by existing or focused tests.
 - Demo/example and language-parity impact are recorded per changed surface.
 
+## Completion notes (2026-09-28)
+
+- Reverified the literal discovery command at `621b3f9d`: its eight output lines
+  represent four constructions (two lines per construction), not eight distinct
+  sites. Positive controls are local platform releases/endpoints, configuration
+  layer keys, and the assets diagnostic. Extended the search to `platform/` and
+  manually inspected CLI commands/libraries, framework, Pluto/examples, copied
+  scaffold templates, and internal tooling using the broader collection lens.
+- Named Kafka, Postgres, observability, Tempo, Prometheus and ingress release and
+  endpoint groups in `Sol_cli_local_platform`; each final list exposes its original
+  ordering. Named workload/unexpected domain groups in status discovery, context
+  override environment entries in logs, and inclusion/exclusion deployment notes.
+- `cmd_assets` is handled separately by REFAC-144. Retained `Sol_cli_config.layer_keys`:
+  homogeneous optional key enumeration is already readable with named target keys.
+  Retained `Sol_obs.of_env`: backend/renderer/flush collections are already named.
+  Retained `Sol_process`'s two pipe-read descriptors: two trivial optional entries
+  do not need names. Retained literal HTTP headers/event fields, uniform per-service
+  mappings, and template dependency lists; these are not hidden conceptual groups.
+- No generic helper, module, dependency, boolean-to-policy change or public API.
+  Added the contributing rule with its restraint. Existing local platform tests
+  explicitly hold install and endpoint order, declarations, values and port uniqueness;
+  deploy selection, status, logs and config tests pass, as do build, formatting and
+  no-comments checks.
+- Demo/example: not applicable; internal collection construction changes only,
+  with unchanged Helm values/argv, CLI text, emitted plans, environment and behavior.
+- Language parity: no impact; language-neutral platform and deployment contracts
+  remain unchanged, and reviewed OCaml app examples/templates need no edits.

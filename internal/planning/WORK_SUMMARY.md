@@ -95,6 +95,15 @@
   public DNS, so the certificate claim was verified by SNI against the IP, which is the stronger of the
   two for that claim.
 
+## REFAC-150 — named conceptual collection groups (2026-09-28)
+
+- Local platform release/endpoint lists now expose named component groups and their
+  ordered combination; status domain groups, log environment overrides, and deployment
+  inclusion/exclusion notes are similarly explicit.
+- Whole-tree review retained homogeneous literals and already named groups, with
+  reasons and folder coverage in the ticket. Existing order/selection tests, builds,
+  formatting and no-comments checks pass; no API/runtime/language contract changed.
+
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
 - **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets
