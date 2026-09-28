@@ -287,6 +287,18 @@ jobs:
           python3 internal/ci/check_node_shape_fits_platform.py .
           python3 internal/ci/test_node_shape_fits_platform_check.py
 
+      - name: Provider TLS path (DEC-055 / FND-0067)
+        # Attempt 17 reached Ready with cert-manager's only DNS-01 solver hardcoded to Route 53, so a
+        # GCP cluster created certificates it could never issue and the platform reported Ready anyway.
+        # The solver and the cert-manager pod's identity are now selected per provider, each provider
+        # root supplies its own scope and identity, and each cluster root owns a DNS permission set
+        # scoped to the workspace's zone. An empty identity fails closed rather than deploying a solver
+        # that runs without credentials.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          python3 internal/ci/check_provider_tls_path.py .
+          python3 internal/ci/test_provider_tls_path_check.py
+
       - name: Terraform output contract (INFRA-091)
         # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
         # what `terraform output -json` publishes. Attempt 13's defect was two artefacts agreeing

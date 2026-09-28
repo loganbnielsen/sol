@@ -9,6 +9,7 @@ import tfconfig
 
 GCP_MAY_OMIT = {
     "aws_region",
+    "cert_manager_dns01_region",
     "cert_manager_irsa_role_arn",
     "grafana_irsa_role_arn",
     "loki_irsa_role_arn",

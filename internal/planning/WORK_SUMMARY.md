@@ -1,5 +1,39 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
+
+- **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets
+  first-class TLS through **Cloud DNS DNS-01 + Workload Identity**, AWS keeps Route 53 and its own
+  identity mechanism, and the boundary used is the one the module already had for Thanos's object-store
+  identity — the module selects the solver and the pod's identity annotation from `var.cloud_provider`,
+  and each provider root supplies its own values. No new certificate-provider abstraction.
+- **Where each concern lives:** the solver (`route53` with a region the *AWS* root now owns, `cloudDNS`
+  with the project the GCP root owns); the identity (IRSA role ARN vs a new GSA); the pod wiring
+  (`eks.amazonaws.com/role-arn` vs `iam.gke.io/gcp-service-account`, bound through
+  `roles/iam.workloadIdentityUser` for `cert-manager/cert-manager`); and least privilege (the AWS inline
+  policy scoped to the workspace's zone, unchanged; on GCP a custom role carrying only the record and
+  change permissions, bound **on the managed zone**, plus a project-level zone-discovery role).
+- **Fail closed:** both ClusterIssuers carry a plan-time `precondition`, so an empty provider identity
+  fails the apply rather than deploying a solver with no credentials. The **GCP driver's install-time
+  refusal is gone** — the gate it was built to be — so a GCP target declaring `cluster_issuer` now
+  installs the issuer path instead of being refused, and the qualification harness's target declares one
+  (`letsencrypt-staging` by default, overridable).
+- **Coverage:** `internal/ci/check_provider_tls_path.py` + twelve mutations hold the contract, and the
+  mutation test earned its keep twice — it caught a check that a solver name in the file satisfied while
+  the issuers had been hardcoded, then one that a variable *name* satisfied while the reference was gone.
+  It also forced the guard to fail closed on unparseable HCL. `#629`'s mirroring guard required the AWS
+  root to mirror the new inputs, which is how that convention is enforced.
+- **`FND-0067` → `FIXED_UNQUALIFIED`**; the live half (Attempt 18) is what observes a certificate issuing.
+  AWS TLS stays unqualified too, and implementing this exposed a detail worth recording: the AWS path
+  declared an IRSA role for cert-manager but never annotated the pod, and that role's trust policy is the
+  cluster's OIDC provider — so the declared identity was arguably unreachable there as well.
+- **New frontier, deliberately not settled:** Attempt 17 reported `Ready` while the platform's own
+  certificates were `READY=False` → `FND-0068` / `DEC-056` (BACKLOG, decision required). `Ready`'s
+  executable contract is component availability; the module requests certificates unconditionally; and
+  there is no supported "no TLS" configuration despite the refusal sentence that claimed one. So whether
+  certificate issuance belongs in `Ready` is a product-semantic choice — with the unpublished-delegation
+  case as its sharp edge — and nothing in the lifecycle moved.
+
 ## Latest: GCP Attempt 17 — `Ready` on Standard, and the TLS blocker (2026-09-28)
 
 - **The platform installs and reaches `Ready`.** Attempt 17 (`30ad9835`, fresh `qual17/gcp/us-central1`,

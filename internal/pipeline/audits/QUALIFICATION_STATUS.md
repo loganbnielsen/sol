@@ -912,3 +912,27 @@ module, and on GCP the role ARN is empty (its own description says "AWS only …
 every challenge dies at `PresentError … NoCredentialProviders` and no ingress — platform dashboard or
 application — can obtain a certificate. The platform is `Ready` while the cluster cannot serve TLS, which
 is exactly the state a `Ready`-only check would call success.
+
+## `DEC-055` implemented — GCP gets a provider-native DNS-01 path (2026-09-28, offline)
+
+`DEC-055` decided: GCP gets first-class TLS through **Cloud DNS DNS-01 with Workload Identity**, AWS keeps
+Route 53 and its own identity mechanism, and the shared module stops assuming AWS. `FND-0067` →
+`FIXED_UNQUALIFIED`; the live half is the next specimen.
+
+| | AWS (unchanged behaviour) | GCP (new) |
+|---|---|---|
+| solver | `dns01.route53`, endpoint region now supplied by the AWS root instead of hardcoded in the shared module | `dns01.cloudDNS`, project supplied by the GCP root |
+| identity | `cert_manager_irsa_role_arn` → `eks.amazonaws.com/role-arn` on the pod | new GSA → `iam.gke.io/gcp-service-account`, bound to `cert-manager/cert-manager` via `roles/iam.workloadIdentityUser` |
+| DNS permission | inline policy scoped to the workspace's hosted zone | custom role (records + changes) bound **on the managed zone**, plus a project-level zone-discovery role |
+
+Both issuers now carry a plan-time `precondition`: an empty provider identity fails the apply instead of
+deploying a solver that runs without credentials. The GCP driver's install-time refusal is removed — the
+gate it existed to be — so a GCP target declaring `cluster_issuer` installs the issuer path. New
+`check_provider_tls_path.py` + 12 mutations hold all of it.
+
+**Also observed, and deliberately *not* settled:** Attempt 17's `Ready` was claimed while the platform's
+own certificates were unready → `FND-0068` / `DEC-056` (BACKLOG, decision required). `Ready`'s executable
+contract is component availability (`readiness_checks`), the module requests certificates
+unconditionally, and there is no supported "no TLS" configuration despite the refusal sentence that
+described one — so whether certificate issuance belongs in `Ready` is a product-semantic choice, with the
+unpublished-delegation case as its sharp edge. Nothing in the lifecycle changed.

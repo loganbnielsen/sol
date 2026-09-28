@@ -337,6 +337,67 @@ resource "google_storage_bucket_iam_member" "thanos" {
   member = "serviceAccount:${google_service_account.thanos[0].email}"
 }
 
+data "google_dns_managed_zone" "existing" {
+  count = var.create_dns_zone ? 0 : 1
+
+  name    = replace(var.base_domain, ".", "-")
+  project = var.project_id
+}
+
+locals {
+  dns_managed_zone = var.create_dns_zone ? google_dns_managed_zone.main[0].name : data.google_dns_managed_zone.existing[0].name
+}
+
+resource "google_service_account" "cert_manager" {
+  project      = var.project_id
+  account_id   = "${var.cluster_name}-cert-manager"
+  display_name = "cert-manager ACME DNS-01 (Workload Identity) for ${var.cluster_name}"
+}
+
+resource "google_project_iam_custom_role" "cert_manager_dns_records" {
+  project     = var.project_id
+  role_id     = "sol_${replace(var.cluster_name, "-", "_")}_cert_manager_dns_records"
+  title       = "Sol cert-manager ACME challenge records"
+  description = "Create, read and remove resource record sets for ACME DNS-01 challenges in the workspace's own zone, and nothing else."
+  permissions = [
+    "dns.changes.create",
+    "dns.changes.get",
+    "dns.changes.list",
+    "dns.resourceRecordSets.create",
+    "dns.resourceRecordSets.delete",
+    "dns.resourceRecordSets.get",
+    "dns.resourceRecordSets.list",
+    "dns.resourceRecordSets.update",
+  ]
+}
+
+resource "google_project_iam_custom_role" "cert_manager_dns_discovery" {
+  project     = var.project_id
+  role_id     = "sol_${replace(var.cluster_name, "-", "_")}_cert_manager_dns_discovery"
+  title       = "Sol cert-manager zone discovery"
+  description = "Read which managed zones exist, so cert-manager can resolve the zone a challenge belongs to. Record authority is granted separately, and only on the workspace's zone."
+  permissions = ["dns.managedZones.get", "dns.managedZones.list"]
+}
+
+resource "google_dns_managed_zone_iam_member" "cert_manager_dns_records" {
+  project      = var.project_id
+  managed_zone = local.dns_managed_zone
+  role         = google_project_iam_custom_role.cert_manager_dns_records.name
+  member       = "serviceAccount:${google_service_account.cert_manager.email}"
+}
+
+resource "google_project_iam_member" "cert_manager_dns_discovery" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.cert_manager_dns_discovery.name
+  member  = "serviceAccount:${google_service_account.cert_manager.email}"
+}
+
+resource "google_service_account_iam_member" "cert_manager_workload_identity" {
+  service_account_id = google_service_account.cert_manager.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[cert-manager/cert-manager]"
+}
+
 resource "google_service_account_iam_member" "thanos_workload_identity" {
   for_each = var.enable_durable_observability ? toset([
     "monitoring/prometheus-server",

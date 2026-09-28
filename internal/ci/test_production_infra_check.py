@@ -115,7 +115,7 @@ resource "kubernetes_cluster_role_binding" "everywhere" {
     ("aws-platform-wrong-backend", edit(AWS_PLATFORM, 'backend "s3" {}', 'backend "gcs" {}'), "no longer declares the s3 backend"),
     ("aws-platform-misses-a-variable", edit(AWS_PLATFORM_VARS, r'variable "base_domain" \{.*?\n\}\n', "", literal=False), "does not mirror these declared variables"),
     ("aws-platform-extra-variable", append(AWS_PLATFORM_VARS, '\nvariable "not_in_the_definition" {\n  type = string\n}\n'), "declares variables the shared definition"),
-    ("aws-platform-does-not-pass-one", edit(AWS_PLATFORM, "  base_domain                          = var.base_domain\n", ""), "declares but does not pass to the module"),
+    ("aws-platform-does-not-pass-one", edit(AWS_PLATFORM, "  base_domain                             = var.base_domain\n", ""), "declares but does not pass to the module"),
 ]
 
 

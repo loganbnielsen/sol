@@ -135,6 +135,9 @@ let valid_gcp_outputs () =
     ; output "thanos_gcs_bucket" ~value:`Null
     ; output "loki_workload_identity_sa_email" ~value:`Null
     ; output "thanos_workload_identity_sa_email" ~value:`Null
+    ; output
+        "cert_manager_workload_identity_sa_email"
+        ~value:(`String "sol-qual-cert-manager@sol-qualification.iam.gserviceaccount.com")
     ]
 ;;
 
@@ -272,12 +275,15 @@ let test_platform_terraform_vars () =
   let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
   let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
   match L.platform_inputs tls_cloud gcp_cloud |> Result.map L.platform_terraform_vars with
-  | Ok (Error message) ->
+  | Ok (Ok vars) ->
     Alcotest.(check bool)
-      "the refusal names the missing solver"
+      "a GCP target asking for TLS is installed, with the identity its solver \
+       authenticates as"
       true
-      (String.starts_with ~prefix:"this GCP target declares cluster_issuer" message)
-  | Ok (Ok _) -> Alcotest.fail "a GCP target asking for TLS must be refused"
+      (has
+         vars
+         "cert_manager_workload_identity_sa_email=sol-qual-cert-manager@sol-qualification.iam.gserviceaccount.com")
+  | Ok (Error message) -> Alcotest.fail message
   | Error message -> Alcotest.fail message
 ;;
 
@@ -374,11 +380,25 @@ let test_platform_vars_destruction_context () =
   let inputs = Result.get_ok (L.platform_inputs tls_cloud gcp_cloud) in
   (match L.platform_terraform_vars inputs with
    | Error message ->
+     Alcotest.fail
+       ("installation must accept a GCP target asking for TLS once the issuer path is \
+         wired          (DEC-055), but it refused: "
+        ^ message)
+   | Ok vars ->
      Alcotest.(check bool)
-       "installation still refuses a GCP target asking for TLS"
+       "installation passes cert-manager's Workload Identity service account"
        true
-       (String.starts_with ~prefix:"this GCP target declares cluster_issuer" message)
-   | Ok _ -> Alcotest.fail "installation must still refuse a GCP target asking for TLS");
+       (List.mem
+          "cert_manager_workload_identity_sa_email=sol-qual-cert-manager@sol-qualification.iam.gserviceaccount.com"
+          vars);
+     Alcotest.(check bool)
+       "installation names the project the Cloud DNS zone lives in"
+       true
+       (List.mem "cert_manager_dns01_project=sol-qualification" vars);
+     Alcotest.(check bool)
+       "and still carries the issuer the target declared"
+       true
+       (List.mem "cluster_issuer=letsencrypt-prod" vars));
   match L.platform_terraform_vars ~context:L.Destruction inputs with
   | Ok vars ->
     Alcotest.(check bool)
