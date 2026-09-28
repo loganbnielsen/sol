@@ -424,16 +424,17 @@ for m in want:
         print(f"{m}\t{value}")
         continue
     owners_name, owners_count = owners.get(m, (None, None))
-    if owners_count == 0:
-        print(f"{m}\t{value}\tno owning resource is listed ({owners_name}): the reading is "
-              "quota accounting lagging behind deletion, not residue")
-        lagging.append(m)
-    else:
+    if owners_count:
         print(f"{m}\t{value}\towned by {owners_name}")
         busy.append(m)
-print("VERDICT:" + ("PRESENT" if busy else "ABSENT"))
+    else:
+        print(f"{m}\t{value}\tno owning resource is listed ({owners_name}): the consumer is "
+              "not identified, which is UNKNOWN -- not absence")
+        lagging.append(m)
+verdict = "PRESENT" if busy else ("UNKNOWN" if lagging else "ABSENT")
+print("VERDICT:" + verdict)
 if lagging:
-    print("LAGGING:" + ";".join(lagging))
+    print("UNIDENTIFIED:" + ";".join(lagging))
 PY
   local verdict
   verdict="$(sed -n 's/^VERDICT://p' "$LOG_DIR/inventory-quota.log" | tail -1)"
@@ -445,6 +446,12 @@ PY
     PRESENT)
       say "    quota: PRESENT (some usage is non-zero; read $LOG_DIR/inventory-quota-raw.log)"
       printf 'quota\tPRESENT\tabsent\tnon-zero usage\n' >>"$INVENTORY_TSV"
+      ;;
+    UNKNOWN)
+      say "    quota: UNKNOWN (non-zero usage no listed resource accounts for -- an"
+      say "           unidentified consumer is not absence; read $LOG_DIR/inventory-quota.log)"
+      printf 'quota\tUNKNOWN\tabsent\tnon-zero usage with no identified owner\n' \
+        >>"$INVENTORY_TSV"
       ;;
     *)
       say "    quota: UNKNOWN (the usage read could not be parsed, which is not zero)"

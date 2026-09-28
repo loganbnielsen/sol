@@ -731,16 +731,17 @@ fi
 printf '\nscenario: quota verdict\n'
 has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"
 run_case quota-busy destroy STUB_QUOTA_BUSY=1
-has "non-zero usage with no owning resource reads as quota lag, not residue" \
-  "quota: ABSENT" "$TMP/quota-busy.out"
-has "and says which accounting lagged" "quota accounting lagging behind deletion" \
+has "non-zero usage with no owning resource is UNKNOWN, never absence" \
+  "quota: UNKNOWN" "$TMP/quota-busy.out"
+has "and says so in the inventory" "the consumer is not identified, which is UNKNOWN" \
   "$TMP/quota-busy.logs/inventory-quota.log"
-is "so a lagging reading does not fail a teardown that removed everything" \
-  "$(cat "$TMP/quota-busy.rc")" "0"
+is "so it does not pass as a clean teardown" "$(cat "$TMP/quota-busy.rc")" "1"
 run_case quota-residue destroy STUB_QUOTA_BUSY=1 STUB_RESIDUE_OWNER=1
 has "non-zero usage an authoritative list accounts for reads as PRESENT" "quota: PRESENT" \
   "$TMP/quota-residue.out"
 has "and names the owner class" "owned by instances" "$TMP/quota-residue.logs/inventory-quota.log"
+has "and the inventory records why" "non-zero usage with no identified owner" \
+  "$TMP/quota-busy.logs/inventory-post.tsv"
 if [ "$(cat "$TMP/quota-residue.rc")" = "0" ]; then
   no "real residue fails the verification" "non-zero" "0"
 else
