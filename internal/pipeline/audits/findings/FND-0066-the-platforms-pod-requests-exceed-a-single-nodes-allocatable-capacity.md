@@ -9,14 +9,23 @@ source: GCP qualification Attempt 16 (2026-09-27), revision c6d8a460
 
 **Depends on:** None.
 
-**State:** `FIXED_UNQUALIFIED` (GCP half) — decided and implemented 2026-09-27, not yet observed live.
-`DEC-054` chose sizing the substrate to the platform, and the drivers' defaults now adopt the shape
-`Sol_cli_profile.recommended_node_shape` already declared: GCP `node_machine_type = "e2-standard-4"`
-with `node_count = 4` (was `e2-standard-2` x 3), AWS `node_instance_types = ["m6i.xlarge"]` with
-`node_desired_size = 4` (was `m6i.large` x 3). `internal/ci/check_node_shape_fits_platform.py` and its
-mutation test hold the fit against the profile's own `platform_capacity_envelope`, with the loki cache's
-9.6 GiB as the one requirement the envelope does not yet carry. **Unqualified** means the next live
-specimen is what observes the four pods scheduling.
+**State:** `QUALIFIED` (GCP half) — fixed 2026-09-27 and **observed live** by GCP Attempt 17 on
+2026-09-28. `DEC-054` chose sizing the substrate to the platform, and the drivers' defaults now adopt the
+shape `Sol_cli_profile.recommended_node_shape` already declared: GCP `node_machine_type =
+"e2-standard-4"` with `node_count = 4` (was `e2-standard-2` x 3), AWS `node_instance_types =
+["m6i.xlarge"]` with `node_desired_size = 4` (was `m6i.large` x 3).
+`internal/ci/check_node_shape_fits_platform.py` and its mutation test hold the fit against the profile's
+own `platform_capacity_envelope`, with the loki cache's 9.6 GiB as the one requirement the envelope does
+not yet carry.
+
+Attempt 17 (`30ad9835`, fresh `qual17/gcp/us-central1`) is the live half: four nodes at
+`3920m / 13591676Ki` allocatable each — `FND-0066`'s estimate was *≈ 3.9 CPU / ≈ 13 GiB*, within 1% —
+**72 of 73 pods `Running` with none `Pending`** (Attempt 16: 58 and 4), all six PVCs `Bound`,
+`platform-apply ok (166.6s)` where it had `FAILED (695.0s)`, and
+**`lifecycle phase: Ready`** — the first time on GKE Standard. A supported `sol cloud destroy` from that
+`Ready` platform then converged to `teardown verified: absent`. Record:
+`internal/qualification/records/2026-09-28-gcp-attempt17-ready-and-the-tls-blocker.md`. The next GCP
+blocker is a different one — `FND-0067`, the ACME solver.
 
 Two residuals stay open and are recorded rather than closed:
 
