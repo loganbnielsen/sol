@@ -151,7 +151,6 @@ let cloud_init
   let* cloud_target =
     Sol_cli_cloud_lifecycle.cloud_target target_cfg |> Sol_cli_exit.of_msg
   in
-  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
   let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
   let infra_dir =
@@ -161,6 +160,7 @@ let cloud_init
     workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
   in
   let var_files = Option.to_list var_file in
+  let inputs : Sol_cli_cloud_wiring.terraform_inputs = { var_files; vars } in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
   let* () =
@@ -198,18 +198,7 @@ let cloud_init
   match action with
   | Plan ->
     let* () =
-      Sol_cli_cloud_wiring.plan
-        ~assets
-        ~run_log
-        ~provider
-        ~cloud_target
-        ~target_cfg
-        ~infra_dir
-        ~platform_dir
-        ~platform_backend
-        ~var_files
-        ~vars
-      |> of_apply_failure
+      Sol_cli_cloud_wiring.plan ~assets ~run_log ~cloud_target ~inputs |> of_apply_failure
     in
     Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!";
     Ok ()
@@ -220,16 +209,9 @@ let cloud_init
           (Sol_cli_cloud_wiring.apply_deps
              ~assets
              ~confirm_ecr_removal
-             ~provider
-             ~pname
              ~run_log
-             ~infra_dir
-             ~platform_dir
-             ~platform_backend
-             ~var_files
-             ~vars
              ~cloud_target
-             ~target_cfg)
+             ~inputs)
     in
     (match outcome with
      | Sol_cli_cloud_apply.Applied ->
@@ -296,6 +278,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~backend_config:platform_backend
   in
   let var_files = Option.to_list var_file in
+  let inputs : Sol_cli_cloud_wiring.terraform_inputs = { var_files; vars } in
   let destruction =
     Sol_cli_cloud_wiring.destruction
       ~run_log
@@ -309,15 +292,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   match action with
   | Plan ->
     let* () =
-      Sol_cli_cloud_wiring.destroy_preview
-        ~assets
-        ~run_log
-        ~provider
-        ~cloud_target
-        ~target_cfg
-        ~infra_dir
-        ~var_files
-        ~vars
+      Sol_cli_cloud_wiring.destroy_preview ~assets ~run_log ~cloud_target ~inputs
       |> Sol_cli_exit.of_msg
     in
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!";
@@ -327,13 +302,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       Sol_cli_cloud_wiring.destroy_deps
         ~assets
         ~run_log
-        ~provider
         ~cloud_target
-        ~target_cfg
-        ~infra_dir
-        ~cloud_backend
-        ~var_files
-        ~vars
+        ~inputs
         ~retention
         ~destruction
     in

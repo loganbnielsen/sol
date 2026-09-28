@@ -145,22 +145,25 @@ val network_policy_doc
   -> unit
   -> Sol_cli_yaml.document
 
-val cronjob_doc
-  :  ?secret_keys:string list
-  -> ?env:string
-  -> ns:string
-  -> name:string
-  -> image:string
-  -> schedule:string
-  -> concurrency_policy:string
-  -> backoff_limit:int
-  -> cpu:string
-  -> memory:string
-  -> workspace:string
-  -> domain:string
-  -> release_id:Sol_cli_release_id.t
-  -> unit
-  -> Sol_cli_yaml.document
+module Scheduled_workload_spec : sig
+  type t =
+    { ns : string
+    ; name : string
+    ; image : string
+    ; secret_keys : string list
+    ; env : string option
+    ; schedule : string
+    ; concurrency_policy : string
+    ; backoff_limit : int
+    ; cpu : string
+    ; memory : string
+    ; workspace : string
+    ; domain : string
+    ; release_id : Sol_cli_release_id.t
+    }
+end
+
+val cronjob_doc : Scheduled_workload_spec.t -> Sol_cli_yaml.document
 
 val migration_configmap_doc
   :  name:string

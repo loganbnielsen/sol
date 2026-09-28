@@ -1475,6 +1475,41 @@ let test_effective_authorization () =
          if args = failed then not (can_i args) else can_i args)))
 ;;
 
+let test_terraform_layout_derives_from_cloud_target () =
+  let layout_for cloud_target = Sol_cli_cloud_wiring.terraform_layout ~cloud_target in
+  let aws = Result.get_ok (L.cloud_target target) in
+  let layout = layout_for aws in
+  Alcotest.(check string) "provider name follows the target" "aws" layout.pname;
+  Alcotest.(check bool)
+    "the cluster workdir is derived from the target's provider and backend"
+    true
+    (String.equal
+       layout.infra_dir
+       (Sol_cli_terraform_workdir.chdir
+          ~provider:Sol_cli_provider.Aws
+          ~role:Sol_cli_platform_assets.Cluster
+          ~backend_config:aws.L.cloud_backend));
+  Alcotest.(check bool)
+    "the platform workdir is derived from the target's provider and backend"
+    true
+    (String.equal
+       layout.platform_dir
+       (Sol_cli_terraform_workdir.chdir
+          ~provider:Sol_cli_provider.Aws
+          ~role:Sol_cli_platform_assets.Platform
+          ~backend_config:aws.L.platform_backend));
+  Alcotest.(check bool)
+    "the two roles never share a workdir"
+    true
+    (not (String.equal layout.infra_dir layout.platform_dir));
+  let gcp = layout_for (Result.get_ok (L.cloud_target (gcp_target ()))) in
+  Alcotest.(check string) "a second provider derives its own name" "gcp" gcp.pname;
+  Alcotest.(check bool)
+    "a second provider derives a different workdir"
+    true
+    (not (String.equal layout.infra_dir gcp.infra_dir))
+;;
+
 let test_terraform_scope () =
   ignore (Sol_cli_terraform.targets "helm_release.cert_manager" []);
   Alcotest.check_raises
@@ -1576,6 +1611,10 @@ let () =
             `Quick
             test_deescalation_requires_a_transition
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
+        ; Alcotest.test_case
+            "terraform layout follows the cloud target"
+            `Quick
+            test_terraform_layout_derives_from_cloud_target
         ] )
     ]
 ;;

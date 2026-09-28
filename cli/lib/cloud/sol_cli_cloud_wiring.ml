@@ -1,5 +1,10 @@
 open Result.Syntax
 
+type terraform_inputs =
+  { var_files : string list
+  ; vars : string list
+  }
+
 let terraform_outcome = Sol_cli_terraform_steps.terraform_outcome
 let apply_asserted = Sol_cli_terraform_steps.apply_asserted
 let capabilities = Sol_cli_provider_capabilities.capabilities_of
@@ -45,6 +50,31 @@ let verification_observation
 
 let workdir provider role ~backend_config =
   Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
+;;
+
+type terraform_layout =
+  { provider : Sol_cli_provider.t
+  ; pname : string
+  ; infra_dir : string
+  ; platform_dir : string
+  ; cloud_backend : string list
+  ; platform_backend : string list
+  }
+
+let terraform_layout ~(cloud_target : Sol_cli_cloud_lifecycle.cloud_target) =
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let provider = target_cfg.Sol_cli_config.provider in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
+  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
+  { provider
+  ; pname = Sol_cli_provider.to_string provider
+  ; infra_dir =
+      workdir provider Sol_cli_platform_assets.Cluster ~backend_config:cloud_backend
+  ; platform_dir =
+      workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
+  ; cloud_backend
+  ; platform_backend
+  }
 ;;
 
 let materialize_workdir ~assets provider role ~backend_config =
@@ -225,17 +255,15 @@ let confirm_guarded_removal_flag = "confirm-ecr-removal"
 let apply_deps
       ~assets
       ~confirm_ecr_removal
-      ~provider
-      ~pname
       ~run_log
-      ~infra_dir
-      ~platform_dir
-      ~platform_backend
-      ~var_files
-      ~vars
       ~cloud_target
-      ~(target_cfg : Sol_cli_config.target)
+      ~(inputs : terraform_inputs)
   =
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let { provider; pname; infra_dir; platform_dir; platform_backend; _ } =
+    terraform_layout ~cloud_target
+  in
+  let { var_files; vars } = inputs in
   let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
   let discard_plan () =
     List.iter Sol_cli_fs.remove_reporting [ plan_file; plan_file ^ ".args" ]
@@ -414,18 +442,12 @@ let apply_deps
   }
 ;;
 
-let plan
-      ~assets
-      ~run_log
-      ~provider
-      ~cloud_target
-      ~(target_cfg : Sol_cli_config.target)
-      ~infra_dir
-      ~platform_dir
-      ~platform_backend
-      ~var_files
-      ~vars
-  =
+let plan ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs) =
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let { provider; infra_dir; platform_dir; platform_backend; _ } =
+    terraform_layout ~cloud_target
+  in
+  let { var_files; vars } = inputs in
   let refused r = Result.map_error (fun m -> Sol_cli_cloud_apply.Refused m) r in
   let* () =
     terraform_failure
@@ -520,24 +542,17 @@ let plan
          Ok ())
 ;;
 
-let destroy_preview
-      ~assets
-      ~run_log
-      ~provider
-      ~cloud_target
-      ~(target_cfg : Sol_cli_config.target)
-      ~infra_dir
-      ~var_files
-      ~vars
+let destroy_preview ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs)
   : (unit, string) result
   =
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let { provider; infra_dir; platform_dir; platform_backend; _ } =
+    terraform_layout ~cloud_target
+  in
+  let { var_files; vars } = inputs in
   let* () =
     match cluster_of ~target_cfg provider infra_dir with
     | Ok (Some cluster) ->
-      let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-      let platform_dir =
-        workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
-      in
       let* platform_vars =
         platform_vars_of_result
           ~context:Sol_cli_cloud_lifecycle.Destruction
@@ -601,17 +616,17 @@ let destruction
 let destroy_deps
       ~assets
       ~run_log
-      ~provider
       ~cloud_target
-      ~(target_cfg : Sol_cli_config.target)
-      ~infra_dir
-      ~cloud_backend
-      ~var_files
-      ~vars
+      ~(inputs : terraform_inputs)
       ~retention
       ~(destruction : Sol_cli_destruction.t)
   : Sol_cli_cloud_destroy.deps
   =
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let { provider; infra_dir; platform_dir; cloud_backend; platform_backend; _ } =
+    terraform_layout ~cloud_target
+  in
+  let { var_files; vars } = inputs in
   let state_ref = ref Sol_cli_cloud_destroy.State_empty in
   let prepared_ref = ref Sol_cli_cloud_destroy.Nothing_prepared in
   let cluster_ref = ref None in
@@ -641,10 +656,6 @@ let destroy_deps
        | None -> workspace_name ())
   in
   let destroy_platform_result ~cluster () : (unit, string) result =
-    let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-    let platform_dir =
-      workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
-    in
     let* platform_vars =
       platform_vars_of_result
         ~context:Sol_cli_cloud_lifecycle.Destruction

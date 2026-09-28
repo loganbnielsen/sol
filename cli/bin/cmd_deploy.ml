@@ -54,19 +54,22 @@ let print_header ~workspace ~sha ?mode_line () =
 ;;
 
 let build_plan (ctx : Sol_cli_deploy_run.context) ~emit_to =
+  let input : Sol_cli_deploy_selection.Planning_input.t =
+    { workspace = ctx.execution.workspace
+    ; registry = ctx.registry
+    ; sha = ctx.sha
+    ; emit_to
+    ; secret_backend = ctx.secret_backend
+    ; config = ctx.resolved_config
+    ; facts = ctx.facts
+    ; inventory = ctx.inventory
+    ; requested_scope = ctx.requested_scope
+    ; image_refs = ctx.image_refs
+    ; services = ctx.services
+    }
+  in
   let* plan =
-    Sol_cli_deploy_selection.plan
-      ~workspace:ctx.execution.workspace
-      ~registry:ctx.registry
-      ~sha:ctx.sha
-      ~emit_to
-      ~secret_backend:ctx.secret_backend
-      ~config:ctx.resolved_config
-      ~facts:ctx.facts
-      ~inventory:ctx.inventory
-      ~requested_scope:ctx.requested_scope
-      ~image_refs:ctx.image_refs
-      ctx.services
+    Sol_cli_deploy_selection.plan input
     |> Result.map_error (function
       | Sol_cli_deploy_selection.Refused message -> Sol_cli_exit.error message
       | Preflight (profile, findings) ->
