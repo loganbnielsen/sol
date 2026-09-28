@@ -18,11 +18,15 @@ outer operation readable in one pass. Keep short familiar expressions inline.
 
 ### Explicit domain grouping
 
-For a single unchanged handoff, consider direct monadic composition instead of a
-`let*` name with no semantic purpose. Keep the binding when it names a useful phase,
-has multiple uses, needs transformations/additional arguments, or clarifies types and
-control flow. Standard `Result.bind` and `Option.bind` take their value first; a pipeline
-uses the repository's existing `Fun.flip Result.bind` form. Introduce no new operator.
+Single-use unchanged handoffs are candidates, not automatic findings. Remove a binding
+only when its name adds no domain meaning and direct composition is clearer.
+`let* cfg = apply ... in Ok cfg` should simply be `apply ...`; retain
+`let* creds_json = classify_imdsv2_response ... in resolved_of_json_credentials creds_json`
+because it identifies a meaningful phase. Keep bindings for reuse, transformations,
+additional arguments, clearer types/control flow, or whenever prefix `Result.bind`
+would make the reader work harder. Standard `Result.bind` and `Option.bind` take their
+value first; piped bind requires the existing `Fun.flip Result.bind` form, not plain
+`|> Result.bind f`. Introduce no new operator or line-count objective.
 
 When arguments travel together as one real concept, represent that concept with an
 existing or named record/variant. Labels alone do not make a 20-argument API cohesive.

@@ -96,9 +96,11 @@ let run_cmd =
           CronJob controller's own scheduled runs, never a manual one.")
     Term.(
       const (fun selector target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"fn run" target in
-           run ~ctx selector))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"fn run" target in
+          run ~ctx selector
+        in
+        Sol_cli_exit.exit_on result)
       $ selector_arg
       $ Cmd_destination.target_arg)
 ;;

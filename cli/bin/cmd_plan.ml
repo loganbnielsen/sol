@@ -40,23 +40,23 @@ let run target_name =
   if resources = [] then Printf.printf "  (none)\n";
   resources
   |> List.iter (fun (r : Sol_cli_config.resource) ->
-    Printf.printf
-      "  - %s%s\n"
-      r.name
-      (match r.typ with
-       | None -> ""
-       | Some t -> " (" ^ t ^ ")");
+    let type_suffix =
+      match r.typ with
+      | None -> ""
+      | Some t -> " (" ^ t ^ ")"
+    in
+    Printf.printf "  - %s%s\n" r.name type_suffix;
     List.iter print_index r.indexes);
   Printf.printf "\nServices:\n";
   if services = [] then Printf.printf "  (none)\n";
   services
   |> List.iter (fun s ->
-    Printf.printf
-      "  - %s%s\n"
-      s.Sol_cli_config.name
-      (match s.typ with
-       | None -> ""
-       | Some t -> " (" ^ t ^ ")");
+    let type_suffix =
+      match s.Sol_cli_config.typ with
+      | None -> ""
+      | Some t -> " (" ^ t ^ ")"
+    in
+    Printf.printf "  - %s%s\n" s.Sol_cli_config.name type_suffix;
     print_opt "path" s.path;
     if s.uses <> []
     then

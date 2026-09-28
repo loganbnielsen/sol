@@ -50,8 +50,10 @@ let headers ~env ?trace_ctx ?(headers = []) () =
   | Error _ as err -> err
   | Ok key ->
     let headers = put_header "x-api-key" key headers in
-    Ok
-      (match trace_ctx with
-       | None -> headers
-       | Some ctx -> Obs_trace.inject_to_headers ctx headers)
+    let authenticated_headers =
+      match trace_ctx with
+      | None -> headers
+      | Some ctx -> Obs_trace.inject_to_headers ctx headers
+    in
+    Ok authenticated_headers
 ;;

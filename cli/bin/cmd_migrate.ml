@@ -99,10 +99,12 @@ let report_job_logs ~ctx (job : Sol_cli_migration_job.job) =
   Printf.printf "\n--- migration Job logs (%s) ---\n%!" job.job_name;
   (match Sol_cli_migration_job.logs ~ctx job with
    | Ok logs ->
-     print_string
-       (match Sol_cli_string.env "POSTGRES_URL" with
-        | Some url -> Sol_cli_redaction.connection_error ~url logs
-        | None -> logs)
+     let redacted_logs =
+       match Sol_cli_string.env "POSTGRES_URL" with
+       | Some url -> Sol_cli_redaction.connection_error ~url logs
+       | None -> logs
+     in
+     print_string redacted_logs
    | Error e -> Printf.eprintf "warning: could not fetch job logs: %s\n" e);
   Printf.printf "--- end logs ---\n\n%!"
 ;;

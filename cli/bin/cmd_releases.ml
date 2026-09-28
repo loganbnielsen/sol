@@ -27,9 +27,11 @@ let cmd =
           up' and 'sol deploy'.")
     Term.(
       const (fun target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"releases" target in
-           run ~ctx ()))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"releases" target in
+          run ~ctx ()
+        in
+        Sol_cli_exit.exit_on result)
       $ Cmd_destination.target_arg)
 ;;
 

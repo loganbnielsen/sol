@@ -498,19 +498,21 @@ let cmd =
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
       const (fun scope dry_run tag confirm_group_change keep_releases ->
-        Sol_cli_exit.exit_on
-          (let* req =
-             Sol_cli_command_request.make_up_request
-               ~scope
-               ~dry_run
-               ~tag
-               ~confirm_group_change
-               ~keep_releases
-               ~git_sha:Sol_cli_command_request.git_sha
-             |> Sol_cli_exit.of_msg
-           in
-           Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
-           run req))
+        let result =
+          let* req =
+            Sol_cli_command_request.make_up_request
+              ~scope
+              ~dry_run
+              ~tag
+              ~confirm_group_change
+              ~keep_releases
+              ~git_sha:Sol_cli_command_request.git_sha
+            |> Sol_cli_exit.of_msg
+          in
+          Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
+          run req
+        in
+        Sol_cli_exit.exit_on result)
       $ scope_arg
       $ dry_run_flag
       $ tag_arg
