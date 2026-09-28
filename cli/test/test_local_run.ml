@@ -278,6 +278,87 @@ let test_shell_lines () =
     (Sol_cli_local_run.launch_line (command [ "node"; "dist/main.js" ] "."))
 ;;
 
+let index_of haystack needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length haystack
+    then None
+    else if String.sub haystack i n = needle
+    then Some i
+    else go (i + 1)
+  in
+  go 0
+;;
+
+let test_command_preserves_build_launch_phases () =
+  let executable =
+    if Filename.is_relative Sys.executable_name
+    then Filename.concat (Sys.getcwd ()) Sys.executable_name
+    else Sys.executable_name
+  in
+  let sol =
+    Filename.concat (Filename.dirname (Filename.dirname executable)) "bin/main.exe"
+  in
+  let check build_exit expected_phases expected_success =
+    with_workspace ts_workspace (fun root ->
+      let bin = Filename.concat root "fake-bin" in
+      let log = Filename.concat root "phases" in
+      let npm = Filename.concat bin "npm" in
+      let node = Filename.concat bin "node" in
+      write_file
+        npm
+        "#!/bin/sh\n\
+         echo build >> \"$SOL_TEST_PHASE_LOG\"\n\
+         exit \"$SOL_TEST_BUILD_EXIT\"\n";
+      write_file
+        node
+        "#!/bin/sh\necho launch >> \"$SOL_TEST_PHASE_LOG\"\necho child-output\n";
+      Unix.chmod npm 0o755;
+      Unix.chmod node 0o755;
+      let path = bin ^ ":" ^ Option.value (Sys.getenv_opt "PATH") ~default:"" in
+      let result =
+        Sol_cli_process.run
+          ~echo:false
+          (Sol_cli_process.cmd
+             ~timeout_s:10.
+             ~env:
+               [ "PATH", path
+               ; "SOL_TEST_PHASE_LOG", log
+               ; "SOL_TEST_BUILD_EXIT", string_of_int build_exit
+               ]
+             [ sol; "local"; "run"; "--workspace"; root ])
+      in
+      check_bool "command success" expected_success (Result.is_ok result);
+      let phases = In_channel.with_open_text log In_channel.input_all in
+      check_string "build gates launch" expected_phases phases;
+      let stdout =
+        match result with
+        | Ok completed -> completed.stdout
+        | Error (Sol_cli_process.Non_zero failure) -> failure.stdout
+        | Error _ -> ""
+      in
+      let precedes before after =
+        match index_of stdout before, index_of stdout after with
+        | Some i, Some j -> i < j
+        | _ -> false
+      in
+      check_bool
+        "the plan report precedes the build"
+        true
+        (precedes "Starting 1 service(s)" "Building...");
+      check_bool
+        "Build done. is reported only on success"
+        expected_success
+        (Option.is_some (index_of stdout "Build done."));
+      check_bool
+        "the build precedes the launch"
+        expected_success
+        (precedes "Building..." "Services running"))
+  in
+  check 0 "build\nlaunch\n" true;
+  check 7 "build\n" false
+;;
+
 let () =
   Alcotest.run
     "sol_cli_local_run"
@@ -300,6 +381,12 @@ let () =
             test_a_mixed_selection_uses_both_adapters
         ] )
     ; "shell lines", [ Alcotest.test_case "build and launch" `Quick test_shell_lines ]
+    ; ( "command phases"
+      , [ Alcotest.test_case
+            "build gates launch"
+            `Quick
+            test_command_preserves_build_launch_phases
+        ] )
     ; ( "refusals"
       , [ Alcotest.test_case
             "an undeclared workload"

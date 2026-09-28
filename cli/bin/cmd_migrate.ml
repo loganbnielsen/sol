@@ -95,6 +95,52 @@ let run_apply_local ~ctx dir table dry_run =
       Ok ())
 ;;
 
+let report_job_logs ~ctx (job : Sol_cli_migration_job.job) =
+  Printf.printf "\n--- migration Job logs (%s) ---\n%!" job.job_name;
+  (match Sol_cli_migration_job.logs ~ctx job with
+   | Ok logs ->
+     let redacted_logs =
+       match Sol_cli_string.env "POSTGRES_URL" with
+       | Some url -> Sol_cli_redaction.connection_error ~url logs
+       | None -> logs
+     in
+     print_string redacted_logs
+   | Error e -> Printf.eprintf "warning: could not fetch job logs: %s\n" e);
+  Printf.printf "--- end logs ---\n\n%!"
+;;
+
+let report_job_outcome (outcome : Sol_cli_migration_job.outcome) =
+  match outcome with
+  | Timed_out s -> Printf.eprintf "error: migration Job did not complete within %.0fs\n" s
+  | Unstartable { reason; detail } ->
+    Printf.eprintf
+      "error: migration Job cannot start: %s%s\n"
+      reason
+      (Option.fold detail ~none:"" ~some:(Printf.sprintf " (%s)"))
+  | Succeeded | Failed -> ()
+;;
+
+let finish_job (outcome : Sol_cli_migration_job.outcome) =
+  match outcome with
+  | Succeeded ->
+    Printf.printf "Done.\n";
+    Ok ()
+  | Failed | Unstartable _ | Timed_out _ ->
+    Error "migration Job failed -- see logs above."
+;;
+
+let run_migration_job ~ctx ~namespace (job : Sol_cli_migration_job.job) =
+  Printf.printf
+    "Submitting migration Job %s in namespace %s...\n%!"
+    job.job_name
+    namespace;
+  let outcome = Sol_cli_migration_job.wait ~ctx ~interval_s:2. ~attempts:150 job in
+  report_job_logs ~ctx job;
+  report_job_outcome outcome;
+  Sol_cli_migration_job.cleanup ~ctx job;
+  finish_job outcome
+;;
+
 let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   let* cfg =
     Sol_cli_config.load_for_target ~target
@@ -131,38 +177,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
         ~args:[ "migrate"; "apply"; "--dir"; "/migrations"; "--table"; table ]
         ~files
     in
-    Printf.printf
-      "Submitting migration Job %s in namespace %s...\n%!"
-      job.job_name
-      namespace;
-    let outcome = Sol_cli_migration_job.wait ~ctx ~interval_s:2. ~attempts:150 job in
-    Printf.printf "\n--- migration Job logs (%s) ---\n%!" job.job_name;
-    (match Sol_cli_migration_job.logs ~ctx job with
-     | Ok logs ->
-       let redacted_logs =
-         match Sol_cli_string.env "POSTGRES_URL" with
-         | Some url -> Sol_cli_redaction.connection_error ~url logs
-         | None -> logs
-       in
-       print_string redacted_logs
-     | Error e -> Printf.eprintf "warning: could not fetch job logs: %s\n" e);
-    Printf.printf "--- end logs ---\n\n%!";
-    (match outcome with
-     | Timed_out s ->
-       Printf.eprintf "error: migration Job did not complete within %.0fs\n" s
-     | Unstartable { reason; detail } ->
-       Printf.eprintf
-         "error: migration Job cannot start: %s%s\n"
-         reason
-         (Option.fold detail ~none:"" ~some:(Printf.sprintf " (%s)"))
-     | Succeeded | Failed -> ());
-    Sol_cli_migration_job.cleanup ~ctx job;
-    match outcome with
-    | Succeeded ->
-      Printf.printf "Done.\n";
-      Ok ()
-    | Failed | Unstartable _ | Timed_out _ ->
-      Error "migration Job failed -- see logs above."
+    run_migration_job ~ctx ~namespace job
 ;;
 
 let require_valid_migrations dir = Sol_cli_migration.required ~dir |> Result.map ignore
