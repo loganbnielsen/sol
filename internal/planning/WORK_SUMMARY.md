@@ -313,6 +313,49 @@
 - REFAC-144 is queued on required CI; REFAC-145 waits for its shared-summary merge.
   REFAC-146/147 and the remaining generalized sweeps continue autonomously.
 
+## Rollback release resolution readability (2026-09-28)
+
+- Flattened release-id/commit/scope validation into one tuple match and extracted commit resolution. Successful resolution returns the release id without printing; rollback execution already reports the selected release.
+- Added command-boundary checks for scope-without-commit and conflicting release-id/commit inputs, including their combinations. No framework or language-parity impact; no demo change applies to this internal refactor.
+- Validation: CLI build, all 50 rollback tests, command-boundary smoke checks (including the four added combinations), OCaml formatting, and diff whitespace checks pass.
+- Reused `Sol_cli_result.map_list` for sequential spec application, discarding its unit results. Per-spec output remains live progress, so successful applies remain visible if a later apply fails.
+
+## Alert-test controller boundary (2026-09-28)
+
+- `Sol_cli_alert_operation.test` loads and validates the target, builds the request and returns typed dry-run/accepted outcomes or configuration, delivery, rejection and transport errors. `cmd_alert.run_test` owns terminal prose and exit mapping, preserving configuration failure exit 1 and delivery validation exit 2.
+- The accepted outcome records the destination URL. The former pre-send message is emitted after acceptance; delivery/acknowledgement evidence remains explicitly separate from command acceptance.
+- Existing pluto alert configuration exercises dry-run payload and typed rejection. No framework/language-parity impact; the existing runnable example remains applicable.
+- Validation: CLI build, four alert tests, formatting and diff whitespace checks pass.
+
+## Asset inspection semantic outcome (2026-09-28)
+
+- Asset inspection returns a report with `All_present` or `Missing_assets` and typed asset-resolution errors. The command controller owns success prose, failure messages and exit conversion; the report no longer carries `Sol_cli_exit.failure`.
+- Internal refactor only; no demo or language-parity impact.
+- Validation: CLI build, complete-checkout success and missing-assets failure smoke checks, formatting and diff whitespace checks pass.
+
+## Migration Cmdliner adapters (2026-09-28)
+
+- Named the status, rollback and local-apply controller adapters so Cmdliner declarations describe command structure. Argument defaults still resolve from the working directory when their terms execute.
+- Checked the target help text: the source already contains the correct em dash in `machine — required`; no encoding edit needed. Internal refactor; no demo or language-parity impact.
+- Validation: CLI build, command-boundary smoke and duplicate-migration failure checks through all three adapters, formatting and diff whitespace checks pass.
+
+## Local infrastructure deployment phases (2026-09-28)
+
+- Named repository setup `prepare_helm_repositories_best_effort`, preserving immediate warnings and continuation when Helm repository add/update fails. Existing repository/cache state may still support installation; actual Helm installation remains authoritative.
+- Replaced the misleading unit-returning `helm_install` and global pending queue with explicit `Sol_cli_local_infra.install` values consumed by `install_releases`. Bounded execution propagates installation failure before Grafana configuration.
+- Internal orchestration refactor; existing local platform example remains applicable, with no language-parity impact.
+- Validation: CLI build, three bounded-install tests (including failure stopping new jobs), eight local-platform tests, formatting and diff whitespace checks pass.
+
+## CLI controller cleanup PR validation (2026-09-28)
+
+- Self-reviewed the combined rollback, alert, assets, migration and local-install changes. Updated bounded-output assertions for the post-acceptance alert message and empty stdout on rejection; typed target/delivery errors are checked alongside dry-run and transport rejection.
+- Full `dune runtest cli/test` passes with CI-pinned kubectl v1.29.0 supplied from a temporary tools directory. Staged formatting, no-comments (681 files), and whitespace checks pass. Live cluster integration is unavailable because Docker is not accessible in this WSL environment.
+
+## PR #670 live integration follow-up (2026-09-28)
+
+- After Docker became available, ran `PATH=/tmp/sol-pr-tools:$PATH bash internal/tooling/scripts/run_tests.sh kafka e2e`. All 15 Kafka integration cases and all nine demo golden-workflow checks pass, including Loki queries, persisted orders and completed confirmation-email jobs.
+- The runner exits 2 for its Kafka performance threshold: repeat duration 10.526 seconds against a recorded 1.275-second baseline (1.4x threshold). E2E repeat duration is 1.245 seconds against 1.278 seconds. This records functional success separately from the observed timing warning; the informational baseline was not changed.
+
 ## Advisory AST parameter linter (2026-09-28)
 
 - Added `internal/tooling/style_audit` using installed OCaml compiler libraries and existing Yojson. It scans `.ml`/`.mli` files for parameter sprawl and name families, reports source locations and counts in text/JSON, and leaves findings advisory. Parse and path errors remain failures.

@@ -83,7 +83,7 @@ let test_bounded_command_bytes () =
        let alert = run [ "alert"; "test"; "--target"; "prod/aws/us-east-1" ] in
        Alcotest.(check string)
          "alert stdout"
-         "Sending a synthetic alert through http://127.0.0.1:9093/api/v2/alerts ...\n\
+         "Sent a synthetic alert through http://127.0.0.1:9093/api/v2/alerts.\n\
           Alertmanager accepted the synthetic alert.\n\n\
           This proves the route is configured and reachable. Confirm the named owner \
           received and acknowledged it: that delivered-and-acknowledged result is the \
@@ -102,10 +102,7 @@ let test_bounded_command_bytes () =
        match run_result [ "alert"; "test"; "--target"; "prod/aws/us-east-1" ] with
        | Error (Non_zero failure) ->
          Alcotest.(check int) "rejected alert exit" 1 failure.exit_code;
-         Alcotest.(check string)
-           "rejected alert stdout"
-           "Sending a synthetic alert through http://127.0.0.1:9093/api/v2/alerts ...\n"
-           failure.stdout;
+         Alcotest.(check string) "rejected alert stdout" "" failure.stdout;
          Alcotest.(check string)
            "rejected alert stderr"
            "error: Alertmanager rejected the synthetic alert (curl exit 7).\n\
