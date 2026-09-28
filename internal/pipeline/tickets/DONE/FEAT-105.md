@@ -115,3 +115,12 @@ commands; the live invocation above exercises them. No app demo or language-pari
 change applies. Repository skills and the separately authorized local PR skill
 were updated using skill-creator guidance: concise proportional validation and
 one satisfactory selected review, not a universal fresh-reviewer loop.
+
+## Post-merge verification
+
+Implementation PR #649 squash-auto-merged as `15481ccb` after required CI passed.
+Both FEAT-105 and BUG-066 are now DONE on main. The trusted exact-source validator
+cache for the merged code is published under `refs/heads/main` with key suffix
+`dfc4bffdf6fce5571908714c723809879400327e2b1f2b6967c3ab2ab555452d`.
+This Markdown-only follow-up checks the fast path after the merge tooling itself
+changed; any cache miss still takes the full fail-safe validation path.
