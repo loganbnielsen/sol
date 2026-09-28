@@ -502,13 +502,15 @@ let observability_options_term =
 let run_term ~local ~target_term =
   Term.(
     const (fun scope release follow tail observability target ->
-      Sol_cli_exit.exit_on
-        (let* ctx =
-           if local
-           then Ok Cmd_destination.local
-           else Cmd_destination.remote ~command:"logs" target
-         in
-         run ~ctx ~target { scope; release; follow; tail; observability }))
+      let result =
+        let* ctx =
+          if local
+          then Ok Cmd_destination.local
+          else Cmd_destination.remote ~command:"logs" target
+        in
+        run ~ctx ~target { scope; release; follow; tail; observability }
+      in
+      Sol_cli_exit.exit_on result)
     $ scope_arg
     $ release_arg
     $ follow_term

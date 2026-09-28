@@ -161,6 +161,11 @@ let observe_decode_error ~ot ~topic_name =
     match ot with
     | None -> ()
     | Some o ->
+      let message =
+        match disposition with
+        | `Dropped -> "sol-worker: decode error, skipping message"
+        | `Dead_lettered -> "sol-worker: decode error, routing message to the DLQ"
+      in
       Obs_eio.log_standalone
         o
         Obs_eio.Error
@@ -170,9 +175,7 @@ let observe_decode_error ~ot ~topic_name =
             , string_of_int (Option.fold ~none:0 ~some:Bytes.length raw_bytes) )
           ; "topic", topic_name
           ]
-        (match disposition with
-         | `Dropped -> "sol-worker: decode error, skipping message"
-         | `Dead_lettered -> "sol-worker: decode error, routing message to the DLQ")
+        message
 ;;
 
 let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
