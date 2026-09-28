@@ -1,5 +1,31 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: GCP Attempt 19 — the TLS path is qualified (2026-09-28)
+
+- **The whole path works, end to end, on a fresh target** (`352fd870`, `qual19/gcp/us-central1`,
+  `cluster_issuer: letsencrypt-staging` declared): `platform-apply ok (180.5s)`, lifecycle **`Ready`**,
+  80 pods running and none pending, both issuers deployed with `dns01.cloudDNS.project =
+  sol-qualification`, the cert-manager pod annotated with its GSA, both ACME orders **valid**, both
+  platform certificates **`Ready=True`**.
+- **Verified independently, not inferred.** A TLS connection to the LoadBalancer IP with the hostname as
+  SNI returns a certificate whose subject and SAN are that hostname, issued by the ACME *staging* CA, and
+  the service answers over it (307 for Argo CD, 302 for Grafana).
+- **The least-privilege design held as written** — an eight-permission record role bound on the managed
+  zone, a two-permission zone-discovery role at project level, and nothing else but
+  `roles/iam.workloadIdentityUser` for `cert-manager/cert-manager`. Nothing had to be widened, which is
+  the evidence that the permission list is right rather than merely sufficient.
+- **Attempt 18 is why this took two specimens**: the first version built the solver from a
+  provider-conditional local, and the `kubernetes_manifest` provider could not coerce the unified type —
+  which also blocked the *destroy*, so the substrate stood until the module was fixed and Sol's own
+  destroy could converge it. Recorded in
+  `internal/qualification/records/2026-09-28-gcp-attempt18-issuer-manifest-type-failure.md`.
+- **`FND-0067` → `QUALIFIED` (GCP half)**; `INV-SUBSTRATE-1`'s ingress realization is qualified on GCP.
+  AWS stays unqualified (no AWS run has reached a platform install).
+- Two observations recorded, not acted on: neither provider publishes A records for the platform's own
+  ingress hostnames (so name→address is outside Sol today), and the run's environment cannot resolve
+  public DNS, so the certificate claim was verified by SNI against the IP, which is the stronger of the
+  two for that claim.
+
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
 - **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets
