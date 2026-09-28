@@ -147,6 +147,7 @@ $TARGET_ENV:
       state_bucket: $STATE_BUCKET
 
       gcp:
+        project_id: $PROJECT
         provisioner_impersonator: $IMPERSONATOR
 
       destroy_retention: none
@@ -1131,6 +1132,7 @@ $TARGET_ENV:
       state_bucket: $STATE_BUCKET
 
       gcp:
+        project_id: $PROJECT
         provisioner_impersonator: $IMPERSONATOR
 
       kube_context: $(app_kube_context)

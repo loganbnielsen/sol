@@ -293,11 +293,14 @@ let aws_no_ebs_volumes ~region ~cluster_name =
       ]
 ;;
 
-let aws_orphan_sweep ~pre_destroy ~region ~cluster =
+let aws_orphan_sweep ~pre_destroy ~region ~cluster ~(target_cfg : Sol_cli_config.target) =
   let cluster_name =
     match state_name pre_destroy "aws_eks_cluster" with
     | Some _ as name -> name
-    | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
+    | None ->
+      (match Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster with
+       | Some _ as name -> name
+       | None -> target_cfg.cluster_name)
   in
   let cluster_probes, cluster_gap =
     match cluster_name with
@@ -309,8 +312,9 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
     | None ->
       ( []
       , [ "the AWS residue checks could not establish the target's cluster name from \
-           Terraform state or the install outputs, so its tag-derived checks were not \
-           run"
+           Terraform state, the install outputs or the target's own cluster_name \
+           declaration, so its tag-derived checks were not run -- an observation that \
+           did not run cannot establish absence"
         ] )
   in
   orphan_sweep ~gaps:cluster_gap cluster_probes
@@ -612,7 +616,11 @@ let destruction ctx : Sol_cli_destruction.t =
         observe_retention ~region:ctx.target.region ~retention ~pre_destroy ~preparation)
   ; residue =
       (fun ~pre_destroy ~cluster ->
-        aws_orphan_sweep ~pre_destroy ~region:ctx.target.region ~cluster)
+        aws_orphan_sweep
+          ~pre_destroy
+          ~region:ctx.target.region
+          ~cluster
+          ~target_cfg:ctx.target)
   ; before_substrate_destroy = before_substrate_destroy ctx
   }
 ;;

@@ -9,9 +9,41 @@ source: GCP qualification Attempt 21 (2026-09-28), revision c6e16a69
 
 **Depends on:** None.
 
-**State:** `OPEN` — observed live, evidence below, no remediation attempted. Reported rather than fixed:
-the second half (a destroy that cannot converge a failed substrate) touches the destroy phase policy,
-which is a product decision about what a destroy may do to a resource it cannot replace.
+**State:** `FIXED` — remediated offline with regression coverage and then exercised live against this
+finding's own residue, which the corrected path converged with no manual action
+(`internal/qualification/records/2026-09-28-fnd0069-live-regression-attempt21-residue.md`).
+
+## Fix (2026-09-28)
+
+**The absence claim is the library's verdict, not the reporter's aside.** `cmd_cloud_tf` printed
+`destruction reached absence with N degraded preparation(s)` on the failure path as well as the success
+path. It is replaced by `Sol_cli_cloud_destroy.completion_message`, so the claim exists once and only for
+a destruction whose verification established absence; the failure path says destruction did not converge
+and that nothing in the run establishes the resources are gone. Verified absence, remaining resources and
+failed observation keep the distinctions the verification already modelled — violations versus unknowns,
+with `UNKNOWN is not absence` — and an **inconclusive residue probe is now an unknown** rather than a
+silent clean sweep (`classify` had been ignoring the sweep's `indeterminate` list while the same report
+called it "not absence").
+
+**A broken resource cannot make the substrate immortal.** The elevated bootstrap access is a
+`ClusterRoleBinding` inside the cluster, so it is removed *with* the cluster; refusing to destroy the
+substrate because it could not be unbound inverted the order and made a broken cluster permanent. A
+cleanup failure is now a degradation — recorded, visible, and the substrate destroy proceeds, with the
+absence check deciding. Two boundaries are unchanged: a *substrate destroy that fails* still fails the
+run, and a *platform teardown that fails* still blocks, because the platform root can own resources
+outside the cluster that do not disappear with it.
+
+**`replace` is still refused**, per design: it is reconciliation toward a resource being present, and
+during destruction the desired state is absence. The guard preparation's purpose — lowering deletion
+protection before deletion — is belt-and-braces: the destroy passes `gke_deletion_protection=false` and
+`sql_deletion_protection=false` itself (`destroy_guard_vars`), so a degraded guard preparation cannot
+prevent deletion. No provider-side deletion logic was added and Terraform's graph is not duplicated: the
+authority stays Terraform's state, the provider's residue sweep, and the final verdict.
+
+**Regression coverage** (`cli/test/test_cloud_destroy.ml`): an unremovable binding does not immobilise
+the substrate (destroyed, verified, exit 0, every fact preserved); a destroy that cannot converge exits
+non-zero and claims no absence; residue the state does not own is not absence; an inconclusive probe is an
+unknown, not a clean sweep. Three tests that encoded the old contract were re-based rather than deleted.
 
 ## Observed (GCP qualification Attempt 21)
 

@@ -637,6 +637,45 @@ let test_residue_the_state_does_not_own_is_not_absence () =
     (contains (Str.regexp_string "reached verified absence") message)
 ;;
 
+let test_inconclusive_residue_probe_is_unknown () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        { Sol_cli_destroy_verification.state = State_absent
+        ; sweep =
+            Sweep_ran
+              { residues = []
+              ; indeterminate =
+                  [ "the GCP residue check could not establish the target's project, so \
+                     the service-networking peering check was not run"
+                  ]
+              }
+        ; retention = Retention_not_required "this fixture declares no retention"
+        })
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed message; _ } ->
+     Alcotest.(check bool)
+       "a probe that did not run is not absence"
+       true
+       (contains (Str.regexp_string "cannot establish absence") message
+        && contains (Str.regexp_string "peering check was not run") message)
+   | _ ->
+     Alcotest.fail
+       "an inconclusive residue probe must make absence unestablished, not assumed");
+  Alcotest.(check int)
+    "so the destroy reports it rather than exiting 0"
+    exit_failure
+    (exit_code outcome);
+  Alcotest.(check bool)
+    "and claims no absence"
+    false
+    (contains (Str.regexp_string "reached verified absence") (completion_message outcome))
+;;
+
 let test_block_preparation_failure_blocks_destruction () =
   let deps, calls =
     fake_deps
@@ -1131,6 +1170,10 @@ let () =
             "residue the state does not own is not absence"
             `Quick
             test_residue_the_state_does_not_own_is_not_absence
+        ; Alcotest.test_case
+            "an inconclusive residue probe is an unknown"
+            `Quick
+            test_inconclusive_residue_probe_is_unknown
         ; Alcotest.test_case
             "block failure blocks destruction"
             `Quick
