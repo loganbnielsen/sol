@@ -110,6 +110,9 @@ STUB
 
 cat >"$TMP/bin/gcloud" <<'STUB'
 #!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "auth configure-docker") exit 0 ;;
+esac
 gcloud_log_to="$ARGV_LOG"
 case " $* " in *"value(endpoint)"*) gcloud_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf "gcloud %s" "$*" >>"$gcloud_log_to"; printf "\n" >>"$gcloud_log_to"
@@ -377,6 +380,10 @@ run_case() {
     printf '# Written by internal/qualification/gcp/live-qual.sh (test preseed)\nqual:\n  targets:\n    gcp/us-central1:\n      cluster_name: test-cluster\n      base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
   fi
   rm -rf "$LOG_DIR"
+  if [ "${PRESEED_CREDENTIALS:-0}" = "1" ]; then
+    mkdir -p "$LOG_DIR"
+    printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
+  fi
   env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
@@ -396,6 +403,10 @@ run_case_without_a_phase() {
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
   rm -rf "$LOG_DIR"
+  if [ "${PRESEED_CREDENTIALS:-0}" = "1" ]; then
+    mkdir -p "$LOG_DIR"
+    printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
+  fi
   env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
@@ -424,6 +435,54 @@ has "the harness's own narrative is part of the bundle" "phase: cloud-apply" \
   "$TMP/cloud-ok.logs/harness.log"
 has "and it opens with the revision the attempt ran from" "environment: work tree" \
   "$TMP/cloud-ok.logs/harness.log"
+
+cat >"$TMP/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"${DOCKER_LOG:-/dev/null}"
+exit 0
+STUB
+chmod +x "$TMP/bin/docker"
+
+printf '\nscenario: the application rows build, push, deploy and verify the transaction\n'
+mv "$TMP/bin/curl" "$TMP/bin/curl.delegation"
+cat >"$TMP/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in
+  *"/charges"*) printf '{"id":"ch_qual01","accepted":true}' ;;
+  *"/notifications"*) printf '[{"id":"ch_qual01","amount_cents":4999}]' ;;
+  *) printf 'ok' ;;
+esac
+STUB
+chmod +x "$TMP/bin/curl"
+export DOCKER_LOG="$TMP/app-docker.argv"
+: >"$DOCKER_LOG"
+PRESEED_CREDENTIALS=1 run_case app-ok app
+mv "$TMP/bin/curl.delegation" "$TMP/bin/curl"
+is "the app phase exits 0 when every step succeeds" "$(cat "$TMP/app-ok.rc")" "0"
+has "it builds each image from that service's own Dockerfile" \
+  "docker build -f app/payments/charge_svc/Dockerfile" "$DOCKER_LOG"
+has "and pushes it into the target's Artifact Registry under the workspace's name" \
+  "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/charge-svc:qual-" "$DOCKER_LOG"
+has "the workspace's migrations are applied before the deploy" "migrate apply" "$TMP/app-ok.argv"
+has "the deploy is given the target's own registry" \
+  "--registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" "$TMP/app-ok.argv"
+has "and a tag unique to the run" "--image-tag qual-" "$TMP/app-ok.argv"
+lacks "the app target selects no profile, so the row claims none of its guarantees" "profile:" "$TARGET_FILE"
+has "the target names the cluster's own kube context" \
+  "kube_context: gke_sol-qualification_us-central1_test-cluster" "$TARGET_FILE"
+has "the target declares the resource pair the transaction uses" "events: {}" "$TARGET_FILE"
+has "and the service pair whose transaction it exercises" "charge_svc: {}" "$TARGET_FILE"
+has "the service whose ingress host is outside any zone Sol can issue for is omitted" "checkout_svc:" "$TARGET_FILE"
+has "and so are the two TypeScript services" "fulfillment_worker:" "$TARGET_FILE"
+present "$TMP/app-ok.logs/app-transaction.txt" "the transaction's evidence is in the bundle"
+has "the transaction records the worker's write-back, not just an accepted charge" \
+  "the worker consumed the charge" "$TMP/app-ok.logs/app-transaction.txt"
+
+printf '\nscenario: the app phase refuses when the run has no credentials\n'
+run_case app-nocred app
+is "it exits 2" "$(cat "$TMP/app-nocred.rc")" "2"
+has "and says why" "no run kubeconfig" "$TMP/app-nocred.out"
+lacks "and invokes no Sol command before it has somewhere to deploy" "sol deploy" "$TMP/app-nocred.argv"
 
 printf '\nscenario: no phase given\n'
 run_case_without_a_phase
