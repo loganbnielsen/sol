@@ -10,6 +10,24 @@
 - Output and behavior stay under the existing real-command rule, which breaks two
   independent assets and requires both failures plus the surviving provider result.
 
+## Latest: Logan review generalized into durable audit rules (2026-09-28)
+
+- FEAT-105 captures the approved faster merge policy: green required CI by default,
+  native squash auto-merge, optional risk-based review, and matching tooling/skills/docs.
+  Filed READY_FOR_ENGINEERING; repository settings have not been changed by filing.
+- BUG-066 separately captures the expensive docs-only CI bootstrap and unrelated
+  guard suites, preserving ticket validation while restoring the lightweight path.
+- REFAC-154 captures direct monadic composition only for semantically empty bindings.
+- REFAC-148..153 turn the local review examples into whole-codebase work: unchanged
+  Result propagation, eager argument normalization, conceptual collection grouping,
+  bounded CLI effect boundaries, typed domain inputs, and visible state/phase pipelines.
+- The style and code-layer audit skills now carry those same lenses, including the
+  important restraints: grep only seeds manual review, short clear expressions stay
+  inline, long signatures do not become vague dependency bags, and inherently streaming
+  effects stay effectful.
+- All six tickets are readable; five are immediately actionable and REFAC-149 waits on
+  REFAC-148 so the Result-specific normalization lands before the broader sweep.
+
 ## Latest: GCP Attempt 19 — the TLS path is qualified (2026-09-28)
 
 - **The whole path works, end to end, on a fresh target** (`352fd870`, `qual19/gcp/us-central1`,
