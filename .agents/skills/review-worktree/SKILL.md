@@ -16,6 +16,11 @@ ticket intent, validation evidence, boundaries/security, and required
 documentation/demo/language-parity coverage. Run additional checks only where
 they add evidence, not to repeat an already valid full CI run.
 
+**Reviewer independence.** That reviewer must be one the author did not prime —
+normally a subagent. If your harness has no subagent facility, do not simulate
+independence: stop and report that the requested review could not run, or, with
+the operator's agreement, review it yourself and label the result a self-review.
+
 Return structured results:
 
 ```json
