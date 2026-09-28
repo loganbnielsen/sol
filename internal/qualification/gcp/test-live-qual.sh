@@ -482,10 +482,12 @@ has "and so are the two TypeScript services" "fulfillment_worker:" "$TARGET_FILE
 present "$TMP/app-ok.logs/app-transaction.txt" "the transaction's evidence is in the bundle"
 has "the transaction records the worker's write-back, not just an accepted charge" \
   "the worker consumed the charge" "$TMP/app-ok.logs/app-transaction.txt"
-present "$TMP/app-ok.logs/app-postgres-url.txt" "the operator's database URL step is recorded"
-has "redacted, because the bundle must never carry the password" "://***@" \
-  "$TMP/app-ok.logs/app-postgres-url.txt"
-lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-postgres-url.txt"
+present "$TMP/app-ok.logs/app-runtime-secrets.txt" "the operator's runtime secrets step is recorded"
+has "the database URL is redacted, because the bundle must never carry the password" "://***@" \
+  "$TMP/app-ok.logs/app-runtime-secrets.txt"
+lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-runtime-secrets.txt"
+has "the API key the app's contract requires is accounted for" "SOL_API_KEY:" \
+  "$TMP/app-ok.logs/app-runtime-secrets.txt"
 
 printf '\nscenario: the app phase refuses when the run has no credentials\n'
 run_case app-nocred app
