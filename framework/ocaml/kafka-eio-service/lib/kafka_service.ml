@@ -121,9 +121,9 @@ module Schema = struct
     | [] -> Ok ()
     | (module M : MESSAGE) :: rest ->
       let message = (module M : MESSAGE) in
-      (match check ~net ~clock ~registry_url message with
-       | Ok () -> check_all ~net ~clock ~registry_url rest
-       | Error e -> Error e)
+      let open Result.Syntax in
+      let* () = check ~net ~clock ~registry_url message in
+      check_all ~net ~clock ~registry_url rest
   ;;
 
   type compatibility_response = Kafka_service_schema.compatibility_response =
@@ -332,7 +332,8 @@ let consume
     ; properties = []
     }
   in
-  match
+  let open Result.Syntax in
+  let* consumer =
     Kafka.Consumer.create
       ~on_ready
       ~on_assigned
@@ -341,17 +342,15 @@ let consume
       ~clock
       consumer_cfg
       ~sw
-  with
-  | Error e -> Error e
-  | Ok consumer ->
-    let decode_and_handle raw_msg ~ack =
-      match Kafka_service_schema.decode_message topic raw_msg with
-      | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
-      | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
-    in
-    let result = Kafka.Consumer.consume consumer ~handler:decode_and_handle () in
-    Kafka.Consumer.close consumer;
-    result
+  in
+  let decode_and_handle raw_msg ~ack =
+    match Kafka_service_schema.decode_message topic raw_msg with
+    | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
+    | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
+  in
+  let result = Kafka.Consumer.consume consumer ~handler:decode_and_handle () in
+  Kafka.Consumer.close consumer;
+  result
 ;;
 
 let consume_partitioned

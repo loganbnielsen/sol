@@ -1,3 +1,9 @@
 (executable
  (name test_schemas)
+ (modules test_schemas)
  (libraries kafka-eio-service eio_main {{name}}_payments_events))
+
+(test
+ (name test_charges)
+ (modules test_charges)
+ (libraries {{name}}_payments_charge_svc {{name}}_payments_events sol-obs eio_main yojson))

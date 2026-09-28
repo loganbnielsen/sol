@@ -1,3 +1,9 @@
 (executable
  (name test_schemas)
+ (modules test_schemas)
  (libraries kafka-eio-service eio_main pluto_payments_events))
+
+(test
+ (name test_charges)
+ (modules test_charges)
+ (libraries pluto_payments_charge_svc yojson))

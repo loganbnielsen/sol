@@ -1,4 +1,5 @@
 open Cmdliner
+open Result.Syntax
 module A = Sol_cli_platform_assets
 
 let form_to_string assets =
@@ -6,8 +7,6 @@ let form_to_string assets =
   | A.Checkout -> "source checkout"
   | A.Installed { version } -> "installed release " ^ version
 ;;
-
-open Result.Syntax
 
 type check =
   { label : string
@@ -46,19 +45,13 @@ let component_checks assets =
   | Ok names ->
     names
     |> List.map (fun component ->
-      check
-        "component"
-        (let* _ =
-           Sol_cli_platform_component.merged_values_yaml
-             ~assets
-             ~component
-             ~profile:"local"
-         in
-         Sol_cli_platform_component.merged_values_yaml
-           ~assets
-           ~component
-           ~profile:"durable"
-         |> as_detail component))
+      let outcome =
+        [ "local"; "durable" ]
+        |> Sol_cli_result.map_list (fun profile ->
+          Sol_cli_platform_component.merged_values_yaml ~assets ~component ~profile)
+        |> as_detail component
+      in
+      check "component" outcome)
 ;;
 
 let runner_check () =
@@ -74,31 +67,37 @@ let template_checks assets =
   let root = A.templates_root assets in
   Sol_cli_scaffold_tree.kinds
   |> List.map (fun kind ->
-    check
-      (Printf.sprintf "templates %s" kind)
-      (match Sol_cli_scaffold_tree.plan ~root ~kind with
-       | Error message -> Error message
-       | Ok [] ->
-         Error (Printf.sprintf "no templates under %s" (Filename.concat root kind))
-       | Ok rels -> Ok (Printf.sprintf "%d files" (List.length rels))))
+    let outcome =
+      let* rels = Sol_cli_scaffold_tree.plan ~root ~kind in
+      match rels with
+      | [] -> Error (Printf.sprintf "no templates under %s" (Filename.concat root kind))
+      | rels -> Ok (Printf.sprintf "%d files" (List.length rels))
+    in
+    check (Printf.sprintf "templates %s" kind) outcome)
 ;;
 
 let checks assets =
+  let terraform_checks =
+    Sol_cli_provider.all
+    |> List.concat_map (fun provider ->
+      [ A.Cluster; A.Platform ] |> List.map (terraform_root assets provider))
+  in
+  let observability_checks =
+    [ check
+        "dashboards"
+        (Sol_cli_dev_observability.dashboard_configmap_yaml
+           ~assets
+           ~namespace:"monitoring"
+         |> as_detail "")
+    ; check "alloy" (Sol_cli_dev_observability.alloy_values_yaml ~assets |> as_detail "")
+    ; runner_check ()
+    ]
+  in
   List.concat
-    [ Sol_cli_provider.all
-      |> List.concat_map (fun provider ->
-        [ A.Cluster; A.Platform ] |> List.map (terraform_root assets provider))
+    [ terraform_checks
     ; component_checks assets
     ; template_checks assets
-    ; [ check
-          "dashboards"
-          (Sol_cli_dev_observability.dashboard_configmap_yaml
-             ~assets
-             ~namespace:"monitoring"
-           |> as_detail "")
-      ; check "alloy" (Sol_cli_dev_observability.alloy_values_yaml ~assets |> as_detail "")
-      ; runner_check ()
-      ]
+    ; observability_checks
     ]
 ;;
 

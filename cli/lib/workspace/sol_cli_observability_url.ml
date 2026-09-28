@@ -38,39 +38,39 @@ let resolve ~backend ?base_domain ?override () =
 ;;
 
 let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain ~target () =
+  let open Result.Syntax in
   match target with
   | None -> Ok (Option.value explicit_backend ~default:Local, explicit_base_domain)
   | Some target_path ->
-    (match Sol_cli_config.load_for_target ~target:target_path with
-     | Error e -> Error (Sol_cli_config.error_to_string e)
-     | Ok cfg ->
-       let t = cfg.target in
-       let target_backend =
-         match t.observability_backend with
-         | None -> Ok None
-         | Some s ->
-           (match backend_of_string s with
-            | Some b -> Ok (Some b)
-            | None ->
-              Error
-                (Printf.sprintf
-                   "target %s has invalid observability_backend %S (expected: local, \
-                    self_hosted_durable, external)"
-                   target_path
-                   s))
-       in
-       (match target_backend with
-        | Error e -> Error e
-        | Ok target_backend ->
-          let backend =
-            match explicit_backend with
-            | Some b -> b
-            | None -> Option.value target_backend ~default:Local
-          in
-          let base_domain =
-            match explicit_base_domain with
-            | Some _ -> explicit_base_domain
-            | None -> t.base_domain
-          in
-          Ok (backend, base_domain)))
+    let* cfg =
+      Sol_cli_config.load_for_target ~target:target_path
+      |> Result.map_error Sol_cli_config.error_to_string
+    in
+    let t = cfg.target in
+    let target_backend =
+      match t.observability_backend with
+      | None -> Ok None
+      | Some s ->
+        (match backend_of_string s with
+         | Some b -> Ok (Some b)
+         | None ->
+           Error
+             (Printf.sprintf
+                "target %s has invalid observability_backend %S (expected: local, \
+                 self_hosted_durable, external)"
+                target_path
+                s))
+    in
+    let* target_backend = target_backend in
+    let backend =
+      match explicit_backend with
+      | Some b -> b
+      | None -> Option.value target_backend ~default:Local
+    in
+    let base_domain =
+      match explicit_base_domain with
+      | Some _ -> explicit_base_domain
+      | None -> t.base_domain
+    in
+    Ok (backend, base_domain)
 ;;

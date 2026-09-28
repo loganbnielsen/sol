@@ -19,14 +19,12 @@ let entries path =
 ;;
 
 let selected path keep =
-  match entries path with
-  | Error e -> Error e
-  | Ok names ->
-    Ok
-      (names
-       |> List.filter (fun name ->
-         let entry = Filename.concat path name in
-         Sys.file_exists entry && keep (Sys.is_directory entry)))
+  entries path
+  |> Result.map (fun names ->
+    names
+    |> List.filter (fun name ->
+      let entry = Filename.concat path name in
+      Sys.file_exists entry && keep (Sys.is_directory entry)))
 ;;
 
 let dirs path = selected path (fun is_dir -> is_dir)

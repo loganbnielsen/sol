@@ -88,27 +88,26 @@ let derived_release_id (t : t) : Sol_cli_release_id.t =
 ;;
 
 let validate ~(name : string) (t : t) : (unit, string) result =
-  match Sol_cli_release_id.of_string t.release_id with
-  | Error msg -> Error msg
-  | Ok id ->
-    if not (String.equal name (configmap_name t))
+  let open Result.Syntax in
+  let* id = Sol_cli_release_id.of_string t.release_id in
+  if not (String.equal name (configmap_name t))
+  then
+    Error
+      (Printf.sprintf
+         "%s is not the record for release %s (expected name %s)"
+         name
+         t.release_id
+         (configmap_name t))
+  else (
+    let derived = derived_release_id t in
+    if derived <> id
     then
       Error
         (Printf.sprintf
-           "%s is not the record for release %s (expected name %s)"
-           name
+           "release record %s is corrupt: its content rederives %s"
            t.release_id
-           (configmap_name t))
-    else (
-      let derived = derived_release_id t in
-      if derived <> id
-      then
-        Error
-          (Printf.sprintf
-             "release record %s is corrupt: its content rederives %s"
-             t.release_id
-             (Sol_cli_release_id.to_string derived))
-      else Ok ())
+           (Sol_cli_release_id.to_string derived))
+    else Ok ())
 ;;
 
 let sorted_pairs pairs =
@@ -313,17 +312,16 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
   match str "release_id" json, str "workspace" json with
   | "", _ | _, "" -> Error "release record is missing release_id/workspace"
   | release_id, workspace ->
-    (match apply_mode_of_json json with
-     | Error msg -> Error msg
-     | Ok apply_mode ->
-       Ok
-         { release_id
-         ; workspace
-         ; environment = string_option "environment" json
-         ; workloads = List.map workload_of_json (list "workloads" json)
-         ; migrations = string_list "migrations" json
-         ; apply_mode
-         })
+    let open Result.Syntax in
+    let* apply_mode = apply_mode_of_json json in
+    Ok
+      { release_id
+      ; workspace
+      ; environment = string_option "environment" json
+      ; workloads = List.map workload_of_json (list "workloads" json)
+      ; migrations = string_list "migrations" json
+      ; apply_mode
+      }
 ;;
 
 let to_configmap_json (t : t) : string =
@@ -402,16 +400,12 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
         | Some (`String stored) when String.length stored > 0 ->
           if not (String.equal (Digest.to_hex (Digest.string record)) stored)
           then Error (Printf.sprintf "%s failed integrity validation" label)
-          else (
-            match Sol_cli_json.decode ~what:(label ^ ": data.record") record with
-            | Error msg -> Error msg
-            | Ok parsed ->
-              (match of_json parsed with
-               | Error msg -> Error (Printf.sprintf "%s: %s" label msg)
-               | Ok r ->
-                 (match validate ~name r with
-                  | Error msg -> Error msg
-                  | Ok () -> Ok r)))
+          else
+            let open Result.Syntax in
+            let* parsed = Sol_cli_json.decode ~what:(label ^ ": data.record") record in
+            let* r = of_json parsed |> Result.map_error (Printf.sprintf "%s: %s" label) in
+            let* () = validate ~name r in
+            Ok r
         | _ ->
           Error
             (Printf.sprintf
@@ -478,9 +472,8 @@ let format_table (records : t list) : string =
 ;;
 
 let finish_deployment ~(record_release : unit -> (unit, string) result) ~report_success =
-  match record_release () with
-  | Error msg -> Error msg
-  | Ok () ->
-    report_success ();
-    Ok ()
+  let open Result.Syntax in
+  let* () = record_release () in
+  report_success ();
+  Ok ()
 ;;

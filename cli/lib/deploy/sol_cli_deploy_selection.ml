@@ -47,7 +47,7 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
       ~is_omitted:(fun s -> Sol_cli_config.is_omitted_service config ~name:s.name)
       selection.resolved
   in
-  let notes =
+  let inclusion_notes =
     List.map
       (fun s ->
          Printf.sprintf
@@ -55,14 +55,17 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
            (unit_id s)
            target)
       omission.included
-    @ List.map
-        (fun s ->
-           Printf.sprintf
-             "Note: %s is omitted by target %s, so it is excluded from this deploy."
-             (unit_id s)
-             target)
-        omission.excluded
   in
+  let exclusion_notes =
+    List.map
+      (fun s ->
+         Printf.sprintf
+           "Note: %s is omitted by target %s, so it is excluded from this deploy."
+           (unit_id s)
+           target)
+      omission.excluded
+  in
+  let notes = inclusion_notes @ exclusion_notes in
   let* () =
     match
       selection.image_refs

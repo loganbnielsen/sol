@@ -1,5 +1,22 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## REFAC-154 — Remove mechanical bindings, preserve domain phases (2026-09-28)
+
+- Config resolution returns its final application directly instead of binding only
+  to wrap the same result in Ok. All 87 config tests and the CLI build pass.
+- Contributing and style-audit guidance now distinguish mechanical handoffs from
+  meaningful phase names. The AWS credentials proposal was withdrawn unmerged;
+  creds_json is a useful boundary, not needless plumbing.
+
+## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
+
+- Component checking names its outcome and runs the fixed `local` and `durable` profile
+  set through one path, so the reason for the two renders is explicit.
+- Template planning errors propagate through `let*`, leaving its match to express only
+  the non-empty invariant; Terraform-root checks and observability checks are named
+  before the final report list.
+- Output and behavior stay under the existing real-command rule, which breaks two
+  independent assets and requires both failures plus the surviving provider result.
 ## Latest: DEC-056 — `Ready` covers the platform's declared certificates (2026-09-28)
 
 - **The semantic**: Sol declares its platform certificates unconditionally and exposes no supported
@@ -37,8 +54,8 @@
   waiting to GitHub. Both pin the head and reject drafts/unresolved prerequisites.
 - Worker/review/self-review/demo skills, local PR skill, and contributor/agent
   guidance now agree. Focused soldev tests and no-comments guard pass locally.
-- REFAC implementation/merging is paused until BUG-066/FEAT-105's faster workflow
-  has been verified, per operator direction.
+- REFAC implementation resumed after both speed fixes merged and PR #653 verified
+  the refreshed docs-only cache with a 14-second required check.
 
 ## Latest: BUG-066 lightweight docs-only CI verified (2026-09-28)
 
@@ -69,6 +86,17 @@
 - All six tickets are readable; five are immediately actionable and REFAC-149 waits on
   REFAC-148 so the Result-specific normalization lands before the broader sweep.
 
+## REFAC-147 — charge examples expose their domain boundary (2026-09-28)
+
+- Pluto and generated charge services now name typed input, directly testable operation,
+  accepted result, and HTTP mapping; routes are declarative. Their different acceptance
+  mechanisms remain intact: Postgres in Pluto, Kafka publication in the scaffold.
+- Pluto and a freshly generated workspace build and run focused operation tests;
+  all 52 scaffold tests pass, including generated tests and golden expectations.
+  There is no new framework abstraction or language/runtime contract change.
+- Filing and merge-speed fixes are complete. REFAC-144 and REFAC-148 are queued on CI;
+  REFAC-145 awaits the shared-summary merge; remaining REFAC tickets continue.
+
 ## Latest: GCP Attempt 19 — the TLS path is qualified (2026-09-28)
 
 - **The whole path works, end to end, on a fresh target** (`352fd870`, `qual19/gcp/us-central1`,
@@ -94,6 +122,15 @@
   ingress hostnames (so name→address is outside Sol today), and the run's environment cannot resolve
   public DNS, so the certificate claim was verified by SNI against the IP, which is the stronger of the
   two for that claim.
+
+## REFAC-150 — named conceptual collection groups (2026-09-28)
+
+- Local platform release/endpoint lists now expose named component groups and their
+  ordered combination; status domain groups, log environment overrides, and deployment
+  inclusion/exclusion notes are similarly explicit.
+- Whole-tree review retained homogeneous literals and already named groups, with
+  reasons and folder coverage in the ticket. Existing order/selection tests, builds,
+  formatting and no-comments checks pass; no API/runtime/language contract changed.
 
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
@@ -260,3 +297,17 @@
 - `check_gcp_standard_substrate.py` + seven mutations hold the contract by *ownership*, never the numbers, so a deliberate sizing change is not a guard failure. Two of its own checks were repaired while building it (a control-plane check a sibling resource could satisfy; a declaration check whose nested quoting matched nothing).
 - INFRA-092: `ADMISSION_DENIED` classifies ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the failure path too. `test-live-qual` → 144 assertions, 0 failures.
 - FND-0064 → `FIXED_UNQUALIFIED`. Attempt 15 on a Standard cluster is the discriminator: install → `Ready` → supported Ready-state destruction.
+
+## REFAC queue continuation — Result propagation (2026-09-28)
+
+- Filing and BUG-066/FEAT-105 are merged; the refreshed docs-only validator was
+  verified with a 14-second required check. REFAC implementation has resumed.
+- REFAC-148 reviewed all 55 identity-error seeds across CLI/framework, plus copied
+  templates, examples and tooling. Linear Result composition replaces unchanged
+  forwarding; deliberate NotFound/AlreadyExists recovery and nested access/process
+  diagnostics remain explicit, with reasons in the ticket.
+- Focused CLI and framework tests, all 52 scaffold tests, builds, formatting,
+  no-comments and ticket-parser checks pass. Framework installation resolved the
+  initial isolated scaffold build failures. No runtime/API/language-contract changes.
+- REFAC-144 is queued on required CI; REFAC-145 waits for its shared-summary merge.
+  REFAC-146/147 and the remaining generalized sweeps continue autonomously.
