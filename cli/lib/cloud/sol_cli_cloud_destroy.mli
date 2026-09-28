@@ -66,6 +66,7 @@ val failure_message : failure -> string
 val exit_clean : int
 val exit_failure : int
 val exit_code : outcome -> int
+val completion_message : outcome -> string
 
 type deps =
   { require_credentials : unit -> (unit, string) result
