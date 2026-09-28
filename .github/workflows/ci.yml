@@ -124,7 +124,6 @@ jobs:
         # the last cache for this OS even after the pin file changes. That is
         # what stops a brief non-GitHub tarball-host outage from failing a PR
         # that changed no dependencies.
-        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
