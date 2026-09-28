@@ -98,19 +98,39 @@ type plan_error =
   | Refused of string
   | Preflight of Sol_cli_profile.t * Sol_cli_profile_preflight.finding list
 
-let plan
-      ~workspace
-      ~registry
-      ~sha
-      ~emit_to
-      ~secret_backend
-      ~(config : Sol_cli_config.t)
-      ~facts
-      ~inventory
-      ~requested_scope
-      ~image_refs
-      services
-  =
+module Planning_input = struct
+  type t =
+    { workspace : string
+    ; registry : string
+    ; sha : string
+    ; emit_to : string option
+    ; secret_backend : Sol_cli_manifest.secret_backend
+    ; config : Sol_cli_config.t
+    ; facts : Sol_cli_workspace_model.t
+    ; inventory : Sol_cli_manifest.service list
+    ; requested_scope : string
+    ; image_refs : (string * string) list
+    ; services : Sol_cli_manifest.service list
+    }
+end
+
+let plan (input : Planning_input.t) =
+  let open Planning_input in
+  let { workspace
+      ; registry
+      ; sha
+      ; emit_to
+      ; secret_backend
+      ; config
+      ; facts
+      ; inventory
+      ; requested_scope
+      ; image_refs
+      ; services
+      }
+    =
+    input
+  in
   let refused r = Result.map_error (fun m -> Refused m) r in
   let* env_target =
     Sol_cli_env_target.customer_cloud_defaults ~registry ~image_tag:sha ~emit_to ()

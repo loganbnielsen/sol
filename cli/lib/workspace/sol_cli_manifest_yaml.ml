@@ -708,22 +708,43 @@ let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
     ]
 ;;
 
-let cronjob_doc
-      ?(secret_keys = [])
-      ?env
-      ~ns
-      ~name
-      ~image
-      ~schedule
-      ~concurrency_policy
-      ~backoff_limit
-      ~cpu
-      ~memory
-      ~workspace
-      ~domain
-      ~release_id
-      ()
-  =
+module Scheduled_workload_spec = struct
+  type t =
+    { ns : string
+    ; name : string
+    ; image : string
+    ; secret_keys : string list
+    ; env : string option
+    ; schedule : string
+    ; concurrency_policy : string
+    ; backoff_limit : int
+    ; cpu : string
+    ; memory : string
+    ; workspace : string
+    ; domain : string
+    ; release_id : Sol_cli_release_id.t
+    }
+end
+
+let cronjob_doc (workload : Scheduled_workload_spec.t) =
+  let open Scheduled_workload_spec in
+  let { ns
+      ; name
+      ; image
+      ; secret_keys
+      ; env
+      ; schedule
+      ; concurrency_policy
+      ; backoff_limit
+      ; cpu
+      ; memory
+      ; workspace
+      ; domain
+      ; release_id
+      }
+    =
+    workload
+  in
   let labels =
     ("app", Y.string name)
     :: (taxonomy_labels

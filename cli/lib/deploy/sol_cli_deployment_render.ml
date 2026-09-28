@@ -325,22 +325,23 @@ let render
                | Sol_cli_toml.Forbid -> "Forbid"
                | Sol_cli_toml.Replace -> "Replace"
              in
-             [ cronjob_doc
-                 ~secret_keys:(List.map fst secrets)
-                 ?env
-                 ~ns
-                 ~name
-                 ~image:img
-                 ~schedule
-                 ~concurrency_policy
-                 ~backoff_limit
-                 ~cpu:(Sol_cli_toml.cpu_quantity_to_string cpu)
-                 ~memory:(Sol_cli_toml.memory_quantity_to_string memory)
-                 ~workspace
-                 ~domain
-                 ~release_id
-                 ()
-             ]
+             let workload : Scheduled_workload_spec.t =
+               { secret_keys = List.map fst secrets
+               ; env
+               ; ns
+               ; name
+               ; image = img
+               ; schedule
+               ; concurrency_policy
+               ; backoff_limit
+               ; cpu = Sol_cli_toml.cpu_quantity_to_string cpu
+               ; memory = Sol_cli_toml.memory_quantity_to_string memory
+               ; workspace
+               ; domain
+               ; release_id
+               }
+             in
+             [ cronjob_doc workload ]
          in
          ( Sol_cli_yaml.render [ ns_yaml ]
          , Sol_cli_yaml.render (common_resources @ resources) ))

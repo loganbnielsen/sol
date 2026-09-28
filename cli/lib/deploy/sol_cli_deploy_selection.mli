@@ -25,16 +25,20 @@ type plan_error =
   | Refused of string
   | Preflight of Sol_cli_profile.t * Sol_cli_profile_preflight.finding list
 
-val plan
-  :  workspace:string
-  -> registry:string
-  -> sha:string
-  -> emit_to:string option
-  -> secret_backend:Sol_cli_manifest.secret_backend
-  -> config:Sol_cli_config.t
-  -> facts:Sol_cli_workspace_model.t
-  -> inventory:Sol_cli_manifest.service list
-  -> requested_scope:string
-  -> image_refs:(string * string) list
-  -> Sol_cli_manifest.service list
-  -> (Sol_cli_deployment_plan.t, plan_error) result
+module Planning_input : sig
+  type t =
+    { workspace : string
+    ; registry : string
+    ; sha : string
+    ; emit_to : string option
+    ; secret_backend : Sol_cli_manifest.secret_backend
+    ; config : Sol_cli_config.t
+    ; facts : Sol_cli_workspace_model.t
+    ; inventory : Sol_cli_manifest.service list
+    ; requested_scope : string
+    ; image_refs : (string * string) list
+    ; services : Sol_cli_manifest.service list
+    }
+end
+
+val plan : Planning_input.t -> (Sol_cli_deployment_plan.t, plan_error) result
