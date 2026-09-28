@@ -1,5 +1,27 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Logan refactor queue — implementation complete (2026-09-28)
+
+- Scope is REFAC-144 through REFAC-155, FEAT-105, and BUG-066, not the unrelated
+  engineering backlog. Every implementation and its ticket completion note is
+  merged.
+- The generalized rules cover named checks and collections, typed workload/domain
+  inputs, unchanged-error propagation, eager argument normalization, bounded
+  rendering/effect boundaries, explicit runtime phases, and one grouped hooks value
+  for a family of instrumentation callbacks. Whole-codebase inventories distinguish
+  worthwhile changes from already-clear APIs and pipelines.
+- Composition remains conservative: remove empty identity handoffs, but retain
+  names that identify domain phases. The proposed AWS credentials change was
+  withdrawn without merging; `creds_json` remains meaningful. Standard OCaml
+  `Result.bind` is result-first, so an unadapted pipeline to `Result.bind f` is invalid.
+- Focused validation includes the full CLI suite, 156 manifest cases, framework
+  unit suites, exact command-output checks, and six live-broker retry integration
+  cases. Refactors preserve cleanup, acknowledgement, retry, and output ordering.
+- FEAT-105 and BUG-066 are merged and verified: required CI still gates native
+  auto-merge, routine work no longer requires a review marker, and warm docs-only
+  required checks completed in 11 and 14 seconds. Review is risk-based, not a
+  repeated universal gate; local worktrees are preserved.
+
 ## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
 
 - Retry consumption separates topic preparation, relay publication, and consumer
