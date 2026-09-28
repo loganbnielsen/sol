@@ -355,3 +355,11 @@
 
 - After Docker became available, ran `PATH=/tmp/sol-pr-tools:$PATH bash internal/tooling/scripts/run_tests.sh kafka e2e`. All 15 Kafka integration cases and all nine demo golden-workflow checks pass, including Loki queries, persisted orders and completed confirmation-email jobs.
 - The runner exits 2 for its Kafka performance threshold: repeat duration 10.526 seconds against a recorded 1.275-second baseline (1.4x threshold). E2E repeat duration is 1.245 seconds against 1.278 seconds. This records functional success separately from the observed timing warning; the informational baseline was not changed.
+
+## Parameter-lint findings review (2026-09-28)
+
+- Ran PR #672's AST checker over `cli framework internal examples` at main revision `1aaec96d`: 49 advisory locations (45 sprawl, four family), including implementation/interface pairs and test helpers. Reviewed candidates with signatures, callers, tests and prior REFAC-152 dispositions. Manually inspected examples, tooling and scaffold templates as well.
+- Filed one actionable ticket, CODEX_STYLE_AUDIT-078: reuse the existing observability options at `sol open`'s controller boundary. It is a contextual finding below the numeric threshold, with no new flags or abstraction required.
+- Consumer-hook warnings belong to REFAC-155 / PR #671. Constructors, independent runtime controls and focused test defaults were deliberately retained. Job claim knobs were considered but no new invariant justified reversing REFAC-152's recorded decision.
+- Full inventory and scope limitations are recorded in `internal/pipeline/audits/2026-09-28_parameter_lint.md`. No source refactor or external support-repo audit in this filing.
+- Validation: pipeline parser reads all 815 tickets; `pipeline check CODEX_STYLE_AUDIT-078` reports actionable with no dependencies. Whitespace checks pass; canonical checkout remains clean.
