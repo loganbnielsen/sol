@@ -237,12 +237,7 @@ type child =
   ; label : string
   }
 
-let dev_run workspace_dir scope =
-  let dir =
-    match workspace_dir with
-    | Some d -> d
-    | None -> "."
-  in
+let resolve_run workspace_dir scope =
   workspace_dir |> Option.iter Unix.chdir;
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
   if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
@@ -267,6 +262,10 @@ let dev_run workspace_dir scope =
         Printf.eprintf "error: %s %s\n%!" label message);
       Error (Sol_cli_exit.reported ())
   in
+  Ok (services, plan)
+;;
+
+let report_run_start ~dir ~services (plan : Sol_cli_local_run.plan) =
   Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
   plan.launches
   |> List.iter (fun (recipe : Sol_cli_local_run.recipe) ->
@@ -280,7 +279,10 @@ let dev_run workspace_dir scope =
       (primitive_label svc.primitive)
       recipe.label
       recipe.artifact);
-  Printf.printf "\n%!";
+  Printf.printf "\n%!"
+;;
+
+let build_services (plan : Sol_cli_local_run.plan) =
   Printf.printf "  Building...\n%!";
   let* () =
     plan.builds
@@ -300,6 +302,10 @@ let dev_run workspace_dir scope =
          (Ok ())
   in
   Printf.printf "  Build done.\n\n%!";
+  Ok ()
+;;
+
+let launch_services (plan : Sol_cli_local_run.plan) =
   let children =
     plan.launches
     |> List.filter_map (fun (recipe : Sol_cli_local_run.recipe) ->
@@ -329,6 +335,10 @@ let dev_run workspace_dir scope =
     | [] -> Error (Sol_cli_exit.error "no services could be started")
     | children -> Ok children
   in
+  Ok children
+;;
+
+let supervise_children children =
   Printf.printf "  Services running — press Ctrl-C to stop all.\n\n%!";
   let kill_all () =
     Printf.printf "\n  Stopping services...\n%!";
@@ -367,6 +377,15 @@ let dev_run workspace_dir scope =
     | Unix.Unix_error _ -> remaining := 0
   done;
   Ok ()
+;;
+
+let dev_run workspace_dir scope =
+  let dir = Option.value workspace_dir ~default:"." in
+  let* services, plan = resolve_run workspace_dir scope in
+  report_run_start ~dir ~services plan;
+  let* () = build_services plan in
+  let* children = launch_services plan in
+  supervise_children children
 ;;
 
 let up_cmd =

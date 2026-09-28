@@ -86,6 +86,7 @@
   test_migration_gate
   test_deploy_run
   test_cloud_command)
+ (deps ../bin/main.exe)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable
