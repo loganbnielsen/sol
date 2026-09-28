@@ -1,5 +1,15 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-145 — Deployment and Rollout share one typed workload input (2026-09-27)
+
+- `Sol_cli_manifest.Workload_spec.t` replaces the 20/21-argument Deployment and Rollout
+  builder calls. The deployment renderer constructs the workload once, so the two paths
+  cannot silently receive different pod fields.
+- The public builders now take that workload plus only their wrapper-specific strategy;
+  the pod-template renderer consumes the same value directly.
+- All 156 manifest-render tests pass, including Deployment, Canary, Blue-green, worker,
+  security, and parsed YAML invariants. Rendered behavior is unchanged.
+
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
 - **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets

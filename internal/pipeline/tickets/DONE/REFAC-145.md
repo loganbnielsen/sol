@@ -40,3 +40,15 @@ tests. Do not introduce a generic dependencies record or change the rendered sch
 - Demo/example: not applicable; this is an internal renderer refactor with identical
   manifests.
 - Language parity: no impact; rendering is shared by every application language.
+
+## Completion notes
+
+- `Sol_cli_manifest.Workload_spec.t` is the one typed value shared by Deployment and
+  Rollout rendering; `deployment_resources` constructs it once.
+- `deployment_doc` now takes the workload plus its optional rolling strategy;
+  `rollout_doc` takes the workload plus progressive-delivery strategy. `pod_template`
+  consumes the same record directly.
+- All 156 manifest-render tests pass, including Deployment, Canary, Blue-green, worker,
+  security, and parsed YAML invariants.
+- Demo/example: not applicable; rendered manifests are unchanged.
+- Language parity: no impact; rendering is shared by every application language.
