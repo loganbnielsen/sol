@@ -7,6 +7,16 @@ import tfconfig
 SIZING = ("node_count", "node_machine_type", "node_disk_gb")
 
 
+def flatten(value):
+    out = []
+    for item in value:
+        if isinstance(item, (list, tuple)):
+            out.extend(flatten(item))
+        else:
+            out.append(str(item))
+    return out
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     cluster_tf = root / "platform/cloud/gcp/cluster/main.tf"
@@ -33,6 +43,29 @@ def main():
             "the cluster's control plane stays regional (location = var.region): every call site "
             "resolves it with --region, and making the control plane zonal is not what the substrate "
             "switch is about"
+        )
+    cluster_zones = sorted(flatten(list(tfconfig.attributes(cluster.body, "node_locations"))))
+    pool_zones = sorted(
+        flatten(
+            [
+                list(tfconfig.attributes(pool.body, "node_locations"))
+                for pool in found
+                if pool.type == "google_container_node_pool"
+            ]
+        )
+    )
+    if not cluster_zones:
+        problems.append(
+            "the cluster declares no node_locations, so GKE places its transient default pool in a "
+            "zone of its own choosing: on 2026-09-28 that zone was stocked out (GCE_STOCKOUT), the "
+            "default pool never started, and the whole cluster failed before the pool Sol owns was "
+            "ever reached (Attempt 21). The cluster's zones must be the pool's zones"
+        )
+    elif pool_zones and cluster_zones != pool_zones:
+        problems.append(
+            f"the cluster's node_locations {cluster_zones} differ from its node pool's {pool_zones}: "
+            "the transient default pool and the pool Sol runs on must share one zone list, or GKE can "
+            "place the throwaway pool somewhere the real one is not"
         )
     pools = [r for r in found if r.type == "google_container_node_pool"]
     if not pools:
