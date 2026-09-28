@@ -1,0 +1,8 @@
+(executable
+ (name main)
+ (libraries compiler-libs.common unix yojson))
+
+(rule
+ (alias runtest)
+ (deps main.exe test_style_audit.py)
+ (action (run python3 %{dep:test_style_audit.py} %{dep:main.exe})))

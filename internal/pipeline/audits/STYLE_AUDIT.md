@@ -64,6 +64,23 @@ rg -n -U 'List\.concat[[:space:]]*\n[[:space:]]*\[' --glob '*.ml'
 
 Neither result set is a finding without reading the surrounding flow.
 
+## Executable parameter candidate scan
+
+The advisory AST checker in [`internal/tooling/style_audit`](../../tooling/style_audit/README.md)
+seeds the long-parameter-list and explicit-domain-grouping review:
+
+```bash
+opam exec -- dune exec internal/tooling/style_audit/main.exe -- cli framework internal/tooling examples
+opam exec -- dune exec internal/tooling/style_audit/main.exe -- --json ~/Code/kafka-eio
+```
+
+It reports name families (three `on_*` arguments or four with another shared
+prefix), signatures with 12 value parameters or four optional arguments, and
+syntactic default counts. Warnings do not fail the scan or establish a finding;
+parse/I/O errors do fail it. Inspect each candidate's types and callers before
+choosing a hooks/config type or retaining independent arguments. Other style
+principles still require contextual review.
+
 ## Config parsing policy
 
 External config values — environment variables, CLI flags, and TOML fields from
