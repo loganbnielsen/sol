@@ -1,5 +1,76 @@
 let () = Random.self_init ()
 
+type charge_input =
+  { customer_id : string
+  ; amount_cents : int
+  ; currency : string
+  }
+
+type accepted_charge = { charge_id : string }
+
+let required_string json name =
+  match Yojson.Basic.Util.member name json with
+  | `String value -> Ok value
+  | `Null -> Error (name ^ " is required")
+  | _ -> Error (name ^ " must be a string")
+;;
+
+let required_int json name =
+  match Yojson.Basic.Util.member name json with
+  | `Int value -> Ok value
+  | `Null -> Error (name ^ " is required")
+  | _ -> Error (name ^ " must be an integer")
+;;
+
+let decode_charge json =
+  let open Result.Syntax in
+  let* customer_id = required_string json "customer_id" in
+  let* amount_cents = required_int json "amount_cents" in
+  let* currency = required_string json "currency" in
+  Ok { customer_id; amount_cents; currency }
+;;
+
+let decode_charge_body body =
+  let parsed =
+    try Ok (Yojson.Basic.from_string body) with
+    | Yojson.Json_error msg -> Error ("invalid JSON: " ^ msg)
+  in
+  Result.bind parsed decode_charge
+;;
+
+let create_charge ~insert { customer_id; amount_cents; currency } =
+  let charge_id = Printf.sprintf "ch_%06d" (Random.int 999999) in
+  insert ~charge_id ~customer_id ~amount_cents ~currency
+  |> Result.map (fun () -> { charge_id })
+;;
+
+let charge_response = function
+  | Ok { charge_id } ->
+    Response.json ~status:202 (Printf.sprintf {|{"id":"%s","accepted":true}|} charge_id)
+  | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e)
+;;
+
+let handle_charge pool req =
+  match decode_charge_body req.Request.body with
+  | Error msg -> Response.bad_request msg
+  | Ok input -> create_charge ~insert:(Notification.insert pool) input |> charge_response
+;;
+
+let list_notifications pool _req =
+  match Notification.list_recent pool with
+  | Error _ -> Response.json ~status:500 {|{"error":"db unavailable"}|}
+  | Ok rows ->
+    let row_json (charge_id, customer_id, amount_cents, currency) =
+      `Assoc
+        [ "charge_id", `String charge_id
+        ; "customer_id", `String customer_id
+        ; "amount_cents", `Int amount_cents
+        ; "currency", `String currency
+        ]
+    in
+    Response.json (Yojson.Basic.to_string (`List (List.map row_json rows)))
+;;
+
 let checkout_quote ~env ~sw ~obs req =
   Sol_obs.with_span obs ?parent:req.Request.trace_ctx "checkout_quote" (fun span ->
     let trace_ctx = Sol_obs.current_trace_context span in
@@ -18,56 +89,7 @@ let checkout_quote ~env ~sw ~obs req =
 let routes ~env ~sw ~obs pool =
   [ Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok")
   ; Route.get "/checkout-quote" ~auth:`Public (checkout_quote ~env ~sw ~obs)
-  ; Route.post "/charges" ~auth:`Public (fun req ->
-      let required_string json name =
-        match Yojson.Basic.Util.member name json with
-        | `String value -> Ok value
-        | `Null -> Error (name ^ " is required")
-        | _ -> Error (name ^ " must be a string")
-      in
-      let required_int json name =
-        match Yojson.Basic.Util.member name json with
-        | `Int value -> Ok value
-        | `Null -> Error (name ^ " is required")
-        | _ -> Error (name ^ " must be an integer")
-      in
-      let decode_charge json =
-        Result.bind (required_string json "customer_id")
-        @@ fun customer_id ->
-        Result.bind (required_int json "amount_cents")
-        @@ fun amount_cents ->
-        Result.map
-          (fun currency -> customer_id, amount_cents, currency)
-          (required_string json "currency")
-      in
-      let parsed =
-        try Ok (Yojson.Basic.from_string req.body) with
-        | Yojson.Json_error msg -> Error ("invalid JSON: " ^ msg)
-      in
-      match Result.bind parsed decode_charge with
-      | Error msg -> Response.bad_request msg
-      | Ok (customer_id, amount_cents, currency) ->
-        let charge_id = Printf.sprintf "ch_%06d" (Random.int 999999) in
-        (match
-           Notification.insert pool ~charge_id ~customer_id ~amount_cents ~currency
-         with
-         | Ok () ->
-           Response.json
-             ~status:202
-             (Printf.sprintf {|{"id":"%s","accepted":true}|} charge_id)
-         | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e)))
-  ; Route.get "/notifications" ~auth:`Public (fun _req ->
-      match Notification.list_recent pool with
-      | Error _ -> Response.json ~status:500 {|{"error":"db unavailable"}|}
-      | Ok rows ->
-        let row_json (charge_id, customer_id, amount_cents, currency) =
-          `Assoc
-            [ "charge_id", `String charge_id
-            ; "customer_id", `String customer_id
-            ; "amount_cents", `Int amount_cents
-            ; "currency", `String currency
-            ]
-        in
-        Response.json (Yojson.Basic.to_string (`List (List.map row_json rows))))
+  ; Route.post "/charges" ~auth:`Public (handle_charge pool)
+  ; Route.get "/notifications" ~auth:`Public (list_notifications pool)
   ]
 ;;
