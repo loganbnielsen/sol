@@ -218,6 +218,54 @@ let raw_retry_msg ?(headers = []) ?key () : Kafka.Consumer.message =
   }
 ;;
 
+let test_shared_record_policy () =
+  let module R = Kafka_service.Retry_topics in
+  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
+  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+  let retry_policy : Kafka.Consumer.retry_policy =
+    { base_delay_s = 0.; max_delay_s = 0.; max_attempts = 3; jitter_ratio = 0. }
+  in
+  let check stage error expected_attempt expected_topic publish_result =
+    let events = ref [] in
+    let publish ~target_topic (relay : R.relay) =
+      events := !events @ [ "publish" ];
+      Alcotest.(check int) "attempt" expected_attempt relay.attempt;
+      Alcotest.(check string)
+        "destination"
+        expected_topic
+        (Kafka_service.topic_name_to_string target_topic);
+      publish_result
+    in
+    let ack () =
+      events := !events @ [ "ack" ];
+      Ok ()
+    in
+    let result =
+      R.process_handler_result
+        ~stage
+        ~retry_topic
+        ~dlq_topic
+        ~retry_policy
+        ~group_id:"orders"
+        ~raw_msg:(raw_retry_msg ())
+        ~publish
+        ~ack
+        (Kafka.Consumer.Error error)
+    in
+    match publish_result, result with
+    | Ok (), Kafka.Consumer.Continue ->
+      Alcotest.(check (list string)) "publish before ack" [ "publish"; "ack" ] !events
+    | Error _, Kafka.Consumer.Error _ ->
+      Alcotest.(check (list string)) "failed publish does not ack" [ "publish" ] !events
+    | _ -> Alcotest.fail "unexpected handler outcome"
+  in
+  check R.Source Kafka_service.Retry 1 "orders-retry" (Ok ());
+  check (R.Retry 1) Kafka_service.Retry 2 "orders-retry" (Ok ());
+  check (R.Retry 2) Kafka_service.Retry 3 "orders-dlq" (Ok ());
+  check (R.Retry 2) (Kafka_service.Dead_letter "invalid") 2 "orders-dlq" (Ok ());
+  check R.Source Kafka_service.Retry 1 "orders-retry" (Error Kafka.Error.Application)
+;;
+
 let test_retry_metadata_rejects_malformed_headers () =
   let check_error name headers =
     match Kafka_service.Retry_topics.parse_retry_metadata headers with
@@ -874,6 +922,7 @@ let () =
             "retry_produce: gives up after max attempts"
             `Quick
             test_retry_produce_gives_up_after_max_attempts
+        ; test_case "shared source/retry record policy" `Quick test_shared_record_policy
         ; test_case
             "retry decode error routes to dlq and acks after publish"
             `Quick

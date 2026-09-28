@@ -1,5 +1,14 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
+
+- Retry consumption separates topic preparation, relay publication, and consumer
+  lifecycle; source/retry handlers use one record-policy path.
+- Named runtime inputs replace the loose controller arguments. Relay startup,
+  source execution, error reconciliation and shutdown remain explicit.
+- All 40 kafka-service unit tests and six focused live-broker integration tests pass;
+  retry budgets, DLQ routing, publish-before-ack, and fail-closed relay shutdown remain.
+
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
 - Component checking names its outcome and runs the fixed `local` and `durable` profile
