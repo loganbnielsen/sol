@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: Logan review generalized into durable audit rules (2026-09-28)
+
+- REFAC-148..153 turn the local review examples into whole-codebase work: unchanged
+  Result propagation, eager argument normalization, conceptual collection grouping,
+  bounded CLI effect boundaries, typed domain inputs, and visible state/phase pipelines.
+- The style and code-layer audit skills now carry those same lenses, including the
+  important restraints: grep only seeds manual review, short clear expressions stay
+  inline, long signatures do not become vague dependency bags, and inherently streaming
+  effects stay effectful.
+- All six tickets are readable; five are immediately actionable and REFAC-149 waits on
+  REFAC-148 so the Result-specific normalization lands before the broader sweep.
+
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
 - **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets

@@ -53,10 +53,24 @@ Flag these first:
   they are tiny, or move down because two adapters truly need the same thing.
 - Compatibility shims, aliases, or optional parameters that keep a broken layer
   shape alive after the intended API is clear.
+- Loose parameter swarms that are really one request, spec, runtime, or mode;
+  prefer an existing domain type, a named record/variant, or a phase split over
+  labels alone or a vague dependencies bag.
+- Non-trivial validation/defaulting/Result or Option unwrapping embedded in an
+  adapter, constructor, or terminal-effect call instead of normalized at the
+  boundary that owns the input.
+- Bounded operations that mix planning, outcome interpretation, rendering, and
+  terminal output instead of returning a typed outcome to the outer controller.
+  Do not apply this to progress, prompts, streams, or child output where the
+  effect is part of execution.
 - Control-flow fragmentation: the same mode/phase value is matched repeatedly
   through a long imperative function, especially with empty branches or inline
   guard matches. Prefer one higher-level branch, a tuple match over the actual
   dimensions, or a small phase boundary.
+- Controller-sized closures that bury validation, provisioning, decision,
+  execution, shutdown, and error arbitration. Map the actual sequence first;
+  extract typed phase boundaries only where policy repeats or a transition has a
+  real contract.
 
 ## File Organization
 
@@ -92,6 +106,10 @@ Useful tags:
 - `name:` module/file name hides the layer it actually implements
 - `flow:` mode or phase branches are scattered instead of owning a readable
   execution path
+- `normalize:` a callee receives unresolved branching/defaulting instead of a
+  validated domain value
+- `group:` loose arguments or conceptual collections hide one domain concept
+- `effect:` bounded computation/rendering/output cross the controller boundary
 
 End with the simplest recommended architecture in one short code-path sketch,
 for example:

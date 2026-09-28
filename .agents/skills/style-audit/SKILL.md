@@ -1,6 +1,6 @@
 ---
 name: style-audit
-description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed finite domains, and nested Option/Result pyramids across the whole repo. Requires manual folder walks beyond grep, supports multi-agent folder partitioning, and creates actionable tickets in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed domains, Result/Option pyramids, unnormalized arguments, hidden conceptual groups, mixed effect boundaries, and embedded phase/state handling across the whole repo. Requires manual folder walks beyond grep and creates actionable tickets.
 ---
 
 # /style-audit - OCaml Type Safety and API Design Audit
@@ -63,6 +63,38 @@ Flag these three categories:
      branches or inline guard matches. Prefer one higher-level branch, a tuple
      match over the actual dimensions, or a small phase boundary.
 
+4. Eager argument normalization
+   - Multi-line `match`, `if`, `try`, Result/Option unwraps, fallbacks, or
+     transformations embedded inside an outer function/constructor/effect call.
+   - Manual `Error e -> Error e` forwarding before the next domain decision.
+   - Inputs validated or defaulted only inside a terminal renderer/effect.
+   - Prefer `let*`/existing combinators and a named local binding before
+     application. Keep short familiar expressions inline; this is not a ban on
+     expressions as arguments.
+
+5. Explicit domain grouping
+   - More than five or six primitive/config-fragment arguments that travel as
+     one request, spec, runtime, or mode.
+   - Several conceptually different collection groups constructed and combined
+     in one expression.
+   - Prefer an existing domain type, a real named record/variant, or named local
+     groups. Never replace a swarm with a vague `deps` bag.
+
+6. Separated effect boundaries
+   - A bounded operation computes, interprets, renders, and prints its result in
+     one function when the outcome could be tested directly.
+   - Side effects buried in transformation pipelines.
+   - Prefer operation -> typed outcome -> renderer -> outer controller effect.
+     Exempt progress, prompts, streaming, and child-process forwarding where the
+     effect is inherently part of execution.
+
+7. Visible phase pipelines
+   - Controller-sized closures that mix validation, provisioning, decode,
+     decision, execution, shutdown, and error arbitration.
+   - Sibling paths that inline the same transition policy separately.
+   - Prefer typed phase outcomes and one linear top-level orchestration. Do not
+     turn a short exhaustive match into a framework.
+
 ## Manual Folder Walk
 
 Walk these folders even if grep finds enough tickets early:
@@ -81,6 +113,8 @@ For each folder:
 3. Read parsing and rendering functions.
 4. Read representative call sites.
 5. Read tests/templates/examples for copied patterns.
+6. For stateful code, write down the actual phase sequence and sibling paths
+   before deciding that nesting is a finding.
 
 ## Long Parameter Lists
 
@@ -119,6 +153,8 @@ rg -n '\b(status|mode|state|role|environment|kind|backend|strategy|target|provid
 rg -n '\b(true|false)\s+(true|false)\b' -g '*.ml' -g '*.mli'
 rg -n '^val .*string -> string|^val .*(bool|int|float) -> .*(bool|int|float)' -g '*.mli'
 rg -n '\bmatch\b' -g '*.ml' -g '*.mli'
+rg --pcre2 -n -U '\| Error ([a-zA-Z_][a-zA-Z0-9_]*) -> Error \1' -g '*.ml'
+rg -n -U 'List\.concat[[:space:]]*\n[[:space:]]*\[' -g '*.ml'
 ```
 
 After running searches, open files manually with `sed`, `nl`, or an editor.
