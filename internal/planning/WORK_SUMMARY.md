@@ -1,5 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## In progress: BUG-066 lightweight docs-only CI (2026-09-28)
+
+- Exact-source cached ticket validator replaces the product bootstrap on warm
+  docs-only runs; a cold cache falls back to full validation, never a false pass.
+- Relevant ticket, specification, classification, and account-artifact checks stay.
+  Execution-path and existing mutation suites pass locally. Real GitHub fast-path
+  timing will be verified after the trusted main cache is populated.
+
 ## Latest: Logan review generalized into durable audit rules (2026-09-28)
 
 - FEAT-105 captures the approved faster merge policy: green required CI by default,
