@@ -412,7 +412,7 @@ let test_platform_failure_is_not_a_degradation () =
 ;;
 
 let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
-  let deps, _ =
+  let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
       ~reconcile:(fun () -> Error "no authority")
@@ -420,46 +420,77 @@ let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
       ()
   in
   let outcome = execute ~deps in
-  match outcome with
-  | Destroy_failed
-      { failure = Elevated_access_not_removed message
-      ; degradations = [ degraded ]
-      ; cleanup = Cleanup_failed cleanup_message
-      ; verification = _
-      } ->
-    Alcotest.(check string) "the removal failure is the failure" "cleanup refused" message;
-    Alcotest.(check string)
-      "and is carried as cleanup evidence"
-      "cleanup refused"
-      cleanup_message;
-    Alcotest.(check bool)
-      "and the skipped teardown is still there"
-      true
-      (contains (Str.regexp_string "bootstrap authority") degraded)
-  | _ -> Alcotest.fail "primary, cleanup and degradation facts must all be preserved"
+  (match outcome with
+   | Destroy_succeeded { degradations; cleanup = Cleanup_failed cleanup_message; _ } ->
+     Alcotest.(check string)
+       "the removal failure is carried as cleanup evidence"
+       "cleanup refused"
+       cleanup_message;
+     Alcotest.(check bool)
+       "and as a degradation naming what it removed"
+       true
+       (List.exists
+          (fun m ->
+             contains (Str.regexp_string "elevated access") m
+             && contains (Str.regexp_string "cleanup refused") m)
+          degradations);
+     Alcotest.(check bool)
+       "and the skipped teardown is still there"
+       true
+       (List.exists
+          (fun m -> contains (Str.regexp_string "bootstrap authority") m)
+          degradations)
+   | _ ->
+     Alcotest.fail
+       "a cleanup failure the substrate deletes anyway must proceed, with every fact \
+        preserved");
+  Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
+  Alcotest.(check int) "and absence was still verified" 1 calls.verify;
+  Alcotest.(check int) "so a verified absence exits 0" exit_clean (exit_code outcome)
 ;;
 
-let test_cleanup_failure_is_not_replaced_by_success () =
+let test_cleanup_failure_does_not_decide_absence () =
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
       ~remove:(fun () -> Error "terraform exited 1: access removal failed")
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        { Sol_cli_destroy_verification.state = State_absent
+        ; sweep =
+            Sweep_ran
+              { residues =
+                  [ "the cluster is still listed by the provider, in state ERROR" ]
+              ; indeterminate = []
+              }
+        ; retention = Retention_not_required "this fixture declares no retention"
+        })
       ()
   in
   let outcome = execute ~deps in
-  match outcome with
-  | Destroy_failed { failure = Elevated_access_not_removed message; cleanup; _ } ->
-    Alcotest.(check bool)
-      "the removal failure is the message"
-      true
-      (contains (Str.regexp "access removal failed") message);
-    Alcotest.(check bool)
-      "the cleanup failure is preserved as evidence"
-      true
-      (match cleanup with
-       | Cleanup_failed _ -> true
-       | _ -> false)
-  | _ -> Alcotest.fail "a cleanup failure must not be reported as success"
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed message; cleanup; degradations; _ } ->
+     Alcotest.(check bool)
+       "the absence check is what failed, not the cleanup"
+       true
+       (contains (Str.regexp_string "still listed by the provider") message);
+     Alcotest.(check bool)
+       "the cleanup failure is preserved as evidence"
+       true
+       (match cleanup with
+        | Cleanup_failed _ -> true
+        | _ -> false);
+     Alcotest.(check bool)
+       "and as a degradation"
+       true
+       (List.exists
+          (fun m -> contains (Str.regexp_string "access removal failed") m)
+          degradations)
+   | _ -> Alcotest.fail "residue must fail the destroy however the cleanup went");
+  Alcotest.(check int) "a destroy with residue exits 1" exit_failure (exit_code outcome);
+  Alcotest.(check bool)
+    "and claims no absence"
+    false
+    (contains (Str.regexp_string "reached verified absence") (completion_message outcome))
 ;;
 
 let test_cleanup_failure_preserved_when_operation_fails () =
@@ -513,9 +544,97 @@ let test_continue_preparation_failure_destroys () =
         visible");
   Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
   Alcotest.(check int)
-    "a degraded destroy that reached absence exits 0 with a warning"
+    "a degraded preparation with verified absence exits 0"
     exit_clean
     (exit_code outcome)
+;;
+
+let test_unremovable_elevated_access_does_not_immobilise_the_substrate () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ ->
+        continue_failure "the deletion guards could not be lowered: replace refused")
+      ~remove:(fun () -> Error "the binding could not be removed: replace refused")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { cleanup = Cleanup_failed message; degradations; _ } ->
+     Alcotest.(check string)
+       "the unremoved binding stays visible as evidence"
+       "the binding could not be removed: replace refused"
+       message;
+     Alcotest.(check bool)
+       "and the run records it as a degradation"
+       true
+       (List.length degradations >= 1)
+   | _ ->
+     Alcotest.fail
+       "a cleanup failure must not make the substrate immortal: the binding it removes \
+        lives inside the cluster");
+  Alcotest.(check int) "the substrate was destroyed anyway" 1 calls.substrate;
+  Alcotest.(check int) "and the absence check still ran" 1 calls.verify;
+  Alcotest.(check int) "a verified absence exits 0" exit_clean (exit_code outcome)
+;;
+
+let test_destroy_that_cannot_converge_claims_no_absence () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ ->
+        continue_failure "the deletion guards could not be lowered: replace refused")
+      ~remove:(fun () -> Error "the binding could not be removed: replace refused")
+      ~destroy_substrate:(fun () ->
+        Error
+          "Error waiting for deleting GKE cluster: the cluster is in ERROR and Terraform \
+           refused the plan")
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int)
+    "a destroy that cannot converge exits non-zero"
+    exit_failure
+    (exit_code outcome);
+  Alcotest.(check int) "the substrate destroy was attempted" 1 calls.substrate;
+  let message = completion_message outcome in
+  Alcotest.(check bool)
+    "and it never claims absence"
+    false
+    (contains (Str.regexp_string "reached verified absence") message);
+  Alcotest.(check bool)
+    "it says the destruction did not converge"
+    true
+    (contains (Str.regexp_string "did not converge") message)
+;;
+
+let test_residue_the_state_does_not_own_is_not_absence () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        { Sol_cli_destroy_verification.state = State_absent
+        ; sweep =
+            Sweep_ran
+              { residues =
+                  [ "the cluster is still listed by the provider, in state ERROR" ]
+              ; indeterminate = []
+              }
+        ; retention = Retention_not_required "this fixture declares no retention"
+        })
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int)
+    "residue outside Terraform's state still fails"
+    exit_failure
+    (exit_code outcome);
+  Alcotest.(check int) "the sweep ran after the destroy" 1 calls.verify;
+  let message = completion_message outcome in
+  Alcotest.(check bool)
+    "and the run claims no absence"
+    false
+    (contains (Str.regexp_string "reached verified absence") message)
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
@@ -725,7 +844,7 @@ let test_refused_reconciliation_never_applies () =
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
-let test_refused_removal_is_not_success () =
+let test_refused_removal_does_not_stop_the_substrate_destroy () =
   let open Sol_cli_terraform_plan in
   let applied = ref 0 in
   let policy =
@@ -742,10 +861,18 @@ let test_refused_removal_is_not_success () =
   let outcome = execute ~deps in
   Alcotest.(check int) "the refused cleanup apply was never invoked" 0 !applied;
   (match outcome with
-   | Destroy_failed
-       { failure = Elevated_access_not_removed _; cleanup = Cleanup_failed _; _ } -> ()
-   | _ -> Alcotest.fail "a refused removal must not be reported as a successful cleanup");
-  Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
+   | Destroy_succeeded { cleanup = Cleanup_failed _; degradations; _ } ->
+     Alcotest.(check bool)
+       "the refused removal is still not reported as a successful cleanup"
+       true
+       (List.exists
+          (fun m -> contains (Str.regexp_string "elevated access") m)
+          degradations)
+   | _ -> Alcotest.fail "the refused removal must stay visible as a degradation");
+  Alcotest.(check int)
+    "and it does not immobilise the substrate: the destroy still ran"
+    1
+    calls.substrate
 ;;
 
 let observation_with
@@ -971,9 +1098,9 @@ let () =
             `Quick
             test_skipped_teardown_and_cleanup_failure_are_both_preserved
         ; Alcotest.test_case
-            "cleanup failure is not success"
+            "cleanup failure does not decide absence"
             `Quick
-            test_cleanup_failure_is_not_replaced_by_success
+            test_cleanup_failure_does_not_decide_absence
         ; Alcotest.test_case
             "cleanup failure preserved"
             `Quick
@@ -992,6 +1119,18 @@ let () =
             "continue failure destroys"
             `Quick
             test_continue_preparation_failure_destroys
+        ; Alcotest.test_case
+            "an unremovable elevated binding does not immobilise the substrate"
+            `Quick
+            test_unremovable_elevated_access_does_not_immobilise_the_substrate
+        ; Alcotest.test_case
+            "a destroy that cannot converge claims no absence (FND-0069)"
+            `Quick
+            test_destroy_that_cannot_converge_claims_no_absence
+        ; Alcotest.test_case
+            "residue the state does not own is not absence"
+            `Quick
+            test_residue_the_state_does_not_own_is_not_absence
         ; Alcotest.test_case
             "block failure blocks destruction"
             `Quick
@@ -1019,9 +1158,9 @@ let () =
             `Quick
             test_refused_reconciliation_never_applies
         ; Alcotest.test_case
-            "refused removal is not success"
+            "a refused removal does not stop the substrate destroy"
             `Quick
-            test_refused_removal_is_not_success
+            test_refused_removal_does_not_stop_the_substrate_destroy
         ] )
     ; ( "verification"
       , [ Alcotest.test_case

@@ -181,6 +181,25 @@ let exit_code = function
   | Destroy_blocked _ | Destroy_failed _ -> exit_failure
 ;;
 
+let completion_message = function
+  | Destroy_succeeded { degradations = []; _ } ->
+    "Done. Destruction reached verified absence."
+  | Destroy_succeeded { degradations; _ } ->
+    Printf.sprintf
+      "Done, with %d degraded preparation(s). Destruction reached verified absence."
+      (List.length degradations)
+  | Destroy_blocked { guarantee } ->
+    Printf.sprintf
+      "Destruction is blocked by a guarantee this target declared, so nothing was \
+       destroyed: %s"
+      guarantee
+  | Destroy_failed { failure; _ } ->
+    Printf.sprintf
+      "Destruction did not converge: %s. What remains is whatever the verification above \
+       reports; nothing here establishes that the resources are gone."
+      (failure_message failure)
+;;
+
 type deps =
   { require_credentials : unit -> (unit, string) result
   ; terraform_init : unit -> (unit, string) result
@@ -302,6 +321,27 @@ let execute ~deps =
       { failure; degradations = List.rev !degradations; cleanup; verification }
   in
   let block guarantee = Destroy_blocked { guarantee } in
+  let destroy_and_verify ~cloud_exists ~cleanup ~preparation =
+    if cloud_exists
+    then
+      deps.report
+        (Printf.sprintf
+           "  lifecycle phase: %s"
+           (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Destroying));
+    match deps.destroy_substrate () with
+    | Error message -> fail ~cleanup (Substrate_destroy_failed message)
+    | Ok () ->
+      deps.report "\nVerifying teardown...";
+      let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
+      let verdict = Sol_cli_destroy_verification.classify observation in
+      if Sol_cli_destroy_verification.is_verified verdict
+      then succeed ~cleanup ~verification:observation preparation
+      else
+        fail
+          ~cleanup
+          ~verification:observation
+          (Verification_failed (Sol_cli_destroy_verification.verdict_message verdict))
+  in
   match deps.require_credentials () with
   | Error message -> fail (Credentials_failed message)
   | Ok () ->
@@ -351,31 +391,16 @@ let execute ~deps =
               |> List.iter (fun message -> degradations := message :: !degradations);
               (match cleanup with
                | Cleanup_failed message ->
-                 fail ~cleanup (Elevated_access_not_removed message)
+                 degrade
+                   "elevated access"
+                   (Printf.sprintf
+                      "%s -- the binding this removes lives inside the cluster, so it is \
+                       removed with the substrate; destruction continues and the absence \
+                       check decides whether anything is left"
+                      message);
+                 destroy_and_verify ~cloud_exists ~cleanup ~preparation
                | Cleanup_not_needed | Cleanup_succeeded ->
-                 if cloud_exists
-                 then
-                   deps.report
-                     (Printf.sprintf
-                        "  lifecycle phase: %s"
-                        (Sol_cli_cloud_lifecycle.phase_to_string
-                           Sol_cli_cloud_lifecycle.Destroying));
-                 (match deps.destroy_substrate () with
-                  | Error message -> fail ~cleanup (Substrate_destroy_failed message)
-                  | Ok () ->
-                    deps.report "\nVerifying teardown...";
-                    let observation =
-                      deps.verify_destruction ~pre_destroy:state ~preparation
-                    in
-                    let verdict = Sol_cli_destroy_verification.classify observation in
-                    if Sol_cli_destroy_verification.is_verified verdict
-                    then succeed ~cleanup ~verification:observation preparation
-                    else
-                      fail
-                        ~cleanup
-                        ~verification:observation
-                        (Verification_failed
-                           (Sol_cli_destroy_verification.verdict_message verdict)))))))
+                 destroy_and_verify ~cloud_exists ~cleanup ~preparation))))
 ;;
 
 let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =

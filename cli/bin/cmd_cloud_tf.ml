@@ -249,10 +249,7 @@ let report_degradations = function
     |> List.iter (fun message ->
       Printf.eprintf
         "warning: a preparation degraded and destruction continued -- %s\n%!"
-        message);
-    Printf.eprintf
-      "warning: destruction reached absence with %d degraded preparation(s)\n%!"
-      (List.length degradations)
+        message)
 ;;
 
 let cloud_destroy ~target ~var_file ~vars ~action () =
@@ -347,12 +344,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        report_cleanup_evidence cleanup;
        report_degradations degradations;
        report_verification verification;
-       let completion =
-         if degradations = []
-         then "\nDone.\n"
-         else "\nDone, with a degraded preparation.\n"
-       in
-       Printf.printf "%s%!" completion
+       Printf.printf "\n%s\n%!" (Sol_cli_cloud_destroy.completion_message outcome)
      | Sol_cli_cloud_destroy.Destroy_blocked { guarantee } ->
        Printf.eprintf
          "error: destruction is blocked -- proceeding would violate a destruction-time \
@@ -360,11 +352,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           %!"
          guarantee
      | Sol_cli_cloud_destroy.Destroy_failed
-         { failure; degradations; cleanup; verification } ->
+         { failure = _; degradations; cleanup; verification } ->
        report_cleanup_evidence cleanup;
        report_degradations degradations;
        verification |> Option.iter report_verification;
-       Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
+       Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.completion_message outcome));
     (match Sol_cli_cloud_destroy.exit_code outcome with
      | 0 -> Ok ()
      | code -> Error (Sol_cli_exit.reported ~code ()))
