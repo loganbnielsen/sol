@@ -71,7 +71,7 @@ awk -F'\t' '
     }
     for (id in added) {
       if (added[id] == "DONE" && !(id in removed)) {
-        print "  new tickets must start in BACKLOG or READY_FOR_ENGINEERING: " id
+        print "  new ticket in DONE/" id ": file it in BACKLOG or READY_FOR_ENGINEERING in its own PR first, then move it to DONE in the implementation PR"
         bad = 1
       }
       if ((id in removed) && !transition_ok(removed[id], added[id])) bad = 1
