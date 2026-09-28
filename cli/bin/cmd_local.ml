@@ -18,28 +18,25 @@ let require_tools () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
-let pending_installs = ref []
-
-let helm_install ~label release chart ~namespace ?version ?(values = []) ?values_yaml () =
-  pending_installs
-  := { Sol_cli_local_infra.label
-     ; run =
-         (fun () ->
-           match
-             upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml ()
-           with
-           | Ok _ -> Ok ()
-           | Error (Sol_cli_process.Non_zero r) ->
-             Error (Sol_cli_process.failure_message r)
-           | Error e -> Error (Sol_cli_process.error_to_string e))
-     }
-     :: !pending_installs
-;;
-
-let run_local_infra_installs () =
-  let installs = List.rev !pending_installs in
-  pending_installs := [];
-  Sol_cli_local_infra.run_bounded installs |> Sol_cli_exit.of_msg
+let helm_install_job (release : Sol_cli_local_platform.release)
+  : Sol_cli_local_infra.install
+  =
+  { label = release.label
+  ; run =
+      (fun () ->
+        upgrade_install
+          ~release:release.name
+          ~chart:release.chart
+          ~namespace:release.namespace
+          ?version:release.version
+          ~values:release.values
+          ?values_yaml:release.values_yaml
+          ()
+        |> Result.map ignore
+        |> Result.map_error (function
+          | Sol_cli_process.Non_zero r -> Sol_cli_process.failure_message r
+          | e -> Sol_cli_process.error_to_string e))
+  }
 ;;
 
 let apply_yaml yaml =
@@ -79,7 +76,7 @@ let declared_resources () =
   Sol_cli_config.local_infra ~root |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
 ;;
 
-let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
+let prepare_helm_repositories_best_effort req =
   if Sol_cli_local_platform.needs_any_chart req
   then (
     Sol_cli_local_platform.repositories
@@ -94,19 +91,19 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
     |> Result.iter_error (fun e ->
       Printf.eprintf
         "warning: helm repo update: %s\n%!"
-        (Sol_cli_process.error_to_string e)));
+        (Sol_cli_process.error_to_string e)))
+;;
+
+let install_releases ~req ~local =
   Sol_cli_local_platform.releases ~req ~assets:local
-  |> List.iter (fun (r : Sol_cli_local_platform.release) ->
-    helm_install
-      ~label:r.label
-      r.name
-      r.chart
-      ~namespace:r.namespace
-      ?version:r.version
-      ~values:r.values
-      ?values_yaml:r.values_yaml
-      ());
-  let* () = run_local_infra_installs () in
+  |> List.map helm_install_job
+  |> Sol_cli_local_infra.run_bounded
+  |> Sol_cli_exit.of_msg
+;;
+
+let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
+  prepare_helm_repositories_best_effort req;
+  let* () = install_releases ~req ~local in
   if Sol_cli_local_platform.needs_grafana req
   then
     install_local_grafana_config

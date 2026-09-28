@@ -243,6 +243,24 @@ let run_apply_term dir table dry_run target registry =
      run_apply ~ctx dir table dry_run target registry |> Sol_cli_exit.of_msg)
 ;;
 
+let run_status_term dir table json =
+  run_status ~ctx:Cmd_destination.local ~json dir table ()
+  |> Sol_cli_exit.of_msg
+  |> Sol_cli_exit.exit_on
+;;
+
+let run_rollback_term dir table =
+  run_rollback ~ctx:Cmd_destination.local dir table ()
+  |> Sol_cli_exit.of_msg
+  |> Sol_cli_exit.exit_on
+;;
+
+let run_local_apply_term dir table dry_run registry =
+  run_apply ~ctx:Cmd_destination.local dir table dry_run None registry
+  |> Sol_cli_exit.of_msg
+  |> Sol_cli_exit.exit_on
+;;
+
 let dir_arg =
   let explicit =
     Arg.(
@@ -342,24 +360,13 @@ let json_flag =
 let status_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show per-file applied/pending status")
-    Term.(
-      const (fun dir table json ->
-        Sol_cli_exit.exit_on
-          (run_status ~ctx:Cmd_destination.local ~json dir table () |> Sol_cli_exit.of_msg))
-      $ dir_arg
-      $ table_arg
-      $ json_flag)
+    Term.(const run_status_term $ dir_arg $ table_arg $ json_flag)
 ;;
 
 let rollback_cmd =
   Cmd.v
     (Cmd.info "rollback" ~doc:"Roll back the last applied migration")
-    Term.(
-      const (fun dir table ->
-        Sol_cli_exit.exit_on
-          (run_rollback ~ctx:Cmd_destination.local dir table () |> Sol_cli_exit.of_msg))
-      $ dir_arg
-      $ table_arg)
+    Term.(const run_rollback_term $ dir_arg $ table_arg)
 ;;
 
 let cmd =
@@ -379,13 +386,5 @@ let cmd =
 let local_cmd =
   Cmd.v
     (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")
-    Term.(
-      const (fun dir table dry_run registry ->
-        Sol_cli_exit.exit_on
-          (run_apply ~ctx:Cmd_destination.local dir table dry_run None registry
-           |> Sol_cli_exit.of_msg))
-      $ dir_arg
-      $ table_arg
-      $ dry_run_flag
-      $ registry_arg)
+    Term.(const run_local_apply_term $ dir_arg $ table_arg $ dry_run_flag $ registry_arg)
 ;;

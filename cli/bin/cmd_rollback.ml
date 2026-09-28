@@ -26,12 +26,7 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
       (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name);
     Ok ()
   in
-  specs
-  |> List.fold_left
-       (fun acc spec ->
-          let* () = acc in
-          apply_spec spec)
-       (Ok ())
+  specs |> Sol_cli_result.map_list apply_spec |> Result.map ignore
 ;;
 
 let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
@@ -58,45 +53,35 @@ let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result 
   Ok ()
 ;;
 
+let resolve_commit ~ctx ~workspace ~target_string ~commit ~scope =
+  let* events = Sol_cli_deployment_store.list ~ctx ~workspace in
+  let resolution =
+    Sol_cli_rollback.resolve_commit ~commit ?scope ~target:target_string events
+  in
+  match resolution with
+  | Sol_cli_rollback.Commit_resolved release_id -> Ok release_id
+  | Commit_invalid _ | Commit_no_match | Commit_ambiguous _ ->
+    Error
+      (Sol_cli_rollback.commit_resolution_to_string
+         ~commit
+         ~target:target_string
+         ?scope
+         resolution)
+;;
+
 let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
   : (string, string) result
   =
-  match commit with
-  | None ->
-    (match scope with
-     | Some _ ->
-       Error
-         "--scope only narrows --commit candidate resolution; pass --commit too, or a \
-          release id directly."
-     | None ->
-       (match release_id with
-        | Some id -> Ok id
-        | None -> Error "pass a release id, or --commit <sha>."))
-  | Some commit ->
-    (match release_id with
-     | Some _ -> Error "pass either a release id or --commit, not both."
-     | None ->
-       let* events = Sol_cli_deployment_store.list ~ctx ~workspace in
-       let resolution =
-         Sol_cli_rollback.resolve_commit ~commit ?scope ~target:target_string events
-       in
-       (match resolution with
-        | Sol_cli_rollback.Commit_resolved release_id ->
-          Printf.printf
-            "%s\n%!"
-            (Sol_cli_rollback.commit_resolution_to_string
-               ~commit
-               ~target:target_string
-               ?scope
-               resolution);
-          Ok release_id
-        | Commit_invalid _ | Commit_no_match | Commit_ambiguous _ ->
-          Error
-            (Sol_cli_rollback.commit_resolution_to_string
-               ~commit
-               ~target:target_string
-               ?scope
-               resolution)))
+  match release_id, commit, scope with
+  | Some id, None, None -> Ok id
+  | None, None, None -> Error "pass a release id, or --commit <sha>."
+  | _, None, Some _ ->
+    Error
+      "--scope only narrows --commit candidate resolution; pass --commit too, or a \
+       release id directly."
+  | Some _, Some _, _ -> Error "pass either a release id or --commit, not both."
+  | None, Some commit, scope ->
+    resolve_commit ~ctx ~workspace ~target_string ~commit ~scope
 ;;
 
 let run ~ctx ?(local = false) ~target_string release_id commit scope =

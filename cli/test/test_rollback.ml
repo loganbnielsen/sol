@@ -1393,6 +1393,20 @@ let test_resolve_commit_invalid_scope () =
   | _ -> Alcotest.fail "expected Commit_invalid: malformed --scope"
 ;;
 
+let test_sequential_application_stops_on_error () =
+  let visited = ref [] in
+  let apply spec =
+    visited := spec :: !visited;
+    if spec = 2 then Error "apply failed" else Ok ()
+  in
+  let result = [ 1; 2; 3 ] |> Sol_cli_result.map_list apply |> Result.map ignore in
+  Alcotest.(check (result unit string)) "first error" (Error "apply failed") result;
+  Alcotest.(check (list int))
+    "sequential, stops before third"
+    [ 1; 2 ]
+    (List.rev !visited)
+;;
+
 let () =
   Alcotest.run
     "rollback"
@@ -1447,6 +1461,12 @@ let () =
             "resource + jsonpath table"
             `Quick
             test_live_resource_and_jsonpath_table
+        ] )
+    ; ( "sequential_application"
+      , [ Alcotest.test_case
+            "stops on first error"
+            `Quick
+            test_sequential_application_stops_on_error
         ] )
     ; ( "apply_mode_refusal"
       , [ Alcotest.test_case "allows Direct" `Quick test_check_apply_mode_allows_direct
