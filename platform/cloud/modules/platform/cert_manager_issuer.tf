@@ -28,17 +28,6 @@ variable "cert_manager_dns01_project" {
 }
 
 locals {
-  cert_manager_dns01_solver = var.cloud_provider == "gcp" ? {
-    cloudDNS = {
-      project = var.cert_manager_dns01_project
-    }
-    } : {
-    route53 = {
-      region  = var.cert_manager_dns01_region
-      roleArn = var.cert_manager_irsa_role_arn != "" ? var.cert_manager_irsa_role_arn : null
-    }
-  }
-
   cert_manager_identity = var.cloud_provider == "gcp" ? var.cert_manager_workload_identity_sa_email : var.cert_manager_irsa_role_arn
 
   cert_manager_identity_annotation = var.cloud_provider == "gcp" ? "iam.gke.io/gcp-service-account" : "eks.amazonaws.com/role-arn"
@@ -46,7 +35,9 @@ locals {
   cert_manager_identity_variable = var.cloud_provider == "gcp" ? "cert_manager_workload_identity_sa_email" : "cert_manager_irsa_role_arn"
 }
 
-resource "kubernetes_manifest" "letsencrypt_staging" {
+resource "kubernetes_manifest" "letsencrypt_staging_aws" {
+  count = var.cloud_provider == "gcp" ? 0 : 1
+
   manifest = {
     apiVersion = "cert-manager.io/v1"
     kind       = "ClusterIssuer"
@@ -56,22 +47,31 @@ resource "kubernetes_manifest" "letsencrypt_staging" {
         server              = "https://acme-staging-v02.api.letsencrypt.org/directory"
         email               = var.letsencrypt_email
         privateKeySecretRef = { name = "letsencrypt-staging" }
-        solvers             = [{ dns01 = local.cert_manager_dns01_solver }]
+        solvers = [{
+          dns01 = {
+            route53 = {
+              region  = var.cert_manager_dns01_region
+              roleArn = var.cert_manager_irsa_role_arn != "" ? var.cert_manager_irsa_role_arn : null
+            }
+          }
+        }]
       }
     }
   }
 
   lifecycle {
     precondition {
-      condition     = local.cert_manager_identity != ""
-      error_message = "cert-manager has no DNS-01 identity for this provider: the ${var.cloud_provider} root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
+      condition     = var.cert_manager_irsa_role_arn != ""
+      error_message = "cert-manager has no DNS-01 identity for aws: the aws root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
     }
   }
 
   depends_on = [helm_release.cert_manager]
 }
 
-resource "kubernetes_manifest" "letsencrypt_prod" {
+resource "kubernetes_manifest" "letsencrypt_prod_aws" {
+  count = var.cloud_provider == "gcp" ? 0 : 1
+
   manifest = {
     apiVersion = "cert-manager.io/v1"
     kind       = "ClusterIssuer"
@@ -81,15 +81,88 @@ resource "kubernetes_manifest" "letsencrypt_prod" {
         server              = "https://acme-v02.api.letsencrypt.org/directory"
         email               = var.letsencrypt_email
         privateKeySecretRef = { name = "letsencrypt-prod" }
-        solvers             = [{ dns01 = local.cert_manager_dns01_solver }]
+        solvers = [{
+          dns01 = {
+            route53 = {
+              region  = var.cert_manager_dns01_region
+              roleArn = var.cert_manager_irsa_role_arn != "" ? var.cert_manager_irsa_role_arn : null
+            }
+          }
+        }]
       }
     }
   }
 
   lifecycle {
     precondition {
-      condition     = local.cert_manager_identity != ""
-      error_message = "cert-manager has no DNS-01 identity for this provider: the ${var.cloud_provider} root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
+      condition     = var.cert_manager_irsa_role_arn != ""
+      error_message = "cert-manager has no DNS-01 identity for aws: the aws root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
+    }
+  }
+
+  depends_on = [helm_release.cert_manager]
+}
+
+resource "kubernetes_manifest" "letsencrypt_staging_gcp" {
+  count = var.cloud_provider == "gcp" ? 1 : 0
+
+  manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "ClusterIssuer"
+    metadata   = { name = "letsencrypt-staging" }
+    spec = {
+      acme = {
+        server              = "https://acme-staging-v02.api.letsencrypt.org/directory"
+        email               = var.letsencrypt_email
+        privateKeySecretRef = { name = "letsencrypt-staging" }
+        solvers = [{
+          dns01 = {
+            cloudDNS = {
+              project = var.cert_manager_dns01_project
+            }
+          }
+        }]
+      }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.cert_manager_workload_identity_sa_email != ""
+      error_message = "cert-manager has no DNS-01 identity for gcp: the gcp root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
+    }
+  }
+
+  depends_on = [helm_release.cert_manager]
+}
+
+resource "kubernetes_manifest" "letsencrypt_prod_gcp" {
+  count = var.cloud_provider == "gcp" ? 1 : 0
+
+  manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "ClusterIssuer"
+    metadata   = { name = "letsencrypt-prod" }
+    spec = {
+      acme = {
+        server              = "https://acme-v02.api.letsencrypt.org/directory"
+        email               = var.letsencrypt_email
+        privateKeySecretRef = { name = "letsencrypt-prod" }
+        solvers = [{
+          dns01 = {
+            cloudDNS = {
+              project = var.cert_manager_dns01_project
+            }
+          }
+        }]
+      }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.cert_manager_workload_identity_sa_email != ""
+      error_message = "cert-manager has no DNS-01 identity for gcp: the gcp root must supply ${local.cert_manager_identity_variable}, or every ACME challenge runs without credentials and no certificate can issue (FND-0067)."
     }
   }
 

@@ -44,7 +44,14 @@ identity. The GCP driver's install-time refusal — *"Sol cannot yet wire a cert
 or qualify the GCP issuer path first"* — is removed, which is the gate it existed to be: a GCP target that
 declares `cluster_issuer` now installs the issuer path instead of being refused.
 
-`internal/ci/check_provider_tls_path.py` and its twelve mutations hold the contract: each provider has a
+**A first live attempt at this failed in a way worth recording** (Attempt 18): the solver had been built
+from a provider-conditional local, and Terraform's `kubernetes_manifest` provider could not convert the
+unified object type against the CRD schema (`Failed to transform Tuple element into Tuple element type`).
+The same config is re-read on refresh, so the *destroy* failed on it too — the substrate stood until the
+module was fixed and Sol's supported destroy could run. The fix is that each provider now has its own
+gated ClusterIssuer resources with literal manifests, exactly the shape that had already applied.
+
+`internal/ci/check_provider_tls_path.py` and its sixteen mutations hold the contract: each provider has a
 solver and an identity, each root supplies its own scope, each cluster root owns a zone-scoped permission
 set, the pod carries the provider's annotation, an empty identity fails closed, and no driver refuses a
 target that asks for TLS.

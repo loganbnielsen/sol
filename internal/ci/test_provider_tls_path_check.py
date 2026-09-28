@@ -65,18 +65,21 @@ def remove_block(relative, anchor):
 
 CASES = [
     ("gcp-solver-removed", substitute(
-        ISSUER,
-        r'solvers\s*=\s*\[\{ dns01 = local\.cert_manager_dns01_solver \}\]',
-        'solvers = [{ dns01 = { route53 = { region = "us-east-1" } } }]',
-        count=2)),
+        ISSUER, r'cloudDNS = \{\n\s*project = var\.cert_manager_dns01_project\n\s*\}',
+        'route53 = { region = "us-east-1" }', count=2)),
     ("gcp-solver-variable-removed", substitute(
-        ISSUER, r'\n\s*project = var\.cert_manager_dns01_project', "")),
+        ISSUER, r'var\.cert_manager_dns01_project', '"sol-qualification"', count=2)),
+    ("gcp-issuers-not-gated-on-the-provider", substitute(
+        ISSUER, r'count = var\.cloud_provider == "gcp" \? 1 : 0', 'count = 1', count=2)),
+    ("aws-issuers-not-gated-on-the-provider", substitute(
+        ISSUER, r'count = var\.cloud_provider == "gcp" \? 0 : 1', 'count = 1', count=2)),
     ("gcp-identity-annotation-removed", substitute(
         RELEASE, r'\n\s*\(local\.cert_manager_identity_annotation\) = local\.cert_manager_identity', "")),
     ("gcp-identity-input-removed", substitute(
-        ISSUER, r'var\.cert_manager_workload_identity_sa_email', '""')),
+        ISSUER, r'var\.cert_manager_workload_identity_sa_email', '""', count=3)),
     ("gcp-empty-identity-no-longer-refused", substitute(
-        ISSUER, r'\n\s*condition\s*=\s*local\.cert_manager_identity != ""', "\n      condition     = true", count=2)),
+        ISSUER, r'condition\s*=\s*var\.cert_manager_workload_identity_sa_email != ""',
+        'condition     = true', count=2)),
     ("gcp-platform-root-drops-the-identity", substitute(
         GCP_PLATFORM, r"\n\s*cert_manager_workload_identity_sa_email = var\.cert_manager_workload_identity_sa_email", "")),
     ("gcp-record-role-widened-to-zone-read", substitute(
