@@ -24,12 +24,15 @@ For a bounded command whose operation finishes before output begins:
 
 1. the operation returns structured data or a typed outcome;
 2. semantic failure is decided where that outcome is built;
-3. rendering converts the outcome to text;
-4. the outer command/controller owns stdout/stderr and exit conversion.
+3. that typed outcome travels up the call chain unchanged;
+4. the command entry function renders it to text at the point it prints, and owns
+   stdout/stderr and exit conversion.
 
-Do not force this shape onto progress output, prompts, streaming logs, child-process
-forwarding, or other operations whose terminal effect is part of execution. Do not add
-`print_*` wrappers that merely hide the effect one function deeper.
+Do not build the output text in a helper deeper in the call chain and return it as a
+string: text is built where it is printed. Do not force this shape onto progress output,
+prompts, streaming logs, child-process forwarding, or other operations whose terminal
+effect is part of execution. Do not add `print_*` wrappers that merely hide the effect
+one function deeper.
 
 ## Remediation
 
@@ -56,28 +59,35 @@ forwarding, or other operations whose terminal effect is part of execution. Do n
 
 ## Completion (2026-09-28)
 
-- Rechecked bounded command bodies after REFAC-144/148/150. Assets still decided
-  failure while printing, check mixed findings/failure/rendering, and alert's final
-  outcome renderer printed. These remain real bounded-presentation opportunities.
-- Assets and check now finish into local typed outcomes including semantic success/
-  failure; pure renderers produce text before run owns terminal effects. Alert's
-  typed domain outcome becomes pure success/error text; its sending progress stays
-  before HTTP. Plan renders into a buffer; release/deployment listings use their
-  existing domain table renderers and a pure empty-list presentation.
-- Presentation types stay local: no generic command framework or accidental public
-  API was added. Existing library outcomes remain the semantic source of truth.
+- Re-derived the boundary against the reviewed branch rather than the ticket text alone.
+  An earlier pass introduced `render_*` helpers that built the command's whole output
+  string (and folded the failure decision into the same `(string, failure) result`) and
+  passed it up to `run` to print. That is exactly the shape this ticket rejects, so those
+  helpers are gone: the typed outcome travels to the command boundary, which prints.
+- Extracted a pure operation only where compute was genuinely mixed with presentation:
+  `cmd_assets` now has `inspect : unit -> (report, Sol_cli_exit.failure) result` and
+  `cmd_check` has `inspect : scope -> (outcome, Sol_cli_exit.failure) result`, each
+  carrying the semantic verdict; their `run` renders the typed fields, prints them, and
+  returns the verdict. `cmd_alert` matches `Sol_cli_alert_test.outcome` at the command
+  boundary and prints there, with the sending progress left before the request.
+- `cmd_plan`, `cmd_releases`, and `cmd_deployments` already had the boundary — a typed
+  config load, or a record list whose domain table renderer is pure — with presentation
+  at the command top. The buffer/string renderers an earlier pass added there were churn
+  and are reverted; the inventory records them as retained.
+- Presentation types stay local: no generic command framework or accidental public API
+  was added. Existing library outcomes remain the semantic source of truth.
 
 ### Every command module inventoried
 
 | Module | Bounded/streaming verdict and disposition |
 | --- | --- |
-| cmd_assets | Bounded; typed inspection outcome and pure renderer extracted |
-| cmd_check | Bounded; typed findings/failure outcome and pure stdout/stderr renderer |
-| cmd_plan | Bounded; pure full-plan renderer, controller prints once |
-| cmd_alert | Mixed; dry-run bounded, final typed outcome rendering made pure; sending progress remains before request |
+| cmd_assets | Bounded; `inspect` returns typed assets + checks + verdict, `run` prints and returns it |
+| cmd_check | Bounded; `inspect` returns typed findings + verdict, `run` prints findings to stderr and the ok line to stdout |
+| cmd_plan | Bounded and retained; typed config load, plan printed at the command top (no renderer) |
+| cmd_alert | Mixed; dry-run bounded, send outcome matched and printed at the command boundary, sending progress stays before the request |
 | cmd_target | Bounded target probes/report; existing target_report owns pure data/rendering |
-| cmd_releases | Bounded domain records/table; pure empty/populated renderer |
-| cmd_deployments | Bounded domain records/table; pure empty/populated renderer |
+| cmd_releases | Bounded and retained; record list and its domain table printed at the command top |
+| cmd_deployments | Bounded and retained; record list and its domain table printed at the command top |
 | cmd_open | Bounded link presentation plus optional browser-launch effect; existing URL resolution stays separate |
 | cmd_fn | Bounded job mutation/identity output; existing manual-job result separates operation from simple presentation |
 | cmd_secret | Bounded secret results; existing redacted_result renderer, stdin read remains an input effect |
@@ -97,7 +107,8 @@ forwarding, or other operations whose terminal effect is part of execution. Do n
 - Validation: full CLI suite including real-command asset multi-failure, plan,
   check/target/alert exit checks and offline cloud lifecycle scenarios passes.
   A new real-command test captures untrimmed output files and checks exact stdout,
-  stderr and exit status for check success and accepted/rejected alerts; its curl
-  adapter never sends a network request.
+  stderr and exit status for check success and accepted/rejected alerts, plus that
+  `sol assets` reaches its all-present footer on a clean checkout; its curl adapter
+  never sends a network request.
 - Demo/example: not applicable; no command behavior or app-author contract changes.
   No language-parity impact: this changes CLI presentation structure only.

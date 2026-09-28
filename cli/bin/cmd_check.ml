@@ -34,21 +34,14 @@ let inspect scope =
   Ok { findings; result }
 ;;
 
-let render { findings; result } =
-  let stderr =
-    findings
-    |> List.map (fun finding -> Sol_cli_check.finding_to_string finding ^ "\n")
-    |> String.concat ""
-  in
-  let stdout = if Result.is_ok result then "sol check: ok\n" else "" in
-  stdout, stderr
-;;
-
 let run scope =
   let* outcome = inspect scope in
-  let stdout, stderr = render outcome in
-  Printf.eprintf "%s" stderr;
-  Printf.printf "%s" stdout;
+  outcome.findings
+  |> List.iter (fun finding ->
+    Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string finding));
+  (match outcome.result with
+   | Ok () -> Printf.printf "sol check: ok\n"
+   | Error _ -> ());
   outcome.result
 ;;
 

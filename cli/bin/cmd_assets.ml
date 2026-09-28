@@ -101,11 +101,11 @@ let checks assets =
     ]
 ;;
 
-let render_check { label; outcome } =
+let print_check { label; outcome } =
   match outcome with
-  | Ok "" -> Printf.sprintf "  ok  %s\n" label
-  | Ok detail -> Printf.sprintf "  ok  %s  %s\n" label detail
-  | Error reason -> Printf.sprintf "  FAIL  %s  %s\n" label reason
+  | Ok "" -> Printf.printf "  ok  %s\n" label
+  | Ok detail -> Printf.printf "  ok  %s  %s\n" label detail
+  | Error reason -> Printf.printf "  FAIL  %s  %s\n" label reason
 ;;
 
 type outcome =
@@ -133,22 +133,17 @@ let inspect () =
   Ok { assets; checks; result }
 ;;
 
-let render { assets; checks; result } =
-  let header =
-    Printf.sprintf
-      "sol %s\nassets: %s\n  root: %s\n\n"
-      (Option.value Sol_cli_build_info.release_version ~default:Version.v)
-      (form_to_string assets)
-      (A.dir assets)
-  in
-  let details = checks |> List.map render_check |> String.concat "" in
-  let footer = if Result.is_ok result then "\nall assets present\n" else "" in
-  header ^ details ^ footer
-;;
-
 let run () =
   let* outcome = inspect () in
-  Printf.printf "%s%!" (render outcome);
+  Printf.printf
+    "sol %s\nassets: %s\n  root: %s\n\n%!"
+    (Option.value Sol_cli_build_info.release_version ~default:Version.v)
+    (form_to_string outcome.assets)
+    (A.dir outcome.assets);
+  outcome.checks |> List.iter print_check;
+  (match outcome.result with
+   | Ok () -> Printf.printf "\nall assets present\n"
+   | Error _ -> ());
   outcome.result
 ;;
 

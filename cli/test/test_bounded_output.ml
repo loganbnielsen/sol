@@ -90,6 +90,12 @@ let test_bounded_command_bytes () =
           HARDEN-002 evidence, not this command's exit status.\n"
          alert.stdout;
        Alcotest.(check string) "alert stderr" "" alert.stderr;
+       let assets = run [ "assets" ] in
+       Alcotest.(check string) "assets stderr" "" assets.stderr;
+       Alcotest.(check bool)
+         "assets reports every check present"
+         true
+         (String.ends_with ~suffix:"\nall assets present\n" assets.stdout);
        unwrap
          (Sol_cli_fs.write_atomic curl "#!/bin/sh\necho synthetic-failure >&2\nexit 7\n");
        Unix.chmod curl 0o755;
@@ -114,7 +120,7 @@ let () =
   Alcotest.run
     "bounded output"
     [ ( "command bytes"
-      , [ Alcotest.test_case "check and accepted alert" `Quick test_bounded_command_bytes
-        ] )
+      , [ Alcotest.test_case "check, alert and assets" `Quick test_bounded_command_bytes ]
+      )
     ]
 ;;
