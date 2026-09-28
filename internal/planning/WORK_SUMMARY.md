@@ -69,6 +69,17 @@
 - All six tickets are readable; five are immediately actionable and REFAC-149 waits on
   REFAC-148 so the Result-specific normalization lands before the broader sweep.
 
+## REFAC-147 — charge examples expose their domain boundary (2026-09-28)
+
+- Pluto and generated charge services now name typed input, directly testable operation,
+  accepted result, and HTTP mapping; routes are declarative. Their different acceptance
+  mechanisms remain intact: Postgres in Pluto, Kafka publication in the scaffold.
+- Pluto and a freshly generated workspace build and run focused operation tests;
+  all 52 scaffold tests pass, including generated tests and golden expectations.
+  There is no new framework abstraction or language/runtime contract change.
+- Filing and merge-speed fixes are complete. REFAC-144 and REFAC-148 are queued on CI;
+  REFAC-145 awaits the shared-summary merge; remaining REFAC tickets continue.
+
 ## Latest: GCP Attempt 19 — the TLS path is qualified (2026-09-28)
 
 - **The whole path works, end to end, on a fresh target** (`352fd870`, `qual19/gcp/us-central1`,
