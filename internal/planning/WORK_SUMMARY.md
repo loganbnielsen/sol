@@ -260,3 +260,17 @@
 - `check_gcp_standard_substrate.py` + seven mutations hold the contract by *ownership*, never the numbers, so a deliberate sizing change is not a guard failure. Two of its own checks were repaired while building it (a control-plane check a sibling resource could satisfy; a declaration check whose nested quoting matched nothing).
 - INFRA-092: `ADMISSION_DENIED` classifies ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the failure path too. `test-live-qual` → 144 assertions, 0 failures.
 - FND-0064 → `FIXED_UNQUALIFIED`. Attempt 15 on a Standard cluster is the discriminator: install → `Ready` → supported Ready-state destruction.
+
+## REFAC queue continuation — Result propagation (2026-09-28)
+
+- Filing and BUG-066/FEAT-105 are merged; the refreshed docs-only validator was
+  verified with a 14-second required check. REFAC implementation has resumed.
+- REFAC-148 reviewed all 55 identity-error seeds across CLI/framework, plus copied
+  templates, examples and tooling. Linear Result composition replaces unchanged
+  forwarding; deliberate NotFound/AlreadyExists recovery and nested access/process
+  diagnostics remain explicit, with reasons in the ticket.
+- Focused CLI and framework tests, all 52 scaffold tests, builds, formatting,
+  no-comments and ticket-parser checks pass. Framework installation resolved the
+  initial isolated scaffold build failures. No runtime/API/language-contract changes.
+- REFAC-144 is queued on required CI; REFAC-145 waits for its shared-summary merge.
+  REFAC-146/147 and the remaining generalized sweeps continue autonomously.

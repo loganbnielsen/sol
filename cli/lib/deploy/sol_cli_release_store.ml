@@ -66,15 +66,16 @@ let write_one ~ctx ~verb ~name json =
 ;;
 
 let write_json ~ctx json =
+  let open Result.Syntax in
   match metadata_string json "name", metadata_string json "namespace" with
   | None, _ | _, None -> Error "release ConfigMap is missing metadata.name/namespace"
   | Some name, Some namespace ->
-    (match fetch_live ~ctx ~name ~namespace with
-     | Error e -> Error e
-     | Ok (Some (live_data, _)) when live_data = data_of_json json -> Ok ()
-     | Ok (Some (_, live_rv)) ->
+    let* live = fetch_live ~ctx ~name ~namespace in
+    (match live with
+     | Some (live_data, _) when live_data = data_of_json json -> Ok ()
+     | Some (_, live_rv) ->
        write_one ~ctx ~verb:`Replace ~name (with_resource_version json live_rv)
-     | Ok None -> write_one ~ctx ~verb:`Create ~name json)
+     | None -> write_one ~ctx ~verb:`Create ~name json)
 ;;
 
 let parse_configmap json = Sol_cli_json.decode ~what:"release ConfigMap" json
@@ -125,38 +126,33 @@ let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
 let get ~ctx ~(workspace : string) ~(release_id : string)
   : (Sol_cli_release.t, string) result
   =
-  match Sol_cli_release_id.of_string release_id with
-  | Error msg -> Error msg
-  | Ok id ->
-    let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
-    (match
-       Sol_cli_kubectl.get_if_present
-         ~ctx
-         ~args:[ "get"; "configmap"; name; "-n"; "default"; "-o"; "json" ]
-     with
-     | Ok None ->
-       Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
-     | Error e ->
-       Error
-         (Printf.sprintf
-            "kubectl get configmap failed: %s"
-            (Sol_cli_process.error_to_string e))
-     | Ok (Some body) ->
-       (match Sol_cli_json.decode ~what:"kubectl output" body with
-        | Error e -> Error e
-        | Ok json ->
-          (match Sol_cli_release.of_kubectl_item json with
-           | Error msg -> Error msg
-           | Ok record ->
-             if String.equal record.workspace workspace
-             then Ok record
-             else
-               Error
-                 (Printf.sprintf
-                    "release %s belongs to workspace %S, not %S"
-                    (Sol_cli_release_id.to_string id)
-                    record.workspace
-                    workspace))))
+  let open Result.Syntax in
+  let* id = Sol_cli_release_id.of_string release_id in
+  let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
+  match
+    Sol_cli_kubectl.get_if_present
+      ~ctx
+      ~args:[ "get"; "configmap"; name; "-n"; "default"; "-o"; "json" ]
+  with
+  | Ok None ->
+    Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
+  | Error e ->
+    Error
+      (Printf.sprintf
+         "kubectl get configmap failed: %s"
+         (Sol_cli_process.error_to_string e))
+  | Ok (Some body) ->
+    let* json = Sol_cli_json.decode ~what:"kubectl output" body in
+    let* record = Sol_cli_release.of_kubectl_item json in
+    if String.equal record.workspace workspace
+    then Ok record
+    else
+      Error
+        (Printf.sprintf
+           "release %s belongs to workspace %S, not %S"
+           (Sol_cli_release_id.to_string id)
+           record.workspace
+           workspace)
 ;;
 
 let current ~ctx ~(workspace : string) : (string option, string) result =
@@ -172,16 +168,15 @@ let current ~ctx ~(workspace : string) : (string option, string) result =
 ;;
 
 let delete ~ctx ~(release_id : string) : (unit, string) result =
-  match Sol_cli_release_id.of_string release_id with
-  | Error msg -> Error msg
-  | Ok id ->
-    let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
-    Sol_cli_kubectl.delete ~ctx ~resource:"configmap" ~name ~namespace:"default"
-    |> Result.map_error Sol_cli_process.error_to_string
+  let open Result.Syntax in
+  let* id = Sol_cli_release_id.of_string release_id in
+  let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
+  Sol_cli_kubectl.delete ~ctx ~resource:"configmap" ~name ~namespace:"default"
+  |> Result.map_error Sol_cli_process.error_to_string
 ;;
 
 let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =
-  match parse_configmap (Sol_cli_release.to_current_configmap_json t) with
-  | Error e -> Error e
-  | Ok json -> write_json ~ctx json
+  Result.bind
+    (parse_configmap (Sol_cli_release.to_current_configmap_json t))
+    (write_json ~ctx)
 ;;

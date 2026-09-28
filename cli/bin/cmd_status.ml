@@ -89,19 +89,21 @@ let curl_status_code url ~timeout_s : (int, string) result =
 ;;
 
 let http_reachable url : (unit, string) result =
-  match curl_status_code url ~timeout_s:2.0 with
-  | Error e -> Error e
-  | Ok code when code > 0 && code < 500 -> Ok ()
-  | Ok 0 -> Error "connection failed"
-  | Ok code -> Error (Printf.sprintf "HTTP %d" code)
+  let open Result.Syntax in
+  let* code = curl_status_code url ~timeout_s:2.0 in
+  match code with
+  | code when code > 0 && code < 500 -> Ok ()
+  | 0 -> Error "connection failed"
+  | code -> Error (Printf.sprintf "HTTP %d" code)
 ;;
 
 let health_check_reachable url : (unit, string) result =
-  match curl_status_code url ~timeout_s:2.0 with
-  | Error e -> Error e
-  | Ok code when code >= 200 && code < 300 -> Ok ()
-  | Ok 0 -> Error "connection failed"
-  | Ok code -> Error (Printf.sprintf "HTTP %d" code)
+  let open Result.Syntax in
+  let* code = curl_status_code url ~timeout_s:2.0 in
+  match code with
+  | code when code >= 200 && code < 300 -> Ok ()
+  | 0 -> Error "connection failed"
+  | code -> Error (Printf.sprintf "HTTP %d" code)
 ;;
 
 let dashboard_reachability ~backend ~base_domain =

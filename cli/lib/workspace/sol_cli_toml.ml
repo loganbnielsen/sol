@@ -56,6 +56,7 @@ let volume_access_mode_of_string = function
 ;;
 
 let effective_rollout_of_string s =
+  let open Result.Syntax in
   match s with
   | "rolling_update" -> Ok (None, None)
   | "recreate" -> Ok (Some Recreate, None)
@@ -84,13 +85,10 @@ let effective_rollout_of_string s =
          let rec go acc = function
            | [] -> Ok (List.rev acc)
            | step :: rest ->
-             (match parse_step step with
-              | Error msg -> Error msg
-              | Ok step -> go (step :: acc) rest)
+             let* step = parse_step step in
+             go (step :: acc) rest
          in
-         match go [] (String.split_on_char ',' steps) with
-         | Error msg -> Error msg
-         | Ok steps -> ok_steps steps)
+         Result.bind (go [] (String.split_on_char ',' steps)) ok_steps)
      | _ ->
        Error
          (Printf.sprintf
