@@ -278,6 +278,18 @@ let test_shell_lines () =
     (Sol_cli_local_run.launch_line (command [ "node"; "dist/main.js" ] "."))
 ;;
 
+let index_of haystack needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length haystack
+    then None
+    else if String.sub haystack i n = needle
+    then Some i
+    else go (i + 1)
+  in
+  go 0
+;;
+
 let test_command_preserves_build_launch_phases () =
   let executable =
     if Filename.is_relative Sys.executable_name
@@ -318,7 +330,30 @@ let test_command_preserves_build_launch_phases () =
       in
       check_bool "command success" expected_success (Result.is_ok result);
       let phases = In_channel.with_open_text log In_channel.input_all in
-      check_string "build gates launch" expected_phases phases)
+      check_string "build gates launch" expected_phases phases;
+      let stdout =
+        match result with
+        | Ok completed -> completed.stdout
+        | Error (Sol_cli_process.Non_zero failure) -> failure.stdout
+        | Error _ -> ""
+      in
+      let precedes before after =
+        match index_of stdout before, index_of stdout after with
+        | Some i, Some j -> i < j
+        | _ -> false
+      in
+      check_bool
+        "the plan report precedes the build"
+        true
+        (precedes "Starting 1 service(s)" "Building...");
+      check_bool
+        "Build done. is reported only on success"
+        expected_success
+        (Option.is_some (index_of stdout "Build done."));
+      check_bool
+        "the build precedes the launch"
+        expected_success
+        (precedes "Building..." "Services running"))
   in
   check 0 "build\nlaunch\n" true;
   check 7 "build\n" false

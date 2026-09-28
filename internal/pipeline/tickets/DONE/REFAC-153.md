@@ -69,10 +69,16 @@ contract or duplicated policy.
 - Effects stay in their original phase: source/child cancellation, build error
   short-circuiting, pipe ownership, signal registration, migration logs, cleanup,
   and final error priority were not reordered.
-- A real-command test with controlled npm/node adapters proves successful build
-  precedes launch, while failed build prevents launch. Existing local recipe,
-  migration-job (success/unstartable/timeout), supervised-process and full CLI
-  tests pass, including offline cloud lifecycle scenarios and readiness argv.
+- A real-command test with controlled npm/node adapters captures the command's own
+  stdout and proves the order report → build → launch, that the build gates launch,
+  and that a failed build omits both "Build done." and the launch report. Existing
+  local recipe, migration-job (success/unstartable/timeout), supervised-process and
+  full CLI tests pass, including offline cloud lifecycle scenarios and readiness argv.
+- Re-read the retained candidates against their actual call sites before recording
+  the keep verdicts above: `sol_jobs`' run body is a named polling loop over typed
+  finalizers, `auth_internal` is a `let*` validation pipeline plus a cache policy,
+  and rollout diagnosis is a set of small parse/format functions. No controller-sized
+  closure was left behind.
 - No duplicated policy was invented to justify an abstraction; the real source/
   retry duplication is addressed by REFAC-146's shared tested record path.
 - Demo/example: existing local-run examples still apply; no app-author behavior
