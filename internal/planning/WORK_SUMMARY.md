@@ -350,3 +350,8 @@
 
 - Self-reviewed the combined rollback, alert, assets, migration and local-install changes. Updated bounded-output assertions for the post-acceptance alert message and empty stdout on rejection; typed target/delivery errors are checked alongside dry-run and transport rejection.
 - Full `dune runtest cli/test` passes with CI-pinned kubectl v1.29.0 supplied from a temporary tools directory. Staged formatting, no-comments (681 files), and whitespace checks pass. Live cluster integration is unavailable because Docker is not accessible in this WSL environment.
+
+## PR #670 live integration follow-up (2026-09-28)
+
+- After Docker became available, ran `PATH=/tmp/sol-pr-tools:$PATH bash internal/tooling/scripts/run_tests.sh kafka e2e`. All 15 Kafka integration cases and all nine demo golden-workflow checks pass, including Loki queries, persisted orders and completed confirmation-email jobs.
+- The runner exits 2 for its Kafka performance threshold: repeat duration 10.526 seconds against a recorded 1.275-second baseline (1.4x threshold). E2E repeat duration is 1.245 seconds against 1.278 seconds. This records functional success separately from the observed timing warning; the informational baseline was not changed.
