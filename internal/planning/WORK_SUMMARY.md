@@ -1,5 +1,14 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
+
+- Component checking names its outcome and runs the fixed `local` and `durable` profile
+  set through one path, so the reason for the two renders is explicit.
+- Template planning errors propagate through `let*`, leaving its match to express only
+  the non-empty invariant; Terraform-root checks and observability checks are named
+  before the final report list.
+- Output and behavior stay under the existing real-command rule, which breaks two
+  independent assets and requires both failures plus the surviving provider result.
 ## Latest: DEC-056 — `Ready` covers the platform's declared certificates (2026-09-28)
 
 - **The semantic**: Sol declares its platform certificates unconditionally and exposes no supported
@@ -37,8 +46,8 @@
   waiting to GitHub. Both pin the head and reject drafts/unresolved prerequisites.
 - Worker/review/self-review/demo skills, local PR skill, and contributor/agent
   guidance now agree. Focused soldev tests and no-comments guard pass locally.
-- REFAC implementation/merging is paused until BUG-066/FEAT-105's faster workflow
-  has been verified, per operator direction.
+- REFAC implementation resumed after both speed fixes merged and PR #653 verified
+  the refreshed docs-only cache with a 14-second required check.
 
 ## Latest: BUG-066 lightweight docs-only CI verified (2026-09-28)
 
