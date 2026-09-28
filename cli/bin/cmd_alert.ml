@@ -1,14 +1,13 @@
 open Result.Syntax
 
-let report_outcome : Sol_cli_alert_test.outcome -> (unit, Sol_cli_exit.failure) result =
+let render_outcome : Sol_cli_alert_test.outcome -> (string, Sol_cli_exit.failure) result =
   function
   | Accepted ->
-    Printf.printf
+    Ok
       "Alertmanager accepted the synthetic alert.\n\n\
        This proves the route is configured and reachable. Confirm the named owner \
        received and acknowledged it: that delivered-and-acknowledged result is the \
-       HARDEN-002 evidence, not this command's exit status.\n";
-    Ok ()
+       HARDEN-002 evidence, not this command's exit status.\n"
   | Rejected { exit_code; stderr } ->
     Error
       (Sol_cli_exit.error
@@ -59,7 +58,10 @@ let run_test target alertmanager_url dry_run =
     Ok ())
   else (
     Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
-    Sol_cli_alert_test.send ~url ~body |> report_outcome)
+    let outcome = Sol_cli_alert_test.send ~url ~body in
+    let* text = render_outcome outcome in
+    print_string text;
+    Ok ())
 ;;
 
 open Cmdliner

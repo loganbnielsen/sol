@@ -4,15 +4,18 @@ let workspace_name = Sol_cli_workspace.current_name
 
 open Result.Syntax
 
+let render ~workspace = function
+  | [] ->
+    Printf.sprintf
+      "No releases recorded for workspace %s in the target's cluster.\n"
+      workspace
+  | records -> Sol_cli_release.format_table records ^ "\n"
+;;
+
 let run ~ctx () =
   let workspace = workspace_name () in
   let* records = Sol_cli_release_store.list ~ctx ~workspace |> Sol_cli_exit.of_msg in
-  (match records with
-   | [] ->
-     Printf.printf
-       "No releases recorded for workspace %s in the target's cluster.\n"
-       workspace
-   | records -> print_endline (Sol_cli_release.format_table records));
+  print_string (render ~workspace records);
   Ok ()
 ;;
 

@@ -1,5 +1,14 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## REFAC-151 — Bounded outcomes before terminal effects (2026-09-28)
+
+- Assets/check return typed inspection outcomes; alert, plan and release/deployment
+  listings render pure text before the controller prints.
+- All 22 command modules have a bounded/streaming verdict in the ticket. Progress,
+  prompts, child forwarding and streaming lifecycles retain their effect timing.
+- Full CLI tests pass; exact-byte check/accepted-alert/rejected-alert checks protect
+  stdout, stderr and exit semantics without sending real alerts.
+
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
 - Component checking names its outcome and runs the fixed `local` and `durable` profile

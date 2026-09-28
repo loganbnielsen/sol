@@ -16,20 +16,40 @@ let findings_for ~facts = function
     Ok (Sol_cli_check.run_services ~facts selected.services)
 ;;
 
-let run scope =
+type outcome =
+  { findings : Sol_cli_check.finding list
+  ; result : (unit, Sol_cli_exit.failure) result
+  }
+
+let inspect scope =
   let* workspace = Sol_cli_workspace.enter_cwd () in
   let* facts =
     Sol_cli_workspace_model.load ~root:workspace.Sol_cli_workspace.root
     |> Sol_cli_exit.of_msg
   in
   let* findings = findings_for ~facts scope in
-  findings
-  |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
-  if Sol_cli_check.has_errors findings
-  then Error (Sol_cli_exit.reported ())
-  else (
-    Printf.printf "sol check: ok\n";
-    Ok ())
+  let result =
+    if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
+  in
+  Ok { findings; result }
+;;
+
+let render { findings; result } =
+  let stderr =
+    findings
+    |> List.map (fun finding -> Sol_cli_check.finding_to_string finding ^ "\n")
+    |> String.concat ""
+  in
+  let stdout = if Result.is_ok result then "sol check: ok\n" else "" in
+  stdout, stderr
+;;
+
+let run scope =
+  let* outcome = inspect scope in
+  let stdout, stderr = render outcome in
+  Printf.eprintf "%s" stderr;
+  Printf.printf "%s" stdout;
+  outcome.result
 ;;
 
 let scope_arg =
