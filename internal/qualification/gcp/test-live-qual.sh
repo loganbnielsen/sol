@@ -472,6 +472,7 @@ has "the deploy is given the target's own registry" \
   "--registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" "$TMP/app-ok.argv"
 has "and a tag unique to the run" "--image-tag qual-" "$TMP/app-ok.argv"
 lacks "the app target selects no profile, so the row claims none of its guarantees" "profile:" "$TARGET_FILE"
+has "the target declares the project the residue probe needs" "project_id: sol-qualification" "$TARGET_FILE"
 has "the target names the cluster's own kube context" \
   "kube_context: gke_sol-qualification_us-central1_test-cluster" "$TARGET_FILE"
 has "the target declares the resource pair the transaction uses" "events: {}" "$TARGET_FILE"

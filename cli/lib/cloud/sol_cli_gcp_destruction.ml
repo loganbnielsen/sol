@@ -56,15 +56,21 @@ let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
     |> Option.to_list
     |> List.find_opt (fun project -> project <> "")
   in
-  match state_name pre_destroy "google_compute_network", project with
+  let network =
+    match state_name pre_destroy "google_compute_network" with
+    | Some _ as name -> name
+    | None -> target_cfg.cluster_name
+  in
+  match network, project with
   | Some network, Some project ->
     orphan_sweep
       (List.map (fun (_, probe) -> probe ~project ~network) relinquished_residue_probes)
   | None, _ ->
     orphan_sweep
       ~gaps:
-        [ "the GCP residue check could not name the target's VPC from Terraform state, \
-           so the service-networking peering check was not run"
+        [ "the GCP residue check could not name the target's VPC from Terraform state or \
+           the target's cluster_name declaration (the network is named after the \
+           cluster), so the service-networking peering check was not run"
         ]
       []
   | Some _, None ->

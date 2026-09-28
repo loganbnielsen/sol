@@ -637,6 +637,46 @@ let test_residue_the_state_does_not_own_is_not_absence () =
     (contains (Str.regexp_string "reached verified absence") message)
 ;;
 
+let test_inconclusive_residue_probe_is_unknown () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        { Sol_cli_destroy_verification.state = State_absent
+        ; sweep =
+            Sweep_ran
+              { residues = []
+              ; indeterminate =
+                  [ "the GCP residue check could not establish the target's project, so \
+                     the service-networking peering check was not run"
+                  ]
+              }
+        ; retention = Retention_not_required "this fixture declares no retention"
+        })
+      ()
+  in
+  let outcome = execute ~deps in
+  let message = completion_message outcome in
+  (match outcome with
+   | Destroy_succeeded _ ->
+     Alcotest.(check bool)
+       "the summary never claims verified absence while a probe did not run"
+       false
+       (contains (Str.regexp_string "reached verified absence") message);
+     Alcotest.(check bool)
+       "it says so plainly instead"
+       true
+       (contains (Str.regexp_string "residue absence is NOT established") message
+        && contains (Str.regexp_string "peering check was not run") message)
+   | _ ->
+     Alcotest.fail
+       "a destroy whose owned resources are gone is not a failure; the observation is");
+  Alcotest.(check int)
+    "and the owned resources are still gone, so the destruction itself succeeded"
+    exit_clean
+    (exit_code outcome)
+;;
+
 let test_block_preparation_failure_blocks_destruction () =
   let deps, calls =
     fake_deps
@@ -1131,6 +1171,10 @@ let () =
             "residue the state does not own is not absence"
             `Quick
             test_residue_the_state_does_not_own_is_not_absence
+        ; Alcotest.test_case
+            "an inconclusive residue probe is an unknown"
+            `Quick
+            test_inconclusive_residue_probe_is_unknown
         ; Alcotest.test_case
             "block failure blocks destruction"
             `Quick
