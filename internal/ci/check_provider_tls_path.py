@@ -21,6 +21,10 @@ RECORD_ACTION = {"aws": "route53:ChangeResourceRecordSets", "gcp": "dns.resource
 
 LIFTED_GATE = "cannot yet wire"
 
+OTHER = {"aws": "gcp", "gcp": "aws"}
+def other(provider):
+    return OTHER[provider]
+
 
 def text(root, relative):
     path = root / relative
@@ -240,24 +244,44 @@ def main():
                 f"cert-manager pod: the provider-native identity is declared but unreachable"
             )
     issuers = [r for r in resources(root, ISSUER) if r.type == "kubernetes_manifest"]
-    if len(issuers) < 2:
-        problems.append(
-            "the module no longer declares both the staging and the production ClusterIssuer: cert-manager "
-            "has no issuer to request against"
-        )
-    for issuer_resource in issuers:
-        if "cert_manager_dns01_solver" not in str(issuer_resource.body):
+    for provider in PROVIDERS:
+        carrying = [
+            r
+            for r in issuers
+            if SOLVER[provider] in str(r.body) and SOLVER[other(provider)] not in str(r.body)
+        ]
+        if len(carrying) < 2:
             problems.append(
-                f"ClusterIssuer {issuer_resource.name} does not take its solvers from the provider-selected "
-                f"solver: the solver is then fixed at declaration time and one provider's challenges run "
-                f"against the other provider's API (FND-0067)"
+                f"the module declares fewer than two ClusterIssuers carrying the {provider} solver "
+                f"(dns01.{SOLVER[provider]}): cert-manager needs both the staging and the production "
+                f"issuer on every provider it runs on (FND-0067)"
             )
+        for issuing in carrying:
+            body = str(issuing.body)
+            if f"var.{SOLVER_SCOPE[provider]}" not in body:
+                problems.append(
+                    f"the {provider} ClusterIssuer {issuing.name} does not take its scope from "
+                    f"{SOLVER_SCOPE[provider]}: the provider root owns that value, and a solver that does "
+                    f"not read it writes into whatever scope its credentials happen to be in"
+                )
+            if IDENTITY[provider] not in body:
+                problems.append(
+                    f"the {provider} ClusterIssuer {issuing.name} does not refuse an empty "
+                    f"{IDENTITY[provider]}: a solver that cannot authenticate must fail the apply rather "
+                    f"than create certificates that never issue"
+                )
+            if "cloud_provider" not in str(issuing.body.get("count", "")):
+                problems.append(
+                    f"the {provider} ClusterIssuer {issuing.name} is not gated on the provider: it would be "
+                    f"applied on every provider, and the other provider's solver would run against this "
+                    f"one's API"
+                )
     if "cloudDNS" not in issuer or "route53" not in issuer:
         problems.append(
-            "the shared module no longer selects its DNS-01 solver by provider: both cloudDNS and route53 "
-            "must be reachable, chosen from var.cloud_provider"
+            "the shared module no longer declares both providers' DNS-01 solvers: cloudDNS and route53 "
+            "must both be reachable"
         )
-    if issuer.count("precondition") < 2 or issuer.count('local.cert_manager_identity != ""') < 2:
+    if issuer.count("precondition") < 4:
         problems.append(
             "the ClusterIssuers do not both refuse an empty provider identity: an empty identity must fail "
             "closed rather than deploy a solver that runs without credentials (FND-0067)"
