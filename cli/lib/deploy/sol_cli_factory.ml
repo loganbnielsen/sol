@@ -36,7 +36,8 @@ type request =
   }
 
 let run execution ~(request : request) ~mode ~facts services =
-  match
+  let open Result.Syntax in
+  let* plan =
     plan_of_services
       ~workspace:execution.Sol_cli_execution.workspace
       ~env:request.env
@@ -44,12 +45,9 @@ let run execution ~(request : request) ~mode ~facts services =
       ?requested_scope:request.requested_scope
       ?declared:request.declared
       services
-  with
-  | Error msg -> Error msg
-  | Ok plan ->
-    (match execute execution ~mode plan with
-     | Error msg -> Error msg
-     | Ok results -> Ok { plan; results })
+  in
+  let* results = execute execution ~mode plan in
+  Ok { plan; results }
 ;;
 
 let affected_services ~plan ~results =

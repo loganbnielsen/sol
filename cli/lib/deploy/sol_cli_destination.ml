@@ -1,17 +1,16 @@
 let resolve ~command ~local ~target =
+  let open Result.Syntax in
   if local
   then Ok Sol_cli_kube_destination.local_context
   else (
     match target with
     | Some path ->
-      (match Sol_cli_config.load_for_target ~target:path with
-       | Error e -> Error (Sol_cli_config.error_to_string e)
-       | Ok cfg ->
-         let t = cfg.target in
-         (match Sol_cli_config.destination_of_target t with
-          | Error msg -> Error msg
-          | Ok destination ->
-            Ok (Sol_cli_kube_destination.context_of_destination destination)))
+      let* cfg =
+        Sol_cli_config.load_for_target ~target:path
+        |> Result.map_error Sol_cli_config.error_to_string
+      in
+      Sol_cli_config.destination_of_target cfg.target
+      |> Result.map Sol_cli_kube_destination.context_of_destination
     | None ->
       Error
         (Printf.sprintf

@@ -31,17 +31,14 @@ let plan ~root ~kind =
           let entry = entries.(index) in
           let rel' = if rel = "" then entry else Filename.concat rel entry in
           if Sys.is_directory (Filename.concat base rel')
-          then (
-            match walk rel' acc with
-            | Ok acc -> iter acc (index + 1)
-            | Error _ as error -> error)
+          then
+            let* acc = walk rel' acc in
+            iter acc (index + 1)
           else iter (rel' :: acc) (index + 1))
       in
       iter acc 0
   in
-  match walk "" [] with
-  | Error message -> Error message
-  | Ok rels -> Ok (List.sort String.compare rels)
+  walk "" [] |> Result.map (List.sort String.compare)
 ;;
 
 let text ~root ~kind ~rel = read_file (Filename.concat (dir_of ~root ~kind) rel)

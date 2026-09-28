@@ -254,10 +254,11 @@ let remove ~ctx ~workspace =
 ;;
 
 let refetch ~ctx ~workspace =
-  match fetch ~ctx ~workspace with
-  | Ok (Some x) -> Ok x
-  | Ok None -> Error "the boundary lease disappeared immediately after it was written"
-  | Error e -> Error e
+  let open Result.Syntax in
+  let* lease = fetch ~ctx ~workspace in
+  match lease with
+  | Some x -> Ok x
+  | None -> Error "the boundary lease disappeared immediately after it was written"
 ;;
 
 type held =
@@ -278,16 +279,17 @@ let acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s =
     then Error "boundary lease contention: repeated compare-and-swap conflicts"
     else (
       let now = Unix.gettimeofday () in
-      match fetch ~ctx ~workspace with
-      | Error e -> Error e
-      | Ok None ->
+      let open Result.Syntax in
+      let* lease = fetch ~ctx ~workspace in
+      match lease with
+      | None ->
         (match create_object ~ctx (create ~boundary:workspace ~holder ~run_id ~now) with
          | Ok () -> refetch ~ctx ~workspace
          | Error Already_exists | Error Conflict -> go (attempts - 1)
          | Error (Other m) ->
            Error
              (Printf.sprintf "could not acquire the %s boundary lease: %s" workspace m))
-      | Ok (Some (existing, resource_version)) ->
+      | Some (existing, resource_version) ->
         let decision =
           (match holder with
            | Deploy -> deploy_decision
@@ -337,9 +339,8 @@ let acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s =
 let acquire ~ctx ~workspace ~holder ~ttl ~wait_s =
   let now = Unix.gettimeofday () in
   let run_id = make_run_id ~holder ~now ~pid:(Unix.getpid ()) in
-  match acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s with
-  | Ok (lease, _resource_version) -> Ok { ctx; lease; run_id }
-  | Error msg -> Error msg
+  acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s
+  |> Result.map (fun (lease, _resource_version) -> { ctx; lease; run_id })
 ;;
 
 type heartbeat_result =
@@ -350,12 +351,12 @@ let heartbeat_raw ~ctx t ~run_id =
   let rec go attempts =
     if attempts <= 0
     then Error "lost the boundary lease: repeated compare-and-swap conflicts"
-    else (
-      match fetch ~ctx ~workspace:t.boundary with
-      | Error e -> Error e
-      | Ok None ->
-        Error (Printf.sprintf "lost the %s boundary lease: it is gone" t.boundary)
-      | Ok (Some (current, resource_version)) ->
+    else
+      let open Result.Syntax in
+      let* lease = fetch ~ctx ~workspace:t.boundary in
+      match lease with
+      | None -> Error (Printf.sprintf "lost the %s boundary lease: it is gone" t.boundary)
+      | Some (current, resource_version) ->
         if not (String.equal current.run_id run_id)
         then
           Error
@@ -380,7 +381,7 @@ let heartbeat_raw ~ctx t ~run_id =
           | Ok () -> Ok Held
           | Error Conflict -> go (attempts - 1)
           | Error Already_exists -> go (attempts - 1)
-          | Error (Other m) -> Error m))
+          | Error (Other m) -> Error m)
   in
   go max_cas_attempts
 ;;
@@ -399,10 +400,11 @@ let ensure_held h =
 ;;
 
 let release_raw ~ctx t =
-  match fetch ~ctx ~workspace:t.boundary with
-  | Error e -> Error e
-  | Ok None -> Ok ()
-  | Ok (Some (current, _)) ->
+  let open Result.Syntax in
+  let* lease = fetch ~ctx ~workspace:t.boundary in
+  match lease with
+  | None -> Ok ()
+  | Some (current, _) ->
     if String.equal current.run_id t.run_id
     then remove ~ctx ~workspace:t.boundary
     else
@@ -422,8 +424,7 @@ let release_with_warning h =
 ;;
 
 let with_boundary_lease ~ctx ~workspace ~holder ~ttl ~wait_s f =
-  match acquire ~ctx ~workspace ~holder ~ttl ~wait_s with
-  | Error msg -> Error msg
-  | Ok held ->
-    Fun.protect ~finally:(fun () -> release_with_warning held) (fun () -> f held)
+  let open Result.Syntax in
+  let* held = acquire ~ctx ~workspace ~holder ~ttl ~wait_s in
+  Fun.protect ~finally:(fun () -> release_with_warning held) (fun () -> f held)
 ;;

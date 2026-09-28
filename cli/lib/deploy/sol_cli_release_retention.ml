@@ -44,24 +44,21 @@ let select ~keep ~current ~previous entries =
 ;;
 
 let prune ~ctx ~workspace ~keep ~current ~previous =
-  match Sol_cli_release_store.list_with_creation ~ctx ~workspace with
-  | Error msg -> Error msg
-  | Ok records ->
-    let entries =
-      records
-      |> List.map (fun ((record : Sol_cli_release.t), created_at) ->
-        record.release_id, created_at)
-    in
-    (match select ~keep ~current ~previous entries with
-     | Error msg -> Error msg
-     | Ok ids ->
-       let rec delete acc = function
-         | [] -> Ok (List.rev acc)
-         | release_id :: rest ->
-           (match Sol_cli_release_store.delete ~ctx ~release_id with
-            | Ok () -> delete (release_id :: acc) rest
-            | Error msg ->
-              Error (Printf.sprintf "could not prune release %s: %s" release_id msg))
-       in
-       delete [] ids)
+  let open Result.Syntax in
+  let* records = Sol_cli_release_store.list_with_creation ~ctx ~workspace in
+  let entries =
+    records
+    |> List.map (fun ((record : Sol_cli_release.t), created_at) ->
+      record.release_id, created_at)
+  in
+  let* ids = select ~keep ~current ~previous entries in
+  let rec delete acc = function
+    | [] -> Ok (List.rev acc)
+    | release_id :: rest ->
+      (match Sol_cli_release_store.delete ~ctx ~release_id with
+       | Ok () -> delete (release_id :: acc) rest
+       | Error msg ->
+         Error (Printf.sprintf "could not prune release %s: %s" release_id msg))
+  in
+  delete [] ids
 ;;

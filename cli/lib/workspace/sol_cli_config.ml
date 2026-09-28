@@ -1341,28 +1341,25 @@ let validate_no_same_cluster ~base ~envs (selected : target) =
     | path :: rest ->
       if path = selected.name
       then loop rest
-      else (
-        match resolved_target ~base ~envs path with
-        | Error error -> Error error
-        | Ok (other : target) ->
-          (match destination_identity selected, destination_identity other with
-           | Some (kubeconfig, context), Some other_destination
-             when selected.env <> other.env && (kubeconfig, context) = other_destination
-             ->
-             Error
-               { path = selected.name
-               ; line = 0
-               ; message =
-                   Printf.sprintf
-                     "environments %S and %S both deploy to Kubernetes context %S, so \
-                      they would share namespaces, service names and injected URLs — \
-                      which are deliberately identical in every environment (DEC-016). \
-                      Point one of them at a different target."
-                     selected.env
-                     other.env
-                     context
-               }
-           | _ -> loop rest))
+      else
+        let* other = resolved_target ~base ~envs path in
+        (match destination_identity selected, destination_identity other with
+         | Some (kubeconfig, context), Some other_destination
+           when selected.env <> other.env && (kubeconfig, context) = other_destination ->
+           Error
+             { path = selected.name
+             ; line = 0
+             ; message =
+                 Printf.sprintf
+                   "environments %S and %S both deploy to Kubernetes context %S, so they \
+                    would share namespaces, service names and injected URLs — which are \
+                    deliberately identical in every environment (DEC-016). Point one of \
+                    them at a different target."
+                   selected.env
+                   other.env
+                   context
+             }
+         | _ -> loop rest)
   in
   loop paths
 ;;

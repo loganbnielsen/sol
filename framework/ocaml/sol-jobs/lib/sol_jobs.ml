@@ -353,11 +353,7 @@ module Make (J : JOB) = struct
               loop ~failures:0
             | Ok (Some (id, kind, payload, attempts)) ->
               let t0 = Eio.Time.now env#clock in
-              let outcome =
-                match J.decode payload with
-                | Error msg -> Error msg
-                | Ok job -> J.handle job
-              in
+              let outcome = Result.bind (J.decode payload) J.handle in
               let elapsed = Eio.Time.now env#clock -. t0 in
               if elapsed > lease_s
               then
