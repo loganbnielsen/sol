@@ -54,6 +54,8 @@ CASES = [
         r"machine_type\s*=\s*var\.node_machine_type", 'machine_type = "e2-standard-2"')),
     ("sizing-became-target-configuration", sizing_in_contract),
     ("one-sizing-default-removed", drop_disk_default),
+    ("cluster-zone-list-dropped", substitute(
+        r'\n\s*node_locations = \["\$\{var\.region\}-a"\]\n', "\n")),
     ("control-plane-became-zonal", substitute(
         r"location\s*=\s*var\.region", 'location = "${var.region}-a"')),
 ]
