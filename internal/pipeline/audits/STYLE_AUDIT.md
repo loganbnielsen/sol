@@ -18,6 +18,12 @@ outer operation readable in one pass. Keep short familiar expressions inline.
 
 ### Explicit domain grouping
 
+For a single unchanged handoff, consider direct monadic composition instead of a
+`let*` name with no semantic purpose. Keep the binding when it names a useful phase,
+has multiple uses, needs transformations/additional arguments, or clarifies types and
+control flow. Standard `Result.bind` and `Option.bind` take their value first; a pipeline
+uses the repository's existing `Fun.flip Result.bind` form. Introduce no new operator.
+
 When arguments travel together as one real concept, represent that concept with an
 existing or named record/variant. Labels alone do not make a 20-argument API cohesive.
 Choose a phase split when the arguments belong to sequential work, and never hide them

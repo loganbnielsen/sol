@@ -64,6 +64,10 @@ Flag these three categories:
      match over the actual dimensions, or a small phase boundary.
 
 4. Eager argument normalization
+   - Single-use `let*` values passed unchanged to one function with no further work:
+     prefer existing direct bind composition only when the name adds no meaning.
+     Keep names that clarify domain phases, types, transformations, or later reuse.
+     Standard bind takes the value first; piped bind here uses `Fun.flip Result.bind`.
    - Multi-line `match`, `if`, `try`, Result/Option unwraps, fallbacks, or
      transformations embedded inside an outer function/constructor/effect call.
    - Manual `Error e -> Error e` forwarding before the next domain decision.
