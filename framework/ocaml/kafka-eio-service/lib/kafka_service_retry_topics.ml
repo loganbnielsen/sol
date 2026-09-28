@@ -63,12 +63,10 @@ let parse_float_hdr key headers =
 ;;
 
 let parse_retry_metadata headers =
-  match parse_int_hdr hdr_attempt headers with
-  | Error e -> Error e
-  | Ok attempt ->
-    (match parse_float_hdr hdr_retry_at headers with
-     | Error e -> Error e
-     | Ok retry_at -> Ok (attempt, retry_at))
+  let open Result.Syntax in
+  let* attempt = parse_int_hdr hdr_attempt headers in
+  let* retry_at = parse_float_hdr hdr_retry_at headers in
+  Ok (attempt, retry_at)
 ;;
 
 let strip_sol_hdrs headers =
@@ -139,18 +137,17 @@ let action_of_handler_error ~retry_topic ~dlq_topic ~retry_policy ~attempt = fun
 ;;
 
 let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
+  let open Result.Syntax in
   match action with
   | Ack -> ack ()
   | Forward_retry { target; delay_s } ->
-    (match publish ~target_topic:target (retry_message ~raw_msg ~attempt ~delay_s) with
-     | Ok () -> ack ()
-     | Error e -> Error e)
+    let* () = publish ~target_topic:target (retry_message ~raw_msg ~attempt ~delay_s) in
+    ack ()
   | Forward_dlq { target } ->
-    (match
-       publish ~target_topic:target (dead_letter_message ~raw_msg ~attempt ~group_id)
-     with
-     | Ok () -> ack ()
-     | Error e -> Error e)
+    let* () =
+      publish ~target_topic:target (dead_letter_message ~raw_msg ~attempt ~group_id)
+    in
+    ack ()
 ;;
 
 let route_decode_error
@@ -169,13 +166,13 @@ let route_decode_error
      | `Source -> "DECODE_ERROR"
      | `Retry -> "RETRY_DECODE_ERROR")
     decode_error;
-  match
+  let open Result.Syntax in
+  let* () =
     publish
       ~target_topic:dlq_topic
       (decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id)
-  with
-  | Ok () -> ack ()
-  | Error e -> Error e
+  in
+  ack ()
 ;;
 
 let max_group_segment_len = 64

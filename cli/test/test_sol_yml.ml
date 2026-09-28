@@ -39,9 +39,9 @@ let with_workspace sol_yml f =
 ;;
 
 let register ~root ~name ~dir =
-  match Sol_cli_sol_yml.plan ~root ~name ~dir ~language:Sol_cli_compat.Ocaml with
-  | Error e -> Error e
-  | Ok plan -> Sol_cli_sol_yml.commit plan
+  Result.bind
+    (Sol_cli_sol_yml.plan ~root ~name ~dir ~language:Sol_cli_compat.Ocaml)
+    Sol_cli_sol_yml.commit
 ;;
 
 let declared ~root =

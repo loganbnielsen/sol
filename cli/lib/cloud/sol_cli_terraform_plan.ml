@@ -183,19 +183,16 @@ let removed_of_type ~resource_type changes =
 ;;
 
 let show_and_record ~run_log ~phase ~show =
-  match show () with
-  | Error message -> Error message
-  | Ok json ->
-    (match changes_of_plan_json json with
-     | Error message -> Error message
-     | Ok changes ->
-       Sol_cli_run_log.append_phase_log
-         run_log
-         ~phase
-         (String.concat
-            ""
-            (changes
-             |> List.map (fun c ->
-               Printf.sprintf "%s %s\n" (action_to_string c.action) c.address)));
-       Ok (json, changes))
+  let open Result.Syntax in
+  let* json = show () in
+  let* changes = changes_of_plan_json json in
+  Sol_cli_run_log.append_phase_log
+    run_log
+    ~phase
+    (String.concat
+       ""
+       (changes
+        |> List.map (fun c ->
+          Printf.sprintf "%s %s\n" (action_to_string c.action) c.address)));
+  Ok (json, changes)
 ;;

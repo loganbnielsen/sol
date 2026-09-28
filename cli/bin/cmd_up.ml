@@ -278,26 +278,24 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
 
 let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
-    match prepare_context ~repo_root with
-    | Error msg -> Error msg
-    | Ok ctx_dir ->
-      let applied =
-        plan.services
-        |> List.fold_left
-             (fun acc spec ->
-                let* () = acc in
-                let* () = Sol_cli_boundary_lease.ensure_held lease in
-                apply_service
-                  ~workspace
-                  ~ctx_dir
-                  ~sha
-                  ~pf_failed
-                  ~release_id:plan.Sol_cli_deployment_plan.release_id
-                  spec)
-             (Ok ())
-      in
-      Sol_cli_up_execution.remove_build_context ~ctx_dir;
-      applied)
+    let* ctx_dir = prepare_context ~repo_root in
+    let applied =
+      plan.services
+      |> List.fold_left
+           (fun acc spec ->
+              let* () = acc in
+              let* () = Sol_cli_boundary_lease.ensure_held lease in
+              apply_service
+                ~workspace
+                ~ctx_dir
+                ~sha
+                ~pf_failed
+                ~release_id:plan.Sol_cli_deployment_plan.release_id
+                spec)
+           (Ok ())
+    in
+    Sol_cli_up_execution.remove_build_context ~ctx_dir;
+    applied)
 ;;
 
 let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
@@ -386,22 +384,18 @@ let run_apply
               plan
               attempt
               (Sol_cli_deployment_attempt.outcome_of applied));
-         match applied with
-         | Error msg -> Error msg
-         | Ok () ->
-           Sol_cli_release.finish_deployment
-             ~record_release:(fun () ->
-               let* () =
-                 record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
-               in
-               Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
-             ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
+         let* () = applied in
+         Sol_cli_release.finish_deployment
+           ~record_release:(fun () ->
+             let* () =
+               record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
+             in
+             Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
+           ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
   in
   Result.map_error run_failed
-  @@
-  match result with
-  | Error msg -> Error msg
-  | Ok () -> if !pf_failed then Error "one or more port-forwards failed" else Ok ()
+  @@ let* () = result in
+     if !pf_failed then Error "one or more port-forwards failed" else Ok ()
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =
