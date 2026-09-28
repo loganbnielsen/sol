@@ -28,9 +28,11 @@ let cmd =
           events pointing at the same release.")
     Term.(
       const (fun target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"deployments" target in
-           run ~ctx ()))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"deployments" target in
+          run ~ctx ()
+        in
+        Sol_cli_exit.exit_on result)
       $ Cmd_destination.target_arg)
 ;;
 

@@ -287,16 +287,16 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~chdir:infra_dir
       ~backend_config:cloud_backend
   in
+  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
+  let platform_dir =
+    workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
+  in
   let* () =
     guard_previous_operation
       ~constructive:false
       ~accept_unresolved:false
-      ~chdir:
-        (workdir
-           provider
-           Sol_cli_platform_assets.Platform
-           ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target))
-      ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target)
+      ~chdir:platform_dir
+      ~backend_config:platform_backend
   in
   let var_files = Option.to_list var_file in
   let destruction =
@@ -347,10 +347,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        report_cleanup_evidence cleanup;
        report_degradations degradations;
        report_verification verification;
-       Printf.printf
-         (if degradations = []
-          then "\nDone.\n%!"
-          else "\nDone, with a degraded preparation.\n%!")
+       let completion =
+         if degradations = []
+         then "\nDone.\n"
+         else "\nDone, with a degraded preparation.\n"
+       in
+       Printf.printf "%s%!" completion
      | Sol_cli_cloud_destroy.Destroy_blocked { guarantee } ->
        Printf.eprintf
          "error: destruction is blocked -- proceeding would violate a destruction-time \

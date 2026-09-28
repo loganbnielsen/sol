@@ -1,5 +1,14 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## REFAC-149 — Normalize meaningful arguments before application (2026-09-28)
+
+- Destination/request resolution is a named result before command exit conversion.
+  Redaction, cloud-state evidence, diagnostic suffixes, headers and log messages
+  are resolved before their outer operation.
+- CLI/framework/tooling builds and focused suites pass. Short defaults, lazy
+  refresh and short-circuit conditions remain inline where pre-binding obscures
+  intent or changes evaluation.
+
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
 - Component checking names its outcome and runs the fixed `local` and `durable` profile

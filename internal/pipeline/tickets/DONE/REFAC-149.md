@@ -53,3 +53,24 @@ or naming it would add indirection without making the outer operation clearer.
   formatting prohibition.
 - Behavior and output remain unchanged, with focused tests for changed decision paths.
 - Demo/example and language-parity impact are recorded per changed surface.
+
+## Completion (2026-09-28)
+
+- Rechecked against origin/main after REFAC-148: asset checks now expose planning
+  decisions, but command exit callbacks, migration log redaction, cloud teardown
+  evidence, and rollout diagnostics still embed non-trivial argument production.
+- Reviewed cli/bin, all six cli/lib domains, framework/ocaml, examples, scaffold
+  templates, tests, and internal/tooling using the manual folder sweep and callers.
+- Changes pre-bind command destination/request resolution before exit conversion,
+  available-domain errors, plan type suffixes, redacted migration logs, platform
+  backend/workdir, teardown completion text and observed-state evidence, rollout
+  diagnostic suffixes, authenticated/traced peer headers, decode disposition log
+  messages, and soldev's review-summary fallback.
+- Retained familiar Option defaults, short constructor literals, Cmdliner combinators,
+  lazy authentication refresh branches, short-circuit job stop checks, and simple
+  optional descriptors: binding those would add indirection or change evaluation.
+- Validation: CLI/framework/soldev builds, formatting, rollout-diagnosis, secret,
+  config, cloud-destroy, peer, and all soldev tests pass.
+- Demo/example: no behavioral change; existing Pluto/scaffold decoding already
+  normalizes its inputs (REFAC-147). No language-parity impact: interfaces and
+  application contracts are unchanged.

@@ -17,14 +17,17 @@ let discover_namespaces ~facts ~domain =
     | Some requested ->
       (match List.filter (Sol_cli_deployment_scope.equal_name requested) domains with
        | [] ->
+         let available_domains =
+           match domains with
+           | [] -> "(none)"
+           | _ -> String.concat ", " domains
+         in
          Error
            (Sol_cli_exit.error
               (Printf.sprintf
                  "--domain %S matches no workload; domains with units: %s"
                  requested
-                 (match domains with
-                  | [] -> "(none)"
-                  | _ -> String.concat ", " domains)))
+                 available_domains))
        | matched -> Ok matched)
   in
   selected
@@ -117,9 +120,11 @@ let set_cmd =
     (Cmd.info "set" ~doc:"Create or update a secret key")
     Term.(
       const (fun env value key domain target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"secret set" target in
-           run_set ~ctx env value key domain))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"secret set" target in
+          run_set ~ctx env value key domain
+        in
+        Sol_cli_exit.exit_on result)
       $ env_arg
       $ value_arg
       $ key_arg
@@ -132,9 +137,11 @@ let list_cmd =
     (Cmd.info "list" ~doc:"List secret keys without values")
     Term.(
       const (fun env domain target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"secret list" target in
-           run_list ~ctx env domain))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"secret list" target in
+          run_list ~ctx env domain
+        in
+        Sol_cli_exit.exit_on result)
       $ env_arg
       $ domain_arg
       $ Cmd_destination.target_arg)
@@ -145,9 +152,11 @@ let delete_cmd =
     (Cmd.info "delete" ~doc:"Delete a secret key")
     Term.(
       const (fun env key domain target ->
-        Sol_cli_exit.exit_on
-          (let* ctx = Cmd_destination.remote ~command:"secret delete" target in
-           run_delete ~ctx env key domain))
+        let result =
+          let* ctx = Cmd_destination.remote ~command:"secret delete" target in
+          run_delete ~ctx env key domain
+        in
+        Sol_cli_exit.exit_on result)
       $ env_arg
       $ key_arg
       $ domain_arg

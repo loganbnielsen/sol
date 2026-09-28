@@ -551,13 +551,15 @@ let status_observability_term =
 let status_term ~local ~target_term =
   Term.(
     const (fun scope observability prometheus_base_url target ->
-      Sol_cli_exit.exit_on
-        (let* ctx =
-           if local
-           then Ok Cmd_destination.local
-           else Cmd_destination.remote ~command:"status" target
-         in
-         run ~ctx { scope; target; observability; prometheus_base_url }))
+      let result =
+        let* ctx =
+          if local
+          then Ok Cmd_destination.local
+          else Cmd_destination.remote ~command:"status" target
+        in
+        run ~ctx { scope; target; observability; prometheus_base_url }
+      in
+      Sol_cli_exit.exit_on result)
     $ domain_arg
     $ status_observability_term
     $ prometheus_base_url_arg
