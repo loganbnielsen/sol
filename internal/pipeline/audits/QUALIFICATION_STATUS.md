@@ -943,8 +943,33 @@ eight-permission record role bound on the managed zone plus a two-permission dis
 widening. **`FND-0067` → `QUALIFIED` (GCP half).** AWS remains unqualified. Full record:
 `internal/qualification/records/2026-09-28-gcp-attempt19-tls-path-verified.md`.
 
-**Also observed, and deliberately *not* settled:** Attempt 17's `Ready` was claimed while the platform's
-own certificates were unready → `FND-0068` / `DEC-056` (BACKLOG, decision required). `Ready`'s executable
+## `DEC-056` — `Ready` now covers the platform's declared certificates (2026-09-28, offline)
+
+`DEC-056` decided the semantic `FND-0068` put on the table: Sol declares its platform certificates
+unconditionally and has no supported no-TLS mode, so they are **platform resources** and the lifecycle
+must not report `Ready` without them. The boundary is explicit — `Ready` covers what Sol declares and
+controls, **not** external/public reachability.
+
+Implemented in the existing readiness architecture: `Sol_cli_platform_tls` declares the certificates with
+provenance (the shape `Sol_cli_platform_storage` uses), and `readiness_checks` derives one
+`kubectl wait --for=condition=Ready certificate/<name>` predicate per declaration, so the gate that
+already refuses `Ready` now waits for them. Provider-neutral by construction: the AWS path gains the same
+predicate, and nothing in the lifecycle is GCP-specific. New
+`check_platform_tls_requirement.py` + five mutations hold the declaration against the module in both
+directions, and `test_ready_requires_the_declared_certificates` reproduces the Attempt 19 sequence and
+requires that it no longer reads `Ready`.
+
+Recorded consequence: a platform whose delegation the operator has not published cannot reach `Ready`,
+and `sol cloud apply` refuses after the readiness budget naming the certificate, rather than reporting a
+`Ready` platform that cannot serve its own endpoints.
+
+**Also observed and left as it stands:** the observation that neither provider publishes A/alias records
+for platform ingress hostnames is unchanged and remains explicit. Per the decision, DNS publication is
+**not** solved as part of `DEC-056`, and the five levels — ingress exists, certificate issued, TLS
+verifiable by SNI, DNS resolves the name, an external client reaches it — stay separate claims.
+
+The earlier framing of this gap: Attempt 17's `Ready` was claimed while the platform's
+own certificates were unready → `FND-0068` / `DEC-056`. `Ready`'s executable
 contract is component availability (`readiness_checks`), the module requests certificates
 unconditionally, and there is no supported "no TLS" configuration despite the refusal sentence that
 described one — so whether certificate issuance belongs in `Ready` is a product-semantic choice, with the

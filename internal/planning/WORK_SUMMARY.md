@@ -9,6 +9,33 @@
   before the final report list.
 - Output and behavior stay under the existing real-command rule, which breaks two
   independent assets and requires both failures plus the surviving provider result.
+## Latest: DEC-056 — `Ready` covers the platform's declared certificates (2026-09-28)
+
+- **The semantic**: Sol declares its platform certificates unconditionally and exposes no supported
+  no-TLS mode, so they are required platform resources — the lifecycle must not report `Ready` without
+  them. The boundary is equally explicit: `Ready` covers what Sol declares and controls, and **not**
+  external/public reachability.
+- **The implementation is the existing architecture**, not an ad hoc TLS wait: `Sol_cli_platform_tls`
+  declares the certificates (name, namespace, provenance) the way `Sol_cli_platform_storage` declares its
+  storage requirement, and `readiness_checks` derives one
+  `kubectl wait --for=condition=Ready certificate/<name> -n <ns>` predicate per declaration — so the gate
+  that `sol cloud apply` already refuses on now covers them, provider-neutrally. The AWS path gains the
+  same predicate; nothing is GCP-specific.
+- **Coverage**: `check_platform_tls_requirement.py` + five mutations hold the declaration against the
+  module in both directions (every annotated ingress must be declared, every declaration must exist) and
+  refuse a gate that stops deriving from the declaration;
+  `test_ready_requires_the_declared_certificates` reproduces the Attempt 19 sequence — all components
+  healthy, the declared certificates not — and requires that it no longer reads `Ready`. The
+  readiness-invocation rule validates the new argv with the pinned kubectl, as it did for the check that
+  caught `rollout status --all`.
+- **Recorded consequence**: an unpublished delegation now surfaces as a refused `Ready` naming the
+  certificate (after `SOL_PLATFORM_READINESS_TIMEOUT_S`, 900 s default) rather than as a `Ready` platform
+  that cannot serve its own endpoints.
+- **Not included, by the decision**: DNS record publication. The observation that neither provider
+  publishes A/alias records for platform ingress hostnames stands, and the five levels — ingress exists,
+  certificate issued, TLS verifiable by SNI, DNS resolves, an external client reaches it — remain
+  distinct claims.
+
 ## Latest: FEAT-105 CI-gated native auto-merge verified (2026-09-28)
 
 - Repository auto-merge is enabled; required test/admin enforcement remain, and
