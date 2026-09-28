@@ -1,14 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-145 — Deployment and Rollout share one typed workload input (2026-09-27)
+## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
 
-- `Sol_cli_manifest.Workload_spec.t` replaces the 20/21-argument Deployment and Rollout
-  builder calls. The deployment renderer constructs the workload once, so the two paths
-  cannot silently receive different pod fields.
-- The public builders now take that workload plus only their wrapper-specific strategy;
-  the pod-template renderer consumes the same value directly.
-- All 156 manifest-render tests pass, including Deployment, Canary, Blue-green, worker,
-  security, and parsed YAML invariants. Rendered behavior is unchanged.
+- Retry consumption separates topic preparation, relay publication, and consumer
+  lifecycle; source/retry handlers use one record-policy path.
+- Named runtime inputs replace the loose controller arguments. Relay startup,
+  source execution, error reconciliation and shutdown remain explicit.
+- All 40 kafka-service unit tests and six focused live-broker integration tests pass;
+  retry budgets, DLQ routing, publish-before-ack, and fail-closed relay shutdown remain.
 
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
