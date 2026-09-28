@@ -3,3 +3,9 @@
  (libraries soldev_lib alcotest unix)
  (deps
   (source_tree ../../../pipeline/tickets)))
+
+(rule
+ (alias runtest)
+ (deps test_cleanup.py ../bin/main.exe)
+ (action
+  (run python3 %{dep:test_cleanup.py} %{dep:../bin/main.exe})))

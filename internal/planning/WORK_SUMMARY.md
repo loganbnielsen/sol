@@ -394,3 +394,10 @@
 - Documentation connects the tool to STYLE_AUDIT's candidate workflow. General callback-type inference, sibling-family repetition and other architecture detectors are deferred; semantic refactoring remains a human decision. Internal tooling only, no demo or language-parity impact.
 - Validation: full `dune build`, the executable's Dune `runtest` harness, and scans of the Sol code roots and external `~/Code/kafka-eio` succeed. The support-repo scan reports ten candidates, showing the checker does not require the scanned code to belong to Sol's Dune project.
 - CI runs the tool’s fixture harness alongside the existing unit suites; it does not scan application code or gate on advisory findings. Staged formatting, no-comments (682 files), and whitespace checks pass.
+
+## Explicit post-merge cleanup (2026-09-28)
+
+- Enabled GitHub's native `delete_branch_on_merge` repository setting.
+- Added preview-first `soldev pipeline cleanup <PR> <WORKTREE> [--apply]` for explicitly selected owned, idle trees. It verifies a same-repository merge into main, matching branch/head, registration, and clean state including ignored files. Canonical/current, primary-branch and locked worktrees are preserved; removal never forces, and branch deletion pins its expected head.
+- Ownership and idleness remain the caller's declaration; active actors should lock their trees. No automatic sweep or cleanup inside merge; no application demo or language-parity impact.
+- Validation: real disposable Git worktrees exercise preview/removal and preservation of current/nested-current/canonical, locked, dirty, untracked, ignored, mismatched/open/fork PRs and post-merge commits. All 66 existing soldev tests pass, full build/formatter and no-comments checks pass. CI now runs these soldev tests; Kafka/application integration does not exercise this maintainer-only Git operation.

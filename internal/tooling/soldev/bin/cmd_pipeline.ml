@@ -160,6 +160,26 @@ let check_reverts_cmd =
     Term.(const (fun () -> Soldev_merge.run_check_reverts () |> exit_on) $ const ())
 ;;
 
+let cleanup_cmd =
+  let pr = Arg.(required & pos 0 (some int) None & info [] ~docv:"PR") in
+  let worktree = Arg.(required & pos 1 (some string) None & info [] ~docv:"WORKTREE") in
+  let apply =
+    Arg.(
+      value
+      & flag
+      & info
+          [ "apply" ]
+          ~doc:"Remove this owned, idle worktree and its branch after verification")
+  in
+  Cmd.v
+    (Cmd.info "cleanup" ~doc:"Preview cleanup of an owned, idle worktree for a merged PR")
+    Term.(
+      const (fun apply pr worktree -> Soldev_cleanup.run ~apply ~pr ~worktree |> exit_on)
+      $ apply
+      $ pr
+      $ worktree)
+;;
+
 let cmd =
   Cmd.group
     (Cmd.info
@@ -167,7 +187,8 @@ let cmd =
        ~doc:
          "Deterministic pipeline operations: merge tickets, process review results, list \
           status")
-    [ ls_cmd
+    [ cleanup_cmd
+    ; ls_cmd
     ; check_cmd
     ; validate_cmd
     ; submit_cmd
