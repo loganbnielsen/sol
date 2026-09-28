@@ -1,5 +1,15 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
+
+- Component checking names its outcome and runs the fixed `local` and `durable` profile
+  set through one path, so the reason for the two renders is explicit.
+- Template planning errors propagate through `let*`, leaving its match to express only
+  the non-empty invariant; Terraform-root checks and observability checks are named
+  before the final report list.
+- Output and behavior stay under the existing real-command rule, which breaks two
+  independent assets and requires both failures plus the surviving provider result.
+
 ## Latest: DEC-055 — a provider-native DNS-01 path, so GCP can issue certificates (2026-09-28)
 
 - **The shared platform module no longer knows an AWS-only solver.** `DEC-055` decided GCP gets
