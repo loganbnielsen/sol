@@ -235,6 +235,7 @@ let test_existing_files_still_generated () =
     ; "testapp/events/payments/charged.ml"
     ; "testapp/events/payments/dune"
     ; "testapp/lib/notification.ml"
+    ; "testapp/test/test_charges.ml"
     ; "testapp/app/payments/charge_svc/bin/main.ml"
     ; "testapp/app/payments/charge_svc/sol.toml"
     ; "testapp/app/comms/notify_worker/bin/main.ml"
@@ -333,7 +334,12 @@ let test_scaffold_compiles () =
   check_bool
     "freshly scaffolded workspace builds with `dune build`"
     true
-    (Result.is_ok built)
+    (Result.is_ok built);
+  let tested =
+    Sol_cli_process.run (Sol_cli_process.cmd ~cwd:"testapp" [ "dune"; "runtest"; "test" ])
+  in
+  tested |> Result.iter_error (fun e -> prerr_endline (Sol_cli_process.error_to_string e));
+  check_bool "generated charge operation tests pass" true (Result.is_ok tested)
 ;;
 
 let test_bare_fn_library_compiles () =

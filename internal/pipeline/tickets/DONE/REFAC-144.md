@@ -44,3 +44,14 @@ abstraction or pure renderers solely to move those effects one function away.
 - A focused command test proves success/failure output and exit behavior are unchanged.
 - Demo/example: not applicable; this changes an install diagnostic's internal shape.
 - Language parity: no impact; the command checks language-neutral platform assets.
+
+## Completion notes
+
+- `component_checks` now names its outcome and checks the fixed `local` and `durable`
+  profile set through one path; `template_checks` uses `let*` to propagate planning
+  errors and matches only the non-empty invariant; `checks` names the Terraform and
+  observability groups before the final summary expression.
+- The existing real-command rule remains the focused behavior check: it breaks two
+  assets, requires both failures, and requires surviving provider output.
+- Demo/example: not applicable; this changes an install diagnostic's internal shape.
+- Language parity: no impact; the command checks language-neutral platform assets.
