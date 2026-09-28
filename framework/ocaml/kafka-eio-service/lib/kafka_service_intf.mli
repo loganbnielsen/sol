@@ -57,6 +57,18 @@ type decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
 
+type consumer_hooks =
+  { on_ready : unit -> unit
+  ; on_assigned : unit -> unit
+  ; on_revoked : unit -> unit
+  ; on_poll : unit -> unit
+  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  ; on_relay_publish :
+      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
+  }
+
+val no_hooks : consumer_hooks
+
 val ensure_topic
   :  Kafka.Producer.t
   -> topic_name:string

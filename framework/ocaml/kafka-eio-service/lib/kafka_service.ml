@@ -305,6 +305,17 @@ type retry_strategy =
   | In_memory of Kafka.Consumer.retry_policy
   | Retry_topics of Kafka.Consumer.retry_policy
 
+type consumer_hooks = Kafka_service_intf.consumer_hooks =
+  { on_ready : unit -> unit
+  ; on_assigned : unit -> unit
+  ; on_revoked : unit -> unit
+  ; on_poll : unit -> unit
+  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  ; on_relay_publish :
+      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
+  }
+
+let no_hooks = Kafka_service_intf.no_hooks
 let default_on_decode_error = Kafka_service_intf.ack_and_drop_decode_error
 
 let consume
@@ -313,15 +324,13 @@ let consume
       ~group_id
       ~sw
       ~clock
-      ?(on_ready = ignore)
-      ?(on_assigned = ignore)
-      ?(on_revoked = ignore)
-      ?(on_poll = ignore)
+      ?(hooks = no_hooks)
       ?(on_decode_error = default_on_decode_error)
       ?ot
       ~handler
       ()
   =
+  let { on_ready; on_assigned; on_revoked; on_poll; _ } = hooks in
   let on_decode_error =
     Kafka_service_intf.wrap_on_decode_error
       ~ot
@@ -366,18 +375,14 @@ let consume_partitioned
       ~sw
       ~net
       ~clock
-      ?(on_ready = ignore)
-      ?(on_assigned = ignore)
-      ?(on_revoked = ignore)
-      ?(on_poll = ignore)
+      ?(hooks = no_hooks)
       ?decode_error_policy
       ~retry_strategy
-      ?(on_retry = fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
-      ?(on_relay_publish = fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
       ?ot
       ~handler
       ()
   =
+  let { on_ready; on_assigned; on_revoked; on_poll; on_retry; _ } = hooks in
   let observe_decode_error =
     Kafka_service_intf.observe_decode_error
       ~ot
@@ -458,14 +463,9 @@ let consume_partitioned
     let runtime : _ Kafka_service_retry_topics.runtime =
       { group_id
       ; retry_policy
-      ; on_ready
-      ; on_assigned
-      ; on_revoked
-      ; on_poll
+      ; hooks
       ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
       ; observe_decode_error
-      ; on_retry
-      ; on_relay_publish
       ; handler
       }
     in

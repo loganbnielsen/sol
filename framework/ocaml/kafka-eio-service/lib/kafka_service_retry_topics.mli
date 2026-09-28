@@ -102,19 +102,13 @@ val process_handler_result
 type 'a runtime =
   { group_id : string
   ; retry_policy : Kafka.Consumer.retry_policy
-  ; on_ready : unit -> unit
-  ; on_assigned : unit -> unit
-  ; on_revoked : unit -> unit
-  ; on_poll : unit -> unit
+  ; hooks : Kafka_service_intf.consumer_hooks
   ; decode_error_policy : Kafka_service_intf.decode_error_policy
   ; observe_decode_error :
       string
       -> raw_bytes:bytes option
       -> disposition:[ `Dropped | `Dead_lettered ]
       -> unit
-  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
   ; handler :
       'a
       -> ack:(unit -> (unit, Kafka.Error.t) result)
