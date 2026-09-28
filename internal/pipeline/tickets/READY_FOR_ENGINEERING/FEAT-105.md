@@ -51,13 +51,6 @@ marker is not evidence that a review actually gated a merge.
   Implement the supported GitHub auto-merge path rather than another polling daemon.
   Auto-merge must wait for required checks; never treat an admin bypass as a substitute
   for independently verifying green CI on an immediate merge.
-- Restore a lightweight docs-only CI path. The current classification skips product
-  tests but still installs OCaml/opam dependencies, builds guard binaries, and runs
-  unrelated mutation suites. Preserve relevant ticket/frontmatter/dependency checks
-  without bootstrapping the product toolchain on every Markdown filing; reuse the
-  authoritative parser rather than introduce a second ticket interpretation. Measure
-  a real docs-only run: aim for about 15 seconds of validation work, recording runner
-  queue/setup time separately. Keep the full checks for changes to code or CI itself.
 - Update .agents/skills/work, review-worktree, quality-review, and self-review,
   AGENTS.md, CONTRIBUTING.md, and other tracked merge guidance to use the same policy.
   Update the user-level PR skill at ~/.codex/skills/pr/SKILL.md in the authorized
@@ -73,9 +66,6 @@ marker is not evidence that a review actually gated a merge.
   auto-merge. No new bespoke risk-label or approval state machine is introduced.
 - A real low-risk PR is queued for GitHub squash auto-merge and merges only after
   required CI succeeds; settings and the resulting merge are recorded as evidence.
-- A Markdown-only filing takes the lightweight path, still rejects malformed tickets,
-  and avoids product builds/tests and unrelated mutation suites. Mixed code/docs
-  changes retain full CI, with classifier positive and negative controls.
 - Skills and documentation no longer universally demand review markers, solo-owner
   approval, or fresh-reviewer loops. Existing operator-requested reviews are honored.
 - Ticket changes still go through PRs, and implementation tickets move to DONE in

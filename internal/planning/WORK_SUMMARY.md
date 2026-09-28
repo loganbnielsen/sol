@@ -5,6 +5,8 @@
 - FEAT-105 captures the approved faster merge policy: green required CI by default,
   native squash auto-merge, optional risk-based review, and matching tooling/skills/docs.
   Filed READY_FOR_ENGINEERING; repository settings have not been changed by filing.
+- BUG-066 separately captures the expensive docs-only CI bootstrap and unrelated
+  guard suites, preserving ticket validation while restoring the lightweight path.
 - REFAC-154 captures direct monadic composition only for semantically empty bindings.
 - REFAC-148..153 turn the local review examples into whole-codebase work: unchanged
   Result propagation, eager argument normalization, conceptual collection grouping,
