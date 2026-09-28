@@ -249,19 +249,13 @@ let process_handler_result
 type 'a runtime =
   { group_id : string
   ; retry_policy : Kafka.Consumer.retry_policy
-  ; on_ready : unit -> unit
-  ; on_assigned : unit -> unit
-  ; on_revoked : unit -> unit
-  ; on_poll : unit -> unit
+  ; hooks : Kafka_service_intf.consumer_hooks
   ; decode_error_policy : Kafka_service_intf.decode_error_policy
   ; observe_decode_error :
       string
       -> raw_bytes:bytes option
       -> disposition:[ `Dropped | `Dead_lettered ]
       -> unit
-  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
   ; handler :
       'a
       -> ack:(unit -> (unit, Kafka.Error.t) result)
@@ -339,8 +333,8 @@ let prepare_topics
   Ok (retry_topic_name, dlq_topic_name)
 ;;
 
-let publish_relay (svc : Kafka_service_intf.t) ~clock runtime =
-  let { on_retry; on_relay_publish; _ } = runtime in
+let publish_relay (svc : Kafka_service_intf.t) ~clock (runtime : _ runtime) =
+  let { Kafka_service_intf.on_retry; on_relay_publish; _ } = runtime.hooks in
   let publish ~target_topic (msg : relay) =
     let partition = msg.source.Kafka.Consumer.partition in
     on_retry ~partition ~attempt:msg.attempt ~delay_s:msg.delay_s;
@@ -399,14 +393,9 @@ let run_consumers
   let open Result.Syntax in
   let { group_id
       ; retry_policy
-      ; on_ready
-      ; on_assigned
-      ; on_revoked
-      ; on_poll
+      ; hooks = { Kafka_service_intf.on_ready; on_assigned; on_revoked; on_poll; _ }
       ; decode_error_policy
       ; observe_decode_error
-      ; on_retry = _
-      ; on_relay_publish = _
       ; handler
       }
     =

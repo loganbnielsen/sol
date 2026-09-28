@@ -279,7 +279,10 @@ let test_publish_consume_roundtrip () =
               ~group_id
               ~sw
               ~clock:env#clock
-              ~on_ready:(fun () -> Eio.Promise.resolve consumer_ready_r ())
+              ~hooks:
+                { Kafka_service.no_hooks with
+                  on_ready = (fun () -> Eio.Promise.resolve consumer_ready_r ())
+                }
               ~handler:(fun msg ~ack ~trace_ctx:_ ->
                 ignore (ack ());
                 Eio.Promise.resolve received_r msg;
@@ -667,7 +670,10 @@ let test_decode_error_callback () =
               ~group_id
               ~sw
               ~clock:env#clock
-              ~on_ready:(fun () -> Eio.Promise.resolve consumer_ready_r ())
+              ~hooks:
+                { Kafka_service.no_hooks with
+                  on_ready = (fun () -> Eio.Promise.resolve consumer_ready_r ())
+                }
               ~on_decode_error:(fun e ~raw_bytes:_ ~ack ->
                 Eio.Stream.add error_stream e;
                 ignore (ack ());

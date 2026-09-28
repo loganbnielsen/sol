@@ -33,6 +33,14 @@ existing or named record/variant. Labels alone do not make a 20-argument API coh
 Choose a phase split when the arguments belong to sequential work, and never hide them
 in a vague dependencies record.
 
+A family of optional/defaulted callbacks is one concept. When several `?on_*` hooks on
+one function are all instrumentation or lifecycle hooks of the same concern — a
+consumer's `on_assigned`/`on_revoked`/`on_poll`/`on_retry`, an HTTP client's retry and
+redirect observers — group them behind one named record with a `no_hooks` default, so
+the signature stays about the operation instead of growing one callback at a time. Do
+not bundle a handle (`?ot`), a policy, or an unrelated required dependency into that
+record merely to shorten the signature; those stay separate arguments.
+
 When several collections mean different things, name the conceptual groups before
 combining them. Preserve useful pipelines within each group and do not name every
 trivial intermediate.

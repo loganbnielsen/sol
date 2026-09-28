@@ -66,6 +66,26 @@ type decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
 
+type consumer_hooks =
+  { on_ready : unit -> unit
+  ; on_assigned : unit -> unit
+  ; on_revoked : unit -> unit
+  ; on_poll : unit -> unit
+  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  ; on_relay_publish :
+      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
+  }
+
+let no_hooks =
+  { on_ready = ignore
+  ; on_assigned = ignore
+  ; on_revoked = ignore
+  ; on_poll = ignore
+  ; on_retry = (fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+  ; on_relay_publish = (fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
+  }
+;;
+
 let ensure_topic producer ~topic_name ~partitions ~topic_durability =
   let replication_factor =
     match topic_durability with
