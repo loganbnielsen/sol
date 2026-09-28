@@ -73,3 +73,54 @@ marker is not evidence that a review actually gated a merge.
 - Demo/example: exercise the maintainer CLI in a runnable workflow example; no
   application demo change is needed because this changes maintainer tooling only.
 - Language parity: no impact; merge orchestration is independent of app language.
+
+## Implementation progress
+
+Verified live 2026-09-28: required approving review count was already zero;
+required `test`, admin enforcement, and PR-only protections remain unchanged.
+Enabled repository `allow_auto_merge`. PR #648 queued for squash auto-merge
+while required CI was pending, and remained open. The head-pin guard also rejected
+an incorrect expected SHA instead of accepting a stale request.
+
+The local implementation removes marker gating and destructive worktree cleanup,
+adds `pipeline merge --auto`, requires successful nonempty required checks for an
+immediate merge, pins the head SHA, rejects drafts/unresolved ticket prerequisites,
+and preserves all local trees. Optional review commands remain informational.
+Ticket/merge tests pass, including absent/malformed/pending/failed checks, green CI
+without any marker, draft refusal, and native auto-merge queue requests.
+
+Repository worker/review/self-review/demo skills and AGENTS/CONTRIBUTING guidance
+now share the policy. The authorized user-level PR skill at
+`~/.codex/skills/pr/SKILL.md` was updated separately and validated; it is not a
+repository file. Local full no-comments guard passes with its required shfmt parser.
+## Completion evidence
+
+The low-risk Markdown completion PR #650 was queued by the implemented command
+`soldev pipeline merge --auto BUG-066` at 14:41:14 UTC, pinned to
+`070ad646f46e44c07f67ebd4c7a57dead49169de`, while required CI was pending.
+The required test succeeded at 14:41:44; GitHub auto-merged at 14:42:52 as squash
+`d699dd0387349fe0be41758bb789cfa32ce9615f`. No SOLDEV-REVIEW comment existed
+(`gh pr view 650 --json comments` filtered for the marker returned zero), and no
+admin bypass or cleanup command was used. Remote merged state and commit were
+verified through the PR API, not inferred from command exit status.
+
+Before marking that PR ready, the same command refused it as draft and no
+auto-merge request was created. Missing/malformed/failed/pending checks prevent
+immediate merging in the runnable merge tests; native head pinning rejected a
+stale SHA live. Required test, admin enforcement, and zero-review protection
+settings were independently re-read after enabling auto-merge.
+
+Maintainer example: CONTRIBUTING.md documents the runnable merge/auto-merge
+commands; the live invocation above exercises them. No app demo or language-parity
+change applies. Repository skills and the separately authorized local PR skill
+were updated using skill-creator guidance: concise proportional validation and
+one satisfactory selected review, not a universal fresh-reviewer loop.
+
+## Post-merge verification
+
+Implementation PR #649 squash-auto-merged as `15481ccb` after required CI passed.
+Both FEAT-105 and BUG-066 are now DONE on main. The trusted exact-source validator
+cache for the merged code is published under `refs/heads/main` with key suffix
+`dfc4bffdf6fce5571908714c723809879400327e2b1f2b6967c3ab2ab555452d`.
+This Markdown-only follow-up checks the fast path after the merge tooling itself
+changed; any cache miss still takes the full fail-safe validation path.

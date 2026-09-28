@@ -9,6 +9,29 @@
   before the final report list.
 - Output and behavior stay under the existing real-command rule, which breaks two
   independent assets and requires both failures plus the surviving provider result.
+## Latest: FEAT-105 CI-gated native auto-merge verified (2026-09-28)
+
+- Repository auto-merge is enabled; required test/admin enforcement remain, and
+  approving-review count was already zero. PR #650 was queued through soldev while
+  CI was pending, then squash-merged by GitHub after required checks succeeded.
+- soldev removes universal review markers and worktree deletion/local sync from
+  merges; immediate requests need successful required checks, and --auto delegates
+  waiting to GitHub. Both pin the head and reject drafts/unresolved prerequisites.
+- Worker/review/self-review/demo skills, local PR skill, and contributor/agent
+  guidance now agree. Focused soldev tests and no-comments guard pass locally.
+- REFAC implementation resumed after both speed fixes merged and PR #653 verified
+  the refreshed docs-only cache with a 14-second required check.
+
+## Latest: BUG-066 lightweight docs-only CI verified (2026-09-28)
+
+- Exact-source cached ticket validator replaces the product bootstrap on warm
+  docs-only runs; a cold cache falls back to full validation, never a false pass.
+- Relevant ticket, specification, classification, and account-artifact checks stay.
+  Execution-path and existing mutation suites pass locally. PR #650's live warm-cache
+  required check passed in 11 seconds, with about 3 seconds of cache/validation work
+  and 21 seconds total including the separate classification job and scheduling.
+- Product setup/build/tests and unrelated suites explicitly skipped; all 814 tickets
+  validated through the authoritative parser. Draft auto-merge refusal was verified.
 
 ## Latest: Logan review generalized into durable audit rules (2026-09-28)
 

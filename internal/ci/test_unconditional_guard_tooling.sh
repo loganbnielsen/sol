@@ -71,6 +71,6 @@ expect fail "a workflow that only mentions the tool is rejected" "$tmp/mention"
 
 make_fixture "$tmp/renamed"
 mutate "$tmp/renamed/.github/workflows/ci.yml" "Tooling for the unconditional guards" subset
-expect pass "building a subset is accepted when nothing else needs the rest" "$tmp/renamed"
+expect fail "a subset that omits full-path guard binaries is rejected" "$tmp/renamed"
 
 echo "unconditional-guard tooling: all expectations hold."
