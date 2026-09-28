@@ -36,6 +36,18 @@ class DocsOnlyPath(unittest.TestCase):
         self.assertEqual(save["if"], "github.event_name == 'push' && github.ref == 'refs/heads/main'")
         self.assertIn("internal/tooling/sol_process/**/*.ml", restore["with"]["key"])
 
+    def test_workflow_has_no_duplicate_keys(self):
+        def inspect(node):
+            if isinstance(node, yaml.MappingNode):
+                keys = [key.value for key, _ in node.value]
+                self.assertEqual(len(keys), len(set(keys)), f"duplicate key near line {node.start_mark.line + 1}")
+                for _, value in node.value:
+                    inspect(value)
+            elif isinstance(node, yaml.SequenceNode):
+                for value in node.value:
+                    inspect(value)
+        inspect(yaml.compose(pathlib.Path(guard.WORKFLOW).read_text()))
+
 
 if __name__ == "__main__":
     unittest.main()
