@@ -1331,7 +1331,7 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
+  if ! run migrate-apply "$SOL" migrate apply "$TARGET" --registry "$(app_registry)"; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle
@@ -1371,10 +1371,12 @@ phases
             workspace's migrations, run `sol deploy`, and verify the application transaction
             (a charge accepted, the worker consuming it, and the service reading the worker's
             row back out of PostgreSQL) with the pods, events and logs captured either way.
-            The workspace's declared runtime secrets (POSTGRES_URL, SOL_API_KEY) come from
-            the operator's side of the contract -- the cluster root's postgres_url output
-            plus a value for the API key -- and the bundle records them redacted, never in
-            the clear.
+            Migrations, like the deploy, run against the target's registry: `sol migrate
+            apply` submits an in-cluster Job built from an image there, so it is given the
+            same --registry the deploy is. The workspace's declared runtime secrets
+            (POSTGRES_URL, SOL_API_KEY) come from the operator's side of the contract -- the
+            cluster root's postgres_url output plus a value for the API key -- and the
+            bundle records them redacted, never in the clear.
             The target it writes selects no profile: this row qualifies the application path,
             and claims nothing the production profile's guarantees would promise.
   destroy   freeze and destroy an existing target, then verify absence

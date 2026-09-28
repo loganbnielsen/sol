@@ -484,6 +484,9 @@ has "it builds each image from that service's own Dockerfile" \
 has "and pushes it into the target's Artifact Registry under the workspace's name" \
   "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/charge-svc:qual-" "$DOCKER_LOG"
 has "the workspace's migrations are applied before the deploy" "migrate apply" "$TMP/app-ok.argv"
+has "and the migration Job is built from the target's registry, as the deploy is" \
+  "migrate apply qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" \
+  "$TMP/app-ok.argv"
 has "the deploy is given the target's own registry" \
   "--registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" "$TMP/app-ok.argv"
 has "and a tag unique to the run" "--image-tag qual-" "$TMP/app-ok.argv"
