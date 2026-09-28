@@ -379,18 +379,61 @@ quota_usage() {
   gcloud compute regions describe "$REGION" --project "$PROJECT" \
     --format='csv[no-heading](quotas.metric,quotas.usage)' \
     >"$LOG_DIR/inventory-quota-raw.log" 2>&1 || true
-  python3 - "$LOG_DIR/inventory-quota-raw.log" <<'PY' >"$LOG_DIR/inventory-quota.log" 2>&1 || true
+  local instances_json="" disks_json="" snapshots_json="" sql_json="" addresses_json=""
+  instances_json="$(gcloud compute instances list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
+  disks_json="$(gcloud compute disks list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
+  snapshots_json="$(gcloud compute snapshots list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
+  sql_json="$(gcloud sql instances list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
+  addresses_json="$(gcloud compute addresses list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
+  printf '%s' "$instances_json" >"$LOG_DIR/inventory-quota-instances.json"
+  printf '%s' "$disks_json" >"$LOG_DIR/inventory-quota-disks.json"
+  printf '%s' "$snapshots_json" >"$LOG_DIR/inventory-quota-snapshots.json"
+  printf '%s' "$sql_json" >"$LOG_DIR/inventory-quota-sql.json"
+  printf '%s' "$addresses_json" >"$LOG_DIR/inventory-quota-addresses.json"
+  python3 - "$LOG_DIR/inventory-quota-raw.log" "$LOG_DIR/inventory-quota-instances.json" \
+    "$LOG_DIR/inventory-quota-disks.json" "$LOG_DIR/inventory-quota-snapshots.json" \
+    "$LOG_DIR/inventory-quota-sql.json" "$LOG_DIR/inventory-quota-addresses.json" \
+    <<'PY' >"$LOG_DIR/inventory-quota.log" 2>&1 || true
+import json
 import sys
+
+
+def count(path):
+    try:
+        return len(json.loads(open(path).read() or "[]"))
+    except Exception:
+        return None
+
+
 metrics, usage = open(sys.argv[1]).read().strip().split(",")
+owners = {
+    "CPUS": ("instances", count(sys.argv[2])),
+    "INSTANCES": ("instances", count(sys.argv[2])),
+    "IN_USE_ADDRESSES": ("addresses", count(sys.argv[6])),
+    "SSD_TOTAL_GB": ("disks, snapshots and SQL instances", sum(
+        value or 0 for value in (count(sys.argv[3]), count(sys.argv[4]), count(sys.argv[5])))),
+    "DISKS_TOTAL_GB": ("disks", count(sys.argv[3])),
+}
 want = ["CPUS", "IN_USE_ADDRESSES", "SSD_TOTAL_GB", "DISKS_TOTAL_GB", "INSTANCES"]
 read = dict(zip(metrics.split(";"), usage.split(";")))
 busy = []
+lagging = []
 for m in want:
     value = (read.get(m) or "0").strip()
-    print(f"{m}\t{value}")
-    if float(value or 0) != 0:
+    if float(value or 0) == 0:
+        print(f"{m}\t{value}")
+        continue
+    owners_name, owners_count = owners.get(m, (None, None))
+    if owners_count == 0:
+        print(f"{m}\t{value}\tno owning resource is listed ({owners_name}): the reading is "
+              "quota accounting lagging behind deletion, not residue")
+        lagging.append(m)
+    else:
+        print(f"{m}\t{value}\towned by {owners_name}")
         busy.append(m)
 print("VERDICT:" + ("PRESENT" if busy else "ABSENT"))
+if lagging:
+    print("LAGGING:" + ";".join(lagging))
 PY
   local verdict
   verdict="$(sed -n 's/^VERDICT://p' "$LOG_DIR/inventory-quota.log" | tail -1)"
@@ -1288,7 +1331,7 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
+  if ! run migrate-apply "$SOL" migrate apply "$TARGET" --registry "$(app_registry)"; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle
@@ -1328,10 +1371,12 @@ phases
             workspace's migrations, run `sol deploy`, and verify the application transaction
             (a charge accepted, the worker consuming it, and the service reading the worker's
             row back out of PostgreSQL) with the pods, events and logs captured either way.
-            The workspace's declared runtime secrets (POSTGRES_URL, SOL_API_KEY) come from
-            the operator's side of the contract -- the cluster root's postgres_url output
-            plus a value for the API key -- and the bundle records them redacted, never in
-            the clear.
+            Migrations, like the deploy, run against the target's registry: `sol migrate
+            apply` submits an in-cluster Job built from an image there, so it is given the
+            same --registry the deploy is. The workspace's declared runtime secrets
+            (POSTGRES_URL, SOL_API_KEY) come from the operator's side of the contract -- the
+            cluster root's postgres_url output plus a value for the API key -- and the
+            bundle records them redacted, never in the clear.
             The target it writes selects no profile: this row qualifies the application path,
             and claims nothing the production profile's guarantees would promise.
   destroy   freeze and destroy an existing target, then verify absence
