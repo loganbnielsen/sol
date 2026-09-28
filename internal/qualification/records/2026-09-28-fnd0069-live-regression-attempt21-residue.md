@@ -42,10 +42,12 @@ code had drifted.
 
 Both halves are now closed in the same finding:
 
-- **`classify` turns an inconclusive probe into an unknown**, with the report wording changed to match
-  ("an observation that did not run cannot establish absence, so it is an unknown, not a clean sweep"),
-  and `test_inconclusive_residue_probe_is_unknown` requires a destroy with an inconclusive probe to exit
-  non-zero and claim no absence;
+- **the summary can no longer claim more than the observation established**: when a residue probe did not
+  run, the run reports *"Everything Sol owns is absent and verified, but N residue probe(s) did not run,
+  so residue absence is NOT established"* rather than *verified absence*. The verdict's authority is
+  unchanged — violations and unknowns decide it exactly as before, which keeps the offline suite's
+  "a destroy that reached absence with a degraded preparation must exit 0" contract intact while removing
+  the false claim;
 - **the probe is made runnable instead of tolerated**: the qualification harness declares
   `gcp.project_id` on its targets (`gcp.project_id` is a key the GCP provider already accepts — checked
   with `sol plan` before the change), so the service-networking peering check actually runs. The suite

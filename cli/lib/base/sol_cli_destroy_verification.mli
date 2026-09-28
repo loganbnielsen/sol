@@ -43,3 +43,5 @@ val classify : observation -> verdict
 val is_verified : verdict -> bool
 val verdict_message : verdict -> string
 val report : observation -> string
+val inconclusive_probes : observation -> string list
+val residue_absence_established : observation -> bool

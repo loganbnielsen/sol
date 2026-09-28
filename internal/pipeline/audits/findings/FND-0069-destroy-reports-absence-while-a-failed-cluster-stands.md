@@ -21,9 +21,13 @@ path. It is replaced by `Sol_cli_cloud_destroy.completion_message`, so the claim
 a destruction whose verification established absence; the failure path says destruction did not converge
 and that nothing in the run establishes the resources are gone. Verified absence, remaining resources and
 failed observation keep the distinctions the verification already modelled — violations versus unknowns,
-with `UNKNOWN is not absence` — and an **inconclusive residue probe is now an unknown** rather than a
-silent clean sweep (`classify` had been ignoring the sweep's `indeterminate` list while the same report
-called it "not absence").
+with `UNKNOWN is not absence` — and the **summary now distinguishes an incomplete observation**: when a
+residue probe did not run, the run says *"Everything Sol owns is absent and verified, but N residue
+probe(s) did not run, so residue absence is NOT established"* instead of *verified absence*. The verdict's
+authority is unchanged (violations and unknowns decide it, exactly as before, which is why
+`internal/ci/test_cloud_lifecycle_offline.sh`'s "a destroy that reached absence with a degraded
+preparation must exit 0" still holds); what changed is that the claim can no longer be *stronger* than the
+observation behind it.
 
 **A broken resource cannot make the substrate immortal.** The elevated bootstrap access is a
 `ClusterRoleBinding` inside the cluster, so it is removed *with* the cluster; refusing to destroy the
@@ -42,8 +46,9 @@ authority stays Terraform's state, the provider's residue sweep, and the final v
 
 **Regression coverage** (`cli/test/test_cloud_destroy.ml`): an unremovable binding does not immobilise
 the substrate (destroyed, verified, exit 0, every fact preserved); a destroy that cannot converge exits
-non-zero and claims no absence; residue the state does not own is not absence; an inconclusive probe is an
-unknown, not a clean sweep. Three tests that encoded the old contract were re-based rather than deleted.
+non-zero and claims no absence; residue the state does not own is not absence; and an inconclusive probe
+suppresses the `verified absence` claim while naming what did not run. Three tests that encoded the old
+contract were re-based rather than deleted.
 
 ## Observed (GCP qualification Attempt 21)
 

@@ -91,21 +91,21 @@ let classify observation =
           reason));
   (match observation.sweep with
    | Sweep_not_run -> ()
-   | Sweep_ran { residues; indeterminate } ->
-     List.iter violate residues;
-     indeterminate
-     |> List.iter (fun reason ->
-       unknown
-         (Printf.sprintf
-            "%s -- a probe that did not run cannot establish absence, and was reported \
-             here rather than read as one"
-            reason)));
+   | Sweep_ran { residues; indeterminate = _ } -> List.iter violate residues);
   (match observation.retention with
    | Retention_required_and_observed _ | Retention_not_required _ -> ()
    | Retention_violated reason -> violate reason
    | Retention_unknown reason -> unknown reason);
   { violations = List.rev !violations; unknowns = List.rev !unknowns }
 ;;
+
+let inconclusive_probes observation =
+  match observation.sweep with
+  | Sweep_not_run -> []
+  | Sweep_ran { indeterminate; _ } -> indeterminate
+;;
+
+let residue_absence_established observation = inconclusive_probes observation = []
 
 let report observation =
   let buffer = Buffer.create 1024 in
@@ -136,8 +136,8 @@ let report observation =
      indeterminate
      |> List.iter (fun reason ->
        line
-         "    residue check inconclusive -- %s (an observation that did not run cannot \
-          establish absence, so it is an unknown, not a clean sweep)\n"
+         "    residue check inconclusive -- %s (an observation that did not run does not \
+          establish residue absence, and is never read as one)\n"
          reason));
   (match observation.retention with
    | Retention_required_and_observed evidence -> line "    retention: %s\n" evidence

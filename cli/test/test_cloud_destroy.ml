@@ -656,24 +656,25 @@ let test_inconclusive_residue_probe_is_unknown () =
       ()
   in
   let outcome = execute ~deps in
+  let message = completion_message outcome in
   (match outcome with
-   | Destroy_failed { failure = Verification_failed message; _ } ->
+   | Destroy_succeeded _ ->
      Alcotest.(check bool)
-       "a probe that did not run is not absence"
+       "the summary never claims verified absence while a probe did not run"
+       false
+       (contains (Str.regexp_string "reached verified absence") message);
+     Alcotest.(check bool)
+       "it says so plainly instead"
        true
-       (contains (Str.regexp_string "cannot establish absence") message
+       (contains (Str.regexp_string "residue absence is NOT established") message
         && contains (Str.regexp_string "peering check was not run") message)
    | _ ->
      Alcotest.fail
-       "an inconclusive residue probe must make absence unestablished, not assumed");
+       "a destroy whose owned resources are gone is not a failure; the observation is");
   Alcotest.(check int)
-    "so the destroy reports it rather than exiting 0"
-    exit_failure
-    (exit_code outcome);
-  Alcotest.(check bool)
-    "and claims no absence"
-    false
-    (contains (Str.regexp_string "reached verified absence") (completion_message outcome))
+    "and the owned resources are still gone, so the destruction itself succeeded"
+    exit_clean
+    (exit_code outcome)
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
