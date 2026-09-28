@@ -144,6 +144,22 @@ case "$*" in
     if [ "${STUB_QUOTA_GARBAGE:-0}" = "1" ]; then printf "not a quota document\n"; exit 0; fi
     if [ "${STUB_QUOTA_BUSY:-0}" = "1" ]; then printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,4;0;0;0;1\n"; exit 0; fi
     printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
+  *"compute instances list"*|*"compute disks list"*|*"compute snapshots list"*)
+    case "$*" in
+      *"--format=json"*)
+        if [ "${STUB_RESIDUE_OWNER:-0}" = "1" ]; then
+          printf '[{"name":"residue-owner"}]\n'
+        else
+          printf '[]\n'
+        fi
+        exit 0 ;;
+    esac
+    exit 0 ;;
+  *"sql instances list"*)
+    case "$*" in
+      *"--format=json"*) printf '[]\n'; exit 0 ;;
+    esac
+    exit 0 ;;
   *"compute networks list"*)    printf "default\n"; exit 0 ;;
 esac
 case "$*" in
@@ -712,11 +728,20 @@ fi
 printf '\nscenario: quota verdict\n'
 has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"
 run_case quota-busy destroy STUB_QUOTA_BUSY=1
-has "non-zero usage reads as PRESENT" "quota: PRESENT" "$TMP/quota-busy.out"
-if [ "$(cat "$TMP/quota-busy.rc")" = "0" ]; then
-  no "non-zero usage fails the verification" "non-zero" "0"
+has "non-zero usage with no owning resource reads as quota lag, not residue" \
+  "quota: ABSENT" "$TMP/quota-busy.out"
+has "and says which accounting lagged" "quota accounting lagging behind deletion" \
+  "$TMP/quota-busy.logs/inventory-quota.log"
+is "so a lagging reading does not fail a teardown that removed everything" \
+  "$(cat "$TMP/quota-busy.rc")" "0"
+run_case quota-residue destroy STUB_QUOTA_BUSY=1 STUB_RESIDUE_OWNER=1
+has "non-zero usage an authoritative list accounts for reads as PRESENT" "quota: PRESENT" \
+  "$TMP/quota-residue.out"
+has "and names the owner class" "owned by instances" "$TMP/quota-residue.logs/inventory-quota.log"
+if [ "$(cat "$TMP/quota-residue.rc")" = "0" ]; then
+  no "real residue fails the verification" "non-zero" "0"
 else
-  ok "non-zero usage fails the verification"
+  ok "real residue fails the verification"
 fi
 run_case quota-garbage destroy STUB_QUOTA_GARBAGE=1
 has "an unparsable usage read is UNKNOWN" "quota: UNKNOWN" "$TMP/quota-garbage.out"
