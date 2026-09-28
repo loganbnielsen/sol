@@ -24,6 +24,7 @@ type pr_info =
   ; pr_url : string
   ; pr_branch : string
   ; pr_head_sha : string
+  ; pr_draft : bool
   }
 
 let ticket_id_of_branch branch =
@@ -36,7 +37,8 @@ let open_prs () =
   let json_str =
     Sol_process.output_shell
       ~echo:false
-      "gh pr list --state open --json number,url,headRefName,headRefOid --limit 200"
+      "gh pr list --state open --json number,url,headRefName,headRefOid,isDraft --limit \
+       200"
   in
   if json_str = ""
   then []
@@ -49,6 +51,7 @@ let open_prs () =
       ; pr_url = j |> member "url" |> to_string
       ; pr_branch = j |> member "headRefName" |> to_string
       ; pr_head_sha = j |> member "headRefOid" |> to_string
+      ; pr_draft = j |> member "isDraft" |> to_bool
       })
 ;;
 
@@ -56,72 +59,41 @@ let find_pr_for_ticket ticket_id =
   open_prs () |> List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id)
 ;;
 
+let checks_green_of_json = function
+  | `List (_ :: _ as checks) ->
+    List.for_all
+      (function
+        | `Assoc fields -> List.assoc_opt "bucket" fields = Some (`String "pass")
+        | _ -> false)
+      checks
+  | _ -> false
+;;
+
 let pr_checks_green pr_url =
-  Sol_process.run_shell_rc
-    ~echo:false
-    (Printf.sprintf "gh pr checks %s >/dev/null 2>&1" (Filename.quote pr_url))
-  = 0
+  let result =
+    Sol_process.run_argv
+      [ "gh"; "pr"; "checks"; pr_url; "--required"; "--json"; "bucket" ]
+  in
+  Sol_process.succeeded result
+  &&
+  try checks_green_of_json (Yojson.Basic.from_string result.stdout) with
+  | Yojson.Json_error _ -> false
 ;;
 
 let review_pass_marker = "SOLDEV-REVIEW: PASS"
 let review_fail_marker = "SOLDEV-REVIEW: FAIL"
-
-type review_verdict =
-  | Reviewed_pass of string
-  | Reviewed_fail
 
 let starts_with ~prefix s =
   String.length s >= String.length prefix
   && String.sub s 0 (String.length prefix) = prefix
 ;;
 
-let parse_review_marker body =
-  match String.split_on_char '\n' body with
-  | [] -> None
-  | first_line :: _ ->
-    if starts_with ~prefix:review_pass_marker first_line
-    then (
-      let rest_start = String.length review_pass_marker in
-      let sha =
-        String.sub first_line rest_start (String.length first_line - rest_start)
-        |> String.trim
-      in
-      Some (Reviewed_pass sha))
-    else if starts_with ~prefix:review_fail_marker first_line
-    then Some Reviewed_fail
-    else None
-;;
-
-let latest_review_verdict_of_bodies bodies =
-  List.fold_left
-    (fun acc body ->
-       match parse_review_marker body with
-       | Some v -> Some v
-       | None -> acc)
-    None
-    bodies
-;;
-
-let pr_comment_bodies pr_url =
-  let json_str =
-    Sol_process.output_shell
-      ~echo:false
-      (Printf.sprintf "gh pr view %s --json comments" (Filename.quote pr_url))
-  in
-  if json_str = ""
-  then []
-  else
-    let open Yojson.Basic.Util in
-    Yojson.Basic.from_string json_str
-    |> member "comments"
-    |> to_list
-    |> List.map (fun c -> c |> member "body" |> to_string)
-;;
-
-let pr_review_approved pr =
-  match latest_review_verdict_of_bodies (pr_comment_bodies pr.pr_url) with
-  | Some (Reviewed_pass reviewed_sha) -> reviewed_sha = pr.pr_head_sha
-  | Some Reviewed_fail | None -> false
+let merge_command ~auto_merge pr =
+  Printf.sprintf
+    "gh pr merge %s --squash --match-head-commit %s%s"
+    (Filename.quote pr.pr_url)
+    (Filename.quote pr.pr_head_sha)
+    (if auto_merge then " --auto" else "")
 ;;
 
 let ticket_id_from_branch branch = ticket_id_of_branch branch
@@ -375,7 +347,7 @@ let run_review ticket_id result_file =
          Soldev_exit.error
            (Printf.sprintf "error: failed to post review-pass comment on %s" p.pr_url)
        else (
-         Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url;
+         Printf.printf "[%s] %s → review passed (informational)\n" ticket_id p.pr_url;
          Ok ())
      | Fail ->
        let body =
@@ -462,102 +434,47 @@ let run_merge_finish ~ticket_id ~merge_sha =
     Ok ()
 ;;
 
-let freshly_built_soldev = "_build/default/internal/tooling/soldev/bin/main.exe"
-
-let merge_candidates ~dry_run candidates =
+let merge_candidates ~dry_run ~auto_merge candidates =
   let errors = ref 0 in
-  let merged = ref [] in
   List.iter
     (fun (id, p) ->
        Printf.printf "\n[%s]\n%!" id;
-       if not (pr_review_approved p)
-       then Printf.printf "  not approved yet — skipping (%s)\n" p.pr_url
-       else if not (pr_checks_green p.pr_url)
-       then Printf.printf "  checks not green yet — skipping (%s)\n" p.pr_url
-       else if dry_run
-       then Printf.printf "  (dry-run) gh pr merge %s --squash --delete-branch\n" p.pr_url
+       let ready =
+         match Soldev_ticket.find_ticket id with
+         | None -> false
+         | Some (state, path) ->
+           let content = read_file path in
+           state <> Soldev_ticket.Backlog
+           && Soldev_ticket.unreadable ~path content = None
+           && (not (Soldev_ticket.has_human_decision_gate content))
+           && (not (Option.is_some (Soldev_ticket.find_dependency_cycle id)))
+           && List.for_all
+                (fun dep -> Soldev_ticket.dependency_status dep = `Done)
+                (Soldev_ticket.parse_depends content)
+       in
+       if not ready
+       then Printf.printf "  ticket prerequisites unresolved — skipping (%s)\n" p.pr_url
+       else if p.pr_draft
+       then Printf.printf "  draft PR — skipping (%s)\n" p.pr_url
+       else if (not auto_merge) && not (pr_checks_green p.pr_url)
+       then Printf.printf "  required checks not green — skipping (%s)\n" p.pr_url
        else (
-         Soldev_shell.run_cmd_lines "git worktree list --porcelain"
-         |> List.filter_map (fun line ->
-           if String.length line > 9 && String.sub line 0 9 = "worktree "
-           then Some (String.sub line 9 (String.length line - 9))
-           else None)
-         |> List.iter (fun wt_path ->
-           let wt_branch =
-             Sol_process.output_shell
-               ~echo:false
-               (Printf.sprintf
-                  "git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null"
-                  (Filename.quote wt_path))
-           in
-           if wt_branch = p.pr_branch
-           then
-             ignore
-               (Soldev_shell.run_cmd
-                  (Printf.sprintf
-                     "git worktree remove %s --force"
-                     (Filename.quote wt_path))));
-         let merge_rc =
-           Soldev_shell.run_cmd
-             (Printf.sprintf
-                "gh pr merge %s --squash --delete-branch --admin"
-                (Filename.quote p.pr_url))
-         in
-         if merge_rc <> 0
-         then (
-           Printf.eprintf
-             "  gh pr merge failed for %s — leaving open, retry once green\n"
-             p.pr_url;
-           incr errors)
-         else (
-           ignore (Soldev_shell.run_cmd ~echo:false "git fetch origin main -q");
-           let sync_rc =
-             Soldev_shell.run_cmd ~echo:false "git merge origin/main --no-edit -q"
-           in
-           if sync_rc <> 0
-           then (
-             Printf.eprintf
-               "  merged on GitHub but failed to sync local main — resolve manually\n";
-             incr errors)
-           else (
-             let merge_sha =
-               Sol_process.output_shell ~echo:false "git rev-parse origin/main"
-             in
-             Printf.printf "  rebuilding before post-merge checks...\n%!";
-             let build_rc = Soldev_shell.run_cmd "dune build" in
-             if build_rc <> 0
-             then (
-               Printf.eprintf
-                 "  post-merge build failed — %s is NOT reverted.\n\
-                 \  The merge is on origin/main and the ticket's DONE move travelled \
-                  with it; local main has been synced to it.\n\
-                 \  Investigate here; if this is a real regression, revert it \
-                  deliberately on the remote:\n\
-                 \    git revert %s && git push origin main\n\
-                  %!"
-                 id
-                 merge_sha;
-               incr errors)
-             else (
-               let finish_rc =
-                 Soldev_shell.run_cmd
-                   (Printf.sprintf
-                      "%s pipeline merge-finish %s %s"
-                      (Filename.quote freshly_built_soldev)
-                      (Filename.quote id)
-                      (Filename.quote merge_sha))
-               in
-               if finish_rc = 0 then merged := id :: !merged else incr errors)))))
+         let command = merge_command ~auto_merge p in
+         if dry_run
+         then Printf.printf "  (dry-run) %s\n" command
+         else if Soldev_shell.run_cmd command <> 0
+         then incr errors
+         else
+           Printf.printf
+             "  GitHub accepted %s\n%!"
+             (if auto_merge then "auto-merge" else "merge")))
     candidates;
-  if !errors > 0 then Printf.eprintf "\n%d ticket(s) had errors.\n" !errors;
-  if (not dry_run) && !merged <> []
-  then
-    Printf.printf "\nLocal main has new commits — remember to `git push origin main`.\n";
-  Printf.printf "\nDone. %d merged.\n" (List.length !merged);
-  Ok ()
+  if !errors = 0
+  then Ok ()
+  else Soldev_exit.error (Printf.sprintf "error: %d merge request(s) failed" !errors)
 ;;
 
-let run_merge ~dry_run ~ticket_filter =
+let run_merge ~dry_run ~auto_merge ~ticket_filter =
   let open Result.Syntax in
   let* candidates =
     match ticket_filter with
@@ -567,16 +484,11 @@ let run_merge ~dry_run ~ticket_filter =
        | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
     | None -> Ok (open_prs () |> List.map (fun p -> ticket_id_of_branch p.pr_branch, p))
   in
-  let branch = current_branch () in
   if candidates = []
   then (
     Printf.printf "No open PRs to merge.\n";
     Ok ())
-  else if branch <> "main"
-  then
-    Soldev_exit.error
-      (Printf.sprintf "error: must be on main to merge (currently on %s)." branch)
-  else merge_candidates ~dry_run candidates
+  else merge_candidates ~dry_run ~auto_merge candidates
 ;;
 
 let parse_worktree_porcelain lines =

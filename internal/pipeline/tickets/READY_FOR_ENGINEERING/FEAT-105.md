@@ -73,3 +73,24 @@ marker is not evidence that a review actually gated a merge.
 - Demo/example: exercise the maintainer CLI in a runnable workflow example; no
   application demo change is needed because this changes maintainer tooling only.
 - Language parity: no impact; merge orchestration is independent of app language.
+
+## Implementation progress
+
+Verified live 2026-09-28: required approving review count was already zero;
+required `test`, admin enforcement, and PR-only protections remain unchanged.
+Enabled repository `allow_auto_merge`. PR #648 queued for squash auto-merge
+while required CI was pending, and remained open. The head-pin guard also rejected
+an incorrect expected SHA instead of accepting a stale request.
+
+The local implementation removes marker gating and destructive worktree cleanup,
+adds `pipeline merge --auto`, requires successful nonempty required checks for an
+immediate merge, pins the head SHA, rejects drafts/unresolved ticket prerequisites,
+and preserves all local trees. Optional review commands remain informational.
+Ticket/merge tests pass, including absent/malformed/pending/failed checks, green CI
+without any marker, draft refusal, and native auto-merge queue requests.
+
+Repository worker/review/self-review/demo skills and AGENTS/CONTRIBUTING guidance
+now share the policy. The authorized user-level PR skill at
+`~/.codex/skills/pr/SKILL.md` was updated separately and validated; it is not a
+repository file. Local full no-comments guard passes with its required shfmt parser.
+Completion awaits a real low-risk native auto-merge and remote verification.

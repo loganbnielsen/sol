@@ -8,7 +8,10 @@ description: Self-review checklist to run against your own diff before pushing o
 Run this against your own diff (`git diff main...HEAD` in the worktree)
 before submitting or pushing a follow-up. Each item below came from a real
 finding an external reviewer had to catch first. Go through the list against
-the actual diff — don't just skim and assume it's fine.
+the actual diff — don't just skim and assume it's fine. Apply only relevant checks
+and run validation proportional to risk; this does not require another reviewer
+or repeated full-suite runs. Routine PRs merge on required green CI. Selected
+high-risk or operator-requested reviews stay draft until resolved.
 
 ## 1. Status/health semantics
 
@@ -64,8 +67,8 @@ the actual diff — don't just skim and assume it's fine.
 
 - No "round N review" / review-history narrative in source or test files.
   That belongs in commit messages and PR descriptions, never in code.
-- Comments explain WHY (a non-obvious constraint or invariant), never WHAT
-  the code already says via naming.
+- Covered source/config formats carry no comments per AGENTS.md. Express invariants
+  in code/tests and put durable rationale in the owning ticket or documentation.
 
 ## 6. Before claiming a fix is live
 
@@ -112,7 +115,8 @@ the actual diff — don't just skim and assume it's fine.
 
 ## 9. Git/PR workflow
 
-- Never merge your own PR (`gh pr merge` / `gh api .../merge`). Open it and
-  stop.
+- Merge only with operator authorization. Prefer `soldev pipeline merge --auto`
+  for native squash auto-merge; required CI gates it. No review-marker is required.
+  Keep a selected review's PR draft until actionable findings are resolved.
 - If a PR is still open, push a follow-up commit to its branch. Only open a
   new PR for genuinely separate work, or once the prior PR is merged.

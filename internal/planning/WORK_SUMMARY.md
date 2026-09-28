@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## In progress: FEAT-105 CI-gated native auto-merge (2026-09-28)
+
+- Repository auto-merge is enabled; required test/admin enforcement remain, and
+  approving-review count was already zero. PR #648 queues while CI is pending.
+- soldev removes universal review markers and worktree deletion/local sync from
+  merges; immediate requests need successful required checks, and --auto delegates
+  waiting to GitHub. Both pin the head and reject drafts/unresolved prerequisites.
+- Worker/review/self-review/demo skills, local PR skill, and contributor/agent
+  guidance now agree. Focused soldev tests and no-comments guard pass locally.
+- REFAC implementation/merging is paused until BUG-066/FEAT-105's faster workflow
+  has been verified, per operator direction.
+
 ## Latest: Logan review generalized into durable audit rules (2026-09-28)
 
 - FEAT-105 captures the approved faster merge policy: green required CI by default,
