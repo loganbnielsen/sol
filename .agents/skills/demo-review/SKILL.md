@@ -1,6 +1,6 @@
 ---
 name: demo-review
-description: "Persona-based adversarial review for a demo or scaffold-facing example: a demo agent (does it actually run end-to-end and show off the platform) and a client agent (is the code an app author has to write appropriately small, or does it hide boilerplate that belongs in a library helper). Iterate fix-and-reconfirm with both personas, then a fresh final reviewer, before treating the demo as done. Use for internal/fixtures/local-demo, tutorial code samples, or any showcase/onboarding artifact — not for internal framework code with no app-author audience."
+description: "Optional persona-based review of demos and scaffold-facing examples, selected for app-author API/lifecycle risk or explicitly requested. Checks runnable behavior and client-code simplicity without mandatory fresh-reviewer loops."
 ---
 
 # /demo-review — does the demo work, and is the abstraction right?
@@ -9,8 +9,10 @@ A demo (`internal/fixtures/local-demo`, a tutorial snippet, a scaffold's generat
 `bin/main.ml`) has two audiences ordinary code review doesn't check for:
 someone running it to see the platform work, and someone reading it as a
 model for their own app code. Correctness review alone misses both. This
-skill runs two persona reviewers against the demo, iterating like `/pr`'s
-adversarial loop, until both are satisfied and a fresh reviewer confirms.
+skill uses the relevant personas when explicitly requested or selected for
+app-author API/lifecycle risk. Routine example formatting/refactors need focused
+validation and CI, not this additional review. Keep a selected-review PR draft
+until findings are resolved; one satisfactory targeted pass suffices.
 
 Do this from a worktree/branch already set up for the ticket (see `/work`
 or `/pr` for that setup) — this skill only covers the review loop itself.
@@ -52,12 +54,8 @@ or `/pr` for that setup) — this skill only covers the review loop itself.
    each persona agent (same agent, follow-up message) the fix summary and
    ask whether it resolves their findings. Iterate until both have no
    actionable feedback.
-6. **Fresh final pass.** Start one brand-new agent with no prior
-   conclusions (fresh `Agent` call, not a continuation) and give it the
-   final diff plus final transcript. Ask it to independently play *both*
-   personas and report whether it's satisfied. Iterate if it finds
-   something new; this is the exit condition — stop once a fresh agent
-   approves.
+6. **Finish once selected findings are resolved.** Do not require a fresh final
+   reviewer. Another pass is appropriate only for materially new risk or a request.
 7. Hand off per the ticket's normal path (`/pr`, `soldev pipeline submit`,
    etc.) — this skill only gates "is the demo actually good," not the
    ticket state machine itself.
@@ -120,4 +118,4 @@ Each agent's findings: concrete, file/line-referenced, ranked by severity,
 same bar as `/pr`'s adversarial review — no speculative redesigns, no
 non-actionable style preference. The final handoff summarizes: what the
 real run showed, what each persona found, what was fixed vs. filed as a
-separate ticket, and confirms the fresh final pass approved.
+separate ticket, and whether selected findings are resolved.
