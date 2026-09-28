@@ -30,6 +30,30 @@ have failed" — it never means "false".
 
 ---
 
+### 2026-09-28 — FND-0070 filed: a failed apply can leave resources the state never adopted
+
+Attempt 25's substrate apply failed at the Cloud SQL instance (`Error waiting for Create Instance`) but the
+provider created it anyway, so Terraform recorded nothing. The supported destroy then correctly destroyed
+everything its state represented and reported **`Done. Destruction reached verified absence.`** while
+`sol-qual-gcp-25-postgres` stands `RUNNABLE` — the harness's independent check says `verify: resources
+remain`.
+
+Two consequences to hold onto while the finding is open:
+
+- the GCP residue sweep checks **one** class (the service-networking peering) where the AWS sweep checks
+  tag-derived load balancers and EBS volumes, so an orphan of any other class is invisible to the absence
+  verdict;
+- a resource Terraform never adopted is **unreachable by the supported destroy path**, which acts on state.
+
+`sol-qual-gcp-25-postgres` is left standing deliberately; reclamation needs the decision recorded in
+FND-0070 (detect-and-refuse / adopt-then-destroy / reclaim-by-identity). The `sol-qual-gcp-15b` residue
+(Artifact Registry repository, reserved peering address, provisioner service account) is very likely the
+same class from an earlier attempt.
+
+The harness's own quota verdict was corrected in the same pass and is now three-valued: `ABSENT`, `PRESENT`
+(an authoritative list accounts for the usage) and `UNKNOWN` (non-zero with no identified owner, never read
+as absence — and it does not pass a teardown verification).
+
 ## Findings (with their state)
 
 | Finding | Provider | What | Ticket | Classification | State |
