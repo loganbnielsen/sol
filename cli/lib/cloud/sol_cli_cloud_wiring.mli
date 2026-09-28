@@ -3,6 +3,19 @@ type terraform_inputs =
   ; vars : string list
   }
 
+type terraform_layout =
+  { provider : Sol_cli_provider.t
+  ; pname : string
+  ; infra_dir : string
+  ; platform_dir : string
+  ; cloud_backend : string list
+  ; platform_backend : string list
+  }
+
+val terraform_layout
+  :  cloud_target:Sol_cli_cloud_lifecycle.cloud_target
+  -> terraform_layout
+
 val confirm_guarded_removal_flag : string
 
 val init

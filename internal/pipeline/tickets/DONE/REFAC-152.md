@@ -56,9 +56,13 @@ sequential phases.
   122 tracked interfaces yielded 28 public signatures above six arguments before
   these changes; deployment_doc (21) was the positive control.
 - Cloud wiring now reuses validated cloud_target for target/provider/backends/root
-  paths and derives the display name. A Terraform input value carries var_files/vars,
-  constructed once and shared by plan/apply or destroy-preview/destroy. Callers
-  can no longer supply contradictory target, provider, backend and path copies.
+  paths and derives the display name. A `terraform_layout` value (provider, pname,
+  cluster and platform workdirs, and both backend configs) is produced once from the
+  cloud target and shared by plan/apply/destroy, so the four entry points can no
+  longer derive contradictory paths; a `terraform_inputs` value carries the
+  caller-supplied var_files/vars. A focused test in `test_cloud_lifecycle` constructs
+  a cloud target and asserts the layout follows its provider and backends and that
+  the two roles never share a workdir.
 - Scheduled_workload_spec names the CronJob render contract without forcing fn
   workloads into the unrelated Deployment/Rollout specification. Planning_input
   names resolved deploy-planning data without depending on the effectful deploy
@@ -99,7 +103,8 @@ REFAC-146's shared process_handler_result also deliberately keeps its policy/mes
 effect test inputs explicit rather than adding a generic dependencies record.
 
 - Validation: CLI build, formatting, all manifest-render tests, deploy-selection,
-  cloud apply/destroy unit suites, and the real-command offline lifecycle scenarios.
+  cloud apply/destroy unit suites, the new terraform-layout focused test, and the
+  real-command offline lifecycle scenarios.
 - Demo/example: internal signature changes only; existing generated manifests and
   deploy/cloud behavior stay unchanged and their existing runnable examples apply.
   No language-parity impact: no framework or deployment convention changes.
