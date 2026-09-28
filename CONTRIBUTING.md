@@ -64,10 +64,10 @@ including internal/pipeline/planning/bookkeeping under `internal/pipeline/`, doc
 (`*.md`), and the perf baseline.
 
 ```text
-branch → push → pull request → required checks green → review → merge
+branch → push → pull request → required checks green → squash merge
 ```
 
-`main` is protected with required status check `test`, one approving review,
+`main` is protected with required status check `test`, no mandatory approving review,
 and admin enforcement enabled — so the rule
 binds maintainers and administrators too, not only contributors. Direct pushes
 to `main` are rejected by GitHub:
@@ -77,6 +77,22 @@ remote: error: GH006: Protected branch update failed for refs/heads/main.
 remote: - Changes must be made through a pull request.
 remote: - Required status check "test" is expected.
 ```
+
+Routine refactors, documentation, and ticket filings use focused author validation
+plus required CI, without a review marker or adversarial loop. Native squash
+auto-merge is enabled: from an owned worktree run
+`soldev pipeline merge --auto <TICKET-ID>` to queue it, or omit `--auto` for an
+immediate merge after required checks succeed. The command pins the PR head and
+preserves local worktrees; it does not delete trees, switch branches, or sync the
+canonical checkout. Post-merge performance maintenance remains optional and
+informational, not another merge gate.
+
+Select targeted review for infrastructure, security, lifecycle/concurrency,
+substantial API changes, or when requested. Keep these PRs draft until the review
+is satisfactory and its actionable findings are resolved, then mark ready and
+queue auto-merge. One satisfactory pass is enough; fresh-reviewer loops and
+SOLDEV-REVIEW markers are not universal requirements. Do not introduce a risk
+classifier or a second approval state machine for this judgment.
 
 ### Why there is no bookkeeping exception
 

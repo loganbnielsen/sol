@@ -22,8 +22,15 @@ let merge_ticket_arg =
 
 let exit_on = Soldev_exit.exit_on
 
-let run_merge dry_run ticket_filter =
-  Soldev_merge.run_merge ~dry_run ~ticket_filter |> exit_on
+let auto_merge_flag =
+  Arg.(
+    value
+    & flag
+    & info [ "auto" ] ~doc:"Queue GitHub squash auto-merge after required CI succeeds")
+;;
+
+let run_merge dry_run auto_merge ticket_filter =
+  Soldev_merge.run_merge ~dry_run ~auto_merge ~ticket_filter |> exit_on
 ;;
 
 let merge_cmd =
@@ -31,10 +38,11 @@ let merge_cmd =
     (Cmd.info
        "merge"
        ~doc:
-         "Merge approved, CI-green PRs — a ticket lands in DONE because its own branch \
-          already committed that move, not because this command moves anything locally. \
-          Pass a ticket ID to merge one; omit to sweep all open, ready PRs.")
-    Term.(const run_merge $ dry_run_flag $ merge_ticket_arg)
+         "Merge non-draft, CI-green PRs; use --auto to wait on GitHub — a ticket lands \
+          in DONE because its own branch already committed that move, not because this \
+          command moves anything locally. Pass a ticket ID to merge one; omit to sweep \
+          all open, ready PRs.")
+    Term.(const run_merge $ dry_run_flag $ auto_merge_flag $ merge_ticket_arg)
 ;;
 
 let ticket_arg =
@@ -46,7 +54,10 @@ let merge_sha_arg =
   Arg.(
     required
     & pos 1 (some string) None
-    & info [] ~docv:"MERGE-SHA" ~doc:"The commit `merge` just synced to local main")
+    & info
+        []
+        ~docv:"MERGE-SHA"
+        ~doc:"The merged commit being measured in this owned checkout")
 ;;
 
 let run_merge_finish ticket_id merge_sha =
@@ -58,10 +69,9 @@ let merge_finish_cmd =
     (Cmd.info
        "merge-finish"
        ~doc:
-         "Internal — spawned by `merge` as a subprocess of a binary rebuilt after the \
-          PR's merge commit landed, never invoke directly. Runs the post-merge test \
-          suite and records the perf baseline; functional test failures revert the \
-          merge. Perf-ratio regressions are informational only and do not revert.")
+         "Optional post-merge maintenance in an owned checkout: run tests and record the \
+          perf baseline. Does not gate merges or revert failures. Not invoked \
+          automatically by merge.")
     Term.(const run_merge_finish $ ticket_arg $ merge_sha_arg)
 ;;
 
@@ -93,9 +103,10 @@ let review_cmd =
        "review"
        ~doc:
          "Process a structured JSON review result by leaving it as a PR comment — marked \
-          SOLDEV-REVIEW: PASS on pass (which `merge` checks for), an ordinary violations \
-          comment on fail. Not a formal GitHub review: `gh` always runs as the PR's own \
-          author here, and GitHub refuses self-approval. No ticket file moves.")
+          SOLDEV-REVIEW: PASS on pass (informational, not a merge prerequisite), an \
+          ordinary violations comment on fail. Not a formal GitHub review: `gh` always \
+          runs as the PR's own author here, and GitHub refuses self-approval. No ticket \
+          file moves.")
     Term.(
       const (fun id file -> Soldev_merge.run_review id file |> exit_on)
       $ ticket_arg

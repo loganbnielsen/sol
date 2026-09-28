@@ -54,7 +54,17 @@ branch moves its own ticket from `READY_FOR_ENGINEERING/` to `DONE/` in the
 final commit, so `gh pr merge --squash` carries the code and ticket completion
 into `main` atomically. Reverting that squash commit reverses the move too.
 
-Review and merge readiness live entirely on the PR, not on a ticket directory: `soldev pipeline review <ticket-id>` leaves its verdict as a plain PR comment either way — a `SOLDEV-REVIEW: PASS`-marked comment on pass, an ordinary violations comment on fail. It's a comment rather than a formal GitHub review because this is a solo-owned repo: the `gh` identity is always the PR's own author, and GitHub refuses to let an author formally approve their own PR. A bounce just means another commit on the same open PR, this repo's established convention, never a ticket-directory round trip. `soldev pipeline merge` checks the PR for that pass-marker comment and green CI directly against GitHub before it will act, then runs `gh pr merge --squash --delete-branch --admin` — the `--admin` bypasses branch protection's separate 1-approval requirement (which, for the same self-approval reason, this repo can never satisfy natively); required status checks still gate the merge for real. A post-merge regression is handled by reverting that one squash commit, which un-does the code *and* the ticket's `DONE` move together (they were always the same commit) — the ticket lands back in `READY_FOR_ENGINEERING` automatically, with no separate "blocked" state to move it out of.
+Merge readiness lives on the PR, not a ticket directory. Routine refactors,
+documentation, and filings use focused author validation and required green CI;
+no review marker or approving-review count is required. Select targeted review
+for infrastructure, security, lifecycle/concurrency, substantial API changes, or
+an operator request, and keep the PR draft until actionable findings are resolved.
+One satisfactory targeted pass is sufficient. `soldev pipeline review` still
+posts optional informational verdicts; they are not universal merge gates.
+`soldev pipeline merge --auto <id>` queues GitHub squash auto-merge; without
+`--auto`, it merges only with successful, nonempty required checks. It pins the
+head SHA, rejects drafts/unresolved prerequisites, uses no admin bypass, and
+preserves local worktrees. Reverting the squash returns its ticket to READY atomically.
 
 **Ticket frontmatter fields:** `id`, `type` (refactor | feature | bug | audit-finding | decision | ux-finding | dogfood-finding | docs-finding | code-layer-finding | verification | release | infra | performance | documentation), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
 Do not add a `status:` field — the directory encodes status.
@@ -79,7 +89,7 @@ The frontmatter is YAML, read with a YAML parser (REFAC-137), and every ticket's
 
 Two rules for writing one: **`check` echoes the command before running it, and a probe is shell supplied by whoever wrote the ticket — read it before you let it run.** And keep the probe cheap and read-only; it runs on every `ls`, so a probe with side effects runs on every listing.
 
-**Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles go in the `example-dockerfile-smoke` CI matrix, and demo-facing changes run `/demo-review`.
+**Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles go in the `example-dockerfile-smoke` CI matrix. Select `/demo-review` for substantial app-author API/lifecycle changes or when requested, not routine example refactors.
 
 **TypeScript-parity tracking (DEC-022):** Sol's platform is language-neutral, and OCaml and TypeScript are both first-class application languages. Parity is **capability + behavioural parity, not implementation parity** — the contract (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric-naming/label vocabulary, lifecycle/shutdown, config/secrets, job semantics) must hold across languages, while the implementation underneath need not be shared (`kafka-eio`/`pg-eio` stay OCaml; TypeScript keeps the Node ecosystem and Sol supplies only the semantics/glue). Every application-facing capability carries a per-language verdict — **implemented / already equivalent / intentionally deferred / not applicable**; silence is not a verdict, and deferring a language is an explicit, recorded decision with a trigger, never default debt. Two conformance levels both matter: the **TS golden path** (`sol new --language typescript` → `sol local up` → `sol deploy`, adoption/DX — FEAT-082) and the **capability matrix** (per-capability verdicts, architectural parity — the inventory in `internal/pipeline/dogfood/2026-09-07_typescript_demo_spike.md` + FEAT-080). Concretely: any ticket that changes one of those conventions, or introduces a new framework-level concept an app author gets "for free" (a new primitive, a new library like `sol-jobs`, a new retry/backoff/observability contract), must check the cross-language gap and say so in one line in its completion notes — "no language-parity impact" with why, or a reference to the tracking ticket recording what the other language would now need. This is bookkeeping, not permission-gating — it keeps the two frameworks from silently drifting the way FEAT-076 through FEAT-079 accumulated against a spike that predated them.
 
@@ -95,20 +105,20 @@ The discipline, since relying on remembering the current directory has now faile
 
 **Skills that interact with tickets:**
 - `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
-- `/review-worktree` — standalone review gate (called internally by `/work`); subagents emit JSON, `soldev pipeline review` leaves the verdict on the PR
+- `/review-worktree` — optional targeted review; structured results become informational PR comments.
 - `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
 
 **soldev roles (REFAC-079):** GitHub PRs/CI are the source of truth; `soldev` is an orchestration layer over GitHub, not a second authority.
 - `pipeline ls` / `pipeline check` — orchestration: queue view, preflight gates, PR and dirty-worktree annotations.
 - `pipeline validate` — validation: reads every ticket in the tree (BACKLOG, READY_FOR_ENGINEERING and DONE) with the same parser the other commands use, and exits 1 naming any it cannot read. CI runs it unconditionally, so a ticket with unreadable frontmatter fails its PR instead of disappearing from the queue view (BUG-060).
 - `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
-- `pipeline review` — orchestration: posts the structured `SOLDEV-REVIEW` verdict comment that `merge` trusts.
-- `pipeline merge` — orchestration: verifies review marker + CI directly on GitHub, then runs `gh pr merge --squash --delete-branch --admin`.
-- `pipeline merge-finish` — informational/maintenance, invoked by `merge`: records perf baseline/history after a merge. It does **not** gate or revert merges; merging outside soldev simply skips this informational step.
+- `pipeline review` — orchestration: posts optional structured review findings as PR comments.
+- `pipeline merge` — orchestration: verifies prerequisites and non-draft status, then uses head-pinned GitHub squash merge; `--auto` queues native auto-merge. Immediate merges require green required CI. No admin bypass or worktree cleanup.
+- `pipeline merge-finish` — optional informational maintenance: records perf baseline/history in an owned checkout after a merge. It does not gate or revert merges and is not run automatically.
 - `pipeline check-reverts` — safety diagnostic over git history.
 - Pre-commit hook — convenience local gate; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
-- Direct-to-`main` ticket-file commits (`BACKLOG` promotions, audit filings) — bookkeeping exception; kept outside PRs because they are metadata moves, not code.
+- Ticket filings and promotions go through PRs too; there is no direct-to-main bookkeeping exception.
 
 **Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `run_tests.sh` writes it only with `--update-baseline`; pre-commit never stages it into code commits; merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
 
@@ -352,53 +362,25 @@ The assurance stack for code is: compile, format and targeted tests locally; ful
 
 ## Shepherding PRs to merge
 
-Merge readiness is a **PR comment**, not a review state (`gh` is always the PR's
-own author here). The mechanics that are easy to get wrong:
+Routine PRs need required green CI, not a review marker. Queue native squash
+auto-merge with `soldev pipeline merge --auto <id>` when merging is authorized.
 
-- **The pass marker is `SOLDEV-REVIEW: PASS <head-sha>` as the *first line*, and
-  only the temporally-last such comment counts.** Any commit after it — including
-  a branch update that merges `main` — invalidates it, because the embedded SHA no
-  longer equals the head. Re-run `soldev pipeline review <ticket>` after updating.
-- **Non-ticket PRs (`audit/*`, `dec/*`) can't use `soldev pipeline review`** (it
-  finds the PR by `<ticket-id>/` branch prefix). Post the same marker by hand:
-  `SOLDEV-REVIEW: PASS <head-sha>`.
-- **A batch branch has the same problem, and it fails quietly.** `docs/DOCS-018-019`
-  does not start with `DOCS-018/`, so `soldev pipeline review DOCS-018` reports
-  *"no open PR found"* — the marker is never posted — while the PR is still
-  mergable enough to go through. Observed on #432: two tickets landed with no
-  `SOLDEV-REVIEW` comment at all. Batch branches are still worth it (one CI cycle
-  for several independent items, and the ticket-move guard reads *every* id in the
-  name, so they all must move), but **check the marker landed** before merging, or
-  post it by hand; do not read "merged" as "the marker step ran".
-- **Protection requires `test` on the PR's head, with `enforce_admins`, but not
-  an up-to-date branch** (`strict` off since 2026-09-27). `--admin` bypasses the
-  1-approval requirement but **not** required checks. A PR whose own head is green
-  may merge even though `main` has moved on; **do not update it and re-run CI just
-  because another PR landed first**, since that re-buys evidence you already have.
-  Update and reconcile before merging only when it matters: git reports a merge
-  conflict, or the commits that landed materially overlap the PR's files or
-  contracts (both change `Sol_cli_provider_capabilities`, say; a DEC markdown
-  file landing does not count). Post-merge CI on `main` catches the rare
-  interaction; if it goes red, fix forward or revert that squash commit.
-- **Do not re-run the full local suite before pushing a branch update.** After
-  merging `main`, run the build and the format check (seconds); CI runs the rest.
-- **The marker gates, so it is posted *before* the merge command runs — and the
-  merge command's exit code does not report the remote outcome.** From an agent
-  worktree the order is: CI green on the head → review → `SOLDEV-REVIEW: PASS
-  <head-sha>` on the PR → `gh pr merge <n> --squash --admin`, **without
-  `--delete-branch`** (`soldev pipeline merge` runs the same command, so this
-  applies wherever it is invoked from) → **verify the PR is `MERGED`** → delete the
-  remote branch (`git push origin --delete <branch>`) and clean up the worktree.
-  `--delete-branch` makes `gh` check out the default branch for its local cleanup,
-  which fails in an agent worktree with `fatal: 'main' is already used by worktree
-  at <canonical checkout>` — *after* the merge has already landed on GitHub. So the
-  command exits non-zero on a merge that succeeded, and anything sequenced after it
-  never runs: this is exactly how #585 merged with its marker step skipped. **Never
-  retry, and never report failure, from that exit code — read
-  `gh pr view <n> --json state,mergedAt,mergeCommit` first.**
-- **Merge dependent PRs by hand, in order.** `soldev pipeline merge` (no argument)
-  sweeps in branch-label order (`[audit]`, `[dec]`, …), which can invert a
-  dependency — e.g. merging a decision PR before the finding it cites.
+- Keep intentionally reviewed PRs draft until the selected review is satisfactory.
+  Review comments are optional evidence, never proof that a gate ran.
+- Protection requires `test` on the PR head with admin enforcement, zero mandatory
+  approvals, and no up-to-date-branch requirement. Do not merge with `--admin`.
+  Do not update/retest a green PR solely because main advanced; reconcile actual
+  conflicts or overlapping contracts. Post-merge CI remains the interaction backstop.
+- Do not repeat the full local suite after an unrelated branch update. Build,
+  format, and relevant tests suffice locally; required CI covers the PR head.
+- Use `--match-head-commit <sha>` for direct GitHub commands, and omit
+  `--delete-branch`: its local checkout cleanup can fail after the remote merge
+  succeeds. Always verify `gh pr view <n> --json state,mergedAt,mergeCommit`;
+  an accepted auto-merge request is not necessarily a completed merge.
+- Preserve local worktrees. Cleanup is separate, only for demonstrably owned,
+  clean trees; never remove a tree with `--force` as a merge prerequisite.
+- Merge dependent tickets in order. soldev checks prerequisites from its current
+  ticket tree, so refresh the owned tree after dependency merges before retrying.
 - **The branch name declares the ticket, and CI holds you to it.** The *Ticket-move
   guard* reads the id from the branch name (`fix/infra-048-namespace-create`,
   `INFRA-061/probe-tri-state`), the worktree directory (`sol-INFRA-049-omit-authority`)

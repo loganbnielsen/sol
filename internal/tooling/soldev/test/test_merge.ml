@@ -89,39 +89,41 @@ let test_mentions_id_rejects_numeric_suffix () =
     (Soldev_merge.mentions_id ~id:"AUDIT-2" "abc123 fix AUDIT-23 typo")
 ;;
 
-let sha_a = "aaaaaaa1111111111111111111111111111111"
-let sha_b = "bbbbbbb2222222222222222222222222222222"
-let pass_body sha = Printf.sprintf "SOLDEV-REVIEW: PASS %s\n\nAutomated review: pass." sha
-
-let fail_body =
-  "SOLDEV-REVIEW: FAIL\n\nAutomated review: changes requested.\n\n- some violation"
+let test_required_checks () =
+  let parse text = Soldev_merge.checks_green_of_json (Yojson.Basic.from_string text) in
+  check_bool "successful required check" true (parse {|[{"bucket":"pass"}]|});
+  List.iter
+    (fun json -> check_bool ("not green: " ^ json) false (parse json))
+    [ "[]"
+    ; "{}"
+    ; {|[{"bucket":"pending"}]|}
+    ; {|[{"bucket":"fail"}]|}
+    ; {|[{"bucket":"pass"},{"bucket":"cancel"}]|}
+    ; {|[{"bucket":"skipping"}]|}
+    ; "[null]"
+    ; {|[{}]|}
+    ]
 ;;
 
-let approved_for_head head_sha bodies =
-  match Soldev_merge.latest_review_verdict_of_bodies bodies with
-  | Some (Soldev_merge.Reviewed_pass reviewed_sha) -> reviewed_sha = head_sha
-  | Some Soldev_merge.Reviewed_fail | None -> false
-;;
-
-let test_pass_then_fail_not_approved () =
-  check_bool
-    "later FAIL supersedes earlier PASS"
-    false
-    (approved_for_head sha_a [ pass_body sha_a; fail_body ])
-;;
-
-let test_pass_on_old_sha_then_new_commit_not_approved () =
-  check_bool
-    "PASS on stale sha does not cover a later unreviewed commit"
-    false
-    (approved_for_head sha_b [ pass_body sha_a ])
-;;
-
-let test_pass_on_current_sha_approved () =
-  check_bool
-    "PASS on the current head sha is approved"
-    true
-    (approved_for_head sha_a [ pass_body sha_a ])
+let test_merge_command () =
+  let pr : Soldev_merge.pr_info =
+    { pr_number = 1
+    ; pr_url = "https://github.com/example/sol/pull/1"
+    ; pr_branch = "BUG-001/test"
+    ; pr_head_sha = "abc123"
+    ; pr_draft = false
+    }
+  in
+  let immediate = Soldev_merge.merge_command ~auto_merge:false pr in
+  check_string
+    "immediate merge pins head and never bypasses checks or deletes a tree"
+    "gh pr merge 'https://github.com/example/sol/pull/1' --squash --match-head-commit \
+     'abc123'"
+    immediate;
+  check_string
+    "auto-merge uses GitHub rather than a polling loop"
+    (immediate ^ " --auto")
+    (Soldev_merge.merge_command ~auto_merge:true pr)
 ;;
 
 let write_file path content =
@@ -147,6 +149,72 @@ let toy_main path_const =
   Printf.sprintf
     {|let () = let ic = open_in %S in print_string (input_line ic)|}
     path_const
+;;
+
+let test_merge_without_review_marker () =
+  in_temp_dir (fun () ->
+    let old_path = Sys.getenv "PATH" in
+    let dir = Sys.getcwd () in
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/pipeline" 0o755;
+    Unix.mkdir "internal/pipeline/tickets" 0o755;
+    List.iter
+      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+    write_file
+      "internal/pipeline/tickets/DONE/BUG-001.md"
+      "---\n\
+       id: BUG-001\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       A completed ticket\n\n\
+       **Depends on:** None.\n";
+    write_file
+      "gh"
+      "#!/bin/sh\n\
+       if [ \"$2\" = checks ]; then cat checks.json; else printf '%s\\n' \"$*\" >> \
+       merges; fi\n";
+    Unix.chmod "gh" 0o755;
+    Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+    Fun.protect
+      ~finally:(fun () -> Unix.putenv "PATH" old_path)
+      (fun () ->
+         let pr : Soldev_merge.pr_info =
+           { pr_number = 1
+           ; pr_url = "https://example.test/pr/1"
+           ; pr_branch = "BUG-001/test"
+           ; pr_head_sha = "abc123"
+           ; pr_draft = false
+           }
+         in
+         let request ~auto_merge pr =
+           ignore
+             (Soldev_merge.merge_candidates ~dry_run:false ~auto_merge [ "BUG-001", pr ])
+         in
+         List.iter
+           (fun json ->
+              write_file "checks.json" json;
+              request ~auto_merge:false pr;
+              check_bool "no unsafe immediate merge" false (Sys.file_exists "merges"))
+           [ "[]"; {|[{"bucket":"pending"}]|}; {|[{"bucket":"fail"}]|}; "not JSON" ];
+         write_file "checks.json" {|[{"bucket":"pass"}]|};
+         request ~auto_merge:true { pr with pr_draft = true };
+         check_bool "draft cannot queue auto-merge" false (Sys.file_exists "merges");
+         request ~auto_merge:false pr;
+         check_bool
+           "green required CI merges without any review marker"
+           true
+           (Sys.file_exists "merges");
+         Sys.remove "merges";
+         write_file "checks.json" {|[{"bucket":"pending"}]|};
+         request ~auto_merge:true pr;
+         let command = In_channel.with_open_text "merges" In_channel.input_all in
+         check_bool
+           "pending CI queues native auto-merge"
+           true
+           (String.ends_with ~suffix:" --auto\n" command)))
 ;;
 
 let test_stale_binary_fails_after_rename () =
@@ -309,19 +377,16 @@ let () =
             `Quick
             test_post_merge_action_of_rc
         ] )
-    ; ( "pr_review_approved sha-pinning"
+    ; ( "CI-gated merges"
       , [ Alcotest.test_case
-            "PASS then FAIL is not approved"
+            "required checks are successful and nonempty"
             `Quick
-            test_pass_then_fail_not_approved
+            test_required_checks
+        ; Alcotest.test_case "head-pinned native merge commands" `Quick test_merge_command
         ; Alcotest.test_case
-            "PASS on old sha does not cover a new commit"
+            "merge and queue gates without review markers"
             `Quick
-            test_pass_on_old_sha_then_new_commit_not_approved
-        ; Alcotest.test_case
-            "PASS on current sha is approved"
-            `Quick
-            test_pass_on_current_sha_approved
+            test_merge_without_review_marker
         ] )
     ]
 ;;
