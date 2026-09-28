@@ -42,3 +42,22 @@ framework or a dependency.
 - Demo/example: not applicable; the application-facing retry contract is unchanged.
 - Language parity: no impact; this reorganizes the OCaml implementation without changing
   the cross-language retry/DLQ convention.
+
+## Completion (2026-09-28)
+
+- Rechecked the premise after REFAC-148 merged: the retry controller still combined
+  provisioning and consumer lifecycles and duplicated handler-error policy.
+- A named retry runtime carries consumer callbacks, policy, and message handling;
+  Eio switch/network/clock remain explicit environment inputs.
+- `consume` now composes `prepare_topics`, `publish_relay`, and `run_consumers`.
+  The lifecycle phase explicitly starts the retry relay, runs the source, reconciles
+  relay failure, and closes the source. Its handlers remain local to that lifecycle:
+  no generic controller/context or application-facing contract was added.
+- Source and retry dispatch share `process_handler_result`. The new focused test
+  checks source attempt 1, retry increment, retry exhaustion, unchanged dead-letter
+  attempt, publish-before-ack, and no acknowledgement after failed publication.
+- Validation: framework build, formatting, all 40 kafka-service unit tests, and six
+  live broker integration tests covering partition errors, failed relay shutdown,
+  source decode-to-DLQ, Ack-and-drop, and rejection of unsupported DLQ policy pass.
+- Demo/example: not applicable; application-facing retry behavior is unchanged.
+  No language-parity impact: retry/DLQ conventions are unchanged.

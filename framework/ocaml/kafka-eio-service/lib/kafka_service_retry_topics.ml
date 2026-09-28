@@ -202,24 +202,80 @@ let relay_topic_name ~source ~group_id ~suffix =
   Printf.sprintf "%s.%s.%s" source (canonical_group_segment group_id) suffix
 ;;
 
-let consume
+type record_stage =
+  | Source
+  | Retry of int
+
+let process_handler_result
+      ~stage
+      ~retry_topic
+      ~dlq_topic
+      ~retry_policy
+      ~group_id
+      ~raw_msg
+      ~publish
+      ~ack
+  = function
+  | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
+  | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
+  | Kafka.Consumer.Error handler_error ->
+    let attempt =
+      match stage, handler_error with
+      | Source, _ -> 1
+      | Retry attempt, Kafka_service_intf.Retry -> attempt + 1
+      | ( Retry attempt
+        , (Kafka_service_intf.Dead_letter _ | Kafka_service_intf.Kafka_error _) ) ->
+        attempt
+    in
+    (match handler_error with
+     | Kafka_service_intf.Dead_letter reason ->
+       Printf.eprintf "sol-worker: DEAD_LETTER reason=%S\n%!" reason
+     | Kafka_service_intf.Retry | Kafka_service_intf.Kafka_error _ -> ());
+    (match
+       action_of_handler_error
+         ~retry_topic
+         ~dlq_topic
+         ~retry_policy
+         ~attempt
+         handler_error
+     with
+     | Error e -> Kafka.Consumer.Error e
+     | Ok action ->
+       (match execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack with
+        | Ok () -> Kafka.Consumer.Continue
+        | Error e -> Kafka.Consumer.Error e))
+;;
+
+type 'a runtime =
+  { group_id : string
+  ; retry_policy : Kafka.Consumer.retry_policy
+  ; on_ready : unit -> unit
+  ; on_assigned : unit -> unit
+  ; on_revoked : unit -> unit
+  ; on_poll : unit -> unit
+  ; decode_error_policy : Kafka_service_intf.decode_error_policy
+  ; observe_decode_error :
+      string
+      -> raw_bytes:bytes option
+      -> disposition:[ `Dropped | `Dead_lettered ]
+      -> unit
+  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  ; on_relay_publish :
+      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
+  ; handler :
+      'a
+      -> ack:(unit -> (unit, Kafka.Error.t) result)
+      -> trace_ctx:Obs_trace.t option
+      -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result
+  }
+
+let prepare_topics
       (svc : Kafka_service_intf.t)
       (topic : 'a Kafka_service_intf.topic)
-      ~group_id
-      ~sw
       ~net
       ~clock
+      ~group_id
       ~(retry_policy : Kafka.Consumer.retry_policy)
-      ~on_ready
-      ~on_assigned
-      ~on_revoked
-      ~on_poll
-      ~decode_error_policy
-      ~observe_decode_error
-      ~on_retry
-      ~on_relay_publish
-      ~handler
-      ()
   =
   let open Result.Syntax in
   let config_error msg =
@@ -280,6 +336,11 @@ let consume
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
+  Ok (retry_topic_name, dlq_topic_name)
+;;
+
+let publish_relay (svc : Kafka_service_intf.t) ~clock runtime =
+  let { on_retry; on_relay_publish; _ } = runtime in
   let publish ~target_topic (msg : relay) =
     let partition = msg.source.Kafka.Consumer.partition in
     on_retry ~partition ~attempt:msg.attempt ~delay_s:msg.delay_s;
@@ -322,6 +383,35 @@ let consume
      | Ok () -> on_relay_publish ~partition ~attempt:msg.attempt ~outcome:`Published);
     result
   in
+  publish
+;;
+
+let run_consumers
+      (svc : Kafka_service_intf.t)
+      (topic : 'a Kafka_service_intf.topic)
+      ~sw
+      ~clock
+      runtime
+      ~retry_topic_name
+      ~dlq_topic_name
+      ~publish
+  =
+  let open Result.Syntax in
+  let { group_id
+      ; retry_policy
+      ; on_ready
+      ; on_assigned
+      ; on_revoked
+      ; on_poll
+      ; decode_error_policy
+      ; observe_decode_error
+      ; on_retry = _
+      ; on_relay_publish = _
+      ; handler
+      }
+    =
+    runtime
+  in
   let consumer_cfg : Kafka.Consumer.config =
     { brokers = svc.brokers
     ; group_id
@@ -361,7 +451,7 @@ let consume
       ; properties = []
       }
     in
-    let* () =
+    let start_retry_relay () =
       match Kafka.Consumer.create ~clock retry_consumer_cfg ~sw with
       | Error e ->
         Kafka.Consumer.close consumer;
@@ -385,33 +475,16 @@ let consume
              | Ok () -> Kafka.Consumer.Continue
              | Error e -> Kafka.Consumer.Error e)
           | Ok (msg, trace_ctx) ->
-            (match handler msg ~ack ~trace_ctx with
-             | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-             | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-             | Kafka.Consumer.Error handler_error ->
-               let next =
-                 match handler_error with
-                 | Kafka_service_intf.Retry -> attempt + 1
-                 | Kafka_service_intf.Dead_letter reason ->
-                   Printf.eprintf "sol-worker: DEAD_LETTER reason=%S\n%!" reason;
-                   attempt
-                 | Kafka_service_intf.Kafka_error _ -> attempt
-               in
-               (match
-                  action_of_handler_error
-                    ~retry_topic:retry_topic_name
-                    ~dlq_topic:dlq_topic_name
-                    ~retry_policy
-                    ~attempt:next
-                    handler_error
-                with
-                | Error e -> Kafka.Consumer.Error e
-                | Ok action ->
-                  (match
-                     execute_action ~group_id action ~raw_msg ~attempt:next ~publish ~ack
-                   with
-                   | Ok () -> Kafka.Consumer.Continue
-                   | Error e -> Kafka.Consumer.Error e)))
+            process_handler_result
+              ~stage:(Retry attempt)
+              ~retry_topic:retry_topic_name
+              ~dlq_topic:dlq_topic_name
+              ~retry_policy
+              ~group_id
+              ~raw_msg
+              ~publish
+              ~ack
+              (handler msg ~ack ~trace_ctx)
         in
         let retry_handler raw_msg ~ack =
           match parse_retry_metadata raw_msg.Kafka.Consumer.headers with
@@ -481,6 +554,7 @@ let consume
           Kafka.Consumer.close retry_consumer);
         Ok ()
     in
+    let* () = start_retry_relay () in
     let decode_and_handle raw_msg ~ack =
       match Kafka_service_schema.decode_message topic raw_msg with
       | Error (e, raw_bytes) ->
@@ -504,31 +578,18 @@ let consume
             | Ok () -> Kafka.Consumer.Continue
             | Error e -> Kafka.Consumer.Error e))
       | Ok (msg, trace_ctx) ->
-        (match handler msg ~ack ~trace_ctx with
-         | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-         | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-         | Kafka.Consumer.Error handler_error ->
-           (match handler_error with
-            | Kafka_service_intf.Dead_letter reason ->
-              Printf.eprintf "sol-worker: DEAD_LETTER reason=%S\n%!" reason
-            | Kafka_service_intf.Retry | Kafka_service_intf.Kafka_error _ -> ());
-           (match
-              action_of_handler_error
-                ~retry_topic:retry_topic_name
-                ~dlq_topic:dlq_topic_name
-                ~retry_policy
-                ~attempt:1
-                handler_error
-            with
-            | Error e -> Kafka.Consumer.Error e
-            | Ok action ->
-              (match
-                 execute_action ~group_id action ~raw_msg ~attempt:1 ~publish ~ack
-               with
-               | Ok () -> Kafka.Consumer.Continue
-               | Error e -> Kafka.Consumer.Error e)))
+        process_handler_result
+          ~stage:Source
+          ~retry_topic:retry_topic_name
+          ~dlq_topic:dlq_topic_name
+          ~retry_policy
+          ~group_id
+          ~raw_msg
+          ~publish
+          ~ack
+          (handler msg ~ack ~trace_ctx)
     in
-    let result =
+    let run_source () =
       Kafka.Consumer.consume_partitioned
         consumer
         ~sw
@@ -542,7 +603,7 @@ let consume
         | Kafka.Consumer.Invalid_config msg ->
           Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
     in
-    let result =
+    let reconcile_relay result =
       match result, !relay_failure with
       | Error _, Some relay_err when !relay_closed_source ->
         Printf.eprintf
@@ -558,6 +619,22 @@ let consume
         Error relay_err
       | (Ok () | Error _), _ -> result
     in
+    let result = run_source () |> reconcile_relay in
     Kafka.Consumer.close consumer;
     result
+;;
+
+let consume svc topic ~sw ~net ~clock runtime () =
+  let open Result.Syntax in
+  let* retry_topic_name, dlq_topic_name =
+    prepare_topics
+      svc
+      topic
+      ~net
+      ~clock
+      ~group_id:runtime.group_id
+      ~retry_policy:runtime.retry_policy
+  in
+  let publish = publish_relay svc ~clock runtime in
+  run_consumers svc topic ~sw ~clock runtime ~retry_topic_name ~dlq_topic_name ~publish
 ;;
