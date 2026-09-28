@@ -14,8 +14,13 @@ app-author API/lifecycle risk. Routine example formatting/refactors need focused
 validation and CI, not this additional review. Keep a selected-review PR draft
 until findings are resolved; one satisfactory targeted pass suffices.
 
-Do this from a worktree/branch already set up for the ticket (see `/work`
-or `/pr` for that setup) — this skill only covers the review loop itself.
+**Reviewer independence.** Steps 2–3 want reviewers the author did not prime —
+normally subagents. If your harness has no subagent facility, do not simulate
+two personas: stop and report that the demo review could not run, or, with the
+operator's agreement, review it once yourself and label the result a self-review.
+
+Do this from a worktree/branch already set up for the ticket (see `/work` for
+that setup) — this skill only covers the review loop itself.
 
 ## Workflow
 
@@ -29,13 +34,14 @@ or `/pr` for that setup) — this skill only covers the review loop itself.
    pre-existing infra bug, a flaky dependency), say so plainly and keep
    the real failure visible — do not quietly loosen an assertion or
    delete a check to make the run look clean.
-2. **Demo agent** — launch a fresh subagent (`general-purpose`, not
-   `fork`) with: the ticket/task, the diff, and the real run transcript
-   from step 1. Ask it to play a developer *demoing this platform to
-   someone else* — running it live, narrating what it proves. Give it the
-   criteria below under "Demo agent criteria." Ask for concrete findings
-   only, most severe first.
-3. **Client agent** — launch a second fresh subagent, independent of the
+2. **Demo agent** — launch a fresh reviewer the author has not primed (a
+   subagent where the harness provides one; see *Reviewer independence*)
+   with: the ticket/task, the diff, and the real run transcript from
+   step 1. Ask it to play a developer *demoing this platform to someone
+   else* — running it live, narrating what it proves. Give it the criteria
+   below under "Demo agent criteria." Ask for concrete findings only, most
+   severe first.
+3. **Client agent** — launch a second fresh reviewer, independent of the
    demo agent (don't let it see the demo agent's findings yet — you want
    an unprimed read). Give it the same diff plus the *user-facing* files
    only (the app-author-visible code: `bin/main.ml`-shaped entrypoints,
@@ -56,7 +62,7 @@ or `/pr` for that setup) — this skill only covers the review loop itself.
    actionable feedback.
 6. **Finish once selected findings are resolved.** Do not require a fresh final
    reviewer. Another pass is appropriate only for materially new risk or a request.
-7. Hand off per the ticket's normal path (`/pr`, `soldev pipeline submit`,
+7. Hand off per the ticket's normal path (`soldev pipeline submit`,
    etc.) — this skill only gates "is the demo actually good," not the
    ticket state machine itself.
 
@@ -114,8 +120,8 @@ like this in their own service:
 
 ## Output
 
-Each agent's findings: concrete, file/line-referenced, ranked by severity,
-same bar as `/pr`'s adversarial review — no speculative redesigns, no
-non-actionable style preference. The final handoff summarizes: what the
-real run showed, what each persona found, what was fixed vs. filed as a
-separate ticket, and whether selected findings are resolved.
+Each agent's findings: concrete, file/line-referenced, ranked by severity, the
+same bar as a correctness-focused adversarial review — no speculative
+redesigns, no non-actionable style preference. The final handoff summarizes:
+what the real run showed, what each persona found, what was fixed vs. filed as
+a separate ticket, and whether selected findings are resolved.

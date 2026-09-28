@@ -14,6 +14,12 @@ reviewer the ticket, worktree, exact diff against origin/main, and applicable
 architecture/type-audit contracts. Ask for concrete actionable findings, not
 speculative redesign or pre-alpha compatibility shims. A clean result is valid.
 
+**Reviewer independence.** "Independent" means a reviewer the author did not
+prime — normally a subagent. If your harness has no subagent facility, do not
+simulate independence: stop and report that the requested review could not run,
+or, with the operator's agreement, do it yourself and label the result a
+self-review. Never present a self-review as an independent one.
+
 Prioritize correctness and safety, explicit invariants, dependency direction,
 appropriate module ownership, accidental public API, existing helpers before
 duplication, useful domain types, and behavior-focused test coverage. Check
