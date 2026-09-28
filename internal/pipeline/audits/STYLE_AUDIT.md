@@ -1,5 +1,65 @@
 # Sol Style Audit — OCaml Type Safety and Config Parsing
 
+## Readability and API meta-principles
+
+These are audit lenses, not mechanical formatting laws. Start from a concrete example,
+extract the principle, then inspect the whole codebase for the same design pressure.
+Read every candidate in context; grep only seeds the walk.
+
+### Eager argument normalization
+
+Resolve, validate, default, and bind non-trivial expressions before passing them to a
+higher-order function, constructor, or terminal effect. Prefer `let*` when an `Error e`
+arm only returns `Error e`, so the remaining code states the next domain decision.
+
+Flag multi-line matches, conditionals, exception handlers, Option/Result unwraps,
+fallbacks, and transformations embedded in argument position when pre-binding makes the
+outer operation readable in one pass. Keep short familiar expressions inline.
+
+### Explicit domain grouping
+
+For a single unchanged handoff, consider direct monadic composition instead of a
+`let*` name with no semantic purpose. Keep the binding when it names a useful phase,
+has multiple uses, needs transformations/additional arguments, or clarifies types and
+control flow. Standard `Result.bind` and `Option.bind` take their value first; a pipeline
+uses the repository's existing `Fun.flip Result.bind` form. Introduce no new operator.
+
+When arguments travel together as one real concept, represent that concept with an
+existing or named record/variant. Labels alone do not make a 20-argument API cohesive.
+Choose a phase split when the arguments belong to sequential work, and never hide them
+in a vague dependencies record.
+
+When several collections mean different things, name the conceptual groups before
+combining them. Preserve useful pipelines within each group and do not name every
+trivial intermediate.
+
+### Separated effect boundaries
+
+For bounded work, prefer operation → typed outcome → renderer → outer controller
+effect. Semantic failure belongs with the outcome, while stdout/stderr and exit
+conversion belong at the command boundary. Progress, prompts, streaming, and child
+output may remain effectful because buffering them would change the operation.
+
+### Visible phase pipelines
+
+Stateful orchestration should expose validation, provisioning, decode/decision,
+execution, shutdown, and reconciliation as named phases with typed transitions. Look
+for controller-sized closures and sibling paths that duplicate policy. Do not extract a
+short exhaustive match or invent a state-machine framework without a real repeated
+boundary.
+
+### Required sweep evidence
+
+For each principle, completion notes must name the folders inspected, representative
+changes, and representative candidates deliberately retained. Useful seeds include:
+
+```bash
+rg --pcre2 -n -U '\| Error ([a-zA-Z_][a-zA-Z0-9_]*) -> Error \1' --glob '*.ml'
+rg -n -U 'List\.concat[[:space:]]*\n[[:space:]]*\[' --glob '*.ml'
+```
+
+Neither result set is a finding without reading the surrounding flow.
+
 ## Config parsing policy
 
 External config values — environment variables, CLI flags, and TOML fields from
