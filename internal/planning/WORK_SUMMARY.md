@@ -1,12 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## REFAC-154 — Remove mechanical bindings, preserve domain phases (2026-09-28)
+## REFAC-146 — Retry-topic phase boundaries (2026-09-28)
 
-- Config resolution returns its final application directly instead of binding only
-  to wrap the same result in Ok. All 87 config tests and the CLI build pass.
-- Contributing and style-audit guidance now distinguish mechanical handoffs from
-  meaningful phase names. The AWS credentials proposal was withdrawn unmerged;
-  creds_json is a useful boundary, not needless plumbing.
+- Retry consumption separates topic preparation, relay publication, and consumer
+  lifecycle; source/retry handlers use one record-policy path.
+- Named runtime inputs replace the loose controller arguments. Relay startup,
+  source execution, error reconciliation and shutdown remain explicit.
+- All 40 kafka-service unit tests and six focused live-broker integration tests pass;
+  retry budgets, DLQ routing, publish-before-ack, and fail-closed relay shutdown remain.
 
 ## Latest: REFAC-144 — sol assets reads as named checks and one report (2026-09-27)
 
