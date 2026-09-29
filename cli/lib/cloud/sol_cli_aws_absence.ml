@@ -6,10 +6,27 @@ type check =
   ; attribution : attribution
   ; argv : string list
   ; attributable : string -> bool
+  ; tagged_with : (string -> string list) option
+  ; checked_as : string
   }
 
-let check ?(attributable = fun _ -> true) ~resource_class ~identity ~attribution argv =
-  { resource_class; identity; attribution; argv; attributable }
+let check
+      ?(attributable = fun _ -> true)
+      ?tagged_with
+      ?checked_as
+      ~resource_class
+      ~identity
+      ~attribution
+      argv
+  =
+  { resource_class
+  ; identity
+  ; attribution
+  ; argv
+  ; attributable
+  ; tagged_with
+  ; checked_as = Option.value checked_as ~default:("aws " ^ String.concat " " argv)
+  }
 ;;
 
 let lines output =
@@ -19,35 +36,49 @@ let lines output =
   |> List.filter (fun line -> line <> "")
 ;;
 
-let checked_with argv = "aws " ^ String.concat " " argv
-
 let not_found reason =
   [ "notfound"; "not found"; "does not exist"; "no such" ]
   |> List.exists (fun needle ->
     Sol_cli_string.contains ~needle (String.lowercase_ascii reason))
 ;;
 
-let run ~check =
-  match Sol_cli_process.run (Sol_cli_process.cmd ("aws" :: check.argv)) with
-  | Ok { Sol_cli_process.stdout; _ } ->
-    let checked_with = checked_with check.argv in
-    (match lines stdout |> List.filter check.attributable with
-     | [] ->
-       Absent
-         { resource_class = check.resource_class
-         ; identity = check.identity
-         ; attribution = check.attribution
-         ; checked_with
-         }
-     | found ->
-       Present
-         { resource_class = check.resource_class
-         ; identity = check.identity
-         ; found
-         ; attribution = check.attribution
-         ; checked_with
-         })
+let run_argv argv =
+  match Sol_cli_process.run (Sol_cli_process.cmd ("aws" :: argv)) with
+  | Ok { Sol_cli_process.stdout; _ } -> Ok (lines stdout)
   | Error (Sol_cli_process.Non_zero r) when not_found r.stderr ->
+    Error (`NotFound r.stderr)
+  | Error (Sol_cli_process.Non_zero r) -> Error (`Failed r.stderr)
+  | Error _ -> Error (`Failed "the aws CLI is unavailable")
+;;
+
+let run ~check =
+  let unobservable reason =
+    Unobservable
+      { resource_class = check.resource_class
+      ; reason = String.trim reason
+      ; checked_with = check.checked_as
+      }
+  in
+  let observed found =
+    match found with
+    | [] ->
+      Absent
+        { resource_class = check.resource_class
+        ; identity = check.identity
+        ; attribution = check.attribution
+        ; checked_with = check.checked_as
+        }
+    | found ->
+      Present
+        { resource_class = check.resource_class
+        ; identity = check.identity
+        ; found
+        ; attribution = check.attribution
+        ; checked_with = check.checked_as
+        }
+  in
+  match run_argv check.argv with
+  | Error (`NotFound reason) ->
     Absent
       { resource_class = check.resource_class
       ; identity = check.identity
@@ -55,21 +86,28 @@ let run ~check =
       ; checked_with =
           Printf.sprintf
             "%s (the provider reports it does not exist: %s)"
-            (checked_with check.argv)
-            (String.trim r.stderr)
+            check.checked_as
+            (String.trim reason)
       }
-  | Error (Sol_cli_process.Non_zero r) ->
-    Unobservable
-      { resource_class = check.resource_class
-      ; reason = String.trim r.stderr
-      ; checked_with = checked_with check.argv
-      }
-  | Error _ ->
-    Unobservable
-      { resource_class = check.resource_class
-      ; reason = "the aws CLI is unavailable"
-      ; checked_with = checked_with check.argv
-      }
+  | Error (`Failed reason) -> unobservable reason
+  | Ok candidates ->
+    let candidates = List.filter check.attributable candidates in
+    (match check.tagged_with with
+     | None -> observed candidates
+     | Some tag_argv ->
+       let rec resolve acc = function
+         | [] -> Ok (List.rev acc)
+         | line :: rest ->
+           (match run_argv (tag_argv line) with
+            | Ok [] -> resolve acc rest
+            | Ok (_ :: _) -> resolve (line :: acc) rest
+            | Error (`NotFound reason) -> Error (`Failed reason)
+            | Error (`Failed reason) -> Error (`Failed reason))
+       in
+       (match resolve [] candidates with
+        | Ok found -> observed found
+        | Error (`Failed reason) -> unobservable reason
+        | Error (`NotFound reason) -> unobservable reason))
 ;;
 
 let named_for_cluster cluster_name =
@@ -92,11 +130,28 @@ let registry_prefix (target : Sol_cli_config.target) =
        if prefix = "" then None else Some prefix)
 ;;
 
-let cluster_tagged ~region ~cluster_name class_name query =
-  let tag =
-    Printf.sprintf "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared" cluster_name
-  in
+let cluster_tag_named cluster_name =
+  Printf.sprintf "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared" cluster_name
+;;
+
+let ec2_tagged_argv ~region ~tag ~subcommand ~query =
+  [ "ec2"
+  ; subcommand
+  ; "--region"
+  ; region
+  ; "--filters"
+  ; tag
+  ; "--query"
+  ; query
+  ; "--output"
+  ; "text"
+  ]
+;;
+
+let cluster_tagged ?tagged_with ?checked_as ~cluster_name class_name argv =
   check
+    ?tagged_with
+    ?checked_as
     ~resource_class:class_name
     ~identity:(Printf.sprintf "tagged kubernetes.io/cluster/%s" cluster_name)
     ~attribution:
@@ -106,43 +161,7 @@ let cluster_tagged ~region ~cluster_name class_name query =
              created,              and Sol writes it itself"
             cluster_name))
     ~attributable:(fun line -> line <> "")
-    (match class_name with
-     | "VPC" | "subnet" ->
-       [ "ec2"
-       ; (if class_name = "VPC" then "describe-vpcs" else "describe-subnets")
-       ; "--region"
-       ; region
-       ; "--filters"
-       ; tag
-       ; "--query"
-       ; query
-       ; "--output"
-       ; "text"
-       ]
-     | "load balancer" ->
-       [ "elbv2"
-       ; "describe-load-balancers"
-       ; "--region"
-       ; region
-       ; "--filters"
-       ; tag
-       ; "--query"
-       ; query
-       ; "--output"
-       ; "text"
-       ]
-     | _ ->
-       [ "ec2"
-       ; "describe-volumes"
-       ; "--region"
-       ; region
-       ; "--filters"
-       ; tag
-       ; "--query"
-       ; query
-       ; "--output"
-       ; "text"
-       ])
+    argv
 ;;
 
 let checks ~region ~cluster_name =
@@ -220,8 +239,22 @@ let checks ~region ~cluster_name =
       ; "--output"
       ; "text"
       ]
-  ; cluster_tagged ~region ~cluster_name "VPC" "Vpcs[].VpcId"
-  ; cluster_tagged ~region ~cluster_name "subnet" "Subnets[].SubnetId"
+  ; cluster_tagged
+      ~cluster_name
+      "VPC"
+      (ec2_tagged_argv
+         ~region
+         ~tag:(cluster_tag_named cluster_name)
+         ~subcommand:"describe-vpcs"
+         ~query:"Vpcs[].VpcId")
+  ; cluster_tagged
+      ~cluster_name
+      "subnet"
+      (ec2_tagged_argv
+         ~region
+         ~tag:(cluster_tag_named cluster_name)
+         ~subcommand:"describe-subnets"
+         ~query:"Subnets[].SubnetId")
   ; prefixed_class
       ~resource_class:"IAM role"
       ~prefix:(cluster_name ^ "-")
@@ -267,11 +300,46 @@ let checks ~region ~cluster_name =
       ; "text"
       ]
   ; cluster_tagged
-      ~region
       ~cluster_name
       "load balancer"
-      "LoadBalancers[].LoadBalancerName"
-  ; cluster_tagged ~region ~cluster_name "EBS volume" "Volumes[].VolumeId"
+      ~tagged_with:(fun arn ->
+        [ "elbv2"
+        ; "describe-tags"
+        ; "--region"
+        ; region
+        ; "--resource-arns"
+        ; arn
+        ; "--query"
+        ; Printf.sprintf
+            "TagDescriptions[].Tags[?Key==`kubernetes.io/cluster/%s`].Value"
+            cluster_name
+        ; "--output"
+        ; "text"
+        ])
+      ~checked_as:
+        (Printf.sprintf
+           "aws elbv2 describe-load-balancers --region %s, then aws elbv2 describe-tags \
+            --region %s --resource-arns <load balancer arn> for each load balancer it \
+            returns"
+           region
+           region)
+      [ "elbv2"
+      ; "describe-load-balancers"
+      ; "--region"
+      ; region
+      ; "--query"
+      ; "LoadBalancers[].LoadBalancerArn"
+      ; "--output"
+      ; "text"
+      ]
+  ; cluster_tagged
+      ~cluster_name
+      "EBS volume"
+      (ec2_tagged_argv
+         ~region
+         ~tag:(cluster_tag_named cluster_name)
+         ~subcommand:"describe-volumes"
+         ~query:"Volumes[].VolumeId")
   ]
 ;;
 
