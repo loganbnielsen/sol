@@ -69,27 +69,60 @@ let workspaces_of json =
   | workspaces -> string_list workspaces
 ;;
 
-let declares ~entry ~package_name ~dir_name =
-  String.equal entry package_name
-  || String.equal entry dir_name
-  || Sol_cli_string.contains ~needle:"*" entry
+let glob_matches pattern path =
+  let plen = String.length pattern
+  and slen = String.length path in
+  let rec go p s =
+    if p = plen
+    then s = slen
+    else (
+      match pattern.[p] with
+      | '*' when p + 1 < plen && pattern.[p + 1] = '*' ->
+        let rec any s' = s' <= slen && (go (p + 2) s' || any (s' + 1)) in
+        any s
+      | '*' ->
+        let rec any s' =
+          s' <= slen && (go (p + 1) s' || (s' < slen && path.[s'] <> '/' && any (s' + 1)))
+        in
+        any s
+      | '?' -> s < slen && path.[s] <> '/' && go (p + 1) (s + 1)
+      | c -> s < slen && path.[s] = c && go (p + 1) (s + 1))
+  in
+  go 0 0
+;;
+
+let normalize_workspace_entry entry =
+  let entry =
+    if String.length entry >= 2 && String.sub entry 0 2 = "./"
+    then String.sub entry 2 (String.length entry - 2)
+    else entry
+  in
+  let rec strip_trailing s =
+    let len = String.length s in
+    if len > 0 && s.[len - 1] = '/' then strip_trailing (String.sub s 0 (len - 1)) else s
+  in
+  strip_trailing entry
+;;
+
+let declares ~entry ~relative_dir =
+  let entry = normalize_workspace_entry entry in
+  String.equal entry relative_dir || glob_matches entry relative_dir
 ;;
 
 let package_json ~root dir = read_json (Filename.concat (join root dir) "package.json")
 
-let npm_project_root ~root ~unit_dir ~package_name =
-  let dir_name = Filename.basename unit_dir in
+let npm_project_root ~root ~unit_dir ~package_name:_ =
   let rec up dir =
     if String.equal dir "" || String.equal dir "."
     then None
     else (
       let parent = Filename.dirname dir in
       let parent = if String.equal parent "." then "" else parent in
+      let relative_dir = relative_under ~prefix:parent unit_dir in
       match package_json ~root parent with
       | Ok json
-        when List.exists
-               (fun entry -> declares ~entry ~package_name ~dir_name)
-               (workspaces_of json) -> Some parent
+        when List.exists (fun entry -> declares ~entry ~relative_dir) (workspaces_of json)
+        -> Some parent
       | _ -> up parent)
   in
   match up unit_dir with
