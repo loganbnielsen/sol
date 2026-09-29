@@ -116,6 +116,25 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     |> Result.map_error (fun fact -> reconstruct_error ~release_id ~workload:w.name ~fact)
   in
   let* volumes = decode_volumes ~release_id ~workload_name:w.name w.volumes in
+  let* scheduled_concurrency =
+    Sol_cli_toml.scheduled_concurrency_of_string w.scheduled_concurrency
+    |> Result.map_error (fun msg ->
+      Printf.sprintf
+        "has an invalid scheduled_concurrency %S: %s"
+        w.scheduled_concurrency
+        msg)
+    |> Result.map_error (fun fact -> reconstruct_error ~release_id ~workload:w.name ~fact)
+  in
+  let* () =
+    if w.backoff_limit < 0
+    then
+      Error
+        (reconstruct_error
+           ~release_id
+           ~workload:w.name
+           ~fact:(Printf.sprintf "has an invalid backoff_limit %d" w.backoff_limit))
+    else Ok ()
+  in
   let* ingress_host =
     decode_optional
       ~release_id
@@ -147,8 +166,8 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; secrets = w.secrets
     ; volumes
     ; schedule = w.schedule
-    ; scheduled_concurrency = Sol_cli_toml.Allow
-    ; backoff_limit = 3
+    ; scheduled_concurrency
+    ; backoff_limit = w.backoff_limit
     ; replicas = w.replicas
     ; language = None
     ; availability =

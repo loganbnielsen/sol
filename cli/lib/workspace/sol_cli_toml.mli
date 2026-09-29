@@ -43,6 +43,8 @@ type volume =
 
 val volume_access_mode_to_string : volume_access_mode -> string
 val volume_access_mode_of_string : string -> (volume_access_mode, string) result
+val scheduled_concurrency_to_string : scheduled_concurrency -> string
+val scheduled_concurrency_of_string : string -> (scheduled_concurrency, string) result
 
 val effective_rollout_of_string
   :  string

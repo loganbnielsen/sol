@@ -160,6 +160,12 @@ Deliberately not made explicit (Kubernetes defaults apply, unchanged):
 `activeDeadlineSeconds`, `startingDeadlineSeconds`,
 `successfulJobsHistoryLimit`/`failedJobsHistoryLimit`, `suspend`.
 
+Both settings are part of a release's identity and of its recorded boundary
+(BUG-072): changing either produces a new release id, and `sol rollback`
+reconstructs the `CronJob` with the policies the release recorded — so a
+function deployed as `scheduled_concurrency = "forbid"` with
+`backoff_limit = 0` comes back that way, not as the `allow`/`3` defaults.
+
 ## Manual invocation: `sol fn run` (FEAT-079)
 
 ```

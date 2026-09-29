@@ -229,6 +229,11 @@ let assert_spec_equal ~label (expected : Sol_cli_deployment_plan.service_spec) g
   Alcotest.(check bool) (field "secrets") true (expected.secrets = got.secrets);
   Alcotest.(check bool) (field "volumes") true (expected.volumes = got.volumes);
   Alcotest.(check bool) (field "schedule") true (expected.schedule = got.schedule);
+  Alcotest.(check bool)
+    (field "scheduled_concurrency")
+    true
+    (expected.scheduled_concurrency = got.scheduled_concurrency);
+  Alcotest.(check int) (field "backoff_limit") expected.backoff_limit got.backoff_limit;
   Alcotest.(check int) (field "replicas") expected.replicas got.replicas;
   Alcotest.(check string)
     (field "cpu")
@@ -687,8 +692,8 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; k8s_name = k8s_name "invoice-fn"
   ; primitive = Sol_cli_deployment_plan.Fn
   ; schedule = Some "0 * * * *"
-  ; scheduled_concurrency = Sol_cli_toml.Allow
-  ; backoff_limit = 3
+  ; scheduled_concurrency = Sol_cli_toml.Forbid
+  ; backoff_limit = 0
   ; replicas = 1
   ; availability = Sol_cli_availability.Single
   ; consumes_kafka = false
@@ -717,6 +722,33 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
       true
       (got.primitive = Sol_cli_deployment_plan.Fn);
     Alcotest.(check (option string)) "schedule preserved" fn_spec.schedule got.schedule;
+    Alcotest.(check bool)
+      "scheduled concurrency preserved"
+      true
+      (got.scheduled_concurrency = Sol_cli_toml.Forbid);
+    Alcotest.(check int) "backoff limit preserved" 0 got.backoff_limit;
+    let rendered =
+      match
+        Sol_cli_deployment_render.render_spec
+          ~workspace:"myapp"
+          ~release_id:
+            (match Sol_cli_release_id.of_string fn_release.release_id with
+             | Ok id -> id
+             | Error msg -> Alcotest.fail msg)
+          ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+          got
+      with
+      | Ok (_ns_yaml, body) -> body
+      | Error msg -> Alcotest.fail msg
+    in
+    Alcotest.(check bool)
+      "rendered CronJob keeps concurrencyPolicy: Forbid"
+      true
+      (contains (Str.regexp_string "concurrencyPolicy: Forbid") rendered);
+    Alcotest.(check bool)
+      "rendered CronJob keeps backoffLimit: 0"
+      true
+      (contains (Str.regexp_string "backoffLimit: 0") rendered);
     Alcotest.(check bool)
       "live kind is CronJob"
       true
