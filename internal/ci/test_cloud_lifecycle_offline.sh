@@ -1014,6 +1014,16 @@ grep -F 'load balancer' "$log.out" >/dev/null || {
   echo "the AWS inventory did not account for the load-balancer class at all" >&2
   exit 1
 }
+if ! grep -F 'external: Route 53 hosted zone' "$log.out" >/dev/null; then
+  echo "the destroy did not report the delegated hosted zone as the durable prerequisite:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
+if grep -F 'present after destroy: Route 53 hosted zone' "$log.out" >/dev/null; then
+  echo "the delegated hosted zone was counted as this target's residue:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
 if grep -F 'load balancer could not be observed' "$log.out" >/dev/null; then
   echo "the load-balancer probe could not run, so an AWS destroy can never" >&2
   echo "establish residue absence:" >&2

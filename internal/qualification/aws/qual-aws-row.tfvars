@@ -11,4 +11,4 @@ rds_deletion_protection = false
 
 rds_skip_final_snapshot = true
 
-create_route53_zone = true
+create_route53_zone = false

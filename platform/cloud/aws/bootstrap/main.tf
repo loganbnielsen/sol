@@ -1,6 +1,8 @@
 terraform {
   required_version = ">= 1.6"
 
+  backend "s3" {}
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -11,6 +13,12 @@ terraform {
 
 provider "aws" {
   region = var.region
+}
+
+resource "aws_route53_zone" "qualification" {
+  count = var.manage_dns_zone ? 1 : 0
+
+  name = var.base_domain
 }
 
 resource "aws_s3_bucket" "state" {

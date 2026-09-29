@@ -15,12 +15,25 @@ small separate root:
 
 ```bash
 cd platform/cloud/aws/bootstrap
-terraform init
+terraform init \
+  -backend-config="bucket=<globally-unique-name>" \
+  -backend-config="key=bootstrap/aws/default.tfstate" \
+  -backend-config="region=us-east-1" \
+  -backend-config="dynamodb_table=<name>" \
+  -backend-config="encrypt=true"
 terraform apply \
   -var="region=us-east-1" \
   -var="state_bucket=<globally-unique-name>" \
   -var="state_lock_table=<name>"
 ```
+
+This root carries a partial `backend "s3" {}` so the resources it owns — the bucket, the lock
+table, and, where a delegated zone is declared, the hosted zone itself — are recorded in state
+that outlives the machine that created them, rather than in a local file. Where a delegated
+qualification zone exists, pass `-var="manage_dns_zone=true" -var="base_domain=<delegated
+name>"` and read the authoritative nameservers from this root's outputs rather than from a
+target's plan: a zone whose nameservers are baked into an external delegation must not be
+recreated, so it is owned here and merely read by a target (DEC-042/DEC-043).
 
 It creates:
 
