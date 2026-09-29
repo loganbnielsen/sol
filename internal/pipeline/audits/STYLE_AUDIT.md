@@ -167,6 +167,41 @@ This makes GitOps plaintext leakage impossible by construction: the type system
 plus the explicit guard ensure that `Kubernetes_live` can never reach the YAML
 renderer when the output goes to a file on disk destined for a git repository.
 
+## Sites examined in the support libraries and deliberately left (2026-09-29)
+
+The pinned `*-eio` packages were re-audited against this checklist after
+REFAC-138, and three families of candidate findings were examined in the code
+and left unchanged. Recording them here is the point: a later pass should not
+have to re-derive why, and if it disagrees, it changes the specific site named.
+
+- **A library-default warning sink that prints** (`kafka-eio`
+  `kafka_consumer.ml:57 default_on_warning` and `:213 default_on_poll_error`,
+  `lambda-eio` `lambda_runtime.ml:132 default_on_error`, `obs-eio`
+  `obs_eio.ml:129,138,158`, `obs-loki-eio` `obs_loki.ml:140`,
+  `obs-prometheus-eio` `obs_prometheus.ml:68`). REFAC-135's rule — a library
+  returns its warnings and the caller owns the sink — was considered and does not
+  apply here: each of these is a *named, overridable default* on a callback the
+  caller replaces by passing their own, not a print buried in a code path. The
+  alternative, a silent default, would hide poll/rebalance/backend failures with
+  nothing to replace. `obs-eio`'s two `Printf.printf` sites are a backend the
+  caller selects, i.e. the sink *is* the feature.
+- **`= ""` / `Some ""` checks** beyond the ones REFAC-138 already recorded
+  (`obs-loki-eio` `obs_loki.ml:17` truncated-body formatting,
+  `obs-prometheus-eio` `obs_prometheus.ml:399` `if body = "" then Ok ()`).
+  Formatting a possibly-empty detail, and treating an empty renderer output as
+  "nothing to push", are decisions at the point of formatting rather than an
+  absent-vs-empty domain value being guessed. The empty-logfmt-key check next to
+  `obs_loki.ml:17` *was* a real instance and is fixed in that repository's own
+  PR: an empty field name is now omitted rather than renamed to `"field"`.
+- **A duplicate three-line helper** (`truncated`-and-detail formatting, identical
+  in `obs-loki-eio/lib/obs_loki.ml:17` and `obs-tempo-eio/lib/obs_tempo.ml:22`).
+  Sharing it would mean a new package dependency between two sibling backends for
+  three lines; the checklist says to keep a duplicate that small.
+
+Constructor argument checks that raise `Invalid_argument` on a programmer error
+remain out of scope, as REFAC-138 recorded (`obs-eio` metric/label names,
+`pg-eio`'s `Identifier.of_string_exn`, which now takes a variant kind).
+
 ## Areas noted for future improvement
 
 *None open.* The one item here — `param_int` silently defaulting invalid integers
