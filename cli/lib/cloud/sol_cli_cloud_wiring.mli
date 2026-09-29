@@ -26,6 +26,20 @@ val init
   -> string list
   -> (unit, Sol_cli_cloud_apply.failure) result
 
+val credentials_result
+  :  provider:Sol_cli_provider.t
+  -> operation:string
+  -> leaves_target_standing:bool
+  -> (unit, string) result
+
+val init_result
+  :  assets:Sol_cli_platform_assets.t
+  -> Sol_cli_run_log.t
+  -> provider:Sol_cli_provider.t
+  -> role:Sol_cli_platform_assets.cloud_role
+  -> string list
+  -> (unit, string) result
+
 val plan
   :  assets:Sol_cli_platform_assets.t
   -> run_log:Sol_cli_run_log.t

@@ -359,6 +359,214 @@ let var_arg =
         ~doc:"Terraform variable. Can be passed multiple times.")
 ;;
 
+let recover_one
+      ~infra_dir
+      ~var_files
+      ~vars
+      (candidate : Sol_cli_ownership_recovery.candidate)
+  =
+  Printf.printf
+    "  importing %s as %s (identity %s)...\n%!"
+    candidate.found
+    candidate.address
+    candidate.import_identity;
+  match
+    Sol_cli_terraform.import_
+      ~chdir:infra_dir
+      ~var_files
+      ~vars
+      ~address:candidate.address
+      ~import_identity:candidate.import_identity
+      ()
+  with
+  | Error error ->
+    Error
+      (Printf.sprintf
+         "%s could not be imported into %s: %s"
+         candidate.found
+         candidate.address
+         (Sol_cli_process.error_to_string error))
+  | Ok _ ->
+    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+     | Error error ->
+       Error
+         (Printf.sprintf
+            "imported %s, but the state could not be re-read: %s"
+            candidate.address
+            (Sol_cli_process.error_to_string error))
+     | Ok result ->
+       let after = Sol_cli_cloud_destroy.inventory_of_show_json result.stdout in
+       let owned =
+         Sol_cli_cloud_destroy.resources after
+         |> List.find_opt (fun (resource : Sol_cli_cloud_destroy.resource) ->
+           resource.address = candidate.address)
+       in
+       (match owned with
+        | None ->
+          Error
+            (Printf.sprintf
+               "the import of %s reported success, but the state does not represent it \
+                afterwards"
+               candidate.address)
+        | Some resource ->
+          let observed = Option.value resource.identifier ~default:"" in
+          let agrees =
+            Sol_cli_string.is_blank observed
+            || Sol_cli_string.contains ~needle:observed candidate.import_identity
+            || Sol_cli_string.contains ~needle:candidate.import_identity observed
+          in
+          if agrees
+          then (
+            Printf.printf
+              "    %s now owns %s (provider id %s)\n%!"
+              candidate.address
+              candidate.found
+              (if Sol_cli_string.is_blank observed then "(none recorded)" else observed);
+            Ok ())
+          else
+            Error
+              (Printf.sprintf
+                 "the state now holds %s with provider id %s, which is not the identity \
+                  %s that was imported, so the adoption is ambiguous"
+                 candidate.address
+                 observed
+                 candidate.import_identity)))
+;;
+
+let cloud_recover ~target ~var_file ~vars ~action () =
+  let* () = check_terraform () in
+  let* provider = provider_of_target_path target in
+  let pname = Sol_cli_provider.to_string provider in
+  let* assets = resolve_assets () in
+  let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
+  let run_log = Sol_cli_run_log.create ~prefix:"cloud-recover" () in
+  let* config_vars, target_cfg = target_vars ~strict:true target in
+  let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
+  let vars = config_vars @ vars in
+  let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
+  let* () =
+    Sol_cli_cloud_wiring.credentials_result
+      ~provider
+      ~operation:"recovering ownership for"
+      ~leaves_target_standing:true
+    |> Sol_cli_exit.of_msg
+  in
+  let* cloud_target =
+    Sol_cli_cloud_lifecycle.cloud_target target_cfg |> Sol_cli_exit.of_msg
+  in
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
+  let infra_dir =
+    workdir provider Sol_cli_platform_assets.Cluster ~backend_config:cloud_backend
+  in
+  let* () =
+    guard_previous_operation
+      ~constructive:false
+      ~accept_unresolved:false
+      ~chdir:infra_dir
+      ~backend_config:cloud_backend
+  in
+  let* () =
+    Sol_cli_cloud_wiring.init_result
+      ~assets
+      run_log
+      ~provider
+      ~role:Sol_cli_platform_assets.Cluster
+      cloud_backend
+    |> Sol_cli_exit.of_msg
+  in
+  let* cluster_name =
+    match target_cfg.cluster_name with
+    | Some name when not (Sol_cli_string.is_blank name) -> Ok name
+    | _ ->
+      Error
+        (Sol_cli_exit.error
+           "recovery needs the target's cluster_name: both the provider inventory and \
+            the identity registry address resources by it, so without it nothing can be \
+            attributed or mapped")
+  in
+  let state =
+    match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+    | Ok result -> Sol_cli_cloud_destroy.inventory_of_show_json result.stdout
+    | Error (Sol_cli_process.Non_zero result) ->
+      Sol_cli_cloud_destroy.State_unreadable
+        (Printf.sprintf "terraform show exited %d" result.exit_code)
+    | Error error ->
+      Sol_cli_cloud_destroy.State_unreadable
+        ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error)
+  in
+  let state_addresses = Sol_cli_cloud_destroy.addresses state in
+  let observations =
+    Sol_cli_provider_registry.observations provider target_cfg ~cluster_name
+  in
+  let dispositions =
+    Sol_cli_ownership_recovery.dispositions
+      ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
+      ~class_rules:Sol_cli_resource_identity.class_rules
+      ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name)
+      ~state_addresses
+      observations
+  in
+  Printf.printf
+    "\nRecovering Terraform ownership for %s (%s, cluster %s)...\n%!"
+    target
+    pname
+    cluster_name;
+  Printf.printf "%s%!" (Sol_cli_absence.report observations);
+  Printf.printf "%s%!" (Sol_cli_ownership_recovery.report dispositions);
+  Printf.printf "  %s\n%!" (Sol_cli_ownership_recovery.summary dispositions);
+  let candidates = List.filter_map Sol_cli_ownership_recovery.candidate dispositions in
+  match action with
+  | Plan ->
+    (match candidates with
+     | [] ->
+       Printf.printf
+         "\n\
+          Done. Nothing here restores Terraform ownership; --apply would re-check the \
+          same question.\n\
+          %!";
+       Ok ()
+     | candidates ->
+       Printf.printf
+         "\n\
+          %d resource(s) can be brought back under Terraform ownership. Re-run with \
+          --apply to import them.\n\
+          %!"
+         (List.length candidates);
+       Ok ())
+  | Apply ->
+    let var_files = Option.to_list var_file in
+    let recovered =
+      List.fold_left
+        (fun acc candidate ->
+           match acc with
+           | Error _ as error -> error
+           | Ok count ->
+             (match recover_one ~infra_dir ~var_files ~vars candidate with
+              | Error _ as error -> error
+              | Ok () -> Ok (count + 1)))
+        (Ok 0)
+        candidates
+    in
+    (match recovered with
+     | Error message ->
+       Printf.eprintf "error: %s\n%!" message;
+       Error (Sol_cli_exit.reported ~code:1 ())
+     | Ok count ->
+       Printf.printf "\n%d resource(s) brought back under Terraform ownership.\n%!" count;
+       let outstanding = Sol_cli_ownership_recovery.outstanding dispositions in
+       if outstanding = []
+       then Ok ()
+       else (
+         Printf.eprintf
+           "error: %d resource(s) attributable to this target remain outside Terraform \
+            ownership, and Sol will not guess at them:\n\
+            %!"
+           (List.length outstanding);
+         Printf.eprintf "%s%!" (Sol_cli_ownership_recovery.report outstanding);
+         Error (Sol_cli_exit.reported ~code:1 ())))
+;;
+
 let plan_flag =
   Arg.(
     value
@@ -468,6 +676,53 @@ let destroy_cmd =
     Term.(
       const (fun target var_file vars action ->
         Sol_cli_exit.exit_on (cloud_destroy ~target ~var_file ~vars ~action ()))
+      $ target_arg
+      $ var_file_arg
+      $ var_arg
+      $ action_term)
+;;
+
+let recover_cmd =
+  let doc =
+    "Restore Terraform ownership of provider resources this target caused to exist but \
+     the disposable root's state never adopted."
+  in
+  let man =
+    [ `S Manpage.s_description
+    ; `P
+        "Terraform is the mutation authority and the provider is the reality authority. \
+         When an apply fails after the provider has created something, the state may not \
+         represent it, and a state-driven destroy then cannot remove it. This command \
+         observes the provider independently, maps each resource it finds to a Terraform \
+         address through the identity registry, and imports it so the ordinary lifecycle \
+         can act on it."
+    ; `P
+        "It refuses to guess. A resource whose class has no registry entry, whose class \
+         the registry marks as not recoverable (a composite provider identity, a \
+         module's internals, a name that depends on the workspace layout), or whose name \
+         matches more than one address, is reported and left alone. Resources that are \
+         external or durable by contract, and resources a controller created on behalf \
+         of something Terraform owns, are reported as their owner's business rather than \
+         imported."
+    ; `P
+        "Import evaluates the whole configuration, so the target's Terraform variables \
+         must be resolvable exactly as an apply needs them, including any the operator \
+         supplies through the environment (TF_VAR_*). Sol never takes a secret on the \
+         command line."
+    ; `S "EXIT STATUS"
+    ; `P
+        "0 -- nothing outstanding: every resource the provider holds for this target is \
+         either owned already, not this target's to recover, or imported by this run."
+    ; `P
+        "1 -- something remains that Sol cannot safely recover, or an import failed. The \
+         reason is named on stderr, and nothing is guessed."
+    ]
+  in
+  Cmd.v
+    (Cmd.info "recover" ~doc ~man)
+    Term.(
+      const (fun target var_file vars action ->
+        Sol_cli_exit.exit_on (cloud_recover ~target ~var_file ~vars ~action ()))
       $ target_arg
       $ var_file_arg
       $ var_arg

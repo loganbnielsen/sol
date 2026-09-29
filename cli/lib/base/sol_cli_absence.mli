@@ -12,6 +12,7 @@ type observation =
   | Present of
       { resource_class : string
       ; identity : string
+      ; found : string list
       ; attribution : attribution
       ; checked_with : string
       }

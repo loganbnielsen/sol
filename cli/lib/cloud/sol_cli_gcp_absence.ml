@@ -18,6 +18,12 @@ let identity_check
   { resource_class; identity; attribution; argv; attributable }
 ;;
 
+let not_found reason =
+  [ "not found"; "notfound"; "does not exist"; "was not found" ]
+  |> List.exists (fun needle ->
+    Sol_cli_string.contains ~needle (String.lowercase_ascii reason))
+;;
+
 let lines output =
   output
   |> String.split_on_char '\n'
@@ -40,7 +46,8 @@ let ok_observation ~check found =
   | found ->
     Present
       { resource_class = check.resource_class
-      ; identity = Printf.sprintf "%s: %s" check.identity (String.concat ", " found)
+      ; identity = check.identity
+      ; found
       ; attribution = check.attribution
       ; checked_with
       }
@@ -50,6 +57,17 @@ let run ~check =
   match Sol_cli_process.run (Sol_cli_process.cmd ("gcloud" :: check.argv)) with
   | Ok { Sol_cli_process.stdout; _ } ->
     ok_observation ~check (lines stdout |> List.filter check.attributable)
+  | Error (Sol_cli_process.Non_zero r) when not_found r.stderr ->
+    Absent
+      { resource_class = check.resource_class
+      ; identity = check.identity
+      ; attribution = check.attribution
+      ; checked_with =
+          Printf.sprintf
+            "%s (gcloud reports it does not exist: %s)"
+            (checked_with check.argv)
+            (String.trim r.stderr)
+      }
   | Error (Sol_cli_process.Non_zero r) ->
     Unobservable
       { resource_class = check.resource_class

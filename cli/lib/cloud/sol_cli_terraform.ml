@@ -132,6 +132,16 @@ let destroy ?(env = []) ~chdir ~var_files ~vars () =
         @ var_args ~var_files ~vars))
 ;;
 
+let import_ ?(env = []) ~chdir ~var_files ~vars ~address ~import_identity () =
+  supervised
+    ~chdir
+    (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "import"; "-input=false"; "-no-color" ]
+        @ var_args ~var_files ~vars
+        @ [ address; import_identity ]))
+;;
+
 let state_rm ?(env = []) ~chdir ~address () =
   supervised ~chdir (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "state"; "rm"; address ])
 ;;

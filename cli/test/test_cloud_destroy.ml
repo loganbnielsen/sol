@@ -692,6 +692,7 @@ let present_class resource_class =
   Sol_cli_absence.Present
     { resource_class
     ; identity = "qual-1-postgres"
+    ; found = [ "qual-1-postgres" ]
     ; attribution = absence_rule
     ; checked_with = "gcloud list"
     }
@@ -799,6 +800,169 @@ let test_the_report_explains_attribution () =
     "and which command established it"
     true
     (contains (Str.regexp_string "gcloud list") report)
+;;
+
+let recovery_entry address ~resource_class ~observed_as ~ownership ~import_identity =
+  Sol_cli_resource_identity.
+    { address
+    ; source = Root
+    ; resource_class
+    ; observed_as
+    ; ownership
+    ; identity = "fixture"
+    ; import_identity
+    }
+;;
+
+let recovery_present resource_class found =
+  Sol_cli_absence.Present
+    { resource_class
+    ; identity = "fixture"
+    ; found = [ found ]
+    ; attribution = absence_rule
+    ; checked_with = "gcloud list"
+    }
+;;
+
+let recovery_plan ?(state_addresses = []) ~entries observations =
+  Sol_cli_ownership_recovery.dispositions
+    ~entries
+    ~class_rules:Sol_cli_resource_identity.class_rules
+    ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name:"qual-1")
+    ~state_addresses
+    observations
+;;
+
+let test_recovery_maps_a_present_resource_to_its_address () =
+  let entries =
+    [ recovery_entry
+        "google_sql_database_instance.postgres"
+        ~resource_class:"Cloud SQL instance"
+        ~observed_as:"qual-1-postgres"
+        ~ownership:Sol_cli_resource_identity.Direct
+        ~import_identity:"qual-1-postgres"
+    ]
+  in
+  let dispositions =
+    recovery_plan ~entries [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Recover candidate ] ->
+    Alcotest.(check string)
+      "the address comes from the registry"
+      "google_sql_database_instance.postgres"
+      candidate.address;
+    Alcotest.(check string)
+      "and the import identity is the provider name"
+      "qual-1-postgres"
+      candidate.import_identity
+  | _ -> Alcotest.fail "a mappable orphan must be a recovery candidate"
+;;
+
+let test_recovery_refuses_a_resource_the_state_already_owns () =
+  let entries =
+    [ recovery_entry
+        "google_sql_database_instance.postgres"
+        ~resource_class:"Cloud SQL instance"
+        ~observed_as:"qual-1-postgres"
+        ~ownership:Sol_cli_resource_identity.Direct
+        ~import_identity:"qual-1-postgres"
+    ]
+  in
+  let dispositions =
+    recovery_plan
+      ~state_addresses:[ "google_sql_database_instance.postgres" ]
+      ~entries
+      [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Already_owned _ ] -> ()
+  | _ -> Alcotest.fail "a resource the state already owns must not be imported twice"
+;;
+
+let test_recovery_refuses_a_class_it_cannot_map () =
+  let descendants = Sol_cli_resource_identity.descendants ~cluster_name:"qual-1" in
+  Alcotest.(check bool)
+    "a controller-created class is accounted for as its owner's business"
+    true
+    (List.exists
+       (fun (d : Sol_cli_resource_identity.descendant) ->
+          d.resource_class = "forwarding rule")
+       descendants);
+  let dispositions =
+    recovery_plan ~entries:[] [ recovery_present "forwarding rule" "k8s2-something" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Owned_through { owner; _ } ] ->
+    Alcotest.(check bool)
+      "and the owner is named"
+      true
+      (contains (Str.regexp_string "Services") owner)
+  | _ ->
+    Alcotest.fail "a descendant class must be reported as its owner's, never imported"
+;;
+
+let test_recovery_refuses_an_unmapped_class () =
+  let dispositions =
+    recovery_plan ~entries:[] [ recovery_present "Some future class" "whatever" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Unmapped _ ] -> ()
+  | _ -> Alcotest.fail "a class with no registry entry must be reported, never guessed at"
+;;
+
+let test_recovery_refuses_a_class_the_registry_calls_unrecoverable () =
+  let entries =
+    [ recovery_entry
+        "google_service_networking_connection.sql"
+        ~resource_class:"service-networking peering connection"
+        ~observed_as:"qual-1"
+        ~ownership:
+          (Sol_cli_resource_identity.Direct_not_recoverable
+             "a composite import identity Sol has not established")
+        ~import_identity:""
+    ]
+  in
+  let dispositions =
+    recovery_plan
+      ~entries
+      [ recovery_present "service-networking peering connection" "qual-1" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Cannot_recover { reason; _ } ] ->
+    Alcotest.(check bool)
+      "the reason is the registry's, not a guess"
+      true
+      (contains (Str.regexp_string "composite import identity") reason)
+  | _ -> Alcotest.fail "a class marked unrecoverable must be refused with its reason"
+;;
+
+let test_recovery_refuses_an_ambiguous_match () =
+  let entries =
+    [ recovery_entry
+        "provider.one"
+        ~resource_class:"Cloud SQL instance"
+        ~observed_as:"qual-1-postgres"
+        ~ownership:Sol_cli_resource_identity.Direct
+        ~import_identity:"qual-1-postgres"
+    ; recovery_entry
+        "provider.two"
+        ~resource_class:"Cloud SQL instance"
+        ~observed_as:"qual-1"
+        ~ownership:Sol_cli_resource_identity.Direct
+        ~import_identity:"qual-1-postgres"
+    ]
+  in
+  let dispositions =
+    recovery_plan ~entries [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
+  in
+  match dispositions with
+  | [ Sol_cli_ownership_recovery.Cannot_recover { reason; _ } ] ->
+    Alcotest.(check bool)
+      "two candidate addresses are reported as ambiguous"
+      true
+      (contains (Str.regexp_string "ambiguous") reason)
+  | _ -> Alcotest.fail "an ambiguous mapping must be refused, never resolved"
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
@@ -1323,6 +1487,30 @@ let () =
             "the report explains attribution"
             `Quick
             test_the_report_explains_attribution
+        ; Alcotest.test_case
+            "recovery maps a present resource to its Terraform address (FND-0070)"
+            `Quick
+            test_recovery_maps_a_present_resource_to_its_address
+        ; Alcotest.test_case
+            "recovery does not import what the state already owns"
+            `Quick
+            test_recovery_refuses_a_resource_the_state_already_owns
+        ; Alcotest.test_case
+            "recovery reports a controller-created class as its owner's"
+            `Quick
+            test_recovery_refuses_a_class_it_cannot_map
+        ; Alcotest.test_case
+            "recovery refuses an unmapped class"
+            `Quick
+            test_recovery_refuses_an_unmapped_class
+        ; Alcotest.test_case
+            "recovery refuses a class the registry calls unrecoverable"
+            `Quick
+            test_recovery_refuses_a_class_the_registry_calls_unrecoverable
+        ; Alcotest.test_case
+            "recovery refuses an ambiguous mapping"
+            `Quick
+            test_recovery_refuses_an_ambiguous_match
         ; Alcotest.test_case
             "block failure blocks destruction"
             `Quick

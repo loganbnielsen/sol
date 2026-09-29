@@ -161,3 +161,74 @@ because its name resembles a Sol resource.
 architecture, not in the qualification harness: an executable guard over each provider root, requiring
 every `resource` block to carry a declared ownership kind and — for direct ones — an import identity and an
 attribution rule. Adding a new directly-managed resource without a rediscovery strategy should fail CI.
+
+## Phase 2 — implemented, and blocked at the import by the roots' own structure
+
+**What is implemented and merged.** `sol cloud recover <TARGET>` (plan by default, `--apply` to import):
+it resolves the provider's credentials the way destroy does, reads the independent inventory, maps every
+resource it finds to a Terraform address through the identity registry, prints the mapping *with* its
+reason, and imports only what the registry calls `Direct` with a recorded import identity. It refuses, with
+the reason, when a class has no registry entry (`Unmapped`), when the registry marks it unrecoverable (a
+composite provider identity, a module's internals, a workspace-dependent name), when two addresses match one
+name (ambiguous), and when the state already owns the address. It verifies each import against the state
+afterwards and fails if the provider id it adopted is not the identity it imported. Resources that are
+external by contract, and resources a controller created on behalf of something Terraform owns, are reported
+as such and never imported.
+
+**Live, on Attempt 25's orphan** (`02:59Z`), the plan is exactly right:
+
+```text
+PRESENT: Cloud SQL instance sol-qual-gcp-25-postgres -- found sol-qual-gcp-25-postgres (the target's own
+  cluster name …; checked with: gcloud --project sol-qualification sql instances list …)
+  recover: Cloud SQL instance sol-qual-gcp-25-postgres maps to google_sql_database_instance.postgres,
+  import identity sol-qual-gcp-25-postgres
+  1 recoverable, 0 already owned, 0 not this target's to recover (contract or owner), 0 refused
+```
+
+**The import is refused by the configuration, not by Sol:**
+
+```text
+Error: Invalid provider configuration
+  on …/platform/cloud/gcp/cluster/main.tf line 217:
+ 217: provider "kubernetes" {
+The configuration for provider["registry.terraform.io/hashicorp/kubernetes"] depends on values that
+cannot be determined until apply.
+```
+
+The cluster root declares its Kubernetes provider from the cluster's own attributes
+(`host = "https://${google_container_cluster.main.endpoint}"`). When the cluster is gone, that value is
+unknown, so **`terraform import` — which must evaluate the whole configuration — cannot run in this root at
+all**, while `terraform destroy` can (it only needs the providers its state's resources use, which is why
+the destroy path works today). This is the counterexample the decision asked to be surfaced rather than
+worked around: importing a substrate resource is blocked by provider configuration that belongs to a
+different lifecycle stage.
+
+**Alternatives, with their trade-offs** (a decision, not a mechanical fix):
+
+1. **Put the in-cluster resources behind a counted module** (`count = var.cluster_exists ? 1 : 0`). When the
+   cluster is absent the module is disabled and its provider is never configured, so import works in the
+   same root and state — Terraform keeps ownership throughout. Costs a structural change to the cluster root
+   and a variable the apply must set; the desired configuration of the imported resource is unchanged.
+2. **A separate substrate-only root** for the resources that do not need the cluster. Cleanest separation of
+   the two lifecycles, but it moves addresses and state, and it duplicates part of the graph today.
+3. **Operator recovery**: delete the orphan at the provider under explicit authorization. It restores
+   nothing to Terraform and is outside Sol's authority by design, but it is immediate.
+4. **Leave it.**
+
+**`sol-qual-gcp-25-postgres` therefore stands**, deliberately, pending that choice. Nothing was imported,
+nothing deleted, no state was edited.
+
+## `sol-qual-gcp-15b` — established, and deliberately not destroyed
+
+Its own state exists (`gs://sol-qualification-tfstate/sol/qual15b/gcp/us-central1/cloud.tfstate`, serial 6)
+and already owns the resources the inventory found, under the *current* address names
+(`google_compute_network.main`, `google_compute_global_address.sql_peering`,
+`google_artifact_registry_repository.images`, `google_service_account.provisioner`,
+`google_project_iam_custom_role.provisioner_cluster_access`, and the rest) — so 15b needs **no import at
+all**: the ordinary supported destroy of *its own* target is the right path.
+
+It was not run, for a reason worth recording: that state also contains
+`google_compute_default_service_account.default` — the **project's default compute service account**,
+declared inside the module — and `terraform destroy` is unscoped, so it would delete a project-wide resource
+that is not 15b's residue. Per "fail closed rather than guessing", the destroy was left unrun; a targeted
+destroy, a module-scoped state, or explicit authorization to remove it are the options.
