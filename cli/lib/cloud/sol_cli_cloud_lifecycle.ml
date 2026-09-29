@@ -699,6 +699,30 @@ let deescalation_verdict
         else Deescalated)
 ;;
 
+let successor_authority (successor : (capability * capability_answer) list) =
+  let unmet =
+    successor
+    |> List.filter_map (fun (capability, answer) ->
+      match answer with
+      | Permitted -> None
+      | Denied -> Some (Printf.sprintf "%s is denied" (capability_label capability))
+      | Indeterminate why ->
+        Some
+          (Printf.sprintf
+             "%s obtained no usable answer (%s)"
+             (capability_label capability)
+             why))
+  in
+  if successor = []
+  then
+    Error
+      "no successor capability was probed, so the successor's authority is not \
+       established"
+  else if unmet <> []
+  then Error (String.concat "; " unmet)
+  else Ok ()
+;;
+
 let deescalation_transition
       ~(before : (capability * capability_answer) list)
       ~after_principal

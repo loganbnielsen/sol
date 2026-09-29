@@ -4,7 +4,7 @@ printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 case " $* " in
   *" auth whoami "*)
     case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
-      sol-provisioner)
+      sol-cluster-access)
         if [ "${WHOAMI_REFUSE:-}" = 1 ] &&
           [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
           printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
@@ -15,41 +15,63 @@ case " $* " in
           printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
           exit 1
         fi
-        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}\n'
+        printf '%s\n' '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth","extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}'
         ;;
-      sol-cluster-access)
-        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth","extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}\n'
-        ;;
+      sol-provisioner) printf '%s\n' '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}' ;;
       *) printf '{"status":{"userInfo":{}}}\n' ;;
     esac
     exit 0
     ;;
-  *" auth can-i "*" clusterroles "*|*" auth can-i "*" clusterrolebindings "*)
-    if [ "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" != "sol-provisioner" ]; then
+  *" auth can-i escalate clusterroles "*|*" auth can-i bind clusterroles "*|\
+    *" auth can-i create namespaces "*|*" auth can-i create clusterroles "*|\
+    *" auth can-i create storageclasses "*)
+    if [ "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" != "sol-cluster-access" ]; then
       printf 'error: the authorizer was asked about the wrong principal\n' >&2
       exit 90
     fi
-    if [ "${CAN_I_FAIL:-}" = 1 ] &&
-      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
-      printf 'error: unable to connect to the server: dial tcp: i/o timeout\n' >&2
-      exit 1
-    fi
-    if [ "${CAN_I_INDETERMINATE_WHEN_OPEN:-}" = 1 ] &&
-      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
-      case " $* " in
-        *" auth can-i create clusterroles "*)
+    case " $* " in
+      *" can-i escalate clusterroles "*|*" can-i bind clusterroles "*)
+        if [ "${CAN_I_FAIL:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'error: unable to connect to the server: dial tcp: i/o timeout\n' >&2
+          exit 1
+        fi
+        if [ "${CAN_I_INDETERMINATE_WHEN_OPEN:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ] &&
+          case " $* " in *" can-i escalate clusterroles "*) true ;; *) false ;; esac; then
           printf 'maybe\n'
           exit 0
-          ;;
-      esac
-    fi
-    if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
-      printf 'yes\n'
-      exit 0
-    fi
-    printf 'no - no RBAC policy matched\n'
-    exit 1
-    ;;
+        fi
+        if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+          printf 'yes\n'
+          exit 0
+        fi
+        printf 'no - no RBAC policy matched\n'
+        exit 1
+        ;;
+      *" can-i create namespaces "*)
+        if [ "${FAIL_ON:-}" = rbac ] && [ ! -e "$FAIL_MARKER_DIR/rbac" ]; then
+          : >"$FAIL_MARKER_DIR/rbac"
+          exit 20
+        fi
+        if [ "${SUCCESSOR_DENIED:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'no - no RBAC policy matched\n'
+          exit 1
+        fi
+        printf 'yes\n'
+        exit 0
+        ;;
+      *" can-i create clusterroles "*|*" can-i create storageclasses "*)
+        if [ "${SUCCESSOR_DENIED:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'no - no RBAC policy matched\n'
+          exit 1
+        fi
+        printf 'yes\n'
+        exit 0
+        ;;
+    esac
 esac
 case " $* " in
   *" api-resources "*)

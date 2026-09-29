@@ -120,12 +120,14 @@ let cluster_tagged ~region ~cluster_name class_name query =
        ; "text"
        ]
      | "load balancer" ->
-       [ "elbv2"
-       ; "describe-load-balancers"
+       [ "resourcegroupstaggingapi"
+       ; "get-resources"
        ; "--region"
        ; region
-       ; "--filters"
-       ; tag
+       ; "--resource-type-filters"
+       ; "elasticloadbalancing:loadbalancer"
+       ; "--tag-filters"
+       ; Printf.sprintf "Key=kubernetes.io/cluster/%s,Values=owned,shared" cluster_name
        ; "--query"
        ; query
        ; "--output"
@@ -270,7 +272,7 @@ let checks ~region ~cluster_name =
       ~region
       ~cluster_name
       "load balancer"
-      "LoadBalancers[].LoadBalancerName"
+      "ResourceTagMappingList[].ResourceARN"
   ; cluster_tagged ~region ~cluster_name "EBS volume" "Volumes[].VolumeId"
   ]
 ;;

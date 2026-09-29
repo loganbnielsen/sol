@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -eu
 printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
+  if [ "$1 $2" = "elbv2 describe-load-balancers" ] &&
+    case " $* " in *" --filters "*) true ;; *) false ;; esac; then
+    printf 'usage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\n' >&2
+    printf 'Unknown options: --filters\n' >&2
+    exit 252
+  fi
+  if [ "$1 $2" = "resourcegroupstaggingapi get-resources" ]; then
+    if [ "${LB_RESIDUE_PRESENT:-}" = 1 ]; then
+      printf 'arn:aws:elasticloadbalancing:us-east-1:111122223333:loadbalancer/k8s-qualification\n'
+    fi
+    exit 0
+  fi
   case "$1 $2" in
     "configure export-credentials")
       if [ "${FAIL_CREDENTIALS:-}" = 1 ]; then
