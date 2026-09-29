@@ -33,30 +33,49 @@ let ticket_id_of_branch branch =
   | None -> branch
 ;;
 
-let open_prs () =
-  let json_str =
-    Sol_process.output_shell
-      ~echo:false
-      "gh pr list --state open --json number,url,headRefName,headRefOid,isDraft --limit \
-       200"
-  in
-  if json_str = ""
-  then []
-  else
-    let open Yojson.Basic.Util in
-    Yojson.Basic.from_string json_str
-    |> to_list
-    |> List.map (fun j ->
-      { pr_number = j |> member "number" |> to_int
-      ; pr_url = j |> member "url" |> to_string
-      ; pr_branch = j |> member "headRefName" |> to_string
-      ; pr_head_sha = j |> member "headRefOid" |> to_string
-      ; pr_draft = j |> member "isDraft" |> to_bool
-      })
+let pr_of_json j =
+  let open Yojson.Basic.Util in
+  { pr_number = j |> member "number" |> to_int
+  ; pr_url = j |> member "url" |> to_string
+  ; pr_branch = j |> member "headRefName" |> to_string
+  ; pr_head_sha = j |> member "headRefOid" |> to_string
+  ; pr_draft = j |> member "isDraft" |> to_bool
+  }
 ;;
 
-let find_pr_for_ticket ticket_id =
-  open_prs () |> List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id)
+let open_prs () =
+  let result =
+    Sol_process.run_argv
+      [ "gh"
+      ; "pr"
+      ; "list"
+      ; "--state"
+      ; "open"
+      ; "--json"
+      ; "number,url,headRefName,headRefOid,isDraft"
+      ; "--limit"
+      ; "200"
+      ]
+  in
+  if not (Sol_process.succeeded result)
+  then
+    Soldev_exit.error
+      (Printf.sprintf
+         "could not read the open PR inventory from gh (exit %d): %s"
+         (Sol_process.exit_code result)
+         (String.trim (result.stderr ^ " " ^ result.stdout)))
+  else (
+    match Yojson.Basic.from_string result.stdout with
+    | exception Yojson.Json_error message ->
+      Soldev_exit.error ("could not decode the open PR inventory from gh: " ^ message)
+    | json ->
+      (try Ok (json |> Yojson.Basic.Util.to_list |> List.map pr_of_json) with
+       | Yojson.Basic.Util.Type_error (message, _) ->
+         Soldev_exit.error ("unexpected gh pr list shape: " ^ message)))
+;;
+
+let find_pr_in prs ticket_id =
+  List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id) prs
 ;;
 
 let checks_green_of_json = function
@@ -215,7 +234,8 @@ let run_submit ticket_id =
     else Soldev_exit.error (Printf.sprintf "error: git push failed for %s" branch)
   in
   let content = read_file done_path in
-  match find_pr_for_ticket ticket_id with
+  let* prs = open_prs () in
+  match find_pr_in prs ticket_id with
   | Some p ->
     Printf.printf "[%s] PR already exists: %s\n%!" ticket_id p.pr_url;
     Ok ()
@@ -303,7 +323,8 @@ let format_violations vs =
 
 let run_review ticket_id result_file =
   let open Result.Syntax in
-  match find_pr_for_ticket ticket_id with
+  let* prs = open_prs () in
+  match find_pr_in prs ticket_id with
   | None ->
     Soldev_exit.error
       (Printf.sprintf
@@ -471,13 +492,14 @@ let merge_candidates ~dry_run ~auto_merge candidates =
 
 let run_merge ~dry_run ~auto_merge ~ticket_filter =
   let open Result.Syntax in
+  let* prs = open_prs () in
   let* candidates =
     match ticket_filter with
     | Some id ->
-      (match find_pr_for_ticket id with
+      (match find_pr_in prs id with
        | Some p -> Ok [ id, p ]
        | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
-    | None -> Ok (open_prs () |> List.map (fun p -> ticket_id_of_branch p.pr_branch, p))
+    | None -> Ok (List.map (fun p -> ticket_id_of_branch p.pr_branch, p) prs)
   in
   if candidates = []
   then (
@@ -585,6 +607,8 @@ let worktree_annotation_for_ticket ticket_id =
 ;;
 
 let run_ls include_done =
+  let open Result.Syntax in
+  let* prs = open_prs () in
   let states =
     if include_done
     then Soldev_ticket.all_states
@@ -649,7 +673,7 @@ let run_ls include_done =
                     let ready =
                       if state = Soldev_ticket.Ready_for_engineering
                       then (
-                        match find_pr_for_ticket id with
+                        match find_pr_in prs id with
                         | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
                         | None -> ready)
                       else ready
@@ -739,7 +763,8 @@ let run_check ticket_id =
     let deps = Soldev_ticket.parse_depends content in
     Printf.printf "%s  state: %s\n" ticket_id (dir state);
     Printf.printf "depends on: %s\n" (Soldev_ticket.dependency_summary deps);
-    (match find_pr_for_ticket ticket_id with
+    let* prs = open_prs () in
+    (match find_pr_in prs ticket_id with
      | Some p -> Printf.printf "open PR: %s\n" p.pr_url
      | None -> ());
     (match worktree_annotation_for_ticket ticket_id with
