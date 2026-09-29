@@ -289,6 +289,10 @@ let derived_by_vpc ~cluster_name observations =
   | _ -> observations
 ;;
 
+let relinquished_residue_probes =
+  [ "google_service_networking_connection.sql", "service-networking peering connection" ]
+;;
+
 let class_names =
   [ "GKE cluster"
   ; "GKE node pool"
