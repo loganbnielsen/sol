@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# The AWS regression row: the same application contract GCP Attempt 28 established.
-#
-# usage: live-row.sh PHASE      PHASE in: cloud | app | destroy | verify | inventory
-#
-# required
-#   CLUSTER           this run's cluster name
-#   DEPLOY_ROLE_ARN   the deploy identity's kubeconfig is what `sol deploy` uses
-# optional (defaults shown)
-#   TARGET=qualreg/aws/us-east-1   ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
-#   AWS_PROFILE=sol-qual           AWS_REGION=us-east-1
-#   TFVARS=internal/qualification/aws/qual-aws-row.tfvars
-#   SOL=_build/default/cli/bin/main.exe   WORKSPACE=examples/pluto
-#   PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<timestamp>
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -38,6 +25,34 @@ export ECR_REGISTRY
 mkdir -p "$LOG_DIR/state"
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
+usage() {
+  cat <<'USAGE'
+live-row.sh — the AWS regression row: the application contract GCP Attempt 28 established
+
+usage: live-row.sh PHASE      PHASE in: cloud | app | destroy | verify
+
+required
+  CLUSTER           this run's EKS cluster name
+  DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
+optional (defaults shown)
+  TARGET=qualreg/aws/us-east-1   ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
+  AWS_PROFILE=sol-qual           AWS_REGION=us-east-1
+  TFVARS=internal/qualification/aws/qual-aws-row.tfvars
+  SOL=_build/default/cli/bin/main.exe   WORKSPACE=examples/pluto
+  PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<timestamp>
+
+phases
+  cloud    cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
+  app      build, ECR login and push, runtime secrets, migrate apply, deploy, the transaction
+  destroy  supported teardown, then the independent inventory
+  verify   the independent inventory only; invokes no teardown
+
+The transaction is the causal path, not a health check: POST /charges returns an id, and the row
+only passes when that id appears in GET /notifications, which cannot happen unless the worker
+consumed the Kafka event and wrote PostgreSQL. AWS_PROFILE and TF_VAR_db_password must be in the
+environment; POSTGRES_URL comes from the cluster root's own postgres_url output.
+USAGE
+}
 
 run() {
   local name="$1"; shift
@@ -52,13 +67,13 @@ run() {
 k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 image_ref() { printf '%s/pluto/%s:%s' "$ECR_REGISTRY" "$(k8s_name "$1")" "$APP_TAG"; }
 
+target_state_bucket() {
+  sed -n 's/^ *state_bucket: *//p' "$TARGET_FILE" | head -1
+}
+
 capture_state() {
   aws s3 cp "s3://$(target_state_bucket)/$STATE_KEY" "$LOG_DIR/state/cloud.tfstate" \
     >"$LOG_DIR/state/copy.log" 2>&1 || true
-}
-
-target_state_bucket() {
-  sed -n 's/^ *state_bucket: *//p' "$TARGET_FILE" | head -1
 }
 
 capture_kube_evidence() {
@@ -71,26 +86,26 @@ capture_kube_evidence() {
 
 aws_inventory() {
   {
-    printf '# clusters\n'
+    printf 'clusters\n'
     aws eks list-clusters --query 'clusters' --output text
-    printf '# ec2 instances (tagged for this run)\n'
+    printf 'ec2 instances tagged for this run\n'
     aws ec2 describe-instances --filters "Name=tag:Name,Values=*$CLUSTER*" \
       --query 'Reservations[].Instances[].InstanceId' --output text
-    printf '# vpcs\n'
+    printf 'vpcs\n'
     aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$CLUSTER" \
       --query 'Vpcs[].VpcId' --output text
-    printf '# rds\n'
+    printf 'rds\n'
     aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text
-    printf '# ecr repositories\n'
+    printf 'ecr repositories\n'
     aws ecr describe-repositories --query 'repositories[].repositoryName' --output text
-    printf '# nat gateways\n'
+    printf 'nat gateways\n'
     aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=*$CLUSTER*" \
       --query 'NatGateways[].NatGatewayId' --output text
-    printf '# elastic ips\n'
+    printf 'elastic ips\n'
     aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text
-    printf '# load balancers\n'
+    printf 'load balancers\n'
     aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
-    printf '# route53 zones\n'
+    printf 'route53 zones for the qualification domain\n'
     aws route53 list-hosted-zones --query "HostedZones[?contains(Name, 'sol-fab')].Name" --output text
   } >"$LOG_DIR/aws-inventory.txt" 2>&1
   cat "$LOG_DIR/aws-inventory.txt"
@@ -148,14 +163,10 @@ phase_destroy() {
   aws_inventory
 }
 
-phase_inventory() {
-  aws_inventory
-}
-
 case "${1:-}" in
   cloud) phase_cloud ;;
   app) phase_app ;;
   destroy) phase_destroy ;;
-  verify | inventory) phase_inventory ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  verify | inventory) aws_inventory ;;
+  *) usage; exit 2 ;;
 esac

@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# The application transaction, provider-neutral: charge accepted over HTTP, consumed from Kafka by
-# the worker, written to PostgreSQL, and read back out of PostgreSQL by the service.
-#
-# usage: app-transaction.sh LOG_DIR
 set -uo pipefail
 
 LOG_DIR="${1:?usage: app-transaction.sh LOG_DIR}"
@@ -10,7 +6,7 @@ NS=pluto-payments
 PORT=18080
 SVC="charge-svc"
 
-kubectl -n "$NS" get pods -o wide >"$LOG_DIR/app-pods.txt" 2>&1 || return 1 2>/dev/null || exit 1
+kubectl -n "$NS" get pods -o wide >"$LOG_DIR/app-pods.txt" 2>&1 || exit 1
 kubectl -n "$NS" get events --sort-by=.lastTimestamp >"$LOG_DIR/app-events.txt" 2>&1 || true
 kubectl -n "$NS" logs -l app.kubernetes.io/component=svc --tail=80 --all-containers=true \
   >"$LOG_DIR/app-charge-svc.log" 2>&1 || true

@@ -1,5 +1,6 @@
 type builder =
   { label : string
+  ; identifying_resources : string list
   ; build : string -> (Sol_cli_cluster.t, string) result
   }
 
@@ -9,6 +10,7 @@ let builder provider ~(target : Sol_cli_config.target) =
   match provider with
   | Sol_cli_provider.Aws ->
     { label = Sol_cli_aws_cluster.label
+    ; identifying_resources = [ "module.eks.aws_eks_cluster" ]
     ; build =
         of_json
           Sol_cli_aws_cluster.of_outputs_json
@@ -19,17 +21,33 @@ let builder provider ~(target : Sol_cli_config.target) =
     }
   | Sol_cli_provider.Gcp ->
     { label = Sol_cli_gcp_cluster.label
+    ; identifying_resources = [ "google_container_cluster.main" ]
     ; build =
         of_json Sol_cli_gcp_cluster.of_outputs_json (Sol_cli_gcp_cluster.cluster ~region)
     }
 ;;
 
+let state_holds_any ~chdir prefixes =
+  match Sol_cli_terraform.state_list ~chdir () with
+  | Ok result ->
+    result.stdout
+    |> String.split_on_char '\n'
+    |> List.exists (fun line ->
+      let line = String.trim line in
+      List.exists
+        (fun prefix ->
+           String.length line >= String.length prefix
+           && String.sub line 0 (String.length prefix) = prefix)
+        prefixes)
+  | Error _ -> false
+;;
+
 let of_root provider ~target ~chdir =
-  let { label; build } = builder provider ~target in
+  let { label; identifying_resources; build } = builder provider ~target in
   match Sol_cli_terraform.output_json ~chdir () with
   | Ok result ->
     (match Yojson.Safe.from_string result.stdout with
-     | `Assoc [] -> Ok None
+     | `Assoc _ when not (state_holds_any ~chdir identifying_resources) -> Ok None
      | _ -> Result.map Option.some (build result.stdout)
      | exception Yojson.Json_error message ->
        Error (Printf.sprintf "invalid %s Terraform output JSON: %s" label message))
