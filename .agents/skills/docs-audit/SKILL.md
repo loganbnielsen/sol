@@ -25,7 +25,7 @@ Read the most recent `internal/pipeline/audits/*_docs_audit.md` report if one ex
 
 ### 3. Verify source-of-truth docs
 
-- Read `README.md`, `docs/ROADMAP.md`, `docs/guides/TUTORIAL.md`, and `internal/planning/WORK_SUMMARY.md`
+- Read `README.md`, `docs/ROADMAP.md`, and `docs/guides/TUTORIAL.md`
 - Check whether status claims match implementation and tests
 - Identify historical sections that could be mistaken for current product state
 - Compare product framing and terminology across docs
