@@ -11,6 +11,12 @@ let () =
     Handler.decode_charge_body {|{"customer_id":"cus_1","amount_cents":"4200"}|}
     = Error "amount_cents must be an integer");
   assert (Result.is_error (Handler.decode_charge_body "{"));
+  List.iter
+    (fun root ->
+      match Handler.decode_charge_body root with
+      | Error message -> assert (message = "request body must be a JSON object")
+      | Ok _ -> failwith ("non-object root accepted: " ^ root))
+    [ "[]"; "null"; "42"; "3.5"; "\"text\""; "true" ];
   Eio_main.run (fun env ->
       Eio.Switch.run (fun sw ->
           let obs =
