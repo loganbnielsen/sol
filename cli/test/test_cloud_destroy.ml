@@ -805,7 +805,6 @@ let test_the_report_explains_attribution () =
 let recovery_entry address ~resource_class ~observed_as ~ownership ~import_identity =
   Sol_cli_resource_identity.
     { address
-    ; source = Root
     ; resource_class
     ; observed_as
     ; ownership
@@ -825,12 +824,7 @@ let recovery_present resource_class found =
 ;;
 
 let recovery_plan ?(state_addresses = []) ~entries observations =
-  Sol_cli_ownership_reconciliation.dispositions
-    ~entries
-    ~class_rules:Sol_cli_resource_identity.class_rules
-    ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name:"qual-1")
-    ~state_addresses
-    observations
+  Sol_cli_ownership_reconciliation.dispositions ~entries ~state_addresses observations
 ;;
 
 let test_recovery_maps_a_present_resource_to_its_address () =
@@ -881,25 +875,17 @@ let test_recovery_refuses_a_resource_the_state_already_owns () =
 ;;
 
 let test_recovery_refuses_a_class_it_cannot_map () =
-  let descendants = Sol_cli_resource_identity.descendants ~cluster_name:"qual-1" in
-  Alcotest.(check bool)
-    "a controller-created class is accounted for as its owner's business"
-    true
-    (List.exists
-       (fun (d : Sol_cli_resource_identity.descendant) ->
-          d.resource_class = "forwarding rule")
-       descendants);
   let dispositions =
     recovery_plan ~entries:[] [ recovery_present "forwarding rule" "k8s2-something" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_reconciliation.Owned_through { owner; _ } ] ->
-    Alcotest.(check bool)
-      "and the owner is named"
-      true
-      (contains (Str.regexp_string "Services") owner)
-  | _ ->
-    Alcotest.fail "a descendant class must be reported as its owner's, never imported"
+  | [ Sol_cli_ownership_reconciliation.Unmapped { resource_class; found } ] ->
+    Alcotest.(check string)
+      "a controller-created class is reported, not adopted"
+      "forwarding rule"
+      resource_class;
+    Alcotest.(check string) "and named" "k8s2-something" found
+  | _ -> Alcotest.fail "a class with no Terraform address must be reported, never adopted"
 ;;
 
 let test_recovery_refuses_an_unmapped_class () =
@@ -1563,7 +1549,7 @@ let () =
             `Quick
             test_recovery_refuses_a_resource_the_state_already_owns
         ; Alcotest.test_case
-            "recovery reports a controller-created class as its owner's"
+            "recovery reports a class it has no address for"
             `Quick
             test_recovery_refuses_a_class_it_cannot_map
         ; Alcotest.test_case

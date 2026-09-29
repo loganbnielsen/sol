@@ -14,7 +14,6 @@ IMPORT = re.compile(r'~import_identity:\s*(?P<value>"[^"]*"|[^\n;]*)')
 CLASS = re.compile(r'~resource_class:\s*(?P<value>"[^"]*")')
 OBSERVED = re.compile(r'~observed_as:\s*(?P<value>"[^"]*"|[^\n;]*)')
 TYPE_RULE = re.compile(r'terraform_type\s*=\s*"(?P<value>[^"]*)"')
-CLASS_RULE = re.compile(r'resource_class\s*=\s*"(?P<value>[^"]*)"\s*;\s*ownership')
 CLASS_NAMES = re.compile(r'class_names\s*=\s*\[(?P<body>[^\]]*)\]', re.S)
 CLASS_NAME = re.compile(r'"(?P<value>[^"]+)"')
 
@@ -42,8 +41,7 @@ def registry(path):
             "observed_as": unquote(observed_match.group("value")) if observed_match else "",
         }
     type_rules = [m.group("value") for m in TYPE_RULE.finditer(text)]
-    class_rules = [m.group("value") for m in CLASS_RULE.finditer(text)]
-    return text, entries, type_rules, class_rules
+    return text, entries, type_rules
 
 
 def inventory_classes(path):
@@ -68,7 +66,7 @@ def root_addresses(root):
 def main(argv):
     root = Path(argv[1]) if len(argv) > 1 else Path(".")
     registry_path = root / "cli/lib/cloud/sol_cli_resource_identity.ml"
-    text, entries, type_rules, class_rules = registry(registry_path)
+    text, entries, type_rules = registry(registry_path)
     problems = []
     if not entries:
         problems.append(f"the identity registry could not be read at {registry_path}")
@@ -128,24 +126,17 @@ def main(argv):
                     "have (FND-0070)"
                 )
 
-    owners = set(entry["resource_class"] for entry in entries.values() if entry["resource_class"])
-    owners.update(class_rules)
-    descendants = set()
-    match = re.search(r"let descendants ~cluster_name =\s*\[(?P<body>.*?)\n\s*\]\s*;;", text, re.S)
-    if match:
-        descendants.update(
-            m.group(1) for m in re.finditer(r'resource_class = "([^"]+)"', match.group("body"))
-        )
+    compared = set()
     for provider in ("gcp", "aws"):
         path = root / f"cli/lib/cloud/sol_cli_{provider}_absence.ml"
-        for resource_class in inventory_classes(path):
-            if resource_class in owners or resource_class in descendants:
-                continue
+        compared.update(inventory_classes(path))
+    for address, entry in sorted(entries.items()):
+        resource_class = entry["resource_class"]
+        if resource_class and resource_class not in compared:
             problems.append(
-                f"the {provider} inventory reports the class {resource_class!r}, which no "
-                "registry entry, class rule or descendant rule accounts for: a class the verifier "
-                "can report PRESENT must also say how it would be recovered, or that it cannot be "
-                "(FND-0070)"
+                f"the registry entry for {address} names the class {resource_class!r}, which no "
+                "provider inventory reports: the inventory maps what it finds back to an address "
+                "by class and name, so a class it never reports cannot be matched (FND-0070)"
             )
 
     if problems:
@@ -155,7 +146,7 @@ def main(argv):
     print(
         f"{NAME}: {checked} declared terraform resource(s) carry an ownership kind, every Direct "
         "one an import identity and the provider name the inventory reports, no stale entry, and "
-        f"every class both inventories verify has a recovery story ({len(owners)} classes)"
+        "every class a mapping names is one an inventory reports"
     )
     return 0
 

@@ -173,10 +173,8 @@ resource "google_sql_database_instance" "postgres" {
     }
 
     ip_configuration {
-      ipv4_enabled = false
-      private_network = (
-        "projects/${var.project_id}/global/networks/${var.cluster_name}"
-      )
+      ipv4_enabled    = false
+      private_network = google_compute_network.main.id
     }
 
     insights_config {
@@ -184,7 +182,7 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  depends_on = [google_compute_network.main, google_service_networking_connection.sql]
+  depends_on = [google_service_networking_connection.sql]
 }
 
 resource "google_sql_database" "app" {
