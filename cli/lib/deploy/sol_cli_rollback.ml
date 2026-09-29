@@ -259,6 +259,14 @@ type migration_check_error =
       ; migration : string
       ; reason : string
       }
+  | Applied_migration_absent of
+      { release_id : string
+      ; version : int
+      }
+  | Applied_state_unavailable of
+      { release_id : string
+      ; reason : string
+      }
 
 let migration_check_error_to_string = function
   | Contracting_migration { release_id; migration } ->
@@ -276,17 +284,62 @@ let migration_check_error_to_string = function
       release_id
       migration
       reason
+  | Applied_migration_absent { release_id; version } ->
+    Printf.sprintf
+      "cannot roll back to release %s: the target has migration version %d applied, and \
+       this checkout has no file for it, so its disposition cannot be checked. An absent \
+       file is not evidence that the schema did not change -- run the rollback from the \
+       checkout that contains it, or resolve the incompatibility forward."
+      release_id
+      version
+  | Applied_state_unavailable { release_id; reason } ->
+    Printf.sprintf
+      "cannot roll back to release %s: the target's applied migration state could not be \
+       compared (%s). Failing closed rather than assuming the schema is unchanged."
+      release_id
+      reason
+;;
+
+let release_migration_versions ~release =
+  let open Result.Syntax in
+  List.fold_left
+    (fun acc migration ->
+       let* versions = acc in
+       match Sol_cli_migration.parse_version migration with
+       | Some (version, _) -> Ok (version :: versions)
+       | None ->
+         Error
+           (Applied_state_unavailable
+              { release_id = release.Sol_cli_release.release_id
+              ; reason =
+                  Printf.sprintf
+                    "its recorded migration %S cannot be interpreted, so the boundary \
+                     between its schema and the target's cannot be established"
+                    migration
+              }))
+    (Ok [])
+    release.Sol_cli_release.migrations
 ;;
 
 let check_migration_boundary
       ~(release : Sol_cli_release.t)
       ~(migrations_dir : string)
       ~(current_migrations : string list)
+      ~(applied : unit -> (int list, string) result)
   : (unit, migration_check_error) result
   =
-  let new_migrations =
-    List.filter (fun m -> not (List.mem m release.migrations)) current_migrations
-    |> List.sort String.compare
+  let open Result.Syntax in
+  let* release_versions = release_migration_versions ~release in
+  let local =
+    List.filter_map
+      (fun file ->
+         Option.map
+           (fun (version, _) -> version, file)
+           (Sol_cli_migration.parse_version file))
+      current_migrations
+  in
+  let local_beyond =
+    List.filter (fun (version, _) -> not (List.mem version release_versions)) local
   in
   let rec go = function
     | [] -> Ok ()
@@ -302,7 +355,27 @@ let check_migration_boundary
          Error (Contracting_migration { release_id = release.release_id; migration })
        | Ok Sol_cli_migration_disposition.Expand -> go rest)
   in
-  go new_migrations
+  let* () = go (local_beyond |> List.map snd |> List.sort String.compare) in
+  let* applied =
+    applied ()
+    |> Result.map_error (fun reason ->
+      Applied_state_unavailable { release_id = release.release_id; reason })
+  in
+  let applied_beyond =
+    applied
+    |> List.filter (fun version -> not (List.mem version release_versions))
+    |> List.sort_uniq compare
+  in
+  match
+    List.filter
+      (fun version ->
+         not
+           (List.exists (fun (local_version, _) -> local_version = version) local_beyond))
+      applied_beyond
+  with
+  | [] -> Ok ()
+  | version :: _ ->
+    Error (Applied_migration_absent { release_id = release.release_id; version })
 ;;
 
 type apply_mode_check_error = Gitops_owned of { release_id : string }
@@ -599,6 +672,7 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
 
 type transaction_deps =
   { ensure_held : unit -> (unit, string) result
+  ; applied_migrations : unit -> (int list, string) result
   ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
@@ -619,7 +693,13 @@ let execute
     | Ok () -> Ok ()
   in
   let* () =
-    match check_migration_boundary ~release ~migrations_dir ~current_migrations with
+    match
+      check_migration_boundary
+        ~release
+        ~migrations_dir
+        ~current_migrations
+        ~applied:deps.applied_migrations
+    with
     | Error e -> Error (migration_check_error_to_string e)
     | Ok () -> Ok ()
   in

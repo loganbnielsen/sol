@@ -35,6 +35,16 @@ here. It answers a different question — whether a migration blocks rolling
 *back* to an older release — and an expand migration is still required for code
 that was written after it.
 
+Rollback answers that question from the **target's applied migration state**, not
+from the working copy: `sol rollback` reads the applied versions out of the
+target's `schema_migrations` (the same in-cluster `migrate status` Job the deploy
+gate uses) and refuses unless every version applied beyond the historical
+release is declared `expand` in a file this checkout can read. A migration that
+is applied on the target but absent from the checkout blocks the rollback — an
+absent file is not evidence that the schema did not change — and so does an
+unreadable applied state. Run the rollback from the checkout that contains the
+migration, or resolve the incompatibility forward.
+
 ## Ordering
 
 ```
@@ -92,7 +102,11 @@ surrounding release-safety semantics that already existed: a failed deployment
 attempt is never a recorded release (`test_deployment_attempt.ml`), rollback
 verifies the live workload set before moving the pointer (`test_rollback.ml`),
 and the same desired content yields the same release identity
-(`test_release_id.ml`).
+(`test_release_id.ml`). Rollback's applied-state boundary is covered the same
+way: a version applied on the target but absent from the checkout blocks, an
+applied expansion passes, an unreadable applied state blocks before any
+mutation, and a local contracting migration still blocks
+(`test_rollback.ml`).
 
 They do **not** prove the live behavior. HARDEN-002 must exercise, against a real
 cluster and database: a deploy with migrations applied (succeeds), a deploy with
