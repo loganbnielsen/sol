@@ -82,6 +82,16 @@ val destroy
   -> unit
   -> (Sol_cli_process.output, Sol_cli_process.error) result
 
+val import_
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> var_files:string list
+  -> vars:string list
+  -> address:string
+  -> import_identity:string
+  -> unit
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
+
 val state_rm
   :  ?env:(string * string) list
   -> chdir:string

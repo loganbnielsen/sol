@@ -12,6 +12,7 @@ type observation =
   | Present of
       { resource_class : string
       ; identity : string
+      ; found : string list
       ; attribution : attribution
       ; checked_with : string
       }
@@ -40,15 +41,15 @@ let attribution_rule = function
   | Within_target rule -> rule
 ;;
 
-let describe resource_class identity = Printf.sprintf "%s %s" resource_class identity
-
 let verdict observations =
   let present = ref [] in
   let unknown = ref [] in
   observations
   |> List.iter (function
-    | Present { resource_class; identity; _ } ->
-      present := describe resource_class identity :: !present
+    | Present { resource_class; identity; found; _ } ->
+      present
+      := Printf.sprintf "%s %s (%s)" resource_class identity (String.concat ", " found)
+         :: !present
     | Unobservable { resource_class; reason; _ } ->
       unknown
       := Printf.sprintf "%s could not be observed: %s" resource_class reason :: !unknown
@@ -74,12 +75,13 @@ let to_sweep observations =
   let indeterminate = ref [] in
   observations
   |> List.iter (function
-    | Present { resource_class; identity; attribution; checked_with } ->
+    | Present { resource_class; identity; found; attribution; checked_with } ->
       residues
       := Printf.sprintf
-           "%s %s is present after destroy (%s; checked with: %s)"
+           "%s %s is present after destroy: %s (%s; checked with: %s)"
            resource_class
            identity
+           (String.concat ", " found)
            (attribution_rule attribution)
            checked_with
          :: !residues
@@ -117,11 +119,12 @@ let report observations =
         identity
         (attribution_rule attribution)
         checked_with
-    | Present { resource_class; identity; attribution; checked_with } ->
+    | Present { resource_class; identity; found; attribution; checked_with } ->
       line
-        "    PRESENT: %s %s (%s; checked with: %s)\n"
+        "    PRESENT: %s %s -- found %s (%s; checked with: %s)\n"
         resource_class
         identity
+        (String.concat ", " found)
         (attribution_rule attribution)
         checked_with
     | External { resource_class; identity; reason } ->

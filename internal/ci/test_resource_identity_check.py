@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "internal/ci/check_resource_identity.py"
 COPIED = [
     "cli/lib/cloud/sol_cli_resource_identity.ml",
+    "cli/lib/cloud/sol_cli_gcp_absence.ml",
+    "cli/lib/cloud/sol_cli_aws_absence.ml",
     "platform/cloud/gcp/cluster/main.tf",
     "platform/cloud/gcp/cluster/variables.tf",
     "platform/cloud/aws/cluster/main.tf",
@@ -60,19 +62,41 @@ def main():
     )
     cases.append(("a directly managed resource with no registry entry", tmp))
 
+    sql_entry = (
+        '      "google_sql_database_instance.postgres"\n'
+        '      direct\n'
+        '      ~resource_class:"Cloud SQL instance"\n'
+        '      ~observed_as:(cluster_name ^ "-postgres")\n'
+        '      ~identity:(cluster_name ^ "-postgres")\n'
+        '      ~import_identity:(cluster_name ^ "-postgres")'
+    )
+
     tmp = scratch()
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_resource_identity.ml",
-        """      "google_sql_database_instance.postgres"
-      direct
-      ~identity:(cluster_name ^ "-postgres")
-      ~import_identity:(cluster_name ^ "-postgres")""",
-        """      "google_sql_database_instance.postgres"
-      direct
-      ~identity:(cluster_name ^ "-postgres")""",
+        sql_entry,
+        sql_entry.replace('\n      ~import_identity:(cluster_name ^ "-postgres")', ""),
     )
     cases.append(("a Direct entry whose import identity was removed", tmp))
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_resource_identity.ml",
+        sql_entry,
+        sql_entry.replace('~resource_class:"Cloud SQL instance"', '~resource_class:"A class the inventory never reports"'),
+    )
+    cases.append(("a class the verifier reports that no entry covers", tmp))
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_resource_identity.ml",
+        sql_entry,
+        sql_entry.replace('~observed_as:(cluster_name ^ "-postgres")', '~observed_as:""'),
+    )
+    cases.append(("a Direct entry the inventory could not map back to", tmp))
 
     tmp = scratch()
     mutate(
@@ -107,8 +131,9 @@ def main():
         return 1
     print(
         "test_resource_identity_check: the guard accepts the real tree and rejects an unregistered "
-        "directly managed resource, a Direct entry without an import identity, a stale entry, and a "
-        "class-level rule that stopped covering its family"
+        "directly managed resource, a Direct entry without an import identity or an observed name, "
+        "a class no entry covers, a stale entry, and a class-level rule that stopped covering its "
+        "family"
     )
     return 0
 

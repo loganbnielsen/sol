@@ -49,6 +49,18 @@ let destruction provider context =
   | Sol_cli_provider.Gcp -> Sol_cli_gcp_destruction.destruction context
 ;;
 
+let observations provider target ~cluster_name =
+  match provider with
+  | Sol_cli_provider.Aws -> Sol_cli_aws_absence.observations target ~cluster_name
+  | Sol_cli_provider.Gcp -> Sol_cli_gcp_absence.observations target ~cluster_name
+;;
+
+let resource_identity provider ~cluster_name =
+  match provider with
+  | Sol_cli_provider.Aws -> Sol_cli_resource_identity.aws ~cluster_name
+  | Sol_cli_provider.Gcp -> Sol_cli_resource_identity.gcp ~cluster_name
+;;
+
 let credentials provider ~operation ~leaves_target_standing =
   match provider with
   | Sol_cli_provider.Aws ->

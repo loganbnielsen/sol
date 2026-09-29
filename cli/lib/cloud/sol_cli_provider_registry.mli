@@ -9,6 +9,17 @@ val destruction
   -> Sol_cli_destruction.context
   -> Sol_cli_destruction.t
 
+val observations
+  :  Sol_cli_provider.t
+  -> Sol_cli_config.target
+  -> cluster_name:string
+  -> Sol_cli_absence.observation list
+
+val resource_identity
+  :  Sol_cli_provider.t
+  -> cluster_name:string
+  -> Sol_cli_resource_identity.entry list
+
 val credentials
   :  Sol_cli_provider.t
   -> operation:string

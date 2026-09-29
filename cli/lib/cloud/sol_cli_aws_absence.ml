@@ -42,7 +42,8 @@ let run ~check =
      | found ->
        Present
          { resource_class = check.resource_class
-         ; identity = Printf.sprintf "%s: %s" check.identity (String.concat ", " found)
+         ; identity = check.identity
+         ; found
          ; attribution = check.attribution
          ; checked_with
          })

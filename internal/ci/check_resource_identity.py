@@ -7,9 +7,20 @@ NAME = "check_resource_identity"
 
 EXPECTED_TYPE_RULES = ["kubernetes_", "helm_", "terraform_data", "random_", "null_resource"]
 
-ENTRY = re.compile(r'entry\s+"(?P<address>[a-z0-9_]+\.[a-z0-9_]+)"\s+(?P<ownership>[A-Za-z_]+)')
+ENTRY = re.compile(
+    r'entry\s+"(?P<address>[a-z0-9_]+\.[a-z0-9_]+)"\s+\(?(?P<ownership>[A-Za-z_]+)'
+)
 IMPORT = re.compile(r'~import_identity:\s*(?P<value>"[^"]*"|[^\n;]*)')
+CLASS = re.compile(r'~resource_class:\s*(?P<value>"[^"]*")')
+OBSERVED = re.compile(r'~observed_as:\s*(?P<value>"[^"]*"|[^\n;]*)')
 TYPE_RULE = re.compile(r'terraform_type\s*=\s*"(?P<value>[^"]*)"')
+CLASS_RULE = re.compile(r'resource_class\s*=\s*"(?P<value>[^"]*)"\s*;\s*ownership')
+CLASS_NAMES = re.compile(r'class_names\s*=\s*\[(?P<body>[^\]]*)\]', re.S)
+CLASS_NAME = re.compile(r'"(?P<value>[^"]+)"')
+
+
+def unquote(value):
+    return value.strip().strip('"') if value else ""
 
 
 def registry(path):
@@ -20,21 +31,36 @@ def registry(path):
         following = window.find("; entry")
         if following != -1:
             window = window[:following]
-        window = window[:400]
+        window = window[:600]
         import_match = IMPORT.search(window)
+        class_match = CLASS.search(window)
+        observed_match = OBSERVED.search(window)
         entries[match.group("address")] = {
             "ownership": match.group("ownership").lower(),
-            "import_identity": (import_match.group("value").strip().strip('"') if import_match else ""),
+            "import_identity": unquote(import_match.group("value")) if import_match else "",
+            "resource_class": unquote(class_match.group("value")) if class_match else "",
+            "observed_as": unquote(observed_match.group("value")) if observed_match else "",
         }
     type_rules = [m.group("value") for m in TYPE_RULE.finditer(text)]
-    return entries, type_rules
+    class_rules = [m.group("value") for m in CLASS_RULE.finditer(text)]
+    return text, entries, type_rules, class_rules
+
+
+def inventory_classes(path):
+    text = path.read_text() if path.exists() else ""
+    match = CLASS_NAMES.search(text)
+    if not match:
+        return []
+    return [m.group("value") for m in CLASS_NAME.finditer(match.group("body"))]
 
 
 def root_addresses(root):
     found = []
     for tf in sorted(root.glob("*.tf")):
         text = tf.read_text()
-        for match in re.finditer(r'^resource\s+"(?P<type>[a-z0-9_]+)"\s+"(?P<name>[a-z0-9_]+)"', text, re.M):
+        for match in re.finditer(
+            r'^resource\s+"(?P<type>[a-z0-9_]+)"\s+"(?P<name>[a-z0-9_]+)"', text, re.M
+        ):
             found.append(f'{match.group("type")}.{match.group("name")}')
     return found
 
@@ -42,7 +68,7 @@ def root_addresses(root):
 def main(argv):
     root = Path(argv[1]) if len(argv) > 1 else Path(".")
     registry_path = root / "cli/lib/cloud/sol_cli_resource_identity.ml"
-    entries, type_rules = registry(registry_path)
+    text, entries, type_rules, class_rules = registry(registry_path)
     problems = []
     if not entries:
         problems.append(f"the identity registry could not be read at {registry_path}")
@@ -51,59 +77,85 @@ def main(argv):
             "the registry must carry the class-level rules for Terraform-internal and in-cluster "
             f"families: expected {EXPECTED_TYPE_RULES}, read {type_rules}"
         )
+
+    declared = {}
     checked = 0
-    for provider in ("gcp", "aws"):
-        roots = [
-            root / f"platform/cloud/{provider}/cluster",
-            root / "platform/cloud/modules/platform",
-        ]
-        for tf_root in roots:
-            if not tf_root.exists():
-                continue
-            for address in root_addresses(tf_root):
-                checked += 1
-                terraform_type = address.split(".")[0]
-                entry = entries.get(address)
-                if entry is None:
-                    covered = [rule for rule in type_rules if terraform_type.startswith(rule)]
-                    if covered:
-                        continue
-                    problems.append(
-                        f"{tf_root} declares {address}, which the identity registry does not "
-                        "account for: every directly Terraform-managed resource must declare how it "
-                        "is rediscovered at the provider (an entry in sol_cli_resource_identity.ml) "
-                        "or fall under a class-level ownership rule (FND-0070)"
-                    )
-                    continue
-                if entry["ownership"] == "direct" and entry["import_identity"] == "":
-                    problems.append(
-                        f"the registry entry for {address} is Direct, so it must carry an "
-                        "~import_identity: the provider identity Sol would import to restore "
-                        "Terraform ownership of an unadopted resource (FND-0070)"
-                    )
-    declared = set()
     for provider in ("gcp", "aws"):
         for tf_root in (
             root / f"platform/cloud/{provider}/cluster",
             root / "platform/cloud/modules/platform",
         ):
             if tf_root.exists():
-                declared.update(root_addresses(tf_root))
-    for address in sorted(entries):
-        if address not in declared:
+                declared.setdefault(provider, set()).update(root_addresses(tf_root))
+
+    for provider, addresses in sorted(declared.items()):
+        for address in sorted(addresses):
+            checked += 1
+            terraform_type = address.split(".")[0]
+            entry = entries.get(address)
+            if entry is None:
+                if any(terraform_type.startswith(rule) for rule in type_rules):
+                    continue
+                problems.append(
+                    f"{provider}: {address} is declared by a root but the identity registry does "
+                    "not account for it: every directly Terraform-managed resource must declare "
+                    "how it is rediscovered at the provider, or fall under a class-level "
+                    "ownership rule (FND-0070)"
+                )
+                continue
+            if entry["ownership"] == "direct":
+                if entry["import_identity"] == "":
+                    problems.append(
+                        f"the registry entry for {address} is Direct, so it must carry an "
+                        "~import_identity: the provider identity Sol would import to restore "
+                        "Terraform ownership of an unadopted resource (FND-0070)"
+                    )
+                if entry["observed_as"] == "":
+                    problems.append(
+                        f"the registry entry for {address} is Direct, so it must carry an "
+                        "~observed_as: the provider name the independent inventory reports, "
+                        "which is how a found resource is mapped back to this address (FND-0070)"
+                    )
+
+    for provider, addresses in sorted(declared.items()):
+        for address in sorted(entries):
+            if address not in addresses and address not in {
+                a for other in declared.values() for a in other
+            }:
+                problems.append(
+                    f"the identity registry names {address}, which no provider root or the shared "
+                    "platform module declares: a stale entry passes off a resource Sol does not "
+                    "have (FND-0070)"
+                )
+
+    owners = set(entry["resource_class"] for entry in entries.values() if entry["resource_class"])
+    owners.update(class_rules)
+    descendants = set()
+    match = re.search(r"let descendants ~cluster_name =\s*\[(?P<body>.*?)\n\s*\]\s*;;", text, re.S)
+    if match:
+        descendants.update(
+            m.group(1) for m in re.finditer(r'resource_class = "([^"]+)"', match.group("body"))
+        )
+    for provider in ("gcp", "aws"):
+        path = root / f"cli/lib/cloud/sol_cli_{provider}_absence.ml"
+        for resource_class in inventory_classes(path):
+            if resource_class in owners or resource_class in descendants:
+                continue
             problems.append(
-                f"the identity registry names {address}, which no provider root or the shared "
-                "platform module declares: a stale entry passes off a resource Sol does not have "
+                f"the {provider} inventory reports the class {resource_class!r}, which no "
+                "registry entry, class rule or descendant rule accounts for: a class the verifier "
+                "can report PRESENT must also say how it would be recovered, or that it cannot be "
                 "(FND-0070)"
             )
+
     if problems:
         for problem in problems:
             print(f"{NAME}: {problem}", file=sys.stderr)
         return 1
     print(
-        f"{NAME}: {checked} terraform resource(s) across the provider cluster roots and the shared "
-        "platform module all carry an ownership kind, and every directly managed one an import "
-        "identity"
+        f"{NAME}: {checked} declared terraform resource(s) carry an ownership kind, every Direct "
+        "one an import identity and the provider name the inventory reports, no stale entry, and "
+        f"every class both inventories verify has a recovery story ({len(owners)} classes)"
     )
     return 0
 
