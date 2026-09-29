@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Targeted scoped-release identity audit (2026-09-29)
+
+- Audited synced `origin/main` `50672938` and filed BUG-092: a scoped deploy renders the selected plan ID but records the complete boundary ID as the workload's provenance, while deployment events still point at the plan ID. Live verification and commit-based rollback cannot resolve the resulting release consistently. Source trace and limits are in `internal/pipeline/audits/2026-09-29_scoped_release_identity_audit.md`. No implementation was made.
+- Open cloud-inventory implementation PRs #727 and #729–731 were reconciled and not duplicated. BUG-087–091 remain tracked separately.
+
 ## Targeted job-queue isolation audit (2026-09-29)
 
 - Audited synced `origin/main` `81b15e53` and filed BUG-091: `sol-jobs` uses one fixed table and routes only by kind, so two workspaces sharing Postgres can claim each other's jobs. Source/SQL trace and verification limits are in `internal/pipeline/audits/2026-09-29_jobs_workspace_isolation_audit.md`. No implementation was made.
