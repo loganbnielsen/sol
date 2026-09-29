@@ -209,3 +209,14 @@ from control-plane HTTP query parameters — named a function and a module
 (`sun_cli_control_plane.ml`) that no longer exist: the control-plane API surface it
 belonged to is not in this repository. It is deleted rather than re-pointed at
 whatever module looks closest today, because there is no current call site to fix.
+
+### The `*-eio` facades (2026-09-29)
+
+`kafka-eio`'s `Kafka` and `aws-eio`'s `Aws` mirrored the interfaces of the modules
+they re-exported, which read as duplication (REFAC-158). It was not: the mirrored
+modules were `private_modules`, so the copies were the only way to keep the
+installed `.cmi` self-contained, and replacing them with `module type of` — which
+gives every datatype a fresh type — broke `Aws.Error.t`'s identity with
+`Aws_error.t`. Both packages now install their modules and alias them from the
+facade, which removes the copies without either hazard. The reasoning is recorded
+on REFAC-158 and in each package's `CHANGES.md`.

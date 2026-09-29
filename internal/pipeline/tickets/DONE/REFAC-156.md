@@ -78,3 +78,31 @@ In `aws-eio`, in one PR:
 - The signature in `aws-eio/lib/aws.mli` and the README match the `.mli`.
 - Demo/example: not applicable (a support library's internal API; its
   app-facing surface is unchanged). Language parity: no impact.
+
+## Completion (2026-09-29)
+
+`signed_request` now takes one credential set and one request value:
+
+```ocaml
+val signed_request
+  :  ?max_retries:int
+  -> ?timeout:float
+  -> ?scheme:[ `Http | `Https ]
+  -> net:_ Eio.Net.t
+  -> clock:_ Eio.Time.clock
+  -> credentials:Aws_signing_credentials.t
+  -> region:string
+  -> service:string
+  -> request:request
+  -> unit
+  -> (int * (string * string) list * string, Aws_error.t) result
+```
+
+with `type request = { meth; host; port; path; query; extra_headers; payload_hash; body }`.
+
+- **`normalize_path` is gone as an argument.** S3 — and S3-compatible endpoints, which use the same service name — signs the path as written and every other service signs the normalized form, derived where the service is known: `not (String.equal service "s3")`. It was a flag whose meaning is a property of the service, and all three call sites passed the value the rule implies. New test `test_path_signing_follows_the_service` signs `/a/../b` for `s3` and for `dynamodb`, asserts S3's request line keeps the dot segment and that the two `Authorization` headers differ; flipping the derivation fails it (mutation-checked).
+- **Two premises in this ticket were wrong and are corrected here.** `Aws_credentials.t` is the *source/region* configuration, not a credential set — `resolved` is. And `Aws_http` cannot name either: `Aws_credentials` already depends on `Aws_http` for its STS and IMDS calls, so referencing it is a module cycle the compiler rejects. The values a signature needs therefore live in `Aws_signing_credentials`, which `Aws_credentials.resolved` is an equation to, so callers' construction and field access are unchanged.
+- Call sites updated: `s3_client.ml`, `dynamodb_client.ml`, `test_aws_live.ml`, `test_aws_http.ml`. The service name decides path signing, so S3's as-written and DynamoDB's normalized behaviour are preserved.
+- Consumers pinned here: aws-eio `2a22706e`, s3-eio `81aa867f`, dynamodb-eio `3d57fb8f`.
+- Demo/example: not applicable — package-internal API shape, and no example calls `signed_request`. Language parity: no impact (the TypeScript runtime has its own AWS client and does not consume `Aws.Http`).
+- Verified: aws-eio's suite (38 SigV4 conformance + 16 HTTP + 14 credentials + the live-gated case) and both consumer suites (s3 6+2+2, dynamodb 14+7+4); sol's `framework/` and `cli/` build at the bumped pins.
