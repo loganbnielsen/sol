@@ -164,8 +164,7 @@ let reconcile_ownership_at
              | Sol_cli_ownership_reconciliation.Unmapped _ -> true
              | Sol_cli_ownership_reconciliation.Recover _
              | Sol_cli_ownership_reconciliation.Already_owned _
-             | Sol_cli_ownership_reconciliation.By_contract _
-             | Sol_cli_ownership_reconciliation.Owned_through _ -> false)
+             | Sol_cli_ownership_reconciliation.By_contract _ -> false)
            reconciliation.dispositions
        in
        if refused <> []
@@ -365,7 +364,17 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let* () =
     if action = Apply
-    then reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
+    then
+      let* () =
+        Sol_cli_cloud_wiring.init_result
+          ~assets
+          run_log
+          ~provider
+          ~role:Sol_cli_platform_assets.Cluster
+          cloud_backend
+        |> Sol_cli_exit.of_msg
+      in
+      reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
     else Ok ()
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
@@ -549,8 +558,7 @@ let cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain () =
       | Sol_cli_ownership_reconciliation.Cannot_recover _
       | Sol_cli_ownership_reconciliation.Unmapped _ -> true
       | Sol_cli_ownership_reconciliation.Already_owned _
-      | Sol_cli_ownership_reconciliation.By_contract _
-      | Sol_cli_ownership_reconciliation.Owned_through _ -> false)
+      | Sol_cli_ownership_reconciliation.By_contract _ -> false)
   in
   if outstanding = []
   then Ok ()

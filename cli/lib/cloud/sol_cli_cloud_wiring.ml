@@ -292,8 +292,6 @@ let reconcile_ownership
   let dispositions =
     Sol_cli_ownership_reconciliation.dispositions
       ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
-      ~class_rules:Sol_cli_resource_identity.class_rules
-      ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name)
       ~state_addresses:(Sol_cli_cloud_destroy.addresses state)
       observations
   in
