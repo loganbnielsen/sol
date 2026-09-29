@@ -124,8 +124,17 @@ let copy_file ~src ~dst ~perm =
      | exception Unix.Unix_error (e, _, _) -> unix_error dst e)
 ;;
 
+let copy_symlink ~src ~dst =
+  match Unix.readlink src with
+  | target ->
+    (match Unix.symlink target dst with
+     | () -> Ok ()
+     | exception Unix.Unix_error (e, _, _) -> unix_error dst e)
+  | exception Unix.Unix_error (e, _, _) -> unix_error src e
+;;
+
 let rec copy_tree ~exclude ~src ~dst =
-  match Unix.stat src with
+  match Unix.lstat src with
   | exception Unix.Unix_error (e, _, _) -> unix_error src e
   | { Unix.st_kind = Unix.S_DIR; st_perm; _ } ->
     let* () =
@@ -144,5 +153,6 @@ let rec copy_tree ~exclude ~src ~dst =
       copy_tree ~exclude ~src:(Filename.concat src entry) ~dst:(Filename.concat dst entry))
     |> Result.map ignore
   | { Unix.st_kind = Unix.S_REG; st_perm; _ } -> copy_file ~src ~dst ~perm:st_perm
+  | { Unix.st_kind = Unix.S_LNK; _ } -> copy_symlink ~src ~dst
   | _ -> Ok ()
 ;;

@@ -86,6 +86,12 @@ The build context is the workspace root -- this directory, the one holding
 docker build -f app/payments/charge_svc/Dockerfile -t charge-svc .
 ```
 
+`sol up` copies this root into a temporary build context first (excluding
+`_build/` and `.git/`, as `.dockerignore` does). Symlinks are copied as
+symlinks, exactly as Docker itself treats them: a link is never followed, so a
+link that points outside the workspace stays a link rather than importing the
+external file's contents into the context.
+
 ## Project layout
 
 ```
