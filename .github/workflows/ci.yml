@@ -201,11 +201,53 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client
 
+      # The unit step's own coverage invariant: every framework package with a
+      # unit suite is listed there. Reads ci.yml as YAML and the dune files as
+      # stanzas, so reformatting either cannot change the verdict.
+      - name: Framework CI coverage
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/check_framework_ci_coverage.py
+
+      - name: Framework CI coverage mutation test
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: bash internal/ci/test_framework_ci_coverage.sh
+
       - name: Unit tests (no broker/Postgres/Loki required)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
-        # framework/ocaml/kafka-eio-service/ excluded: its test/dune also builds a
-        # broker-requiring integration suite (see run_tests.sh's run_kafka()).
-        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
+        # Every framework package is here. kafka-eio-service's broker-requiring
+        # suite is an executable behind the runtest-integration alias, so this
+        # step compiles and runs only its unit suite; the alias and sol-jobs'
+        # Postgres case run in the integration step below.
+        # internal/ci/check_framework_ci_coverage.py holds both facts.
+        run: opam exec -- dune test framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-jobs/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
+
+      # The other half of the same invariant: a framework suite that needs
+      # infrastructure still has to run on the PR gate, not only in
+      # run_tests.sh. The two things the framework packages ask for are a
+      # Kafka-compatible broker with a schema registry and admin API, and
+      # Postgres -- both containers are started the same way the developer loop
+      # starts them. Redpanda serves all three endpoints from one container
+      # (9092/8081/9644). The broker step is `start-redpanda.sh`, not
+      # `ensure-broker.sh`: the latter also creates the demo topics with a host
+      # `rpk`, which a clean runner does not have, and these suites register
+      # their own topics through the schema registry. sol-jobs' Postgres case
+      # skips itself when POSTGRES_URL is unset, which is why the variable is
+      # part of this step rather than the suite being excluded from it.
+      # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
+      - name: Framework integration tests (broker and database backed)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        timeout-minutes: 20
+        env:
+          KAFKA_SECURITY_PROTOCOL: plaintext
+          KAFKA_BROKERS: localhost:9092
+          SCHEMA_REGISTRY_URL: http://localhost:8081
+          REDPANDA_ADMIN_URL: http://localhost:9644
+          POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
+        run: |
+          bash platform/local/scripts/start-redpanda.sh
+          bash platform/local/scripts/ensure-postgres.sh
+          opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
+          opam exec -- dune test framework/ocaml/sol-jobs/
 
       # INFRA-006: formatting check runs after unit tests on purpose — running
       # `dune fmt --preview` first populates _build/default/framework, which

@@ -7,7 +7,7 @@
  (modules test_kafka_service)
  (libraries kafka_eio_service kafka-eio alcotest yojson uri unix))
 
-(test
+(executable
  (name test_kafka_service_integration)
  (modules test_kafka_service_integration)
  (libraries
@@ -17,3 +17,8 @@
   alcotest
   eio_main
   unix))
+
+(rule
+ (alias runtest-integration)
+ (action
+  (run ./test_kafka_service_integration.exe)))
