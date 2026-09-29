@@ -26,6 +26,8 @@ val init
   -> string list
   -> (unit, Sol_cli_cloud_apply.failure) result
 
+val substrate_only_vars : string list
+
 val credentials_result
   :  provider:Sol_cli_provider.t
   -> operation:string

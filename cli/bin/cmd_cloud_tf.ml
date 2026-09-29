@@ -442,7 +442,7 @@ let cloud_recover ~target ~var_file ~vars ~action () =
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-recover" () in
   let* config_vars, target_cfg = target_vars ~strict:true target in
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
-  let vars = config_vars @ vars in
+  let vars = config_vars @ vars @ Sol_cli_cloud_wiring.substrate_only_vars in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
   let* () =
     Sol_cli_cloud_wiring.credentials_result
@@ -554,7 +554,20 @@ let cloud_recover ~target ~var_file ~vars ~action () =
        Error (Sol_cli_exit.reported ~code:1 ())
      | Ok count ->
        Printf.printf "\n%d resource(s) brought back under Terraform ownership.\n%!" count;
-       let outstanding = Sol_cli_ownership_recovery.outstanding dispositions in
+       let imported =
+         List.map (fun (c : Sol_cli_ownership_recovery.candidate) -> c.address) candidates
+       in
+       let outstanding =
+         Sol_cli_ownership_recovery.outstanding dispositions
+         |> List.filter (function
+           | Sol_cli_ownership_recovery.Recover candidate ->
+             not (List.mem candidate.address imported)
+           | Sol_cli_ownership_recovery.Cannot_recover _
+           | Sol_cli_ownership_recovery.Unmapped _ -> true
+           | Sol_cli_ownership_recovery.Already_owned _
+           | Sol_cli_ownership_recovery.By_contract _
+           | Sol_cli_ownership_recovery.Owned_through _ -> false)
+       in
        if outstanding = []
        then Ok ()
        else (
