@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Targeted job-queue isolation audit (2026-09-29)
+
+- Audited synced `origin/main` `81b15e53` and filed BUG-091: `sol-jobs` uses one fixed table and routes only by kind, so two workspaces sharing Postgres can claim each other's jobs. Source/SQL trace and verification limits are in `internal/pipeline/audits/2026-09-29_jobs_workspace_isolation_audit.md`. No implementation was made.
+- PR #726 merged with green CI; BUG-088–090 remain actionable, and this audit adds only the independent workspace-isolation finding.
+
 ## Targeted scoped-deployment audit (2026-09-29)
 
 - Audited synced `origin/main` `2485a3af` and filed BUG-088–090: scoped deploys lose workspace-wide consumer-group tracking; scoped callee deploys drop cross-domain ingress from NetworkPolicy; rollback leaves the consumer-group guard at the prior release. Source traces, sequences, and limits are in `internal/pipeline/audits/2026-09-29_scoped_deploy_contract_audit.md`. No implementation was made.
