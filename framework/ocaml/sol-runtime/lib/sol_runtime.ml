@@ -22,21 +22,30 @@ let rec update f =
   if not (Atomic.compare_and_set registered old (f old)) then update f
 ;;
 
+let registration_mutex = Mutex.create ()
+
+let with_registration_lock f =
+  Mutex.lock registration_mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock registration_mutex) f
+;;
+
 let register w =
-  if Atomic.get registered = []
-  then (
-    Atomic.set signalled false;
-    previous := List.map (fun s -> s, Sys.signal s (Sys.Signal_handle handle)) signals);
-  update (fun ws -> w :: ws)
+  with_registration_lock (fun () ->
+    if Atomic.get registered = []
+    then (
+      Atomic.set signalled false;
+      previous := List.map (fun s -> s, Sys.signal s (Sys.Signal_handle handle)) signals);
+    update (fun ws -> w :: ws))
 ;;
 
 let unregister w =
-  update (List.filter (fun w' -> w' <> w));
-  if Atomic.get registered = []
-  then (
-    List.iter (fun (s, behavior) -> Sys.set_signal s behavior) !previous;
-    previous := [];
-    Atomic.set signalled false)
+  with_registration_lock (fun () ->
+    update (List.filter (fun w' -> w' <> w));
+    if Atomic.get registered = []
+    then (
+      List.iter (fun (s, behavior) -> Sys.set_signal s behavior) !previous;
+      previous := [];
+      Atomic.set signalled false))
 ;;
 
 let close_noerr fd =
