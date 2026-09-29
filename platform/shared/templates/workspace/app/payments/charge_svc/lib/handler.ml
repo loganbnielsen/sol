@@ -22,10 +22,13 @@ let required_int json name =
 
 let decode_charge json =
   let open Result.Syntax in
-  let* customer_id = required_string json "customer_id" in
-  let* amount_cents = required_int json "amount_cents" in
-  let* currency = required_string json "currency" in
-  Ok { customer_id; amount_cents; currency }
+  match json with
+  | `Assoc _ ->
+      let* customer_id = required_string json "customer_id" in
+      let* amount_cents = required_int json "amount_cents" in
+      let* currency = required_string json "currency" in
+      Ok { customer_id; amount_cents; currency }
+  | _ -> Error "request body must be a JSON object"
 
 let decode_charge_body body =
   let parsed =
