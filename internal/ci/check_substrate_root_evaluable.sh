@@ -63,6 +63,12 @@ if [ "$on" != "true" ]; then
   fail=1
 fi
 
+relinquish="$(ask local.needs_kubernetes -var=in_cluster_layer=true -var=provisioner_bootstrap_admin=false | tr -d '[:space:]')"
+if [ "$relinquish" != "true" ]; then
+  echo "check_substrate_root_evaluable: with the layer on and the binding closed, needs_kubernetes read '$relinquish' (expected true: the apply that removes the binding deletes it through this provider)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

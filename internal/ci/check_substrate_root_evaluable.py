@@ -103,12 +103,12 @@ def main(argv):
                 "in-cluster layer is off"
             )
 
-    if re.search(r"^\s*needs_kubernetes\s*=\s*var\.in_cluster_layer\s*&&\s*"
-                 r"var\.provisioner_bootstrap_admin\s*$", text, re.M) is None:
+    if re.search(r"^\s*needs_kubernetes\s*=\s*var\.in_cluster_layer\s*$", text, re.M) is None:
         problems.append(
-            "local.needs_kubernetes must be var.in_cluster_layer && var.provisioner_bootstrap_admin: "
-            "the layer is an operation-scoped input and the binding is a phase-scoped one, and "
-            "both must be on for the provider to be configured"
+            "local.needs_kubernetes must be var.in_cluster_layer: the layer is the operation-scoped "
+            "input, and the provider must be configured whenever the in-cluster graph is part of "
+            "the operation -- including the apply that *removes* the bootstrap binding, which is "
+            "a delete through that provider and fails against an empty host (FND-0070)"
         )
 
     if re.search(r'^variable\s+"in_cluster_layer"', text, re.M) is None:

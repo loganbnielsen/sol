@@ -54,10 +54,10 @@ def main():
     mutate(
         tmp,
         "platform/cloud/gcp/cluster/main.tf",
-        "needs_kubernetes = var.in_cluster_layer && var.provisioner_bootstrap_admin",
+        "needs_kubernetes = var.in_cluster_layer",
         "needs_kubernetes = var.provisioner_bootstrap_admin",
     )
-    cases.append(("the operation gate dropped from needs_kubernetes", tmp, "substrate"))
+    cases.append(("the provider switched off with the binding instead of the layer", tmp, "substrate"))
 
     tmp = scratch()
     mutate(

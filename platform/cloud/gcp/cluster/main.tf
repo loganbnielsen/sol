@@ -221,7 +221,7 @@ resource "google_service_networking_connection" "sql" {
 }
 
 locals {
-  needs_kubernetes = var.in_cluster_layer && var.provisioner_bootstrap_admin
+  needs_kubernetes = var.in_cluster_layer
 }
 
 data "google_client_config" "default" {}
