@@ -82,6 +82,24 @@ than excluding the package that contains them:
   plus `internal/ci/test_framework_ci_coverage.sh` (four expectations: missing
   package fails and is named, covered tree passes, integration-only package is
   not required, committed tree passes) and their two CI steps.
+- **The infrastructure-backed half, added in the same PR.** Moving the suite out
+  of `dune test` is only half the fix: it also has to run somewhere on the PR
+  gate, and until now it ran only in `run_tests.sh`. The `test` job now starts
+  Redpanda (`platform/local/scripts/ensure-broker.sh` — one container serving
+  Kafka 9092, schema registry 8081 and the admin API 9644) and Postgres
+  (`ensure-postgres.sh`) and runs both suites that need them: the
+  `runtest-integration` alias (15 tests) and `framework/ocaml/sol-jobs/`, whose
+  Postgres case now *runs* instead of skipping — 8 tests that the PR gate had
+  never executed. Both scripts are the ones `sol local infra up` uses, so CI and
+  the developer loop cannot drift. Verified locally by running the step's exact
+  commands against the local containers: `dune build
+  @framework/ocaml/kafka-eio-service/test/runtest-integration` and
+  `dune test framework/ocaml/sol-jobs/` with the step's environment.
+- **The guard covers both directions.** `check_framework_ci_coverage.py` now also
+  fails when a `runtest-integration` alias under `framework/` is built by no CI
+  step — the mirror invariant, since a suite moved to an alias to leave `dune
+  test` must not leave the gate — and `test_framework_ci_coverage.sh` gained the
+  matching expectation (an unbuilt alias fails and is named).
 - **Validation.** `dune build`, `dune test framework/ocaml/kafka-eio-service/
   framework/ocaml/sol-jobs/` (41 + 11 tests, no broker needed), the integration
   alias against the local Redpanda (17 tests), `check_no_comments.sh`,

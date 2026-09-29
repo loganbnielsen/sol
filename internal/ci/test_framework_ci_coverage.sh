@@ -79,8 +79,17 @@ cat > "$WORK/framework/ocaml/beta/test/dune" <<'DUNE'
 DUNE
 workflow "framework/ocaml/alpha/"
 run_guard
+[ "$RC" != 0 ] || fail "an integration alias no step builds was accepted: $OUT"
+case "$OUT" in
+  *"framework/ocaml/beta"*) ;;
+  *) fail "the failure did not name the unbuilt alias (got: $OUT)" ;;
+esac
+ok "a runtest-integration alias outside every CI step fails the guard, and is named"
+
+workflow "framework/ocaml/alpha/ @framework/ocaml/beta/test/runtest-integration"
+run_guard
 [ "$RC" = 0 ] || fail "a package whose suite needs infrastructure was still required: $OUT"
-ok "a package with no unit suite (integration-only) is not required"
+ok "a package with no unit suite (integration-only) is not required once its alias is built"
 
 rm -rf "$WORK/framework/ocaml/beta"
 workflow "framework/ocaml/alpha/"
