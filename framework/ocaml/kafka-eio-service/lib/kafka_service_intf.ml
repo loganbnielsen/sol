@@ -67,21 +67,13 @@ type decode_error_policy =
   | Ack_and_drop
 
 type consumer_hooks =
-  { on_ready : unit -> unit
-  ; on_assigned : unit -> unit
-  ; on_revoked : unit -> unit
-  ; on_poll : unit -> unit
-  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  { kafka : Kafka.Consumer.hooks
   ; on_relay_publish :
       partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
   }
 
 let no_hooks =
-  { on_ready = ignore
-  ; on_assigned = ignore
-  ; on_revoked = ignore
-  ; on_poll = ignore
-  ; on_retry = (fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+  { kafka = Kafka.Consumer.default_hooks
   ; on_relay_publish = (fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
   }
 ;;

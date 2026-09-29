@@ -306,11 +306,7 @@ type retry_strategy =
   | Retry_topics of Kafka.Consumer.retry_policy
 
 type consumer_hooks = Kafka_service_intf.consumer_hooks =
-  { on_ready : unit -> unit
-  ; on_assigned : unit -> unit
-  ; on_revoked : unit -> unit
-  ; on_poll : unit -> unit
-  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  { kafka : Kafka.Consumer.hooks
   ; on_relay_publish :
       partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
   }
@@ -331,7 +327,7 @@ let consume
       ~handler
       ()
   =
-  let { on_ready; on_assigned; on_revoked; on_poll; _ } = hooks in
+  let ({ kafka = kafka_hooks; _ } : Kafka_service_intf.consumer_hooks) = hooks in
   let on_decode_error =
     Kafka_service_intf.wrap_on_decode_error
       ~ot
@@ -349,22 +345,15 @@ let consume
     }
   in
   let open Result.Syntax in
-  let* consumer =
-    Kafka.Consumer.create
-      ~on_ready
-      ~on_assigned
-      ~on_revoked
-      ~on_poll
-      ~clock
-      consumer_cfg
-      ~sw
-  in
+  let* consumer = Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw in
   let decode_and_handle raw_msg ~ack =
     match Kafka_service_schema.decode_message topic raw_msg with
     | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
     | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
   in
-  let result = Kafka.Consumer.consume consumer ?stop ~handler:decode_and_handle () in
+  let result =
+    Kafka.Consumer.consume consumer ~hooks:kafka_hooks ?stop ~handler:decode_and_handle ()
+  in
   Kafka.Consumer.close consumer;
   result
 ;;
@@ -384,7 +373,7 @@ let consume_partitioned
       ~handler
       ()
   =
-  let { on_ready; on_assigned; on_revoked; on_poll; on_retry; _ } = hooks in
+  let ({ kafka = kafka_hooks; _ } : Kafka_service_intf.consumer_hooks) = hooks in
   let observe_decode_error =
     Kafka_service_intf.observe_decode_error
       ~ot
@@ -412,16 +401,7 @@ let consume_partitioned
       ; properties = []
       }
     in
-    (match
-       Kafka.Consumer.create
-         ~on_ready
-         ~on_assigned
-         ~on_revoked
-         ~on_poll
-         ~clock
-         consumer_cfg
-         ~sw
-     with
+    (match Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw with
      | Error e -> Error (Consumer_error e)
      | Ok consumer ->
        let decode_and_handle raw_msg ~ack =
@@ -440,7 +420,7 @@ let consume_partitioned
            ~sw
            ~clock
            ~retry
-           ~on_retry
+           ~hooks:kafka_hooks
            ~handler:(fun raw_msg ~ack ->
              match decode_and_handle raw_msg ~ack with
              | Kafka.Consumer.Continue -> Kafka.Consumer.Continue

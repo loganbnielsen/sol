@@ -337,7 +337,9 @@ let prepare_topics
 ;;
 
 let publish_relay (svc : Kafka_service_intf.t) ~clock (runtime : _ runtime) =
-  let { Kafka_service_intf.on_retry; on_relay_publish; _ } = runtime.hooks in
+  let { Kafka_service_intf.on_relay_publish; kafka = { Kafka.Consumer.on_retry; _ } } =
+    runtime.hooks
+  in
   let publish ~target_topic (msg : relay) =
     let partition = msg.source.Kafka.Consumer.partition in
     on_retry ~partition ~attempt:msg.attempt ~delay_s:msg.delay_s;
@@ -396,7 +398,7 @@ let run_consumers
   let open Result.Syntax in
   let { group_id
       ; retry_policy
-      ; hooks = { Kafka_service_intf.on_ready; on_assigned; on_revoked; on_poll; _ }
+      ; hooks = { kafka = kafka_hooks; _ }
       ; decode_error_policy
       ; observe_decode_error
       ; handler
@@ -421,16 +423,7 @@ let run_consumers
     ref None
   in
   let relay_closed_source = ref false in
-  match
-    Kafka.Consumer.create
-      ~on_ready
-      ~on_assigned
-      ~on_revoked
-      ~on_poll
-      ~clock
-      consumer_cfg
-      ~sw
-  with
+  match Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw with
   | Error e -> Error (Kafka_service_intf.Consumer_error e)
   | Ok consumer ->
     let retry_consumer_cfg : Kafka.Consumer.config =
@@ -515,7 +508,10 @@ let run_consumers
                  ~sw
                  ~clock
                  ~retry:no_retry
-                 ~on_retry:(fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+                 ~hooks:
+                   { Kafka.Consumer.default_hooks with
+                     on_retry = (fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+                   }
                  ~handler:retry_handler
                  ()
              with
@@ -587,7 +583,10 @@ let run_consumers
         ~sw
         ~clock
         ~retry:no_retry
-        ~on_retry:(fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+        ~hooks:
+          { Kafka.Consumer.default_hooks with
+            on_retry = (fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+          }
         ~handler:decode_and_handle
         ()
       |> Result.map_error (function
