@@ -650,75 +650,78 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
   | _ -> Alcotest.fail "expected publish failure to be returned"
 ;;
 
+let hash12 s = String.sub (Digest.to_hex (Digest.string s)) 0 12
+
+let relay ~source ~group_id ~suffix =
+  Kafka_service.Retry_topics.relay_topic_name ~source ~group_id ~suffix
+;;
+
 let test_relay_topic_name_scopes_by_group () =
   Alcotest.(check string)
-    "canonical shape"
-    "orders.payments.retry"
-    (Kafka_service.Retry_topics.relay_topic_name
-       ~source:"orders"
-       ~group_id:"payments"
-       ~suffix:"retry");
+    "readable group prefix plus a collision-resistant hash"
+    ("orders.payments-" ^ hash12 "payments" ^ ".retry")
+    (relay ~source:"orders" ~group_id:"payments" ~suffix:"retry");
   Alcotest.(check bool)
     "two groups on the same source topic get distinct topic names"
     true
-    (String.equal
-       (Kafka_service.Retry_topics.relay_topic_name
-          ~source:"orders"
-          ~group_id:"payments"
-          ~suffix:"dlq")
-       (Kafka_service.Retry_topics.relay_topic_name
-          ~source:"orders"
-          ~group_id:"analytics"
-          ~suffix:"dlq")
-     |> not)
+    (not
+       (String.equal
+          (relay ~source:"orders" ~group_id:"payments" ~suffix:"dlq")
+          (relay ~source:"orders" ~group_id:"analytics" ~suffix:"dlq")))
 ;;
 
 let test_relay_topic_name_sanitizes_invalid_characters () =
   Alcotest.(check string)
     "dots and slashes become hyphens"
-    "orders.pay-ments-v1-eu-west-1.retry"
-    (Kafka_service.Retry_topics.relay_topic_name
-       ~source:"orders"
-       ~group_id:"pay.ments/v1_eu:west-1"
-       ~suffix:"retry")
+    ("orders.pay-ments-v1-eu-west-1-" ^ hash12 "pay.ments/v1_eu:west-1" ^ ".retry")
+    (relay ~source:"orders" ~group_id:"pay.ments/v1_eu:west-1" ~suffix:"retry")
+;;
+
+let test_relay_topic_name_distinguishes_punctuation_variants () =
+  let variants = [ "pay.ments"; "pay_ments"; "pay-ments" ] in
+  let names =
+    List.map (fun group_id -> relay ~source:"orders" ~group_id ~suffix:"retry") variants
+  in
+  Alcotest.(check int)
+    "every punctuation variant gets its own topic"
+    3
+    (List.length (List.sort_uniq String.compare names));
+  Alcotest.(check bool)
+    "each variant is deterministic (one topic per group)"
+    true
+    (List.for_all2
+       (fun group_id name ->
+          String.equal name (relay ~source:"orders" ~group_id ~suffix:"retry"))
+       variants
+       names);
+  Alcotest.(check bool)
+    "the readable prefix is retained"
+    true
+    (String.starts_with ~prefix:"orders.pay-ments-" (List.hd names))
 ;;
 
 let test_relay_topic_name_empty_group_id_is_unscoped () =
   Alcotest.(check string)
     "empty group id"
-    "orders.unscoped.retry"
-    (Kafka_service.Retry_topics.relay_topic_name
-       ~source:"orders"
-       ~group_id:""
-       ~suffix:"retry")
+    ("orders.unscoped-" ^ hash12 "" ^ ".retry")
+    (relay ~source:"orders" ~group_id:"" ~suffix:"retry")
 ;;
 
 let test_relay_topic_name_truncates_overlong_group_ids_deterministically () =
   let long_group = String.make 200 'g' in
-  let name1 =
-    Kafka_service.Retry_topics.relay_topic_name
-      ~source:"orders"
-      ~group_id:long_group
-      ~suffix:"retry"
-  in
-  let name2 =
-    Kafka_service.Retry_topics.relay_topic_name
-      ~source:"orders"
-      ~group_id:long_group
-      ~suffix:"retry"
-  in
+  let name1 = relay ~source:"orders" ~group_id:long_group ~suffix:"retry" in
+  let name2 = relay ~source:"orders" ~group_id:long_group ~suffix:"retry" in
   Alcotest.(check string) "deterministic for the same group id" name1 name2;
   Alcotest.(check bool)
     "stays well under Kafka's 249-byte limit"
     true
     (String.length name1 < 249);
+  Alcotest.(check bool)
+    "the group segment stays within the bound"
+    true
+    (String.length name1 <= String.length "orders" + 1 + 64 + 1 + 5);
   let other_long_group = String.make 200 'h' in
-  let name3 =
-    Kafka_service.Retry_topics.relay_topic_name
-      ~source:"orders"
-      ~group_id:other_long_group
-      ~suffix:"retry"
-  in
+  let name3 = relay ~source:"orders" ~group_id:other_long_group ~suffix:"retry" in
   Alcotest.(check bool)
     "two different overlong group ids never truncate to the same name"
     true
@@ -939,6 +942,10 @@ let () =
             "relay topic name sanitizes invalid characters"
             `Quick
             test_relay_topic_name_sanitizes_invalid_characters
+        ; test_case
+            "relay topic name isolates punctuation variants (BUG-080)"
+            `Quick
+            test_relay_topic_name_distinguishes_punctuation_variants
         ; test_case
             "relay topic name: empty group id is unscoped"
             `Quick
