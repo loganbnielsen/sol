@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Targeted scoped-deployment audit (2026-09-29)
+
+- Audited synced `origin/main` `2485a3af` and filed BUG-088–090: scoped deploys lose workspace-wide consumer-group tracking; scoped callee deploys drop cross-domain ingress from NetworkPolicy; rollback leaves the consumer-group guard at the prior release. Source traces, sequences, and limits are in `internal/pipeline/audits/2026-09-29_scoped_deploy_contract_audit.md`. No implementation was made.
+- PRs #720–725 were reconciled as merged; BUG-083–087 already exist and were not duplicated. The new tickets are ready for engineering, with no implementation in progress in this audit.
+
 ## Targeted release-boundary audit (2026-09-29)
 
 - Audited synced `origin/main` `4bde298f`. Filed BUG-087 for `sol up --scope` reading its retained release boundary before acquiring the workspace lease; a competing deploy or rollback can make the new current release stale. Evidence and limits are in `internal/pipeline/audits/2026-09-29_up_boundary_race_audit.md`. No implementation was made.
