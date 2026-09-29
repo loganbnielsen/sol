@@ -81,6 +81,104 @@ let test_validate_retry_policy_accepts_positive_and_negative () =
   Alcotest.(check bool) "negative (unlimited) max_attempts accepted" true (accepts (-1))
 ;;
 
+let test_validate_retry_policy_rejects_invalid_timings () =
+  let rejected policy =
+    match Sol_jobs.For_testing.validate_retry_policy policy with
+    | Error (`Config _) -> true
+    | Error (`Database _) | Ok () -> false
+  in
+  let base = Sol_jobs.default_retry_policy in
+  Alcotest.(check bool)
+    "negative base_delay_s"
+    true
+    (rejected { base with base_delay_s = -1.0 });
+  Alcotest.(check bool)
+    "nan base_delay_s"
+    true
+    (rejected { base with base_delay_s = Float.nan });
+  Alcotest.(check bool)
+    "infinite max_delay_s"
+    true
+    (rejected { base with max_delay_s = Float.infinity });
+  Alcotest.(check bool)
+    "negative max_delay_s"
+    true
+    (rejected { base with max_delay_s = -10.0 });
+  Alcotest.(check bool) "jitter above 1" true (rejected { base with jitter_ratio = 2.0 });
+  Alcotest.(check bool)
+    "negative jitter"
+    true
+    (rejected { base with jitter_ratio = -0.5 });
+  Alcotest.(check bool)
+    "nan jitter"
+    true
+    (rejected { base with jitter_ratio = Float.nan });
+  Alcotest.(check bool)
+    "zero retry delays accepted"
+    true
+    (not (rejected { base with base_delay_s = 0.0; max_delay_s = 0.0 }));
+  Alcotest.(check bool) "the default policy is accepted" true (not (rejected base))
+;;
+
+let test_validate_timing () =
+  let accepted ~poll ~lease =
+    match Sol_jobs.For_testing.validate_timing ~poll_interval_s:poll ~lease_s:lease with
+    | Ok () -> true
+    | Error _ -> false
+  in
+  Alcotest.(check bool) "defaults accepted" true (accepted ~poll:1.0 ~lease:300.0);
+  Alcotest.(check bool) "zero poll refused" false (accepted ~poll:0.0 ~lease:300.0);
+  Alcotest.(check bool) "negative poll refused" false (accepted ~poll:(-1.0) ~lease:300.0);
+  Alcotest.(check bool) "nan poll refused" false (accepted ~poll:Float.nan ~lease:300.0);
+  Alcotest.(check bool)
+    "infinite poll refused"
+    false
+    (accepted ~poll:Float.infinity ~lease:300.0);
+  Alcotest.(check bool) "zero lease refused" false (accepted ~poll:1.0 ~lease:0.0);
+  Alcotest.(check bool) "negative lease refused" false (accepted ~poll:1.0 ~lease:(-5.0));
+  Alcotest.(check bool) "nan lease refused" false (accepted ~poll:1.0 ~lease:Float.nan)
+;;
+
+let contains ~needle haystack =
+  let n = String.length needle
+  and m = String.length haystack in
+  let rec go i = i + n <= m && (String.sub haystack i n = needle || go (i + 1)) in
+  go 0
+;;
+
+module Email = struct
+  type t = string
+
+  let kind (_ : t) = "send_email"
+  let kinds = [ "send_email" ]
+  let encode t = t
+  let decode s = Ok s
+  let handle (_ : t) = Ok ()
+end
+
+module Emails = Sol_jobs.Make (Email)
+
+let test_invalid_timing_fails_before_database_or_signals () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  match
+    Pg_db.create_pool
+      ~url:"postgresql://127.0.0.1:1/unused"
+      ~sw
+      ~stdenv:(env :> Caqti_eio.stdenv)
+      ()
+  with
+  | Error e -> Alcotest.failf "pool: %s" (Pg_error.to_string e)
+  | Ok pool ->
+    (match Emails.run ~env ~pool ~lease_s:0.0 () with
+     | Error (`Config msg) ->
+       Alcotest.(check bool) "names lease_s" true (contains ~needle:"lease_s" msg)
+     | Error (`Database m) -> Alcotest.failf "expected a Config error, got Database: %s" m
+     | Ok () -> Alcotest.fail "an invalid lease must not start the poller")
+;;
+
 let () =
   let open Alcotest in
   run
@@ -111,6 +209,22 @@ let () =
             "accepts positive and negative max_attempts"
             `Quick
             test_validate_retry_policy_accepts_positive_and_negative
+        ; test_case
+            "rejects nonfinite or out-of-range timing (CODEX_STYLE_AUDIT-079)"
+            `Quick
+            test_validate_retry_policy_rejects_invalid_timings
+        ] )
+    ; ( "validate_timing"
+      , [ test_case
+            "accepts positive, refuses nonpositive or nonfinite (CODEX_STYLE_AUDIT-079)"
+            `Quick
+            test_validate_timing
+        ] )
+    ; ( "config boundary"
+      , [ test_case
+            "invalid timing is Config before the pool (CODEX_STYLE_AUDIT-079)"
+            `Quick
+            test_invalid_timing_fails_before_database_or_signals
         ] )
     ]
 ;;
