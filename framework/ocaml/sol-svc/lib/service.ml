@@ -48,12 +48,13 @@ let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
   if too_large_from_header
   then None
   else (
+    let probe_limit = if max_bytes >= max_int then max_bytes else max_bytes + 1 in
     match
-      let buf = Eio.Buf_read.of_flow body ~max_size:max_bytes in
+      let buf = Eio.Buf_read.of_flow body ~max_size:probe_limit in
       Eio.Buf_read.take_all buf
     with
     | exception Eio.Buf_read.Buffer_limit_exceeded -> None
-    | s -> Some s)
+    | s -> if String.length s > max_bytes then None else Some s)
 ;;
 
 open Result.Syntax
