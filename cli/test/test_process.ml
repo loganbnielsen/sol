@@ -97,6 +97,117 @@ let test_run_shell_nonzero () =
   | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
+let with_alarm seconds f =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit)) in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = seconds });
+  let outcome =
+    match f () with
+    | value -> Ok value
+    | exception Exit -> Error `Timed_out
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  outcome
+;;
+
+let fd_count () = Array.length (Sys.readdir "/proc/self/fd")
+
+let check_drained label runner =
+  match with_alarm 5.0 runner with
+  | Error `Timed_out -> Alcotest.fail (label ^ " stalled on a full stderr pipe")
+  | Ok (Ok ({ stdout; stderr } : Sol_cli_process.output)) ->
+    check_str (label ^ " stdout intact") "done" stdout;
+    check (label ^ " stderr drained") 262144 (String.length stderr)
+  | Ok (Error e) -> Alcotest.fail (label ^ ": " ^ Sol_cli_process.error_to_string e)
+;;
+
+let test_shell_drains_both_streams () =
+  check_drained "run_shell" (fun () ->
+    Sol_cli_process.run_shell "head -c 262144 /dev/zero >&2; echo done")
+;;
+
+let test_argv_drains_both_streams () =
+  check_drained "run" (fun () ->
+    Sol_cli_process.run
+      (Sol_cli_process.cmd [ "sh"; "-c"; "head -c 262144 /dev/zero >&2; echo done" ]))
+;;
+
+let test_deadline_covers_child_exit () =
+  let start = Unix.gettimeofday () in
+  let result =
+    Sol_cli_process.run
+      (Sol_cli_process.cmd ~timeout_s:0.05 [ "sh"; "-c"; "exec 1>&- 2>&-; sleep 0.5" ])
+  in
+  let elapsed = Unix.gettimeofday () -. start in
+  (match result with
+   | Error (Sol_cli_process.Timeout _) -> ()
+   | Error e ->
+     Alcotest.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
+   | Ok _ -> Alcotest.fail "expected Timeout once the child outlives its pipes");
+  check_bool "prompt timeout" true (elapsed < 0.4)
+;;
+
+let test_deadline_while_capturing () =
+  let start = Unix.gettimeofday () in
+  let result =
+    Sol_cli_process.run (Sol_cli_process.cmd ~timeout_s:0.05 [ "sh"; "-c"; "sleep 0.5" ])
+  in
+  let elapsed = Unix.gettimeofday () -. start in
+  (match result with
+   | Error (Sol_cli_process.Timeout _) -> ()
+   | Error e ->
+     Alcotest.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
+   | Ok _ -> Alcotest.fail "expected Timeout while the pipes stay open");
+  check_bool "prompt timeout" true (elapsed < 0.4)
+;;
+
+let test_deadline_preserves_short_commands () =
+  let r =
+    ok_result
+      (Sol_cli_process.run (Sol_cli_process.cmd ~timeout_s:5.0 [ "sh"; "-c"; "echo ok" ]))
+  in
+  check_str "stdout" "ok" r.stdout
+;;
+
+let test_handled_signal_completes_capture () =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> ())) in
+  let before = fd_count () in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0.05 });
+  let result =
+    Sol_cli_process.run (Sol_cli_process.cmd [ "sh"; "-c"; "sleep 0.2; echo done" ])
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  (match result with
+   | Ok { stdout; _ } -> check_str "completed despite a handled signal" "done" stdout
+   | Error e ->
+     Alcotest.fail
+       ("handled signal aborted the command: " ^ Sol_cli_process.error_to_string e));
+  check "no descriptor leak" before (fd_count ())
+;;
+
+let test_interrupted_capture_cleans_up () =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit)) in
+  let before = fd_count () in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0.05 });
+  let raised =
+    match Sol_cli_process.run (Sol_cli_process.cmd [ "sleep"; "5" ]) with
+    | _ -> false
+    | exception Exit -> true
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  check_bool "interruption propagates" true raised;
+  check "no descriptor leak on interruption" before (fd_count ());
+  let unreaped =
+    match Unix.waitpid [ Unix.WNOHANG ] (-1) with
+    | 0, _ -> 0
+    | pid, _ -> pid
+    | exception Unix.Unix_error _ -> 0
+  in
+  check "no unreaped child" 0 unreaped
+;;
+
 let test_error_to_string_spawn () =
   let s = Sol_cli_process.error_to_string (Sol_cli_process.Spawn_failed "oops") in
   check_bool
@@ -180,6 +291,38 @@ let () =
     ; ( "run_shell"
       , [ Alcotest.test_case "shell success" `Quick test_run_shell_success
         ; Alcotest.test_case "shell non-zero" `Quick test_run_shell_nonzero
+        ; Alcotest.test_case
+            "shell drains both streams (CODE_LAYER-023)"
+            `Quick
+            test_shell_drains_both_streams
+        ] )
+    ; ( "deadline"
+      , [ Alcotest.test_case
+            "argv drains both streams (CODE_LAYER-023)"
+            `Quick
+            test_argv_drains_both_streams
+        ; Alcotest.test_case
+            "deadline covers child exit (BUG-068)"
+            `Quick
+            test_deadline_covers_child_exit
+        ; Alcotest.test_case
+            "deadline covers pipe capture (BUG-068)"
+            `Quick
+            test_deadline_while_capturing
+        ; Alcotest.test_case
+            "short commands keep output (BUG-068)"
+            `Quick
+            test_deadline_preserves_short_commands
+        ] )
+    ; ( "ownership"
+      , [ Alcotest.test_case
+            "handled signal completes capture (CODE_LAYER-025)"
+            `Quick
+            test_handled_signal_completes_capture
+        ; Alcotest.test_case
+            "interrupted capture cleans up (CODE_LAYER-025)"
+            `Quick
+            test_interrupted_capture_cleans_up
         ] )
     ; ( "error_to_string"
       , [ Alcotest.test_case "spawn error" `Quick test_error_to_string_spawn

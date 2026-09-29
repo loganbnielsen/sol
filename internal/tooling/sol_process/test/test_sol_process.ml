@@ -128,6 +128,74 @@ let test_run_ok_failure () =
   check_bool "raises Failure on non-zero" true raised
 ;;
 
+let with_alarm seconds f =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit)) in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = seconds });
+  let outcome =
+    match f () with
+    | value -> Ok value
+    | exception Exit -> Error `Timed_out
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  outcome
+;;
+
+let fd_count () = Array.length (Sys.readdir "/proc/self/fd")
+
+let check_drained label runner =
+  match with_alarm 5.0 runner with
+  | Error `Timed_out -> Alcotest.fail (label ^ " stalled on a full stderr pipe")
+  | Ok r ->
+    check_str (label ^ " stdout intact") "done" r.Sol_process.stdout;
+    check_int (label ^ " stderr drained") 262144 (String.length r.Sol_process.stderr)
+;;
+
+let test_shell_drains_both_streams () =
+  check_drained "run_shell" (fun () ->
+    Sol_process.run_shell ~echo:false "head -c 262144 /dev/zero >&2; echo done")
+;;
+
+let test_argv_drains_both_streams () =
+  check_drained "run_argv" (fun () ->
+    Sol_process.run_argv
+      ~echo:false
+      [ "sh"; "-c"; "head -c 262144 /dev/zero >&2; echo done" ])
+;;
+
+let test_handled_signal_completes_capture () =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> ())) in
+  let before = fd_count () in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0.05 });
+  let r = Sol_process.run_argv ~echo:false [ "sh"; "-c"; "sleep 0.2; echo done" ] in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  check_str "completed despite a handled signal" "done" r.Sol_process.stdout;
+  check_int "no descriptor leak" before (fd_count ())
+;;
+
+let test_interrupted_capture_cleans_up () =
+  let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit)) in
+  let before = fd_count () in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0.05 });
+  let raised =
+    match Sol_process.run_argv ~echo:false [ "sleep"; "5" ] with
+    | _ -> false
+    | exception Exit -> true
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+  Sys.set_signal Sys.sigalrm previous;
+  check_bool "interruption propagates" true raised;
+  check_int "no descriptor leak on interruption" before (fd_count ());
+  let unreaped =
+    match Unix.waitpid [ Unix.WNOHANG ] (-1) with
+    | 0, _ -> 0
+    | pid, _ -> pid
+    | exception Unix.Unix_error _ -> 0
+  in
+  check_int "no unreaped child" 0 unreaped
+;;
+
 let () =
   Alcotest.run
     "sol_process"
@@ -165,6 +233,26 @@ let () =
     ; ( "run_ok"
       , [ Alcotest.test_case "success → no raise" `Quick test_run_ok_success
         ; Alcotest.test_case "failure → Failure" `Quick test_run_ok_failure
+        ] )
+    ; ( "streams"
+      , [ Alcotest.test_case
+            "shell drains both streams (CODE_LAYER-023)"
+            `Quick
+            test_shell_drains_both_streams
+        ; Alcotest.test_case
+            "argv drains both streams (CODE_LAYER-023)"
+            `Quick
+            test_argv_drains_both_streams
+        ] )
+    ; ( "ownership"
+      , [ Alcotest.test_case
+            "handled signal completes capture (CODE_LAYER-025)"
+            `Quick
+            test_handled_signal_completes_capture
+        ; Alcotest.test_case
+            "interrupted capture cleans up (CODE_LAYER-025)"
+            `Quick
+            test_interrupted_capture_cleans_up
         ] )
     ]
 ;;
