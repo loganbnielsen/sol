@@ -74,6 +74,15 @@ def main():
     mutate(
         tmp,
         "platform/cloud/gcp/cluster/main.tf",
+        "local.needs_kubernetes ? \"https://${google_container_cluster.main.endpoint}\" : \"\"",
+        "local.needs_kubernetes ? \"https://${data.google_container_cluster.in_cluster[0].endpoint}\" : \"\"",
+    )
+    cases.append(("a provider value read through a cluster data source", tmp, "substrate"))
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "platform/cloud/gcp/cluster/main.tf",
         'removed {\n  from = google_compute_default_service_account.default\n\n'
         "  lifecycle {\n    destroy = false\n  }\n}\n\n",
         "",

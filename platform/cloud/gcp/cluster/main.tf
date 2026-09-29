@@ -226,22 +226,16 @@ locals {
 
 data "google_client_config" "default" {}
 
-data "google_container_cluster" "in_cluster" {
-  count = local.needs_kubernetes ? 1 : 0
-
-  name     = var.cluster_name
-  location = var.region
-  project  = var.project_id
-}
-
 locals {
-  kubernetes_host = local.needs_kubernetes ? "https://${data.google_container_cluster.in_cluster[0].endpoint}" : ""
+  kubernetes_host = (
+    local.needs_kubernetes ? "https://${google_container_cluster.main.endpoint}" : ""
+  )
   kubernetes_token = (
     local.needs_kubernetes ? data.google_client_config.default.access_token : ""
   )
   kubernetes_cluster_ca_certificate = (
     local.needs_kubernetes
-    ? base64decode(data.google_container_cluster.in_cluster[0].master_auth[0].cluster_ca_certificate)
+    ? base64decode(google_container_cluster.main.master_auth[0].cluster_ca_certificate)
     : ""
   )
 }

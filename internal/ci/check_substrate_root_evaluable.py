@@ -22,6 +22,8 @@ NAME = "check_substrate_root_evaluable"
 
 ROOT = "platform/cloud/gcp/cluster"
 PROVIDER_VALUES = ["host", "token", "cluster_ca_certificate"]
+CLUSTER_SOURCED = ["kubernetes_host", "kubernetes_cluster_ca_certificate"]
+
 LOCALS = {
     "kubernetes_host": "local.needs_kubernetes",
     "kubernetes_token": "local.needs_kubernetes",
@@ -67,6 +69,30 @@ def main(argv):
                 "gated: configured straight from the cluster's attributes it is unknown while "
                 "the cluster is absent, and then Terraform refuses to evaluate the root at all "
                 "(FND-0070)"
+            )
+
+    for local in LOCALS:
+        match = re.search(
+            rf"^\s*{local}\s*=(?P<body>.*?)\n(?:\s*[a-z_]+\s*=|\}}\s*$)", text, re.M | re.S
+        )
+        body = match.group("body") if match else ""
+        if "data.google_container_cluster" in body:
+            problems.append(
+                f"local.{local} reads the cluster through a data source: that is resolved when "
+                "the configuration is evaluated, so an apply that creates the cluster cannot "
+                "defer it and fails before the cluster exists (FND-0070)"
+            )
+
+    for local in CLUSTER_SOURCED:
+        match = re.search(
+            rf"^\s*{local}\s*=(?P<body>.*?)\n(?:\s*[a-z_]+\s*=|\}}\s*$)", text, re.M | re.S
+        )
+        body = match.group("body") if match else ""
+        if "google_container_cluster.main" not in body:
+            problems.append(
+                f"local.{local} must derive from google_container_cluster.main: a managed "
+                "resource's attribute is deferrable, which is what lets the bootstrap binding be "
+                "created in the same apply that creates the cluster (FND-0070)"
             )
 
     for local, gate in LOCALS.items():
