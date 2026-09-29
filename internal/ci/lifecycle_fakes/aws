@@ -7,9 +7,15 @@ printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
     printf 'Unknown options: --filters\n' >&2
     exit 252
   fi
-  if [ "$1 $2" = "resourcegroupstaggingapi get-resources" ]; then
+  if [ "$1 $2" = "elbv2 describe-load-balancers" ]; then
     if [ "${LB_RESIDUE_PRESENT:-}" = 1 ]; then
       printf 'arn:aws:elasticloadbalancing:us-east-1:111122223333:loadbalancer/k8s-qualification\n'
+    fi
+    exit 0
+  fi
+  if [ "$1 $2" = "elbv2 describe-tags" ]; then
+    if [ "${LB_RESIDUE_PRESENT:-}" = 1 ]; then
+      printf 'owned\n'
     fi
     exit 0
   fi
