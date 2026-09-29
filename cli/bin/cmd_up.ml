@@ -367,45 +367,50 @@ let run_apply
       ~services
   in
   let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
-  let* retained =
-    Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan
-    |> Result.map_error run_failed
-  in
   let pf_failed = ref false in
   let result =
-    Sol_cli_boundary_lease.with_boundary_lease
-      ~ctx:cluster
-      ~workspace
-      ~holder:Sol_cli_boundary_lease.Deploy
-      ~ttl:Sol_cli_boundary_lease.default_ttl_s
-      ~wait_s:0.
-      (fun lease ->
-         let previous = read_previous_release ~workspace in
-         let attempt = Sol_cli_deployment_attempt.start () in
-         let applied =
-           apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
-         in
-         ignore
-           (Sol_cli_deployment_attempt.record
+    Sol_cli_boundary_epoch.run
+      { acquire_lease =
+          (fun f ->
+            Sol_cli_boundary_lease.with_boundary_lease
               ~ctx:cluster
-              ~target:(Some "local")
-              plan
-              attempt
-              (Sol_cli_deployment_attempt.outcome_of applied));
-         let* () = applied in
-         Sol_cli_release.finish_deployment
-           ~record_release:(fun () ->
-             let* () = Sol_cli_boundary_lease.ensure_held lease in
-             let* () =
-               record_release_and_prune
-                 ~workspace
-                 ~keep:keep_releases
-                 ~previous
-                 ~retained
+              ~workspace
+              ~holder:Sol_cli_boundary_lease.Deploy
+              ~ttl:Sol_cli_boundary_lease.default_ttl_s
+              ~wait_s:0.
+              f)
+      ; read_boundary_holding =
+          (fun _lease ->
+            Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan)
+      ; apply =
+          (fun lease retained ->
+            let previous = read_previous_release ~workspace in
+            let attempt = Sol_cli_deployment_attempt.start () in
+            let applied =
+              apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
+            in
+            ignore
+              (Sol_cli_deployment_attempt.record
+                 ~ctx:cluster
+                 ~target:(Some "local")
                  plan
-             in
-             Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
-           ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
+                 attempt
+                 (Sol_cli_deployment_attempt.outcome_of applied));
+            let* () = applied in
+            Sol_cli_release.finish_deployment
+              ~record_release:(fun () ->
+                let* () = Sol_cli_boundary_lease.ensure_held lease in
+                let* () =
+                  record_release_and_prune
+                    ~workspace
+                    ~keep:keep_releases
+                    ~previous
+                    ~retained
+                    plan
+                in
+                Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
+              ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
+      }
   in
   Result.map_error run_failed
   @@ let* () = result in
