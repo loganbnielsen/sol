@@ -26,6 +26,10 @@ type disposition =
       { resource_class : string
       ; found : string
       }
+  | Unresolved of
+      { resource_class : string
+      ; reason : string
+      }
 
 let matches (entry : entry) ~resource_class ~found =
   entry.resource_class = resource_class
@@ -79,15 +83,16 @@ let dispositions ~entries ~state_addresses observations =
   |> List.concat_map (function
     | Sol_cli_absence.Present { resource_class; found; _ } ->
       List.map (disposition_of ~entries ~state_addresses ~resource_class) found
+    | Sol_cli_absence.Unobservable { resource_class; reason; _ } ->
+      [ Unresolved { resource_class; reason } ]
     | Sol_cli_absence.Absent _
     | Sol_cli_absence.External _
-    | Sol_cli_absence.Not_attributable _
-    | Sol_cli_absence.Unobservable _ -> [])
+    | Sol_cli_absence.Not_attributable _ -> [])
 ;;
 
 let candidate = function
   | Recover candidate -> Some candidate
-  | Already_owned _ | By_contract _ | Cannot_recover _ | Unmapped _ -> None
+  | Already_owned _ | By_contract _ | Cannot_recover _ | Unmapped _ | Unresolved _ -> None
 ;;
 
 let outcome ?(dry_run = false) dispositions =
@@ -96,7 +101,14 @@ let outcome ?(dry_run = false) dispositions =
     List.filter
       (function
         | Cannot_recover _ | Unmapped _ -> true
-        | Recover _ | Already_owned _ | By_contract _ -> false)
+        | Recover _ | Already_owned _ | By_contract _ | Unresolved _ -> false)
+      dispositions
+  in
+  let unresolved =
+    List.filter
+      (function
+        | Unresolved _ -> true
+        | _ -> false)
       dispositions
   in
   let buffer = Buffer.create 256 in
@@ -112,13 +124,20 @@ let outcome ?(dry_run = false) dispositions =
             else "Restored Terraform ownership:\n  %s\n")
            restored.address)
       restored;
-    if dry_run
-    then line "Infrastructure ownership is reconcilable; nothing was changed.\n"
-    else line "Infrastructure ownership is reconciled.\n")
-  else if refused = []
-  then line "Infrastructure ownership is reconciled.\nNo changes.\n"
-  else (
-    line "Infrastructure ownership is not reconciled:\n";
+    if unresolved = []
+    then
+      line
+        (if dry_run
+         then "Infrastructure ownership is reconcilable; nothing was changed.\n"
+         else "Infrastructure ownership is reconciled.\n"));
+  if restored = [] && refused = [] && unresolved = []
+  then line "Infrastructure ownership is reconciled.\nNo changes.\n";
+  if refused <> []
+  then (
+    line
+      (if restored = [] && unresolved = []
+       then "Infrastructure ownership is not reconciled:\n"
+       else "\nThese resources are not reconciled:\n");
     List.iter
       (function
         | Cannot_recover { resource_class; found; reason } ->
@@ -128,15 +147,28 @@ let outcome ?(dry_run = false) dispositions =
             "  %s %s has no Terraform address Sol can attribute it to, so it is left alone\n"
             resource_class
             found
-        | Recover _ | Already_owned _ | By_contract _ -> ())
+        | Recover _ | Already_owned _ | By_contract _ | Unresolved _ -> ())
       refused);
+  if unresolved <> []
+  then (
+    line
+      (if restored = [] && refused = []
+       then "Infrastructure ownership could not be established:\n"
+       else "\nThese checks could not run, so absence is unknown for them:\n");
+    List.iter
+      (function
+        | Unresolved { resource_class; reason } ->
+          line "  %s could not be checked: %s\n" resource_class reason
+        | _ -> ())
+      unresolved;
+    line "  nothing is claimed about the resources those checks cover.\n");
   Buffer.contents buffer
 ;;
 
 let unreconciled dispositions =
   dispositions
   |> List.filter (function
-    | Recover _ | Cannot_recover _ | Unmapped _ -> true
+    | Recover _ | Cannot_recover _ | Unmapped _ | Unresolved _ -> true
     | Already_owned _ | By_contract _ -> false)
 ;;
 
@@ -167,7 +199,9 @@ let report dispositions =
       line
         "    UNMAPPED: %s %s has no registry entry, so no Terraform address can own it\n"
         resource_class
-        found);
+        found
+    | Unresolved { resource_class; reason } ->
+      line "    UNKNOWN: %s could not be checked: %s\n" resource_class reason);
   Buffer.contents buffer
 ;;
 
@@ -197,14 +231,22 @@ let summary dispositions =
     List.filter
       (function
         | Cannot_recover _ | Unmapped _ -> true
-        | Recover _ | Already_owned _ | By_contract _ -> false)
+        | Recover _ | Already_owned _ | By_contract _ | Unresolved _ -> false)
+      dispositions
+  in
+  let unresolved =
+    List.filter
+      (function
+        | Unresolved _ -> true
+        | _ -> false)
       dispositions
   in
   Printf.sprintf
     "%d recoverable, %d already owned, %d not this target's to recover (contract or \
-     owner), %d refused"
+     owner), %d refused, %d unknown"
     (List.length recovered)
     (List.length already)
     (List.length by_contract)
     (List.length refused)
+    (List.length unresolved)
 ;;

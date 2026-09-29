@@ -162,6 +162,7 @@ let reconcile_ownership_at
            (function
              | Sol_cli_ownership_reconciliation.Cannot_recover _
              | Sol_cli_ownership_reconciliation.Unmapped _ -> true
+             | Sol_cli_ownership_reconciliation.Unresolved _ -> false
              | Sol_cli_ownership_reconciliation.Recover _
              | Sol_cli_ownership_reconciliation.Already_owned _
              | Sol_cli_ownership_reconciliation.By_contract _ -> false)
@@ -557,6 +558,7 @@ let cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain () =
              reconciliation.restored)
       | Sol_cli_ownership_reconciliation.Cannot_recover _
       | Sol_cli_ownership_reconciliation.Unmapped _ -> true
+      | Sol_cli_ownership_reconciliation.Unresolved _ -> true
       | Sol_cli_ownership_reconciliation.Already_owned _
       | Sol_cli_ownership_reconciliation.By_contract _ -> false)
   in
