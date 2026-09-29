@@ -23,6 +23,7 @@
   test_process
   test_tool_adapters
   test_aws_absence
+  test_gcp_absence
   test_ownership_reconcile
   test_port_forward
   test_deployment_state
