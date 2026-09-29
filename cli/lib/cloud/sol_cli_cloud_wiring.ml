@@ -315,8 +315,6 @@ let reconcile_ownership
       candidates
 ;;
 
-let substrate_only_vars = [ "in_cluster_layer=false" ]
-
 let bootstrap_access_vars ~enabled =
   [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
 ;;
@@ -759,8 +757,7 @@ let destroy_deps
         (Sol_cli_cloud_lifecycle.observed_phase ~cloud_exists ~platform_installed:true)
   in
   let destroy_apply_vars () =
-    substrate_only_vars
-    @ vars
+    vars
     @ Sol_cli_terraform.kv_args
         (destroy_policy_vars
            ~provider
