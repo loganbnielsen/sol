@@ -1,0 +1,141 @@
+type attribution =
+  | Named_for_target of string
+  | Within_target of string
+
+type observation =
+  | Absent of
+      { resource_class : string
+      ; identity : string
+      ; attribution : attribution
+      ; checked_with : string
+      }
+  | Present of
+      { resource_class : string
+      ; identity : string
+      ; attribution : attribution
+      ; checked_with : string
+      }
+  | External of
+      { resource_class : string
+      ; identity : string
+      ; reason : string
+      }
+  | Not_attributable of
+      { resource_class : string
+      ; reason : string
+      }
+  | Unobservable of
+      { resource_class : string
+      ; reason : string
+      ; checked_with : string
+      }
+
+type verdict =
+  | All_absent
+  | Some_present of string list
+  | Some_unknown of string list
+
+let attribution_rule = function
+  | Named_for_target rule -> rule
+  | Within_target rule -> rule
+;;
+
+let describe resource_class identity = Printf.sprintf "%s %s" resource_class identity
+
+let verdict observations =
+  let present = ref [] in
+  let unknown = ref [] in
+  observations
+  |> List.iter (function
+    | Present { resource_class; identity; _ } ->
+      present := describe resource_class identity :: !present
+    | Unobservable { resource_class; reason; _ } ->
+      unknown
+      := Printf.sprintf "%s could not be observed: %s" resource_class reason :: !unknown
+    | Absent _ | External _ | Not_attributable _ -> ());
+  match List.rev !present, List.rev !unknown with
+  | _ :: _, unknown -> Some_present (List.rev !present @ unknown)
+  | [], [] -> All_absent
+  | [], unknown -> Some_unknown unknown
+;;
+
+let permits_absence_claim = function
+  | All_absent -> true
+  | Some_present _ | Some_unknown _ -> false
+;;
+
+let residue = function
+  | All_absent -> []
+  | Some_present names | Some_unknown names -> names
+;;
+
+let to_sweep observations =
+  let residues = ref [] in
+  let indeterminate = ref [] in
+  observations
+  |> List.iter (function
+    | Present { resource_class; identity; attribution; checked_with } ->
+      residues
+      := Printf.sprintf
+           "%s %s is present after destroy (%s; checked with: %s)"
+           resource_class
+           identity
+           (attribution_rule attribution)
+           checked_with
+         :: !residues
+    | Unobservable { resource_class; reason; checked_with } ->
+      indeterminate
+      := Printf.sprintf
+           "%s could not be observed (%s; checked with: %s)"
+           resource_class
+           reason
+           checked_with
+         :: !indeterminate
+    | Absent _ | External _ | Not_attributable _ -> ());
+  match List.rev !residues, List.rev !indeterminate with
+  | [], [] -> Sol_cli_destroy_verification.Sweep_ran { residues = []; indeterminate = [] }
+  | residues, indeterminate ->
+    Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
+;;
+
+let report observations =
+  let buffer = Buffer.create 1024 in
+  let line format = Printf.ksprintf (Buffer.add_string buffer) format in
+  line "  provider inventory: what was checked, and why anything found is this target's\n";
+  line
+    "    (Sol verifies absence by observing the provider directly; Terraform's own state \
+     is\n\
+    \     necessary evidence, and never sufficient -- a resource the provider created \
+     but never\n\
+    \     adopted into that state is PRESENT, not absent)\n";
+  observations
+  |> List.iter (function
+    | Absent { resource_class; identity; attribution; checked_with } ->
+      line
+        "    absent: %s %s (%s; checked with: %s)\n"
+        resource_class
+        identity
+        (attribution_rule attribution)
+        checked_with
+    | Present { resource_class; identity; attribution; checked_with } ->
+      line
+        "    PRESENT: %s %s (%s; checked with: %s)\n"
+        resource_class
+        identity
+        (attribution_rule attribution)
+        checked_with
+    | External { resource_class; identity; reason } ->
+      line "    external: %s %s -- %s\n" resource_class identity reason
+    | Not_attributable { resource_class; reason } ->
+      line
+        "    not attributed: %s -- %s (reported, never counted as this target's residue)\n"
+        resource_class
+        reason
+    | Unobservable { resource_class; reason; checked_with } ->
+      line
+        "    UNKNOWN: %s could not be observed -- %s (checked with: %s)\n"
+        resource_class
+        reason
+        checked_with);
+  Buffer.contents buffer
+;;

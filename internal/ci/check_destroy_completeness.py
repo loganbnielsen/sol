@@ -30,8 +30,12 @@ def main():
     checked = 0
     for directory in target_roots:
         provider = directory.split("/")[2]
-        residue_path = root / f"cli/lib/cloud/sol_cli_{provider}_destruction.ml"
-        residue_text = residue_path.read_text() if residue_path.exists() else ""
+        residue_texts = []
+        for home in ("destruction", "absence"):
+            candidate = root / f"cli/lib/cloud/sol_cli_{provider}_{home}.ml"
+            if candidate.exists():
+                residue_texts.append(candidate.read_text())
+        residue_text = "\n".join(residue_texts)
         for tf in sorted((root / directory).glob("*.tf")):
             checked += 1
             try:
@@ -86,7 +90,7 @@ def classify_deletion(r, key, value, residue_text, provider):
     relinquishes = (key == "deletion_policy" and literal == "ABANDON") or (key != "deletion_policy" and literal is True)
     if relinquishes:
         if f'"{r.address}"' not in residue_text:
-            return [f"{r.where} {r.address} relinquishes deletion (Terraform will not delete the remote object), but no residue probe in cli/lib/cloud/sol_cli_{provider}_destruction.ml names it: register one in relinquished_residue_probes (DEC-045)."]
+            return [f"{r.where} {r.address} relinquishes deletion (Terraform will not delete the remote object), but no residue probe in cli/lib/cloud/sol_cli_{provider}_destruction.ml or cli/lib/cloud/sol_cli_{provider}_absence.ml names it: register one in relinquished_residue_probes (DEC-045)."]
         return []
     if key == "deletion_policy" and literal == "PREVENT":
         return [f'{r.where} {r.address} sets deletion_policy = "PREVENT", which no Destroy policy can lift: a target Sol provisioned could never be destroyed (ADR 0004).']

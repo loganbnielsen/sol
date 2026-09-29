@@ -44,7 +44,9 @@ let verification_observation
   =
   let open Sol_cli_destroy_verification in
   let state = post_destroy_state ~infra_dir in
-  let sweep = destruction.residue ~pre_destroy ~cluster in
+  let observations = destruction.residue ~pre_destroy ~cluster in
+  Sol_cli_report.app "%s" (Sol_cli_absence.report observations);
+  let sweep = Sol_cli_absence.to_sweep observations in
   { state; sweep; retention = destruction.retention ~retention ~pre_destroy ~preparation }
 ;;
 

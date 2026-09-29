@@ -10,6 +10,27 @@ case "$1 $2" in
     esac
     ;;
 esac
+case " $* " in
+  *" container clusters list "*|*" container node-pools list "*|*" compute networks list "*|\
+    *" compute networks subnets list "*|*" compute routers list "*|*" compute addresses list "*|\
+    *" artifacts repositories list "*|*" iam service-accounts list "*|*" iam roles list "*|\
+    *" storage buckets list "*|*" compute disks list "*|*" compute firewall-rules list "*|\
+    *" compute forwarding-rules list "*|*" compute routers nats list "*)
+    exit 0
+    ;;
+  *" sql instances list "*)
+    if [ "${ORPHAN_SQL_PRESENT:-0}" = 1 ]; then
+      printf '%s\n' "${ORPHAN_SQL_NAME:-sol-qual-postgres}"
+    fi
+    exit 0
+    ;;
+  *" services vpc-peerings list "*)
+    if [ "${ORPHAN_PEERING_PRESENT:-0}" = 1 ]; then
+      printf 'ACTIVE\n'
+    fi
+    exit 0
+    ;;
+esac
 case "$1 $2" in
   "compute regions")
     printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'

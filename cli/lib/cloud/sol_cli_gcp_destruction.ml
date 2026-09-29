@@ -3,86 +3,6 @@ open Sol_cli_destruction
 open Sol_cli_terraform_steps
 open Result.Syntax
 
-let gcp_peering_probe ~project ~network =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "gcloud"
-         ; "services"
-         ; "vpc-peerings"
-         ; "list"
-         ; "--network=" ^ network
-         ; "--service=servicenetworking.googleapis.com"
-         ; "--project"
-         ; project
-         ; "--format=value(peering)"
-         ])
-  with
-  | Ok result ->
-    let peerings =
-      String.split_on_char '\n' result.stdout
-      |> List.map String.trim
-      |> List.filter (fun peering -> peering <> "" && peering <> "---")
-    in
-    if peerings = []
-    then Probe_gone
-    else
-      Probe_found
-        (Printf.sprintf
-           "the service-networking peering survived the destroy: %s"
-           (String.concat ", " peerings))
-  | Error (Sol_cli_process.Non_zero _ as error)
-    when Sol_cli_gcloud.classify ~project error = Not_found -> Probe_gone
-  | Error (Sol_cli_process.Non_zero result) ->
-    Probe_indeterminate
-      (Printf.sprintf
-         "the service-networking peering could not be checked: %s"
-         (String.trim result.stderr))
-  | Error _ ->
-    Probe_indeterminate
-      "the service-networking peering could not be checked: gcloud is unavailable"
-;;
-
-let relinquished_residue_probes =
-  [ "google_service_networking_connection.sql", gcp_peering_probe ]
-;;
-
-let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
-  let project =
-    List.assoc_opt "gcp" target_cfg.provider_fields
-    |> Option.map (List.assoc_opt "project_id")
-    |> Option.join
-    |> Option.map String.trim
-    |> Option.to_list
-    |> List.find_opt (fun project -> project <> "")
-  in
-  let network =
-    match state_name pre_destroy "google_compute_network" with
-    | Some _ as name -> name
-    | None -> target_cfg.cluster_name
-  in
-  match network, project with
-  | Some network, Some project ->
-    orphan_sweep
-      (List.map (fun (_, probe) -> probe ~project ~network) relinquished_residue_probes)
-  | None, _ ->
-    orphan_sweep
-      ~gaps:
-        [ "the GCP residue check could not name the target's VPC from Terraform state or \
-           the target's cluster_name declaration (the network is named after the \
-           cluster), so the service-networking peering check was not run"
-        ]
-      []
-  | Some _, None ->
-    orphan_sweep
-      ~gaps:
-        [ "the GCP residue check could not establish the target's project (the target \
-           declares no gcp.project_id), so the service-networking peering check was not \
-           run"
-        ]
-      []
-;;
-
 let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
   : unit Sol_cli_cloud_lifecycle.preparation_outcome
   =
@@ -222,8 +142,22 @@ let destruction ctx : Sol_cli_destruction.t =
   ; retention =
       (fun ~retention ~pre_destroy:_ ~preparation:_ -> observe_retention ~retention)
   ; residue =
-      (fun ~pre_destroy ~cluster:_ ->
-        gcp_orphan_sweep ~pre_destroy ~target_cfg:ctx.target)
+      (fun ~pre_destroy ~cluster ->
+        match
+          Sol_cli_destruction.residue_cluster_name
+            ~kind:"google_container_cluster"
+            ~pre_destroy
+            ~cluster
+            ~target_cfg:ctx.target
+        with
+        | Some cluster_name -> Sol_cli_gcp_absence.observations ctx.target ~cluster_name
+        | None ->
+          Sol_cli_gcp_absence.unresolved
+            ~reason:
+              "the target's cluster name could not be established from Terraform state, \
+               the install outputs or the target's own cluster_name declaration, so the \
+               provider could not be listed by identity -- an inventory that did not run \
+               cannot establish absence")
   ; before_substrate_destroy = ignore
   }
 ;;
