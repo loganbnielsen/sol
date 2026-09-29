@@ -310,7 +310,26 @@ guessed if the commit matches more than one release. `--scope DOMAIN[/UNIT]`
 narrows which of a commit's releases `--commit` resolves to when it deployed
 more than one (e.g. `payments` and the whole workspace as two separate
 releases); it is a *selector* only — a release's recorded workload set is
-always restored whole, never partially. `--commit` resolution is authoritative
+always restored whole, never partially.
+
+**A boundary is complete, and each workload carries its own provenance
+(BUG-077).** A release record does not hold bare specs; it holds
+`{ spec; applied_by }` per workload, where `applied_by` is the id of the deploy
+that applied that workload. A scoped deploy therefore records a *complete*
+workspace boundary: the workloads inside its scope take the new spec and the
+new deploy's id, and every workload outside it keeps both the spec and the
+provenance it already had, read from the current boundary before anything is
+mutated (a scoped deploy refuses, before any mutation, if that boundary cannot
+be read — a whole-workspace deploy does not need it, because it supersedes
+every workload). Rollback verifies and re-applies each workload under *its own*
+`applied_by`, so restoring a boundary that touched one unit neither re-labels
+nor prunes the units it never touched, while a full-workspace deploy that drops
+a workload still records a boundary without it and rollback still prunes it.
+The boundary's id is derived from the workloads the deploy applied together
+with the provenance of the ones it inherited — a whole-workspace deploy with
+nothing inherited is exactly its content id, as before — so a record's content
+is always a function of its id and the immutable ConfigMap is never rewritten
+with different content. `--commit` resolution is authoritative
 (FEAT-070's deployment-event record), never Loki. Either form restores that
 recorded release boundary. Does not use `kubectl rollout undo` — that
 mechanism cannot restore config, volumes, or ingress. Restoration comes

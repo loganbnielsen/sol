@@ -76,55 +76,91 @@ let enc_table b rows =
     List.iter (enc_string b) row)
 ;;
 
+let enc_workload b (w : workload) =
+  enc_string b w.domain;
+  enc_string b w.name;
+  enc_string b w.primitive;
+  enc_string b w.image;
+  enc_pairs b w.config;
+  enc_pairs b w.secrets;
+  enc_option enc_string b w.schedule;
+  enc_string b w.scheduled_concurrency;
+  enc_int b w.backoff_limit;
+  enc_int b w.replicas;
+  enc_string b w.availability;
+  enc_int b (if w.consumes_kafka then 1 else 0);
+  enc_string b w.cpu;
+  enc_string b w.memory;
+  enc_pairs b w.extra_labels;
+  enc_table
+    b
+    (List.map (fun (n, m, s, a) -> [ n; m; s; a ]) (List.sort compare4 w.volumes));
+  enc_string b w.rollout;
+  enc_option enc_string b w.ingress_host;
+  enc_option enc_string b w.ingress_path;
+  enc_string b w.cluster_issuer;
+  enc_table
+    b
+    (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls))
+;;
+
+let compare_workload_spec a b =
+  let by_domain = String.compare a.domain b.domain in
+  if by_domain <> 0
+  then by_domain
+  else (
+    let by_name = String.compare a.name b.name in
+    if by_name <> 0 then by_name else String.compare a.primitive b.primitive)
+;;
+
 let canonical_string (content : content) =
   let b = Buffer.create 256 in
   enc_string b encoding_version;
   enc_string b content.workspace;
   enc_option enc_string b content.environment;
-  let workloads =
-    content.workloads
-    |> List.sort (fun a c ->
-      let by_domain = String.compare a.domain c.domain in
-      if by_domain <> 0
-      then by_domain
-      else (
-        let by_name = String.compare a.name c.name in
-        if by_name <> 0 then by_name else String.compare a.primitive c.primitive))
-  in
+  let workloads = List.sort compare_workload_spec content.workloads in
   enc_int b (List.length workloads);
-  workloads
-  |> List.iter (fun w ->
-    enc_string b w.domain;
-    enc_string b w.name;
-    enc_string b w.primitive;
-    enc_string b w.image;
-    enc_pairs b w.config;
-    enc_pairs b w.secrets;
-    enc_option enc_string b w.schedule;
-    enc_string b w.scheduled_concurrency;
-    enc_int b w.backoff_limit;
-    enc_int b w.replicas;
-    enc_string b w.availability;
-    enc_int b (if w.consumes_kafka then 1 else 0);
-    enc_string b w.cpu;
-    enc_string b w.memory;
-    enc_pairs b w.extra_labels;
-    enc_table
-      b
-      (List.map (fun (n, m, s, a) -> [ n; m; s; a ]) (List.sort compare4 w.volumes));
-    enc_string b w.rollout;
-    enc_option enc_string b w.ingress_host;
-    enc_option enc_string b w.ingress_path;
-    enc_string b w.cluster_issuer;
-    enc_table
-      b
-      (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls)));
+  workloads |> List.iter (enc_workload b);
   Buffer.contents b
 ;;
+
+type recorded_workload =
+  { spec : workload
+  ; applied_by : string
+  }
+
+let boundary_encoding_version = "sol-boundary-v1"
 
 let of_content (content : content) =
   let hex = Digest.to_hex (Digest.string (canonical_string content)) in
   "r-" ^ String.sub hex 0 16
+;;
+
+let of_boundary
+      ~workspace
+      ~environment
+      ~(deployed : workload list)
+      ~(inherited : (workload * string) list)
+  =
+  if inherited = []
+  then of_content { workspace; environment; workloads = deployed }
+  else (
+    let b = Buffer.create 256 in
+    enc_string b boundary_encoding_version;
+    enc_string b workspace;
+    enc_option enc_string b environment;
+    let deployed = List.sort compare_workload_spec deployed in
+    enc_int b (List.length deployed);
+    deployed |> List.iter (enc_workload b);
+    let inherited =
+      List.sort (fun (a, _) (c, _) -> compare_workload_spec a c) inherited
+    in
+    enc_int b (List.length inherited);
+    inherited
+    |> List.iter (fun (w, applied_by) ->
+      enc_workload b w;
+      enc_string b applied_by);
+    "r-" ^ String.sub (Digest.to_hex (Digest.string (Buffer.contents b))) 0 16)
 ;;
 
 let to_string (t : t) = t

@@ -278,30 +278,41 @@ let assert_spec_equal ~label (expected : Sol_cli_deployment_plan.service_spec) g
 
 let test_gate_a_decode_correctness () =
   match reconstruct_ok () with
-  | [ got_billing; got_ledger ] ->
+  | [ (got_billing, billing_by); (got_ledger, ledger_by) ] ->
     assert_spec_equal ~label:"billing_svc" billing_spec got_billing;
-    assert_spec_equal ~label:"ledger_svc" ledger_spec got_ledger
+    assert_spec_equal ~label:"ledger_svc" ledger_spec got_ledger;
+    Alcotest.(check string) "billing provenance" gate_release.release_id billing_by;
+    Alcotest.(check string) "ledger provenance" gate_release.release_id ledger_by
   | specs -> Alcotest.failf "expected 2 reconstructed specs, got %d" (List.length specs)
 ;;
 
 let test_gate_b_identity_correctness () =
   let specs = reconstruct_ok () in
+  let deployed, inherited = Sol_cli_release.partition_boundary gate_release in
   let reconstructed_id =
-    Sol_cli_release_id.of_content
-      { workspace = gate_release.workspace
-      ; environment = gate_release.environment
-      ; workloads = List.map Sol_cli_deployment_plan.release_workload_of_spec specs
-      }
+    Sol_cli_release.boundary_id
+      ~workspace:gate_release.workspace
+      ~environment:gate_release.environment
+      ~deployed:(List.map Sol_cli_release.workload_identity deployed)
+      ~inherited:
+        (List.map
+           (fun (w : Sol_cli_release.recorded_workload) ->
+              w.Sol_cli_release_id.spec, w.applied_by)
+           inherited)
   in
   Alcotest.(check string)
     "reconstructed release id matches the record"
     gate_release.release_id
-    (Sol_cli_release_id.to_string reconstructed_id)
+    reconstructed_id;
+  Alcotest.(check int)
+    "every reconstructed workload carries observable provenance"
+    (List.length specs)
+    (List.length deployed + List.length inherited)
 ;;
 
-let render_by_identity ~release_id specs =
+let render_by_identity ~release_id apply_specs =
   List.map
-    (fun (s : Sol_cli_deployment_plan.service_spec) ->
+    (fun ((s : Sol_cli_deployment_plan.service_spec), _) ->
        let key =
          ( Sol_cli_deployment_plan.namespace_to_string s.namespace
          , Sol_cli_deployment_plan.k8s_name_to_string s.k8s_name )
@@ -319,7 +330,7 @@ let render_by_identity ~release_id specs =
          | Error msg -> Alcotest.fail msg
        in
        key, rendered)
-    specs
+    apply_specs
   |> List.sort (fun (a, _) (b, _) -> compare a b)
 ;;
 
@@ -330,7 +341,11 @@ let test_gate_c_render_correctness () =
     | Ok id -> id
     | Error msg -> Alcotest.fail msg
   in
-  let original = render_by_identity ~release_id gate_plan.services in
+  let original =
+    render_by_identity
+      ~release_id
+      (List.map (fun s -> s, gate_release.release_id) gate_plan.services)
+  in
   let reconstructed = render_by_identity ~release_id specs in
   Alcotest.(check (list (pair string string)))
     "same object identity set"
@@ -347,10 +362,15 @@ let test_gate_c_render_correctness () =
 ;;
 
 let bad_workload_release update : Sol_cli_release.t =
-  { release_id = "r-0000000000000000"
+  let record_id = "r-0000000000000000" in
+  { release_id = record_id
   ; workspace = "myapp"
   ; environment = Some "prod"
-  ; workloads = [ update (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec) ]
+  ; workloads =
+      [ Sol_cli_release.applied_by
+          record_id
+          (update (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec))
+      ]
   ; migrations = []
   ; apply_mode = Sol_cli_release.Direct
   }
@@ -667,6 +687,11 @@ let id kind namespace name : Sol_cli_rollback.workload_identity =
 ;;
 
 let expected_specs = [ ledger_spec; billing_spec ]
+
+let expected_applied =
+  List.map (fun spec -> spec, verify_release.release_id) expected_specs
+;;
+
 let ledger_id = id Sol_cli_rollback.Live_deployment "myapp-payments" "ledger-svc"
 let billing_id = id Sol_cli_rollback.Live_rollout "myapp-payments" "billing-svc"
 
@@ -674,12 +699,7 @@ let test_verify_workloads_ok_when_set_matches () =
   let live =
     [ ledger_id, verify_release.release_id; billing_id, verify_release.release_id ]
   in
-  let report =
-    Sol_cli_rollback.verify_workloads
-      ~release:verify_release
-      ~expected:expected_specs
-      ~live
-  in
+  let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
   Alcotest.(check bool)
     "workload set matches"
     true
@@ -694,12 +714,7 @@ let test_verify_workloads_reports_unexpected () =
     ; stale_id, "r-9999999999999999"
     ]
   in
-  let report =
-    Sol_cli_rollback.verify_workloads
-      ~release:verify_release
-      ~expected:expected_specs
-      ~live
-  in
+  let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
   Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "unexpected workload") msg);
@@ -708,12 +723,7 @@ let test_verify_workloads_reports_unexpected () =
 
 let test_verify_workloads_reports_missing () =
   let live = [ billing_id, verify_release.release_id ] in
-  let report =
-    Sol_cli_rollback.verify_workloads
-      ~release:verify_release
-      ~expected:expected_specs
-      ~live
-  in
+  let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
   Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload missing") msg);
@@ -722,12 +732,7 @@ let test_verify_workloads_reports_missing () =
 
 let test_verify_workloads_reports_label_mismatch () =
   let live = [ ledger_id, "r-9999999999999999"; billing_id, verify_release.release_id ] in
-  let report =
-    Sol_cli_rollback.verify_workloads
-      ~release:verify_release
-      ~expected:expected_specs
-      ~live
-  in
+  let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
   Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload state mismatch") msg);
@@ -743,12 +748,7 @@ let test_verify_workloads_distinguishes_kind () =
     ; billing_id, verify_release.release_id
     ]
   in
-  let report =
-    Sol_cli_rollback.verify_workloads
-      ~release:verify_release
-      ~expected:expected_specs
-      ~live
-  in
+  let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
   Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload missing") msg);
@@ -776,7 +776,11 @@ let fn_release : Sol_cli_release.t =
   { release_id = "r-3333333333333333"
   ; workspace = "myapp"
   ; environment = None
-  ; workloads = [ Sol_cli_deployment_plan.release_workload_of_spec fn_spec ]
+  ; workloads =
+      [ Sol_cli_release.applied_by
+          "r-3333333333333333"
+          (Sol_cli_deployment_plan.release_workload_of_spec fn_spec)
+      ]
   ; migrations = []
   ; apply_mode = Sol_cli_release.Direct
   }
@@ -785,7 +789,8 @@ let fn_release : Sol_cli_release.t =
 let test_fn_reconstructs_and_verifies_as_cronjob () =
   match Sol_cli_rollback.service_specs_of_release fn_release with
   | Error msg -> Alcotest.fail msg
-  | Ok [ got ] ->
+  | Ok [ (got, applied_by) ] ->
+    Alcotest.(check string) "provenance" fn_release.release_id applied_by;
     Alcotest.(check bool)
       "primitive is still Fn"
       true
@@ -828,7 +833,7 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
       ]
     in
     let report =
-      Sol_cli_rollback.verify_workloads ~release:fn_release ~expected:[ got ] ~live
+      Sol_cli_rollback.verify_workloads ~expected:[ got, fn_release.release_id ] ~live
     in
     Alcotest.(check bool)
       "a CronJob is part of the verified set, not skipped"
@@ -839,16 +844,16 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
 
 let test_reconstruction_rejects_invalid_persistence () =
   let workload = List.hd gate_release.workloads in
-  let invalid =
-    { gate_release with
-      workloads =
-        [ { workload with
-            replicas = 2
-          ; volumes = [ "data", "/data", "10Gi", "ReadWriteOnce" ]
-          }
-        ]
+  let invalid_workload =
+    { workload with
+      Sol_cli_release_id.spec =
+        { workload.Sol_cli_release_id.spec with
+          replicas = 2
+        ; volumes = [ "data", "/data", "10Gi", "ReadWriteOnce" ]
+        }
     }
   in
+  let invalid = { gate_release with workloads = [ invalid_workload ] } in
   match Sol_cli_rollback.service_specs_of_release invalid with
   | Ok _ -> Alcotest.fail "expected rollback reconstruction to reject persistence"
   | Error msg -> assert (contains (Str.regexp "set replicas = 1") msg)
@@ -858,8 +863,10 @@ let test_recreate_strategy_reconstructs () =
   let specs = reconstruct_ok () in
   let ledger =
     List.find
-      (fun (s : Sol_cli_deployment_plan.service_spec) -> s.source_name = "ledger_svc")
+      (fun ((s : Sol_cli_deployment_plan.service_spec), _) ->
+         s.source_name = "ledger_svc")
       specs
+    |> fst
   in
   Alcotest.(check bool)
     "recreate preserved"
@@ -1387,8 +1394,13 @@ let test_execute_lost_ownership_after_prune_skips_pointer_move () =
 ;;
 
 let transaction_release_with_ledger ~apply_mode : Sol_cli_release.t =
-  { (transaction_release ~apply_mode) with
-    workloads = [ Sol_cli_deployment_plan.release_workload_of_spec ledger_spec ]
+  let base = transaction_release ~apply_mode in
+  { base with
+    workloads =
+      [ Sol_cli_release.applied_by
+          base.release_id
+          (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec)
+      ]
   }
 ;;
 

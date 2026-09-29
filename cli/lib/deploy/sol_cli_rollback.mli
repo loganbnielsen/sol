@@ -1,6 +1,6 @@
 val service_specs_of_release
   :  Sol_cli_release.t
-  -> (Sol_cli_deployment_plan.service_spec list, string) result
+  -> ((Sol_cli_deployment_plan.service_spec * string) list, string) result
 
 type migration_check_error =
   | Contracting_migration of
@@ -49,6 +49,8 @@ type workload_identity =
   ; name : string
   }
 
+val identity_of_spec : Sol_cli_deployment_plan.service_spec -> workload_identity
+
 val live_workloads
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
@@ -81,8 +83,7 @@ val unexpected_workloads
   -> (workload_identity * string) list
 
 val verify_workloads
-  :  release:Sol_cli_release.t
-  -> expected:Sol_cli_deployment_plan.service_spec list
+  :  expected:(Sol_cli_deployment_plan.service_spec * string) list
   -> live:(workload_identity * string) list
   -> workload_report
 
@@ -110,7 +111,7 @@ val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> st
 type transaction_deps =
   { ensure_held : unit -> (unit, string) result
   ; applied_migrations : unit -> (int list, string) result
-  ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  ; apply : (Sol_cli_deployment_plan.service_spec * string) list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result

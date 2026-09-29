@@ -636,6 +636,8 @@ let workload_capabilities ~declared ~services ~topics ~migrations =
     ]
 ;;
 
+let is_whole_workspace (t : t) = String.equal t.requested_scope "workspace"
+
 let profile_claim ~declared ~services ~topics ~migrations ~whole_workspace =
   match declared with
   | None -> None

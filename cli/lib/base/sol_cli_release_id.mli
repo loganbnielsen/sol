@@ -28,9 +28,22 @@ type content =
   ; workloads : workload list
   }
 
+type recorded_workload =
+  { spec : workload
+  ; applied_by : string
+  }
+
 type t
 
 val of_content : content -> t
+
+val of_boundary
+  :  workspace:string
+  -> environment:string option
+  -> deployed:workload list
+  -> inherited:(workload * string) list
+  -> t
+
 val to_string : t -> string
 val of_string : string -> (t, string) result
 val canonical_string : content -> string
