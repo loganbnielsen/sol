@@ -1,0 +1,200 @@
+let target : Sol_cli_config.target =
+  { name = "prod/aws/us-east-1"
+  ; env = "prod"
+  ; provider = Sol_cli_provider.Aws
+  ; region = "us-east-1"
+  ; registry = None
+  ; base_domain = None
+  ; cluster_issuer = None
+  ; letsencrypt_email = None
+  ; cluster_name = Some "acme-prod"
+  ; kube_context = None
+  ; kubeconfig = None
+  ; terraform_var_file = None
+  ; observability_backend = None
+  ; destroy_retention = None
+  ; alert_receiver_type = None
+  ; alert_receiver_url = None
+  ; alert_owner = None
+  ; alert_runbook_url = None
+  ; state_bucket = None
+  ; cluster_endpoint_cidr = None
+  ; node_failure_headroom_nodes = None
+  ; profile = None
+  ; provider_fields = []
+  }
+;;
+
+let fake_aws ~log ~list_out ~tags_out ~tags_exit =
+  Printf.sprintf
+    {|#!/bin/sh
+printf '%%s\n' "$*" >> %s
+case "$1 $2" in
+  "elbv2 describe-load-balancers")
+    printf '%%s' %s
+    exit 0
+    ;;
+  "elbv2 describe-tags")
+    printf '%%s' %s%s
+    exit %d
+    ;;
+esac
+exit 0
+|}
+    log
+    (Filename.quote list_out)
+    (Filename.quote tags_out)
+    (if tags_exit = 0 then "" else " >&2")
+    tags_exit
+;;
+
+let with_fake_aws ~list_out ~tags_out ~tags_exit f =
+  let dir = Filename.temp_file "sol-fake-aws-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let log = Filename.concat dir "calls.log" in
+  let bin = Filename.concat dir "aws" in
+  let oc = open_out bin in
+  output_string oc (fake_aws ~log ~list_out ~tags_out ~tags_exit);
+  close_out oc;
+  Unix.chmod bin 0o755;
+  let old_path =
+    try Sys.getenv "PATH" with
+    | Not_found -> ""
+  in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" old_path;
+      (try Sys.remove bin with
+       | _ -> ());
+      (try Sys.remove log with
+       | _ -> ());
+      try Unix.rmdir dir with
+      | _ -> ())
+    f
+;;
+
+let calls log = In_channel.with_open_text log In_channel.input_all
+
+let arguments_of ~log ~contains =
+  calls log
+  |> String.split_on_char '\n'
+  |> List.filter (fun line -> Sol_cli_string.contains ~needle:contains line)
+;;
+
+let class_of (o : Sol_cli_absence.observation) =
+  match o with
+  | Sol_cli_absence.Absent a -> a.resource_class
+  | Present p -> p.resource_class
+  | External e -> e.resource_class
+  | Not_attributable n -> n.resource_class
+  | Unobservable u -> u.resource_class
+;;
+
+let load_balancer observations =
+  List.find (fun o -> String.equal (class_of o) "load balancer") observations
+;;
+
+let with_calls ~list_out ~tags_out ~tags_exit f =
+  with_fake_aws ~list_out ~tags_out ~tags_exit (fun () ->
+    let observations =
+      Sol_cli_aws_absence.observations target ~cluster_name:"acme-prod"
+    in
+    let log =
+      match Sys.getenv_opt "PATH" with
+      | Some path -> Filename.concat (List.hd (String.split_on_char ':' path)) "calls.log"
+      | None -> Alcotest.fail "PATH is unset"
+    in
+    f ~log ~observations)
+;;
+
+let test_load_balancers_use_a_supported_command () =
+  with_calls ~list_out:"" ~tags_out:"" ~tags_exit:0 (fun ~log ~observations:_ ->
+    let list_calls = arguments_of ~log ~contains:"describe-load-balancers" in
+    Alcotest.(check bool) "the load balancers were listed" true (list_calls <> []);
+    List.iter
+      (fun call ->
+         Alcotest.(check bool)
+           (Printf.sprintf "no --filters in %S" call)
+           false
+           (Sol_cli_string.contains ~needle:"--filters" call))
+      list_calls;
+    let ec2_calls = arguments_of ~log ~contains:"describe-vpcs" in
+    Alcotest.(check bool) "the volumes/vpcs still filter by tag" true (ec2_calls <> []);
+    List.iter
+      (fun call ->
+         Alcotest.(check bool)
+           (Printf.sprintf "ec2 filters remain in %S" call)
+           true
+           (Sol_cli_string.contains ~needle:"--filters" call))
+      ec2_calls)
+;;
+
+let test_tagged_load_balancer_is_present () =
+  let arn = "arn:aws:elasticloadbalancing:us-east-1:1:loadbalancer/app/acme/1" in
+  with_calls
+    ~list_out:(arn ^ "\n")
+    ~tags_out:"owned\n"
+    ~tags_exit:0
+    (fun ~log:_ ~observations ->
+       match load_balancer observations with
+       | Sol_cli_absence.Present p ->
+         Alcotest.(check (list string))
+           "the tagged load balancer is reported"
+           [ arn ]
+           p.found
+       | _ -> Alcotest.fail "a tagged load balancer must be Present")
+;;
+
+let test_untagged_inventory_is_absent () =
+  let arn = "arn:aws:elasticloadbalancing:us-east-1:1:loadbalancer/app/other/1" in
+  with_calls ~list_out:(arn ^ "\n") ~tags_out:"" ~tags_exit:0 (fun ~log:_ ~observations ->
+    match load_balancer observations with
+    | Sol_cli_absence.Absent a ->
+      Alcotest.(check bool)
+        "the check names both steps"
+        true
+        (Sol_cli_string.contains ~needle:"describe-tags" a.checked_with)
+    | _ -> Alcotest.fail "an untagged inventory must be Absent")
+;;
+
+let test_failed_tag_read_is_unobservable () =
+  let arn = "arn:aws:elasticloadbalancing:us-east-1:1:loadbalancer/app/acme/1" in
+  with_calls
+    ~list_out:(arn ^ "\n")
+    ~tags_out:"AccessDenied: not authorized\n"
+    ~tags_exit:254
+    (fun ~log:_ ~observations ->
+       match load_balancer observations with
+       | Sol_cli_absence.Unobservable u ->
+         Alcotest.(check bool)
+           "the reason is the provider's"
+           true
+           (Sol_cli_string.contains ~needle:"AccessDenied" u.reason)
+       | _ -> Alcotest.fail "a failed tag read must be Unobservable")
+;;
+
+let () =
+  Alcotest.run
+    "aws_absence"
+    [ ( "load balancer inventory"
+      , [ Alcotest.test_case
+            "uses only supported AWS commands"
+            `Quick
+            test_load_balancers_use_a_supported_command
+        ; Alcotest.test_case
+            "a tagged load balancer is Present"
+            `Quick
+            test_tagged_load_balancer_is_present
+        ; Alcotest.test_case
+            "an untagged inventory is Absent"
+            `Quick
+            test_untagged_inventory_is_absent
+        ; Alcotest.test_case
+            "a failed tag read is Unobservable"
+            `Quick
+            test_failed_tag_read_is_unobservable
+        ] )
+    ]
+;;
