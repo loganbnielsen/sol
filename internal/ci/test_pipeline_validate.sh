@@ -22,6 +22,12 @@ trap 'rm -rf "$WORK"' EXIT
 TREE="$WORK/internal/pipeline/tickets"
 mkdir -p "$TREE/BACKLOG" "$TREE/READY_FOR_ENGINEERING" "$TREE/DONE"
 
+STUB_BIN="$WORK/bin"
+mkdir -p "$STUB_BIN"
+printf '#!/usr/bin/env bash\nprintf "[]\\n"\n' > "$STUB_BIN/gh"
+chmod +x "$STUB_BIN/gh"
+export PATH="$STUB_BIN:$PATH"
+
 readable() {
   printf -- '---\nid: %s\ntype: bug\nseverity: low\nsource: planted fixture\n---\n\n%s\n' "$1" "$2"
 }
