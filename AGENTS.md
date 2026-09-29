@@ -23,7 +23,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `internal/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`.
 
 Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
@@ -94,6 +94,8 @@ Two rules for writing one: **`check` echoes the command before running it, and a
 **TypeScript-parity tracking (DEC-022):** Sol's platform is language-neutral, and OCaml and TypeScript are both first-class application languages. Parity is **capability + behavioural parity, not implementation parity** — the contract (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric-naming/label vocabulary, lifecycle/shutdown, config/secrets, job semantics) must hold across languages, while the implementation underneath need not be shared (`kafka-eio`/`pg-eio` stay OCaml; TypeScript keeps the Node ecosystem and Sol supplies only the semantics/glue). Every application-facing capability carries a per-language verdict — **implemented / already equivalent / intentionally deferred / not applicable**; silence is not a verdict, and deferring a language is an explicit, recorded decision with a trigger, never default debt. Two conformance levels both matter: the **TS golden path** (`sol new --language typescript` → `sol local up` → `sol deploy`, adoption/DX — FEAT-082) and the **capability matrix** (per-capability verdicts, architectural parity — the inventory in `internal/pipeline/dogfood/2026-09-07_typescript_demo_spike.md` + FEAT-080). Concretely: any ticket that changes one of those conventions, or introduces a new framework-level concept an app author gets "for free" (a new primitive, a new library like `sol-jobs`, a new retry/backoff/observability contract), must check the cross-language gap and say so in one line in its completion notes — "no language-parity impact" with why, or a reference to the tracking ticket recording what the other language would now need. This is bookkeeping, not permission-gating — it keeps the two frameworks from silently drifting the way FEAT-076 through FEAT-079 accumulated against a spike that predated them.
 
 **Worktree isolation (REFAC-090):** each concurrent actor owns one worktree, and agents do not perform mutating work in the canonical checkout — that checkout belongs to the human operator, and its branch can change underneath an actor midway through a commit, producing a commit that is *valid but in the wrong place*. The authoritative statement, the checks to resolve before every commit and push, and the recovery for a stale hook install live in `CONTRIBUTING.md` § *Isolation and ownership*; the preflight is `internal/ci/check_authority.sh`, wired into the pre-commit hook. That section is the one place to keep true — this file does not restate the policy.
+
+**Refreshing canonical `main` is allowed:** if it is clean, fetch `origin`, fast-forward `main` with `git merge --ff-only origin/main`, and verify `HEAD == origin/main`. Do not edit, stage, or commit there; use an owned worktree for all repository changes. If synchronization fails, diagnose it before relying on that checkout for an audit.
 
 **But name the tree on every mutating command (observed twice in one session).** The preflight catches a *commit* in the wrong place, and only when a context is declared — so it cannot catch the more common failure, which is a **staging** operation: `git add` / `rm` / `mv` / `checkout` run after a `cd` into the canonical checkout stages changes *there*, and every later check passes while the edit is in the wrong repository. Both occurrences were exactly that — a file written into the wrong worktree, and a ticket `git rm`'d from canonical — and in the second the canonical checkout sat with a staged deletion until a later sweep found it.
 
@@ -183,14 +185,14 @@ sol/
     ci/                         ← CI guardrails, classifier, mutation tests
     qualification/              ← live qualification: aws/, gcp/ (harnesses, matrices), records/ (dated runs), transport/
     pipeline/                   ← tickets/, audits/, dogfood/
-    planning/                   ← WORK_SUMMARY and maintainer trackers
+    planning/                   ← maintainer trackers
     specs/                      ← cross-language framework conventions (DEC-022)
     tooling/                    ← soldev, sol_process, hooks/, perf/, scripts/ (test runner, perf, hook install)
     fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
   # ── package contracts ────────────────────────────────────────────────────
   *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
   dune-project / dune-workspace ← unified root build
-  README.md / docs/ROADMAP.md / internal/planning/WORK_SUMMARY.md  ← project-wide docs
+  README.md / docs/ROADMAP.md   ← project-wide docs
 
   # Extracted support packages (own repos, opam-pinned into this switch):
   #   kafka-eio (~/Code/kafka-eio); obs-eio/obs-loki-eio/obs-prometheus-eio
@@ -276,15 +278,15 @@ Default broker address: `localhost:9092`
 You must maintain and consult the project's source-of-truth markdown files:
 
 1. **At Startup / Task Initialization**:
-   - Explicitly read `docs/ROADMAP.md` and `internal/planning/WORK_SUMMARY.md` using your file-reading tool before writing any code.
-   - Align your execution path with the active milestone in `docs/ROADMAP.md` and the current active tasks in `internal/planning/WORK_SUMMARY.md`.
+   - Read `docs/ROADMAP.md` and the relevant tickets in `internal/pipeline/tickets/` before writing code.
+   - Align your execution path with the active milestone and ticket state.
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
    - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/ocaml/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
 
 3. **At Task Completion / Session End**:
-   - Update `internal/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.
+   - Record completion and implementation hurdles in the relevant ticket and PR.
    - If a major milestone is hit, update the status checklist in `docs/ROADMAP.md`.
 
 ## Comments: none in covered formats

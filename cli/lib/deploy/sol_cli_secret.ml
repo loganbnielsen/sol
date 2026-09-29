@@ -275,6 +275,66 @@ let read_rotations ~ctx namespaces =
   Ok (List.rev rotations)
 ;;
 
+let external_secret_targets ~ctx namespace =
+  let outcome =
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:
+        [ "get"
+        ; "externalsecrets"
+        ; "-n"
+        ; namespace
+        ; "-o"
+        ; "jsonpath={range \
+           .items[*]}{.metadata.name}{\\t}{.spec.target.name}{\"\\n\"}{end}"
+        ]
+  in
+  match outcome with
+  | Ok output ->
+    let output = output.Sol_cli_process.stdout in
+    Ok
+      (output
+       |> String.split_on_char '\n'
+       |> List.map String.trim
+       |> List.filter (fun line -> line <> "")
+       |> List.map (fun line ->
+         match String.split_on_char '\t' line with
+         | [ _name; target ] when String.trim target <> "" -> String.trim target
+         | [ name ] -> String.trim name
+         | name :: _ -> String.trim name
+         | [] -> line))
+  | Error error ->
+    let message = Sol_cli_process.error_to_string error in
+    if
+      Sol_cli_string.contains ~needle:"doesn't have a resource type" message
+      || Sol_cli_string.contains ~needle:"no matches for kind" message
+    then Ok []
+    else
+      Error
+        (Printf.sprintf
+           "could not determine whether namespace %s rotates secrets through External \
+            Secrets Operator: %s"
+           namespace
+           message)
+;;
+
+let refuse_external_secret_rotation ~ctx rotations =
+  iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
+    let* managed = external_secret_targets ~ctx namespace in
+    match List.filter (fun (name, _) -> List.mem name managed) secrets with
+    | [] -> Ok ()
+    | (name, _) :: _ ->
+      Error
+        (Printf.sprintf
+           "refusing to rotate %s in namespace %s: it is managed by an ExternalSecret, \
+            so the External Secrets Operator owns its value and would restore the \
+            previous one on its next reconcile -- the rotation would be reported as \
+            applied and then silently undone. Rotate the value in the provider store the \
+            ExternalSecret reads from, or remove that ExternalSecret's ownership first."
+           name
+           namespace))
+;;
+
 let restart_workloads ~ctx ~namespace names =
   let* () =
     iter_namespaces names ~f:(fun name ->
@@ -319,6 +379,7 @@ let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* rotations = read_rotations ~ctx namespaces in
+  let* () = refuse_external_secret_rotation ~ctx rotations in
   let* () =
     iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
       iter_namespaces secrets ~f:(fun (secret_name, existing_data) ->
@@ -351,6 +412,7 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let* () = validate_key_format key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* rotations = read_rotations ~ctx namespaces in
+  let* () = refuse_external_secret_rotation ~ctx rotations in
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
   let remove_from namespace name =
     match
