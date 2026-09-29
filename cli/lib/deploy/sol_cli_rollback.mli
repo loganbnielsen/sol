@@ -99,7 +99,8 @@ val pointer_report_ok : pointer_report -> bool
 val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> string
 
 type transaction_deps =
-  { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  { ensure_held : unit -> (unit, string) result
+  ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result

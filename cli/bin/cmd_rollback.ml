@@ -8,8 +8,9 @@ open Result.Syntax
 let ttl_s = Sol_cli_boundary_lease.default_ttl_s
 let wait_s = Sol_cli_boundary_lease.rollback_wait_s
 
-let apply_specs ~ctx ~local ~release ~release_id_t specs =
+let apply_specs ~ensure_held ~ctx ~local ~release ~release_id_t specs =
   let apply_spec spec =
+    let* () = ensure_held () in
     let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
     let* yaml =
       Sol_cli_deployment_render.render_spec
@@ -29,7 +30,7 @@ let apply_specs ~ctx ~local ~release ~release_id_t specs =
   specs |> Sol_cli_result.map_list apply_spec |> Result.map ignore
 ;;
 
-let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
+let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
   let* release_id_t = Sol_cli_release_id.of_string release.release_id in
@@ -38,7 +39,14 @@ let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result 
     |> List.map Sol_cli_plan_ids.Migration_file.to_string
   in
   let deps : Sol_cli_rollback.transaction_deps =
-    { apply = apply_specs ~ctx ~local ~release ~release_id_t
+    { ensure_held = (fun () -> Sol_cli_boundary_lease.ensure_held lease)
+    ; apply =
+        apply_specs
+          ~ensure_held:(fun () -> Sol_cli_boundary_lease.ensure_held lease)
+          ~ctx
+          ~local
+          ~release
+          ~release_id_t
     ; live_workloads =
         (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
     ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
@@ -97,7 +105,7 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
        ~holder:Sol_cli_boundary_lease.Rollback
        ~ttl:ttl_s
        ~wait_s
-       (fun _lease -> run_locked ~ctx ~local ~workspace ~facts release_id))
+       (fun lease -> run_locked ~lease ~ctx ~local ~workspace ~facts release_id))
 ;;
 
 let release_id_arg =
