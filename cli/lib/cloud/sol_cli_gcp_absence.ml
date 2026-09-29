@@ -126,6 +126,8 @@ let checks ~project ~region ~cluster_name =
          ; "list"
          ; "--cluster"
          ; cluster_name
+         ; "--location"
+         ; region
          ; "--format"
          ; "value(name)"
          ])
@@ -137,11 +139,20 @@ let checks ~project ~region ~cluster_name =
   ; named
       ~resource_class:"subnetwork"
       ~identity:(cluster_name ^ "-nodes")
-      (p [ "compute"; "networks"; "subnets"; "list"; "--format"; "value(name)" ])
+      (p
+         [ "compute"
+         ; "networks"
+         ; "subnets"
+         ; "list"
+         ; "--region"
+         ; region
+         ; "--format"
+         ; "value(name)"
+         ])
   ; named
       ~resource_class:"Cloud Router"
       ~identity:(cluster_name ^ "-router")
-      (p [ "compute"; "routers"; "list"; "--format"; "value(name)" ])
+      (p [ "compute"; "routers"; "list"; "--region"; region; "--format"; "value(name)" ])
   ; named
       ~resource_class:"Cloud NAT"
       ~identity:(cluster_name ^ "-nat")
@@ -152,6 +163,8 @@ let checks ~project ~region ~cluster_name =
          ; "list"
          ; "--router"
          ; cluster_name ^ "-router"
+         ; "--router-region"
+         ; region
          ; "--format"
          ; "value(name)"
          ])

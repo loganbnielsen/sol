@@ -827,6 +827,93 @@ let recovery_plan ?(state_addresses = []) ~entries observations =
   Sol_cli_ownership_reconciliation.dispositions ~entries ~state_addresses observations
 ;;
 
+let recovery_unobservable resource_class reason =
+  Sol_cli_absence.Unobservable { resource_class; reason; checked_with = "gcloud list" }
+;;
+
+let recovery_absent resource_class =
+  Sol_cli_absence.Absent
+    { resource_class
+    ; identity = "fixture"
+    ; attribution = absence_rule
+    ; checked_with = "gcloud list"
+    }
+;;
+
+let mentions haystack needle = Sol_cli_string.contains ~needle haystack
+
+let test_recovery_carries_a_check_that_could_not_run () =
+  let dispositions =
+    recovery_plan ~entries:[] [ recovery_unobservable "Cloud NAT" "AccessDenied: denied" ]
+  in
+  (match dispositions with
+   | [ Sol_cli_ownership_reconciliation.Unresolved { resource_class; reason } ] ->
+     Alcotest.(check string) "the class is named" "Cloud NAT" resource_class;
+     Alcotest.(check string) "and the provider's reason" "AccessDenied: denied" reason
+   | _ -> Alcotest.fail "a check that could not run must be carried, never dropped");
+  Alcotest.(check int)
+    "it is outstanding, so the command exits nonzero"
+    1
+    (List.length (Sol_cli_ownership_reconciliation.unreconciled dispositions));
+  let outcome = Sol_cli_ownership_reconciliation.outcome dispositions in
+  Alcotest.(check bool)
+    "no reconciled claim is made"
+    false
+    (mentions outcome "reconciled. No changes.");
+  Alcotest.(check bool)
+    "the unresolved check is reported"
+    true
+    (mentions outcome "Cloud NAT could not be checked");
+  Alcotest.(check bool)
+    "and absence is not claimed for it"
+    true
+    (mentions outcome "nothing is claimed about the resources those checks cover")
+;;
+
+let test_recovery_reports_present_and_unresolved_together () =
+  let entries =
+    [ recovery_entry
+        "google_sql_database_instance.postgres"
+        ~resource_class:"Cloud SQL instance"
+        ~observed_as:"qual-1-postgres"
+        ~ownership:Sol_cli_resource_identity.Direct
+        ~import_identity:"qual-1-postgres"
+    ]
+  in
+  let dispositions =
+    recovery_plan
+      ~entries
+      [ recovery_present "Cloud SQL instance" "qual-1-postgres"
+      ; recovery_unobservable "Cloud NAT" "AccessDenied: denied"
+      ]
+  in
+  let outcome = Sol_cli_ownership_reconciliation.outcome dispositions in
+  Alcotest.(check bool)
+    "the recoverable resource is still reported"
+    true
+    (mentions outcome "Restored Terraform ownership");
+  Alcotest.(check bool)
+    "the unresolved check is reported too"
+    true
+    (mentions outcome "Cloud NAT could not be checked");
+  Alcotest.(check bool)
+    "and the result is not called reconciled"
+    false
+    (mentions outcome "Infrastructure ownership is reconciled.")
+;;
+
+let test_recovery_claims_no_changes_only_for_a_complete_inventory () =
+  let dispositions = recovery_plan ~entries:[] [ recovery_absent "Cloud NAT" ] in
+  Alcotest.(check int)
+    "nothing is outstanding"
+    0
+    (List.length (Sol_cli_ownership_reconciliation.unreconciled dispositions));
+  Alcotest.(check string)
+    "a complete all-absent inventory reconciles"
+    "Infrastructure ownership is reconciled.\nNo changes.\n"
+    (Sol_cli_ownership_reconciliation.outcome dispositions)
+;;
+
 let test_recovery_maps_a_present_resource_to_its_address () =
   let entries =
     [ recovery_entry
@@ -1544,6 +1631,18 @@ let () =
             "recovery maps a present resource to its Terraform address (FND-0070)"
             `Quick
             test_recovery_maps_a_present_resource_to_its_address
+        ; Alcotest.test_case
+            "recovery carries a check that could not run (BUG-085)"
+            `Quick
+            test_recovery_carries_a_check_that_could_not_run
+        ; Alcotest.test_case
+            "recovery reports present and unresolved together (BUG-085)"
+            `Quick
+            test_recovery_reports_present_and_unresolved_together
+        ; Alcotest.test_case
+            "recovery claims no changes only for a complete inventory (BUG-085)"
+            `Quick
+            test_recovery_claims_no_changes_only_for_a_complete_inventory
         ; Alcotest.test_case
             "recovery does not import what the state already owns"
             `Quick
