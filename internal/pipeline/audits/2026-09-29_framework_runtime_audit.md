@@ -29,3 +29,9 @@ This continues the retry-relay audit (BUG-096). It covers the framework runtime 
 - Reproductions were scratch executables linked against the in-repo libraries, not deployed pods. Probe, PDB and rollout consequences in BUG-099 come from rendered-manifest code and Kubernetes semantics, not a cluster run.
 - BUG-098 simulated an OOM with self-SIGKILL.
 - Only disposable local Redpanda topics and groups and a disposable Postgres container were used, and they were removed afterwards. No cluster or cloud state was touched.
+
+## Addendum — BUG-101
+
+| Ticket | Severity | Finding | Evidence |
+|---|---|---|---|
+| BUG-101 | Medium | `sol logs` and `sol open logs` select a unit by `{service=~".*<name>.*"}`, matching same-named or longer-named units in other domains and workspaces. | Code trace of all three selector sites; OBS-046's recorded live stream labels (`service` is the bare k8s name); pluto and venus share unit names. Not reproduced against a live Loki. |
