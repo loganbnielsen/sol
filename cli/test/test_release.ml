@@ -27,6 +27,8 @@ let sample_workload : R.workload =
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DATABASE_URL", "db-secret" ]
   ; schedule = None
+  ; scheduled_concurrency = "forbid"
+  ; backoff_limit = 0
   ; replicas = 2
   ; availability = "single"
   ; consumes_kafka = false
@@ -72,6 +74,8 @@ let test_json_round_trip () =
       "db-secret"
       (List.assoc "DATABASE_URL" w.secrets);
     check_int "replicas preserved" 2 w.replicas;
+    check_string "scheduled concurrency preserved" "forbid" w.scheduled_concurrency;
+    check_int "backoff limit preserved" 0 w.backoff_limit;
     Alcotest.(check (list string))
       "migrations preserved"
       [ "0001_notifications.sql" ]
@@ -323,7 +327,7 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "cc3f3694daa7847f57190a7bee17c417"
+    "1f4ea6773dd62c155c4a3ebbdad2f5c2"
     (R.record_digest sample_record)
 ;;
 

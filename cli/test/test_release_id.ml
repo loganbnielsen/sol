@@ -19,6 +19,8 @@ let wl
       ?(ingress_path = None)
       ?(cluster_issuer = "letsencrypt-prod")
       ?(calls = [])
+      ?(scheduled_concurrency = "allow")
+      ?(backoff_limit = 3)
       name
       image
   =
@@ -29,6 +31,8 @@ let wl
   ; config
   ; secrets
   ; schedule
+  ; scheduled_concurrency
+  ; backoff_limit
   ; replicas
   ; availability
   ; consumes_kafka
@@ -207,7 +211,7 @@ let test_of_string_round_trips_and_validates () =
 let test_known_vector () =
   check_string
     "known id for a fixed content"
-    "r-41a1291ca74157ee"
+    "r-9255cab6aa649011"
     (id
        (content
           [ wl
@@ -260,7 +264,11 @@ let test_manifest_affecting_fields_change_identity () =
     (wl ~cluster_issuer:"other-issuer" "charge_svc" "acme/charge:1");
   moved
     "service call change"
-    (wl ~calls:[ "X_URL", "x", "x-svc", "ns-x" ] "charge_svc" "acme/charge:1")
+    (wl ~calls:[ "X_URL", "x", "x-svc", "ns-x" ] "charge_svc" "acme/charge:1");
+  moved
+    "scheduled concurrency change"
+    (wl ~scheduled_concurrency:"forbid" "charge_svc" "acme/charge:1");
+  moved "backoff limit change" (wl ~backoff_limit:0 "charge_svc" "acme/charge:1")
 ;;
 
 let test_canary_step_order_is_semantic () =

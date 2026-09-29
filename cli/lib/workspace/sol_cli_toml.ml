@@ -326,18 +326,29 @@ let parse_rollout_strategy path s =
          other)
 ;;
 
-let parse_scheduled_concurrency path s =
+let scheduled_concurrency_to_string = function
+  | Allow -> "allow"
+  | Forbid -> "forbid"
+  | Replace -> "replace"
+;;
+
+let scheduled_concurrency_of_string s =
   match s with
   | "allow" -> Ok Allow
   | "forbid" -> Ok Forbid
   | "replace" -> Ok Replace
   | other ->
-    validation_error
-      path
+    Error
       (Printf.sprintf
-         "sol.toml: unsupported scheduled_concurrency %S — valid values are \"allow\", \
-          \"forbid\", and \"replace\""
+         "unsupported scheduled_concurrency %S — valid values are \"allow\", \"forbid\", \
+          and \"replace\""
          other)
+;;
+
+let parse_scheduled_concurrency path s =
+  match scheduled_concurrency_of_string s with
+  | Ok concurrency -> Ok concurrency
+  | Error message -> validation_error path (Printf.sprintf "sol.toml: %s" message)
 ;;
 
 let validate_opt path parse = function

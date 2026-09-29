@@ -6,6 +6,8 @@ type workload =
   ; config : (string * string) list
   ; secrets : (string * string) list
   ; schedule : string option
+  ; scheduled_concurrency : string
+  ; backoff_limit : int
   ; replicas : int
   ; availability : string
   ; consumes_kafka : bool
@@ -28,7 +30,7 @@ type content =
 
 type t = string
 
-let encoding_version = "sol-release-v3"
+let encoding_version = "sol-release-v4"
 
 let enc_string b s =
   Buffer.add_string b (Printf.sprintf "%d:" (String.length s));
@@ -99,6 +101,8 @@ let canonical_string (content : content) =
     enc_pairs b w.config;
     enc_pairs b w.secrets;
     enc_option enc_string b w.schedule;
+    enc_string b w.scheduled_concurrency;
+    enc_int b w.backoff_limit;
     enc_int b w.replicas;
     enc_string b w.availability;
     enc_int b (if w.consumes_kafka then 1 else 0);

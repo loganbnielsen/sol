@@ -6,6 +6,8 @@ type workload =
   ; config : (string * string) list
   ; secrets : (string * string) list
   ; schedule : string option
+  ; scheduled_concurrency : string
+  ; backoff_limit : int
   ; replicas : int
   ; availability : string
   ; consumes_kafka : bool

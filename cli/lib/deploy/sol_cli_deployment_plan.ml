@@ -200,6 +200,9 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   ; config = spec.config
   ; secrets = spec.secrets
   ; schedule = spec.schedule
+  ; scheduled_concurrency =
+      Sol_cli_toml.scheduled_concurrency_to_string spec.scheduled_concurrency
+  ; backoff_limit = spec.backoff_limit
   ; replicas = spec.replicas
   ; availability = Sol_cli_availability.to_string spec.availability
   ; consumes_kafka = spec.consumes_kafka
