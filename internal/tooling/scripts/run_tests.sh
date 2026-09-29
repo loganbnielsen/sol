@@ -99,7 +99,7 @@ run_kafka() {
   info "Kafka integration tests (requires broker at localhost:9092)"
   eval $(opam env)
   KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 \
-    dune test --root "$REPO_ROOT" framework/ocaml/kafka-eio-service/ --force 2>&1
+    dune build --root "$REPO_ROOT" @framework/ocaml/kafka-eio-service/test/runtest-integration --force 2>&1
 }
 
 run_e2e() {
