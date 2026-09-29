@@ -1,0 +1,6 @@
+(library
+ (name sol_cli_inline_probe)
+ (inline_tests)
+ (preprocess
+  (pps ppx_windtrap))
+ (libraries windtrap sol_cli))
