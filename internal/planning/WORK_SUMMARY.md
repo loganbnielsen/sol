@@ -407,3 +407,9 @@
 - Broad contextual audit of CLI, framework, examples/scaffolds, representative tests and maintainer tooling at origin/main `6a7b1fb5`; full evidence and limits are in `internal/pipeline/audits/2026-09-28_code_layer_audit.md`.
 - Filed seven findings: CODE_LAYER-023/024, CODEX_STYLE_AUDIT-079 and BUG-067..070. Highest priorities are dual-stream subprocess deadlock, lost subprocess deadlines and idle-worker graceful stop. No implementation fixes were made.
 - Advisory parameter scan succeeds with 43 candidates; count-only style changes were retained rather than promoted. Focused subprocess, GitHub failure and JSON checks substantiate runtime boundary findings; worker/job/TypeScript findings remain source-traced. Full integration and cloud qualification were outside this filing.
+
+## Deeper code quality audit (2026-09-28)
+
+- Followed cancellation/resource ownership, malformed input and deploy/rollback recovery at origin/main `2dfa5694`; report: `internal/pipeline/audits/2026-09-28_deep_code_quality_audit.md`.
+- Filed BUG-071..076 and CODE_LAYER-025: lease ownership expiry, lost scheduled policies on rollback, exact HTTP body limit, multi-domain signal restoration, symlink dereferencing in build contexts, npm workspace membership and interrupted process cleanup. Seven new findings; fourteen across both passes. No runtime fixes.
+- Focused dependency/production-function probes reproduce body, signal, copy, npm and subprocess behavior; lease takeover is a pure decision probe plus source trace, and scheduled policy loss is source-traced. Build succeeds; no live concurrent cluster mutation or full integration/cloud qualification. Coverage remains bounded, not exhaustive.
