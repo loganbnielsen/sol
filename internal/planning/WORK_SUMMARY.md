@@ -516,3 +516,23 @@ actor starts from them:
 - Third targeted pass at origin/main `6eb36b2c` filed BUG-077..082, six high-severity findings: destructive scoped rollback, checkout-based schema compatibility, premature JWT authorization, retry/DLQ group collisions, ignored emitted External Secrets backend, and unreadable migration discovery bypassing the deployment gate.
 - Report: `internal/pipeline/audits/2026-09-28_high_value_code_quality_audit.md`. Focused reproductions and source traces are separated explicitly; no runtime fixes or live workload/database mutations. Twenty findings across the three passes.
 - CLI/soldev build succeeds. Foundation transaction cancellation was retained unfiled pending verification of the pinned implementation/pool behavior; checksum work is already FEAT-094. This pass remains targeted, not exhaustive.
+
+## Audit-ticket wave closeout (2026-09-29)
+
+**All twenty audit tickets from the three filing passes are merged.** Wave one: CODE_LAYER-023/024/025, CODEX_STYLE_AUDIT-079, BUG-068..070, BUG-073..076 (PRs #689–#700). Wave two: BUG-071, BUG-072, BUG-077, BUG-078, BUG-082, and BUG-067 (PRs #701–#703, #706, #707, #711). BUG-067's mechanism lives in the pinned `kafka-eio` package (loganbnielsen/kafka-eio#26) with `?stop` threaded through `Kafka_service` and joined in `sol-worker`.
+
+**Support-library theme work (`*-eio`), from the same REFAC/CODEX_STYLE_AUDIT catalogue:**
+
+- loganbnielsen/kafka-eio#27 (`960a427`) — `Kafka.Consumer.hooks` + `default_hooks` replace five loose callbacks on `create` and the `?on_warning`/`?on_retry` pair on the loops. Mutation-checked by a new "hooks are observed" integration test.
+- sol REFAC-157 (#715, `2b4f33a6`) — `Kafka_service.consumer_hooks` becomes `{ kafka : Kafka.Consumer.hooks; on_relay_publish }`, so a hook the library grows needs no sol-side declaration; pin bumped to `960a427`.
+- loganbnielsen/pg-eio#23 (`7770eca`) — `Identifier.of_string`'s stringly-typed `?kind` is a required `[ `Table | `Column ]`.
+- loganbnielsen/obs-loki-eio#16 (`6996f5d`) — an empty logfmt field name is omitted rather than renamed to `"field"`; the contract is documented in `obs_loki.mli`.
+- Deliberately retained findings are recorded in `internal/pipeline/audits/STYLE_AUDIT.md` § *Sites examined in the support libraries* (library-default warning sinks, the remaining `= ""` checks, one three-line duplicate) with the reasoning.
+
+**Still open in those libraries** (filed, actionable, not started): REFAC-156 — `Aws.Http.signed_request`'s nineteen arguments become a credential set and a request spec, with `normalize_path:bool` replaced by a variant; REFAC-158 — the `kafka-eio`/`aws-eio` facades stop hand-copying the signatures of the private modules they re-export (hide the three hidden internals at the source, then `module type of`).
+
+**Framework test coverage (INFRA-095, #712 + #713, `36a56d0f`).** CI's unit step had excluded `framework/ocaml/kafka-eio-service/` (its `test/dune` built a broker-requiring suite as well) and never listed `framework/ocaml/sol-jobs/`, so 41 + 11 offline tests ran only outside the PR gate. The integration suite is now an executable behind `runtest-integration`, every framework package is in the unit step, and a new step starts Redpanda and Postgres (the same scripts `sol local infra up` uses) to run the alias and sol-jobs' Postgres case on the gate. `internal/ci/check_framework_ci_coverage.py` protects both invariants — every unit suite is in the unit step, every integration alias is built by some step — with a mutation test.
+
+**Branch protection.** All eleven `*-eio` repositories now mirror sol: required `test`, `enforce_admins: true`, no mandatory review, no up-to-date-branch requirement. kafka-eio#27, pg-eio#23 and obs-loki-eio#16 merged through that path with no bypass.
+
+**Local state.** The Redpanda and Postgres containers started for this work, the audit/implementation worktrees and the merged local branches were removed. Four pre-existing sol worktrees with unpushed work (`logan-comments`, `audit/high-value-code-quality`, `tooling/parameter-style-lint`, `tooling/pipeline-cleanup`) and three `*-eio` worktrees whose branches hold unique commits (`kafka-eio-topic-config`, `aws-eio-REFAC-154-direct-composition` — the withdrawn credential-composition refactor — and `obs-tempo-eio-CODE_LAYER-004`) were left untouched.
