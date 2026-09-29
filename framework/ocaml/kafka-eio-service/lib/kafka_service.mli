@@ -241,6 +241,7 @@ val consume
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> ?ot:Obs_eio.t
+  -> ?stop:unit Eio.Promise.t
   -> handler:
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
@@ -268,6 +269,7 @@ val consume_partitioned
   -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
   -> ?ot:Obs_eio.t
+  -> ?stop:unit Eio.Promise.t
   -> handler:
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)

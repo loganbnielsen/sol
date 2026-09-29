@@ -327,6 +327,7 @@ let consume
       ?(hooks = no_hooks)
       ?(on_decode_error = default_on_decode_error)
       ?ot
+      ?stop
       ~handler
       ()
   =
@@ -363,7 +364,7 @@ let consume
     | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
     | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
   in
-  let result = Kafka.Consumer.consume consumer ~handler:decode_and_handle () in
+  let result = Kafka.Consumer.consume consumer ?stop ~handler:decode_and_handle () in
   Kafka.Consumer.close consumer;
   result
 ;;
@@ -379,6 +380,7 @@ let consume_partitioned
       ?decode_error_policy
       ~retry_strategy
       ?ot
+      ?stop
       ~handler
       ()
   =
@@ -433,6 +435,7 @@ let consume_partitioned
        in
        let result =
          Kafka.Consumer.consume_partitioned
+           ?stop
            consumer
            ~sw
            ~clock

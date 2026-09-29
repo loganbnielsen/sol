@@ -341,6 +341,124 @@ module PartitionFailEvent = struct
   ;;
 end
 
+module IdleTopic = struct
+  type t = unit
+
+  let topic_name =
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-idle-%05d" run_id)
+  ;;
+
+  let schema = {|{"type":"object","properties":{"x":{"type":"string"}}}|}
+  let encode () = `Assoc []
+  let decode _ = Ok ()
+end
+
+let test_consume_returns_promptly_when_idle_and_stop_resolves () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  match Kafka_service.create (make_config ()) ~sw with
+  | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+  | Ok svc ->
+    (match
+       Kafka_service.register svc ~net:env#net ~clock:env#clock (module IdleTopic)
+     with
+     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+     | Ok topic ->
+       let stop_p, stop_r = Eio.Promise.create () in
+       let done_p, done_r = Eio.Promise.create () in
+       Eio.Fiber.fork ~sw (fun () ->
+         Eio.Promise.resolve
+           done_r
+           (Kafka_service.consume
+              svc
+              topic
+              ~group_id:(Printf.sprintf "sol-svc-idle-%05d" run_id)
+              ~sw
+              ~clock:env#clock
+              ~stop:stop_p
+              ~handler:(fun () ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Continue)
+              ()));
+       Eio.Time.sleep env#clock 1.0;
+       Alcotest.(check bool)
+         "nothing to consume, so the loop is still parked on the topic"
+         true
+         (not (Eio.Promise.is_resolved done_p));
+       Eio.Promise.resolve stop_r ();
+       (match
+          Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await done_p)
+        with
+        | Ok () -> ()
+        | Error e -> Alcotest.fail (Kafka.Error.to_string e)))
+;;
+
+module IdleRetryTopic = struct
+  type t = unit
+
+  let topic_name =
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-idle-retry-%05d" run_id)
+  ;;
+
+  let schema = {|{"type":"object","properties":{"x":{"type":"string"}}}|}
+  let encode () = `Assoc []
+  let decode _ = Ok ()
+end
+
+let test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  match Kafka_service.create (make_config ()) ~sw with
+  | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+  | Ok svc ->
+    (match
+       Kafka_service.register svc ~net:env#net ~clock:env#clock (module IdleRetryTopic)
+     with
+     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+     | Ok topic ->
+       let stop_p, stop_r = Eio.Promise.create () in
+       let done_p, done_r = Eio.Promise.create () in
+       Eio.Fiber.fork ~sw (fun () ->
+         Eio.Promise.resolve
+           done_r
+           (Kafka_service.consume_partitioned
+              svc
+              topic
+              ~group_id:(Printf.sprintf "sol-svc-idle-retry-%05d" run_id)
+              ~sw
+              ~net:env#net
+              ~clock:env#clock
+              ~retry_strategy:
+                (Kafka_service.In_memory
+                   { Kafka.Consumer.base_delay_s = 0.05
+                   ; max_delay_s = 0.2
+                   ; max_attempts = 2
+                   ; jitter_ratio = 0.0
+                   })
+              ~stop:stop_p
+              ~handler:(fun () ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Continue)
+              ()));
+       Eio.Time.sleep env#clock 1.0;
+       Alcotest.(check bool)
+         "nothing to consume, so the routing loop is still parked on the topic"
+         true
+         (not (Eio.Promise.is_resolved done_p));
+       Eio.Promise.resolve stop_r ();
+       (match
+          Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await done_p)
+        with
+        | Ok () -> ()
+        | Error e ->
+          Alcotest.failf
+            "expected a clean stop, got %s"
+            (match e with
+             | Kafka_service.Consumer_error ke -> Kafka.Error.to_string ke
+             | Kafka_service.Partition_errors errs ->
+               Printf.sprintf "%d partition error(s)" (List.length errs))))
+;;
+
 let test_consume_partitioned_reports_partition_error () =
   Eio_main.run
   @@ fun env ->
@@ -1025,8 +1143,18 @@ let () =
             `Slow
             test_single_broker_loss_rejects_under_replicated_topic
         ] )
+    ; ( "idle_stop"
+      , [ test_case
+            "an idle consume returns promptly when stop resolves (BUG-067)"
+            `Slow
+            test_consume_returns_promptly_when_idle_and_stop_resolves
+        ] )
     ; ( "consume_partitioned"
       , [ test_case
+            "an idle retry worker returns promptly when stop resolves (BUG-067)"
+            `Slow
+            test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves
+        ; test_case
             "reports partition error, not a collapsed single error"
             `Slow
             test_consume_partitioned_reports_partition_error

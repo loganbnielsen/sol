@@ -184,6 +184,7 @@ val consume
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> ?ot:Obs_eio.t
+  -> ?stop:unit Eio.Promise.t
   -> handler:
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
@@ -192,6 +193,22 @@ val consume
   -> unit
   -> (unit, Kafka.Error.t) result
 ```
+
+### `?stop` — waking an idle consumer (BUG-067)
+
+Both entry points take `?stop:unit Eio.Promise.t`. The consumer blocks on its
+message stream, so without a stop handle nothing can end the loop while the topic
+is empty: a worker with nothing to consume, malformed-only traffic, or a stop
+requested during the final message would wait for the *next* message. Resolving
+the promise ends consumption at the next opportunity instead — `consume` races it
+against the blocking take, and `consume_partitioned` feeds its internal stop
+signal, which `routing_loop` and the per-partition loops already observe.
+
+A handler that is already running is unaffected: the race happens *between*
+messages, so the in-flight handler still completes and acknowledges before
+closure. The mechanism lives in the pinned `kafka-eio` package
+(`Kafka.Consumer.consume`/`consume_partitioned`, kafka-eio#26); this module and
+`sol-worker` pass the handle through.
 
 ### `consume_partitioned` — per-partition fiber isolation
 
@@ -225,6 +242,7 @@ val consume_partitioned
   -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
   -> ?ot:Obs_eio.t
+  -> ?stop:unit Eio.Promise.t
   -> handler:
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)

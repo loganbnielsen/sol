@@ -162,6 +162,13 @@ After `run` returns:
 - If `register` failed → returns `Error (`Register ...)`
 - On SIGTERM/SIGINT or `stop` resolving → returns normally
 
+Both stop sources are joined into one handle passed to the consumer, so an *idle*
+worker — an empty topic, malformed-only traffic, or a stop requested while the
+final message is in flight — returns promptly too, rather than waiting for the
+next decoded message. `stop_handle`/`join_stop` resolves once, from whichever
+source fires first; a handler already running still completes and acknowledges
+before the loop ends.
+
 ## Signal handling
 
 Self-pipe trick (same pattern as `sol-svc` and `sol-fn`), implemented once in `Sol_runtime` and shared by every service primitive:

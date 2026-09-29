@@ -313,9 +313,10 @@ let test_metrics_endpoint_served () =
       |> run_ok)
 ;;
 
-let test_stop_flag_stops_after_current_message () =
+let test_stop_requested_after_a_message_stops_before_the_next () =
   Eio_main.run (fun env ->
     let processed = ref 0 in
+    let stop_p, stop_r = Eio.Promise.create () in
     let module StopWorker = struct
       module Message = TestMsg
 
@@ -323,14 +324,60 @@ let test_stop_flag_stops_after_current_message () =
 
       let handle _msg ~trace_ctx:_ =
         incr processed;
+        Eio.Promise.resolve stop_r ();
         Worker.Ack
       ;;
     end
     in
     let msgs = [ TestMsg.{ id = "msg-a" }; TestMsg.{ id = "msg-b" } ] in
     let module W = Worker.For_testing.Make (StopWorker) in
-    W.run ~env ~config:fake_config ~test_consume_loop:(two_messages msgs) () |> run_ok;
-    Alcotest.(check int) "both messages processed" 2 !processed)
+    W.run ~env ~config:fake_config ~stop:stop_p ~test_consume_loop:(two_messages msgs) ()
+    |> run_ok;
+    Alcotest.(check int)
+      "the in-flight message completed and the next one never started"
+      1
+      !processed)
+;;
+
+let test_stop_handle_wakes_from_either_source () =
+  Eio_main.run (fun _env ->
+    Eio.Switch.run (fun sw ->
+      let handle_of ?signal ?caller () =
+        Worker.For_testing.join_stop ~sw ?signal ?caller ()
+      in
+      let signal, signal_r = Eio.Promise.create () in
+      let caller, caller_r = Eio.Promise.create () in
+      let handle = handle_of ~signal ~caller () in
+      Eio.Fiber.yield ();
+      Alcotest.(check bool)
+        "unresolved while neither source has fired"
+        false
+        (Eio.Promise.is_resolved handle);
+      Eio.Promise.resolve caller_r ();
+      Eio.Fiber.yield ();
+      Alcotest.(check bool)
+        "the caller's promise wakes the handle"
+        true
+        (Eio.Promise.is_resolved handle);
+      Eio.Promise.resolve signal_r ();
+      Eio.Fiber.yield ();
+      Alcotest.(check bool)
+        "a second source firing is harmless"
+        true
+        (Eio.Promise.is_resolved handle);
+      let signal_only, signal_only_r = Eio.Promise.create () in
+      let handle_signal = handle_of ~signal:signal_only () in
+      Eio.Fiber.yield ();
+      Alcotest.(check bool)
+        "the signal source alone starts unresolved"
+        false
+        (Eio.Promise.is_resolved handle_signal);
+      Eio.Promise.resolve signal_only_r ();
+      Eio.Fiber.yield ();
+      Alcotest.(check bool)
+        "the signal source wakes the handle"
+        true
+        (Eio.Promise.is_resolved handle_signal)))
 ;;
 
 let test_no_metrics_without_ot () =
@@ -470,9 +517,13 @@ let () =
             test_handle_dead_letter_returns_consumer_error
         ; Alcotest.test_case "no ot — no crash" `Quick test_no_metrics_without_ot
         ; Alcotest.test_case
-            "two messages both processed"
+            "a stop request after a message stops before the next"
             `Quick
-            test_stop_flag_stops_after_current_message
+            test_stop_requested_after_a_message_stops_before_the_next
+        ; Alcotest.test_case
+            "stop handle wakes from the signal or the caller"
+            `Quick
+            test_stop_handle_wakes_from_either_source
         ; Alcotest.test_case
             "max_messages stops cleanly"
             `Quick

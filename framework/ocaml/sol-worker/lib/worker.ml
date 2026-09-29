@@ -65,6 +65,22 @@ let run_error_to_string = function
 
 let default_metrics_port = 9090
 
+let join_stop ~sw ?signal ?caller () =
+  let handle, handle_r = Eio.Promise.create () in
+  let resolve_once () =
+    if not (Eio.Promise.is_resolved handle) then Eio.Promise.resolve handle_r ()
+  in
+  let watch p =
+    Eio.Fiber.fork_daemon ~sw (fun () ->
+      Eio.Promise.await p;
+      resolve_once ();
+      `Stop_daemon)
+  in
+  Option.iter watch signal;
+  Option.iter watch caller;
+  handle
+;;
+
 let with_runtime_unflushed
       ~(env : (_, _, _, _) Sol_env.timed)
       ~ot
@@ -114,6 +130,7 @@ let with_runtime_unflushed
       decr r;
       if !r <= 0 then Kafka.Consumer.Stop else Kafka.Consumer.Continue
   in
+  let stop_handle ~sw = join_stop ~sw ~signal:signal_stop ?caller:stop () in
   let health = Worker_health.create ~now:(fun () -> Eio.Time.now env#clock) in
   Eio.Switch.run (fun sw ->
     Sol_runtime.install_signal_handler ~sw signal_stop_r;
@@ -122,7 +139,15 @@ let with_runtime_unflushed
         match metrics_renderer with
         | Some render -> render ()
         | None -> ""));
-    body ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health)
+    body
+      ~sw
+      ~ot
+      ~msg_count
+      ~msg_duration
+      ~should_stop
+      ~advance
+      ~health
+      ~stop_handle:(stop_handle ~sw))
 ;;
 
 let with_runtime ~env ~ot ~metrics_port ~stop ~max_messages ~body =
@@ -204,7 +229,9 @@ module Make_with_test_seam (W : WORKER) = struct
         ~metrics_port
         ~stop
         ~max_messages
-        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ->
+        ~body:
+          (fun
+            ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ~stop_handle ->
           let handler msg ~ack ~trace_ctx =
             if should_stop ()
             then Kafka.Consumer.Stop
@@ -251,6 +278,7 @@ module Make_with_test_seam (W : WORKER) = struct
               ~clock:env#clock
               ~hooks
               ?ot
+              ~stop:stop_handle
               ~handler
               ()
             |> Result.map_error (fun e -> `Consume (Kafka_service.Consumer_error e)))
@@ -288,7 +316,9 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
         ~metrics_port
         ~stop
         ~max_messages
-        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ->
+        ~body:
+          (fun
+            ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ~stop_handle ->
           let on_retry ~partition:_ ~attempt:_ ~delay_s:_ =
             match msg_count with
             | Some c -> c ~labels:[ "status", "retry" ] 1
@@ -363,6 +393,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 ?decode_error_policy
                 ~retry_strategy
                 ?ot
+                ~stop:stop_handle
                 ~handler
                 ()
               |> Result.map_error (fun ke -> `Consume ke)
@@ -404,6 +435,8 @@ module Make_with_retry (W : RETRYABLE_WORKER) = struct
 end
 
 module For_testing = struct
+  let join_stop = join_stop
+
   module Make = Make_with_test_seam
   module Make_with_retry = Make_with_retry_and_test_seam
 end
