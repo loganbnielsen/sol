@@ -1,0 +1,7 @@
+(library
+ (name sol_cli_inline_tests)
+ (inline_tests
+  (deps ../../bin/main.exe))
+ (preprocess
+  (pps ppx_windtrap))
+ (libraries windtrap sol_cli sol_cli_test_support unix))

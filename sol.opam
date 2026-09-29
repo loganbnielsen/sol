@@ -32,11 +32,19 @@ depends: [
   "yaml"
   "jose"
   "ptime"
-  "alcotest" {with-test}
+  "alcotest"
+  "windtrap" {>= "0.1.0"}
+  "ppx_windtrap" {>= "0.1.0"}
   "mirage-crypto-pk" {with-test}
   "mirage-crypto-rng" {with-test}
   "odoc" {with-doc}
 ]
+
+pin-depends: [
+  [ "windtrap.0.1.0" "https://github.com/invariant-hq/windtrap/releases/download/0.1.0/windtrap-0.1.0.tbz" ]
+  [ "ppx_windtrap.0.1.0" "https://github.com/invariant-hq/windtrap/releases/download/0.1.0/windtrap-0.1.0.tbz" ]
+]
+
 build: [
   ["dune" "subst"] {dev}
   [
