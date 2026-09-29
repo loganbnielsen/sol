@@ -50,6 +50,57 @@ let test_disposition_restored_after_the_switch_ends () =
     (now = Sys.Signal_default)
 ;;
 
+let concurrent_registration_child () =
+  let leaked = ref false in
+  let round = ref 0 in
+  while (not !leaked) && !round < 2000 do
+    incr round;
+    let entered = Atomic.make 0 in
+    let installed = Atomic.make 0 in
+    let work () =
+      Eio_main.run (fun _env ->
+        Eio.Switch.run (fun sw ->
+          ignore (Atomic.fetch_and_add entered 1);
+          while Atomic.get entered < 2 do
+            Domain.cpu_relax ()
+          done;
+          let _promise, resolver = Eio.Promise.create () in
+          Sol_runtime.install_signal_handler ~sw resolver;
+          ignore (Atomic.fetch_and_add installed 1);
+          while Atomic.get installed < 2 do
+            Domain.cpu_relax ()
+          done))
+    in
+    let domain = Domain.spawn work in
+    work ();
+    Domain.join domain;
+    match Sys.signal Sys.sigterm Sys.Signal_default with
+    | Sys.Signal_default -> ()
+    | _ ->
+      leaked := true;
+      Printf.eprintf "round %d: the SIGTERM handler survived both switches\n%!" !round
+  done;
+  if !leaked then exit 1 else exit 0
+;;
+
+let test_concurrent_registration_restores_disposition () =
+  let pid =
+    Unix.create_process
+      Sys.executable_name
+      [| Sys.executable_name; "--concurrent-registration-child" |]
+      Unix.stdin
+      Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with
+  | _, Unix.WEXITED 0 -> ()
+  | _, Unix.WEXITED n ->
+    Alcotest.failf
+      "child exited %d; a SIGTERM handler was left installed after both runtimes closed"
+      n
+  | _, (Unix.WSIGNALED _ | Unix.WSTOPPED _) -> Alcotest.fail "child ended unexpectedly"
+;;
+
 let double_signal_child () =
   Eio_main.run
   @@ fun env ->
@@ -81,8 +132,12 @@ let test_second_signal_terminates () =
 ;;
 
 let () =
-  if Array.length Sys.argv > 1 && Sys.argv.(1) = "--double-signal-child"
-  then double_signal_child ();
+  if Array.length Sys.argv > 1
+  then (
+    match Sys.argv.(1) with
+    | "--double-signal-child" -> double_signal_child ()
+    | "--concurrent-registration-child" -> concurrent_registration_child ()
+    | _ -> ());
   Alcotest.run
     "sol_runtime"
     [ ( "install_signal_handler"
@@ -102,6 +157,10 @@ let () =
             "disposition restored after the switch ends"
             `Quick
             test_disposition_restored_after_the_switch_ends
+        ; Alcotest.test_case
+            "concurrent registration restores the original disposition (BUG-074)"
+            `Quick
+            test_concurrent_registration_restores_disposition
         ; Alcotest.test_case
             "a second signal terminates"
             `Quick
