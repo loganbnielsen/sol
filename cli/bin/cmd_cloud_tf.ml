@@ -125,6 +125,67 @@ let workdir provider role ~backend_config =
   Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
 ;;
 
+let reconcile_ownership_at
+      ~provider
+      ~target
+      ~(target_cfg : Sol_cli_config.target)
+      ~infra_dir
+      ~var_files
+      ~vars
+  =
+  match target_cfg.cluster_name with
+  | Some cluster_name when not (Sol_cli_string.is_blank cluster_name) ->
+    let reconciliation =
+      Sol_cli_cloud_wiring.reconcile_ownership
+        ~provider
+        ~target_cfg
+        ~cluster_name
+        ~infra_dir
+        ~var_files
+        ~vars
+        ~act:true
+    in
+    (match reconciliation with
+     | Error message ->
+       Printf.eprintf
+         "warning: ownership reconciliation could not complete -- %s\n%!"
+         message;
+       Ok ()
+     | Ok reconciliation ->
+       if reconciliation.restored <> []
+       then
+         Printf.printf
+           "\n%s%!"
+           (Sol_cli_ownership_reconciliation.outcome reconciliation.dispositions);
+       let refused =
+         List.filter
+           (function
+             | Sol_cli_ownership_reconciliation.Cannot_recover _
+             | Sol_cli_ownership_reconciliation.Unmapped _ -> true
+             | Sol_cli_ownership_reconciliation.Recover _
+             | Sol_cli_ownership_reconciliation.Already_owned _
+             | Sol_cli_ownership_reconciliation.By_contract _
+             | Sol_cli_ownership_reconciliation.Owned_through _ -> false)
+           reconciliation.dispositions
+       in
+       if refused <> []
+       then
+         Printf.eprintf
+           "warning: %d resource(s) the provider holds for this target cannot be \
+            attributed to a Terraform address automatically; run 'sol cloud reconcile %s \
+            --explain' to see what was checked.\n\
+            %!"
+           (List.length refused)
+           target;
+       Ok ())
+  | _ ->
+    Printf.eprintf
+      "warning: ownership reconciliation is skipped: the target declares no cluster_name \
+       to attribute provider resources by.\n\
+       %!";
+    Ok ()
+;;
+
 let cloud_init
       ?(confirm_ecr_removal = false)
       ?(accept_unresolved = false)
@@ -195,6 +256,11 @@ let cloud_init
       cloud_backend
     |> of_apply_failure
   in
+  let* () =
+    if action = Apply
+    then reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
+    else Ok ()
+  in
   match action with
   | Plan ->
     let* () =
@@ -221,6 +287,15 @@ let cloud_init
        Ok ()
      | Sol_cli_cloud_apply.Apply_failed { failure; cleanup } ->
        report_cleanup_evidence cleanup;
+       Printf.eprintf
+         "\n\
+          warning: the apply failed, so Terraform's error is not evidence about what the \
+          provider holds. Observing the provider independently and reconciling what can \
+          be attributed exactly:\n\
+          %!";
+       let* () =
+         reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
+       in
        Error failure |> of_apply_failure)
 ;;
 
@@ -287,6 +362,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~infra_dir
       ~var_files
       ~vars
+  in
+  let* () =
+    if action = Apply
+    then reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
+    else Ok ()
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   match action with
@@ -359,87 +439,35 @@ let var_arg =
         ~doc:"Terraform variable. Can be passed multiple times.")
 ;;
 
-let recover_one
-      ~infra_dir
-      ~var_files
-      ~vars
-      (candidate : Sol_cli_ownership_recovery.candidate)
-  =
-  Printf.printf
-    "  importing %s as %s (identity %s)...\n%!"
-    candidate.found
-    candidate.address
-    candidate.import_identity;
-  match
-    Sol_cli_terraform.import_
-      ~chdir:infra_dir
-      ~var_files
-      ~vars
-      ~address:candidate.address
-      ~import_identity:candidate.import_identity
-      ()
-  with
-  | Error error ->
-    Error
-      (Printf.sprintf
-         "%s could not be imported into %s: %s"
-         candidate.found
-         candidate.address
-         (Sol_cli_process.error_to_string error))
-  | Ok _ ->
-    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-     | Error error ->
-       Error
-         (Printf.sprintf
-            "imported %s, but the state could not be re-read: %s"
-            candidate.address
-            (Sol_cli_process.error_to_string error))
-     | Ok result ->
-       let after = Sol_cli_cloud_destroy.inventory_of_show_json result.stdout in
-       let owned =
-         Sol_cli_cloud_destroy.resources after
-         |> List.find_opt (fun (resource : Sol_cli_cloud_destroy.resource) ->
-           resource.address = candidate.address)
-       in
-       (match owned with
-        | None ->
-          Error
-            (Printf.sprintf
-               "the import of %s reported success, but the state does not represent it \
-                afterwards"
-               candidate.address)
-        | Some resource ->
-          let observed = Option.value resource.identifier ~default:"" in
-          let agrees =
-            Sol_cli_string.is_blank observed
-            || Sol_cli_string.contains ~needle:observed candidate.import_identity
-            || Sol_cli_string.contains ~needle:candidate.import_identity observed
-          in
-          if agrees
-          then (
-            Printf.printf
-              "    %s now owns %s (provider id %s)\n%!"
-              candidate.address
-              candidate.found
-              (if Sol_cli_string.is_blank observed then "(none recorded)" else observed);
-            Ok ())
-          else
-            Error
-              (Printf.sprintf
-                 "the state now holds %s with provider id %s, which is not the identity \
-                  %s that was imported, so the adoption is ambiguous"
-                 candidate.address
-                 observed
-                 candidate.import_identity)))
+let dry_run_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "dry-run" ]
+        ~doc:
+          "Report what reconciliation would do without adopting anything. Reconciliation \
+           adopts nothing it cannot attribute exactly, so running it without this flag \
+           is safe.")
 ;;
 
-let cloud_recover ~target ~var_file ~vars ~action () =
+let explain_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "explain" ]
+        ~doc:
+          "Show everything the provider inventory checked, with the rule that makes each \
+           finding this target's, and the disposition of every resource found.")
+;;
+
+let cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain () =
   let* () = check_terraform () in
   let* provider = provider_of_target_path target in
-  let pname = Sol_cli_provider.to_string provider in
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
-  let run_log = Sol_cli_run_log.create ~prefix:"cloud-recover" () in
+  let run_log = Sol_cli_run_log.create ~prefix:"cloud-reconcile" () in
   let* config_vars, target_cfg = target_vars ~strict:true target in
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars = config_vars @ vars @ Sol_cli_cloud_wiring.substrate_only_vars in
@@ -447,7 +475,7 @@ let cloud_recover ~target ~var_file ~vars ~action () =
   let* () =
     Sol_cli_cloud_wiring.credentials_result
       ~provider
-      ~operation:"recovering ownership for"
+      ~operation:"reconciling infrastructure ownership for"
       ~leaves_target_standing:true
     |> Sol_cli_exit.of_msg
   in
@@ -481,103 +509,113 @@ let cloud_recover ~target ~var_file ~vars ~action () =
     | _ ->
       Error
         (Sol_cli_exit.error
-           "recovery needs the target's cluster_name: both the provider inventory and \
-            the identity registry address resources by it, so without it nothing can be \
-            attributed or mapped")
+           "reconciliation needs the target's cluster_name: both the provider inventory \
+            and the identity registry address resources by it, so without it nothing can \
+            be attributed or mapped")
   in
-  let state =
-    match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-    | Ok result -> Sol_cli_cloud_destroy.inventory_of_show_json result.stdout
-    | Error (Sol_cli_process.Non_zero result) ->
-      Sol_cli_cloud_destroy.State_unreadable
-        (Printf.sprintf "terraform show exited %d" result.exit_code)
-    | Error error ->
-      Sol_cli_cloud_destroy.State_unreadable
-        ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error)
+  let var_files = Option.to_list var_file in
+  let* reconciliation =
+    Sol_cli_cloud_wiring.reconcile_ownership
+      ~provider
+      ~target_cfg
+      ~cluster_name
+      ~infra_dir
+      ~var_files
+      ~vars
+      ~act:(not dry_run)
+    |> Sol_cli_exit.of_msg
   in
-  let state_addresses = Sol_cli_cloud_destroy.addresses state in
-  let observations =
-    Sol_cli_provider_registry.observations provider target_cfg ~cluster_name
-  in
-  let dispositions =
-    Sol_cli_ownership_recovery.dispositions
-      ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
-      ~class_rules:Sol_cli_resource_identity.class_rules
-      ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name)
-      ~state_addresses
-      observations
-  in
+  if explain
+  then (
+    Printf.printf "%s%!" (Sol_cli_absence.report reconciliation.observations);
+    Printf.printf
+      "%s%!"
+      (Sol_cli_ownership_reconciliation.report reconciliation.dispositions);
+    Printf.printf
+      "  %s\n\n%!"
+      (Sol_cli_ownership_reconciliation.summary reconciliation.dispositions));
   Printf.printf
-    "\nRecovering Terraform ownership for %s (%s, cluster %s)...\n%!"
-    target
-    pname
-    cluster_name;
-  Printf.printf "%s%!" (Sol_cli_absence.report observations);
-  Printf.printf "%s%!" (Sol_cli_ownership_recovery.report dispositions);
-  Printf.printf "  %s\n%!" (Sol_cli_ownership_recovery.summary dispositions);
-  let candidates = List.filter_map Sol_cli_ownership_recovery.candidate dispositions in
-  match action with
-  | Plan ->
-    (match candidates with
-     | [] ->
-       Printf.printf
-         "\n\
-          Done. Nothing here restores Terraform ownership; --apply would re-check the \
-          same question.\n\
-          %!";
-       Ok ()
-     | candidates ->
-       Printf.printf
-         "\n\
-          %d resource(s) can be brought back under Terraform ownership. Re-run with \
-          --apply to import them.\n\
-          %!"
-         (List.length candidates);
-       Ok ())
-  | Apply ->
-    let var_files = Option.to_list var_file in
-    let recovered =
-      List.fold_left
-        (fun acc candidate ->
-           match acc with
-           | Error _ as error -> error
-           | Ok count ->
-             (match recover_one ~infra_dir ~var_files ~vars candidate with
-              | Error _ as error -> error
-              | Ok () -> Ok (count + 1)))
-        (Ok 0)
-        candidates
-    in
-    (match recovered with
-     | Error message ->
-       Printf.eprintf "error: %s\n%!" message;
-       Error (Sol_cli_exit.reported ~code:1 ())
-     | Ok count ->
-       Printf.printf "\n%d resource(s) brought back under Terraform ownership.\n%!" count;
-       let imported =
-         List.map (fun (c : Sol_cli_ownership_recovery.candidate) -> c.address) candidates
-       in
-       let outstanding =
-         Sol_cli_ownership_recovery.outstanding dispositions
-         |> List.filter (function
-           | Sol_cli_ownership_recovery.Recover candidate ->
-             not (List.mem candidate.address imported)
-           | Sol_cli_ownership_recovery.Cannot_recover _
-           | Sol_cli_ownership_recovery.Unmapped _ -> true
-           | Sol_cli_ownership_recovery.Already_owned _
-           | Sol_cli_ownership_recovery.By_contract _
-           | Sol_cli_ownership_recovery.Owned_through _ -> false)
-       in
-       if outstanding = []
-       then Ok ()
-       else (
-         Printf.eprintf
-           "error: %d resource(s) attributable to this target remain outside Terraform \
-            ownership, and Sol will not guess at them:\n\
-            %!"
-           (List.length outstanding);
-         Printf.eprintf "%s%!" (Sol_cli_ownership_recovery.report outstanding);
-         Error (Sol_cli_exit.reported ~code:1 ())))
+    "%s%!"
+    (Sol_cli_ownership_reconciliation.outcome ~dry_run reconciliation.dispositions);
+  let outstanding =
+    Sol_cli_ownership_reconciliation.unreconciled reconciliation.dispositions
+    |> List.filter (function
+      | Sol_cli_ownership_reconciliation.Recover candidate ->
+        not
+          (List.exists
+             (fun (restored : Sol_cli_ownership_reconciliation.candidate) ->
+                restored.address = candidate.address)
+             reconciliation.restored)
+      | Sol_cli_ownership_reconciliation.Cannot_recover _
+      | Sol_cli_ownership_reconciliation.Unmapped _ -> true
+      | Sol_cli_ownership_reconciliation.Already_owned _
+      | Sol_cli_ownership_reconciliation.By_contract _
+      | Sol_cli_ownership_reconciliation.Owned_through _ -> false)
+  in
+  if outstanding = []
+  then Ok ()
+  else (
+    Printf.eprintf
+      "error: %d resource(s) attributable to this target remain outside Terraform \
+       ownership, and Sol will not guess at them:\n\
+       %!"
+      (List.length outstanding);
+    Printf.eprintf "%s%!" (Sol_cli_ownership_reconciliation.report outstanding);
+    Error (Sol_cli_exit.reported ~code:1 ()))
+;;
+
+let reconcile_cmd =
+  let doc =
+    "Compare Terraform ownership with independently observed provider reality, and \
+     repair discrepancies that can be attributed exactly."
+  in
+  let man =
+    [ `S Manpage.s_description
+    ; `P
+        "Terraform is the mutation and convergence authority for directly managed \
+         infrastructure; the provider is the reality authority. When an apply fails \
+         after the provider created something, the state may not represent it, and a \
+         state-driven destroy then cannot remove it. This command observes the provider \
+         independently, maps each resource it finds to a Terraform address through the \
+         identity registry, and adopts it so the ordinary lifecycle can act on it."
+    ; `P
+        "It refuses to guess. A resource whose class has no registry entry, whose class \
+         the registry marks as not recoverable (a composite provider identity, a \
+         module's internals, a name that depends on the workspace layout), or whose name \
+         matches more than one address, is reported and left alone. Resources that are \
+         external or durable by contract, and resources a controller created on behalf \
+         of something Terraform owns, are reported as their owner's business rather than \
+         adopted."
+    ; `P
+        "Adoption is idempotent: a resource Terraform already owns is reported as such \
+         and nothing changes. Lifecycle operations reconcile automatically before an \
+         apply and before a destroy, so an operator does not have to know that a failed \
+         apply left the state behind reality."
+    ; `P
+        "Adoption evaluates the whole configuration, so the target's Terraform variables \
+         must be resolvable exactly as an apply needs them, including any the operator \
+         supplies through the environment (TF_VAR_*). Sol never takes a secret on the \
+         command line."
+    ; `S "EXIT STATUS"
+    ; `P
+        "0 -- reconciled: every resource the provider holds for this target is either \
+         owned already, not this target's to reconcile, or adopted by this run."
+    ; `P
+        "1 -- something remains that Sol cannot safely reconcile, or an adoption failed. \
+         The reason is named on stderr, and nothing is guessed."
+    ]
+  in
+  Cmd.v
+    (Cmd.info "reconcile" ~doc ~man)
+    Term.(
+      const (fun target var_file vars dry_run explain ->
+        Sol_cli_exit.exit_on
+          (cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain ()))
+      $ target_arg
+      $ var_file_arg
+      $ var_arg
+      $ dry_run_flag
+      $ explain_flag)
 ;;
 
 let plan_flag =
@@ -689,53 +727,6 @@ let destroy_cmd =
     Term.(
       const (fun target var_file vars action ->
         Sol_cli_exit.exit_on (cloud_destroy ~target ~var_file ~vars ~action ()))
-      $ target_arg
-      $ var_file_arg
-      $ var_arg
-      $ action_term)
-;;
-
-let recover_cmd =
-  let doc =
-    "Restore Terraform ownership of provider resources this target caused to exist but \
-     the disposable root's state never adopted."
-  in
-  let man =
-    [ `S Manpage.s_description
-    ; `P
-        "Terraform is the mutation authority and the provider is the reality authority. \
-         When an apply fails after the provider has created something, the state may not \
-         represent it, and a state-driven destroy then cannot remove it. This command \
-         observes the provider independently, maps each resource it finds to a Terraform \
-         address through the identity registry, and imports it so the ordinary lifecycle \
-         can act on it."
-    ; `P
-        "It refuses to guess. A resource whose class has no registry entry, whose class \
-         the registry marks as not recoverable (a composite provider identity, a \
-         module's internals, a name that depends on the workspace layout), or whose name \
-         matches more than one address, is reported and left alone. Resources that are \
-         external or durable by contract, and resources a controller created on behalf \
-         of something Terraform owns, are reported as their owner's business rather than \
-         imported."
-    ; `P
-        "Import evaluates the whole configuration, so the target's Terraform variables \
-         must be resolvable exactly as an apply needs them, including any the operator \
-         supplies through the environment (TF_VAR_*). Sol never takes a secret on the \
-         command line."
-    ; `S "EXIT STATUS"
-    ; `P
-        "0 -- nothing outstanding: every resource the provider holds for this target is \
-         either owned already, not this target's to recover, or imported by this run."
-    ; `P
-        "1 -- something remains that Sol cannot safely recover, or an import failed. The \
-         reason is named on stderr, and nothing is guessed."
-    ]
-  in
-  Cmd.v
-    (Cmd.info "recover" ~doc ~man)
-    Term.(
-      const (fun target var_file vars action ->
-        Sol_cli_exit.exit_on (cloud_recover ~target ~var_file ~vars ~action ()))
       $ target_arg
       $ var_file_arg
       $ var_arg

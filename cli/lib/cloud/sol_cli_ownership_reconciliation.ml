@@ -133,7 +133,50 @@ let candidate = function
     None
 ;;
 
-let outstanding dispositions =
+let outcome ?(dry_run = false) dispositions =
+  let restored = List.filter_map candidate dispositions in
+  let refused =
+    List.filter
+      (function
+        | Cannot_recover _ | Unmapped _ -> true
+        | Recover _ | Already_owned _ | By_contract _ | Owned_through _ -> false)
+      dispositions
+  in
+  let buffer = Buffer.create 256 in
+  let line format = Printf.ksprintf (Buffer.add_string buffer) format in
+  if restored <> []
+  then (
+    List.iter
+      (fun restored ->
+         line "Found %s %s.\n" restored.resource_class restored.found;
+         line
+           (if dry_run
+            then "Would restore Terraform ownership:\n  %s\n"
+            else "Restored Terraform ownership:\n  %s\n")
+           restored.address)
+      restored;
+    if dry_run
+    then line "Infrastructure ownership is reconcilable; nothing was changed.\n"
+    else line "Infrastructure ownership is reconciled.\n")
+  else if refused = []
+  then line "Infrastructure ownership is reconciled.\nNo changes.\n"
+  else (
+    line "Infrastructure ownership is not reconciled:\n";
+    List.iter
+      (function
+        | Cannot_recover { resource_class; found; reason } ->
+          line "  %s %s cannot be reconciled: %s\n" resource_class found reason
+        | Unmapped { resource_class; found } ->
+          line
+            "  %s %s has no Terraform address Sol can attribute it to, so it is left alone\n"
+            resource_class
+            found
+        | Recover _ | Already_owned _ | By_contract _ | Owned_through _ -> ())
+      refused);
+  Buffer.contents buffer
+;;
+
+let unreconciled dispositions =
   dispositions
   |> List.filter (function
     | Recover _ | Cannot_recover _ | Unmapped _ -> true
