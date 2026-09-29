@@ -264,10 +264,13 @@ module Make_with_test_seam (W : WORKER) = struct
             in
             let hooks : Kafka_service.consumer_hooks =
               { Kafka_service.no_hooks with
-                on_ready = Option.value on_ready ~default:ignore
-              ; on_assigned = (fun () -> Worker_health.on_assigned health)
-              ; on_revoked = (fun () -> Worker_health.on_revoked health)
-              ; on_poll = (fun () -> Worker_health.on_poll health)
+                kafka =
+                  { Kafka.Consumer.default_hooks with
+                    on_ready = Option.value on_ready ~default:ignore
+                  ; on_assigned = (fun () -> Worker_health.on_assigned health)
+                  ; on_revoked = (fun () -> Worker_health.on_revoked health)
+                  ; on_poll = (fun () -> Worker_health.on_poll health)
+                  }
               }
             in
             Kafka_service.consume
@@ -374,11 +377,14 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
             in
             let result =
               let hooks : Kafka_service.consumer_hooks =
-                { on_ready = Option.value on_ready ~default:ignore
-                ; on_assigned = (fun () -> Worker_health.on_assigned health)
-                ; on_revoked = (fun () -> Worker_health.on_revoked health)
-                ; on_poll = (fun () -> Worker_health.on_poll health)
-                ; on_retry
+                { kafka =
+                    { Kafka.Consumer.default_hooks with
+                      on_ready = Option.value on_ready ~default:ignore
+                    ; on_assigned = (fun () -> Worker_health.on_assigned health)
+                    ; on_revoked = (fun () -> Worker_health.on_revoked health)
+                    ; on_poll = (fun () -> Worker_health.on_poll health)
+                    ; on_retry
+                    }
                 ; on_relay_publish
                 }
               in

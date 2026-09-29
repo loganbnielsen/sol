@@ -160,11 +160,7 @@ val publish
     decode-error behavior (log + ack + continue); raw_bytes is None when the
     record could not be framed at all. Returns when handler returns Error. *)
 type consumer_hooks =
-  { on_ready : unit -> unit
-  ; on_assigned : unit -> unit
-  ; on_revoked : unit -> unit
-  ; on_poll : unit -> unit
-  ; on_retry : partition:int32 -> attempt:int -> delay_s:float -> unit
+  { kafka : Kafka.Consumer.hooks
   ; on_relay_publish :
       partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
   }
