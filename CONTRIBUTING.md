@@ -136,6 +136,10 @@ hook was quiet" as evidence a change is safe. CI is the gate.
 **Each concurrent actor owns one worktree. Agents do not perform mutating work in
 the canonical checkout.** The canonical checkout — the first entry in
 `git worktree list`, the one that holds `.git/` — belongs to the human operator.
+When canonical `main` is clean, an agent may fetch `origin` and fast-forward it
+with `git merge --ff-only origin/main`, then verify `HEAD` equals `origin/main`.
+This synchronization changes only the checkout's branch and tracked files to
+the published commit. All edits, staging, and commits belong in an owned worktree.
 
 Worktrees share the object database, so commits and refs stay visible to
 everyone, but working-tree state and `HEAD` are isolated. That isolation is the

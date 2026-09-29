@@ -537,6 +537,9 @@ actor starts from them:
 
 **Local state.** The Redpanda and Postgres containers started for this work, the audit/implementation worktrees and the merged local branches were removed. Four pre-existing sol worktrees with unpushed work (`logan-comments`, `audit/high-value-code-quality`, `tooling/parameter-style-lint`, `tooling/pipeline-cleanup`) and three `*-eio` worktrees whose branches hold unique commits (`kafka-eio-topic-config`, `aws-eio-REFAC-154-direct-composition` — the withdrawn credential-composition refactor — and `obs-tempo-eio-CODE_LAYER-004`) were left untouched.
 
+## Canonical main synchronization policy (2026-09-29)
+
+- Clarified in `AGENTS.md` and `CONTRIBUTING.md` that an agent may fetch and fast-forward a clean canonical `main`, verify it matches `origin/main`, and must keep edits, staging, and commits in an owned worktree. This documents the existing isolation boundary without changing tooling.
 ## Targeted code quality follow-up (2026-09-29)
 
 - Refreshed canonical `main` to `f52b946c` and reconciled previous findings and open work. Filed BUG-083 for cloud ownership reconciliation treating an unreadable Terraform state as an empty ownership set before import. Evidence and audit limits are in `internal/pipeline/audits/2026-09-29_targeted_code_quality_audit.md`.
