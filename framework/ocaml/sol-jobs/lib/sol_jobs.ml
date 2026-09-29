@@ -30,9 +30,55 @@ let run_error_to_string = function
 ;;
 
 let validate_retry_policy (policy : retry_policy) =
+  let non_negative_finite name value =
+    if Float.is_finite value && value >= 0.0
+    then Ok ()
+    else
+      Error
+        (`Config
+            (Printf.sprintf
+               "retry_policy.%s must be a finite number >= 0 (got %s)"
+               name
+               (Float.to_string value)))
+  in
   if policy.max_attempts = 0
   then Error (`Config "retry_policy.max_attempts must be nonzero (negative = unlimited)")
-  else Ok ()
+  else (
+    match non_negative_finite "base_delay_s" policy.base_delay_s with
+    | Error _ as e -> e
+    | Ok () ->
+      (match non_negative_finite "max_delay_s" policy.max_delay_s with
+       | Error _ as e -> e
+       | Ok () ->
+         if
+           Float.is_finite policy.jitter_ratio
+           && policy.jitter_ratio >= 0.0
+           && policy.jitter_ratio <= 1.0
+         then Ok ()
+         else
+           Error
+             (`Config
+                 (Printf.sprintf
+                    "retry_policy.jitter_ratio must be a finite number within [0, 1] \
+                     (got %s)"
+                    (Float.to_string policy.jitter_ratio)))))
+;;
+
+let validate_timing ~poll_interval_s ~lease_s =
+  let positive_finite name value =
+    if Float.is_finite value && value > 0.0
+    then Ok ()
+    else
+      Error
+        (`Config
+            (Printf.sprintf
+               "%s must be a finite number > 0 (got %s)"
+               name
+               (Float.to_string value)))
+  in
+  match positive_finite "poll_interval_s" poll_interval_s with
+  | Error _ as e -> e
+  | Ok () -> positive_finite "lease_s" lease_s
 ;;
 
 let default_rng = Random.State.make_self_init ()
@@ -77,6 +123,7 @@ let validate_kinds kinds =
 module For_testing = struct
   let backoff_s = backoff_s
   let validate_retry_policy = validate_retry_policy
+  let validate_timing = validate_timing
   let validate_kinds = validate_kinds
 end
 
@@ -238,6 +285,7 @@ module Make (J : JOB) = struct
     =
     let open Result.Syntax in
     let* () = validate_retry_policy retry_policy in
+    let* () = validate_timing ~poll_interval_s ~lease_s in
     let* () = validate_kinds J.kinds in
     let* () =
       match Pg_db.find pool table_check_q () with
