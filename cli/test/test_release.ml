@@ -46,17 +46,16 @@ let sample_workload : R.workload =
 
 let sample_record : R.t =
   let placeholder =
-    { R.release_id = "r-0000000000000000"
+    { R.release_id = ""
     ; workspace = "myworkspace"
     ; environment = Some "dev"
-    ; workloads = [ sample_workload ]
+    ; workloads = [ R.applied_by "" sample_workload ]
     ; migrations = [ "0001_notifications.sql" ]
     ; apply_mode = R.Direct
     }
   in
-  { placeholder with
-    release_id = Sol_cli_release_id.to_string (R.derived_release_id placeholder)
-  }
+  let release_id = Sol_cli_release_id.to_string (R.derived_release_id placeholder) in
+  { placeholder with release_id; workloads = [ R.applied_by release_id sample_workload ] }
 ;;
 
 let test_json_round_trip () =
@@ -66,7 +65,12 @@ let test_json_round_trip () =
     check_string "workspace preserved" "myworkspace" r.workspace;
     check_string "environment preserved" "dev" (Option.value r.environment ~default:"");
     check_int "one workload" 1 (List.length r.workloads);
-    let w = List.hd r.workloads in
+    let recorded = List.hd r.workloads in
+    let w = Sol_cli_release.workload_identity recorded in
+    check_string
+      "provenance preserved"
+      sample_record.release_id
+      recorded.Sol_cli_release_id.applied_by;
     check_string "image preserved" "reg/myworkspace/charge-svc:abc1234" w.image;
     check_string "config value preserved" "info" (List.assoc "LOG_LEVEL" w.config);
     check_string
@@ -294,13 +298,19 @@ let earlier_workload : R.workload =
 let test_record_digest_is_order_independent () =
   let forward =
     { sample_record with
-      workloads = [ shuffled_workload; earlier_workload ]
+      workloads =
+        [ R.applied_by sample_record.release_id shuffled_workload
+        ; R.applied_by sample_record.release_id earlier_workload
+        ]
     ; migrations = [ "0002_b.sql"; "0001_a.sql" ]
     }
   in
   let reversed =
     { sample_record with
-      workloads = [ earlier_workload; ordered_workload ]
+      workloads =
+        [ R.applied_by sample_record.release_id earlier_workload
+        ; R.applied_by sample_record.release_id ordered_workload
+        ]
     ; migrations = [ "0001_a.sql"; "0002_b.sql" ]
     }
   in
@@ -316,7 +326,10 @@ let test_record_digest_is_order_independent () =
 
 let test_record_digest_is_total_for_duplicate_keys () =
   let with_config config =
-    { sample_record with workloads = [ { sample_workload with config } ] }
+    { sample_record with
+      workloads =
+        [ R.applied_by sample_record.release_id { sample_workload with config } ]
+    }
   in
   check_string
     "duplicate-key order is total"
@@ -327,7 +340,7 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "1f4ea6773dd62c155c4a3ebbdad2f5c2"
+    "d14c45499af5cc91ec0a6c3250801cfa"
     (R.record_digest sample_record)
 ;;
 
@@ -433,6 +446,241 @@ let with_plan ~requested_scope f =
     | Ok plan -> f plan)
 ;;
 
+let second_service (spec : Sol_cli_deployment_plan.service_spec) =
+  { spec with
+    source_name = "ledger_svc"
+  ; k8s_name =
+      (match Sol_cli_deployment_plan.k8s_name_result "ledger-svc" with
+       | Ok name -> name
+       | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e))
+  ; image = "reg/myworkspace/ledger-svc:abc1234"
+  }
+;;
+
+let recorded_of (r : R.t) name =
+  List.find
+    (fun (w : R.recorded_workload) -> String.equal w.Sol_cli_release_id.spec.name name)
+    r.workloads
+;;
+
+let reconstruct release =
+  match Sol_cli_rollback.service_specs_of_release release with
+  | Ok specs -> specs
+  | Error msg -> Alcotest.failf "reconstruction failed: %s" msg
+;;
+
+let live_of release =
+  reconstruct release
+  |> List.map (fun (spec, applied_by) ->
+    Sol_cli_rollback.identity_of_spec spec, applied_by)
+;;
+
+let two_service_plan plan =
+  match plan.Sol_cli_deployment_plan.services with
+  | [ charge ] ->
+    { plan with
+      services = [ charge; second_service charge ]
+    ; requested_scope = "workspace"
+    }
+  | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+;;
+
+let scoped_update plan =
+  match plan.Sol_cli_deployment_plan.services with
+  | [ charge ] ->
+    { plan with
+      services = [ { charge with image = "reg/myworkspace/charge-svc:def5678" } ]
+    ; requested_scope = "payments/charge_svc"
+    }
+  | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+;;
+
+let test_scoped_deploy_records_a_complete_boundary () =
+  with_plan ~requested_scope:"workspace" (fun plan ->
+    let full = two_service_plan plan in
+    let boundary_a = R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:[] full in
+    check_int
+      "a full boundary records every workload"
+      2
+      (List.length boundary_a.workloads);
+    check_string
+      "a full boundary's id is exactly its content id"
+      (Sol_cli_release_id.to_string
+         (Sol_cli_release_id.of_content
+            { Sol_cli_release_id.workspace = full.Sol_cli_deployment_plan.workspace
+            ; environment = full.environment.env
+            ; workloads = List.map R.workload_of_spec full.services
+            }))
+      boundary_a.release_id;
+    check_string
+      "a full boundary's content rederives its id"
+      boundary_a.release_id
+      (Sol_cli_release_id.to_string (R.derived_release_id boundary_a));
+    let boundary_b =
+      R.of_plan_with_boundary
+        ~apply_mode:R.Direct
+        ~retained:boundary_a.workloads
+        (scoped_update plan)
+    in
+    check_int "a scoped boundary stays complete" 2 (List.length boundary_b.workloads);
+    check_bool
+      "a scoped boundary is a new identity"
+      false
+      (String.equal boundary_a.release_id boundary_b.release_id);
+    check_string
+      "a scoped boundary's content rederives its id"
+      boundary_b.release_id
+      (Sol_cli_release_id.to_string (R.derived_release_id boundary_b));
+    let charge = recorded_of boundary_b "charge_svc"
+    and ledger = recorded_of boundary_b "ledger_svc" in
+    check_bool
+      "the in-scope workload carries the new spec"
+      true
+      (contains "def5678" charge.Sol_cli_release_id.spec.image);
+    check_string
+      "the in-scope workload is applied by this deploy"
+      boundary_b.release_id
+      charge.Sol_cli_release_id.applied_by;
+    check_string
+      "the untouched workload keeps its spec"
+      (recorded_of boundary_a "ledger_svc").Sol_cli_release_id.spec.image
+      ledger.Sol_cli_release_id.spec.image;
+    check_string
+      "the untouched workload keeps its provenance"
+      boundary_a.release_id
+      ledger.Sol_cli_release_id.applied_by)
+;;
+
+let test_scoped_rollback_keeps_untouched_workloads () =
+  with_plan ~requested_scope:"workspace" (fun plan ->
+    let boundary_a =
+      R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:[] (two_service_plan plan)
+    in
+    let boundary_b =
+      R.of_plan_with_boundary
+        ~apply_mode:R.Direct
+        ~retained:boundary_a.workloads
+        (scoped_update plan)
+    in
+    let expected_b = reconstruct boundary_b in
+    check_int
+      "a scoped boundary's rollback set covers the untouched workload"
+      2
+      (List.length expected_b);
+    let report =
+      Sol_cli_rollback.verify_workloads ~expected:expected_b ~live:(live_of boundary_b)
+    in
+    check_bool
+      "the scoped boundary verifies against its own live state"
+      true
+      (Sol_cli_rollback.workload_report_ok report);
+    check_int
+      "rolling back to the scoped boundary prunes nothing"
+      0
+      (List.length report.Sol_cli_rollback.unexpected);
+    check_string
+      "the untouched workload is verified under the boundary that applied it"
+      boundary_a.release_id
+      (List.assoc
+         "ledger_svc"
+         (List.map
+            (fun (spec, applied_by) ->
+               spec.Sol_cli_deployment_plan.source_name, applied_by)
+            expected_b));
+    check_int
+      "rolling back to the full boundary covers both workloads"
+      2
+      (List.length (reconstruct boundary_a));
+    let expected_a = reconstruct boundary_a in
+    let report_a =
+      Sol_cli_rollback.verify_workloads ~expected:expected_a ~live:(live_of boundary_a)
+    in
+    check_bool
+      "rolling back to the full boundary prunes nothing"
+      true
+      (Sol_cli_rollback.workload_report_ok report_a))
+;;
+
+let test_full_deploy_removes_a_dropped_workload () =
+  with_plan ~requested_scope:"workspace" (fun plan ->
+    let boundary_a =
+      R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:[] (two_service_plan plan)
+    in
+    let boundary_b =
+      R.of_plan_with_boundary
+        ~apply_mode:R.Direct
+        ~retained:boundary_a.workloads
+        (scoped_update plan)
+    in
+    let dropped =
+      match plan.Sol_cli_deployment_plan.services with
+      | [ charge ] -> { plan with services = [ charge ]; requested_scope = "workspace" }
+      | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+    in
+    let boundary_c =
+      R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:boundary_b.workloads dropped
+    in
+    check_int
+      "a full deploy supersedes every workload"
+      1
+      (List.length boundary_c.workloads);
+    let report =
+      Sol_cli_rollback.verify_workloads
+        ~expected:(reconstruct boundary_c)
+        ~live:(live_of boundary_b)
+    in
+    check_int
+      "the removed workload is surplus for that boundary"
+      1
+      (List.length report.Sol_cli_rollback.unexpected))
+;;
+
+let with_failing_kubectl f =
+  let dir = Filename.temp_file "sol-fake-kubectl" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  let path = Filename.concat dir "kubectl" in
+  let oc = open_out path in
+  output_string oc "#!/bin/sh\nexit 1\n";
+  close_out oc;
+  Unix.chmod path 0o755;
+  let old = Sys.getenv_opt "PATH" in
+  Unix.putenv "PATH" (dir ^ ":" ^ Option.value old ~default:"");
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" (Option.value old ~default:"");
+      Sys.remove path;
+      Unix.rmdir dir)
+    f
+;;
+
+let read_boundary plan =
+  Sol_cli_release_store.retained_for_plan
+    ~ctx:Sol_cli_kube_destination.local_context
+    ~workspace:"myworkspace"
+    plan
+;;
+
+let test_scoped_deploy_refuses_an_unreadable_boundary () =
+  with_plan ~requested_scope:"payments/charge_svc" (fun plan ->
+    with_failing_kubectl (fun () ->
+      match read_boundary plan with
+      | Ok _ -> Alcotest.fail "expected a scoped deploy to refuse an unreadable boundary"
+      | Error msg -> assert (contains "could not be read" msg)))
+;;
+
+let test_full_deploy_tolerates_an_unreadable_boundary () =
+  with_plan ~requested_scope:"workspace" (fun plan ->
+    with_failing_kubectl (fun () ->
+      match read_boundary plan with
+      | Ok [] -> ()
+      | Ok retained ->
+        Alcotest.failf
+          "expected an unreadable boundary to retain nothing, got %d"
+          (List.length retained)
+      | Error msg -> Alcotest.failf "expected a full deploy to proceed: %s" msg))
+;;
+
 let test_of_plan_rederives_the_plan_identity () =
   with_plan ~requested_scope:"payments" (fun plan ->
     let r = R.of_plan ~apply_mode:R.Direct plan in
@@ -445,8 +693,14 @@ let test_of_plan_rederives_the_plan_identity () =
       (Sol_cli_release_id.to_string plan.release_id)
       (Sol_cli_release_id.to_string (R.derived_release_id r));
     check_int "one resolved workload" 1 (List.length r.workloads);
-    check_string "workload name" "charge_svc" (List.hd r.workloads).name;
-    check_bool "image recorded" true (contains "charge-svc" (List.hd r.workloads).image))
+    let recorded = List.hd r.workloads in
+    let w = R.workload_identity recorded in
+    check_string "workload name" "charge_svc" w.name;
+    check_bool "image recorded" true (contains "charge-svc" w.image);
+    check_string
+      "the deploy records itself as the applier"
+      (Sol_cli_release_id.to_string plan.release_id)
+      recorded.Sol_cli_release_id.applied_by)
 ;;
 
 let test_same_content_same_record () =
@@ -576,6 +830,28 @@ let () =
             "known canonical digest"
             `Quick
             test_record_digest_known_vector
+        ] )
+    ; ( "scoped boundary (BUG-077)"
+      , [ Alcotest.test_case
+            "a scoped deploy records a complete boundary"
+            `Quick
+            test_scoped_deploy_records_a_complete_boundary
+        ; Alcotest.test_case
+            "rolling back to a scoped boundary keeps untouched workloads"
+            `Quick
+            test_scoped_rollback_keeps_untouched_workloads
+        ; Alcotest.test_case
+            "a full deploy supersedes every workload"
+            `Quick
+            test_full_deploy_removes_a_dropped_workload
+        ; Alcotest.test_case
+            "a scoped deploy refuses an unreadable boundary"
+            `Quick
+            test_scoped_deploy_refuses_an_unreadable_boundary
+        ; Alcotest.test_case
+            "a full deploy tolerates an unreadable boundary"
+            `Quick
+            test_full_deploy_tolerates_an_unreadable_boundary
         ] )
     ; ( "of_plan"
       , [ Alcotest.test_case

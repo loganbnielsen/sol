@@ -91,10 +91,14 @@ let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
 let record_plan
       ~ctx
       ~(apply_mode : Sol_cli_release.apply_mode)
+      ~(retained : Sol_cli_release.recorded_workload list)
       (plan : Sol_cli_deployment_plan.t)
-  : (unit, string) result
+  : (string, string) result
   =
-  record ~ctx (Sol_cli_release.of_plan ~apply_mode plan)
+  let boundary = Sol_cli_release.of_plan_with_boundary ~apply_mode ~retained plan in
+  let open Result.Syntax in
+  let* () = record ~ctx boundary in
+  Ok boundary.Sol_cli_release.release_id
 ;;
 
 let list_with_creation ~ctx ~(workspace : string)
@@ -179,4 +183,28 @@ let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =
   Result.bind
     (parse_configmap (Sol_cli_release.to_current_configmap_json t))
     (write_json ~ctx)
+;;
+
+let retained_for_plan ~ctx ~workspace (plan : Sol_cli_deployment_plan.t)
+  : (Sol_cli_release.recorded_workload list, string) result
+  =
+  let scoped_refusal reason =
+    Error
+      (Printf.sprintf
+         "cannot deploy %s: the current workspace boundary could not be read (%s), and \
+          this           deploy is scoped to %S. A scoped deploy records a complete \
+          boundary, so it needs the           boundary it is amending; deploy the whole \
+          workspace to establish it, or fix the read           and retry."
+         workspace
+         reason
+         plan.Sol_cli_deployment_plan.requested_scope)
+  in
+  let tolerate = Sol_cli_deployment_plan.is_whole_workspace plan in
+  match current ~ctx ~workspace with
+  | Error reason -> if tolerate then Ok [] else scoped_refusal reason
+  | Ok None -> Ok []
+  | Ok (Some release_id) ->
+    (match get ~ctx ~workspace ~release_id with
+     | Ok record -> Ok record.Sol_cli_release.workloads
+     | Error reason -> if tolerate then Ok [] else scoped_refusal reason)
 ;;

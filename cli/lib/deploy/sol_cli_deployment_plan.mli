@@ -121,6 +121,7 @@ val effective_rollout_strategy_to_string : effective_rollout_strategy -> string
 val release_workload_of_spec : service_spec -> Sol_cli_release_id.workload
 val to_json : t -> Yojson.Safe.t
 val pp_summary : Format.formatter -> t -> unit
+val is_whole_workspace : t -> bool
 val plan_error_to_string : plan_error -> string
 val validate_persistence : service_spec -> (unit, plan_error) result
 val validate_availability : service_spec -> (unit, plan_error) result

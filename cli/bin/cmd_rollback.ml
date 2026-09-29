@@ -8,9 +8,17 @@ open Result.Syntax
 let ttl_s = Sol_cli_boundary_lease.default_ttl_s
 let wait_s = Sol_cli_boundary_lease.rollback_wait_s
 
-let apply_specs ~ensure_held ~ctx ~local ~release ~release_id_t specs =
-  let apply_spec spec =
+let apply_specs ~ensure_held ~ctx ~local ~release specs =
+  let apply_spec (spec, applied_by) =
     let* () = ensure_held () in
+    let* release_id_t =
+      Sol_cli_release_id.of_string applied_by
+      |> Result.map_error (fun message ->
+        Printf.sprintf
+          "release %s records an unreadable applied_by id: %s"
+          release.Sol_cli_release.release_id
+          message)
+    in
     let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
     let* yaml =
       Sol_cli_deployment_render.render_spec
@@ -35,7 +43,6 @@ let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
   =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
-  let* release_id_t = Sol_cli_release_id.of_string release.release_id in
   let current_migrations =
     Sol_cli_workspace_model.migration_files facts
     |> List.map Sol_cli_plan_ids.Migration_file.to_string
@@ -57,7 +64,6 @@ let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
           ~ctx
           ~local
           ~release
-          ~release_id_t
     ; live_workloads =
         (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
     ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)

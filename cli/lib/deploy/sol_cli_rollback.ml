@@ -238,15 +238,20 @@ let with_called_by (specs : Sol_cli_deployment_plan.service_spec list) =
 ;;
 
 let service_specs_of_release (release : Sol_cli_release.t) =
-  let release_id = release.release_id in
   let rec go acc = function
     | [] -> Ok (List.rev acc)
-    | w :: rest ->
-      let* spec = decode_workload ~release_id ~workspace:release.workspace w in
-      go (spec :: acc) rest
+    | (w : Sol_cli_release.recorded_workload) :: rest ->
+      let* spec =
+        decode_workload
+          ~release_id:w.Sol_cli_release_id.applied_by
+          ~workspace:release.workspace
+          w.spec
+      in
+      go ((spec, w.applied_by) :: acc) rest
   in
-  let* specs = go [] release.workloads in
-  Ok (with_called_by specs)
+  let* applied = go [] release.workloads in
+  let specs = with_called_by (List.map fst applied) in
+  Ok (List.map2 (fun spec (_, applied_by) -> spec, applied_by) specs applied)
 ;;
 
 type migration_check_error =
@@ -539,30 +544,29 @@ let unexpected_workloads
 ;;
 
 let verify_workloads
-      ~(release : Sol_cli_release.t)
-      ~(expected : Sol_cli_deployment_plan.service_spec list)
+      ~(expected : (Sol_cli_deployment_plan.service_spec * string) list)
       ~(live : (workload_identity * string) list)
   : workload_report
   =
-  let expected_ids = List.map identity_of_spec expected in
   let mismatched, missing =
     List.fold_left
-      (fun (mismatched, missing) id ->
+      (fun (mismatched, missing) (spec, applied_by) ->
+         let id = identity_of_spec spec in
          match List.find_opt (fun (i, _) -> same_identity i id) live with
          | None -> mismatched, id :: missing
          | Some (_, actual) ->
-           if String.equal actual release.release_id
+           if String.equal actual applied_by
            then mismatched, missing
            else
              ( { kind = id.kind; namespace = id.namespace; name = id.name; actual }
                :: mismatched
              , missing ))
       ([], [])
-      expected_ids
+      expected
   in
   { mismatched = List.rev mismatched
   ; missing = List.rev missing
-  ; unexpected = unexpected_workloads ~expected ~live
+  ; unexpected = unexpected_workloads ~expected:(List.map fst expected) ~live
   }
 ;;
 
@@ -673,7 +677,7 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
 type transaction_deps =
   { ensure_held : unit -> (unit, string) result
   ; applied_migrations : unit -> (int list, string) result
-  ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  ; apply : (Sol_cli_deployment_plan.service_spec * string) list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
@@ -710,7 +714,7 @@ let execute
     match deps.live_workloads () with
     | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
     | Ok live ->
-      let report = verify_workloads ~release ~expected:specs ~live in
+      let report = verify_workloads ~expected:specs ~live in
       if report.mismatched <> [] || report.missing <> []
       then
         Error

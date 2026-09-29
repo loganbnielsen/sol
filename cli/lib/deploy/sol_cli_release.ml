@@ -1,4 +1,5 @@
 type workload = Sol_cli_release_id.workload
+type recorded_workload = Sol_cli_release_id.recorded_workload
 
 type apply_mode =
   | Direct
@@ -23,7 +24,7 @@ type t =
   { release_id : string
   ; workspace : string
   ; environment : string option
-  ; workloads : workload list
+  ; workloads : recorded_workload list
   ; migrations : string list
   ; apply_mode : apply_mode
   }
@@ -69,22 +70,75 @@ let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
   Sol_cli_deployment_plan.release_workload_of_spec spec
 ;;
 
-let of_plan ~(apply_mode : apply_mode) (plan : Sol_cli_deployment_plan.t) : t =
-  { release_id = Sol_cli_release_id.to_string plan.release_id
+let applied_by identity (w : workload) =
+  { Sol_cli_release_id.spec = w; applied_by = identity }
+;;
+
+let workload_identity (w : recorded_workload) = w.Sol_cli_release_id.spec
+
+let same_workload_identity (a : recorded_workload) (b : recorded_workload) =
+  let a = a.Sol_cli_release_id.spec
+  and b = b.Sol_cli_release_id.spec in
+  String.equal a.domain b.domain
+  && String.equal a.name b.name
+  && String.equal a.primitive b.primitive
+;;
+
+let boundary_id ~workspace ~environment ~deployed ~inherited =
+  Sol_cli_release_id.to_string
+    (Sol_cli_release_id.of_boundary ~workspace ~environment ~deployed ~inherited)
+;;
+
+let of_plan_with_boundary
+      ~(apply_mode : apply_mode)
+      ~(retained : recorded_workload list)
+      (plan : Sol_cli_deployment_plan.t)
+  : t
+  =
+  let deployed = List.map workload_of_spec plan.services in
+  let deployed_records = List.map (applied_by "") deployed in
+  let inherited =
+    if Sol_cli_deployment_plan.is_whole_workspace plan
+    then []
+    else
+      List.filter
+        (fun (w : recorded_workload) ->
+           not (List.exists (fun a -> same_workload_identity w a) deployed_records))
+        retained
+  in
+  let release_id =
+    boundary_id
+      ~workspace:plan.workspace
+      ~environment:plan.environment.env
+      ~deployed
+      ~inherited:(List.map (fun w -> w.Sol_cli_release_id.spec, w.applied_by) inherited)
+  in
+  { release_id
   ; workspace = plan.workspace
   ; environment = plan.environment.env
-  ; workloads = List.map workload_of_spec plan.services
+  ; workloads = List.map (applied_by release_id) deployed @ inherited
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   ; apply_mode
   }
 ;;
 
-let content_of_record (t : t) : Sol_cli_release_id.content =
-  { workspace = t.workspace; environment = t.environment; workloads = t.workloads }
+let of_plan ~(apply_mode : apply_mode) (plan : Sol_cli_deployment_plan.t) : t =
+  of_plan_with_boundary ~apply_mode ~retained:[] plan
+;;
+
+let partition_boundary (t : t) =
+  List.partition
+    (fun (w : recorded_workload) -> String.equal w.applied_by t.release_id)
+    t.workloads
 ;;
 
 let derived_release_id (t : t) : Sol_cli_release_id.t =
-  Sol_cli_release_id.of_content (content_of_record t)
+  let deployed, inherited = partition_boundary t in
+  Sol_cli_release_id.of_boundary
+    ~workspace:t.workspace
+    ~environment:t.environment
+    ~deployed:(List.map workload_identity deployed)
+    ~inherited:(List.map (fun w -> w.Sol_cli_release_id.spec, w.applied_by) inherited)
 ;;
 
 let validate ~(name : string) (t : t) : (unit, string) result =
@@ -121,7 +175,9 @@ let pairs_to_assoc pairs =
   `Assoc (List.map (fun (k, v) -> k, `String v) (sorted_pairs pairs))
 ;;
 
-let compare_workload (a : workload) (b : workload) =
+let compare_workload (a : recorded_workload) (b : recorded_workload) =
+  let a = a.Sol_cli_release_id.spec
+  and b = b.Sol_cli_release_id.spec in
   let by_domain = String.compare a.domain b.domain in
   if by_domain <> 0
   then by_domain
@@ -185,6 +241,12 @@ let workload_to_json (w : workload) : Yojson.Safe.t =
     ]
 ;;
 
+let recorded_workload_to_json (w : recorded_workload) : Yojson.Safe.t =
+  match workload_to_json w.Sol_cli_release_id.spec with
+  | `Assoc fields -> `Assoc (("applied_by", `String w.applied_by) :: fields)
+  | other -> other
+;;
+
 let to_json (t : t) : Yojson.Safe.t =
   `Assoc
     [ "release_id", `String t.release_id
@@ -194,7 +256,8 @@ let to_json (t : t) : Yojson.Safe.t =
         | None -> `Null
         | Some e -> `String e )
     ; ( "workloads"
-      , `List (List.map workload_to_json (List.sort compare_workload t.workloads)) )
+      , `List
+          (List.map recorded_workload_to_json (List.sort compare_workload t.workloads)) )
     ; ( "migrations"
       , `List (List.map (fun m -> `String m) (List.sort String.compare t.migrations)) )
     ; "apply_mode", `String (apply_mode_to_string t.apply_mode)
@@ -297,6 +360,10 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   }
 ;;
 
+let recorded_workload_of_json (json : Yojson.Safe.t) : recorded_workload =
+  { Sol_cli_release_id.spec = workload_of_json json; applied_by = str "applied_by" json }
+;;
+
 let string_list key json =
   List.filter_map
     (function
@@ -322,7 +389,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
       { release_id
       ; workspace
       ; environment = string_option "environment" json
-      ; workloads = List.map workload_of_json (list "workloads" json)
+      ; workloads = List.map recorded_workload_of_json (list "workloads" json)
       ; migrations = string_list "migrations" json
       ; apply_mode
       }

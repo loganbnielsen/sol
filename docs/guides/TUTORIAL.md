@@ -606,7 +606,12 @@ sol secret delete <KEY> --env <ENV> [--domain DOMAIN]              delete a secr
 # --scope selects one domain (`payments`) or one unit (`payments/charge_svc`).
 # A name that matches nothing fails closed and says what exists, before any
 # mutation runs. Mutating commands (up/deploy/rollback) refuse an empty
-# selection. `sol logs` accepts a single unit only; use `sol open logs` for a
+# selection. A scoped deploy records a complete workspace boundary: the
+# workloads it did not select keep their recorded spec and their provenance,
+# and `sol rollback` restores each workload under the release that applied it,
+# so rolling back a scoped change never prunes or re-labels the services it
+# never touched. A scoped deploy refuses before mutating anything when the
+# current boundary cannot be read; deploy the whole workspace to establish it. `sol logs` accepts a single unit only; use `sol open logs` for a
 # domain or workspace view. `sol secret` takes `--domain` rather than
 # `--scope`, because secrets are addressed by Kubernetes namespace, not by
 # workload.
@@ -766,7 +771,7 @@ The generated files contain the full manifest (Namespace, ServiceAccount, Config
 
 If a deploy introduces a regression, `sol rollback <release-id>` restores that recorded release boundary — find the id with `sol releases`. Rollback does not use `kubectl rollout undo`, which cannot restore config, volumes, or ingress; instead it reconstructs the target release's own resolved workloads from its immutable record, re-applies them, verifies the live workload set, and only then moves the current-release pointer and verifies it.
 
-Rollback refuses closed rather than mutating the cluster when: the release id doesn't resolve to a valid record; the record was applied as controller/GitOps-owned (Sol does not own those resources, so a direct apply would not establish a stable transition); a migration applied since that release is a *contracting* change (or fails to declare an expand/contract disposition at all — see `-- sol:disposition` in each migration file), or the target has a migration applied that this checkout cannot supply a readable disposition for, or its applied state cannot be read — rollback reads the applied set from the target, so an absent local file is not evidence that the schema did not change; or verification finds the live workloads don't match the restored release — including a workload left over from the superseded release — or the pointer doesn't name it. Verification runs before the pointer moves, so a failure leaves the pointer unchanged. There is no `--force`.
+Rollback restores every workload in the boundary under the release that applied it, so a release that touched one unit leaves the other units exactly as they were. It refuses closed rather than mutating the cluster when: the release id doesn't resolve to a valid record; the record was applied as controller/GitOps-owned (Sol does not own those resources, so a direct apply would not establish a stable transition); a migration applied since that release is a *contracting* change (or fails to declare an expand/contract disposition at all — see `-- sol:disposition` in each migration file), or the target has a migration applied that this checkout cannot supply a readable disposition for, or its applied state cannot be read — rollback reads the applied set from the target, so an absent local file is not evidence that the schema did not change; or verification finds the live workloads don't match the restored release — including a workload left over from the superseded release — or the pointer doesn't name it. Verification runs before the pointer moves, so a failure leaves the pointer unchanged. There is no `--force`.
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 

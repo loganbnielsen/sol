@@ -48,7 +48,9 @@ let wl
   }
 ;;
 
-let content ?(workspace = "acme") ?(environment = Some "prod") workloads =
+let content ?(workspace = "acme") ?(environment = Some "prod") workloads
+  : Sol_cli_release_id.content
+  =
   { Sol_cli_release_id.workspace; environment; workloads }
 ;;
 

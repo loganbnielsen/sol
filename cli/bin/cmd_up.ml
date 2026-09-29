@@ -244,9 +244,13 @@ let read_previous_release ~workspace =
   | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
-let record_release_and_prune ~workspace ~keep ~previous plan =
+let record_release_and_prune ~workspace ~keep ~previous ~retained plan =
   match
-    Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
+    Sol_cli_release_store.record_plan
+      ~ctx:cluster
+      ~apply_mode:Sol_cli_release.Direct
+      ~retained
+      plan
   with
   | Error msg ->
     Error
@@ -257,13 +261,13 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
           previous release.\n\
          \  Fix the cause and deploy again -- nothing on the cluster needs undoing."
          msg)
-  | Ok () ->
+  | Ok boundary_id ->
     (match
        Sol_cli_release_retention.prune
          ~ctx:cluster
          ~workspace
          ~keep
-         ~current:(Sol_cli_release_id.to_string plan.release_id)
+         ~current:boundary_id
          ~previous
      with
      | Ok [] -> ()
@@ -363,6 +367,10 @@ let run_apply
       ~services
   in
   let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
+  let* retained =
+    Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan
+    |> Result.map_error run_failed
+  in
   let pf_failed = ref false in
   let result =
     Sol_cli_boundary_lease.with_boundary_lease
@@ -389,7 +397,12 @@ let run_apply
            ~record_release:(fun () ->
              let* () = Sol_cli_boundary_lease.ensure_held lease in
              let* () =
-               record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
+               record_release_and_prune
+                 ~workspace
+                 ~keep:keep_releases
+                 ~previous
+                 ~retained
+                 plan
              in
              Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
            ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))

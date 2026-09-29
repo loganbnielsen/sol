@@ -6,8 +6,15 @@ val record
 val record_plan
   :  ctx:Sol_cli_kube_destination.context
   -> apply_mode:Sol_cli_release.apply_mode
+  -> retained:Sol_cli_release.recorded_workload list
   -> Sol_cli_deployment_plan.t
-  -> (unit, string) result
+  -> (string, string) result
+
+val retained_for_plan
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> Sol_cli_deployment_plan.t
+  -> (Sol_cli_release.recorded_workload list, string) result
 
 val list
   :  ctx:Sol_cli_kube_destination.context
