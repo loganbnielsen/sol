@@ -1,5 +1,66 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Audit-ticket wave: 16 of 20 filed findings implemented (2026-09-29)
+
+Three audit passes filed 20 tickets across `internal/pipeline/tickets/` (filing
+PRs #682, #683, #687). Sixteen are implemented in their own PRs, each with the
+ticket moved to `DONE/`, a mutation-checked test and completion notes:
+
+- **Process/runner (CODE_LAYER-023, -024, -025):** both output streams drained by
+  one argv runner, absolute deadlines enforced until child exit, descriptors and
+  children cleaned up when capture is interrupted; `soldev` reads one checked,
+  typed PR inventory per operation instead of treating a failed `gh` call as an
+  empty list.
+- **Request/response contracts (BUG-069, -073, -079):** non-object charge JSON is
+  a 400, a body exactly at the limit is accepted (only over-limit is 413), and
+  verified JWTs now enforce `nbf` as well as `exp` with an explicit no-clock-skew
+  policy.
+- **Jobs/runtime (CODEX_STYLE_AUDIT-079, BUG-074):** retry/timing configuration is
+  validated at the config boundary before any pool or runtime work, and signal
+  registration/unregistration is serialized across domains.
+- **Build context/npm (BUG-075, -076):** `copy_tree` recreates symlinks instead of
+  dereferencing them, and npm workspace membership is resolved from the unit's
+  path relative to each candidate root with npm's glob semantics rather than
+  "any entry containing `*` matches everything".
+- **Kafka/deploy (BUG-080, -081):** retry/DLQ topic segments always carry a hash
+  of the original group id, so punctuation variants stay isolated; emission
+  preserves the `external-secrets` backend and refuses `kubernetes-live`.
+- **Demo/TS (BUG-070):** the TypeScript order service extracts the inbound
+  `traceparent`, so caller → service → worker is one Tempo trace; the
+  `golden-path-smoke-ts` job now asserts that trace id spans both services.
+- **Deploy safety (BUG-082, -071, -072):** an uninspectable `db/migrations`
+  fails closed instead of reading as "no migrations"; boundary ownership is
+  re-verified (and thereby renewed) before every apply/prune/pointer/record
+  mutation, with takeover regressions; `scheduled_concurrency` and
+  `backoff_limit` travel through release identity, the v4 canonical encoding,
+  ConfigMap JSON and rollback reconstruction.
+
+Remaining in `READY_FOR_ENGINEERING/`, with findings recorded here so the next
+actor starts from them:
+
+- **BUG-077 (scoped deployment release records)** is an **architecture decision
+  for the operator**. A scoped deploy records only `plan.services` but advances
+  the workspace-wide pointer, so rollback prunes the untouched workloads. Making
+  the record complete is not sufficient by itself: `service_specs_of_release`
+  labels every recorded workload with the record's id and `verify_workloads`
+  requires each live workload to carry it, so a merely merged boundary would make
+  an untouched workload read as mismatched. Three coherent designs exist —
+  re-apply the whole boundary on a scoped deploy (changes `--scope`'s "touch only
+  these" contract), per-workload provenance in the record (a new field outside
+  the derived content, plus rollback-verification changes), or an explicitly
+  typed scope-owned record with a `basis` chain — and each changes
+  rollback/prune semantics. Flagged rather than chosen.
+- **BUG-067 (wake idle workers on stop)** needs the pinned `kafka-eio` consumer
+  loop: `Kafka.Consumer.consume` has no stop handle and the `on_poll` hook in
+  `Kafka_service.consumer_hooks` is a notification (`unit -> unit`), so an idle
+  consumer cannot be woken from `sol-worker` alone without cancelling a fiber
+  mid-handler. The fix belongs in the support package (a poll-time stop check)
+  plus a pin bump here.
+- **BUG-078 (target applied migrations before rollback)** is tractable but needs
+  the migration-status Job wired into `Sol_cli_rollback.execute`'s injected deps
+  (the deploy gate's `read_applied` is the reusable piece), failing closed when an
+  applied-beyond-release migration has no locally readable disposition.
+
 ## Logan refactor queue — implementation complete (2026-09-28)
 
 - Scope is REFAC-144 through REFAC-155, FEAT-105, and BUG-066, not the unrelated
