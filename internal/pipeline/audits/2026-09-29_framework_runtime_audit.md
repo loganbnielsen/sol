@@ -35,3 +35,21 @@ This continues the retry-relay audit (BUG-096). It covers the framework runtime 
 | Ticket | Severity | Finding | Evidence |
 |---|---|---|---|
 | BUG-101 | Medium | `sol logs` and `sol open logs` select a unit by `{service=~".*<name>.*"}`, matching same-named or longer-named units in other domains and workspaces. | Code trace of all three selector sites; OBS-046's recorded live stream labels (`service` is the bare k8s name); pluto and venus share unit names. Not reproduced against a live Loki. |
+
+## Addendum — design pass (2026-09-29)
+
+Re-read with the explicit standard that correctness and design win over incremental middle grounds (pre-alpha, no compatibility constraint). This rejects "documented, therefore accepted" as a reason not to file, and removes hedged remediations.
+
+| Ticket | Severity | Finding | Evidence |
+|---|---|---|---|
+| BUG-102 | High | Two retry mechanisms; the reference app uses the non-durable, unbounded, no-DLQ `In_memory` one. | Code/docs trace; pluto and venus call sites. |
+| BUG-103 | High | `sol-jobs` leases are never renewed, so overrunning handlers run concurrently. | Code/docs trace (`sol-jobs.md:105-110`). |
+| BUG-104 | High | The retry relay releases records in log order, so long delays block records due sooner. | Code trace; documented in `kafka-eio-service.md:340-346`. |
+| BUG-105 | High | Every consumer registers its reader schema as a new subject version and resets compatibility at startup. | Local Redpanda: the consumer's schema became `latest`; operator `NONE` reset to `FULL`. |
+| BUG-106 | Medium | Migration grammar duplicated between Sol and `pg-eio`; rollback reconstructs `%04d` names; dry-run shows applied migrations. | Code trace. |
+
+Amended in the same pass: BUG-096 (fix in `kafka-eio`'s poll backpressure; withdrew the unverified claim that pausing is insufficient), BUG-098 (catch handler exceptions as failed attempts), BUG-099 (readiness = membership; partitions and key in the event contract; no replica cap), BUG-100 (add `sol local secret`).
+
+**Correction to BUG-096's filing:** the same 600-record backlog through `consume_partitioned`'s pausing retry path (15s backoff) kept a 3.0s maximum poll gap and was not evicted. `In_memory`'s pause therefore does not hit the BUG-096 starvation, and the original claim that pausing is insufficient was unverified.
+
+Previously rejected and now filed: lease renewal (was "documented and fenced"), retry head-of-line (was "documented and accepted"), migration rollback naming (was "fails closed"). Still not filed: peer API keys, because workload identity is an explicit DEC-026 decision, not a middle ground.
