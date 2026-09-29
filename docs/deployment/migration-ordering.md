@@ -59,8 +59,12 @@ direct database reachability:
 - **Unsatisfied** — the deploy fails and names the missing migrations plus the
   action: `sol migrate apply <target>`, then deploy again.
 - **Unavailable** (the Job cannot run, the DB cannot be queried, the table
-  cannot be read) — the deploy **fails closed**. It never substitutes a cached
-  Sol-side record or assumes the schema is compatible.
+  cannot be read, or the workspace's own `db/migrations` cannot be inspected —
+  permission denied, or a regular file where the directory should be) — the
+  deploy **fails closed**. It never substitutes a cached
+  Sol-side record or assumes the schema is compatible. An *absent* or empty
+  `db/migrations` is not this case: it means the workspace declares no
+  migrations.
 
 ## `--dry-run` and `--emit-to`
 

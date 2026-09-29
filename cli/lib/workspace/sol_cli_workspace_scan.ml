@@ -10,6 +10,18 @@ let fold_dir dir ~init ~f =
     init
 ;;
 
+let fold_dir_result dir ~init ~f =
+  match Sol_cli_fs_walk.entries dir with
+  | Ok names ->
+    Ok
+      (List.fold_left
+         (fun acc entry -> f acc entry (Filename.concat dir entry))
+         init
+         names)
+  | Error (Sol_cli_fs_walk.Absent _) -> Ok init
+  | Error error -> Error (Sol_cli_fs_walk.to_string error)
+;;
+
 let filter_validated ~kind of_string strings =
   strings
   |> List.filter_map (fun s ->
@@ -80,11 +92,16 @@ let discover_topics ?root () =
 ;;
 
 let discover_migrations ?root () =
+  let open Result.Syntax in
   let root = Option.value root ~default:"" in
-  let files =
-    fold_dir (in_root root "db/migrations") ~init:[] ~f:(fun acc f _path ->
+  let* files =
+    fold_dir_result (in_root root "db/migrations") ~init:[] ~f:(fun acc f _path ->
       if Filename.check_suffix f ".sql" then f :: acc else acc)
   in
   let sorted = List.sort String.compare files in
-  filter_validated ~kind:"migration file" Sol_cli_plan_ids.Migration_file.of_string sorted
+  Ok
+    (filter_validated
+       ~kind:"migration file"
+       Sol_cli_plan_ids.Migration_file.of_string
+       sorted)
 ;;

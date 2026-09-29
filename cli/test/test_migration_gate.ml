@@ -42,6 +42,59 @@ let test_missing_dir_is_an_error () =
   | Error _ -> ()
 ;;
 
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
+
+let verify dir =
+  Sol_cli_migration_gate.verify
+    ~ctx:Sol_cli_kube_destination.local_context
+    ~target:"prod/aws/us-east-1"
+    ~workspace:"pluto"
+    ~dir
+    ~services:[]
+;;
+
+let test_verify_absent_and_empty_dirs_are_no_migrations () =
+  let empty = temp_dir () in
+  (match verify (Filename.concat empty "never-created") with
+   | Sol_cli_migration_gate.No_migrations -> ()
+   | _ -> Alcotest.fail "an absent migrations directory must mean no migrations");
+  match verify empty with
+  | Sol_cli_migration_gate.No_migrations -> ()
+  | _ -> Alcotest.fail "an empty migrations directory must mean no migrations"
+;;
+
+let test_verify_refuses_a_file_at_the_migrations_path () =
+  let dir = temp_dir () in
+  let path = Filename.concat dir "db-migrations" in
+  write dir "db-migrations" "";
+  match verify path with
+  | Sol_cli_migration_gate.Unavailable message ->
+    Alcotest.(check bool) "names the path" true (contains message path)
+  | Sol_cli_migration_gate.No_migrations ->
+    Alcotest.fail "a file at the migrations path must not read as 'no migrations'"
+  | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
+    Alcotest.fail "a file at the migrations path must not be verified"
+;;
+
+let test_verify_refuses_an_unreadable_migrations_dir () =
+  let dir = temp_dir () in
+  Unix.chmod dir 0o000;
+  Fun.protect
+    ~finally:(fun () -> Unix.chmod dir 0o755)
+    (fun () ->
+       if Unix.geteuid () = 0
+       then ()
+       else (
+         match verify dir with
+         | Sol_cli_migration_gate.Unavailable message ->
+           Alcotest.(check bool) "names the path" true (contains message dir)
+         | Sol_cli_migration_gate.No_migrations ->
+           Alcotest.fail
+             "an unreadable migrations directory must not read as 'no migrations'"
+         | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
+           Alcotest.fail "an unreadable migrations directory must not be verified"))
+;;
+
 let test_registry_override_wins () =
   Alcotest.(check (result string string))
     "override"
@@ -73,6 +126,20 @@ let () =
     ; ( "registry"
       , [ Alcotest.test_case "override wins" `Quick test_registry_override_wins
         ; Alcotest.test_case "absent" `Quick test_registry_absent_says_how_to_set
+        ] )
+    ; ( "verification gate"
+      , [ Alcotest.test_case
+            "absent and empty dirs mean no migrations"
+            `Quick
+            test_verify_absent_and_empty_dirs_are_no_migrations
+        ; Alcotest.test_case
+            "a file at the migrations path refuses (BUG-082)"
+            `Quick
+            test_verify_refuses_a_file_at_the_migrations_path
+        ; Alcotest.test_case
+            "an unreadable migrations dir refuses (BUG-082)"
+            `Quick
+            test_verify_refuses_an_unreadable_migrations_dir
         ] )
     ]
 ;;
