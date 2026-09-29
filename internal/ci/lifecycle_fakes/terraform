@@ -21,6 +21,14 @@ case "$*" in
     case "$*" in *-backend-config=*) : ;; *) exit 91 ;; esac
     case "$*" in *cloud/aws/platform* | *cloud/gcp/platform*) if fail_once platform-init; then exit 20; fi ;; esac
     ;;
+  *" state list"*)
+    if [ "${OUTPUT_ABSENT:-}" = 1 ] || [ "${STATE_EMPTY:-}" = 1 ]; then exit 0; fi
+    case " $* " in
+      *cloud/gcp/cluster*) printf 'google_container_cluster.main\n' ;;
+      *) printf 'module.eks.aws_eks_cluster.this[0]\n' ;;
+    esac
+    exit 0
+    ;;
   *" output -json"*)
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
     case " $* " in

@@ -722,6 +722,23 @@ grep -F 'GCP Terraform output "project_id" is missing or not a string' "$no_proj
   cat "$no_project_log.out" >&2
   exit 1
 }
+
+partial_log="$tmp/gcp-partial-state.log"
+rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
+(cd "$tmp/work" && OUTPUT_NO_PROJECT=1 STATE_EMPTY=1 LIFECYCLE_LOG="$partial_log" \
+   "$sol" cloud apply prod/gcp/us-central1) >"$partial_log.out" 2>&1 || true
+grep -F 'GCP Terraform output "project_id" is missing or not a string' "$partial_log.out" \
+  >/dev/null && {
+  echo "a state holding no substrate resource was read as a broken output set, so an" >&2
+  echo "interrupted apply could never be retried:" >&2
+  cat "$partial_log.out" >&2
+  exit 1
+}
+grep -F -- "'apply'" "$partial_log.out" >/dev/null || {
+  echo "the interrupted apply never reached Terraform: the presence check stopped it" >&2
+  cat "$partial_log.out" >&2
+  exit 1
+}
 if grep -qF 'compute regions describe' "$no_project_log"; then
   echo "the quota was read although the project was never parsed:" >&2
   grep -nF 'compute regions describe' "$no_project_log" >&2
