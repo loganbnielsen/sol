@@ -301,12 +301,15 @@ type retry_strategy =
        retry_policy.jitter_ratio and clamped to retry_policy.max_delay_s --
        the same computation In_memory uses (Kafka.Consumer.backoff_s), not
        just the same type.
-       Retry and DLQ topic names are group-scoped (BUG-030): both are
+       Retry and DLQ topic names are group-scoped (BUG-030, BUG-080): both are
        <source>.<canonical-group>.<retry|dlq>, where <canonical-group> is
        group_id sanitized to alphanumerics and '-' (Kafka's metrics/JMX
        naming treats '.' and '_' as interchangeable, so unsanitized ids risk
-       metric-name collisions) and, if long enough to risk Kafka's 249-byte
-       topic name limit, truncated with a content-hash suffix. Retry and DLQ
+       metric-name collisions) **followed by a 12-hex-digit hash of the
+       original group_id**, so punctuation variants (pay.ments, pay_ments,
+       pay-ments) and overlong ids each keep their own retry/DLQ topic
+       instead of colliding on one sanitized name; the segment is bounded to
+       64 bytes. Retry and DLQ
        destinations belong to the logical consumer group whose processing
        responsibility they receive -- dead-lettering is a statement about
        that group's processing attempt, not an intrinsic property of the

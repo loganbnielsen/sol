@@ -176,6 +176,7 @@ let route_decode_error
 ;;
 
 let max_group_segment_len = 64
+let group_hash_len = 12
 
 let sanitize_group_id group_id =
   let sanitized =
@@ -189,13 +190,15 @@ let sanitize_group_id group_id =
 ;;
 
 let canonical_group_segment group_id =
-  let sanitized = sanitize_group_id group_id in
-  if String.length sanitized <= max_group_segment_len
-  then sanitized
-  else (
-    let hash_suffix = String.sub (Digest.to_hex (Digest.string group_id)) 0 8 in
-    let prefix_len = max_group_segment_len - String.length hash_suffix - 1 in
-    String.sub sanitized 0 prefix_len ^ "-" ^ hash_suffix)
+  let readable = sanitize_group_id group_id in
+  let hash = String.sub (Digest.to_hex (Digest.string group_id)) 0 group_hash_len in
+  let prefix_len = max_group_segment_len - group_hash_len - 1 in
+  let prefix =
+    if String.length readable <= prefix_len
+    then readable
+    else String.sub readable 0 prefix_len
+  in
+  prefix ^ "-" ^ hash
 ;;
 
 let relay_topic_name ~source ~group_id ~suffix =
