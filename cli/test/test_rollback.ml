@@ -416,6 +416,7 @@ let test_migration_boundary_no_new_migrations_passes () =
            ~release
            ~migrations_dir
            ~current_migrations:[ "0001_init.sql" ]
+           ~applied:(fun () -> Ok [ 1 ])
        with
        | Ok () -> ()
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
@@ -431,6 +432,7 @@ let test_migration_boundary_new_expand_passes () =
            ~release
            ~migrations_dir
            ~current_migrations:[ "0001_init.sql"; "0002_add_col.sql" ]
+           ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () -> ()
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
@@ -446,12 +448,13 @@ let test_migration_boundary_new_contract_blocks () =
            ~release
            ~migrations_dir
            ~current_migrations:[ "0001_init.sql"; "0002_drop_col.sql" ]
+           ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () -> Alcotest.fail "expected a contracting migration to block the rollback"
        | Error (Sol_cli_rollback.Contracting_migration { release_id; migration }) ->
          Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
          Alcotest.(check string) "migration" "0002_drop_col.sql" migration
-       | Error (Sol_cli_rollback.Undeclared_disposition _ as e) ->
+       | Error e ->
          Alcotest.failf
            "expected Contracting_migration, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
@@ -467,6 +470,7 @@ let test_migration_boundary_undeclared_new_migration_blocks () =
            ~release
            ~migrations_dir
            ~current_migrations:[ "0001_init.sql"; "0002_mystery.sql" ]
+           ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () ->
          Alcotest.fail "expected an undeclared disposition to block the rollback closed"
@@ -475,7 +479,7 @@ let test_migration_boundary_undeclared_new_migration_blocks () =
          Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
          Alcotest.(check string) "migration" "0002_mystery.sql" migration;
          assert (contains (Str.regexp "sol:disposition") reason)
-       | Error (Sol_cli_rollback.Contracting_migration _ as e) ->
+       | Error e ->
          Alcotest.failf
            "expected Undeclared_disposition, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
@@ -491,9 +495,74 @@ let test_migration_boundary_ignores_already_recorded_contract () =
            ~release
            ~migrations_dir
            ~current_migrations:[ "0001_drop_col.sql" ]
+           ~applied:(fun () -> Ok [ 1 ])
        with
        | Ok () -> ()
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_applied_beyond_release_absent_locally_blocks () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql" ]
+           ~applied:(fun () -> Ok [ 1; 2 ])
+       with
+       | Ok () ->
+         Alcotest.fail
+           "expected a migration applied to the target but absent from this checkout to \
+            block the rollback"
+       | Error (Sol_cli_rollback.Applied_migration_absent { release_id; version }) ->
+         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
+         Alcotest.(check int) "version" 2 version
+       | Error e ->
+         Alcotest.failf
+           "expected Applied_migration_absent, got: %s"
+           (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_applied_expansion_beyond_release_passes () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql; "0002_add_col.sql", expand_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql"; "0002_add_col.sql" ]
+           ~applied:(fun () -> Ok [ 1; 2 ])
+       with
+       | Ok () -> ()
+       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_applied_state_unavailable_blocks () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql" ]
+           ~applied:(fun () -> Error "migration-status Job cannot start")
+       with
+       | Ok () ->
+         Alcotest.fail "expected an unreadable applied state to block the rollback"
+       | Error (Sol_cli_rollback.Applied_state_unavailable { release_id; reason }) ->
+         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
+         assert (contains (Str.regexp "migration-status Job cannot start") reason)
+       | Error e ->
+         Alcotest.failf
+           "expected Applied_state_unavailable, got: %s"
+           (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let progressive_canary = Some (Sol_cli_toml.Canary { steps = [] })
@@ -1022,7 +1091,13 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
   }
 ;;
 
-let recording_deps ?(live = []) ?(prune_result = Ok ()) ?ensure_held () =
+let recording_deps
+      ?(live = [])
+      ?(prune_result = Ok ())
+      ?ensure_held
+      ?applied_migrations
+      ()
+  =
   let calls = ref [] in
   let pruned = ref None in
   let record name = calls := name :: !calls in
@@ -1037,8 +1112,20 @@ let recording_deps ?(live = []) ?(prune_result = Ok ()) ?ensure_held () =
         record "ensure_held";
         Ok ()
   in
+  let applied_migrations =
+    match applied_migrations with
+    | Some f ->
+      fun () ->
+        record "applied_migrations";
+        f ()
+    | None ->
+      fun () ->
+        record "applied_migrations";
+        Ok []
+  in
   let deps : Sol_cli_rollback.transaction_deps =
     { ensure_held
+    ; applied_migrations
     ; apply =
         (fun _specs ->
           record "apply";
@@ -1079,7 +1166,8 @@ let test_execute_success_calls_every_dep_in_order () =
   | Ok () ->
     Alcotest.(check (list string))
       "ownership is re-verified before each mutation"
-      [ "ensure_held"
+      [ "applied_migrations"
+      ; "ensure_held"
       ; "apply"
       ; "live_workloads"
       ; "ensure_held"
@@ -1152,7 +1240,8 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
   | Ok () ->
     Alcotest.(check (list string))
       "apply, live_workloads, prune, move_pointer, verify_pointer all ran"
-      [ "ensure_held"
+      [ "applied_migrations"
+      ; "ensure_held"
       ; "apply"
       ; "live_workloads"
       ; "ensure_held"
@@ -1198,8 +1287,36 @@ let test_execute_prune_failure_skips_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
-      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held"; "prune" ]
+      [ "applied_migrations"
+      ; "ensure_held"
+      ; "apply"
+      ; "live_workloads"
+      ; "ensure_held"
+      ; "prune"
+      ]
       (List.rev !calls)
+;;
+
+let test_execute_applied_state_unavailable_skips_every_mutation () =
+  let calls, pruned, deps =
+    recording_deps ~applied_migrations:(fun () -> Error "no cluster") ()
+  in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the unreadable applied state to block the rollback"
+  | Error msg ->
+    assert (contains (Str.regexp "applied migration state") msg);
+    Alcotest.(check (list string))
+      "only the applied-state read ran"
+      [ "applied_migrations" ]
+      (List.rev !calls);
+    Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
 
 let ghost_live : Sol_cli_rollback.workload_identity * string =
@@ -1236,7 +1353,7 @@ let test_execute_lost_ownership_after_apply_skips_prune_and_pointer () =
     assert (contains (Str.regexp "lost the boundary lease") msg);
     Alcotest.(check (list string))
       "the takeover stopped the transaction before prune"
-      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held" ]
+      [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads"; "ensure_held" ]
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
@@ -1258,7 +1375,14 @@ let test_execute_lost_ownership_after_prune_skips_pointer_move () =
     assert (contains (Str.regexp "lost the boundary lease") msg);
     Alcotest.(check (list string))
       "apply and prune ran; the pointer was never moved"
-      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held"; "prune"; "ensure_held" ]
+      [ "applied_migrations"
+      ; "ensure_held"
+      ; "apply"
+      ; "live_workloads"
+      ; "ensure_held"
+      ; "prune"
+      ; "ensure_held"
+      ]
       (List.rev !calls)
 ;;
 
@@ -1284,7 +1408,7 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
-      [ "ensure_held"; "apply"; "live_workloads" ]
+      [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
@@ -1305,7 +1429,7 @@ let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
-      [ "ensure_held"; "apply"; "live_workloads" ]
+      [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
@@ -1571,6 +1695,18 @@ let () =
             "already-recorded contract is ignored"
             `Quick
             test_migration_boundary_ignores_already_recorded_contract
+        ; Alcotest.test_case
+            "applied migration absent from the checkout blocks (BUG-078)"
+            `Quick
+            test_migration_boundary_applied_beyond_release_absent_locally_blocks
+        ; Alcotest.test_case
+            "applied expansion beyond the release passes (BUG-078)"
+            `Quick
+            test_migration_boundary_applied_expansion_beyond_release_passes
+        ; Alcotest.test_case
+            "unreadable applied state blocks (BUG-078)"
+            `Quick
+            test_migration_boundary_applied_state_unavailable_blocks
         ] )
     ; ( "live_kind_of_service"
       , [ Alcotest.test_case
@@ -1651,6 +1787,10 @@ let () =
         ] )
     ; ( "rollback_transaction"
       , [ Alcotest.test_case
+            "unreadable applied state skips every mutation (BUG-078)"
+            `Quick
+            test_execute_applied_state_unavailable_skips_every_mutation
+        ; Alcotest.test_case
             "lost ownership after apply skips prune and pointer (BUG-071)"
             `Quick
             test_execute_lost_ownership_after_apply_skips_prune_and_pointer

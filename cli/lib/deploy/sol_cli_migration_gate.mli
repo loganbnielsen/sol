@@ -18,6 +18,15 @@ type verification =
   | Unsatisfied of Sol_cli_migration.prerequisite list
   | Unavailable of string
 
+val read_applied
+  :  ctx:Sol_cli_kube_destination.context
+  -> target:string
+  -> workspace:string
+  -> dir:string
+  -> table:string
+  -> services:Sol_cli_manifest.service list
+  -> (int list, string) result
+
 val verify
   :  ctx:Sol_cli_kube_destination.context
   -> target:string

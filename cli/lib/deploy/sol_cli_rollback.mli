@@ -12,6 +12,14 @@ type migration_check_error =
       ; migration : string
       ; reason : string
       }
+  | Applied_migration_absent of
+      { release_id : string
+      ; version : int
+      }
+  | Applied_state_unavailable of
+      { release_id : string
+      ; reason : string
+      }
 
 val migration_check_error_to_string : migration_check_error -> string
 
@@ -19,6 +27,7 @@ val check_migration_boundary
   :  release:Sol_cli_release.t
   -> migrations_dir:string
   -> current_migrations:string list
+  -> applied:(unit -> (int list, string) result)
   -> (unit, migration_check_error) result
 
 type live_kind =
@@ -100,6 +109,7 @@ val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> st
 
 type transaction_deps =
   { ensure_held : unit -> (unit, string) result
+  ; applied_migrations : unit -> (int list, string) result
   ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
