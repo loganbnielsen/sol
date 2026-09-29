@@ -422,7 +422,7 @@ sol status              # show running pods and endpoints
 
 ### ~~Step 1~~ ✓ — `sol new workspace/svc/worker/fn/event`
 
-All five scaffold commands fully implemented and verified. `sol new workspace acme` generates 17 files that pass `dune build` on the first shot with no manual edits. See `internal/planning/WORK_SUMMARY.md` §16 for the full scaffold contract.
+All five scaffold commands fully implemented and verified. `sol new workspace acme` generates 17 files that pass `dune build` on the first shot with no manual edits.
 
 ---
 
@@ -436,7 +436,7 @@ Implemented in `cli/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart install
 
 ### ~~Step 7~~ ✓ — `sol migrate`
 
-Implemented in `cli/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres. See `internal/planning/WORK_SUMMARY.md` §16.
+Implemented in `cli/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres.
 
 ---
 
