@@ -23,7 +23,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `internal/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`.
 
 Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
@@ -185,14 +185,14 @@ sol/
     ci/                         ← CI guardrails, classifier, mutation tests
     qualification/              ← live qualification: aws/, gcp/ (harnesses, matrices), records/ (dated runs), transport/
     pipeline/                   ← tickets/, audits/, dogfood/
-    planning/                   ← WORK_SUMMARY and maintainer trackers
+    planning/                   ← maintainer trackers
     specs/                      ← cross-language framework conventions (DEC-022)
     tooling/                    ← soldev, sol_process, hooks/, perf/, scripts/ (test runner, perf, hook install)
     fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
   # ── package contracts ────────────────────────────────────────────────────
   *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
   dune-project / dune-workspace ← unified root build
-  README.md / docs/ROADMAP.md / internal/planning/WORK_SUMMARY.md  ← project-wide docs
+  README.md / docs/ROADMAP.md   ← project-wide docs
 
   # Extracted support packages (own repos, opam-pinned into this switch):
   #   kafka-eio (~/Code/kafka-eio); obs-eio/obs-loki-eio/obs-prometheus-eio
@@ -278,15 +278,15 @@ Default broker address: `localhost:9092`
 You must maintain and consult the project's source-of-truth markdown files:
 
 1. **At Startup / Task Initialization**:
-   - Explicitly read `docs/ROADMAP.md` and `internal/planning/WORK_SUMMARY.md` using your file-reading tool before writing any code.
-   - Align your execution path with the active milestone in `docs/ROADMAP.md` and the current active tasks in `internal/planning/WORK_SUMMARY.md`.
+   - Read `docs/ROADMAP.md` and the relevant tickets in `internal/pipeline/tickets/` before writing code.
+   - Align your execution path with the active milestone and ticket state.
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
    - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/ocaml/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
 
 3. **At Task Completion / Session End**:
-   - Update `internal/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.
+   - Record completion and implementation hurdles in the relevant ticket and PR.
    - If a major milestone is hit, update the status checklist in `docs/ROADMAP.md`.
 
 ## Comments: none in covered formats
