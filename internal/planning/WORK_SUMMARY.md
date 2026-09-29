@@ -1,5 +1,41 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Audit-ticket wave, follow-up: BUG-077, BUG-078 and BUG-067 (2026-09-29)
+
+- **BUG-078 (merged)** — rollback derives the migration boundary from the
+  target's *applied* set through the deploy gate's migrate-status Job, not from
+  the files the checkout happens to have: a version applied beyond the release
+  with no readable local file blocks, an unreadable applied state blocks before
+  any mutation, an applied expansion still rolls back, and the local check runs
+  first so a refusal that needs no cluster contact still happens without one.
+- **BUG-077 (PR #707)** — the operator chose **per-workload provenance**:
+  a record holds `{ spec; applied_by }` per workload, a scoped deploy fills its
+  scope from the plan and inherits the spec *and* provenance of everything else
+  from the current boundary (read and validated before any mutation), and
+  rollback verifies and re-applies each workload under its own `applied_by`, so
+  an untouched workload is neither re-labelled nor pruned. A whole-workspace
+  deploy still supersedes every workload. The invariants are written into the
+  ticket, and the identity formula deliberately covers the inherited provenance
+  as well as the deployed specs: the sketch's "content only" rule would rewrite
+  the same id with a different `applied_by` on a re-applied unit and fail the
+  immutable ConfigMap write after the workloads had been applied. Five
+  acceptance cases (including a stub `kubectl` for the unreadable-boundary
+  refusal) are mutation-checked.
+- **BUG-067 (upstream PR open)** — the fix landed in the pinned `kafka-eio`
+  package as loganbnielsen/kafka-eio#26: `consume` races an optional stop
+  promise against its blocking take, and `consume_partitioned` feeds its
+  existing internal stop signal from it, so an idle consumer wakes while a
+  running handler still completes and acknowledges. Its CI is green and the two
+  new offline tests are mutation-checked; that repository requires an approving
+  review, so the PR is open. Once it merges, the pin bump
+  (`bump-support-refs.sh kafka-eio`), the `?stop` threading through
+  `Kafka_service` and the `sol-worker` promise join are the remaining work here
+  — recorded in the ticket.
+- **Also merged:** an earlier follow-up corrected the wave count (17 of 20) and
+  CODE_LAYER-024's CI guard now supplies a stub `gh`, because `pipeline ls`
+  legitimately requires a readable PR inventory and the `test` job has no
+  `GH_TOKEN`.
+
 ## Audit-ticket wave: 17 of 20 filed findings implemented (2026-09-29)
 
 Three audit passes filed 20 tickets across `internal/pipeline/tickets/` (filing
