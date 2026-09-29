@@ -401,3 +401,9 @@
 - Added preview-first `soldev pipeline cleanup <PR> <WORKTREE> [--apply]` for explicitly selected owned, idle trees. It verifies a same-repository merge into main, matching branch/head, registration, and clean state including ignored files. Canonical/current, primary-branch and locked worktrees are preserved; removal never forces, and branch deletion pins its expected head.
 - Ownership and idleness remain the caller's declaration; active actors should lock their trees. No automatic sweep or cleanup inside merge; no application demo or language-parity impact.
 - Validation: real disposable Git worktrees exercise preview/removal and preservation of current/nested-current/canonical, locked, dirty, untracked, ignored, mismatched/open/fork PRs and post-merge commits. All 66 existing soldev tests pass, full build/formatter and no-comments checks pass. CI now runs these soldev tests; Kafka/application integration does not exercise this maintainer-only Git operation.
+
+## Code quality audit (2026-09-28)
+
+- Broad contextual audit of CLI, framework, examples/scaffolds, representative tests and maintainer tooling at origin/main `6a7b1fb5`; full evidence and limits are in `internal/pipeline/audits/2026-09-28_code_layer_audit.md`.
+- Filed seven findings: CODE_LAYER-023/024, CODEX_STYLE_AUDIT-079 and BUG-067..070. Highest priorities are dual-stream subprocess deadlock, lost subprocess deadlines and idle-worker graceful stop. No implementation fixes were made.
+- Advisory parameter scan succeeds with 43 candidates; count-only style changes were retained rather than promoted. Focused subprocess, GitHub failure and JSON checks substantiate runtime boundary findings; worker/job/TypeScript findings remain source-traced. Full integration and cloud qualification were outside this filing.
