@@ -40,6 +40,7 @@ val dispositions
   -> disposition list
 
 val candidate : disposition -> candidate option
-val outstanding : disposition list -> disposition list
+val unreconciled : disposition list -> disposition list
+val outcome : ?dry_run:bool -> disposition list -> string
 val report : disposition list -> string
 val summary : disposition list -> string

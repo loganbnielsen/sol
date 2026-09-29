@@ -199,6 +199,124 @@ let destroy_policy_vars ~provider ~phase ~retention ~prepared =
       ~retention
 ;;
 
+type reconciliation =
+  { observations : Sol_cli_absence.observation list
+  ; dispositions : Sol_cli_ownership_reconciliation.disposition list
+  ; restored : Sol_cli_ownership_reconciliation.candidate list
+  }
+
+let adopt
+      ~infra_dir
+      ~var_files
+      ~vars
+      (candidate : Sol_cli_ownership_reconciliation.candidate)
+  =
+  match
+    Sol_cli_terraform.import_
+      ~chdir:infra_dir
+      ~var_files
+      ~vars
+      ~address:candidate.address
+      ~import_identity:candidate.import_identity
+      ()
+  with
+  | Error error ->
+    Error
+      (Printf.sprintf
+         "%s could not be adopted as %s: %s"
+         candidate.found
+         candidate.address
+         (Sol_cli_process.error_to_string error))
+  | Ok _ ->
+    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+     | Error error ->
+       Error
+         (Printf.sprintf
+            "adopted %s, but the state could not be re-read: %s"
+            candidate.address
+            (Sol_cli_process.error_to_string error))
+     | Ok result ->
+       let after = Sol_cli_cloud_destroy.inventory_of_show_json result.stdout in
+       let owned =
+         Sol_cli_cloud_destroy.resources after
+         |> List.find_opt (fun (resource : Sol_cli_cloud_destroy.resource) ->
+           resource.address = candidate.address)
+       in
+       (match owned with
+        | None ->
+          Error
+            (Printf.sprintf
+               "the adoption of %s reported success, but the state does not represent it"
+               candidate.address)
+        | Some resource ->
+          let observed = Option.value resource.identifier ~default:"" in
+          let agrees =
+            Sol_cli_string.is_blank observed
+            || Sol_cli_string.contains ~needle:observed candidate.import_identity
+            || Sol_cli_string.contains ~needle:candidate.import_identity observed
+          in
+          if agrees
+          then Ok ()
+          else
+            Error
+              (Printf.sprintf
+                 "the state now holds %s with provider id %s, which is not the identity \
+                  %s that                   was adopted"
+                 candidate.address
+                 observed
+                 candidate.import_identity)))
+;;
+
+let reconcile_ownership
+      ~provider
+      ~(target_cfg : Sol_cli_config.target)
+      ~cluster_name
+      ~infra_dir
+      ~var_files
+      ~vars
+      ~act
+  =
+  let state =
+    match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+    | Ok result -> Sol_cli_cloud_destroy.inventory_of_show_json result.stdout
+    | Error (Sol_cli_process.Non_zero result) ->
+      Sol_cli_cloud_destroy.State_unreadable
+        (Printf.sprintf "terraform show exited %d" result.exit_code)
+    | Error error ->
+      Sol_cli_cloud_destroy.State_unreadable
+        ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error)
+  in
+  let observations =
+    Sol_cli_provider_registry.observations provider target_cfg ~cluster_name
+  in
+  let dispositions =
+    Sol_cli_ownership_reconciliation.dispositions
+      ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
+      ~class_rules:Sol_cli_resource_identity.class_rules
+      ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name)
+      ~state_addresses:(Sol_cli_cloud_destroy.addresses state)
+      observations
+  in
+  let candidates =
+    List.filter_map Sol_cli_ownership_reconciliation.candidate dispositions
+  in
+  if not act
+  then Ok { observations; dispositions; restored = [] }
+  else
+    List.fold_left
+      (fun acc (candidate : Sol_cli_ownership_reconciliation.candidate) ->
+         match acc with
+         | Error _ as error -> error
+         | Ok reconciliation ->
+           (match adopt ~infra_dir ~var_files ~vars candidate with
+            | Error _ as error -> error
+            | Ok () ->
+              Ok
+                { reconciliation with restored = reconciliation.restored @ [ candidate ] }))
+      (Ok { observations; dispositions; restored = [] })
+      candidates
+;;
+
 let substrate_only_vars = [ "in_cluster_layer=false" ]
 
 let bootstrap_access_vars ~enabled =

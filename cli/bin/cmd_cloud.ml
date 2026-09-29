@@ -6,6 +6,6 @@ let cmd =
     [ Cmd_cloud_tf.plan_cmd
     ; Cmd_cloud_tf.apply_cmd
     ; Cmd_cloud_tf.destroy_cmd
-    ; Cmd_cloud_tf.recover_cmd
+    ; Cmd_cloud_tf.reconcile_cmd
     ]
 ;;

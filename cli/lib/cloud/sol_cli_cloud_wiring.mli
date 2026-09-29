@@ -26,6 +26,22 @@ val init
   -> string list
   -> (unit, Sol_cli_cloud_apply.failure) result
 
+type reconciliation =
+  { observations : Sol_cli_absence.observation list
+  ; dispositions : Sol_cli_ownership_reconciliation.disposition list
+  ; restored : Sol_cli_ownership_reconciliation.candidate list
+  }
+
+val reconcile_ownership
+  :  provider:Sol_cli_provider.t
+  -> target_cfg:Sol_cli_config.target
+  -> cluster_name:string
+  -> infra_dir:string
+  -> var_files:string list
+  -> vars:string list
+  -> act:bool
+  -> (reconciliation, string) result
+
 val substrate_only_vars : string list
 
 val credentials_result
