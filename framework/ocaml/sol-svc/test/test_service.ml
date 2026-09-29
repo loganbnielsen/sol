@@ -582,6 +582,59 @@ let test_public_oversized_body_gets_413 env () =
       Alcotest.(check int) "413 on oversized public upload" 413 status))
 ;;
 
+let test_body_exactly_at_limit env () =
+  Switch.run (fun sw ->
+    with_small_body_server env ~sw (fun port ->
+      let upload body = http_call env ~sw ~port ~meth:`POST ~path:"/upload" ~body () in
+      let status_49, echoed_49 = upload (String.make 49 'x') in
+      Alcotest.(check int) "N-1 accepted" 200 status_49;
+      Alcotest.(check int) "N-1 echoed intact" 49 (String.length echoed_49);
+      let status_50, echoed_50 = upload (String.make 50 'x') in
+      Alcotest.(check int) "exactly N accepted" 200 status_50;
+      Alcotest.(check int) "exactly N echoed intact" 50 (String.length echoed_50);
+      let status_51, _ = upload (String.make 51 'x') in
+      Alcotest.(check int) "N+1 rejected with 413" 413 status_51))
+;;
+
+let test_empty_body_accepted env () =
+  Switch.run (fun sw ->
+    with_small_body_server env ~sw (fun port ->
+      let status, body = http_call env ~sw ~port ~meth:`POST ~path:"/upload" () in
+      Alcotest.(check int) "empty body accepted" 200 status;
+      Alcotest.(check string) "empty body echoed" "" body))
+;;
+
+let raw_chunked_status env ~sw ~port payload =
+  let flow = Eio.Net.connect ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port)) in
+  let chunk = Printf.sprintf "%x\r\n%s\r\n" (String.length payload) payload in
+  let request =
+    "POST /upload HTTP/1.1\r\n\
+     Host: 127.0.0.1\r\n\
+     Transfer-Encoding: chunked\r\n\
+     Connection: close\r\n\
+     \r\n"
+    ^ chunk
+    ^ "0\r\n\r\n"
+  in
+  Eio.Flow.copy_string request flow;
+  Eio.Flow.shutdown flow `Send;
+  let reader = Eio.Buf_read.of_flow flow ~max_size:65536 in
+  let status_line = Eio.Buf_read.line reader in
+  ignore (Eio.Buf_read.take_all reader);
+  match String.split_on_char ' ' status_line with
+  | _ :: code :: _ -> int_of_string code
+  | _ -> failwith ("unexpected status line: " ^ status_line)
+;;
+
+let test_chunked_body_limit env () =
+  Switch.run (fun sw ->
+    with_small_body_server env ~sw (fun port ->
+      let status_50 = raw_chunked_status env ~sw ~port (String.make 50 'x') in
+      Alcotest.(check int) "exactly N chunked accepted" 200 status_50;
+      let status_51 = raw_chunked_status env ~sw ~port (String.make 51 'x') in
+      Alcotest.(check int) "N+1 chunked rejected with 413" 413 status_51))
+;;
+
 let test_non_object_jwt_payload_gets_401 env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
@@ -751,6 +804,18 @@ let () =
               "public route + oversized body → 413"
               `Quick
               (test_public_oversized_body_gets_413 env)
+          ; Alcotest.test_case
+              "body at exactly N accepted, N+1 rejected (BUG-073)"
+              `Quick
+              (test_body_exactly_at_limit env)
+          ; Alcotest.test_case
+              "empty body accepted (BUG-073)"
+              `Quick
+              (test_empty_body_accepted env)
+          ; Alcotest.test_case
+              "chunked body at N accepted, N+1 rejected (BUG-073)"
+              `Quick
+              (test_chunked_body_limit env)
           ; Alcotest.test_case
               "api key file read failure is startup error"
               `Quick
