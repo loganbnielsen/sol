@@ -479,7 +479,7 @@ let cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain () =
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-reconcile" () in
   let* config_vars, target_cfg = target_vars ~strict:true target in
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
-  let vars = config_vars @ vars @ Sol_cli_cloud_wiring.substrate_only_vars in
+  let vars = config_vars @ vars in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
   let* () =
     Sol_cli_cloud_wiring.credentials_result

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Each new guard must fail on the change it exists to prevent."""
+"""The shared-resource guard must fail on the change it exists to prevent."""
 import shutil
 import subprocess
 import sys
@@ -32,9 +32,11 @@ def mutate(tmp, relative, old, new):
     path.write_text(text.replace(old, new, 1))
 
 
-def run(script, tmp):
+def run(tmp):
     return subprocess.run(
-        [sys.executable, str(ROOT / script), str(tmp)], capture_output=True, text=True
+        [sys.executable, str(ROOT / "internal/ci/check_project_shared_resources.py"), str(tmp)],
+        capture_output=True,
+        text=True,
     )
 
 
@@ -45,58 +47,23 @@ def main():
     mutate(
         tmp,
         "platform/cloud/gcp/cluster/main.tf",
-        '  host                   = local.kubernetes_host',
-        '  host                   = "https://${google_container_cluster.main.endpoint}"',
+        'data "google_compute_default_service_account" "default" {',
+        'resource "google_compute_default_service_account" "default" {',
     )
-    cases.append(("the provider configured from the cluster resource again", tmp, "substrate"))
-
-    tmp = scratch()
-    mutate(
-        tmp,
-        "platform/cloud/gcp/cluster/main.tf",
-        "needs_kubernetes = var.in_cluster_layer && var.provisioner_bootstrap_admin",
-        "needs_kubernetes = var.provisioner_bootstrap_admin",
-    )
-    cases.append(("the operation gate dropped from needs_kubernetes", tmp, "substrate"))
-
-    tmp = scratch()
-    mutate(
-        tmp,
-        "platform/cloud/gcp/cluster/main.tf",
-        "resource \"kubernetes_cluster_role_binding\" \"provisioner_bootstrap_admin\" {\n"
-        "  count = local.needs_kubernetes ? 1 : 0",
-        "resource \"kubernetes_cluster_role_binding\" \"provisioner_bootstrap_admin\" {\n"
-        "  count = 1",
-    )
-    cases.append(("an in-cluster object no longer gated", tmp, "substrate"))
-
-    tmp = scratch()
-    mutate(
-        tmp,
-        "platform/cloud/gcp/cluster/main.tf",
-        'removed {\n  from = google_compute_default_service_account.default\n\n'
-        "  lifecycle {\n    destroy = false\n  }\n}\n\n",
-        "",
-    )
-    cases.append(("the legacy shared resource no longer relinquished", tmp, "shared"))
+    cases.append(("a project-wide resource managed by a target again", tmp))
 
     tmp = scratch()
     mutate(
         tmp,
         "platform/cloud/gcp/cluster/main.tf",
         'data "google_compute_default_service_account" "default" {',
-        'resource "google_compute_default_service_account" "default" {',
+        "",
     )
-    cases.append(("a project-wide resource managed by a target again", tmp, "shared"))
+    cases.append(("the shared account no longer read at all", tmp))
 
     failures = 0
-    for label, tmp, which in cases:
-        script = (
-            "internal/ci/check_substrate_root_evaluable.py"
-            if which == "substrate"
-            else "internal/ci/check_project_shared_resources.py"
-        )
-        result = run(script, tmp)
+    for label, tmp in cases:
+        result = run(tmp)
         if result.returncode == 0:
             print(f"test_guard_mutations: guard ACCEPTED a mutation: {label}", file=sys.stderr)
             failures += 1
@@ -105,10 +72,9 @@ def main():
     if failures:
         return 1
     print(
-        "test_guard_mutations: both guards reject the change each exists to prevent -- a "
-        "provider configured from the cluster, a dropped operation gate, an ungated "
-        "in-cluster object, a relinquished address restored, and a shared resource managed "
-        "again"
+        "test_guard_mutations: the guard rejects the change it exists to prevent -- a "
+        "project-wide resource managed by a target instead of read, and the shared account "
+        "not read at all"
     )
     return 0
 

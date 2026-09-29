@@ -134,14 +134,6 @@ resource "google_artifact_registry_repository" "images" {
   description   = "Container images for ${var.cluster_name} Sol workspace"
 }
 
-removed {
-  from = google_compute_default_service_account.default
-
-  lifecycle {
-    destroy = false
-  }
-}
-
 data "google_compute_default_service_account" "default" {
   project = var.project_id
 }
@@ -220,40 +212,16 @@ resource "google_service_networking_connection" "sql" {
   deletion_policy = "ABANDON"
 }
 
-locals {
-  needs_kubernetes = var.in_cluster_layer && var.provisioner_bootstrap_admin
-}
-
 data "google_client_config" "default" {}
 
-data "google_container_cluster" "in_cluster" {
-  count = local.needs_kubernetes ? 1 : 0
-
-  name     = var.cluster_name
-  location = var.region
-  project  = var.project_id
-}
-
-locals {
-  kubernetes_host = local.needs_kubernetes ? "https://${data.google_container_cluster.in_cluster[0].endpoint}" : ""
-  kubernetes_token = (
-    local.needs_kubernetes ? data.google_client_config.default.access_token : ""
-  )
-  kubernetes_cluster_ca_certificate = (
-    local.needs_kubernetes
-    ? base64decode(data.google_container_cluster.in_cluster[0].master_auth[0].cluster_ca_certificate)
-    : ""
-  )
-}
-
 provider "kubernetes" {
-  host                   = local.kubernetes_host
-  token                  = local.kubernetes_token
-  cluster_ca_certificate = local.kubernetes_cluster_ca_certificate
+  host                   = "https://${google_container_cluster.main.endpoint}"
+  token                  = data.google_client_config.default.access_token
+  cluster_ca_certificate = base64decode(google_container_cluster.main.master_auth[0].cluster_ca_certificate)
 }
 
 resource "kubernetes_cluster_role_binding" "provisioner_bootstrap_admin" {
-  count = local.needs_kubernetes ? 1 : 0
+  count = var.provisioner_bootstrap_admin ? 1 : 0
 
   metadata { name = "sol-platform-provisioner-bootstrap-admin" }
 
