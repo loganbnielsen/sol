@@ -74,6 +74,8 @@ let test_with_temp_file () =
   check_bool "removed afterwards" false (Sys.file_exists !seen)
 ;;
 
+let is_symlink path = (Unix.lstat path).Unix.st_kind = Unix.S_LNK
+
 let test_copy_tree () =
   in_temp (fun root ->
     let src = Filename.concat root "src" in
@@ -83,8 +85,6 @@ let test_copy_tree () =
     write (Filename.concat src "app/run.sh") "#!/bin/sh";
     Unix.chmod (Filename.concat src "app/run.sh") 0o755;
     write (Filename.concat src "app/_build/junk") "x";
-    write (Filename.concat src "outside") "followed";
-    Unix.symlink (Filename.concat src "outside") (Filename.concat src "app/link");
     let dst = Filename.concat root "dst" in
     Sol_cli_fs.copy_tree ~exclude:[ "_build"; ".git" ] ~src ~dst |> Result.get_ok;
     Alcotest.(check string)
@@ -95,15 +95,57 @@ let test_copy_tree () =
       "its mode"
       0o755
       (Unix.stat (Filename.concat dst "app/run.sh")).st_perm;
-    Alcotest.(check string)
-      "a symlink is followed"
-      "followed"
-      (read (Filename.concat dst "app/link"));
     check_bool
       "_build excluded"
       false
       (Sys.file_exists (Filename.concat dst "app/_build"));
     check_bool ".git excluded" false (Sys.file_exists (Filename.concat dst ".git")))
+;;
+
+let test_copy_tree_preserves_symlinks () =
+  in_temp (fun root ->
+    let src = Filename.concat root "src" in
+    Sol_cli_fs.mkdir_p (Filename.concat src "app") |> Result.get_ok;
+    write (Filename.concat src "app/main.ml") "main";
+    let outside_file = Filename.concat root "outside-secret" in
+    write outside_file "outside content";
+    let outside_dir = Filename.concat root "outside-dir" in
+    Sol_cli_fs.mkdir_p outside_dir |> Result.get_ok;
+    write (Filename.concat outside_dir "child") "external child";
+    Unix.symlink outside_file (Filename.concat src "app/external-file");
+    Unix.symlink outside_dir (Filename.concat src "app/external-dir");
+    Unix.symlink
+      (Filename.concat src "does-not-exist")
+      (Filename.concat src "app/dangling");
+    Unix.symlink ".." (Filename.concat src "app/ancestor");
+    let dst = Filename.concat root "dst" in
+    (match Sol_cli_fs.copy_tree ~exclude:[] ~src ~dst with
+     | Ok () -> ()
+     | Error e -> Alcotest.failf "copy_tree failed: %s" e);
+    let link name = Filename.concat (Filename.concat dst "app") name in
+    check_bool
+      "external file link stays a link (contents not imported)"
+      true
+      (is_symlink (link "external-file"));
+    Alcotest.(check string)
+      "external file target preserved"
+      outside_file
+      (Unix.readlink (link "external-file"));
+    check_bool
+      "external directory link stays a link (not recursed)"
+      true
+      (is_symlink (link "external-dir"));
+    Alcotest.(check string)
+      "external directory target preserved"
+      outside_dir
+      (Unix.readlink (link "external-dir"));
+    check_bool "dangling link preserved" true (is_symlink (link "dangling"));
+    check_bool "dangling link stays dangling" false (Sys.file_exists (link "dangling"));
+    check_bool
+      "ancestor cycle preserved without recursing"
+      true
+      (is_symlink (link "ancestor"));
+    Alcotest.(check string) "regular-file positive control" "main" (read (link "main.ml")))
 ;;
 
 let test_spawn () =
@@ -149,6 +191,10 @@ let () =
         ; Alcotest.test_case "write_atomic" `Quick test_write_atomic
         ; Alcotest.test_case "with_temp_file" `Quick test_with_temp_file
         ; Alcotest.test_case "copy_tree" `Quick test_copy_tree
+        ; Alcotest.test_case
+            "copy_tree preserves symlinks (BUG-075)"
+            `Quick
+            test_copy_tree_preserves_symlinks
         ; Alcotest.test_case "spawn" `Quick test_spawn
         ] )
     ]
