@@ -105,6 +105,12 @@ val output_json
   -> unit
   -> (Sol_cli_process.output, Sol_cli_process.error) result
 
+val state_list
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> unit
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
+
 val show_json
   :  ?env:(string * string) list
   -> chdir:string

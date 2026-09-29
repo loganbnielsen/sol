@@ -150,6 +150,10 @@ let output_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "output"; "-json" ])
 ;;
 
+let state_list ?(env = []) ~chdir () =
+  run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "state"; "list" ])
+;;
+
 let show_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json" ])
 ;;
