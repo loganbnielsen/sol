@@ -536,3 +536,8 @@ actor starts from them:
 **Branch protection.** All eleven `*-eio` repositories now mirror sol: required `test`, `enforce_admins: true`, no mandatory review, no up-to-date-branch requirement. kafka-eio#27, pg-eio#23 and obs-loki-eio#16 merged through that path with no bypass.
 
 **Local state.** The Redpanda and Postgres containers started for this work, the audit/implementation worktrees and the merged local branches were removed. Four pre-existing sol worktrees with unpushed work (`logan-comments`, `audit/high-value-code-quality`, `tooling/parameter-style-lint`, `tooling/pipeline-cleanup`) and three `*-eio` worktrees whose branches hold unique commits (`kafka-eio-topic-config`, `aws-eio-REFAC-154-direct-composition` — the withdrawn credential-composition refactor — and `obs-tempo-eio-CODE_LAYER-004`) were left untouched.
+
+## Targeted code quality follow-up (2026-09-29)
+
+- Refreshed canonical `main` to `f52b946c` and reconciled previous findings and open work. Filed BUG-083 for cloud ownership reconciliation treating an unreadable Terraform state as an empty ownership set before import. Evidence and audit limits are in `internal/pipeline/audits/2026-09-29_targeted_code_quality_audit.md`.
+- Discovery and filing only; implementation remains open. No other candidate cleared the filing threshold.
