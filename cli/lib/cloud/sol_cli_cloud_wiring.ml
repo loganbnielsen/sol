@@ -286,33 +286,44 @@ let reconcile_ownership
       Sol_cli_cloud_destroy.State_unreadable
         ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error)
   in
-  let observations =
-    Sol_cli_provider_registry.observations provider target_cfg ~cluster_name
-  in
-  let dispositions =
-    Sol_cli_ownership_reconciliation.dispositions
-      ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
-      ~state_addresses:(Sol_cli_cloud_destroy.addresses state)
-      observations
-  in
-  let candidates =
-    List.filter_map Sol_cli_ownership_reconciliation.candidate dispositions
-  in
-  if not act
-  then Ok { observations; dispositions; restored = [] }
-  else
-    List.fold_left
-      (fun acc (candidate : Sol_cli_ownership_reconciliation.candidate) ->
-         match acc with
-         | Error _ as error -> error
-         | Ok reconciliation ->
-           (match adopt ~infra_dir ~var_files ~vars candidate with
-            | Error _ as error -> error
-            | Ok () ->
-              Ok
-                { reconciliation with restored = reconciliation.restored @ [ candidate ] }))
-      (Ok { observations; dispositions; restored = [] })
-      candidates
+  match state with
+  | Sol_cli_cloud_destroy.State_unreadable reason ->
+    Error
+      (Printf.sprintf
+         "refusing to reconcile: the Terraform state could not be read (%s), so Sol \
+          cannot tell which provider resources this target already owns. An unreadable \
+          state is not an empty one -- nothing is imported while ownership is unknown"
+         reason)
+  | Sol_cli_cloud_destroy.State_empty | Sol_cli_cloud_destroy.State_represented _ ->
+    let observations =
+      Sol_cli_provider_registry.observations provider target_cfg ~cluster_name
+    in
+    let dispositions =
+      Sol_cli_ownership_reconciliation.dispositions
+        ~entries:(Sol_cli_provider_registry.resource_identity provider ~cluster_name)
+        ~state_addresses:(Sol_cli_cloud_destroy.addresses state)
+        observations
+    in
+    let candidates =
+      List.filter_map Sol_cli_ownership_reconciliation.candidate dispositions
+    in
+    if not act
+    then Ok { observations; dispositions; restored = [] }
+    else
+      List.fold_left
+        (fun acc (candidate : Sol_cli_ownership_reconciliation.candidate) ->
+           match acc with
+           | Error _ as error -> error
+           | Ok reconciliation ->
+             (match adopt ~infra_dir ~var_files ~vars candidate with
+              | Error _ as error -> error
+              | Ok () ->
+                Ok
+                  { reconciliation with
+                    restored = reconciliation.restored @ [ candidate ]
+                  }))
+        (Ok { observations; dispositions; restored = [] })
+        candidates
 ;;
 
 let bootstrap_access_vars ~enabled =
