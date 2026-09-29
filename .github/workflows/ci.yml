@@ -1470,17 +1470,22 @@ jobs:
           # One real transaction through the whole path: HTTP -> order_svc ->
           # Kafka -> fulfillment_worker -> Postgres. Marker is unique per run
           # so a re-run (or a flaky retry) can't misread a stale row from a
-          # previous attempt as this run's evidence.
+          # previous attempt as this run's evidence. The request also carries a
+          # traceparent we chose, so the trace id is known in advance and can be
+          # asserted end to end below (BUG-070).
           marker="ci-ts-golden-$(date +%s)-${RANDOM}"
+          trace_id=$(openssl rand -hex 16)
+          span_id=$(openssl rand -hex 8)
           http_code=$(curl -s -o /tmp/order_response.json -w '%{http_code}' \
             -X POST http://localhost:8080/orders \
             -H 'Content-Type: application/json' \
+            -H "traceparent: 00-${trace_id}-${span_id}-01" \
             -d "{\"order_id\":\"${marker}\",\"item\":\"widget\",\"quantity\":1}")
           if [ "$http_code" != "202" ]; then
             echo "::error::TS golden-path smoke test: POST /orders returned $http_code, expected 202 ($(cat /tmp/order_response.json))"
             exit 1
           fi
-          echo "POST /orders OK (202, marker=${marker})"
+          echo "POST /orders OK (202, marker=${marker}, trace=${trace_id})"
 
           # fulfilled_orders_ts is created by fulfillment_worker itself
           # (CREATE TABLE IF NOT EXISTS in db.ts) -- no Sol migration owns
@@ -1516,6 +1521,29 @@ jobs:
             exit 1
           fi
           echo "Postgres row for ${marker} confirmed OK -- HTTP -> Kafka -> worker -> Postgres path proven"
+
+          # Caller-to-worker trace continuity (BUG-070): the traceparent sent
+          # with that request must survive order_svc and the Kafka header, so
+          # the trace holds a span from each unit rather than two rooted traces.
+          # Asserted against Tempo's query API (the same store the demo's README
+          # tells a user to read), so an app that starts a fresh root trace --
+          # the pre-fix behaviour -- fails here.
+          trace_ok=0
+          for i in $(seq 1 30); do
+            trace=$(curl -sf "http://localhost:3200/api/traces/${trace_id}" 2>/dev/null || true)
+            services=$(jq -r '[.batches[].resource.attributes[]? | select(.key == "service.name") | .value.stringValue] | unique | .[]' <<< "$trace" 2>/dev/null || true)
+            if grep -Fxq 'order-svc-ts' <<< "$services" && grep -Fxq 'fulfillment-worker-ts' <<< "$services"; then
+              trace_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$trace_ok" -ne 1 ]; then
+            echo "::error::TS golden-path smoke test: trace ${trace_id} did not span both order-svc-ts and fulfillment-worker-ts -- inbound trace context was not preserved"
+            curl -s "http://localhost:3200/api/traces/${trace_id}" | head -c 500 || true
+            exit 1
+          fi
+          echo "trace ${trace_id} spans order-svc-ts and fulfillment-worker-ts -- inbound trace context preserved"
 
           # Coarse liveness check, not a reproduction of FEAT-082's
           # forced-shutdown/redelivery experiments: a graceful pod delete

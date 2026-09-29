@@ -70,6 +70,30 @@ Then check Grafana (Loki logs + Prometheus metrics) and Tempo — the
 `receive_order` span from `order_svc` and `fulfill_order` span from
 `fulfillment_worker` link into a single trace across the Kafka boundary.
 
+To see that continuity as a check rather than a claim, supply your own
+`traceparent` and follow that exact trace id:
+
+```bash
+trace_id=$(openssl rand -hex 16)
+span_id=$(openssl rand -hex 8)
+curl -X POST localhost:8080/orders -H 'content-type: application/json' \
+  -H "traceparent: 00-${trace_id}-${span_id}-01" \
+  -d '{"order_id":"demo-1","item":"widget","quantity":3}'
+
+curl -s "http://localhost:3200/api/traces/${trace_id}" | jq -r '
+  [.batches[].resource.attributes[] | select(.key == "service.name").value.stringValue]
+  | unique | .[]'
+# order-svc-ts
+# fulfillment-worker-ts
+```
+
+`order_svc` extracts the inbound carrier with the OpenTelemetry propagation API,
+so the trace is the caller's: `receive_order` keeps `${trace_id}`, the Kafka
+message carries the same trace id in its `traceparent` header, and
+`fulfillment_worker` continues it as `fulfill_order`. With no `traceparent`
+header the service starts a valid new trace, and an unparseable one is ignored
+the same way.
+
 A unit whose `sol.yml` entry declares no language is refused by the loop rather
 than guessed at, and a unit with no installed dependencies is reported with the
 `npm ci` to run — Sol never decides a workload's language from its files.
