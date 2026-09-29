@@ -372,3 +372,31 @@ presence during a teardown.
 
 Simplified: 138 mappings still, but the registry loses two lookup tables and two constructors, and the
 reconciler loses a disposition case and two parameters.
+
+## The GCP application row, completed (Attempt 28)
+
+**Every boundary observed, on a fresh specimen:** substrate → platform install success and `Ready`
+→ build → push → `sol migrate apply` → `sol deploy` → the transaction (a charge accepted, the
+worker consumed it, and the service read the worker's row back out of PostgreSQL) → supported
+teardown → `Done. Destruction reached verified absence.` — with an independent inventory afterwards
+showing no clusters, instances, addresses, networks, routers, disks or service accounts attributable
+to qualification.
+
+**Three defects the row found, and what each was.**
+
+1. **My `in_cluster_layer` gate was itself the defect**, three times over: the creating apply could
+   not plan (a data source reading a cluster that did not exist), the install-window relinquish
+   could not delete the binding through a provider switched off, and the destroy could not either.
+   Reverted, with the evidence that the reverted code converged the standing substrate to verified
+   absence where the gated code had refused it.
+2. **Qualification machinery**: the harness re-derived `PROJECT` and `REGION` without exporting
+   them, so the app helpers built `-docker.pkg.dev//…` and docker rejected the tag — the same class
+   as the empty `APP_TAG` fixed earlier.
+3. **A product defect the row existed to find**: the teardown deleted `google_sql_database.app` and
+   `google_sql_user.postgres` as siblings, in parallel, and the application's schema objects depend
+   on the role — `role "postgres" cannot be dropped because some objects depend on it ... 3 objects
+   in database app`. The database now depends on the user, so destruction drops the database first
+   and releases the objects before the role goes. Verified by the teardown that had previously
+   failed now reaching verified absence.
+
+Attempt 26 and 27 are recorded here because they are the evidence for (1); neither left residue.

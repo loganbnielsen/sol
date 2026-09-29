@@ -188,6 +188,8 @@ resource "google_sql_database_instance" "postgres" {
 resource "google_sql_database" "app" {
   name     = "app"
   instance = google_sql_database_instance.postgres.name
+
+  depends_on = [google_sql_user.postgres]
 }
 
 resource "google_sql_user" "postgres" {
