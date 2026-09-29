@@ -232,19 +232,6 @@ let load_balancers_gone ~region ~cluster_name =
   | _ -> None
 ;;
 
-let aws_load_balancer_probe ~region ~cluster_name =
-  match load_balancers_gone ~region ~cluster_name with
-  | Some true -> Probe_gone
-  | Some false ->
-    Probe_found
-      (Printf.sprintf
-         "AWS load balancer(s) still exist after destroy (tag kubernetes.io/cluster/%s)"
-         cluster_name)
-  | None ->
-    Probe_indeterminate
-      "AWS load balancers could not be checked: the aws CLI is unavailable or errored"
-;;
-
 let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
   if attempts = 0
   then
@@ -257,67 +244,6 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
     | Some false | None ->
       Unix.sleepf 5.;
       wait_for_load_balancers_gone ~region ~cluster_name (attempts - 1))
-;;
-
-let aws_list_probe ~region ~kind ~argv =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
-  with
-  | Ok { stdout = listed; _ } when Sol_cli_string.is_blank listed -> Probe_gone
-  | Ok { stdout = listed; _ } ->
-    Probe_found
-      (Printf.sprintf "AWS %s still exist after destroy: %s" kind (String.trim listed))
-  | Error (Sol_cli_process.Non_zero r) ->
-    Probe_indeterminate
-      (Printf.sprintf "AWS %s could not be checked: %s" kind (String.trim r.stderr))
-  | Error _ ->
-    Probe_indeterminate
-      (Printf.sprintf "AWS %s could not be checked: the aws CLI is unavailable" kind)
-;;
-
-let aws_no_ebs_volumes ~region ~cluster_name =
-  aws_list_probe
-    ~region
-    ~kind:"EBS volumes"
-    ~argv:
-      [ "ec2"
-      ; "describe-volumes"
-      ; "--filters"
-      ; Printf.sprintf
-          "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared"
-          cluster_name
-      ; "--query"
-      ; "Volumes[].VolumeId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
-let aws_orphan_sweep ~pre_destroy ~region ~cluster ~(target_cfg : Sol_cli_config.target) =
-  let cluster_name =
-    match state_name pre_destroy "aws_eks_cluster" with
-    | Some _ as name -> name
-    | None ->
-      (match Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster with
-       | Some _ as name -> name
-       | None -> target_cfg.cluster_name)
-  in
-  let cluster_probes, cluster_gap =
-    match cluster_name with
-    | Some cluster_name ->
-      ( [ aws_load_balancer_probe ~region ~cluster_name
-        ; aws_no_ebs_volumes ~region ~cluster_name
-        ]
-      , [] )
-    | None ->
-      ( []
-      , [ "the AWS residue checks could not establish the target's cluster name from \
-           Terraform state, the install outputs or the target's own cluster_name \
-           declaration, so its tag-derived checks were not run -- an observation that \
-           did not run cannot establish absence"
-        ] )
-  in
-  orphan_sweep ~gaps:cluster_gap cluster_probes
 ;;
 
 let final_snapshot_attempts = 12
@@ -616,11 +542,21 @@ let destruction ctx : Sol_cli_destruction.t =
         observe_retention ~region:ctx.target.region ~retention ~pre_destroy ~preparation)
   ; residue =
       (fun ~pre_destroy ~cluster ->
-        aws_orphan_sweep
-          ~pre_destroy
-          ~region:ctx.target.region
-          ~cluster
-          ~target_cfg:ctx.target)
+        match
+          Sol_cli_destruction.residue_cluster_name
+            ~kind:"aws_eks_cluster"
+            ~pre_destroy
+            ~cluster
+            ~target_cfg:ctx.target
+        with
+        | Some cluster_name -> Sol_cli_aws_absence.observations ctx.target ~cluster_name
+        | None ->
+          Sol_cli_aws_absence.unresolved
+            ~reason:
+              "the target's cluster name could not be established from Terraform state, \
+               the install outputs or the target's own cluster_name declaration, so the \
+               provider could not be listed by identity -- an inventory that did not run \
+               cannot establish absence")
   ; before_substrate_destroy = before_substrate_destroy ctx
   }
 ;;

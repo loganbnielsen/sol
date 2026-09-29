@@ -3,34 +3,20 @@ let abbreviate ?(limit = 400) text =
   if String.length text <= limit then text else String.sub text 0 limit ^ "..."
 ;;
 
-type probe_outcome =
-  | Probe_gone
-  | Probe_found of string
-  | Probe_indeterminate of string
-
-let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
-  let residues =
-    List.filter_map
-      (function
-        | Probe_found r -> Some r
-        | _ -> None)
-      probes
-  in
-  let indeterminate =
-    gaps
-    @ List.filter_map
-        (function
-          | Probe_indeterminate r -> Some r
-          | _ -> None)
-        probes
-  in
-  Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
-;;
-
 let state_name pre_destroy kind =
   Sol_cli_cloud_destroy.resources pre_destroy
   |> List.find_map (fun (resource : Sol_cli_cloud_destroy.resource) ->
     if String.equal resource.kind kind then resource.name else None)
+;;
+
+let residue_cluster_name ~kind ~pre_destroy ~cluster ~(target_cfg : Sol_cli_config.target)
+  =
+  match state_name pre_destroy kind with
+  | Some _ as name -> name
+  | None ->
+    (match Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster with
+     | Some _ as name -> name
+     | None -> target_cfg.cluster_name)
 ;;
 
 let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
@@ -74,6 +60,6 @@ type t =
   ; residue :
       pre_destroy:Sol_cli_cloud_destroy.state_read
       -> cluster:Sol_cli_cluster.t option
-      -> Sol_cli_destroy_verification.sweep
+      -> Sol_cli_absence.observation list
   ; before_substrate_destroy : unit -> unit
   }

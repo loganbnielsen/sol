@@ -532,10 +532,20 @@ fi
 
 assert_contains "the GCP destroy read its own state postcondition" "$gcp_destroy_log.out" \
   'terraform state (disposable root): empty -- Terraform destroyed every resource it manages' || exit 1
-assert_contains "the GCP residue check ran and found nothing" "$gcp_destroy_log.out" \
-  'residue Terraform does not own (controller load balancers, PVC volumes, abandoned peering): none found' || exit 1
-grep -F 'gcloud services vpc-peerings list' "$gcp_destroy_log" >/dev/null || {
+assert_contains "the GCP provider inventory reported each class it checked" "$gcp_destroy_log.out" \
+  'absent: GKE cluster' || exit 1
+assert_contains "FND-0070: and the class an orphan was found in would be reported as PRESENT" \
+  "$gcp_destroy_log.out" 'absent: Cloud SQL instance' || exit 1
+grep -E 'gcloud .* services vpc-peerings list' "$gcp_destroy_log" >/dev/null || {
   echo "REFAC-094: the GCP residue (peering) query is missing from the destroy log" >&2
+  exit 1
+}
+grep -E 'gcloud .* sql instances list' "$gcp_destroy_log" >/dev/null || {
+  echo "FND-0070: the provider inventory did not list the Cloud SQL class" >&2
+  exit 1
+}
+grep -F 'by observing the provider directly' "$gcp_destroy_log.out" >/dev/null || {
+  echo "FND-0070: the destroy did not say that provider observation, not state, is the authority:" >&2
   exit 1
 }
 for managed in 'gcloud container clusters describe' 'gcloud sql instances describe' \
@@ -596,6 +606,48 @@ grep -F 'a preparation degraded and destruction continued' "$refuse_log.out" >/d
 if ! grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
   echo "the substrate destroy did not run after a refused reconciliation:" >&2
   cat "$refuse_log" >&2
+  exit 1
+fi
+grep -F 'absent: Cloud SQL instance' "$refuse_log.out" >/dev/null || {
+  echo "the provider inventory did not report what it checked, per class:" >&2
+  cat "$refuse_log.out" >&2
+  exit 1
+}
+
+orphan_log="$tmp/gcp-orphan.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
+orphan_rc=0
+(cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 ORPHAN_SQL_PRESENT=1 \
+   LIFECYCLE_LOG="$orphan_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$orphan_log.out" 2>&1 || orphan_rc=$?
+if [ "$orphan_rc" -eq 0 ]; then
+  echo "FND-0070: a destroy whose provider still holds a resource Terraform never adopted exited 0:" >&2
+  cat "$orphan_log.out" >&2
+  exit 1
+fi
+grep -F 'PRESENT: Cloud SQL instance' "$orphan_log.out" >/dev/null || {
+  echo "FND-0070: the orphaned Cloud SQL instance was not reported as PRESENT:" >&2
+  cat "$orphan_log.out" >&2
+  exit 1
+}
+grep -F 'sol-qual-postgres' "$orphan_log.out" >/dev/null || {
+  echo "FND-0070: the orphan was not named for the operator:" >&2
+  cat "$orphan_log.out" >&2
+  exit 1
+}
+grep -F 'own cluster name' "$orphan_log.out" >/dev/null || {
+  echo "FND-0070: the inventory did not explain why the orphan is attributable to this target:" >&2
+  cat "$orphan_log.out" >&2
+  exit 1
+}
+grep -F 'Destruction did not converge' "$orphan_log.out" >/dev/null || {
+  echo "FND-0070: the destroy did not report non-convergence:" >&2
+  cat "$orphan_log.out" >&2
+  exit 1
+}
+if grep -F 'reached verified absence' "$orphan_log.out" >/dev/null; then
+  echo "FND-0070: a destroy with a standing orphan still claimed verified absence:" >&2
+  cat "$orphan_log.out" >&2
   exit 1
 fi
 if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
@@ -911,12 +963,18 @@ esac
 grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
 grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
 grep -F 'aws ec2 describe-volumes' "$log" >/dev/null
-for gone in 'aws ec2 describe-addresses' 'aws ec2 describe-nat-gateways' 'aws ecr describe-repositories'; do
+for gone in 'ec2 describe-volumes --volume-ids' 'ecr describe-repositories --repository-names' \
+             'rds describe-db-instances --db-instance-identifier' \
+             'ec2 describe-addresses --public-ips'; do
   if grep -F "$gone" "$log" >/dev/null; then
-    echo "REFAC-093: the destroy sweep still queries a Terraform-managed kind: $gone" >&2
+    echo "REFAC-093: the destroy re-queried a Terraform-managed resource by identity: $gone" >&2
     exit 1
   fi
 done
+grep -F 'ECR repository' "$log.out" >/dev/null || {
+  echo "FND-0070: the AWS inventory did not account for the ECR class at all" >&2
+  exit 1
+}
 
 for residual in ebs; do
   residual_log="$tmp/destroy-residual-$residual.log"
@@ -925,13 +983,22 @@ for residual in ebs; do
     exit 1
   fi
   case "$residual" in
-    ebs) expected='AWS EBS volumes still exist after destroy' ;;
+    ebs) expected='present after destroy' ;;
   esac
   grep -F "$expected" "$residual_log.out" >/dev/null || {
     echo "AWS residual $residual did not report its failed absence check" >&2
     cat "$residual_log.out" >&2
     exit 1
   }
+  grep -F 'vol-residual' "$residual_log.out" >/dev/null || {
+    echo "AWS residual $residual was not named for the operator" >&2
+    cat "$residual_log.out" >&2
+    exit 1
+  }
+  if grep -F 'reached verified absence' "$residual_log.out" >/dev/null; then
+    echo "AWS residual $residual still produced a verified-absence claim" >&2
+    exit 1
+  fi
 done
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
 destroy_line_no="$(grep -n 'cloud/aws/cluster.* destroy ' "$log" | head -1 | cut -d: -f1)"
@@ -996,10 +1063,12 @@ assert_contains "the retained snapshot was observed, not assumed" "$log_retain.o
   "final snapshot $retained_id observed available" || exit 1
 assert_contains "the retention observation names how to remove it" "$log_retain.out" \
   'delete-db-snapshot' || exit 1
-assert_not_contains "the destroy does not re-query the Terraform-managed database" "$log_retain.out" \
-  'aws rds describe-db-instances' || exit 1
-assert_not_contains "the destroy does not re-query the Terraform-managed cluster" "$log_retain.out" \
+assert_not_contains "the destroy does not re-query the managed database by identity" "$log_retain.out" \
+  'aws rds describe-db-instances --db-instance-identifier' || exit 1
+assert_not_contains "the destroy does not re-query the managed cluster by identity" "$log_retain.out" \
   'aws eks describe-cluster' || exit 1
+assert_contains "FND-0070: the destroy observes the provider's classes independently of state" \
+  "$log_retain.out" 'absent: RDS instance' || exit 1
 
 missing_snapshot_log="$tmp/destroy-retention-missing.log"
 rm -f "$RDS_PREPARED_FILE"
@@ -1134,9 +1203,10 @@ grep -F 'aws ec2 describe-volumes' "$managed_log" >/dev/null || {
   echo "REFAC-094: the AWS residue (EBS) query is missing from the destroy log" >&2
   exit 1
 }
-for managed in 'aws eks describe-cluster' 'aws eks describe-addon' 'aws rds describe-db-instances'; do
+for managed in 'aws eks describe-cluster' 'aws eks describe-addon' \
+               'aws rds describe-db-instances --db-instance-identifier'; do
   if grep -F "$managed" "$managed_log" >/dev/null; then
-    echo "REFAC-094: the AWS destroy still re-queries a Terraform-managed resource: $managed" >&2
+    echo "REFAC-094: the AWS destroy still re-queries a Terraform-managed resource by identity: $managed" >&2
     exit 1
   fi
 done

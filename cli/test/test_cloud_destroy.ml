@@ -677,6 +677,130 @@ let test_inconclusive_residue_probe_is_unknown () =
     (exit_code outcome)
 ;;
 
+let absence_rule = Sol_cli_absence.Named_for_target "the target's own cluster name"
+
+let absent_class resource_class =
+  Sol_cli_absence.Absent
+    { resource_class
+    ; identity = "qual-1"
+    ; attribution = absence_rule
+    ; checked_with = "gcloud list"
+    }
+;;
+
+let present_class resource_class =
+  Sol_cli_absence.Present
+    { resource_class
+    ; identity = "qual-1-postgres"
+    ; attribution = absence_rule
+    ; checked_with = "gcloud list"
+    }
+;;
+
+let unobservable_class resource_class =
+  Sol_cli_absence.Unobservable
+    { resource_class; reason = "the CLI is unavailable"; checked_with = "gcloud list" }
+;;
+
+let test_an_empty_inventory_permits_the_absence_claim () =
+  let observations = [ absent_class "GKE cluster"; absent_class "Cloud SQL instance" ] in
+  Alcotest.(check bool)
+    "every class observed absent permits the claim"
+    true
+    (Sol_cli_absence.permits_absence_claim (Sol_cli_absence.verdict observations));
+  Alcotest.(check bool)
+    "and the sweep carries no residue and no unknown"
+    true
+    (Sol_cli_absence.to_sweep observations
+     = Sol_cli_destroy_verification.Sweep_ran { residues = []; indeterminate = [] })
+;;
+
+let test_a_present_resource_refuses_the_absence_claim () =
+  let observations = [ absent_class "GKE cluster"; present_class "Cloud SQL instance" ] in
+  let verdict = Sol_cli_absence.verdict observations in
+  Alcotest.(check bool)
+    "a resource the state never adopted still refuses the claim"
+    false
+    (Sol_cli_absence.permits_absence_claim verdict);
+  Alcotest.(check bool)
+    "and it is named"
+    true
+    (List.exists
+       (fun line -> contains (Str.regexp_string "qual-1-postgres") line)
+       (Sol_cli_absence.residue verdict));
+  let verification =
+    Sol_cli_destroy_verification.classify
+      { Sol_cli_destroy_verification.state = State_absent
+      ; sweep = Sol_cli_absence.to_sweep observations
+      ; retention = Retention_not_required "fixture"
+      }
+  in
+  Alcotest.(check bool)
+    "so the destruction verdict is not verified"
+    false
+    (Sol_cli_destroy_verification.is_verified verification)
+;;
+
+let test_an_unobservable_class_refuses_the_absence_claim () =
+  let verdict =
+    Sol_cli_absence.verdict
+      [ absent_class "GKE cluster"; unobservable_class "forwarding rule" ]
+  in
+  Alcotest.(check bool)
+    "an observation that did not run is UNKNOWN, never absence"
+    false
+    (Sol_cli_absence.permits_absence_claim verdict)
+;;
+
+let test_a_present_resource_outranks_an_unobservable_class () =
+  let verdict =
+    Sol_cli_absence.verdict
+      [ unobservable_class "GKE cluster"; present_class "Cloud SQL instance" ]
+  in
+  Alcotest.(check bool)
+    "both refuse the claim"
+    false
+    (Sol_cli_absence.permits_absence_claim verdict);
+  Alcotest.(check bool)
+    "and the resource that was actually found is reported first"
+    true
+    (match Sol_cli_absence.residue verdict with
+     | first :: _ -> contains (Str.regexp_string "qual-1-postgres") first
+     | [] -> false)
+;;
+
+let test_an_external_resource_is_not_residue () =
+  let observations =
+    [ Sol_cli_absence.External
+        { resource_class = "Terraform state bucket"
+        ; identity = "the durable backend"
+        ; reason = "durable by contract"
+        }
+    ; absent_class "GKE cluster"
+    ]
+  in
+  Alcotest.(check bool)
+    "a resource the contract keeps alive is not this target's residue"
+    true
+    (Sol_cli_absence.permits_absence_claim (Sol_cli_absence.verdict observations))
+;;
+
+let test_the_report_explains_attribution () =
+  let report = Sol_cli_absence.report [ present_class "Cloud SQL instance" ] in
+  Alcotest.(check bool)
+    "it says what was found"
+    true
+    (contains (Str.regexp_string "PRESENT: Cloud SQL instance") report);
+  Alcotest.(check bool)
+    "and why it is this target's"
+    true
+    (contains (Str.regexp_string "the target's own cluster name") report);
+  Alcotest.(check bool)
+    "and which command established it"
+    true
+    (contains (Str.regexp_string "gcloud list") report)
+;;
+
 let test_block_preparation_failure_blocks_destruction () =
   let deps, calls =
     fake_deps
@@ -1175,6 +1299,30 @@ let () =
             "an inconclusive residue probe is an unknown"
             `Quick
             test_inconclusive_residue_probe_is_unknown
+        ; Alcotest.test_case
+            "an empty provider inventory permits the claim"
+            `Quick
+            test_an_empty_inventory_permits_the_absence_claim
+        ; Alcotest.test_case
+            "a present resource refuses the claim (FND-0070)"
+            `Quick
+            test_a_present_resource_refuses_the_absence_claim
+        ; Alcotest.test_case
+            "an unobservable class refuses the claim"
+            `Quick
+            test_an_unobservable_class_refuses_the_absence_claim
+        ; Alcotest.test_case
+            "a present resource outranks an unobservable class"
+            `Quick
+            test_a_present_resource_outranks_an_unobservable_class
+        ; Alcotest.test_case
+            "an external resource is not residue"
+            `Quick
+            test_an_external_resource_is_not_residue
+        ; Alcotest.test_case
+            "the report explains attribution"
+            `Quick
+            test_the_report_explains_attribution
         ; Alcotest.test_case
             "block failure blocks destruction"
             `Quick

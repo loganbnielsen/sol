@@ -64,7 +64,22 @@ instance is standing for that reason, and it also explains the 80 GiB `SSD_TOTAL
 account) is still in the project from an earlier attempt, and this is the most likely explanation for it
 too. Both were reported rather than deleted; neither was created or left by the run that found it.
 
-## What is needed (a decision, not a mechanical fix)
+## Decision (2026-09-29): detect, refuse, name — then restore Terraform ownership
+
+The operator decided: the immediate safety requirement is that such a resource is **PRESENT, not absent**,
+and Sol must never report verified absence while it remains. Detect-and-refuse is not the terminal
+behaviour: the long-term invariant is that every resource Sol causes Terraform to create stays
+Terraform-owned or is deterministically recoverable into Terraform ownership, with Terraform remaining the
+mutation authority and provider APIs the reality authority.
+
+**Phase 1 (this work)** replaces the ad-hoc residue sweeps with a common absence contract behind two
+provider inventories, so a discrepancy can no longer be reported as absence. See
+`internal/qualification/records/2026-09-29-fnd0070-phase1-provider-inventory-and-live-regression.md`.
+
+**Phase 2 (next)** restores Terraform ownership of an orphan through deterministic identity, and is
+recorded with its evidence and constraints below.
+
+## Earlier analysis: what is needed (a decision, not a mechanical fix)
 
 **Detection is mechanical**: the GCP residue sweep should be brought up to the level the AWS sweep already
 sets — name-addressed provider resources for the target's identity (the SQL instance named after the
