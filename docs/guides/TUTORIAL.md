@@ -741,6 +741,25 @@ sol deploy prod/aws/us-east-1 \
 # → Argo CD detects the change and applies it
 ```
 
+If the External Secrets Operator should supply the runtime credentials, pass the
+store on the same command — the emitted workload manifest is then an
+`ExternalSecret` referencing that store rather than an ordinary `Secret`:
+
+```bash
+sol deploy prod/aws/us-east-1 \
+  --emit-to          manifests/ \
+  --image-tag        "$GIT_SHA" \
+  --registry         "123456789.dkr.ecr.us-east-1.amazonaws.com" \
+  --secret-backend   external-secrets \
+  --secret-store-ref payments-store \
+  --key-prefix       "pluto/"
+# → manifests/pluto-payments-charge-svc.yaml contains an ExternalSecret
+#   (secretStoreRef payments-store, keys prefixed pluto/), not a plaintext Secret
+```
+
+`--secret-backend=kubernetes-live` is refused for `--emit-to`: these files are
+committed to a repository, and a plaintext Secret must never be.
+
 The generated files contain the full manifest (Namespace, ServiceAccount, ConfigMap, Deployment/Service). If a service enables progressive delivery in `sol.toml`, Sol emits an Argo Rollouts `Rollout` instead of a Kubernetes `Deployment`. Argo CD applies these manifests with `ServerSideApply=true` and prunes resources that are removed.
 
 ### Day-2 operations

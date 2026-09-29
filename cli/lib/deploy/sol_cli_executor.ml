@@ -43,6 +43,17 @@ let local ~ctx ~workspace ~release_id ~dry_run spec =
     dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml)
 ;;
 
+let artifact_backend backend =
+  match backend with
+  | Sol_cli_manifest.Kubernetes_live ->
+    Error
+      "refusing to emit a GitOps artifact with the kubernetes-live secret backend: a \
+       plaintext secret must never be committed to a repository. Use external-secrets \
+       (with --secret-store-ref) or kubernetes-placeholder."
+  | Sol_cli_manifest.Kubernetes_placeholder | Sol_cli_manifest.External_secrets _ ->
+    Ok backend
+;;
+
 let gitops
       ~ctx
       ~workspace
@@ -51,8 +62,11 @@ let gitops
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       spec
   =
-  Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
-  |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
+  match artifact_backend secret_backend with
+  | Error _ as e -> e
+  | Ok secret_backend ->
+    Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
+    |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
 ;;
 
 let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
@@ -74,12 +88,12 @@ let run_plan
   let workspace = execution.workspace in
   let env = execution.env in
   let services = plan.Sol_cli_deployment_plan.services in
-  let backend =
-    match mode with
-    | Emit_to _ -> Sol_cli_manifest.Kubernetes_placeholder
-    | Dry_run | Apply -> secret_backend
-  in
   let open Result.Syntax in
+  let* backend =
+    match mode with
+    | Emit_to _ -> artifact_backend secret_backend
+    | Dry_run | Apply -> Ok secret_backend
+  in
   let render spec =
     Sol_cli_deployment_render.render_spec
       ~workspace
