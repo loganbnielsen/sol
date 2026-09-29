@@ -4,18 +4,9 @@ type ownership =
   | In_cluster of string
   | Synthetic of string
   | External_by_contract of string
-  | Through_owner of
-      { owner : string
-      ; reason : string
-      }
-
-type source =
-  | Root
-  | Module of string
 
 type entry =
   { address : string
-  ; source : source
   ; resource_class : string
   ; observed_as : string
   ; ownership : ownership
@@ -28,31 +19,12 @@ type type_rule =
   ; ownership : ownership
   }
 
-type class_rule =
-  { resource_class : string
-  ; ownership : ownership
-  }
-
-type descendant =
-  { resource_class : string
-  ; owner : string
-  ; reason : string
-  }
-
 let entry address ownership ~resource_class ~observed_as ~identity ~import_identity =
-  { address
-  ; source = Root
-  ; resource_class
-  ; observed_as
-  ; ownership
-  ; identity
-  ; import_identity
-  }
+  { address; resource_class; observed_as; ownership; identity; import_identity }
 ;;
 
 let direct = Direct
 let not_recoverable reason = Direct_not_recoverable reason
-let through_owner ~owner ~reason = Through_owner { owner; reason }
 
 let in_cluster =
   In_cluster
@@ -78,12 +50,6 @@ let composite_identity =
    is reported rather than crossed"
 ;;
 
-let module_owned =
-  "the AWS roots build the cluster through the EKS module, and this registry enumerates \
-   the roots' own resources rather than a module's internals, so there is no address to \
-   import into"
-;;
-
 let arn_needs_account =
   "the policy's import identity is its ARN, which needs the account id the target does \
    not carry"
@@ -95,7 +61,6 @@ let ownership_kind = function
   | In_cluster _ -> "In_cluster"
   | Synthetic _ -> "Synthetic"
   | External_by_contract _ -> "External_by_contract"
-  | Through_owner _ -> "Through_owner"
 ;;
 
 let ownership_reason = function
@@ -106,51 +71,37 @@ let ownership_reason = function
   | In_cluster reason -> reason
   | Synthetic reason -> reason
   | External_by_contract reason -> reason
-  | Through_owner { owner; reason } -> Printf.sprintf "%s (owned by %s)" reason owner
 ;;
 
 let is_direct (entry : entry) =
   match entry.ownership with
   | Direct -> true
-  | Direct_not_recoverable _
-  | In_cluster _
-  | Synthetic _
-  | External_by_contract _
-  | Through_owner _ -> false
+  | Direct_not_recoverable _ | In_cluster _ | Synthetic _ | External_by_contract _ ->
+    false
 ;;
 
 let recoverable (entry : entry) =
   match entry.ownership with
   | Direct -> entry.import_identity <> "" && entry.observed_as <> ""
-  | Direct_not_recoverable _
-  | In_cluster _
-  | Synthetic _
-  | External_by_contract _
-  | Through_owner _ -> false
+  | Direct_not_recoverable _ | In_cluster _ | Synthetic _ | External_by_contract _ ->
+    false
 ;;
 
 let inside_the_instance =
-  through_owner
-    ~owner:"the Cloud SQL instance (google_sql_database_instance.postgres)"
-    ~reason:
-      "it lives inside the instance Terraform declares, so the instance's absence \
-       removes it and        no separate import is needed"
+  Direct_not_recoverable
+    "it lives inside the Cloud SQL instance Terraform declares, so the instance's \
+     absence removes it and no separate adoption is needed"
 ;;
 
 let inside_the_control_plane =
-  through_owner
-    ~owner:"the EKS cluster that hosts it"
-    ~reason:
-      "an add-on runs inside the control plane, so it is removed with the cluster, and \
-       the        inventory has no separate class for it in any case"
+  Direct_not_recoverable
+    "an add-on runs inside the control plane, so it is removed with the cluster, and the \
+     inventory has no separate class for it"
 ;;
 
 let part_of_the_bucket =
-  through_owner
-    ~owner:"the Loki bucket it configures"
-    ~reason:
-      "a lifecycle configuration is part of the bucket it belongs to and cannot outlive \
-       it"
+  Direct_not_recoverable
+    "a lifecycle configuration is part of the bucket it belongs to and cannot outlive it"
 ;;
 
 let type_rules =
@@ -159,58 +110,6 @@ let type_rules =
   ; { terraform_type = "terraform_data"; ownership = synthetic }
   ; { terraform_type = "random_"; ownership = synthetic }
   ; { terraform_type = "null_resource"; ownership = synthetic }
-  ]
-;;
-
-let class_rules =
-  [ { resource_class = "DNS managed zone"; ownership = external_by_contract }
-  ; { resource_class = "EKS cluster"; ownership = not_recoverable module_owned }
-  ; { resource_class = "EKS node group"; ownership = not_recoverable module_owned }
-  ; { resource_class = "VPC"; ownership = not_recoverable module_owned }
-  ; { resource_class = "subnet"; ownership = not_recoverable module_owned }
-  ; { resource_class = "IAM role"; ownership = not_recoverable module_owned }
-  ]
-;;
-
-let descendants ~cluster_name =
-  [ { resource_class = "persistent disk"
-    ; owner = "the node pool that owns the nodes, or the claim whose volume it is"
-    ; reason =
-        "GKE creates the node boot disks with the node pool, and a persistent volume's \
-         disk belongs to its claim: both are removed through that owner rather than \
-         imported"
-    }
-  ; { resource_class = "firewall rule"
-    ; owner = "the cluster and the VPC it runs in"
-    ; reason =
-        "GKE and Kubernetes create these for their own traffic, and they are removed \
-         with the cluster and its VPC"
-    }
-  ; { resource_class = "forwarding rule"
-    ; owner =
-        Printf.sprintf
-          "the Services in the cluster that caused it (the inventory attributes it by \
-           the target's own VPC %s)"
-          cluster_name
-    ; reason =
-        "a Kubernetes Service causes the controller to create it, so cleanup runs \
-         through that Service, which Terraform manages, never by importing the \
-         forwarding rule"
-    }
-  ; { resource_class = "load balancer"
-    ; owner = "the Services in the cluster that caused it"
-    ; reason =
-        "recovered through the owning Service rather than by importing a \
-         controller-created load balancer"
-    }
-  ; { resource_class = "EBS volume"
-    ; owner = "the persistent volume claims whose pods use it"
-    ; reason = "the volume follows its claim, and it is removed with the cluster"
-    }
-  ; { resource_class = "EKS control-plane log group"
-    ; owner = "the control plane EKS manages"
-    ; reason = "it is created and removed with the control plane, not by Terraform"
-    }
   ]
 ;;
 
@@ -367,7 +266,7 @@ let gcp ~cluster_name =
   ; entry
       "google_service_networking_connection.sql"
       (not_recoverable composite_identity)
-      ~resource_class:"service-networking peering connection"
+      ~resource_class:""
       ~observed_as:cluster_name
       ~identity:"the Cloud SQL peering on the target's own VPC"
       ~import_identity:""

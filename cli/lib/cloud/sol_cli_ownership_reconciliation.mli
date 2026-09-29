@@ -15,12 +15,6 @@ type disposition =
       { resource_class : string
       ; found : string
       }
-  | Owned_through of
-      { resource_class : string
-      ; found : string
-      ; owner : string
-      ; reason : string
-      }
   | Cannot_recover of
       { resource_class : string
       ; found : string
@@ -33,13 +27,12 @@ type disposition =
 
 val dispositions
   :  entries:Sol_cli_resource_identity.entry list
-  -> class_rules:Sol_cli_resource_identity.class_rule list
-  -> descendants:Sol_cli_resource_identity.descendant list
   -> state_addresses:string list
   -> Sol_cli_absence.observation list
   -> disposition list
 
 val candidate : disposition -> candidate option
-val outstanding : disposition list -> disposition list
+val unreconciled : disposition list -> disposition list
+val outcome : ?dry_run:bool -> disposition list -> string
 val report : disposition list -> string
 val summary : disposition list -> string

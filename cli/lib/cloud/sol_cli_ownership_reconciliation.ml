@@ -17,12 +17,6 @@ type disposition =
       { resource_class : string
       ; found : string
       }
-  | Owned_through of
-      { resource_class : string
-      ; found : string
-      ; owner : string
-      ; reason : string
-      }
   | Cannot_recover of
       { resource_class : string
       ; found : string
@@ -39,25 +33,22 @@ let matches (entry : entry) ~resource_class ~found =
   && Sol_cli_string.contains ~needle:entry.observed_as found
 ;;
 
-let disposition_of
-      ~entries
-      ~class_rules
-      ~descendants
-      ~state_addresses
-      ~resource_class
-      found
-  =
+let disposition_of ~entries ~state_addresses ~resource_class found =
   match
     List.filter (fun (entry : entry) -> matches entry ~resource_class ~found) entries
   with
   | [ entry ] ->
     if not (Sol_cli_resource_identity.recoverable entry)
-    then
-      Cannot_recover
-        { resource_class
-        ; found
-        ; reason = Sol_cli_resource_identity.ownership_reason entry.ownership
-        }
+    then (
+      match entry.ownership with
+      | Sol_cli_resource_identity.External_by_contract _ ->
+        By_contract { resource_class; found }
+      | ownership ->
+        Cannot_recover
+          { resource_class
+          ; found
+          ; reason = Sol_cli_resource_identity.ownership_reason ownership
+          })
     else if List.mem entry.address state_addresses
     then Already_owned { address = entry.address; found }
     else
@@ -67,33 +58,7 @@ let disposition_of
         ; found
         ; import_identity = entry.import_identity
         }
-  | [] ->
-    (match
-       List.find_opt
-         (fun (rule : Sol_cli_resource_identity.class_rule) ->
-            rule.resource_class = resource_class)
-         class_rules
-     with
-     | Some rule ->
-       (match rule.ownership with
-        | External_by_contract _ -> By_contract { resource_class; found }
-        | ownership ->
-          Cannot_recover { resource_class; found; reason = ownership_reason ownership })
-     | None ->
-       (match
-          List.find_opt
-            (fun (d : Sol_cli_resource_identity.descendant) ->
-               d.resource_class = resource_class)
-            descendants
-        with
-        | Some descendant ->
-          Owned_through
-            { resource_class
-            ; found
-            ; owner = descendant.owner
-            ; reason = descendant.reason
-            }
-        | None -> Unmapped { resource_class; found }))
+  | [] -> Unmapped { resource_class; found }
   | candidates ->
     Cannot_recover
       { resource_class
@@ -109,18 +74,11 @@ let disposition_of
       }
 ;;
 
-let dispositions ~entries ~class_rules ~descendants ~state_addresses observations =
+let dispositions ~entries ~state_addresses observations =
   observations
   |> List.concat_map (function
     | Sol_cli_absence.Present { resource_class; found; _ } ->
-      List.map
-        (disposition_of
-           ~entries
-           ~class_rules
-           ~descendants
-           ~state_addresses
-           ~resource_class)
-        found
+      List.map (disposition_of ~entries ~state_addresses ~resource_class) found
     | Sol_cli_absence.Absent _
     | Sol_cli_absence.External _
     | Sol_cli_absence.Not_attributable _
@@ -129,15 +87,57 @@ let dispositions ~entries ~class_rules ~descendants ~state_addresses observation
 
 let candidate = function
   | Recover candidate -> Some candidate
-  | Already_owned _ | By_contract _ | Owned_through _ | Cannot_recover _ | Unmapped _ ->
-    None
+  | Already_owned _ | By_contract _ | Cannot_recover _ | Unmapped _ -> None
 ;;
 
-let outstanding dispositions =
+let outcome ?(dry_run = false) dispositions =
+  let restored = List.filter_map candidate dispositions in
+  let refused =
+    List.filter
+      (function
+        | Cannot_recover _ | Unmapped _ -> true
+        | Recover _ | Already_owned _ | By_contract _ -> false)
+      dispositions
+  in
+  let buffer = Buffer.create 256 in
+  let line format = Printf.ksprintf (Buffer.add_string buffer) format in
+  if restored <> []
+  then (
+    List.iter
+      (fun restored ->
+         line "Found %s %s.\n" restored.resource_class restored.found;
+         line
+           (if dry_run
+            then "Would restore Terraform ownership:\n  %s\n"
+            else "Restored Terraform ownership:\n  %s\n")
+           restored.address)
+      restored;
+    if dry_run
+    then line "Infrastructure ownership is reconcilable; nothing was changed.\n"
+    else line "Infrastructure ownership is reconciled.\n")
+  else if refused = []
+  then line "Infrastructure ownership is reconciled.\nNo changes.\n"
+  else (
+    line "Infrastructure ownership is not reconciled:\n";
+    List.iter
+      (function
+        | Cannot_recover { resource_class; found; reason } ->
+          line "  %s %s cannot be reconciled: %s\n" resource_class found reason
+        | Unmapped { resource_class; found } ->
+          line
+            "  %s %s has no Terraform address Sol can attribute it to, so it is left alone\n"
+            resource_class
+            found
+        | Recover _ | Already_owned _ | By_contract _ -> ())
+      refused);
+  Buffer.contents buffer
+;;
+
+let unreconciled dispositions =
   dispositions
   |> List.filter (function
     | Recover _ | Cannot_recover _ | Unmapped _ -> true
-    | Already_owned _ | By_contract _ | Owned_through _ -> false)
+    | Already_owned _ | By_contract _ -> false)
 ;;
 
 let report dispositions =
@@ -161,13 +161,6 @@ let report dispositions =
          recovered here\n"
         resource_class
         found
-    | Owned_through { resource_class; found; owner; reason } ->
-      line
-        "    owned through: %s %s belongs to %s -- %s\n"
-        resource_class
-        found
-        owner
-        reason
     | Cannot_recover { resource_class; found; reason } ->
       line "    CANNOT recover: %s %s -- %s\n" resource_class found reason
     | Unmapped { resource_class; found } ->
@@ -200,18 +193,11 @@ let summary dispositions =
         | _ -> false)
       dispositions
   in
-  let through =
-    List.filter
-      (function
-        | Owned_through _ -> true
-        | _ -> false)
-      dispositions
-  in
   let refused =
     List.filter
       (function
         | Cannot_recover _ | Unmapped _ -> true
-        | Recover _ | Already_owned _ | By_contract _ | Owned_through _ -> false)
+        | Recover _ | Already_owned _ | By_contract _ -> false)
       dispositions
   in
   Printf.sprintf
@@ -219,6 +205,6 @@ let summary dispositions =
      owner), %d refused"
     (List.length recovered)
     (List.length already)
-    (List.length by_contract + List.length through)
+    (List.length by_contract)
     (List.length refused)
 ;;

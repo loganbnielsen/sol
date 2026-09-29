@@ -315,7 +315,60 @@ removed {
 }
 ```
 
-`check_project_shared_resources.py` (with `test_guard_mutations.py`, five mutations rejected) keeps a
-target from managing a project-wide resource and keeps the legacy address relinquished. 15b itself was
-not destroyed: its own SQL instance would meet the same guard blocker, and a half-teardown is worse
-than a whole one.
+A data-source record is not ownership, and an ordinary destroy does not touch it. The root reads the
+account to grant the node identity registry access (`gke_node_service_account` resolves the node pool's
+`"default"` to that address, REFAC-100), which is the correct shape: GKE nodes use the project's default
+compute service account unless a dedicated one is configured, so Sol needs its email and must not own it.
+
+My earlier `jq` printed only the type and name, dropping the field that carries the distinction, and I
+concluded from that. `check_project_shared_resources.py` now keeps the config-side invariant that makes the
+state-side fact true — no target may *manage* a project-wide resource, and each must be *read* — with the
+mutation that reintroduces managed ownership rejected. The unnecessary `removed` block I added on the
+strength of the wrong reading is gone.
+
+15b was still not destroyed, and for a reason that survives the correction: its own SQL instance would meet
+the same deletion-guard blocker as Attempt 25, and a half-teardown is worse than a whole one.
+
+## What Attempt 25 actually was, and what that leaves
+
+**The trace.** `sol cloud apply` started 22:28:05Z; GCP's `CREATE` operation for the SQL instance ran
+22:29:41.617Z → **22:37:34.845Z, `DONE` with no error**; Terraform exited 1 at 22:39:11Z — 96s *after*
+GCP had succeeded — with `Error waiting for Create Instance: ` and nothing after the colon. The target's
+cloud state afterwards held **0 resources**. So the orphan was not a GCP failure and not Sol's: the
+provider's wait reported a failure the provider had no message for, and on that path it calls
+`d.SetId("")` before returning, so Terraform recorded nothing.
+
+**Why the message was empty.** `SqlAdminOperationError.Error()` builds its text from
+`OperationErrors.Errors`; when GCP returns an error object with no entries it returns `""`, and the shared
+waiter wraps it as `Error waiting for %s: %w`. An empty message, by construction.
+
+**There is nothing to upgrade to.** `google/services/sql/sqladmin_operation.go` and
+`google/tpgresource/common_operation.go` are **byte-identical between v5.45.2 and v6.20.0**, and v6.20.0's
+create path still calls `d.SetId("")` on a failed wait and still defaults `deletion_protection` to `true`.
+Upstream tracks it as open issues (#25234 "`OperationWait`: `err` gives us no error output despite
+`err != nil`", #27922). "Upgrade past the waiter bug" is not available; the class is what it is, and it is
+an *ambiguous remote outcome*, not a provider bug with a released fix.
+
+**The guard was never in GCP.** `settings.deletionProtectionEnabled` is `false` on the live instance, while
+the imported state's `deletion_protection` is `true`: that attribute is provider-only, is not read from the
+API, and import leaves it at the schema default. `apply -refresh-only` does not change it. So a destroy
+refused because Terraform's own bookkeeping said so, and clearing it needed an apply whose plan for the
+instance also **creates** its absent dependencies ("3 to add, 1 to change") — reconciliation toward
+presence during a teardown.
+
+## Classification of the FND-0070 machinery, and what was cut
+
+| piece | verdict |
+|---|---|
+| `Sol_cli_absence` (ABSENT/PRESENT/UNKNOWN, attribution, residue, report) | **kept** — the independently verified postcondition; a successful Terraform command is not proof of provider reality |
+| the two provider inventories (16 + 15 classes) | **kept** — independent observation of provider reality, and the tool that made this cleanup possible |
+| the identity registry's adoptable mappings (address, class, observed name, import identity) | **kept** — the exact join adoption needs for an ambiguous outcome |
+| `in_cluster_layer` and the root restructuring | **kept** — small, and required for a substrate adoption to be evaluable while the cluster is absent, which an ambiguous outcome can leave behind |
+| the recurrence guard + mutation tests | **kept, simplified** — a declared resource with no mapping, a mapping without an import identity, a mapping naming a class no inventory reports, a stale entry |
+| `descendants`, `class_rules`, `Through_owner`, `source` | **removed** — a taxonomy of *why* something is not adoptable, earning nothing once adoption is restricted to exactly-attributable directly-managed resources; an unlisted class is reported and never adopted, which is already fail-closed |
+| the class-coverage check ("every class the verifier reports has a recovery story") | **removed** — it forced an entry for every class, including ones that are never adoptable |
+| `private_network` expressed from the target's inputs, and the extra `depends_on` | **reverted** — introduced only so the guard-clearing plan would not also want a replacement; that chain is gone |
+| any provider-side mutation or deletion fallback in Sol | **never added** — disposal of the historical specimen was a one-time operator-authorized act, outside the product |
+
+Simplified: 138 mappings still, but the registry loses two lookup tables and two constructors, and the
+reconciler loses a disposition case and two parameters.

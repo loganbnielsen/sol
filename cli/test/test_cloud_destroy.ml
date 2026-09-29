@@ -805,7 +805,6 @@ let test_the_report_explains_attribution () =
 let recovery_entry address ~resource_class ~observed_as ~ownership ~import_identity =
   Sol_cli_resource_identity.
     { address
-    ; source = Root
     ; resource_class
     ; observed_as
     ; ownership
@@ -825,12 +824,7 @@ let recovery_present resource_class found =
 ;;
 
 let recovery_plan ?(state_addresses = []) ~entries observations =
-  Sol_cli_ownership_recovery.dispositions
-    ~entries
-    ~class_rules:Sol_cli_resource_identity.class_rules
-    ~descendants:(Sol_cli_resource_identity.descendants ~cluster_name:"qual-1")
-    ~state_addresses
-    observations
+  Sol_cli_ownership_reconciliation.dispositions ~entries ~state_addresses observations
 ;;
 
 let test_recovery_maps_a_present_resource_to_its_address () =
@@ -847,7 +841,7 @@ let test_recovery_maps_a_present_resource_to_its_address () =
     recovery_plan ~entries [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Recover candidate ] ->
+  | [ Sol_cli_ownership_reconciliation.Recover candidate ] ->
     Alcotest.(check string)
       "the address comes from the registry"
       "google_sql_database_instance.postgres"
@@ -876,30 +870,22 @@ let test_recovery_refuses_a_resource_the_state_already_owns () =
       [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Already_owned _ ] -> ()
+  | [ Sol_cli_ownership_reconciliation.Already_owned _ ] -> ()
   | _ -> Alcotest.fail "a resource the state already owns must not be imported twice"
 ;;
 
 let test_recovery_refuses_a_class_it_cannot_map () =
-  let descendants = Sol_cli_resource_identity.descendants ~cluster_name:"qual-1" in
-  Alcotest.(check bool)
-    "a controller-created class is accounted for as its owner's business"
-    true
-    (List.exists
-       (fun (d : Sol_cli_resource_identity.descendant) ->
-          d.resource_class = "forwarding rule")
-       descendants);
   let dispositions =
     recovery_plan ~entries:[] [ recovery_present "forwarding rule" "k8s2-something" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Owned_through { owner; _ } ] ->
-    Alcotest.(check bool)
-      "and the owner is named"
-      true
-      (contains (Str.regexp_string "Services") owner)
-  | _ ->
-    Alcotest.fail "a descendant class must be reported as its owner's, never imported"
+  | [ Sol_cli_ownership_reconciliation.Unmapped { resource_class; found } ] ->
+    Alcotest.(check string)
+      "a controller-created class is reported, not adopted"
+      "forwarding rule"
+      resource_class;
+    Alcotest.(check string) "and named" "k8s2-something" found
+  | _ -> Alcotest.fail "a class with no Terraform address must be reported, never adopted"
 ;;
 
 let test_recovery_refuses_an_unmapped_class () =
@@ -907,7 +893,7 @@ let test_recovery_refuses_an_unmapped_class () =
     recovery_plan ~entries:[] [ recovery_present "Some future class" "whatever" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Unmapped _ ] -> ()
+  | [ Sol_cli_ownership_reconciliation.Unmapped _ ] -> ()
   | _ -> Alcotest.fail "a class with no registry entry must be reported, never guessed at"
 ;;
 
@@ -929,7 +915,7 @@ let test_recovery_refuses_a_class_the_registry_calls_unrecoverable () =
       [ recovery_present "service-networking peering connection" "qual-1" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Cannot_recover { reason; _ } ] ->
+  | [ Sol_cli_ownership_reconciliation.Cannot_recover { reason; _ } ] ->
     Alcotest.(check bool)
       "the reason is the registry's, not a guess"
       true
@@ -957,12 +943,79 @@ let test_recovery_refuses_an_ambiguous_match () =
     recovery_plan ~entries [ recovery_present "Cloud SQL instance" "qual-1-postgres" ]
   in
   match dispositions with
-  | [ Sol_cli_ownership_recovery.Cannot_recover { reason; _ } ] ->
+  | [ Sol_cli_ownership_reconciliation.Cannot_recover { reason; _ } ] ->
     Alcotest.(check bool)
       "two candidate addresses are reported as ambiguous"
       true
       (contains (Str.regexp_string "ambiguous") reason)
   | _ -> Alcotest.fail "an ambiguous mapping must be refused, never resolved"
+;;
+
+let test_reconciliation_outcome_reports_what_it_restored () =
+  let restored =
+    Sol_cli_ownership_reconciliation.Recover
+      { address = "google_sql_database_instance.postgres"
+      ; resource_class = "Cloud SQL instance"
+      ; found = "qual-1-postgres"
+      ; import_identity = "qual-1-postgres"
+      }
+  in
+  let text = Sol_cli_ownership_reconciliation.outcome [ restored ] in
+  List.iter
+    (fun expected ->
+       Alcotest.(check bool) expected true (contains (Str.regexp_string expected) text))
+    [ "Found Cloud SQL instance qual-1-postgres."
+    ; "Restored Terraform ownership:"
+    ; "  google_sql_database_instance.postgres"
+    ; "Infrastructure ownership is reconciled."
+    ]
+;;
+
+let test_reconciliation_outcome_says_no_changes () =
+  let text = Sol_cli_ownership_reconciliation.outcome [] in
+  Alcotest.(check bool)
+    "a reconciled target reports no changes"
+    true
+    (contains (Str.regexp_string "No changes.") text)
+;;
+
+let test_reconciliation_outcome_refuses_rather_than_claiming () =
+  let refused =
+    Sol_cli_ownership_reconciliation.Cannot_recover
+      { resource_class = "service-networking peering connection"
+      ; found = "qual-1"
+      ; reason = "a composite import identity Sol has not established"
+      }
+  in
+  let text = Sol_cli_ownership_reconciliation.outcome [ refused ] in
+  Alcotest.(check bool)
+    "an unreconcilable resource is named, with its reason"
+    true
+    (contains (Str.regexp_string "is not reconciled") text);
+  Alcotest.(check bool)
+    "and the reason is the registry's"
+    true
+    (contains (Str.regexp_string "composite import identity") text)
+;;
+
+let test_reconciliation_outcome_does_not_claim_a_dry_run_changed_anything () =
+  let candidate =
+    Sol_cli_ownership_reconciliation.Recover
+      { address = "google_sql_database_instance.postgres"
+      ; resource_class = "Cloud SQL instance"
+      ; found = "qual-1-postgres"
+      ; import_identity = "qual-1-postgres"
+      }
+  in
+  let text = Sol_cli_ownership_reconciliation.outcome ~dry_run:true [ candidate ] in
+  Alcotest.(check bool)
+    "a dry run says what it would do, not what it did"
+    true
+    (contains (Str.regexp_string "Would restore Terraform ownership:") text);
+  Alcotest.(check bool)
+    "and never claims the work happened"
+    false
+    (contains (Str.regexp_string "Infrastructure ownership is reconciled.") text)
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
@@ -1496,7 +1549,7 @@ let () =
             `Quick
             test_recovery_refuses_a_resource_the_state_already_owns
         ; Alcotest.test_case
-            "recovery reports a controller-created class as its owner's"
+            "recovery reports a class it has no address for"
             `Quick
             test_recovery_refuses_a_class_it_cannot_map
         ; Alcotest.test_case
@@ -1507,6 +1560,22 @@ let () =
             "recovery refuses a class the registry calls unrecoverable"
             `Quick
             test_recovery_refuses_a_class_the_registry_calls_unrecoverable
+        ; Alcotest.test_case
+            "reconciliation reports what it restored (FND-0070)"
+            `Quick
+            test_reconciliation_outcome_reports_what_it_restored
+        ; Alcotest.test_case
+            "reconciliation says no changes when there are none"
+            `Quick
+            test_reconciliation_outcome_says_no_changes
+        ; Alcotest.test_case
+            "reconciliation refuses rather than claiming"
+            `Quick
+            test_reconciliation_outcome_refuses_rather_than_claiming
+        ; Alcotest.test_case
+            "a dry run never claims to have changed anything"
+            `Quick
+            test_reconciliation_outcome_does_not_claim_a_dry_run_changed_anything
         ; Alcotest.test_case
             "recovery refuses an ambiguous mapping"
             `Quick

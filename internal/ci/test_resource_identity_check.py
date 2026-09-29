@@ -87,7 +87,7 @@ def main():
         sql_entry,
         sql_entry.replace('~resource_class:"Cloud SQL instance"', '~resource_class:"A class the inventory never reports"'),
     )
-    cases.append(("a class the verifier reports that no entry covers", tmp))
+    cases.append(("a mapping naming a class no inventory reports", tmp))
 
     tmp = scratch()
     mutate(
@@ -132,8 +132,8 @@ def main():
     print(
         "test_resource_identity_check: the guard accepts the real tree and rejects an unregistered "
         "directly managed resource, a Direct entry without an import identity or an observed name, "
-        "a class no entry covers, a stale entry, and a class-level rule that stopped covering its "
-        "family"
+        "a mapping naming a class no inventory reports, a stale entry, and a class-level rule that "
+        "stopped covering its family"
     )
     return 0
 
