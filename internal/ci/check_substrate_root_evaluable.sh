@@ -1,8 +1,4 @@
 #!/bin/bash
-# Behavioural half of check_substrate_root_evaluable.py: with the in-cluster layer off, the
-# GCP cluster root's Kubernetes provider values must be *known* (empty), which is what lets
-# a substrate operation (recovery import, teardown of a target whose cluster is gone) be
-# evaluated at all. With the layer on and the binding open they must be the cluster's.
 set -euo pipefail
 
 ROOT="${1:-.}"
