@@ -610,8 +610,12 @@ sol secret delete <KEY> --env <ENV> [--domain DOMAIN]              delete a secr
 # workloads it did not select keep their recorded spec and their provenance,
 # and `sol rollback` restores each workload under the release that applied it,
 # so rolling back a scoped change never prunes or re-labels the services it
-# never touched. A scoped deploy refuses before mutating anything when the
-# current boundary cannot be read; deploy the whole workspace to establish it. `sol logs` accepts a single unit only; use `sol open logs` for a
+# never touched. The inherited boundary is read while the workspace lease is
+# held, so the release a scoped `sol up` records describes the workspace as it
+# was at apply time: a deploy or rollback that won the lease first is what the
+# new release builds on, never a snapshot taken before the lease was acquired.
+# A scoped deploy refuses before mutating anything when the current boundary
+# cannot be read; deploy the whole workspace to establish it. `sol logs` accepts a single unit only; use `sol open logs` for a
 # domain or workspace view. `sol secret` takes `--domain` rather than
 # `--scope`, because secrets are addressed by Kubernetes namespace, not by
 # workload.

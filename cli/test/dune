@@ -22,6 +22,7 @@
   test_logs
   test_process
   test_tool_adapters
+  test_boundary_epoch
   test_port_forward
   test_deployment_state
   test_dev_observability
