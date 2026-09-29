@@ -540,3 +540,12 @@ actor starts from them:
 ## Canonical main synchronization policy (2026-09-29)
 
 - Clarified in `AGENTS.md` and `CONTRIBUTING.md` that an agent may fetch and fast-forward a clean canonical `main`, verify it matches `origin/main`, and must keep edits, staging, and commits in an owned worktree. This documents the existing isolation boundary without changing tooling.
+## Targeted code quality follow-up (2026-09-29)
+
+- Refreshed canonical `main` to `f52b946c` and reconciled previous findings and open work. Filed BUG-083 for cloud ownership reconciliation treating an unreadable Terraform state as an empty ownership set before import. Evidence and audit limits are in `internal/pipeline/audits/2026-09-29_targeted_code_quality_audit.md`.
+- Discovery and filing only; implementation remains open. No other candidate cleared the filing threshold.
+
+## Cloud inventory code audit (2026-09-29)
+
+- On refreshed `main` at `3f662e7b`, filed BUG-084..086: unsupported AWS load-balancer filter, lost unknown-provider status in explicit reconciliation, and missing target location in two GCP inventory commands. Evidence and limits are in `internal/pipeline/audits/2026-09-29_cloud_inventory_code_audit.md`.
+- Discovery and filing only; no cloud commands were run against a live target and no findings were implemented.
