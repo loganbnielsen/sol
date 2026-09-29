@@ -590,6 +590,10 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: python3 internal/ci/check_destroy_completeness.py .
 
+      - name: Every Terraform-managed resource declares how it is rediscovered (FND-0070)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/check_resource_identity.py .
+
       - name: Provider roots mirror by role (DEC-046 rule 4, REFAC-100)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: internal/ci/check_provider_roots.sh .
