@@ -240,6 +240,128 @@ let test_gitops_worker () =
   Alcotest.(check bool) "gitops worker file created" true exists
 ;;
 
+let read_file path =
+  let ic = open_in path in
+  let content = In_channel.input_all ic in
+  close_in ic;
+  content
+;;
+
+let contains needle haystack =
+  let nlen = String.length needle
+  and hlen = String.length haystack in
+  let found = ref false in
+  for i = 0 to hlen - nlen do
+    if (not !found) && String.sub haystack i nlen = needle then found := true
+  done;
+  !found
+;;
+
+let temp_dir prefix =
+  let dir = Filename.temp_file prefix "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  dir
+;;
+
+let remove_dir dir name =
+  (try Sys.remove (Filename.concat dir name) with
+   | _ -> ());
+  try Unix.rmdir dir with
+  | _ -> ()
+;;
+
+let secretful_spec : Sol_cli_deployment_plan.service_spec =
+  { svc_spec with secrets = [ "DATABASE_URL", ""; "API_KEY", "" ] }
+;;
+
+let external_secrets_backend =
+  Sol_cli_manifest.External_secrets
+    { store_ref = "probe-store"
+    ; store_kind = "ClusterSecretStore"
+    ; key_prefix = "myapp/"
+    ; refresh_interval = "1h"
+    }
+;;
+
+let emitted_name = "myapp-payments-charge-svc.yaml"
+
+let test_gitops_preserves_external_secrets () =
+  let dir = temp_dir "sol-gitops-eso-" in
+  (match
+     Sol_cli_executor.gitops
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace:"myapp"
+       ~release_id:release_id_of_test
+       ~dir
+       ~secret_backend:external_secrets_backend
+       secretful_spec
+   with
+   | Error e -> Alcotest.fail ("gitops emission failed: " ^ e)
+   | Ok _ -> ());
+  let content = read_file (Filename.concat dir emitted_name) in
+  remove_dir dir emitted_name;
+  Alcotest.(check bool)
+    "An ExternalSecret is emitted, not a plain Secret"
+    true
+    (contains "kind: ExternalSecret" content);
+  Alcotest.(check bool) "store reference preserved" true (contains "probe-store" content);
+  Alcotest.(check bool)
+    "key prefix preserved"
+    true
+    (contains "key: myapp/DATABASE_URL" content);
+  Alcotest.(check bool)
+    "refresh interval preserved"
+    true
+    (contains "refreshInterval: 1h" content);
+  Alcotest.(check bool) "no plaintext Secret" false (contains "kind: Secret" content)
+;;
+
+let test_gitops_rejects_kubernetes_live () =
+  let dir = temp_dir "sol-gitops-live-" in
+  let outcome =
+    Sol_cli_executor.gitops
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace:"myapp"
+      ~release_id:release_id_of_test
+      ~dir
+      ~secret_backend:Sol_cli_manifest.Kubernetes_live
+      secretful_spec
+  in
+  let written = Sys.file_exists (Filename.concat dir emitted_name) in
+  remove_dir dir emitted_name;
+  (match outcome with
+   | Error message ->
+     Alcotest.(check bool) "names the refusal" true (contains "kubernetes-live" message)
+   | Ok _ -> Alcotest.fail "kubernetes-live must not emit a GitOps artifact");
+  Alcotest.(check bool) "nothing was written" false written
+;;
+
+let test_gitops_placeholder_still_emits_secret () =
+  let dir = temp_dir "sol-gitops-placeholder-" in
+  (match
+     Sol_cli_executor.gitops
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace:"myapp"
+       ~release_id:release_id_of_test
+       ~dir
+       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+       secretful_spec
+   with
+   | Error e -> Alcotest.fail ("gitops emission failed: " ^ e)
+   | Ok _ -> ());
+  let content = read_file (Filename.concat dir emitted_name) in
+  remove_dir dir emitted_name;
+  Alcotest.(check bool)
+    "placeholder Secret emitted"
+    true
+    (contains "kind: Secret" content);
+  Alcotest.(check bool)
+    "no ExternalSecret"
+    false
+    (contains "kind: ExternalSecret" content)
+;;
+
 let () =
   Alcotest.run
     "executor"
@@ -255,6 +377,18 @@ let () =
       , [ Alcotest.test_case "result fields" `Quick test_gitops_result_fields
         ; Alcotest.test_case "file written" `Quick test_gitops_writes_file
         ; Alcotest.test_case "worker file written" `Quick test_gitops_worker
+        ; Alcotest.test_case
+            "external secrets preserved (BUG-081)"
+            `Quick
+            test_gitops_preserves_external_secrets
+        ; Alcotest.test_case
+            "kubernetes-live refused (BUG-081)"
+            `Quick
+            test_gitops_rejects_kubernetes_live
+        ; Alcotest.test_case
+            "placeholder still emits a Secret (BUG-081)"
+            `Quick
+            test_gitops_placeholder_still_emits_secret
         ] )
     ]
 ;;
