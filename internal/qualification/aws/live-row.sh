@@ -38,6 +38,7 @@ export ECR_REGISTRY
 mkdir -p "$LOG_DIR/state"
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
+
 run() {
   local name="$1"; shift
   say "$name"
@@ -96,8 +97,8 @@ aws_inventory() {
 }
 
 phase_cloud() {
-  run cloud-plan "$SOL" cloud plan "$TARGET" || return 1
-  run cloud-apply "$SOL" cloud apply "$TARGET" || return 1
+  run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET'" || return 1
+  run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET'" || return 1
   run kubeconfig aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
     --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" || return 1
   run nodes kubectl get nodes -o wide || return 1
@@ -128,8 +129,8 @@ phase_app() {
     printf 'POSTGRES_URL: %s\n' "$(printf '%s' "$url" | sed 's#://[^@]*@#://***@#')"
     printf 'SOL_API_KEY: %s*** (generated for this run)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
-  run migrate-apply "$SOL" migrate apply "$TARGET" --registry "$ECR_REGISTRY" || return 1
-  run app-deploy "$SOL" deploy "$TARGET" --registry "$ECR_REGISTRY" --image-tag "$APP_TAG" || return 1
+  run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET' --registry '$ECR_REGISTRY'" || return 1
+  run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'" || return 1
   if ! run app-transaction bash "$ROOT/internal/qualification/aws/app-transaction.sh" "$LOG_DIR"; then
     capture_kube_evidence
     return 1
@@ -142,7 +143,7 @@ phase_app() {
 
 phase_destroy() {
   capture_state
-  run cloud-destroy "$SOL" cloud destroy "$TARGET" --apply || return 1
+  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply" || return 1
   say "destroy returned success; the independent inventory decides absence"
   aws_inventory
 }
