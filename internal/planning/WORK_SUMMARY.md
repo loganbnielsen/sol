@@ -536,3 +536,7 @@ actor starts from them:
 **Branch protection.** All eleven `*-eio` repositories now mirror sol: required `test`, `enforce_admins: true`, no mandatory review, no up-to-date-branch requirement. kafka-eio#27, pg-eio#23 and obs-loki-eio#16 merged through that path with no bypass.
 
 **Local state.** The Redpanda and Postgres containers started for this work, the audit/implementation worktrees and the merged local branches were removed. Four pre-existing sol worktrees with unpushed work (`logan-comments`, `audit/high-value-code-quality`, `tooling/parameter-style-lint`, `tooling/pipeline-cleanup`) and three `*-eio` worktrees whose branches hold unique commits (`kafka-eio-topic-config`, `aws-eio-REFAC-154-direct-composition` — the withdrawn credential-composition refactor — and `obs-tempo-eio-CODE_LAYER-004`) were left untouched.
+
+## Canonical main synchronization policy (2026-09-29)
+
+- Clarified in `AGENTS.md` and `CONTRIBUTING.md` that an agent may fetch and fast-forward a clean canonical `main`, verify it matches `origin/main`, and must keep edits, staging, and commits in an owned worktree. This documents the existing isolation boundary without changing tooling.
