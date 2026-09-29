@@ -111,3 +111,53 @@ do to something it never adopted, and because options 1 and 2 differ in who owns
 | provider | `sol-qual-gcp-25-postgres RUNNABLE` (still standing, deliberately) |
 | independent check | `verify: resources remain` (`✗ quota still exists (PRESENT) — non-zero usage`) |
 | state | the disposable cluster root's state is empty — the instance was never recorded |
+
+## Phase 2 — ownership recovery (designed, not implemented)
+
+The decision's invariant: **provider reality → deterministic attribution to the Sol target → deterministic
+mapping to a Terraform address → restore Terraform ownership → the ordinary Terraform lifecycle.** No
+parallel provider-side deletion: `gcloud … delete` for a resource Terraform should own is explicitly out.
+
+**The mapping is deterministic for both live specimens, established rather than assumed:**
+
+| provider resource | Terraform address (root) | import identity |
+|---|---|---|
+| `sol-qual-gcp-25-postgres` (Cloud SQL) | `google_sql_database_instance.postgres` | `projects/sol-qualification/instances/sol-qual-gcp-25-postgres` |
+| `sol-qual-gcp-15b` (VPC network) | `google_compute_network.main` | the network name in the project |
+| `sol-qual-gcp-15b-sql-peering` (reserved address) | `google_compute_global_address.sql_peering` | the address name |
+| `sol-qual-gcp-15b` (Artifact Registry) | `google_artifact_registry_repository.images` | `projects/sol-qualification/locations/us-central1/repositories/sol-qual-gcp-15b` |
+| `sol-qual-gcp-15b-provisioner@…` | `google_service_account.provisioner` | the account id |
+| `sol_…_15b_cluster_access` (custom role) | `google_project_iam_custom_role.provisioner_cluster_access` | the role id |
+
+**How the identity gets established, per the decision's four requirements.** Which target owns it: the
+inventory's attribution rules (the target's own cluster name/tag/registry path) — never a broad naming
+heuristic, and `Not_attributable` where it cannot be proven. Which logical resource it is: the mapping
+above, one entry per `resource` block in the provider root, declared rather than derived by pattern
+matching. Canonical provider identity: the import identity, derived from the cluster name. The address
+that should own it: the root's own declared address, taken from the root rather than guessed.
+
+**Ownership chains.** The distinction the decision asks for is already visible in the code and must be part
+of the registry rather than implied:
+
+- **direct** — Terraform declares it and can destroy it (`google_container_cluster.main`,
+  `google_sql_database_instance.postgres`, …): recovery = import, then the ordinary destroy;
+- **in-cluster** — Terraform declares it but it lives inside the cluster
+  (`kubernetes_cluster_role_binding.provisioner_bootstrap_admin`): its absence follows from the cluster's,
+  and it needs no recovery of its own;
+- **controller-created descendants** — load balancers, disks, NEGs and forwarding rules that GKE/Kubernetes
+  create in response to something Sol declares: recovery is **through the legitimate owner** (the
+  Service/Ingress/PVC), never by importing the descendant into Terraform. This is why the inventory
+  attributes forwarding rules by "inside the target's own VPC" and disks by `gke-<cluster>-*` rather than
+  claiming every one of them;
+- **external by contract** — the durable backend and the delegation zone: present by design.
+
+**Fail-closed requirements for the import path.** Import only when the address, the provider identity and
+the target all match exactly; refuse when the address already holds a resource, when another target claims
+the identity, when the identity is ambiguous, or when the provider's own import semantics for that class
+are not established. Never state surgery as an ordinary mechanism. Never delete an unknown resource
+because its name resembles a Sol resource.
+
+**Prevention (so this cannot recur for a new resource type).** The mapping must live with the resource
+architecture, not in the qualification harness: an executable guard over each provider root, requiring
+every `resource` block to carry a declared ownership kind and — for direct ones — an import identity and an
+attribution rule. Adding a new directly-managed resource without a rediscovery strategy should fail CI.
