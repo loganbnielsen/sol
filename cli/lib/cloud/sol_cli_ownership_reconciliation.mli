@@ -24,6 +24,10 @@ type disposition =
       { resource_class : string
       ; found : string
       }
+  | Unresolved of
+      { resource_class : string
+      ; reason : string
+      }
 
 val dispositions
   :  entries:Sol_cli_resource_identity.entry list
