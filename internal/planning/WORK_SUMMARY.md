@@ -413,3 +413,9 @@
 - Followed cancellation/resource ownership, malformed input and deploy/rollback recovery at origin/main `2dfa5694`; report: `internal/pipeline/audits/2026-09-28_deep_code_quality_audit.md`.
 - Filed BUG-071..076 and CODE_LAYER-025: lease ownership expiry, lost scheduled policies on rollback, exact HTTP body limit, multi-domain signal restoration, symlink dereferencing in build contexts, npm workspace membership and interrupted process cleanup. Seven new findings; fourteen across both passes. No runtime fixes.
 - Focused dependency/production-function probes reproduce body, signal, copy, npm and subprocess behavior; lease takeover is a pure decision probe plus source trace, and scheduled policy loss is source-traced. Build succeeds; no live concurrent cluster mutation or full integration/cloud qualification. Coverage remains bounded, not exhaustive.
+
+## High-value code quality audit (2026-09-28)
+
+- Third targeted pass at origin/main `6eb36b2c` filed BUG-077..082, six high-severity findings: destructive scoped rollback, checkout-based schema compatibility, premature JWT authorization, retry/DLQ group collisions, ignored emitted External Secrets backend, and unreadable migration discovery bypassing the deployment gate.
+- Report: `internal/pipeline/audits/2026-09-28_high_value_code_quality_audit.md`. Focused reproductions and source traces are separated explicitly; no runtime fixes or live workload/database mutations. Twenty findings across the three passes.
+- CLI/soldev build succeeds. Foundation transaction cancellation was retained unfiled pending verification of the pinned implementation/pool behavior; checksum work is already FEAT-094. This pass remains targeted, not exhaustive.
