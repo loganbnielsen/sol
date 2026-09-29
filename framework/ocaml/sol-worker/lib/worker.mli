@@ -71,6 +71,13 @@ module Make_with_retry (W : RETRYABLE_WORKER) : sig
 end
 
 module For_testing : sig
+  val join_stop
+    :  sw:Eio.Switch.t
+    -> ?signal:unit Eio.Promise.t
+    -> ?caller:unit Eio.Promise.t
+    -> unit
+    -> unit Eio.Promise.t
+
   module Make (W : WORKER) : sig
     val run
       :  env:(_, _, _, _) Sol_env.timed

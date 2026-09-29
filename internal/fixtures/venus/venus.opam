@@ -58,7 +58,7 @@ pin-depends: [
   # development" choice. All of it disappears when RELEASE-005 publishes the
   # framework and its dependencies.
   [ "https-eio.0.1.1"           "git+https://github.com/loganbnielsen/https-eio.git#e548f47cd8cc607e4781638fa3f4aec996b60d60" ]
-  [ "kafka-eio.0.3.0"           "git+https://github.com/loganbnielsen/kafka-eio.git#4b6d4204bdb2d6009645515bc5821fe257160bb3" ]
+  [ "kafka-eio.0.3.0"           "git+https://github.com/loganbnielsen/kafka-eio.git#b9edb4e0fd681c4d456e87febfabb6487005a4e1" ]
   [ "obs-eio.0.1.2"             "git+https://github.com/loganbnielsen/obs-eio.git#b425c55eba8b1bc65378d7fc7d6c77a573001fb4" ]
   [ "obs-prometheus-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-prometheus-eio.git#5f443342fd20a36551336f27f7dbb93ab90e73bb" ]
 ]
