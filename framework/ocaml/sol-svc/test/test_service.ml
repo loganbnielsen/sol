@@ -697,6 +697,68 @@ let test_dispatch_turns_auth_exception_into_500 _env () =
   Alcotest.(check int) "500, not a dropped connection" 500 r.Response.status
 ;;
 
+let hs256_http_auth () =
+  `Jwt
+    Auth.
+      { scopes = []
+      ; verification =
+          Verified_signature_required
+            { issuer = "https://issuer.example.com"
+            ; audience = "svc"
+            ; algorithms = [ `HS256 ]
+            ; key_source = Hs256_secret "test-hs256-shared-secret"
+            }
+      }
+;;
+
+let sign_hs256_claims temporal =
+  let payload =
+    `Assoc
+      ([ "sub", `String "u1"
+       ; "iss", `String "https://issuer.example.com"
+       ; "aud", `String "svc"
+       ]
+       @ temporal)
+  in
+  match Jose.Jwt.sign ~payload (Jose.Jwk.make_oct "test-hs256-shared-secret") with
+  | Ok t -> Jose.Jwt.to_string t
+  | Error (`Msg m) -> failwith ("sign_hs256_claims: " ^ m)
+;;
+
+let dispatch_signed_hs256 temporal =
+  let req =
+    Http.Request.make
+      ~meth:`GET
+      ~headers:
+        (Http.Header.of_list [ "authorization", "Bearer " ^ sign_hs256_claims temporal ])
+      "/jwt"
+  in
+  Service.For_testing.dispatch
+    ~routes:[ Route.get "/jwt" ~auth:(hs256_http_auth ()) get_json ]
+    req
+    (Cohttp_eio.Body.of_string "")
+;;
+
+let test_http_verified_token_boundaries _env () =
+  let now = Unix.gettimeofday () in
+  let status temporal = (dispatch_signed_hs256 temporal).Response.status in
+  Alcotest.(check int)
+    "valid verified token → 200"
+    200
+    (status [ "exp", `Int (int_of_float (now +. 3600.)) ]);
+  Alcotest.(check int)
+    "nbf in the future → 401, not 500 (BUG-079)"
+    401
+    (status
+       [ "nbf", `Int (int_of_float (now +. 3600.))
+       ; "exp", `Int (int_of_float (now +. 7200.))
+       ]);
+  Alcotest.(check int)
+    "malformed exp → 401, not 500 (BUG-079)"
+    401
+    (status [ "exp", `String "soon" ])
+;;
+
 let () =
   Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
@@ -756,6 +818,10 @@ let () =
               "auth exception through dispatch → 500"
               `Quick
               (test_dispatch_turns_auth_exception_into_500 env)
+          ; Alcotest.test_case
+              "verified JWT nbf/exp through the HTTP adapter (BUG-079)"
+              `Quick
+              (test_http_verified_token_boundaries env)
           ; Alcotest.test_case
               "handler exception → 500, server survives"
               `Quick

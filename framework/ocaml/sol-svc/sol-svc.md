@@ -170,7 +170,13 @@ For production mode (`verification = Verified_signature_required vconfig`):
      refetch, at most every 30 s, so a key the IdP just rotated in is accepted; if
      that refetch fails the token is a 401 (the cached set is authoritative). A
      failed fetch is shared with every waiting request for 5 s rather than repeated.
-4. Verify the signature and `exp` via `Jose.Jwt.validate`.
+4. Verify the signature via `Jose.Jwt.validate_signature` (which performs no claim
+   checks), then validate the temporal claims directly: `nbf`, when present, must
+   not be in the future, and `exp`, when present, must not be in the past. Both are
+   read as finite NumericDate values (`Int` or `Float` per RFC 7519 §2); a temporal
+   claim that is present but not a finite number is a typed 401, never a 500. The
+   policy is **no clock-skew allowance** — the issuer and verifier are expected to
+   agree on time, so a token outside its declared window is rejected exactly (BUG-079).
 5. Check `iss` equals `vconfig.issuer` and `aud` contains `vconfig.audience`
    (`aud` may be a single string or a JSON array per RFC 7519).
 6. Check every scope in `config.scopes` is present in the token's `scope` claim.

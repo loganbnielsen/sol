@@ -314,6 +314,87 @@ let test_jwt_verified_expired () =
   | _ -> Alcotest.fail "expected Unauthorized (expired)"
 ;;
 
+let sign_claims payload =
+  match Jose.Jwt.sign ~payload (Jose.Jwk.make_oct hs256_secret) with
+  | Ok t -> Jose.Jwt.to_string t
+  | Error (`Msg m) -> failwith ("sign_claims: " ^ m)
+;;
+
+let verified_claims ?(sub = "user1") ?(scopes = [ "read" ]) temporal =
+  `Assoc
+    ([ "sub", `String sub
+     ; "scope", `String (String.concat " " scopes)
+     ; "iss", `String issuer
+     ; "aud", `String audience
+     ]
+     @ temporal)
+;;
+
+let check_unauthorized label token =
+  match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer token) with
+  | Error (`Unauthorized _) -> ()
+  | Error _ -> Alcotest.fail (label ^ ": expected Unauthorized")
+  | Ok _ -> Alcotest.fail (label ^ ": expected rejection")
+;;
+
+let check_authenticated label token =
+  match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer token) with
+  | Ok { principal = Auth.User _ } -> ()
+  | Error (`Unauthorized m) -> Alcotest.fail (label ^ ": rejected: " ^ m)
+  | _ -> Alcotest.fail (label ^ ": expected User principal")
+;;
+
+let test_jwt_verified_future_nbf_rejected () =
+  let now = Unix.gettimeofday () in
+  check_unauthorized
+    "nbf one hour ahead"
+    (sign_claims
+       (verified_claims
+          [ "nbf", `Int (int_of_float (now +. 3600.))
+          ; "exp", `Int (int_of_float (now +. 7200.))
+          ]))
+;;
+
+let test_jwt_verified_current_nbf_accepted () =
+  let now = Unix.gettimeofday () in
+  check_authenticated
+    "nbf one second ago"
+    (sign_claims
+       (verified_claims
+          [ "nbf", `Int (int_of_float (now -. 1.))
+          ; "exp", `Int (int_of_float (now +. 3600.))
+          ]))
+;;
+
+let test_jwt_verified_fractional_numeric_dates () =
+  let now = Unix.gettimeofday () in
+  check_authenticated
+    "fractional nbf/exp in range"
+    (sign_claims
+       (verified_claims [ "nbf", `Float (now -. 1.); "exp", `Float (now +. 3600.) ]));
+  check_unauthorized
+    "fractional exp in the past"
+    (sign_claims (verified_claims [ "exp", `Float (now -. 3600.) ]));
+  check_unauthorized
+    "fractional nbf in the future"
+    (sign_claims
+       (verified_claims [ "nbf", `Float (now +. 3600.); "exp", `Float (now +. 7200.) ]))
+;;
+
+let test_jwt_verified_malformed_temporal_claims () =
+  let now = Unix.gettimeofday () in
+  let exp_in_range = `Int (int_of_float (now +. 3600.)) in
+  List.iter
+    (fun (label, temporal) ->
+       check_unauthorized label (sign_claims (verified_claims temporal)))
+    [ "exp is a string", [ "exp", `String "soon" ]
+    ; "exp is an array", [ "exp", `List [] ]
+    ; "exp is an object", [ "exp", `Assoc [] ]
+    ; "nbf is a string", [ "nbf", `String "later"; "exp", exp_in_range ]
+    ; "nbf is a boolean", [ "nbf", `Bool true; "exp", exp_in_range ]
+    ]
+;;
+
 let test_jwt_verified_missing_scope () =
   let tok = sign_hs256 ~scopes:[ "read" ] () in
   match
@@ -584,6 +665,22 @@ let () =
             `Quick
             test_jwt_verified_wrong_audience
         ; Alcotest.test_case "expired → 401" `Quick test_jwt_verified_expired
+        ; Alcotest.test_case
+            "future nbf → 401 (BUG-079)"
+            `Quick
+            test_jwt_verified_future_nbf_rejected
+        ; Alcotest.test_case
+            "current nbf → ok (BUG-079)"
+            `Quick
+            test_jwt_verified_current_nbf_accepted
+        ; Alcotest.test_case
+            "fractional NumericDate boundaries (BUG-079)"
+            `Quick
+            test_jwt_verified_fractional_numeric_dates
+        ; Alcotest.test_case
+            "malformed temporal claims → 401 (BUG-079)"
+            `Quick
+            test_jwt_verified_malformed_temporal_claims
         ; Alcotest.test_case "missing scope → 403" `Quick test_jwt_verified_missing_scope
         ; Alcotest.test_case
             "JWKS fetch failure fails closed → 500"

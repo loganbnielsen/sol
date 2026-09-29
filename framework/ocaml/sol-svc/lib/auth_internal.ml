@@ -122,6 +122,27 @@ let check_jwt_expiry json =
   else Ok ()
 ;;
 
+let numeric_date_claim json name =
+  match json with
+  | `Assoc fields ->
+    (match List.assoc_opt name fields with
+     | None | Some `Null -> Ok None
+     | Some (`Int n) -> Ok (Some (float_of_int n))
+     | Some (`Float f) when Float.is_finite f -> Ok (Some f)
+     | Some _ ->
+       Error (`Unauthorized (Printf.sprintf "JWT %s claim is not a numeric date" name)))
+  | _ -> Error (`Unauthorized "Malformed JWT: payload is not a JSON object")
+;;
+
+let check_temporal_claims ~now json =
+  let* nbf = numeric_date_claim json "nbf" in
+  let* exp = numeric_date_claim json "exp" in
+  match nbf, exp with
+  | Some nbf, _ when now < nbf -> Error (`Unauthorized "JWT not yet valid")
+  | _, Some exp when now >= exp -> Error (`Unauthorized "JWT expired")
+  | _ -> Ok ()
+;;
+
 let validate_required_scopes ~required ~actual =
   match List.filter (fun scope -> not (List.mem scope actual)) required with
   | [] -> Ok ()
@@ -202,19 +223,15 @@ let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
            e))
 ;;
 
-let now_ptime () =
-  match Ptime.of_float_s (Unix.gettimeofday ()) with
-  | Some t -> t
-  | None -> Ptime.epoch
-;;
-
 let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
   let with_jwk jwk =
-    match Jose.Jwt.validate ~jwk ~now:(now_ptime ()) parsed with
+    match Jose.Jwt.validate_signature ~jwk parsed with
     | Ok t -> Ok t
-    | Error `Expired -> Error (`Unauthorized "JWT expired")
     | Error `Invalid_signature -> Error (`Unauthorized "JWT signature invalid")
     | Error (`Msg m) -> Error (`Unauthorized ("JWT invalid: " ^ m))
+    | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
+    | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
+    | exception exn -> Error (`Unauthorized ("JWT invalid: " ^ Printexc.to_string exn))
   in
   let jwks_lookup ?refetch jwks =
     match kid with
@@ -308,6 +325,7 @@ let validate_verified_jwt ?fetch_jwks vconfig ~scopes headers =
   let kid = parsed.Jose.Jwt.header.Jose.Header.kid in
   let* verified = verify_with_key_source ?fetch_jwks ~kid parsed vconfig.key_source in
   let* json = require_claims_object verified.Jose.Jwt.payload in
+  let* () = check_temporal_claims ~now:(Unix.gettimeofday ()) json in
   let* () = check_issuer ~issuer:vconfig.issuer json in
   let* () = check_audience ~audience:vconfig.audience json in
   let token_scopes = token_scopes json in
