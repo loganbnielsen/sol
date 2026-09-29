@@ -152,6 +152,90 @@ let test_a_standalone_typescript_unit_is_its_own_project () =
        Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
+let build_of root =
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Alcotest.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (match plan.builds with
+     | [ build ] -> build
+     | builds ->
+       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)))
+;;
+
+let api_unit_package_json = {|{"name": "api", "scripts": {"build": "tsc"}}|}
+let api_unit_tsconfig = {|{"compilerOptions": {"outDir": "build"}}|}
+
+let api_svc_workspace ~root_package_json =
+  [ "sol.yml", "services:\n  api_svc:\n    language: typescript\n"
+  ; "app/package.json", root_package_json
+  ; "app/node_modules/.keep", ""
+  ; "app/api/api_svc/package.json", api_unit_package_json
+  ; "app/api/api_svc/tsconfig.json", api_unit_tsconfig
+  ; "app/api/api_svc/node_modules/.keep", ""
+  ; "app/api/api_svc/Dockerfile", dockerfile
+  ; "app/api/api_svc/sol.toml", ""
+  ]
+;;
+
+let test_an_unrelated_glob_does_not_capture_a_unit () =
+  with_workspace
+    (api_svc_workspace
+       ~root_package_json:
+         {|{"name": "app-root", "private": true, "workspaces": ["tools/*"]}|})
+  @@ fun root ->
+  let build = build_of root in
+  check_strings
+    "tools/* does not capture app/api/api_svc"
+    [ "npm"; "run"; "build" ]
+    build.argv;
+  check_string "built as its own project" "app/api/api_svc" build.cwd
+;;
+
+let test_a_nested_exact_entry_selects_the_ancestor () =
+  with_workspace
+    (api_svc_workspace
+       ~root_package_json:
+         {|{"name": "app-root", "private": true, "workspaces": ["api/api_svc"]}|})
+  @@ fun root ->
+  let build = build_of root in
+  check_strings
+    "the nested exact entry selects the workspace"
+    [ "npm"; "run"; "build"; "--workspace"; "api" ]
+    build.argv;
+  check_string "built in the npm project root" "app" build.cwd
+;;
+
+let test_a_supported_glob_selects_the_ancestor () =
+  with_workspace
+    (api_svc_workspace
+       ~root_package_json:
+         {|{"name": "app-root", "private": true, "workspaces": ["api/*", "tools/*"]}|})
+  @@ fun root ->
+  let build = build_of root in
+  check_strings
+    "api/* matches the single-segment package directory"
+    [ "npm"; "run"; "build"; "--workspace"; "api" ]
+    build.argv;
+  check_string "built in the npm project root" "app" build.cwd
+;;
+
+let test_a_glob_does_not_cross_path_segments () =
+  with_workspace
+    (api_svc_workspace
+       ~root_package_json:
+         {|{"name": "app-root", "private": true, "workspaces": ["app/*", "tools/*"]}|})
+  @@ fun root ->
+  let build = build_of root in
+  check_strings
+    "app/* does not reach app/api/api_svc"
+    [ "npm"; "run"; "build" ]
+    build.argv;
+  check_string "built as its own project" "app/api/api_svc" build.cwd
+;;
+
 let test_a_mixed_selection_uses_both_adapters () =
   let files =
     [ ( "sol.yml"
@@ -379,6 +463,22 @@ let () =
             "a mixed selection uses both adapters"
             `Quick
             test_a_mixed_selection_uses_both_adapters
+        ; Alcotest.test_case
+            "an unrelated glob does not capture a unit (BUG-076)"
+            `Quick
+            test_an_unrelated_glob_does_not_capture_a_unit
+        ; Alcotest.test_case
+            "a nested exact entry selects the ancestor (BUG-076)"
+            `Quick
+            test_a_nested_exact_entry_selects_the_ancestor
+        ; Alcotest.test_case
+            "a supported glob selects the ancestor (BUG-076)"
+            `Quick
+            test_a_supported_glob_selects_the_ancestor
+        ; Alcotest.test_case
+            "a glob does not cross path segments (BUG-076)"
+            `Quick
+            test_a_glob_does_not_cross_path_segments
         ] )
     ; "shell lines", [ Alcotest.test_case "build and launch" `Quick test_shell_lines ]
     ; ( "command phases"
