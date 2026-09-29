@@ -232,3 +232,90 @@ It was not run, for a reason worth recording: that state also contains
 declared inside the module — and `terraform destroy` is unscoped, so it would delete a project-wide resource
 that is not 15b's residue. Per "fail closed rather than guessing", the destroy was left unrun; a targeted
 destroy, a module-scoped state, or explicit authorization to remove it are the options.
+
+## Option 1 implemented — and the live proof stops one step short, at a different defect
+
+**The mechanism.** `in_cluster_layer` (bool, default `true`) is an *operation-scoped* input, not a
+claim about GKE: `local.needs_kubernetes = var.in_cluster_layer && var.provisioner_bootstrap_admin`
+gates the Kubernetes provider and the bootstrap binding. The provider now takes `host`, `token` and
+`cluster_ca_certificate` from three locals that are the **empty string** when the layer is off — a
+*known* value — and reads the cluster through a `count`-gated data source instead of the resource it
+creates. No address changed, no state migrated: the same root, the same state, the same resource
+addresses. Sol passes `in_cluster_layer=false` for recovery and teardown.
+
+Two facts settled the design by experiment, in `/tmp` against a copy of the real root:
+
+- **Gating the resource is not enough.** `provisioner_bootstrap_admin` already defaults to `false`, so
+  the binding's `count` was already 0 — and `terraform import` still failed with the provider error.
+  Terraform configures the root's provider whether or not a resource uses it.
+- **A counted module containing a provider is refused**: *"Module is incompatible with count,
+  for_each, and depends_on"*. That closes the counted-module route the decision proposed exploring.
+
+Coverage: `check_substrate_root_evaluable.py` (structural: the provider's values come from the gated
+locals, the gate is the conjunction, every in-cluster object carries it) runs in CI;
+`check_substrate_root_evaluable.sh` is the behavioural half — `terraform console` proves the three
+locals are a known empty string with the layer off and `needs_kubernetes` is true with it on.
+
+**The live result, Attempt 25 (`03:48Z`).** The import now succeeds:
+
+```text
+  importing sol-qual-gcp-25-postgres as google_sql_database_instance.postgres (identity sol-qual-gcp-25-postgres)...
+    google_sql_database_instance.postgres now owns sol-qual-gcp-25-postgres
+1 resource(s) brought back under Terraform ownership.
+```
+
+and a second run is idempotent — `already owned: sol-qual-gcp-25-postgres is already in this root's
+state (google_sql_database_instance.postgres)`, `0 recoverable, 1 already owned, 0 refused`, exit 0.
+
+**The destroy does not converge, for a reason that is not FND-0070.** The instance's
+`deletion_protection` is `true` at the API, so the ordinary destroy needs Sol's guard-lowering
+preparation first. That preparation's plan — necessarily the target's dependency closure — wants to
+**create** `google_compute_network.main`, `google_compute_global_address.sql_peering` and
+`google_service_networking_connection.sql`, because the instance's network and peering were destroyed
+in an earlier teardown. A teardown preparation must not create infrastructure, so the refusal is
+correct, the guard is never lowered, and `terraform destroy` then fails:
+
+```text
+Error: Error, failed to delete instance because deletion_protection is set to true.
+error: Destruction did not converge: terraform exited 1
+```
+
+Terraform cannot flip that attribute during a destroy, and `-target` cannot isolate it because
+targeting a resource includes its dependencies' creates. One change was needed and is in this branch:
+`private_network` is now expressed from `var.project_id`/`var.cluster_name` (the same value the
+resource's `id` produces, with an explicit `depends_on` keeping the ordering) instead of from
+`google_compute_network.main.id`, which was *unknown* while the network was absent and therefore forced
+a **replacement** of a live instance. With that, the plan is replace-free; the remaining blocker is
+purely the guard.
+
+**The options, for a product decision** (this is the stop):
+
+1. Let a *destroy-time* preparation apply guard-only changes even when its plan includes creating the
+   resource's absent dependencies — reconciling what is about to be deleted, against the standing
+   "during destruction the desired state is absence".
+2. Have Sol lower a deletion guard through the provider's own API (a patch, not a delete) when the
+   guarded resource is being destroyed and Terraform cannot reach it — provider-side *guard* action,
+   never provider-side deletion of an orphan.
+3. Operator action: lower the guard on this one instance, then run the supported destroy, which then
+   converges.
+
+## The project's default compute service account is shared, and now stays that way
+
+`sol-qual-gcp-15b`'s state holds `google_compute_default_service_account.default`, and an unscoped
+destroy would delete the project's default compute service account. The current root only *reads* it
+(`data "google_compute_default_service_account" "default"`, used to grant the node identity
+`roles/artifactregistry.reader`), so the contract already treats it as shared and never managed — the
+hazard exists only in states written by the older revision that managed it. The root now relinquishes
+that legacy address declaratively:
+
+```hcl
+removed {
+  from = google_compute_default_service_account.default
+  lifecycle { destroy = false }
+}
+```
+
+`check_project_shared_resources.py` (with `test_guard_mutations.py`, five mutations rejected) keeps a
+target from managing a project-wide resource and keeps the legacy address relinquished. 15b itself was
+not destroyed: its own SQL instance would meet the same guard blocker, and a half-teardown is worse
+than a whole one.

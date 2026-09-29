@@ -594,6 +594,26 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: python3 internal/ci/check_resource_identity.py .
 
+      - name: A substrate resource stays evaluable without its cluster (FND-0070)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: |
+          python3 internal/ci/check_substrate_root_evaluable.py .
+
+      - name: Terraform agrees the substrate root is evaluable (FND-0070)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: |
+          if command -v terraform >/dev/null 2>&1; then
+            bash internal/ci/check_substrate_root_evaluable.sh .
+          else
+            echo "terraform is not on this runner; the structural half of this check ran above"
+          fi
+
+      - name: Target destruction does not reach project-wide resources (FND-0070)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: |
+          python3 internal/ci/check_project_shared_resources.py .
+          python3 internal/ci/test_guard_mutations.py
+
       - name: Provider roots mirror by role (DEC-046 rule 4, REFAC-100)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: internal/ci/check_provider_roots.sh .

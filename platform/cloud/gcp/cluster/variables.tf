@@ -75,6 +75,12 @@ variable "provisioner_impersonators" {
   default     = []
 }
 
+variable "in_cluster_layer" {
+  description = "Whether this operation includes the in-cluster layer. Substrate-only operations -- recovery, and teardown of a target whose cluster is already gone -- disable it so the configuration stays evaluable without a Kubernetes provider whose cluster no longer exists. It is an operation-scoped input, never a claim about whether the cluster exists: the provider is only configured when this and provisioner_bootstrap_admin are both set."
+  type        = bool
+  default     = true
+}
+
 variable "provisioner_bootstrap_admin" {
   description = "Temporarily grant the platform provisioner the in-cluster authority the install needs. Sol opens this for the install window and closes it before Ready."
   type        = bool
