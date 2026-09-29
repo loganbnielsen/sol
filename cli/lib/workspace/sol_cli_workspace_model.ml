@@ -99,9 +99,9 @@ let load ~root =
            workload_of_manifest ~root ~declared svc has_dockerfile)
         scan.workloads
   in
-  let migrations =
+  let* migrations =
     Sol_cli_workspace_scan.discover_migrations ~root ()
-    |> List.map (migration_of_file ~root)
+    |> Result.map (List.map (migration_of_file ~root))
   in
   Ok
     { root

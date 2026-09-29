@@ -51,12 +51,31 @@ let shared_version_error ~dir (a, b, version) =
   Error message
 ;;
 
+type directory_contents =
+  | Absent
+  | Entries of string list
+  | Uninspectable of string
+
+let inspect_directory dir =
+  match Unix.stat dir with
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Absent
+  | exception Unix.Unix_error (error, _, _) ->
+    Uninspectable (Printf.sprintf "cannot inspect %s: %s" dir (Unix.error_message error))
+  | { Unix.st_kind = Unix.S_DIR; _ } ->
+    (match Sys.readdir dir with
+     | entries -> Entries (Array.to_list entries)
+     | exception Sys_error message ->
+       Uninspectable (Printf.sprintf "cannot read %s: %s" dir message))
+  | _ -> Uninspectable (Printf.sprintf "%s exists but is not a directory" dir)
+;;
+
 let required ~dir =
-  match Sys.readdir dir with
-  | exception Sys_error _ -> Ok []
-  | arr ->
+  match inspect_directory dir with
+  | Absent -> Ok []
+  | Uninspectable message -> Error message
+  | Entries entries ->
     let sql =
-      Array.to_list arr
+      entries
       |> List.filter (fun f ->
         Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql"))
       |> List.sort String.compare

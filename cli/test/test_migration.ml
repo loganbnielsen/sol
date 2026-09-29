@@ -113,6 +113,32 @@ let test_required_missing_dir_is_empty () =
      | _ -> false)
 ;;
 
+let test_required_file_instead_of_dir_is_an_error () =
+  with_tmp_dir (fun dir ->
+    let path = Filename.concat dir "db-migrations" in
+    write_file path "";
+    match M.required ~dir:path with
+    | Ok _ -> Alcotest.fail "expected a regular file at the migrations path to be refused"
+    | Error message ->
+      Alcotest.(check bool) "names the distinct path" true (contains message path))
+;;
+
+let test_required_unreadable_dir_is_an_error () =
+  with_tmp_dir (fun dir ->
+    Unix.chmod dir 0o000;
+    Fun.protect
+      ~finally:(fun () -> Unix.chmod dir 0o755)
+      (fun () ->
+         if Unix.geteuid () = 0
+         then ()
+         else (
+           match M.required ~dir with
+           | Ok _ ->
+             Alcotest.fail "expected an unreadable migrations directory to be refused"
+           | Error message ->
+             Alcotest.(check bool) "names the path" true (contains message dir))))
+;;
+
 let test_unsatisfied () =
   let required : M.prerequisite list =
     [ { version = 1; name = "a" }; { version = 2; name = "b" } ]
@@ -289,6 +315,14 @@ let () =
             "missing directory requires nothing"
             `Quick
             test_required_missing_dir_is_empty
+        ; Alcotest.test_case
+            "a file at the migrations path is an error (BUG-082)"
+            `Quick
+            test_required_file_instead_of_dir_is_an_error
+        ; Alcotest.test_case
+            "an unreadable migrations directory is an error (BUG-082)"
+            `Quick
+            test_required_unreadable_dir_is_an_error
         ; Alcotest.test_case "unsatisfied subset" `Quick test_unsatisfied
         ] )
     ; ( "encoding"
