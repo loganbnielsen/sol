@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import { Kafka } from "kafkajs";
 import { Pushgateway } from "@prometheus-io/client";
-import { SpanStatusCode } from "@opentelemetry/api";
+import { context, propagation, SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
 import { encodeWire, registerTopic } from "@sol-fab/kafka";
@@ -116,7 +116,12 @@ async function main() {
     const correlationId =
       (req.headers["x-correlation-id"] as string | undefined) ?? randomBytes(4).toString("hex");
 
-    const span = tracer.startSpan("receive_order", { kind: SpanKind.PRODUCER });
+    const parentContext = propagation.extract(context.active(), req.headers);
+    const span = tracer.startSpan(
+      "receive_order",
+      { kind: SpanKind.PRODUCER },
+      parentContext,
+    );
     try {
       span.setAttribute("order_id", body.order_id);
       span.setAttribute("item", body.item);
