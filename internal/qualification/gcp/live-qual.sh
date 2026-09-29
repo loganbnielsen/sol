@@ -15,6 +15,7 @@ TARGET_MARK="# Written by internal/qualification/gcp/live-qual.sh for $TARGET; r
 
 PROJECT="${PROJECT:-sol-qualification}"
 REGION="${REGION:-us-central1}"
+export PROJECT REGION
 BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-1200}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
