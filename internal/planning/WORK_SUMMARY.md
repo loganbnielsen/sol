@@ -1,9 +1,9 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Audit-ticket wave: 16 of 20 filed findings implemented (2026-09-29)
+## Audit-ticket wave: 17 of 20 filed findings implemented (2026-09-29)
 
 Three audit passes filed 20 tickets across `internal/pipeline/tickets/` (filing
-PRs #682, #683, #687). Sixteen are implemented in their own PRs, each with the
+PRs #682, #683, #687). Seventeen are implemented in their own PRs, each with the
 ticket moved to `DONE/`, a mutation-checked test and completion notes:
 
 - **Process/runner (CODE_LAYER-023, -024, -025):** both output streams drained by
