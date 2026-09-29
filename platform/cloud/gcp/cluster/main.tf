@@ -134,14 +134,6 @@ resource "google_artifact_registry_repository" "images" {
   description   = "Container images for ${var.cluster_name} Sol workspace"
 }
 
-removed {
-  from = google_compute_default_service_account.default
-
-  lifecycle {
-    destroy = false
-  }
-}
-
 data "google_compute_default_service_account" "default" {
   project = var.project_id
 }

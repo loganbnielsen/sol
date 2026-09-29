@@ -74,16 +74,6 @@ def main():
     mutate(
         tmp,
         "platform/cloud/gcp/cluster/main.tf",
-        'removed {\n  from = google_compute_default_service_account.default\n\n'
-        "  lifecycle {\n    destroy = false\n  }\n}\n\n",
-        "",
-    )
-    cases.append(("the legacy shared resource no longer relinquished", tmp, "shared"))
-
-    tmp = scratch()
-    mutate(
-        tmp,
-        "platform/cloud/gcp/cluster/main.tf",
         'data "google_compute_default_service_account" "default" {',
         'resource "google_compute_default_service_account" "default" {',
     )
@@ -107,8 +97,7 @@ def main():
     print(
         "test_guard_mutations: both guards reject the change each exists to prevent -- a "
         "provider configured from the cluster, a dropped operation gate, an ungated "
-        "in-cluster object, a relinquished address restored, and a shared resource managed "
-        "again"
+        "in-cluster object, and a project-wide resource managed by a target instead of read"
     )
     return 0
 

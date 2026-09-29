@@ -299,23 +299,31 @@ purely the guard.
 3. Operator action: lower the guard on this one instance, then run the supported destroy, which then
    converges.
 
-## The project's default compute service account is shared, and now stays that way
+## The project's default compute service account — a correction
 
-`sol-qual-gcp-15b`'s state holds `google_compute_default_service_account.default`, and an unscoped
-destroy would delete the project's default compute service account. The current root only *reads* it
-(`data "google_compute_default_service_account" "default"`, used to grant the node identity
-`roles/artifactregistry.reader`), so the contract already treats it as shared and never managed — the
-hazard exists only in states written by the older revision that managed it. The root now relinquishes
-that legacy address declaratively:
+I first reported that `sol-qual-gcp-15b`'s state holds the project's default compute service account and
+that an unscoped destroy would delete it. **That was wrong**, and the way it was wrong is the reason this
+section exists. The state entry is `mode: data`:
 
-```hcl
-removed {
-  from = google_compute_default_service_account.default
-  lifecycle { destroy = false }
-}
+```text
+$ jq -r '.resources[] | "\(.mode)\t\(.type).\(.name)"' qual15b-state.json | sort -u
+data    google_client_config.default
+data    google_compute_default_service_account.default
+managed google_artifact_registry_repository.images
+managed google_compute_network.main
+...
 ```
 
-`check_project_shared_resources.py` (with `test_guard_mutations.py`, five mutations rejected) keeps a
-target from managing a project-wide resource and keeps the legacy address relinquished. 15b itself was
-not destroyed: its own SQL instance would meet the same guard blocker, and a half-teardown is worse
-than a whole one.
+A data-source record is not ownership, and an ordinary destroy does not touch it. The root reads the
+account to grant the node identity registry access (`gke_node_service_account` resolves the node pool's
+`"default"` to that address, REFAC-100), which is the correct shape: GKE nodes use the project's default
+compute service account unless a dedicated one is configured, so Sol needs its email and must not own it.
+
+My earlier `jq` printed only the type and name, dropping the field that carries the distinction, and I
+concluded from that. `check_project_shared_resources.py` now keeps the config-side invariant that makes the
+state-side fact true — no target may *manage* a project-wide resource, and each must be *read* — with the
+mutation that reintroduces managed ownership rejected. The unnecessary `removed` block I added on the
+strength of the wrong reading is gone.
+
+15b was still not destroyed, and for a reason that survives the correction: its own SQL instance would meet
+the same deletion-guard blocker as Attempt 25, and a half-teardown is worse than a whole one.
