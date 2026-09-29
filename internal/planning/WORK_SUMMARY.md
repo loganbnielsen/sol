@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Targeted release-boundary audit (2026-09-29)
+
+- Audited synced `origin/main` `4bde298f`. Filed BUG-087 for `sol up --scope` reading its retained release boundary before acquiring the workspace lease; a competing deploy or rollback can make the new current release stale. Evidence and limits are in `internal/pipeline/audits/2026-09-29_up_boundary_race_audit.md`. No implementation was made.
+- Reconciled PRs #720/#721 as merged and #722/#723 as open. BUG-084–086 remain filed in #723 and were not duplicated. The new finding is ready for engineering; no audit implementation is in progress.
+
 ## Audit-ticket wave, follow-up: BUG-077, BUG-078 and BUG-067 (2026-09-29)
 
 - **BUG-078 (merged)** — rollback derives the migration boundary from the
