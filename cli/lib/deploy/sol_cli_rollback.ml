@@ -598,7 +598,8 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
 ;;
 
 type transaction_deps =
-  { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  { ensure_held : unit -> (unit, string) result
+  ; apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
@@ -623,6 +624,7 @@ let execute
     | Ok () -> Ok ()
   in
   let* specs = service_specs_of_release release in
+  let* () = deps.ensure_held () in
   let* () = deps.apply specs in
   let* () =
     match deps.live_workloads () with
@@ -639,16 +641,20 @@ let execute
              (workload_report_to_string ~release report)
              release.release_id)
       else (
-        match deps.prune report.unexpected with
-        | Ok () -> Ok ()
-        | Error msg ->
-          Error
-            (Printf.sprintf
-               "%s\n\
-                rollback incomplete: could not prune surplus workloads; the \
-                current-release pointer was left unchanged"
-               msg))
+        match deps.ensure_held () with
+        | Error msg -> Error msg
+        | Ok () ->
+          (match deps.prune report.unexpected with
+           | Ok () -> Ok ()
+           | Error msg ->
+             Error
+               (Printf.sprintf
+                  "%s\n\
+                   rollback incomplete: could not prune surplus workloads; the \
+                   current-release pointer was left unchanged"
+                  msg)))
   in
+  let* () = deps.ensure_held () in
   let* () = deps.move_pointer () in
   let pointer = deps.verify_pointer () in
   if pointer_report_ok pointer

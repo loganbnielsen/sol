@@ -409,6 +409,20 @@ apply path — returns a `result` rather than calling `exit`, so the lease is
 released exactly once on every path and the command edge is the only place a
 refusal becomes a process exit.
 
+Ownership is not just acquired once: every mutation re-verifies it against the
+live lease (`Sol_cli_boundary_lease.ensure_held`, a heartbeat write guarded by a
+`resourceVersion` compare-and-swap) — before each workload `apply`, before the
+surplus `prune`, and before the pointer move — and `sol deploy`/`sol up` do the
+same before recording the release and advancing the pointer. That is also the
+renewal: a long rollback or deploy keeps pushing its heartbeat forward as it
+works, so a long healthy operation is never taken over mid-flight. Losing
+ownership is a **stop**, not a race: the next check fails and the operation
+returns an error before its next mutation, leaving the current-release pointer
+unchanged, so a new owner finishes the boundary without the old one still
+writing into it. An operation already in progress when the takeover happens
+therefore completes at most the mutation it was inside and no more — there is no
+forced kill.
+
 GitOps-mode rollback (content and pointer travelling in one emitted commit) and
 `--commit`/`--scope` release disambiguation are not yet implemented — this
 command only accepts an exact, unambiguous release id against a live cluster,

@@ -1022,12 +1022,24 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
   }
 ;;
 
-let recording_deps ?(live = []) ?(prune_result = Ok ()) () =
+let recording_deps ?(live = []) ?(prune_result = Ok ()) ?ensure_held () =
   let calls = ref [] in
   let pruned = ref None in
   let record name = calls := name :: !calls in
+  let ensure_held =
+    match ensure_held with
+    | Some f ->
+      fun () ->
+        record "ensure_held";
+        f ()
+    | None ->
+      fun () ->
+        record "ensure_held";
+        Ok ()
+  in
   let deps : Sol_cli_rollback.transaction_deps =
-    { apply =
+    { ensure_held
+    ; apply =
         (fun _specs ->
           record "apply";
           Ok ())
@@ -1066,8 +1078,16 @@ let test_execute_success_calls_every_dep_in_order () =
   | Error msg -> Alcotest.fail msg
   | Ok () ->
     Alcotest.(check (list string))
-      "apply, then live_workloads, then prune, then move_pointer, then verify_pointer"
-      [ "apply"; "live_workloads"; "prune"; "move_pointer"; "verify_pointer" ]
+      "ownership is re-verified before each mutation"
+      [ "ensure_held"
+      ; "apply"
+      ; "live_workloads"
+      ; "ensure_held"
+      ; "prune"
+      ; "ensure_held"
+      ; "move_pointer"
+      ; "verify_pointer"
+      ]
       (List.rev !calls);
     Alcotest.(check int) "prune ran with no surplus" 0 (List.length (Option.get !pruned))
 ;;
@@ -1132,7 +1152,15 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
   | Ok () ->
     Alcotest.(check (list string))
       "apply, live_workloads, prune, move_pointer, verify_pointer all ran"
-      [ "apply"; "live_workloads"; "prune"; "move_pointer"; "verify_pointer" ]
+      [ "ensure_held"
+      ; "apply"
+      ; "live_workloads"
+      ; "ensure_held"
+      ; "prune"
+      ; "ensure_held"
+      ; "move_pointer"
+      ; "verify_pointer"
+      ]
       (List.rev !calls);
     (match !pruned with
      | None -> Alcotest.fail "prune was never called"
@@ -1170,7 +1198,67 @@ let test_execute_prune_failure_skips_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
-      [ "apply"; "live_workloads"; "prune" ]
+      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held"; "prune" ]
+      (List.rev !calls)
+;;
+
+let ghost_live : Sol_cli_rollback.workload_identity * string =
+  ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+    ; namespace = "myapp-payments"
+    ; name = "ghost-svc"
+    }
+  , "r-3333333333333333" )
+;;
+
+let ownership_lost_after n =
+  let calls = ref 0 in
+  fun () ->
+    incr calls;
+    if !calls >= n
+    then Error "lost the boundary lease to rollback run-takeover (BUG-071)"
+    else Ok ()
+;;
+
+let test_execute_lost_ownership_after_apply_skips_prune_and_pointer () =
+  let calls, pruned, deps =
+    recording_deps ~live:[ ghost_live ] ~ensure_held:(ownership_lost_after 2) ()
+  in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the lost lease to stop the transaction"
+  | Error msg ->
+    assert (contains (Str.regexp "lost the boundary lease") msg);
+    Alcotest.(check (list string))
+      "the takeover stopped the transaction before prune"
+      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held" ]
+      (List.rev !calls);
+    Alcotest.(check bool) "prune never called" true (!pruned = None)
+;;
+
+let test_execute_lost_ownership_after_prune_skips_pointer_move () =
+  let calls, _pruned, deps =
+    recording_deps ~live:[ ghost_live ] ~ensure_held:(ownership_lost_after 3) ()
+  in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the lost lease to block the pointer move"
+  | Error msg ->
+    assert (contains (Str.regexp "lost the boundary lease") msg);
+    Alcotest.(check (list string))
+      "apply and prune ran; the pointer was never moved"
+      [ "ensure_held"; "apply"; "live_workloads"; "ensure_held"; "prune"; "ensure_held" ]
       (List.rev !calls)
 ;;
 
@@ -1196,7 +1284,7 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
-      [ "apply"; "live_workloads" ]
+      [ "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
@@ -1217,7 +1305,7 @@ let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
       "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
-      [ "apply"; "live_workloads" ]
+      [ "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
     Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
@@ -1563,6 +1651,14 @@ let () =
         ] )
     ; ( "rollback_transaction"
       , [ Alcotest.test_case
+            "lost ownership after apply skips prune and pointer (BUG-071)"
+            `Quick
+            test_execute_lost_ownership_after_apply_skips_prune_and_pointer
+        ; Alcotest.test_case
+            "lost ownership after prune skips pointer move (BUG-071)"
+            `Quick
+            test_execute_lost_ownership_after_prune_skips_pointer_move
+        ; Alcotest.test_case
             "success calls every dep in order"
             `Quick
             test_execute_success_calls_every_dep_in_order

@@ -271,6 +271,7 @@ let apply ctx ~push_events ~report_success plan =
        in
        Sol_cli_release.finish_deployment
          ~record_release:(fun () ->
+           let* () = Sol_cli_boundary_lease.ensure_held lease in
            let* () = record_release_and_prune ctx ~previous plan in
            Sol_cli_deployment_state.record_outcome
              ~ctx:ctx.execution.cluster
