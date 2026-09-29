@@ -48,6 +48,12 @@ let read_available fd buf =
     `Open
 ;;
 
+let rec select_ready reads =
+  match Unix.select reads [] [] (-1.0) with
+  | ready -> ready
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> select_ready reads
+;;
+
 let capture_fds stdout_fd stderr_fd =
   Unix.set_nonblock stdout_fd;
   Unix.set_nonblock stderr_fd;
@@ -60,7 +66,7 @@ let capture_fds stdout_fd stderr_fd =
         (if stdout_open then [ stdout_fd ] else [])
         @ if stderr_open then [ stderr_fd ] else []
       in
-      let ready, _, _ = Unix.select reads [] [] (-1.0) in
+      let ready, _, _ = select_ready reads in
       let stdout_open =
         stdout_open
         && ((not (List.mem stdout_fd ready))
@@ -91,6 +97,12 @@ let close_noerr fd =
   | Unix.Unix_error _ -> ()
 ;;
 
+let rec wait_reap pid =
+  match Unix.waitpid [] pid with
+  | _, status -> status
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait_reap pid
+;;
+
 let run_argv ?(echo = false) argv =
   match argv with
   | [] -> invalid_arg "Sol_process.run_argv: empty argv"
@@ -104,11 +116,27 @@ let run_argv ?(echo = false) argv =
        close_noerr stdin_fd;
        close_noerr stdout_w;
        close_noerr stderr_w;
-       let captured = capture_fds stdout_r stderr_r in
-       close_noerr stdout_r;
-       close_noerr stderr_r;
-       let status = status_of_unix (Unix.waitpid [] pid |> snd) in
-       trim_result { captured with status }
+       let finished = ref false in
+       let kill_and_reap () =
+         (try Unix.kill pid Sys.sigkill with
+          | Unix.Unix_error _ -> ());
+         try ignore (wait_reap pid) with
+         | Unix.Unix_error _ -> ()
+       in
+       Fun.protect
+         ~finally:(fun () ->
+           if not !finished
+           then (
+             close_noerr stdout_r;
+             close_noerr stderr_r;
+             kill_and_reap ()))
+         (fun () ->
+            let captured = capture_fds stdout_r stderr_r in
+            close_noerr stdout_r;
+            close_noerr stderr_r;
+            let status = status_of_unix (wait_reap pid) in
+            finished := true;
+            trim_result { captured with status })
      | exception Unix.Unix_error (err, fn, arg) ->
        close_noerr stdin_fd;
        close_noerr stdout_r;
@@ -124,12 +152,7 @@ let run_argv ?(echo = false) argv =
 
 let run_shell ?(echo = false) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
-  let ic, oc, ec = Unix.open_process_full cmd (Unix.environment ()) in
-  close_out oc;
-  let stdout = In_channel.input_all ic in
-  let stderr = In_channel.input_all ec in
-  let status = status_of_unix (Unix.close_process_full (ic, oc, ec)) in
-  { status; stdout = String.trim stdout; stderr = String.trim stderr }
+  run_argv ~echo:false [ "sh"; "-c"; cmd ]
 ;;
 
 let lines_shell ?(echo = false) cmd =

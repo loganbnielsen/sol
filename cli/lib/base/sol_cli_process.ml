@@ -102,6 +102,20 @@ let read_available fd buf =
     `Open
 ;;
 
+let rec select_ready ?deadline reads =
+  match deadline with
+  | Some d when d -. Unix.gettimeofday () <= 0.0 -> `Expired
+  | _ ->
+    let timeout =
+      match deadline with
+      | None -> -1.0
+      | Some d -> d -. Unix.gettimeofday ()
+    in
+    (match Unix.select reads [] [] timeout with
+     | ready, _, _ -> `Ready ready
+     | exception Unix.Unix_error (Unix.EINTR, _, _) -> select_ready ?deadline reads)
+;;
+
 let capture_until_closed ?(deadline = None) stdout_fd stderr_fd =
   Unix.set_nonblock stdout_fd;
   Unix.set_nonblock stderr_fd;
@@ -111,44 +125,27 @@ let capture_until_closed ?(deadline = None) stdout_fd stderr_fd =
   let rec loop so se =
     if so || se
     then (
-      let timeout =
-        match deadline with
-        | None -> -1.0
-        | Some d ->
-          let remaining = d -. Unix.gettimeofday () in
-          if remaining <= 0.0
-          then (
-            timed_out := true;
-            0.0)
-          else remaining
-      in
-      if !timed_out
-      then ()
-      else (
-        let reads =
-          (if so then [ stdout_fd ] else []) @ if se then [ stderr_fd ] else []
+      let reads = (if so then [ stdout_fd ] else []) @ if se then [ stderr_fd ] else [] in
+      match select_ready ?deadline reads with
+      | `Expired -> timed_out := true
+      | `Ready ready ->
+        let so =
+          so
+          && ((not (List.mem stdout_fd ready))
+              ||
+              match read_available stdout_fd out with
+              | `Open -> true
+              | `Closed -> false)
         in
-        let ready, _, _ = Unix.select reads [] [] timeout in
-        if ready = [] && deadline <> None
-        then timed_out := true
-        else (
-          let so =
-            so
-            && ((not (List.mem stdout_fd ready))
-                ||
-                match read_available stdout_fd out with
-                | `Open -> true
-                | `Closed -> false)
-          in
-          let se =
-            se
-            && ((not (List.mem stderr_fd ready))
-                ||
-                match read_available stderr_fd err with
-                | `Open -> true
-                | `Closed -> false)
-          in
-          loop so se)))
+        let se =
+          se
+          && ((not (List.mem stderr_fd ready))
+              ||
+              match read_available stderr_fd err with
+              | `Open -> true
+              | `Closed -> false)
+        in
+        loop so se)
   in
   loop true true;
   !timed_out, Buffer.contents out, Buffer.contents err
@@ -160,6 +157,38 @@ let status_to_exit_code = function
   | Unix.WEXITED n -> n
   | Unix.WSIGNALED n -> signal_exit n
   | Unix.WSTOPPED n -> signal_exit n
+;;
+
+let rec wait_reap pid =
+  match Unix.waitpid [] pid with
+  | _, status -> status
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait_reap pid
+;;
+
+let rec wait_reap_wnohang pid =
+  match Unix.waitpid [ Unix.WNOHANG ] pid with
+  | 0, _ -> None
+  | _, status -> Some status
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait_reap_wnohang pid
+;;
+
+let rec wait_poll ~deadline pid =
+  match wait_reap_wnohang pid with
+  | None ->
+    let remaining = deadline -. Unix.gettimeofday () in
+    if remaining <= 0.0
+    then `Timed_out
+    else (
+      (try ignore (Unix.select [] [] [] (Float.min remaining 0.05)) with
+       | Unix.Unix_error (Unix.EINTR, _, _) -> ());
+      wait_poll ~deadline pid)
+  | Some status -> `Exited status
+;;
+
+let wait_for_exit ?deadline pid =
+  match deadline with
+  | None -> `Exited (wait_reap pid)
+  | Some d -> wait_poll ~deadline:d pid
 ;;
 
 let run ?(echo = false) c =
@@ -221,18 +250,44 @@ let run ?(echo = false) c =
           Error (Spawn_failed msg)
         | Ok pid ->
           let deadline = Option.map (fun s -> Unix.gettimeofday () +. s) c.timeout_s in
-          let timed_out, stdout, stderr = capture_until_closed ~deadline out_r err_r in
-          close_noerr out_r;
-          close_noerr err_r;
-          if timed_out
-          then (
+          let finished = ref false in
+          let kill_and_reap () =
             (try Unix.kill pid Sys.sigkill with
-             | _ -> ());
-            ignore (Unix.waitpid [] pid);
-            Error (Timeout (Option.get c.timeout_s)))
-          else (
-            let exit_code = status_to_exit_code (Unix.waitpid [] pid |> snd) in
-            completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr))))
+             | Unix.Unix_error _ -> ());
+            try ignore (wait_reap pid) with
+            | Unix.Unix_error _ -> ()
+          in
+          Fun.protect
+            ~finally:(fun () ->
+              if not !finished
+              then (
+                close_noerr out_r;
+                close_noerr err_r;
+                kill_and_reap ()))
+            (fun () ->
+               let timed_out, stdout, stderr =
+                 capture_until_closed ~deadline out_r err_r
+               in
+               close_noerr out_r;
+               close_noerr err_r;
+               let exit_code =
+                 if timed_out
+                 then None
+                 else (
+                   match wait_for_exit ?deadline pid with
+                   | `Timed_out -> None
+                   | `Exited status -> Some (status_to_exit_code status))
+               in
+               finished := true;
+               match exit_code with
+               | None ->
+                 kill_and_reap ();
+                 Error (Timeout (Option.get c.timeout_s))
+               | Some exit_code ->
+                 completed
+                   ~exit_code
+                   ~stdout:(String.trim stdout)
+                   ~stderr:(String.trim stderr))))
 ;;
 
 type background = { pid : int }
@@ -283,15 +338,5 @@ let failure_message { exit_code; stdout; stderr } =
 
 let run_shell ?(echo = false) cmd_str =
   if echo then Sol_cli_report.app "  $ %s" cmd_str;
-  try
-    let ic, oc, ec = Unix.open_process_full cmd_str (Unix.environment ()) in
-    close_out oc;
-    let stdout = In_channel.input_all ic in
-    let stderr = In_channel.input_all ec in
-    let status = Unix.close_process_full (ic, oc, ec) in
-    let exit_code = status_to_exit_code status in
-    completed ~exit_code ~stdout:(String.trim stdout) ~stderr:(String.trim stderr)
-  with
-  | Unix.Unix_error (e, fn, _) ->
-    Error (Spawn_failed (Printf.sprintf "%s: %s" fn (Unix.error_message e)))
+  run ~echo:false (cmd [ "sh"; "-c"; cmd_str ])
 ;;
