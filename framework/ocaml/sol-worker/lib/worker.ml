@@ -107,6 +107,19 @@ let with_runtime_unflushed
       in
       Some c, Some h
   in
+  let assigned_partitions =
+    match ot with
+    | None -> None
+    | Some o ->
+      Some
+        (Obs_eio.register_gauge
+           o
+           ~name:"sol_worker_assigned_partitions"
+           ~help:
+             "Partitions this replica owns right now. 0 is a healthy idle standby \
+              (readiness follows group membership), not a fault."
+           ~label_names:[])
+  in
   let signal_stop, signal_stop_r = Eio.Promise.create () in
   let remaining =
     match max_messages with
@@ -147,6 +160,7 @@ let with_runtime_unflushed
       ~should_stop
       ~advance
       ~health
+      ~assigned_partitions
       ~stop_handle:(stop_handle ~sw))
 ;;
 
@@ -231,7 +245,16 @@ module Make_with_test_seam (W : WORKER) = struct
         ~max_messages
         ~body:
           (fun
-            ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ~stop_handle ->
+            ~sw
+            ~ot
+            ~msg_count
+            ~msg_duration
+            ~should_stop
+            ~advance
+            ~health
+            ~assigned_partitions
+            ~stop_handle
+          ->
           let handler msg ~ack ~trace_ctx =
             if should_stop ()
             then Kafka.Consumer.Stop
@@ -267,8 +290,12 @@ module Make_with_test_seam (W : WORKER) = struct
                 kafka =
                   { Kafka.Consumer.default_hooks with
                     on_ready = Option.value on_ready ~default:ignore
-                  ; on_assigned = (fun () -> Worker_health.on_assigned health)
-                  ; on_revoked = (fun () -> Worker_health.on_revoked health)
+                  ; on_assignment =
+                      (fun owned ->
+                        Worker_health.on_assignment health owned;
+                        match assigned_partitions with
+                        | None -> ()
+                        | Some (emit : Obs_eio.gauge_fn) -> emit (Float.of_int owned))
                   ; on_poll = (fun () -> Worker_health.on_poll health)
                   }
               }
@@ -321,7 +348,16 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
         ~max_messages
         ~body:
           (fun
-            ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ~stop_handle ->
+            ~sw
+            ~ot
+            ~msg_count
+            ~msg_duration
+            ~should_stop
+            ~advance
+            ~health
+            ~assigned_partitions
+            ~stop_handle
+          ->
           let on_retry ~partition:_ ~attempt:_ ~delay_s:_ =
             match msg_count with
             | Some c -> c ~labels:[ "status", "retry" ] 1
@@ -380,8 +416,12 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 { kafka =
                     { Kafka.Consumer.default_hooks with
                       on_ready = Option.value on_ready ~default:ignore
-                    ; on_assigned = (fun () -> Worker_health.on_assigned health)
-                    ; on_revoked = (fun () -> Worker_health.on_revoked health)
+                    ; on_assignment =
+                        (fun owned ->
+                          Worker_health.on_assignment health owned;
+                          match assigned_partitions with
+                          | None -> ()
+                          | Some (emit : Obs_eio.gauge_fn) -> emit (Float.of_int owned))
                     ; on_poll = (fun () -> Worker_health.on_poll health)
                     ; on_retry
                     }

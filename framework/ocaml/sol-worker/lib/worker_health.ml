@@ -1,16 +1,28 @@
 let liveness_bound_s = 30.0
 
 type t =
-  { ready : bool Atomic.t
+  { joined : bool Atomic.t
+  ; assigned : int Atomic.t
   ; last_poll : float Atomic.t
   ; now : unit -> float
   }
 
-let create ~now = { ready = Atomic.make false; last_poll = Atomic.make (now ()); now }
-let on_assigned t = Atomic.set t.ready true
-let on_revoked t = Atomic.set t.ready false
+let create ~now =
+  { joined = Atomic.make false
+  ; assigned = Atomic.make 0
+  ; last_poll = Atomic.make (now ())
+  ; now
+  }
+;;
+
+let on_assignment t owned =
+  Atomic.set t.assigned owned;
+  Atomic.set t.joined true
+;;
+
 let on_poll t = Atomic.set t.last_poll (t.now ())
-let is_ready t = Atomic.get t.ready
+let is_ready t = Atomic.get t.joined
+let assigned_partitions t = Atomic.get t.assigned
 let is_live t = t.now () -. Atomic.get t.last_poll <= liveness_bound_s
 
 let respond_string ~status body =
@@ -25,7 +37,9 @@ let serve ~sw ~net ~port t renderer =
       if is_ready t
       then respond_string ~status:`OK "ready\n"
       else
-        respond_string ~status:`Service_unavailable "not ready: no partitions assigned\n"
+        respond_string
+          ~status:`Service_unavailable
+          "not ready: the consumer has not joined its consumer group yet\n"
     | `GET, "/livez" ->
       if is_live t
       then respond_string ~status:`OK "live\n"

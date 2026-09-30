@@ -57,10 +57,14 @@ declared.
   before it can become ready.
 - **Kafka consumer worker** — readiness on `/readyz` and liveness on `/livez`,
   both on the metrics port (`9090`), plus a startup probe.
-  - *Readiness* is the consumer-join state: the broker has assigned partitions.
-    A rebalance that takes them away makes the worker not-ready, and it becomes
-    ready again when the assignment returns — readiness transitions both ways,
-    it does not latch true.
+  - *Readiness* is **group membership**: the consumer has joined its consumer
+    group. It does not require owning a partition. A replica that owns nothing
+    is an idle standby — exactly what `node-failure-tolerant` asks for — so it
+    stays ready instead of failing its startup probe and crash-looping before
+    the node it might replace ever fails. Readiness latches true once the
+    consumer has joined; a rebalance does not flap it. How many partitions this
+    replica owns is a metric (`sol_worker_assigned_partitions`), not a readiness
+    condition.
   - *Liveness* is the **poll cadence**: a consumer that stops polling is stuck
     even though its process is up, so it is replaced instead of left looking
     healthy. A worker whose runtime becomes irrecoverably unhealthy is detected
