@@ -233,7 +233,23 @@ phase_app() {
     printf 'SOL_API_KEY: %s*** (generated for this run)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
   run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET' --registry '$ECR_REGISTRY'" || return 1
+  deploy_namespaces="pluto-payments pluto-comms"
+  say "deploy-substrate"
+  for ns in $deploy_namespaces; do
+    if kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
+      say "  $ns: sol-deploy already bound (not a clean test of the substrate prerequisite)"
+    else
+      say "  $ns: no sol-deploy RoleBinding yet"
+    fi
+  done
   run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'" || return 1
+  for ns in $deploy_namespaces; do
+    if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
+      say "the deploy completed into $ns without establishing its scoped deploy RBAC"
+      return 1
+    fi
+  done
+  say "  the deploy established the scoped deploy RBAC in every namespace it entered"
   if ! run app-transaction bash "$ROOT/internal/qualification/aws/app-transaction.sh" "$LOG_DIR"; then
     capture_kube_evidence
     return 1

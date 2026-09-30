@@ -15,6 +15,11 @@ val ensure
   -> namespaces:string list
   -> (unit, string) result
 
+val established
+  :  ctx:Sol_cli_kube_destination.context
+  -> namespaces:string list
+  -> (unit, string) result
+
 val operator_binding_docs
   :  workspace:string
   -> Sol_cli_manifest.service list

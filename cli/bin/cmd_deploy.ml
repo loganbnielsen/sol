@@ -135,6 +135,13 @@ let check_migration_prerequisite ~ctx ~plan ~live =
     | Failed report -> Sol_cli_exit.failure report)
 ;;
 
+let check_substrate_prerequisite ~ctx ~plan ~live =
+  Sol_cli_deploy_run.substrate_prerequisite ctx ~plan ~live
+  |> Result.map_error (function
+    | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
+    | Failed report -> Sol_cli_exit.failure report)
+;;
+
 let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
   let backend =
     Option.bind
@@ -156,6 +163,7 @@ let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to =
   let* plan = build_plan ctx ~emit_to in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
+  let* () = check_substrate_prerequisite ~ctx ~plan ~live:false in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
   let* _ = run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan in
@@ -230,6 +238,7 @@ let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_pus
   in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
+  let* () = check_substrate_prerequisite ~ctx ~plan ~live:true in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
