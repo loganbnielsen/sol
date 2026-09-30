@@ -115,9 +115,10 @@ Selected high-risk or operator-requested reviews stay draft until resolved.
 
 ## 9. Git/PR workflow
 
-- Queue native squash auto-merge by default (`soldev pipeline merge --auto`);
+- Queue native squash auto-merge by default (`soldev pipeline merge`, or
+  `soldev pipeline merge --pr <n>` for a PR that names no ticket);
   required CI gates it and no review-marker is required. An immediate merge is the
-  exception. Keep a selected review's PR draft until actionable findings are
-  resolved, then queue the merge and monitor it to completion.
+  exception, via `--immediate`. Keep a selected review's PR draft until actionable
+  findings are resolved, then queue the merge and monitor it to completion.
 - If a PR is still open, push a follow-up commit to its branch. Only open a
   new PR for genuinely separate work, or once the prior PR is merged.
