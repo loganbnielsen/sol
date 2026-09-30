@@ -113,13 +113,7 @@ let ctx = Sol_cli_kube_destination.local_context
 let namespaces = [ "payments" ]
 
 let set () =
-  Sol_cli_secret.set
-    ~ctx
-    ~env:"cloud"
-    ~workspace:"demo"
-    ~namespaces
-    ~key:"NEW_KEY"
-    ~value:"v"
+  Sol_cli_secret.set ~ctx ~workspace:"demo" ~namespaces ~key:"NEW_KEY" ~value:"v"
 ;;
 
 let is_error = function
@@ -139,12 +133,7 @@ let test_set_refuses_an_unreadable_secret () =
 let test_delete_refuses_an_unreadable_secret () =
   with_fake_kubectl ~mode:"unreachable" (fun ~calls ~manifests:_ ->
     let result =
-      Sol_cli_secret.delete
-        ~ctx
-        ~env:"cloud"
-        ~workspace:"demo"
-        ~namespaces
-        ~key:"LEAKED_KEY"
+      Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"LEAKED_KEY"
     in
     Alcotest.(check bool) "delete returns Error, not \"deleted\"" true (is_error result);
     Alcotest.(check bool)
@@ -155,7 +144,7 @@ let test_delete_refuses_an_unreadable_secret () =
 
 let test_list_refuses_an_unreadable_secret () =
   with_fake_kubectl ~mode:"unreachable" (fun ~calls:_ ~manifests:_ ->
-    let result = Sol_cli_secret.list ~ctx ~env:"cloud" ~workspace:"demo" ~namespaces in
+    let result = Sol_cli_secret.list ~ctx ~workspace:"demo" ~namespaces in
     Alcotest.(check bool)
       "list returns Error, not an empty key list"
       true
@@ -177,12 +166,7 @@ let test_later_read_failure_writes_nothing mode () =
       true
       (nothing_written (calls ()));
     let deleted =
-      Sol_cli_secret.delete
-        ~ctx
-        ~env:"cloud"
-        ~workspace:"demo"
-        ~namespaces
-        ~key:"EXISTING"
+      Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"EXISTING"
     in
     Alcotest.(check bool) "delete returns Error" true (is_error deleted);
     Alcotest.(check bool)

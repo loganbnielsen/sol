@@ -47,7 +47,7 @@ let print_result result =
 
 let load_facts () = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg
 
-let run_set ~ctx env value key domain =
+let run_set ~ctx value key domain =
   let value =
     match value with
     | Some v -> v
@@ -55,34 +55,21 @@ let run_set ~ctx env value key domain =
   in
   let* facts = load_facts () in
   let* namespaces = discover_namespaces ~facts ~domain in
-  Sol_cli_secret.set ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key ~value
+  Sol_cli_secret.set ~ctx ~workspace:(workspace_name ()) ~namespaces ~key ~value
   |> print_result
 ;;
 
-let run_list ~ctx env domain =
+let run_list ~ctx domain =
   let* facts = load_facts () in
   let* namespaces = discover_namespaces ~facts ~domain in
-  Sol_cli_secret.list ~ctx ~env ~workspace:(workspace_name ()) ~namespaces |> print_result
+  Sol_cli_secret.list ~ctx ~workspace:(workspace_name ()) ~namespaces |> print_result
 ;;
 
-let run_delete ~ctx env key domain =
+let run_delete ~ctx key domain =
   let* facts = load_facts () in
   let* namespaces = discover_namespaces ~facts ~domain in
-  Sol_cli_secret.delete ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key
+  Sol_cli_secret.delete ~ctx ~workspace:(workspace_name ()) ~namespaces ~key
   |> print_result
-;;
-
-let env_arg =
-  Arg.(
-    required
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "env" ]
-        ~docv:"ENV"
-        ~doc:
-          "Target environment name. local/dev use the local Kubernetes path; \
-           hosted/sol_hosted use the hosted API boundary; other names use the \
-           customer-cloud Kubernetes path.")
 ;;
 
 let value_arg =
@@ -115,56 +102,62 @@ let domain_arg =
            services, so a directory with no workload is never targeted.")
 ;;
 
-let set_cmd =
+let context_term ~local ~command =
+  if local
+  then Term.const (Ok Cmd_destination.local)
+  else Term.(const (Cmd_destination.remote ~command) $ Cmd_destination.target_arg)
+;;
+
+let set_cmd ~local =
   Cmd.v
     (Cmd.info "set" ~doc:"Create or update a secret key")
     Term.(
-      const (fun env value key domain target ->
+      const (fun ctx value key domain ->
         let result =
-          let* ctx = Cmd_destination.remote ~command:"secret set" target in
-          run_set ~ctx env value key domain
+          let* ctx = ctx in
+          run_set ~ctx value key domain
         in
         Sol_cli_exit.exit_on result)
-      $ env_arg
+      $ context_term ~local ~command:"secret set"
       $ value_arg
       $ key_arg
-      $ domain_arg
-      $ Cmd_destination.target_arg)
+      $ domain_arg)
 ;;
 
-let list_cmd =
+let list_cmd ~local =
   Cmd.v
     (Cmd.info "list" ~doc:"List secret keys without values")
     Term.(
-      const (fun env domain target ->
+      const (fun ctx domain ->
         let result =
-          let* ctx = Cmd_destination.remote ~command:"secret list" target in
-          run_list ~ctx env domain
+          let* ctx = ctx in
+          run_list ~ctx domain
         in
         Sol_cli_exit.exit_on result)
-      $ env_arg
-      $ domain_arg
-      $ Cmd_destination.target_arg)
+      $ context_term ~local ~command:"secret list"
+      $ domain_arg)
 ;;
 
-let delete_cmd =
+let delete_cmd ~local =
   Cmd.v
     (Cmd.info "delete" ~doc:"Delete a secret key")
     Term.(
-      const (fun env key domain target ->
+      const (fun ctx key domain ->
         let result =
-          let* ctx = Cmd_destination.remote ~command:"secret delete" target in
-          run_delete ~ctx env key domain
+          let* ctx = ctx in
+          run_delete ~ctx key domain
         in
         Sol_cli_exit.exit_on result)
-      $ env_arg
+      $ context_term ~local ~command:"secret delete"
       $ key_arg
-      $ domain_arg
-      $ Cmd_destination.target_arg)
+      $ domain_arg)
 ;;
 
-let cmd =
+let group ~local =
   Cmd.group
-    (Cmd.info "secret" ~doc:"Manage environment-scoped secrets")
-    [ set_cmd; list_cmd; delete_cmd ]
+    (Cmd.info "secret" ~doc:"Manage secrets in a target cluster")
+    [ set_cmd ~local; list_cmd ~local; delete_cmd ~local ]
 ;;
+
+let cmd = group ~local:false
+let local_cmd = group ~local:true

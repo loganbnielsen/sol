@@ -458,6 +458,7 @@ let cmd =
     ; Cmd_migrate.local_cmd
     ; Cmd_releases.local_cmd
     ; Cmd_deployments.local_cmd
+    ; Cmd_secret.local_cmd
     ; run_subcmd
     ]
 ;;

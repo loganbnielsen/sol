@@ -154,7 +154,7 @@ lists every key that must be populated before the manifest is applied:
 ```yaml
 kind: Secret
 # Populate these values before applying.
-# Use `sol secret set <KEY> --env <env>` or your secrets manager.
+# Use `sol secret set <KEY> --target <env>/<provider>/<region>` or your secrets manager.
 stringData:
   POSTGRES_URL: ""
 ```

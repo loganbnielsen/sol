@@ -156,7 +156,8 @@ let secret_doc
     if redact
     then
       [ "Populate these values before applying."
-      ; "Use `sol secret set <KEY> --env <env>` or your secrets manager."
+      ; "Use `sol secret set <KEY> --target <env>/<provider>/<region>` or your secrets \
+         manager."
       ]
     else []
   in

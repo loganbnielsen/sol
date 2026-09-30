@@ -1,6 +1,5 @@
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
-let check_mode label expected actual = check_bool label true (actual = Ok expected)
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let test_key_validation_accepts_env_style_key () =
@@ -20,42 +19,6 @@ let test_key_validation_rejects_hyphen () =
     check_string
       "error"
       "secret key may contain only uppercase letters, digits, and underscores"
-      msg
-;;
-
-let test_mode_of_env_accepts_hosted_aliases () =
-  List.iter
-    (fun env -> check_mode env Sol_cli_secret.Sol_hosted (Sol_cli_secret.mode_of_env env))
-    [ "hosted"; "sol_hosted"; "sol-hosted" ]
-;;
-
-let test_mode_of_env_accepts_local_aliases () =
-  List.iter
-    (fun env -> check_mode env Sol_cli_secret.Local (Sol_cli_secret.mode_of_env env))
-    [ "local" ]
-;;
-
-let test_mode_of_env_rejects_the_retired_dev_alias () =
-  match Sol_cli_secret.mode_of_env "dev" with
-  | Ok _ -> Alcotest.fail "\"dev\" must no longer select the local secret mode"
-  | Error _ -> ()
-;;
-
-let test_mode_of_env_accepts_customer_cloud_aliases () =
-  List.iter
-    (fun env ->
-       check_mode env Sol_cli_secret.Customer_cloud (Sol_cli_secret.mode_of_env env))
-    [ "cloud"; "customer_cloud"; "customer-cloud" ]
-;;
-
-let test_mode_of_env_rejects_unknown () =
-  match Sol_cli_secret.mode_of_env "staging" with
-  | Ok _ -> Alcotest.fail "unknown env accepted"
-  | Error msg ->
-    check_string
-      "error"
-      "unknown secret environment \"staging\"; expected one of: hosted, sol_hosted, \
-       sol-hosted, local, cloud, customer_cloud, customer-cloud"
       msg
 ;;
 
@@ -107,40 +70,16 @@ let test_redacted_result_hides_value () =
   check_bool "no secret value" false (contains out "postgres://secret")
 ;;
 
-let test_hosted_stub_boundary () =
-  match
-    Sol_cli_secret.set
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~env:"hosted"
-      ~workspace:"myapp"
-      ~namespaces:[ "myapp-payments" ]
-      ~key:"DATABASE_URL"
-      ~value:"postgres://secret"
-  with
-  | Ok _ -> Alcotest.fail "hosted set unexpectedly succeeded"
-  | Error msg ->
-    check_string
-      "hosted boundary"
-      "hosted secret management will use the Sol control-plane API; no hosted endpoint \
-       is configured yet"
-      msg
-;;
-
-let test_list_rejects_unknown_env () =
+let test_list_rejects_empty_namespaces () =
   match
     Sol_cli_secret.list
       ~ctx:Sol_cli_kube_destination.local_context
-      ~env:"staging"
       ~workspace:"myapp"
-      ~namespaces:[ "myapp-payments" ]
+      ~namespaces:[]
   with
-  | Ok _ -> Alcotest.fail "unknown env list unexpectedly succeeded"
+  | Ok _ -> Alcotest.fail "empty namespace list unexpectedly succeeded"
   | Error msg ->
-    check_string
-      "unknown env"
-      "unknown secret environment \"staging\"; expected one of: hosted, sol_hosted, \
-       sol-hosted, local, cloud, customer_cloud, customer-cloud"
-      msg
+    check_string "no target" "no target namespaces found for this workspace" msg
 ;;
 
 let () =
@@ -157,31 +96,11 @@ let () =
             test_key_validation_rejects_lowercase
         ; Alcotest.test_case "rejects hyphen" `Quick test_key_validation_rejects_hyphen
         ] )
-    ; ( "env"
+    ; ( "target"
       , [ Alcotest.test_case
-            "accepts hosted aliases"
+            "rejects empty namespace selection"
             `Quick
-            test_mode_of_env_accepts_hosted_aliases
-        ; Alcotest.test_case
-            "accepts local aliases"
-            `Quick
-            test_mode_of_env_accepts_local_aliases
-        ; Alcotest.test_case
-            "the retired dev alias is rejected"
-            `Quick
-            test_mode_of_env_rejects_the_retired_dev_alias
-        ; Alcotest.test_case
-            "accepts customer cloud aliases"
-            `Quick
-            test_mode_of_env_accepts_customer_cloud_aliases
-        ; Alcotest.test_case
-            "rejects unknown parser input"
-            `Quick
-            test_mode_of_env_rejects_unknown
-        ; Alcotest.test_case
-            "rejects unknown operation env"
-            `Quick
-            test_list_rejects_unknown_env
+            test_list_rejects_empty_namespaces
         ] )
     ; ( "rendering"
       , [ Alcotest.test_case
@@ -194,6 +113,5 @@ let () =
             test_secret_manifest_yaml_escapes_special_values
         ; Alcotest.test_case "redacted result" `Quick test_redacted_result_hides_value
         ] )
-    ; "hosted", [ Alcotest.test_case "stub boundary" `Quick test_hosted_stub_boundary ]
     ]
 ;;

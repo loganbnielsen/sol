@@ -599,9 +599,10 @@ sol open dashboard [SCOPE] [--links]              open Grafana workspace/service
 #   also accepts --observability-backend {local|self_hosted_durable|external},
 #   --base-domain DOMAIN, and TARGET
 
-sol secret set <KEY> --env <ENV> --value <VAL> [--domain DOMAIN]   create or update a secret
-sol secret list --env <ENV> [--domain DOMAIN]                      list secret keys (values never printed)
-sol secret delete <KEY> --env <ENV> [--domain DOMAIN]              delete a secret
+sol secret set <KEY> --target ENV/PROVIDER/REGION --value <VAL> [--domain DOMAIN]   create or update a secret
+sol secret list --target ENV/PROVIDER/REGION [--domain DOMAIN]                      list secret keys (values never printed)
+sol secret delete <KEY> --target ENV/PROVIDER/REGION [--domain DOMAIN]              delete a secret
+sol local secret set|list|delete ...                                               use the local cluster
 
 # --scope selects one domain (`payments`) or one unit (`payments/charge_svc`).
 # A name that matches nothing fails closed and says what exists, before any

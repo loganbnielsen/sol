@@ -41,7 +41,7 @@ necessarily:
    completed" is a claim Sol can back rather than assume.
 
 ```bash
-sol secret set --env prod --target prod/aws/us-east-1 DATABASE_URL
+sol secret set --target prod/aws/us-east-1 DATABASE_URL
 ```
 
 `sol secret set` is therefore both the create path and the rotation path. The

@@ -174,7 +174,7 @@ sol local run
 sol up
 sol local status
 sol logs
-sol secret set DATABASE_URL --env local --value ...
+sol local secret set DATABASE_URL --value ...
 sol migrate
 sol deploy dev/aws/us-east-1 --dry-run  # requires dev: targets: aws/us-east-1 in sol/environments.yml, with a registry
 sol rollback <release-id>  # find one with `sol releases`
