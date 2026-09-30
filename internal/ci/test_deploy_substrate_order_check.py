@@ -84,8 +84,8 @@ def main():
     mutate(
         tmp,
         "cli/lib/deploy/sol_cli_deploy_run.ml",
-        "Sol_cli_substrate.ensure ~ctx:ctx.execution.cluster ~namespaces",
-        "ignore ~ctx:ctx.execution.cluster ~namespaces",
+        "Sol_cli_substrate.ensure\n      ~ctx:ctx.execution.cluster\n      ~namespaces\n",
+        "",
     )
     cases.append(("live-path-never-establishes", tmp, "never establishes anything"))
 

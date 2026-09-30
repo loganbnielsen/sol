@@ -8,6 +8,7 @@ type aws_outputs =
   ; thanos_irsa_role_arn : string option
   ; grafana_irsa_role_arn : string option
   ; managed_resource_dashboards : Yojson.Safe.t
+  ; database_egress_cidrs : string list
   }
 
 let aws_outputs_of_json text =
@@ -23,6 +24,24 @@ let aws_outputs_of_json text =
   let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
   let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
   let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
+  let database_egress_cidrs = value "database_egress_cidrs" in
+  let* database_egress_cidrs =
+    match database_egress_cidrs with
+    | `Null -> Ok []
+    | `List items
+      when List.for_all
+             (function
+               | `String _ -> true
+               | _ -> false)
+             items ->
+      Ok
+        (List.map
+           (function
+             | `String cidr -> cidr
+             | _ -> "")
+           items)
+    | _ -> Error "AWS Terraform output \"database_egress_cidrs\" is not a list of strings"
+  in
   let managed_resource_dashboards = value "managed_resource_dashboards" in
   match managed_resource_dashboards with
   | `Assoc _ ->
@@ -36,6 +55,7 @@ let aws_outputs_of_json text =
       ; thanos_irsa_role_arn
       ; grafana_irsa_role_arn
       ; managed_resource_dashboards
+      ; database_egress_cidrs
       }
   | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
 ;;
@@ -613,6 +633,13 @@ let aws_cloud_ready ~region outputs =
   | _ -> false
 ;;
 
+let database_egress_cidrs_json outputs =
+  match outputs.database_egress_cidrs with
+  | [] -> None
+  | cidrs ->
+    Some (`List (List.map (fun cidr -> `String cidr) cidrs) |> Yojson.Safe.to_string)
+;;
+
 let platform_vars outputs _context ~cluster_issuer:_ ~region =
   Ok
     { Sol_cli_cluster.fixed =
@@ -628,6 +655,7 @@ let platform_vars outputs _context ~cluster_issuer:_ ~region =
         ; "thanos_s3_bucket", outputs.thanos_s3_bucket
         ; "thanos_irsa_role_arn", outputs.thanos_irsa_role_arn
         ; "grafana_irsa_role_arn", outputs.grafana_irsa_role_arn
+        ; "database_egress_cidrs", database_egress_cidrs_json outputs
         ]
     }
 ;;

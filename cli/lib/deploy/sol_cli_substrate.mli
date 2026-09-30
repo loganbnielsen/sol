@@ -11,7 +11,8 @@ val docs_for_namespaces
   -> (Sol_cli_yaml.document list, string) result
 
 val ensure
-  :  ctx:Sol_cli_kube_destination.context
+  :  workloads:(string * string) list
+  -> ctx:Sol_cli_kube_destination.context
   -> namespaces:string list
   -> (unit, string) result
 

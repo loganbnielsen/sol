@@ -62,6 +62,7 @@ module "platform" {
   letsencrypt_email                       = var.letsencrypt_email
   cert_manager_irsa_role_arn              = var.cert_manager_irsa_role_arn
   cert_manager_dns01_region               = var.cert_manager_dns01_region
+  database_egress_cidrs                   = var.database_egress_cidrs
   cert_manager_dns01_project              = var.cert_manager_dns01_project
   cert_manager_workload_identity_sa_email = var.cert_manager_workload_identity_sa_email
 }

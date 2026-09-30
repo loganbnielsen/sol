@@ -137,6 +137,13 @@ val ingress_doc
   -> unit
   -> Sol_cli_yaml.document
 
+val managed_database_egress_doc
+  :  cidrs:string list
+  -> port:int
+  -> ns:string
+  -> name:string
+  -> Sol_cli_yaml.document
+
 val network_policy_doc
   :  ?egress_to:(string * string) list
   -> ?ingress_from:(string * string) list

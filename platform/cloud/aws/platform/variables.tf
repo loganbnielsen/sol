@@ -321,6 +321,12 @@ variable "cert_manager_dns01_region" {
   default     = "us-east-1"
 }
 
+variable "database_egress_cidrs" {
+  description = "The ranges a workload must reach to use this target's managed database, derived by the cluster root from the placement Sol provisioned. Rendered into the cluster as a fact the deploy reads, so an application author never declares a CIDR."
+  type        = list(string)
+  default     = []
+}
+
 variable "cert_manager_dns01_project" {
   description = "GCP project holding the Cloud DNS zone cert-manager writes into. Declared here as the mirror of the shared definition; empty on AWS, which solves DNS-01 through Route 53."
   type        = string

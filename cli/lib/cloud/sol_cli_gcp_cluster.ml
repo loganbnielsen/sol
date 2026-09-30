@@ -11,11 +11,14 @@ type gcp_outputs =
   ; thanos_workload_identity_sa_email : string option
   ; cert_manager_workload_identity_sa_email : string option
   ; provisioner_service_account : string
+  ; database_egress_cidrs : string list
   }
 
 let gcp_outputs_of_json text =
   let open Result.Syntax in
-  let* _, string, optional_string = Sol_cli_cluster.outputs_reader ~provider:"GCP" text in
+  let* value, string, optional_string =
+    Sol_cli_cluster.outputs_reader ~provider:"GCP" text
+  in
   let* cluster_name = string "cluster_name" in
   let* project_id = string "project_id" in
   let* region = string "region" in
@@ -31,6 +34,24 @@ let gcp_outputs_of_json text =
   let* cert_manager_workload_identity_sa_email =
     optional_string "cert_manager_workload_identity_sa_email"
   in
+  let database_egress_cidrs = value "database_egress_cidrs" in
+  let* database_egress_cidrs =
+    match database_egress_cidrs with
+    | `Null -> Ok []
+    | `List items
+      when List.for_all
+             (function
+               | `String _ -> true
+               | _ -> false)
+             items ->
+      Ok
+        (List.map
+           (function
+             | `String cidr -> cidr
+             | _ -> "")
+           items)
+    | _ -> Error "GCP Terraform output \"database_egress_cidrs\" is not a list of strings"
+  in
   let* provisioner_service_account = string "provisioner_service_account" in
   Ok
     { cluster_name
@@ -43,6 +64,7 @@ let gcp_outputs_of_json text =
     ; thanos_workload_identity_sa_email
     ; cert_manager_workload_identity_sa_email
     ; provisioner_service_account
+    ; database_egress_cidrs
     }
 ;;
 
@@ -141,6 +163,13 @@ let gcp_cloud_ready outputs =
   | _ -> false
 ;;
 
+let database_egress_cidrs_json outputs =
+  match outputs.database_egress_cidrs with
+  | [] -> None
+  | cidrs ->
+    Some (`List (List.map (fun cidr -> `String cidr) cidrs) |> Yojson.Safe.to_string)
+;;
+
 let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =
   Ok
     { Sol_cli_cluster.fixed = [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ]
@@ -151,6 +180,7 @@ let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =
         ; "thanos_workload_identity_sa_email", outputs.thanos_workload_identity_sa_email
         ; ( "cert_manager_workload_identity_sa_email"
           , outputs.cert_manager_workload_identity_sa_email )
+        ; "database_egress_cidrs", database_egress_cidrs_json outputs
         ; "cert_manager_dns01_project", Some outputs.project_id
         ; "gcp_provisioner_service_account", Some outputs.provisioner_service_account
         ]

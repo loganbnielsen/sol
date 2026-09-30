@@ -158,7 +158,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   let* namespace, k8s_name =
     Sol_cli_migration_job.namespace_and_repository ~workspace ~services
   in
-  let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] in
+  let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] ~workloads:[] in
   Sol_cli_migration_gate.reconcile_operator_bindings ~ctx ~workspace ~services;
   let* files = Sol_cli_migration_gate.migration_files dir in
   if files = []

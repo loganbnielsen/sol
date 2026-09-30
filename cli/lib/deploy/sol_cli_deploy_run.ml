@@ -82,6 +82,14 @@ type gate_failure =
   | Refused of string
   | Failed of string
 
+let plan_workloads (plan : Sol_cli_deployment_plan.t) =
+  List.map
+    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+       ( Sol_cli_deployment_plan.namespace_to_string spec.namespace
+       , Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name ))
+    plan.Sol_cli_deployment_plan.services
+;;
+
 let migration_prerequisite ctx ~plan ~live =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Ok ()
@@ -104,6 +112,7 @@ let migration_prerequisite ctx ~plan ~live =
         Sol_cli_substrate.ensure
           ~ctx:ctx.execution.cluster
           ~namespaces:(Sol_cli_substrate.namespaces plan)
+          ~workloads:(plan_workloads plan)
         |> Result.map_error (fun message -> Refused message)
       in
       Sol_cli_migration_gate.reconcile_operator_bindings
@@ -156,7 +165,10 @@ let substrate_prerequisite ctx ~plan ~live =
   then Ok ()
   else if live
   then
-    Sol_cli_substrate.ensure ~ctx:ctx.execution.cluster ~namespaces
+    Sol_cli_substrate.ensure
+      ~ctx:ctx.execution.cluster
+      ~namespaces
+      ~workloads:(plan_workloads plan)
     |> Result.map_error (fun message -> Refused message)
   else
     Sol_cli_substrate.established ~ctx:ctx.execution.cluster ~namespaces

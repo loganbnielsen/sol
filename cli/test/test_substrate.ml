@@ -106,7 +106,10 @@ let test_missing_credential_fails_closed_before_applying_anything () =
 
 let test_ensure_refuses_a_reserved_platform_namespace () =
   match
-    S.ensure ~ctx:Sol_cli_kube_destination.local_context ~namespaces:[ "cert-manager" ]
+    S.ensure
+      ~workloads:[]
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~namespaces:[ "cert-manager" ]
   with
   | Ok () -> Alcotest.fail "expected ensure to refuse a reserved platform namespace"
   | Error msg ->
