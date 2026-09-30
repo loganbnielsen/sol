@@ -113,6 +113,7 @@ let test_pr_info =
   { Soldev_merge.pr_number = 1
   ; pr_url = "https://github.com/example/sol/pull/1"
   ; pr_branch = "BUG-001/test"
+  ; pr_base_ref = "main"
   ; pr_head_sha = "abc123"
   ; pr_draft = false
   }
@@ -234,6 +235,7 @@ let test_merge_without_review_marker () =
            { pr_number = 1
            ; pr_url = "https://example.test/pr/1"
            ; pr_branch = "BUG-001/test"
+           ; pr_base_ref = "main"
            ; pr_head_sha = "abc123"
            ; pr_draft = false
            }
@@ -361,6 +363,7 @@ case "$1 $2" in
 "pr list") cat prs.json ;;
 "pr checks") printf 'checks\n' >> calls; cat checks.json ;;
 "pr merge") printf '%s\n' "$*" >> merges ;;
+"api repos/"*) if [ -f protection-absent ]; then printf '0'; else printf '1'; fi ;;
 *) exit 1 ;;
 esac
 |};
@@ -444,13 +447,23 @@ esac
            true
            (containing text "draft PR" && not (Sys.file_exists "merges"));
          write_file "prs.json" (pr_json ~draft:false ~branch:"docs/auto-merge-default");
-         write_file "checks.json" "[]";
+         write_file "protection-absent" "";
          let text, _ = capture_stdout (fun () -> run (Some "42")) in
          check_bool
-           "a branch with no required checks is refused, naming the reason"
+           "a base branch with no required checks is refused, naming the reason"
            true
            (containing text "no required checks configured"
             && not (Sys.file_exists "merges"));
+         Sys.remove "protection-absent";
+         clear_merges ();
+         write_file "checks.json" "not JSON";
+         run (Some "42") |> ignore;
+         check_bool
+           "queueing consults no check rollup, so a PR whose checks have not been \
+            reported yet still queues"
+           true
+           (String.ends_with ~suffix:" --auto\n" (merges ()));
+         clear_merges ();
          write_file "checks.json" {|[{"bucket":"pending"}]|};
          let text, _ =
            capture_stdout (fun () -> run ~mode:Soldev_merge.Immediate (Some "42"))
