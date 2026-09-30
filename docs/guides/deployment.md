@@ -204,4 +204,4 @@ part of it over.
 - [The runtime contract](../reference/runtime.md) is what a deployed unit may rely on.
 - [Building an application](application-authoring.md) is the other half: what runs once it is
   deployed.
-- [`docs/README.md`](../README.md) is the index, including the command reference once published.
+- [`docs/reference/cli.md`](../reference/cli.md) is every command and flag.
