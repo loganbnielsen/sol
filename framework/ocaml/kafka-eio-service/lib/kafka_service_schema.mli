@@ -37,21 +37,17 @@ val register_schema
   -> schema:string
   -> (int, string) result
 
-type registered =
-  { id : int
-  ; schema : string
-  }
-
 val subject_name : string -> string
 
-val registered_schema
+val register_contract
   :  _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string
-  -> (registered, string) result
+  -> schema:string
+  -> (int, string) result
 
-val register_contract
+val lookup_schema
   :  _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string

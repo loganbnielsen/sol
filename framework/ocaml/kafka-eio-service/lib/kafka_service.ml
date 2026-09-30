@@ -128,25 +128,13 @@ module Schema = struct
   ;;
 
   let resolve ~net ~clock ~registry_url (module M : MESSAGE) =
-    let topic = M.topic_name in
-    match
-      Kafka_service_schema.registered_schema
-        net
-        ~clock
-        ~registry_url
-        ~topic_name:(topic_name_to_string topic)
-    with
-    | Error msg -> Error (Schema_registry (topic, msg))
-    | Ok (registered : Kafka_service_schema.registered) ->
-      if String.equal registered.schema M.schema
-      then Ok registered.id
-      else
-        Error
-          (Schema_registry
-             ( topic
-             , "the registered schema differs from the declared contract; register the \
-                contract through the deployment lifecycle (sol plan / sol deploy), not \
-                at runtime" ))
+    Kafka_service_schema.lookup_schema
+      net
+      ~clock
+      ~registry_url
+      ~topic_name:(topic_name_to_string M.topic_name)
+      ~schema:M.schema
+    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
   ;;
 
   type compatibility_response = Kafka_service_schema.compatibility_response =

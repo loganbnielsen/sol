@@ -55,6 +55,15 @@ let optional_db_pool ~sw ~stdenv ~fs = function
 let create_registered_topic ~sw ~net ~clock () =
   say "registering topic %S ..." (Kafka_service.topic_name_to_string Charged.topic_name);
   let svc = Kafka_service.create kafka_config ~sw |> require_kafka "kafka create" in
+  (match
+     Kafka_service.Schema.register
+       ~net
+       ~clock
+       ~registry_url:kafka_config.schema_registry_url
+       (module Charged)
+   with
+   | Ok _ -> ()
+   | Error e -> failwith ("kafka contract: " ^ Kafka_service.error_to_string e));
   let topic =
     Kafka_service.register svc ~net ~clock (module Charged)
     |> require_kafka "kafka register"

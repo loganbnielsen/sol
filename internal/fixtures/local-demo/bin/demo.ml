@@ -291,6 +291,15 @@ let () =
     | Ok s -> s
     | Error e -> failwith ("create: " ^ Kafka_service.error_to_string e)
   in
+  (match
+     Kafka_service.Schema.register
+       ~net:env#net
+       ~clock:env#clock
+       ~registry_url:kafka_config.schema_registry_url
+       (module Demo_order)
+   with
+   | Ok _ -> ()
+   | Error e -> failwith ("contract: " ^ Kafka_service.error_to_string e));
   let topic =
     match
       Kafka_service.register svc ~net:env#net ~clock:env#clock (module Demo_order)

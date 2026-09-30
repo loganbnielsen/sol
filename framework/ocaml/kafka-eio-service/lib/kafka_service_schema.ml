@@ -138,48 +138,39 @@ let register_schema net ~clock ~registry_url ~topic_name ~schema =
     Error (Printf.sprintf "schema registry: HTTP %d: %s" status resp_body)
 ;;
 
-type registered =
-  { id : int
-  ; schema : string
-  }
-
-let decode_registered_schema resp_body =
-  let open Result.Syntax in
-  let* json =
-    decode_json
-      ~parse_error:(fun body -> "schema registry: json parse error in: " ^ body)
-      resp_body
-  in
-  match json with
-  | `Assoc fields ->
-    (match List.assoc_opt "id" fields, List.assoc_opt "schema" fields with
-     | Some (`Int id), Some (`String schema) -> Ok { id; schema }
-     | _ -> Error ("schema registry: unexpected subject response: " ^ resp_body))
-  | _ -> Error ("schema registry: unexpected subject response: " ^ resp_body)
-;;
-
 let subject_name topic_name = topic_name ^ "-value"
-
-let registered_schema net ~clock ~registry_url ~topic_name =
-  let subject = subject_name topic_name in
-  match
-    Kafka_service_http.http_get
-      net
-      ~clock
-      ~base_url:registry_url
-      ~path:(Printf.sprintf "/subjects/%s/versions/latest" subject)
-  with
-  | Error e -> Error ("schema registry connect: " ^ e)
-  | Ok (200, resp_body) -> decode_registered_schema resp_body
-  | Ok (404, body) when Schema.is_subject_not_found body ->
-    Error (Printf.sprintf "subject '%s' has no registered schema" subject)
-  | Ok (status, body) -> Error (Printf.sprintf "schema registry HTTP %d: %s" status body)
-;;
 
 let register_contract net ~clock ~registry_url ~topic_name ~schema =
   let open Result.Syntax in
   let* () = set_subject_compatibility net ~clock ~registry_url ~topic_name in
   register_schema net ~clock ~registry_url ~topic_name ~schema
+;;
+
+let lookup_schema net ~clock ~registry_url ~topic_name ~schema =
+  let subject = subject_name topic_name in
+  let body =
+    Yojson.Safe.to_string
+      (`Assoc [ "schemaType", `String "JSON"; "schema", `String schema ])
+  in
+  match
+    Kafka_service_http.http_post
+      net
+      ~clock
+      ~base_url:registry_url
+      ~path:(Printf.sprintf "/subjects/%s" subject)
+      ~content_type:"application/vnd.schemaregistry.v1+json"
+      ~body
+  with
+  | Error e -> Error ("schema registry connect: " ^ e)
+  | Ok (200, resp_body) ->
+    decode_registration_response resp_body |> Result.map (fun r -> r.id)
+  | Ok (404, _) ->
+    Error
+      (Printf.sprintf
+         "subject '%s' has no registered schema matching the declared contract"
+         subject)
+  | Ok (status, resp_body) ->
+    Error (Printf.sprintf "schema registry HTTP %d: %s" status resp_body)
 ;;
 
 module Confluent_wire = struct
