@@ -140,19 +140,17 @@ def main():
     mutate(
         tmp,
         "cli/lib/workspace/sol_cli_manifest_yaml.ml",
-        '''                    ; ( "ports"
-                      , Y.list [ Y.map [ "port", Y.int port; "protocol", Y.string "TCP" ] ] )
-''',
-        "",
+        '"port", Y.int port; "protocol", Y.string "TCP"',
+        '"port", Y.int 5432; "protocol", Y.string "TCP"',
     )
-    cases.append(("allowance-names-no-port", tmp, "names no port"))
+    cases.append(("allowance-port-hardcoded", tmp, "names no port"))
 
     tmp = scratch()
     mutate(
         tmp,
         "cli/lib/workspace/sol_cli_manifest_yaml.ml",
-        '    Y.map [ "ipBlock", Y.map [ "cidr", Y.string cidr ] ]',
-        '    Y.map [ "ipBlock", Y.map [ "cidr", Y.string "0.0.0.0/0" ] ]',
+        'Y.map [ "ipBlock", Y.map [ "cidr", Y.string cidr ] ]',
+        'Y.map [ "ipBlock", Y.map [ "cidr", Y.string "0.0.0.0/0" ] ]',
     )
     cases.append(("allowance-not-scoped", tmp, "cannot be scoped"))
 
