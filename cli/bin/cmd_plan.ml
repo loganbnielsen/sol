@@ -71,10 +71,19 @@ let run target_name =
         (Option.fold ~none:"?" ~some:string_of_int min)
         (Option.fold ~none:"?" ~some:string_of_int max));
   let* () =
-    Sol_cli_contract.plan_report
-      ~workspace:(Sys.getcwd ())
-      ~registry_url:(Sys.getenv_opt "SCHEMA_REGISTRY_URL")
-    |> Sol_cli_exit.of_msg
+    let declares_ocaml =
+      List.exists
+        (fun (s : Sol_cli_config.service) ->
+           s.Sol_cli_config.language <> Some Sol_cli_compat.Typescript)
+        services
+    in
+    if declares_ocaml
+    then
+      Sol_cli_contract.plan_report
+        ~workspace:(Sys.getcwd ())
+        ~registry_url:(Sys.getenv_opt "SCHEMA_REGISTRY_URL")
+      |> Sol_cli_exit.of_msg
+    else Ok ()
   in
   Ok ()
 ;;

@@ -287,23 +287,8 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
   if not (Sol_cli_contract.has_projection ~workspace)
   then Ok ()
   else (
-    let ocaml_names =
-      ctx.facts.Sol_cli_workspace_model.workloads
-      |> List.filter_map (fun (workload : Sol_cli_workspace_model.workload) ->
-        match workload.language with
-        | Some Sol_cli_compat.Ocaml ->
-          Sol_cli_deployment_plan.k8s_name_result workload.service.name
-          |> Result.to_option
-          |> Option.map Sol_cli_kubernetes_name.k8s_name_to_string
-        | _ -> None)
-    in
     match
-      plan.Sol_cli_deployment_plan.services
-      |> List.find_map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-        let name = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name in
-        if List.mem name ocaml_names
-        then Some (Sol_cli_deployment_plan.namespace_to_string spec.namespace, spec.image)
-        else None)
+      Sol_cli_contract.ocaml_reconciliation_image plan.Sol_cli_deployment_plan.services
     with
     | None -> Ok ()
     | Some (namespace, image) ->

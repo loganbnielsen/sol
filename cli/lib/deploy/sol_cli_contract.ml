@@ -98,6 +98,33 @@ let plan_report ~workspace ~registry_url =
     Ok ())
 ;;
 
+let scope_has_ocaml services =
+  List.exists
+    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+       spec.Sol_cli_deployment_plan.language <> Some Sol_cli_compat.Typescript)
+    services
+;;
+
+let ocaml_reconciliation_image services =
+  let is_typescript (spec : Sol_cli_deployment_plan.service_spec) =
+    spec.Sol_cli_deployment_plan.language = Some Sol_cli_compat.Typescript
+  in
+  let candidate =
+    match
+      List.find_opt
+        (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+           spec.Sol_cli_deployment_plan.language = Some Sol_cli_compat.Ocaml)
+        services
+    with
+    | Some spec -> Some spec
+    | None -> List.find_opt (fun spec -> not (is_typescript spec)) services
+  in
+  Option.map
+    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+       Sol_cli_deployment_plan.namespace_to_string spec.namespace, spec.image)
+    candidate
+;;
+
 let reconcile_in_destination ~ctx ~namespace ~image =
   match
     Sol_cli_migration_job.submit_doc
