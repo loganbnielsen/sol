@@ -29,7 +29,7 @@ shared user's `--role-arn`; both contexts then authenticated as the role written
 context named the deploy role and used the cluster-access one. The evidence is the file itself:
 
 ```
-- name: arn:aws:eks:us-east-1:876701109436:cluster/sol-qual-aws-32      ← one user, both contexts
+- name: arn:aws:eks:us-east-1:123456789012:cluster/sol-qual-aws-32      ← one user, both contexts
 - context: … name: sol-qual-aws-32-access
 - context: … name: sol-qual-aws-32-deploy
 current-context: sol-qual-aws-32-deploy
@@ -73,7 +73,7 @@ path then failed at its first cluster mutation:
 ```
 error: kubectl create (workspace substrate): exited with code 1: Error from server (Forbidden):
 error when creating "/tmp/sol-substrate-a94b42.yaml": rolebindings.rbac.authorization.k8s.io is
-forbidden: User "arn:aws:sts::876701109436:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth"
+forbidden: User "arn:aws:sts::123456789012:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth"
 cannot create resource "rolebindings" in API group "rbac.authorization.k8s.io" in the namespace
 "pluto-checkout"
 ```

@@ -72,10 +72,10 @@ ns-1335.awsdns-38.org	ns-803.awsdns-36.net	ns-1560.awsdns-03.co.uk	ns-485.awsdns
 Imports into the durable root's S3-backed state (`bootstrap/aws/default.tfstate`):
 
 ```
-aws_s3_bucket.state                                 -> sol-qual5-876701109436-tfstate
-aws_s3_bucket_versioning.state                      -> sol-qual5-876701109436-tfstate
-aws_s3_bucket_server_side_encryption_configuration.state -> sol-qual5-876701109436-tfstate
-aws_s3_bucket_public_access_block.state             -> sol-qual5-876701109436-tfstate
+aws_s3_bucket.state                                 -> sol-qual5-123456789012-tfstate
+aws_s3_bucket_versioning.state                      -> sol-qual5-123456789012-tfstate
+aws_s3_bucket_server_side_encryption_configuration.state -> sol-qual5-123456789012-tfstate
+aws_s3_bucket_public_access_block.state             -> sol-qual5-123456789012-tfstate
 aws_dynamodb_table.lock                             -> sol-qual5-tflock
 aws_route53_zone.qualification[0]                   -> Z0555133LN4ZIDB3U52A
 ```

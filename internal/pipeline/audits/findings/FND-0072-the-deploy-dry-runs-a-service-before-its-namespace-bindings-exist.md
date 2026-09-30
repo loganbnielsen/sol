@@ -23,7 +23,7 @@ specimen. `sol deploy` then failed while preparing `notify_worker`:
 error: kubectl server-side dry-run failed: exited with code 1: Error from server (Forbidden):
 error when retrieving current configuration of: … /tmp/sol-manifest-431065.yaml:
 serviceaccounts "notify-worker" is forbidden: User
-"arn:aws:sts::876701109436:assumed-role/sol-qual5-deploy/EKSGetTokenAuth" cannot get resource
+"arn:aws:sts::123456789012:assumed-role/sol-qual5-deploy/EKSGetTokenAuth" cannot get resource
 "serviceaccounts" in API group "" in the namespace "pluto-comms"
 ```
 

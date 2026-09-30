@@ -10,7 +10,7 @@ Fresh specimen; the delegated hosted zone is the durable one owned by the AWS bo
   authoritatively: `dig`-equivalent SOA via the resolvers returns
   `ns-1335.awsdns-38.org. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400`.
 - **Durable root reconciled by the row itself.** The harness's new durable-root step ran as part
-  of the cloud phase: `bootstrap: state bucket s3://sol-qual5-876701109436-tfstate present`,
+  of the cloud phase: `bootstrap: state bucket s3://sol-qual5-123456789012-tfstate present`,
   then `bootstrap: durable root already matches its declared state` — a no-op, which is also the
   first live exercise of that step.
 
@@ -20,13 +20,13 @@ Fresh specimen; the delegated hosted zone is the durable one owned by the AWS bo
 lifecycle phase: CloudBootstrap
   whoami capture: ~/.sol-qual/whoami-capture-….json
   whoami shape: parsed (identity source: extra.canonicalArn)
-  cluster access identity: arn:aws:iam::876701109436:role/sol-qual5-cluster-access
+  cluster access identity: arn:aws:iam::123456789012:role/sol-qual5-cluster-access
   bootstrap window control: principal=confirmed arn:…:role/sol-qual5-cluster-access;
     escalate clusterroles=permitted, bind clusterroles=permitted
 lifecycle phase: PlatformInstalling
   [platform-prerequisites-apply] ok (57.3s)
   [platform-apply] ok
-  de-escalation verified as arn:aws:iam::876701109436:role/sol-qual5-cluster-access
+  de-escalation verified as arn:aws:iam::123456789012:role/sol-qual5-cluster-access
 lifecycle phase: Ready
 Done.
 ```
@@ -56,7 +56,7 @@ its first step, the workspace substrate:
 ```
 error: kubectl create (workspace substrate): exited with code 1: Error from server (Forbidden):
 error when creating "/tmp/sol-substrate-a94b42.yaml": rolebindings.rbac.authorization.k8s.io is
-forbidden: User "arn:aws:sts::876701109436:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth"
+forbidden: User "arn:aws:sts::123456789012:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth"
 cannot create resource "rolebindings" in API group "rbac.authorization.k8s.io" in the namespace
 "pluto-checkout"
 ```
