@@ -334,7 +334,10 @@ let () =
            Pg_db.transaction pool (fun pool ->
              let open Result.Syntax in
              let* () = FulfilledOrders.insert pool row in
-             Jobs.enqueue pool EmailJobCodec.{ order_id = msg.Message.order_id })
+             Jobs.enqueue
+               pool
+               ~dedupe_key:msg.Message.order_id
+               EmailJobCodec.{ order_id = msg.Message.order_id })
          in
          (match result with
           | Ok () -> ()

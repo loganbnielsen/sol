@@ -154,6 +154,9 @@ let claim_q =
                                     AND candidate.budget >= 0
                                THEN 'worker stopped before finishing the previous attempt'
                                ELSE job.last_error END,
+             finished_at = CASE WHEN candidate.attempts >= candidate.budget
+                                     AND candidate.budget >= 0
+                                THEN now() ELSE job.finished_at END,
              attempts = CASE WHEN candidate.attempts >= candidate.budget
                                   AND candidate.budget >= 0
                              THEN job.attempts ELSE job.attempts + 1 END
@@ -166,7 +169,10 @@ let claim_q =
 let complete_q =
   Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
     (Printf.sprintf
-       "DELETE FROM %s WHERE id = ? AND attempts = ? AND status = 'pending' RETURNING id"
+       {|UPDATE %s
+         SET status = 'completed', finished_at = now(), locked_until = NULL
+         WHERE id = ? AND attempts = ? AND status = 'pending'
+         RETURNING id|}
        table)
 ;;
 
@@ -185,7 +191,8 @@ let retry_q =
 let fail_q =
   Caqti_request.Infix.(Caqti_type.(t3 string int int) ->? Caqti_type.int)
     (Printf.sprintf
-       {|UPDATE %s SET status = 'failed', locked_until = NULL, last_error = ?
+       {|UPDATE %s
+         SET status = 'failed', finished_at = now(), locked_until = NULL, last_error = ?
          WHERE id = ? AND attempts = ? AND status = 'pending'
          RETURNING id|}
        table)
@@ -199,6 +206,16 @@ let renew_q =
          WHERE id = ? AND attempts = ? AND status = 'pending'
            AND locked_until > now()
          RETURNING id|}
+       table)
+;;
+
+let sweep_q =
+  Caqti_request.Infix.(Caqti_type.(float ->. Caqti_type.unit))
+    (Printf.sprintf
+       {|DELETE FROM %s
+         WHERE status <> 'pending'
+           AND finished_at IS NOT NULL
+           AND finished_at < now() - (?::float8 * interval '1 second')|}
        table)
 ;;
 
@@ -274,12 +291,35 @@ let with_runtime ~env ~ot ~metrics_port ~stop ~max_jobs ~body =
   result
 ;;
 
+let default_terminal_retention_s = 604800.0
+let default_sweep_interval_s = 60.0
+
+let validate_retention ~terminal_retention_s ~sweep_interval_s =
+  let non_negative name value =
+    if Float.is_finite value && value >= 0.0
+    then Ok ()
+    else
+      Error
+        (`Config
+            (Printf.sprintf
+               "%s must be a finite number >= 0 (got %s)"
+               name
+               (Float.to_string value)))
+  in
+  match non_negative "terminal_retention_s" terminal_retention_s with
+  | Error _ as e -> e
+  | Ok () -> non_negative "sweep_interval_s" sweep_interval_s
+;;
+
 module Make (J : JOB) = struct
-  let enqueue pool ?run_at (job : J.t) =
+  let enqueue pool ?run_at ?dedupe_key (job : J.t) =
     let insert_q =
-      Caqti_request.Infix.(Caqti_type.(t3 string string float) ->. Caqti_type.unit)
+      Caqti_request.Infix.(
+        Caqti_type.(t4 string string float (option string)) ->. Caqti_type.unit)
         (Printf.sprintf
-           "INSERT INTO %s (kind, payload, run_at) VALUES (?, ?, to_timestamp(?))"
+           {|INSERT INTO %s (kind, payload, run_at, dedupe_key)
+             VALUES (?, ?, to_timestamp(?), ?)
+             ON CONFLICT (kind, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING|}
            table)
     in
     let run_at = Option.value run_at ~default:(Unix.gettimeofday ()) in
@@ -291,7 +331,7 @@ module Make (J : JOB) = struct
            (Printf.sprintf
               "sol-jobs: kind %S is not in J.kinds; nothing would claim it"
               kind))
-    else Pg_db.exec pool insert_q (kind, J.encode job, run_at)
+    else Pg_db.exec pool insert_q (kind, J.encode job, run_at, dedupe_key)
   ;;
 
   let run
@@ -306,12 +346,15 @@ module Make (J : JOB) = struct
         ?stop
         ?max_jobs
         ?(max_claim_failures = default_max_claim_failures)
+        ?(terminal_retention_s = default_terminal_retention_s)
+        ?(sweep_interval_s = default_sweep_interval_s)
         ()
     =
     let open Result.Syntax in
     let* () = validate_retry_policy retry_policy in
     let* () = validate_timing ~poll_interval_s ~lease_s in
     let* () = validate_kinds J.kinds in
+    let* () = validate_retention ~terminal_retention_s ~sweep_interval_s in
     let* () =
       match Pg_db.find pool table_check_q () with
       | Ok _ -> Ok ()
@@ -363,7 +406,7 @@ module Make (J : JOB) = struct
            | Error e ->
              log_warn
                [ "job_id", string_of_int id; "error", Pg_error.to_string e ]
-               "sol-jobs: failed to delete completed job (will be reclaimed after its \
+               "sol-jobs: failed to mark the job completed (will be reclaimed after its \
                 lease expires and re-run)");
           (match job_duration with
            | Some h -> h (Eio.Time.now env#clock -. t0)
@@ -401,7 +444,21 @@ module Make (J : JOB) = struct
                   lease expires and re-run)");
             count "retry" ~kind)
         in
+        let last_sweep = ref 0.0 in
+        let sweep_expired () =
+          let now = Eio.Time.now env#clock in
+          if now -. !last_sweep >= sweep_interval_s
+          then (
+            (match Pg_db.exec pool sweep_q terminal_retention_s with
+             | Ok () -> ()
+             | Error e ->
+               log_warn
+                 [ "error", Pg_error.to_string e ]
+                 "sol-jobs: failed to sweep expired terminal jobs");
+            last_sweep := now)
+        in
         let rec loop ~failures =
+          sweep_expired ();
           if should_stop ()
           then Ok ()
           else (

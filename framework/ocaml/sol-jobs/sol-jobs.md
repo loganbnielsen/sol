@@ -62,20 +62,54 @@ CREATE TABLE IF NOT EXISTS sol_jobs (
   id           SERIAL      PRIMARY KEY,
   kind         TEXT        NOT NULL,
   payload      TEXT        NOT NULL,
-  status       TEXT        NOT NULL DEFAULT 'pending',  -- 'pending' | 'failed'
+  status       TEXT        NOT NULL DEFAULT 'pending',  -- 'pending' | 'completed' | 'failed'
   attempts     INT         NOT NULL DEFAULT 0,
   run_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   locked_until TIMESTAMPTZ,
   last_error   TEXT,
-  inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  dedupe_key   TEXT,
+  inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at  TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS sol_jobs_claim_idx
   ON sol_jobs (run_at)
   WHERE status = 'pending';
+
+CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
+  ON sol_jobs (kind, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx
+  ON sol_jobs (finished_at)
+  WHERE status <> 'pending';
 ```
 
 The table name (`sol_jobs`) is fixed, not configurable — one app, one job table, matching FEAT-077's non-goal against a pluggable/configurable backend surface.
+
+## Deduplication: the Kafka → jobs handoff
+
+`enqueue ?dedupe_key` makes handing work from a Kafka fact to a job idempotent. The dedupe key is the **event's** stable id, not a job id:
+
+```ocaml
+Jobs.enqueue pool ~dedupe_key:event.id (Send_confirmation_email { order_id })
+```
+
+- The uniqueness constraint on `(kind, dedupe_key)` lives in the database, not only in `enqueue`: two concurrent enqueues of the same key insert one row.
+- **A duplicate is success.** `enqueue` returns `Ok ()` whether it inserted the row or found one already there — the caller cannot, and should not have to, tell those apart. No job id is returned, so nothing else about the existing row is observable.
+- Omitting `~dedupe_key` keeps the plain at-least-once insert: two calls enqueue two jobs. That is the right shape when the caller has no stable id to offer.
+
+**How long a key stays occupied.** A finished job's row is retained for `~terminal_retention_s` (default 604800s = 7 days) and only then swept, so its dedupe key blocks a re-enqueue for that whole window. That is the point: a Kafka redelivery usually arrives after the first attempt has already finished, and deleting the row on completion would re-enqueue exactly then.
+
+```text
+enqueue evt-1 → handle → completed ─┐
+                                    │  row retained: a redelivery of evt-1 is a no-op
+redeliver evt-1 ────────────────────┘
+```
+
+Past the window the key is free again, so a redelivery *older than the window* enqueues a second job. **That horizon is part of the contract**: choose a window longer than the redelivery you need to absorb, and keep a handler idempotent if it must survive anything older. The alternative — retaining forever — would grow the job table with throughput.
+
+Sweeping happens inside the poller (`~sweep_interval_s`, default 60s), so it needs no separate process or cron. `status = 'completed'` rows are never claimed: the claim query and its partial index both filter on `'pending'`.
 
 ## Claim, lease, and retry mechanics
 
