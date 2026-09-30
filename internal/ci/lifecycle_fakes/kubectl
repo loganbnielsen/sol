@@ -74,20 +74,28 @@ case " $* " in
     esac
 esac
 case " $* " in
-  *" get pods --all-namespaces "*)
+  *" get pods -n "*)
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
-      printf '%s\n' '{"items":[{"metadata":{"namespace":"pluto-payments"}},{"metadata":{"namespace":"pluto-comms"}}]}'
+      printf '%s\n' '{"items":[{"metadata":{"name":"charge-svc-qual","namespace":"lifecycle-test-payments"}}]}'
     else
       printf '{"items":[]}\n'
     fi
     exit 0
     ;;
-  *" delete namespace "*)
+  *" delete deployment,cronjob,job -n "*)
     if [ "${RELEASE_DELETE_FAILS:-}" = 1 ]; then
-      printf 'error: the namespace could not be deleted\n' >&2
+      printf 'error: the workload could not be deleted\n' >&2
       exit 1
     fi
-    printf 'namespace deleted\n'
+    printf 'deployment.apps deleted\n'
+    exit 0
+    ;;
+  *" wait --for=delete pod -n "*)
+    if [ "${RELEASE_WAIT_FAILS:-}" = 1 ]; then
+      printf 'error: timed out waiting for the pods to go\n' >&2
+      exit 1
+    fi
+    printf 'pod deleted\n'
     exit 0
     ;;
   *" api-resources "*)

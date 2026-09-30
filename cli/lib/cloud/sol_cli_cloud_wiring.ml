@@ -809,9 +809,7 @@ let destroy_deps
         ~vars:platform_vars)
   in
   let release_workloads_result () : (unit, string) result =
-    let* destination =
-      Sol_cli_config.destination_of_target target_cfg
-    in
+    let* destination = Sol_cli_config.destination_of_target target_cfg in
     let ctx = Sol_cli_kube_destination.context_of_destination destination in
     let workspace = workspace_name () in
     let release namespace =
@@ -819,7 +817,9 @@ let destroy_deps
         Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_args ~namespace ~workspace)
         |> Result.map_error Sol_cli_process.error_to_string
       in
-      let* pods = Sol_cli_workload_scope.pods_of_pods_json listing.Sol_cli_process.stdout in
+      let* pods =
+        Sol_cli_workload_scope.pods_of_pods_json listing.Sol_cli_process.stdout
+      in
       match pods with
       | [] -> Ok ()
       | pods ->
@@ -827,7 +827,10 @@ let destroy_deps
         let* () =
           Sol_cli_kubectl.run
             ~ctx
-            (Sol_cli_workload_scope.delete_args ~namespace ~workspace ~timeout_seconds:300)
+            (Sol_cli_workload_scope.delete_args
+               ~namespace
+               ~workspace
+               ~timeout_seconds:300)
           |> Result.map_error Sol_cli_process.error_to_string
           |> Result.map (fun _ -> ())
         in

@@ -49,12 +49,12 @@ let pods_of_pods_json json =
       (items
        |> List.filter_map (fun item ->
          Sol_cli_json.field [ "metadata"; "name" ] item |> Sol_cli_json.string)
+       |> List.filter (fun name -> not (Sol_cli_string.is_blank name))
        |> List.sort String.compare)
 ;;
 
 let to_string scope =
   match scope.pods with
   | [] -> Printf.sprintf "%s: no workload of this workspace is running" scope.namespace
-  | pods ->
-    Printf.sprintf "%s: releasing %s" scope.namespace (String.concat ", " pods)
+  | pods -> Printf.sprintf "%s: releasing %s" scope.namespace (String.concat ", " pods)
 ;;

@@ -11,7 +11,9 @@ COPIED = [
     "cli/lib/cloud/sol_cli_cloud_destroy.ml",
     "cli/lib/cloud/sol_cli_cloud_destroy.mli",
     "cli/lib/cloud/sol_cli_workload_scope.ml",
+    "cli/lib/cloud/sol_cli_cloud_wiring.ml",
     "cli/lib/cloud/dune",
+    "cli/bin/cmd_cloud_tf.ml",
 ]
 
 
@@ -90,12 +92,41 @@ def main():
     expect_rejected("release-failure-no-longer-degrades", tmp, "no longer degrades the teardown")
 
     tmp = scratch()
-    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"workspace=" ^ workspace', '"app=" ^ workspace')
-    expect_rejected("discovery-selects-a-different-label", tmp, "ownership label Sol renders")
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        '  ; "-n"\n',
+        '  ; "--all-namespaces"\n',
+        count=3,
+    )
+    expect_rejected("read-is-cluster-wide", tmp, "no longer a namespaced pod listing")
 
     tmp = scratch()
-    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"--wait=true"', '"--wait=false"')
-    expect_rejected("removal-stops-waiting", tmp, "no longer waits")
+    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"workspace=" ^ workspace', '"app=" ^ workspace')
+    expect_rejected("read-selects-a-different-label", tmp, "ownership label Sol renders")
+
+    tmp = scratch()
+    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"--for=delete"', '"--for=ready"')
+    expect_rejected("release-stops-waiting-for-the-pods", tmp, "no longer waits")
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
+        "Sol_cli_config.destination_of_target target_cfg in\n",
+        "Ok (Sol_cli_kube_destination.context_of_destination Sol_cli_kube_destination.local) in\n",
+    )
+    expect_rejected("release-runs-as-the-platform-identity", tmp, "no longer runs as the target's deploy identity")
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/bin/cmd_cloud_tf.ml",
+        "declared_workload_namespaces",
+        "undeclared_workload_scope",
+        count=2,
+    )
+    expect_rejected("declared-scope-dropped", tmp, "no longer supplies the declared namespace scope")
 
     tmp = scratch()
     mutate(
@@ -116,8 +147,9 @@ def main():
     expect_rejected("scope-read-from-the-release-store", tmp, "reads release-store state")
 
     print("test_workload_release_order_check: the guard accepts the real tree and rejects a destroy")
-    print("  that drops the release, one that stops degrading, one that selects a different label,")
-    print("  one that stops waiting, one that inverts the layer graph, and one that reads the store")
+    print("  that drops the release, one that stops degrading, one that reads cluster-wide, one that")
+    print("  selects a different label, one that stops waiting, one that keeps the platform identity,")
+    print("  one that drops the declared scope, and one that inverts the layer graph")
 
 
 main()

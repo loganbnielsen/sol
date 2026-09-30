@@ -17,6 +17,9 @@ if [ "$heredocs_open" != "$heredocs_close" ]; then
 fi
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/sol" "$tmp/markers"
+mkdir -p "$tmp/work/app/payments/charge_svc" "$tmp/work/app/comms/notify_worker"
+printf 'FROM scratch\n' >"$tmp/work/app/payments/charge_svc/Dockerfile"
+printf 'FROM scratch\n' >"$tmp/work/app/comms/notify_worker/Dockerfile"
 cp "$root"/internal/ci/lifecycle_fakes/* "$tmp/bin/"
 
 cat >"$tmp/work/sol.yml" <<'EOF'
@@ -24,6 +27,15 @@ project: lifecycle-test
 resources:
   app_db:
     type: postgres
+services:
+  charge_svc:
+    type: http
+    path: app/payments/charge_svc
+    language: ocaml
+  notify_worker:
+    type: worker
+    path: app/comms/notify_worker
+    language: ocaml
 EOF
 cat >"$tmp/work/sol/environments.yml" <<'EOF'
 prod:
@@ -55,6 +67,7 @@ prod:
       cluster_name: sol-qual
       letsencrypt_email: ops@example.test
       state_bucket: sol-qualification-tfstate
+      kube_context: lifecycle-test
       destroy_retention: none
       gcp:
         project_id: sol-qualification
@@ -498,27 +511,40 @@ grep -F 'Releasing the application workloads' "$release_log.out" >/dev/null || {
   cat "$release_log.out" >&2
   exit 1
 }
-grep -F 'get pods --all-namespaces' "$release_log" >/dev/null || {
-  echo "the destroy did not discover the deployed workload scope from the cluster:" >&2
+grep -F 'get pods -n work-payments' "$release_log" >/dev/null || {
+  echo "the destroy did not scope its read to the declared namespace:" >&2
   grep -F 'kubectl' "$release_log" >&2
   exit 1
 }
-for namespace in pluto-payments pluto-comms; do
-  grep -F "delete namespace $namespace" "$release_log" >/dev/null || {
-    echo "the destroy did not remove the workloads in $namespace:" >&2
+if grep -F -- '--all-namespaces' "$release_log" >/dev/null; then
+  echo "the destroy read pods cluster-wide rather than within the declared namespaces:" >&2
+  grep -F 'kubectl' "$release_log" >&2
+  exit 1
+fi
+for namespace in work-payments work-comms; do
+  grep -F "delete deployment,cronjob,job -n $namespace" "$release_log" >/dev/null || {
+    echo "the destroy did not release the workloads in $namespace:" >&2
+    grep -F 'kubectl' "$release_log" >&2
+    exit 1
+  }
+  grep -F "wait --for=delete pod -n $namespace" "$release_log" >/dev/null || {
+    echo "the destroy did not wait for $namespace's pods to go:" >&2
     grep -F 'kubectl' "$release_log" >&2
     exit 1
   }
 done
-release_line="$(grep -n -m1 'delete namespace pluto-payments' "$release_log" | cut -d: -f1)"
+release_line="$(
+  grep -n -m1 'delete deployment,cronjob,job -n work-payments' "$release_log" | cut -d: -f1
+)"
 substrate_line="$(
   grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_log" | head -1 | cut -d: -f1
 )"
 if [ -z "$release_line" ] || [ -z "$substrate_line" ] || [ "$release_line" -ge "$substrate_line" ]; then
   echo "the workloads were not released before the substrate was destroyed (release=$release_line substrate=$substrate_line):" >&2
-  grep -nE 'delete namespace|cloud/gcp/cluster .* destroy ' "$release_log" >&2
+  grep -nE 'delete deployment|cloud/gcp/cluster .* destroy ' "$release_log" >&2
   exit 1
 fi
+
 
 release_fail_log="$tmp/release-fail-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
