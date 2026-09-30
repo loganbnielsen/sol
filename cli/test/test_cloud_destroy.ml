@@ -167,6 +167,7 @@ type calls =
   ; mutable substrate : int
   ; mutable verify : int
   ; mutable reports : string list
+  ; mutable order : string list
   }
 
 let verified_observation =
@@ -183,6 +184,7 @@ let fake_deps
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
+      ?(release_workloads = fun () -> Ok ())
       ?(destroy_substrate = fun () -> Ok ())
       ?(verify_destruction = fun ~pre_destroy:_ ~preparation:_ -> verified_observation)
       ()
@@ -198,6 +200,7 @@ let fake_deps
     ; substrate = 0
     ; verify = 0
     ; reports = []
+    ; order = []
     }
   in
   let deps =
@@ -232,9 +235,14 @@ let fake_deps
           remove ())
     ; observe_window_before = (fun () -> Ok ())
     ; verify_window_after = (fun () -> Ok ())
+    ; release_workloads =
+        (fun () ->
+          calls.order <- "release" :: calls.order;
+          release_workloads ())
     ; destroy_substrate =
         (fun () ->
           calls.substrate <- calls.substrate + 1;
+          calls.order <- "substrate" :: calls.order;
           destroy_substrate ())
     ; verify_destruction =
         (fun ~pre_destroy ~preparation ->
@@ -576,6 +584,76 @@ let test_unremovable_elevated_access_does_not_immobilise_the_substrate () =
   Alcotest.(check int) "the substrate was destroyed anyway" 1 calls.substrate;
   Alcotest.(check int) "and the absence check still ran" 1 calls.verify;
   Alcotest.(check int) "a verified absence exits 0" exit_clean (exit_code outcome)
+;;
+
+let test_the_workload_scope_comes_from_the_labelled_pods () =
+  let listing =
+    {|{"items":[{"metadata":{"namespace":"pluto-payments","labels":{"workspace":"pluto"}}},
+                {"metadata":{"namespace":"pluto-comms","labels":{"workspace":"pluto"}}},
+                {"metadata":{"namespace":"pluto-payments","labels":{"workspace":"pluto"}}},
+                {"metadata":{"namespace":"other"}}]}|}
+  in
+  Alcotest.(check (result (list string) string))
+    "distinct namespaces, in a stable order"
+    (Ok [ "other"; "pluto-comms"; "pluto-payments" ])
+    (Sol_cli_workload_scope.namespaces_of_pods_json listing);
+  Alcotest.(check (result (list string) string))
+    "a listing with no pods is an empty scope, not an error"
+    (Ok [])
+    (Sol_cli_workload_scope.namespaces_of_pods_json {|{"items":[]}|});
+  Alcotest.(check bool)
+    "a listing that cannot be read is an error rather than an empty scope"
+    true
+    (match Sol_cli_workload_scope.namespaces_of_pods_json "not json" with
+     | Error _ -> true
+     | Ok _ -> false)
+;;
+
+let test_the_removal_waits_for_the_pods_to_go () =
+  let args =
+    Sol_cli_workload_scope.delete_namespace_args
+      ~namespace:"pluto-payments"
+      ~timeout_seconds:300
+  in
+  Alcotest.(check bool)
+    "the removal is a wait, so the sessions are closed before the database is touched"
+    true
+    (List.exists (fun arg -> arg = "--wait=true") args);
+  Alcotest.(check bool)
+    "and it is bounded"
+    true
+    (List.exists (fun arg -> Sol_cli_string.contains ~needle:"--timeout=" arg) args);
+  Alcotest.(check string)
+    "the listing asks for the workspace's pods across every namespace"
+    "workspace=pluto"
+    (Sol_cli_workload_scope.selector ~workspace:"pluto")
+;;
+
+let test_the_workloads_are_released_before_the_substrate_is_destroyed () =
+  let deps, calls = fake_deps () in
+  ignore (execute ~deps);
+  Alcotest.(check (list string))
+    "the workloads that hold the managed database's sessions are released first"
+    [ "release"; "substrate" ]
+    (List.rev calls.order)
+;;
+
+let test_a_release_failure_is_reported_and_the_teardown_continues () =
+  let deps, calls =
+    fake_deps ~release_workloads:(fun () -> Error "the cluster refused the request") ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Sol_cli_cloud_destroy.Destroy_succeeded { degradations; _ } ->
+     Alcotest.(check bool)
+       "the failure is named as a degradation rather than swallowed"
+       true
+       (List.exists
+          (fun degradation ->
+             Sol_cli_string.contains ~needle:"could not be released" degradation)
+          degradations)
+   | _ -> Alcotest.fail "a release failure must not stop the teardown");
+  Alcotest.(check int) "and the substrate is still destroyed" 1 calls.substrate
 ;;
 
 let test_destroy_that_cannot_converge_claims_no_absence () =
@@ -1723,6 +1801,22 @@ let () =
             "degradation preserved when verification fails"
             `Quick
             test_degradation_preserved_when_verification_fails
+        ; Alcotest.test_case
+            "the workload scope comes from the labelled pods"
+            `Quick
+            test_the_workload_scope_comes_from_the_labelled_pods
+        ; Alcotest.test_case
+            "the removal waits for the pods to go"
+            `Quick
+            test_the_removal_waits_for_the_pods_to_go
+        ; Alcotest.test_case
+            "workloads are released before the substrate is destroyed"
+            `Quick
+            test_the_workloads_are_released_before_the_substrate_is_destroyed
+        ; Alcotest.test_case
+            "a release failure is reported and teardown continues"
+            `Quick
+            test_a_release_failure_is_reported_and_the_teardown_continues
         ; Alcotest.test_case "missing retention fails" `Quick test_missing_retention_fails
         ; Alcotest.test_case "fully clean exits 0" `Quick test_fully_clean_is_exit_0
         ; Alcotest.test_case

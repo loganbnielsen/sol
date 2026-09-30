@@ -396,6 +396,9 @@ run_case() {
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
+  if [ "${PRESEED_EMPTY_TARGET:-0}" = "1" ]; then
+    : >"$TARGET_FILE"
+  fi
   if [ "${PRESEED_TARGET:-0}" = "1" ]; then
     printf '# Written by internal/qualification/gcp/live-qual.sh (test preseed)\nqual:\n  targets:\n    gcp/us-central1:\n      cluster_name: test-cluster\n      base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
   fi
@@ -513,6 +516,21 @@ run_case app-nocred app
 is "it exits 2" "$(cat "$TMP/app-nocred.rc")" "2"
 has "and says why" "no run kubeconfig" "$TMP/app-nocred.out"
 lacks "and invokes no Sol command before it has somewhere to deploy" "sol deploy" "$TMP/app-nocred.argv"
+
+printf '\nscenario: destroy asks for the identity it uses (FND-0078)\n'
+run_case destroy-nocred destroy CLUSTER=test-cluster IMPERSONATOR=
+is "a destroy without the impersonator is refused" "$(cat "$TMP/destroy-nocred.rc")" "1"
+has "and names the variable the phase needs rather than crashing on it" \
+  "IMPERSONATOR" "$TMP/destroy-nocred.out"
+lacks "and tears nothing down" "cloud destroy" "$TMP/destroy-nocred.argv"
+
+printf '\nscenario: destroy reuses the target file the harness left behind (FND-0078)\n'
+run_case destroy-empty-target destroy CLUSTER=test-cluster IMPERSONATOR=user:test@example.test \
+  PRESEED_EMPTY_TARGET=1
+lacks "an empty harness target file is not treated as a foreign one" \
+  "was not written by this harness" "$TMP/destroy-empty-target.out"
+has "and the phase went on to destroy its target, which it could only do from a usable file" \
+  "cloud destroy" "$TMP/destroy-empty-target.argv"
 
 printf '\nscenario: no phase given\n'
 run_case_without_a_phase

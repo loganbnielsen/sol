@@ -11,7 +11,7 @@ TARGET="${TARGET:-qual/gcp/us-central1}"
 TARGET_ENV="${TARGET%%/*}"
 TARGET_KEY="${TARGET#*/}"
 TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
-TARGET_MARK="# Written by internal/qualification/gcp/live-qual.sh for $TARGET; removed after a verified teardown."
+TARGET_MARK="# Written by internal/qualification/gcp/live-qual.sh for $TARGET; each phase rewrites it for the target that phase needs, and it is removed after a verified teardown."
 
 PROJECT="${PROJECT:-sol-qualification}"
 REGION="${REGION:-us-central1}"
@@ -38,6 +38,7 @@ case "${1:-}" in
   destroy | verify | "")
     if [ -n "${1:-}" ]; then
       CLUSTER="${CLUSTER:?Set CLUSTER to the cluster name to check}"
+      IMPERSONATOR="${IMPERSONATOR:?Set IMPERSONATOR to the calling identity, e.g. user:you@example.com}"
     fi
     ;;
 esac
@@ -120,7 +121,8 @@ run() {
 }
 
 owns_target_file() {
-  [ -f "$TARGET_FILE" ] && head -1 "$TARGET_FILE" | grep -qF "live-qual.sh"
+  if [ ! -s "$TARGET_FILE" ]; then return 0; fi
+  head -1 "$TARGET_FILE" | grep -qF "live-qual.sh"
 }
 
 remove_target() {
