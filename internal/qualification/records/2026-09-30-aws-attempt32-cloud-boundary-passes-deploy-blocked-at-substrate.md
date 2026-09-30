@@ -130,3 +130,58 @@ to make it pass.
 The specimen remains standing at platform `Ready` with a partial workspace substrate, and is used
 for discovery only — it is not the final qualification row, which still has to run fresh from
 `cloud plan` through independently verified teardown once this is fixed.
+
+## FND-0072 fixed, and the deploy path now completes on AWS
+
+The defect was that the deploy path's only call to the substrate step sat behind the plan's
+profile, so a profile-less target never bootstrapped a namespace: `sol deploy` created
+`pluto-comms` and then had its server-side dry-run refused there, while `sol migrate apply`
+looked healthy only because its own path calls the substrate unconditionally.
+
+The substrate is now its own prerequisite — unconditional of the profile, derived from the plan's
+namespaces, called before the dry-run and before the apply, and refusing a side-effect-free run
+with an explanation instead of letting the gap surface as a cluster refusal
+(`check_deploy_substrate_order.py` + ten mutations). The discovery specimen showed it working:
+
+```
+deploy-substrate
+  pluto-payments: no sol-deploy RoleBinding yet
+  pluto-comms: no sol-deploy RoleBinding yet
+app-deploy
+  the deploy established the scoped deploy RBAC in every namespace it entered
+```
+
+Neither namespace had the binding beforehand, so this is the clean case the finding asked for —
+not a namespace that `sol migrate apply` had already prepared. The deploy then reported
+"Done. 2 service(s) deployed.", `charge-svc` was `1/1 Running` on `:80`, and both images were
+built and pushed from ECR.
+
+## The application transaction does not complete (FND-0073)
+
+The row's transaction then failed at its first request. The service accepts `POST /charges`,
+reads the body, and never answers — 0 bytes back at both 15s and 30s, with nothing in its log
+beyond `sol-svc listening on :8080`. Every dependency was checked live and is healthy: schema
+registry HTTP 200, broker TCP open, Redpanda admin HTTP 200, RDS 5432 open, and the same
+`POSTGRES_URL` carried a successful migration Job earlier in the attempt. Kafka itself sees the
+service working — its topic `pluto-payments-charges` is created by the service's own retry loop
+and the registry lists `pluto-payments-charges-value` — and the advertised internal listener is a
+DNS name with all three brokers Ready.
+
+So the request path reaches Kafka, registers its schema and creates its topic, and then does not
+return. Filed as FND-0073 with the evidence; the remaining candidate is the produce/delivery
+receipt path as exercised on EKS, which needs its own trace rather than a guessed timeout.
+
+**The row's transaction method changed for a least-privilege reason.** It used
+`kubectl port-forward`, which no Sol identity may perform — deploy holds `jobs` but not
+`pods/portforward`, operator is `get`/`list` only, cluster-access holds no pod authority. The row
+now drives the transaction the way the product reaches a service: a Job in the application
+namespace using the deploy identity's existing `jobs` authority, read back from its log. Nothing
+was widened.
+
+## Specimen disposition
+
+The discovery specimen was torndown through the supported path (`sol cloud destroy … --apply`)
+after this, because the FND-0073 investigation will take materially longer than it is useful to
+hold a `Ready` platform for. Attempt 32 is not a qualification run: it reached the application
+contract, proved two fixes live, and exposed a third defect. AWS remains unqualified until one
+fresh specimen completes the whole row.
