@@ -23,6 +23,7 @@ let target : Sol_cli_config.target =
   ; alert_runbook_url = None
   ; state_bucket = Some "acme-state"
   ; cluster_endpoint_cidr = None
+  ; dns_zone_ownership = None
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields =

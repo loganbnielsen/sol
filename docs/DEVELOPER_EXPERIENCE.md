@@ -183,6 +183,7 @@ Installation (CloudBootstrap) -- the durable prerequisites that outlive every en
   deploy identity          arn:aws:iam::111122223333:role/sol-deploy
   operator identity        arn:aws:iam::111122223333:role/sol-operator
   zone domain              api.acme.com
+  zone ownership           sol-created (durable: Sol creates it and only an explicit uninstall removes it)
 
   terraform state backend      Established
   terraform state lock         Established
@@ -193,8 +194,15 @@ Installation (CloudBootstrap) -- the durable prerequisites that outlive every en
   delegated DNS zone           Established
 ```
 
-Every line is an **observation**: the bucket was looked for, the lock table was
-described, each role was fetched, the zone was listed. `Unmet` means the provider
+The target declares who owns the zone (`dns_zone_ownership: sol | user | external`) and Sol
+does not guess it from the fact that a zone exists. `sol` means the installation creates and
+owns it; `user` means you created it and Sol never removes it; `external` means the parent is
+yours and Sol asks for the delegation instead of owning the zone.
+
+Every line after that is an **observation**: the bucket was looked for, the lock table was
+described, each role was fetched, and the zone is only looked for when the installation owns
+it — an externally delegated zone is reported `UNKNOWN`, naming what remains to be confirmed,
+rather than being counted as a missing prerequisite. `Unmet` means the provider
 answered that it is not there; `UNKNOWN` means Sol could not look, and it fails
 closed — an unobservable installation is never reported healthy.
 

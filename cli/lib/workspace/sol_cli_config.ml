@@ -19,6 +19,7 @@ type target =
   ; alert_runbook_url : string option
   ; state_bucket : string option
   ; cluster_endpoint_cidr : string option
+  ; dns_zone_ownership : string option
   ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
@@ -79,6 +80,7 @@ let target_empty =
   ; alert_runbook_url = None
   ; state_bucket = None
   ; cluster_endpoint_cidr = None
+  ; dns_zone_ownership = None
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = []
@@ -169,6 +171,7 @@ type target_field =
   | Target_cluster_endpoint_cidr
   | Target_node_failure_headroom_nodes
   | Target_profile
+  | Target_dns_zone_ownership
 
 type target_key =
   | Target_field of target_field
@@ -196,6 +199,7 @@ let target_key_of_string s =
   | "cluster_endpoint_cidr" -> Target_field Target_cluster_endpoint_cidr
   | "node_failure_headroom_nodes" -> Target_field Target_node_failure_headroom_nodes
   | "profile" -> Target_field Target_profile
+  | "dns_zone_ownership" -> Target_field Target_dns_zone_ownership
   | _ ->
     (match Sol_cli_provider.owned_legacy_key s with
      | Some provider -> Target_provider_owned (s, provider)
@@ -224,6 +228,7 @@ let target_field_name = function
   | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
   | Target_node_failure_headroom_nodes -> "node_failure_headroom_nodes"
   | Target_profile -> "profile"
+  | Target_dns_zone_ownership -> "dns_zone_ownership"
 ;;
 
 let error_at ~path message = { path; line = 0; message }
@@ -387,6 +392,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
     | Target_alert_runbook_url -> Ok { current with alert_runbook_url = Some s }
     | Target_state_bucket -> Ok { current with state_bucket = Some s }
     | Target_cluster_endpoint_cidr -> Ok { current with cluster_endpoint_cidr = Some s }
+    | Target_dns_zone_ownership -> Ok { current with dns_zone_ownership = Some s }
     | Target_node_failure_headroom_nodes ->
       parse_int s
       |> Result.map (fun n -> { current with node_failure_headroom_nodes = n })
@@ -690,6 +696,7 @@ let merge_target a b =
   { a with
     registry = prefer a.registry b.registry
   ; base_domain = prefer a.base_domain b.base_domain
+  ; dns_zone_ownership = prefer a.dns_zone_ownership b.dns_zone_ownership
   ; cluster_issuer = prefer a.cluster_issuer b.cluster_issuer
   ; letsencrypt_email = prefer a.letsencrypt_email b.letsencrypt_email
   ; cluster_name = prefer a.cluster_name b.cluster_name
@@ -813,6 +820,7 @@ let target_of_path s =
           ; alert_runbook_url = None
           ; state_bucket = None
           ; cluster_endpoint_cidr = None
+          ; dns_zone_ownership = None
           ; node_failure_headroom_nodes = None
           ; profile = None
           ; provider_fields = []
@@ -1005,6 +1013,7 @@ let layer_keys (l : layer) =
         ; opt "alert_runbook_url" t.alert_runbook_url
         ; opt "state_bucket" t.state_bucket
         ; opt "cluster_endpoint_cidr" t.cluster_endpoint_cidr
+        ; opt "dns_zone_ownership" t.dns_zone_ownership
         ; opt "node_failure_headroom_nodes" t.node_failure_headroom_nodes
         ; opt "profile" t.profile
         ]

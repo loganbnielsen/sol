@@ -21,6 +21,21 @@ val unresolved : (prerequisite * verdict) list -> (prerequisite * verdict) list
 val all_established : (prerequisite * verdict) list -> (unit, string) result
 val summary : (prerequisite * verdict) list -> string
 
+type zone_ownership =
+  | Sol_created
+  | User_supplied
+  | Externally_delegated
+
+val zone_ownership_of_declaration : string option -> (zone_ownership, string) result
+val zone_ownership_declaration : zone_ownership -> string
+
+type zone =
+  | No_zone
+  | Service_zone of
+      { domain : string
+      ; ownership : zone_ownership
+      }
+
 type installation_config =
   { state_bucket : string
   ; state_prefix : string
@@ -30,10 +45,12 @@ type installation_config =
   ; cluster_access_identity : string option
   ; deploy_identity : string option
   ; operator_identity : string option
-  ; zone_domain : string option
+  ; zone : zone
   ; project_id : string option
   }
 
+val zone_domain : zone -> string option
+val owns_the_zone : zone -> bool
 val of_target : Sol_cli_config.target -> (installation_config, string) result
 val resolved_configuration_to_lines : installation_config -> string list
 
@@ -52,6 +69,10 @@ type probe =
       { prerequisite : prerequisite
       ; reason : string
       }
+  | Unverifiable of
+      { prerequisite : prerequisite
+      ; reason : string
+      }
 
 val probe_prerequisite : probe -> prerequisite
 val present_if_output : prerequisite -> string list -> probe
@@ -64,6 +85,7 @@ val present_if_output_names
   -> probe
 
 val absent : prerequisite -> string -> probe
+val unverifiable : prerequisite -> string -> probe
 
 val observe
   :  run:(string list -> observation)

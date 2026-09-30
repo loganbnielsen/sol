@@ -55,6 +55,7 @@ ${TARGET%%/*}:
     ${TARGET#*/}:
       cluster_name: $CLUSTER
       base_domain: smoke-test.invalid
+      dns_zone_ownership: sol
       cluster_issuer: letsencrypt-staging
       letsencrypt_email: smoke-test@example.invalid
       terraform_var_file: $TFVARS
