@@ -8,8 +8,9 @@ TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
 TFVARS="${TFVARS:-$ROOT/internal/qualification/aws/qual-aws-row.tfvars}"
 AWS_PROFILE="${AWS_PROFILE:-sol-qual}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-CLUSTER="${CLUSTER:?Set CLUSTER to this run's EKS cluster name}"
-DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the target's deploy role}"
+CLUSTER="${CLUSTER:?Set CLUSTER to this the run EKS cluster name}"
+DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the deploy role the target declares}"
+CLUSTER_ACCESS_ROLE_ARN="${CLUSTER_ACCESS_ROLE_ARN:?Set CLUSTER_ACCESS_ROLE_ARN to the cluster-access role the target declares}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
 SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
@@ -27,6 +28,7 @@ STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
 export ECR_REGISTRY
 
 mkdir -p "$LOG_DIR/state"
+export KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
 usage() {
@@ -168,19 +170,28 @@ reconcile_durable_root() {
   say "bootstrap: durable root reconciled"
 }
 
+ensure_contexts() {
+  say "kubeconfig"
+  aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
+    --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" >/dev/null || return 1
+  aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
+    --alias "$CLUSTER-access" --role-arn "$CLUSTER_ACCESS_ROLE_ARN" >/dev/null || return 1
+  kubectl config use-context "$CLUSTER-deploy" >/dev/null || return 1
+}
+
 phase_cloud() {
   reconcile_durable_root || return 1
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET'" || return 1
   run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET'" || return 1
-  run kubeconfig aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
-    --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" || return 1
-  run nodes kubectl get nodes -o wide || return 1
+  ensure_contexts || return 1
+  run nodes kubectl --context "$CLUSTER-access" get nodes -o wide || return 1
   capture_kube_evidence
   capture_state
   say "the substrate and platform install completed; evidence in $LOG_DIR"
 }
 
 phase_app() {
+  ensure_contexts || return 1
   run app-build docker build -f app/payments/charge_svc/Dockerfile \
     -t "$(image_ref charge_svc)" "$WORKSPACE" || return 1
   run app-build-worker docker build -f app/comms/notify_worker/Dockerfile \

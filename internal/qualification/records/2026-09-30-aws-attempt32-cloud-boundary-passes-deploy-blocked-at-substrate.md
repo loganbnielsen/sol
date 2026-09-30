@@ -1,0 +1,100 @@
+# AWS attempt 32: the cloud boundary passes end to end, and the deploy path stops at the workspace substrate (2026-09-30)
+
+Target `qualreg/aws/us-east-1`, cluster `sol-qual-aws-32`, base domain `qual-aws.sol-fab.dev`.
+Fresh specimen; the delegated hosted zone is the durable one owned by the AWS bootstrap root.
+
+## Preconditions verified before starting
+
+- **Delegation observable.** `NS qual-aws.sol-fab.dev` returns `Status: 0` with exactly the
+  current four nameservers from both Google and Cloudflare resolvers, and the zone answers
+  authoritatively: `dig`-equivalent SOA via the resolvers returns
+  `ns-1335.awsdns-38.org. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400`.
+- **Durable root reconciled by the row itself.** The harness's new durable-root step ran as part
+  of the cloud phase: `bootstrap: state bucket s3://sol-qual5-876701109436-tfstate present`,
+  then `bootstrap: durable root already matches its declared state` — a no-op, which is also the
+  first live exercise of that step.
+
+## The cloud boundary passed, and the two earlier defects are now proven live
+
+```
+lifecycle phase: CloudBootstrap
+  whoami capture: ~/.sol-qual/whoami-capture-….json
+  whoami shape: parsed (identity source: extra.canonicalArn)
+  cluster access identity: arn:aws:iam::876701109436:role/sol-qual5-cluster-access
+  bootstrap window control: principal=confirmed arn:…:role/sol-qual5-cluster-access;
+    escalate clusterroles=permitted, bind clusterroles=permitted
+lifecycle phase: PlatformInstalling
+  [platform-prerequisites-apply] ok (57.3s)
+  [platform-apply] ok
+  de-escalation verified as arn:aws:iam::876701109436:role/sol-qual5-cluster-access
+lifecycle phase: Ready
+Done.
+```
+
+Both fixes from the stopped row are exercised for real here: the window is managed against the
+durable cluster-access identity (the gate parses instead of reading `Unauthorized`), and the
+bootstrap-only capability set reads `escalate/bind clusterroles` — permitted inside the window,
+which is what makes the later denial meaningful. `de-escalation verified` then appears with the
+successor still holding what it needs, so the handoff proof ran in the success path too.
+
+Independent checks on the specimen: `kubectl get nodes` as the cluster-access identity returns
+four `Ready` nodes (`v1.36.4-eks`), and the identity is correctly narrow — it may read nodes but
+not pods or certificates at cluster scope, which is the installed RBAC working as intended.
+
+Observed and recorded, not yet explained: no ELBv2 load balancer exists in the account
+(`describe-load-balancers` returns none), and the zone holds only NS and SOA records. The
+platform is `Ready` with no cloud load balancer and no published record, which is consistent
+with the documented boundary that DNS publication is the operator's and that reachability is a
+separate level from lifecycle readiness — but it is worth a deliberate look, since
+"Provisioned endpoints" printed nothing.
+
+## Where the row stopped
+
+Build and ECR push succeeded for `charge_svc` and `notify_worker`; `migrate-apply` then failed at
+its first step, the workspace substrate:
+
+```
+error: kubectl create (workspace substrate): exited with code 1: Error from server (Forbidden):
+error when creating "/tmp/sol-substrate-a94b42.yaml": rolebindings.rbac.authorization.k8s.io is
+forbidden: User "arn:aws:sts::876701109436:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth"
+cannot create resource "rolebindings" in API group "rbac.authorization.k8s.io" in the namespace
+"pluto-checkout"
+```
+
+The identity is **cluster-access** in every variant tried, including when the ambient kubeconfig's
+current context was the deploy context — so Sol selects that identity itself, not the shell's.
+That matches the code: the deploy path reaches the cluster through `with_access`, and
+`Sol_cli_aws_cluster.provisioner_kubeconfig` defaults `--role-arn` to
+`cluster_access_role_arn` when none is given.
+
+The authority the step needs exists in the shared platform module, bound to the **deploy**
+identity. `platform/cloud/modules/platform/platform_deploy_rbac.tf` declares
+`kubernetes_cluster_role.sol_deploy_bootstrap` with exactly the substrate's needs —
+`namespaces` (get/list/watch/create), `rolebindings` (get/list/watch/create), and `bind` on the
+named `sol-deploy` and `sol-operator-diagnostics` cluster roles — and binds it to group
+`sol:deployers`. On AWS, `sol:deployers` is the **deploy** role's group
+(`platform/cloud/aws/cluster/main.tf`), while cluster-access is in
+`sol:platform-provisioners`, whose ClusterRole grants cluster-scoped `clusterroles` and
+`clusterrolebindings` but no namespaced `rolebindings`.
+
+So no identity satisfies the step: the one Sol uses lacks the grant, and the one holding the
+grant is not the one Sol uses. Filed as **FND-0071** with the two candidate resolutions; this is
+a security-boundary decision (widen a group's authority, or change which identity mutates what),
+so the row stops here rather than choosing.
+
+## Qualification-machinery defects found and fixed in this attempt
+
+- **The substrate health check used the wrong identity.** `kubectl get nodes` ran as the deploy
+  identity, which is namespace-scoped by design, so a healthy cluster reported `Forbidden`. The
+  row now keeps a cluster-access context for cluster-scoped reads and a deploy context for
+  namespace-scoped ones.
+- **The row inherited the operator's kubeconfig.** `aws eks update-kubeconfig` calls made outside
+  the harness had changed the current context in `~/.kube/config`, and the harness's kubectl
+  inherited it — the first substrate failure named `sol-qual5-operator`. The harness now exports
+  its own `KUBECONFIG` under the run's log directory, so the row cannot be influenced by whatever
+  contexts the operator's shell has accumulated.
+- **A quoting landmine in `${VAR:?message}`.** `CLUSTER="${CLUSTER:?Set CLUSTER to this run's EKS
+  cluster name}"` compiles only because the apostrophe in `run's` opens a quote that a later
+  apostrophe closes; removing the second one produced a parse error 50 lines further down. Both
+  harnesses are now apostrophe-free in parameter-error messages. The GCP harness was already
+  clean.
