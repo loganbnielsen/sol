@@ -283,7 +283,7 @@ let execute_deployment_attempt ctx ~before_apply ~push_events plan =
 ;;
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
-  let workspace = ctx.execution.workspace in
+  let workspace = ctx.facts.Sol_cli_workspace_model.root in
   if not (Sol_cli_contract.has_projection ~workspace)
   then Ok ()
   else (
