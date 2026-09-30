@@ -25,7 +25,12 @@ type run_error =
 val run_error_to_string : run_error -> string
 
 module Make (J : JOB) : sig
-  val enqueue : Pg_db.pool -> ?run_at:float -> J.t -> (unit, Pg_error.t) result
+  val enqueue
+    :  Pg_db.pool
+    -> ?run_at:float
+    -> ?dedupe_key:string
+    -> J.t
+    -> (unit, Pg_error.t) result
 
   val run
     :  env:(_, _, _, _) Sol_env.timed
@@ -39,6 +44,8 @@ module Make (J : JOB) : sig
     -> ?stop:unit Eio.Promise.t
     -> ?max_jobs:int
     -> ?max_claim_failures:int
+    -> ?terminal_retention_s:float
+    -> ?sweep_interval_s:float
     -> unit
     -> (unit, run_error) result
 end

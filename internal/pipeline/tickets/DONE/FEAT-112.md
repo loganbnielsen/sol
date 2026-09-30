@@ -91,3 +91,49 @@ handoff with an idempotent enqueue, since it is now the recommended composition.
 **TypeScript parity:** required or explicitly deferred with a trigger. There is no TS
 jobs package today, so this strengthens an existing gap rather than creating a new
 one (DEC-022).
+
+## Completion
+
+Implemented 2026-09-30. Premise verified at `origin/main` `3e8705c5`: `enqueue` was a
+plain `INSERT` with no uniqueness constraint, and the table had no dedupe column
+(`sol_jobs.ml`, `sol-jobs.md`).
+
+**The post-completion decision, recorded.** The ticket asked for one of three; this
+takes the second — `sol-jobs` retains terminal rows for a retention window instead of
+deleting them on completion. Reasoning: the case this handoff must actually survive
+is a *replay*, where the redelivery arrives long after the first attempt finished and
+the row would already be gone. A separate TTL'd dedupe marker would keep the queue
+table smaller, but duplicates the lifecycle (a second table, a second sweep, two
+writes per enqueue) for the same bounded guarantee, while the partial unique index on
+`(kind, dedupe_key)` does the work of both. Omitting the key stays at-least-once, and
+the horizon — how long a key stays occupied — becomes an explicit, tunable part of the
+contract instead of an accident of delete-on-completion.
+
+What changed: `enqueue ?dedupe_key` (`INSERT … ON CONFLICT (kind, dedupe_key) WHERE
+dedupe_key IS NOT NULL DO NOTHING`; a duplicate is `Ok ()` and no job id is returned),
+a `completed` terminal status carrying `finished_at`, and a sweep inside the poller
+(`terminal_retention_s`, default 7 days; `sweep_interval_s`, default 60s).
+
+**Demo/example coverage:** `internal/fixtures/local-demo` — the runnable Kafka→jobs
+fixture — now enqueues with `~dedupe_key:msg.Message.order_id` in the same transaction
+as the fulfilled-order insert, and `0003_sol_jobs_dedupe.sql` carries the new column
+and indexes. It uses the order id because the demo event carries no event id; a real
+application uses the event's stable id.
+
+**TypeScript parity:** deferred with a trigger (DEC-022). There is no TS jobs package
+at all today, so this deepens an existing gap rather than opening a new one; the
+trigger is the same one already recorded for `sol-jobs` — the first TS application
+that needs durable jobs.
+
+**Validation:** `dune build` clean; 18 `sol_jobs_pg` tests, 5 new (repeated key,
+concurrent duplicates, omitted key, redelivery after completion, expired-row sweep);
+9 `local-demo` e2e tests including the jobs handoff and `sol_jobs_processed_total > 0`.
+Full required CI on the PR head.
+
+**Remaining limitation:** a redelivery older than the retention window re-enqueues.
+That is why the window is stated as part of the contract, and why a handler that must
+survive arbitrary replays stays idempotent.
+
+**Adoption note:** the job table is app-owned and app-migrated, so this is a schema
+change every existing workspace adopts — the full DDL and the dedupe contract are in
+`sol-jobs.md` § Job table and § Deduplication.

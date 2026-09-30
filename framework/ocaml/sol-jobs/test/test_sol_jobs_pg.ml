@@ -11,7 +11,13 @@ let ddl =
        run_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
        locked_until TIMESTAMPTZ,
        last_error   TEXT,
-       inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now())|}
+       dedupe_key   TEXT,
+       inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+       finished_at  TIMESTAMPTZ)|}
+  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (kind, dedupe_key) WHERE \
+     dedupe_key IS NOT NULL"
+  ; "CREATE INDEX sol_jobs_terminal_idx ON sol_jobs (finished_at) WHERE status <> \
+     'pending'"
   ]
 ;;
 
@@ -107,7 +113,7 @@ let test_make_instances_do_not_cross_claim () =
       !Email.handled;
     Alcotest.(check (list (triple string string int)))
       "the report job was not claimed by the email poller"
-      [ "build_report", "pending", 0 ]
+      [ "build_report", "pending", 0; "send_email", "completed", 1 ]
       (rows pool))
 ;;
 
@@ -244,16 +250,35 @@ let contains ~needle s =
   go 0
 ;;
 
-let run_slow ?retry_policy ?stop ?lease_s ?max_jobs env pool =
+let run_slow
+      ?retry_policy
+      ?stop
+      ?lease_s
+      ?max_jobs
+      ?terminal_retention_s
+      ?sweep_interval_s
+      env
+      pool
+  =
   match
-    Slows.run ~env ~pool ?retry_policy ?stop ?lease_s ?max_jobs ~poll_interval_s:0.05 ()
+    Slows.run
+      ~env
+      ~pool
+      ?retry_policy
+      ?stop
+      ?lease_s
+      ?max_jobs
+      ?terminal_retention_s
+      ?sweep_interval_s
+      ~poll_interval_s:0.05
+      ()
   with
   | Ok () -> ()
   | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e)
 ;;
 
-let enqueue_slow pool =
-  match Slows.enqueue pool "work" with
+let enqueue_slow ?dedupe_key pool =
+  match Slows.enqueue pool ?dedupe_key "work" with
   | Ok () -> ()
   | Error e -> Alcotest.failf "enqueue: %s" (Pg_error.to_string e)
 ;;
@@ -348,7 +373,10 @@ let test_long_handler_renews_lease () =
      | Ok () -> ()
      | Error `Timeout -> Alcotest.fail "pollers did not finish");
     Alcotest.(check int) "one handler ran" 1 !handled;
-    Alcotest.(check int) "job finalized" 0 (List.length (rows pool)))
+    Alcotest.(check (list (triple string string int)))
+      "the completed row is retained, not deleted"
+      [ "slow", "completed", 1 ]
+      (rows pool))
 ;;
 
 let test_lost_renewal_is_logged () =
@@ -409,7 +437,10 @@ let test_unlimited_attempts_reclaim () =
     let retry_policy = { Sol_jobs.default_retry_policy with max_attempts = -1 } in
     run_slow ~retry_policy ~max_jobs:1 env pool;
     Alcotest.(check bool) "handler ran again" true !handled;
-    Alcotest.(check int) "job completed" 0 (List.length (rows pool)))
+    Alcotest.(check (list (triple string string int)))
+      "job completed and is retained"
+      [ "slow", "completed", 3 ]
+      (rows pool))
 ;;
 
 let test_handler_exception_is_a_failed_attempt () =
@@ -454,6 +485,72 @@ let test_expired_holder_cannot_complete_terminal_row () =
       "the lost lease is logged"
       true
       (contains ~needle:"lease lost" err))
+;;
+
+let test_duplicate_enqueue_with_a_dedupe_key_is_a_no_op () =
+  with_pool (fun _env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow ~dedupe_key:"evt-1" pool;
+    enqueue_slow ~dedupe_key:"evt-1" pool;
+    Alcotest.(check (list (triple string string int)))
+      "one row for a repeated dedupe key"
+      [ "slow", "pending", 0 ]
+      (rows pool))
+;;
+
+let test_concurrent_duplicate_enqueue_inserts_one_row () =
+  with_pool (fun _env pool ->
+    List.iter (exec_sql pool) ddl;
+    ignore
+      (Eio.Fiber.both
+         (fun () -> enqueue_slow ~dedupe_key:"evt-2" pool)
+         (fun () -> enqueue_slow ~dedupe_key:"evt-2" pool));
+    Alcotest.(check (list (triple string string int)))
+      "the unique index admits exactly one of two concurrent inserts"
+      [ "slow", "pending", 0 ]
+      (rows pool))
+;;
+
+let test_omitted_dedupe_key_keeps_at_least_once () =
+  with_pool (fun _env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    enqueue_slow pool;
+    Alcotest.(check int)
+      "no dedupe key means no deduplication"
+      2
+      (List.length (rows pool)))
+;;
+
+let test_redelivery_after_completion_is_a_no_op () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow ~dedupe_key:"evt-3" pool;
+    (Slow.on_handle := fun () -> Ok ());
+    run_slow ~max_jobs:1 env pool;
+    Alcotest.(check (list (triple string string int)))
+      "the finished row is retained while its key is live"
+      [ "slow", "completed", 1 ]
+      (rows pool);
+    enqueue_slow ~dedupe_key:"evt-3" pool;
+    Alcotest.(check int)
+      "a redelivery after completion enqueues nothing"
+      1
+      (List.length (rows pool)))
+;;
+
+let test_expired_terminal_row_releases_its_key () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow ~dedupe_key:"evt-4" pool;
+    (Slow.on_handle := fun () -> Ok ());
+    run_slow ~terminal_retention_s:0.0 ~sweep_interval_s:0.0 ~max_jobs:1 env pool;
+    Alcotest.(check int) "the expired terminal row was swept" 0 (List.length (rows pool));
+    enqueue_slow ~dedupe_key:"evt-4" pool;
+    Alcotest.(check int)
+      "the key is reusable once its row is gone"
+      1
+      (List.length (rows pool)))
 ;;
 
 let () =
@@ -509,6 +606,28 @@ let () =
             "expired holder cannot complete a terminal row"
             `Quick
             test_expired_holder_cannot_complete_terminal_row
+        ] )
+    ; ( "idempotent enqueue (FEAT-112)"
+      , [ Alcotest.test_case
+            "a repeated dedupe key is a no-op"
+            `Quick
+            test_duplicate_enqueue_with_a_dedupe_key_is_a_no_op
+        ; Alcotest.test_case
+            "concurrent duplicates insert one row"
+            `Quick
+            test_concurrent_duplicate_enqueue_inserts_one_row
+        ; Alcotest.test_case
+            "an omitted dedupe key keeps at-least-once"
+            `Quick
+            test_omitted_dedupe_key_keeps_at_least_once
+        ; Alcotest.test_case
+            "a redelivery after completion is a no-op"
+            `Quick
+            test_redelivery_after_completion_is_a_no_op
+        ; Alcotest.test_case
+            "an expired terminal row releases its key"
+            `Quick
+            test_expired_terminal_row_releases_its_key
         ] )
     ]
 ;;
