@@ -98,3 +98,35 @@ so the row stops here rather than choosing.
   apostrophe closes; removing the second one produced a parse error 50 lines further down. Both
   harnesses are now apostrophe-free in parameter-error messages. The GCP harness was already
   clean.
+
+## Resumed after the actor-selection correction (same specimen)
+
+The finding above was filed as a Sol actor-selection defect. The implementation evidence did not
+support that, and the correction is in FND-0071: `aws eks update-kubeconfig` writes one shared
+user entry per cluster, so the row's two contexts in one kubeconfig both authenticated as the role
+written last. Sol resolves the deploy destination from the target's `kube_context`, as intended.
+
+The row now gives each identity its own kubeconfig file and asserts the boundary live before any
+application operation. On the resumed specimen:
+
+```
+identity-boundary   deploy creates rolebindings, cluster-access does not
+```
+
+and, with the deploy identity genuinely in use:
+
+- `app-build`, `ecr-login`, `app-push` for both images: ok;
+- `migrate-apply`: **ok** — the step that had failed at the workspace substrate now completes, and
+  `pluto-checkout` ends up with `sol-deploy` and `sol-operator` bindings;
+- `app-deploy`: **FAILED** at the server-side dry-run for `notify_worker` in `pluto-comms`, where
+  every resource read is `Forbidden` for the deploy identity because that namespace holds no
+  RoleBinding, although this same deploy created the namespace.
+
+That is a second, distinct defect, filed as **FND-0072** (the deploy dry-runs a service's
+manifests before that namespace's bindings exist, or its ensure does not cover that namespace and
+its failure is silent). The row stops there rather than patching through, and nothing was widened
+to make it pass.
+
+The specimen remains standing at platform `Ready` with a partial workspace substrate, and is used
+for discovery only — it is not the final qualification row, which still has to run fresh from
+`cloud plan` through independently verified teardown once this is fixed.

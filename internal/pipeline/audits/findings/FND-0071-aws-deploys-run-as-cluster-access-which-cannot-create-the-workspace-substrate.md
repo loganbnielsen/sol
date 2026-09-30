@@ -12,7 +12,58 @@ identity split), AUDIT-072 (`platform/cloud/modules/platform/platform_deploy_rba
 namespace-scoped application identity), `platform/cloud/modules/platform/platform_provisioner_rbac.tf`,
 `cli/lib/cloud/sol_cli_aws_cluster.ml`, `internal/qualification/records/2026-09-30-aws-attempt32-cloud-boundary-passes-deploy-blocked-at-substrate.md`.
 
-# AWS deploys run as the cluster-access identity, which cannot create the workspace substrate
+# CORRECTED — the deploy actor selection was the row's, not Sol's: EKS kubeconfigs share one user per cluster
+
+## Correction (2026-09-30, after implementation evidence)
+
+This finding was filed as a Sol actor-selection defect. The implementation evidence does not
+support that, and the correction matters because the operator's chosen resolution — send
+application lifecycle operations to the **deploy** identity, and do not widen
+`cluster-access`/`sol:platform-provisioners` — is already how the product behaves. No product
+change was required; the defect was in the qualification row's kubeconfig.
+
+**What actually happened.** `aws eks update-kubeconfig` writes **one user entry per cluster**,
+named by the cluster ARN, regardless of `--alias`. The row created a deploy context and a
+cluster-access context in the *same* kubeconfig, so the second `update-kubeconfig` overwrote the
+shared user's `--role-arn`; both contexts then authenticated as the role written last. The deploy
+context named the deploy role and used the cluster-access one. The evidence is the file itself:
+
+```
+- name: arn:aws:eks:us-east-1:876701109436:cluster/sol-qual-aws-32      ← one user, both contexts
+- context: … name: sol-qual-aws-32-access
+- context: … name: sol-qual-aws-32-deploy
+current-context: sol-qual-aws-32-deploy
+```
+
+**What Sol does.** `sol migrate apply` and `sol deploy` resolve their destination from the target
+(`Sol_cli_destination.resolve` → `Sol_cli_config.destination_of_target` →
+`Sol_cli_kube_destination.of_context`), i.e. the identity comes from the target's `kube_context`,
+which is exactly the contract the operator asked for. `cluster_access_role_arn` is the default
+only on the platform path (`with_access`), which is what the platform lifecycle should use.
+
+**The boundary holds, proven live** once each identity gets its own kubeconfig:
+
+```
+deploy identity (sol-qual5-deploy):          can-i create rolebindings -n pluto-payments → yes
+cluster-access identity (…-cluster-access):  can-i create rolebindings -n pluto-payments → no
+```
+
+which is the existing RBAC doing its job — `sol-deploy-bootstrap` (namespaces, rolebindings,
+bind on the named deploy cluster roles) is bound to `sol:deployers`, the deploy role's group,
+and cluster-access holds none of it. **No widening was applied, and none is needed.**
+
+**Coverage now in place.** The row gives each identity its own kubeconfig file and asserts the
+boundary live before any application operation (`verify_identity_boundary`): the deploy identity
+must be able to create rolebindings in a workspace namespace, and the cluster-access identity
+must not. On the resumed specimen this printed
+`identity boundary holds: deploy creates rolebindings, cluster-access does not`, and the step that
+had failed — the workspace substrate inside `sol migrate apply` — then completed.
+
+The rest of this file is the original filing, kept for the record.
+
+---
+
+# (original filing) AWS deploys run as the cluster-access identity, which cannot create the workspace substrate
 
 ## What happened
 

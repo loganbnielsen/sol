@@ -28,7 +28,6 @@ STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
 export ECR_REGISTRY
 
 mkdir -p "$LOG_DIR/state"
-export KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
 usage() {
@@ -170,13 +169,32 @@ reconcile_durable_root() {
   say "bootstrap: durable root reconciled"
 }
 
+DEPLOY_KUBECONFIG="$LOG_DIR/kubeconfig-deploy.yaml"
+ACCESS_KUBECONFIG="$LOG_DIR/kubeconfig-access.yaml"
+
 ensure_contexts() {
   say "kubeconfig"
-  aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
-    --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" >/dev/null || return 1
-  aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
-    --alias "$CLUSTER-access" --role-arn "$CLUSTER_ACCESS_ROLE_ARN" >/dev/null || return 1
-  kubectl config use-context "$CLUSTER-deploy" >/dev/null || return 1
+  KUBECONFIG="$DEPLOY_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
+    --name "$CLUSTER" --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" >/dev/null || return 1
+  KUBECONFIG="$ACCESS_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
+    --name "$CLUSTER" --alias "$CLUSTER-access" --role-arn "$CLUSTER_ACCESS_ROLE_ARN" >/dev/null || return 1
+  export KUBECONFIG="$DEPLOY_KUBECONFIG"
+}
+
+verify_identity_boundary() {
+  say "identity-boundary"
+  if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" auth can-i create rolebindings \
+      --namespace pluto-payments >/dev/null 2>&1; then
+    say "the deploy identity cannot create rolebindings, so application operations cannot bootstrap"
+    return 1
+  fi
+  if kubectl --kubeconfig "$ACCESS_KUBECONFIG" auth can-i create rolebindings \
+      --namespace pluto-payments >/dev/null 2>&1; then
+    say "the cluster-access identity can create rolebindings: the two identities are not separated,"
+    say "and the row would no longer be testing the separation the platform is built on"
+    return 1
+  fi
+  say "identity boundary holds: deploy creates rolebindings, cluster-access does not"
 }
 
 phase_cloud() {
@@ -184,7 +202,7 @@ phase_cloud() {
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET'" || return 1
   run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET'" || return 1
   ensure_contexts || return 1
-  run nodes kubectl --context "$CLUSTER-access" get nodes -o wide || return 1
+  run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
   capture_kube_evidence
   capture_state
   say "the substrate and platform install completed; evidence in $LOG_DIR"
@@ -192,6 +210,7 @@ phase_cloud() {
 
 phase_app() {
   ensure_contexts || return 1
+  verify_identity_boundary || return 1
   run app-build docker build -f app/payments/charge_svc/Dockerfile \
     -t "$(image_ref charge_svc)" "$WORKSPACE" || return 1
   run app-build-worker docker build -f app/comms/notify_worker/Dockerfile \
