@@ -333,6 +333,68 @@ let test_lease_overrun_is_logged () =
     Alcotest.(check int) "its own fenced finalize still won" 0 (List.length (rows pool)))
 ;;
 
+let test_crashed_attempt_is_exhausted_at_claim () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    exec_sql
+      pool
+      "UPDATE sol_jobs SET attempts = 2, locked_until = now() - interval '1 second'";
+    let handled = ref false in
+    (Slow.on_handle
+     := fun () ->
+          handled := true;
+          Ok ());
+    let retry_policy = { Sol_jobs.default_retry_policy with max_attempts = 2 } in
+    run_slow ~retry_policy ~max_jobs:1 env pool;
+    Alcotest.(check bool) "handler not called" false !handled;
+    Alcotest.(check (list (triple string string int)))
+      "exhausted row failed without another attempt"
+      [ "slow", "failed", 2 ]
+      (rows pool);
+    Alcotest.(check (list (pair string (triple int bool bool))))
+      "crash failure is recorded without a live lease"
+      [ "failed", (2, false, true) ]
+      (lease_state pool))
+;;
+
+let test_unlimited_attempts_reclaim () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    exec_sql
+      pool
+      "UPDATE sol_jobs SET attempts = 2, locked_until = now() - interval '1 second'";
+    let handled = ref false in
+    (Slow.on_handle
+     := fun () ->
+          handled := true;
+          Ok ());
+    let retry_policy = { Sol_jobs.default_retry_policy with max_attempts = -1 } in
+    run_slow ~retry_policy ~max_jobs:1 env pool;
+    Alcotest.(check bool) "handler ran again" true !handled;
+    Alcotest.(check int) "job completed" 0 (List.length (rows pool)))
+;;
+
+let test_handler_exception_is_a_failed_attempt () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    (Slow.on_handle := fun () -> failwith "handler exploded");
+    let retry_policy =
+      { Sol_jobs.default_retry_policy with
+        max_attempts = 2
+      ; base_delay_s = 0.0
+      ; max_delay_s = 0.0
+      }
+    in
+    run_slow ~retry_policy ~max_jobs:1 env pool;
+    Alcotest.(check (list (triple string string int)))
+      "exception used the normal terminal failure path"
+      [ "slow", "failed", 2 ]
+      (rows pool))
+;;
+
 let () =
   Alcotest.run
     "sol_jobs_pg"
@@ -364,6 +426,20 @@ let () =
         ; Alcotest.test_case "stale fail is a no-op" `Quick test_stale_fail_is_a_no_op
         ; Alcotest.test_case "stale retry is a no-op" `Quick test_stale_retry_is_a_no_op
         ; Alcotest.test_case "lease overrun is logged" `Quick test_lease_overrun_is_logged
+        ] )
+    ; ( "bounded attempts (BUG-098)"
+      , [ Alcotest.test_case
+            "crashed attempts stop at the configured budget"
+            `Quick
+            test_crashed_attempt_is_exhausted_at_claim
+        ; Alcotest.test_case
+            "handler exceptions are failed attempts"
+            `Quick
+            test_handler_exception_is_a_failed_attempt
+        ; Alcotest.test_case
+            "unlimited attempts still reclaim"
+            `Quick
+            test_unlimited_attempts_reclaim
         ] )
     ]
 ;;
