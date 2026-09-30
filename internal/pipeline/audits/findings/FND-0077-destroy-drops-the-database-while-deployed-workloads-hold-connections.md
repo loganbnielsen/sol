@@ -89,3 +89,47 @@ including the release-before-substrate ordering, and two offline lifecycle scena
 the namespace removals precede the substrate destroy in the run's own log, one proving a release
 failure degrades and the teardown still finishes.
 
+## The live acceptance test, and what it disproved
+
+The ordered acceptance test — one fresh GCP specimen where a single supported destroy goes from
+running workloads with active DB pools to independently verified absence — was run against the
+merged fix and **does not yet pass**.
+
+Two results, both from specimen `sol-qual-gcp-30`:
+
+**1. The platform never reached `Ready`, so no application workloads existed.** `platform-apply`
+succeeded, then the lifecycle reported `awaiting platform readiness: 2 check(s) unmet` until the
+phase gave up. The ClusterIssuers were healthy in the captured evidence —
+`letsencrypt-prod` and `letsencrypt-staging` both `True`, *"The ACME account was registered with the
+ACME server"* — so the two unmet checks are almost certainly the DEC-056 platform-certificate gate,
+not the ACME account path. Why those certificates did not become ready is **not established**; the
+harness captured cert-manager evidence and classified it `UNKNOWN`, which is honest about what it
+knew.
+
+**2. The release step cannot discover the workloads at all, and degrades.** With no application
+deployed the degrade was harmless, and the destroy converged and reported verified absence — but the
+reason it converged is that nothing held a session, so the criterion was never exercised:
+
+```
+Releasing the application workloads...
+warning: the workloads this target deployed could not be released: exited with code 1: Error from
+server (Forbidden): pods is forbidden: User
+"sol-qual-gcp-30-provisioner@sol-qualification.iam.gserviceaccount.com" cannot list resource "pods"
+in API group "" at the cluster scope: requires one of ["container.pods.list"] permission(s) in
+Cloud IAM or a Kubernetes RBAC role with verb "list" for resource "pods".
+```
+
+The discovery lists pods **cluster-wide**, and it runs as the **provisioner** identity — which by
+design has no cluster-wide pod authority (`sol:platform-provisioners` deliberately grants
+namespaced platform work, not application reads). So on a real specimen the sessions would not be
+released and the database drop would fail exactly as this finding describes.
+
+The design held where it was supposed to: the failure degraded rather than blocking, and nothing
+claimed absence that had not been established.
+
+**The correction is not a widening of platform authority.** The scope must come from the target's
+declared namespaces, read with the identity Sol deploys applications with (`sol-deployers`), which
+is the same authority the deploy path already uses — the alternative seam that was considered and
+set aside in favour of cluster-wide discovery. This finding stays **not met live** until a single
+supported destroy converges on a specimen whose application is running with active database pools.
+
