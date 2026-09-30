@@ -96,3 +96,70 @@ guide (DOCS-026) must show the stage's user-visible output, and `examples/pluto`
 
 **TypeScript parity:** No language-parity impact — the installation is
 language-neutral and no application-facing contract changes.
+
+## Pickup record (2026-09-30)
+
+**Premise verified, with a positive control.** The claim is that the durable roots exist
+but no product path owns them. Run at `origin/main` `e19695ec`:
+
+```text
+$ rg -n 'cloud/(aws|gcp)/bootstrap' cli/ platform/ internal/ docs/
+docs/reference/substrate.md:364
+docs/deployment/production-bootstrap.md:17
+internal/qualification/aws/aws-run-procedure.md:81
+internal/qualification/aws/live-row.sh:25
+internal/qualification/aws/run8-aws-target.example.yml:41
+internal/qualification/records/2026-09-29-aws-durable-zone-adoption.md:42
+internal/ci/check_cluster_access_identity.py:25
+internal/ci/check_durable_dns_zone.py:30,42
+internal/ci/check_production_infra.py:262,287
+internal/ci/test_cluster_access_identity.sh:6
+internal/ci/test_durable_dns_zone_check.py:30,32,77,86,93
+internal/ci/test_production_infra_check.py:20,21
+internal/ci/test_provider_roots.sh:37
+        (no cli/ hit)
+
+$ rg -n 'cloud/(aws|gcp)/(cluster|platform)' cli/ | wc -l
+13
+```
+
+Every reference to a durable root is a document, the qualification harness or one of its
+dated records, or a CI guard. Nothing in `cli/` names one — and the control shows the same
+search does find the provider roots that *do* have a product owner. Premise holds.
+
+**Machinery this ticket must not rebuild.** `cli/lib/cloud/sol_cli_aws_absence.ml:346` and
+`sol_cli_gcp_absence.ml:276` already define `durable_observations`, so destroy-time absence
+verification already models the state backend as durable and outside the target's
+disposable set; AC4's boundary test anchors there. `Sol_cli_cloud_lifecycle` already
+carries a phase machine (`Absent | Cloud_bootstrap | Platform_installing | Ready | …`) and
+the `readiness = Established | Unmet of string` vocabulary, which the installation verdicts
+extend with `UNKNOWN` (DEC-052) rather than replacing with a second one.
+
+**Measured scope.** The durable root is real Terraform — the state bucket with versioning,
+SSE and public-access block, the lock table, five IAM policy documents, and the optional
+durable DNS zone — and the surrounding cloud surface is large (`sol_cli_cloud_lifecycle`
+804 lines, `sol_cli_cloud_wiring` 947, `cmd_cloud_tf` 744, plus the GCP mirror). This is a
+multi-session ticket, so it is recorded here as three landings rather than attempted as
+one.
+
+## Implementation split (recorded at pickup; the ticket stays READY until all three land)
+
+- **A — observation and verdicts.** An installation-prerequisite model carrying the
+  DEC-052 vocabulary (`Established` / `Unmet` / `UNKNOWN`, with `UNKNOWN` failing closed),
+  one prerequisite set and one probe per provider so symmetry is by construction rather
+  than an AWS shape copied over, and the inspectable resolved installation configuration —
+  whose *type* has no field for an authority grant or an accountability declaration, so
+  AC6 holds structurally instead of by review.
+- **B — the stage.** `bootstrap` driving the durable root: reconcile rather than
+  presence-check, with the state backend as the one structural exception because a root
+  cannot create the backend that stores its own state; idempotent on re-run; safely
+  re-runnable after a partial run; and stopping when a plan would replace or destroy a
+  durable resource (DEC-043's rule, carried into AC3).
+- **C — the boundary and the user-visible path.** The test that fails if an environment
+  `destroy` removes a durable prerequisite, plus the `docs/DEVELOPER_EXPERIENCE.md` §3–4
+  output and the second-deploy example the coverage note requires.
+
+`sol uninstall` is FEAT-108 and inline onboarding is FEAT-106; this ticket provides the
+stage they call. No `sol init`-style command is added, because DEC-057 §2 makes the inline
+path the ordinary one and the ticket's own non-goals keep the administrative workflow
+optional.
