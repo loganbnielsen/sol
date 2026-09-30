@@ -64,7 +64,7 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
   let* namespace, k8s_name =
     Sol_cli_migration_job.namespace_and_repository ~workspace ~services
   in
-  let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] in
+  let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] ~workloads:[] in
   let* image = Sol_cli_migration_job.runner_image ~registry ~workspace ~k8s_name in
   let* files = migration_files dir in
   let* job =

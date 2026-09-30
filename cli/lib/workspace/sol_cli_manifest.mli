@@ -141,6 +141,7 @@ val managed_database_egress_doc
   :  cidrs:string list
   -> port:int
   -> ns:string
+  -> name:string
   -> Sol_cli_yaml.document
 
 val network_policy_doc

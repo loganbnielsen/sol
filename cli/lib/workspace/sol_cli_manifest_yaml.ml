@@ -603,15 +603,15 @@ let peer ~ns ~name =
     ]
 ;;
 
-let managed_database_egress_doc ~cidrs ~port ~ns =
+let managed_database_egress_doc ~cidrs ~port ~ns ~name =
   let destination cidr = Y.map [ "ipBlock", Y.map [ "cidr", Y.string cidr ] ] in
   resource
     ~api_version:"networking.k8s.io/v1"
     ~kind:"NetworkPolicy"
-    [ "metadata", metadata ~ns ~name:"sol-managed-database-egress"
+    [ "metadata", metadata ~ns ~name:(name ^ "-managed-database-egress")
     ; ( "spec"
       , Y.map
-          [ "podSelector", Y.map []
+          [ "podSelector", Y.map [ "matchLabels", app_selector name ]
           ; "policyTypes", Y.list [ Y.string "Egress" ]
           ; ( "egress"
             , Y.list

@@ -154,6 +154,17 @@ def main():
     )
     cases.append(("allowance-not-scoped", tmp, "cannot be scoped"))
 
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/workspace/sol_cli_manifest_yaml.ml",
+        '''          [ "podSelector", Y.map [ "matchLabels", app_selector name ]
+          ; "policyTypes", Y.list [ Y.string "Egress" ]''',
+        '''          [ "podSelector", Y.map []
+          ; "policyTypes", Y.list [ Y.string "Egress" ]''',
+    )
+    cases.append(("allowance-selects-the-whole-namespace", tmp, "does not select the workloads"))
+
     for name, tmp, expected in cases:
         result = run(tmp)
         if result.returncode == 0:

@@ -124,7 +124,7 @@ let platform_network_fact ~ctx =
      | exception Yojson.Json_error _ -> None)
 ;;
 
-let ensure ~ctx ~namespaces : (unit, string) result =
+let ensure ~workloads ~ctx ~namespaces : (unit, string) result =
   let open Result.Syntax in
   match List.find_opt (fun ns -> List.mem ns reserved_platform_namespaces) namespaces with
   | Some ns ->
@@ -160,8 +160,9 @@ let ensure ~ctx ~namespaces : (unit, string) result =
       | Some (cidrs, port) ->
         apply_all
           (List.map
-             (fun ns -> Sol_cli_manifest.managed_database_egress_doc ~cidrs ~port ~ns)
-             namespaces)
+             (fun (ns, name) ->
+                Sol_cli_manifest.managed_database_egress_doc ~cidrs ~port ~ns ~name)
+             workloads)
     in
     (match secret_docs namespaces with
      | Error _ as e -> e

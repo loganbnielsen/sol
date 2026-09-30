@@ -120,6 +120,14 @@ def check(root: pathlib.Path) -> list[str]:
                 "ranges as ipBlocks carrying the ranges it was given, so it cannot be scoped to "
                 "what Sol provisioned"
             )
+        if "app_selector name" not in allowance:
+            problems.append(
+                "cli/lib/workspace/sol_cli_manifest_yaml.ml: the allowance does not select the "
+                "workloads that need it. An empty podSelector makes the namespace "
+                "egress-default-deny for every pod in it, which breaks everything that is not an "
+                "application workload -- observed live when a verification Job could no longer "
+                "resolve the service it was checking"
+            )
         if '"ports"' not in allowance or "Y.int port" not in allowance:
             problems.append(
                 "cli/lib/workspace/sol_cli_manifest_yaml.ml: the allowance names no port, which "
