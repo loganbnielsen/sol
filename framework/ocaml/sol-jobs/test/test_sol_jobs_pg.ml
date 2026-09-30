@@ -319,18 +319,54 @@ let test_stale_retry_is_a_no_op () =
       (lease_state pool))
 ;;
 
-let test_lease_overrun_is_logged () =
+let test_long_handler_renews_lease () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    let started, started_r = Eio.Promise.create () in
+    let stop, stop_r = Eio.Promise.create () in
+    let handled = ref 0 in
+    (Slow.on_handle
+     := fun () ->
+          incr handled;
+          ignore (Eio.Promise.try_resolve started_r ());
+          Eio.Time.sleep env#clock 0.5;
+          Ok ());
+    (match
+       Eio.Time.with_timeout env#clock 5.0 (fun () ->
+         Eio.Fiber.both
+           (fun () -> run_slow ~lease_s:0.1 ~max_jobs:1 env pool)
+           (fun () ->
+              Eio.Promise.await started;
+              Eio.Fiber.both
+                (fun () -> run_slow ~lease_s:0.1 ~stop env pool)
+                (fun () ->
+                   Eio.Time.sleep env#clock 0.35;
+                   ignore (Eio.Promise.try_resolve stop_r ())));
+         Ok ())
+     with
+     | Ok () -> ()
+     | Error `Timeout -> Alcotest.fail "pollers did not finish");
+    Alcotest.(check int) "one handler ran" 1 !handled;
+    Alcotest.(check int) "job finalized" 0 (List.length (rows pool)))
+;;
+
+let test_lost_renewal_is_logged () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
     current_pool := Some pool;
     enqueue_slow pool;
     (Slow.on_handle
      := fun () ->
-          Unix.sleepf 0.3;
+          reclaim_now ();
+          Eio.Time.sleep env#clock 0.15;
           Ok ());
     let (), err = capture_stderr (fun () -> run_slow ~lease_s:0.1 ~max_jobs:1 env pool) in
-    Alcotest.(check bool) "overrun logged" true (contains ~needle:"lease overrun" err);
-    Alcotest.(check int) "its own fenced finalize still won" 0 (List.length (rows pool)))
+    Alcotest.(check bool) "lost renewal logged" true (contains ~needle:"action=renew" err);
+    Alcotest.(check (list (pair string (triple int bool bool))))
+      "new holder remains fenced"
+      [ "pending", (2, true, false) ]
+      (lease_state pool))
 ;;
 
 let test_crashed_attempt_is_exhausted_at_claim () =
@@ -399,31 +435,25 @@ let test_expired_holder_cannot_complete_terminal_row () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
     enqueue_slow pool;
-    let started, started_r = Eio.Promise.create () in
-    let release, release_r = Eio.Promise.create () in
     (Slow.on_handle
      := fun () ->
-          ignore (Eio.Promise.try_resolve started_r ());
-          Eio.Promise.await release;
+          exec_sql
+            pool
+            "UPDATE sol_jobs SET status = 'failed', locked_until = NULL, last_error = \
+             'worker stopped before finishing the previous attempt'";
           Ok ());
     let retry_policy = { Sol_jobs.default_retry_policy with max_attempts = 1 } in
-    (match
-       Eio.Time.with_timeout env#clock 5.0 (fun () ->
-         Eio.Fiber.both
-           (fun () -> run_slow ~retry_policy ~lease_s:0.1 ~max_jobs:1 env pool)
-           (fun () ->
-              Eio.Promise.await started;
-              Eio.Time.sleep env#clock 0.2;
-              run_slow ~retry_policy ~lease_s:0.1 ~max_jobs:1 env pool;
-              ignore (Eio.Promise.try_resolve release_r ()));
-         Ok ())
-     with
-     | Ok () -> ()
-     | Error `Timeout -> Alcotest.fail "the two pollers did not finish");
+    let (), err =
+      capture_stderr (fun () -> run_slow ~retry_policy ~lease_s:0.1 ~max_jobs:1 env pool)
+    in
     Alcotest.(check (list (triple string string int)))
       "old holder did not delete terminal row"
       [ "slow", "failed", 1 ]
-      (rows pool))
+      (rows pool);
+    Alcotest.(check bool)
+      "the lost lease is logged"
+      true
+      (contains ~needle:"lease lost" err))
 ;;
 
 let () =
@@ -456,7 +486,11 @@ let () =
             test_stale_complete_is_a_no_op
         ; Alcotest.test_case "stale fail is a no-op" `Quick test_stale_fail_is_a_no_op
         ; Alcotest.test_case "stale retry is a no-op" `Quick test_stale_retry_is_a_no_op
-        ; Alcotest.test_case "lease overrun is logged" `Quick test_lease_overrun_is_logged
+        ; Alcotest.test_case
+            "long handler renews its lease"
+            `Quick
+            test_long_handler_renews_lease
+        ; Alcotest.test_case "lost renewal is logged" `Quick test_lost_renewal_is_logged
         ] )
     ; ( "bounded attempts (BUG-098)"
       , [ Alcotest.test_case

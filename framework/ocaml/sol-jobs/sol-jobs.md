@@ -100,14 +100,15 @@ RETURNING id, kind, payload, attempts
 
 `FOR UPDATE SKIP LOCKED` is the whole mechanism: Postgres's own row locking gives mutual exclusion across any number of pollers (multiple replicas of the same `-worker`, or multiple distinct `Make` instances sharing the table — each claims only its own `J.kinds`) with no coordinator, no `LISTEN`/`NOTIFY`, no external lease service. This is a **polling** claim loop by design (FEAT-077 non-goal: no `LISTEN`/`NOTIFY` push) — `poll_interval_s` (default `1.0`) is how long the loop sleeps when it finds nothing claimable; it never sleeps between consecutive jobs while the queue is non-empty.
 
-The claim query updates `locked_until` and commits immediately — `J.handle` then runs **outside** any open database transaction or connection hold. This matters for a Postgres connection pool of limited size: a slow job never ties up a pooled connection for its own duration, only for the brief claim/finalize queries around it. `locked_until` (`lease_s`, default `300.0`) exists purely as the crash-recovery mechanism: if this process dies or is killed mid-`handle`, the row's lease eventually expires and another poller (or this same process, restarted) can reclaim it. A clean run always finalizes well before the lease expires; `lease_s` only needs to comfortably exceed the slowest realistic `J.handle` call.
+The claim query updates `locked_until` and commits immediately — `J.handle` then runs **outside** any open database transaction or connection hold. This matters for a Postgres connection pool of limited size: a slow job never ties up a pooled connection for its own duration, only for the brief claim/renew/finalize queries around it. `locked_until` (`lease_s`, default `300.0`) is the crash-recovery mechanism: if this process dies or is killed mid-`handle`, the row's lease expires and another poller can reclaim it after about one lease.
 
-**Leases are not renewed, so a handler that outlives `lease_s` is not exclusive** (BUG-050). Once the lease expires, another poller can claim the same job while the first `handle` is still running; both run it. Two guards keep that from also corrupting the queue:
+While `J.handle` runs, a sibling fiber renews the lease every `lease_s / 3` using the claimed row's `id` and `attempts`. A renewal succeeds only while that same claim is pending and its lease is still current. A long handler that yields to Eio stays exclusive. If renewal loses the claim, it stops and logs the loss. A handler that blocks the Eio domain or an unavailable database can still miss renewal; keep handlers cooperative and idempotent.
 
-- **Fenced finalize.** The claim increments `attempts` and returns it, and the complete (`DELETE`), retry and fail statements all match `id = ? AND attempts = ?`. A stale holder's finalize therefore matches no row: it cannot delete the job out from under the new holder or clear its lease. The loss is logged (`sol-jobs: lease lost`, with `job_id`, `attempt`, `action`), and the stale outcome is not recorded — the new holder's is.
-- **Overrun warning.** When `handle` takes longer than `lease_s`, the loop logs `sol-jobs: lease overrun` (with `elapsed_s` and `lease_s`) even if its fenced finalize still wins, because a concurrent run was possible.
+Fenced finalization protects the queue if a lease is lost:
 
-Both go through `ot` when given and stderr otherwise. Renewal (heartbeating the lease during a long `handle`) is out of scope; size `lease_s` for the slowest handler, and keep handlers idempotent, since at-least-once already requires it.
+The claim increments `attempts` and returns it, and the complete (`DELETE`), retry and fail statements all match `id = ? AND attempts = ?`. A stale holder's finalize therefore matches no row: it cannot delete the job out from under the new holder or clear its lease. The loss is logged (`sol-jobs: lease lost`, with `job_id`, `attempt`, `action`), and the stale outcome is not recorded — the new holder's is.
+
+Warnings go through `ot` when given and stderr otherwise. Keep handlers idempotent, since crash recovery is at-least-once.
 
 On completion:
 
