@@ -1,0 +1,3 @@
+(executable
+ (name contract)
+ (libraries pluto_payments_events kafka-eio-service eio_main yojson))

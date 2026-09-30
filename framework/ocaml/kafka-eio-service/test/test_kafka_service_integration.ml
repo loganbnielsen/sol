@@ -122,6 +122,18 @@ let make_config () : Kafka_service.config =
   }
 ;;
 
+let register (type a) svc ~net ~clock (module M : Kafka_service.MESSAGE with type t = a) =
+  let open Result.Syntax in
+  let* _id =
+    Kafka_service.Schema.register
+      ~net
+      ~clock
+      ~registry_url:(make_config ()).schema_registry_url
+      (module M)
+  in
+  Kafka_service.register svc ~net ~clock (module M)
+;;
+
 let test_single_broker_loss_rejects_under_replicated_topic () =
   Eio_main.run
   @@ fun env ->
@@ -133,21 +145,13 @@ let test_single_broker_loss_rejects_under_replicated_topic () =
     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
   in
   let broker_default = create (make_config ()) in
-  (match
-     Kafka_service.register
-       broker_default
-       ~net:env#net
-       ~clock:env#clock
-       (module RawTestEvent)
-   with
+  (match register broker_default ~net:env#net ~clock:env#clock (module RawTestEvent) with
    | Ok _ -> ()
    | Error e -> Alcotest.fail (Kafka_service.error_to_string e));
   let durable =
     create { (make_config ()) with topic_durability = Kafka_service.Single_broker_loss }
   in
-  match
-    Kafka_service.register durable ~net:env#net ~clock:env#clock (module RawTestEvent)
-  with
+  match register durable ~net:env#net ~clock:env#clock (module RawTestEvent) with
   | Error (Kafka_service.Insufficient_replication { current = 1; required = 3; _ }) -> ()
   | Error e ->
     Alcotest.failf
@@ -192,9 +196,7 @@ let test_schema_check_compatible () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        (match
@@ -219,9 +221,7 @@ let test_schema_check_incompatible () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        (match
@@ -243,9 +243,7 @@ let test_schema_check_all_fails_fast () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        let result =
@@ -270,9 +268,7 @@ let test_publish_consume_roundtrip () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic ->
        let group_id =
@@ -346,9 +342,7 @@ let test_consume_returns_promptly_when_idle_and_stop_resolves () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module IdleTopic)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module IdleTopic) with
      | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
      | Ok topic ->
        let stop_p, stop_r = Eio.Promise.create () in
@@ -431,6 +425,12 @@ let serve_stub_registry ~sw ~net ~log =
       let status, body =
         if String.starts_with ~prefix:"PUT /config/" request_line
         then "500 Internal Server Error", {|{"error_code":50001,"message":"boom"}|}
+        else if String.starts_with ~prefix:"POST /compatibility/" request_line
+        then "200 OK", {|{"is_compatible":true}|}
+        else if
+          String.starts_with ~prefix:"POST /subjects/" request_line
+          && String.ends_with ~suffix:"/versions" request_line
+        then "201 Created", {|{"id":1}|}
         else "200 OK", {|{"id":1}|}
       in
       Eio.Flow.copy_string
@@ -450,7 +450,42 @@ let serve_stub_registry ~sw ~net ~log =
   | _ -> Alcotest.fail "stub registry has no port"
 ;;
 
-let test_register_sets_full_before_registering_and_fails_loudly () =
+let test_contract_register_sets_full_before_registering_and_fails_loudly () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  let log = ref [] in
+  let stub_url = serve_stub_registry ~sw ~net:env#net ~log in
+  (match
+     Kafka_service.Schema.register
+       ~net:env#net
+       ~clock:env#clock
+       ~registry_url:stub_url
+       (module StubRegistryEvent)
+   with
+   | Ok _ -> Alcotest.fail "a failed compatibility PUT must fail contract registration"
+   | Error (Kafka_service.Schema_registry _) -> ()
+   | Error e ->
+     Alcotest.failf "expected Schema_registry, got %s" (Kafka_service.error_to_string e));
+  let requests = List.rev !log in
+  Alcotest.(check bool)
+    "the compatibility PUT was attempted"
+    true
+    (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "no schema version was registered after the failed PUT (%s)"
+       (String.concat " | " requests))
+    false
+    (List.exists
+       (fun r ->
+          String.starts_with ~prefix:"POST /subjects/" r
+          && String.ends_with ~suffix:"/versions" r)
+       requests)
+;;
+
+let test_runtime_register_never_writes_the_registry () =
   Eio_main.run
   @@ fun env ->
   Eio.Switch.run
@@ -458,35 +493,35 @@ let test_register_sets_full_before_registering_and_fails_loudly () =
   let log = ref [] in
   let stub_url = serve_stub_registry ~sw ~net:env#net ~log in
   let config = { (make_config ()) with schema_registry_url = stub_url } in
-  match Kafka_service.create config ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module StubRegistryEvent)
-     with
-     | Ok _ -> Alcotest.fail "a failed compatibility PUT must fail register"
-     | Error (Kafka_service.Schema_registry _) -> ()
-     | Error e ->
-       Alcotest.failf "expected Schema_registry, got %s" (Kafka_service.error_to_string e));
-    let requests = List.rev !log in
-    Alcotest.(check bool)
-      "the compatibility PUT was attempted"
-      true
-      (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
-    Alcotest.(check bool)
-      (Printf.sprintf
-         "no schema was registered before compatibility was set (%s)"
-         (String.concat " | " requests))
-      false
-      (List.exists
-         (fun r ->
-            String.starts_with ~prefix:"POST /subjects/" r
-            &&
-            let n = String.length "/versions"
-            and m = String.length r in
-            let rec go i = i + n <= m && (String.sub r i n = "/versions" || go (i + 1)) in
-            go 0)
-         requests)
+  (match Kafka_service.create config ~sw with
+   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+   | Ok svc ->
+     (match
+        Kafka_service.register
+          svc
+          ~net:env#net
+          ~clock:env#clock
+          (module StubRegistryEvent)
+      with
+      | Ok _ -> ()
+      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)));
+  let requests = List.rev !log in
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "runtime register issued no compatibility PUT (%s)"
+       (String.concat " | " requests))
+    false
+    (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "runtime register issued no schema version POST (%s)"
+       (String.concat " | " requests))
+    false
+    (List.exists
+       (fun r ->
+          String.starts_with ~prefix:"POST /subjects/" r
+          && String.ends_with ~suffix:"/versions" r)
+       requests)
 ;;
 
 let produce_undecodable ~sw ~topic_name =
@@ -569,7 +604,7 @@ let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) 
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match Kafka_service.register svc ~net:env#net ~clock:env#clock (module M) with
+    (match register svc ~net:env#net ~clock:env#clock (module M) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic -> f env sw svc topic)
 ;;
@@ -813,9 +848,7 @@ let test_same_key_records_keep_their_order_across_partitions () =
   match Kafka_service.create (make_config ()) ~sw with
   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module OrderingEvent)
-     with
+    (match register svc ~net:env#net ~clock:env#clock (module OrderingEvent) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic ->
        (match
@@ -934,9 +967,13 @@ let () =
             `Slow
             test_schema_check_wrong_registry_path_is_an_error
         ; test_case
-            "register sets FULL first and fails loudly"
+            "contract register sets FULL first and fails loudly"
             `Slow
-            test_register_sets_full_before_registering_and_fails_loudly
+            test_contract_register_sets_full_before_registering_and_fails_loudly
+        ; test_case
+            "runtime register never writes the registry"
+            `Slow
+            test_runtime_register_never_writes_the_registry
         ] )
     ; ( "roundtrip"
       , [ test_case "publish and consume" `Slow test_publish_consume_roundtrip ] )

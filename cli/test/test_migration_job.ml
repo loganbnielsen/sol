@@ -29,7 +29,7 @@ esac
 let job =
   { Sol_cli_migration_job.namespace = "pluto-payments"
   ; job_name = "sol-migrate-1"
-  ; configmap_name = "sol-migrate-files-1"
+  ; configmap_name = Some "sol-migrate-files-1"
   }
 ;;
 

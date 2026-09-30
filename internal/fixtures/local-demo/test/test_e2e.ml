@@ -250,6 +250,15 @@ let run_golden_path () =
     | Ok s -> s
     | Error e -> failwith ("Kafka create: " ^ Kafka_service.error_to_string e)
   in
+  (match
+     Kafka_service.Schema.register
+       ~net:env#net
+       ~clock:env#clock
+       ~registry_url:kafka_config.schema_registry_url
+       (module OrderPlaced)
+   with
+   | Ok _ -> ()
+   | Error e -> failwith ("Kafka contract: " ^ Kafka_service.error_to_string e));
   let topic =
     match
       Kafka_service.register svc ~net:env#net ~clock:env#clock (module OrderPlaced)

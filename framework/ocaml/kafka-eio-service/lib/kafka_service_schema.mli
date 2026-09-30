@@ -37,6 +37,24 @@ val register_schema
   -> schema:string
   -> (int, string) result
 
+val subject_name : string -> string
+
+val register_contract
+  :  _ Eio.Net.t
+  -> clock:_ Eio.Time.clock
+  -> registry_url:string
+  -> topic_name:string
+  -> schema:string
+  -> (int, string) result
+
+val lookup_schema
+  :  _ Eio.Net.t
+  -> clock:_ Eio.Time.clock
+  -> registry_url:string
+  -> topic_name:string
+  -> schema:string
+  -> (int, string) result
+
 module Confluent_wire : sig
   val encode : schema_id:int -> Yojson.Safe.t -> bytes
   val decode : bytes -> (int * string, string) result

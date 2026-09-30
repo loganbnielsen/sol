@@ -105,16 +105,21 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
    | Error _ ->
      Sol_cli_migration_job.evidence ~ctx job
      |> Option.iter (Sol_cli_report.err "\nmigration-status Job evidence:\n%s");
+     let cleanup_hint =
+       match job.configmap_name with
+       | Some configmap ->
+         Printf.sprintf
+           "kubectl delete job/%s configmap/%s -n %s"
+           job.job_name
+           configmap
+           namespace
+       | None -> Printf.sprintf "kubectl delete job/%s -n %s" job.job_name namespace
+     in
      Sol_cli_report.err
-       "\n\
-        The failing Job is kept for inspection:\n\
-       \  kubectl logs job/%s -n %s\n\
-       \  kubectl delete job/%s configmap/%s -n %s"
+       "\nThe failing Job is kept for inspection:\n  kubectl logs job/%s -n %s\n  %s"
        job.job_name
        namespace
-       job.job_name
-       job.configmap_name
-       namespace);
+       cleanup_hint);
   result
 ;;
 

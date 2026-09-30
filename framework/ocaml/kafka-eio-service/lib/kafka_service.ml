@@ -117,6 +117,26 @@ module Schema = struct
       check_all ~net ~clock ~registry_url rest
   ;;
 
+  let register ~net ~clock ~registry_url (module M : MESSAGE) =
+    Kafka_service_schema.register_contract
+      net
+      ~clock
+      ~registry_url
+      ~topic_name:(topic_name_to_string M.topic_name)
+      ~schema:M.schema
+    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+  ;;
+
+  let resolve ~net ~clock ~registry_url (module M : MESSAGE) =
+    Kafka_service_schema.lookup_schema
+      net
+      ~clock
+      ~registry_url
+      ~topic_name:(topic_name_to_string M.topic_name)
+      ~schema:M.schema
+    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+  ;;
+
   type compatibility_response = Kafka_service_schema.compatibility_response =
     { is_compatible : bool }
 
@@ -128,6 +148,24 @@ module Schema = struct
 end
 
 module Confluent_wire = Kafka_service_schema.Confluent_wire
+
+module Contract = struct
+  let event_json module_name (module M : MESSAGE) =
+    `Assoc
+      [ "module", `String module_name
+      ; "topic", `String (topic_name_to_string M.topic_name)
+      ; "partitions", `Int M.partitions
+      ; "schema", `String M.schema
+      ]
+  ;;
+
+  let projection events =
+    `Assoc
+      [ "version", `Int 1
+      ; "events", `List (List.map (fun (name, m) -> event_json name m) events)
+      ]
+  ;;
+end
 
 module Dlq = struct
   type relay = Kafka_service_dlq.relay =
@@ -241,22 +279,9 @@ let register
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
-  let* () =
-    Kafka_service_schema.set_subject_compatibility
-      net
-      ~clock
-      ~registry_url:svc.schema_registry_url
-      ~topic_name:raw_topic_name
-    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
-  in
+  let* () = Schema.check ~net ~clock ~registry_url:svc.schema_registry_url (module M) in
   let* schema_id =
-    Kafka_service_schema.register_schema
-      net
-      ~clock
-      ~registry_url:svc.schema_registry_url
-      ~topic_name:raw_topic_name
-      ~schema:M.schema
-    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+    Schema.resolve ~net ~clock ~registry_url:svc.schema_registry_url (module M)
   in
   Ok
     { Kafka_service_intf.name = M.topic_name
