@@ -284,6 +284,43 @@ command still only reports.
 reconcile applies the plan, a no-change plan re-runs as a no-op, and a plan whose actions
 are `delete,create` is refused with the address named and no `apply` executed.
 
-**Still open:** part C — the test that an environment `destroy` cannot remove a durable
-prerequisite, anchored on `durable_observations`, plus the `docs/DEVELOPER_EXPERIENCE.md`
-§3–4 output and the second-deploy example. The ticket stays in `READY_FOR_ENGINEERING`.
+**Still open in this landing:** part C, below.
+
+## Part C completion notes (2026-09-30)
+
+**The boundary is provable (AC4).** `internal/ci/test_cloud_lifecycle_offline.sh` now fails, for
+both providers, if a target `destroy` reaches the installation. The checks are anchored on the
+`durable_observations` the ticket named (`sol_cli_aws_absence.ml`, `sol_cli_gcp_absence.ml`):
+
+- no terraform invocation from a destroy has a `-chdir=` under the durable root, so the
+  destroy never plans, applies or destroys the installation's own root;
+- no invocation addresses the installation's own state
+  (`bootstrap/aws/default.tfstate`, `prefix=bootstrap/gcp`);
+- the state backend is reported as `external: Terraform state bucket` and never as
+  `present after destroy:`, so the destructive path asserts the prerequisite *survives*
+  rather than assuming it, and its presence is never counted as the target's residue.
+
+The AWS case already asserted this for the delegated hosted zone; both providers now assert
+the state backend as well. Positive control: the `-chdir` pattern was checked against a real
+durable-root invocation line (`-chdir=…/terraform/aws-bootstrap-8d3a40f75e5c68de/platform/cloud/aws/bootstrap`),
+so the check fires on the shape it forbids rather than matching nothing.
+
+**The user-visible path (AC for the coverage note).** `docs/DEVELOPER_EXPERIENCE.md` §4.3 now
+carries the stage's real output — the resolved configuration, the verdict table, and what
+`Unmet`/`UNKNOWN` mean — and states that `--apply` reconciles with a replace/destroy stop and
+is a no-op when the root is already at its declared state. `examples/pluto/README.md` gains
+"Once per account: the installation": the target declaration the installation is resolved
+from, the observe-and-reconcile pair, and a second environment (`sol deploy pilot/aws/us-east-1`)
+deploying against the installation that already exists, with no installation work.
+
+**Language parity:** no application-facing contract changes — the installation is
+language-neutral (no `sol.toml` field, no framework primitive, no changed manifest), so
+DEC-022 carries no per-language verdict for this ticket.
+
+**Recorded limitations, unchanged from the earlier notes.** GCP's durable root declares no
+identities, so its observed set is the state backend and the delegated zone; whether GCP
+should own durable identities is a durable-root question, not an observation one. Zone
+ownership is not declared anywhere yet, so a target whose DNS is external reports the
+delegated zone `Unmet` — the safe direction — until FEAT-107's create/adopt declaration
+lands, at which point `Sol_cli_installation.of_target` and the stage's `manage_dns_zone`
+decision are where it plugs in.

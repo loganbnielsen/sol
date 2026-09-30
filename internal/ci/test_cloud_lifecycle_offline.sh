@@ -574,6 +574,28 @@ for managed in 'gcloud container clusters describe' 'gcloud sql instances descri
     exit 1
   fi
 done
+
+gcp_durable_invocations="$(grep -E -- '-chdir=[^ ]*bootstrap' "$gcp_destroy_log" || true)"
+if [ -n "$gcp_durable_invocations" ]; then
+  echo "INFRA-096: the GCP destroy ran terraform against the durable installation root:" >&2
+  printf '%s\n' "$gcp_durable_invocations" >&2
+  exit 1
+fi
+if ! grep -F 'external: Terraform state bucket' "$gcp_destroy_log.out" >/dev/null; then
+  echo "INFRA-096: the GCP destroy did not report the state backend as a durable prerequisite:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
+if ! grep -F 'external: DNS managed zone' "$gcp_destroy_log.out" >/dev/null; then
+  echo "INFRA-096: the GCP destroy did not report the delegated zone as a durable prerequisite:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
+if grep -F 'present after destroy: Terraform state bucket' "$gcp_destroy_log.out" >/dev/null; then
+  echo "INFRA-096: the GCP destroy counted the installation's state backend as this target's residue:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
 grep -F 'retention: none' "$gcp_destroy_log.out" >/dev/null || {
   echo "the GCP destroy did not say what it kept:" >&2
   cat "$gcp_destroy_log.out" >&2
@@ -1021,6 +1043,28 @@ if ! grep -F 'external: Route 53 hosted zone' "$log.out" >/dev/null; then
 fi
 if grep -F 'present after destroy: Route 53 hosted zone' "$log.out" >/dev/null; then
   echo "the delegated hosted zone was counted as this target's residue:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
+
+durable_invocations="$(grep -E -- '-chdir=[^ ]*bootstrap' "$log" || true)"
+if [ -n "$durable_invocations" ]; then
+  echo "INFRA-096: the destroy ran terraform against the durable installation root:" >&2
+  printf '%s\n' "$durable_invocations" >&2
+  exit 1
+fi
+if grep -E 'bootstrap/(aws|gcp)/default\.tfstate|prefix=bootstrap' "$log" >/dev/null; then
+  echo "INFRA-096: the destroy addressed the installation's own state:" >&2
+  grep -E 'bootstrap/(aws|gcp)/default\.tfstate|prefix=bootstrap' "$log" >&2
+  exit 1
+fi
+if ! grep -F 'external: Terraform state bucket' "$log.out" >/dev/null; then
+  echo "INFRA-096: the destroy did not report the state backend as a durable prerequisite:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
+if grep -F 'present after destroy: Terraform state bucket' "$log.out" >/dev/null; then
+  echo "INFRA-096: the destroy counted the installation's state backend as this target's residue:" >&2
   cat "$log.out" >&2
   exit 1
 fi
