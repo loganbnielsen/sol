@@ -46,3 +46,18 @@ because they exist.
 Report merged versus queued PRs accurately, with validation and any blockers.
 A queue request is not a completed merge, and an optional marker is not proof
 that review gated one.
+
+**Do not end a session on a tidy boundary.** The objective is working through the
+backlog. Do not postpone implementation because it is large, will span sessions, or cannot
+end green: an owned worktree may hold incomplete, even non-compiling, work — canonical
+`main` stays green, the worktree does not have to. Leave a precise checkpoint and continue
+from it. Reconnaissance is a means to implementation, not a deliverable: record findings in
+the ticket and start building, rather than opening a recon-only PR. Resolve ordinary
+ownership, triage and implementation questions yourself — infer which worktree owns a
+ticket, take ownership of unowned executable work in your stream, adopt what is useful from
+a dirty orphan tree, reconcile a ticket that fails the READY criteria or that in-flight work
+has mooted, and read upstream source when behaviour is uncertain. Stop and ask only for a
+major unresolved design decision: materially different options that would change what Sol
+means (architecture, public contract, correctness guarantees, persistence or security
+model, product direction) — and only after reconnaissance. Session and context limits are
+not design questions; finish by running out of executable work, not by tidying up.
