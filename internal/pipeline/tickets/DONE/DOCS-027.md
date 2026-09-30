@@ -74,3 +74,46 @@ event, add a migration, and know which language path to take.
   contract pages. This page is the conceptual and task-level guide.
 - If a section needs a framework primitive that does not exist, file it rather
   than documenting an aspiration as if it worked.
+
+## Completion notes (2026-09-30)
+
+`docs/guides/application-authoring.md` is published, and `docs/README.md` marks it so.
+
+**A reader can design a domain and add each primitive from the page alone** (AC1). The page
+gives the decision rule first (a caller waits → `-svc`; something happened → `-worker`; time
+passed → `-fn`), then one section per primitive with the entry-point shape and the generated
+layout, then the task recipes: add a domain and a unit, add an event, add a table, add a
+scheduled function, wire a dependency, add a service dependency. The workspace section states
+the layout, the `sol.yml` declaration, and the rule that a unit's directory and its declaration
+must agree (`sol check` fails when they do not).
+
+**Both language paths are stated, with the gaps recorded** (AC2). Parity is stated the way
+DEC-022 defines it — capability and behavioural parity, not implementation parity — and the two
+current gaps are named rather than glossed: the `sol new --language typescript` entry point does
+not exist (FEAT-084; `sol new svc|worker|fn` scaffolds OCaml, and a TypeScript unit is written
+in the same shape as the OCaml one, as `examples/pluto/app/demo_ts` does), and the production
+profile's preflight still refuses a TypeScript workload (DEC-026 §2; the standing goal is
+FEAT-102 and the state is in `docs/deployment/compatibility.md`). The TypeScript demos are
+pointed at as the worked `-svc` and `-worker` examples.
+
+**No signature is restated** (AC3). The page links `docs/reference/runtime.md` (health, config
+injection, discovery, migration filenames, synchronous calls), the application contract index,
+and the five package specs, and quotes code only where the *shape* is the point.
+
+**Every sample is real** (AC4). Each code block is taken from a cited path:
+`app/checkout/checkout_svc/bin/main.ml` and `app/comms/notify_worker/bin/main.ml` for the two
+primitives, `events/payments/charged.ml` for the event contract, `sol.yml`'s declaration, and
+`app/<domain>/<name>_{svc,worker,fn}/` for the generated layout — verified against
+`cli/lib/workspace/sol_cli_cmd_new.ml` (`component_suffix`) and
+`platform/shared/templates/event/events/{{team}}/{{name}}.ml`, whose shape the quoted event
+matches. The `-fn` walkthrough is the tutorial's, and the anchor was corrected to the heading
+that exists (`#new-scheduled-function`).
+
+**Demo/example coverage:** the samples in this page *are* the examples — each is a path in
+`examples/pluto` or the tutorial — so the ticket adds no new runnable example of its own. One
+gap is recorded rather than invented away: `examples/pluto` has no `-fn` unit, so the scheduled
+function is documented from the tutorial's walkthrough and the scaffold template.
+
+**Language parity:** this page is where the parity statement is made for authors; it adds no
+capability, so no new per-language verdict is owed, and the two documented gaps already carry
+tickets (FEAT-084, FEAT-102).
