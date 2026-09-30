@@ -7,6 +7,32 @@ not a full commit log — see `git log` and `internal/pipeline/tickets/DONE/` fo
 
 ## Unreleased
 
+- **Breaking (FEAT-113):** Kafka message-level retry and application-level
+  `Dead_letter` are removed (DEC-021's 2026-09-29 amendment). `Worker.Make_with_retry`,
+  `Worker.RETRYABLE_WORKER`, `retry_policy`/`default_retry_policy`,
+  `Worker.Retry`/`Worker.Dead_letter`, `Kafka_service.Retry_topics`,
+  `consume_partitioned`, `consumer_hooks`/`on_relay_publish`, the
+  `X-Sol-Retry-Attempt`/`X-Sol-Retry-At` headers, and the retry-topic relay are
+  gone. `Worker.Make` is the single tier, and `handle` returns exactly
+  `Ack | Fail`. A `Fail` does not advance the offset, emits
+  `sol_worker_messages_total{status="fail"}`, logs, and stops the consumer — a
+  contract failure an operator sees, rather than a fact the runtime skipped.
+  Independently retryable work belongs in `sol-jobs`, enqueued in the same
+  transaction as the state change that caused it (`examples/pluto` and
+  `internal/fixtures/venus` show the pattern). The removed
+  `kafka_service_retry_topics` module is replaced by `Kafka_service.Dlq`, which
+  keeps the group-scoped DLQ naming and decode-failure handling.
+- **Behavior change (FEAT-113):** every `Worker.Make` worker now routes a source
+  record it cannot decode to the consumer group's DLQ by default
+  (`decode_error_policy = Route_to_dlq`). Previously that default belonged only to
+  `Make_with_retry`; a plain `Make` worker acked and dropped. `Ack_and_drop`
+  remains an explicit opt-in. Decode failures still count on
+  `sol_worker_decode_errors_total`.
+- **Behavior change (FEAT-113):** `sol_worker_messages_total`'s `status` vocabulary
+  shrinks to exactly `ok`, `fail`, `ack_failed`. `retry`, `dead_letter`,
+  `relay_published`, and `relay_failed` are gone, and the
+  `SolWorkerRelayPublishFailed` and `SolWorkerDeadLetterInflow` alerts are removed
+  with them, since their series can no longer occur.
 - **New (FEAT-079):** `-fn`'s `sol.toml` gains `scheduled_concurrency`
   (`allow`/`forbid`/`replace`, default `allow`) and `backoff_limit` (default
   `3`), rendered as the deployed `CronJob`'s `concurrencyPolicy` and

@@ -96,15 +96,6 @@ type t = Kafka_service_intf.t =
   ; security : Kafka.Security.t
   }
 
-type consume_partitioned_error = Kafka_service_intf.consume_partitioned_error =
-  | Consumer_error of Kafka.Error.t
-  | Partition_errors of (int32 * Kafka.Error.t) list
-
-type handler_error = Kafka_service_intf.handler_error =
-  | Retry
-  | Dead_letter of string
-  | Kafka_error of Kafka.Error.t
-
 type decode_error_policy = Kafka_service_intf.decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
@@ -138,38 +129,17 @@ end
 
 module Confluent_wire = Kafka_service_schema.Confluent_wire
 
-module Retry_topics = struct
-  type retry_action = Kafka_service_retry_topics.retry_action =
-    | Ack
-    | Forward_retry of
-        { target : topic_name
-        ; delay_s : float
-        }
-    | Forward_dlq of { target : topic_name }
-
-  type relay = Kafka_service_retry_topics.relay =
+module Dlq = struct
+  type relay = Kafka_service_dlq.relay =
     { source : Kafka.Consumer.message
     ; headers : (string * string option) list
-    ; attempt : int
-    ; delay_s : float
     }
 
-  let parse_retry_metadata = Kafka_service_retry_topics.parse_retry_metadata
-  let produce_backoff_s = Kafka_service_retry_topics.produce_backoff_s
-  let retry_produce = Kafka_service_retry_topics.retry_produce
-  let retry_message = Kafka_service_retry_topics.retry_message
-  let dead_letter_message = Kafka_service_retry_topics.dead_letter_message
-  let decode_failure_message = Kafka_service_retry_topics.decode_failure_message
-  let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
-  let execute_action = Kafka_service_retry_topics.execute_action
-  let route_decode_error = Kafka_service_retry_topics.route_decode_error
-  let relay_topic_name = Kafka_service_retry_topics.relay_topic_name
-
-  type record_stage = Kafka_service_retry_topics.record_stage =
-    | Source
-    | Retry of int
-
-  let process_handler_result = Kafka_service_retry_topics.process_handler_result
+  let sanitize_group_id = Kafka_service_dlq.sanitize_group_id
+  let canonical_group_segment = Kafka_service_dlq.canonical_group_segment
+  let dlq_topic_name = Kafka_service_dlq.dlq_topic_name
+  let decode_failure_message = Kafka_service_dlq.decode_failure_message
+  let route_decode_error = Kafka_service_dlq.route_decode_error
 end
 
 module Admin = struct
@@ -316,13 +286,6 @@ let publish svc topic ?trace_ctx msg =
     ()
 ;;
 
-type consumer_hooks = Kafka_service_intf.consumer_hooks =
-  { kafka : Kafka.Consumer.hooks
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
-  }
-
-let no_hooks = Kafka_service_intf.no_hooks
 let default_on_decode_error = Kafka_service_intf.ack_and_drop_decode_error
 
 let consume
@@ -331,35 +294,72 @@ let consume
       ~group_id
       ~sw
       ~clock
-      ?(hooks = no_hooks)
-      ?(on_decode_error = default_on_decode_error)
+      ?hooks
+      ?(decode_error_policy = Route_to_dlq)
       ?ot
       ?stop
       ~handler
       ()
   =
-  let ({ kafka = kafka_hooks; _ } : Kafka_service_intf.consumer_hooks) = hooks in
-  let on_decode_error =
-    Kafka_service_intf.wrap_on_decode_error
-      ~ot
-      ~topic_name:(topic_name_to_string topic.name)
-      on_decode_error
+  let kafka_hooks = Option.value hooks ~default:Kafka.Consumer.default_hooks in
+  let source_topic = topic_name_to_string topic.name in
+  let dlq_topic = Kafka_service_dlq.dlq_topic_name ~source:source_topic ~group_id in
+  let open Result.Syntax in
+  let* () =
+    match decode_error_policy with
+    | Ack_and_drop -> Ok ()
+    | Route_to_dlq ->
+      Kafka_service_intf.ensure_topic
+        svc.producer
+        ~topic_name:dlq_topic
+        ~partitions:topic.partitions
+        ~topic_durability:svc.topic_durability
+  in
+  let publish_relay ~target_topic (relay : Kafka_service_dlq.relay) =
+    Kafka.Producer.produce_await
+      svc.producer
+      ~topic:target_topic
+      ~value:relay.source.value
+      ?key:relay.source.key
+      ~headers:relay.headers
+      ()
+  in
+  let observe_decode_error =
+    Kafka_service_intf.observe_decode_error ~ot ~topic_name:source_topic
+  in
+  let on_decode_error raw_msg e ~raw_bytes ~ack =
+    match decode_error_policy with
+    | Ack_and_drop ->
+      observe_decode_error e ~raw_bytes ~disposition:`Dropped;
+      default_on_decode_error e ~raw_bytes ~ack
+    | Route_to_dlq ->
+      observe_decode_error e ~raw_bytes ~disposition:`Dead_lettered;
+      (match
+         Kafka_service_dlq.route_decode_error
+           ~dlq_topic
+           ~raw_msg
+           ~decode_error:e
+           ~group_id
+           ~publish:publish_relay
+           ~ack
+       with
+       | Ok () -> Kafka.Consumer.Continue
+       | Error ke -> Kafka.Consumer.Error ke)
   in
   let consumer_cfg : Kafka.Consumer.config =
     { brokers = svc.brokers
     ; group_id
-    ; topics = [ topic_name_to_string topic.name ]
+    ; topics = [ source_topic ]
     ; offset_reset = Kafka.Consumer.Earliest
     ; auto_commit = false
     ; security = svc.security
     ; properties = []
     }
   in
-  let open Result.Syntax in
   let* consumer = Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw in
   let decode_and_handle raw_msg ~ack =
     match Kafka_service_schema.decode_message topic raw_msg with
-    | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
+    | Error (e, raw_bytes) -> on_decode_error raw_msg e ~raw_bytes ~ack
     | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
   in
   let result =
@@ -367,38 +367,4 @@ let consume
   in
   Kafka.Consumer.close consumer;
   result
-;;
-
-let consume_partitioned
-      svc
-      topic
-      ~group_id
-      ~sw
-      ~net
-      ~clock
-      ?(hooks = no_hooks)
-      ?decode_error_policy
-      ~retry_policy
-      ?(consumer_properties = [])
-      ?ot
-      ?stop
-      ~handler
-      ()
-  =
-  let observe_decode_error =
-    Kafka_service_intf.observe_decode_error
-      ~ot
-      ~topic_name:(topic_name_to_string topic.name)
-  in
-  let runtime : _ Kafka_service_retry_topics.runtime =
-    { group_id
-    ; retry_policy
-    ; consumer_properties
-    ; hooks
-    ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
-    ; observe_decode_error
-    ; handler
-    }
-  in
-  Kafka_service_retry_topics.consume svc topic ~sw ~net ~clock ?stop runtime ()
 ;;

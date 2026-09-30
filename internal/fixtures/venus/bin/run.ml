@@ -138,8 +138,20 @@ let () =
       ~context:[ "team", "comms" ]
       ()
   in
+  let jobs_obs =
+    Sol_obs.of_env
+      ~sw
+      ~net:env#net
+      ~clock:env#clock
+      ~mono_clock:env#mono_clock
+      ~service:"jobs-worker"
+      ~context:[ "team", "comms" ]
+      ()
+  in
   let render () =
-    Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs ()
+    Sol_obs.metrics_renderer svc_obs ()
+    ^ Sol_obs.metrics_renderer worker_obs ()
+    ^ Sol_obs.metrics_renderer jobs_obs ()
   in
   let svc_ot = Sol_obs.obs_eio svc_obs in
   let worker_ot = Sol_obs.obs_eio worker_obs in
@@ -150,6 +162,10 @@ let () =
   let charges_count = 3 in
   let worker_ready_p, worker_ready_r = Eio.Promise.create () in
   let worker_done_p, worker_done_r = Eio.Promise.create () in
+  let jobs_done_p, jobs_done_r = Eio.Promise.create () in
+  (match db_pool with
+   | None -> Eio.Promise.resolve jobs_done_r ()
+   | Some _ -> ());
   let module W = Notify_worker.Make (struct
       let pool = db_pool
       let ot = worker_ot
@@ -157,7 +173,7 @@ let () =
   in
   Eio.Fiber.fork ~sw (fun () ->
     (try
-       let module WR = Worker.Make_with_retry (W) in
+       let module WR = Worker.Make (W) in
        WR.run
          ~env
          ~config:kafka_config
@@ -177,6 +193,28 @@ let () =
      | Failure msg -> Printf.eprintf "[notify-worker] error: %s\n%!" msg);
     try Eio.Promise.resolve worker_done_r () with
     | _ -> ());
+  (match db_pool with
+   | None -> ()
+   | Some pool ->
+     Eio.Fiber.fork ~sw (fun () ->
+       (try
+          let module Jobs = Sol_jobs.Make (Notify_worker.Email_job) in
+          Jobs.run
+            ~env
+            ~pool
+            ~ot:jobs_obs
+            ~metrics_port:0
+            ~poll_interval_s:0.2
+            ~max_jobs:charges_count
+            ()
+          |> Result.map_error Sol_jobs.run_error_to_string
+          |> function
+          | Ok () -> ()
+          | Error msg -> failwith msg
+        with
+        | Failure msg -> Printf.eprintf "[jobs]   error: %s\n%!" msg);
+       try Eio.Promise.resolve jobs_done_r () with
+       | _ -> ()));
   let handle_charge req =
     let corr_id =
       Option.value (Request.header req "x-correlation-id") ~default:(new_corr_id ())
@@ -306,6 +344,19 @@ let () =
    | Error `Timeout -> Printf.eprintf "[venus] timed out waiting for worker\n%!"
    | Ok () -> ());
   say "all %d events processed." charges_count;
+  (match db_pool with
+   | None -> ()
+   | Some _ ->
+     say
+       "waiting for the jobs-worker to process all %d receipt emails (up to 20s) ..."
+       charges_count;
+     (match
+        Eio.Time.with_timeout env#clock 20.0 (fun () ->
+          Ok (Eio.Promise.await jobs_done_p))
+      with
+      | Error `Timeout -> Printf.eprintf "[venus] timed out waiting for jobs-worker\n%!"
+      | Ok () -> ());
+     say "all %d receipt-email jobs completed." charges_count);
   (match db_pool with
    | None -> ()
    | Some pool ->

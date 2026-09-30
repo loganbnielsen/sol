@@ -822,31 +822,7 @@ locals {
             }
             annotations = merge({
               summary     = "{{ $labels.service }} could not decode messages ({{ $labels.domain }}/{{ $labels.workspace }})"
-              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) could not decode about {{ $value | humanize }} message(s) in the last 5 minutes; they were dead-lettered (Retry_topics) or acked and dropped. Usually a producer deployed an incompatible schema."
-            }, local.alert_annotations)
-          },
-          {
-            alert = "SolWorkerRelayPublishFailed"
-            expr  = "sum by (workspace, env, domain, service) (sol_worker_messages_total{status=\"relay_failed\"}) > 0"
-            for   = "0s"
-            labels = {
-              severity = "critical"
-            }
-            annotations = merge({
-              summary     = "{{ $labels.service }} cannot publish to its retry/DLQ topics ({{ $labels.domain }}/{{ $labels.workspace }})"
-              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) failed {{ $value | humanize }} retry/DLQ publish(es) after exhausting in-process retries since the pod started. The records stay unacknowledged; retry delivery is not progressing."
-            }, local.alert_annotations)
-          },
-          {
-            alert = "SolWorkerDeadLetterInflow"
-            expr  = "sum by (workspace, env, domain, service) (rate(sol_worker_messages_total{status=\"dead_letter\"}[10m])) > 0"
-            for   = "15m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = merge({
-              summary     = "{{ $labels.service }} is dead-lettering messages ({{ $labels.domain }}/{{ $labels.workspace }})"
-              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) has sent messages to its DLQ continuously for 15 minutes ({{ $value | humanize }}/s)."
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) could not decode about {{ $value | humanize }} message(s) in the last 5 minutes. By default they are parked on the group's DLQ; under an explicit Ack_and_drop they are discarded. Usually a producer deployed an incompatible schema."
             }, local.alert_annotations)
           },
           {

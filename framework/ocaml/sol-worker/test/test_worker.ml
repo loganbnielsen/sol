@@ -41,18 +41,11 @@ module OkWorker = struct
   ;;
 end
 
-module ErrWorker = struct
+module FailWorker = struct
   module Message = TestMsg
 
-  let group_id = "test-err"
-  let handle _msg ~trace_ctx:_ = Worker.Retry "something went wrong"
-end
-
-module DlqWorker = struct
-  module Message = TestMsg
-
-  let group_id = "test-dlq"
-  let handle _msg ~trace_ctx:_ = Worker.Dead_letter "poison"
+  let group_id = "test-fail"
+  let handle _msg ~trace_ctx:_ = Worker.Fail
 end
 
 let one_message msg ~handler () =
@@ -75,10 +68,6 @@ let one_message_with_ack msg ~ack ~result_r ~handler () =
   result_r := Some (handler msg ~ack ~trace_ctx:None)
 ;;
 
-let one_message_result msg result_r ~handler () =
-  result_r := Some (handler msg ~ack:(fun () -> Ok ()) ~trace_ctx:None)
-;;
-
 let run_ok result =
   match result with
   | Ok () -> ()
@@ -92,28 +81,33 @@ let test_handle_ok () =
     W.run ~env ~config:fake_config ~test_consume_loop:(one_message msg) () |> run_ok)
 ;;
 
-let test_handle_error_returns_consumer_error () =
+let test_handle_fail_stops_without_acking () =
   Eio_main.run (fun env ->
-    let msg = TestMsg.{ id = "msg-err" } in
-    let module W = Worker.For_testing.Make_with_retry (ErrWorker) in
+    let msg = TestMsg.{ id = "msg-fail" } in
+    let module W = Worker.For_testing.Make (FailWorker) in
+    let acked = ref false in
     let result_r = ref None in
-    W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
+    W.run
+      ~env
+      ~config:fake_config
+      ~test_consume_loop:(fun ~handler () ->
+        result_r
+        := Some
+             (handler
+                msg
+                ~ack:(fun () ->
+                  acked := true;
+                  Ok ())
+                ~trace_ctx:None))
+      ()
     |> run_ok;
+    Alcotest.(check bool)
+      "a fact the handler declined to apply is not acknowledged"
+      false
+      !acked;
     match !result_r with
-    | Some (Kafka.Consumer.Error Kafka_service.Retry) -> ()
-    | _ -> Alcotest.fail "expected handler retry to become Kafka.Consumer.Error")
-;;
-
-let test_handle_dead_letter_returns_consumer_error () =
-  Eio_main.run (fun env ->
-    let msg = TestMsg.{ id = "msg-dlq" } in
-    let module W = Worker.For_testing.Make_with_retry (DlqWorker) in
-    let result_r = ref None in
-    W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
-    |> run_ok;
-    match !result_r with
-    | Some (Kafka.Consumer.Error (Kafka_service.Dead_letter "poison")) -> ()
-    | _ -> Alcotest.fail "expected handler dead-letter to become Kafka.Consumer.Error")
+    | Some Kafka.Consumer.Stop -> ()
+    | _ -> Alcotest.fail "expected Fail to stop the consumer")
 ;;
 
 let test_metrics_ok_counter () =
@@ -165,7 +159,7 @@ let test_metrics_ok_counter () =
        !found))
 ;;
 
-let test_metrics_error_counter () =
+let test_metrics_fail_counter () =
   Eio_main.run (fun env ->
     Eio.Switch.run
     @@ fun sw ->
@@ -180,20 +174,20 @@ let test_metrics_error_counter () =
     in
     let render = Sol_obs.metrics_renderer obs in
     let msg = TestMsg.{ id = "msg-err-metrics" } in
-    let module W = Worker.For_testing.Make_with_retry (ErrWorker) in
-    ignore
-      (W.run
-         ~env
-         ~config:fake_config
-         ~ot:obs
-         ~metrics_port:0
-         ~test_consume_loop:(one_message msg)
-         ());
+    let module W = Worker.For_testing.Make (FailWorker) in
+    W.run
+      ~env
+      ~config:fake_config
+      ~ot:obs
+      ~metrics_port:0
+      ~test_consume_loop:(one_message msg)
+      ()
+    |> run_ok;
     let output = render () in
     Alcotest.(check bool)
-      "status=error label present"
+      "status=fail label present"
       true
-      (let needle = {|status="error"|} in
+      (let needle = {|status="fail"|} in
        let n = String.length needle
        and s = String.length output in
        let found = ref false in
@@ -548,13 +542,9 @@ let () =
     [ ( "lifecycle"
       , [ Alcotest.test_case "handle ok returns normally" `Quick test_handle_ok
         ; Alcotest.test_case
-            "handle error returns Error"
+            "Fail stops without acking the fact"
             `Quick
-            test_handle_error_returns_consumer_error
-        ; Alcotest.test_case
-            "handle dead-letter returns Error"
-            `Quick
-            test_handle_dead_letter_returns_consumer_error
+            test_handle_fail_stops_without_acking
         ; Alcotest.test_case "no ot — no crash" `Quick test_no_metrics_without_ot
         ; Alcotest.test_case
             "a stop request after a message stops before the next"
@@ -583,7 +573,7 @@ let () =
         ] )
     ; ( "metrics"
       , [ Alcotest.test_case "ok counter emitted" `Quick test_metrics_ok_counter
-        ; Alcotest.test_case "error counter emitted" `Quick test_metrics_error_counter
+        ; Alcotest.test_case "fail counter emitted" `Quick test_metrics_fail_counter
         ; Alcotest.test_case "duration histogram emitted" `Quick test_metrics_duration
         ; Alcotest.test_case "metrics endpoint served" `Quick test_metrics_endpoint_served
         ] )

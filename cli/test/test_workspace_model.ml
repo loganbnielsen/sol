@@ -112,21 +112,27 @@ let test_pluto_events_migrations_and_targets () =
     ]
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
-   | [ migration ] ->
+   | [ notifications; sol_jobs ] ->
      Alcotest.(check string)
        "file"
        "0001_notifications.sql"
-       (Sol_cli_plan_ids.Migration_file.to_string migration.file);
-     Alcotest.(check (option int)) "version" (Some 1) migration.version;
-     Alcotest.(check (option string)) "name" (Some "notifications") migration.name;
-     (match migration.disposition with
+       (Sol_cli_plan_ids.Migration_file.to_string notifications.file);
+     Alcotest.(check (option int)) "version" (Some 1) notifications.version;
+     Alcotest.(check (option string)) "name" (Some "notifications") notifications.name;
+     (match notifications.disposition with
       | Ok _ -> Alcotest.fail "expected pluto's migration to declare no disposition"
-      | Error _ -> ())
+      | Error _ -> ());
+     Alcotest.(check string)
+       "sol-jobs migration file"
+       "0002_sol_jobs.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string sol_jobs.file);
+     Alcotest.(check (option int)) "sol-jobs version" (Some 2) sol_jobs.version;
+     Alcotest.(check (option string)) "sol-jobs name" (Some "sol_jobs") sol_jobs.name
    | other ->
-     Alcotest.fail (Printf.sprintf "expected one migration, got %d" (List.length other)));
+     Alcotest.fail (Printf.sprintf "expected two migrations, got %d" (List.length other)));
   Alcotest.(check int)
     "unapplied migrations"
-    1
+    2
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
@@ -150,7 +156,7 @@ let test_venus_reads_both_domains () =
     facts.Sol_cli_workspace_model.targets;
   Alcotest.(check int)
     "unapplied migrations"
-    1
+    2
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 

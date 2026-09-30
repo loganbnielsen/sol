@@ -261,28 +261,31 @@ The caller endpoint uses `Peer.url "checkout_svc"` and `Peer.headers` so
 
 ```ocaml
 module Make (Config : sig
-  val pool : Db.pool option
+  val pool : Pg_db.pool
   val ot   : Obs_eio.t
 end) = struct
   module Message = Charged
   let group_id = "pluto-comms-notify-worker"
 
-  let handle (msg : Message.t) ~trace_ctx:_ =
-    Obs_eio.log_standalone Config.ot Obs_eio.Info
-      ~fields:[("charge_id", msg.id); ("customer_id", msg.customer_id)]
-      "charge event received";
-    (match Config.pool with
-     | Some pool -> ignore (Notification.insert pool ...)
-     | None -> ());
-    Worker.Ack
+  let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
+    Pg_db.transaction Config.pool (fun pool ->
+      let open Result.Syntax in
+      let* () = Notification.insert pool ~charge_id:msg.id ... in
+      Jobs.enqueue pool ~dedupe_key:msg.id
+        Email_job.{ charge_id = msg.id; customer_id = msg.customer_id })
+    |> function
+    | Ok () -> Worker.Ack
+    | Error _ -> Worker.Fail
 end
 ```
 
 `module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Worker.Ack`.
 
-A worker whose `handle` can only ever return `Worker.Ack` implements `Worker.WORKER` and runs under `Worker.Make(W).run`. A worker that can return `Worker.Retry reason` (retryable failures) or `Worker.Dead_letter reason` (poison messages) implements `Worker.RETRYABLE_WORKER` — `handle`'s return type annotated as `Worker.outcome` — and runs under `Worker.Make_with_retry(W).run`. Sol routes retries through durable retry topics with a bounded default policy and a group-scoped DLQ. `notify_worker` above returns `Worker.Retry` on a DB failure elsewhere in `handle`, so it uses the retryable kind.
+`handle` returns `Worker.outcome`, which is exactly `Ack` or `Fail`. `Ack` applies the fact and advances the offset. `Fail` declines it: the offset is not committed and the consumer stops, so a contract failure surfaces to an operator instead of being a fact the runtime silently skipped. There is no retry outcome and no application-level dead-letter outcome — a transient dependency failure is handled at the operation level (retry the dependency call, not the whole handler), never by re-running `handle`.
 
-The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics either way.
+Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../framework/ocaml/sol-jobs/sol-jobs.md)).
+
+The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
 
 ### The shared storage module
 

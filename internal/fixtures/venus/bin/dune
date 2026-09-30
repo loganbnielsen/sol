@@ -12,6 +12,7 @@
   kafka-eio-service
   sol-svc
   sol-worker
+  sol-jobs
   pg-eio
   caqti
   caqti-eio

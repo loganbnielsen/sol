@@ -3,6 +3,7 @@
  (libraries
   pluto_comms_notify
   sol-worker
+  sol-jobs
   kafka-eio-service
   obs-eio
   sol-obs

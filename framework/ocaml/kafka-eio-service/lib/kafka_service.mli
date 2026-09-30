@@ -34,11 +34,6 @@ module type MESSAGE = sig
   val decode : Yojson.Safe.t -> (t, string) result
 end
 
-type handler_error =
-  | Retry
-  | Dead_letter of string
-  | Kafka_error of Kafka.Error.t
-
 type decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
@@ -66,98 +61,30 @@ module Schema : sig
   val decode_registration_response : string -> (registration_response, string) result
 end
 
-module Retry_topics : sig
-  type retry_action =
-    | Ack
-    | Forward_retry of
-        { target : topic_name
-        ; delay_s : float
-        }
-    | Forward_dlq of { target : topic_name }
-
-  val parse_retry_metadata : (string * string option) list -> (int * float, string) result
-  val produce_backoff_s : int -> float
-
-  val retry_produce
-    :  max_attempts:int
-    -> backoff_s:(int -> float)
-    -> sleep:(float -> unit)
-    -> on_retry:(attempt:int -> error:'e -> unit)
-    -> produce:(unit -> (unit, 'e) result)
-    -> unit
-    -> (unit, 'e) result
-
-  val action_of_handler_error
-    :  retry_topic:topic_name
-    -> dlq_topic:topic_name
-    -> retry_policy:Kafka.Consumer.retry_policy
-    -> attempt:int
-    -> handler_error
-    -> (retry_action, Kafka.Error.t) result
-
+module Dlq : sig
   type relay =
     { source : Kafka.Consumer.message
     ; headers : (string * string option) list
-    ; attempt : int
-    ; delay_s : float
     }
 
-  val retry_message
-    :  raw_msg:Kafka.Consumer.message
-    -> attempt:int
-    -> delay_s:float
-    -> relay
-
-  val dead_letter_message
-    :  raw_msg:Kafka.Consumer.message
-    -> attempt:int
-    -> group_id:string
-    -> relay
+  val sanitize_group_id : string -> string
+  val canonical_group_segment : string -> string
+  val dlq_topic_name : source:string -> group_id:string -> string
 
   val decode_failure_message
     :  raw_msg:Kafka.Consumer.message
-    -> attempt:int
     -> decode_error:string
     -> group_id:string
     -> relay
 
-  val execute_action
-    :  group_id:string
-    -> retry_action
-    -> raw_msg:Kafka.Consumer.message
-    -> attempt:int
-    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
-    -> ack:(unit -> (unit, Kafka.Error.t) result)
-    -> (unit, Kafka.Error.t) result
-
   val route_decode_error
-    :  stage:[ `Source | `Retry ]
-    -> dlq_topic:topic_name
+    :  dlq_topic:string
     -> raw_msg:Kafka.Consumer.message
-    -> attempt:int
     -> decode_error:string
     -> group_id:string
-    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
+    -> publish:(target_topic:string -> relay -> (unit, Kafka.Error.t) result)
     -> ack:(unit -> (unit, Kafka.Error.t) result)
     -> (unit, Kafka.Error.t) result
-
-  val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
-
-  type record_stage =
-    | Source
-    | Retry of int
-
-  val process_handler_result
-    :  stage:record_stage
-    -> retry_topic:topic_name
-    -> dlq_topic:topic_name
-    -> retry_policy:Kafka.Consumer.retry_policy
-    -> group_id:string
-    -> raw_msg:Kafka.Consumer.message
-    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
-    -> ack:(unit -> (unit, Kafka.Error.t) result)
-    -> handler_error Kafka.Consumer.handler_result
-    -> Kafka.Error.t Kafka.Consumer.handler_result
 end
 
 module Admin : sig
@@ -224,26 +151,14 @@ val publish
   -> 'a
   -> (unit, Kafka.Error.t) result Eio.Promise.t
 
-type consumer_hooks =
-  { kafka : Kafka.Consumer.hooks
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
-  }
-
-val no_hooks : consumer_hooks
-
 val consume
   :  t
   -> 'a topic
   -> group_id:string
   -> sw:Eio.Switch.t
   -> clock:_ Eio.Time.clock
-  -> ?hooks:consumer_hooks
-  -> ?on_decode_error:
-       (string
-        -> raw_bytes:bytes option
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+  -> ?hooks:Kafka.Consumer.hooks
+  -> ?decode_error_policy:decode_error_policy
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
   -> handler:
@@ -253,28 +168,3 @@ val consume
         -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> unit
   -> (unit, Kafka.Error.t) result
-
-type consume_partitioned_error =
-  | Consumer_error of Kafka.Error.t
-  | Partition_errors of (int32 * Kafka.Error.t) list
-
-val consume_partitioned
-  :  t
-  -> 'a topic
-  -> group_id:string
-  -> sw:Eio.Switch.t
-  -> net:_ Eio.Net.t
-  -> clock:_ Eio.Time.clock
-  -> ?hooks:consumer_hooks
-  -> ?decode_error_policy:decode_error_policy
-  -> retry_policy:Kafka.Consumer.retry_policy
-  -> ?consumer_properties:(string * string) list
-  -> ?ot:Obs_eio.t
-  -> ?stop:unit Eio.Promise.t
-  -> handler:
-       ('a
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> trace_ctx:Obs_trace.t option
-        -> handler_error Kafka.Consumer.handler_result)
-  -> unit
-  -> (unit, consume_partitioned_error) result

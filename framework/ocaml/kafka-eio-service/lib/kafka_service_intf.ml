@@ -55,30 +55,9 @@ type t =
   ; security : Kafka.Security.t
   }
 
-type consume_partitioned_error =
-  | Consumer_error of Kafka.Error.t
-  | Partition_errors of (int32 * Kafka.Error.t) list
-
-type handler_error =
-  | Retry
-  | Dead_letter of string
-  | Kafka_error of Kafka.Error.t
-
 type decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
-
-type consumer_hooks =
-  { kafka : Kafka.Consumer.hooks
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
-  }
-
-let no_hooks =
-  { kafka = Kafka.Consumer.default_hooks
-  ; on_relay_publish = (fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
-  }
-;;
 
 let ensure_topic producer ~topic_name ~partitions ~topic_durability =
   let replication_factor =
@@ -190,13 +169,6 @@ let observe_decode_error ~ot ~topic_name =
           ; "topic", topic_name
           ]
         message
-;;
-
-let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
-  let observe = observe_decode_error ~ot ~topic_name in
-  fun e ~raw_bytes ~ack ->
-    observe e ~raw_bytes ~disposition:`Dropped;
-    user_on_decode_error e ~raw_bytes ~ack
 ;;
 
 let ack_and_drop_decode_error e ~raw_bytes:_ ~ack =

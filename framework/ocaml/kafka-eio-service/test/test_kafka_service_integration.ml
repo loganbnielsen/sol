@@ -289,11 +289,8 @@ let test_publish_consume_roundtrip () =
               ~sw
               ~clock:env#clock
               ~hooks:
-                { Kafka_service.no_hooks with
-                  kafka =
-                    { Kafka.Consumer.default_hooks with
-                      on_ready = (fun () -> Eio.Promise.resolve consumer_ready_r ())
-                    }
+                { Kafka.Consumer.default_hooks with
+                  on_ready = (fun () -> Eio.Promise.resolve consumer_ready_r ())
                 }
               ~handler:(fun msg ~ack ~trace_ctx:_ ->
                 ignore (ack ());
@@ -326,30 +323,6 @@ let test_publish_consume_roundtrip () =
             expected.amount_cents
             msg.PaymentEvent.amount_cents))
 ;;
-
-module PartitionFailEvent = struct
-  type t = { n : int }
-
-  let schema =
-    {|{
-    "type": "object",
-    "properties": { "n": { "type": "integer" } },
-    "required": ["n"]
-  }|}
-  ;;
-
-  let partitions = 1
-  let key t = Some (string_of_int t.n)
-  let encode t = `Assoc [ "n", `Int t.n ]
-
-  let decode = function
-    | `Assoc fields ->
-      (match List.assoc_opt "n" fields with
-       | Some (`Int n) -> Ok { n }
-       | _ -> Error "missing n")
-    | _ -> Error "expected object"
-  ;;
-end
 
 module IdleTopic = struct
   type t = unit
@@ -403,73 +376,6 @@ let test_consume_returns_promptly_when_idle_and_stop_resolves () =
         with
         | Ok () -> ()
         | Error e -> Alcotest.fail (Kafka.Error.to_string e)))
-;;
-
-module IdleRetryTopic = struct
-  type t = unit
-
-  let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-idle-retry-%05d" run_id)
-  ;;
-
-  let schema = {|{"type":"object","properties":{"x":{"type":"string"}}}|}
-  let partitions = 1
-  let key () = None
-  let encode () = `Assoc []
-  let decode _ = Ok ()
-end
-
-let test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves () =
-  Eio_main.run
-  @@ fun env ->
-  Eio.Switch.run
-  @@ fun sw ->
-  match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module IdleRetryTopic)
-     with
-     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
-     | Ok topic ->
-       let stop_p, stop_r = Eio.Promise.create () in
-       let done_p, done_r = Eio.Promise.create () in
-       Eio.Fiber.fork ~sw (fun () ->
-         Eio.Promise.resolve
-           done_r
-           (Kafka_service.consume_partitioned
-              svc
-              topic
-              ~group_id:(Printf.sprintf "sol-svc-idle-retry-%05d" run_id)
-              ~sw
-              ~net:env#net
-              ~clock:env#clock
-              ~retry_policy:
-                { Kafka.Consumer.base_delay_s = 0.05
-                ; max_delay_s = 0.2
-                ; max_attempts = 2
-                ; jitter_ratio = 0.0
-                }
-              ~stop:stop_p
-              ~handler:(fun () ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Continue)
-              ()));
-       Eio.Time.sleep env#clock 1.0;
-       Alcotest.(check bool)
-         "nothing to consume, so the routing loop is still parked on the topic"
-         true
-         (not (Eio.Promise.is_resolved done_p));
-       Eio.Promise.resolve stop_r ();
-       (match
-          Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await done_p)
-        with
-        | Ok () -> ()
-        | Error e ->
-          Alcotest.failf
-            "expected a clean stop, got %s"
-            (match e with
-             | Kafka_service.Consumer_error ke -> Kafka.Error.to_string ke
-             | Kafka_service.Partition_errors errs ->
-               Printf.sprintf "%d partition error(s)" (List.length errs))))
 ;;
 
 let test_schema_check_wrong_registry_path_is_an_error () =
@@ -583,188 +489,6 @@ let test_register_sets_full_before_registering_and_fails_loudly () =
          requests)
 ;;
 
-module RelayDeathEvent = struct
-  include PartitionFailEvent
-
-  let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-relaydeath-%05d" run_id)
-  ;;
-end
-
-let test_retry_topics_dead_relay_fails_the_worker () =
-  Eio_main.run
-  @@ fun env ->
-  Eio.Switch.run
-  @@ fun sw ->
-  match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module RelayDeathEvent)
-     with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
-     | Ok topic ->
-       (match
-          Eio.Promise.await (Kafka_service.publish svc topic RelayDeathEvent.{ n = 1 })
-        with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
-        | Ok () -> ());
-       let group_id =
-         Printf.sprintf "sol-test-relaydeath-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let retry_policy =
-         { Kafka.Consumer.base_delay_s = 0.0
-         ; max_delay_s = 0.0
-         ; max_attempts = 3
-         ; jitter_ratio = 0.0
-         }
-       in
-       let deliveries = ref 0 in
-       let result =
-         Eio.Time.with_timeout env#clock 45.0 (fun () ->
-           Ok
-             (Kafka_service.consume_partitioned
-                svc
-                topic
-                ~group_id
-                ~sw
-                ~net:env#net
-                ~clock:env#clock
-                ~retry_policy
-                ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
-                  incr deliveries;
-                  if !deliveries = 1
-                  then Kafka.Consumer.Error Kafka_service.Retry
-                  else
-                    Kafka.Consumer.Error
-                      (Kafka_service.Kafka_error Kafka.Error.Application))
-                ()))
-       in
-       (match result with
-        | Error `Timeout ->
-          Alcotest.failf
-            "the relay stopped (after %d deliveries) but the worker kept running"
-            !deliveries
-        | Ok (Ok ()) -> Alcotest.fail "a dead relay must not end in Ok ()"
-        | Ok (Error (Kafka_service.Partition_errors errs)) ->
-          Alcotest.(check bool)
-            "the relay saw the retried record before it stopped"
-            true
-            (!deliveries >= 2);
-          Alcotest.(check bool)
-            "the error returned is the relay's own, not a side effect of the close"
-            true
-            (List.exists (fun (_, e) -> e = Kafka.Error.Application) errs)
-        | Ok (Error (Kafka_service.Consumer_error e)) ->
-          Alcotest.failf
-            "expected the relay's Partition_errors, got Consumer_error %s"
-            (Kafka.Error.to_string e)))
-;;
-
-let test_decode_error_callback () =
-  Eio_main.run
-  @@ fun env ->
-  Eio.Switch.run
-  @@ fun sw ->
-  match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register svc ~net:env#net ~clock:env#clock (module RawTestEvent)
-     with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
-     | Ok topic ->
-       let group_id =
-         Printf.sprintf "sol-test-decode-err-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let error_stream = Eio.Stream.create 1 in
-       let consumer_ready_p, consumer_ready_r = Eio.Promise.create () in
-       Eio.Fiber.fork ~sw (fun () ->
-         ignore
-           (Kafka_service.consume
-              svc
-              topic
-              ~group_id
-              ~sw
-              ~clock:env#clock
-              ~hooks:
-                { Kafka_service.no_hooks with
-                  kafka =
-                    { Kafka.Consumer.default_hooks with
-                      on_ready = (fun () -> Eio.Promise.resolve consumer_ready_r ())
-                    }
-                }
-              ~on_decode_error:(fun e ~raw_bytes:_ ~ack ->
-                Eio.Stream.add error_stream e;
-                ignore (ack ());
-                Kafka.Consumer.Stop)
-              ~handler:(fun _msg ~ack ~trace_ctx:_ ->
-                ignore (ack ());
-                Kafka.Consumer.Stop)
-              ()));
-       (match
-          Eio.Time.with_timeout env#clock 15.0 (fun () ->
-            Ok (Eio.Promise.await consumer_ready_p))
-        with
-        | Error `Timeout ->
-          Alcotest.fail "timed out waiting for consumer partition assignment (on_ready)"
-        | Ok () -> ());
-       let producer_cfg : Kafka.Producer.config =
-         { brokers = Kafka_test_helpers.brokers ()
-         ; delivery_mode = Kafka.Producer.At_least_once
-         ; linger_ms = None
-         ; security = Kafka.Security.default
-         ; properties = []
-         }
-       in
-       (match Kafka.Producer.create producer_cfg ~sw with
-        | Error e ->
-          Alcotest.failf "raw producer create failed: %s" (Kafka.Error.to_string e)
-        | Ok producer ->
-          let raw = Bytes.of_string {|{"id":"raw-no-wire-format"}|} in
-          (match
-             Eio.Promise.await
-               (Kafka.Producer.produce_receipt
-                  producer
-                  ~topic:(Kafka_service.topic_name_to_string RawTestEvent.topic_name)
-                  ~value:(Some raw)
-                  ())
-           with
-           | Error e -> Alcotest.failf "raw publish failed: %s" (Kafka.Error.to_string e)
-           | Ok () -> ());
-          Kafka.Producer.close producer);
-       (match
-          Eio.Time.with_timeout env#clock 10.0 (fun () ->
-            Ok (Eio.Stream.take error_stream))
-        with
-        | Error `Timeout -> Alcotest.fail "timed out waiting for decode error callback"
-        | Ok _ -> ()))
-;;
-
-module Decode_policy_event (N : sig
-    val suffix : string
-  end) =
-struct
-  type t = { id : string }
-
-  let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-decode-%s-%05d" N.suffix run_id)
-  ;;
-
-  let schema = RawTestEvent.schema
-  let partitions = 1
-  let key t = Some t.id
-  let encode t = `Assoc [ "id", `String t.id ]
-
-  let decode = function
-    | `Assoc fields ->
-      (match List.assoc_opt "id" fields with
-       | Some (`String id) -> Ok { id }
-       | _ -> Error "missing id")
-    | _ -> Error "expected object"
-  ;;
-end
-
 let produce_undecodable ~sw ~topic_name =
   let producer_cfg : Kafka.Producer.config =
     { brokers = Kafka_test_helpers.brokers ()
@@ -837,14 +561,6 @@ let while_consuming ~consume f =
   Option.get !result
 ;;
 
-let retry_topics_policy =
-  { Kafka.Consumer.base_delay_s = 0.0
-  ; max_delay_s = 0.0
-  ; max_attempts = 3
-  ; jitter_ratio = 0.0
-  }
-;;
-
 let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) f =
   Eio_main.run
   @@ fun env ->
@@ -858,214 +574,154 @@ let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) 
      | Ok topic -> f env sw svc topic)
 ;;
 
-let test_default_retry_policy_reaches_dlq_and_allows_later_record () =
-  with_registered
-    (module PaymentEvent)
-    (fun env sw svc topic ->
-       let group_id =
-         Printf.sprintf "sol-test-default-retry-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let dlq =
-         Kafka_service.Retry_topics.relay_topic_name
-           ~source:(Kafka_service.topic_name_to_string PaymentEvent.topic_name)
-           ~group_id
-           ~suffix:"dlq"
-       in
-       List.iter
-         (fun payment_id ->
-            match
-              Eio.Promise.await
-                (Kafka_service.publish
-                   svc
-                   topic
-                   PaymentEvent.{ payment_id; amount_cents = 1 })
-            with
-            | Ok () -> ()
-            | Error e -> Alcotest.fail (Kafka.Error.to_string e))
-         [ "poison"; "later" ];
-       let later, later_r = Eio.Promise.create () in
-       let poison_attempts = ref 0 in
-       let dead_lettered =
-         while_consuming
-           ~consume:(fun ~sw ->
-             ignore
-               (Kafka_service.consume_partitioned
-                  svc
-                  topic
-                  ~group_id
-                  ~sw
-                  ~net:env#net
-                  ~clock:env#clock
-                  ~retry_policy:Worker.default_retry_policy
-                  ~handler:(fun (msg : PaymentEvent.t) ~ack ~trace_ctx:_ ->
-                    if msg.payment_id = "poison"
-                    then (
-                      incr poison_attempts;
-                      Kafka.Consumer.Error Kafka_service.Retry)
-                    else (
-                      ignore (ack ());
-                      ignore (Eio.Promise.try_resolve later_r ());
-                      Kafka.Consumer.Continue))
-                  ()))
-           (fun () ->
-              Eio.Time.with_timeout_exn env#clock 10.0 (fun () -> Eio.Promise.await later);
-              read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:30.0)
-       in
-       Alcotest.(check int)
-         "default attempt budget"
-         Worker.default_retry_policy.max_attempts
-         !poison_attempts;
-       Alcotest.(check bool) "poison reached the DLQ" true (Option.is_some dead_lettered))
-;;
+module Decode_policy_event (N : sig
+    val suffix : string
+  end) =
+struct
+  type t = { id : string }
 
-module Dlq_event = Decode_policy_event (struct
-    let suffix = "dlq"
-  end)
+  let topic_name =
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-decode-%s-%05d" N.suffix run_id)
+  ;;
 
-module Backpressure_event = Decode_policy_event (struct
-    let suffix = "backpressure"
-  end)
+  let schema = RawTestEvent.schema
+  let partitions = 1
+  let key t = Some t.id
+  let encode t = `Assoc [ "id", `String t.id ]
 
-let test_retry_relay_backlog_keeps_deliveries () =
-  with_registered
-    (module Backpressure_event)
-    (fun env _sw svc topic ->
-       let count = 400 in
-       let published =
-         List.init count (fun i ->
-           Kafka_service.publish svc topic Backpressure_event.{ id = string_of_int i })
-       in
-       List.iter
-         (fun receipt ->
-            match Eio.Promise.await receipt with
-            | Ok () -> ()
-            | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e))
-         published;
-       let group_id =
-         Printf.sprintf
-           "sol-test-retry-backpressure-%d-%d"
-           (Unix.getpid ())
-           (Random.int 9999)
-       in
-       let attempts = Hashtbl.create count in
-       let done_p, done_r = Eio.Promise.create () in
-       let completed = ref 0 in
-       let retry_policy : Kafka.Consumer.retry_policy =
-         { base_delay_s = 12.0; max_delay_s = 12.0; max_attempts = 2; jitter_ratio = 0.0 }
-       in
-       while_consuming
-         ~consume:(fun ~sw ->
-           ignore
-             (Kafka_service.consume_partitioned
-                svc
-                topic
-                ~group_id
-                ~sw
-                ~net:env#net
-                ~clock:env#clock
-                ~retry_policy
-                ~consumer_properties:
-                  [ "max.poll.interval.ms", "10000"; "session.timeout.ms", "6000" ]
-                ~handler:(fun (msg : Backpressure_event.t) ~ack ~trace_ctx:_ ->
-                  let n =
-                    1 + Option.value ~default:0 (Hashtbl.find_opt attempts msg.id)
-                  in
-                  Hashtbl.replace attempts msg.id n;
-                  if n = 1
-                  then Kafka.Consumer.Error Kafka_service.Retry
-                  else (
-                    (match ack () with
-                     | Ok () -> ()
-                     | Error e ->
-                       Alcotest.failf "ack failed: %s" (Kafka.Error.to_string e));
-                    incr completed;
-                    if !completed = count then ignore (Eio.Promise.try_resolve done_r ());
-                    Kafka.Consumer.Continue))
-                ()))
-         (fun () ->
-            match
-              Eio.Time.with_timeout env#clock 40.0 (fun () ->
-                Ok (Eio.Promise.await done_p))
-            with
-            | Error `Timeout -> Alcotest.fail "retry relay backlog did not drain"
-            | Ok () -> ());
-       Alcotest.(check int) "completed" count !completed;
-       Alcotest.(check int) "unique records" count (Hashtbl.length attempts);
-       Hashtbl.iter
-         (fun _ attempts -> Alcotest.(check int) "exactly two attempts" 2 attempts)
-         attempts)
-;;
-
-let test_retry_topics_routes_source_decode_error_to_dlq () =
-  with_registered
-    (module Dlq_event)
-    (fun env sw svc topic ->
-       let group_id =
-         Printf.sprintf "sol-test-decode-dlq-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let dlq =
-         Kafka_service.Retry_topics.relay_topic_name
-           ~source:(Kafka_service.topic_name_to_string Dlq_event.topic_name)
-           ~group_id
-           ~suffix:"dlq"
-       in
-       produce_undecodable ~sw ~topic_name:Dlq_event.topic_name;
-       let handled = ref 0 in
-       let dead_lettered =
-         while_consuming
-           ~consume:(fun ~sw ->
-             match
-               Kafka_service.consume_partitioned
-                 svc
-                 topic
-                 ~group_id
-                 ~sw
-                 ~net:env#net
-                 ~clock:env#clock
-                 ~retry_policy:retry_topics_policy
-                 ~handler:(fun _ ~ack ~trace_ctx:_ ->
-                   incr handled;
-                   ignore (ack ());
-                   Kafka.Consumer.Continue)
-                 ()
-             with
-             | Ok () -> ()
-             | Error (Kafka_service.Consumer_error e) ->
-               Printf.eprintf "consumer error: %s\n%!" (Kafka.Error.to_string e)
-             | Error (Kafka_service.Partition_errors _) ->
-               prerr_endline "partition failed instead of dead-lettering")
-           (fun () -> read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:30.0)
-       in
-       Alcotest.(check int) "the handler never saw the undecodable record" 0 !handled;
-       match dead_lettered with
-       | None -> Alcotest.fail "the undecodable source record never reached the DLQ"
-       | Some msg ->
-         let header k = List.assoc_opt k msg.Kafka.Consumer.headers |> Option.join in
-         Alcotest.(check (option string))
-           "raw payload"
-           (Some "not-wire-format")
-           (Option.map Bytes.to_string msg.value);
-         Alcotest.(check (option string))
-           "key"
-           (Some "order-7")
-           (Option.map Bytes.to_string msg.key);
-         Alcotest.(check (option string))
-           "original header"
-           (Some "kept")
-           (header "app-header");
-         Alcotest.(check bool)
-           "decode diagnostic"
-           true
-           (Option.is_some (header "X-Sol-Decode-Error"));
-         Alcotest.(check (option string))
-           "origin group"
-           (Some group_id)
-           (header "X-Sol-Origin-Group"))
-;;
+  let decode = function
+    | `Assoc fields ->
+      (match List.assoc_opt "id" fields with
+       | Some (`String id) -> Ok { id }
+       | _ -> Error "missing id")
+    | _ -> Error "expected object"
+  ;;
+end
 
 module Drop_event = Decode_policy_event (struct
     let suffix = "drop"
   end)
+
+let test_an_unacked_record_is_redelivered_to_the_same_group () =
+  with_registered
+    (module RawTestEvent)
+    (fun env _sw svc topic ->
+       let group_id =
+         Printf.sprintf "sol-test-unacked-%d-%d" (Unix.getpid ()) (Random.int 9999)
+       in
+       (match
+          Eio.Promise.await
+            (Kafka_service.publish svc topic RawTestEvent.{ id = "must-redeliver" })
+        with
+        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Ok () -> ());
+       let stopped_on, stopped_on_r = Eio.Promise.create () in
+       while_consuming
+         ~consume:(fun ~sw ->
+           ignore
+             (Kafka_service.consume
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~clock:env#clock
+                ~handler:(fun (_ : RawTestEvent.t) ~ack:_ ~trace_ctx:_ ->
+                  ignore (Eio.Promise.try_resolve stopped_on_r ());
+                  Kafka.Consumer.Stop)
+                ()))
+         (fun () ->
+            match
+              Eio.Time.with_timeout env#clock 30.0 (fun () ->
+                Ok (Eio.Promise.await stopped_on))
+            with
+            | Error `Timeout -> Alcotest.fail "the first consumer never saw the record"
+            | Ok () -> ());
+       let redelivered, redelivered_r = Eio.Promise.create () in
+       while_consuming
+         ~consume:(fun ~sw ->
+           ignore
+             (Kafka_service.consume
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~clock:env#clock
+                ~handler:(fun (m : RawTestEvent.t) ~ack ~trace_ctx:_ ->
+                  ignore (ack ());
+                  ignore (Eio.Promise.try_resolve redelivered_r m.RawTestEvent.id);
+                  Kafka.Consumer.Stop)
+                ()))
+         (fun () ->
+            match
+              Eio.Time.with_timeout env#clock 30.0 (fun () ->
+                Ok (Eio.Promise.await redelivered))
+            with
+            | Error `Timeout ->
+              Alcotest.fail
+                "a fact the handler did not acknowledge must come back to the group, not \
+                 be skipped"
+            | Ok id ->
+              Alcotest.(check string) "the same record came back" "must-redeliver" id))
+;;
+
+let test_decode_error_routes_to_dlq () =
+  with_registered
+    (module Drop_event)
+    (fun env sw svc topic ->
+       let group_id =
+         Printf.sprintf "sol-test-decode-dlq-%d-%d" (Unix.getpid ()) (Random.int 9999)
+       in
+       produce_undecodable ~sw ~topic_name:Drop_event.topic_name;
+       (match
+          Eio.Promise.await (Kafka_service.publish svc topic Drop_event.{ id = "good" })
+        with
+        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Ok () -> ());
+       let got_good, got_good_r = Eio.Promise.create () in
+       while_consuming
+         ~consume:(fun ~sw ->
+           ignore
+             (Kafka_service.consume
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~clock:env#clock
+                ~handler:(fun (m : Drop_event.t) ~ack ~trace_ctx:_ ->
+                  ignore (ack ());
+                  if m.id = "good" then ignore (Eio.Promise.try_resolve got_good_r ());
+                  Kafka.Consumer.Continue)
+                ()))
+         (fun () ->
+            match
+              Eio.Time.with_timeout env#clock 30.0 (fun () ->
+                Ok (Eio.Promise.await got_good))
+            with
+            | Error `Timeout ->
+              Alcotest.fail "the record after the undecodable one was never reached"
+            | Ok () -> ());
+       let dlq =
+         Kafka_service.Dlq.dlq_topic_name
+           ~source:(Kafka_service.topic_name_to_string Drop_event.topic_name)
+           ~group_id
+       in
+       match read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:15.0 with
+       | None ->
+         Alcotest.fail
+           "a record the framework could not decode must be parked on the group's DLQ, \
+            not dropped"
+       | Some record ->
+         Alcotest.(check (option string))
+           "the parked record carries the originating group (BUG-030)"
+           (Some group_id)
+           (List.assoc_opt "X-Sol-Origin-Group" record.Kafka.Consumer.headers
+            |> Option.join);
+         Alcotest.(check bool)
+           "the parked record carries a decode diagnostic"
+           true
+           (Option.is_some
+              (List.assoc_opt "X-Sol-Decode-Error" record.Kafka.Consumer.headers)))
+;;
 
 let test_ack_and_drop_opt_in_skips () =
   with_registered
@@ -1084,15 +740,13 @@ let test_ack_and_drop_opt_in_skips () =
        while_consuming
          ~consume:(fun ~sw ->
            ignore
-             (Kafka_service.consume_partitioned
+             (Kafka_service.consume
                 svc
                 topic
                 ~group_id
                 ~sw
-                ~net:env#net
                 ~clock:env#clock
                 ~decode_error_policy:Kafka_service.Ack_and_drop
-                ~retry_policy:retry_topics_policy
                 ~handler:(fun (m : Drop_event.t) ~ack ~trace_ctx:_ ->
                   ignore (ack ());
                   if m.id = "good" then ignore (Eio.Promise.try_resolve got_good_r ());
@@ -1107,10 +761,9 @@ let test_ack_and_drop_opt_in_skips () =
               Alcotest.fail "the record after the undecodable one was never reached"
             | Ok () -> ());
        let dlq =
-         Kafka_service.Retry_topics.relay_topic_name
+         Kafka_service.Dlq.dlq_topic_name
            ~source:(Kafka_service.topic_name_to_string Drop_event.topic_name)
            ~group_id
-           ~suffix:"dlq"
        in
        Alcotest.(check bool)
          "nothing was dead-lettered"
@@ -1305,39 +958,22 @@ let () =
             `Slow
             test_consume_returns_promptly_when_idle_and_stop_resolves
         ] )
-    ; ( "consume_partitioned"
+    ; ( "ack_ownership"
       , [ test_case
-            "an idle retry worker returns promptly when stop resolves (BUG-067)"
+            "a fact the handler did not acknowledge is redelivered to its group \
+             (FEAT-113)"
             `Slow
-            test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves
-        ; test_case
-            "default poison retry reaches DLQ and later record flows (BUG-102)"
-            `Slow
-            test_default_retry_policy_reaches_dlq_and_allows_later_record
-        ; test_case
-            "a stopped Retry_topics relay fails the worker promptly"
-            `Slow
-            test_retry_topics_dead_relay_fails_the_worker
-        ; test_case
-            "retry relay drains backlog without duplicate delivery"
-            `Slow
-            test_retry_relay_backlog_keeps_deliveries
+            test_an_unacked_record_is_redelivered_to_the_same_group
         ] )
     ; ( "decode_error_policy"
       , [ test_case
-            "Retry_topics routes a source decode failure to the DLQ"
+            "a decode failure is parked on the group's DLQ and the next record flows"
             `Slow
-            test_retry_topics_routes_source_decode_error_to_dlq
+            test_decode_error_routes_to_dlq
         ; test_case
             "Ack_and_drop opt-in skips and acks"
             `Slow
             test_ack_and_drop_opt_in_skips
-        ] )
-    ; ( "error_handling"
-      , [ test_case
-            "on_decode_error fires for non-wire-format message"
-            `Slow
-            test_decode_error_callback
         ] )
     ]
 ;;

@@ -1,5 +1,5 @@
 (executables
- (names demo retry_demo)
+ (names demo)
  (libraries
   demo_events
   eio

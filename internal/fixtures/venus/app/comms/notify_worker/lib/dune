@@ -5,9 +5,11 @@
  (libraries
   venus_payments_events
   sol-worker
+  sol-jobs
   pg-eio
   obs-eio
   caqti
   caqti-eio
   caqti-eio.unix
-  caqti-driver-postgresql))
+  caqti-driver-postgresql
+  yojson))

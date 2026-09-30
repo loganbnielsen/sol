@@ -65,7 +65,18 @@ let () =
       let ot = Sol_obs.obs_eio obs
     end)
   in
-  let module WR = Worker.Make_with_retry (W) in
+  (match db_pool with
+   | None -> ()
+   | Some pool ->
+     let module Jobs = Sol_jobs.Make (Notify_worker.Email_job) in
+     Eio.Fiber.fork_daemon ~sw (fun () ->
+       (Jobs.run ~env ~pool ~ot:obs ~metrics_port:0 ()
+        |> Result.map_error Sol_jobs.run_error_to_string
+        |> function
+        | Ok () -> ()
+        | Error msg -> failwith msg);
+       `Stop_daemon));
+  let module WR = Worker.Make (W) in
   WR.run ~env ~config:kafka_config ~ot:obs ()
   |> Result.map_error Worker.run_error_to_string
   |> function

@@ -84,8 +84,8 @@ count, and consumers can scale up to it. `key` decides the partition, and so the
 order a consumer observes — every record sharing a key is handled by one consumer
 in publication order, which is what lets per-entity ordering survive more than
 one partition. Returning `None` states that the event carries no key: records
-spread across partitions and no ordering is claimed for them. Retry and DLQ
-topics inherit the source topic's count.
+spread across partitions and no ordering is claimed for them. The DLQ topic
+inherits the source topic's count.
 
 ## Configuration
 
@@ -122,7 +122,7 @@ val config_of_env : unit -> (config, error) result
    KAFKA_SSL_CA_LOCATION   — path to CA cert bundle (optional)
    KAFKA_SASL_MECHANISM    — e.g. "SCRAM-SHA-256" (optional)
    KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD — SASL credentials (optional)
-   linger_ms = 50, partitions = 1)
+   linger_ms = 50)
 (* Returns Error when KAFKA_SECURITY_PROTOCOL is unset, or a supplied Kafka
    security setting is malformed or incomplete. *)
 ```
@@ -170,29 +170,19 @@ val publish
     handler_result/ack docs). trace_ctx in the handler carries the upstream
     traceparent header from the Kafka message — pass it as ?parent:trace_ctx
     to Obs_eio.with_span to link spans. on_ready is called once when the broker
-    assigns partitions to this consumer. on_decode_error overrides the default
-    decode-error behavior (log + ack + continue); raw_bytes is None when the
-    record could not be framed at all. Returns when handler returns Error. *)
-type consumer_hooks =
-  { kafka : Kafka.Consumer.hooks
-  ; on_relay_publish :
-      partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit
-  }
-
-val no_hooks : consumer_hooks
-
+    assigns partitions to this consumer. decode_error_policy decides what happens
+    to a record the framework could not decode: the default, Route_to_dlq, parks
+    it on the consumer group's DLQ and acknowledges its source offset only after
+    that publish succeeds, while Ack_and_drop is an explicit opt-in that discards
+    it. Returns when handler returns Error. *)
 val consume
   :  t
   -> 'a topic
   -> group_id:string
   -> sw:Eio.Switch.t
   -> clock:_ Eio.Time.clock
-  -> ?hooks:consumer_hooks
-  -> ?on_decode_error:
-       (string
-        -> raw_bytes:bytes option
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+  -> ?hooks:Kafka.Consumer.hooks
+  -> ?decode_error_policy:decode_error_policy
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
   -> handler:
@@ -206,46 +196,28 @@ val consume
 
 ### `?stop` — waking an idle consumer (BUG-067)
 
-Both entry points take `?stop:unit Eio.Promise.t`. The consumer blocks on its
+`consume` takes `?stop:unit Eio.Promise.t`. The consumer blocks on its
 message stream, so without a stop handle nothing can end the loop while the topic
 is empty: a worker with nothing to consume, malformed-only traffic, or a stop
 requested during the final message would wait for the *next* message. Resolving
 the promise ends consumption at the next opportunity instead — `consume` races it
-against the blocking take, and `consume_partitioned` feeds its internal stop
-signal, which `routing_loop` and the per-partition loops already observe.
+against the blocking take.
 
 A handler that is already running is unaffected: the race happens *between*
 messages, so the in-flight handler still completes and acknowledges before
 closure. The mechanism lives in the pinned `kafka-eio` package
-(`Kafka.Consumer.consume`/`consume_partitioned`, kafka-eio#26); this module and
+(`Kafka.Consumer.consume`, kafka-eio#26); this module and
 `sol-worker` pass the handle through.
 
-### `consume_partitioned` — durable retry delivery
+### DLQ delivery for records the framework cannot decode
 
-`consume_partitioned` routes `Retry` through a group-scoped retry topic and `Dead_letter` to a group-scoped DLQ. The caller supplies a `retry_policy` with at least one attempt. The default decode policy is `Route_to_dlq`: a source record that cannot be decoded is published with its raw payload, key, and headers plus `X-Sol-Decode-Error`; its source offset is acknowledged only after that publish succeeds. `Ack_and_drop` is an explicit opt-in. Decode errors count on `sol_worker_decode_errors_total` when observability is configured. `?consumer_properties` is passed to librdkafka verbatim on both the source and retry consumers, for tuning Sol does not already set.
-
-```ocaml
-val consume_partitioned
-  :  t
-  -> 'a topic
-  -> group_id:string
-  -> sw:Eio.Switch.t
-  -> net:_ Eio.Net.t
-  -> clock:_ Eio.Time.clock
-  -> ?hooks:consumer_hooks
-  -> ?decode_error_policy:decode_error_policy
-  -> retry_policy:Kafka.Consumer.retry_policy
-  -> ?consumer_properties:(string * string) list
-  -> ?ot:Obs_eio.t
-  -> ?stop:unit Eio.Promise.t
-  -> handler:
-       ('a
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> trace_ctx:Obs_trace.t option
-        -> handler_error Kafka.Consumer.handler_result)
-  -> unit
-  -> (unit, consume_partitioned_error) result
-```
+A source record that cannot be decoded is published to the consumer group's DLQ as
+raw bytes with its original key and headers, plus `X-Sol-Decode-Error` and
+`X-Sol-Origin-Group`. Its source offset is acknowledged only after that publish
+succeeds, so a DLQ publish failure leaves the record to be redelivered rather than
+lost. `Ack_and_drop` replaces this with an ack-and-continue and is an explicit
+opt-in, because it discards the record. Decode errors count on
+`sol_worker_decode_errors_total` when observability is configured.
 
 ### Message ordering
 
@@ -270,39 +242,30 @@ expect two more that it doesn't:
   (e.g. an entity's version history) must enforce or reconcile that
   itself — versioning, idempotency, compare-and-set against stored state —
   Kafka's log order is necessary for this but not sufficient.
-- **C. Completion order (retries do not preserve this).** A failed message is republished at a later offset, so it can complete after messages that originally followed it, including same-key messages. See DEC-021's "Ordering consequence" section for the reasoning and use `sol-jobs` for independent jobs that need durable per-message retry.
+- **C. Completion order (nothing here preserves it).** A fact a handler declines to apply is not retried in place: the offset stays uncommitted and the consumer stops, so the record completes only when the consumer resumes. See DEC-021's amendment, and use `sol-jobs` for independent work that needs durable retry.
 
 **The practical rule:** if a handler's correctness depends on strict
 processing order (B or C), that's a real constraint to design for
 explicitly — declare `key` so every record that must stay ordered lands on one
-partition, and make handlers reconcile domain versions when retries can overtake
-later records. Independent units of work can use `sol-jobs`.
+partition, and make handlers reconcile domain versions when redelivery after a
+restart can overtake later records. Independent units of work can use `sol-jobs`.
 
-### Retry topics
+### DLQ naming
 
-On `Retry`, the source record is copied with its raw bytes and key to `<source>.<canonical-group>.retry`, with `X-Sol-Attempt` and `X-Sol-Retry-At` headers. The source offset is acknowledged only after that publish succeeds. The relay re-runs the handler when due. After `retry_policy.max_attempts` failures, or on `Dead_letter`, the record goes to `<source>.<canonical-group>.dlq`; the relay offset is acknowledged only after that publish succeeds. Both destinations are provisioned for the consumer group. The canonical group segment is bounded and includes a hash of the original group ID, so distinct punctuation variants do not collide (BUG-030, BUG-080). The DLQ record also carries `X-Sol-Origin-Group`.
+The DLQ topic is `<source>.<canonical-group>.dlq`, provisioned for the consumer
+group when a consumer starts. The canonical group segment is bounded and includes
+a hash of the original group ID, so distinct punctuation variants never share a
+DLQ (BUG-030, BUG-080), and the parked record also carries `X-Sol-Origin-Group`.
 
-`retry_policy` uses exponential backoff with jitter and a maximum delay; `max_attempts` must be at least 1. Retries are at least once and are not order preserving. A long delay blocks later records in the same retry partition while its queue is full, but a full partition queue pauses fetching from that partition while consumer polling continues, so delays through `retry_policy.max_delay_s` do not cause max-poll eviction; BUG-104 tracks delay tiers. A retry record that cannot be decoded goes to the DLQ with diagnostics before its offset is acknowledged.
+Ack/drop behaviour follows the [`sol-worker` acknowledgement ownership
+invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
 
-Ack/drop behavior follows the [`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
-
-**Relay resilience and exhaustion policy (BUG-029).** The retry consumer's own
-publish to the retry/DLQ topic is retried in-process, with backoff
-and jitter, before it's treated as a failure at all — a single transient
-produce error self-heals rather than reaching `consume_partitioned`'s own
-zero-tolerance retry policy for the relay. If those in-process attempts are
-exhausted, that **is** treated as a real failure, and the policy is explicit
-rather than an accident of internal retry-count configuration: **the relay
-failing and never recovering fails the worker**, rather than leaving the
-process running with retry delivery silently dead. It fails promptly: when the
-relay stops, it closes the source consumer, so `consume_partitioned` (and
-`Worker.Make_with_retry(W).run`) returns the relay's `Error` straight away
-rather than when the source next stops on its own, which for a healthy idle
-source is never (BUG-043). An error the source consumer reports after that close
-(for instance an in-flight ack answered with `Destroy`) is a consequence of the
-relay failure, so the relay's error is the one returned. `on_relay_publish` distinguishes a publish that ultimately succeeded
-from one that was exhausted, separately from `on_retry`, which fires once per
-record when a retry is *scheduled* — before publication is even attempted.
+**There is no message-level retry.** The framework never republishes a
+handler-failed record and never advances past one: the handler outcome vocabulary
+is exactly `Ack | Fail`, a `Fail` leaves the offset uncommitted, and the consumer
+stops so an operator sees the contract failure (DEC-021's amendment). Independent
+work that needs durable retry belongs in `sol-jobs`, which retries on its own
+lease — not on the stream.
 
 ### Schema compatibility checking
 
