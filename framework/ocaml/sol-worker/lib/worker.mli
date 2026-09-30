@@ -26,9 +26,7 @@ type retry_policy = Kafka.Consumer.retry_policy =
   ; jitter_ratio : float
   }
 
-type retry_strategy = Kafka_service.retry_strategy =
-  | In_memory of retry_policy
-  | Retry_topics of retry_policy
+val default_retry_policy : retry_policy
 
 type decode_error_policy = Kafka_service.decode_error_policy =
   | Route_to_dlq
@@ -59,7 +57,7 @@ module Make_with_retry (W : RETRYABLE_WORKER) : sig
   val run
     :  env:(_, _, _, _) Sol_env.timed
     -> config:Kafka_service.config
-    -> retry_strategy:retry_strategy
+    -> ?retry_policy:retry_policy
     -> ?decode_error_policy:decode_error_policy
     -> ?ot:Sol_obs.t
     -> ?metrics_port:int
@@ -103,7 +101,7 @@ module For_testing : sig
     val run
       :  env:(_, _, _, _) Sol_env.timed
       -> config:Kafka_service.config
-      -> retry_strategy:retry_strategy
+      -> ?retry_policy:retry_policy
       -> ?decode_error_policy:decode_error_policy
       -> ?ot:Sol_obs.t
       -> ?metrics_port:int

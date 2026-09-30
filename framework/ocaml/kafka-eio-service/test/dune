@@ -12,6 +12,7 @@
  (modules test_kafka_service_integration)
  (libraries
   kafka_eio_service
+  sol_worker
   kafka-eio
   kafka_test_helpers
   alcotest

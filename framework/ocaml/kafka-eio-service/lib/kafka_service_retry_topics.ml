@@ -392,6 +392,7 @@ let run_consumers
       ~sw
       ~clock
       runtime
+      ~stop
       ~retry_topic_name
       ~dlq_topic_name
       ~publish
@@ -507,6 +508,7 @@ let run_consumers
              match
                Kafka.Consumer.consume_partitioned
                  retry_consumer
+                 ?stop
                  ~sw
                  ~clock
                  ~retry:no_retry
@@ -585,6 +587,7 @@ let run_consumers
     let run_source () =
       Kafka.Consumer.consume_partitioned
         consumer
+        ?stop
         ~sw
         ~clock
         ~retry:no_retry
@@ -621,7 +624,7 @@ let run_consumers
     result
 ;;
 
-let consume svc topic ~sw ~net ~clock runtime () =
+let consume svc topic ~sw ~net ~clock ?stop runtime () =
   let open Result.Syntax in
   let* retry_topic_name, dlq_topic_name =
     prepare_topics
@@ -633,5 +636,14 @@ let consume svc topic ~sw ~net ~clock runtime () =
       ~retry_policy:runtime.retry_policy
   in
   let publish = publish_relay svc ~clock runtime in
-  run_consumers svc topic ~sw ~clock runtime ~retry_topic_name ~dlq_topic_name ~publish
+  run_consumers
+    svc
+    topic
+    ~sw
+    ~clock
+    runtime
+    ~stop
+    ~retry_topic_name
+    ~dlq_topic_name
+    ~publish
 ;;

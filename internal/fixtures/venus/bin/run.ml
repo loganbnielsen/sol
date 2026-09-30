@@ -161,7 +161,6 @@ let () =
        WR.run
          ~env
          ~config:kafka_config
-         ~retry_strategy:(Worker.In_memory Kafka.Consumer.default_retry)
          ~ot:worker_obs
          ~metrics_port:0
          ~on_ready:(fun () ->

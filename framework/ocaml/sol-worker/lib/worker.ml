@@ -26,9 +26,9 @@ type retry_policy = Kafka.Consumer.retry_policy =
   ; jitter_ratio : float
   }
 
-type retry_strategy = Kafka_service.retry_strategy =
-  | In_memory of retry_policy
-  | Retry_topics of retry_policy
+let default_retry_policy : retry_policy =
+  { base_delay_s = 1.0; max_delay_s = 600.0; max_attempts = 5; jitter_ratio = 0.1 }
+;;
 
 type decode_error_policy = Kafka_service.decode_error_policy =
   | Route_to_dlq
@@ -302,7 +302,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
   let run
         ~(env : (_, _, _, _) Sol_env.timed)
         ~config
-        ~retry_strategy
+        ?(retry_policy = default_retry_policy)
         ?decode_error_policy
         ?ot
         ?(metrics_port = default_metrics_port)
@@ -397,7 +397,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 ~clock:env#clock
                 ~hooks
                 ?decode_error_policy
-                ~retry_strategy
+                ~retry_policy
                 ?ot
                 ~stop:stop_handle
                 ~handler
@@ -417,7 +417,7 @@ module Make_with_retry (W : RETRYABLE_WORKER) = struct
   let run
         ~env
         ~config
-        ~retry_strategy
+        ?retry_policy
         ?decode_error_policy
         ?ot
         ?metrics_port
@@ -429,7 +429,7 @@ module Make_with_retry (W : RETRYABLE_WORKER) = struct
     Impl.run
       ~env
       ~config
-      ~retry_strategy
+      ?retry_policy
       ?decode_error_policy
       ?ot
       ?metrics_port

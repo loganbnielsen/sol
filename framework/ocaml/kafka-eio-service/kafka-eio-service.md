@@ -206,29 +206,11 @@ closure. The mechanism lives in the pinned `kafka-eio` package
 (`Kafka.Consumer.consume`/`consume_partitioned`, kafka-eio#26); this module and
 `sol-worker` pass the handle through.
 
-### `consume_partitioned` — per-partition fiber isolation
+### `consume_partitioned` — durable retry delivery
+
+`consume_partitioned` routes `Retry` through a group-scoped retry topic and `Dead_letter` to a group-scoped DLQ. The caller supplies a `retry_policy` with at least one attempt. The default decode policy is `Route_to_dlq`: a source record that cannot be decoded is published with its raw payload, key, and headers plus `X-Sol-Decode-Error`; its source offset is acknowledged only after that publish succeeds. `Ack_and_drop` is an explicit opt-in. Decode errors count on `sol_worker_decode_errors_total` when observability is configured. `?consumer_properties` is passed to librdkafka verbatim on both the source and retry consumers, for tuning Sol does not already set.
 
 ```ocaml
-(* What consume_partitioned does with a source-topic record that cannot be
-   decoded (BUG-051):
-   - Route_to_dlq: publish the raw record (payload, key, headers) to the
-     group-scoped DLQ with X-Sol-Decode-Error and X-Sol-Origin-Group, ack only
-     once that publish succeeds; a failed publish leaves it unacked and fails
-     the partition. Default under Retry_topics; a Consumer_error under
-     In_memory, which has no DLQ.
-   - Ack_and_drop: log, count, ack -- the record is gone. Explicit opt-in under
-     Retry_topics; the only (default) disposition under In_memory.
-   Both count on sol_worker_decode_errors_total when ?ot is given. *)
-type decode_error_policy =
-  | Route_to_dlq
-  | Ack_and_drop
-
-(** Like consume but routes each message to a dedicated per-partition fiber.
-    A partition's in-memory retry sleep pauses that Kafka partition for the retry
-    delay; other partitions continue unaffected. During the sleep the partition is
-    paused at the librdkafka level so no messages accumulate in its stream buffer.
-    ?consumer_properties is passed to librdkafka verbatim on both the source and
-    retry consumers, for tuning Sol does not already set. *)
 val consume_partitioned
   :  t
   -> 'a topic
@@ -238,7 +220,7 @@ val consume_partitioned
   -> clock:_ Eio.Time.clock
   -> ?hooks:consumer_hooks
   -> ?decode_error_policy:decode_error_policy
-  -> retry_strategy:retry_strategy
+  -> retry_policy:Kafka.Consumer.retry_policy
   -> ?consumer_properties:(string * string) list
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
@@ -274,105 +256,19 @@ expect two more that it doesn't:
   (e.g. an entity's version history) must enforce or reconcile that
   itself — versioning, idempotency, compare-and-set against stored state —
   Kafka's log order is necessary for this but not sufficient.
-- **C. Completion order (`Retry_topics` deliberately does not preserve
-  this).** Even when Kafka delivers `1, 2, 3, 4` in order, a failed
-  message on `Retry_topics` is republished at a later offset rather than
-  blocking its partition, so it can complete *after* messages that
-  originally followed it — including same-key messages. `In_memory`
-  instead blocks its partition for the retry sleep, preserving completion
-  order at the cost of pausing later messages on that partition. See
-  DEC-021's "Ordering consequence" section for the full reasoning and the
-  `sol-jobs` (FEAT-077) escape hatch for workloads that need independent
-  per-message retry regardless of key.
+- **C. Completion order (retries do not preserve this).** A failed message is republished at a later offset, so it can complete after messages that originally followed it, including same-key messages. See DEC-021's "Ordering consequence" section for the reasoning and use `sol-jobs` for independent jobs that need durable per-message retry.
 
 **The practical rule:** if a handler's correctness depends on strict
 processing order (B or C), that's a real constraint to design for
-explicitly — partition by the key that must stay ordered, and choose
-`In_memory` (or a leased-job primitive once one exists) over
-`Retry_topics`. If the events a handler processes are genuinely
-independent of each other, don't manufacture an ordering requirement Kafka
-never promised in the first place.
+explicitly — partition by the key that must stay ordered and make handlers reconcile domain versions when retries can overtake later records. Independent units of work can use `sol-jobs`.
 
-### Retry strategy
+### Retry topics
 
-```ocaml
-type retry_strategy =
-  | In_memory of Kafka.Consumer.retry_policy
-    (* Exponential back-off sleep inside the partition fiber (delay =
-       base_delay_s * 2^(attempt-1), jittered by jitter_ratio, clamped to
-       max_delay_s). Simple, zero infra. Pauses that Kafka partition for the
-       retry delay. Vulnerable to rebalance preempting the sleep window. On
-       exhaustion, or on Dead_letter (In_memory has no DLQ to route it to):
-       terminal handler failure -- the message is left unacknowledged
-       (FEAT-078). *)
-  | Retry_topics of Kafka.Consumer.retry_policy
-    (* Both variants share this one retry_policy vocabulary (FEAT-078) but
-       are not feature-equivalent -- exhaustion disposition below is
-       strategy-specific by design.
-       On Retry: publish raw bytes (with the original message's key -- BUG-027,
-       so a retried message hashes to the same partition on the retry topic
-       that it would on the source topic, both sharing the same partition
-       count) to <source>.<canonical-group>.retry with X-Sol-Attempt /
-       X-Sol-Retry-At headers; commit original offset immediately. The retry
-       delay is retry_policy.base_delay_s * 2^(attempt-1), jittered by
-       retry_policy.jitter_ratio and clamped to retry_policy.max_delay_s --
-       the same computation In_memory uses (Kafka.Consumer.backoff_s), not
-       just the same type.
-       Retry and DLQ topic names are group-scoped (BUG-030, BUG-080): both are
-       <source>.<canonical-group>.<retry|dlq>, where <canonical-group> is
-       group_id sanitized to alphanumerics and '-' (Kafka's metrics/JMX
-       naming treats '.' and '_' as interchangeable, so unsanitized ids risk
-       metric-name collisions) **followed by a 12-hex-digit hash of the
-       original group_id**, so punctuation variants (pay.ments, pay_ments,
-       pay-ments) and overlong ids each keep their own retry/DLQ topic
-       instead of colliding on one sanitized name; the segment is bounded to
-       64 bytes. Retry and DLQ
-       destinations belong to the logical consumer group whose processing
-       responsibility they receive -- dead-lettering is a statement about
-       that group's processing attempt, not an intrinsic property of the
-       source event, so two independent groups consuming the same source
-       topic get fully isolated retry/DLQ topics rather than racing on a
-       shared <topic>-retry/<topic>-dlq pair (DEC-021). Every DLQ record
-       still carries an X-Sol-Origin-Group header naming the group that
-       dead-lettered it, as provenance -- not needed for routing, since the
-       topic name already encodes it.
-       A background retry consumer (group <group_id>-sol-retry), itself routed
-       through consume_partitioned, delays until X-Sol-Retry-At then re-runs
-       the handler. A full partition queue pauses fetching from that partition
-       while consumer polling continues, so delays up to max_delay_s do not
-       evict the relay from its consumer group. That sleep blocks the retry
-       partition, not the whole retry topic; every later record assigned to
-       that retry partition waits behind
-       it, including unrelated keys that hashed to the same partition.
-       Republish also gives the retry a later Kafka offset, so it can execute
-       after records that originally followed it on the source partition,
-       including records with the same key.
-       In steady state the extra head-of-line delay is bounded roughly by
-       retry_policy.max_delay_s; under backlog or overload Kafka is the
-       buffer, so observed delay is unbounded. After retry_policy.max_attempts
-       failures, or on Dead_letter, the message is routed to the DLQ topic
-       and the retry offset acked only once that publish succeeds. Both
-       topics are auto-provisioned. retry_policy.max_attempts must be at
-       least 1.
-       If a retry record cannot be decoded, it publishes the raw retry record
-       and original headers to the DLQ topic with decode diagnostics, then
-       acks only after that publish succeeds (BUG-028). A source record that
-       cannot be decoded does the same under the default
-       decode_error_policy, Route_to_dlq (BUG-051).
-       Ack/drop behavior follows sol-worker.md's acknowledgement ownership
-       invariant. Retry_topics does not preserve strict source-partition or
-       per-key ordering; workloads that need independent per-message retry
-       regardless of key need a leased-job primitive (DEC-021). *)
-```
+On `Retry`, the source record is copied with its raw bytes and key to `<source>.<canonical-group>.retry`, with `X-Sol-Attempt` and `X-Sol-Retry-At` headers. The source offset is acknowledged only after that publish succeeds. The relay re-runs the handler when due. After `retry_policy.max_attempts` failures, or on `Dead_letter`, the record goes to `<source>.<canonical-group>.dlq`; the relay offset is acknowledged only after that publish succeeds. Both destinations are provisioned for the consumer group. The canonical group segment is bounded and includes a hash of the original group ID, so distinct punctuation variants do not collide (BUG-030, BUG-080). The DLQ record also carries `X-Sol-Origin-Group`.
 
-There is no `default_retry_strategy` (removed, FEAT-078): `retry_strategy` is a
-mandatory argument to `consume_partitioned`, never an implicit fallback. A
-missing retry strategy must never be discovered only after a message first
-fails to process -- see `sol-worker.md`'s `WORKER`/`RETRYABLE_WORKER` split,
-which enforces this at the type level one layer up.
+`retry_policy` uses exponential backoff with jitter and a maximum delay; `max_attempts` must be at least 1. Retries are at least once and are not order preserving. A long delay blocks later records in the same retry partition while its queue is full, but a full partition queue pauses fetching from that partition while consumer polling continues, so delays through `retry_policy.max_delay_s` do not cause max-poll eviction; BUG-104 tracks delay tiers. A retry record that cannot be decoded goes to the DLQ with diagnostics before its offset is acknowledged.
 
-Ack/drop behavior follows the
-[`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
+Ack/drop behavior follows the [`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
 
 **Relay resilience and exhaustion policy (BUG-029).** The retry consumer's own
 publish to the retry/DLQ topic is retried in-process, with backoff

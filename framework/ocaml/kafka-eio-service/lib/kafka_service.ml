@@ -301,10 +301,6 @@ let publish svc topic ?trace_ctx msg =
     ()
 ;;
 
-type retry_strategy =
-  | In_memory of Kafka.Consumer.retry_policy
-  | Retry_topics of Kafka.Consumer.retry_policy
-
 type consumer_hooks = Kafka_service_intf.consumer_hooks =
   { kafka : Kafka.Consumer.hooks
   ; on_relay_publish :
@@ -367,93 +363,27 @@ let consume_partitioned
       ~clock
       ?(hooks = no_hooks)
       ?decode_error_policy
-      ~retry_strategy
+      ~retry_policy
       ?(consumer_properties = [])
       ?ot
       ?stop
       ~handler
       ()
   =
-  let ({ kafka = kafka_hooks; _ } : Kafka_service_intf.consumer_hooks) = hooks in
   let observe_decode_error =
     Kafka_service_intf.observe_decode_error
       ~ot
       ~topic_name:(topic_name_to_string topic.name)
   in
-  match retry_strategy, decode_error_policy with
-  | In_memory _, Some Route_to_dlq ->
-    Error
-      (Consumer_error
-         (Kafka.Error.Config_error
-            "decode_error_policy Route_to_dlq needs a DLQ, which only Retry_topics \
-             provisions; use Retry_topics, or state Ack_and_drop for In_memory"))
-  | In_memory retry, (None | Some Ack_and_drop) ->
-    let on_decode_error e ~raw_bytes ~ack =
-      observe_decode_error e ~raw_bytes ~disposition:`Dropped;
-      Kafka_service_intf.ack_and_drop_decode_error e ~raw_bytes ~ack
-    in
-    let consumer_cfg : Kafka.Consumer.config =
-      { brokers = svc.brokers
-      ; group_id
-      ; topics = [ topic_name_to_string topic.name ]
-      ; offset_reset = Kafka.Consumer.Earliest
-      ; auto_commit = false
-      ; security = svc.security
-      ; properties = consumer_properties
-      }
-    in
-    (match Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw with
-     | Error e -> Error (Consumer_error e)
-     | Ok consumer ->
-       let decode_and_handle raw_msg ~ack =
-         match Kafka_service_schema.decode_message topic raw_msg with
-         | Error (e, raw_bytes) ->
-           (match on_decode_error e ~raw_bytes ~ack with
-            | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-            | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-            | Kafka.Consumer.Error e -> Kafka.Consumer.Error (Kafka_error e))
-         | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
-       in
-       let result =
-         Kafka.Consumer.consume_partitioned
-           ?stop
-           consumer
-           ~sw
-           ~clock
-           ~retry
-           ~hooks:kafka_hooks
-           ~handler:(fun raw_msg ~ack ->
-             match decode_and_handle raw_msg ~ack with
-             | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-             | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-             | Kafka.Consumer.Error Retry -> Kafka.Consumer.Error Kafka.Error.Application
-             | Kafka.Consumer.Error (Kafka_error e) -> Kafka.Consumer.Error e
-             | Kafka.Consumer.Error (Dead_letter reason) ->
-               Printf.eprintf
-                 "sol-worker: DEAD_LETTER without Retry_topics configured (no DLQ \
-                  available) reason=%S -- failing closed, not acking\n\
-                  %!"
-                 reason;
-               Kafka.Consumer.Error Kafka.Error.Application)
-           ()
-         |> Result.map_error (function
-           | Kafka.Consumer.Handler_errors errs -> Partition_errors errs
-           | Kafka.Consumer.Invalid_config msg ->
-             Consumer_error (Kafka.Error.Config_error msg)
-           | Kafka.Consumer.Consumer_error e -> Consumer_error e)
-       in
-       Kafka.Consumer.close consumer;
-       result)
-  | Retry_topics retry_policy, decode_error_policy ->
-    let runtime : _ Kafka_service_retry_topics.runtime =
-      { group_id
-      ; retry_policy
-      ; consumer_properties
-      ; hooks
-      ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
-      ; observe_decode_error
-      ; handler
-      }
-    in
-    Kafka_service_retry_topics.consume svc topic ~sw ~net ~clock runtime ()
+  let runtime : _ Kafka_service_retry_topics.runtime =
+    { group_id
+    ; retry_policy
+    ; consumer_properties
+    ; hooks
+    ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
+    ; observe_decode_error
+    ; handler
+    }
+  in
+  Kafka_service_retry_topics.consume svc topic ~sw ~net ~clock ?stop runtime ()
 ;;
