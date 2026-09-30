@@ -439,7 +439,8 @@ let consume_partitioned
          |> Result.map_error (function
            | Kafka.Consumer.Handler_errors errs -> Partition_errors errs
            | Kafka.Consumer.Invalid_config msg ->
-             Consumer_error (Kafka.Error.Config_error msg))
+             Consumer_error (Kafka.Error.Config_error msg)
+           | Kafka.Consumer.Consumer_error e -> Consumer_error e)
        in
        Kafka.Consumer.close consumer;
        result)

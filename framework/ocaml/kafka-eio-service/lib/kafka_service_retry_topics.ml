@@ -539,6 +539,9 @@ let run_consumers
                relay_failure
                := Some (Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg));
                stop_source_after_relay_failure ()
+             | Error (Kafka.Consumer.Consumer_error e) ->
+               relay_failure := Some (Kafka_service_intf.Consumer_error e);
+               stop_source_after_relay_failure ()
            with
            | Eio.Cancel.Cancelled _ -> ());
           Kafka.Consumer.close retry_consumer);
@@ -594,7 +597,8 @@ let run_consumers
       |> Result.map_error (function
         | Kafka.Consumer.Handler_errors errs -> Kafka_service_intf.Partition_errors errs
         | Kafka.Consumer.Invalid_config msg ->
-          Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
+          Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg)
+        | Kafka.Consumer.Consumer_error e -> Kafka_service_intf.Consumer_error e)
     in
     let reconcile_relay result =
       match result, !relay_failure with
