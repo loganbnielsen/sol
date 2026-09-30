@@ -10,6 +10,14 @@ source: Sol Unified Operational Interface design review, 2026-09-18
 
 **Related:** DOCS-019, DEC-031, DEC-032, OBS-043, FEAT-090.
 
+**Reconciled with `DEC-057` (2026-09-29):** the experience contract states that
+alert *delivery* is configured into the customer's own observability/notification
+integrations where possible (`docs/DEVELOPER_EXPERIENCE.md` §10), and its guiding
+test prefers the OSS implementation whenever the CLI can read what the customer
+already runs. That is evidence for option 1 below being OSS-deliverable rather
+than a hosted feature; it does not decide this ticket, which still chooses between
+building the view and declaring it a non-goal.
+
 ## Decision Required
 
 This ticket is allowed to resolve to "no change", and that resolution is the

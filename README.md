@@ -6,6 +6,16 @@
 
 Sol is an open-source software factory for backend systems. Write domain logic in **OCaml or TypeScript** — both are first-class application languages on one language-neutral platform. Sol scaffolds, builds, packages, observes, and deploys either, against a single contract: the same schema-registry conventions, trace propagation, metric vocabulary, retry/DLQ semantics, and deploy lifecycle, in every language. OCaml is the deepest-supported path and where Sol's architecture is proven; TypeScript is the broadest on-ramp for backend developers. (Sol's own CLI and platform are written in OCaml, and are language-neutral in what they do.) Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
+Sol's promise is a PaaS-simple deployment experience on infrastructure you own.
+The factory is Sol's; the cloud account, registry, database and DNS are yours, and
+stopping use of Sol does not stop what it deployed. There is no Sol-operated
+control plane in the core product: everything on the happy path runs from the Sol
+CLI, your own CI, or resources Sol installs into your account. Setup is designed
+to happen once per account; after that, deployment is essentially
+`sol deploy <target>`. The intended experience — and what is implemented versus
+still planned — is in
+**[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
+
 ---
 
 ## What it looks like
@@ -56,6 +66,14 @@ curl localhost:8080/health
 ```
 
 That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
+
+This is the **local** path, and it needs no cloud account. Deploying the same
+workspace to your own AWS or GCP runs `sol deploy <env>/<provider>/<region>`. The
+durable, account-level setup (state backend, identities, delegated DNS) is
+designed to be established inline on the first run and reused after; today that
+part is still a separate step, and the guided flow is planned (FEAT-106, FEAT-107).
+The intended first-run flow, its current status, and what stays your
+responsibility are in **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
 
 A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
 `sol-vX.Y.Z/share/sol/vX.Y.Z/` (Terraform roots, Helm values, dashboards) and the
@@ -176,9 +194,22 @@ FEAT-084; nothing in this README should be read as that flag existing.
 
 ## Deployment
 
-Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sol cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
+Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy <env>/<provider>/<region>` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sol cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
 
-See the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sol.toml` overrides) for details.
+Two things are worth distinguishing, because conflating them is the usual source
+of lifecycle confusion:
+
+- **Installation** is the durable, account-level layer — Terraform state and
+  locking, the provisioner/deploy/operator identities, and the delegated DNS
+  zone. It is designed to be set up once and removed only by an explicit
+  `sol uninstall` (planned, FEAT-108), never by destroying an environment.
+- **An environment** is one disposable target — its network, cluster, database
+  and workloads. `sol cloud destroy <target>` removes the environment and is
+  designed to leave the installation intact, so redeploying does not redo
+  registrar or DNS work.
+
+See [The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md) for the model,
+the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sol.toml` overrides) for the details.
 
 ---
 
@@ -212,6 +243,8 @@ sol/
 
 ## Docs
 
+- [The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md) — the product promise, the first deploy, and what is built versus planned
+- [Documentation map](docs/README.md) — what exists, who each page is for, and the documentation roadmap
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
 - [Contract](docs/reference/README.md) — the language-neutral application contract
 - [TypeScript packages](https://github.com/loganbnielsen/sol-typescript) — the four published `@sol-fab/*` packages ([`kafka`](https://github.com/loganbnielsen/sol-kafka), [`obs`](https://github.com/loganbnielsen/sol-obs), `svc`, `worker`), plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase

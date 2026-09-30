@@ -141,8 +141,10 @@ the full local workflow.
 
 ## Docs
 
-User-facing docs live in `README.md`, `docs/guides/`, `docs/deployment/`, and
-`docs/hosted/`. Architecture and ownership docs live in `docs/architecture/`.
+User-facing docs live in `README.md`, `docs/DEVELOPER_EXPERIENCE.md`, `docs/guides/`,
+`docs/deployment/`, and `docs/reference/`. Architecture and ownership docs live in
+`docs/architecture/`. The documentation map and the roadmap of planned pages live in
+`docs/README.md`.
 Audit checklists live in `internal/pipeline/audits/`; dated audit findings belong under
 `internal/pipeline/audits/`, not in reusable checklist files. That directory also
 carries the durable qualification ledger — `internal/pipeline/audits/README.md`
@@ -151,9 +153,10 @@ current "what does Sol know" index of findings, provider-neutral invariants and
 open qualification rows.
 
 Extend docs where the reader is already making the relevant decision: quickstart
-behavior in `README.md`, walkthroughs in `docs/guides/`, deployment contracts in
-`docs/deployment/`, hosting concepts in `docs/hosted/`, and contributor-facing
-boundaries here.
+behavior in `README.md`, the product experience and its status in
+`docs/DEVELOPER_EXPERIENCE.md`, walkthroughs in `docs/guides/`, deployment
+contracts in `docs/deployment/`, the application contract in `docs/reference/`,
+and contributor-facing boundaries here.
 
 Do not document unavailable commands, stale workflow names, or generated YAML as
 files users should edit. If docs mention a command, generated file, or guarantee,

@@ -12,6 +12,13 @@ source: GCP Attempt 8's preserved stale platform state, via the INFRA-079 decisi
 rule this is deliberately *not* part of), FND-0055, DEC-045,
 `internal/qualification/records/2026-09-25-gcp-attempt8.md`.
 
+**Reconciled with `DEC-057` (2026-09-29):** the developer-experience contract fixes
+the *scoping* rule this decision sits under — `sol cloud destroy <target>` removes
+an environment and leaves the durable installation intact — but it does not answer
+the question here, which is about a target whose provider resources and platform
+state disagree. The decision stays open. `DEC-057` adds one constraint: whatever
+this resolves must never reach installation-level resources.
+
 ## Context
 
 Attempt 8's destroy was degraded by FND-0058, so the platform teardown was skipped and the cloud

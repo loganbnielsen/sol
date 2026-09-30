@@ -10,6 +10,13 @@ source: Sol Unified Operational Interface design review, 2026-09-18
 
 **Related:** DEC-032, INFRA-027, OBS-044, ADR 0003.
 
+**Reconciled with `DEC-057` (2026-09-29):** the experience contract puts this field
+on the day-two surface (`docs/DEVELOPER_EXPERIENCE.md` §7 and §11) — "last
+operation" is one of the facts a user should be able to read without a provider
+console, and readiness is observed rather than inferred. That confirms the field is
+on the product path; it does not change this ticket's design constraints (ADR 0003's
+no-new-store rule still stands).
+
 ## What this is
 
 `sol target show --check` already reports a target's identity, Kubernetes
