@@ -39,7 +39,7 @@ point for "what is Sol and what is it promising".
 | [`guides/TUTORIAL.md`](guides/TUTORIAL.md) | New users | **Published** — local path, end to end |
 | Installation and first deploy | New users | **Planned** — DOCS-026 |
 | [`guides/application-authoring.md`](guides/application-authoring.md) | Application authors | **Published** — DOCS-027 |
-| Deployment guide | Operators | **Partial** — `docs/deployment/*` covers pieces; the single end-to-end cloud path is DOCS-028 |
+| [`guides/deployment.md`](guides/deployment.md) | Operators | **Published** — DOCS-028; the operator detail stays in `deployment/*` |
 | Operations and lifecycle | Operators | **Planned** — DOCS-029 |
 | [`reference/README.md`](reference/README.md), [`reference/runtime.md`](reference/runtime.md), [`reference/substrate.md`](reference/substrate.md) | Application authors | **Published** |
 | CLI reference | All users | **Planned** — DOCS-030 |

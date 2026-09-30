@@ -1,0 +1,207 @@
+# Deploying to your own cloud
+
+From "it runs locally" to "it is running in my AWS account": choosing a target, provisioning the
+substrate, deploying the application directly or through GitOps, and wiring CI.
+
+This is the narrative path. The operator-level detail is
+[production-bootstrap.md](../deployment/production-bootstrap.md) (the durable installation, identities and
+recovery), [substrate.md](../reference/substrate.md) (what Sol generates and what you bring),
+[escape-hatches.md](../deployment/escape-hatches.md) (the `sol.toml` overrides), and
+[compatibility.md](../deployment/compatibility.md) (what a profile admits today). This page links them instead
+of repeating them.
+
+## 1. Choose a target
+
+A target is `<env>/<provider>/<region>` — `prod/aws/us-east-1`. It is the only thing a
+deploying command needs, and it is always the positional:
+
+```bash
+sol deploy prod/aws/us-east-1       # target-addressed: the target is the positional
+sol status payments --target prod/aws/us-east-1
+```
+
+Two layers, doing two different jobs (`DEC-016`):
+
+- The **environment** is *policy*: the profile it selects, its base domain, resource sizes,
+  service scaling, the alert-delivery contract. It is declared once in
+  `sol/environments.yml` — pluto declares `prod`, `pilot`, `dev` and `customer_cloud`.
+- The **target** is *where*: the provider and region, and the cluster name.
+
+```yaml
+prod:
+  base_domain: pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
+  services:
+    charge_svc:
+      scale:
+        min: 1
+        max: 2
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-prod
+```
+
+`sol deploy prod/aws/us-east-1` resolves `sol.yml` → `prod` → `aws/us-east-1`, a lower layer
+overriding a higher one. There is no `--env` and no ambient current target: the destination comes
+from the target, not from the shell (`DEC-020`). Account-specific values you would rather not
+commit go in `sol/environments.local.yml`, which is gitignored and may only add keys
+`environments.yml` leaves unset.
+
+An environment's **name never selects a profile**. `prod` above deliberately has none, and
+`pilot` selects the production profile explicitly with `profile: production-single-region` — so a
+"production" deployment is a decision you write down, not a name you type.
+
+Inspect what a target resolves to before changing anything:
+
+```bash
+sol target show prod/aws/us-east-1
+sol plan prod/aws/us-east-1          # the merged app/resource/service plan
+```
+
+## 2. The installation comes first, once per account
+
+The durable layer — the Terraform state backend and locking, the provisioning/cluster-access/
+deploy/operator identities, and the delegated DNS zone when Sol owns one — is per **account**, not
+per environment. It outlives every environment, which is why `sol cloud destroy` removes an
+environment and never the installation.
+
+```bash
+sol cloud bootstrap prod/aws/us-east-1          # observe: what is established, what is not
+sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
+```
+
+The report is observed, not inferred: each prerequisite is asked for at the provider, `Unmet`
+means the provider answered that it is not there, and `UNKNOWN` (Sol could not look) fails closed.
+`--apply` reconciles the durable root and stops when a plan would replace or destroy a durable
+resource, because a recreated DNS zone gets different nameservers than the registrar delegation
+names. The identities it needs, and how to create them, are in
+[production-bootstrap.md](../deployment/production-bootstrap.md).
+
+**Guided first-run.** The ordinary path is that `sol deploy` detects an uninstalled account and
+walks you through this in place, so you never have to invoke an administrative command to get
+started — that inline experience is **FEAT-106**, and the guided DNS create/adopt flow is
+**FEAT-107**. Until they land, the explicit pair above is the path.
+
+## 3. Provision the substrate
+
+The substrate is the cluster and the platform components Sol runs on it. Three commands, and the
+first one is free:
+
+```bash
+sol cloud plan prod/aws/us-east-1               # what would change; nothing is applied
+sol cloud apply prod/aws/us-east-1              # create or update it
+sol cloud destroy prod/aws/us-east-1 --plan     # what teardown would remove; nothing is applied
+sol cloud destroy prod/aws/us-east-1 --apply    # tear the environment down
+```
+
+- `plan` is read-only and is the review step; it never mutates, and it exits zero on an absent
+  target, reporting the phases it defers.
+- `apply` converges the substrate and then verifies it. When a fact about the target cannot be
+  resolved, it refuses; `--accept-unresolved` exists for an operator who has decided to proceed
+  anyway, and the unresolved facts are reported rather than hidden.
+- `destroy` verifies absence afterwards by observing the provider directly, and refuses while
+  something it does not own is in the way — it will not take your data with it. A destroy that
+  would remove a registry path needs `--confirm-ecr-removal`.
+- `--var` / `--var-file` pass values through to Terraform for the exceptional case.
+
+What the substrate contains, and which parts Sol generates versus which you bring, is
+[substrate.md](../reference/substrate.md). The `sol.toml` overrides that change what Sol renders
+are [escape-hatches.md](../deployment/escape-hatches.md).
+
+**Profiles admit less than Sol can run.** A target that declares a profile runs that profile's
+preflight, and the preflight refuses until the target establishes every guarantee the profile
+requires, naming each unmet guarantee and who must act. Today the profile admits OCaml
+applications on AWS: TypeScript is staged (`DEC-026` §2, the standing goal **FEAT-102**), and GCP
+is not a qualified provider for it. The current verdicts, with their evidence, are in
+[compatibility.md](../deployment/compatibility.md).
+
+## 4. Deploy the application
+
+Images must already exist in a registry: Sol deploys images, it does not build them in the
+deploying command (a `sol build` is planned, not shipped). Choose how the manifests reach the
+cluster.
+
+**Direct mode** — the CLI renders and applies:
+
+```bash
+sol deploy prod/aws/us-east-1 --registry 123456789.dkr.ecr.us-east-1.amazonaws.com --image-tag "$SHA"
+```
+
+**GitOps mode** — the CLI renders and you commit the result, and a controller applies it:
+
+```bash
+sol deploy prod/aws/us-east-1 --emit-to manifests/ --image-tag "$SHA"
+```
+
+**Which to choose.** Direct mode is the shorter path: one command, and the cluster credentials
+live wherever the command runs. GitOps buys you a reviewable diff of what is about to change and a
+controller that reconciles drift, at the cost of a pipeline that commits. Both render the same
+manifests from the same inputs — the difference is who applies them, not what they say — so
+switching later is a change of mechanism, not of contract.
+
+Both modes take the same inputs, and both are honest about what they would do:
+
+- `--dry-run` runs everything except the change.
+- `--emit-plan-to plan.json` captures the typed deployment intent without rendering, which is what
+  a review gate should consume.
+- `--scope payments/checkout-svc` deploys one unit, or `--scope payments` one domain.
+- `--keep-releases N`, `--refresh-interval`, `--secret-*`, `--key-prefix`, `--loki-push-url` and
+  `--confirm-group-change` cover release retention, rollout refresh, secret backends and
+  telemetry destinations.
+
+Never rebuild the plan/render/execute logic in your own CI: all deployment decisions (image tags,
+namespaces, discovery, secrets) belong to `sol deploy`, and CI's job is to supply the inputs
+(`--registry`, `--image-tag`).
+
+Deployed releases are records, not folklore:
+
+```bash
+sol releases --target prod/aws/us-east-1     # what is deployed, by content-addressed id
+sol rollback --target prod/aws/us-east-1     # restore a recorded boundary
+sol deployments --target prod/aws/us-east-1  # the deployment events for this workspace
+```
+
+`sol rollback` refuses when a migration since that release is contracting, because restoring
+workloads cannot un-apply that.
+
+## 5. CI
+
+Two modes are checked in as ordinary workflows in [`examples/pluto/.github/workflows/`](../../examples/pluto/.github/workflows),
+and either can be copied and edited — there is no generated-workflow command yet (**FEAT-109**).
+
+**GitOps**, `sol-ci.yml`: no cluster credentials at all. Build and push images, then let the CLI
+say what would change and render it:
+
+```bash
+sol deploy "$SOL_TARGET" --emit-plan-to plan.json --dry-run    # typed intent, as an artefact
+sol deploy "$SOL_TARGET" --emit-to manifests/ --image-tag "$SHA"
+```
+
+**Direct**, `deploy.yml`: same build phase, then `sol deploy` with a registry and an image tag and
+a kubeconfig from a secret (`KUBECONFIG_B64`).
+
+Both follow the same contract, and it is the part worth keeping: **CI provides inputs, Sol decides
+everything else.** Phase 1 (compile, test, build and push images) is user-owned and will become
+`sol build`; phase 2 (deploy) is the typed contract above, and duplicating the plan/render/execute
+logic in a workflow is the mistake this contract exists to prevent.
+
+The full Argo CD variant lives in `platform/cloud/delivery/ci/`. Short-lived, least-privilege
+identities for CI — rather than long-lived keys — are the installation's business:
+[production-bootstrap.md](../deployment/production-bootstrap.md) and **FEAT-109**.
+
+## 6. What you bring, and what Sol brings
+
+Sol generates the cluster substrate, the platform components and the manifests; you bring the
+cloud account, the images, the domain and the decisions above. That split, with the exact list, is
+[substrate.md](../reference/substrate.md) — read it before deciding how much of the stack you want
+to manage yourself, and [escape-hatches.md](../deployment/escape-hatches.md) for the levels at which you can take
+part of it over.
+
+## 7. Where to go next
+
+- Day two — logs, metrics, rollback, destroy — is the operations guide (DOCS-029), and the index
+  in [`docs/README.md`](../README.md) says what is published today.
+- [The runtime contract](../reference/runtime.md) is what a deployed unit may rely on.
+- [Building an application](application-authoring.md) is the other half: what runs once it is
+  deployed.
+- [`docs/README.md`](../README.md) is the index, including the command reference once published.

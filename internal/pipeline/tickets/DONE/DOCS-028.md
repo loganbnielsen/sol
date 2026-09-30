@@ -76,3 +76,54 @@ the application directly or through GitOps, and setting up CI.
 
 - Keep `production-bootstrap.md` as the operator detail page; this guide is the
   narrative path and should link down to it rather than absorb it.
+
+## Completion notes (2026-09-30)
+
+`docs/guides/deployment.md` is published and `docs/README.md` marks it so.
+
+**A reader can go from a local workspace to a deployed environment** (AC1). The page walks the
+seven steps in order: pick a target, reconcile the installation, provision the substrate, deploy,
+wire CI, take over what you want, and go on to day two — with the CLI invocations that do each.
+The installation step is the pair that exists today (`sol cloud bootstrap <target>` and
+`--apply`), and it says plainly that the guided inline first-run experience is FEAT-106 and the
+guided zone create/adopt flow is FEAT-107, so the reader is not left waiting for a command that
+does not exist.
+
+**Both deploy modes are covered, with the choice stated** (AC2). Direct mode
+(`sol deploy <target> --registry … --image-tag …`) and GitOps mode (`--emit-to manifests/`) are
+both shown, with the trade-off in one paragraph: the same manifests from the same inputs, and the
+difference is who applies them. `--dry-run` and `--emit-plan-to` are presented as the review gate,
+`sol releases`/`sol rollback` as how a deployed release is inspected and restored, and the page
+says explicitly not to rebuild plan/render/execute in CI.
+
+**Nothing is duplicated, everything is linked** (AC3). `production-bootstrap.md` stays the
+operator detail page (identities, recovery), `substrate.md` owns what Sol generates versus what you
+bring, `escape-hatches.md` owns the `sol.toml` overrides, and `compatibility.md` owns the profile
+verdicts. The CI section quotes the two workflows already checked in under
+`examples/pluto/.github/workflows/` — which is the supported path today — rather than inventing a
+generated one.
+
+**The current limitations are stated, not implied away** (AC4). TypeScript is staged
+(`DEC-026` §2, standing goal FEAT-102) and AWS is the only qualified provider for the production
+profile, both named in the substrate section and linked to the matrix; the profile's guarantee
+preflight and its refusal are described as behaviour the reader will meet, not as a footnote.
+
+**Every command shown is real on `main`** (AC5). Each command and flag was checked against the
+built binary's own help (`sol cloud plan|apply|destroy`, `sol cloud bootstrap`, `sol deploy`,
+`sol target show`, `sol plan`, `sol releases`, `sol rollback`, `sol deployments`). The two
+planned surfaces are marked with their tickets instead of being shown as working: the CI workflow
+generator is FEAT-109, and `sol uninstall` is FEAT-108. `docs/README.md` marks the page Published
+(AC6).
+
+**Demo/example coverage:** the guide's samples are the real pluto files it cites
+(`sol/environments.yml`, `.github/workflows/sol-ci.yml`, `deploy.yml`), so it adds no example of
+its own. Its samples are exercised in the sense the criterion asks: they are the checked-in
+example, quoted rather than paraphrased.
+
+**Language parity:** no capability changes here, so no new per-language verdict is owed; the page
+states the parity-relevant fact an operator meets — that the profile admits OCaml today and
+TypeScript's qualification is the standing goal FEAT-102 — and links the matrix.
+
+**One link deliberately withheld:** `docs/reference/cli.md` is published by the still-open
+DOCS-030 PR, so this page points at the index instead of linking a page that is not on `main`
+yet. Add the direct link when DOCS-030 lands.
