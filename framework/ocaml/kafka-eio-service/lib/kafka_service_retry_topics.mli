@@ -123,6 +123,7 @@ val consume
   -> sw:Eio.Switch.t
   -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
+  -> ?stop:unit Eio.Promise.t
   -> 'a runtime
   -> unit
   -> (unit, Kafka_service_intf.consume_partitioned_error) result

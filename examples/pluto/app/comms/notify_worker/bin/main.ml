@@ -44,12 +44,7 @@ let () =
     end)
   in
   let module WR = Worker.Make_with_retry (W) in
-  WR.run
-    ~env
-    ~config:kafka_config
-    ~retry_strategy:(Worker.In_memory Kafka.Consumer.default_retry)
-    ~ot:obs
-    ()
+  WR.run ~env ~config:kafka_config ~ot:obs ()
   |> Result.map_error Worker.run_error_to_string
   |> function
   | Ok () -> ()

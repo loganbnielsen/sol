@@ -129,13 +129,12 @@ let () =
        WR.run
          ~env
          ~config:kafka_config
-         ~retry_strategy:
-           (Worker.Retry_topics
-              { base_delay_s = 2.0
-              ; max_delay_s = 10.0
-              ; max_attempts = 3
-              ; jitter_ratio = 0.1
-              })
+         ~retry_policy:
+           { Worker.base_delay_s = 2.0
+           ; max_delay_s = 10.0
+           ; max_attempts = 3
+           ; jitter_ratio = 0.1
+           }
          ~on_ready:(fun () ->
            Printf.printf "\n[worker] partition assigned — ready\n%!";
            try Eio.Promise.resolve worker_ready_r () with

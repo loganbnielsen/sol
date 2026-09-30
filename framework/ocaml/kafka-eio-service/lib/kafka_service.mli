@@ -246,10 +246,6 @@ val consume
   -> unit
   -> (unit, Kafka.Error.t) result
 
-type retry_strategy =
-  | In_memory of Kafka.Consumer.retry_policy
-  | Retry_topics of Kafka.Consumer.retry_policy
-
 type consume_partitioned_error =
   | Consumer_error of Kafka.Error.t
   | Partition_errors of (int32 * Kafka.Error.t) list
@@ -263,7 +259,7 @@ val consume_partitioned
   -> clock:_ Eio.Time.clock
   -> ?hooks:consumer_hooks
   -> ?decode_error_policy:decode_error_policy
-  -> retry_strategy:retry_strategy
+  -> retry_policy:Kafka.Consumer.retry_policy
   -> ?consumer_properties:(string * string) list
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t

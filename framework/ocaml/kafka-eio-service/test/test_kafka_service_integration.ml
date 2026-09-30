@@ -321,10 +321,6 @@ let test_publish_consume_roundtrip () =
 module PartitionFailEvent = struct
   type t = { n : int }
 
-  let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-partfail-%05d" run_id)
-  ;;
-
   let schema =
     {|{
     "type": "object",
@@ -433,13 +429,12 @@ let test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves () =
               ~sw
               ~net:env#net
               ~clock:env#clock
-              ~retry_strategy:
-                (Kafka_service.In_memory
-                   { Kafka.Consumer.base_delay_s = 0.05
-                   ; max_delay_s = 0.2
-                   ; max_attempts = 2
-                   ; jitter_ratio = 0.0
-                   })
+              ~retry_policy:
+                { Kafka.Consumer.base_delay_s = 0.05
+                ; max_delay_s = 0.2
+                ; max_attempts = 2
+                ; jitter_ratio = 0.0
+                }
               ~stop:stop_p
               ~handler:(fun () ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Continue)
               ()));
@@ -460,123 +455,6 @@ let test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves () =
              | Kafka_service.Consumer_error ke -> Kafka.Error.to_string ke
              | Kafka_service.Partition_errors errs ->
                Printf.sprintf "%d partition error(s)" (List.length errs))))
-;;
-
-let test_consume_partitioned_reports_partition_error () =
-  Eio_main.run
-  @@ fun env ->
-  Eio.Switch.run
-  @@ fun sw ->
-  match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register
-         svc
-         ~net:env#net
-         ~clock:env#clock
-         (module PartitionFailEvent)
-     with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
-     | Ok topic ->
-       (match
-          Eio.Promise.await (Kafka_service.publish svc topic PartitionFailEvent.{ n = 1 })
-        with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
-        | Ok () -> ());
-       let group_id =
-         Printf.sprintf "sol-test-partfail-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let retry_strategy =
-         Kafka_service.In_memory
-           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1; jitter_ratio = 0.0 }
-       in
-       let result =
-         Eio.Time.with_timeout env#clock 20.0 (fun () ->
-           Ok
-             (Kafka_service.consume_partitioned
-                svc
-                topic
-                ~group_id
-                ~sw
-                ~net:env#net
-                ~clock:env#clock
-                ~retry_strategy
-                ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
-                  Kafka.Consumer.Error Kafka_service.Retry)
-                ()))
-       in
-       (match result with
-        | Error `Timeout ->
-          Alcotest.fail "timed out waiting for partition to exhaust retries"
-        | Ok (Ok ()) -> Alcotest.fail "expected the failing handler to exhaust retries"
-        | Ok (Error (Kafka_service.Consumer_error e)) ->
-          Alcotest.failf
-            "expected Partition_errors, got Consumer_error: %s"
-            (Kafka.Error.to_string e)
-        | Ok (Error (Kafka_service.Partition_errors errs)) ->
-          Alcotest.(check bool) "at least one partition error reported" true (errs <> [])))
-;;
-
-let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
-  Eio_main.run
-  @@ fun env ->
-  Eio.Switch.run
-  @@ fun sw ->
-  match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
-  | Ok svc ->
-    (match
-       Kafka_service.register
-         svc
-         ~net:env#net
-         ~clock:env#clock
-         (module PartitionFailEvent)
-     with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
-     | Ok topic ->
-       (match
-          Eio.Promise.await (Kafka_service.publish svc topic PartitionFailEvent.{ n = 1 })
-        with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
-        | Ok () -> ());
-       let group_id =
-         Printf.sprintf "sol-test-dlqclosed-%d-%d" (Unix.getpid ()) (Random.int 9999)
-       in
-       let retry_strategy =
-         Kafka_service.In_memory
-           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1; jitter_ratio = 0.0 }
-       in
-       let result =
-         Eio.Time.with_timeout env#clock 20.0 (fun () ->
-           Ok
-             (Kafka_service.consume_partitioned
-                svc
-                topic
-                ~group_id
-                ~sw
-                ~net:env#net
-                ~clock:env#clock
-                ~retry_strategy
-                ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
-                  Kafka.Consumer.Error (Kafka_service.Dead_letter "poison"))
-                ()))
-       in
-       (match result with
-        | Error `Timeout ->
-          Alcotest.fail "timed out waiting for the dead-lettered partition to fail closed"
-        | Ok (Ok ()) ->
-          Alcotest.fail
-            "Dead_letter under In_memory must not silently succeed (ack-and-drop)"
-        | Ok (Error (Kafka_service.Consumer_error e)) ->
-          Alcotest.failf
-            "expected Partition_errors, got Consumer_error: %s"
-            (Kafka.Error.to_string e)
-        | Ok (Error (Kafka_service.Partition_errors errs)) ->
-          Alcotest.(check bool)
-            "dead-letter without a DLQ is reported as a partition failure, not acked"
-            true
-            (errs <> [])))
 ;;
 
 let test_schema_check_wrong_registry_path_is_an_error () =
@@ -719,9 +597,12 @@ let test_retry_topics_dead_relay_fails_the_worker () =
        let group_id =
          Printf.sprintf "sol-test-relaydeath-%d-%d" (Unix.getpid ()) (Random.int 9999)
        in
-       let retry_strategy =
-         Kafka_service.Retry_topics
-           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 3; jitter_ratio = 0.0 }
+       let retry_policy =
+         { Kafka.Consumer.base_delay_s = 0.0
+         ; max_delay_s = 0.0
+         ; max_attempts = 3
+         ; jitter_ratio = 0.0
+         }
        in
        let deliveries = ref 0 in
        let result =
@@ -734,7 +615,7 @@ let test_retry_topics_dead_relay_fails_the_worker () =
                 ~sw
                 ~net:env#net
                 ~clock:env#clock
-                ~retry_strategy
+                ~retry_policy
                 ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
                   incr deliveries;
                   if !deliveries = 1
@@ -940,8 +821,11 @@ let while_consuming ~consume f =
 ;;
 
 let retry_topics_policy =
-  Kafka_service.Retry_topics
-    { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 3; jitter_ratio = 0.0 }
+  { Kafka.Consumer.base_delay_s = 0.0
+  ; max_delay_s = 0.0
+  ; max_attempts = 3
+  ; jitter_ratio = 0.0
+  }
 ;;
 
 let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) f =
@@ -955,6 +839,66 @@ let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) 
     (match Kafka_service.register svc ~net:env#net ~clock:env#clock (module M) with
      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic -> f env sw svc topic)
+;;
+
+let test_default_retry_policy_reaches_dlq_and_allows_later_record () =
+  with_registered
+    (module PaymentEvent)
+    (fun env sw svc topic ->
+       let group_id =
+         Printf.sprintf "sol-test-default-retry-%d-%d" (Unix.getpid ()) (Random.int 9999)
+       in
+       let dlq =
+         Kafka_service.Retry_topics.relay_topic_name
+           ~source:(Kafka_service.topic_name_to_string PaymentEvent.topic_name)
+           ~group_id
+           ~suffix:"dlq"
+       in
+       List.iter
+         (fun payment_id ->
+            match
+              Eio.Promise.await
+                (Kafka_service.publish
+                   svc
+                   topic
+                   PaymentEvent.{ payment_id; amount_cents = 1 })
+            with
+            | Ok () -> ()
+            | Error e -> Alcotest.fail (Kafka.Error.to_string e))
+         [ "poison"; "later" ];
+       let later, later_r = Eio.Promise.create () in
+       let poison_attempts = ref 0 in
+       let dead_lettered =
+         while_consuming
+           ~consume:(fun ~sw ->
+             ignore
+               (Kafka_service.consume_partitioned
+                  svc
+                  topic
+                  ~group_id
+                  ~sw
+                  ~net:env#net
+                  ~clock:env#clock
+                  ~retry_policy:Worker.default_retry_policy
+                  ~handler:(fun (msg : PaymentEvent.t) ~ack ~trace_ctx:_ ->
+                    if msg.payment_id = "poison"
+                    then (
+                      incr poison_attempts;
+                      Kafka.Consumer.Error Kafka_service.Retry)
+                    else (
+                      ignore (ack ());
+                      ignore (Eio.Promise.try_resolve later_r ());
+                      Kafka.Consumer.Continue))
+                  ()))
+           (fun () ->
+              Eio.Time.with_timeout_exn env#clock 10.0 (fun () -> Eio.Promise.await later);
+              read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:30.0)
+       in
+       Alcotest.(check int)
+         "default attempt budget"
+         Worker.default_retry_policy.max_attempts
+         !poison_attempts;
+       Alcotest.(check bool) "poison reached the DLQ" true (Option.is_some dead_lettered))
 ;;
 
 module Dlq_event = Decode_policy_event (struct
@@ -989,13 +933,8 @@ let test_retry_relay_backlog_keeps_deliveries () =
        let attempts = Hashtbl.create count in
        let done_p, done_r = Eio.Promise.create () in
        let completed = ref 0 in
-       let retry_strategy =
-         Kafka_service.Retry_topics
-           { base_delay_s = 12.0
-           ; max_delay_s = 12.0
-           ; max_attempts = 2
-           ; jitter_ratio = 0.0
-           }
+       let retry_policy : Kafka.Consumer.retry_policy =
+         { base_delay_s = 12.0; max_delay_s = 12.0; max_attempts = 2; jitter_ratio = 0.0 }
        in
        while_consuming
          ~consume:(fun ~sw ->
@@ -1007,7 +946,7 @@ let test_retry_relay_backlog_keeps_deliveries () =
                 ~sw
                 ~net:env#net
                 ~clock:env#clock
-                ~retry_strategy
+                ~retry_policy
                 ~consumer_properties:
                   [ "max.poll.interval.ms", "10000"; "session.timeout.ms", "6000" ]
                 ~handler:(fun (msg : Backpressure_event.t) ~ack ~trace_ctx:_ ->
@@ -1066,7 +1005,7 @@ let test_retry_topics_routes_source_decode_error_to_dlq () =
                  ~sw
                  ~net:env#net
                  ~clock:env#clock
-                 ~retry_strategy:retry_topics_policy
+                 ~retry_policy:retry_topics_policy
                  ~handler:(fun _ ~ack ~trace_ctx:_ ->
                    incr handled;
                    ignore (ack ());
@@ -1136,7 +1075,7 @@ let test_ack_and_drop_opt_in_skips () =
                 ~net:env#net
                 ~clock:env#clock
                 ~decode_error_policy:Kafka_service.Ack_and_drop
-                ~retry_strategy:retry_topics_policy
+                ~retry_policy:retry_topics_policy
                 ~handler:(fun (m : Drop_event.t) ~ack ~trace_ctx:_ ->
                   ignore (ack ());
                   if m.id = "good" then ignore (Eio.Promise.try_resolve got_good_r ());
@@ -1160,43 +1099,6 @@ let test_ack_and_drop_opt_in_skips () =
          "nothing was dead-lettered"
          true
          (Option.is_none (read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:5.0)))
-;;
-
-let test_route_to_dlq_refused_under_in_memory () =
-  with_registered
-    (module Dlq_event)
-    (fun env _sw svc topic ->
-       let returned, returned_r = Eio.Promise.create () in
-       let outcome =
-         while_consuming
-           ~consume:(fun ~sw ->
-             Eio.Promise.resolve
-               returned_r
-               (Kafka_service.consume_partitioned
-                  svc
-                  topic
-                  ~group_id:"sol-test-decode-inmem"
-                  ~sw
-                  ~net:env#net
-                  ~clock:env#clock
-                  ~decode_error_policy:Kafka_service.Route_to_dlq
-                  ~retry_strategy:
-                    (Kafka_service.In_memory
-                       { base_delay_s = 0.0
-                       ; max_delay_s = 0.0
-                       ; max_attempts = 1
-                       ; jitter_ratio = 0.0
-                       })
-                  ~handler:(fun _ ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Stop)
-                  ()))
-           (fun () ->
-              Eio.Time.with_timeout env#clock 10.0 (fun () ->
-                Ok (Eio.Promise.await returned)))
-       in
-       match outcome with
-       | Ok (Error (Kafka_service.Consumer_error (Kafka.Error.Config_error _))) -> ()
-       | Error `Timeout -> Alcotest.fail "In_memory with Route_to_dlq started consuming"
-       | Ok _ -> Alcotest.fail "In_memory has no DLQ; Route_to_dlq must be refused")
 ;;
 
 let () =
@@ -1240,13 +1142,9 @@ let () =
             `Slow
             test_retry_worker_consume_returns_promptly_when_idle_and_stop_resolves
         ; test_case
-            "reports partition error, not a collapsed single error"
+            "default poison retry reaches DLQ and later record flows (BUG-102)"
             `Slow
-            test_consume_partitioned_reports_partition_error
-        ; test_case
-            "dead-letter without Retry_topics fails closed, not acked"
-            `Slow
-            test_consume_partitioned_dead_letter_without_retry_topics_fails_closed
+            test_default_retry_policy_reaches_dlq_and_allows_later_record
         ; test_case
             "a stopped Retry_topics relay fails the worker promptly"
             `Slow
@@ -1265,10 +1163,6 @@ let () =
             "Ack_and_drop opt-in skips and acks"
             `Slow
             test_ack_and_drop_opt_in_skips
-        ; test_case
-            "Route_to_dlq is refused under In_memory"
-            `Slow
-            test_route_to_dlq_refused_under_in_memory
         ] )
     ; ( "error_handling"
       , [ test_case

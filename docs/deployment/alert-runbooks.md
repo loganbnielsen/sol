@@ -99,9 +99,9 @@ failing; the `SolPostgresUnavailable` rule is `critical`.
 show this: a worker that acks and drops keeps lag at zero.
 
 - `SolWorkerDecodeDrops` (critical): messages on the source topic could not be
-  decoded. Under `Retry_topics` (default `decode_error_policy = Route_to_dlq`,
+  decoded. Under `Make_with_retry` (default `decode_error_policy = Route_to_dlq`,
   BUG-051) they were diverted, raw, to the group's DLQ with `X-Sol-Decode-Error`.
-  Under `In_memory`, a plain `Make` worker, or an explicit `Ack_and_drop`, they
+  Under a plain `Make` worker or an explicit `Ack_and_drop`, they
   were **acked and dropped**, and the input is gone from this consumer group. The
   usual cause is a producer deploying a schema this consumer cannot read.
 - `SolWorkerRelayPublishFailed` (critical): publishing to the group's retry or DLQ
