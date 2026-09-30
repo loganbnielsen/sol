@@ -33,3 +33,27 @@ On the pluto question: pluto already has a TypeScript project (`examples/pluto/a
 - A production-profile target with a TypeScript `-svc`/`-worker` passes preflight; the old refusal test is inverted.
 - Demo/example: `examples/pluto/app/demo_ts` runs under the production profile, and the TypeScript tutorial says so.
 - Language parity: this ticket *is* the parity work for the profile. Note any capability still OCaml-only, with its trigger.
+
+## Triage (2026-09-30): this is a standing goal, so it lives in BACKLOG
+
+Moved out of `READY_FOR_ENGINEERING/` by triage. A ticket in that directory is treated as
+actionable, and work that implements something else then gets credited to it instead of to the
+ticket it implements — which is what a *standing qualification goal* does here: it closes when
+DEC-026 §2's three triggers hold, and one of those triggers is a change in another repository
+(`@sol-fab/worker`'s readiness hook, in `sol-typescript`), not work this repository can finish.
+
+Standing qualification goals live in the qualification ledger
+(`internal/qualification/README.md`, the matrices, and
+`internal/pipeline/audits/QUALIFICATION_STATUS.md`); each *live* run is its own ticket, gated in
+`BACKLOG/` on explicit authorization. The trigger state in this ticket's evidence section
+(1 met, 2 not met, 3 partly met, checked 2026-09-26) remains the record.
+
+## Blocked On
+
+- `@sol-fab/worker` publishing a readiness hook with the semantics DEC-026 §3 settles for
+  OCaml's `on_ready`. The package is maintained in `sol-typescript`, outside this repository.
+- An explicit authorization to run the TypeScript production-profile qualification as a live
+  run. That run is its own ticket; this ticket is the standing goal behind it, not the run.
+
+Promotion back to `READY_FOR_ENGINEERING/` is a triage decision for when the remaining triggers
+become work that can finish here — with the command and its output that establish them.
