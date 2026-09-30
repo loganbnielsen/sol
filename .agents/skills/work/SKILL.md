@@ -27,11 +27,12 @@ and remaining limitations in the ticket and work summary.
 
 Use `soldev pipeline submit <id>` from the worktree to open/reuse the PR.
 Routine refactors, documentation, and filings require no review-marker comment
-or adversarial loop. When merging is authorized, use
-`soldev pipeline merge --auto <id>` to queue GitHub squash auto-merge, or omit
-`--auto` for an immediate merge only after required checks succeed. Drafts,
-unresolved prerequisites, and failed/missing/pending required checks cannot be
-immediately merged. Local worktrees are preserved.
+or adversarial loop. **Queue GitHub squash auto-merge by default** with
+`soldev pipeline merge --auto <id>`, as soon as the PR is non-draft and its
+prerequisites are resolved. Do not wait for green and merge by hand; an immediate
+merge (without `--auto`) is the exception. Drafts and unresolved prerequisites
+cannot be queued. Then monitor the queued merge to completion and report whether it
+merged — a queue request is not a merge. Local worktrees are preserved.
 
 Choose targeted review for infrastructure, security, lifecycle/concurrency,
 substantial API changes, or an explicit operator request. Keep that PR draft

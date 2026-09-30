@@ -10,8 +10,8 @@ before submitting or pushing a follow-up. Each item below came from a real
 finding an external reviewer had to catch first. Go through the list against
 the actual diff — don't just skim and assume it's fine. Apply only relevant checks
 and run validation proportional to risk; this does not require another reviewer
-or repeated full-suite runs. Routine PRs merge on required green CI. Selected
-high-risk or operator-requested reviews stay draft until resolved.
+or repeated full-suite runs. Routine PRs queue auto-merge on required green CI.
+Selected high-risk or operator-requested reviews stay draft until resolved.
 
 ## 1. Status/health semantics
 
@@ -115,8 +115,9 @@ high-risk or operator-requested reviews stay draft until resolved.
 
 ## 9. Git/PR workflow
 
-- Merge only with operator authorization. Prefer `soldev pipeline merge --auto`
-  for native squash auto-merge; required CI gates it. No review-marker is required.
-  Keep a selected review's PR draft until actionable findings are resolved.
+- Queue native squash auto-merge by default (`soldev pipeline merge --auto`);
+  required CI gates it and no review-marker is required. An immediate merge is the
+  exception. Keep a selected review's PR draft until actionable findings are
+  resolved, then queue the merge and monitor it to completion.
 - If a PR is still open, push a follow-up commit to its branch. Only open a
   new PR for genuinely separate work, or once the prior PR is merged.
