@@ -24,34 +24,16 @@ let delete_namespace_args ~namespace ~timeout_seconds =
   ]
 ;;
 
-let namespaces_of_items items =
-  items
-  |> List.filter_map (fun item ->
-    match Yojson.Safe.Util.member "metadata" item with
-    | `Assoc _ as metadata ->
-      (match Yojson.Safe.Util.member "namespace" metadata with
-       | `String namespace when namespace <> "" -> Some namespace
-       | _ -> None)
-    | _ -> None)
-  |> List.sort_uniq String.compare
-;;
-
 let namespaces_of_pods_json json =
-  match Yojson.Safe.from_string json with
-  | `Assoc _ as document ->
-    (match Yojson.Safe.Util.member "items" document with
-     | `List items -> Ok (namespaces_of_items items)
-     | `Null -> Ok []
-     | _ ->
-       Error
-         "the pod listing has no items list, so the workload scope it describes is \
-          unknown")
-  | `Null -> Ok []
-  | _ ->
-    Error
-      "the pod listing is not an object, so the workload scope it describes is unknown"
-  | exception Yojson.Json_error message ->
-    Error (Printf.sprintf "the pod listing is not valid JSON (%s)" message)
+  match Sol_cli_json.items ~what:"the pod listing" json with
+  | Error message -> Error message
+  | Ok items ->
+    Ok
+      (items
+       |> List.filter_map (fun item ->
+         Sol_cli_json.field [ "metadata"; "namespace" ] item |> Sol_cli_json.string)
+       |> List.filter (fun namespace -> namespace <> "")
+       |> List.sort_uniq String.compare)
 ;;
 
 let to_string scope =
