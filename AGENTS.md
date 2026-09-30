@@ -368,6 +368,53 @@ Sol is pre-alpha, and the goal is to get the architecture built and qualified qu
 
 The assurance stack for code is: compile, format and targeted tests locally; full required CI on the PR head; post-merge CI on `main` as the backstop for rare cross-PR interactions. A PR need not be retested solely because `main` advanced (see the protection bullet below).
 
+## Autonomy: decide, don't defer
+
+**Exercise engineering judgment aggressively; exercise product and architecture
+authority conservatively.** The objective is working through the backlog — not keeping
+every intermediate state green, and not fitting each unit of work inside one session. The
+failure this section exists to stop is an agent that ends a session with a
+reconnaissance-only PR because implementation "would not fit", or that asks the operator
+to adjudicate ordinary ownership and triage. Autonomy that defers whenever judgment is
+required is not autonomy.
+
+**Finish a session by running out of executable work, or by hitting a real fork — never by
+tidying up.**
+
+- **Do not postpone implementation because it is large, spans sessions, or cannot end
+  green.** An active worktree may hold incomplete or non-compiling work: keep canonical
+  `main` green, not the worktree. Leave a precise checkpoint and continue from it next
+  time.
+- **Reconnaissance is a means to implementation, not a deliverable.** Record findings in
+  the ticket and start building. Do not open "pickup record" or "recon only" PRs unless a
+  ticket explicitly asks for one.
+- **Resolve ordinary questions yourself:** which worktree owns a ticket (infer it from the
+  active trees and avoid the conflict); taking ownership of unowned executable work in
+  your stream; reconciling a ticket that objectively fails the READY criteria; closing a
+  ticket that in-flight work has mooted; inspecting a dirty orphan worktree, preserving
+  what is useful and adopting it; reading upstream source when behaviour is uncertain; and
+  removing a clean, obsolete worktree that would lose no commits.
+- **Do not stop merely because** the next change is large; the work spans sessions; there
+  is no green intermediate state; a ticket or PR just completed; a worktree is dirty; a
+  ticket has no named owner; another repository must change; ticket state needs triage;
+  more reconnaissance would answer an engineering question; or the decision in front of
+  you is reversible.
+
+**Stop for the operator only for a major unresolved design decision** — after the
+reconnaissance, materially different choices remain and picking one would change what Sol
+means: its architecture, public contract, correctness guarantees, persistence or security
+model, or product direction. The test:
+
+> **Can more engineering, code reading, testing, history inspection, or repository
+> convention answer this?** → answer it yourself.
+>
+> **Does somebody have to choose what Sol should mean, because the evidence genuinely
+> permits materially different designs?** → ask the operator.
+
+Session and context limits are not design questions. When one approaches, leave the
+worktree and the ticket in a precise resumable state after doing as much implementation as
+possible — never withhold implementation in order to end on a clean or landed boundary.
+
 **Repair understood workflow friction in place; do not escalate it.** A failure whose mechanism is fully understood — a local checkout colliding with a worktree, a tool whose exit code does not reflect the remote outcome, an instruction that sequences a gate after the action it gates — is fixed in the instructions or the tooling directly, in the same session, without asking. Operator boundaries are for what the table above names: architectural decisions, live qualification, destructive actions and security ambiguity. "Say the word and I'll file it" is the wrong shape for a known local tooling defect; fix it and say what changed.
 
 ## Shepherding PRs to merge
