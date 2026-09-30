@@ -84,6 +84,8 @@ resource "google_container_cluster" "main" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  datapath_provider = "ADVANCED_DATAPATH"
+
   private_cluster_config {
     enable_private_nodes    = true
     enable_private_endpoint = false

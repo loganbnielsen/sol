@@ -44,6 +44,13 @@ output "postgres_url" {
   sensitive   = true
 }
 
+output "database_egress_cidrs" {
+  description = "The network range a workload must reach to use this target's managed database: the private services access range Cloud SQL's private address is allocated from."
+  value = [
+    "${google_compute_global_address.sql_peering.address}/${google_compute_global_address.sql_peering.prefix_length}"
+  ]
+}
+
 output "dns_nameservers" {
   description = "Nameservers to set at your domain registrar"
   value       = var.create_dns_zone ? google_dns_managed_zone.main[0].name_servers : null

@@ -603,6 +603,29 @@ let peer ~ns ~name =
     ]
 ;;
 
+let managed_database_egress_doc ~cidrs ~port ~ns =
+  let destination cidr = Y.map [ "ipBlock", Y.map [ "cidr", Y.string cidr ] ] in
+  resource
+    ~api_version:"networking.k8s.io/v1"
+    ~kind:"NetworkPolicy"
+    [ "metadata", metadata ~ns ~name:"sol-managed-database-egress"
+    ; ( "spec"
+      , Y.map
+          [ "podSelector", Y.map []
+          ; "policyTypes", Y.list [ Y.string "Egress" ]
+          ; ( "egress"
+            , Y.list
+                [ Y.map
+                    [ "to", Y.list (List.map destination cidrs)
+                    ; ( "ports"
+                      , Y.list
+                          [ Y.map [ "port", Y.int port; "protocol", Y.string "TCP" ] ] )
+                    ]
+                ] )
+          ] )
+    ]
+;;
+
 let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
   let platform_ingress =
     Y.map

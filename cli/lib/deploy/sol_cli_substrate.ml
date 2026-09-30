@@ -85,6 +85,45 @@ let apply_doc ~ctx doc =
       (Sol_cli_process.error_to_string err))
 ;;
 
+let platform_network_fact ~ctx =
+  match
+    Sol_cli_kubectl.get
+      ~ctx
+      ~resource:"configmap"
+      ~name:"sol-platform-network"
+      ~namespace:"kube-system"
+      ~output:"json"
+  with
+  | Error _ -> None
+  | Ok result ->
+    (match Yojson.Safe.from_string result.Sol_cli_process.stdout with
+     | `Assoc fields ->
+       let data key =
+         match List.assoc_opt "data" fields with
+         | Some (`Assoc entries) ->
+           (match List.assoc_opt key entries with
+            | Some (`String value) -> Some value
+            | _ -> None)
+         | _ -> None
+       in
+       let cidrs =
+         match data "database-egress-cidrs" with
+         | Some text -> String.split_on_char ',' text |> List.filter (fun c -> c <> "")
+         | None -> []
+       in
+       let port =
+         match data "database-port" with
+         | Some text ->
+           (match int_of_string_opt text with
+            | Some port -> port
+            | None -> 5432)
+         | None -> 5432
+       in
+       if cidrs = [] then None else Some (cidrs, port)
+     | _ -> None
+     | exception Yojson.Json_error _ -> None)
+;;
+
 let ensure ~ctx ~namespaces : (unit, string) result =
   let open Result.Syntax in
   match List.find_opt (fun ns -> List.mem ns reserved_platform_namespaces) namespaces with
@@ -114,6 +153,15 @@ let ensure ~ctx ~namespaces : (unit, string) result =
         (List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
          @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
         )
+    in
+    let* () =
+      match platform_network_fact ~ctx with
+      | None -> Ok ()
+      | Some (cidrs, port) ->
+        apply_all
+          (List.map
+             (fun ns -> Sol_cli_manifest.managed_database_egress_doc ~cidrs ~port ~ns)
+             namespaces)
     in
     (match secret_docs namespaces with
      | Error _ as e -> e

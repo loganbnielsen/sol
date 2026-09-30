@@ -64,6 +64,7 @@ let valid_outputs () =
     ; output "thanos_irsa_arn" ~value:(`String "thanos-role")
     ; output "grafana_irsa_arn" ~value:`Null
     ; output "managed_resource_dashboards" ~value:(`Assoc [])
+    ; output "database_egress_cidrs" ~value:(`List [ `String "10.0.0.0/16" ])
     ]
 ;;
 

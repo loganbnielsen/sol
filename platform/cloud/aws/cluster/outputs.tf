@@ -59,6 +59,11 @@ output "postgres_url" {
   sensitive   = true
 }
 
+output "database_egress_cidrs" {
+  description = "The network ranges a workload must reach to use this target's managed database: the private subnets Sol places the instance in. Empty when no database is created."
+  value       = var.create_rds ? module.vpc.private_subnets_cidr_blocks : []
+}
+
 output "route53_zone_id" {
   description = "Route53 hosted zone ID (needed for cert-manager DNS01 validation)"
   value       = var.create_route53_zone ? aws_route53_zone.main[0].zone_id : null
