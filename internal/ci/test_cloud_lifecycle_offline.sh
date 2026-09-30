@@ -484,6 +484,63 @@ for aws_only in aws_region= cert_manager_irsa_role_arn= loki_s3_bucket= \
   fi
 done
 
+release_log="$tmp/release-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 LIFECYCLE_LOG="$release_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$release_log.out" 2>&1
+then
+  cat "$release_log.out" >&2
+  echo "cloud destroy with deployed workloads failed (FND-0077)" >&2
+  exit 1
+fi
+grep -F 'Releasing the application workloads' "$release_log.out" >/dev/null || {
+  echo "the destroy did not report releasing the workloads:" >&2
+  cat "$release_log.out" >&2
+  exit 1
+}
+grep -F 'get pods --all-namespaces' "$release_log" >/dev/null || {
+  echo "the destroy did not discover the deployed workload scope from the cluster:" >&2
+  grep -F 'kubectl' "$release_log" >&2
+  exit 1
+}
+for namespace in pluto-payments pluto-comms; do
+  grep -F "delete namespace $namespace" "$release_log" >/dev/null || {
+    echo "the destroy did not remove the workloads in $namespace:" >&2
+    grep -F 'kubectl' "$release_log" >&2
+    exit 1
+  }
+done
+release_line="$(grep -n -m1 'delete namespace pluto-payments' "$release_log" | cut -d: -f1)"
+substrate_line="$(
+  grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_log" | head -1 | cut -d: -f1
+)"
+if [ -z "$release_line" ] || [ -z "$substrate_line" ] || [ "$release_line" -ge "$substrate_line" ]; then
+  echo "the workloads were not released before the substrate was destroyed (release=$release_line substrate=$substrate_line):" >&2
+  grep -nE 'delete namespace|cloud/gcp/cluster .* destroy ' "$release_log" >&2
+  exit 1
+fi
+
+release_fail_log="$tmp/release-fail-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
+        LIFECYCLE_LOG="$release_fail_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$release_fail_log.out" 2>&1
+then
+  cat "$release_fail_log.out" >&2
+  echo "a workload-release failure must degrade the teardown, not block it (FND-0077)" >&2
+  exit 1
+fi
+grep -F 'the workloads this target deployed could not be released' "$release_fail_log.out" >/dev/null || {
+  echo "the workload-release failure was not reported:" >&2
+  cat "$release_fail_log.out" >&2
+  exit 1
+}
+grep -F 'Done' "$release_fail_log.out" >/dev/null || {
+  echo "the teardown did not continue past the release failure:" >&2
+  cat "$release_fail_log.out" >&2
+  exit 1
+}
+
 gcp_destroy_log="$tmp/gcp-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$gcp_destroy_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \

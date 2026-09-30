@@ -807,6 +807,41 @@ let destroy_deps
         ~chdir:platform_dir
         ~vars:platform_vars)
   in
+  let release_workloads_result () : (unit, string) result =
+    match !cluster_ref with
+    | None -> Ok ()
+    | Some (cluster : Sol_cli_cluster.t) ->
+      with_cluster_access_result cluster (fun ~env ->
+        let workspace = workspace_name () in
+        let argv = Sol_cli_workload_scope.list_args ~workspace in
+        let* listing =
+          match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+          | Ok result -> Ok result.stdout
+          | Error error -> Error (Sol_cli_process.error_to_string error)
+        in
+        let* namespaces = Sol_cli_workload_scope.namespaces_of_pods_json listing in
+        Sol_cli_report.app
+          "  %s"
+          (Sol_cli_workload_scope.to_string { Sol_cli_workload_scope.namespaces });
+        List.fold_left
+          (fun released namespace ->
+             let* () = released in
+             let argv =
+               Sol_cli_workload_scope.delete_namespace_args
+                 ~namespace
+                 ~timeout_seconds:300
+             in
+             match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+             | Ok _ -> Ok ()
+             | Error error ->
+               Error
+                 (Printf.sprintf
+                    "removing the workloads in %s failed: %s"
+                    namespace
+                    (Sol_cli_process.error_to_string error)))
+          (Ok ())
+          namespaces)
+  in
   let deps : Sol_cli_cloud_destroy.deps =
     { require_credentials =
         (fun () ->
@@ -920,6 +955,7 @@ let destroy_deps
                      the access with it, and teardown is not blocked by a probe that can \
                      fail (ADR 0003 invariant 6)."
                     verdict)))
+    ; release_workloads = release_workloads_result
     ; destroy_substrate =
         (fun () ->
           destruction.before_substrate_destroy ();

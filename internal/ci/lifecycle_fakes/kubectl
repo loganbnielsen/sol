@@ -74,6 +74,22 @@ case " $* " in
     esac
 esac
 case " $* " in
+  *" get pods --all-namespaces "*)
+    if [ "${WORKSPACE_PODS:-}" = 1 ]; then
+      printf '%s\n' '{"items":[{"metadata":{"namespace":"pluto-payments"}},{"metadata":{"namespace":"pluto-comms"}}]}'
+    else
+      printf '{"items":[]}\n'
+    fi
+    exit 0
+    ;;
+  *" delete namespace "*)
+    if [ "${RELEASE_DELETE_FAILS:-}" = 1 ]; then
+      printf 'error: the namespace could not be deleted\n' >&2
+      exit 1
+    fi
+    printf 'namespace deleted\n'
+    exit 0
+    ;;
   *" api-resources "*)
     printf 'NAME        SHORTNAMES   APIVERSION   NAMESPACED   KIND\n'
     printf 'namespaces  ns           v1           false        Namespace\n'

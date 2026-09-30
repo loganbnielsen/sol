@@ -79,6 +79,7 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
+  ; release_workloads : unit -> (unit, string) result
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read

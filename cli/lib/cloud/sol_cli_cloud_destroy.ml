@@ -224,6 +224,7 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
+  ; release_workloads : unit -> (unit, string) result
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read
@@ -341,6 +342,17 @@ let execute ~deps =
         (Printf.sprintf
            "  lifecycle phase: %s"
            (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Destroying));
+    deps.report "\nReleasing the application workloads...";
+    (match deps.release_workloads () with
+     | Ok () -> ()
+     | Error message ->
+       degrade
+         "the workloads this target deployed could not be released"
+         (Printf.sprintf
+            "%s. A managed database whose sessions they still hold refuses to be \
+             dropped, so the teardown below may not converge; if it does not, nothing \
+             here claims it did"
+            message));
     match deps.destroy_substrate () with
     | Error message -> fail ~cleanup (Substrate_destroy_failed message)
     | Ok () ->

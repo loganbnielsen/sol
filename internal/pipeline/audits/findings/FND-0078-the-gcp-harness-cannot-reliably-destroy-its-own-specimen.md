@@ -71,3 +71,18 @@ followed immediately by phases that do not need to re-declare it.
 - Coverage in `internal/qualification/gcp/test-live-qual.sh`: a destroy after an app phase resolves
   its target with only the documented variables, and a refused ownership check leaves the target
   file unchanged.
+
+## Fixed
+
+- `destroy` and `verify` now declare the `IMPERSONATOR` they use, so a documented invocation either
+  runs or refuses with a message naming the variable instead of failing on an unbound one.
+- `owns_target_file` treats an **empty** target file as the harness's own. A phase that truncated
+  the file (or a run that left it empty) could otherwise make the next phase refuse it as foreign
+  and exit without destroying anything.
+- The target mark now records that each phase rewrites the file for the target that phase needs, so
+  reusing it is the documented behaviour rather than an accident.
+
+Coverage in `internal/qualification/gcp/test-live-qual.sh`: a destroy without the impersonator is
+refused and names it, and a destroy asked to run against an empty harness target file does not
+treat it as foreign and goes on to destroy its target.
+
