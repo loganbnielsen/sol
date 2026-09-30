@@ -191,6 +191,17 @@ let fail_q =
        table)
 ;;
 
+let renew_q =
+  Caqti_request.Infix.(Caqti_type.(t3 float int int) ->? Caqti_type.int)
+    (Printf.sprintf
+       {|UPDATE %s
+         SET locked_until = now() + (?::float8 * interval '1 second')
+         WHERE id = ? AND attempts = ? AND status = 'pending'
+           AND locked_until > now()
+         RETURNING id|}
+       table)
+;;
+
 let table_check_q =
   Caqti_request.Infix.(Caqti_type.unit ->? Caqti_type.int)
     (Printf.sprintf "SELECT 1 FROM %s LIMIT 1" table)
@@ -422,22 +433,29 @@ module Make (J : JOB) = struct
             | Ok (Some (id, kind, payload, attempts, _)) ->
               let t0 = Eio.Time.now env#clock in
               let outcome =
-                try Result.bind (J.decode payload) J.handle with
-                | Eio.Cancel.Cancelled _ as exn -> raise exn
-                | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
-                | exn -> Error (Printexc.to_string exn)
+                let never, _ = Eio.Promise.create () in
+                Eio.Fiber.first
+                  (fun () ->
+                     try Result.bind (J.decode payload) J.handle with
+                     | Eio.Cancel.Cancelled _ as exn -> raise exn
+                     | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+                     | exn -> Error (Printexc.to_string exn))
+                  (fun () ->
+                     let rec renew () =
+                       Eio.Time.sleep env#clock (lease_s /. 3.0);
+                       match Pg_db.find pool renew_q (lease_s, id, attempts) with
+                       | Ok (Some _) -> renew ()
+                       | Ok None ->
+                         lease_lost id ~attempts ~action:"renew";
+                         Eio.Promise.await never
+                       | Error e ->
+                         log_warn
+                           [ "job_id", string_of_int id; "error", Pg_error.to_string e ]
+                           "sol-jobs: lease renewal failed";
+                         renew ()
+                     in
+                     renew ())
               in
-              let elapsed = Eio.Time.now env#clock -. t0 in
-              if elapsed > lease_s
-              then
-                log_warn
-                  [ "job_id", string_of_int id
-                  ; "kind", kind
-                  ; "elapsed_s", Printf.sprintf "%.1f" elapsed
-                  ; "lease_s", Printf.sprintf "%.1f" lease_s
-                  ]
-                  "sol-jobs: lease overrun -- the handler ran longer than lease_s, so \
-                   another poller may have claimed the job meanwhile; raise ?lease_s";
               (match outcome with
                | Ok () -> finalize_success id ~kind ~attempts ~t0
                | Error msg -> finalize_failure id ~kind ~attempts ~t0 ~msg);
