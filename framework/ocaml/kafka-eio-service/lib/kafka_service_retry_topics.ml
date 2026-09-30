@@ -252,6 +252,7 @@ let process_handler_result
 type 'a runtime =
   { group_id : string
   ; retry_policy : Kafka.Consumer.retry_policy
+  ; consumer_properties : (string * string) list
   ; hooks : Kafka_service_intf.consumer_hooks
   ; decode_error_policy : Kafka_service_intf.decode_error_policy
   ; observe_decode_error :
@@ -398,6 +399,7 @@ let run_consumers
   let open Result.Syntax in
   let { group_id
       ; retry_policy
+      ; consumer_properties
       ; hooks = { kafka = kafka_hooks; _ }
       ; decode_error_policy
       ; observe_decode_error
@@ -413,7 +415,7 @@ let run_consumers
     ; offset_reset = Kafka.Consumer.Earliest
     ; auto_commit = false
     ; security = svc.security
-    ; properties = []
+    ; properties = consumer_properties
     }
   in
   let no_retry : Kafka.Consumer.retry_policy =
@@ -433,7 +435,7 @@ let run_consumers
       ; offset_reset = Kafka.Consumer.Earliest
       ; auto_commit = false
       ; security = svc.security
-      ; properties = []
+      ; properties = consumer_properties
       }
     in
     let start_retry_relay () =
@@ -537,6 +539,9 @@ let run_consumers
                relay_failure
                := Some (Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg));
                stop_source_after_relay_failure ()
+             | Error (Kafka.Consumer.Consumer_error e) ->
+               relay_failure := Some (Kafka_service_intf.Consumer_error e);
+               stop_source_after_relay_failure ()
            with
            | Eio.Cancel.Cancelled _ -> ());
           Kafka.Consumer.close retry_consumer);
@@ -592,7 +597,8 @@ let run_consumers
       |> Result.map_error (function
         | Kafka.Consumer.Handler_errors errs -> Kafka_service_intf.Partition_errors errs
         | Kafka.Consumer.Invalid_config msg ->
-          Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
+          Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg)
+        | Kafka.Consumer.Consumer_error e -> Kafka_service_intf.Consumer_error e)
     in
     let reconcile_relay result =
       match result, !relay_failure with

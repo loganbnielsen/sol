@@ -59,6 +59,18 @@ expect fail "a declaration naming a branch instead of a commit"
 mkrepo; sed -i "s/#$A/#$B/" "$tmp/repo/sol-x.opam"; commit
 expect fail "pin-depends disagreeing with support-refs.txt"
 
+mkrepo; mkdir -p "$tmp/repo/examples/app"
+printf 'pin-depends: [\n  [ "foo-eio.0.1.0" "git+https://github.com/loganbnielsen/foo-eio.git#%s" ]\n]\n' "$B" \
+  >"$tmp/repo/examples/app/app.opam"
+commit
+expect fail "an example opam disagreeing with support-refs.txt"
+
+mkrepo; mkdir -p "$tmp/repo/internal/fixtures/app"
+printf 'pin-depends: [\n  [ "foo-eio.0.1.0" "git+https://github.com/loganbnielsen/foo-eio.git#%s" ]\n]\n' "$B" \
+  >"$tmp/repo/internal/fixtures/app/app.opam"
+commit
+expect fail "a fixture opam disagreeing with support-refs.txt"
+
 mkrepo; printf 'see https://github.com/loganbnielsen/foo-eio.git#%s\n' "$A" >"$tmp/repo/doc.md"; commit
 expect pass "a reference at an exact commit"
 

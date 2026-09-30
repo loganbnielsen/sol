@@ -226,7 +226,9 @@ type decode_error_policy =
 (** Like consume but routes each message to a dedicated per-partition fiber.
     A partition's in-memory retry sleep pauses that Kafka partition for the retry
     delay; other partitions continue unaffected. During the sleep the partition is
-    paused at the librdkafka level so no messages accumulate in its stream buffer. *)
+    paused at the librdkafka level so no messages accumulate in its stream buffer.
+    ?consumer_properties is passed to librdkafka verbatim on both the source and
+    retry consumers, for tuning Sol does not already set. *)
 val consume_partitioned
   :  t
   -> 'a topic
@@ -237,6 +239,7 @@ val consume_partitioned
   -> ?hooks:consumer_hooks
   -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
+  -> ?consumer_properties:(string * string) list
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
   -> handler:
@@ -335,8 +338,11 @@ type retry_strategy =
        topic name already encodes it.
        A background retry consumer (group <group_id>-sol-retry), itself routed
        through consume_partitioned, delays until X-Sol-Retry-At then re-runs
-       the handler. That sleep blocks the retry partition, not the whole retry
-       topic; every later record assigned to that retry partition waits behind
+       the handler. A full partition queue pauses fetching from that partition
+       while consumer polling continues, so delays up to max_delay_s do not
+       evict the relay from its consumer group. That sleep blocks the retry
+       partition, not the whole retry topic; every later record assigned to
+       that retry partition waits behind
        it, including unrelated keys that hashed to the same partition.
        Republish also gives the retry a later Kafka offset, so it can execute
        after records that originally followed it on the source partition,

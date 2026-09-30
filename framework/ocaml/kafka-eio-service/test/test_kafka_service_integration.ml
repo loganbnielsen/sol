@@ -961,6 +961,85 @@ module Dlq_event = Decode_policy_event (struct
     let suffix = "dlq"
   end)
 
+module Backpressure_event = Decode_policy_event (struct
+    let suffix = "backpressure"
+  end)
+
+let test_retry_relay_backlog_keeps_deliveries () =
+  with_registered
+    (module Backpressure_event)
+    (fun env _sw svc topic ->
+       let count = 400 in
+       let published =
+         List.init count (fun i ->
+           Kafka_service.publish svc topic Backpressure_event.{ id = string_of_int i })
+       in
+       List.iter
+         (fun receipt ->
+            match Eio.Promise.await receipt with
+            | Ok () -> ()
+            | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e))
+         published;
+       let group_id =
+         Printf.sprintf
+           "sol-test-retry-backpressure-%d-%d"
+           (Unix.getpid ())
+           (Random.int 9999)
+       in
+       let attempts = Hashtbl.create count in
+       let done_p, done_r = Eio.Promise.create () in
+       let completed = ref 0 in
+       let retry_strategy =
+         Kafka_service.Retry_topics
+           { base_delay_s = 12.0
+           ; max_delay_s = 12.0
+           ; max_attempts = 2
+           ; jitter_ratio = 0.0
+           }
+       in
+       while_consuming
+         ~consume:(fun ~sw ->
+           ignore
+             (Kafka_service.consume_partitioned
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~net:env#net
+                ~clock:env#clock
+                ~retry_strategy
+                ~consumer_properties:
+                  [ "max.poll.interval.ms", "10000"; "session.timeout.ms", "6000" ]
+                ~handler:(fun (msg : Backpressure_event.t) ~ack ~trace_ctx:_ ->
+                  let n =
+                    1 + Option.value ~default:0 (Hashtbl.find_opt attempts msg.id)
+                  in
+                  Hashtbl.replace attempts msg.id n;
+                  if n = 1
+                  then Kafka.Consumer.Error Kafka_service.Retry
+                  else (
+                    (match ack () with
+                     | Ok () -> ()
+                     | Error e ->
+                       Alcotest.failf "ack failed: %s" (Kafka.Error.to_string e));
+                    incr completed;
+                    if !completed = count then ignore (Eio.Promise.try_resolve done_r ());
+                    Kafka.Consumer.Continue))
+                ()))
+         (fun () ->
+            match
+              Eio.Time.with_timeout env#clock 40.0 (fun () ->
+                Ok (Eio.Promise.await done_p))
+            with
+            | Error `Timeout -> Alcotest.fail "retry relay backlog did not drain"
+            | Ok () -> ());
+       Alcotest.(check int) "completed" count !completed;
+       Alcotest.(check int) "unique records" count (Hashtbl.length attempts);
+       Hashtbl.iter
+         (fun _ attempts -> Alcotest.(check int) "exactly two attempts" 2 attempts)
+         attempts)
+;;
+
 let test_retry_topics_routes_source_decode_error_to_dlq () =
   with_registered
     (module Dlq_event)
@@ -1172,6 +1251,10 @@ let () =
             "a stopped Retry_topics relay fails the worker promptly"
             `Slow
             test_retry_topics_dead_relay_fails_the_worker
+        ; test_case
+            "retry relay drains backlog without duplicate delivery"
+            `Slow
+            test_retry_relay_backlog_keeps_deliveries
         ] )
     ; ( "decode_error_policy"
       , [ test_case

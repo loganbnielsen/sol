@@ -12,7 +12,7 @@
 #
 # RELEASE-005 (support packages published to opam with versions) may replace this.
 https-eio https://github.com/loganbnielsen/https-eio.git e548f47cd8cc607e4781638fa3f4aec996b60d60
-kafka-eio https://github.com/loganbnielsen/kafka-eio.git b2881b3105c128fb6d92873166cdc80cf57c4c6a
+kafka-eio https://github.com/loganbnielsen/kafka-eio.git 20df6068c4698895ec4b7e87ebffee7b271d0d2d
 obs-eio https://github.com/loganbnielsen/obs-eio.git b425c55eba8b1bc65378d7fc7d6c77a573001fb4
 obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git 148a970651b299114b881bb382d3590caf8d38fa
 obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git 5f443342fd20a36551336f27f7dbb93ab90e73bb

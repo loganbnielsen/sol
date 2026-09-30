@@ -130,6 +130,8 @@ delay blocks every later record sharing that retry partition, not just the same
 key; republishing assigns a later Kafka offset, so a retry can run after records
 that originally followed it; and the steady-state head-of-line bound disappears
 under backlog or overload.
+The retry relay keeps polling while a partition waits or its queue is full, so
+delays through `retry_policy.max_delay_s` do not cause max-poll eviction.
 
 ## Lifecycle
 
