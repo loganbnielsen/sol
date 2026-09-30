@@ -14,7 +14,6 @@ type prerequisite =
   | Delegated_zone
 
 val prerequisite_label : prerequisite -> string
-val prerequisites : Sol_cli_provider.t -> prerequisite list
 val verdict_label : verdict -> string
 val establish : verdict
 val unmet : string -> verdict
@@ -51,7 +50,8 @@ type probe =
       }
 
 val probe_prerequisite : probe -> prerequisite
-val probes : Sol_cli_provider.t -> installation_config -> probe list
+val present_if_output : prerequisite -> string list -> probe
+val absent : prerequisite -> string -> probe
 
 val observe
   :  run:(string list -> string option)

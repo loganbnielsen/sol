@@ -24,27 +24,6 @@ let prerequisite_label = function
   | Delegated_zone -> "delegated DNS zone"
 ;;
 
-let prerequisites = function
-  | Sol_cli_provider.Aws ->
-    [ State_backend
-    ; State_lock
-    ; Provisioning_identity
-    ; Cluster_access_identity
-    ; Deploy_identity
-    ; Operator_identity
-    ; Publisher_identity
-    ; Delegated_zone
-    ]
-  | Sol_cli_provider.Gcp ->
-    [ State_backend
-    ; Provisioning_identity
-    ; Cluster_access_identity
-    ; Deploy_identity
-    ; Operator_identity
-    ; Delegated_zone
-    ]
-;;
-
 let verdict_label = function
   | Established -> "Established"
   | Unmet reason -> "Unmet: " ^ reason
@@ -148,101 +127,6 @@ let present_if_output prerequisite argv =
 ;;
 
 let absent prerequisite reason = Unavailable { prerequisite; reason }
-
-let probes provider configuration =
-  let role prerequisite name =
-    match name with
-    | Some name ->
-      present_if_output prerequisite [ "aws"; "iam"; "get-role"; "--role-name"; name ]
-    | None ->
-      absent
-        prerequisite
-        (Printf.sprintf
-           "the resolved installation configuration names no %s"
-           (prerequisite_label prerequisite))
-  in
-  let service_account prerequisite name =
-    match name with
-    | Some name ->
-      present_if_output
-        prerequisite
-        [ "gcloud"; "iam"; "service-accounts"; "describe"; name; "--format=value(email)" ]
-    | None ->
-      absent
-        prerequisite
-        (Printf.sprintf
-           "the resolved installation configuration names no %s"
-           (prerequisite_label prerequisite))
-  in
-  match provider with
-  | Sol_cli_provider.Aws ->
-    [ present_if_output
-        State_backend
-        [ "aws"
-        ; "s3api"
-        ; "head-bucket"
-        ; "--bucket"
-        ; configuration.state_bucket
-        ; "--region"
-        ; configuration.region
-        ]
-    ; (match configuration.lock_table with
-       | Some table ->
-         present_if_output
-           State_lock
-           [ "aws"
-           ; "dynamodb"
-           ; "describe-table"
-           ; "--table-name"
-           ; table
-           ; "--region"
-           ; configuration.region
-           ]
-       | None ->
-         absent
-           State_lock
-           "the resolved installation configuration names no lock table, and the AWS \
-            durable root declares one")
-    ; role Provisioning_identity configuration.provisioning_identity
-    ; role Cluster_access_identity configuration.cluster_access_identity
-    ; role Deploy_identity configuration.deploy_identity
-    ; role Operator_identity configuration.operator_identity
-    ; role Publisher_identity configuration.publisher_identity
-    ; (match configuration.zone_domain with
-       | Some domain ->
-         present_if_output
-           Delegated_zone
-           [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
-       | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
-    ]
-  | Sol_cli_provider.Gcp ->
-    [ present_if_output
-        State_backend
-        [ "gcloud"
-        ; "storage"
-        ; "buckets"
-        ; "describe"
-        ; Printf.sprintf "gs://%s" configuration.state_bucket
-        ; "--format=value(name)"
-        ]
-    ; service_account Provisioning_identity configuration.provisioning_identity
-    ; service_account Cluster_access_identity configuration.cluster_access_identity
-    ; service_account Deploy_identity configuration.deploy_identity
-    ; service_account Operator_identity configuration.operator_identity
-    ; (match configuration.zone_domain with
-       | Some domain ->
-         present_if_output
-           Delegated_zone
-           [ "gcloud"
-           ; "dns"
-           ; "managed-zones"
-           ; "describe"
-           ; domain
-           ; "--format=value(name)"
-           ]
-       | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
-    ]
-;;
 
 let observe ~run probes =
   List.map

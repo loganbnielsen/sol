@@ -26,14 +26,14 @@ let gcp_config : Sol_cli_installation.installation_config =
 ;;
 
 let probe_prerequisites provider config =
-  Sol_cli_installation.probes provider config
+  Sol_cli_provider_capabilities.installation_probes provider config
   |> List.map Sol_cli_installation.probe_prerequisite
 ;;
 
 let test_probe_coverage () =
   List.iter
     (fun (name, provider, config) ->
-       let expected = Sol_cli_installation.prerequisites provider in
+       let expected = Sol_cli_provider_capabilities.installation_prerequisites provider in
        let actual = probe_prerequisites provider config in
        Alcotest.(check (list string))
          (name ^ ": every prerequisite is probed exactly once")
@@ -49,8 +49,12 @@ let test_probe_coverage () =
 ;;
 
 let test_provider_sets_are_not_the_same_shape () =
-  let aws = Sol_cli_installation.prerequisites Sol_cli_provider.Aws in
-  let gcp = Sol_cli_installation.prerequisites Sol_cli_provider.Gcp in
+  let aws =
+    Sol_cli_provider_capabilities.installation_prerequisites Sol_cli_provider.Aws
+  in
+  let gcp =
+    Sol_cli_provider_capabilities.installation_prerequisites Sol_cli_provider.Gcp
+  in
   check_bool
     "the AWS root declares a lock table"
     true
@@ -128,7 +132,7 @@ let test_missing_configuration_is_unmet () =
   in
   let inspected = ref [] in
   let verdicts =
-    Sol_cli_installation.probes Sol_cli_provider.Aws bare
+    Sol_cli_provider_capabilities.installation_probes Sol_cli_provider.Aws bare
     |> Sol_cli_installation.observe ~run:(fun argv ->
       inspected := argv :: !inspected;
       Some "present")

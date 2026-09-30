@@ -22,6 +22,9 @@ type t =
        -> region:string
        -> (Sol_cli_disk_quota.observation, string) result)
         option
+  ; installation_prerequisites : Sol_cli_installation.prerequisite list
+  ; installation_probes :
+      Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -50,3 +53,12 @@ val required : string -> string option -> (string, string) result
 val aws : t
 val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t
+
+val installation_prerequisites
+  :  Sol_cli_provider.t
+  -> Sol_cli_installation.prerequisite list
+
+val installation_probes
+  :  Sol_cli_provider.t
+  -> Sol_cli_installation.installation_config
+  -> Sol_cli_installation.probe list

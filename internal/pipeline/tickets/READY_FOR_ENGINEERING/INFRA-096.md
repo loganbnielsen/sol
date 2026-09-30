@@ -149,7 +149,11 @@ one.
   one prerequisite set and one probe per provider so symmetry is by construction rather
   than an AWS shape copied over, and the inspectable resolved installation configuration —
   whose *type* has no field for an authority grant or an accountability declaration, so
-  AC6 holds structurally instead of by review.
+  AC6 holds structurally instead of by review. The per-provider sets and probe argv live
+  behind `Sol_cli_provider_capabilities` (`installation_prerequisites` /
+  `installation_probes`): REFAC-092's provider-dispatch guard refuses
+  `Sol_cli_provider.Aws`/`Gcp` in a generic module, so the model module names no provider
+  and the provider-specific argv sits in the provider tier the guard requires.
 - **B — the stage.** `bootstrap` driving the durable root: reconcile rather than
   presence-check, with the state backend as the one structural exception because a root
   cannot create the backend that stores its own state; idempotent on re-run; safely
