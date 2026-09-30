@@ -51,6 +51,13 @@ check docs-only README.md docs/foo.md
 check docs-only docs/foo.md internal/pipeline/tickets/X.md internal/tooling/perf/perf_baseline.json
 
 echo
+echo "classify-changes: generated documents are source-like, the prose beside them is not"
+check source docs/reference/cli.md
+check docs-only docs/reference/runtime.md
+check docs-only docs/reference/README.md
+check source docs/reference/cli.md docs/foo.md
+
+echo
 echo "classify-changes: .github/** is source-like regardless of extension"
 check source .github/README.md
 check source .github/workflows/ci.yml

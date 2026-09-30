@@ -44,13 +44,19 @@ case "$MODE" in
 esac
 
 seen=0
+generated_artifacts="docs/reference/cli.md"
 while IFS= read -r p; do
   [ -n "$p" ] || continue
   seen=1
   case "$p" in
     .github/*)
       emit source ;;
-    docs/*)                            continue ;;
+    docs/*)
+      for generated in $generated_artifacts; do
+        [ "$p" = "$generated" ] && emit source
+      done
+      continue
+      ;;
     internal/pipeline/tickets/*)                continue ;;
     internal/tooling/perf/perf_baseline.json)  continue ;;
     *.md)                              continue ;;
