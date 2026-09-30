@@ -2246,6 +2246,32 @@ let test_image_user_matches_pod_security () =
     [ "svc", svc_spec; "worker", worker_spec; "fn", fn_spec ]
 ;;
 
+let test_contract_job_manifest () =
+  let doc =
+    Sol_cli_manifest.contract_job_doc
+      ~name:"sol-contract-1"
+      ~namespace:"myapp-payments"
+      ~image:"sol-registry:5000/myapp/charge-svc:abc123"
+      ~command:[ "/usr/local/bin/contract" ]
+      ~args:[ "--apply" ]
+    |> render_doc
+  in
+  assert_contains "contract Job kind" doc "kind: Job";
+  assert_contains "contract Job name" doc "name: sol-contract-1";
+  assert_contains "contract Job namespace" doc "namespace: myapp-payments";
+  assert_contains "contract Job image" doc "sol-registry:5000/myapp/charge-svc:abc123";
+  assert_contains "contract Job command" doc "/usr/local/bin/contract";
+  assert_contains "contract Job args" doc "--apply";
+  assert_contains "contract Job does not retry" doc "backoffLimit: 0";
+  assert_contains "contract Job never restarts" doc "restartPolicy: Never";
+  assert_contains "contract Job env names the registry" doc "name: SCHEMA_REGISTRY_URL";
+  assert_contains
+    "contract Job reaches the private registry in-cluster"
+    doc
+    "value: http://redpanda.redpanda.svc.cluster.local:8081";
+  assert_absent "contract Job does not mount migrations" doc "mountPath: /migrations"
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
@@ -2780,6 +2806,12 @@ let () =
             "an environment is absent from the namespace"
             `Quick
             test_environment_absent_from_the_namespace
+        ] )
+    ; ( "contract reconciliation"
+      , [ Alcotest.test_case
+            "the contract Job runs the deployed image's contract binary"
+            `Quick
+            test_contract_job_manifest
         ] )
     ]
 ;;

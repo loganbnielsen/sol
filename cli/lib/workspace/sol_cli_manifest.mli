@@ -186,6 +186,14 @@ val migration_job_doc
   -> configmap_name:string
   -> Sol_cli_yaml.document
 
+val contract_job_doc
+  :  name:string
+  -> namespace:string
+  -> image:string
+  -> command:string list
+  -> args:string list
+  -> Sol_cli_yaml.document
+
 val create_idempotent
   :  ctx:Sol_cli_kube_destination.context
   -> file:string

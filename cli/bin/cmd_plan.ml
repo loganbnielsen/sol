@@ -70,6 +70,12 @@ let run target_name =
         "    scale: %s..%s\n"
         (Option.fold ~none:"?" ~some:string_of_int min)
         (Option.fold ~none:"?" ~some:string_of_int max));
+  let* () =
+    Sol_cli_contract.plan_report
+      ~workspace:(Sys.getcwd ())
+      ~registry_url:(Sys.getenv_opt "SCHEMA_REGISTRY_URL")
+    |> Sol_cli_exit.of_msg
+  in
   Ok ()
 ;;
 

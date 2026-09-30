@@ -816,3 +816,40 @@ let migration_job_doc ~name ~namespace ~image ~args ~configmap_name =
           ] )
     ]
 ;;
+
+let contract_job_doc ~name ~namespace ~image ~command ~args =
+  let container =
+    Y.map
+      [ "name", Y.string "contract"
+      ; "image", Y.string image
+      ; "command", Y.list (List.map Y.quoted command)
+      ; "args", Y.list (List.map Y.quoted args)
+      ; ( "env"
+        , Y.list
+            (List.map
+               (fun (key, value) ->
+                  Y.map [ "name", Y.string key; "value", Y.string value ])
+               default_cluster_env) )
+      ; ( "envFrom"
+        , Y.list [ Y.map [ "secretRef", Y.map [ "name", Y.string runtime_secret_name ] ] ]
+        )
+      ]
+  in
+  resource
+    ~api_version:"batch/v1"
+    ~kind:"Job"
+    [ "metadata", metadata ~ns:namespace ~name
+    ; ( "spec"
+      , Y.map
+          [ "backoffLimit", Y.int 0
+          ; ( "template"
+            , Y.map
+                [ ( "spec"
+                  , Y.map
+                      [ "restartPolicy", Y.string "Never"
+                      ; "containers", Y.list [ container ]
+                      ] )
+                ] )
+          ] )
+    ]
+;;

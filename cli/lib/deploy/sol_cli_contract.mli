@@ -1,12 +1,21 @@
 type mode =
   | Check
   | Apply
+  | Projection
 
 val run
-  :  workspace:string
+  :  echo:bool
+  -> workspace:string
   -> registry_url:string
   -> mode:mode
   -> (string option, string) result
 
 val has_projection : workspace:string -> bool
 val report : workspace:string -> registry_url:string -> mode:mode -> (unit, string) result
+val plan_report : workspace:string -> registry_url:string option -> (unit, string) result
+
+val reconcile_in_destination
+  :  ctx:Sol_cli_kube_destination.context
+  -> namespace:string
+  -> image:string
+  -> (unit, string) result

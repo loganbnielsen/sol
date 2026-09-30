@@ -3,7 +3,7 @@ open Result.Syntax
 type job =
   { namespace : string
   ; job_name : string
-  ; configmap_name : string
+  ; configmap_name : string option
   }
 
 type outcome =
@@ -116,43 +116,55 @@ let apply_doc ~ctx ~what doc =
 ;;
 
 let cleanup ~ctx job =
-  [ [ "delete"
-    ; "job"
-    ; job.job_name
-    ; "-n"
-    ; job.namespace
-    ; "--ignore-not-found"
-    ; "--wait=false"
-    ]
-  ; [ "delete"
-    ; "configmap"
-    ; job.configmap_name
-    ; "-n"
-    ; job.namespace
-    ; "--ignore-not-found"
-    ]
-  ]
-  |> List.iter (fun args ->
-    kubectl ~ctx args
+  let delete resource name =
+    kubectl
+      ~ctx
+      [ "delete"
+      ; resource
+      ; name
+      ; "-n"
+      ; job.namespace
+      ; "--ignore-not-found"
+      ; "--wait=false"
+      ]
     |> Result.iter_error (fun e ->
       Sol_cli_report.warn
-        "warning: could not clean up after the migration Job: %s"
-        (Sol_cli_process.error_to_string e)))
+        "warning: could not clean up after the Job: %s"
+        (Sol_cli_process.error_to_string e))
+  in
+  delete "job" job.job_name;
+  Option.iter (fun name -> delete "configmap" name) job.configmap_name
 ;;
 
-let submit ~ctx ~namespace ~name_prefix ~label ~image ~args ~files =
+let submit_doc ~ctx ~namespace ~name_prefix ~label build_doc =
   let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
   let job =
     { namespace
     ; job_name = Printf.sprintf "%s-%s" name_prefix run_id
-    ; configmap_name = Printf.sprintf "%s-files-%s" name_prefix run_id
+    ; configmap_name = None
+    }
+  in
+  match apply_doc ~ctx ~what:(label ^ " job") (build_doc ~name:job.job_name) with
+  | Ok () -> Ok job
+  | Error _ as e ->
+    cleanup ~ctx job;
+    e
+;;
+
+let submit ~ctx ~namespace ~name_prefix ~label ~image ~args ~files =
+  let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
+  let configmap_name = Printf.sprintf "%s-files-%s" name_prefix run_id in
+  let job =
+    { namespace
+    ; job_name = Printf.sprintf "%s-%s" name_prefix run_id
+    ; configmap_name = Some configmap_name
     }
   in
   let* () =
     apply_doc
       ~ctx
       ~what:(label ^ "configmap")
-      (Sol_cli_manifest.migration_configmap_doc ~name:job.configmap_name ~namespace files)
+      (Sol_cli_manifest.migration_configmap_doc ~name:configmap_name ~namespace files)
   in
   match
     apply_doc
@@ -163,7 +175,7 @@ let submit ~ctx ~namespace ~name_prefix ~label ~image ~args ~files =
          ~namespace
          ~image
          ~args
-         ~configmap_name:job.configmap_name)
+         ~configmap_name)
   with
   | Ok () -> Ok job
   | Error _ as e ->
