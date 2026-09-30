@@ -143,9 +143,14 @@ val create
   -> sw:Eio.Switch.t
   -> (t, error) result
 
-(** Provision M's topic via the Redpanda admin HTTP API and register its JSON schema
-    with the schema registry. Returns a typed topic handle for use with publish and consume.
-    Call once per message type at startup. *)
+(** Provision M's topic via the Redpanda admin HTTP API and resolve M's schema from the
+    registry. Read-only: it never registers a schema version and never changes subject
+    configuration. Schema.check verifies the declared schema can read the registered
+    versions; Schema.resolve then requires the declared schema to be the registered one.
+    A topic whose contract has not been registered fails here, so a producer whose schema
+    is not registered fails at startup rather than becoming the first writer. Registration
+    belongs to the deployment lifecycle's contract step (Schema.register). Returns a typed
+    topic handle for use with publish and consume. Call once per message type at startup. *)
 val register
   :  t
   -> net:_ Eio.Net.t
@@ -267,6 +272,20 @@ stops so an operator sees the contract failure (DEC-021's amendment). Independen
 work that needs durable retry belongs in `sol-jobs`, which retries on its own
 lease — not on the stream.
 
+### Contract registration is a deployment step
+
+A runtime process never registers a schema version and never changes subject configuration.
+`register` provisions the topic and resolves the declared schema from the registry
+(read-only); it fails when the contract has not been registered, so a producer whose schema
+is not registered fails at startup instead of becoming the first writer. Registration
+belongs to the deployment lifecycle: every workspace generates `contract/contract.exe`,
+which projects each event module's contract metadata as JSON (`--json`) and validates and
+registers it against the target registry (`--check` / `--apply`). `sol up` runs `--apply`
+after compatibility validation and before applying any workload, so a deploy that cannot
+satisfy the contract fails before rollout. `MESSAGE.schema` stays the single source of
+truth — nothing is duplicated into the manifest. The projection is a language-neutral wire
+format, so a TypeScript workspace can emit the same object.
+
 ### Schema compatibility checking
 
 ```ocaml
@@ -287,6 +306,32 @@ module Schema : sig
     -> registry_url:string
     -> (module MESSAGE) list
     -> (unit, error) result
+
+  (** The only registry write path: set the subject's compatibility to FULL, then register
+      the declared schema. Run by the deployment lifecycle's contract step
+      (the generated `contract/contract.exe --apply`); never call it from a running
+      workload. *)
+  val register
+    :  net:_ Eio.Net.t
+    -> clock:_ Eio.Time.clock
+    -> registry_url:string
+    -> (module MESSAGE)
+    -> (int, error) result
+
+  (** Read-only: require the declared schema to be the registered one and return its id.
+      This is the producer's startup identity check; it never writes. *)
+  val resolve
+    :  net:_ Eio.Net.t
+    -> clock:_ Eio.Time.clock
+    -> registry_url:string
+    -> (module MESSAGE)
+    -> (int, error) result
+end
+
+(** The language-neutral projection of the workspace's event contracts, emitted by the
+    generated contract executable and consumed by `sol plan` / `sol deploy` / `sol up`. *)
+module Contract : sig
+  val projection : (string * (module MESSAGE)) list -> Yojson.Safe.t
 end
 ```
 
@@ -295,9 +340,10 @@ gate schema compatibility in CI before breaking changes reach staging. The gener
 gate fails (rather than skipping) under CI when `SCHEMA_REGISTRY_URL` is not set, and it
 checks only the `MESSAGE` modules listed in it, so list every one.
 
-**Compatibility is FULL, and enforced (BUG-049).** `register` sets the subject's
-compatibility to `FULL` *before* registering its schema, and a failure to set it is a
-`Schema_registry` error rather than a warning. The registry therefore evaluates every
+**Compatibility is FULL, and enforced (BUG-049).** `Schema.register` — the contract step,
+run by the deployment lifecycle — sets the subject's compatibility to `FULL` *before*
+registering its schema, and a failure to set it is a `Schema_registry` error rather than a
+warning. The registry therefore evaluates every
 registration against FULL, and a subject can never silently stay at the registry
 default. `check` treats a registry 404 as "no version registered yet" only when its
 body carries error code 40401 (subject not found) or 40402 (version not found). Any

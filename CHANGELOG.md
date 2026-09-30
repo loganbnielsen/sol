@@ -7,6 +7,14 @@ not a full commit log — see `git log` and `internal/pipeline/tickets/DONE/` fo
 
 ## Unreleased
 
+- **Behavior change (BUG-105):** runtime schema registration is removed. `Worker.Make`
+  and producer units no longer write to the schema registry: `Kafka_service.register`
+  provisions the topic and resolves the declared schema (read-only), failing when the
+  contract is not registered. Registration belongs to the deployment lifecycle — each
+  workspace generates `contract/contract.exe`, and `sol up` runs its `--apply` after
+  compatibility validation and before any workload is applied. `MESSAGE.schema` stays the
+  source of truth (nothing is duplicated into the manifest), and the projection format is
+  language-neutral.
 - **Breaking (FEAT-113):** Kafka message-level retry and application-level
   `Dead_letter` are removed (DEC-021's 2026-09-29 amendment). `Worker.Make_with_retry`,
   `Worker.RETRYABLE_WORKER`, `retry_policy`/`default_retry_policy`,
