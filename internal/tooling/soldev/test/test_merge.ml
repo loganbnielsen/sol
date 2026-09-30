@@ -79,6 +79,32 @@ let test_pinned_head_sha_keeps_the_listed_sha_when_it_cannot_be_improved () =
        (Some "\trefs/heads/BUG-001/test\n"))
 ;;
 
+let outcome_of ~errors ~refusals ~targeted =
+  match Soldev_merge.merge_outcome ~errors ~refusals ~targeted with
+  | Soldev_merge.All_requested -> "all_requested"
+  | Soldev_merge.Some_requests_failed -> "some_requests_failed"
+  | Soldev_merge.Nothing_requested -> "nothing_requested"
+;;
+
+let test_a_skipped_targeted_merge_is_not_a_success () =
+  check_string
+    "a refusal on a targeted invocation is a failure, not a quiet success"
+    "nothing_requested"
+    (outcome_of ~errors:0 ~refusals:1 ~targeted:true);
+  check_string
+    "a sweep may skip what cannot be queued"
+    "all_requested"
+    (outcome_of ~errors:0 ~refusals:3 ~targeted:false);
+  check_string
+    "a request that failed to queue outranks the skip"
+    "some_requests_failed"
+    (outcome_of ~errors:1 ~refusals:1 ~targeted:true);
+  check_string
+    "no refusals, nothing to report"
+    "all_requested"
+    (outcome_of ~errors:0 ~refusals:0 ~targeted:true)
+;;
+
 let test_parse_worktree_porcelain () =
   let lines =
     [ "worktree /home/user/sol"
@@ -289,6 +315,7 @@ let test_merge_without_review_marker () =
              (Soldev_merge.merge_candidates
                 ~dry_run:false
                 ~mode
+                ~targeted:true
                 [ Soldev_merge.Ticket_target ("BUG-001", pr) ])
          in
          let clear_merges () = if Sys.file_exists "merges" then Sys.remove "merges" in
@@ -653,6 +680,12 @@ let () =
             "passes through when no slash"
             `Quick
             test_ticket_id_from_branch_no_slash
+        ] )
+    ; ( "merge outcome"
+      , [ Alcotest.test_case
+            "a skipped targeted merge is not a success"
+            `Quick
+            test_a_skipped_targeted_merge_is_not_a_success
         ] )
     ; ( "worktree_porcelain"
       , [ Alcotest.test_case

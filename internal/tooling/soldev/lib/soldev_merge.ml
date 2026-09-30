@@ -695,8 +695,26 @@ let run_merge_finish ~ticket_id ~merge_sha =
     Ok ()
 ;;
 
-let merge_candidates ~dry_run ~mode targets =
+type merge_outcome =
+  | All_requested
+  | Some_requests_failed
+  | Nothing_requested
+
+let merge_outcome ~errors ~refusals ~targeted =
+  if errors > 0
+  then Some_requests_failed
+  else if targeted && refusals > 0
+  then Nothing_requested
+  else All_requested
+;;
+
+let targeted_invocation ~pr_target ~ticket_filter =
+  Option.is_some pr_target || Option.is_some ticket_filter
+;;
+
+let merge_candidates ~dry_run ~mode ~targeted targets =
   let errors = ref 0 in
+  let refusals = ref 0 in
   List.iter
     (fun target ->
        let p = target_pr target in
@@ -719,7 +737,9 @@ let merge_candidates ~dry_run ~mode targets =
            ~checks
        in
        match refusal with
-       | Some refusal -> Printf.printf "%s\n" (merge_refusal_message refusal p.pr_url)
+       | Some refusal ->
+         incr refusals;
+         Printf.printf "%s\n" (merge_refusal_message refusal p.pr_url)
        | None ->
          let command = merge_command ~mode p in
          if dry_run
@@ -733,9 +753,16 @@ let merge_candidates ~dry_run ~mode targets =
               | Auto_merge -> "auto-merge"
               | Immediate -> "merge"))
     targets;
-  if !errors = 0
-  then Ok ()
-  else Soldev_exit.error (Printf.sprintf "error: %d merge request(s) failed" !errors)
+  match merge_outcome ~errors:!errors ~refusals:!refusals ~targeted with
+  | All_requested -> Ok ()
+  | Some_requests_failed ->
+    Soldev_exit.error (Printf.sprintf "error: %d merge request(s) failed" !errors)
+  | Nothing_requested ->
+    Soldev_exit.error
+      (Printf.sprintf
+         "error: nothing was %s: the pull request was skipped, and the message above \
+          says why. A skip is not a queued merge — resolve it and run this again."
+         (if dry_run then "reported as queueable" else "queued"))
 ;;
 
 let run_merge ~dry_run ~mode ~ticket_filter ~pr_target =
@@ -759,10 +786,20 @@ let run_merge ~dry_run ~mode ~ticket_filter ~pr_target =
                "error: no open pull request #%d — --pr targets an open PR by number or \
                 URL"
                number)
-        | Some p -> merge_candidates ~dry_run ~mode [ Pull_request_target p ]))
+        | Some p ->
+          merge_candidates
+            ~dry_run
+            ~mode
+            ~targeted:(targeted_invocation ~pr_target ~ticket_filter)
+            [ Pull_request_target p ]))
   | None, Some id ->
     (match find_pr_in prs id with
-     | Some p -> merge_candidates ~dry_run ~mode [ Ticket_target (id, p) ]
+     | Some p ->
+       merge_candidates
+         ~dry_run
+         ~mode
+         ~targeted:(targeted_invocation ~pr_target ~ticket_filter)
+         [ Ticket_target (id, p) ]
      | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
   | None, None ->
     let targets =
@@ -772,7 +809,7 @@ let run_merge ~dry_run ~mode ~ticket_filter ~pr_target =
     then (
       Printf.printf "No open PRs to merge.\n";
       Ok ())
-    else merge_candidates ~dry_run ~mode targets
+    else merge_candidates ~dry_run ~mode ~targeted:false targets
 ;;
 
 let parse_worktree_porcelain lines =
