@@ -23,6 +23,7 @@ type pr_info =
   { pr_number : int
   ; pr_url : string
   ; pr_branch : string
+  ; pr_base_ref : string
   ; pr_head_sha : string
   ; pr_draft : bool
   }
@@ -38,6 +39,8 @@ let pr_of_json j =
   { pr_number = j |> member "number" |> to_int
   ; pr_url = j |> member "url" |> to_string
   ; pr_branch = j |> member "headRefName" |> to_string
+  ; pr_base_ref =
+      j |> member "baseRefName" |> to_string_option |> Option.value ~default:""
   ; pr_head_sha = j |> member "headRefOid" |> to_string
   ; pr_draft = j |> member "isDraft" |> to_bool
   }
@@ -52,7 +55,7 @@ let open_prs () =
       ; "--state"
       ; "open"
       ; "--json"
-      ; "number,url,headRefName,headRefOid,isDraft"
+      ; "number,url,headRefName,baseRefName,headRefOid,isDraft"
       ; "--limit"
       ; "200"
       ]
@@ -139,6 +142,30 @@ let checks_pass = function
   | _ -> false
 ;;
 
+type checks_configuration =
+  | Configuration_not_consulted
+  | Configuration_unreadable
+  | Configuration_absent
+  | Configuration_present
+
+let base_required_checks_configured ~base_ref =
+  let result =
+    Sol_process.run_argv
+      [ "gh"
+      ; "api"
+      ; Printf.sprintf "repos/{owner}/{repo}/branches/%s/protection" base_ref
+      ; "--jq"
+      ; ".required_status_checks.contexts | length"
+      ]
+  in
+  if not (Sol_process.succeeded result)
+  then None
+  else (
+    match int_of_string_opt (String.trim result.stdout) with
+    | Some count -> Some (count > 0)
+    | None -> None)
+;;
+
 let review_pass_marker = "SOLDEV-REVIEW: PASS"
 let review_fail_marker = "SOLDEV-REVIEW: FAIL"
 
@@ -212,9 +239,13 @@ let target_label = function
   | Pull_request_target p -> Printf.sprintf "#%d" p.pr_number
 ;;
 
-let target_requires_configured_checks = function
-  | Ticket_target _ -> false
-  | Pull_request_target _ -> true
+let target_checks_configuration = function
+  | Ticket_target _ -> Configuration_not_consulted
+  | Pull_request_target p ->
+    (match base_required_checks_configured ~base_ref:p.pr_base_ref with
+     | Some true -> Configuration_present
+     | Some false -> Configuration_absent
+     | None -> Configuration_unreadable)
 ;;
 
 let ticket_prerequisites_ready id =
@@ -247,19 +278,19 @@ type merge_refusal =
   | Refused_checks_unreadable
   | Refused_checks_not_green
 
-let merge_refusal ~mode ~ticket_ready ~pr_draft ~checks =
+let merge_refusal ~mode ~ticket_ready ~pr_draft ~checks ~checks_configured =
   if not ticket_ready
   then Some Ticket_prerequisites_unresolved
   else if pr_draft
   then Some Refused_draft
   else if
-    match checks with
-    | Checks_none_configured -> true
+    match checks_configured with
+    | Configuration_absent -> true
     | _ -> false
   then Some Refused_no_required_checks
   else if
-    match checks with
-    | Checks_unreadable -> true
+    match checks_configured with
+    | Configuration_unreadable -> true
     | _ -> false
   then Some Refused_checks_unreadable
   else if
@@ -632,13 +663,10 @@ let merge_candidates ~dry_run ~mode targets =
     (fun target ->
        let p = target_pr target in
        Printf.printf "\n[%s]\n%!" (target_label target);
-       let checks =
-         required_checks
-           ~consult:(target_requires_configured_checks target || mode_consults_checks mode)
-           p.pr_url
-       in
+       let checks = required_checks ~consult:(mode_consults_checks mode) p.pr_url in
        let refusal =
          merge_refusal
+           ~checks_configured:(target_checks_configuration target)
            ~mode
            ~ticket_ready:(target_ticket_ready target)
            ~pr_draft:p.pr_draft

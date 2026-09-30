@@ -135,6 +135,46 @@ See `docs/deployment/migration-ordering.md`.
 See the "Production Profile" section of
 `docs/reference/substrate.md` in the Sol repository.
 
+## Once per account: the installation
+
+The installation is the durable, account-level layer — the Terraform state backend
+and its locking, the provisioning/cluster-access/deploy/operator identities, and the
+delegated DNS zone when Sol owns one. It outlives every environment: `sol cloud
+destroy <target>` removes an environment, never the installation.
+
+It is declared where the environment's durable state already lives, in the target:
+
+```yaml
+prod:
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-prod
+      base_domain: pluto.example.com
+      state_bucket: pluto-tfstate
+      aws:
+        state_lock_table: pluto-tflock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+```
+
+Then observe it, and reconcile it once:
+
+```bash
+sol cloud bootstrap prod/aws/us-east-1          # report: what is established, what is not
+sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
+```
+
+A second environment needs **no** installation work: it deploys against the
+installation that already exists, which is why redeploying never means redoing
+registrar or DNS work.
+
+```bash
+sol deploy prod/aws/us-east-1     # first environment
+sol deploy pilot/aws/us-east-1    # a second one, same installation
+```
+
 ## CLI commands
 
 ```bash

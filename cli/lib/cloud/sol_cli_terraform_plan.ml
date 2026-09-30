@@ -18,6 +18,7 @@ type matcher =
   | Exact of string
   | Resource of string
   | Type of string
+  | Every_change
 
 type rule =
   { matches : matcher list
@@ -88,6 +89,7 @@ let matches matcher change =
   | Exact address -> change.address = address
   | Resource resource -> String.equal (without_instance_key change.address) resource
   | Type kind -> change.resource_type = kind
+  | Every_change -> true
 ;;
 
 let permitted policy change =

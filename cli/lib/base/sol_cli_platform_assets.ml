@@ -158,6 +158,7 @@ let dir t = t.dir
 let form t = t.form
 
 type cloud_role =
+  | Bootstrap
   | Cluster
   | Platform
 
@@ -166,6 +167,7 @@ let cloud_root_rel provider role =
     "platform/cloud/%s/%s"
     (Sol_cli_provider.to_string provider)
     (match role with
+     | Bootstrap -> "bootstrap"
      | Cluster -> "cluster"
      | Platform -> "platform")
 ;;

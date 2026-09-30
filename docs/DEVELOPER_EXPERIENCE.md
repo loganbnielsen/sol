@@ -161,7 +161,50 @@ administrative workflow may exist, but the ordinary path is that `sol deploy`
 detects an uninitialised account and guides the user through initialisation in
 place. The user experiences one command.
 
-### 4.3 DNS and domain onboarding
+### 4.3 Inspecting and reconciling the installation
+
+The installation is one stage with one owner, and it is observable before it is
+changed. `sol cloud bootstrap <target>` resolves the installation from the
+target's own declaration, observes each durable prerequisite at the provider, and
+reports it — never inferring health from configuration, and never promoting a
+prerequisite it could not observe:
+
+```text
+$ sol cloud bootstrap prod/aws/us-east-1
+Installation (CloudBootstrap) -- the durable prerequisites that outlive every environment:
+
+  resolved configuration
+  state bucket             acme-tfstate
+  state prefix             bootstrap/aws
+  region                   us-east-1
+  lock table               acme-tflock
+  provisioning identity    arn:aws:iam::111122223333:role/sol-provisioner
+  cluster-access identity  arn:aws:iam::111122223333:role/sol-cluster-access
+  deploy identity          arn:aws:iam::111122223333:role/sol-deploy
+  operator identity        arn:aws:iam::111122223333:role/sol-operator
+  zone domain              api.acme.com
+
+  terraform state backend      Established
+  terraform state lock         Established
+  provisioning identity        Established
+  cluster-access identity      Established
+  deploy identity              Established
+  operator identity            Established
+  delegated DNS zone           Established
+```
+
+Every line is an **observation**: the bucket was looked for, the lock table was
+described, each role was fetched, the zone was listed. `Unmet` means the provider
+answered that it is not there; `UNKNOWN` means Sol could not look, and it fails
+closed — an unobservable installation is never reported healthy.
+
+`--apply` reconciles the durable root instead of only reporting it: the root is
+planned, a plan that would **replace or destroy** a durable resource stops the run
+and asks a human, and a root already at its declared state applies nothing, so a
+second run is a no-op. The state backend is the one prerequisite whose presence is
+checked first, because a root cannot create the backend that stores its own state.
+
+### 4.4 DNS and domain onboarding
 
 DNS is an unavoidable external boundary: Sol can automate everything it has
 authority over, and must ask for only the part that lives outside that authority.

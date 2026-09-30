@@ -103,6 +103,12 @@
  (action
   (run bash %{dep:test_secret_cli.sh} %{dep:../bin/main.exe})))
 
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_cloud_bootstrap.sh)
+ (action
+  (run bash %{dep:test_cloud_bootstrap.sh} %{dep:../bin/main.exe})))
+
 (executable
  (name print_providers)
  (libraries sol_cli))
@@ -223,3 +229,8 @@
  (name test_gcp_outputs)
  (libraries sol_cli alcotest yojson)
  (deps fixtures/terraform-output-gcp-cloud.json))
+
+(test
+ (name test_installation)
+ (modules test_installation)
+ (libraries sol_cli alcotest str))

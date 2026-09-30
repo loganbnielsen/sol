@@ -22,6 +22,16 @@ type t =
        -> region:string
        -> (Sol_cli_disk_quota.observation, string) result)
         option
+  ; installation_prerequisites : Sol_cli_installation.prerequisite list
+  ; installation_probes :
+      Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  ; installation_backend :
+      Sol_cli_installation.installation_config -> (string list, string) result
+  ; installation_vars :
+      manage_dns_zone:bool
+      -> Sol_cli_installation.installation_config
+      -> (string * string) list
+  ; installation_zone_address : string
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -45,6 +55,18 @@ type t =
   ; state_locking : string option
   ; scoped_identities : string list
   }
+
+let dns_declaration
+      ~manage_dns_zone
+      (configuration : Sol_cli_installation.installation_config)
+  =
+  if not manage_dns_zone
+  then "false", ""
+  else (
+    match configuration.zone_domain with
+    | None -> "false", ""
+    | Some domain -> "true", domain)
+;;
 
 let add_opt k = function
   | None -> Fun.id
@@ -81,6 +103,119 @@ let aws =
   ; platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
   ; cluster_substrate = None
   ; disk_quota = None
+  ; installation_prerequisites =
+      [ Sol_cli_installation.State_backend
+      ; Sol_cli_installation.State_lock
+      ; Sol_cli_installation.Provisioning_identity
+      ; Sol_cli_installation.Cluster_access_identity
+      ; Sol_cli_installation.Deploy_identity
+      ; Sol_cli_installation.Operator_identity
+      ; Sol_cli_installation.Delegated_zone
+      ]
+  ; installation_probes =
+      (fun configuration ->
+        let open Sol_cli_installation in
+        let role_name arn =
+          let after needle =
+            let n = String.length needle in
+            let rec scan i =
+              if i + n > String.length arn
+              then None
+              else if String.sub arn i n = needle
+              then Some (String.sub arn (i + n) (String.length arn - i - n))
+              else scan (i + 1)
+            in
+            scan 0
+          in
+          match after ":role/" with
+          | Some name -> name
+          | None ->
+            (match String.rindex_opt arn '/' with
+             | Some i when i + 1 < String.length arn ->
+               String.sub arn (i + 1) (String.length arn - i - 1)
+             | _ -> arn)
+        in
+        let role prerequisite name =
+          match name with
+          | Some arn ->
+            present_if_output
+              prerequisite
+              [ "aws"; "iam"; "get-role"; "--role-name"; role_name arn ]
+          | None ->
+            absent
+              prerequisite
+              (Printf.sprintf
+                 "the resolved installation configuration names no %s"
+                 (prerequisite_label prerequisite))
+        in
+        [ present_if_output
+            State_backend
+            [ "aws"
+            ; "s3api"
+            ; "head-bucket"
+            ; "--bucket"
+            ; configuration.state_bucket
+            ; "--region"
+            ; configuration.region
+            ]
+        ; (match configuration.lock_table with
+           | Some table ->
+             present_if_output
+               State_lock
+               [ "aws"
+               ; "dynamodb"
+               ; "describe-table"
+               ; "--table-name"
+               ; table
+               ; "--region"
+               ; configuration.region
+               ]
+           | None ->
+             absent
+               State_lock
+               "the resolved installation configuration names no lock table, and the AWS \
+                durable root declares one")
+        ; role Provisioning_identity configuration.provisioning_identity
+        ; role Cluster_access_identity configuration.cluster_access_identity
+        ; role Deploy_identity configuration.deploy_identity
+        ; role Operator_identity configuration.operator_identity
+        ; (match configuration.zone_domain with
+           | Some domain ->
+             present_if_output_names
+               ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
+               ~reason:
+                 (Printf.sprintf
+                    "no Route53 hosted zone named %s, so this installation does not own \
+                     the delegated zone for the domain the target serves"
+                    domain)
+               Delegated_zone
+               [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
+           | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
+        ])
+  ; installation_backend =
+      (fun configuration ->
+        match configuration.lock_table with
+        | None ->
+          Error
+            "an AWS installation must declare aws.state_lock_table before the durable \
+             root can be reconciled: S3 has no native state locking, so a root whose \
+             backend names no lock table could corrupt its own state"
+        | Some table ->
+          Ok
+            [ "bucket=" ^ configuration.state_bucket
+            ; "key=" ^ configuration.state_prefix ^ "/default.tfstate"
+            ; "region=" ^ configuration.region
+            ; "dynamodb_table=" ^ table
+            ; "encrypt=true"
+            ])
+  ; installation_vars =
+      (fun ~manage_dns_zone configuration ->
+        [ "region", configuration.region
+        ; "state_bucket", configuration.state_bucket
+        ; "state_lock_table", Option.value configuration.lock_table ~default:""
+        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ])
   ; own_vars =
       (fun target ~workspace shared ->
         shared
@@ -139,6 +274,7 @@ let aws =
       ; "operator_role_arn"
       ]
   ; state_locking = Some "state_lock_table"
+  ; installation_zone_address = "aws_route53_zone.qualification"
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -165,6 +301,67 @@ let gcp =
       Some
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
+  ; installation_prerequisites =
+      [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
+  ; installation_probes =
+      (fun configuration ->
+        let open Sol_cli_installation in
+        let zone_name =
+          match configuration.zone_domain with
+          | None -> None
+          | Some domain ->
+            Some
+              (String.map
+                 (function
+                   | '.' -> '-'
+                   | character -> character)
+                 domain)
+        in
+        [ present_if_output_names
+            ~reason:
+              (Printf.sprintf
+                 "no Cloud Storage bucket gs://%s"
+                 configuration.state_bucket)
+            State_backend
+            [ "gcloud"
+            ; "storage"
+            ; "buckets"
+            ; "describe"
+            ; Printf.sprintf "gs://%s" configuration.state_bucket
+            ; "--format=value(name)"
+            ]
+        ; (match zone_name with
+           | Some name ->
+             present_if_output_names
+               ~reason:
+                 (Printf.sprintf
+                    "no Cloud DNS managed zone named %s, so this installation does not \
+                     own the delegated zone for the domain the target serves"
+                    name)
+               Delegated_zone
+               [ "gcloud"
+               ; "dns"
+               ; "managed-zones"
+               ; "describe"
+               ; name
+               ; "--format=value(name)"
+               ]
+           | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
+        ])
+  ; installation_backend =
+      (fun configuration ->
+        Ok
+          [ "bucket=" ^ configuration.state_bucket
+          ; "prefix=" ^ configuration.state_prefix
+          ])
+  ; installation_vars =
+      (fun ~manage_dns_zone configuration ->
+        [ "project_id", Option.value configuration.project_id ~default:""
+        ; "region", configuration.region
+        ; "state_bucket", configuration.state_bucket
+        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ])
   ; own_vars =
       (fun target ~workspace:_ shared ->
         shared
@@ -195,6 +392,7 @@ let gcp =
   ; production_qualified = false
   ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
+  ; installation_zone_address = "google_dns_managed_zone.qualification"
   ; scoped_identities = []
   }
 ;;
@@ -202,4 +400,20 @@ let gcp =
 let capabilities_of = function
   | Sol_cli_provider.Aws -> aws
   | Sol_cli_provider.Gcp -> gcp
+;;
+
+let installation_prerequisites provider =
+  (capabilities_of provider).installation_prerequisites
+;;
+
+let installation_probes provider configuration =
+  (capabilities_of provider).installation_probes configuration
+;;
+
+let installation_backend provider configuration =
+  (capabilities_of provider).installation_backend configuration
+;;
+
+let installation_vars provider ~manage_dns_zone configuration =
+  (capabilities_of provider).installation_vars ~manage_dns_zone configuration
 ;;
