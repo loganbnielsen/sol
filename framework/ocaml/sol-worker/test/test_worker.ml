@@ -489,6 +489,58 @@ let test_external_stop_flag_skips_messages () =
     Alcotest.(check int) "W.handle never called when stop pre-set" 0 !processed)
 ;;
 
+let test_ready_without_owning_a_partition () =
+  let now = ref 0.0 in
+  let health = Worker_health.create ~now:(fun () -> !now) in
+  Alcotest.(check bool) "not ready before joining" false (Worker_health.is_ready health);
+  Worker_health.on_assignment health 0;
+  Alcotest.(check bool)
+    "a member owning no partition is ready"
+    true
+    (Worker_health.is_ready health);
+  Worker_health.on_assignment health 2;
+  Worker_health.on_assignment health 0;
+  Alcotest.(check bool)
+    "a rebalance that takes the partitions away stays ready"
+    true
+    (Worker_health.is_ready health)
+;;
+
+let test_owned_partitions_are_observable () =
+  let now = ref 0.0 in
+  let health = Worker_health.create ~now:(fun () -> !now) in
+  Alcotest.(check int)
+    "nothing owned before joining"
+    0
+    (Worker_health.assigned_partitions health);
+  Worker_health.on_assignment health 3;
+  Alcotest.(check int)
+    "the owned count follows the assignment"
+    3
+    (Worker_health.assigned_partitions health);
+  Worker_health.on_assignment health 0;
+  Alcotest.(check int)
+    "an idle standby reports zero"
+    0
+    (Worker_health.assigned_partitions health)
+;;
+
+let test_liveness_is_poll_cadence () =
+  let now = ref 0.0 in
+  let health = Worker_health.create ~now:(fun () -> !now) in
+  Alcotest.(check bool) "fresh is live" true (Worker_health.is_live health);
+  now := Worker_health.liveness_bound_s +. 1.0;
+  Alcotest.(check bool)
+    "a stalled poll loop is not live"
+    false
+    (Worker_health.is_live health);
+  Worker_health.on_poll health;
+  Alcotest.(check bool)
+    "a successful poll restores liveness"
+    true
+    (Worker_health.is_live health)
+;;
+
 let () =
   Alcotest.run
     "sol_worker"
@@ -533,6 +585,20 @@ let () =
         ; Alcotest.test_case "error counter emitted" `Quick test_metrics_error_counter
         ; Alcotest.test_case "duration histogram emitted" `Quick test_metrics_duration
         ; Alcotest.test_case "metrics endpoint served" `Quick test_metrics_endpoint_served
+        ] )
+    ; ( "readiness follows membership, not ownership"
+      , [ Alcotest.test_case
+            "an idle standby is ready"
+            `Quick
+            test_ready_without_owning_a_partition
+        ; Alcotest.test_case
+            "the owned count is observable"
+            `Quick
+            test_owned_partitions_are_observable
+        ; Alcotest.test_case
+            "liveness is poll cadence"
+            `Quick
+            test_liveness_is_poll_cadence
         ] )
     ]
 ;;
