@@ -18,6 +18,8 @@ module type MESSAGE = sig
 
   val topic_name : topic_name
   val schema : string
+  val partitions : int
+  val key : t -> string option
   val encode : t -> Yojson.Safe.t
   val decode : Yojson.Safe.t -> (t, string) result
 end
@@ -25,6 +27,8 @@ end
 type 'a topic =
   { name : topic_name
   ; schema_id : int
+  ; partitions : int
+  ; key : 'a -> string option
   ; encode : 'a -> Yojson.Safe.t
   ; decode : Yojson.Safe.t -> ('a, string) result
   }
@@ -38,7 +42,6 @@ type config =
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
-  ; partitions : int
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
@@ -48,7 +51,6 @@ type t =
   ; brokers : string list
   ; schema_registry_url : string
   ; admin_url : string
-  ; partitions : int
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }

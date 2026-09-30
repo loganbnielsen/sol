@@ -68,6 +68,8 @@ let topic_name_exn name =
 type 'a topic = 'a Kafka_service_intf.topic =
   { name : topic_name
   ; schema_id : int
+  ; partitions : int
+  ; key : 'a -> string option
   ; encode : 'a -> Yojson.Safe.t
   ; decode : Yojson.Safe.t -> ('a, string) result
   }
@@ -81,7 +83,6 @@ type config = Kafka_service_intf.config =
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
-  ; partitions : int
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
@@ -91,7 +92,6 @@ type t = Kafka_service_intf.t =
   ; brokers : string list
   ; schema_registry_url : string
   ; admin_url : string
-  ; partitions : int
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
@@ -184,6 +184,7 @@ module Admin = struct
 
   let topic_partition_error_to_string = Kafka_service_intf.topic_partition_error_to_string
   let decode_topic_partitions = Kafka_service_intf.decode_topic_partitions
+  let query_topic_partitions = Kafka_service_intf.query_topic_partitions
 end
 
 let encode_wire = Kafka_service_schema.encode_wire
@@ -209,7 +210,6 @@ let create (cfg : config) ~sw =
       ; brokers = cfg.brokers
       ; schema_registry_url = cfg.schema_registry_url
       ; admin_url = cfg.admin_url
-      ; partitions = cfg.partitions
       ; topic_durability = cfg.topic_durability
       ; security = cfg.security
       }
@@ -226,6 +226,17 @@ let register
   fun svc ~net ~clock (module M) ->
   let open Result.Syntax in
   let raw_topic_name = topic_name_to_string M.topic_name in
+  let* () =
+    if M.partitions < 1
+    then
+      Error
+        (Config
+           (Printf.sprintf
+              "topic '%s' declares %d partitions; a topic has at least one"
+              raw_topic_name
+              M.partitions))
+    else Ok ()
+  in
   let partition_guard () =
     match
       Kafka_service_intf.query_topic_partitions
@@ -240,10 +251,10 @@ let register
            (M.topic_name, Kafka_service_intf.topic_partition_error_to_string e))
     | Ok Kafka_service_intf.Topic_not_found -> Ok ()
     | Ok (Kafka_service_intf.Topic_partitions { partitions = current; _ })
-      when current > svc.partitions ->
+      when current > M.partitions ->
       Error
         (Partition_count_reduction
-           { topic_name = M.topic_name; current; requested = svc.partitions })
+           { topic_name = M.topic_name; current; requested = M.partitions })
     | Ok (Kafka_service_intf.Topic_partitions { replication_factor; _ })
       when svc.topic_durability = Single_broker_loss && replication_factor < 3 ->
       Error
@@ -256,7 +267,7 @@ let register
     Kafka_service_intf.ensure_topic
       svc.producer
       ~topic_name:raw_topic_name
-      ~partitions:svc.partitions
+      ~partitions:M.partitions
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
@@ -280,6 +291,8 @@ let register
   Ok
     { Kafka_service_intf.name = M.topic_name
     ; schema_id
+    ; partitions = M.partitions
+    ; key = M.key
     ; encode = M.encode
     ; decode = M.decode
     }
@@ -293,10 +306,12 @@ let publish svc topic ?trace_ctx msg =
   in
   let headers = List.map (fun (k, v) -> k, Some v) headers in
   let payload = encode_wire ~schema_id:topic.schema_id (topic.encode msg) in
+  let key = Option.map Bytes.of_string (topic.key msg) in
   Kafka.Producer.produce_receipt
     svc.producer
     ~topic:(topic_name_to_string topic.name)
     ~value:(Some payload)
+    ?key
     ~headers
     ()
 ;;

@@ -20,6 +20,10 @@ let schema = {|{
   "required": ["id", "amount_cents", "customer_id", "currency", "correlation_id"]
 }|}
 
+let partitions = 3
+
+let key t = Some t.id
+
 let encode t = `Assoc [
   ("id",             `String t.id);
   ("amount_cents",   `Int    t.amount_cents);

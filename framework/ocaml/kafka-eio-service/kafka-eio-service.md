@@ -54,6 +54,10 @@ module PaymentEvent : Kafka_service.MESSAGE = struct
     "required": ["payment_id", "amount_cents", "currency"]
   }|}
 
+  let partitions = 3
+
+  let key t = Some t.payment_id
+
   let encode t = `Assoc [
     ("payment_id",    `String t.payment_id);
     ("amount_cents",  `Int    t.amount_cents);
@@ -72,6 +76,17 @@ module PaymentEvent : Kafka_service.MESSAGE = struct
 end
 ```
 
+`partitions` and `key` belong to the event's contract, not to the deployment.
+`partitions` is what Sol creates the topic with, and it is never reduced:
+registering against an existing topic that has **more** partitions is an error
+(`Partition_count_reduction`), so every replica of every service agrees on the
+count, and consumers can scale up to it. `key` decides the partition, and so the
+order a consumer observes — every record sharing a key is handled by one consumer
+in publication order, which is what lets per-entity ordering survive more than
+one partition. Returning `None` states that the event carries no key: records
+spread across partitions and no ordering is claimed for them. Retry and DLQ
+topics inherit the source topic's count.
+
 ## Configuration
 
 ```ocaml
@@ -84,7 +99,6 @@ type config =
   ; schema_registry_url : string       (* "http://localhost:8081" *)
   ; admin_url : string                 (* Redpanda admin API, e.g. "http://localhost:9644" *)
   ; linger_ms : int                    (* batch window; 50ms recommended *)
-  ; partitions : int                   (* partition count for auto-provisioned topics *)
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   (* Transport security. Use Kafka.Security.default for local dev. With
@@ -260,7 +274,9 @@ expect two more that it doesn't:
 
 **The practical rule:** if a handler's correctness depends on strict
 processing order (B or C), that's a real constraint to design for
-explicitly — partition by the key that must stay ordered and make handlers reconcile domain versions when retries can overtake later records. Independent units of work can use `sol-jobs`.
+explicitly — declare `key` so every record that must stay ordered lands on one
+partition, and make handlers reconcile domain versions when retries can overtake
+later records. Independent units of work can use `sol-jobs`.
 
 ### Retry topics
 

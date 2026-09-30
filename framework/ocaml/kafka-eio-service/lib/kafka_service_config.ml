@@ -52,7 +52,6 @@ let of_env () =
       ; schema_registry_url = env_or "SCHEMA_REGISTRY_URL" ""
       ; admin_url = env_or "REDPANDA_ADMIN_URL" ""
       ; linger_ms = 50
-      ; partitions = 1
       ; topic_durability
       ; security
       }

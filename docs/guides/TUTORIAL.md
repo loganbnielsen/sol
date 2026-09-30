@@ -209,11 +209,17 @@ type t = {
   currency    : string;
 }
 
-let topic  = "pluto-payments-charges"
-let schema = {|{"type":"record","name":"Charged",...}|}
+let topic_name = Kafka_service.topic_name_exn "pluto-payments-charges"
+let partitions = 3
+let key t      = Some t.id
+let schema     = {|{"type":"object",...}|}
 ```
 
-The `topic` and `schema` fields satisfy the `Kafka_service.MESSAGE` module type. Sol registers the Avro schema with the schema registry at worker startup. A producer cannot publish a message that breaks the registered schema.
+These satisfy the `Kafka_service.MESSAGE` module type, together with `encode` and
+`decode`. Sol registers the schema with the schema registry at worker startup, so
+a producer cannot publish a message that breaks it. `partitions` is the count Sol
+creates the topic with, and `key` is what keeps every record for one entity on a
+single partition — and therefore in order.
 
 ### The HTTP service
 

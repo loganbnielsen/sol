@@ -17,6 +17,8 @@ module Job = struct
   }|}
   ;;
 
+  let partitions = 3
+  let key t = Some t.id
   let encode t = `Assoc [ "id", `String t.id; "payload", `String t.payload ]
 
   let decode = function
