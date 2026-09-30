@@ -395,6 +395,37 @@ let test_handler_exception_is_a_failed_attempt () =
       (rows pool))
 ;;
 
+let test_expired_holder_cannot_complete_terminal_row () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    let started, started_r = Eio.Promise.create () in
+    let release, release_r = Eio.Promise.create () in
+    (Slow.on_handle
+     := fun () ->
+          ignore (Eio.Promise.try_resolve started_r ());
+          Eio.Promise.await release;
+          Ok ());
+    let retry_policy = { Sol_jobs.default_retry_policy with max_attempts = 1 } in
+    (match
+       Eio.Time.with_timeout env#clock 5.0 (fun () ->
+         Eio.Fiber.both
+           (fun () -> run_slow ~retry_policy ~lease_s:0.1 ~max_jobs:1 env pool)
+           (fun () ->
+              Eio.Promise.await started;
+              Eio.Time.sleep env#clock 0.2;
+              run_slow ~retry_policy ~lease_s:0.1 ~max_jobs:1 env pool;
+              ignore (Eio.Promise.try_resolve release_r ()));
+         Ok ())
+     with
+     | Ok () -> ()
+     | Error `Timeout -> Alcotest.fail "the two pollers did not finish");
+    Alcotest.(check (list (triple string string int)))
+      "old holder did not delete terminal row"
+      [ "slow", "failed", 1 ]
+      (rows pool))
+;;
+
 let () =
   Alcotest.run
     "sol_jobs_pg"
@@ -440,6 +471,10 @@ let () =
             "unlimited attempts still reclaim"
             `Quick
             test_unlimited_attempts_reclaim
+        ; Alcotest.test_case
+            "expired holder cannot complete a terminal row"
+            `Quick
+            test_expired_holder_cannot_complete_terminal_row
         ] )
     ]
 ;;

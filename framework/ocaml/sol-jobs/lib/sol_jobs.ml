@@ -165,7 +165,9 @@ let claim_q =
 
 let complete_q =
   Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
-    (Printf.sprintf "DELETE FROM %s WHERE id = ? AND attempts = ? RETURNING id" table)
+    (Printf.sprintf
+       "DELETE FROM %s WHERE id = ? AND attempts = ? AND status = 'pending' RETURNING id"
+       table)
 ;;
 
 let retry_q =
@@ -175,7 +177,7 @@ let retry_q =
          SET run_at = now() + (?::float8 * interval '1 second'),
              locked_until = NULL,
              last_error = ?
-         WHERE id = ? AND attempts = ?
+         WHERE id = ? AND attempts = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
@@ -184,7 +186,7 @@ let fail_q =
   Caqti_request.Infix.(Caqti_type.(t3 string int int) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s SET status = 'failed', locked_until = NULL, last_error = ?
-         WHERE id = ? AND attempts = ?
+         WHERE id = ? AND attempts = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
