@@ -136,10 +136,10 @@ let test_location_is_explicit_on_every_regional_check () =
       @ arguments_of ~log ~contains:"subnets list"
     in
     Alcotest.(check bool)
-      "and so does every other regional list"
+      "and so does every other regional list, with the flag gcloud accepts"
       true
       (List.for_all
-         (fun call -> Sol_cli_string.contains ~needle:"--region us-central1" call)
+         (fun call -> Sol_cli_string.contains ~needle:"--regions us-central1" call)
          regional))
 ;;
 
