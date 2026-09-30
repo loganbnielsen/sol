@@ -291,22 +291,9 @@ let register
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
-  let* () =
-    Kafka_service_schema.set_subject_compatibility
-      net
-      ~clock
-      ~registry_url:svc.schema_registry_url
-      ~topic_name:raw_topic_name
-    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
-  in
+  let* () = Schema.check ~net ~clock ~registry_url:svc.schema_registry_url (module M) in
   let* schema_id =
-    Kafka_service_schema.register_schema
-      net
-      ~clock
-      ~registry_url:svc.schema_registry_url
-      ~topic_name:raw_topic_name
-      ~schema:M.schema
-    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+    Schema.resolve ~net ~clock ~registry_url:svc.schema_registry_url (module M)
   in
   Ok
     { Kafka_service_intf.name = M.topic_name

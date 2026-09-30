@@ -1,0 +1,8 @@
+(executable
+ (name contract)
+ (libraries
+  venus_payments_events
+  venus_billing_events
+  kafka-eio-service
+  eio_main
+  yojson))
