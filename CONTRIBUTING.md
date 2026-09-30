@@ -81,10 +81,14 @@ remote: - Required status check "test" is expected.
 Routine refactors, documentation, and ticket filings use focused author validation
 plus required CI, without a review marker or adversarial loop. Native squash
 auto-merge is the default: from an owned worktree run
-`soldev pipeline merge --auto <TICKET-ID>` to queue it as soon as the PR is
+`soldev pipeline merge <TICKET-ID>` to queue it as soon as the PR is
 non-draft with its prerequisites resolved, and GitHub lands it when required checks
-pass. An immediate merge (omitting `--auto`) is the exception, for when you want it
-merged synchronously. Whoever queues it monitors it to completion and reports
+pass. A PR that names no ticket is targeted by number or URL instead —
+`soldev pipeline merge --pr <n>` — which applies the same non-draft, required-check
+and head-pin rules, and refuses a branch with no required checks configured. An
+immediate merge is the opt-in exception, via `--immediate` and only when required
+checks are already green, for when you want it merged synchronously. Whoever queues
+it monitors it to completion and reports
 whether it actually merged — a queued request is not a completed merge. The command
 pins the PR head and preserves local worktrees; it does not delete trees, switch
 branches, or sync the canonical checkout. Post-merge performance maintenance remains

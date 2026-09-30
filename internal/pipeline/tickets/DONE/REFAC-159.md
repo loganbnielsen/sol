@@ -76,7 +76,45 @@ tool would still contradict "auto-merge is the default".
 - `AGENTS.md` and `CONTRIBUTING.md` agree with the shipped behavior.
 
 **Demo/example coverage:** Not applicable — internal maintainer tooling with no
-app-author surface. State that in the completion notes.
+app-author surface, so there is no runnable example to update.
 
 **TypeScript parity:** No language-parity impact — `soldev` is maintainer tooling,
 not part of the application contract.
+
+## Completion
+
+**Premise re-verified before implementing.** Checked 2026-09-30 at `origin/main`
+`24f45f43` — main has moved since the ticket recorded `488741f4`, so the probe was
+re-run rather than trusted. All three claims still held: the `merge` doc read "use
+`--auto` to wait on GitHub", `--auto` was an `Arg.flag` with no default, and
+`soldev_merge.ml` chose "merge" versus "auto-merge" from that boolean. The probe now
+succeeds, which is what completion of this ticket means.
+
+**`--auto` is dropped, not aliased.** An alias is the one option `AGENTS.md` rules
+out: pre-alpha, no compat shims or deprecated aliases. So `soldev pipeline merge
+--auto <id>` now fails as an unknown option — a loud break at the call site, in the
+same change that moved the default — and every in-repo caller was updated here:
+`AGENTS.md` (the auto-merge-default paragraph, the `pipeline merge` role, and
+§ *Shepherding PRs to merge*), `CONTRIBUTING.md` § *Merge*, and the `work` and
+`self-review` skills. The old ordinary invocation, `soldev pipeline merge <id>`,
+keeps its spelling and becomes today's `--auto` behaviour, which is the intent.
+
+**What changed.** `merge_mode` (`Auto_merge` | `Immediate`) replaces the boolean
+through `merge_command`, `merge_candidates` and `run_merge`; `merge_command` emits
+` --auto` unless the mode is `Immediate`. Green required checks now has one
+definition — `check_buckets_of_json` plus `buckets_green`, shared by
+`checks_green_of_json` and the new tri-state `required_checks`. The ticket and sweep
+paths keep their gates exactly: a test pins that queueing a ticket consults no checks
+at all (no `gh pr checks` call), and `--immediate` still requires green required CI.
+Non-draft, prerequisite, head-pin and no-admin-bypass behaviour are untouched.
+
+**Validation:** `dune build` clean. `internal/tooling/soldev/test/test_merge.exe` —
+18 tests, 4 rewritten or added (the default mode and the opt-in, the pinned
+head-merge command, and the no-checks-consulted pin). Two mutations were run against
+the suite and each failed it for the reason under test: flipping the default mode to
+`Immediate`, and making the default skip `--auto`. `soldev pipeline merge --help` was
+re-read: it names the default and the opt-in and no longer contains "use `--auto` to
+wait on GitHub". Full required CI on the PR head.
+
+**Remaining limitation:** none known. `merge-finish`, `check-reverts` and
+`pipeline submit` are untouched.

@@ -62,10 +62,12 @@ an operator request, and keep the PR draft until actionable findings are resolve
 One satisfactory targeted pass is sufficient. `soldev pipeline review` still
 posts optional informational verdicts; they are not universal merge gates.
 
-**Auto-merge is the default.** Queue `soldev pipeline merge --auto <id>` as soon as
+**Auto-merge is the default.** Queue `soldev pipeline merge <id>` as soon as
 a PR is non-draft with its prerequisites resolved; GitHub lands it the moment
-required checks pass. Waiting for green and then merging by hand is the exception,
-not the routine. The command pins the head SHA, rejects drafts/unresolved
+required checks pass. `soldev pipeline merge --pr <n>` does the same for a PR that
+names no ticket. Waiting for green and then merging by hand is the exception,
+not the routine: it is the opt-in `--immediate`, allowed only when required checks
+are already green. The command pins the head SHA, rejects drafts/unresolved
 prerequisites, uses no admin bypass, and preserves local worktrees. Whoever queues
 a merge monitors it to completion and reports whether it actually merged
 (§ *Shepherding PRs to merge*). Reverting the squash returns its ticket to READY
@@ -120,7 +122,7 @@ The discipline, since relying on remembering the current directory has now faile
 - `pipeline validate` — validation: reads every ticket in the tree (BACKLOG, READY_FOR_ENGINEERING and DONE) with the same parser the other commands use, and exits 1 naming any it cannot read. CI runs it unconditionally, so a ticket with unreadable frontmatter fails its PR instead of disappearing from the queue view (BUG-060).
 - `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
 - `pipeline review` — orchestration: posts optional structured review findings as PR comments.
-- `pipeline merge` — orchestration: verifies prerequisites and non-draft status. `--auto` is the default choice and queues native auto-merge, which lands the PR when required checks pass; without it the command merges immediately, and only when required CI is already green. Head-pinned; no admin bypass or worktree cleanup.
+- `pipeline merge` — orchestration: verifies prerequisites and non-draft status. It queues native squash auto-merge by default, which lands the PR when required checks pass; `--immediate` is the opt-in synchronous merge, and only when required CI is already green. Targets a ticket id, a pull request via `--pr <n|#n|url>`, or with neither sweeps every open ready PR; a PR target is also refused when its base branch has no required checks configured. Head-pinned; no admin bypass or worktree cleanup.
 - `pipeline merge-finish` — optional informational maintenance: records perf baseline/history in an owned checkout after a merge. It does not gate or revert merges and is not run automatically.
 - `pipeline check-reverts` — safety diagnostic over git history.
 - Pre-commit hook — convenience local gate; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
@@ -371,10 +373,12 @@ The assurance stack for code is: compile, format and targeted tests locally; ful
 ## Shepherding PRs to merge
 
 Routine PRs need required green CI, not a review marker. **Queue native squash
-auto-merge by default** — `soldev pipeline merge --auto <id>` — as soon as a PR is
+auto-merge by default** — `soldev pipeline merge <id>`, or
+`soldev pipeline merge --pr <n>` for a PR that names no ticket — as soon as a PR is
 non-draft and its prerequisites are resolved. Do not hold a PR until it is green and
-then merge it by hand; an immediate merge is the exception, for when the operator
-wants it landed synchronously.
+then merge it by hand; an immediate merge is the exception (`--immediate`, and only
+with required checks already green), for when the operator wants it landed
+synchronously.
 
 - **Monitor every queued auto-merge to completion, and report whether it merged.** A
   queue request is not a completed merge. Read the PR's actual state —

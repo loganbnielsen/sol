@@ -22,15 +22,36 @@ let merge_ticket_arg =
 
 let exit_on = Soldev_exit.exit_on
 
-let auto_merge_flag =
+let immediate_flag =
   Arg.(
     value
     & flag
-    & info [ "auto" ] ~doc:"Queue GitHub squash auto-merge after required CI succeeds")
+    & info
+        [ "immediate" ]
+        ~doc:
+          "Merge now instead of queueing auto-merge; allowed only when the required \
+           checks are already green")
 ;;
 
-let run_merge dry_run auto_merge ticket_filter =
-  Soldev_merge.run_merge ~dry_run ~auto_merge ~ticket_filter |> exit_on
+let pr_target_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "pr" ]
+        ~docv:"PR"
+        ~doc:
+          "Target this pull request instead of a ticket: a number (758), #758, or a PR \
+           URL. Mutually exclusive with the TICKET-ID positional.")
+;;
+
+let run_merge dry_run immediate pr_target ticket_filter =
+  Soldev_merge.run_merge
+    ~dry_run
+    ~mode:(Soldev_merge.merge_mode_of_flag ~immediate)
+    ~ticket_filter
+    ~pr_target
+  |> exit_on
 ;;
 
 let merge_cmd =
@@ -38,11 +59,15 @@ let merge_cmd =
     (Cmd.info
        "merge"
        ~doc:
-         "Merge non-draft, CI-green PRs; use --auto to wait on GitHub — a ticket lands \
-          in DONE because its own branch already committed that move, not because this \
-          command moves anything locally. Pass a ticket ID to merge one; omit to sweep \
-          all open, ready PRs.")
-    Term.(const run_merge $ dry_run_flag $ auto_merge_flag $ merge_ticket_arg)
+         "Merge a non-draft PR whose prerequisites are resolved, by queueing native \
+          squash auto-merge — the default — so GitHub lands it the moment required \
+          checks pass. --immediate merges now instead, and only when required checks are \
+          already green. A ticket lands in DONE because its own branch already committed \
+          that move, not because this command moves anything locally. Pass a ticket ID \
+          to merge one, --pr to target a pull request that names no ticket, or omit both \
+          to sweep all open, ready PRs.")
+    Term.(
+      const run_merge $ dry_run_flag $ immediate_flag $ pr_target_arg $ merge_ticket_arg)
 ;;
 
 let ticket_arg =

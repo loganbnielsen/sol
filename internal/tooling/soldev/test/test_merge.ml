@@ -4,6 +4,10 @@ let check_option_string msg expected actual =
   Alcotest.(check (option string)) msg expected actual
 ;;
 
+let check_option_int msg expected actual =
+  Alcotest.(check (option int)) msg expected actual
+;;
+
 let test_extract_reverted_branch_match () =
   check_option_string
     "extracts branch"
@@ -105,16 +109,17 @@ let test_required_checks () =
     ]
 ;;
 
+let test_pr_info =
+  { Soldev_merge.pr_number = 1
+  ; pr_url = "https://github.com/example/sol/pull/1"
+  ; pr_branch = "BUG-001/test"
+  ; pr_head_sha = "abc123"
+  ; pr_draft = false
+  }
+;;
+
 let test_merge_command () =
-  let pr : Soldev_merge.pr_info =
-    { pr_number = 1
-    ; pr_url = "https://github.com/example/sol/pull/1"
-    ; pr_branch = "BUG-001/test"
-    ; pr_head_sha = "abc123"
-    ; pr_draft = false
-    }
-  in
-  let immediate = Soldev_merge.merge_command ~auto_merge:false pr in
+  let immediate = Soldev_merge.merge_command ~mode:Soldev_merge.Immediate test_pr_info in
   check_string
     "immediate merge pins head and never bypasses checks or deletes a tree"
     "gh pr merge 'https://github.com/example/sol/pull/1' --squash --match-head-commit \
@@ -123,7 +128,51 @@ let test_merge_command () =
   check_string
     "auto-merge uses GitHub rather than a polling loop"
     (immediate ^ " --auto")
-    (Soldev_merge.merge_command ~auto_merge:true pr)
+    (Soldev_merge.merge_command ~mode:Soldev_merge.Auto_merge test_pr_info)
+;;
+
+let test_default_mode_queues_auto_merge () =
+  check_bool
+    "the flag default — no --immediate — is auto-merge"
+    true
+    (Soldev_merge.merge_mode_of_flag ~immediate:false = Soldev_merge.Auto_merge);
+  check_bool
+    "--immediate is the opt-in"
+    true
+    (Soldev_merge.merge_mode_of_flag ~immediate:true = Soldev_merge.Immediate);
+  check_bool
+    "the default command queues auto-merge"
+    true
+    (String.ends_with
+       ~suffix:" --auto"
+       (Soldev_merge.merge_command
+          ~mode:(Soldev_merge.merge_mode_of_flag ~immediate:false)
+          test_pr_info))
+;;
+
+let test_parse_pr_number () =
+  let parse = Soldev_merge.parse_pr_number in
+  List.iter
+    (fun (input, expected) ->
+       check_option_int ("accepts " ^ input) (Some expected) (parse input))
+    [ "42", 42
+    ; "#42", 42
+    ; " 42 ", 42
+    ; "#758 ", 758
+    ; "https://github.com/loganbnielsen/sol/pull/758", 758
+    ];
+  List.iter
+    (fun input -> check_option_int ("rejects " ^ input) None (parse input))
+    [ ""
+    ; "  "
+    ; "main"
+    ; "#"
+    ; "BUG-001"
+    ; "fix/42"
+    ; "42x"
+    ; "https://github.com/loganbnielsen/sol/pull/"
+    ; "https://github.com/loganbnielsen/sol/pull/abc"
+    ]
 ;;
 
 let write_file path content =
@@ -174,8 +223,8 @@ let test_merge_without_review_marker () =
     write_file
       "gh"
       "#!/bin/sh\n\
-       if [ \"$2\" = checks ]; then cat checks.json; else printf '%s\\n' \"$*\" >> \
-       merges; fi\n";
+       if [ \"$2\" = checks ]; then printf 'checks\\n' >> calls; cat checks.json; else \
+       printf '%s\\n' \"$*\" >> merges; fi\n";
     Unix.chmod "gh" 0o755;
     Unix.putenv "PATH" (dir ^ ":" ^ old_path);
     Fun.protect
@@ -189,32 +238,239 @@ let test_merge_without_review_marker () =
            ; pr_draft = false
            }
          in
-         let request ~auto_merge pr =
+         let request ~mode pr =
            ignore
-             (Soldev_merge.merge_candidates ~dry_run:false ~auto_merge [ "BUG-001", pr ])
+             (Soldev_merge.merge_candidates
+                ~dry_run:false
+                ~mode
+                [ Soldev_merge.Ticket_target ("BUG-001", pr) ])
          in
+         let clear_merges () = if Sys.file_exists "merges" then Sys.remove "merges" in
+         let clear_calls () = if Sys.file_exists "calls" then Sys.remove "calls" in
          List.iter
            (fun json ->
               write_file "checks.json" json;
-              request ~auto_merge:false pr;
+              request ~mode:Soldev_merge.Immediate pr;
               check_bool "no unsafe immediate merge" false (Sys.file_exists "merges"))
            [ "[]"; {|[{"bucket":"pending"}]|}; {|[{"bucket":"fail"}]|}; "not JSON" ];
          write_file "checks.json" {|[{"bucket":"pass"}]|};
-         request ~auto_merge:true { pr with pr_draft = true };
+         request ~mode:Soldev_merge.Auto_merge { pr with pr_draft = true };
          check_bool "draft cannot queue auto-merge" false (Sys.file_exists "merges");
-         request ~auto_merge:false pr;
+         request ~mode:Soldev_merge.Immediate pr;
          check_bool
            "green required CI merges without any review marker"
            true
            (Sys.file_exists "merges");
-         Sys.remove "merges";
+         clear_merges ();
          write_file "checks.json" {|[{"bucket":"pending"}]|};
-         request ~auto_merge:true pr;
+         clear_calls ();
+         request ~mode:Soldev_merge.Auto_merge pr;
          let command = In_channel.with_open_text "merges" In_channel.input_all in
          check_bool
            "pending CI queues native auto-merge"
            true
-           (String.ends_with ~suffix:" --auto\n" command)))
+           (String.ends_with ~suffix:" --auto\n" command);
+         check_bool
+           "the ticket path keeps its old gates and consults no checks when queueing"
+           false
+           (Sys.file_exists "calls")))
+;;
+
+let capture_stdout f =
+  let path = Filename.temp_file "soldev-capture-" ".txt" in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  let saved = Unix.dup Unix.stdout in
+  Unix.dup2 fd Unix.stdout;
+  Unix.close fd;
+  let result =
+    Fun.protect
+      ~finally:(fun () ->
+        flush stdout;
+        Unix.dup2 saved Unix.stdout;
+        Unix.close saved)
+      (fun () ->
+         let result = f () in
+         flush stdout;
+         result)
+  in
+  let text = In_channel.with_open_text path In_channel.input_all in
+  Sys.remove path;
+  text, result
+;;
+
+let containing haystack needle =
+  let nlen = String.length needle in
+  let found = ref false in
+  for i = 0 to String.length haystack - nlen do
+    if String.sub haystack i nlen = needle then found := true
+  done;
+  !found
+;;
+
+let pr_json ~draft ~branch =
+  Printf.sprintf
+    {|[{"number":42,"url":"https://example.test/pull/42","headRefName":"%s",|}
+    branch
+  ^ Printf.sprintf {|"headRefOid":"sha42","isDraft":%b}]|} draft
+;;
+
+let test_pr_target_merge_path () =
+  in_temp_dir (fun () ->
+    let old_path = Sys.getenv "PATH" in
+    let dir = Sys.getcwd () in
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/pipeline" 0o755;
+    Unix.mkdir "internal/pipeline/tickets" 0o755;
+    List.iter
+      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+    write_file
+      "internal/pipeline/tickets/DONE/BUG-001.md"
+      "---\n\
+       id: BUG-001\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       A completed ticket\n\n\
+       **Depends on:** None.\n";
+    write_file
+      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-002.md"
+      "---\n\
+       id: BUG-002\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       A ticket waiting on an unstarted dependency\n\n\
+       **Depends on:** BUG-003.\n";
+    write_file
+      "internal/pipeline/tickets/BACKLOG/BUG-003.md"
+      "---\n\
+       id: BUG-003\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       Not started\n\n\
+       **Depends on:** None.\n";
+    write_file
+      "gh"
+      {|#!/bin/sh
+case "$1 $2" in
+"pr list") cat prs.json ;;
+"pr checks") printf 'checks\n' >> calls; cat checks.json ;;
+"pr merge") printf '%s\n' "$*" >> merges ;;
+*) exit 1 ;;
+esac
+|};
+    Unix.chmod "gh" 0o755;
+    Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+    Fun.protect
+      ~finally:(fun () -> Unix.putenv "PATH" old_path)
+      (fun () ->
+         let run ?(mode = Soldev_merge.Auto_merge) target =
+           Soldev_merge.run_merge
+             ~dry_run:false
+             ~mode
+             ~ticket_filter:None
+             ~pr_target:target
+         in
+         let run_ticketed target =
+           Soldev_merge.run_merge
+             ~dry_run:false
+             ~mode:Soldev_merge.Auto_merge
+             ~ticket_filter:(Some "BUG-001")
+             ~pr_target:target
+         in
+         let merges () =
+           if Sys.file_exists "merges"
+           then In_channel.with_open_text "merges" In_channel.input_all
+           else ""
+         in
+         let clear_merges () = if Sys.file_exists "merges" then Sys.remove "merges" in
+         let message_of = function
+           | Ok () -> ""
+           | Error { Soldev_exit.message; _ } -> Option.value ~default:"" message
+         in
+         write_file "checks.json" {|[{"bucket":"pass"}]|};
+         write_file "prs.json" (pr_json ~draft:false ~branch:"docs/auto-merge-default");
+         run (Some "42") |> ignore;
+         check_bool
+           "a ticketless PR queues by number with the head pinned"
+           true
+           (String.ends_with ~suffix:" --auto\n" (merges ())
+            && containing (merges ()) "sha42");
+         clear_merges ();
+         run (Some "#42") |> ignore;
+         check_bool "#42 is the same target" true (Sys.file_exists "merges");
+         clear_merges ();
+         run (Some "https://example.test/pull/42") |> ignore;
+         check_bool "a PR URL is the same target" true (Sys.file_exists "merges");
+         clear_merges ();
+         write_file "prs.json" (pr_json ~draft:false ~branch:"BUG-001/test");
+         run (Some "42") |> ignore;
+         check_bool
+           "a PR whose branch names a DONE ticket still queues"
+           true
+           (Sys.file_exists "merges");
+         check_bool
+           "a junk target is refused by name"
+           true
+           (containing
+              (message_of (run (Some "not-a-pr")))
+              "is not a pull request number or URL");
+         check_bool
+           "an unknown PR number is refused by name"
+           true
+           (containing (message_of (run (Some "99"))) "no open pull request #99");
+         check_bool
+           "a ticket ID and --pr together are refused by name"
+           true
+           (containing (message_of (run_ticketed (Some "42"))) "not both");
+         clear_merges ();
+         write_file "checks.json" {|[{"bucket":"pass"}]|};
+         write_file "prs.json" (pr_json ~draft:false ~branch:"BUG-002/blocked");
+         let text, _ = capture_stdout (fun () -> run (Some "42")) in
+         check_bool
+           "an unresolved ticket behind the PR refuses it, naming the reason"
+           true
+           (containing text "ticket prerequisites unresolved"
+            && not (Sys.file_exists "merges"));
+         write_file "prs.json" (pr_json ~draft:true ~branch:"docs/auto-merge-default");
+         let text, _ = capture_stdout (fun () -> run (Some "42")) in
+         check_bool
+           "a draft PR is refused, naming the reason"
+           true
+           (containing text "draft PR" && not (Sys.file_exists "merges"));
+         write_file "prs.json" (pr_json ~draft:false ~branch:"docs/auto-merge-default");
+         write_file "checks.json" "[]";
+         let text, _ = capture_stdout (fun () -> run (Some "42")) in
+         check_bool
+           "a branch with no required checks is refused, naming the reason"
+           true
+           (containing text "no required checks configured"
+            && not (Sys.file_exists "merges"));
+         write_file "checks.json" {|[{"bucket":"pending"}]|};
+         let text, _ =
+           capture_stdout (fun () -> run ~mode:Soldev_merge.Immediate (Some "42"))
+         in
+         check_bool
+           "--immediate on pending CI is refused, naming the reason"
+           true
+           (containing text "required checks not green" && not (Sys.file_exists "merges"));
+         run (Some "42") |> ignore;
+         check_bool
+           "the default queues the same pending PR instead of merging it"
+           true
+           (String.ends_with ~suffix:" --auto\n" (merges ()));
+         clear_merges ();
+         write_file "checks.json" {|[{"bucket":"pass"}]|};
+         run ~mode:Soldev_merge.Immediate (Some "42") |> ignore;
+         check_bool
+           "--immediate merges green CI without --auto"
+           true
+           (Sys.file_exists "merges" && not (containing (merges ()) " --auto"))))
 ;;
 
 let test_stale_binary_fails_after_rename () =
@@ -384,9 +640,23 @@ let () =
             test_required_checks
         ; Alcotest.test_case "head-pinned native merge commands" `Quick test_merge_command
         ; Alcotest.test_case
+            "the default queues auto-merge and --immediate is the opt-in"
+            `Quick
+            test_default_mode_queues_auto_merge
+        ; Alcotest.test_case
             "merge and queue gates without review markers"
             `Quick
             test_merge_without_review_marker
+        ] )
+    ; ( "pull-request merge targets (FEAT-115)"
+      , [ Alcotest.test_case
+            "parses numbers, #numbers and PR URLs"
+            `Quick
+            test_parse_pr_number
+        ; Alcotest.test_case
+            "queues, refuses by name, and matches the ticket path"
+            `Quick
+            test_pr_target_merge_path
         ] )
     ]
 ;;

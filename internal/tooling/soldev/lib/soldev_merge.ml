@@ -78,25 +78,65 @@ let find_pr_in prs ticket_id =
   List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id) prs
 ;;
 
-let checks_green_of_json = function
-  | `List (_ :: _ as checks) ->
-    List.for_all
-      (function
-        | `Assoc fields -> List.assoc_opt "bucket" fields = Some (`String "pass")
-        | _ -> false)
+let check_buckets_of_json = function
+  | `List checks ->
+    List.fold_left
+      (fun acc check ->
+         match acc, check with
+         | Some buckets, `Assoc fields ->
+           (match List.assoc_opt "bucket" fields with
+            | Some (`String bucket) -> Some (bucket :: buckets)
+            | _ -> None)
+         | _ -> None)
+      (Some [])
       checks
-  | _ -> false
+    |> Option.map List.rev
+  | _ -> None
 ;;
 
-let pr_checks_green pr_url =
+let buckets_green = function
+  | [] -> false
+  | buckets -> List.for_all (String.equal "pass") buckets
+;;
+
+let checks_green_of_json json =
+  match check_buckets_of_json json with
+  | Some buckets -> buckets_green buckets
+  | None -> false
+;;
+
+let required_check_buckets pr_url =
   let result =
     Sol_process.run_argv
       [ "gh"; "pr"; "checks"; pr_url; "--required"; "--json"; "bucket" ]
   in
-  Sol_process.succeeded result
-  &&
-  try checks_green_of_json (Yojson.Basic.from_string result.stdout) with
-  | Yojson.Json_error _ -> false
+  if not (Sol_process.succeeded result)
+  then None
+  else (
+    match Yojson.Basic.from_string result.stdout with
+    | exception Yojson.Json_error _ -> None
+    | json -> check_buckets_of_json json)
+;;
+
+type required_checks =
+  | Checks_not_consulted
+  | Checks_unreadable
+  | Checks_none_configured
+  | Checks_known of string list
+
+let required_checks ~consult pr_url =
+  if not consult
+  then Checks_not_consulted
+  else (
+    match required_check_buckets pr_url with
+    | None -> Checks_unreadable
+    | Some [] -> Checks_none_configured
+    | Some buckets -> Checks_known buckets)
+;;
+
+let checks_pass = function
+  | Checks_known buckets -> buckets_green buckets
+  | _ -> false
 ;;
 
 let review_pass_marker = "SOLDEV-REVIEW: PASS"
@@ -107,12 +147,148 @@ let starts_with ~prefix s =
   && String.sub s 0 (String.length prefix) = prefix
 ;;
 
-let merge_command ~auto_merge pr =
+type merge_mode =
+  | Auto_merge
+  | Immediate
+
+let merge_mode_of_flag ~immediate = if immediate then Immediate else Auto_merge
+
+let merge_command ~mode pr =
   Printf.sprintf
     "gh pr merge %s --squash --match-head-commit %s%s"
     (Filename.quote pr.pr_url)
     (Filename.quote pr.pr_head_sha)
-    (if auto_merge then " --auto" else "")
+    (match mode with
+     | Auto_merge -> " --auto"
+     | Immediate -> "")
+;;
+
+let contains_substring ~needle haystack =
+  let nlen = String.length needle
+  and hlen = String.length haystack in
+  let rec go i =
+    if i + nlen > hlen
+    then false
+    else if String.sub haystack i nlen = needle
+    then true
+    else go (i + 1)
+  in
+  go 0
+;;
+
+let parse_pr_number raw =
+  let trimmed = String.trim raw in
+  let digits value =
+    value <> "" && String.for_all (fun c -> c >= '0' && c <= '9') value
+  in
+  let after_last_slash value =
+    match String.rindex_opt value '/' with
+    | Some i -> String.sub value (i + 1) (String.length value - i - 1)
+    | None -> value
+  in
+  let bare =
+    if starts_with ~prefix:"#" trimmed
+    then String.sub trimmed 1 (String.length trimmed - 1)
+    else trimmed
+  in
+  if digits bare
+  then int_of_string_opt bare
+  else if contains_substring ~needle:"/pull/" trimmed && digits (after_last_slash trimmed)
+  then int_of_string_opt (after_last_slash trimmed)
+  else None
+;;
+
+type merge_target =
+  | Ticket_target of string * pr_info
+  | Pull_request_target of pr_info
+
+let target_pr = function
+  | Ticket_target (_, p) -> p
+  | Pull_request_target p -> p
+;;
+
+let target_label = function
+  | Ticket_target (id, _) -> id
+  | Pull_request_target p -> Printf.sprintf "#%d" p.pr_number
+;;
+
+let target_requires_configured_checks = function
+  | Ticket_target _ -> false
+  | Pull_request_target _ -> true
+;;
+
+let ticket_prerequisites_ready id =
+  match Soldev_ticket.find_ticket id with
+  | None -> false
+  | Some (state, path) ->
+    let content = read_file path in
+    state <> Soldev_ticket.Backlog
+    && Soldev_ticket.unreadable ~path content = None
+    && (not (Soldev_ticket.has_human_decision_gate content))
+    && (not (Option.is_some (Soldev_ticket.find_dependency_cycle id)))
+    && List.for_all
+         (fun dep -> Soldev_ticket.dependency_status dep = `Done)
+         (Soldev_ticket.parse_depends content)
+;;
+
+let target_ticket_ready = function
+  | Ticket_target (id, _) -> ticket_prerequisites_ready id
+  | Pull_request_target p ->
+    let id = ticket_id_of_branch p.pr_branch in
+    (match Soldev_ticket.find_ticket id with
+     | None -> true
+     | Some _ -> ticket_prerequisites_ready id)
+;;
+
+type merge_refusal =
+  | Ticket_prerequisites_unresolved
+  | Refused_draft
+  | Refused_no_required_checks
+  | Refused_checks_unreadable
+  | Refused_checks_not_green
+
+let merge_refusal ~mode ~ticket_ready ~pr_draft ~checks =
+  if not ticket_ready
+  then Some Ticket_prerequisites_unresolved
+  else if pr_draft
+  then Some Refused_draft
+  else if
+    match checks with
+    | Checks_none_configured -> true
+    | _ -> false
+  then Some Refused_no_required_checks
+  else if
+    match checks with
+    | Checks_unreadable -> true
+    | _ -> false
+  then Some Refused_checks_unreadable
+  else if
+    (match mode with
+     | Immediate -> true
+     | Auto_merge -> false)
+    && not (checks_pass checks)
+  then Some Refused_checks_not_green
+  else None
+;;
+
+let merge_refusal_message refusal pr_url =
+  match refusal with
+  | Ticket_prerequisites_unresolved ->
+    Printf.sprintf "  ticket prerequisites unresolved — skipping (%s)" pr_url
+  | Refused_draft -> Printf.sprintf "  draft PR — skipping (%s)" pr_url
+  | Refused_no_required_checks ->
+    Printf.sprintf
+      "  no required checks configured on the base branch — skipping (%s)"
+      pr_url
+  | Refused_checks_unreadable ->
+    Printf.sprintf "  could not read the required checks from gh — skipping (%s)" pr_url
+  | Refused_checks_not_green ->
+    Printf.sprintf "  required checks not green — skipping (%s)" pr_url
+;;
+
+let mode_consults_checks = function
+  | Immediate -> true
+  | Auto_merge -> false
 ;;
 
 let ticket_id_from_branch branch = ticket_id_of_branch branch
@@ -450,32 +626,28 @@ let run_merge_finish ~ticket_id ~merge_sha =
     Ok ()
 ;;
 
-let merge_candidates ~dry_run ~auto_merge candidates =
+let merge_candidates ~dry_run ~mode targets =
   let errors = ref 0 in
   List.iter
-    (fun (id, p) ->
-       Printf.printf "\n[%s]\n%!" id;
-       let ready =
-         match Soldev_ticket.find_ticket id with
-         | None -> false
-         | Some (state, path) ->
-           let content = read_file path in
-           state <> Soldev_ticket.Backlog
-           && Soldev_ticket.unreadable ~path content = None
-           && (not (Soldev_ticket.has_human_decision_gate content))
-           && (not (Option.is_some (Soldev_ticket.find_dependency_cycle id)))
-           && List.for_all
-                (fun dep -> Soldev_ticket.dependency_status dep = `Done)
-                (Soldev_ticket.parse_depends content)
+    (fun target ->
+       let p = target_pr target in
+       Printf.printf "\n[%s]\n%!" (target_label target);
+       let checks =
+         required_checks
+           ~consult:(target_requires_configured_checks target || mode_consults_checks mode)
+           p.pr_url
        in
-       if not ready
-       then Printf.printf "  ticket prerequisites unresolved — skipping (%s)\n" p.pr_url
-       else if p.pr_draft
-       then Printf.printf "  draft PR — skipping (%s)\n" p.pr_url
-       else if (not auto_merge) && not (pr_checks_green p.pr_url)
-       then Printf.printf "  required checks not green — skipping (%s)\n" p.pr_url
-       else (
-         let command = merge_command ~auto_merge p in
+       let refusal =
+         merge_refusal
+           ~mode
+           ~ticket_ready:(target_ticket_ready target)
+           ~pr_draft:p.pr_draft
+           ~checks
+       in
+       match refusal with
+       | Some refusal -> Printf.printf "%s\n" (merge_refusal_message refusal p.pr_url)
+       | None ->
+         let command = merge_command ~mode p in
          if dry_run
          then Printf.printf "  (dry-run) %s\n" command
          else if Soldev_shell.run_cmd command <> 0
@@ -483,29 +655,50 @@ let merge_candidates ~dry_run ~auto_merge candidates =
          else
            Printf.printf
              "  GitHub accepted %s\n%!"
-             (if auto_merge then "auto-merge" else "merge")))
-    candidates;
+             (match mode with
+              | Auto_merge -> "auto-merge"
+              | Immediate -> "merge"))
+    targets;
   if !errors = 0
   then Ok ()
   else Soldev_exit.error (Printf.sprintf "error: %d merge request(s) failed" !errors)
 ;;
 
-let run_merge ~dry_run ~auto_merge ~ticket_filter =
+let run_merge ~dry_run ~mode ~ticket_filter ~pr_target =
   let open Result.Syntax in
   let* prs = open_prs () in
-  let* candidates =
-    match ticket_filter with
-    | Some id ->
-      (match find_pr_in prs id with
-       | Some p -> Ok [ id, p ]
-       | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
-    | None -> Ok (List.map (fun p -> ticket_id_of_branch p.pr_branch, p) prs)
-  in
-  if candidates = []
-  then (
-    Printf.printf "No open PRs to merge.\n";
-    Ok ())
-  else merge_candidates ~dry_run ~auto_merge candidates
+  match pr_target, ticket_filter with
+  | Some _, Some _ -> Soldev_exit.error "error: pass either a ticket ID or --pr, not both"
+  | Some raw, None ->
+    (match parse_pr_number raw with
+     | None ->
+       Soldev_exit.error
+         (Printf.sprintf
+            "error: %S is not a pull request number or URL (try --pr 758, --pr #758, or \
+             a PR URL)"
+            raw)
+     | Some number ->
+       (match List.find_opt (fun p -> p.pr_number = number) prs with
+        | None ->
+          Soldev_exit.error
+            (Printf.sprintf
+               "error: no open pull request #%d — --pr targets an open PR by number or \
+                URL"
+               number)
+        | Some p -> merge_candidates ~dry_run ~mode [ Pull_request_target p ]))
+  | None, Some id ->
+    (match find_pr_in prs id with
+     | Some p -> merge_candidates ~dry_run ~mode [ Ticket_target (id, p) ]
+     | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
+  | None, None ->
+    let targets =
+      List.map (fun p -> Ticket_target (ticket_id_of_branch p.pr_branch, p)) prs
+    in
+    if targets = []
+    then (
+      Printf.printf "No open PRs to merge.\n";
+      Ok ())
+    else merge_candidates ~dry_run ~mode targets
 ;;
 
 let parse_worktree_porcelain lines =
