@@ -37,6 +37,48 @@ let test_ticket_id_from_branch_no_slash () =
     (Soldev_merge.ticket_id_from_branch "EXP-023")
 ;;
 
+let test_pinned_head_sha_prefers_the_branch_ref () =
+  check_string
+    "the ref the transport advertises now, not the payload's older value"
+    "fresh456"
+    (Soldev_merge.pinned_head_sha
+       ~listed:"stale123"
+       ~cross_repository:false
+       (Some "fresh456\trefs/heads/BUG-001/test\n"))
+;;
+
+let test_pinned_head_sha_keeps_the_listed_sha_when_it_cannot_be_improved () =
+  check_string
+    "a cross-repository PR's head is not this repository's ref"
+    "listed123"
+    (Soldev_merge.pinned_head_sha
+       ~listed:"listed123"
+       ~cross_repository:true
+       (Some "other456\trefs/heads/BUG-001/test\n"));
+  check_string
+    "an unreadable ref query changes nothing"
+    "listed123"
+    (Soldev_merge.pinned_head_sha ~listed:"listed123" ~cross_repository:false None);
+  check_string
+    "an empty answer changes nothing"
+    "listed123"
+    (Soldev_merge.pinned_head_sha ~listed:"listed123" ~cross_repository:false (Some ""));
+  check_string
+    "an ambiguous answer changes nothing"
+    "listed123"
+    (Soldev_merge.pinned_head_sha
+       ~listed:"listed123"
+       ~cross_repository:false
+       (Some "a\trefs/heads/x\nb\trefs/heads/y\n"));
+  check_string
+    "a line with no sha changes nothing"
+    "listed123"
+    (Soldev_merge.pinned_head_sha
+       ~listed:"listed123"
+       ~cross_repository:false
+       (Some "\trefs/heads/BUG-001/test\n"))
+;;
+
 let test_parse_worktree_porcelain () =
   let lines =
     [ "worktree /home/user/sol"
@@ -116,6 +158,7 @@ let test_pr_info =
   ; pr_base_ref = "main"
   ; pr_head_sha = "abc123"
   ; pr_draft = false
+  ; pr_cross_repository = false
   }
 ;;
 
@@ -238,6 +281,7 @@ let test_merge_without_review_marker () =
            ; pr_base_ref = "main"
            ; pr_head_sha = "abc123"
            ; pr_draft = false
+           ; pr_cross_repository = false
            }
          in
          let request ~mode pr =
@@ -615,6 +659,16 @@ let () =
             "parses paths and branches"
             `Quick
             test_parse_worktree_porcelain
+        ] )
+    ; ( "merge head pinning"
+      , [ Alcotest.test_case
+            "prefers the branch ref to the payload's head"
+            `Quick
+            test_pinned_head_sha_prefers_the_branch_ref
+        ; Alcotest.test_case
+            "keeps the listed head when it cannot be improved"
+            `Quick
+            test_pinned_head_sha_keeps_the_listed_sha_when_it_cannot_be_improved
         ] )
     ; ( "worktree unpushed annotation (BUG-063)"
       , [ Alcotest.test_case
