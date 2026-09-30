@@ -82,3 +82,33 @@ reading the result from that Job's log. No authority was widened for it.
   consumes it, PostgreSQL holds the row, and `GET /notifications` serves it back.
 - The fix does not add authority, and does not lengthen a timeout to make a stalled operation
   look healthy.
+
+## The trace, ready to run (blocked only on AWS credentials)
+
+`handle_charge` never touches Kafka — it is `Notification.insert pool`, a single
+`INSERT INTO pluto_notifications (charge_id, customer_id, amount_cents, currency) VALUES (?,?,?,?)`
+through a Caqti pool built at startup by `Pg_db.create_pool ~url ~sw ~stdenv ()`. The repeated
+topic creation the broker logged every five minutes is the *worker's* consumer path, a separate
+observation, not this hang.
+
+The table is `id BIGSERIAL PRIMARY KEY, charge_id TEXT NOT NULL, …` with no unique constraint, so
+an ordinary insert cannot block on a peer row. That leaves "the connection never got established"
+against "connected and waiting", and these probes separate them. The deploy identity may create
+Jobs, so each runs in `pluto-payments` without any authority change:
+
+1. Reproduce: a Job that POSTs `/charges`, confirming the hang is still reproducible at the
+   current head.
+2. While it hangs, a `postgres:16-alpine` Job against the same database:
+   - `SELECT pid, state, wait_event_type, wait_event, left(query,60) FROM pg_stat_activity WHERE datname = 'app';`
+     — does the service's connection appear at all, and if so what is it waiting on?
+   - `SELECT * FROM pg_locks WHERE NOT granted;` and `SELECT pg_blocking_pids(pid) FROM pg_stat_activity;`
+     — if a lock is the cause, this names the holder.
+   - `INSERT INTO pluto_notifications (charge_id, customer_id, amount_cents, currency) VALUES ('ch_probe','cus_probe',1,'usd');`
+     — proves the database accepts exactly the statement the service runs.
+3. A `psql` check with an explicit `sslmode` to separate "cannot connect" from "connected and
+   stuck".
+4. `sol logs --scope pluto-payments/charge-svc` for the service's own account of the request.
+
+If the service's connection never appears in `pg_stat_activity`, the block is before the query —
+Caqti's pool connect — and the next step is FND-0074's URL construction and the Eio connect path.
+If it appears and waits, the lock evidence names the holder.
