@@ -117,6 +117,8 @@ On completion:
 
 `retry_policy`'s shape and default (`base_delay_s = 1.0; max_delay_s = 600.0; max_attempts = 5; jitter_ratio = 0.1`) intentionally bounds retries by default — `sol-jobs` is a durable at-least-once queue, not an infinite-retry stream consumer, so a poison job lands in `'failed'` rather than retrying forever unless an app explicitly opts into `max_attempts < 0`.
 
+An expired lease from a worker crash counts as an unfinished attempt. The next claim atomically moves the row to `'failed'` once `max_attempts` is reached, without calling the handler again; `last_error` names the unfinished attempt. Ordinary exceptions from `decode` or `handle` count as failed attempts through the same retry/fail path as returned errors. Cancellation and fatal runtime exceptions still propagate.
+
 ## Entrypoint
 
 ```ocaml

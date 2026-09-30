@@ -131,13 +131,10 @@ let table = "sol_jobs"
 
 let claim_q =
   Caqti_request.Infix.(
-    Caqti_type.(t2 float string) ->? Caqti_type.(t4 int string string int))
+    Caqti_type.(t3 int float string) ->? Caqti_type.(t5 int string string int string))
     (Printf.sprintf
-       {|UPDATE %s
-         SET locked_until = now() + (?::float8 * interval '1 second'),
-             attempts = attempts + 1
-         WHERE id = (
-           SELECT id FROM %s
+       {|WITH candidate AS (
+           SELECT id, attempts, ?::int AS budget, ?::float8 AS lease FROM %s
            WHERE status = 'pending'
              AND kind = ANY(string_to_array(?, ','))
              AND run_at <= now()
@@ -146,14 +143,31 @@ let claim_q =
            FOR UPDATE SKIP LOCKED
            LIMIT 1
          )
-         RETURNING id, kind, payload, attempts|}
+         UPDATE %s AS job
+         SET status = CASE WHEN candidate.attempts >= candidate.budget
+                                AND candidate.budget >= 0
+                           THEN 'failed' ELSE 'pending' END,
+             locked_until = CASE WHEN candidate.attempts >= candidate.budget
+                                      AND candidate.budget >= 0
+                                 THEN NULL ELSE now() + (candidate.lease * interval '1 second') END,
+             last_error = CASE WHEN candidate.attempts >= candidate.budget
+                                    AND candidate.budget >= 0
+                               THEN 'worker stopped before finishing the previous attempt'
+                               ELSE job.last_error END,
+             attempts = CASE WHEN candidate.attempts >= candidate.budget
+                                  AND candidate.budget >= 0
+                             THEN job.attempts ELSE job.attempts + 1 END
+         FROM candidate WHERE job.id = candidate.id
+         RETURNING job.id, job.kind, job.payload, job.attempts, job.status|}
        table
        table)
 ;;
 
 let complete_q =
   Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
-    (Printf.sprintf "DELETE FROM %s WHERE id = ? AND attempts = ? RETURNING id" table)
+    (Printf.sprintf
+       "DELETE FROM %s WHERE id = ? AND attempts = ? AND status = 'pending' RETURNING id"
+       table)
 ;;
 
 let retry_q =
@@ -163,7 +177,7 @@ let retry_q =
          SET run_at = now() + (?::float8 * interval '1 second'),
              locked_until = NULL,
              last_error = ?
-         WHERE id = ? AND attempts = ?
+         WHERE id = ? AND attempts = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
@@ -172,7 +186,7 @@ let fail_q =
   Caqti_request.Infix.(Caqti_type.(t3 string int int) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s SET status = 'failed', locked_until = NULL, last_error = ?
-         WHERE id = ? AND attempts = ?
+         WHERE id = ? AND attempts = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
@@ -380,7 +394,9 @@ module Make (J : JOB) = struct
           if should_stop ()
           then Ok ()
           else (
-            match Pg_db.find pool claim_q (lease_s, kinds_param) with
+            match
+              Pg_db.find pool claim_q (retry_policy.max_attempts, lease_s, kinds_param)
+            with
             | Error e when failures + 1 >= max_claim_failures ->
               Error
                 (`Database
@@ -399,9 +415,18 @@ module Make (J : JOB) = struct
             | Ok None ->
               Eio.Time.sleep env#clock poll_interval_s;
               loop ~failures:0
-            | Ok (Some (id, kind, payload, attempts)) ->
+            | Ok (Some (_id, kind, _payload, _attempts, "failed")) ->
+              count "failed" ~kind;
+              record_terminal ();
+              loop ~failures:0
+            | Ok (Some (id, kind, payload, attempts, _)) ->
               let t0 = Eio.Time.now env#clock in
-              let outcome = Result.bind (J.decode payload) J.handle in
+              let outcome =
+                try Result.bind (J.decode payload) J.handle with
+                | Eio.Cancel.Cancelled _ as exn -> raise exn
+                | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+                | exn -> Error (Printexc.to_string exn)
+              in
               let elapsed = Eio.Time.now env#clock -. t0 in
               if elapsed > lease_s
               then
