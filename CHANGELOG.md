@@ -11,8 +11,10 @@ not a full commit log — see `git log` and `internal/pipeline/tickets/DONE/` fo
   and producer units no longer write to the schema registry: `Kafka_service.register`
   provisions the topic and resolves the declared schema (read-only), failing when the
   contract is not registered. Registration belongs to the deployment lifecycle — each
-  workspace generates `contract/contract.exe`, and `sol up` runs its `--apply` after
-  compatibility validation and before any workload is applied. `MESSAGE.schema` stays the
+  workspace generates `contract/contract.exe`; `sol up` runs its `--apply` locally and
+  `sol deploy` runs it inside the destination (a Job on the deployment's own image)
+  before any workload is applied, so a failure prevents rollout. `sol plan` stays
+  read-only and reports a private registry as not observed. `MESSAGE.schema` stays the
   source of truth (nothing is duplicated into the manifest), and the projection format is
   language-neutral.
 - **Breaking (FEAT-113):** Kafka message-level retry and application-level

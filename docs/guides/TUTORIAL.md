@@ -216,8 +216,10 @@ let schema     = {|{"type":"object",...}|}
 ```
 
 These satisfy the `Kafka_service.MESSAGE` module type, together with `encode` and
-`decode`. Sol registers the schema with the schema registry at worker startup, so
-a producer cannot publish a message that breaks it. `partitions` is the count Sol
+`decode`. Sol registers the schema with the schema registry during deployment — a
+contract step `sol up` and `sol deploy` run before any workload moves — and a producer
+or consumer resolves it read-only at startup, so a producer cannot publish a message that
+breaks it and a runtime never rewrites the contract. `partitions` is the count Sol
 creates the topic with, and `key` is what keeps every record for one entity on a
 single partition — and therefore in order.
 
@@ -501,7 +503,7 @@ sol new event billing/payment_confirmed
 
 Generates `events/billing/payment_confirmed.ml` with a stub `type t` and `schema`. Edit the type to match your payload; the compiler will find every place that needs updating.
 
-**Schema backward compatibility:** Changing the `schema` field (the JSON Schema string) may break consumers that are still running against the old schema. The OCaml compiler catches structural type mismatches, but JSON schema changes are only caught at runtime when the worker calls `Kafka_service.register`. To catch breaking schema changes in CI before deploy, run the generated schema compatibility test:
+**Schema backward compatibility:** Changing the `schema` field (the JSON Schema string) may break consumers that are still running against the old schema. The OCaml compiler catches structural type mismatches, but JSON schema changes are only caught when the contract is reconciled — at `sol plan`/`sol deploy` time, and by this test. To catch breaking schema changes in CI before deploy, run the generated schema compatibility test:
 
 ```bash
 SCHEMA_REGISTRY_URL=http://localhost:8081 dune test test/

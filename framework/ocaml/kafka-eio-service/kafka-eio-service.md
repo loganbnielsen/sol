@@ -280,11 +280,26 @@ A runtime process never registers a schema version and never changes subject con
 is not registered fails at startup instead of becoming the first writer. Registration
 belongs to the deployment lifecycle: every workspace generates `contract/contract.exe`,
 which projects each event module's contract metadata as JSON (`--json`) and validates and
-registers it against the target registry (`--check` / `--apply`). `sol up` runs `--apply`
-after compatibility validation and before applying any workload, so a deploy that cannot
-satisfy the contract fails before rollout. `MESSAGE.schema` stays the single source of
-truth — nothing is duplicated into the manifest. The projection is a language-neutral wire
-format, so a TypeScript workspace can emit the same object.
+registers it against the target registry (`--check` / `--apply`). `MESSAGE.schema` stays
+the single source of truth — nothing is duplicated into the manifest. The projection is a
+language-neutral wire format, so a TypeScript workspace can emit the same object.
+
+The reconciliation runs where the registry is reachable, after the destination is
+established and before any workload moves, so a deploy that cannot satisfy the contract
+fails before rollout:
+
+- `sol up` runs `--apply` locally, because the local target's dependencies are reachable
+  from the workstation.
+- `sol deploy` runs it inside the destination, because a private registry may only be
+  reachable from there. It submits a Job that runs the deployment's own application image
+  with `command: ["/usr/local/bin/contract"]` and `args: ["--apply"]`, so the reconciled
+  contract cannot drift from the artifact being deployed; the OCaml app images build and
+  install that binary. This is the same Job lifecycle the migration gate uses: apply, wait,
+  fail closed, capture logs as evidence, clean up on success. A workspace that declares no
+  OCaml workload in the deploy's scope has no image to reconcile with, and is skipped.
+- `sol plan` is read-only. It projects the declared contract offline and reports the
+  registry as *not observed* when the target registry is private to the destination,
+  rather than mutating it or pretending the remote state was seen.
 
 ### Schema compatibility checking
 
