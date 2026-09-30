@@ -357,6 +357,110 @@ let test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates () =
   | None -> Alcotest.fail "the delegated zone has no probe"
 ;;
 
+let test_the_durable_root_is_configured_from_the_declaration () =
+  let aws = resolved_or_fail aws_target in
+  (match Sol_cli_provider_capabilities.installation_backend Sol_cli_provider.Aws aws with
+   | Error message ->
+     Alcotest.fail ("the AWS durable root's backend was refused: " ^ message)
+   | Ok backend ->
+     Alcotest.(check (list string))
+       "the durable root's own state lives under the derived prefix"
+       [ "bucket=acme-tfstate"
+       ; "key=bootstrap/aws/default.tfstate"
+       ; "region=us-east-1"
+       ; "dynamodb_table=acme-tflock"
+       ; "encrypt=true"
+       ]
+       backend);
+  (match
+     Sol_cli_provider_capabilities.installation_vars
+       Sol_cli_provider.Aws
+       ~manage_dns_zone:true
+       aws
+   with
+   | [ (_, "us-east-1")
+     ; (_, "acme-tfstate")
+     ; (_, "acme-tflock")
+     ; ("manage_dns_zone", "true")
+     ; ("base_domain", "api.acme.example")
+     ] -> ()
+   | vars ->
+     Alcotest.fail
+       ("the AWS durable root's variables are not the declared ones: "
+        ^ String.concat "," (List.map fst vars)));
+  let gcp = resolved_or_fail gcp_target in
+  (match Sol_cli_provider_capabilities.installation_backend Sol_cli_provider.Gcp gcp with
+   | Error message ->
+     Alcotest.fail ("the GCP durable root's backend was refused: " ^ message)
+   | Ok backend ->
+     Alcotest.(check (list string))
+       "the GCP backend is a prefix, not a key"
+       [ "bucket=sol-qualification-tfstate"; "prefix=bootstrap/gcp" ]
+       backend);
+  let no_zone =
+    Sol_cli_provider_capabilities.installation_vars
+      Sol_cli_provider.Aws
+      ~manage_dns_zone:false
+      aws
+  in
+  Alcotest.(check (option string))
+    "a root that does not own the zone is told so"
+    (Some "false")
+    (List.assoc_opt "manage_dns_zone" no_zone)
+;;
+
+let test_the_durable_root_refuses_an_incomplete_declaration () =
+  let aws = resolved_or_fail aws_target in
+  (match
+     Sol_cli_provider_capabilities.installation_backend
+       Sol_cli_provider.Aws
+       { aws with lock_table = None }
+   with
+   | Ok _ -> Alcotest.fail "an AWS root with no lock table was configured"
+   | Error message ->
+     check_bool
+       "the refusal names the lock table"
+       true
+       (Sol_cli_string.contains ~needle:"state_lock_table" message));
+  let gcp = resolved_or_fail gcp_target in
+  match
+    Sol_cli_provider_capabilities.installation_vars
+      Sol_cli_provider.Gcp
+      ~manage_dns_zone:false
+      { gcp with project_id = None }
+  with
+  | vars ->
+    Alcotest.(check (option string))
+      "a GCP root with no project still passes what the target declared"
+      (Some "")
+      (List.assoc_opt "project_id" vars)
+;;
+
+let test_the_durable_root_policy_refuses_recreation () =
+  let open Sol_cli_terraform_plan in
+  let change address action =
+    { address; resource_type = "aws_s3_bucket"; mode = "managed"; action }
+  in
+  let policy = Sol_cli_installation_stage.durable_root_policy in
+  Alcotest.(check int)
+    "a metadata-only change is permitted"
+    0
+    (List.length (violations policy [ change "aws_s3_bucket.state" Update ]));
+  Alcotest.(check int)
+    "a creation is permitted, so the root can gain a durable resource"
+    0
+    (List.length (violations policy [ change "aws_dynamodb_table.lock" Create ]));
+  Alcotest.(check int)
+    "a replacement is refused"
+    1
+    (List.length (violations policy [ change "aws_s3_bucket.state" Replace ]));
+  Alcotest.(check int)
+    "a destruction is refused"
+    1
+    (List.length
+       (violations policy [ change "aws_route53_zone.qualification[0]" Delete ]))
+;;
+
 let test_resolved_configuration_has_no_authority () =
   let lines = Sol_cli_installation.resolved_configuration_to_lines aws_config in
   check_bool "the resolved configuration is inspectable" true (List.length lines >= 6);
@@ -439,6 +543,18 @@ let () =
             "the GCP zone probe uses the zone name Terraform creates"
             `Quick
             test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates
+        ; Alcotest.test_case
+            "the durable root is configured from the declaration"
+            `Quick
+            test_the_durable_root_is_configured_from_the_declaration
+        ; Alcotest.test_case
+            "an incomplete declaration is refused"
+            `Quick
+            test_the_durable_root_refuses_an_incomplete_declaration
+        ; Alcotest.test_case
+            "the durable root's policy refuses recreation and destruction"
+            `Quick
+            test_the_durable_root_policy_refuses_recreation
         ] )
     ]
 ;;

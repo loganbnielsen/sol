@@ -253,3 +253,37 @@ destructive plan stopping the run) and part C (the destroy-boundary test and the
 `docs/DEVELOPER_EXPERIENCE.md` §3–4 / second-deploy example coverage). The ticket stays in
 `READY_FOR_ENGINEERING`; the demo/example obligation is discharged with part C.
 
+
+## Part B completion notes (2026-09-30)
+
+`sol cloud bootstrap <TARGET> --apply` reconciles the durable root; without the flag the
+command still only reports.
+
+- **The durable root has an owner of its own.** `cloud_role` gains `Bootstrap`, so
+  `platform/cloud/<provider>/bootstrap` is materialized into a work directory of its own
+  (`aws-bootstrap-…` / `gcp-bootstrap-…`) with the installation's backend, beside the
+  cluster and platform roots rather than reusing either.
+- **Reconciled, not presence-checked.** The run initializes the durable root and plans it;
+  a plan at the declared state applies nothing, so a second run is a no-op that reports,
+  and a partial run is safely re-runnable. The state backend is the one presence check —
+  it is reported first, and Terraform's own `init` decides, so a backend that can create
+  itself is not blocked and one that cannot fails closed before anything is applied.
+- **A destructive plan stops the run (AC3).** `Sol_cli_terraform_plan` gains an
+  `Every_change` matcher, and the stage's policy allows create/update/read on it while
+  refusing replace and delete: everything the durable root declares outlives every
+  environment, so recreation or deletion is never an automatic action. The refusal names
+  the address, and the plan is not applied.
+- **A run never creates, and never drops, a durable DNS zone.** `manage_dns_zone` follows
+  whether the root's *own state* already owns the zone, read from `terraform state list`:
+  the stage reconciles ownership that exists and takes none that does not. Creating a zone
+  needs the create/adopt declaration FEAT-107 owns, and passing `manage_dns_zone=true`
+  against a live zone Terraform does not own would create a second one with different
+  nameservers — the silent breakage DEC-043 records.
+
+`cli/test/test_cloud_bootstrap.sh` drives all of it against fake `aws` and `terraform`:
+reconcile applies the plan, a no-change plan re-runs as a no-op, and a plan whose actions
+are `delete,create` is refused with the address named and no `apply` executed.
+
+**Still open:** part C — the test that an environment `destroy` cannot remove a durable
+prerequisite, anchored on `durable_observations`, plus the `docs/DEVELOPER_EXPERIENCE.md`
+§3–4 output and the second-deploy example. The ticket stays in `READY_FOR_ENGINEERING`.

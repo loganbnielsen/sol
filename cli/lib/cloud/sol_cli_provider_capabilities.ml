@@ -25,6 +25,13 @@ type t =
   ; installation_prerequisites : Sol_cli_installation.prerequisite list
   ; installation_probes :
       Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  ; installation_backend :
+      Sol_cli_installation.installation_config -> (string list, string) result
+  ; installation_vars :
+      manage_dns_zone:bool
+      -> Sol_cli_installation.installation_config
+      -> (string * string) list
+  ; installation_zone_address : string
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -48,6 +55,18 @@ type t =
   ; state_locking : string option
   ; scoped_identities : string list
   }
+
+let dns_declaration
+      ~manage_dns_zone
+      (configuration : Sol_cli_installation.installation_config)
+  =
+  if not manage_dns_zone
+  then "false", ""
+  else (
+    match configuration.zone_domain with
+    | None -> "false", ""
+    | Some domain -> "true", domain)
+;;
 
 let add_opt k = function
   | None -> Fun.id
@@ -173,6 +192,30 @@ let aws =
                [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
            | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
         ])
+  ; installation_backend =
+      (fun configuration ->
+        match configuration.lock_table with
+        | None ->
+          Error
+            "an AWS installation must declare aws.state_lock_table before the durable \
+             root can be reconciled: S3 has no native state locking, so a root whose \
+             backend names no lock table could corrupt its own state"
+        | Some table ->
+          Ok
+            [ "bucket=" ^ configuration.state_bucket
+            ; "key=" ^ configuration.state_prefix ^ "/default.tfstate"
+            ; "region=" ^ configuration.region
+            ; "dynamodb_table=" ^ table
+            ; "encrypt=true"
+            ])
+  ; installation_vars =
+      (fun ~manage_dns_zone configuration ->
+        [ "region", configuration.region
+        ; "state_bucket", configuration.state_bucket
+        ; "state_lock_table", Option.value configuration.lock_table ~default:""
+        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ])
   ; own_vars =
       (fun target ~workspace shared ->
         shared
@@ -231,6 +274,7 @@ let aws =
       ; "operator_role_arn"
       ]
   ; state_locking = Some "state_lock_table"
+  ; installation_zone_address = "aws_route53_zone.qualification"
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -304,6 +348,20 @@ let gcp =
                ]
            | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
         ])
+  ; installation_backend =
+      (fun configuration ->
+        Ok
+          [ "bucket=" ^ configuration.state_bucket
+          ; "prefix=" ^ configuration.state_prefix
+          ])
+  ; installation_vars =
+      (fun ~manage_dns_zone configuration ->
+        [ "project_id", Option.value configuration.project_id ~default:""
+        ; "region", configuration.region
+        ; "state_bucket", configuration.state_bucket
+        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ])
   ; own_vars =
       (fun target ~workspace:_ shared ->
         shared
@@ -334,6 +392,7 @@ let gcp =
   ; production_qualified = false
   ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
+  ; installation_zone_address = "google_dns_managed_zone.qualification"
   ; scoped_identities = []
   }
 ;;
@@ -349,4 +408,12 @@ let installation_prerequisites provider =
 
 let installation_probes provider configuration =
   (capabilities_of provider).installation_probes configuration
+;;
+
+let installation_backend provider configuration =
+  (capabilities_of provider).installation_backend configuration
+;;
+
+let installation_vars provider ~manage_dns_zone configuration =
+  (capabilities_of provider).installation_vars ~manage_dns_zone configuration
 ;;

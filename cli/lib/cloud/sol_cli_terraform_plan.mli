@@ -18,6 +18,7 @@ type matcher =
   | Exact of string
   | Resource of string
   | Type of string
+  | Every_change
 
 type rule =
   { matches : matcher list

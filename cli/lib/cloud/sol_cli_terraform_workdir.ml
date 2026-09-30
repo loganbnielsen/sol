@@ -1,6 +1,7 @@
 module A = Sol_cli_platform_assets
 
 let role_name : A.cloud_role -> string = function
+  | A.Bootstrap -> "bootstrap"
   | A.Cluster -> "cluster"
   | A.Platform -> "platform"
 ;;

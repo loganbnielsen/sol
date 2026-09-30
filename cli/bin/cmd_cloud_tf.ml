@@ -650,9 +650,22 @@ let declared_target target =
          (Sol_cli_config.target_source config.target))
 ;;
 
-let cloud_bootstrap ~target () =
+let cloud_bootstrap ~target ~reconcile () =
   let* target_cfg = declared_target target in
   let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
+  let* () =
+    if reconcile
+    then
+      let* () = check_terraform () in
+      let* assets = resolve_assets () in
+      Sol_cli_installation_stage.reconcile
+        ~assets
+        ~provider:target_cfg.provider
+        ~configuration
+        ()
+      |> Sol_cli_exit.of_msg
+    else Ok ()
+  in
   let verdicts =
     Sol_cli_provider_capabilities.installation_probes target_cfg.provider configuration
     |> Sol_cli_installation.observe ~run:installation_observation
@@ -676,6 +689,18 @@ let cloud_bootstrap ~target () =
   Ok ()
 ;;
 
+let bootstrap_apply_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "apply" ]
+        ~doc:
+          "Reconcile the durable root, then report. Reconciliation plans the root, \
+           refuses a plan that would replace or destroy a durable resource, and applies \
+           what is left.")
+;;
+
 let bootstrap_cmd =
   let doc =
     "Report whether a target's durable installation is established, and what is missing."
@@ -690,20 +715,29 @@ let bootstrap_cmd =
          inferred from configuration, and reports Established, Unmet or UNKNOWN. A \
          prerequisite Sol cannot observe is UNKNOWN, never healthy (DEC-052)."
     ; `P
-        "Read-only: nothing here changes your account. It reports what the provider \
-         holds so a missing prerequisite is named before anything is created."
+        "Without --apply this is read-only: it reports what the provider holds so a \
+         missing prerequisite is named before anything is created."
+    ; `P
+        "With --apply the durable root is reconciled: planned, inspected, and applied \
+         only when the plan neither replaces nor destroys a durable resource. A root \
+         already at its declared state applies nothing, so a second run is a no-op. The \
+         state backend is the one prerequisite whose presence is checked first, because \
+         a root cannot create the backend that stores its own state."
     ; `S "EXIT STATUS"
     ; `P "0 -- every prerequisite was observed Established."
     ; `P
-        "1 -- a prerequisite is Unmet or UNKNOWN. The verdict and the reason are \
-         printed, and nothing is assumed healthy."
+        "1 -- a prerequisite is Unmet or UNKNOWN, or reconciliation was refused. The \
+         verdict and the reason are printed, and nothing is assumed healthy."
     ; `P "No other code is used by this command."
     ]
   in
   Cmd.v
     (Cmd.info "bootstrap" ~doc ~man)
     Term.(
-      const (fun target -> Sol_cli_exit.exit_on (cloud_bootstrap ~target ())) $ target_arg)
+      const (fun target reconcile ->
+        Sol_cli_exit.exit_on (cloud_bootstrap ~target ~reconcile ()))
+      $ target_arg
+      $ bootstrap_apply_flag)
 ;;
 
 let plan_flag =

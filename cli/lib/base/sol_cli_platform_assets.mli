@@ -30,6 +30,7 @@ val dir : t -> string
 val form : t -> form
 
 type cloud_role =
+  | Bootstrap
   | Cluster
   | Platform
 

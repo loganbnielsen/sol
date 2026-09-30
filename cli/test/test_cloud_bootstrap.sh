@@ -35,7 +35,27 @@ check_absent() {
   esac
 }
 
-mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing"
+mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing" "$tmp/bin-tf" "$tmp/data"
+cat >"$tmp/bin-tf/terraform" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/terraform.log"
+case " \$* " in
+  *" state list "*) printf 'aws_s3_bucket.state\n'; exit 0 ;;
+  *" init "*) exit 0 ;;
+  *" plan "*)
+    for argument in "\$@"; do
+      case "\$argument" in
+        -out=*) : >"\${argument#-out=}" ;;
+      esac
+    done
+    exit 0
+    ;;
+  *" show "*) cat "$tmp/plan.json"; exit 0 ;;
+  *" apply "*) exit 0 ;;
+esac
+exit 0
+EOF
+chmod +x "$tmp/bin-tf/terraform"
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: bootstrap-test
 EOF
@@ -62,6 +82,10 @@ cat >"$tmp/bin-ok/aws" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/aws.log"
 case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
   "route53 list-hosted-zones-by-name")
     printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}'
     ;;
@@ -71,6 +95,10 @@ EOF
 cat >"$tmp/bin-refusing/aws" <<'EOF'
 #!/bin/sh
 case "$1 $2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
   "s3api head-bucket" | "dynamodb describe-table")
     exit 254
     ;;
@@ -88,8 +116,11 @@ chmod +x "$tmp/bin-ok/aws" "$tmp/bin-refusing/aws"
 
 run() {
   local path="$1" target="$2"
+  shift 2
   set +e
-  output="$(cd "$tmp/work" && PATH="$path" "$sol" cloud bootstrap "$target" 2>&1)"
+  output="$(
+    cd "$tmp/work" && XDG_DATA_HOME="$tmp/data" PATH="$path" "$sol" cloud bootstrap "$target" "$@" 2>&1
+  )"
   rc=$?
   set -e
 }
@@ -138,6 +169,36 @@ check_contains "the refusal names state_bucket" "requires the target's state_buc
 run "$tmp/bin-ok:/usr/bin:/bin" nope/aws/us-east-1
 check "an undeclared target exits 1" 1 "$rc"
 check_contains "the refusal names the target" "nope/aws/us-east-1 is not declared" "$output"
+
+printf '%s\n' \
+  '{"resource_changes":[{"address":"aws_s3_bucket.state","type":"aws_s3_bucket","mode":"managed","change":{"actions":["update"]}}]}' \
+  >"$tmp/plan.json"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a reconciled durable root exits 0" 0 "$rc"
+check_contains "the reconcile applied the plan" " apply " "$(cat "$tmp/terraform.log")"
+check_contains "the reconcile planned before applying" " plan " "$(cat "$tmp/terraform.log")"
+check_contains \
+  "the durable root gets a state of its own" \
+  "aws-bootstrap" \
+  "$(cat "$tmp/terraform.log")"
+check_contains "the installation is established after the reconcile" "The installation is established" "$output"
+
+printf '%s\n' '{"resource_changes":[]}' >"$tmp/plan.json"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a root already at its declared state exits 0" 0 "$rc"
+check_contains "a second run still plans" " plan " "$(cat "$tmp/terraform.log")"
+
+printf '%s\n' \
+  '{"resource_changes":[{"address":"aws_s3_bucket.state","type":"aws_s3_bucket","mode":"managed","change":{"actions":["delete","create"]}}]}' \
+  >"$tmp/plan.json"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a plan that would replace a durable resource exits 1" 1 "$rc"
+check_contains "the refusal names the resource" "aws_s3_bucket.state" "$output"
+check_contains "the refusal is a refusal" "refused" "$output"
+check_absent "a refused plan is never applied" "apply" "$(cat "$tmp/terraform.log")"
 
 if [ "$fail" -ne 0 ]; then
   exit 1
