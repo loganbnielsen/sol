@@ -690,6 +690,17 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: internal/ci/check_provider_dispatch.sh .
 
+      # DOCS-030: docs/reference/cli.md documents every registered command from the binary's
+      # own help, so a command added in code cannot land undocumented, and the page cannot
+      # carry a command or a flag the binary does not have.
+      - name: CLI reference mutation test (DOCS-030)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/test_cli_reference_check.py
+
+      - name: CLI reference guard (DOCS-030)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/check_cli_reference.py
+
       # DEC-038: the operator identity owns production observation and diagnosis,
       # and its grant must follow the evidence Sol's read-only commands consume.
       - name: Operator diagnostic grant (DEC-038 / INFRA-057)
