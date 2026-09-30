@@ -61,10 +61,15 @@ for infrastructure, security, lifecycle/concurrency, substantial API changes, or
 an operator request, and keep the PR draft until actionable findings are resolved.
 One satisfactory targeted pass is sufficient. `soldev pipeline review` still
 posts optional informational verdicts; they are not universal merge gates.
-`soldev pipeline merge --auto <id>` queues GitHub squash auto-merge; without
-`--auto`, it merges only with successful, nonempty required checks. It pins the
-head SHA, rejects drafts/unresolved prerequisites, uses no admin bypass, and
-preserves local worktrees. Reverting the squash returns its ticket to READY atomically.
+
+**Auto-merge is the default.** Queue `soldev pipeline merge --auto <id>` as soon as
+a PR is non-draft with its prerequisites resolved; GitHub lands it the moment
+required checks pass. Waiting for green and then merging by hand is the exception,
+not the routine. The command pins the head SHA, rejects drafts/unresolved
+prerequisites, uses no admin bypass, and preserves local worktrees. Whoever queues
+a merge monitors it to completion and reports whether it actually merged
+(§ *Shepherding PRs to merge*). Reverting the squash returns its ticket to READY
+atomically.
 
 **Ticket frontmatter fields:** `id`, `type` (refactor | feature | bug | audit-finding | decision | ux-finding | dogfood-finding | docs-finding | code-layer-finding | verification | release | infra | performance | documentation), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
 Do not add a `status:` field — the directory encodes status.
@@ -115,7 +120,7 @@ The discipline, since relying on remembering the current directory has now faile
 - `pipeline validate` — validation: reads every ticket in the tree (BACKLOG, READY_FOR_ENGINEERING and DONE) with the same parser the other commands use, and exits 1 naming any it cannot read. CI runs it unconditionally, so a ticket with unreadable frontmatter fails its PR instead of disappearing from the queue view (BUG-060).
 - `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
 - `pipeline review` — orchestration: posts optional structured review findings as PR comments.
-- `pipeline merge` — orchestration: verifies prerequisites and non-draft status, then uses head-pinned GitHub squash merge; `--auto` queues native auto-merge. Immediate merges require green required CI. No admin bypass or worktree cleanup.
+- `pipeline merge` — orchestration: verifies prerequisites and non-draft status. `--auto` is the default choice and queues native auto-merge, which lands the PR when required checks pass; without it the command merges immediately, and only when required CI is already green. Head-pinned; no admin bypass or worktree cleanup.
 - `pipeline merge-finish` — optional informational maintenance: records perf baseline/history in an owned checkout after a merge. It does not gate or revert merges and is not run automatically.
 - `pipeline check-reverts` — safety diagnostic over git history.
 - Pre-commit hook — convenience local gate; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
@@ -357,6 +362,7 @@ Sol is pre-alpha, and the goal is to get the architecture built and qualified qu
 | Architectural decision | Stop for the operator. |
 | Live qualification | Strict evidence, no in-run remediation (the qualification ledger's rules). |
 | Destructive action, or security ambiguity | Stop. |
+| Landing a PR | Queue native squash auto-merge by default; monitor it to completion and report the outcome. An immediate, in-session merge is the exception. |
 
 The assurance stack for code is: compile, format and targeted tests locally; full required CI on the PR head; post-merge CI on `main` as the backstop for rare cross-PR interactions. A PR need not be retested solely because `main` advanced (see the protection bullet below).
 
@@ -364,8 +370,23 @@ The assurance stack for code is: compile, format and targeted tests locally; ful
 
 ## Shepherding PRs to merge
 
-Routine PRs need required green CI, not a review marker. Queue native squash
-auto-merge with `soldev pipeline merge --auto <id>` when merging is authorized.
+Routine PRs need required green CI, not a review marker. **Queue native squash
+auto-merge by default** — `soldev pipeline merge --auto <id>` — as soon as a PR is
+non-draft and its prerequisites are resolved. Do not hold a PR until it is green and
+then merge it by hand; an immediate merge is the exception, for when the operator
+wants it landed synchronously.
+
+- **Monitor every queued auto-merge to completion, and report whether it merged.** A
+  queue request is not a completed merge. Read the PR's actual state —
+  `gh pr view <n> --json state,mergedAt,mergeCommit,statusCheckRollup`, or
+  `soldev pipeline check` — rather than sleeping on an assumed duration: the change
+  classifier sends docs-only and ticket-only PRs down a fast path where `test` can
+  finish in seconds, so "wait about fifteen minutes" is wrong and has already let a
+  green PR sit unmerged. On failure, report the failing check and its cause; after a
+  fix, auto-merge is still armed and completes on its own. If the failure is not
+  being addressed, say so explicitly rather than leaving it silently queued.
+- Queue dependent PRs in order: `soldev` reads prerequisites from its current ticket
+  tree, so queue a dependent PR only after its dependency has actually merged.
 
 - Keep intentionally reviewed PRs draft until the selected review is satisfactory.
   Review comments are optional evidence, never proof that a gate ran.

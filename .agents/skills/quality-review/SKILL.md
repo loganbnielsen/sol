@@ -32,4 +32,5 @@ appropriate only for materially new risk or an explicit request.
 
 Record what was actually reviewed and tested. Review comments, including
 SOLDEV-REVIEW markers, are informational and never a universal merge prerequisite.
-Mark the PR ready and queue auto-merge only after selected findings are resolved.
+Mark the PR ready and queue auto-merge (the default) once selected findings are
+resolved, then monitor it to completion.

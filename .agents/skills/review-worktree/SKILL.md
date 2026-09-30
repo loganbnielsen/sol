@@ -33,5 +33,6 @@ The marker is an informational comment, not an approval requirement. Do not move
 tickets or claim a review guarantees correctness.
 
 Fix actionable findings on the same PR and confirm them; no mandatory fresh
-reviewer loop. Once selected review is satisfactory, mark the PR ready and
-queue native auto-merge if merging is authorized. Required CI still gates it.
+reviewer loop. Once selected review is satisfactory, mark the PR ready and queue
+native squash auto-merge (the default). Required CI still gates it, and whoever
+queued it monitors the merge to completion.
