@@ -252,6 +252,7 @@ let process_handler_result
 type 'a runtime =
   { group_id : string
   ; retry_policy : Kafka.Consumer.retry_policy
+  ; consumer_properties : (string * string) list
   ; hooks : Kafka_service_intf.consumer_hooks
   ; decode_error_policy : Kafka_service_intf.decode_error_policy
   ; observe_decode_error :
@@ -398,6 +399,7 @@ let run_consumers
   let open Result.Syntax in
   let { group_id
       ; retry_policy
+      ; consumer_properties
       ; hooks = { kafka = kafka_hooks; _ }
       ; decode_error_policy
       ; observe_decode_error
@@ -413,7 +415,7 @@ let run_consumers
     ; offset_reset = Kafka.Consumer.Earliest
     ; auto_commit = false
     ; security = svc.security
-    ; properties = []
+    ; properties = consumer_properties
     }
   in
   let no_retry : Kafka.Consumer.retry_policy =
@@ -433,7 +435,7 @@ let run_consumers
       ; offset_reset = Kafka.Consumer.Earliest
       ; auto_commit = false
       ; security = svc.security
-      ; properties = []
+      ; properties = consumer_properties
       }
     in
     let start_retry_relay () =

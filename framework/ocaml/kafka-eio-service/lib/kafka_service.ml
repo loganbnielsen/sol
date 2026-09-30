@@ -368,6 +368,7 @@ let consume_partitioned
       ?(hooks = no_hooks)
       ?decode_error_policy
       ~retry_strategy
+      ?(consumer_properties = [])
       ?ot
       ?stop
       ~handler
@@ -398,7 +399,7 @@ let consume_partitioned
       ; offset_reset = Kafka.Consumer.Earliest
       ; auto_commit = false
       ; security = svc.security
-      ; properties = []
+      ; properties = consumer_properties
       }
     in
     (match Kafka.Consumer.create ~hooks:kafka_hooks ~clock consumer_cfg ~sw with
@@ -446,6 +447,7 @@ let consume_partitioned
     let runtime : _ Kafka_service_retry_topics.runtime =
       { group_id
       ; retry_policy
+      ; consumer_properties
       ; hooks
       ; decode_error_policy = Option.value decode_error_policy ~default:Route_to_dlq
       ; observe_decode_error

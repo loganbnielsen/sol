@@ -264,6 +264,7 @@ val consume_partitioned
   -> ?hooks:consumer_hooks
   -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
+  -> ?consumer_properties:(string * string) list
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
   -> handler:

@@ -102,6 +102,7 @@ val process_handler_result
 type 'a runtime =
   { group_id : string
   ; retry_policy : Kafka.Consumer.retry_policy
+  ; consumer_properties : (string * string) list
   ; hooks : Kafka_service_intf.consumer_hooks
   ; decode_error_policy : Kafka_service_intf.decode_error_policy
   ; observe_decode_error :
