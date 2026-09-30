@@ -28,7 +28,7 @@ let () =
     let pool = pool
     let obs = obs
   end) in
-  let module WR = Worker.Make_with_retry (W) in
+  let module WR = Worker.Make (W) in
   WR.run ~env ~config:kafka_config ~ot:obs ()
   |> Result.map_error Worker.run_error_to_string
   |> function

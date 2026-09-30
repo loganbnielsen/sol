@@ -6,6 +6,8 @@
   pluto_storage
   pluto_payments_events
   sol-worker
+  sol-jobs
   kafka-eio-service
   obs-eio
-  pg-eio))
+  pg-eio
+  yojson))

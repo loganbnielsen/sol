@@ -20,6 +20,6 @@ end) = struct
       Sol_obs.log_error Config.obs
         ~fields:[("error", Pg_error.to_string e)]
         "db insert failed";
-      Worker.Retry (Pg_error.to_string e)
+      Worker.Fail
 
 end

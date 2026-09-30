@@ -207,8 +207,8 @@ let test_config_of_env_topic_durability () =
         (contains (Kafka_service.error_to_string e) "SOL_KAFKA_DURABILITY"))
 ;;
 
-let raw_retry_msg ?(headers = []) ?key () : Kafka.Consumer.message =
-  { topic = "orders-retry"
+let raw_source_msg ?(headers = []) ?key () : Kafka.Consumer.message =
+  { topic = "orders"
   ; partition = 0l
   ; offset = 0L
   ; key
@@ -218,352 +218,16 @@ let raw_retry_msg ?(headers = []) ?key () : Kafka.Consumer.message =
   }
 ;;
 
-let test_shared_record_policy () =
-  let module R = Kafka_service.Retry_topics in
-  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
-  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
-  let retry_policy : Kafka.Consumer.retry_policy =
-    { base_delay_s = 0.; max_delay_s = 0.; max_attempts = 3; jitter_ratio = 0. }
-  in
-  let check stage error expected_attempt expected_topic publish_result =
-    let events = ref [] in
-    let publish ~target_topic (relay : R.relay) =
-      events := !events @ [ "publish" ];
-      Alcotest.(check int) "attempt" expected_attempt relay.attempt;
-      Alcotest.(check string)
-        "destination"
-        expected_topic
-        (Kafka_service.topic_name_to_string target_topic);
-      publish_result
-    in
-    let ack () =
-      events := !events @ [ "ack" ];
-      Ok ()
-    in
-    let result =
-      R.process_handler_result
-        ~stage
-        ~retry_topic
-        ~dlq_topic
-        ~retry_policy
-        ~group_id:"orders"
-        ~raw_msg:(raw_retry_msg ())
-        ~publish
-        ~ack
-        (Kafka.Consumer.Error error)
-    in
-    match publish_result, result with
-    | Ok (), Kafka.Consumer.Continue ->
-      Alcotest.(check (list string)) "publish before ack" [ "publish"; "ack" ] !events
-    | Error _, Kafka.Consumer.Error _ ->
-      Alcotest.(check (list string)) "failed publish does not ack" [ "publish" ] !events
-    | _ -> Alcotest.fail "unexpected handler outcome"
-  in
-  check R.Source Kafka_service.Retry 1 "orders-retry" (Ok ());
-  check (R.Retry 1) Kafka_service.Retry 2 "orders-retry" (Ok ());
-  check (R.Retry 2) Kafka_service.Retry 3 "orders-dlq" (Ok ());
-  check (R.Retry 2) (Kafka_service.Dead_letter "invalid") 2 "orders-dlq" (Ok ());
-  check R.Source Kafka_service.Retry 1 "orders-retry" (Error Kafka.Error.Application)
-;;
-
-let test_retry_metadata_rejects_malformed_headers () =
-  let check_error name headers =
-    match Kafka_service.Retry_topics.parse_retry_metadata headers with
-    | Ok _ -> Alcotest.failf "%s: expected retry metadata error" name
-    | Error _ -> ()
-  in
-  let valid = [ "X-Sol-Attempt", Some "2"; "X-Sol-Retry-At", Some "123.5" ] in
-  Alcotest.(check (result (pair int (float 0.0001)) string))
-    "valid retry metadata"
-    (Ok (2, 123.5))
-    (Kafka_service.Retry_topics.parse_retry_metadata valid);
-  check_error "missing attempt" [ "X-Sol-Retry-At", Some "123.5" ];
-  check_error "zero attempt" [ "X-Sol-Attempt", Some "0"; "X-Sol-Retry-At", Some "123.5" ];
-  check_error
-    "bad attempt"
-    [ "X-Sol-Attempt", Some "nan"; "X-Sol-Retry-At", Some "123.5" ];
-  check_error "missing retry_at" [ "X-Sol-Attempt", Some "1" ];
-  check_error "bad retry_at" [ "X-Sol-Attempt", Some "1"; "X-Sol-Retry-At", Some "soon" ]
-;;
-
-let test_retry_publish_then_ack_failure_is_error () =
-  let acked = ref 0 in
-  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) = Ok () in
-  let ack () =
-    incr acked;
-    Error Kafka.Error.Application
-  in
-  let target = Kafka_service.topic_name_exn "orders-retry" in
-  let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
-  match
-    Kafka_service.Retry_topics.execute_action
-      ~group_id:"test-group"
-      action
-      ~raw_msg:(raw_retry_msg ())
-      ~attempt:1
-      ~publish
-      ~ack
-  with
-  | Error Kafka.Error.Application -> Alcotest.(check int) "ack attempted once" 1 !acked
-  | _ -> Alcotest.fail "expected ack failure to be returned"
-;;
-
-let test_retry_publish_failure_does_not_ack () =
-  let acked = ref false in
-  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) =
-    Error Kafka.Error.Transport
-  in
-  let ack () =
-    acked := true;
-    Ok ()
-  in
-  let target = Kafka_service.topic_name_exn "orders-dlq" in
-  let action = Kafka_service.Retry_topics.Forward_dlq { target } in
-  match
-    Kafka_service.Retry_topics.execute_action
-      ~group_id:"test-group"
-      action
-      ~raw_msg:(raw_retry_msg ())
-      ~attempt:1
-      ~publish
-      ~ack
-  with
-  | Error Kafka.Error.Transport -> Alcotest.(check bool) "ack skipped" false !acked
-  | _ -> Alcotest.fail "expected publish failure to be returned"
-;;
-
-let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
-  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
-  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
-  let acked = ref 0 in
-  let published = ref None in
-  let publish ~target_topic (msg : Kafka_service.Retry_topics.relay) =
-    published := Some (target_topic, msg);
-    Ok ()
-  in
-  let ack () =
-    incr acked;
-    Ok ()
-  in
-  match
-    Kafka_service.Retry_topics.action_of_handler_error
-      ~retry_topic
-      ~dlq_topic
-      ~retry_policy:
-        { base_delay_s = 1.0; max_delay_s = 60.0; max_attempts = 3; jitter_ratio = 0.0 }
-      ~attempt:1
-      (Kafka_service.Dead_letter "poison")
-  with
-  | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
-  | Ok action ->
-    (match
-       Kafka_service.Retry_topics.execute_action
-         ~group_id:"test-group"
-         action
-         ~raw_msg:(raw_retry_msg ())
-         ~attempt:1
-         ~publish
-         ~ack
-     with
-     | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
-     | Ok () ->
-       Alcotest.(check int) "acked once" 1 !acked;
-       (match !published with
-        | None -> Alcotest.fail "publish was never called"
-        | Some (target_topic, (msg : Kafka_service.Retry_topics.relay)) ->
-          Alcotest.(check (triple string int (float 0.0001)))
-            "published to dlq without retry delay"
-            (Kafka_service.topic_name_to_string dlq_topic, 1, 0.0)
-            (Kafka_service.topic_name_to_string target_topic, msg.attempt, msg.delay_s);
-          Alcotest.(check (option string))
-            "origin-group header (BUG-030)"
-            (Some "test-group")
-            (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join)))
-;;
-
-let test_retry_within_budget_schedules_jittered_bounded_delay () =
-  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
-  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
-  let retry_policy : Kafka.Consumer.retry_policy =
-    { base_delay_s = 1.0; max_delay_s = 5.0; max_attempts = 5; jitter_ratio = 0.3 }
-  in
-  for attempt = 1 to retry_policy.max_attempts - 1 do
-    match
-      Kafka_service.Retry_topics.action_of_handler_error
-        ~retry_topic
-        ~dlq_topic
-        ~retry_policy
-        ~attempt
-        Kafka_service.Retry
-    with
-    | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
-    | Ok (Kafka_service.Retry_topics.Forward_retry { target; delay_s }) ->
-      Alcotest.(check string)
-        "targets the retry topic"
-        "orders-retry"
-        (Kafka_service.topic_name_to_string target);
-      Alcotest.(check bool)
-        (Printf.sprintf "attempt %d delay within [0, max_delay_s]" attempt)
-        true
-        (delay_s >= 0.0 && delay_s <= retry_policy.max_delay_s)
-    | Ok _ -> Alcotest.failf "attempt %d: expected Forward_retry, not Forward_dlq" attempt
-  done;
-  match
-    Kafka_service.Retry_topics.action_of_handler_error
-      ~retry_topic
-      ~dlq_topic
-      ~retry_policy
-      ~attempt:retry_policy.max_attempts
-      Kafka_service.Retry
-  with
-  | Ok (Kafka_service.Retry_topics.Forward_dlq { target }) ->
-    Alcotest.(check string)
-      "exhausted budget routes to the dlq topic"
-      "orders-dlq"
-      (Kafka_service.topic_name_to_string target)
-  | Ok (Kafka_service.Retry_topics.Forward_retry _) ->
-    Alcotest.fail "expected the exhausted attempt to route to the dlq, not retry again"
-  | Ok Kafka_service.Retry_topics.Ack ->
-    Alcotest.fail "expected the exhausted attempt to route to the dlq, not ack"
-  | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
-;;
-
-let test_retry_publish_preserves_key () =
-  let published_key = ref `Not_called in
-  let publish ~target_topic:_ (msg : Kafka_service.Retry_topics.relay) =
-    published_key := `Called msg.source.Kafka.Consumer.key;
-    Ok ()
-  in
-  let ack () = Ok () in
-  let target = Kafka_service.topic_name_exn "orders-retry" in
-  let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
-  let raw_msg = raw_retry_msg ~key:(Bytes.of_string "order-42") () in
-  match
-    Kafka_service.Retry_topics.execute_action
-      ~group_id:"test-group"
-      action
-      ~raw_msg
-      ~attempt:1
-      ~publish
-      ~ack
-  with
-  | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
-  | Ok () ->
-    (match !published_key with
-     | `Not_called -> Alcotest.fail "publish was never called"
-     | `Called None -> Alcotest.fail "expected the original message's key, got None"
-     | `Called (Some key) ->
-       Alcotest.(check string)
-         "key preserved on republish"
-         "order-42"
-         (Bytes.to_string key))
-;;
-
-let test_produce_backoff_s_early_attempt_within_jittered_bounds () =
-  let v = Kafka_service.Retry_topics.produce_backoff_s 1 in
-  Alcotest.(check bool)
-    "attempt 1 backoff is within +-20% of 0.1s"
-    true
-    (v >= 0.08 && v <= 0.12)
-;;
-
-let test_produce_backoff_s_caps_at_max_delay () =
-  Alcotest.(check (float 0.0))
-    "large attempt clamps to the cap"
-    5.0
-    (Kafka_service.Retry_topics.produce_backoff_s 10)
-;;
-
-let test_produce_backoff_s_never_negative () =
-  Alcotest.(check bool)
-    "attempt 1 backoff is non-negative"
-    true
-    (Kafka_service.Retry_topics.produce_backoff_s 1 >= 0.0)
-;;
-
-let test_retry_produce_succeeds_immediately_without_retrying () =
-  let produce_calls = ref 0 in
-  let sleeps = ref [] in
-  let retries = ref [] in
-  match
-    Kafka_service.Retry_topics.retry_produce
-      ~max_attempts:5
-      ~backoff_s:(fun n -> Float.of_int n)
-      ~sleep:(fun s -> sleeps := s :: !sleeps)
-      ~on_retry:(fun ~attempt ~error -> retries := (attempt, error) :: !retries)
-      ~produce:(fun () ->
-        incr produce_calls;
-        Ok ())
-      ()
-  with
-  | Error _ -> Alcotest.fail "expected immediate success"
-  | Ok () ->
-    Alcotest.(check int) "produce called once" 1 !produce_calls;
-    Alcotest.(check int) "no sleeps" 0 (List.length !sleeps);
-    Alcotest.(check int) "no retries reported" 0 (List.length !retries)
-;;
-
-let test_retry_produce_recovers_after_transient_failures () =
-  let attempts_seen = ref [] in
-  let sleeps = ref [] in
-  let call_count = ref 0 in
-  match
-    Kafka_service.Retry_topics.retry_produce
-      ~max_attempts:5
-      ~backoff_s:(fun n -> Float.of_int n *. 0.01)
-      ~sleep:(fun s -> sleeps := s :: !sleeps)
-      ~on_retry:(fun ~attempt ~error:_ -> attempts_seen := attempt :: !attempts_seen)
-      ~produce:(fun () ->
-        incr call_count;
-        if !call_count < 3 then Error "boom" else Ok ())
-      ()
-  with
-  | Error _ -> Alcotest.fail "expected eventual success"
-  | Ok () ->
-    Alcotest.(check int) "produce called 3 times" 3 !call_count;
-    Alcotest.(check (list int)) "retried after attempts 1 and 2" [ 2; 1 ] !attempts_seen;
-    Alcotest.(check (list (float 0.0001)))
-      "slept with backoff_s(1) then backoff_s(2)"
-      [ 0.02; 0.01 ]
-      !sleeps
-;;
-
-let test_retry_produce_gives_up_after_max_attempts () =
-  let call_count = ref 0 in
-  let retries = ref 0 in
-  match
-    Kafka_service.Retry_topics.retry_produce
-      ~max_attempts:3
-      ~backoff_s:(fun _ -> 0.0)
-      ~sleep:(fun _ -> ())
-      ~on_retry:(fun ~attempt:_ ~error:_ -> incr retries)
-      ~produce:(fun () ->
-        incr call_count;
-        Error "always fails")
-      ()
-  with
-  | Ok () -> Alcotest.fail "expected exhaustion"
-  | Error e ->
-    Alcotest.(check string) "final error surfaces" "always fails" e;
-    Alcotest.(check int) "produce called exactly max_attempts times" 3 !call_count;
-    Alcotest.(check int) "on_retry called max_attempts - 1 times" 2 !retries
-;;
-
-let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
-  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+let test_decode_error_routes_to_dlq_and_acks_after_publish () =
   let acked = ref 0 in
   let published = ref None in
   let raw_msg =
-    raw_retry_msg
+    raw_source_msg
       ~key:(Bytes.of_string "order-42")
-      ~headers:
-        [ "X-Sol-Attempt", Some "2"
-        ; "X-Sol-Retry-At", Some "123.5"
-        ; "app-header", Some "kept"
-        ]
+      ~headers:[ "app-header", Some "kept" ]
       ()
   in
-  let publish ~target_topic (msg : Kafka_service.Retry_topics.relay) =
+  let publish ~target_topic (msg : Kafka_service.Dlq.relay) =
     published := Some (target_topic, msg, !acked);
     Ok ()
   in
@@ -572,27 +236,21 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
     Ok ()
   in
   match
-    Kafka_service.Retry_topics.route_decode_error
-      ~stage:`Retry
-      ~dlq_topic
+    Kafka_service.Dlq.route_decode_error
+      ~dlq_topic:"orders-dlq"
       ~raw_msg
-      ~attempt:2
       ~decode_error:"bad json"
       ~group_id:"test-group"
       ~publish
       ~ack
   with
-  | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
+  | Error e -> Alcotest.failf "unexpected route error: %s" (Kafka.Error.to_string e)
   | Ok () ->
     Alcotest.(check int) "acked once" 1 !acked;
     (match !published with
      | None -> Alcotest.fail "publish was never called"
-     | Some (target_topic, (msg : Kafka_service.Retry_topics.relay), acked_before) ->
-       Alcotest.(check string)
-         "target"
-         "orders-dlq"
-         (Kafka_service.topic_name_to_string target_topic);
-       Alcotest.(check int) "attempt preserved" 2 msg.attempt;
+     | Some (target_topic, (msg : Kafka_service.Dlq.relay), acked_before) ->
+       Alcotest.(check string) "target" "orders-dlq" target_topic;
        Alcotest.(check (option string))
          "raw payload preserved"
          (Some "payload")
@@ -602,17 +260,9 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
          (Some "order-42")
          (Option.map Bytes.to_string msg.source.Kafka.Consumer.key);
        Alcotest.(check (option string))
-         "original header preserved"
+         "the application's own header is carried through"
          (Some "kept")
          (List.assoc_opt "app-header" msg.headers |> Option.join);
-       Alcotest.(check (option string))
-         "attempt header preserved"
-         (Some "2")
-         (List.assoc_opt "X-Sol-Attempt" msg.headers |> Option.join);
-       Alcotest.(check (option string))
-         "retry-at header preserved"
-         (Some "123.5")
-         (List.assoc_opt "X-Sol-Retry-At" msg.headers |> Option.join);
        Alcotest.(check (option string))
          "decode diagnostic header"
          (Some "bad json")
@@ -621,14 +271,12 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
          "origin-group header (BUG-030)"
          (Some "test-group")
          (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join);
-       Alcotest.(check (float 0.0001)) "dlq delay" 0.0 msg.delay_s;
        Alcotest.(check int) "publish happened before ack" 0 acked_before)
 ;;
 
-let test_retry_decode_error_publish_failure_does_not_ack () =
-  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+let test_decode_error_publish_failure_does_not_ack () =
   let acked = ref false in
-  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) =
+  let publish ~target_topic:_ (_ : Kafka_service.Dlq.relay) =
     Error Kafka.Error.Transport
   in
   let ack () =
@@ -636,11 +284,9 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
     Ok ()
   in
   match
-    Kafka_service.Retry_topics.route_decode_error
-      ~stage:`Retry
-      ~dlq_topic
-      ~raw_msg:(raw_retry_msg ())
-      ~attempt:1
+    Kafka_service.Dlq.route_decode_error
+      ~dlq_topic:"orders-dlq"
+      ~raw_msg:(raw_source_msg ())
       ~decode_error:"bad json"
       ~group_id:"test-group"
       ~publish
@@ -651,37 +297,32 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
 ;;
 
 let hash12 s = String.sub (Digest.to_hex (Digest.string s)) 0 12
+let dlq ~source ~group_id = Kafka_service.Dlq.dlq_topic_name ~source ~group_id
 
-let relay ~source ~group_id ~suffix =
-  Kafka_service.Retry_topics.relay_topic_name ~source ~group_id ~suffix
-;;
-
-let test_relay_topic_name_scopes_by_group () =
+let test_dlq_topic_name_scopes_by_group () =
   Alcotest.(check string)
     "readable group prefix plus a collision-resistant hash"
-    ("orders.payments-" ^ hash12 "payments" ^ ".retry")
-    (relay ~source:"orders" ~group_id:"payments" ~suffix:"retry");
+    ("orders.payments-" ^ hash12 "payments" ^ ".dlq")
+    (dlq ~source:"orders" ~group_id:"payments");
   Alcotest.(check bool)
     "two groups on the same source topic get distinct topic names"
     true
     (not
        (String.equal
-          (relay ~source:"orders" ~group_id:"payments" ~suffix:"dlq")
-          (relay ~source:"orders" ~group_id:"analytics" ~suffix:"dlq")))
+          (dlq ~source:"orders" ~group_id:"payments")
+          (dlq ~source:"orders" ~group_id:"analytics")))
 ;;
 
-let test_relay_topic_name_sanitizes_invalid_characters () =
+let test_dlq_topic_name_sanitizes_invalid_characters () =
   Alcotest.(check string)
     "dots and slashes become hyphens"
-    ("orders.pay-ments-v1-eu-west-1-" ^ hash12 "pay.ments/v1_eu:west-1" ^ ".retry")
-    (relay ~source:"orders" ~group_id:"pay.ments/v1_eu:west-1" ~suffix:"retry")
+    ("orders.pay-ments-v1-eu-west-1-" ^ hash12 "pay.ments/v1_eu:west-1" ^ ".dlq")
+    (dlq ~source:"orders" ~group_id:"pay.ments/v1_eu:west-1")
 ;;
 
-let test_relay_topic_name_distinguishes_punctuation_variants () =
+let test_dlq_topic_name_distinguishes_punctuation_variants () =
   let variants = [ "pay.ments"; "pay_ments"; "pay-ments" ] in
-  let names =
-    List.map (fun group_id -> relay ~source:"orders" ~group_id ~suffix:"retry") variants
-  in
+  let names = List.map (fun group_id -> dlq ~source:"orders" ~group_id) variants in
   Alcotest.(check int)
     "every punctuation variant gets its own topic"
     3
@@ -690,8 +331,7 @@ let test_relay_topic_name_distinguishes_punctuation_variants () =
     "each variant is deterministic (one topic per group)"
     true
     (List.for_all2
-       (fun group_id name ->
-          String.equal name (relay ~source:"orders" ~group_id ~suffix:"retry"))
+       (fun group_id name -> String.equal name (dlq ~source:"orders" ~group_id))
        variants
        names);
   Alcotest.(check bool)
@@ -700,17 +340,17 @@ let test_relay_topic_name_distinguishes_punctuation_variants () =
     (String.starts_with ~prefix:"orders.pay-ments-" (List.hd names))
 ;;
 
-let test_relay_topic_name_empty_group_id_is_unscoped () =
+let test_dlq_topic_name_empty_group_id_is_unscoped () =
   Alcotest.(check string)
     "empty group id"
-    ("orders.unscoped-" ^ hash12 "" ^ ".retry")
-    (relay ~source:"orders" ~group_id:"" ~suffix:"retry")
+    ("orders.unscoped-" ^ hash12 "" ^ ".dlq")
+    (dlq ~source:"orders" ~group_id:"")
 ;;
 
-let test_relay_topic_name_truncates_overlong_group_ids_deterministically () =
+let test_dlq_topic_name_truncates_overlong_group_ids_deterministically () =
   let long_group = String.make 200 'g' in
-  let name1 = relay ~source:"orders" ~group_id:long_group ~suffix:"retry" in
-  let name2 = relay ~source:"orders" ~group_id:long_group ~suffix:"retry" in
+  let name1 = dlq ~source:"orders" ~group_id:long_group in
+  let name2 = dlq ~source:"orders" ~group_id:long_group in
   Alcotest.(check string) "deterministic for the same group id" name1 name2;
   Alcotest.(check bool)
     "stays well under Kafka's 249-byte limit"
@@ -719,9 +359,9 @@ let test_relay_topic_name_truncates_overlong_group_ids_deterministically () =
   Alcotest.(check bool)
     "the group segment stays within the bound"
     true
-    (String.length name1 <= String.length "orders" + 1 + 64 + 1 + 5);
+    (String.length name1 <= String.length "orders" + 1 + 64 + 1 + 4);
   let other_long_group = String.make 200 'h' in
-  let name3 = relay ~source:"orders" ~group_id:other_long_group ~suffix:"retry" in
+  let name3 = dlq ~source:"orders" ~group_id:other_long_group in
   Alcotest.(check bool)
     "two different overlong group ids never truncate to the same name"
     true
@@ -876,84 +516,35 @@ let () =
         ; test_case "topic durability" `Quick test_config_of_env_topic_durability
         ; test_case "addresses are required" `Quick test_config_of_env_requires_addresses
         ] )
-    ; ( "retry_topics"
+    ; ( "dlq"
       , [ test_case
-            "malformed retry headers are rejected"
+            "decode error routes to dlq and acks after publish"
             `Quick
-            test_retry_metadata_rejects_malformed_headers
+            test_decode_error_routes_to_dlq_and_acks_after_publish
         ; test_case
-            "ack failure after publish is returned"
+            "decode error publish failure does not ack"
             `Quick
-            test_retry_publish_then_ack_failure_is_error
+            test_decode_error_publish_failure_does_not_ack
         ; test_case
-            "publish failure does not ack"
+            "dlq topic name scopes by group"
             `Quick
-            test_retry_publish_failure_does_not_ack
+            test_dlq_topic_name_scopes_by_group
         ; test_case
-            "dead-letter handler error routes to dlq and acks"
+            "dlq topic name sanitizes invalid characters"
             `Quick
-            test_dead_letter_handler_error_routes_to_dlq_and_acks
+            test_dlq_topic_name_sanitizes_invalid_characters
         ; test_case
-            "retry within budget schedules jittered bounded delay"
+            "dlq topic name isolates punctuation variants (BUG-080)"
             `Quick
-            test_retry_within_budget_schedules_jittered_bounded_delay
+            test_dlq_topic_name_distinguishes_punctuation_variants
         ; test_case
-            "retry publish preserves the message key"
+            "dlq topic name: empty group id is unscoped"
             `Quick
-            test_retry_publish_preserves_key
+            test_dlq_topic_name_empty_group_id_is_unscoped
         ; test_case
-            "produce backoff: early attempt within jittered bounds"
+            "dlq topic name truncates overlong group ids deterministically"
             `Quick
-            test_produce_backoff_s_early_attempt_within_jittered_bounds
-        ; test_case
-            "produce backoff: caps at max delay"
-            `Quick
-            test_produce_backoff_s_caps_at_max_delay
-        ; test_case
-            "produce backoff: never negative"
-            `Quick
-            test_produce_backoff_s_never_negative
-        ; test_case
-            "retry_produce: succeeds immediately without retrying"
-            `Quick
-            test_retry_produce_succeeds_immediately_without_retrying
-        ; test_case
-            "retry_produce: recovers after transient failures"
-            `Quick
-            test_retry_produce_recovers_after_transient_failures
-        ; test_case
-            "retry_produce: gives up after max attempts"
-            `Quick
-            test_retry_produce_gives_up_after_max_attempts
-        ; test_case "shared source/retry record policy" `Quick test_shared_record_policy
-        ; test_case
-            "retry decode error routes to dlq and acks after publish"
-            `Quick
-            test_retry_decode_error_routes_to_dlq_and_acks_after_publish
-        ; test_case
-            "retry decode error publish failure does not ack"
-            `Quick
-            test_retry_decode_error_publish_failure_does_not_ack
-        ; test_case
-            "relay topic name scopes by group"
-            `Quick
-            test_relay_topic_name_scopes_by_group
-        ; test_case
-            "relay topic name sanitizes invalid characters"
-            `Quick
-            test_relay_topic_name_sanitizes_invalid_characters
-        ; test_case
-            "relay topic name isolates punctuation variants (BUG-080)"
-            `Quick
-            test_relay_topic_name_distinguishes_punctuation_variants
-        ; test_case
-            "relay topic name: empty group id is unscoped"
-            `Quick
-            test_relay_topic_name_empty_group_id_is_unscoped
-        ; test_case
-            "relay topic name truncates overlong group ids deterministically"
-            `Quick
-            test_relay_topic_name_truncates_overlong_group_ids_deterministically
+            test_dlq_topic_name_truncates_overlong_group_ids_deterministically
         ] )
     ; ( "topic_name"
       , [ test_case

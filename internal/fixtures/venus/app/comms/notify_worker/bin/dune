@@ -4,6 +4,7 @@
   venus_comms_notify
   kafka-eio-service
   sol-worker
+  sol-jobs
   pg-eio
   obs-eio
   sol-obs

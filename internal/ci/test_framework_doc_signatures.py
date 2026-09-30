@@ -16,9 +16,9 @@ CASES = [
     ("a member the .mli does not export", "fail", SVC,
      "val internal_error  : string -> t", "val internal_error  : string -> t\nval not_implemented : t"),
     ("an old flat module name", "fail", KAFKA,
-     "-> retry_policy:Kafka.Consumer.retry_policy",
-     "-> retry_policy:Kafka_consumer.retry_policy"),
-    ("a changed argument shape", "fail", KAFKA, "-> raw_bytes:bytes option", "-> raw_bytes:bytes"),
+     "-> ?hooks:Kafka.Consumer.hooks",
+     "-> ?hooks:Kafka_consumer.hooks"),
+    ("a changed argument shape", "fail", KAFKA, "-> ?ot:Obs_eio.t", "-> ?ot:Obs_eio.t option"),
     ("a spec that shows fewer declarations than the .mli", "pass", SVC,
      "val query_params : t -> string -> string list", ""),
 ]
