@@ -26,6 +26,7 @@ type pr_info =
   ; pr_base_ref : string
   ; pr_head_sha : string
   ; pr_draft : bool
+  ; pr_cross_repository : bool
   }
 
 let ticket_id_of_branch branch =
@@ -43,6 +44,8 @@ let pr_of_json j =
       j |> member "baseRefName" |> to_string_option |> Option.value ~default:""
   ; pr_head_sha = j |> member "headRefOid" |> to_string
   ; pr_draft = j |> member "isDraft" |> to_bool
+  ; pr_cross_repository =
+      j |> member "isCrossRepository" |> to_bool_option |> Option.value ~default:false
   }
 ;;
 
@@ -55,7 +58,7 @@ let open_prs () =
       ; "--state"
       ; "open"
       ; "--json"
-      ; "number,url,headRefName,baseRefName,headRefOid,isDraft"
+      ; "number,url,headRefName,baseRefName,headRefOid,isDraft,isCrossRepository"
       ; "--limit"
       ; "200"
       ]
@@ -75,6 +78,41 @@ let open_prs () =
       (try Ok (json |> Yojson.Basic.Util.to_list |> List.map pr_of_json) with
        | Yojson.Basic.Util.Type_error (message, _) ->
          Soldev_exit.error ("unexpected gh pr list shape: " ^ message)))
+;;
+
+let sha_field line =
+  match String.split_on_char '\t' line with
+  | sha :: _ -> String.trim sha
+  | [] -> ""
+;;
+
+let pinned_head_sha ~listed ~cross_repository remote =
+  match remote, cross_repository with
+  | Some output, false ->
+    let lines =
+      output |> String.split_on_char '\n' |> List.filter (fun line -> line <> "")
+    in
+    (match lines with
+     | [ line ] when sha_field line <> "" -> sha_field line
+     | _ -> listed)
+  | Some _, true | None, _ -> listed
+;;
+
+let remote_head_sha branch =
+  let result =
+    Sol_process.run_argv [ "git"; "ls-remote"; "origin"; "refs/heads/" ^ branch ]
+  in
+  if Sol_process.succeeded result then Some result.stdout else None
+;;
+
+let pin_head_sha p =
+  { p with
+    pr_head_sha =
+      pinned_head_sha
+        ~listed:p.pr_head_sha
+        ~cross_repository:p.pr_cross_repository
+        (remote_head_sha p.pr_branch)
+  }
 ;;
 
 let find_pr_in prs ticket_id =
@@ -663,6 +701,14 @@ let merge_candidates ~dry_run ~mode targets =
     (fun target ->
        let p = target_pr target in
        Printf.printf "\n[%s]\n%!" (target_label target);
+       let p = pin_head_sha p in
+       if not (String.equal p.pr_head_sha (target_pr target).pr_head_sha)
+       then
+         Printf.printf
+           "  pinning the branch's current head %s (a read of the PR payload reported %s)\n\
+            %!"
+           p.pr_head_sha
+           (target_pr target).pr_head_sha;
        let checks = required_checks ~consult:(mode_consults_checks mode) p.pr_url in
        let refusal =
          merge_refusal
