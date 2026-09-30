@@ -11,6 +11,13 @@ source: the INFRA-079 decision investigation (item 8), which deliberately did no
 **Related:** DEC-048 (the authority rule), `INFRA-079`, `Sol_cli_provider_capabilities.t`,
 `Sol_cli_terraform.targets`.
 
+**Reconciled with `DEC-057`/`DEC-051` (2026-09-29):** this ticket gains a second
+consumer. `DEC-051`'s `byo` driver owns no cloud Terraform root, and `DEC-057`
+requires the installation to be provider-symmetric — both need the capability
+record to say "this provider has no authority mechanism / no root", which is
+exactly the explicit "none" this ticket asks for. The decision stays open; the
+contract raises its priority rather than pre-empting its answer.
+
 ## Problem
 
 `capabilities.t` describes a provider's authority mechanism as data — `bootstrap_matchers`,

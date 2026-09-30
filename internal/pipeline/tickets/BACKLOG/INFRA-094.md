@@ -9,6 +9,14 @@ source: GCP qualification Attempt 15b (2026-09-27)
 
 **Depends on:** None.
 
+**Reconciled with `DEC-057` (2026-09-29):** the destroy semantics this concerns
+are now stated at product level — environment destroy must converge the target to
+absence without constructing, and must not touch the durable installation. That
+strengthens the constraint rather than answering the question here, which is how
+to converge a target whose creation the provider failed. Non-construction stays
+the invariant; `DEC-057` adds that installation resources are out of scope for
+any resolution.
+
 Attempt 15b: a zonal GCE stockout failed the cluster creation after Terraform had recorded
 resources; the supported destroy then planned a **Replace** of `google_container_cluster.main` and
 Sol correctly refused it (destroy must not construct). The destroy exited non-zero with the cluster
