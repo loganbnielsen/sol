@@ -77,10 +77,13 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
 let bootstrap_only_capabilities =
   List.map
     (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
-    [ "create", "clusterroles"
-    ; "create", "clusterrolebindings"
-    ; "escalate", "clusterroles"
-    ]
+    [ "escalate", "clusterroles"; "bind", "clusterroles" ]
+;;
+
+let successor_capabilities =
+  List.map
+    (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
+    [ "create", "namespaces"; "create", "clusterroles"; "create", "storageclasses" ]
 ;;
 
 let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
@@ -93,6 +96,17 @@ let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
   | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
     Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code ~stdout ~stderr
   | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
+;;
+
+let successor_probe ~region ~outputs () =
+  match
+    provisioner_kubeconfig ~region outputs (fun env ->
+      successor_capabilities
+      |> List.map (fun capability ->
+        capability, capability_answer_of_can_i ~env capability))
+  with
+  | Ok probes -> probes
+  | Error _ -> []
 ;;
 
 let whoami_retry_interval_s () =
@@ -255,7 +269,7 @@ let refusal_is_deescalation assumption detail =
          detail)
 ;;
 
-let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
+let deescalation_principal_check ~expected_arn ~assumable_role_arn env =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
@@ -279,22 +293,25 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
     if Sol_cli_kubectl.classify (Sol_cli_process.Non_zero r) = Refused
     then (
       let assumption =
-        match
-          Sol_cli_process.run
-            (Sol_cli_process.cmd
-               ~env
-               [ "aws"
-               ; "sts"
-               ; "assume-role"
-               ; "--role-arn"
-               ; provisioner_role_arn
-               ; "--role-session-name"
-               ; "sol-deescalation-check"
-               ])
-        with
-        | Ok _ -> Credential_assumable
-        | Error (Sol_cli_process.Non_zero _) -> Credential_refused
-        | Error _ -> Credential_unchecked
+        if Sol_cli_string.is_blank assumable_role_arn
+        then Credential_unchecked
+        else (
+          match
+            Sol_cli_process.run
+              (Sol_cli_process.cmd
+                 ~env
+                 [ "aws"
+                 ; "sts"
+                 ; "assume-role"
+                 ; "--role-arn"
+                 ; assumable_role_arn
+                 ; "--role-session-name"
+                 ; "sol-deescalation-check"
+                 ])
+          with
+          | Ok _ -> Credential_assumable
+          | Error (Sol_cli_process.Non_zero _) -> Credential_refused
+          | Error _ -> Credential_unchecked)
       in
       refusal_is_deescalation assumption detail)
     else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
@@ -302,13 +319,13 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
 ;;
 
-let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
+let deescalation_probe ~region ~outputs ~window_role_arn ~assumable_role_arn () =
   match
-    provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+    provisioner_kubeconfig ~role_arn:window_role_arn ~region outputs (fun env ->
       let principal =
         deescalation_principal_check
-          ~expected_arn:(normalize_role_arn provisioner_role_arn)
-          ~provisioner_role_arn
+          ~expected_arn:(normalize_role_arn window_role_arn)
+          ~assumable_role_arn
           env
       in
       let probes =
@@ -364,14 +381,14 @@ let persist_whoami_capture ~run_id json =
          reason)
 ;;
 
-let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
+let verify_whoami_shape ~region ~outputs ~window_role_arn =
   let fail message = Error message in
   let interval_s = whoami_retry_interval_s () in
-  let expected = normalize_role_arn provisioner_role_arn in
+  let expected = normalize_role_arn window_role_arn in
   let run_id = Printf.sprintf "%d" (int_of_float (Unix.gettimeofday ())) in
   let rec attempt remaining =
     let outcome =
-      provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+      provisioner_kubeconfig ~role_arn:window_role_arn ~region outputs (fun env ->
         Sol_cli_process.run
           (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
     in
@@ -454,11 +471,11 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
   attempt cluster_propagation_attempts
 ;;
 
-let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
+let await_deescalation ~region ~outputs ~window_role_arn ~assumable_role_arn ~before =
   let interval_s = whoami_retry_interval_s () in
   let rec loop remaining =
     let principal, probes =
-      deescalation_probe ~region ~outputs ~provisioner_role_arn ()
+      deescalation_probe ~region ~outputs ~window_role_arn ~assumable_role_arn ()
     in
     let verdict =
       Sol_cli_cloud_lifecycle.deescalation_transition
@@ -514,10 +531,18 @@ let window_control_failure ~permitted indeterminate =
       stop
 ;;
 
-let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
+let observe_bootstrap_window_result
+      ~region
+      ~outputs
+      ~window_role_arn
+      ~assumable_role_arn
+      ()
+  =
   let interval_s = whoami_retry_interval_s () in
   let rec attempt remaining =
-    let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
+    let control =
+      deescalation_probe ~region ~outputs ~window_role_arn ~assumable_role_arn ()
+    in
     let principal, probes = control in
     let permitted =
       probes
@@ -623,13 +648,15 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
       (fun f -> provisioner_kubeconfig ~region outputs (fun env -> f ~env) |> Result.join)
   ; ready = (fun () -> aws_cloud_ready ~region outputs)
   ; bootstrap_window =
-      (match provisioner_role_arn with
-       | None -> Sol_cli_cluster.No_role_declared
-       | Some provisioner_role_arn ->
+      (let window_role_arn = outputs.cluster_access_role_arn in
+       let assumable_role_arn = Option.value ~default:"" provisioner_role_arn in
+       if Sol_cli_string.is_blank window_role_arn
+       then Sol_cli_cluster.No_role_declared
+       else (
          let before = ref [] in
          Sol_cli_cluster.Verified
-           { principal = provisioner_role_arn
-           ; gate = (fun () -> verify_whoami_shape ~region ~outputs ~provisioner_role_arn)
+           { principal = window_role_arn
+           ; gate = (fun () -> verify_whoami_shape ~region ~outputs ~window_role_arn)
            ; observe =
                (fun () ->
                  let open Result.Syntax in
@@ -637,7 +664,8 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
                    observe_bootstrap_window_result
                      ~region
                      ~outputs
-                     ~provisioner_role_arn
+                     ~window_role_arn
+                     ~assumable_role_arn
                      ()
                  in
                  before := probes;
@@ -648,13 +676,26 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
                    await_deescalation
                      ~region
                      ~outputs
-                     ~provisioner_role_arn
+                     ~window_role_arn
+                     ~assumable_role_arn
                      ~before:!before
                  with
-                 | Sol_cli_cloud_lifecycle.Deescalated -> Ok ()
+                 | Sol_cli_cloud_lifecycle.Deescalated ->
+                   (match
+                      Sol_cli_cloud_lifecycle.successor_authority
+                        (successor_probe ~region ~outputs ())
+                    with
+                    | Ok () -> Ok ()
+                    | Error why ->
+                      Error
+                        (Printf.sprintf
+                           "the bootstrap elevation was relinquished, but the durable \
+                            cluster-access identity was not demonstrated to hold the \
+                            authority the lifecycle needs next: %s"
+                           why))
                  | verdict ->
                    Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
-           })
+           }))
   }
 ;;
 

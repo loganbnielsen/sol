@@ -100,7 +100,7 @@ CASES = [
         'let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =\n  let _ = "Sol cannot yet wire a certificate issuer on GCP" in\n  ignore _ in')),
     ("aws-record-authority-widened-to-every-zone", substitute(
         AWS_CLUSTER,
-        r'resources = var\.create_route53_zone \? \[aws_route53_zone\.main\[0\]\.arn\] : \["arn:aws:route53:::hostedzone/\*"\]',
+        r'resources = \[local\.route53_zone_arn\]',
         'resources = ["*"]')),
     ("aws-solver-region-dropped", substitute(
         AWS_PLATFORM, r"\n\s*cert_manager_dns01_region\s*=\s*var\.cert_manager_dns01_region", "")),

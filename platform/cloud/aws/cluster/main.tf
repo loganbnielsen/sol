@@ -309,6 +309,17 @@ resource "aws_route53_zone" "main" {
   tags  = var.tags
 }
 
+data "aws_route53_zone" "existing" {
+  count = var.create_route53_zone ? 0 : 1
+
+  name         = var.base_domain
+  private_zone = false
+}
+
+locals {
+  route53_zone_arn = var.create_route53_zone ? aws_route53_zone.main[0].arn : data.aws_route53_zone.existing[0].arn
+}
+
 data "aws_iam_policy_document" "cert_manager" {
   statement {
     actions   = ["route53:GetChange"]
@@ -316,7 +327,7 @@ data "aws_iam_policy_document" "cert_manager" {
   }
   statement {
     actions   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
-    resources = var.create_route53_zone ? [aws_route53_zone.main[0].arn] : ["arn:aws:route53:::hostedzone/*"]
+    resources = [local.route53_zone_arn]
   }
   statement {
     actions   = ["route53:ListHostedZonesByName"]

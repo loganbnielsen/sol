@@ -37,3 +37,13 @@ output "operator_policy_json" {
   description = "The generated operator-identity policy contract. Supply the role ARN as `operator_role_arn`."
   value       = data.aws_iam_policy_document.operator.json
 }
+
+output "dns_zone_id" {
+  description = "The durable qualification hosted zone this root owns, if any. The registrar delegation must outlive every target."
+  value       = var.manage_dns_zone ? aws_route53_zone.qualification[0].zone_id : null
+}
+
+output "dns_zone_nameservers" {
+  description = "The zone's authoritative nameservers -- read this from the durable owner, not from a target's plan, so the values cannot drift from the delegation."
+  value       = var.manage_dns_zone ? aws_route53_zone.qualification[0].name_servers : null
+}

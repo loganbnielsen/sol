@@ -163,6 +163,8 @@ val deescalation_verdict
   -> (capability * capability_answer) list
   -> deescalation_verdict
 
+val successor_authority : (capability * capability_answer) list -> (unit, string) result
+
 val deescalation_transition
   :  before:(capability * capability_answer) list
   -> after_principal:deescalation_principal

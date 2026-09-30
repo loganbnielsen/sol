@@ -1124,6 +1124,32 @@ let test_deescalation_requires_the_effective_surface () =
     Alcotest.fail "a measurement failure was read as still elevated"
 ;;
 
+let test_successor_authority_requires_demonstration () =
+  let caps = [ capability "create" "namespaces"; capability "create" "clusterroles" ] in
+  Alcotest.(check bool)
+    "a permitted successor set establishes the successor's authority"
+    true
+    (Result.is_ok (Sol_cli_cloud_lifecycle.successor_authority (List.map permitted caps)));
+  Alcotest.(check bool)
+    "a denied successor capability is not a demonstrated handoff"
+    true
+    (Result.is_error
+       (Sol_cli_cloud_lifecycle.successor_authority
+          [ permitted (List.nth caps 0); denied (List.nth caps 1) ]));
+  Alcotest.(check bool)
+    "an unanswered successor capability is not a demonstrated handoff"
+    true
+    (Result.is_error
+       (Sol_cli_cloud_lifecycle.successor_authority
+          [ permitted (List.nth caps 0)
+          ; indeterminate (List.nth caps 1) "the probe never reached the server"
+          ]));
+  Alcotest.(check bool)
+    "proving nothing is not proving the successor works"
+    true
+    (Result.is_error (Sol_cli_cloud_lifecycle.successor_authority []))
+;;
+
 let test_deescalation_requires_a_transition () =
   let caps =
     [ capability "create" "clusterroles"
@@ -1606,6 +1632,10 @@ let () =
             "parse failure is Undetermined (DEC-040)"
             `Quick
             test_parse_failure_is_undetermined
+        ; Alcotest.test_case
+            "a handoff is claimed only with a demonstrated successor"
+            `Quick
+            test_successor_authority_requires_demonstration
         ; Alcotest.test_case
             "verified de-escalation is a transition (DEC-040)"
             `Quick
