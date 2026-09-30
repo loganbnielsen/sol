@@ -10,9 +10,10 @@ Sol's promise is a PaaS-simple deployment experience on infrastructure you own.
 The factory is Sol's; the cloud account, registry, database and DNS are yours, and
 stopping use of Sol does not stop what it deployed. There is no Sol-operated
 control plane in the core product: everything on the happy path runs from the Sol
-CLI, your own CI, or resources Sol installs into your account. Setup happens
-once per account; after that, deployment is essentially `sol deploy <target>`.
-The intended experience — and what is implemented versus still planned — is in
+CLI, your own CI, or resources Sol installs into your account. Setup is designed
+to happen once per account; after that, deployment is essentially
+`sol deploy <target>`. The intended experience — and what is implemented versus
+still planned — is in
 **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
 
 ---
@@ -67,11 +68,12 @@ curl localhost:8080/health
 That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
 
 This is the **local** path, and it needs no cloud account. Deploying the same
-workspace to your own AWS or GCP runs `sol deploy <env>/<provider>/<region>`; the
-first run against an account also performs the one-time installation (state
-backend, identities, delegated DNS), and later runs are just the deploy. The
-intended first-run flow, its current status, and what stays your responsibility
-are in **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
+workspace to your own AWS or GCP runs `sol deploy <env>/<provider>/<region>`. The
+durable, account-level setup (state backend, identities, delegated DNS) is
+designed to be established inline on the first run and reused after; today that
+part is still a separate step, and the guided flow is planned (FEAT-106, FEAT-107).
+The intended first-run flow, its current status, and what stays your
+responsibility are in **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
 
 A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
 `sol-vX.Y.Z/share/sol/vX.Y.Z/` (Terraform roots, Helm values, dashboards) and the
@@ -199,10 +201,12 @@ of lifecycle confusion:
 
 - **Installation** is the durable, account-level layer — Terraform state and
   locking, the provisioner/deploy/operator identities, and the delegated DNS
-  zone. It is set up once and removed only by an explicit uninstall.
+  zone. It is designed to be set up once and removed only by an explicit
+  `sol uninstall` (planned, FEAT-108), never by destroying an environment.
 - **An environment** is one disposable target — its network, cluster, database
-  and workloads. `sol cloud destroy <target>` removes the environment and leaves
-  the installation intact, so redeploying does not redo registrar or DNS work.
+  and workloads. `sol cloud destroy <target>` removes the environment and is
+  designed to leave the installation intact, so redeploying does not redo
+  registrar or DNS work.
 
 See [The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md) for the model,
 the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sol.toml` overrides) for the details.
