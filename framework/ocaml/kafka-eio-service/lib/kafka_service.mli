@@ -28,6 +28,8 @@ module type MESSAGE = sig
 
   val topic_name : topic_name
   val schema : string
+  val partitions : int
+  val key : t -> string option
   val encode : t -> Yojson.Safe.t
   val decode : Yojson.Safe.t -> (t, string) result
 end
@@ -173,6 +175,13 @@ module Admin : sig
   val decode_topic_partitions
     :  string
     -> (topic_partition_metadata, topic_partition_error) result
+
+  val query_topic_partitions
+    :  _ Eio.Net.t
+    -> clock:_ Eio.Time.clock
+    -> admin_url:string
+    -> topic_name:string
+    -> (topic_partition_metadata, topic_partition_error) result
 end
 
 type 'a topic
@@ -186,7 +195,6 @@ type config =
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
-  ; partitions : int
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }

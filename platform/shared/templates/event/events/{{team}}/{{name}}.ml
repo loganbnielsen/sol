@@ -14,6 +14,10 @@ let schema = {|{
   "required": ["id", "payload"]
 }|}
 
+let partitions = 3
+
+let key t = Some t.id
+
 let encode t = `Assoc [
   ("id",      `String t.id);
   ("payload", `String t.payload);

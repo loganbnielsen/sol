@@ -321,7 +321,7 @@ let prepare_topics
     Kafka_service_intf.ensure_topic
       svc.producer
       ~topic_name:(topic_name_to_string retry_topic_name)
-      ~partitions:svc.partitions
+      ~partitions:topic.partitions
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
@@ -330,7 +330,7 @@ let prepare_topics
     Kafka_service_intf.ensure_topic
       svc.producer
       ~topic_name:(topic_name_to_string dlq_topic_name)
-      ~partitions:svc.partitions
+      ~partitions:topic.partitions
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in

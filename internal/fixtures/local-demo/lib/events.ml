@@ -21,6 +21,9 @@ module OrderPlaced = struct
   }|}
   ;;
 
+  let partitions = 3
+  let key t = Some t.order_id
+
   let encode t =
     `Assoc
       [ "order_id", `String t.order_id

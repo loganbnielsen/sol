@@ -22,6 +22,9 @@ let schema =
 }|}
 ;;
 
+let partitions = 3
+let key t = Some t.id
+
 let encode t =
   `Assoc
     [ "id", `String t.id
