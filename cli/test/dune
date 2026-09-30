@@ -97,6 +97,12 @@
  (name print_readiness_invocations)
  (libraries sol_cli))
 
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_secret_cli.sh)
+ (action
+  (run bash %{dep:test_secret_cli.sh} %{dep:../bin/main.exe})))
+
 (executable
  (name print_providers)
  (libraries sol_cli))

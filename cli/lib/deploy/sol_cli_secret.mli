@@ -1,15 +1,8 @@
-type mode =
-  | Local
-  | Customer_cloud
-  | Sol_hosted
-
 type action_result =
   | Applied of string list
   | Deleted of string list
   | Listed of string list
-  | Hosted_unavailable of string
 
-val mode_of_env : string -> (mode, string) result
 val validate_key_format : string -> (unit, string) result
 val validate_key : string -> (unit, string) result
 
@@ -24,7 +17,6 @@ val redacted_result : action_result -> string
 
 val set
   :  ctx:Sol_cli_kube_destination.context
-  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> key:string
@@ -33,14 +25,12 @@ val set
 
 val list
   :  ctx:Sol_cli_kube_destination.context
-  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> (action_result, string) result
 
 val delete
   :  ctx:Sol_cli_kube_destination.context
-  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> key:string

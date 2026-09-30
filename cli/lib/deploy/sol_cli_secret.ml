@@ -1,29 +1,9 @@
-type mode =
-  | Local
-  | Customer_cloud
-  | Sol_hosted
-
 type action_result =
   | Applied of string list
   | Deleted of string list
   | Listed of string list
-  | Hosted_unavailable of string
 
 open Result.Syntax
-
-let mode_of_env env =
-  let normalized = String.lowercase_ascii (String.trim env) in
-  match normalized with
-  | "hosted" | "sol_hosted" | "sol-hosted" -> Ok Sol_hosted
-  | "local" -> Ok Local
-  | "cloud" | "customer_cloud" | "customer-cloud" -> Ok Customer_cloud
-  | _ ->
-    Error
-      (Printf.sprintf
-         "unknown secret environment %S; expected one of: hosted, sol_hosted, \
-          sol-hosted, local, cloud, customer_cloud, customer-cloud"
-         env)
-;;
 
 let is_key_char = function
   | 'A' .. 'Z' | '0' .. '9' | '_' -> true
@@ -121,7 +101,6 @@ let redacted_result = function
   | Deleted namespaces ->
     Printf.sprintf "secret deleted from %d namespace(s)" (List.length namespaces)
   | Listed keys -> String.concat "\n" keys
-  | Hosted_unavailable msg -> msg
 ;;
 
 let apply_manifest ~ctx yaml =
@@ -203,25 +182,10 @@ let list_workload_secrets ~ctx namespace =
           && String.ends_with ~suffix:"-secrets" name))
 ;;
 
-let hosted_stub _env =
-  Error
-    "hosted secret management will use the Sol control-plane API; no hosted endpoint is \
-     configured yet"
-;;
-
 let require_namespaces namespaces =
   match namespaces with
   | [] -> Error "no target namespaces found for this workspace"
   | _ -> Ok ()
-;;
-
-let validate_operation_context ~env ~namespaces =
-  let* mode = mode_of_env env in
-  match mode with
-  | Sol_hosted -> hosted_stub env
-  | Local | Customer_cloud ->
-    let* () = require_namespaces namespaces in
-    Ok namespaces
 ;;
 
 let iter_namespaces namespaces ~f =
@@ -375,9 +339,9 @@ let restart_all ~ctx rotations =
     Ok ())
 ;;
 
-let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
+let set ~ctx ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
-  let* namespaces = validate_operation_context ~env ~namespaces in
+  let* () = require_namespaces namespaces in
   let* rotations = read_rotations ~ctx namespaces in
   let* () = refuse_external_secret_rotation ~ctx rotations in
   let* () =
@@ -398,8 +362,8 @@ let read_keys ~ctx namespace =
   | Some json -> Ok (List.map fst (data_keys json))
 ;;
 
-let list ~ctx ~env ~workspace:_ ~namespaces =
-  let* namespaces = validate_operation_context ~env ~namespaces in
+let list ~ctx ~workspace:_ ~namespaces =
+  let* () = require_namespaces namespaces in
   let* keys =
     fold_namespaces namespaces ~init:[] ~f:(fun acc namespace ->
       let* keys = read_keys ~ctx namespace in
@@ -408,9 +372,9 @@ let list ~ctx ~env ~workspace:_ ~namespaces =
   Ok (Listed (List.sort_uniq String.compare keys))
 ;;
 
-let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
+let delete ~ctx ~workspace:_ ~namespaces ~key =
   let* () = validate_key_format key in
-  let* namespaces = validate_operation_context ~env ~namespaces in
+  let* () = require_namespaces namespaces in
   let* rotations = read_rotations ~ctx namespaces in
   let* () = refuse_external_secret_rotation ~ctx rotations in
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
