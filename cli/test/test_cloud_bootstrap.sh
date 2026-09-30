@@ -51,11 +51,15 @@ case " \$* " in
     exit 0
     ;;
   *" show "*) cat "$tmp/plan.json"; exit 0 ;;
+  *" output -json "*) cat "$tmp/outputs.json"; exit 0 ;;
   *" apply "*) exit 0 ;;
 esac
 exit 0
 EOF
 chmod +x "$tmp/bin-tf/terraform"
+printf '%s\n' \
+  '{"name_servers":{"sensitive":false,"value":["ns-1.awsdns.test","ns-2.awsdns.test"]}}' \
+  >"$tmp/outputs.json"
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: bootstrap-test
 EOF
@@ -223,6 +227,18 @@ check_contains \
   "aws-bootstrap" \
   "$(cat "$tmp/terraform.log")"
 check_contains "the installation is established after the reconcile" "The installation is established" "$output"
+check_contains \
+  "the delegation instruction names the zone's domain and parent" \
+  "add these NS records for qual-aws.example.test" \
+  "$output"
+check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
+check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
+
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" byo/aws/us-east-1 --apply
+check_absent \
+  "a zone Sol does not own gets no delegation instruction" \
+  "add these NS records" \
+  "$output"
 
 printf '%s\n' '{"resource_changes":[]}' >"$tmp/plan.json"
 rm -f "$tmp/terraform.log"

@@ -32,6 +32,7 @@ type t =
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
+  ; installation_nameservers_output : string
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -290,6 +291,7 @@ let aws =
       ]
   ; state_locking = Some "state_lock_table"
   ; installation_zone_address = "aws_route53_zone.qualification"
+  ; installation_nameservers_output = "name_servers"
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -433,6 +435,7 @@ let gcp =
   ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
   ; installation_zone_address = "google_dns_managed_zone.qualification"
+  ; installation_nameservers_output = "name_servers"
   ; scoped_identities = []
   }
 ;;
@@ -440,6 +443,10 @@ let gcp =
 let capabilities_of = function
   | Sol_cli_provider.Aws -> aws
   | Sol_cli_provider.Gcp -> gcp
+;;
+
+let installation_nameservers_output provider =
+  (capabilities_of provider).installation_nameservers_output
 ;;
 
 let installation_prerequisites provider =
