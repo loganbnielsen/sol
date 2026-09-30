@@ -10,7 +10,6 @@ type prerequisite =
   | Cluster_access_identity
   | Deploy_identity
   | Operator_identity
-  | Publisher_identity
   | Delegated_zone
 
 val prerequisite_label : prerequisite -> string
@@ -30,19 +29,24 @@ type installation_config =
   ; provisioning_identity : string option
   ; cluster_access_identity : string option
   ; deploy_identity : string option
-  ; publisher_identity : string option
   ; operator_identity : string option
   ; zone_domain : string option
   ; project_id : string option
   }
 
+val of_target : Sol_cli_config.target -> (installation_config, string) result
 val resolved_configuration_to_lines : installation_config -> string list
+
+type observation =
+  | Observed of string
+  | Absent of string
+  | Unobservable of string
 
 type probe =
   | Inspect of
       { prerequisite : prerequisite
       ; argv : string list
-      ; classify : string option -> verdict
+      ; classify : observation -> verdict
       }
   | Unavailable of
       { prerequisite : prerequisite
@@ -51,9 +55,17 @@ type probe =
 
 val probe_prerequisite : probe -> prerequisite
 val present_if_output : prerequisite -> string list -> probe
+
+val present_if_output_names
+  :  ?present:(string -> bool)
+  -> prerequisite
+  -> reason:string
+  -> string list
+  -> probe
+
 val absent : prerequisite -> string -> probe
 
 val observe
-  :  run:(string list -> string option)
+  :  run:(string list -> observation)
   -> probe list
   -> (prerequisite * verdict) list

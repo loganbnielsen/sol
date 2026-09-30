@@ -628,6 +628,84 @@ let reconcile_cmd =
       $ explain_flag)
 ;;
 
+let installation_observation argv =
+  match Sol_cli_process.run (Sol_cli_process.cmd argv) with
+  | Ok output -> Sol_cli_installation.Observed output.stdout
+  | Error (Sol_cli_process.Non_zero failure) ->
+    Sol_cli_installation.Absent (Sol_cli_process.failure_message failure)
+  | Error error ->
+    Sol_cli_installation.Unobservable (Sol_cli_process.error_to_string error)
+;;
+
+let declared_target target =
+  match Sol_cli_config.load_for_target ~target with
+  | Error e -> refuse (Sol_cli_config.error_to_string e)
+  | Ok { target = target_config; _ } when Sol_cli_config.target_declared target_config ->
+    Ok target_config
+  | Ok config ->
+    refuse
+      (Printf.sprintf
+         "target %s is not declared (expected in %s)"
+         target
+         (Sol_cli_config.target_source config.target))
+;;
+
+let cloud_bootstrap ~target () =
+  let* target_cfg = declared_target target in
+  let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
+  let verdicts =
+    Sol_cli_provider_capabilities.installation_probes target_cfg.provider configuration
+    |> Sol_cli_installation.observe ~run:installation_observation
+  in
+  Printf.printf
+    "\n\
+     Installation (%s) -- the durable prerequisites that outlive every environment:\n\n\
+     %!"
+    (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Cloud_bootstrap);
+  Printf.printf "  resolved configuration\n%!";
+  Sol_cli_installation.resolved_configuration_to_lines configuration
+  |> List.iter print_endline;
+  Printf.printf "\n%s\n%!" (Sol_cli_installation.summary verdicts);
+  let* () = Sol_cli_installation.all_established verdicts |> Sol_cli_exit.of_msg in
+  Printf.printf
+    "\n\
+     The installation is established. Environments can be created and destroyed against \
+     it;\n\
+     `sol cloud destroy` removes an environment, never this.\n\
+     %!";
+  Ok ()
+;;
+
+let bootstrap_cmd =
+  let doc =
+    "Report whether a target's durable installation is established, and what is missing."
+  in
+  let man =
+    [ `S Manpage.s_description
+    ; `P
+        "The installation is the durable account-level layer that outlives every \
+         environment: the Terraform state backend and its locking, the provisioning / \
+         cluster-access / deploy / operator identities, and the delegated DNS zone when \
+         Sol owns one (DEC-057). Every prerequisite is *observed* at the provider, never \
+         inferred from configuration, and reports Established, Unmet or UNKNOWN. A \
+         prerequisite Sol cannot observe is UNKNOWN, never healthy (DEC-052)."
+    ; `P
+        "Read-only: nothing here changes your account. It reports what the provider \
+         holds so a missing prerequisite is named before anything is created."
+    ; `S "EXIT STATUS"
+    ; `P "0 -- every prerequisite was observed Established."
+    ; `P
+        "1 -- a prerequisite is Unmet or UNKNOWN. The verdict and the reason are \
+         printed, and nothing is assumed healthy."
+    ; `P "No other code is used by this command."
+    ]
+  in
+  Cmd.v
+    (Cmd.info "bootstrap" ~doc ~man)
+    Term.(
+      const (fun target -> Sol_cli_exit.exit_on (cloud_bootstrap ~target ())) $ target_arg)
+;;
+
 let plan_flag =
   Arg.(
     value

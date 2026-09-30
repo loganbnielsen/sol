@@ -3,13 +3,12 @@ let check_string msg expected actual = Alcotest.(check string) msg expected actu
 
 let aws_config : Sol_cli_installation.installation_config =
   { state_bucket = "sol-state-test"
-  ; state_prefix = "sol/terraform.tfstate"
+  ; state_prefix = "bootstrap/aws"
   ; region = "eu-west-1"
   ; lock_table = Some "sol-lock-test"
   ; provisioning_identity = Some "sol-provisioner"
   ; cluster_access_identity = Some "sol-cluster-access"
   ; deploy_identity = Some "sol-deploy"
-  ; publisher_identity = Some "sol-publisher"
   ; operator_identity = Some "sol-operator"
   ; zone_domain = Some "qual-aws.example.test"
   ; project_id = None
@@ -18,8 +17,12 @@ let aws_config : Sol_cli_installation.installation_config =
 
 let gcp_config : Sol_cli_installation.installation_config =
   { aws_config with
-    lock_table = None
-  ; publisher_identity = None
+    state_prefix = "bootstrap/gcp"
+  ; lock_table = None
+  ; provisioning_identity = None
+  ; cluster_access_identity = None
+  ; deploy_identity = None
+  ; operator_identity = None
   ; zone_domain = Some "qual-gcp.example.test"
   ; project_id = Some "sol-project"
   }
@@ -28,6 +31,68 @@ let gcp_config : Sol_cli_installation.installation_config =
 let probe_prerequisites provider config =
   Sol_cli_provider_capabilities.installation_probes provider config
   |> List.map Sol_cli_installation.probe_prerequisite
+;;
+
+let aws_target : Sol_cli_config.target =
+  { name = "prod/aws/us-east-1"
+  ; env = "prod"
+  ; provider = Sol_cli_provider.Aws
+  ; region = "us-east-1"
+  ; registry = None
+  ; base_domain = Some "api.acme.example"
+  ; cluster_issuer = None
+  ; letsencrypt_email = None
+  ; cluster_name = Some "acme-prod"
+  ; kube_context = None
+  ; kubeconfig = None
+  ; terraform_var_file = None
+  ; observability_backend = None
+  ; destroy_retention = None
+  ; alert_receiver_type = None
+  ; alert_receiver_url = None
+  ; alert_owner = None
+  ; alert_runbook_url = None
+  ; state_bucket = Some "acme-tfstate"
+  ; cluster_endpoint_cidr = None
+  ; node_failure_headroom_nodes = None
+  ; profile = None
+  ; provider_fields =
+      [ ( "aws"
+        , [ "state_lock_table", "acme-tflock"
+          ; "provisioner_role_arn", "arn:aws:iam::111122223333:role/sol-provisioner"
+          ; "cluster_access_role_arn", "arn:aws:iam::111122223333:role/sol-cluster-access"
+          ; "deploy_role_arn", "arn:aws:iam::111122223333:role/sol-deploy"
+          ; "operator_role_arn", "arn:aws:iam::111122223333:role/sol-operator"
+          ] )
+      ]
+  }
+;;
+
+let gcp_target : Sol_cli_config.target =
+  { aws_target with
+    name = "qual/gcp/us-central1"
+  ; env = "qual"
+  ; provider = Sol_cli_provider.Gcp
+  ; region = "us-central1"
+  ; state_bucket = Some "sol-qualification-tfstate"
+  ; base_domain = Some "qual-gcp.example.test"
+  ; provider_fields = [ "gcp", [ "project_id", "sol-qualification" ] ]
+  }
+;;
+
+let resolved_or_fail target =
+  match Sol_cli_installation.of_target target with
+  | Ok configuration -> configuration
+  | Error message -> Alcotest.fail ("of_target refused a declared target: " ^ message)
+;;
+
+let probe_argv provider configuration prerequisite =
+  Sol_cli_provider_capabilities.installation_probes provider configuration
+  |> List.find_map (fun probe ->
+    match probe with
+    | Sol_cli_installation.Inspect probe when probe.prerequisite = prerequisite ->
+      Some probe.argv
+    | Sol_cli_installation.Inspect _ | Sol_cli_installation.Unavailable _ -> None)
 ;;
 
 let test_probe_coverage () =
@@ -64,20 +129,26 @@ let test_provider_sets_are_not_the_same_shape () =
     false
     (List.mem Sol_cli_installation.State_lock gcp);
   check_bool
-    "the AWS root declares a publisher policy"
+    "the AWS root declares the four identities the target resolves as role ARNs"
     true
-    (List.mem Sol_cli_installation.Publisher_identity aws);
+    (List.mem Sol_cli_installation.Provisioning_identity aws
+     && List.mem Sol_cli_installation.Cluster_access_identity aws
+     && List.mem Sol_cli_installation.Deploy_identity aws
+     && List.mem Sol_cli_installation.Operator_identity aws);
   check_bool
-    "the GCP root does not"
+    "the GCP durable root declares no identity of its own, so GCP has none to observe"
     false
-    (List.mem Sol_cli_installation.Publisher_identity gcp);
-  check_bool
-    "both name the identities the installation contains"
-    true
     (List.mem Sol_cli_installation.Provisioning_identity gcp
-     && List.mem Sol_cli_installation.Cluster_access_identity gcp
-     && List.mem Sol_cli_installation.Deploy_identity gcp
-     && List.mem Sol_cli_installation.Operator_identity gcp)
+     || List.mem Sol_cli_installation.Cluster_access_identity gcp
+     || List.mem Sol_cli_installation.Deploy_identity gcp
+     || List.mem Sol_cli_installation.Operator_identity gcp);
+  check_bool
+    "both installations are observed for the durable state and the delegated zone"
+    true
+    (List.mem Sol_cli_installation.State_backend aws
+     && List.mem Sol_cli_installation.State_backend gcp
+     && List.mem Sol_cli_installation.Delegated_zone aws
+     && List.mem Sol_cli_installation.Delegated_zone gcp)
 ;;
 
 let test_unobservable_is_never_established () =
@@ -89,7 +160,11 @@ let test_unobservable_is_never_established () =
         }
     ]
   in
-  match Sol_cli_installation.observe ~run:(fun _ -> None) probes with
+  match
+    Sol_cli_installation.observe
+      ~run:(fun _ -> Sol_cli_installation.Unobservable "no aws CLI in PATH")
+      probes
+  with
   | [ (_, verdict) ] ->
     (match verdict with
      | Sol_cli_installation.Unknown reason ->
@@ -101,19 +176,40 @@ let test_unobservable_is_never_established () =
   | _ -> Alcotest.fail "expected one verdict"
 ;;
 
-let test_observation_drives_the_verdict () =
+let test_a_refused_probe_is_unmet () =
   let probes =
-    [ Sol_cli_installation.Inspect
-        { prerequisite = Sol_cli_installation.State_backend
-        ; argv = [ "aws"; "s3api"; "head-bucket" ]
-        ; classify =
-            (function
-              | Some _ -> Sol_cli_installation.Established
-              | None -> Sol_cli_installation.Unknown "not run")
-        }
+    [ Sol_cli_installation.present_if_output
+        Sol_cli_installation.State_backend
+        [ "aws"; "s3api"; "head-bucket" ]
     ]
   in
-  match Sol_cli_installation.observe ~run:(fun _ -> Some "ok") probes with
+  match
+    Sol_cli_installation.observe
+      ~run:(fun _ -> Sol_cli_installation.Absent "aws exited with code 254: Not Found")
+      probes
+  with
+  | [ (_, Sol_cli_installation.Unmet reason) ] ->
+    check_bool
+      "the provider's own answer is carried through"
+      true
+      (String.length reason > 0)
+  | [ (_, Sol_cli_installation.Unknown reason) ] ->
+    Alcotest.fail ("a probe that ran and refused is Unmet, not UNKNOWN: " ^ reason)
+  | [ (_, Sol_cli_installation.Established) ] ->
+    Alcotest.fail "a refused probe was reported Established"
+  | _ -> Alcotest.fail "expected one verdict"
+;;
+
+let test_observation_drives_the_verdict () =
+  let probes =
+    [ Sol_cli_installation.present_if_output
+        Sol_cli_installation.State_backend
+        [ "aws"; "s3api"; "head-bucket" ]
+    ]
+  in
+  match
+    Sol_cli_installation.observe ~run:(fun _ -> Sol_cli_installation.Observed "ok") probes
+  with
   | [ (_, Sol_cli_installation.Established) ] -> ()
   | _ -> Alcotest.fail "an observed resource should be Established"
 ;;
@@ -125,7 +221,6 @@ let test_missing_configuration_is_unmet () =
     ; provisioning_identity = None
     ; cluster_access_identity = None
     ; deploy_identity = None
-    ; publisher_identity = None
     ; operator_identity = None
     ; zone_domain = None
     }
@@ -135,7 +230,7 @@ let test_missing_configuration_is_unmet () =
     Sol_cli_provider_capabilities.installation_probes Sol_cli_provider.Aws bare
     |> Sol_cli_installation.observe ~run:(fun argv ->
       inspected := argv :: !inspected;
-      Some "present")
+      Sol_cli_installation.Observed "present")
   in
   Alcotest.(check int) "only the state backend is inspected" 1 (List.length !inspected);
   List.iter
@@ -175,6 +270,91 @@ let test_all_established_fails_closed () =
       "terraform state backend is Unmet: no bucket"
       message
   | Ok () -> Alcotest.fail "Unmet must fail closed"
+;;
+
+let test_resolves_the_declared_installation () =
+  let aws = resolved_or_fail aws_target in
+  check_string
+    "the state prefix is derived plumbing, not a declaration"
+    "bootstrap/aws"
+    aws.state_prefix;
+  check_string "the bucket is the target's declaration" "acme-tfstate" aws.state_bucket;
+  check_string "the region is the target's declaration" "us-east-1" aws.region;
+  Alcotest.(check (option string))
+    "the lock table is the target's declaration"
+    (Some "acme-tflock")
+    aws.lock_table;
+  Alcotest.(check (option string))
+    "the provisioning identity is the declared ARN"
+    (Some "arn:aws:iam::111122223333:role/sol-provisioner")
+    aws.provisioning_identity;
+  Alcotest.(check (option string))
+    "the delegated zone follows the served domain"
+    (Some "api.acme.example")
+    aws.zone_domain;
+  Alcotest.(check (option string))
+    "an AWS installation names no project"
+    None
+    aws.project_id;
+  let gcp = resolved_or_fail gcp_target in
+  check_string "the GCP prefix is derived too" "bootstrap/gcp" gcp.state_prefix;
+  Alcotest.(check (option string))
+    "the GCP root declares no lock table, so none is resolved"
+    None
+    gcp.lock_table;
+  Alcotest.(check (option string))
+    "the GCP project is the target's declaration"
+    (Some "sol-qualification")
+    gcp.project_id;
+  Alcotest.(check (option string))
+    "the GCP durable root declares no identity, so none is resolved"
+    None
+    gcp.deploy_identity
+;;
+
+let test_the_state_backend_is_required () =
+  match Sol_cli_installation.of_target { aws_target with state_bucket = None } with
+  | Ok _ -> Alcotest.fail "an installation with no state backend was resolved"
+  | Error message ->
+    check_bool
+      "the refusal names what is missing"
+      true
+      (Sol_cli_string.contains ~needle:"state_bucket" message)
+;;
+
+let test_the_role_probe_names_the_role_not_the_arn () =
+  let configuration = resolved_or_fail aws_target in
+  match
+    probe_argv
+      Sol_cli_provider.Aws
+      configuration
+      Sol_cli_installation.Provisioning_identity
+  with
+  | Some argv ->
+    Alcotest.(check (list string))
+      "get-role takes the role name, derived from the declared ARN"
+      [ "aws"; "iam"; "get-role"; "--role-name"; "sol-provisioner" ]
+      argv
+  | None -> Alcotest.fail "the provisioning identity has no probe"
+;;
+
+let test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates () =
+  let configuration = resolved_or_fail gcp_target in
+  match
+    probe_argv Sol_cli_provider.Gcp configuration Sol_cli_installation.Delegated_zone
+  with
+  | Some argv ->
+    Alcotest.(check (list string))
+      "the durable root names its zone by replacing the dots"
+      [ "gcloud"
+      ; "dns"
+      ; "managed-zones"
+      ; "describe"
+      ; "qual-gcp-example-test"
+      ; "--format=value(name)"
+      ]
+      argv
+  | None -> Alcotest.fail "the delegated zone has no probe"
 ;;
 
 let test_resolved_configuration_has_no_authority () =
@@ -226,6 +406,10 @@ let () =
             `Quick
             test_observation_drives_the_verdict
         ; Alcotest.test_case
+            "a probe that ran and refused is Unmet"
+            `Quick
+            test_a_refused_probe_is_unmet
+        ; Alcotest.test_case
             "absent configuration is Unmet, not UNKNOWN"
             `Quick
             test_missing_configuration_is_unmet
@@ -239,6 +423,22 @@ let () =
             "carries plumbing and no authority"
             `Quick
             test_resolved_configuration_has_no_authority
+        ; Alcotest.test_case
+            "resolves the declared installation"
+            `Quick
+            test_resolves_the_declared_installation
+        ; Alcotest.test_case
+            "requires a state backend"
+            `Quick
+            test_the_state_backend_is_required
+        ; Alcotest.test_case
+            "the role probe names the role, not the ARN"
+            `Quick
+            test_the_role_probe_names_the_role_not_the_arn
+        ; Alcotest.test_case
+            "the GCP zone probe uses the zone name Terraform creates"
+            `Quick
+            test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates
         ] )
     ]
 ;;

@@ -167,3 +167,89 @@ one.
 stage they call. No `sol init`-style command is added, because DEC-057 §2 makes the inline
 path the ordinary one and the ticket's own non-goals keep the administrative workflow
 optional.
+
+## Part A completion notes (2026-09-30)
+
+Part A is landed as the observation half: a resolver, the per-provider data behind a
+capability, and a command that reports. Nothing here creates or changes anything.
+
+**What a user sees.** `sol cloud bootstrap <TARGET>` resolves the target's declaration,
+prints the resolved installation configuration, observes each prerequisite at the provider,
+and fails closed (exit 1) on anything not `Established`:
+
+```text
+$ PATH=<fake aws that answers yes> sol cloud bootstrap qual/aws/us-east-1
+Installation (CloudBootstrap) -- the durable prerequisites that outlive every environment:
+
+  resolved configuration
+  state bucket             sol-qual-tfstate
+  state prefix             bootstrap/aws
+  region                   us-east-1
+  lock table               sol-qual-tflock
+  provisioning identity    arn:aws:iam::111122223333:role/sol-provisioner
+  ...
+  terraform state backend      Established
+  terraform state lock         Established
+  provisioning identity        Established
+  cluster-access identity      Established
+  deploy identity              Established
+  operator identity            Established
+  delegated DNS zone           Established
+```
+
+`cli/test/test_cloud_bootstrap.sh` pins that output end to end against a fake provider,
+including the three failure directions: a refusing provider is `Unmet` carrying the
+provider's own message, a provider CLI that cannot be spawned is `UNKNOWN`, and a target
+whose declaration is incomplete is refused before anything is observed.
+
+**Corrections the wiring forced, each with its evidence.** The first slice was written from
+the AWS root outward; driving real argv exposed three things it asserted that the durable
+roots do not contain, and one that would have reported health it had not observed:
+
+- **The publisher identity is not an observable prerequisite.** `platform/cloud/aws/bootstrap`
+  emits a publisher *policy document* (`outputs.tf`, `publisher_policy_json`), but the
+  identity it authorises is the operator's CI identity: no target field names it and "Sol's
+  own execution never resolves it" (`docs/deployment/production-bootstrap.md` §2). A
+  prerequisite whose verdict could therefore never come from an observation was removed
+  rather than kept as a permanent `Unmet`; DEC-043's identity class is the four
+  identities Sol does resolve.
+- **GCP has no durable installation identities to observe.** `platform/cloud/gcp/bootstrap/main.tf`
+  (42 lines) declares the state bucket and the optional Cloud DNS zone and nothing else; the
+  provisioning/cluster-access/deploy service accounts are created by the *cluster* root
+  (`platform/cloud/gcp/cluster/main.tf:244`), so they are target-disposable, not installation
+  members. GCP's set is therefore `State_backend` and `Delegated_zone` — the provider sets
+  differ for a verified reason rather than by an AWS shape copied over. Whether GCP should
+  own durable identities of its own is a durable-root question, not an observation one, and
+  is not asserted here.
+- **A query-shaped probe cannot take its answer from the exit code.**
+  `aws route53 list-hosted-zones-by-name` **succeeds with an empty list** when no zone
+  matches, so "the command ran" reported `Established` for an installation with no delegated
+  zone — a false healthy, the exact failure DEC-052 exists to stop. Probes now carry how
+  their command answers: exit code (`head-bucket`, `describe-table`, `get-role`,
+  `gcloud … describe`) or the output naming the resource (Route53's list, `--format=value(name)`).
+- **The GCP zone is named by Terraform, not by the domain.** The durable root creates
+  `replace(var.base_domain, ".", "-")` (`platform/cloud/gcp/bootstrap/main.tf`), and the
+  qualification harness describes it the same way (`internal/qualification/gcp/live-qual.sh`,
+  `ZONE_NAME`), so the probe asks for `qual-gcp-example-test`, not `qual-gcp.example.test`.
+
+**What is resolved, and from where.** `Sol_cli_installation.of_target` derives the state
+prefix (`bootstrap/<provider>`) and the delegated zone's domain from the target's
+`base_domain`, and takes everything else from the target's declaration —
+`state_bucket`, `region`, and the provider block's `state_lock_table` /
+`provisioner_role_arn` / `cluster_access_role_arn` / `deploy_role_arn` /
+`operator_role_arn` / `project_id`. The AWS probes ask IAM for the role **name** derived
+from the declared ARN, so a declaration of authority is not passed back as plumbing. The
+resolved configuration still has no field for an authority grant, so AC6 remains structural.
+
+**Known limitation, recorded rather than hidden.** Zone ownership is not yet declared
+anywhere: the resolver reads the delegated zone from the target's `base_domain`, so a
+target whose DNS is external (a user-supplied zone, DEC-057 §4) reports the zone `Unmet`
+even though nothing is wrong. That is the safe direction (the installation is not reported
+established without the observation), and DEC-057 §4's create/adopt/ownership declaration
+is FEAT-107's; when it lands, `of_target` is where the distinction is resolved.
+
+**Still open in this ticket.** Part B (the stage: reconcile, not presence-check, with a
+destructive plan stopping the run) and part C (the destroy-boundary test and the
+`docs/DEVELOPER_EXPERIENCE.md` §3–4 / second-deploy example coverage). The ticket stays in
+`READY_FOR_ENGINEERING`; the demo/example obligation is discharged with part C.
+

@@ -10,7 +10,6 @@ type prerequisite =
   | Cluster_access_identity
   | Deploy_identity
   | Operator_identity
-  | Publisher_identity
   | Delegated_zone
 
 let prerequisite_label = function
@@ -20,7 +19,6 @@ let prerequisite_label = function
   | Cluster_access_identity -> "cluster-access identity"
   | Deploy_identity -> "deploy identity"
   | Operator_identity -> "operator identity"
-  | Publisher_identity -> "publisher identity"
   | Delegated_zone -> "delegated DNS zone"
 ;;
 
@@ -74,7 +72,6 @@ type installation_config =
   ; provisioning_identity : string option
   ; cluster_access_identity : string option
   ; deploy_identity : string option
-  ; publisher_identity : string option
   ; operator_identity : string option
   ; zone_domain : string option
   ; project_id : string option
@@ -92,18 +89,59 @@ let resolved_configuration_to_lines configuration =
   ; named "provisioning identity" configuration.provisioning_identity
   ; named "cluster-access identity" configuration.cluster_access_identity
   ; named "deploy identity" configuration.deploy_identity
-  ; named "publisher identity" configuration.publisher_identity
   ; named "operator identity" configuration.operator_identity
   ; named "zone domain" configuration.zone_domain
   ; named "project" configuration.project_id
   ]
 ;;
 
+let require what = function
+  | Some value when not (Sol_cli_string.is_blank value) -> Ok (String.trim value)
+  | _ -> Error (Printf.sprintf "the installation requires %s" what)
+;;
+
+let declared_value = function
+  | Some value when not (Sol_cli_string.is_blank value) -> Some (String.trim value)
+  | _ -> None
+;;
+
+let declared target key = declared_value (Sol_cli_config.provider_field target key)
+
+let of_target (target : Sol_cli_config.target) =
+  let open Result.Syntax in
+  let* state_bucket =
+    require
+      "the target's state_bucket: a Terraform root cannot create the backend that stores \
+       its own state, so the backend is declared on the target and provisioned once by \
+       the durable root"
+      (declared_value target.state_bucket)
+  in
+  let* region = require "the target's region" (declared_value (Some target.region)) in
+  Ok
+    { state_bucket
+    ; state_prefix =
+        Printf.sprintf "bootstrap/%s" (Sol_cli_provider.to_string target.provider)
+    ; region
+    ; lock_table = declared target "state_lock_table"
+    ; provisioning_identity = declared target "provisioner_role_arn"
+    ; cluster_access_identity = declared target "cluster_access_role_arn"
+    ; deploy_identity = declared target "deploy_role_arn"
+    ; operator_identity = declared target "operator_role_arn"
+    ; zone_domain = declared_value target.base_domain
+    ; project_id = declared target "project_id"
+    }
+;;
+
+type observation =
+  | Observed of string
+  | Absent of string
+  | Unobservable of string
+
 type probe =
   | Inspect of
       { prerequisite : prerequisite
       ; argv : string list
-      ; classify : string option -> verdict
+      ; classify : observation -> verdict
       }
   | Unavailable of
       { prerequisite : prerequisite
@@ -121,8 +159,27 @@ let present_if_output prerequisite argv =
     ; argv
     ; classify =
         (function
-          | Some _ -> Established
-          | None -> Unknown "the probe could not be run")
+          | Observed _ -> Established
+          | Absent refusal -> Unmet refusal
+          | Unobservable reason -> Unknown reason)
+    }
+;;
+
+let present_if_output_names
+      ?(present = fun output -> not (Sol_cli_string.is_blank output))
+      prerequisite
+      ~reason
+      argv
+  =
+  Inspect
+    { prerequisite
+    ; argv
+    ; classify =
+        (function
+          | Observed output when present output -> Established
+          | Observed _ -> Unmet reason
+          | Absent refusal -> Unmet refusal
+          | Unobservable why -> Unknown why)
     }
 ;;
 
@@ -138,8 +195,7 @@ let observe ~run probes =
          let verdict = probe.classify observed in
          let verdict =
            match observed, verdict with
-           | None, Established ->
-             Unknown "the probe could not be run, so nothing was observed"
+           | Unobservable reason, Established -> Unknown reason
            | _ -> verdict
          in
          probe.prerequisite, verdict)

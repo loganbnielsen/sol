@@ -91,18 +91,37 @@ let aws =
       ; Sol_cli_installation.Cluster_access_identity
       ; Sol_cli_installation.Deploy_identity
       ; Sol_cli_installation.Operator_identity
-      ; Sol_cli_installation.Publisher_identity
       ; Sol_cli_installation.Delegated_zone
       ]
   ; installation_probes =
       (fun configuration ->
         let open Sol_cli_installation in
+        let role_name arn =
+          let after needle =
+            let n = String.length needle in
+            let rec scan i =
+              if i + n > String.length arn
+              then None
+              else if String.sub arn i n = needle
+              then Some (String.sub arn (i + n) (String.length arn - i - n))
+              else scan (i + 1)
+            in
+            scan 0
+          in
+          match after ":role/" with
+          | Some name -> name
+          | None ->
+            (match String.rindex_opt arn '/' with
+             | Some i when i + 1 < String.length arn ->
+               String.sub arn (i + 1) (String.length arn - i - 1)
+             | _ -> arn)
+        in
         let role prerequisite name =
           match name with
-          | Some name ->
+          | Some arn ->
             present_if_output
               prerequisite
-              [ "aws"; "iam"; "get-role"; "--role-name"; name ]
+              [ "aws"; "iam"; "get-role"; "--role-name"; role_name arn ]
           | None ->
             absent
               prerequisite
@@ -141,10 +160,15 @@ let aws =
         ; role Cluster_access_identity configuration.cluster_access_identity
         ; role Deploy_identity configuration.deploy_identity
         ; role Operator_identity configuration.operator_identity
-        ; role Publisher_identity configuration.publisher_identity
         ; (match configuration.zone_domain with
            | Some domain ->
-             present_if_output
+             present_if_output_names
+               ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
+               ~reason:
+                 (Printf.sprintf
+                    "no Route53 hosted zone named %s, so this installation does not own \
+                     the delegated zone for the domain the target serves"
+                    domain)
                Delegated_zone
                [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
            | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
@@ -234,36 +258,26 @@ let gcp =
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
   ; installation_prerequisites =
-      [ Sol_cli_installation.State_backend
-      ; Sol_cli_installation.Provisioning_identity
-      ; Sol_cli_installation.Cluster_access_identity
-      ; Sol_cli_installation.Deploy_identity
-      ; Sol_cli_installation.Operator_identity
-      ; Sol_cli_installation.Delegated_zone
-      ]
+      [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
   ; installation_probes =
       (fun configuration ->
         let open Sol_cli_installation in
-        let service_account prerequisite name =
-          match name with
-          | Some name ->
-            present_if_output
-              prerequisite
-              [ "gcloud"
-              ; "iam"
-              ; "service-accounts"
-              ; "describe"
-              ; name
-              ; "--format=value(email)"
-              ]
-          | None ->
-            absent
-              prerequisite
-              (Printf.sprintf
-                 "the resolved installation configuration names no %s"
-                 (prerequisite_label prerequisite))
+        let zone_name =
+          match configuration.zone_domain with
+          | None -> None
+          | Some domain ->
+            Some
+              (String.map
+                 (function
+                   | '.' -> '-'
+                   | character -> character)
+                 domain)
         in
-        [ present_if_output
+        [ present_if_output_names
+            ~reason:
+              (Printf.sprintf
+                 "no Cloud Storage bucket gs://%s"
+                 configuration.state_bucket)
             State_backend
             [ "gcloud"
             ; "storage"
@@ -272,19 +286,20 @@ let gcp =
             ; Printf.sprintf "gs://%s" configuration.state_bucket
             ; "--format=value(name)"
             ]
-        ; service_account Provisioning_identity configuration.provisioning_identity
-        ; service_account Cluster_access_identity configuration.cluster_access_identity
-        ; service_account Deploy_identity configuration.deploy_identity
-        ; service_account Operator_identity configuration.operator_identity
-        ; (match configuration.zone_domain with
-           | Some domain ->
-             present_if_output
+        ; (match zone_name with
+           | Some name ->
+             present_if_output_names
+               ~reason:
+                 (Printf.sprintf
+                    "no Cloud DNS managed zone named %s, so this installation does not \
+                     own the delegated zone for the domain the target serves"
+                    name)
                Delegated_zone
                [ "gcloud"
                ; "dns"
                ; "managed-zones"
                ; "describe"
-               ; domain
+               ; name
                ; "--format=value(name)"
                ]
            | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
