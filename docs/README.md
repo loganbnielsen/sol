@@ -42,7 +42,7 @@ point for "what is Sol and what is it promising".
 | Deployment guide | Operators | **Partial** — `docs/deployment/*` covers pieces; the single end-to-end cloud path is DOCS-028 |
 | Operations and lifecycle | Operators | **Planned** — DOCS-029 |
 | [`reference/README.md`](reference/README.md), [`reference/runtime.md`](reference/runtime.md), [`reference/substrate.md`](reference/substrate.md) | Application authors | **Published** |
-| CLI reference | All users | **Planned** — DOCS-030 |
+| CLI reference | All users | **Published** — [`reference/cli.md`](reference/cli.md) |
 | [`architecture/PRODUCT_ARCHITECTURE.md`](architecture/PRODUCT_ARCHITECTURE.md) and [`architecture/adr/`](architecture/adr/) | Evaluators, contributors | **Published** |
 | [`hosted/README.md`](hosted/README.md) | Evaluators | **Published** — boundary only |
 
