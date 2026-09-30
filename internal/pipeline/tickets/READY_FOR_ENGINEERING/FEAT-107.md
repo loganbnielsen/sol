@@ -154,3 +154,53 @@ and a walkthrough in `examples/pluto`/the tutorial for create-or-adopt and the o
 action.
 
 **Language parity:** unchanged — DNS onboarding is language-neutral.
+
+## Part A landed (2026-09-30): the ownership model
+
+Slice A is in the branch that carries this note; the ticket stays `READY_FOR_ENGINEERING` for B and C.
+
+**The declaration.** A target (or the environment it inherits from) says who owns the domain it
+serves:
+
+```yaml
+prod:
+  base_domain: pluto.example.com
+  dns_zone_ownership: sol      # sol | user | external
+```
+
+`sol` — the installation creates and owns the zone; `user` — the operator created it and Sol never
+removes it; `external` — the zone is published elsewhere and Sol asks for the delegation instead of
+owning it. A target that declares a domain must declare this: Sol refuses with a message naming the
+key and the three values rather than guessing an owner from the fact that a zone exists. A target
+that serves no domain declares neither.
+
+**The model.** `Sol_cli_installation.zone` is `No_zone | Service_zone { domain; ownership }`, so the
+invariant (ownership exists exactly when a domain does) is the type rather than a convention, and
+`owns_the_zone` is the one place that answers "is this the installation's to reconcile". The
+ownership is printed in the resolved configuration, so the three cases are distinguishable in the
+output and not collapsed into "a zone exists".
+
+**The observations follow the declaration.** A target that serves no domain has no zone
+prerequisite at all — it is not "unmet", there is nothing to establish. A Sol-created or
+user-supplied zone is looked for at the provider, and a missing one is reported with the declared
+ownership in the reason. An externally delegated zone is not looked for anywhere, because it is not
+observable where the installation looks: `Sol_cli_installation.probe` gains an `Unverifiable` case
+that yields `Unknown` (DEC-052) with a reason naming the domain and the delegation, and the clone of
+the provider probe cannot be reached for it (a test drives `observe` with a probe runner that fails
+if the domain is ever looked up).
+
+**The stage acts only on what Sol owns.** `manage_dns_zone` is now
+`owns_the_zone configuration.zone && the root's own state owns the zone`, so a user-supplied or
+externally delegated zone is never created, never adopted and never dropped — and the state read is
+skipped entirely for a zone Sol does not own.
+
+**Example and fixtures.** `examples/pluto/sol/environments.yml` declares the three cases across its
+four environments (prod and pilot `sol`, dev `user`, customer_cloud `external`), and the
+qualification harness and target template carry the key. `docs/DEVELOPER_EXPERIENCE.md` §4.3 shows
+the ownership line and states the rule.
+
+**What remains.** B: create and adopt (only when the declaration claims ownership, in the
+installation and never in the cluster root), then delegation — automatic when the parent is
+Sol-managed, exact records when it is not. C: the bounded, visible wait with public-resolution
+verification, and the zone's survival asserted by name in the destroy-boundary test. FEAT-108 needs
+A's model and has it; it does not need B or C.

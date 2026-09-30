@@ -19,6 +19,7 @@ let target : Sol_cli_config.target =
   ; alert_runbook_url = None
   ; state_bucket = None
   ; cluster_endpoint_cidr = None
+  ; dns_zone_ownership = None
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = [ "gcp", [ "project_id", "acme-project" ] ]

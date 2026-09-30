@@ -10,7 +10,9 @@ let aws_config : Sol_cli_installation.installation_config =
   ; cluster_access_identity = Some "sol-cluster-access"
   ; deploy_identity = Some "sol-deploy"
   ; operator_identity = Some "sol-operator"
-  ; zone_domain = Some "qual-aws.example.test"
+  ; zone =
+      Sol_cli_installation.Service_zone
+        { domain = "qual-aws.example.test"; ownership = Sol_cli_installation.Sol_created }
   ; project_id = None
   }
 ;;
@@ -23,7 +25,9 @@ let gcp_config : Sol_cli_installation.installation_config =
   ; cluster_access_identity = None
   ; deploy_identity = None
   ; operator_identity = None
-  ; zone_domain = Some "qual-gcp.example.test"
+  ; zone =
+      Sol_cli_installation.Service_zone
+        { domain = "qual-gcp.example.test"; ownership = Sol_cli_installation.Sol_created }
   ; project_id = Some "sol-project"
   }
 ;;
@@ -54,6 +58,7 @@ let aws_target : Sol_cli_config.target =
   ; alert_runbook_url = None
   ; state_bucket = Some "acme-tfstate"
   ; cluster_endpoint_cidr = None
+  ; dns_zone_ownership = Some "sol"
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields =
@@ -92,7 +97,9 @@ let probe_argv provider configuration prerequisite =
     match probe with
     | Sol_cli_installation.Inspect probe when probe.prerequisite = prerequisite ->
       Some probe.argv
-    | Sol_cli_installation.Inspect _ | Sol_cli_installation.Unavailable _ -> None)
+    | Sol_cli_installation.Inspect _
+    | Sol_cli_installation.Unavailable _
+    | Sol_cli_installation.Unverifiable _ -> None)
 ;;
 
 let test_probe_coverage () =
@@ -222,7 +229,7 @@ let test_missing_configuration_is_unmet () =
     ; cluster_access_identity = None
     ; deploy_identity = None
     ; operator_identity = None
-    ; zone_domain = None
+    ; zone = Sol_cli_installation.No_zone
     }
   in
   let inspected = ref [] in
@@ -291,7 +298,7 @@ let test_resolves_the_declared_installation () =
   Alcotest.(check (option string))
     "the delegated zone follows the served domain"
     (Some "api.acme.example")
-    aws.zone_domain;
+    (Sol_cli_installation.zone_domain aws.zone);
   Alcotest.(check (option string))
     "an AWS installation names no project"
     None
@@ -487,10 +494,206 @@ let test_resolved_configuration_has_no_authority () =
        lines)
 ;;
 
+let with_ownership ownership =
+  { aws_config with
+    zone = Sol_cli_installation.Service_zone { domain = "api.acme.example"; ownership }
+  }
+;;
+
+let test_zone_ownership_is_three_distinguishable_cases () =
+  let declared = Sol_cli_installation.zone_ownership_of_declaration in
+  check_bool
+    "sol means the installation creates and owns the zone"
+    true
+    (declared (Some "sol") = Ok Sol_cli_installation.Sol_created);
+  check_bool
+    "user means the operator created it and Sol never removes it"
+    true
+    (declared (Some "user") = Ok Sol_cli_installation.User_supplied);
+  check_bool
+    "external means someone else publishes the zone"
+    true
+    (declared (Some "external") = Ok Sol_cli_installation.Externally_delegated);
+  (match declared (Some "sol-created") with
+   | Error message ->
+     check_bool
+       "an unknown value is refused rather than guessed, naming the accepted set"
+       true
+       (Sol_cli_string.contains ~needle:"dns_zone_ownership" message
+        && Sol_cli_string.contains ~needle:"sol" message
+        && Sol_cli_string.contains ~needle:"user" message
+        && Sol_cli_string.contains ~needle:"external" message)
+   | Ok _ -> Alcotest.fail "an unknown ownership value was accepted");
+  match declared None with
+  | Error message ->
+    check_bool
+      "an absent declaration is refused, naming the key"
+      true
+      (Sol_cli_string.contains ~needle:"dns_zone_ownership" message)
+  | Ok _ -> Alcotest.fail "an absent ownership declaration was accepted"
+;;
+
+let test_ownership_reaches_the_resolved_configuration () =
+  let lines ownership =
+    String.concat
+      "\n"
+      (Sol_cli_installation.resolved_configuration_to_lines (with_ownership ownership))
+  in
+  check_bool
+    "a Sol-owned zone says so"
+    true
+    (Sol_cli_string.contains
+       ~needle:"sol-created"
+       (lines Sol_cli_installation.Sol_created));
+  check_bool
+    "a user-supplied zone says Sol never removes it"
+    true
+    (Sol_cli_string.contains
+       ~needle:"user-supplied (Sol never removes it)"
+       (lines Sol_cli_installation.User_supplied));
+  check_bool
+    "an externally delegated zone says the parent is the operator's"
+    true
+    (Sol_cli_string.contains
+       ~needle:"externally delegated"
+       (lines Sol_cli_installation.Externally_delegated));
+  check_bool
+    "a target that serves no domain says so"
+    true
+    (Sol_cli_string.contains
+       ~needle:"serves no domain"
+       (String.concat
+          "\n"
+          (Sol_cli_installation.resolved_configuration_to_lines
+             { aws_config with zone = Sol_cli_installation.No_zone })))
+;;
+
+let test_owns_the_zone_follows_the_declaration () =
+  check_bool
+    "only a Sol-created zone is the installation's to reconcile"
+    true
+    (Sol_cli_installation.owns_the_zone
+       (with_ownership Sol_cli_installation.Sol_created).zone);
+  check_bool
+    "a user-supplied zone is not"
+    false
+    (Sol_cli_installation.owns_the_zone
+       (with_ownership Sol_cli_installation.User_supplied).zone);
+  check_bool
+    "an externally delegated zone is not"
+    false
+    (Sol_cli_installation.owns_the_zone
+       (with_ownership Sol_cli_installation.Externally_delegated).zone);
+  check_bool
+    "and neither is a target that serves no domain"
+    false
+    (Sol_cli_installation.owns_the_zone Sol_cli_installation.No_zone)
+;;
+
+let test_external_delegation_is_unverifiable_not_unmet () =
+  let config = with_ownership Sol_cli_installation.Externally_delegated in
+  List.iter
+    (fun (name, provider) ->
+       let run argv =
+         if
+           List.exists
+             (fun argument -> Sol_cli_string.contains ~needle:"api.acme.example" argument)
+             argv
+         then Alcotest.fail (name ^ " looked the zone up at the provider")
+         else Sol_cli_installation.Observed "present"
+       in
+       let verdict =
+         Sol_cli_provider_capabilities.installation_probes provider config
+         |> Sol_cli_installation.observe ~run
+         |> List.find (fun (prerequisite, _) ->
+           prerequisite = Sol_cli_installation.Delegated_zone)
+         |> snd
+       in
+       match verdict with
+       | Sol_cli_installation.Unknown reason ->
+         check_bool
+           (name ^ ": the reason names the domain and the delegation")
+           true
+           (Sol_cli_string.contains ~needle:"api.acme.example" reason
+            && Sol_cli_string.contains ~needle:"delegation" reason)
+       | Sol_cli_installation.Unmet reason ->
+         Alcotest.fail
+           (name ^ ": an unobservable delegation was reported Unmet: " ^ reason)
+       | Sol_cli_installation.Established ->
+         Alcotest.fail (name ^ ": an unobservable delegation was reported Established"))
+    [ "aws", Sol_cli_provider.Aws; "gcp", Sol_cli_provider.Gcp ]
+;;
+
+let test_a_target_that_serves_no_domain_has_no_zone_prerequisite () =
+  List.iter
+    (fun (name, provider) ->
+       let probes =
+         Sol_cli_provider_capabilities.installation_probes
+           provider
+           { aws_config with zone = Sol_cli_installation.No_zone }
+       in
+       check_bool
+         (name ^ ": nothing to observe about a zone that does not exist")
+         false
+         (List.exists
+            (fun probe ->
+               Sol_cli_installation.probe_prerequisite probe
+               = Sol_cli_installation.Delegated_zone)
+            probes))
+    [ "aws", Sol_cli_provider.Aws; "gcp", Sol_cli_provider.Gcp ];
+  match
+    Sol_cli_installation.of_target
+      { aws_target with base_domain = None; dns_zone_ownership = None }
+  with
+  | Ok configuration ->
+    check_bool
+      "a target with no domain resolves to no zone"
+      true
+      (configuration.zone = Sol_cli_installation.No_zone)
+  | Error message -> Alcotest.fail ("of_target refused a domain-less target: " ^ message)
+;;
+
+let test_the_declaration_is_required_when_a_domain_is_declared () =
+  match Sol_cli_installation.of_target { aws_target with dns_zone_ownership = None } with
+  | Ok _ ->
+    Alcotest.fail "a target with a domain and no ownership declaration was accepted"
+  | Error message ->
+    check_bool
+      "the refusal names the missing declaration"
+      true
+      (Sol_cli_string.contains ~needle:"dns_zone_ownership" message)
+;;
+
 let () =
   Alcotest.run
     "installation"
-    [ ( "prerequisites"
+    [ ( "zone ownership"
+      , [ Alcotest.test_case
+            "the three cases are distinguishable declarations"
+            `Quick
+            test_zone_ownership_is_three_distinguishable_cases
+        ; Alcotest.test_case
+            "ownership reaches the resolved configuration"
+            `Quick
+            test_ownership_reaches_the_resolved_configuration
+        ; Alcotest.test_case
+            "only a Sol-created zone is the installation's to reconcile"
+            `Quick
+            test_owns_the_zone_follows_the_declaration
+        ; Alcotest.test_case
+            "an external delegation is UNKNOWN, never Unmet or Established"
+            `Quick
+            test_external_delegation_is_unverifiable_not_unmet
+        ; Alcotest.test_case
+            "a domain-less target has no zone prerequisite"
+            `Quick
+            test_a_target_that_serves_no_domain_has_no_zone_prerequisite
+        ; Alcotest.test_case
+            "a declared domain requires an ownership declaration"
+            `Quick
+            test_the_declaration_is_required_when_a_domain_is_declared
+        ] )
+    ; ( "prerequisites"
       , [ Alcotest.test_case
             "every prerequisite has exactly one probe"
             `Quick

@@ -62,6 +62,7 @@ EOF
 cat >"$tmp/work/sol/environments.yml" <<'EOF'
 qual:
   base_domain: qual-aws.example.test
+  dns_zone_ownership: sol
   targets:
     aws/us-east-1:
       cluster_name: sol-qual-row
@@ -74,9 +75,37 @@ qual:
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 barest:
   base_domain: barest.example.test
+  dns_zone_ownership: user
   targets:
     aws/us-east-1:
       cluster_name: sol-barest
+
+undeclared:
+  base_domain: undeclared.example.test
+  targets:
+    aws/us-east-1:
+      cluster_name: sol-undeclared
+      state_bucket: sol-undeclared-tfstate
+      aws:
+        state_lock_table: sol-undeclared-tflock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+
+byo:
+  base_domain: byo.example.test
+  dns_zone_ownership: external
+  targets:
+    aws/us-east-1:
+      cluster_name: sol-byo
+      state_bucket: sol-byo-tfstate
+      aws:
+        state_lock_table: sol-byo-tflock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 EOF
 cat >"$tmp/bin-ok/aws" <<EOF
 #!/bin/sh
@@ -155,7 +184,7 @@ check_contains \
   "$output"
 check_contains \
   "an empty hosted-zone answer is Unmet, not Established" \
-  "delegated DNS zone           Unmet: no Route53 hosted zone named qual-aws.example.test" \
+  "delegated DNS zone           Unmet: no Route53 hosted zone named qual-aws.example.test, although the target declares it sol-created" \
   "$output"
 
 run "/usr/bin:/bin" qual/aws/us-east-1
@@ -165,6 +194,17 @@ check_contains "an unobservable probe is UNKNOWN" "UNKNOWN: spawn failed" "$outp
 run "$tmp/bin-ok:/usr/bin:/bin" barest/aws/us-east-1
 check "a target with no state backend exits 1" 1 "$rc"
 check_contains "the refusal names state_bucket" "requires the target's state_bucket" "$output"
+
+run "$tmp/bin-ok:/usr/bin:/bin" undeclared/aws/us-east-1
+check "a declared domain with no ownership declaration exits 1" 1 "$rc"
+check_contains "the refusal names dns_zone_ownership" "declares no dns_zone_ownership" "$output"
+
+run "$tmp/bin-ok:/usr/bin:/bin" byo/aws/us-east-1
+check "an externally delegated zone is not reported established" 1 "$rc"
+check_contains \
+  "an externally delegated zone is UNKNOWN, not Unmet" \
+  "delegated DNS zone           UNKNOWN: byo.example.test is externally delegated" \
+  "$output"
 
 run "$tmp/bin-ok:/usr/bin:/bin" nope/aws/us-east-1
 check "an undeclared target exits 1" 1 "$rc"

@@ -19,6 +19,7 @@ type target =
   ; alert_runbook_url : string option
   ; state_bucket : string option
   ; cluster_endpoint_cidr : string option
+  ; dns_zone_ownership : string option
   ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list

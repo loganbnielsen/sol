@@ -30,6 +30,7 @@ qual:
       profile: production-single-region
       cluster_name: <cluster-name>          # also names the VPC, NAT gateways and EIPs
       base_domain: <your-domain>
+      dns_zone_ownership: sol        # sol | user | external -- who owns the zone
       letsencrypt_email: <ops@your-domain>
       kube_context: <cluster-name>
       registry: <account>.dkr.ecr.us-east-1.amazonaws.com

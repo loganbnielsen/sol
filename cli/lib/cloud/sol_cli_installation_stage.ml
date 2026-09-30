@@ -71,7 +71,11 @@ let reconcile ~assets ~provider ~configuration () =
       ~role:Sol_cli_platform_assets.Bootstrap
       backend_config
   in
-  let* manage_dns_zone = owns_the_delegated_zone ~provider ~chdir in
+  let* manage_dns_zone =
+    if Sol_cli_installation.owns_the_zone configuration.zone
+    then owns_the_delegated_zone ~provider ~chdir
+    else Ok false
+  in
   Sol_cli_terraform_steps.apply_asserted
     ~run_log
     ~phase_name:"installation-bootstrap"

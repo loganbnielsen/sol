@@ -63,7 +63,7 @@ let dns_declaration
   if not manage_dns_zone
   then "false", ""
   else (
-    match configuration.zone_domain with
+    match Sol_cli_installation.zone_domain configuration.zone with
     | None -> "false", ""
     | Some domain -> "true", domain)
 ;;
@@ -179,19 +179,34 @@ let aws =
         ; role Cluster_access_identity configuration.cluster_access_identity
         ; role Deploy_identity configuration.deploy_identity
         ; role Operator_identity configuration.operator_identity
-        ; (match configuration.zone_domain with
-           | Some domain ->
-             present_if_output_names
-               ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
-               ~reason:
-                 (Printf.sprintf
-                    "no Route53 hosted zone named %s, so this installation does not own \
-                     the delegated zone for the domain the target serves"
-                    domain)
-               Delegated_zone
-               [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
-           | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
-        ])
+        ]
+        @
+        match configuration.zone with
+        | No_zone -> []
+        | Service_zone { domain; ownership = Externally_delegated } ->
+          [ unverifiable
+              Delegated_zone
+              (Printf.sprintf
+                 "%s is externally delegated: the zone lives outside AWS, so the \
+                  delegation to this installation cannot be observed where the \
+                  installation looks — confirming it is the delegation wait, not a \
+                  provider lookup"
+                 domain)
+          ]
+        | Service_zone { domain; ownership } ->
+          [ present_if_output_names
+              ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
+              ~reason:
+                (Printf.sprintf
+                   "no Route53 hosted zone named %s, although the target declares it %s"
+                   domain
+                   (match ownership with
+                    | Sol_created -> "sol-created"
+                    | User_supplied -> "user-supplied"
+                    | Externally_delegated -> "(external)"))
+              Delegated_zone
+              [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
+          ])
   ; installation_backend =
       (fun configuration ->
         match configuration.lock_table with
@@ -307,7 +322,7 @@ let gcp =
       (fun configuration ->
         let open Sol_cli_installation in
         let zone_name =
-          match configuration.zone_domain with
+          match Sol_cli_installation.zone_domain configuration.zone with
           | None -> None
           | Some domain ->
             Some
@@ -330,24 +345,49 @@ let gcp =
             ; Printf.sprintf "gs://%s" configuration.state_bucket
             ; "--format=value(name)"
             ]
-        ; (match zone_name with
-           | Some name ->
-             present_if_output_names
-               ~reason:
-                 (Printf.sprintf
-                    "no Cloud DNS managed zone named %s, so this installation does not \
-                     own the delegated zone for the domain the target serves"
-                    name)
-               Delegated_zone
-               [ "gcloud"
-               ; "dns"
-               ; "managed-zones"
-               ; "describe"
-               ; name
-               ; "--format=value(name)"
-               ]
-           | None -> absent Delegated_zone "this installation owns no delegated DNS zone")
-        ])
+        ]
+        @
+        match configuration.zone, zone_name with
+        | No_zone, _ -> []
+        | Service_zone { domain; ownership = Externally_delegated }, _ ->
+          [ unverifiable
+              Delegated_zone
+              (Printf.sprintf
+                 "%s is externally delegated: the zone lives outside Google Cloud, so \
+                  the delegation to this installation cannot be observed where the \
+                  installation looks — confirming it is the delegation wait, not a \
+                  provider lookup"
+                 domain)
+          ]
+        | Service_zone { ownership; _ }, None ->
+          [ unverifiable
+              Delegated_zone
+              (Printf.sprintf
+                 "the target declares %s zone ownership but names no domain, so the \
+                  installation cannot tell which zone to observe"
+                 (Sol_cli_installation.zone_ownership_declaration ownership))
+          ]
+        | Service_zone { domain; ownership }, Some name ->
+          [ present_if_output_names
+              ~reason:
+                (Printf.sprintf
+                   "no Cloud DNS managed zone named %s for %s, although the target \
+                    declares it %s"
+                   name
+                   domain
+                   (match ownership with
+                    | Sol_created -> "sol-created"
+                    | User_supplied -> "user-supplied"
+                    | Externally_delegated -> "(external)"))
+              Delegated_zone
+              [ "gcloud"
+              ; "dns"
+              ; "managed-zones"
+              ; "describe"
+              ; name
+              ; "--format=value(name)"
+              ]
+          ])
   ; installation_backend =
       (fun configuration ->
         Ok
