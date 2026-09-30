@@ -117,6 +117,38 @@ module Schema = struct
       check_all ~net ~clock ~registry_url rest
   ;;
 
+  let register ~net ~clock ~registry_url (module M : MESSAGE) =
+    Kafka_service_schema.register_contract
+      net
+      ~clock
+      ~registry_url
+      ~topic_name:(topic_name_to_string M.topic_name)
+      ~schema:M.schema
+    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+  ;;
+
+  let resolve ~net ~clock ~registry_url (module M : MESSAGE) =
+    let topic = M.topic_name in
+    match
+      Kafka_service_schema.registered_schema
+        net
+        ~clock
+        ~registry_url
+        ~topic_name:(topic_name_to_string topic)
+    with
+    | Error msg -> Error (Schema_registry (topic, msg))
+    | Ok (registered : Kafka_service_schema.registered) ->
+      if String.equal registered.schema M.schema
+      then Ok registered.id
+      else
+        Error
+          (Schema_registry
+             ( topic
+             , "the registered schema differs from the declared contract; register the \
+                contract through the deployment lifecycle (sol plan / sol deploy), not \
+                at runtime" ))
+  ;;
+
   type compatibility_response = Kafka_service_schema.compatibility_response =
     { is_compatible : bool }
 
@@ -128,6 +160,24 @@ module Schema = struct
 end
 
 module Confluent_wire = Kafka_service_schema.Confluent_wire
+
+module Contract = struct
+  let event_json module_name (module M : MESSAGE) =
+    `Assoc
+      [ "module", `String module_name
+      ; "topic", `String (topic_name_to_string M.topic_name)
+      ; "partitions", `Int M.partitions
+      ; "schema", `String M.schema
+      ]
+  ;;
+
+  let projection events =
+    `Assoc
+      [ "version", `Int 1
+      ; "events", `List (List.map (fun (name, m) -> event_json name m) events)
+      ]
+  ;;
+end
 
 module Dlq = struct
   type relay = Kafka_service_dlq.relay =

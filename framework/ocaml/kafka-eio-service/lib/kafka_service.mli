@@ -53,12 +53,30 @@ module Schema : sig
     -> (module MESSAGE) list
     -> (unit, error) result
 
+  val register
+    :  net:_ Eio.Net.t
+    -> clock:_ Eio.Time.clock
+    -> registry_url:string
+    -> (module MESSAGE)
+    -> (int, error) result
+
+  val resolve
+    :  net:_ Eio.Net.t
+    -> clock:_ Eio.Time.clock
+    -> registry_url:string
+    -> (module MESSAGE)
+    -> (int, error) result
+
   type compatibility_response = { is_compatible : bool }
   type registration_response = { id : int }
 
   val is_subject_not_found : string -> bool
   val decode_compatibility_response : string -> (compatibility_response, string) result
   val decode_registration_response : string -> (registration_response, string) result
+end
+
+module Contract : sig
+  val projection : (string * (module MESSAGE)) list -> Yojson.Safe.t
 end
 
 module Dlq : sig
