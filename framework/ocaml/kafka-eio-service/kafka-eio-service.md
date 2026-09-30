@@ -226,7 +226,9 @@ type decode_error_policy =
 (** Like consume but routes each message to a dedicated per-partition fiber.
     A partition's in-memory retry sleep pauses that Kafka partition for the retry
     delay; other partitions continue unaffected. During the sleep the partition is
-    paused at the librdkafka level so no messages accumulate in its stream buffer. *)
+    paused at the librdkafka level so no messages accumulate in its stream buffer.
+    ?consumer_properties is passed to librdkafka verbatim on both the source and
+    retry consumers, for tuning Sol does not already set. *)
 val consume_partitioned
   :  t
   -> 'a topic
@@ -237,6 +239,7 @@ val consume_partitioned
   -> ?hooks:consumer_hooks
   -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
+  -> ?consumer_properties:(string * string) list
   -> ?ot:Obs_eio.t
   -> ?stop:unit Eio.Promise.t
   -> handler:

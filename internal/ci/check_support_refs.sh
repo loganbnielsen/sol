@@ -47,7 +47,7 @@ while IFS= read -r opam; do
     fi
   done < <(grep -oE '"[a-z0-9-]+\.[^"]*" +"git\+https://github\.com/loganbnielsen/[a-z0-9-]+\.git#[0-9a-f]{40}"' "$root/$opam" |
     sed -E 's|^"([a-z0-9-]+)\.[^"]*" +"git\+https://github\.com/loganbnielsen/[a-z0-9-]+\.git#([0-9a-f]{40})"$|\1 \2|')
-done < <(git -C "$root" ls-files -- '*.opam' | grep -vE '^(examples|internal/fixtures)/')
+done < <(git -C "$root" ls-files -- '*.opam')
 
 if [ "$fail" -ne 0 ]; then
   echo "check_support_refs: support-library revisions must come from support-refs.txt (BUG-059)" >&2
