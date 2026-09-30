@@ -309,6 +309,27 @@ let report_degradations = function
         message)
 ;;
 
+let declared_workload_namespaces () =
+  match Sol_cli_workspace_model.load_cwd () with
+  | Error message ->
+    Sol_cli_report.warn
+      "warning: the workspace's declared services could not be read (%s), so the \
+       workloads it deployed cannot be released by namespace before the substrate is \
+       destroyed"
+      message;
+    []
+  | Ok facts ->
+    let workspace = Sol_cli_workspace.current_name () in
+    Sol_cli_workspace_model.services facts
+    |> List.filter_map (fun (service : Sol_cli_manifest.service) ->
+      match Sol_cli_deployment_plan.namespace_name ~workspace ~domain:service.domain with
+      | Ok namespace -> Some namespace
+      | Error message ->
+        Sol_cli_report.warn "warning: %s" message;
+        None)
+    |> List.sort_uniq String.compare
+;;
+
 let cloud_destroy ~target ~var_file ~vars ~action () =
   let* () = check_terraform () in
   let* provider = provider_of_target_path target in
@@ -388,6 +409,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!";
     Ok ()
   | Apply ->
+    let workload_namespaces = declared_workload_namespaces () in
     let deps =
       Sol_cli_cloud_wiring.destroy_deps
         ~assets
@@ -395,6 +417,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
         ~cloud_target
         ~inputs
         ~retention
+        ~workload_namespaces
         ~destruction
     in
     let outcome = Sol_cli_cloud_destroy.execute ~deps in

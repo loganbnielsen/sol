@@ -586,33 +586,58 @@ let test_unremovable_elevated_access_does_not_immobilise_the_substrate () =
   Alcotest.(check int) "a verified absence exits 0" exit_clean (exit_code outcome)
 ;;
 
-let test_the_workload_scope_comes_from_the_labelled_pods () =
+let test_the_workload_scope_is_read_within_one_namespace () =
   let listing =
-    {|{"items":[{"metadata":{"namespace":"pluto-payments","labels":{"workspace":"pluto"}}},
-                {"metadata":{"namespace":"pluto-comms","labels":{"workspace":"pluto"}}},
-                {"metadata":{"namespace":"pluto-payments","labels":{"workspace":"pluto"}}},
-                {"metadata":{"namespace":"other"}}]}|}
+    {|{"items":[{"metadata":{"name":"charge-svc-abc","namespace":"pluto-payments"}},
+                {"metadata":{"name":"charge-svc-def","namespace":"pluto-payments"}},
+                {"metadata":{"name":""}}]}|}
   in
   Alcotest.(check (result (list string) string))
-    "distinct namespaces, in a stable order"
-    (Ok [ "other"; "pluto-comms"; "pluto-payments" ])
-    (Sol_cli_workload_scope.namespaces_of_pods_json listing);
+    "the pods Sol owns in this namespace, in a stable order"
+    (Ok [ "charge-svc-abc"; "charge-svc-def" ])
+    (Sol_cli_workload_scope.pods_of_pods_json listing);
   Alcotest.(check (result (list string) string))
-    "a listing with no pods is an empty scope, not an error"
+    "a namespace with no pods of this workspace is empty, not an error"
     (Ok [])
-    (Sol_cli_workload_scope.namespaces_of_pods_json {|{"items":[]}|});
+    (Sol_cli_workload_scope.pods_of_pods_json {|{"items":[]}|});
   Alcotest.(check bool)
     "a listing that cannot be read is an error rather than an empty scope"
     true
-    (match Sol_cli_workload_scope.namespaces_of_pods_json "not json" with
+    (match Sol_cli_workload_scope.pods_of_pods_json "not json" with
      | Error _ -> true
      | Ok _ -> false)
 ;;
 
+let test_the_scope_is_the_declared_namespace_and_the_ownsership_label () =
+  let listing =
+    Sol_cli_workload_scope.list_args ~namespace:"pluto-payments" ~workspace:"pluto"
+  in
+  Alcotest.(check bool)
+    "the read is scoped to one namespace rather than the whole cluster"
+    true
+    (List.exists (fun arg -> arg = "-n") listing
+     && List.exists (fun arg -> arg = "pluto-payments") listing
+     && not (List.exists (fun arg -> arg = "--all-namespaces") listing));
+  Alcotest.(check bool)
+    "and it selects the ownership label Sol renders, not everything in the namespace"
+    true
+    (List.exists (fun arg -> arg = "workspace=pluto") listing);
+  Alcotest.(check string)
+    "the deletion names the workload kinds the deploy authority may delete"
+    "deployment,cronjob,job"
+    (List.nth
+       (Sol_cli_workload_scope.delete_args
+          ~namespace:"pluto-payments"
+          ~workspace:"pluto"
+          ~timeout_seconds:300)
+       1)
+;;
+
 let test_the_removal_waits_for_the_pods_to_go () =
   let args =
-    Sol_cli_workload_scope.delete_namespace_args
+    Sol_cli_workload_scope.delete_args
       ~namespace:"pluto-payments"
+      ~workspace:"pluto"
       ~timeout_seconds:300
   in
   Alcotest.(check bool)
@@ -623,10 +648,18 @@ let test_the_removal_waits_for_the_pods_to_go () =
     "and it is bounded"
     true
     (List.exists (fun arg -> Sol_cli_string.contains ~needle:"--timeout=" arg) args);
-  Alcotest.(check string)
-    "the listing asks for the workspace's pods across every namespace"
-    "workspace=pluto"
-    (Sol_cli_workload_scope.selector ~workspace:"pluto")
+  let waiting =
+    Sol_cli_workload_scope.wait_args
+      ~namespace:"pluto-payments"
+      ~workspace:"pluto"
+      ~timeout_seconds:300
+  in
+  Alcotest.(check bool)
+    "the pods themselves are awaited, so their database sessions are gone"
+    true
+    (List.exists (fun arg -> arg = "--for=delete") waiting
+     && List.exists (fun arg -> arg = "pod") waiting
+     && List.exists (fun arg -> arg = "workspace=pluto") waiting)
 ;;
 
 let test_the_workloads_are_released_before_the_substrate_is_destroyed () =
@@ -1802,9 +1835,13 @@ let () =
             `Quick
             test_degradation_preserved_when_verification_fails
         ; Alcotest.test_case
-            "the workload scope comes from the labelled pods"
+            "the workload scope is read within one namespace"
             `Quick
-            test_the_workload_scope_comes_from_the_labelled_pods
+            test_the_workload_scope_is_read_within_one_namespace
+        ; Alcotest.test_case
+            "the scope is the declared namespace and the ownership label"
+            `Quick
+            test_the_scope_is_the_declared_namespace_and_the_ownsership_label
         ; Alcotest.test_case
             "the removal waits for the pods to go"
             `Quick

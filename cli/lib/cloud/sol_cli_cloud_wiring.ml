@@ -748,6 +748,7 @@ let destroy_deps
       ~cloud_target
       ~(inputs : terraform_inputs)
       ~retention
+      ~workload_namespaces
       ~(destruction : Sol_cli_destruction.t)
   : Sol_cli_cloud_destroy.deps
   =
@@ -808,39 +809,43 @@ let destroy_deps
         ~vars:platform_vars)
   in
   let release_workloads_result () : (unit, string) result =
-    match !cluster_ref with
-    | None -> Ok ()
-    | Some (cluster : Sol_cli_cluster.t) ->
-      with_cluster_access_result cluster (fun ~env ->
-        let workspace = workspace_name () in
-        let argv = Sol_cli_workload_scope.list_args ~workspace in
-        let* listing =
-          match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-          | Ok result -> Ok result.stdout
-          | Error error -> Error (Sol_cli_process.error_to_string error)
+    let* destination = Sol_cli_config.destination_of_target target_cfg in
+    let ctx = Sol_cli_kube_destination.context_of_destination destination in
+    let workspace = workspace_name () in
+    let release namespace =
+      let* listing =
+        Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_args ~namespace ~workspace)
+        |> Result.map_error Sol_cli_process.error_to_string
+      in
+      let* pods =
+        Sol_cli_workload_scope.pods_of_pods_json listing.Sol_cli_process.stdout
+      in
+      match pods with
+      | [] -> Ok ()
+      | pods ->
+        Sol_cli_report.app "  %s" (Sol_cli_workload_scope.to_string { namespace; pods });
+        let* () =
+          Sol_cli_kubectl.run
+            ~ctx
+            (Sol_cli_workload_scope.delete_args
+               ~namespace
+               ~workspace
+               ~timeout_seconds:300)
+          |> Result.map_error Sol_cli_process.error_to_string
+          |> Result.map (fun _ -> ())
         in
-        let* namespaces = Sol_cli_workload_scope.namespaces_of_pods_json listing in
-        Sol_cli_report.app
-          "  %s"
-          (Sol_cli_workload_scope.to_string { Sol_cli_workload_scope.namespaces });
-        List.fold_left
-          (fun released namespace ->
-             let* () = released in
-             let argv =
-               Sol_cli_workload_scope.delete_namespace_args
-                 ~namespace
-                 ~timeout_seconds:300
-             in
-             match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-             | Ok _ -> Ok ()
-             | Error error ->
-               Error
-                 (Printf.sprintf
-                    "removing the workloads in %s failed: %s"
-                    namespace
-                    (Sol_cli_process.error_to_string error)))
-          (Ok ())
-          namespaces)
+        Sol_cli_kubectl.run
+          ~ctx
+          (Sol_cli_workload_scope.wait_args ~namespace ~workspace ~timeout_seconds:300)
+        |> Result.map_error Sol_cli_process.error_to_string
+        |> Result.map (fun _ -> ())
+    in
+    List.fold_left
+      (fun released namespace ->
+         let* () = released in
+         release namespace)
+      (Ok ())
+      workload_namespaces
   in
   let deps : Sol_cli_cloud_destroy.deps =
     { require_credentials =
