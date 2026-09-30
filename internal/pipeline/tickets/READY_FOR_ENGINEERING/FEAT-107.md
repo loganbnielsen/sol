@@ -94,3 +94,63 @@ create-or-adopt and the "one action required" hand-off.
 
 **TypeScript parity:** No language-parity impact — DNS onboarding is
 app-language neutral.
+
+## Premise checked (2026-09-30)
+
+Checked before a worktree, per the ticket rules. The substance holds; two names in this ticket's
+own text do not exist, so an implementer should not go looking for them.
+
+**What the code actually has.** The create-or-adopt mechanism is on the **cluster** roots — the
+target-disposable ones — not the durable roots, and there is no `create_route53_zone` anywhere:
+
+```text
+$ rg -n "create_dns_zone" platform/cloud/gcp/cluster/main.tf
+278:  count       = var.create_dns_zone ? 1 : 0
+355:  count = var.create_dns_zone ? 0 : 1
+362:  dns_managed_zone = var.create_dns_zone ? google_dns_managed_zone.main[0].name : data.google_dns_managed_zone.existing[0].name
+
+$ rg -n "create_route53_zone" -g '!*.md' .
+(no matches)
+```
+
+So today a zone Sol owns is created by the *environment's* cluster root when its
+`create_dns_zone` is true, with a data lookup standing in for adoption when it is false — the
+lifetime hazard `DEC-042` and `DEC-043` describe, sitting in the layer that is destroyed with the
+environment.
+
+**What INFRA-096 already built, and where this plugs in.** The durable root takes
+`manage_dns_zone` (`platform/cloud/aws/bootstrap/variables.tf:16`), the installation models the
+zone as the `Delegated_zone` prerequisite (`cli/lib/cloud/sol_cli_installation.ml:22`), and
+`Sol_cli_installation_stage` decides `manage_dns_zone` from whether the root's *own state* owns
+the zone (`owns_the_delegated_zone`, `cli/lib/cloud/sol_cli_installation_stage.ml:31,74`). What is
+missing is exactly what this ticket says: a declaration of who owns the domain, the create/adopt
+action, the delegation instruction, and the wait/verify observation. INFRA-096's completion notes
+record the same boundary, including that a BYO-DNS target currently reports the zone `Unmet` —
+the safe direction, with the wrong reason.
+
+## Slice plan (recorded so the work can land in reviewable pieces)
+
+- **A — the ownership model, and it is what FEAT-108 needs.** Declare where authority for the
+  domain lies (the three cases this ticket names) and carry it through the installation model, so
+  ownership is a recorded fact rather than an inference: surface it in the `sol cloud bootstrap`
+  report and in a machine-readable form, and make the stage's `manage_dns_zone` follow the
+  declaration rather than only the existing state. No create and no adopt in this slice — the
+  point of A is that FEAT-108 can tell a Sol-owned zone from a user-supplied one. Tests: the three
+  cases distinguishable, and a user-supplied zone never adopted or dropped.
+- **B — create and adopt, then delegation.** Create only when the declaration claims ownership
+  (durable, in the installation, never in the cluster root), adopt an existing zone without
+  recreating it, create the NS delegation automatically when the parent is Sol-managed, and
+  display the exact records to add when it is not. The `check_durable_dns_zone.py` guard and the
+  2026-09-29 adoption record are the existing evidence about this path.
+- **C — wait and verify, then preservation.** Poll the public/resolver view with a bounded,
+  *visible* wait and report `Established` only when the delegation is observable; an unqueryable
+  answer is `UNKNOWN` and fails closed (`DEC-052`). Extend the destroy-boundary test from
+  INFRA-096 (which already asserts the durable root is never touched) to the zone's survival by
+  name.
+
+**Demo/example coverage** stays as this ticket states, and belongs with slice A's user-visible
+surface rather than with the model: `docs/DEVELOPER_EXPERIENCE.md` §4.3, DOCS-026 when it lands,
+and a walkthrough in `examples/pluto`/the tutorial for create-or-adopt and the one required
+action.
+
+**Language parity:** unchanged — DNS onboarding is language-neutral.
