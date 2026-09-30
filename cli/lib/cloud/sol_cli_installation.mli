@@ -23,13 +23,37 @@ val unresolved : (prerequisite * verdict) list -> (prerequisite * verdict) list
 val all_established : (prerequisite * verdict) list -> (unit, string) result
 val summary : (prerequisite * verdict) list -> string
 
-type resolved_configuration =
+type installation_config =
   { state_bucket : string
   ; state_prefix : string
   ; region : string
   ; lock_table : string option
+  ; provisioning_identity : string option
+  ; cluster_access_identity : string option
+  ; deploy_identity : string option
+  ; publisher_identity : string option
+  ; operator_identity : string option
   ; zone_domain : string option
   ; project_id : string option
   }
 
-val resolved_configuration_to_lines : resolved_configuration -> string list
+val resolved_configuration_to_lines : installation_config -> string list
+
+type probe =
+  | Inspect of
+      { prerequisite : prerequisite
+      ; argv : string list
+      ; classify : string option -> verdict
+      }
+  | Unavailable of
+      { prerequisite : prerequisite
+      ; reason : string
+      }
+
+val probe_prerequisite : probe -> prerequisite
+val probes : Sol_cli_provider.t -> installation_config -> probe list
+
+val observe
+  :  run:(string list -> string option)
+  -> probe list
+  -> (prerequisite * verdict) list

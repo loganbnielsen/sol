@@ -223,3 +223,8 @@
  (name test_gcp_outputs)
  (libraries sol_cli alcotest yojson)
  (deps fixtures/terraform-output-gcp-cloud.json))
+
+(test
+ (name test_installation)
+ (modules test_installation)
+ (libraries sol_cli alcotest str))
