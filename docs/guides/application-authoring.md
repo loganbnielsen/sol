@@ -265,4 +265,4 @@ what the runtime guarantees and what it does not.
   [`sol-obs`](../../framework/ocaml/sol-obs/sol-obs.md).
 - [`docs/guides/TUTORIAL.md`](TUTORIAL.md) — the same material as a walkthrough, from an empty
   directory to a running service.
-- [`docs/README.md`](../README.md) — the index, including the command reference once published.
+- [`docs/reference/cli.md`](../reference/cli.md) — every command and flag.
