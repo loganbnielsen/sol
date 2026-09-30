@@ -211,6 +211,11 @@ jobs:
       - name: Framework CI coverage mutation test
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: bash internal/ci/test_framework_ci_coverage.sh
+      - name: Test reachability guard
+        run: python3 internal/ci/check_test_reachability.py
+
+      - name: Test reachability guard mutation coverage
+        run: bash internal/ci/test_test_reachability.sh
 
       - name: Unit tests (no broker/Postgres/Loki required)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
