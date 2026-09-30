@@ -830,9 +830,6 @@ let contract_job_doc ~name ~namespace ~image ~command ~args =
                (fun (key, value) ->
                   Y.map [ "name", Y.string key; "value", Y.string value ])
                default_cluster_env) )
-      ; ( "envFrom"
-        , Y.list [ Y.map [ "secretRef", Y.map [ "name", Y.string runtime_secret_name ] ] ]
-        )
       ]
   in
   resource

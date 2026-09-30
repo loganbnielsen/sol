@@ -2269,7 +2269,11 @@ let test_contract_job_manifest () =
     "contract Job reaches the private registry in-cluster"
     doc
     "value: http://redpanda.redpanda.svc.cluster.local:8081";
-  assert_absent "contract Job does not mount migrations" doc "mountPath: /migrations"
+  assert_absent "contract Job does not mount migrations" doc "mountPath: /migrations";
+  assert_absent
+    "contract Job depends on no runtime Secret (it runs before the workloads create one)"
+    doc
+    "sol-secrets"
 ;;
 
 let () =
