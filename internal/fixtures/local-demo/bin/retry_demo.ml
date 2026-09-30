@@ -212,7 +212,7 @@ let () =
    | Ok producer ->
      (match
         Eio.Promise.await
-          (Kafka.Producer.produce_await
+          (Kafka.Producer.produce_receipt
              producer
              ~topic:(Kafka_service.topic_name_to_string Job.topic_name)
              ~value:(Some (Bytes.of_string "not a Sol message"))

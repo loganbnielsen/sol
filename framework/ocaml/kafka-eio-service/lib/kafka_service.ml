@@ -293,7 +293,7 @@ let publish svc topic ?trace_ctx msg =
   in
   let headers = List.map (fun (k, v) -> k, Some v) headers in
   let payload = encode_wire ~schema_id:topic.schema_id (topic.encode msg) in
-  Kafka.Producer.produce_await
+  Kafka.Producer.produce_receipt
     svc.producer
     ~topic:(topic_name_to_string topic.name)
     ~value:(Some payload)

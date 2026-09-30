@@ -360,7 +360,7 @@ let publish_relay (svc : Kafka_service_intf.t) ~clock (runtime : _ runtime) =
             (Kafka.Error.to_string e))
         ~produce:(fun () ->
           Eio.Promise.await
-            (Kafka.Producer.produce_await
+            (Kafka.Producer.produce_receipt
                svc.producer
                ~topic:(topic_name_to_string target_topic)
                ~value:msg.source.Kafka.Consumer.value
