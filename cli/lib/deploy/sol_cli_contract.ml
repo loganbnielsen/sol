@@ -57,7 +57,7 @@ let print_declared_contract json =
          (fun event ->
             match event with
             | `Assoc fields ->
-              Printf.printf
+              Sol_cli_report.app
                 "  - %s  topic %s  partitions %s\n"
                 (string_field fields "module")
                 (string_field fields "topic")
@@ -79,11 +79,11 @@ let plan_report ~workspace ~registry_url =
        Sol_cli_report.warn "warning: could not project the declared contract: %s" msg
      | Ok None -> ()
      | Ok (Some json) ->
-       Printf.printf "\nContract (declared):\n";
+       Sol_cli_report.app "\nContract (declared):";
        print_declared_contract json);
     (match registry_url with
      | "" ->
-       Printf.printf
+       Sol_cli_report.app
          "  registry: not observed (no SCHEMA_REGISTRY_URL; a private registry is only \
           reachable from the destination, and `sol deploy` reconciles it there)\n"
      | registry_url ->
@@ -92,9 +92,9 @@ let plan_report ~workspace ~registry_url =
           String.split_on_char '\n' output
           |> List.iter (fun line ->
             let line = String.trim line in
-            if line <> "" then Printf.printf "  %s\n" line)
+            if line <> "" then Sol_cli_report.app "  %s" line)
         | Ok None -> ()
-        | Error msg -> Printf.printf "  registry: not observed -- %s\n" msg));
+        | Error msg -> Sol_cli_report.app "  registry: not observed -- %s" msg));
     Ok ())
 ;;
 
