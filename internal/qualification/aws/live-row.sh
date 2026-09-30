@@ -8,8 +8,9 @@ TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
 TFVARS="${TFVARS:-$ROOT/internal/qualification/aws/qual-aws-row.tfvars}"
 AWS_PROFILE="${AWS_PROFILE:-sol-qual}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-CLUSTER="${CLUSTER:?Set CLUSTER to this run's EKS cluster name}"
-DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the target's deploy role}"
+CLUSTER="${CLUSTER:?Set CLUSTER to this the run EKS cluster name}"
+DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the deploy role the target declares}"
+CLUSTER_ACCESS_ROLE_ARN="${CLUSTER_ACCESS_ROLE_ARN:?Set CLUSTER_ACCESS_ROLE_ARN to the cluster-access role the target declares}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
 SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
@@ -168,19 +169,48 @@ reconcile_durable_root() {
   say "bootstrap: durable root reconciled"
 }
 
+DEPLOY_KUBECONFIG="$LOG_DIR/kubeconfig-deploy.yaml"
+ACCESS_KUBECONFIG="$LOG_DIR/kubeconfig-access.yaml"
+
+ensure_contexts() {
+  say "kubeconfig"
+  KUBECONFIG="$DEPLOY_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
+    --name "$CLUSTER" --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" >/dev/null || return 1
+  KUBECONFIG="$ACCESS_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
+    --name "$CLUSTER" --alias "$CLUSTER-access" --role-arn "$CLUSTER_ACCESS_ROLE_ARN" >/dev/null || return 1
+  export KUBECONFIG="$DEPLOY_KUBECONFIG"
+}
+
+verify_identity_boundary() {
+  say "identity-boundary"
+  if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" auth can-i create rolebindings \
+      --namespace pluto-payments >/dev/null 2>&1; then
+    say "the deploy identity cannot create rolebindings, so application operations cannot bootstrap"
+    return 1
+  fi
+  if kubectl --kubeconfig "$ACCESS_KUBECONFIG" auth can-i create rolebindings \
+      --namespace pluto-payments >/dev/null 2>&1; then
+    say "the cluster-access identity can create rolebindings: the two identities are not separated,"
+    say "and the row would no longer be testing the separation the platform is built on"
+    return 1
+  fi
+  say "identity boundary holds: deploy creates rolebindings, cluster-access does not"
+}
+
 phase_cloud() {
   reconcile_durable_root || return 1
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET'" || return 1
   run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET'" || return 1
-  run kubeconfig aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" \
-    --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" || return 1
-  run nodes kubectl get nodes -o wide || return 1
+  ensure_contexts || return 1
+  run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
   capture_kube_evidence
   capture_state
   say "the substrate and platform install completed; evidence in $LOG_DIR"
 }
 
 phase_app() {
+  ensure_contexts || return 1
+  verify_identity_boundary || return 1
   run app-build docker build -f app/payments/charge_svc/Dockerfile \
     -t "$(image_ref charge_svc)" "$WORKSPACE" || return 1
   run app-build-worker docker build -f app/comms/notify_worker/Dockerfile \
@@ -203,7 +233,23 @@ phase_app() {
     printf 'SOL_API_KEY: %s*** (generated for this run)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
   run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET' --registry '$ECR_REGISTRY'" || return 1
+  deploy_namespaces="pluto-payments pluto-comms"
+  say "deploy-substrate"
+  for ns in $deploy_namespaces; do
+    if kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
+      say "  $ns: sol-deploy already bound (not a clean test of the substrate prerequisite)"
+    else
+      say "  $ns: no sol-deploy RoleBinding yet"
+    fi
+  done
   run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'" || return 1
+  for ns in $deploy_namespaces; do
+    if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
+      say "the deploy completed into $ns without establishing its scoped deploy RBAC"
+      return 1
+    fi
+  done
+  say "  the deploy established the scoped deploy RBAC in every namespace it entered"
   if ! run app-transaction bash "$ROOT/internal/qualification/aws/app-transaction.sh" "$LOG_DIR"; then
     capture_kube_evidence
     return 1

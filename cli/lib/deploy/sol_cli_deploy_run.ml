@@ -150,6 +150,19 @@ let migration_prerequisite ctx ~plan ~live =
                  ctx.target_name)))
 ;;
 
+let substrate_prerequisite ctx ~plan ~live =
+  let namespaces = Sol_cli_substrate.namespaces plan in
+  if namespaces = []
+  then Ok ()
+  else if live
+  then
+    Sol_cli_substrate.ensure ~ctx:ctx.execution.cluster ~namespaces
+    |> Result.map_error (fun message -> Refused message)
+  else
+    Sol_cli_substrate.established ~ctx:ctx.execution.cluster ~namespaces
+    |> Result.map_error (fun message -> Refused message)
+;;
+
 let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_id plan =
   plan.Sol_cli_deployment_plan.services
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->

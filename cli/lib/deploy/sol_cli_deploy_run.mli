@@ -41,6 +41,12 @@ val migration_prerequisite
   -> live:bool
   -> (unit, gate_failure) result
 
+val substrate_prerequisite
+  :  context
+  -> plan:Sol_cli_deployment_plan.t
+  -> live:bool
+  -> (unit, gate_failure) result
+
 val deploy_events
   :  workspace:string
   -> target_cfg:Sol_cli_config.target

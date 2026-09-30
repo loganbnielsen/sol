@@ -120,6 +120,52 @@ let ensure ~ctx ~namespaces : (unit, string) result =
      | Ok docs -> apply_all docs)
 ;;
 
+let established ~ctx ~namespaces : (unit, string) result =
+  let open Result.Syntax in
+  let check_ns ns =
+    match
+      Sol_cli_kubectl.get ~ctx ~resource:"namespace" ~name:ns ~namespace:"" ~output:"name"
+    with
+    | Ok _ -> Ok ()
+    | Error _ ->
+      Error
+        (Printf.sprintf
+           "namespace %s does not exist, so the deploy identity holds no scoped \
+            authority in it; Sol establishes a namespace and its scoped RBAC together, \
+            and neither is present here"
+           ns)
+  in
+  let check_binding ns name =
+    match
+      Sol_cli_kubectl.get ~ctx ~resource:"rolebinding" ~name ~namespace:ns ~output:"name"
+    with
+    | Ok _ -> Ok ()
+    | Error _ ->
+      Error
+        (Printf.sprintf
+           "namespace %s exists but has no %s RoleBinding, so any manifest operation \
+            there would be refused before it began; deploy into %s with a live run, \
+            which establishes the namespace and its scoped RBAC before it touches a \
+            manifest"
+           ns
+           name
+           ns)
+  in
+  let rec check = function
+    | [] -> Ok ()
+    | ns :: rest ->
+      let* () = check_ns ns in
+      let* () =
+        List.fold_left
+          (fun acc name -> Result.bind acc (fun () -> check_binding ns name))
+          (Ok ())
+          [ "sol-deploy"; "sol-operator" ]
+      in
+      check rest
+  in
+  check namespaces
+;;
+
 let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
   : Sol_cli_yaml.document list
   =
