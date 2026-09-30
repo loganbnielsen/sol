@@ -709,7 +709,7 @@ let test_decode_error_callback () =
           let raw = Bytes.of_string {|{"id":"raw-no-wire-format"}|} in
           (match
              Eio.Promise.await
-               (Kafka.Producer.produce_await
+               (Kafka.Producer.produce_receipt
                   producer
                   ~topic:(Kafka_service.topic_name_to_string RawTestEvent.topic_name)
                   ~value:(Some raw)
@@ -762,7 +762,7 @@ let produce_undecodable ~sw ~topic_name =
   | Ok producer ->
     (match
        Eio.Promise.await
-         (Kafka.Producer.produce_await
+         (Kafka.Producer.produce_receipt
             producer
             ~topic:(Kafka_service.topic_name_to_string topic_name)
             ~value:(Some (Bytes.of_string "not-wire-format"))
