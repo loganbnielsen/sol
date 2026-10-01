@@ -38,6 +38,35 @@ let () =
       ()
   in
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) postgres_url in
+  let kafka = Kafka_service.create kafka_config ~sw |> require_kafka "kafka create" in
+  let notification_sent =
+    Kafka_service.register kafka ~net:env#net ~clock:env#clock (module Notification_sent)
+    |> require_kafka "kafka register"
+  in
+  let publish (publication : Sol_outbox.publication) =
+    let decoded =
+      try Notification_sent.decode (Yojson.Safe.from_string publication.payload) with
+      | Yojson.Json_error msg -> Error msg
+    in
+    match decoded with
+    | Error msg -> Error msg
+    | Ok event ->
+      Eio.Promise.await (Kafka_service.publish kafka notification_sent event)
+      |> Result.map_error Kafka.Error.to_string
+  in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+    (Notify_worker.Notification_sent_outbox.relay
+       ~env
+       ~pool
+       ~publish
+       ~ot:obs
+       ~metrics_port:0
+       ()
+     |> Result.map_error Sol_outbox.run_error_to_string
+     |> function
+     | Ok () -> ()
+     | Error msg -> failwith msg);
+    `Stop_daemon);
   let module W = Notify_worker.Make (struct
       let pool = pool
       let ot = Sol_obs.obs_eio obs

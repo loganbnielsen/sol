@@ -35,6 +35,14 @@ end
 
 module Jobs = Sol_jobs.Make (Email_job)
 
+module Notification_sent_outbox = Sol_outbox.Make (struct
+    type t = Notification_sent.t
+
+    let kind (_ : t) = "notification_sent"
+    let kinds = [ "notification_sent" ]
+    let encode (t : t) = Yojson.Safe.to_string (Notification_sent.encode t)
+  end)
+
 module Make (Config : sig
     val pool : Pg_db.pool
     val ot : Obs_eio.t
@@ -65,10 +73,22 @@ struct
             ~amount_cents:msg.amount_cents
             ~currency:msg.currency
         in
-        Jobs.enqueue
+        let* () =
+          Jobs.enqueue
+            tx
+            ~dedupe_key:msg.id
+            Email_job.{ charge_id = msg.id; customer_id = msg.customer_id }
+        in
+        Notification_sent_outbox.publish
           tx
-          ~dedupe_key:msg.id
-          Email_job.{ charge_id = msg.id; customer_id = msg.customer_id })
+          ~key:msg.id
+          ~ord:1L
+          Notification_sent.
+            { charge_id = msg.id
+            ; customer_id = msg.customer_id
+            ; amount_cents = msg.amount_cents
+            ; currency = msg.currency
+            })
     with
     | Ok () -> Worker.Ack
     | Error e ->
