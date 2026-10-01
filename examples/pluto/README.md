@@ -120,7 +120,10 @@ See `docs/deployment/workload-availability.md`.
 
 A production deploy refuses to roll code out against an unapplied migration
 (AUDIT-069). This workspace has one migration, `db/migrations/0001_notifications.sql`,
-so the two cases are:
+with a matching `0001_notifications.down.sql` for `sol migrate rollback`.
+`sol migrate apply --dry-run` connects to the target database and prints only
+unapplied migration SQL; set `POSTGRES_URL` when previewing a remote target.
+The two deploy cases are:
 
 - **Compatible** — after `sol migrate apply prod/aws/us-east-1`, `sol deploy
   prod/aws/us-east-1` verifies `0001_notifications` against the authoritative

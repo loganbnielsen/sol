@@ -17,39 +17,7 @@ let table_name ~workspace =
   Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
 ;;
 
-let parse_version fname =
-  let base = Filename.remove_extension fname in
-  match String.index_opt base '_' with
-  | None -> None
-  | Some i ->
-    let num = String.sub base 0 i in
-    (match int_of_string_opt num with
-     | Some version when version >= 0 ->
-       Some (version, String.sub base (i + 1) (String.length base - i - 1))
-     | _ -> None)
-;;
-
-let duplicate_versions named =
-  let rec scan acc = function
-    | (fa, a) :: ((fb, b) :: _ as rest) when a.version = b.version ->
-      scan ((fa, fb, a.version) :: acc) rest
-    | _ :: rest -> scan acc rest
-    | [] -> List.rev acc
-  in
-  scan [] (List.stable_sort (fun (_, a) (_, b) -> compare a.version b.version) named)
-;;
-
-let shared_version_error ~dir (a, b, version) =
-  let message =
-    String.concat
-      " "
-      [ Printf.sprintf "migrations %s and %s in %s share version %d;" a b dir version
-      ; "each migration needs its own version, or the runner applies one and silently"
-      ; "skips the other -- renumber one of them"
-      ]
-  in
-  Error message
-;;
+let parse_version = Migration.parse_filename
 
 type directory_contents =
   | Absent
@@ -71,33 +39,24 @@ let inspect_directory dir =
 
 let required ~dir =
   match inspect_directory dir with
-  | Absent -> Ok []
+  | Absent ->
+    Error
+      (Printf.sprintf
+         "cannot read migrations dir: %s: %s"
+         dir
+         (Unix.error_message Unix.ENOENT))
   | Uninspectable message -> Error message
-  | Entries entries ->
-    let sql =
-      entries
-      |> List.filter (fun f ->
-        Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql"))
-      |> List.sort String.compare
-    in
-    let rec parse acc = function
-      | [] -> Ok (List.rev acc)
-      | fname :: rest ->
-        (match parse_version fname with
-         | Some (version, name) -> parse ((fname, { version; name }) :: acc) rest
-         | None ->
-           Error
-             (Printf.sprintf
-                "migration file %S does not start with a numeric version separated by \
-                 `_` (expected e.g. `001_create_orders.sql`)"
-                (Filename.concat dir fname)))
-    in
-    (match parse [] sql with
-     | Error _ as e -> e
-     | Ok named ->
-       (match duplicate_versions named with
-        | [] -> Ok (List.map snd named)
-        | shared :: _ -> shared_version_error ~dir shared))
+  | Entries _ ->
+    Eio_main.run (fun env ->
+      Migration.migrations ~fs:env#fs ~dir
+      |> Result.map_error Pg_error.to_string
+      |> Result.map (List.map (fun (version, name, _) -> { version; name })))
+;;
+
+let required_if_present ~dir =
+  match inspect_directory dir with
+  | Absent -> Ok []
+  | Uninspectable _ | Entries _ -> required ~dir
 ;;
 
 let to_string (p : prerequisite) = Printf.sprintf "%03d_%s" p.version p.name

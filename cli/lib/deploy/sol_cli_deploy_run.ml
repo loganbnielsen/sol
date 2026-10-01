@@ -99,7 +99,7 @@ let migration_prerequisite ctx ~plan ~live =
     in
     if not live
     then (
-      match Sol_cli_migration.required ~dir with
+      match Sol_cli_migration.required_if_present ~dir with
       | Ok [] | Error _ -> Ok ()
       | Ok _ ->
         Sol_cli_report.app

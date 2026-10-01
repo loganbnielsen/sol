@@ -124,7 +124,7 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
 ;;
 
 let verify ~ctx ~target ~workspace ~dir ~services =
-  match Sol_cli_migration.required ~dir with
+  match Sol_cli_migration.required_if_present ~dir with
   | Error e -> Unavailable e
   | Ok [] -> No_migrations
   | Ok required ->
