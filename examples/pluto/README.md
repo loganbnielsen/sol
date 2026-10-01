@@ -175,6 +175,46 @@ sol deploy prod/aws/us-east-1     # first environment
 sol deploy pilot/aws/us-east-1    # a second one, same installation
 ```
 
+## Tearing down: destroy an environment, or uninstall Sol
+
+The two operations remove different things, and neither removes the other's.
+
+```bash
+sol cloud destroy prod/aws/us-east-1 --apply   # environment only
+```
+
+That removes the environment's network, cluster, database and workloads, verifies
+their absence independently, and leaves the installation standing: the state
+backend, the identities, and the delegated DNS zone survive, so redeploying the
+same environment needs no registrar or DNS work again. Sol reports what it
+retained and why.
+
+Removing the installation is its own command and is never implied by an
+environment destroy:
+
+```bash
+sol uninstall prod/aws/us-east-1
+```
+
+Without `--confirm` it prints the plan and changes nothing. The plan names what
+it would remove (the state facility, and the delegated zone when Sol owns it) and
+what it keeps, with the reason: a user-supplied or externally delegated zone,
+the registrar NS records (which live outside every provider API Sol can call),
+and the four identities, which the durable root does not create — the operator
+creates them from its policy output.
+
+When the zone going away is a Sol-created one, it needs its own confirmation
+naming the exact domain, because the delegation at the registrar becomes stale
+and a recreated zone gets different nameservers:
+
+```bash
+sol uninstall prod/aws/us-east-1 --confirm --confirm-dns-zone pluto.example.com
+```
+
+After the removal Sol re-observes each resource with the installation's own
+probes and reports which are absent; an unqueryable answer is UNKNOWN and fails
+closed rather than being reported as removed.
+
 ## CLI commands
 
 ```bash

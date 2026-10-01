@@ -132,15 +132,93 @@ and needs its own confirmation naming the domain; a user-supplied zone is never 
 none; a zone the declaration disowns is unmanaged only when the state owns it; an unobservable
 answer is reported as a failed observation rather than as absence.
 
-## What remains (part B)
+## Part B landed (2026-10-01): the command, its lifecycle, and its verification
 
-The command surface itself: `cli/bin/cmd_uninstall.ml` registered in `main.ml` with `--confirm` and
-`--confirm-dns-zone <domain>`; the destroy of the durable root with the `state_rm` step for an
-unmanaged zone; absence verified by observation after removal (the installation's own probes, which
-fail closed, plus `Sol_cli_destroy_verification`'s residue model where it fits) with the retained
-resources named in the output; a CLI surface test driving fakes for the refusals, the retained zone
-and the verified absence; and the documentation the ticket's demo/example line requires
-(`docs/DEVELOPER_EXPERIENCE.md` §3/§10, DOCS-029, the `examples/pluto` walkthrough), then a
-regenerated `docs/reference/cli.md`.
+`sol uninstall <TARGET>` is registered in `main.ml` (`cli/bin/cmd_uninstall.ml`), target-addressed
+like `sol cloud bootstrap` (DEC-031, DEC-016), with `--confirm`, `--confirm-dns-zone <domain>`,
+`--var-file` and `--var`. It reuses the part A model (`Sol_cli_installation_uninstall.plan`) rather
+than rebuilding the ownership decision at the CLI edge, and the executor
+(`Sol_cli_installation_uninstall_stage`) is a typed injectable-dependency function, as
+`Sol_cli_cloud_destroy` is.
 
-**Language parity:** no impact — installation removal is app-language neutral.
+**Correction to part A: the identities are not Sol-created.** The durable roots declare the
+service/operator policy contracts as `data` sources only — `platform/cloud/aws/bootstrap/main.tf`
+has no `aws_iam_role`, the GCP root has none at all, and the AWS outputs say "The operator creates
+the role and supplies its ARN". Part A's `removes` listed every non-zone prerequisite, which would
+have claimed to delete resources Sol never created (and which Terraform never manages, so the
+post-destroy observation would have seen them present and failed every AWS run). `plan` now takes
+`created:` — the provider's `installation_created_prerequisites` — so `removes` is exactly the
+durable root's own resources (state facility; the zone when the declaration says Sol owns it), and
+each identity is reported as retained with the reason "the durable root does not create it; the
+operator does, so Sol does not remove it". `Public_delegation` is not a resource at all and is
+covered by the zone/registrar line rather than an identity line. The user-supplied-zone property
+part A tested is unchanged.
+
+**What a user sees.**
+
+```text
+$ sol uninstall qual/aws/us-east-1
+Uninstall plan for qual/aws/us-east-1 -- the durable installation that outlives every environment:
+
+  remove  terraform state backend
+  remove  terraform state lock
+  remove  delegated DNS zone
+  retain  qual-aws.example.test -- the NS records at your registrar still point at this zone's nameservers; a recreated zone gets different ones
+  retain  provisioning identity -- the durable root does not create it; the operator does, so Sol does not remove it
+  ...
+  removing the zone for qual-aws.example.test needs its own confirmation, because the delegation at your registrar becomes stale and a recreated zone would have different nameservers: --confirm-dns-zone qual-aws.example.test
+error: nothing was removed: removing an installation is destructive, so re-run with --confirm once you intend what the plan above states
+```
+
+With `--confirm` (and `--confirm-dns-zone` when a Sol-created zone is going away) the run removes,
+re-observes, and prints `Removed and independently observed absent:` followed by `Retained:`.
+
+**Mechanism and ordering.** The durable root is destroyed through `Sol_cli_terraform` (credentials →
+`init` → `state list` → destroy), not a parallel destruction path. Two things are taken out of the
+root's state *before* the destroy, in this order: the zone when the target declares it is the
+operator's but the state owns it (part A's `unmanages_the_zone`), and the state backend. The state
+facility is the structural exception: a Terraform root cannot destroy the backend that stores its
+own state (Terraform persists state during the destroy walk, so deleting the bucket breaks the run;
+that is the mirror of INFRA-096's "a root cannot create the backend that stores its own state"), so
+the released bucket is retired explicitly afterwards through the provider — AWS purges every object
+version and delete-marker then deletes the bucket; GCP uses `gcloud storage rm --recursive`. Absence
+is then established by the installation's own probes (`Sol_cli_installation.observe`), never by the
+destroy's exit code: a resource observed `Established` is reported `NOT removed`, an `UNKNOWN`
+observation fails closed, and a destroy that failed while every removal is observed absent still
+reports success (the ticket's own rule, read in both directions).
+
+**Evidence.** `cli/test/test_installation.ml` (39 total) adds: the identities are retained and the
+GCP created-set is state+zone; `classify_removal` maps Unmet→removed, Established→present,
+Unknown→unknown, and a missing observation to UNKNOWN; an unconfirmed uninstall and a DNS
+confirmation that does not name the exact zone refuse with *no* destructive step reaching the deps;
+a user-supplied zone is preserved without any DNS confirmation and is never `state_rm`'d; the
+release/zone unmanage both precede the destroy; the observation runs after the destroy and after the
+state-backend retirement; and an UNKNOWN observation or a survived state backend fails closed.
+`cli/test/test_uninstall_cli.sh`, driven through the real binary with fake `terraform`/`aws`,
+pins the same at the CLI edge plus the `state_rm aws_s3_bucket.state` → `destroy` ordering and the
+provider retirement argv.
+
+**Premise verified.** `rg -n 'uninstall' cli/bin` returned nothing before this work and now finds
+the command; `sol uninstall --help` is registered, and `internal/ci/check_cli_reference.py` reports
+the 47-command surface with no drift. The durable-root destroy was never exercised by the
+qualification path (the durable roots are only ever *reconciled*, per INFRA-096 part B and
+`internal/qualification/aws/live-row.sh`), which is why the backend ordering above is an explicit
+mechanism rather than an assumed one.
+
+**Demo/example coverage.** `docs/DEVELOPER_EXPERIENCE.md` §3/§10 now mark uninstall **Today** and
+carry the real plan output; `examples/pluto/README.md` gains "Tearing down: destroy an environment,
+or uninstall Sol", showing both commands and what each leaves behind; `docs/reference/cli.md` is
+regenerated (the planned-command bullet is gone). The operations guide is DOCS-029, which this
+ticket makes executable and which is done separately.
+
+**Language parity:** no impact — installation removal is app-language neutral, and nothing here
+touches the application contract, framework primitives or generated manifests.
+
+**Recorded limitations.** The probes classify a refused provider command (non-zero exit) as `Unmet`
+= absent, so a permission error that is not a 404 verifies as absence; that is the existing
+`present_if_output` model shared with `sol cloud bootstrap`, not new here. The live destroy/retire
+path was not exercised against a real account — live qualification is a separate, gated ticket per
+the qualification ledger, and the offline fakes plus the observation step are the available
+evidence. GCS soft-deleted objects (FND-0057) are outside this ticket: the bucket is observed
+absent, which is the installation resource, but the soft-deleted objects it leaves are not
+individually observed.

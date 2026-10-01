@@ -26,6 +26,7 @@ let () =
       ; Cmd_assets.cmd
       ; Cmd_alert.cmd
       ; Cmd_cloud.cmd
+      ; Cmd_uninstall.cmd
       ]
   in
   exit (Cmdliner.Cmd.eval cmd)

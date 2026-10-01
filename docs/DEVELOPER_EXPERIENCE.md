@@ -90,7 +90,7 @@ Most confusion about deployment lifecycles comes from conflating these two.
 | What it is | Sol's durable, account-level setup | One deployable target |
 | Examples | Terraform state backend, provisioner/deploy/operator identities, the delegated DNS zone | Network, cluster, database, registry use, the deployed application |
 | Lifetime | Outlives every environment | Disposable; can be destroyed and recreated |
-| Removed by | An explicit `sol uninstall` | `sol cloud destroy <target>` |
+| Removed by | An explicit `sol uninstall <target>` | `sol cloud destroy <target>` |
 | Contains billable resources | Some (the delegated zone, the state bucket) | Yes (the cluster, database, load balancers) |
 
 This distinction is the whole point of the model:
@@ -397,7 +397,7 @@ into provider tools for the normal path.
 | `sol check` | Diagnostics against the selected target/scope, with explained failures | **Partial** — declaration validity today; target/scope diagnostics **Target** |
 | `sol open <view>` | Open the relevant local/white-labelled operational UI | **Today** (logs, metrics, dashboard); traces/infra **Target** (OBS-045, INFRA-027) |
 | `sol cloud destroy <target>` | Remove disposable environment resources and verify absence | **Today** |
-| `sol uninstall` | Remove Sol's persistent installation, explicitly | **Target** (FEAT-108) |
+| `sol uninstall <target>` | Remove Sol's persistent installation, explicitly | **Today** |
 
 ---
 
@@ -465,7 +465,7 @@ which of three things they are doing.
 | Operation | Removes | Leaves intact |
 |---|---|---|
 | `sol cloud destroy <target>` | Environment X's network, cluster, database, workloads | The installation: state backend, identities, delegated DNS zone |
-| `sol uninstall` | Sol's durable installation for the account/workspace | Externally supplied zones and any resources Sol does not own |
+| `sol uninstall <target>` | Sol's durable installation for the account/workspace | Externally supplied zones, the identities the operator created, and any resources Sol does not own |
 | `terraform destroy` (advanced) | Whatever that root manages | Everything else |
 
 Rules:
@@ -485,9 +485,46 @@ Rules:
 - After uninstall, Sol independently verifies which Sol-owned resources are
   absent, and reports what was intentionally retained or is externally owned.
 
+`sol uninstall <target>` prints what it will remove and what it will keep, and it
+changes nothing without `--confirm`:
+
+```text
+$ sol uninstall qual/aws/us-east-1 --confirm --confirm-dns-zone qual-aws.example.test
+Uninstall plan for qual/aws/us-east-1 -- the durable installation that outlives every environment:
+
+  remove  terraform state backend
+  remove  terraform state lock
+  remove  delegated DNS zone
+  retain  qual-aws.example.test -- the NS records at your registrar still point at this zone's nameservers; a recreated zone gets different ones
+  retain  provisioning identity -- the durable root does not create it; the operator does, so Sol does not remove it
+  removing the zone for qual-aws.example.test needs its own confirmation, because the delegation at your registrar becomes stale and a recreated zone would have different nameservers: --confirm-dns-zone qual-aws.example.test
+
+Removed and independently observed absent:
+  terraform state backend
+  terraform state lock
+  delegated DNS zone
+
+Retained:
+  qual-aws.example.test -- ...
+  provisioning identity -- the durable root does not create it; ...
+Done. The installation's Sol-owned durable resources are gone; nothing else was touched.
+```
+
+Removing a Sol-created zone needs its **own** confirmation naming the exact
+domain, because the delegation at the operator's registrar becomes stale and a
+recreated zone gets different nameservers. A user-supplied or externally
+delegated zone is never removed. The Terraform state facility is the one
+structural exception — a root cannot destroy the backend that stores its own
+state — so Sol takes it out of the root's state before the destroy and retires it
+explicitly afterwards. The provisioning / cluster-access / deploy / operator
+identities are created by the operator from the durable root's policy output, so
+uninstall never deletes them; it reports them as retained, with the reason.
+Absence is observed through the installation's own probes, never inferred from an
+exit code: an unqueryable answer is UNKNOWN and fails closed.
+
 **Today:** environment destroy and absence verification exist (`sol cloud
-destroy`, `DEC-044`); the installation-level `sol uninstall` is **Target**
-(FEAT-108).
+destroy`, `DEC-044`), and installation removal exists (`sol uninstall <target>`,
+`FEAT-108`).
 
 ---
 
