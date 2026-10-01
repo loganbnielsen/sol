@@ -2,7 +2,8 @@ let insert_q =
   Caqti_request.Infix.(Caqti_type.(t4 string string int string) ->. Caqti_type.unit)
     "INSERT INTO {{name}}_notifications \
      (charge_id, customer_id, amount_cents, currency) \
-     VALUES (?, ?, ?, ?)"
+     VALUES (?, ?, ?, ?) \
+     ON CONFLICT (charge_id) DO NOTHING"
 
 let list_q =
   Caqti_request.Infix.(Caqti_type.unit ->* Caqti_type.(t4 string string int string))
