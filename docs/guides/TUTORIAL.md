@@ -270,10 +270,10 @@ end) = struct
   let group_id = "pluto-comms-notify-worker"
 
   let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
-    Pg_db.transaction Config.pool (fun pool ->
+    Pg_db.transaction Config.pool (fun tx ->
       let open Result.Syntax in
       let* () = Notification.insert pool ~charge_id:msg.id ... in
-      Jobs.enqueue pool ~dedupe_key:msg.id
+      Jobs.enqueue tx ~dedupe_key:msg.id
         Email_job.{ charge_id = msg.id; customer_id = msg.customer_id })
     |> function
     | Ok () -> Worker.Ack

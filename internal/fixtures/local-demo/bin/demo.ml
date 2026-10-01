@@ -340,11 +340,11 @@ let () =
              }
          in
          let result =
-           Pg_db.transaction pool (fun pool ->
+           Pg_db.transaction pool (fun tx ->
              let open Result.Syntax in
-             let* () = FulfilledOrders.insert pool row in
+             let* () = FulfilledOrders.insert tx row in
              Jobs.enqueue
-               pool
+               tx
                ~dedupe_key:msg.Message.order_id
                EmailJobCodec.{ order_id = msg.Message.order_id })
          in

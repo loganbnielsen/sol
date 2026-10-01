@@ -97,10 +97,10 @@ let with_pool f =
 let test_make_instances_do_not_cross_claim () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
-    (match Reports.enqueue pool "q3" with
+    (match Pg_db.transaction pool (fun tx -> Reports.enqueue tx "q3") with
      | Ok () -> ()
      | Error e -> Alcotest.failf "enqueue report: %s" (Pg_error.to_string e));
-    (match Emails.enqueue pool "alice" with
+    (match Pg_db.transaction pool (fun tx -> Emails.enqueue tx "alice") with
      | Ok () -> ()
      | Error e -> Alcotest.failf "enqueue email: %s" (Pg_error.to_string e));
     Email.handled := [];
@@ -153,7 +153,7 @@ let test_enqueue_refuses_an_undeclared_kind () =
     end
     in
     let module Strays = Sol_jobs.Make (Stray) in
-    (match Strays.enqueue pool "x" with
+    (match Pg_db.transaction pool (fun tx -> Strays.enqueue tx "x") with
      | Error _ -> ()
      | Ok () -> Alcotest.fail "a kind nothing claims must not be enqueued");
     Alcotest.(check int) "nothing was inserted" 0 (List.length (rows pool)))
@@ -278,7 +278,7 @@ let run_slow
 ;;
 
 let enqueue_slow ?dedupe_key pool =
-  match Slows.enqueue pool ?dedupe_key "work" with
+  match Pg_db.transaction pool (fun tx -> Slows.enqueue tx ?dedupe_key "work") with
   | Ok () -> ()
   | Error e -> Alcotest.failf "enqueue: %s" (Pg_error.to_string e)
 ;;

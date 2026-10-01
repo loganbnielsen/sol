@@ -129,9 +129,11 @@ column serves scanning, cleanup and tie-breaking.
 ## Design requirements
 
 - **Transaction-scoped publication.** `Outbox.publish` participates in the caller's
-  transaction and never opens its own. `EXP-033` decides whether transaction scope is
-  represented in the type system — so that `Outbox.publish pool event` is a type error —
-  or stays a documented convention with the atomicity test below as the guard.
+  transaction and never opens its own, and takes `Pg_db.tx`, not `Pg_db.pool`. `EXP-033`
+  decided this (2026-10-01): transaction scope is in the type system now, so
+  `Outbox.publish pool event` is a type error, exactly as `Sol_jobs.enqueue` is. The
+  atomicity test below still stands — the type proves you *entered* a transaction, not
+  that it is still open (`EXP-033` records the limit).
 - **Per-key ordered publication.** The outbox row carries the aggregate key and the
   ordering token defined above. The relay publishes with the aggregate key as the Kafka
   key, so downstream per-partition order is the published order.

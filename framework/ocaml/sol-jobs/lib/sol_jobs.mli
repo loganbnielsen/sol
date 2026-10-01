@@ -26,7 +26,7 @@ val run_error_to_string : run_error -> string
 
 module Make (J : JOB) : sig
   val enqueue
-    :  Pg_db.pool
+    :  Pg_db.tx
     -> ?run_at:float
     -> ?dedupe_key:string
     -> J.t

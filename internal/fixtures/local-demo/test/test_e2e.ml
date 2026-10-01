@@ -288,10 +288,10 @@ let run_golden_path () =
               }
           in
           let result =
-            Pg_db.transaction pool (fun pool ->
+            Pg_db.transaction pool (fun tx ->
               let open Result.Syntax in
-              let* () = FulfilledOrders.insert pool row in
-              Jobs.enqueue pool EmailJobCodec.{ order_id = msg.Message.order_id })
+              let* () = FulfilledOrders.insert tx row in
+              Jobs.enqueue tx EmailJobCodec.{ order_id = msg.Message.order_id })
           in
           (match result with
            | Ok () | Error _ -> ()));

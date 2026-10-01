@@ -55,18 +55,18 @@ struct
         ]
       "charge event received";
     match
-      Pg_db.transaction Config.pool (fun pool ->
+      Pg_db.transaction Config.pool (fun tx ->
         let open Result.Syntax in
         let* () =
           Notification.insert
-            pool
+            tx
             ~charge_id:msg.id
             ~customer_id:msg.customer_id
             ~amount_cents:msg.amount_cents
             ~currency:msg.currency
         in
         Jobs.enqueue
-          pool
+          tx
           ~dedupe_key:msg.id
           Email_job.{ charge_id = msg.id; customer_id = msg.customer_id })
     with
