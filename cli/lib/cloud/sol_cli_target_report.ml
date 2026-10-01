@@ -3,6 +3,7 @@ type kubernetes_status =
   | Configured of string
   | Reachable of string
   | Unreachable of string * string
+  | Unreadable of string * string
 
 let redact ~needle ~replacement haystack =
   if needle = ""
@@ -26,6 +27,10 @@ let redact ~needle ~replacement haystack =
     Buffer.contents buffer)
 ;;
 
+let redact_context ~verbose ~context text =
+  if verbose then text else redact ~needle:context ~replacement:"<context>" text
+;;
+
 let describe ~verbose = function
   | Not_configured ->
     "not configured — this target names no kube_context, so `sol deploy` has no cluster \
@@ -44,6 +49,19 @@ let describe ~verbose = function
     else
       Printf.sprintf
         "unreachable: %s"
+        (redact ~needle:context ~replacement:"<context>" reason)
+  | Unreadable (context, reason) ->
+    if verbose
+    then
+      Printf.sprintf
+        "could not be probed (%s): %s — Sol cannot tell whether the cluster is reachable \
+         from here"
+        context
+        reason
+    else
+      Printf.sprintf
+        "could not be probed: %s — Sol cannot tell whether the cluster is reachable from \
+         here"
         (redact ~needle:context ~replacement:"<context>" reason)
 ;;
 
@@ -81,6 +99,7 @@ let rows
       ?cloud
       ?drift
       ?(last_operation = last_operation_unavailable)
+      ?substrate
       ~verbose
       (target : Sol_cli_config.target)
       kubernetes
@@ -101,6 +120,15 @@ let rows
     @ labelled "drift" drift
     @ labelled "last operation" (Some last_operation)
   in
+  let core =
+    match substrate with
+    | None -> core
+    | Some lines ->
+      core
+      @ List.map
+          (fun (input, verdict) -> Printf.sprintf "substrate: %s" input, verdict)
+          lines
+  in
   if not verbose
   then core
   else
@@ -117,11 +145,12 @@ let to_json
       ?cloud
       ?drift
       ?(last_operation = last_operation_unavailable)
+      ?substrate
       ~verbose
       target
       kubernetes
   =
   `Assoc
-    (rows ?platform ?cloud ?drift ~last_operation ~verbose target kubernetes
+    (rows ?platform ?cloud ?drift ~last_operation ?substrate ~verbose target kubernetes
      |> List.map (fun (key, value) -> key, `String value))
 ;;

@@ -125,6 +125,37 @@ The following substrate inputs must exist before running `sol deploy`.
 
 ---
 
+## Each Input as an Observation
+
+The list above is what you bring; this is how Sol checks it. Every input is a predicate
+Sol reports per target with the same three-valued vocabulary the durable prerequisites
+use — `Established`, `Unmet` (the answer says it is not there) or `UNKNOWN` (Sol could
+not look) — and **an answer Sol could not obtain is never promoted to satisfied**
+(`DEC-052`).
+
+| Input | Statement | How Sol observes it | Reported by |
+|---|---|---|---|
+| Kubernetes cluster | a reachable cluster and a kubeconfig context that reaches it | `kubectl cluster-info` through the target's context; a connection-level failure is `Unmet`, a refused or unauthenticated answer is `UNKNOWN` | `sol target show <target> --check` |
+| Container registry | a registry prefix the cluster's nodes can pull from | the prefix is read from the target; **pullability is not observable from the CLI**, because only a node in the cluster pulls | `sol target show <target> --check` |
+| Kafka and schema registry | broker addresses and a schema-registry URL the workloads reach, with `KAFKA_SECURITY_PROTOCOL` set (`SEC-007`) | the addresses are workspace configuration (`[infra.env] config`); reachability and the broker's security posture are properties of the cluster's network, which the CLI does not sit in | `sol deploy` (the workloads observe it at runtime) |
+| Postgres connection | a `POSTGRES_URL` the workspace's runtime Secret carries | read from the environment of the identity running the deploy; without it the Secret cannot carry the key, and Sol refuses rather than rendering one without it | `sol deploy`, `sol target show <target> --check` |
+| Observability endpoints | Loki and Pushgateway endpoints the workloads reach | the URLs are workspace configuration; reachability is again a property of the cluster's network | `sol deploy` (the workloads observe it at runtime) |
+| Base domain and TLS | a certificate Issuer and a DNS entry when a service declares an ingress host | the Issuer lives in the cluster and the record in the DNS provider, neither of which the deploy check reads | `sol deploy` (`--check` reports it `UNKNOWN`, with the reason) |
+
+Two consequences worth stating plainly, because they are what this contract refuses:
+
+- **Nothing here is asserted in YAML.** A `substrate:` block saying `database: managed`
+  or `tls: yes` would be a declaration Sol cannot check, and a wrong one would be
+  undetectable; where a fact can be observed, configuration may only say how to look
+  (`DEC-052`). `DEC-053` is where the set of keys that exist at all is settled, so a key
+  that asserts a discoverable substrate fact is refused there rather than honoured here.
+- **The unobservable half is named, not hidden.** The entries whose reachability only
+  the cluster's own network can answer are reported `UNKNOWN` with that reason, and the
+  first unit of this contract (`DEC-052`) adds the predicates Sol can observe today
+  rather than inventing a check that would pass.
+
+---
+
 ## What Sol Generates
 
 Running `sol deploy` (or `sol up` locally) produces the following Kubernetes

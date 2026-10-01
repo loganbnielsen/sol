@@ -74,6 +74,7 @@
   test_destroy_verification
   test_terraform_plan
   test_substrate
+  test_substrate_contract
   test_migration
   test_up_plan
   test_workspace_model

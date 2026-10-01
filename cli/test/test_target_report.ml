@@ -78,6 +78,7 @@ let test_default_summary_never_names_the_context () =
     ; Configured "prod-us-east-1"
     ; Reachable "prod-us-east-1"
     ; Unreachable ("prod-us-east-1", "connection refused")
+    ; Unreadable ("prod-us-east-1", "error: forbidden")
     ]
   in
   statuses
@@ -255,6 +256,21 @@ let () =
             "unreachable carries the reason"
             `Quick
             test_unreachable_carries_the_reason
+        ; Alcotest.test_case "an unreadable probe says Sol cannot tell" `Quick (fun () ->
+            let quiet =
+              Sol_cli_target_report.describe
+                ~verbose:false
+                (Unreadable ("prod-us-east-1", "error: forbidden"))
+            in
+            assert (Sol_cli_string.contains ~needle:"error: forbidden" quiet);
+            assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" quiet));
+            assert (Sol_cli_string.contains ~needle:"cannot tell" quiet);
+            let loud =
+              Sol_cli_target_report.describe
+                ~verbose:true
+                (Unreadable ("prod-us-east-1", "error: forbidden"))
+            in
+            assert (Sol_cli_string.contains ~needle:"prod-us-east-1" loud))
         ; Alcotest.test_case "json matches rows" `Quick test_json_matches_rows
         ; Alcotest.test_case
             "the live state rows follow readiness"
