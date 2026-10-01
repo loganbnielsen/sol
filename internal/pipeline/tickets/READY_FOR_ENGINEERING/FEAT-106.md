@@ -209,8 +209,9 @@ guided run stops at them and names `sol cloud apply <target>`. Two pieces:
 (2) is a security-model question — whether Sol may establish ephemeral
 deploy-identity cluster access for a run on the operator's behalf, and whether a
 provider without an equivalent path should refuse rather than degrade — and this
-ticket's non-goals do not settle it. It is recorded here for the operator instead
-of being assumed.
+ticket's non-goals do not settle it. It is **DEC-058**'s, with the options and what
+each costs; part B cannot start until that decision is recorded, so the two pieces
+above wait on it rather than on more engineering.
 
 ## Coverage (part A)
 
