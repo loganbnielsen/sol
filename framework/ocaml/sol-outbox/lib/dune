@@ -1,0 +1,14 @@
+(library
+ (name sol_outbox)
+ (public_name sol-outbox)
+ (wrapped false)
+ (libraries
+  eio
+  eio.unix
+  obs-eio
+  obs-prometheus-eio
+  pg-eio
+  caqti
+  sol_env
+  sol_obs
+  sol_runtime))

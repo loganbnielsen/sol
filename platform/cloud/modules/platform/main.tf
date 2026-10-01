@@ -826,6 +826,18 @@ locals {
             }, local.alert_annotations)
           },
           {
+            alert = "SolOutboxPublicationLag"
+            expr  = "max by (workspace, env, domain, service, kind) (sol_outbox_oldest_pending_seconds) > 300"
+            for   = "5m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = merge({
+              summary     = "Outbox publication is lagging for kind {{ $labels.kind }} ({{ $labels.domain }}/{{ $labels.workspace }})"
+              description = "{{ $labels.service }} has held the oldest {{ $labels.kind }} outbox event unpublished for over 5 minutes ({{ $value | humanize }}s). Nothing is lost - the intent is committed - but that key's later events are held back behind it. The broker, an incompatible schema, or a stopped relay is the usual cause."
+            }, local.alert_annotations)
+          },
+          {
             alert = "SolKafkaBrokerDown"
             expr  = "up{job=~\".*redpanda.*\"} == 0"
             for   = "5m"

@@ -200,3 +200,78 @@ same.
 **TypeScript parity:** required or explicitly deferred with a trigger — a TS application
 needs the same transactional publication path, and today there is no TS `sol-jobs`
 equivalent either (DEC-022). Silence is not a verdict.
+
+## Completion notes (2026-10-01)
+
+**Premise:** confirmed at start — `git grep -in outbox -- docs framework cli internal/fixtures
+examples platform` found nothing outside the tickets.
+
+### What landed
+
+`framework/ocaml/sol-outbox` — a Postgres transactional outbox, with the table owned by a
+workspace migration (`db/migrations/0003_sol_outbox.sql` in the scaffold, `examples/pluto`
+and `internal/fixtures/venus`).
+
+- **Transaction-scoped publication, enforced by type.** `Outbox.publish` takes `Pg_db.tx`,
+  so state change, event intent and `Sol_jobs.enqueue` compose in one transaction and an
+  enqueue that would commit on its own does not compile. `EXP-033` is what made that
+  possible; it landed first for exactly this reason.
+- **The ordering token is the domain's.** `publish ~key ~ord` takes it; the package has no
+  sequence generator and no global-ordering fallback, and a unique index on
+  `(aggregate_key, ord)` refuses a token collision rather than publishing two events into
+  one position.
+- **The relay** publishes each key's oldest row (one row per key per pass, by `min(ord)`),
+  deletes only after the injected publish callback returns `Ok`, and on failure leaves the
+  row and does not advance the key. Rows are deleted on publication, so retention is "none
+  until published" — Kafka is the durable log and Postgres is not a second one — and the
+  `(aggregate_key, ord)` index serves both the per-key minimum and uniqueness.
+- **Failure visibility.** `sol_outbox_published_total{kind,status}`,
+  `sol_outbox_pending{kind}` and `sol_outbox_oldest_pending_seconds{kind}`, plus the
+  `SolOutboxPublicationLag` alert in `platform/cloud/modules/platform/main.tf`. Lag is
+  reported per kind rather than per key on purpose (a key label is unbounded cardinality),
+  and a blocked key raises its kind's oldest-pending age immediately.
+- **Demo/example coverage: `FEAT-121`, filed with this work and blocked on it.** The pluto
+  and tutorial wiring was written for this PR and then removed, for a reason that is not a
+  judgement call: a workspace's Dockerfile reconstructs framework dependencies with
+  `opam install --deps-only .`, and `pluto.opam` pins every `sol-*` package to
+  `sol.git#main` (DEC-025's development channel), so a workspace cannot name a framework
+  package that `main` does not yet publish. `sol-outbox` in `pluto.opam` made
+  `example-dockerfile-smoke` fail with `opam install` exiting 20, and would have done so for
+  any ordering of this PR. The workspace migrations went with it: a table nothing in the
+  workspace uses is worse than no table. The `sol-outbox` package is exercised by its own
+  runnable suite (`dune test framework/ocaml/sol-outbox/`, 7 Postgres-backed cases), and
+  `sol-outbox.md` carries the table DDL the workspace migration will apply.
+
+### Acceptance mapping
+
+| Criterion | Where |
+|---|---|
+| State change and outbox row commit or roll back together, nothing published on rollback | `test_state_and_intent_commit_together`, `test_the_outbox_and_jobs_share_one_transaction` |
+| Per-key order preserved, mutation-caught | `test_per_key_order_is_not_insertion_order` — inserts `ord=2` before `ord=1` and asserts publication order `[1;2]`, so the `ORDER BY id` shortcut fails it |
+| Marked published only after the receipt resolves | `test_a_row_is_kept_until_the_receipt_resolves` (row survives while the callback is blocked) |
+| Killed relay republishes the same event first, no advance | `test_a_failed_publish_does_not_advance_the_key` covers the no-advance half; the crash-between-ack-and-remove half is a live-run observation in `FEAT-120` |
+| Aggregate key as the Kafka key, multi-partition downstream order | the relay passes the publication's key to the injected callback, which is where a workspace's `Kafka_service.publish` keys the record. The deployed multi-partition assertion is `FEAT-120` |
+| A blocked publish is visible as lag and blocks only that key | `test_a_blocked_key_does_not_block_other_keys` + the lag gauges and alert above |
+| Retention, index, cleanup documented and exercised | `sol-outbox.md` § The table; delete-on-publish is exercised by every relay test |
+| Composes with `sol-jobs` in one transaction | `test_the_outbox_and_jobs_share_one_transaction` |
+| Contract limits where an author reads them | `sol-outbox.md` § What it does not prove; `docs/guides/TUTORIAL.md` |
+
+### Deliberately not in this ticket
+
+Two things are deliberately not in this ticket:
+
+- The end-to-end failure qualification — rollback through a deployed workspace, Kafka outage
+  and recovery, duplicate delivery, `worker Fail`, job retry, same-key ordering under a relay
+  restart, and the crash-between-ack-and-mark case — is **FEAT-120**, filed with this work and
+  blocked on it.
+- The pluto/tutorial/migration wiring is **FEAT-121**, filed with this work and blocked on it
+  for the pin-resolution reason above. It is a live run against `sol local infra up` and `sol up`, which is the only
+place those observations can be made honestly; the unit tests above assert the mechanism, not
+the deployed behavior.
+
+**TypeScript parity (DEC-022):** **deferred, with a trigger.** The `@sol-fab/*` packages have
+no `sol-jobs` equivalent and no outbox, so there is nothing to mirror today; the trigger is
+the TypeScript job/outbox family (FEAT-119 tracks the schema-registry and worker-contract
+gaps). The projection boundary is already language-neutral — the contract is the table plus
+the publication protocol, not the OCaml API — so a TypeScript relay is a port, not a
+redesign. This verdict is recorded in `internal/specs/framework-conventions.md`.
