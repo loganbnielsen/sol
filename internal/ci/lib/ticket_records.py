@@ -46,10 +46,12 @@ def rename_problems(change, exists_at_base):
     return []
 
 
-def addition_problems(change, occupied_by):
+def addition_problems(change, occupied_by, moved_ids=()):
     added = ticket_of(change["path"])
     if added:
         _root, _state, ticket_id, _name = added
+        if ticket_id in moved_ids:
+            return []
         occupied = occupied_by(ticket_id)
         if occupied:
             return [
