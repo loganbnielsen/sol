@@ -78,6 +78,7 @@ val required : string -> string option -> (string, string) result
 val aws : t
 val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t
+val provider_console_url : Sol_cli_config.target -> string option
 val installation_nameservers_output : Sol_cli_provider.t -> string
 val installation_identity_contracts : Sol_cli_provider.t -> identity_contract list
 

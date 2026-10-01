@@ -565,6 +565,23 @@ let capabilities_of = function
   | Sol_cli_provider.Gcp -> gcp
 ;;
 
+let provider_console_url (target : Sol_cli_config.target) =
+  match target.provider with
+  | Sol_cli_provider.Aws ->
+    Some
+      (Printf.sprintf
+         "https://console.aws.amazon.com/eks/home?region=%s#/clusters"
+         target.region)
+  | Sol_cli_provider.Gcp ->
+    (match Sol_cli_config.provider_field target "project_id" with
+     | Some project when not (Sol_cli_string.is_blank project) ->
+       Some
+         (Printf.sprintf
+            "https://console.cloud.google.com/kubernetes/list/overview?project=%s"
+            (String.trim project))
+     | _ -> None)
+;;
+
 let installation_nameservers_output provider =
   (capabilities_of provider).installation_nameservers_output
 ;;

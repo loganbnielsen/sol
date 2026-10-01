@@ -615,6 +615,7 @@ sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  st
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
 sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
+sol open infra --target TARGET [--links]          open the target's infrastructure view (no SCOPE: infrastructure is target-addressed)
 #   SCOPE: omit for workspace, domain, domain/service, or resource/<type>/<name>
 #   also accepts --observability-backend {local|self_hosted_durable|external},
 #   --base-domain DOMAIN, and TARGET

@@ -253,6 +253,112 @@ let test_logs_service_scope_invalid_name () =
   check_bool "empty service name -> Error" true (String.length (err_msg result) > 0)
 ;;
 
+let test_infra_url_is_the_target_infrastructure_dashboard () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Infra O.Workspace) in
+  check_string
+    "the infra view opens the target-infrastructure dashboard"
+    "http://localhost:3000/d/sol-target-infrastructure"
+    url
+;;
+
+let test_infra_takes_no_scope () =
+  let result = O.url ~base_url ~workspace ~kind:O.Infra (O.Domain "payments") in
+  check_bool
+    "a scope is refused"
+    true
+    (contains (err_msg result) "target-scoped"
+     && contains (err_msg result) "no application scope")
+;;
+
+let test_infra_requires_a_target () =
+  check_bool "the infra view is target-addressed" true (O.requires_target O.Infra);
+  check_bool "logs is not" false (O.requires_target O.Logs);
+  check_bool "metrics is not" false (O.requires_target O.Metrics);
+  check_bool "dashboard is not" false (O.requires_target O.Dashboard);
+  check_bool
+    "no target is refused, naming the view"
+    true
+    (match O.validate ~kind:O.Infra ~target_present:false O.Workspace with
+     | Error message -> contains message "--target" && contains message "infra"
+     | Ok () -> false);
+  check_bool
+    "a target and no scope is accepted"
+    true
+    (O.validate ~kind:O.Infra ~target_present:true O.Workspace = Ok ());
+  check_bool
+    "a scope is refused before the target is looked at"
+    true
+    (match
+       O.validate
+         ~kind:O.Infra
+         ~target_present:true
+         (O.Service ("payments", "charge-svc"))
+     with
+     | Error message -> contains message "no application scope"
+     | Ok () -> false);
+  check_bool
+    "the scope-addressed views are untouched"
+    true
+    (O.validate ~kind:O.Logs ~target_present:false O.Workspace = Ok ()
+     && O.validate ~kind:O.Dashboard ~target_present:false (O.Domain "payments") = Ok ())
+;;
+
+let test_provider_console_urls_are_provider_owned () =
+  let target ~provider ~region ~fields : Sol_cli_config.target =
+    { name = "prod/" ^ Sol_cli_provider.to_string provider ^ "/" ^ region
+    ; env = "prod"
+    ; provider
+    ; region
+    ; registry = None
+    ; base_domain = None
+    ; cluster_issuer = None
+    ; letsencrypt_email = None
+    ; cluster_name = None
+    ; kube_context = None
+    ; kubeconfig = None
+    ; terraform_var_file = None
+    ; observability_backend = None
+    ; destroy_retention = None
+    ; alert_receiver_type = None
+    ; alert_receiver_url = None
+    ; alert_owner = None
+    ; alert_runbook_url = None
+    ; state_bucket = None
+    ; cluster_endpoint_cidr = None
+    ; dns_zone_ownership = None
+    ; node_failure_headroom_nodes = None
+    ; profile = None
+    ; provider_fields = fields
+    }
+  in
+  (match
+     Sol_cli_provider_capabilities.provider_console_url
+       (target ~provider:Sol_cli_provider.Aws ~region:"us-east-1" ~fields:[])
+   with
+   | Some url ->
+     check_bool "the AWS console names the region" true (contains url "region=us-east-1")
+   | None -> Alcotest.fail "an AWS target must have a console");
+  (match
+     Sol_cli_provider_capabilities.provider_console_url
+       (target
+          ~provider:Sol_cli_provider.Gcp
+          ~region:"us-central1"
+          ~fields:[ "gcp", [ "project_id", "sol-qualification" ] ])
+   with
+   | Some url ->
+     check_bool
+       "the GCP console names the project"
+       true
+       (contains url "project=sol-qualification")
+   | None -> Alcotest.fail "a GCP target with a project must have a console");
+  check_bool
+    "a GCP target with no project has no console to offer"
+    true
+    (Sol_cli_provider_capabilities.provider_console_url
+       (target ~provider:Sol_cli_provider.Gcp ~region:"us-central1" ~fields:[])
+     = None)
+;;
+
 let () =
   Alcotest.run
     "open"
@@ -324,6 +430,21 @@ let () =
             "resource scope has no logs view"
             `Quick
             test_logs_resource_scope_has_no_view
+        ] )
+    ; ( "url infra (INFRA-027)"
+      , [ Alcotest.test_case
+            "the target-infrastructure dashboard"
+            `Quick
+            test_infra_url_is_the_target_infrastructure_dashboard
+        ; Alcotest.test_case "takes no scope" `Quick test_infra_takes_no_scope
+        ; Alcotest.test_case
+            "requires a target and rejects a scope"
+            `Quick
+            test_infra_requires_a_target
+        ; Alcotest.test_case
+            "provider console URLs are provider-owned"
+            `Quick
+            test_provider_console_urls_are_provider_owned
         ] )
     ]
 ;;

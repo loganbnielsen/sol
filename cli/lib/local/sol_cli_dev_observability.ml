@@ -48,6 +48,7 @@ let dashboard_names =
   ; "domain-overview.json"
   ; "service-template.json"
   ; "release-timeline.json"
+  ; "target-infrastructure.json"
   ]
 ;;
 

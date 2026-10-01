@@ -8,6 +8,34 @@ type kind =
   | Logs
   | Metrics
   | Dashboard
+  | Infra
+
+let target_infrastructure_uid = "sol-target-infrastructure"
+
+let scopeless_error =
+  "'infra' is a target-scoped infrastructure view: it takes no application scope, so \
+   drop the scope argument and name the target with --target"
+;;
+
+let target_required_error =
+  "'infra' is target-scoped infrastructure observability, so it needs the target whose \
+   infrastructure to show: pass --target <env>/<provider>/<region>. There is no default \
+   (DEC-016)."
+;;
+
+let validate ~kind ~target_present scope =
+  match kind with
+  | Logs | Metrics | Dashboard -> Ok ()
+  | Infra ->
+    (match scope with
+     | Workspace -> if target_present then Ok () else Error target_required_error
+     | Domain _ | Service _ | Resource _ -> Error scopeless_error)
+;;
+
+let requires_target = function
+  | Infra -> true
+  | Logs | Metrics | Dashboard -> false
+;;
 
 let parse_scope = function
   | None -> Ok Workspace
@@ -109,4 +137,8 @@ let url ~base_url ~workspace ~kind scope =
   match kind with
   | Logs -> logs_url ~base_url ~workspace scope
   | Metrics | Dashboard -> dashboard_url ~base_url ~workspace scope
+  | Infra ->
+    (match scope with
+     | Workspace -> Ok (Printf.sprintf "%s/d/%s" base_url target_infrastructure_uid)
+     | Domain _ | Service _ | Resource _ -> Error scopeless_error)
 ;;

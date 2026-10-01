@@ -607,10 +607,11 @@ resource "kubernetes_config_map" "grafana_dashboards" {
   }
 
   data = {
-    "workspace-overview.json" = file("${local.observability_dir}/dashboards/workspace-overview.json")
-    "service-template.json"   = file("${local.observability_dir}/dashboards/service-template.json")
-    "domain-overview.json"    = file("${local.observability_dir}/dashboards/domain-overview.json")
-    "release-timeline.json"   = file("${local.observability_dir}/dashboards/release-timeline.json")
+    "workspace-overview.json"    = file("${local.observability_dir}/dashboards/workspace-overview.json")
+    "service-template.json"      = file("${local.observability_dir}/dashboards/service-template.json")
+    "domain-overview.json"       = file("${local.observability_dir}/dashboards/domain-overview.json")
+    "release-timeline.json"      = file("${local.observability_dir}/dashboards/release-timeline.json")
+    "target-infrastructure.json" = file("${local.observability_dir}/dashboards/target-infrastructure.json")
   }
 
   depends_on = [helm_release.grafana]

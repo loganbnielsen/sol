@@ -19,6 +19,7 @@ spelling in [`reference/cli.md`](../reference/cli.md), the deployment path in
 | `sol rollback [RELEASE_ID]` | Put back a known-good release | release id or `--commit` | whole release; `--scope` only disambiguates `--commit` |
 | `sol check [--scope DOMAIN[/UNIT]]` | Is the declaration valid before anything runs? | scope flag | `domain`, `domain/unit` |
 | `sol open <view> [SCOPE]` | Open the operational UI for a scope | scope | workspace (omit), `domain`, `domain/unit` |
+| `sol open infra --target TARGET` | The infrastructure a target runs on | target | none — infrastructure has no application scope (`DEC-032`) |
 | `sol cloud destroy <TARGET>` | Remove one environment | target | the target |
 | `sol uninstall <TARGET>` | Remove the installation itself | target | the target |
 
@@ -142,9 +143,26 @@ comes from the target's base domain (`grafana.<base-domain>`); for a local clust
 `http://localhost:3000`. It never guesses a URL it cannot resolve: it prints the exact
 port-forward to run and exits with the reason.
 
-**Target behaviour.** `sol open traces` and `sol open infra` are **Target**
-(`OBS-045`, `INFRA-027`) — traces and an infrastructure view are the two operational
-signals with no CLI surface yet.
+Infrastructure is observed through a **view addressed by target, with no application
+scope** — a target is not a scope (`DEC-032`):
+
+```bash
+sol open infra --target prod/aws/us-east-1
+```
+
+It opens the target-infrastructure dashboard and prints the target's provider console.
+The dashboard gathers each fact through the source that owns it and says so on every row:
+Kubernetes and node facts from Prometheus (kube-state-metrics and cAdvisor), platform
+resource utilization from cAdvisor, the observability stack from Prometheus (`up` and
+kube-state-metrics), Redpanda from its own public metrics, and Postgres from the postgres
+exporter. A database Sol provisions for you — RDS on AWS, for example — keeps its own
+CloudWatch-backed dashboard instead: `sol open dashboard resource/rds/<name>`. The view
+navigates to the right source rather than pretending they are one store, and it links out
+to plain Grafana and Explore. It needs `--target` and takes no scope: `sol open infra
+payments` is an error naming the view as target-scoped, not a wider query.
+
+**Target behaviour.** `sol open traces` is **Target** (`OBS-045`) — traces are the one
+operational signal with no CLI surface yet.
 
 ## 7. Destroy an environment
 

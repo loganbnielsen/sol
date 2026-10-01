@@ -1,0 +1,297 @@
+{
+  "title": "Sol Target Infrastructure",
+  "uid": "sol-target-infrastructure",
+  "description": "The infrastructure a Sol target runs on, gathered from the telemetry source that owns each fact: Kubernetes and node facts from Prometheus (kube-state-metrics and cAdvisor), Redpanda facts from Redpanda's own public metrics, and Postgres facts from the postgres exporter. A managed database keeps its own CloudWatch-backed dashboard instead. This view is target-scoped: it takes no application scope.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["sol", "infrastructure"],
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(kube_node_status_condition{condition=\"Ready\"}, node)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(container_memory_working_set_bytes, namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Nodes - Prometheus (kube-state-metrics and the kubelet)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "title": "Nodes ready",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 1)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Nodes known",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "count(kube_node_info)", "instant": true }]
+    },
+    {
+      "id": 4,
+      "title": "Kubelet targets up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "sum(up{job=\"kubernetes-nodes\"})", "instant": true }]
+    },
+    {
+      "id": 5,
+      "title": "Ready condition by node",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\",node=~\"$node\"}",
+          "legendFormat": "{{node}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Node CPU capacity (cores)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "kube_node_status_capacity{resource=\"cpu\",node=~\"$node\"}",
+          "legendFormat": "{{node}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Node memory capacity (GiB)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "kube_node_status_capacity{resource=\"memory\",node=~\"$node\"} / 1024 / 1024 / 1024",
+          "legendFormat": "{{node}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Platform resource utilization - Prometheus (cAdvisor)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "title": "Memory working set by namespace (GiB)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (namespace) (container_memory_working_set_bytes{container!=\"\",namespace=~\"$namespace\"}) / 1024 / 1024 / 1024",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "CPU usage by namespace (cores)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{container!=\"\",namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Observability stack - Prometheus (up and kube-state-metrics)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "title": "Scrape targets up",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "up{namespace=\"monitoring\"}",
+          "legendFormat": "{{job}} {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Observability workloads ready / desired",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "kube_deployment_status_replicas_available{namespace=\"monitoring\"} / kube_deployment_spec_replicas{namespace=\"monitoring\"}",
+          "legendFormat": "deployment {{deployment}}"
+        },
+        {
+          "expr": "kube_statefulset_status_replicas_ready{namespace=\"monitoring\"} / kube_statefulset_replicas{namespace=\"monitoring\"}",
+          "legendFormat": "statefulset {{statefulset}}"
+        },
+        {
+          "expr": "kube_daemonset_status_number_ready{namespace=\"monitoring\"} / kube_daemonset_status_desired_number_scheduled{namespace=\"monitoring\"}",
+          "legendFormat": "daemonset {{daemonset}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Redpanda - Prometheus (Redpanda public metrics)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "title": "Brokers",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 32 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "redpanda_cluster_brokers", "instant": true }]
+    },
+    {
+      "id": 16,
+      "title": "Unavailable partitions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 32 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "redpanda_cluster_unavailable_partitions", "instant": true }]
+    },
+    {
+      "id": 17,
+      "title": "Under-replicated replicas",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 32 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "redpanda_kafka_under_replicated_replicas", "instant": true }]
+    },
+    {
+      "id": 18,
+      "title": "Redpanda throughput (records/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(redpanda_kafka_records_produced_total[5m]))",
+          "legendFormat": "produced"
+        },
+        {
+          "expr": "sum(rate(redpanda_kafka_records_fetched_total[5m]))",
+          "legendFormat": "fetched"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Postgres - Prometheus (postgres exporter)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "Postgres up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 43 },
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "pg_up", "instant": true }]
+    },
+    {
+      "id": 21,
+      "title": "Connections by database",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 43 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (datname) (pg_stat_database_numbackends)",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Database size (GiB)",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 43 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (datname) (pg_database_size_bytes) / 1024 / 1024 / 1024",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Where to go next",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "title": "Plain Grafana, Prometheus, and the provider console",
+      "type": "text",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 48 },
+      "options": {
+        "mode": "markdown",
+        "content": "This view is target-scoped: `sol open infra <env>/<provider>/<region>` opens it for one target and prints that target's provider console.\n\n- **Plain Grafana:** [dashboards](/dashboards)\n- **Plain Prometheus:** [Explore](/explore) - the Prometheus datasource every panel above reads\n- **Managed datastores:** a database Sol provisions for you (for example RDS) keeps its own CloudWatch-backed dashboard - `sol open dashboard resource/rds/<name>`\n\nThe sources do not converge into one store on purpose: Kubernetes and node facts come from Prometheus, Redpanda from its own public metrics, Postgres from the postgres exporter or the provider's metrics service, and a managed database from the provider. This view navigates to the right one rather than pretending they are one system."
+      }
+    }
+  ]
+}
