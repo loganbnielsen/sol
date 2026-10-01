@@ -6,9 +6,13 @@ type kubernetes_status =
 
 val describe : verbose:bool -> kubernetes_status -> string
 val context_is_configured : Sol_cli_kube_destination.t -> bool
+val last_operation_unavailable : string
 
 val rows
   :  ?platform:string
+  -> ?cloud:string
+  -> ?drift:string
+  -> ?last_operation:string
   -> verbose:bool
   -> Sol_cli_config.target
   -> kubernetes_status
@@ -16,6 +20,9 @@ val rows
 
 val to_json
   :  ?platform:string
+  -> ?cloud:string
+  -> ?drift:string
+  -> ?last_operation:string
   -> verbose:bool
   -> Sol_cli_config.target
   -> kubernetes_status

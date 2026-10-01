@@ -14,7 +14,8 @@ val whole_root : scope
 val targets : string -> string list -> scope
 
 val init
-  :  ?env:(string * string) list
+  :  ?echo:bool
+  -> ?env:(string * string) list
   -> chdir:string
   -> backend_config:string list
   -> unit
@@ -25,6 +26,14 @@ val kv_args : (string * string) list -> string list
 val plan
   :  ?env:(string * string) list
   -> scope:scope
+  -> chdir:string
+  -> var_files:string list
+  -> vars:string list
+  -> unit
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
+
+val plan_refresh_only
+  :  ?env:(string * string) list
   -> chdir:string
   -> var_files:string list
   -> vars:string list

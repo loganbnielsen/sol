@@ -51,6 +51,10 @@ let provider_name (target : Sol_cli_config.target) =
   Sol_cli_provider.to_string target.provider
 ;;
 
+let last_operation_unavailable =
+  "unavailable — Sol keeps no target-scoped operation record (ADR 0003)"
+;;
+
 let context_is_configured (destination : Sol_cli_kube_destination.t) =
   let named name =
     String.equal (String.trim name) destination.Sol_cli_kube_destination.context
@@ -67,7 +71,20 @@ let context_is_configured (destination : Sol_cli_kube_destination.t) =
   | Error _ -> true
 ;;
 
-let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
+let labelled label = function
+  | None -> []
+  | Some value -> [ label, value ]
+;;
+
+let rows
+      ?platform
+      ?cloud
+      ?drift
+      ?(last_operation = last_operation_unavailable)
+      ~verbose
+      (target : Sol_cli_config.target)
+      kubernetes
+  =
   let core =
     [ "provider", provider_name target
     ; "region", target.region
@@ -78,9 +95,11 @@ let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
     ]
   in
   let core =
-    match platform with
-    | None -> core
-    | Some status -> core @ [ "platform", status ]
+    core
+    @ labelled "platform" platform
+    @ labelled "cloud" cloud
+    @ labelled "drift" drift
+    @ labelled "last operation" (Some last_operation)
   in
   if not verbose
   then core
@@ -93,8 +112,16 @@ let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
       ]
 ;;
 
-let to_json ?platform ~verbose target kubernetes =
+let to_json
+      ?platform
+      ?cloud
+      ?drift
+      ?(last_operation = last_operation_unavailable)
+      ~verbose
+      target
+      kubernetes
+  =
   `Assoc
-    (rows ?platform ~verbose target kubernetes
+    (rows ?platform ?cloud ?drift ~last_operation ~verbose target kubernetes
      |> List.map (fun (key, value) -> key, `String value))
 ;;

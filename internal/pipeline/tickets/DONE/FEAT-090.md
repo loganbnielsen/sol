@@ -215,3 +215,75 @@ not.
 **not added at all**: nothing else in this stream needs a second entry point, and
 adding then keeping two surfaces agreeing is more machinery than the problem is
 worth today.
+
+## Completion (2026-10-01)
+
+Implemented on `FEAT-090/target-status`, rebased onto `main` at `9b0e272a`. The
+checkpoint above is the design record; this section says what landed and where the two
+places it changed differ from it.
+
+**What landed.** `sol target show` reports the three day-two facts, each from its own
+authority:
+
+- **`last operation`** — always present, reported as `unavailable — Sol keeps no
+  target-scoped operation record (ADR 0003)`. `Sol_cli_target_report.last_operation_unavailable`
+  is the one definition, and the projection defaults to it so no caller can omit the row.
+- **`cloud`** (behind `--check`) — `Sol_cli_installation.health_summary` projects the
+  existing installation observation: every prerequisite `Established` → `Healthy`,
+  otherwise `Unmet — <prerequisite>: <reason>`, or `Unknown — …` when any prerequisite
+  could not be looked at. The observation is the provider's, never a Sol-side record.
+- **`drift`** (behind `--check`) — `Sol_cli_environment_stage.drift` runs a read-only
+  `terraform plan -refresh-only -detailed-exitcode` in the cluster root's workdir and
+  classifies the exit code: `0` → `None`, `2` → `Detected`, anything else (including a
+  spawn failure) → `Unknown — <reason>`, never "no drift". It is not routed through
+  `Sol_cli_supervised`, so it records no operation and cannot make the state guard
+  refuse a later constructive run.
+
+`Sol_cli_provider_capabilities.observe_installation` is now the one installation
+observation helper, shared by `cmd_target` and `cmd_deploy` (the copy in `cmd_deploy` is
+gone). `Sol_cli_terraform.init` gained `?echo` (default `true`) so the drift read can
+initialize its workdir quietly: a status command must not print a `$ terraform` line
+over its own `--json` output, and `cli/test/test_target_status.sh` holds that.
+
+**Two differences from the checkpoint, with reasons.**
+
+1. **`Unknown` stays distinct from `Unmet` instead of being collapsed into it.** The
+   checkpoint proposed `Unmet — …` for both. Collapsing them would report a probe Sol
+   could not run as one the provider answered absent — the exact confusion `DEC-052` and
+   `DEC-040` exist to prevent. `health_summary` takes the weaker headline when any
+   unresolved prerequisite is `Unknown`, and lists each with its own verdict and reason.
+2. **`last operation` is reported by the offline invocation, not only under `--check`.**
+   The AC gates the *new reads* behind `--check`; this row performs no read, and its
+   message is precisely what tells a reader Sol keeps no such record — hiding it behind
+   `--check` would imply it is a probe. `cloud` and `drift` stay opt-in, so the offline
+   summary still touches no network (asserted in the shell test).
+
+**No new store.** Nothing is persisted: drift reuses the existing Terraform workdir and a
+refresh-only plan, `cloud` reuses the installation observation, and the last-operation
+row is a constant. `sol cloud status` was not added, so one command family reports target
+state.
+
+**Revisit trigger for `last operation`:** if a later ticket makes run history or the
+deployment-event stream target-scoped, this row reads it and the `unavailable` reason
+disappears. The constant and its single call site (the `last_operation` default in
+`Sol_cli_target_report`) are the whole surface to change.
+
+**Demo/example coverage.** `docs/guides/TUTORIAL.md` §*Inspecting a target* shows the new
+output and explains each row; `docs/architecture/observability-design.md` and
+`docs/DEVELOPER_EXPERIENCE.md` §7 record FEAT-090 as shipped.
+`docs/deployment/production-bootstrap.md` does not quote the old shape, so it is
+unchanged.
+
+**Validation.** `dune build`; `dune test cli/` (including the existing `sol target show
+--check` rules and `test_cloud_bootstrap.sh`); new unit cases in `test_installation.ml`
+(the health summary), `test_environment_stage.ml` (the drift exit codes) and
+`test_target_report.ml` (rows, JSON, offline omission); a new fake-driven end-to-end
+`cli/test/test_target_status.sh` covering cloud healthy/unmet/unknown, drift
+none/detected/unknown, the offline rows and no-read guarantee, and that `--json` stays
+parseable JSON. `internal/ci/check_ocamlformat.sh --all`, `check_no_comments.sh`,
+`check_result_syntax.sh`, `check_cli_reference.py`, `check_test_reachability.py`,
+`check_provider_dispatch.sh`, `check_library_output.sh` and
+`check_examples_self_contained.sh` all pass.
+
+**TypeScript parity:** No language-parity impact — target inspection is language-neutral
+and no application-facing contract changes.

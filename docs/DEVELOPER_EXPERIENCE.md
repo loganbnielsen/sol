@@ -450,7 +450,7 @@ into provider tools for the normal path.
 | Command / capability | Expected experience | Today |
 |---|---|---|
 | `sol deploy <target>` | Build, provision/reconcile, migrate, deploy, verify, return endpoints | **Today** (first run guides the installation, drives the environment and reaches it as the deploy identity — FEAT-106, DEC-058) |
-| `sol status [SCOPE]` | Environment and workload health in Sol terms | **Today**; cloud health/drift/last-operation **Target** (FEAT-090) |
+| `sol status [SCOPE]` | Environment and workload health in Sol terms | **Today**; cloud health/drift/last operation on `sol target show` (FEAT-090) |
 | `sol logs <unit>` | Application logs without `kubectl` or observability-tool knowledge | **Today** (Loki, with a `kubectl` fallback) |
 | `sol rollback` | Return to a recorded known release via Sol's release contract | **Today** |
 | `sol check` | Diagnostics against the selected target/scope, with explained failures | **Partial** — declaration validity today; target/scope diagnostics **Target** |

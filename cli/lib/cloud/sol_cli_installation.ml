@@ -107,6 +107,37 @@ let summary verdicts =
        verdicts)
 ;;
 
+let health_summary verdicts =
+  let reason_of = function
+    | Established -> "established"
+    | Unmet reason | Unknown reason -> reason
+  in
+  match unresolved verdicts with
+  | [] -> "Healthy"
+  | unresolved ->
+    let headline =
+      match
+        List.find_opt
+          (fun (_, verdict) ->
+             match verdict with
+             | Unknown _ -> true
+             | Established | Unmet _ -> false)
+          unresolved
+      with
+      | Some _ -> "Unknown"
+      | None -> "Unmet"
+    in
+    Printf.sprintf
+      "%s — %s"
+      headline
+      (String.concat
+         "; "
+         (List.map
+            (fun (prerequisite, verdict) ->
+               prerequisite_label prerequisite ^ ": " ^ reason_of verdict)
+            unresolved))
+;;
+
 type zone =
   | No_zone
   | Service_zone of

@@ -66,10 +66,10 @@ let scope_args = function
   | Targets (first, rest) -> List.map (fun target -> "-target=" ^ target) (first :: rest)
 ;;
 
-let init ?(env = []) ~chdir ~backend_config () =
+let init ?(echo = true) ?(env = []) ~chdir ~backend_config () =
   Hashtbl.replace configured chdir (operation_key ~chdir ~backend_config);
   run
-    ~echo:true
+    ~echo
     (cmd
        ~env
        ([ "terraform"; "-chdir=" ^ chdir; "init"; "-reconfigure" ]
@@ -91,6 +91,14 @@ let plan ?(env = []) ~scope ~chdir ~var_files ~vars () =
        ~env
        ([ "terraform"; "-chdir=" ^ chdir; "plan" ]
         @ scope_args scope
+        @ var_args ~var_files ~vars))
+;;
+
+let plan_refresh_only ?(env = []) ~chdir ~var_files ~vars () =
+  run
+    (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "plan"; "-refresh-only"; "-detailed-exitcode" ]
         @ var_args ~var_files ~vars))
 ;;
 

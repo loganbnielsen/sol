@@ -124,10 +124,13 @@ to a user at the worst moment.
 **The target axis.** A *target* is not a scope. DEC-032 settled target, scope and
 view as three separate axes, so an infrastructure view is addressed by target with
 no application scope attached — the positional form DEC-031 fixed, the same one
-`sol cloud plan|apply|destroy` already take. Extending the status surface with cloud
-health, drift and last operation is **FEAT-090**; target-scoped infrastructure views
-(nodes, Postgres, Redpanda, the observability stack itself) are **INFRA-027**.
-Neither is claimed here as shipped.
+`sol cloud plan|apply|destroy` already take. The target surface reports cloud
+health, drift and last operation today (`sol target show --check`, **FEAT-090**),
+each from its own authority: the provider's installation observation, a read-only
+refresh-only Terraform plan, and `unavailable` where no target-scoped record exists
+(ADR 0003 forbids adding one). Target-scoped infrastructure views (nodes, Postgres,
+Redpanda, the observability stack itself) are **INFRA-027**, and that is not
+claimed here as shipped.
 
 ## Lifecycle
 

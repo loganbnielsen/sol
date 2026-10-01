@@ -692,15 +692,22 @@ sol target show --target prod/aws/us-east-1
 ```
 
 ```
-provider      aws
-region        us-east-1
-cluster       acme-prod
-registry      123456789012.dkr.ecr.us-east-1.amazonaws.com
-base domain   acme.com
-kubernetes    configured — not checked; pass --check to probe it
+provider       aws
+region         us-east-1
+cluster        acme-prod
+registry       123456789012.dkr.ecr.us-east-1.amazonaws.com
+base domain    acme.com
+kubernetes     configured — not checked; pass --check to probe it
+last operation unavailable — Sol keeps no target-scoped operation record (ADR 0003)
 ```
 
-The summary is offline by default, so it still prints while you are diagnosing a cluster you cannot reach. `--check` probes it, `--json` prints the same fields for scripts, and `--verbose` adds where the target sits plus the raw kube-context Sol will use. For an AWS target, `--check` also adds a `platform` row carrying ADR 0002's live readiness verdict — `Ready`, or `Unmet — <component>: <reason>` when a required component's named predicate fails.
+The summary is offline by default, so it still prints while you are diagnosing a cluster you cannot reach. `--check` probes it, `--json` prints the same fields for scripts, and `--verbose` adds where the target sits plus the raw kube-context Sol will use. `--check` adds three more rows, each answering from an authority rather than from a Sol-side record:
+
+- **`platform`** carries ADR 0002's live readiness verdict — `Ready`, or `Unmet — <component>: <reason>` when a required component's named predicate fails (AWS targets).
+- **`cloud`** is the provider's own answer for the installation Sol manages: `Healthy` when every durable prerequisite is observed established, or `Unmet — <prerequisite>: <reason>`/`Unknown — <prerequisite>: <reason>`. A prerequisite Sol could not look at is `Unknown`, never promoted to healthy.
+- **`drift`** is a read-only, refresh-only Terraform plan: `None` when Terraform's recorded state matches observed reality, `Detected` when it has drifted, or `Unknown — <reason>` when the refresh could not be read — never reported as no drift.
+
+`last operation` is reported either way, because it needs no read: Sol keeps no target-scoped operation record, and ADR 0003 forbids adding one, so it says so instead of pretending the target was never operated on.
 
 Two things that line is telling you:
 

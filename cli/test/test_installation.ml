@@ -279,6 +279,49 @@ let test_all_established_fails_closed () =
   | Ok () -> Alcotest.fail "Unmet must fail closed"
 ;;
 
+let test_the_health_summary_never_promotes_an_unknown () =
+  let open Sol_cli_installation in
+  check_string
+    "an established installation is Healthy"
+    "Healthy"
+    (health_summary [ State_backend, establish; Delegated_zone, establish ]);
+  let unmet_summary =
+    health_summary [ State_backend, establish; State_lock, unmet "no such table" ]
+  in
+  check_bool
+    "an unmet prerequisite reads as Unmet"
+    true
+    (Sol_cli_string.contains ~needle:"Unmet — " unmet_summary);
+  check_bool
+    "and carries the provider's own reason"
+    true
+    (Sol_cli_string.contains ~needle:"terraform state lock: no such table" unmet_summary);
+  let unknown_summary =
+    health_summary [ State_backend, establish; Deploy_identity, unknown "could not look" ]
+  in
+  check_bool
+    "an unobservable prerequisite is never Unmet"
+    false
+    (Sol_cli_string.contains ~needle:"Unmet" unknown_summary);
+  check_bool
+    "and reads as Unknown"
+    true
+    (Sol_cli_string.contains ~needle:"Unknown — " unknown_summary);
+  check_bool "and is never Healthy" false (String.equal unknown_summary "Healthy");
+  let mixed =
+    health_summary
+      [ State_backend, unmet "no bucket"; Deploy_identity, unknown "could not look" ]
+  in
+  check_bool
+    "a mixed answer takes the weaker headline"
+    true
+    (Sol_cli_string.contains ~needle:"Unknown — " mixed);
+  check_bool
+    "and still names the unmet prerequisite"
+    true
+    (Sol_cli_string.contains ~needle:"terraform state backend: no bucket" mixed)
+;;
+
 let test_resolves_the_declared_installation () =
   let aws = resolved_or_fail aws_target in
   check_string
@@ -1737,6 +1780,10 @@ let () =
             "all_established fails closed"
             `Quick
             test_all_established_fails_closed
+        ; Alcotest.test_case
+            "the health summary never promotes an UNKNOWN"
+            `Quick
+            test_the_health_summary_never_promotes_an_unknown
         ] )
     ; ( "resolved configuration"
       , [ Alcotest.test_case

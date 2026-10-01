@@ -61,6 +61,30 @@ let platform_status ~check (target : Sol_cli_config.target) =
          |> Sol_cli_cloud_lifecycle.readiness_summary))
 ;;
 
+let cloud_status (target : Sol_cli_config.target) =
+  match Sol_cli_provider_capabilities.observe_installation target with
+  | Ok (_, verdicts) -> Sol_cli_installation.health_summary verdicts
+  | Error message -> "Unknown — the installation could not be resolved: " ^ message
+;;
+
+let drift_status (target : Sol_cli_config.target) =
+  let drift =
+    match Sol_cli_platform_assets.resolve () with
+    | Error error ->
+      Sol_cli_environment_stage.Unknown
+        ("the platform's Terraform assets are not available: "
+         ^ Sol_cli_platform_assets.error_to_string error)
+    | Ok assets ->
+      Sol_cli_environment_stage.drift
+        ~assets
+        ~target:target.name
+        ~var_file:None
+        ~vars:[]
+        ()
+  in
+  Sol_cli_environment_stage.drift_to_string drift
+;;
+
 open Result.Syntax
 
 let declared_target target =
@@ -86,14 +110,22 @@ let show target verbose json check =
   let* target_config = declared_target target in
   let status = kubernetes_status ~check target_config in
   let platform = platform_status ~check target_config in
+  let cloud = if check then Some (cloud_status target_config) else None in
+  let drift = if check then Some (drift_status target_config) else None in
   if json
   then
     print_endline
       (Yojson.Safe.to_string
-         (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
+         (Sol_cli_target_report.to_json
+            ?platform
+            ?cloud
+            ?drift
+            ~verbose
+            target_config
+            status))
   else
-    Sol_cli_target_report.rows ?platform ~verbose target_config status
-    |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value);
+    Sol_cli_target_report.rows ?platform ?cloud ?drift ~verbose target_config status
+    |> List.iter (fun (label, value) -> Printf.printf "%-14s %s\n" label value);
   Ok ()
 ;;
 
@@ -132,9 +164,13 @@ let check_arg =
     & info
         [ "check" ]
         ~doc:
-          "Probe the cluster and report whether it is reachable. Off by default: the \
-           summary is also what you read while diagnosing an unreachable cluster, so it \
-           must not block before printing.")
+          "Report live state as well as identity: probe whether the cluster is \
+           reachable, observe whether the provider's installation is established, and \
+           read whether Terraform's recorded state has drifted from observed reality. \
+           Off by default: the summary is also what you read while diagnosing an \
+           unreachable cluster, so it must not block before printing. `last operation` \
+           is reported either way: it needs no read because Sol keeps no target-scoped \
+           record for it.")
 ;;
 
 let show_cmd =
@@ -145,6 +181,14 @@ let show_cmd =
         "Prints a target as a target — provider, region, cluster, registry, base domain \
          — and says whether Sol can reach its cluster. Nothing is inferred: an unknown \
          or missing target fails closed and lists what exists."
+    ; `P
+        "Every live field names its authority rather than keeping state of its own. \
+         `cloud` is the provider's own answer for the installation Sol manages — the \
+         same observation `sol cloud bootstrap` reports, never a Sol-side record. \
+         `drift` is a read-only, refresh-only Terraform plan, so it compares the \
+         recorded state with observed reality without changing either. `last operation` \
+         has no target-scoped authority to read, and ADR 0003 forbids adding one, so it \
+         is reported as unavailable rather than as `none`."
     ]
   in
   Cmd.v

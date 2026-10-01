@@ -110,3 +110,10 @@ val installation_observation
   :  provider:Sol_cli_provider.t
   -> string list
   -> Sol_cli_installation.observation
+
+val observe_installation
+  :  Sol_cli_config.target
+  -> ( Sol_cli_installation.installation_config
+       * (Sol_cli_installation.prerequisite * Sol_cli_installation.verdict) list
+       , string )
+       result
