@@ -86,7 +86,7 @@ The target is the positional; `--scope` narrows to a domain or unit.
 |---|---|---|---|---|
 | `sol alert test` | — | `--alertmanager-url=URL`, `--dry-run`, `--target=ENV/PROVIDER/REGION` | documented | Send a synthetic alert through the target's |
 | `sol cloud apply` | TARGET | `--accept-unresolved`, `--confirm-ecr-removal`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Apply cloud infrastructure changes for a target. |
-| `sol cloud bootstrap` | TARGET | `--apply` | documented | Report whether a target's durable installation |
+| `sol cloud bootstrap` | TARGET | `--apply`, `--await-delegation=SECONDS` | documented | Report whether a target's durable installation |
 | `sol cloud destroy` | TARGET | `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Destroy cloud infrastructure via Terraform. |
 | `sol cloud plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview cloud infrastructure changes for a target. |
 | `sol cloud reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
