@@ -17,7 +17,7 @@ PROJECT="${PROJECT:-sol-qualification}"
 REGION="${REGION:-us-central1}"
 export PROJECT REGION
 BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
-PHASE_TIMEOUT="${PHASE_TIMEOUT:-1200}"
+PHASE_TIMEOUT="${PHASE_TIMEOUT:-2700}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$(date +%Y%m%d-%H%M%S)}"
 RUN_KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
@@ -110,10 +110,15 @@ CLOUD_APPLIED=0
 TEARDOWN_ATTEMPTED=0
 
 run() {
-  local name="$1"; shift
+  local name="$1"; local rc=0; shift
   say "phase: $name"
-  if ! ( cd "$WORKSPACE" && timeout "$PHASE_TIMEOUT" "$@" ) >"$LOG_DIR/$name.log" 2>&1; then
-    say "FAILED: $name  (last 40 lines; full log $LOG_DIR/$name.log)"
+  ( cd "$WORKSPACE" && timeout "$PHASE_TIMEOUT" "$@" ) >"$LOG_DIR/$name.log" 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then
+    if [ "$rc" = 124 ]; then
+      say "FAILED: $name  (THE HARNESS ENDED IT after ${PHASE_TIMEOUT}s, not Sol: this deadline killed a phase that was still working, so the log above ends mid-step. Raise PHASE_TIMEOUT for a cold run.)"
+    else
+      say "FAILED: $name  (exit $rc; last 40 lines; full log $LOG_DIR/$name.log)"
+    fi
     tail -n 40 "$LOG_DIR/$name.log" || true
     return 1
   fi
@@ -148,6 +153,8 @@ $TARGET_ENV:
       terraform_var_file: $TFVARS
 
       state_bucket: $STATE_BUCKET
+
+      kube_context: $(app_kube_context)
 
       gcp:
         project_id: $PROJECT
@@ -1402,7 +1409,7 @@ optional (defaults shown)
   TARGET=qual/gcp/us-central1
   PROJECT=sol-qualification   REGION=us-central1
   BASE_DOMAIN=qual-gcp.sol-fab.dev
-  PHASE_TIMEOUT=1200          a full GCP attempt needs >= 1800; the runbook uses 2700
+  PHASE_TIMEOUT=2700          how long one phase may take before the harness ends it
   SOL=_build/default/cli/bin/main.exe
   WORKSPACE=examples/pluto    TFVARS=internal/qualification/gcp/qual-gcp.tfvars
   LOG_DIR=/tmp/sol-gcp-qual-<timestamp>   XDG_DATA_HOME
