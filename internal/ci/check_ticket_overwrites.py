@@ -57,9 +57,20 @@ def changes(base):
         kind = fields[0][:1]
         if kind == "R" and len(fields) == 3:
             found.append({"kind": "R", "source": fields[1], "destination": fields[2]})
-        elif kind in ("A", "M") and len(fields) == 2:
+        elif kind in ("A", "M", "D") and len(fields) == 2:
             found.append({"kind": kind, "path": fields[1]})
     return found
+
+
+def moved_ids(changes):
+    ids = set()
+    for change in changes:
+        if change["kind"] != "D":
+            continue
+        ticket = ticket_records.ticket_of(change["path"])
+        if ticket:
+            ids.add(ticket[2])
+    return ids
 
 
 def main():
@@ -74,13 +85,15 @@ def main():
 
     base = args.base
     subjects = git("log", "--format=%s", f"{base}..HEAD").splitlines()
+    found = changes(base)
+    moved = moved_ids(found)
     problems = []
-    for change in changes(base):
+    for change in found:
         if change["kind"] == "R":
             problems += ticket_records.rename_problems(change, lambda p: exists_at_base(base, p))
         elif change["kind"] == "A":
             problems += ticket_records.addition_problems(
-                change, lambda ticket_id: occupied_by(base, ticket_id)
+                change, lambda ticket_id: occupied_by(base, ticket_id), moved
             )
         elif change["kind"] == "M":
             path = change["path"]
@@ -106,7 +119,7 @@ def main():
 
     print(
         f"check_ticket_overwrites: no ticket record is replaced by this change "
-        f"({len(changes(base))} ticket-tree change(s) checked)"
+        f"({len(found)} ticket-tree change(s) checked)"
     )
     return 0
 

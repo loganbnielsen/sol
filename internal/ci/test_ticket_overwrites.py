@@ -80,6 +80,23 @@ def pure_cases():
         "a new ticket with a free id",
         ticket_records.addition_problems(addition, lambda ticket_id: None),
     )
+    expect_accept(
+        "an added record whose id is deleted by the same diff (a move git reported as add+delete)",
+        ticket_records.addition_problems(
+            addition,
+            lambda ticket_id: "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-108.md",
+            {"BUG-108"},
+        ),
+    )
+    expect_problem(
+        "an added record whose id is occupied but not deleted (a genuine reuse)",
+        ticket_records.addition_problems(
+            addition,
+            lambda ticket_id: "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-108.md",
+            {"BUG-109"},
+        ),
+        "already exists at",
+    )
 
     done = "internal/pipeline/tickets/DONE/BUG-108.md"
     change = {"kind": "M", "path": done}
@@ -121,6 +138,63 @@ def pure_cases():
         "frontmatter that does not parse",
         ticket_records.modification_problems(change, "not a ticket\n", ticket("BUG-108", "x"), []),
     )
+
+
+def end_to_end_move_case():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        tickets = repo / "internal" / "pipeline" / "tickets"
+        (tickets / "READY_FOR_ENGINEERING").mkdir(parents=True)
+        (tickets / "DONE").mkdir(parents=True)
+        (tickets / "READY_FOR_ENGINEERING" / "FEAT-121.md").write_text(
+            ticket("FEAT-121", "one ticket", "A short body.")
+        )
+
+        def run(*args):
+            return subprocess.run(
+                ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+            )
+
+        run("init", "-q", "-b", "main")
+        run("config", "user.email", "test@example.invalid")
+        run("config", "user.name", "test")
+        run("add", "-A")
+        run("commit", "-qm", "first")
+        base = run("rev-parse", "HEAD").stdout.strip()
+
+        ready = tickets / "READY_FOR_ENGINEERING" / "FEAT-121.md"
+        (tickets / "DONE" / "FEAT-121.md").write_text(
+            ticket("FEAT-121", "one ticket", "\n".join(f"line {n}" for n in range(200)))
+        )
+        ready.unlink()
+        run("add", "-A")
+        run("commit", "-qm", "FEAT-121: land it")
+
+        status = run("diff", "--name-status", "-M", f"{base}...HEAD").stdout
+        kinds = {line.split("\t")[0][:1] for line in status.splitlines() if line.strip()}
+        if kinds != {"A", "D"}:
+            print(
+                f"  [FAIL] expected the move to look like add+delete, git reported {sorted(kinds)}",
+                file=sys.stderr,
+            )
+            failures.append("end to end move")
+            return
+
+        result = subprocess.run(
+            [sys.executable, str(CHECK), "--base", base],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(
+                "  [FAIL] the guard refused a ticket move git reported as add+delete",
+                file=sys.stderr,
+            )
+            print(result.stderr, file=sys.stderr)
+            failures.append("end to end move")
+            return
+        print("  [OK]   a ticket move git reports as add+delete is accepted")
 
 
 def end_to_end_case():
@@ -176,6 +250,7 @@ def end_to_end_case():
 
 
 pure_cases()
+end_to_end_move_case()
 end_to_end_case()
 
 if failures:
