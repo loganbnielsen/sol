@@ -11,6 +11,7 @@ type prerequisite =
   | Deploy_identity
   | Operator_identity
   | Delegated_zone
+  | Public_delegation
 
 type zone_ownership =
   | Sol_created
@@ -61,6 +62,7 @@ let prerequisite_label = function
   | Deploy_identity -> "deploy identity"
   | Operator_identity -> "operator identity"
   | Delegated_zone -> "delegated DNS zone"
+  | Public_delegation -> "public delegation"
 ;;
 
 let verdict_label = function

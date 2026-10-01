@@ -212,6 +212,33 @@ and asks a human, and a root already at its declared state applies nothing, so a
 second run is a no-op. The state backend is the one prerequisite whose presence is
 checked first, because a root cannot create the backend that stores its own state.
 
+### Delegation: one action, then verification
+
+A zone Sol owns is only reachable once the zone that publishes it delegates to it, and that step
+is the one a user cannot guess. Reconciling the durable root therefore ends by naming the exact
+records to add, with both zones named:
+
+```text
+One action is required at the zone that publishes api.acme.com (acme.com):
+add these NS records for api.acme.com,
+or let the durable root create the delegation when that zone is in this account.
+  NS  ns-1.awsdns-08.org
+  NS  ns-2.awsdns-08.org
+```
+
+Nothing is printed for a zone Sol does not own (`user`, `external`): delegating is not Sol's to
+do there. And because a written delegation is not evidence, the delegation is confirmed by
+**observing public resolution, never by configuration**:
+
+```bash
+sol cloud bootstrap prod/aws/us-east-1 --await-delegation=120
+```
+
+That waits in bounded five-second checks for the domain to answer with NS records from a public
+resolver, printing each attempt so the wait is visible, and exits non-zero when the delegation
+is still not visible. A resolver it cannot query is `UNKNOWN`, never a silent success
+(`DEC-052`).
+
 ### 4.4 DNS and domain onboarding
 
 DNS is an unavoidable external boundary: Sol can automate everything it has

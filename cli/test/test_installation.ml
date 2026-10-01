@@ -664,10 +664,141 @@ let test_the_declaration_is_required_when_a_domain_is_declared () =
       (Sol_cli_string.contains ~needle:"dns_zone_ownership" message)
 ;;
 
+let await_delegation ?(expected = []) ~attempts observations =
+  let remaining = ref observations in
+  let runs = ref 0 in
+  let reports = ref [] in
+  let run _ =
+    incr runs;
+    match !remaining with
+    | [] -> Sol_cli_installation.Observed ""
+    | observation :: rest ->
+      remaining := rest;
+      observation
+  in
+  let verdict =
+    Sol_cli_installation_stage.await_delegation
+      ~run
+      ~report:(fun line -> reports := line :: !reports)
+      ~attempts
+      ~interval:0.
+      ~domain:"api.acme.example"
+      ~expected
+      ()
+  in
+  verdict, List.rev !reports, !runs
+;;
+
+let test_the_wait_succeeds_when_the_delegation_appears () =
+  let verdict, reports, runs =
+    await_delegation
+      ~expected:[ "ns-1.awsdns.test"; "ns-2.awsdns.test" ]
+      ~attempts:5
+      [ Sol_cli_installation.Observed "ns-other.example"
+      ; Sol_cli_installation.Observed "ns-1.awsdns.test\nns-2.awsdns.test"
+      ]
+  in
+  check_bool
+    "the delegation is Established once the resolver names the zone's nameservers"
+    true
+    (verdict = Sol_cli_installation.Established);
+  check_bool "the wait stopped as soon as it succeeded" true (runs = 2);
+  check_bool
+    "a partial answer is reported as pending, not accepted"
+    true
+    (List.length reports = 1)
+;;
+
+let test_the_wait_gives_up_and_says_what_it_saw () =
+  let verdict, reports, runs =
+    await_delegation
+      ~expected:[ "ns-1.awsdns.test" ]
+      ~attempts:3
+      [ Sol_cli_installation.Observed "ns-other.example"
+      ; Sol_cli_installation.Observed "ns-other.example"
+      ; Sol_cli_installation.Observed "ns-other.example"
+      ]
+  in
+  (match verdict with
+   | Sol_cli_installation.Unmet reason ->
+     check_bool
+       "giving up names what the resolver kept answering"
+       true
+       (Sol_cli_string.contains ~needle:"ns-other.example" reason)
+   | Sol_cli_installation.Established | Sol_cli_installation.Unknown _ ->
+     Alcotest.fail "a delegation that never appeared was not Unmet");
+  check_bool "the wait used its whole budget" true (runs = 3);
+  check_bool
+    "every attempt was visible"
+    true
+    (List.length reports = 3
+     && List.for_all
+          (fun line -> Sol_cli_string.contains ~needle:"resolver answers" line)
+          reports)
+;;
+
+let test_an_unqueryable_resolver_fails_closed_without_waiting () =
+  let verdict, reports, runs =
+    await_delegation ~attempts:5 [ Sol_cli_installation.Unobservable "dig: spawn failed" ]
+  in
+  (match verdict with
+   | Sol_cli_installation.Unknown reason ->
+     check_bool
+       "the resolver's own reason is what is reported"
+       true
+       (Sol_cli_string.contains ~needle:"spawn failed" reason)
+   | Sol_cli_installation.Established | Sol_cli_installation.Unmet _ ->
+     Alcotest.fail
+       "an unqueryable resolver was reported as a verdict about the delegation");
+  check_bool "an unqueryable resolver is not retried" true (runs = 1);
+  check_bool
+    "nothing is claimed to be pending when it cannot be observed"
+    true
+    (reports = [])
+;;
+
+let test_the_wait_without_an_expectation_accepts_any_answer () =
+  let verdict, _, runs =
+    await_delegation ~attempts:2 [ Sol_cli_installation.Observed "ns-1.example" ]
+  in
+  check_bool
+    "without the zone's nameservers, a public answer is the observable"
+    true
+    (verdict = Sol_cli_installation.Established);
+  check_bool "one answer was enough" true (runs = 1);
+  let zero_wait, _, _ = await_delegation ~attempts:0 [] in
+  match zero_wait with
+  | Sol_cli_installation.Unmet reason ->
+    check_bool
+      "asking for no wait says so instead of claiming a verdict"
+      true
+      (Sol_cli_string.contains ~needle:"no delegation wait was requested" reason)
+  | Sol_cli_installation.Established | Sol_cli_installation.Unknown _ ->
+    Alcotest.fail "a zero-attempt wait returned a verdict about the delegation"
+;;
+
 let () =
   Alcotest.run
     "installation"
-    [ ( "zone ownership"
+    [ ( "delegation wait"
+      , [ Alcotest.test_case
+            "Established when the resolver names the zone's nameservers"
+            `Quick
+            test_the_wait_succeeds_when_the_delegation_appears
+        ; Alcotest.test_case
+            "Unmet after the budget, saying what was seen"
+            `Quick
+            test_the_wait_gives_up_and_says_what_it_saw
+        ; Alcotest.test_case
+            "an unqueryable resolver is UNKNOWN, without waiting"
+            `Quick
+            test_an_unqueryable_resolver_fails_closed_without_waiting
+        ; Alcotest.test_case
+            "without an expectation, a public answer suffices"
+            `Quick
+            test_the_wait_without_an_expectation_accepts_any_answer
+        ] )
+    ; ( "zone ownership"
       , [ Alcotest.test_case
             "the three cases are distinguishable declarations"
             `Quick

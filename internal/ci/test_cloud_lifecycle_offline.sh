@@ -664,6 +664,13 @@ if [ -n "$gcp_durable_invocations" ]; then
   printf '%s\n' "$gcp_durable_invocations" >&2
   exit 1
 fi
+for durable_zone in 'google_dns_managed_zone.qualification'; do
+  if grep -F "$durable_zone" "$gcp_destroy_log" >/dev/null; then
+    echo "FEAT-107: the GCP destroy planned against the durable zone $durable_zone:" >&2
+    grep -F "$durable_zone" "$gcp_destroy_log" >&2
+    exit 1
+  fi
+done
 if ! grep -F 'external: Terraform state bucket' "$gcp_destroy_log.out" >/dev/null; then
   echo "INFRA-096: the GCP destroy did not report the state backend as a durable prerequisite:" >&2
   cat "$gcp_destroy_log.out" >&2
@@ -1141,6 +1148,18 @@ if grep -E 'bootstrap/(aws|gcp)/default\.tfstate|prefix=bootstrap' "$log" >/dev/
   grep -E 'bootstrap/(aws|gcp)/default\.tfstate|prefix=bootstrap' "$log" >&2
   exit 1
 fi
+for durable_zone in 'aws_route53_zone.qualification'; do
+  if grep -F "$durable_zone" "$log" >/dev/null; then
+    echo "INFRA-096/FEAT-107: a target destroy planned against the durable zone $durable_zone:" >&2
+    grep -F "$durable_zone" "$log" >&2
+    exit 1
+  fi
+  if grep -F "$durable_zone" "$log.out" >/dev/null; then
+    echo "FEAT-107: the destroy claimed the durable zone $durable_zone as this target's:" >&2
+    grep -F "$durable_zone" "$log.out" >&2
+    exit 1
+  fi
+done
 if ! grep -F 'external: Terraform state bucket' "$log.out" >/dev/null; then
   echo "INFRA-096: the destroy did not report the state backend as a durable prerequisite:" >&2
   cat "$log.out" >&2

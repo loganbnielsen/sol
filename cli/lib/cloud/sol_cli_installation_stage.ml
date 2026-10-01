@@ -80,6 +80,60 @@ let print_delegation_instruction ~provider ~domain ~chdir () =
     List.iter (fun nameserver -> Printf.printf "  NS  %s\n%!" nameserver) nameservers
 ;;
 
+let await_delegation ~run ~report ~attempts ~interval ~domain ?(expected = []) () =
+  let satisfies = function
+    | Sol_cli_installation.Observed output ->
+      (match expected with
+       | [] -> not (Sol_cli_string.is_blank output)
+       | nameservers ->
+         List.for_all
+           (fun nameserver -> Sol_cli_string.contains ~needle:nameserver output)
+           nameservers)
+    | Sol_cli_installation.Absent _ | Sol_cli_installation.Unobservable _ -> false
+  in
+  let describe = function
+    | Sol_cli_installation.Observed output ->
+      if Sol_cli_string.is_blank output then "no NS records yet" else String.trim output
+    | Sol_cli_installation.Absent reason | Sol_cli_installation.Unobservable reason ->
+      reason
+  in
+  let rec go attempt =
+    match run [ "dig"; "+short"; "NS"; domain ] with
+    | Sol_cli_installation.Unobservable reason -> Sol_cli_installation.Unknown reason
+    | observed ->
+      if satisfies observed
+      then Sol_cli_installation.Established
+      else (
+        let reached_the_limit = attempt >= attempts in
+        report
+          (Printf.sprintf
+             "%s %s (%d/%d): the resolver answers %s"
+             (if reached_the_limit
+              then "gave up waiting for the delegation to"
+              else "waiting for the delegation to")
+             domain
+             attempt
+             attempts
+             (describe observed));
+        match observed with
+        | _ when reached_the_limit ->
+          Sol_cli_installation.Unmet
+            (Printf.sprintf
+               "after %d attempt(s) the resolver answers %s for %s"
+               attempts
+               (describe observed)
+               domain)
+        | _ ->
+          Unix.sleepf interval;
+          go (attempt + 1))
+  in
+  if attempts <= 0
+  then
+    Sol_cli_installation.Unmet
+      (Printf.sprintf "no delegation wait was requested for %s" domain)
+  else go 1
+;;
+
 let reconcile ~assets ~provider ~configuration () =
   let open Result.Syntax in
   let run_log = Sol_cli_run_log.create ~prefix:"installation-bootstrap" () in

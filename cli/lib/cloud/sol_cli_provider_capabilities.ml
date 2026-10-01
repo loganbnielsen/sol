@@ -57,6 +57,17 @@ type t =
   ; scoped_identities : string list
   }
 
+let public_delegation_probe domain =
+  Sol_cli_installation.present_if_output_names
+    ~reason:
+      (Printf.sprintf
+         "no public NS records resolve for %s, so nothing outside Sol can reach the zone \
+          yet: the delegation has not propagated, or it has not been added"
+         domain)
+    Sol_cli_installation.Public_delegation
+    [ "dig"; "+short"; "NS"; domain ]
+;;
+
 let dns_declaration
       ~manage_dns_zone
       (configuration : Sol_cli_installation.installation_config)
@@ -112,6 +123,7 @@ let aws =
       ; Sol_cli_installation.Deploy_identity
       ; Sol_cli_installation.Operator_identity
       ; Sol_cli_installation.Delegated_zone
+      ; Sol_cli_installation.Public_delegation
       ]
   ; installation_probes =
       (fun configuration ->
@@ -207,7 +219,11 @@ let aws =
                     | Externally_delegated -> "(external)"))
               Delegated_zone
               [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
-          ])
+          ]
+          @
+            (match configuration.zone with
+            | No_zone -> []
+            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
   ; installation_backend =
       (fun configuration ->
         match configuration.lock_table with
@@ -319,7 +335,10 @@ let gcp =
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
   ; installation_prerequisites =
-      [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
+      [ Sol_cli_installation.State_backend
+      ; Sol_cli_installation.Delegated_zone
+      ; Sol_cli_installation.Public_delegation
+      ]
   ; installation_probes =
       (fun configuration ->
         let open Sol_cli_installation in
@@ -389,7 +408,11 @@ let gcp =
               ; name
               ; "--format=value(name)"
               ]
-          ])
+          ]
+          @
+            (match configuration.zone with
+            | No_zone -> []
+            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
   ; installation_backend =
       (fun configuration ->
         Ok

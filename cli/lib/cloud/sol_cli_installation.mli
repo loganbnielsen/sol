@@ -11,6 +11,7 @@ type prerequisite =
   | Deploy_identity
   | Operator_identity
   | Delegated_zone
+  | Public_delegation
 
 val prerequisite_label : prerequisite -> string
 val verdict_label : verdict -> string

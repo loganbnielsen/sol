@@ -111,6 +111,13 @@ byo:
         deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 EOF
+cat >"$tmp/bin-ok/dig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ns-1.awsdns.test.'
+printf '%s\n' 'ns-2.awsdns.test.'
+exit 0
+EOF
+chmod +x "$tmp/bin-ok/dig"
 cat >"$tmp/bin-ok/aws" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/aws.log"
@@ -170,6 +177,17 @@ check_contains \
   "delegated DNS zone           Established" \
   "$output"
 check_contains "the installation is reported established" "The installation is established" "$output"
+check_contains \
+  "the delegation is observed through a public resolver" \
+  "public delegation            Established" \
+  "$output"
+
+run "$tmp/bin-ok:/usr/bin:/bin" qual/aws/us-east-1 --await-delegation=5
+check "waiting for a delegation that is already public exits 0" 0 "$rc"
+check_contains \
+  "the waited verdict is printed" \
+  "public delegation           Established" \
+  "$output"
 check_contains \
   "the probe asks for the role by name, not by ARN" \
   "iam get-role --role-name sol-provisioner" \
