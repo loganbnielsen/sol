@@ -37,6 +37,11 @@ type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
 
+type workload_release =
+  | Workloads_released
+  | Workloads_not_applicable of string
+  | Workloads_unestablished of string
+
 type failure =
   | Credentials_failed of string
   | Init_failed of string
@@ -45,6 +50,7 @@ type failure =
   | Substrate_destroy_failed of string
   | Verification_failed of string
   | Elevated_access_not_removed of string
+  | Workload_release_unestablished of string
 
 type outcome =
   | Destroy_succeeded of
@@ -79,7 +85,8 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
-  ; release_workloads : unit -> (unit, string) result
+  ; release_workloads : unit -> workload_release
+  ; accept_unreleased : bool
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read

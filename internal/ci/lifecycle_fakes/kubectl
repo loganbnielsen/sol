@@ -75,6 +75,10 @@ case " $* " in
 esac
 case " $* " in
   *" get deployment -n "*)
+    if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
+      printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 1
+    fi
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
       printf '%s\n' '{"items":[{"kind":"Deployment","metadata":{"name":"charge-svc"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
     else
@@ -83,10 +87,18 @@ case " $* " in
     exit 0
     ;;
   *" get cronjob -n "*|*" get job -n "*)
+    if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
+      printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 1
+    fi
     printf '{"items":[]}\n'
     exit 0
     ;;
   *" get rollout -n "*)
+    if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
+      printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 1
+    fi
     if [ "${ROLLOUT_SERVED:-}" != 1 ]; then
       printf "error: the server doesn't have a resource type \"rollout\"\n" >&2
       exit 1

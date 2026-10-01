@@ -63,8 +63,8 @@ wiring_ml = read("cli/lib/cloud/sol_cli_cloud_wiring.ml", "the workload release 
 cloud_dune = read("cli/lib/cloud/dune", "the layer boundaries cannot be checked")
 cli_tf = read("cli/bin/cmd_cloud_tf.ml", "the declared scope cannot be checked")
 
-if "; release_workloads : unit -> (unit, string) result" not in destroy_mli:
-    fail("the destroy interface no longer declares the workload release step")
+if "release_workloads : unit -> workload_release" not in destroy_mli:
+    fail("the destroy interface no longer declares the workload release outcome")
 
 release_at = destroy_ml.find("deps.release_workloads ()")
 substrate_at = destroy_ml.find("deps.destroy_substrate ()")
@@ -76,16 +76,26 @@ if release_at > substrate_at:
     fail("the destroy destroys the substrate before it releases the workloads, which is the")
     fail("  ordering that made a supported destroy fail on the managed database")
 
-release_block_start = destroy_ml.find("(match deps.release_workloads () with")
+release_block_start = destroy_ml.find("match deps.release_workloads () with")
 release_block_end = destroy_ml.find("deps.destroy_substrate ()")
 if release_block_start < 0:
-    fail("the workload release is no longer a matched result, so its failure cannot be classified")
+    fail("the workload release is no longer a matched outcome, so its result cannot be classified")
 release_block = destroy_ml[release_block_start:release_block_end]
+if "Workloads_released" not in release_block or "Workloads_unestablished" not in release_block:
+    fail("the destroy no longer distinguishes a released workload scope from an unestablished")
+    fail("  release, so a destroy that cannot establish the workloads are gone proceeds anyway")
+if "Workloads_not_applicable" not in release_block:
+    fail("a release that could not run because there is no reachable cluster is no longer")
+    fail("  distinguished from an unestablished one, so teardown could block on a target whose")
+    fail("  cluster is gone (ADR 0003 invariant 6) or read an API error as absence")
+if "accept_unreleased" not in release_block:
+    fail("the explicit override for an unestablished release is no longer consulted")
+if "Workload_release_unestablished" not in release_block:
+    fail("an unestablished workload release no longer stops the destroy before the substrate, so")
+    fail("  the managed database can be asked to drop while the workloads that own it still hold")
+    fail("  sessions (FND-0077)")
 if "degrade" not in release_block:
-    fail("a workload-release failure no longer degrades the teardown: a release that cannot run")
-    fail("  must be reported and teardown must continue, not block it")
-if re.search(r"\bfail\b\s*\(", release_block):
-    fail("a workload-release failure now fails the destroy outright instead of degrading it")
+    fail("a release that could not run is no longer reported as a degradation")
 
 if '"get"' not in scope_ml or '"-n"' not in scope_ml:
     fail("the workload read is no longer a namespaced listing, so its scope is not the")
@@ -142,9 +152,20 @@ if "optional_kind" not in release_wiring or "No_resource_type" not in release_wi
     fail("  Rollouts custom resource is not served the release fails instead of releasing the kinds")
     fail("  that are there, and where a built-in kind cannot be read it must still fail rather than")
     fail("  read as an empty scope")
+if "cluster_unreachable" not in release_wiring:
+    fail("the release no longer tells an unreachable cluster apart from an API error that")
+    fail("  answered, so a failed read and an absent cluster would be classified alike")
+if (
+    "Workloads_not_applicable" not in release_wiring
+    or "Workloads_unestablished" not in release_wiring
+):
+    fail("the release no longer reports whether it established absence or could not reach a")
+    fail("  cluster, so the destroy cannot decide whether to stop")
 
 if "declared_workload_namespaces" not in cli_tf:
     fail("the destroy command no longer supplies the declared namespace scope")
+if "accept_unreleased" not in cli_tf:
+    fail("the destroy command no longer offers the explicit override for an unestablished release")
 if "Sol_cli_workspace_model.services" not in cli_tf or "namespace_name" not in cli_tf:
     fail("the declared scope is no longer derived from the workspace's declared services")
 
@@ -166,5 +187,7 @@ print("check_workload_release_order: the destroy takes its scope from the declar
 print("                            reads ownership from the cluster as the deploy identity, names")
 print("                            every workload kind Sol deploys one at a time -- reading an")
 print("                            unserved controller-installed kind as absence -- waits for the")
-print("                            pods, releases before destroying the substrate, and degrades")
-print("                            rather than blocks when the release cannot run")
+print("                            pods before it destroys the substrate, stops before the")
+print("                            substrate when it cannot establish the workloads are gone,")
+print("                            proceeds when there is no reachable cluster, and destroys")
+print("                            anyway only with the explicit override")

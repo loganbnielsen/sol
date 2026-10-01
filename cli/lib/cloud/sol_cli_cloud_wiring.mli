@@ -94,5 +94,6 @@ val destroy_deps
   -> inputs:terraform_inputs
   -> retention:Sol_cli_cloud_lifecycle.destroy_retention
   -> workload_namespaces:string list
+  -> accept_unreleased:bool
   -> destruction:Sol_cli_destruction.t
   -> Sol_cli_cloud_destroy.deps

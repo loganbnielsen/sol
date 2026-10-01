@@ -184,7 +184,8 @@ let fake_deps
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
-      ?(release_workloads = fun () -> Ok ())
+      ?(release_workloads = fun () -> Workloads_released)
+      ?(accept_unreleased = false)
       ?(destroy_substrate = fun () -> Ok ())
       ?(verify_destruction = fun ~pre_destroy:_ ~preparation:_ -> verified_observation)
       ()
@@ -239,6 +240,7 @@ let fake_deps
         (fun () ->
           calls.order <- "release" :: calls.order;
           release_workloads ())
+    ; accept_unreleased
     ; destroy_substrate =
         (fun () ->
           calls.substrate <- calls.substrate + 1;
@@ -757,22 +759,68 @@ let test_the_workloads_are_released_before_the_substrate_is_destroyed () =
     (List.rev calls.order)
 ;;
 
-let test_a_release_failure_is_reported_and_the_teardown_continues () =
+let test_an_unestablished_release_stops_before_the_substrate () =
   let deps, calls =
-    fake_deps ~release_workloads:(fun () -> Error "the cluster refused the request") ()
+    fake_deps
+      ~release_workloads:(fun () ->
+        Workloads_unestablished "the cluster refused the request")
+      ()
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Sol_cli_cloud_destroy.Destroy_succeeded { degradations; _ } ->
+   | Destroy_failed { failure = Workload_release_unestablished message; _ } ->
      Alcotest.(check bool)
-       "the failure is named as a degradation rather than swallowed"
+       "the failure names the release"
+       true
+       (Sol_cli_string.contains ~needle:"refused the request" message)
+   | _ -> Alcotest.fail "an unestablished release must stop the destroy");
+  Alcotest.(check int) "the substrate is not destroyed" 0 calls.substrate;
+  Alcotest.(check int) "absence is not verified" 0 calls.verify;
+  Alcotest.(check int) "and the destroy exits non-zero" exit_failure (exit_code outcome)
+;;
+
+let test_an_unestablished_release_proceeds_with_the_override () =
+  let deps, calls =
+    fake_deps
+      ~accept_unreleased:true
+      ~release_workloads:(fun () ->
+        Workloads_unestablished "the cluster refused the request")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations; _ } ->
+     Alcotest.(check bool)
+       "the override is recorded rather than swallowed"
        true
        (List.exists
           (fun degradation ->
-             Sol_cli_string.contains ~needle:"could not be released" degradation)
+             Sol_cli_string.contains ~needle:"--accept-unreleased" degradation)
           degradations)
-   | _ -> Alcotest.fail "a release failure must not stop the teardown");
-  Alcotest.(check int) "and the substrate is still destroyed" 1 calls.substrate
+   | _ -> Alcotest.fail "the explicit override must let the destroy proceed");
+  Alcotest.(check int) "the substrate is destroyed" 1 calls.substrate;
+  Alcotest.(check int) "and absence is verified" 1 calls.verify
+;;
+
+let test_a_release_with_no_reachable_cluster_proceeds () =
+  let deps, calls =
+    fake_deps
+      ~release_workloads:(fun () ->
+        Workloads_not_applicable "the cluster could not be reached")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations; _ } ->
+     Alcotest.(check bool)
+       "the not-applicable release is recorded rather than swallowed"
+       true
+       (List.exists
+          (fun degradation ->
+             Sol_cli_string.contains ~needle:"could not be reached" degradation)
+          degradations)
+   | _ -> Alcotest.fail "a release with no reachable cluster must not stop the destroy");
+  Alcotest.(check int) "the substrate is destroyed" 1 calls.substrate
 ;;
 
 let test_destroy_that_cannot_converge_claims_no_absence () =
@@ -1953,9 +2001,17 @@ let () =
             `Quick
             test_the_workloads_are_released_before_the_substrate_is_destroyed
         ; Alcotest.test_case
-            "a release failure is reported and teardown continues"
+            "an unestablished release stops before the substrate"
             `Quick
-            test_a_release_failure_is_reported_and_the_teardown_continues
+            test_an_unestablished_release_stops_before_the_substrate
+        ; Alcotest.test_case
+            "an unestablished release proceeds with the explicit override"
+            `Quick
+            test_an_unestablished_release_proceeds_with_the_override
+        ; Alcotest.test_case
+            "a release with no reachable cluster proceeds"
+            `Quick
+            test_a_release_with_no_reachable_cluster_proceeds
         ; Alcotest.test_case "missing retention fails" `Quick test_missing_retention_fails
         ; Alcotest.test_case "fully clean exits 0" `Quick test_fully_clean_is_exit_0
         ; Alcotest.test_case
