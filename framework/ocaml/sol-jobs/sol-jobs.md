@@ -92,7 +92,8 @@ The table name (`sol_jobs`) is fixed, not configurable — one app, one job tabl
 `enqueue ?dedupe_key` makes handing work from a Kafka fact to a job idempotent. The dedupe key is the **event's** stable id, not a job id:
 
 ```ocaml
-Jobs.enqueue pool ~dedupe_key:event.id (Send_confirmation_email { order_id })
+Db.transaction pool (fun tx ->
+  Jobs.enqueue tx ~dedupe_key:event.id (Send_confirmation_email { order_id }))
 ```
 
 - The uniqueness constraint on `(kind, dedupe_key)` lives in the database, not only in `enqueue`: two concurrent enqueues of the same key insert one row.
@@ -158,7 +159,7 @@ An expired lease from a worker crash counts as an unfinished attempt. The next c
 
 ```ocaml
 module Make (J : JOB) : sig
-  val enqueue : Pg_db.pool -> ?run_at:float -> J.t -> (unit, Pg_error.t) result
+  val enqueue : Pg_db.tx -> ?run_at:float -> J.t -> (unit, Pg_error.t) result
 
   val run
     :  env:(_, _, _, _) Sol_env.timed
@@ -189,12 +190,26 @@ Database trouble is loud (BUG-044). `run` reads the `sol_jobs` table before its 
 
 ```ocaml
 let accept_order pool order =
-  Db.transaction pool (fun pool ->
-    let* () = Orders.insert pool order in
-    Jobs.enqueue pool (Send_confirmation_email { order_id = order.Orders.id }))
+  Db.transaction pool (fun tx ->
+    let* () = Orders.insert tx order in
+    Jobs.enqueue tx (Send_confirmation_email { order_id = order.Orders.id }))
 ```
 
 If the transaction commits, the order row and the job row both exist. If it rolls back, neither does. There is no window where the order exists but the job was never enqueued (or vice versa) — the failure mode a Kafka publish outside the same transaction cannot close.
+
+The guarantee is **enforced by the type, not by convention**. `enqueue` takes
+`Pg_db.tx`, which only `Pg_db.transaction`'s callback can produce, so an enqueue that
+would commit on its own — the shape that silently loses the atomicity — does not
+compile. `Db.exec`/`find`/`collect` and the `Pg_table` accessors are polymorphic in the
+capability, so the same helpers work in both places and there is no second API to keep
+in step.
+
+What the type does **not** prove: that you are *currently* inside the transaction. A
+`pg_db.tx` is an ordinary value, so a callback can store it and use it after commit.
+The compiler establishes that you entered a transaction, not that it is still open.
+Closing that needs linearity or regions, which we do not have cheaply; treat a stored
+`tx` as a bug, and keep the atomicity test — both rows commit together and roll back
+together — as the behavioural check.
 
 ## Non-goals
 

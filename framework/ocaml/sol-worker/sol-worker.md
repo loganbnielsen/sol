@@ -70,10 +70,10 @@ Transient failures of a *dependency* are handled at the operation level — a bo
 ```ocaml
 let handle msg ~trace_ctx:_ =
   match
-    Pg_db.transaction pool (fun pool ->
+    Pg_db.transaction pool (fun tx ->
       let open Result.Syntax in
       let* () = Orders.insert pool msg in
-      Jobs.enqueue pool ~dedupe_key:msg.order_id EmailJob.{ order_id = msg.order_id })
+      Jobs.enqueue tx ~dedupe_key:msg.order_id EmailJob.{ order_id = msg.order_id })
   with
   | Ok () -> Worker.Ack
   | Error _ -> Worker.Fail
@@ -155,10 +155,10 @@ module NotifyWorker = struct
 
   let handle msg ~trace_ctx:_ : Worker.outcome =
     match
-      Pg_db.transaction Config.pool (fun pool ->
+      Pg_db.transaction Config.pool (fun tx ->
         let open Result.Syntax in
         let* () = Notifications.insert pool msg in
-        Jobs.enqueue pool ~dedupe_key:msg.charge_id EmailJob.{ charge_id = msg.charge_id })
+        Jobs.enqueue tx ~dedupe_key:msg.charge_id EmailJob.{ charge_id = msg.charge_id })
     with
     | Ok () -> Worker.Ack
     | Error _ -> Worker.Fail

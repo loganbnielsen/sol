@@ -312,7 +312,7 @@ let validate_retention ~terminal_retention_s ~sweep_interval_s =
 ;;
 
 module Make (J : JOB) = struct
-  let enqueue pool ?run_at ?dedupe_key (job : J.t) =
+  let enqueue tx ?run_at ?dedupe_key (job : J.t) =
     let insert_q =
       Caqti_request.Infix.(
         Caqti_type.(t4 string string float (option string)) ->. Caqti_type.unit)
@@ -331,7 +331,7 @@ module Make (J : JOB) = struct
            (Printf.sprintf
               "sol-jobs: kind %S is not in J.kinds; nothing would claim it"
               kind))
-    else Pg_db.exec pool insert_q (kind, J.encode job, run_at, dedupe_key)
+    else Pg_db.exec tx insert_q (kind, J.encode job, run_at, dedupe_key)
   ;;
 
   let run

@@ -20,7 +20,7 @@ depends: [
   "sol-env" "sol-obs" "sol-runtime"
 ]
 pin-depends: [
-  [ "pg-eio.0.1.0" "git+https://github.com/loganbnielsen/pg-eio.git#1cfc9b512cdedc5775884e6c5d4586d117fb061a" ]
+  [ "pg-eio.0.1.0" "git+https://github.com/loganbnielsen/pg-eio.git#53ad39427cb93af916a7fa73fe414073ad6bbc2e" ]
 ]
 build: [
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]

@@ -89,10 +89,10 @@ struct
             }
         in
         (match
-           Pg_db.transaction pool (fun pool ->
+           Pg_db.transaction pool (fun tx ->
              let open Result.Syntax in
-             let* () = Notification.insert pool row in
-             Jobs.enqueue pool ~dedupe_key:msg.Message.charge_id job)
+             let* () = Notification.insert tx row in
+             Jobs.enqueue tx ~dedupe_key:msg.Message.charge_id job)
          with
          | Ok () -> Ok ()
          | Error e ->
