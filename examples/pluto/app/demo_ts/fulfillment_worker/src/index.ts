@@ -47,6 +47,7 @@ function requiredEnv(name: string): string {
 const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
 const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
+const PARTITIONS = 3;
 
 const METRICS_PORT = intEnv("METRICS_PORT", 9090);
 const LOKI_URL = setting("LOKI_URL");
@@ -106,7 +107,7 @@ async function main() {
   const producer = kafka.producer();
   await producer.connect();
   const relay = kafkaRetryRelay(producer);
-  await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID });
+  await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID, partitions: PARTITIONS });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
   wireCrashListener(consumer, {

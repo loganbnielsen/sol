@@ -39,6 +39,7 @@ const SCHEMA_REGISTRY_URL = requiredEnv("SCHEMA_REGISTRY_URL");
 const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
 const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
+const PARTITIONS = 3;
 
 const ORDER_PLACED_SCHEMA = JSON.stringify({
   type: "object",
@@ -65,6 +66,7 @@ async function main() {
     registryUrl: SCHEMA_REGISTRY_URL,
     topicName: TOPIC_NAME,
     schema: ORDER_PLACED_SCHEMA,
+    partitions: PARTITIONS,
   });
   console.log(`[order-svc-ts] schema registered, id=${schemaId}`);
 
@@ -144,7 +146,7 @@ async function main() {
 
       await producer.send({
         topic: TOPIC_NAME,
-        messages: [{ value: wire, headers: { traceparent } }],
+        messages: [{ key: body.order_id, value: wire, headers: { traceparent } }],
       });
 
       reply.code(202);
