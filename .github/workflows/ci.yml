@@ -696,6 +696,15 @@ jobs:
       - name: CLI reference mutation test (DOCS-030)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: python3 internal/ci/test_cli_reference_check.py
+      # Two actors can allocate the same ticket id concurrently, and the tree keeps one record
+      # per id, so the second would silently replace the first (BUG-110).
+      - name: Ticket-overwrite mutation test (BUG-110)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/test_ticket_overwrites.py
+
+      - name: Ticket-overwrite guard (BUG-110)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: python3 internal/ci/check_ticket_overwrites.py --base origin/main
 
       - name: CLI reference guard (DOCS-030)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
