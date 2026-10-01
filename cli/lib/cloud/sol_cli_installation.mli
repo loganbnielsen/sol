@@ -21,6 +21,7 @@ val unknown : string -> verdict
 val unresolved : (prerequisite * verdict) list -> (prerequisite * verdict) list
 val all_established : (prerequisite * verdict) list -> (unit, string) result
 val summary : (prerequisite * verdict) list -> string
+val health_summary : (prerequisite * verdict) list -> string
 
 type zone_ownership =
   | Sol_created

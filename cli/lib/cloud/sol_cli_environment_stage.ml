@@ -13,6 +13,25 @@ let of_apply_failure = function
   | Sol_cli_cloud_apply.Refused message -> Refused message
 ;;
 
+type drift =
+  | In_sync
+  | Detected
+  | Unknown of string
+
+let drift_to_string = function
+  | In_sync -> "None — Terraform's recorded state matches the provider's observed reality"
+  | Detected ->
+    "Detected — Terraform's recorded state differs from the provider's observed reality; \
+     `sol cloud plan` shows the changes"
+  | Unknown reason -> "Unknown — " ^ reason
+;;
+
+let drift_of_refresh = function
+  | Ok _ -> In_sync
+  | Error (Sol_cli_process.Non_zero { exit_code = 2; _ }) -> Detected
+  | Error error -> Unknown (Sol_cli_process.error_to_string error)
+;;
+
 type environment =
   { cluster : Sol_cli_cluster.t option
   ; infra_dir : string
@@ -193,6 +212,37 @@ let report_starting { provider; _ } =
   Sol_cli_report.app
     "\nInitializing cloud infrastructure (%s)..."
     (Sol_cli_provider.to_string provider)
+;;
+
+let refresh_only_drift ~assets ~provider ~infra_dir ~cloud_backend ~var_files ~vars =
+  match
+    Sol_cli_terraform_workdir.materialize
+      ~assets
+      ~provider
+      ~role:Sol_cli_platform_assets.Cluster
+      ~backend_config:cloud_backend
+  with
+  | Error message -> Unknown message
+  | Ok _ ->
+    (match
+       Sol_cli_terraform.init
+         ~echo:false
+         ~chdir:infra_dir
+         ~backend_config:cloud_backend
+         ()
+     with
+     | Error error -> Unknown (Sol_cli_process.error_to_string error)
+     | Ok _ ->
+       Sol_cli_terraform.plan_refresh_only ~chdir:infra_dir ~var_files ~vars ()
+       |> drift_of_refresh)
+;;
+
+let drift ~assets ~target ~var_file ~vars () =
+  match prepare ~strict:false ~assets ~target ~var_file ~vars () with
+  | Error failure -> Unknown (failure_to_string failure)
+  | Ok { provider; infra_dir; cloud_backend; inputs; _ } ->
+    let { Sol_cli_cloud_wiring.var_files; vars } = inputs in
+    refresh_only_drift ~assets ~provider ~infra_dir ~cloud_backend ~var_files ~vars
 ;;
 
 let plan ~assets ~run_log ~target ~var_file ~vars () =

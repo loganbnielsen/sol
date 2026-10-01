@@ -133,6 +133,84 @@ let test_json_matches_rows () =
   Alcotest.(check (list (pair string string))) "same rows" rows from_json
 ;;
 
+let test_the_live_state_rows_follow_readiness () =
+  let rows =
+    Sol_cli_target_report.rows
+      ~platform:"Ready"
+      ~cloud:"Healthy"
+      ~drift:"None — Terraform's recorded state matches the provider's observed reality"
+      ~last_operation:"unavailable — no record"
+      ~verbose:false
+      (target ())
+      (Reachable "c")
+  in
+  Alcotest.(check (option string)) "cloud" (Some "Healthy") (value_of rows "cloud");
+  Alcotest.(check (option string))
+    "drift"
+    (Some "None — Terraform's recorded state matches the provider's observed reality")
+    (value_of rows "drift");
+  Alcotest.(check (option string))
+    "last operation"
+    (Some "unavailable — no record")
+    (value_of rows "last operation");
+  Alcotest.(check (list string))
+    "the live state rows keep their order"
+    [ "platform"; "cloud"; "drift"; "last operation" ]
+    (List.filter
+       (fun label -> List.mem label [ "platform"; "cloud"; "drift"; "last operation" ])
+       (List.map fst rows))
+;;
+
+let test_the_offline_summary_omits_the_checked_rows () =
+  let rows = Sol_cli_target_report.rows ~verbose:false (target ()) (Configured "c") in
+  Alcotest.(check (option string)) "no cloud row" None (value_of rows "cloud");
+  Alcotest.(check (option string)) "no drift row" None (value_of rows "drift");
+  Alcotest.(check (option string))
+    "the last-operation row needs no check and is always reported"
+    (Some Sol_cli_target_report.last_operation_unavailable)
+    (value_of rows "last operation")
+;;
+
+let test_last_operation_is_unavailable_not_none () =
+  let message = Sol_cli_target_report.last_operation_unavailable in
+  assert (Sol_cli_string.contains ~needle:"unavailable" message);
+  assert (Sol_cli_string.contains ~needle:"ADR 0003" message);
+  assert (not (String.equal (String.trim message) "none"))
+;;
+
+let test_json_carries_the_live_state_fields () =
+  let json =
+    Sol_cli_target_report.to_json
+      ~cloud:"Healthy"
+      ~drift:
+        "Detected — Terraform's recorded state differs from the provider's observed \
+         reality"
+      ~last_operation:Sol_cli_target_report.last_operation_unavailable
+      ~verbose:false
+      (target ())
+      (Configured "c")
+  in
+  match json with
+  | `Assoc fields ->
+    let value name =
+      match List.assoc_opt name fields with
+      | Some (`String value) -> Some value
+      | _ -> None
+    in
+    Alcotest.(check (option string)) "cloud" (Some "Healthy") (value "cloud");
+    Alcotest.(check (option string))
+      "drift"
+      (Some
+         "Detected — Terraform's recorded state differs from the provider's observed \
+          reality")
+      (value "drift");
+    Alcotest.(check (option string))
+      "last operation"
+      (Some Sol_cli_target_report.last_operation_unavailable)
+      (value "last operation")
+  | _ -> Alcotest.fail "expected an object"
+;;
+
 let () =
   Alcotest.run
     "target_report"
@@ -178,6 +256,22 @@ let () =
             `Quick
             test_unreachable_carries_the_reason
         ; Alcotest.test_case "json matches rows" `Quick test_json_matches_rows
+        ; Alcotest.test_case
+            "the live state rows follow readiness"
+            `Quick
+            test_the_live_state_rows_follow_readiness
+        ; Alcotest.test_case
+            "the offline summary omits the checked rows"
+            `Quick
+            test_the_offline_summary_omits_the_checked_rows
+        ; Alcotest.test_case
+            "last operation is unavailable, not none"
+            `Quick
+            test_last_operation_is_unavailable_not_none
+        ; Alcotest.test_case
+            "json carries the live state fields"
+            `Quick
+            test_json_carries_the_live_state_fields
         ] )
     ]
 ;;

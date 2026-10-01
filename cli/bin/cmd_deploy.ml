@@ -126,19 +126,6 @@ let check_migration_prerequisite ~ctx ~plan ~live =
 let print_guided lines = List.iter (fun line -> Printf.printf "%s\n%!" line) lines
 let eprint_guided lines = List.iter (fun line -> Printf.eprintf "%s\n%!" line) lines
 
-let observe_installation target_cfg =
-  let provider = target_cfg.Sol_cli_config.provider in
-  match Sol_cli_installation.of_target target_cfg with
-  | Error message -> Error message
-  | Ok configuration ->
-    let verdicts =
-      Sol_cli_provider_capabilities.installation_probes provider configuration
-      |> Sol_cli_installation.observe
-           ~run:(Sol_cli_provider_capabilities.installation_observation ~provider)
-    in
-    Ok (configuration, verdicts)
-;;
-
 let setup_refusal_reason = function
   | Sol_cli_command_request.Deploy_apply -> "this run is not interactive"
   | Deploy_dry_run _ -> "this run is `--dry-run`, which changes nothing"
@@ -200,7 +187,7 @@ let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
   in
   print_guided (List.map (fun line -> "  " ^ line) lines);
   let* () = await_public_delegation ~configuration ~run ~seconds:await_delegation in
-  match observe_installation target_cfg with
+  match Sol_cli_provider_capabilities.observe_installation target_cfg with
   | Error message ->
     Error
       (Sol_cli_exit.error
@@ -227,7 +214,7 @@ type installation_state =
   | Installation_reported
 
 let installation_stage ~target ~target_cfg ~action ~await_delegation () =
-  match observe_installation target_cfg with
+  match Sol_cli_provider_capabilities.observe_installation target_cfg with
   | Error message ->
     eprint_guided
       (Sol_cli_installation_onboarding.undeclared_lines ~target ~reason:message);

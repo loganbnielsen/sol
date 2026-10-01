@@ -608,3 +608,15 @@ let installation_observation ~provider argv =
   | Error error ->
     Sol_cli_installation.Unobservable (Sol_cli_process.error_to_string error)
 ;;
+
+let observe_installation (target_cfg : Sol_cli_config.target) =
+  let provider = target_cfg.Sol_cli_config.provider in
+  match Sol_cli_installation.of_target target_cfg with
+  | Error message -> Error message
+  | Ok configuration ->
+    let verdicts =
+      installation_probes provider configuration
+      |> Sol_cli_installation.observe ~run:(installation_observation ~provider)
+    in
+    Ok (configuration, verdicts)
+;;

@@ -16,6 +16,22 @@ type outcome =
       ; cleanup : Sol_cli_cloud_destroy.cleanup
       }
 
+type drift =
+  | In_sync
+  | Detected
+  | Unknown of string
+
+val drift_to_string : drift -> string
+val drift_of_refresh : (Sol_cli_process.output, Sol_cli_process.error) result -> drift
+
+val drift
+  :  assets:Sol_cli_platform_assets.t
+  -> target:string
+  -> var_file:string option
+  -> vars:string list
+  -> unit
+  -> drift
+
 val plan
   :  assets:Sol_cli_platform_assets.t
   -> run_log:Sol_cli_run_log.t

@@ -89,7 +89,8 @@
   test_migration_job
   test_migration_gate
   test_deploy_run
-  test_cloud_command)
+  test_cloud_command
+  test_environment_stage)
  (deps ../bin/main.exe)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
@@ -255,3 +256,9 @@
  (name test_installation)
  (modules test_installation)
  (libraries sol_cli alcotest str))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_target_status.sh)
+ (action
+  (run bash %{dep:test_target_status.sh} %{dep:../bin/main.exe})))
