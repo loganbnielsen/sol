@@ -255,7 +255,7 @@ check_contains \
 check_contains "the installation is established after the reconcile" "The installation is established" "$output"
 check_contains \
   "the delegation instruction names the zone's domain and parent" \
-  "Add these NS records for qual-aws.example.test at the zone that publishes it (example.test)" \
+  "add these NS records for qual-aws.example.test at the zone that publishes it (example.test)" \
   "$output"
 check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
 check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
@@ -301,7 +301,7 @@ check_contains \
   "$(cat "$tmp/terraform.log")"
 check_absent \
   "nothing is asked of the operator when Sol can write the delegation" \
-  "Add these NS records" \
+  "add these NS records" \
   "$output"
 rm -f "$tmp/parent-zone-id"
 
@@ -319,7 +319,7 @@ rm -f "$tmp/state-list"
 run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" byo/aws/us-east-1 --apply
 check_absent \
   "a zone Sol does not own gets no delegation instruction" \
-  "Add these NS records" \
+  "add these NS records" \
   "$output"
 
 printf '%s\n' '{"resource_changes":[]}' >"$tmp/plan.json"

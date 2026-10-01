@@ -683,16 +683,20 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
   let* () =
     if reconcile
-    then
+    then (
       let* () = check_terraform () in
       let* assets = resolve_assets () in
-      Sol_cli_installation_stage.reconcile
-        ~assets
-        ~provider:target_cfg.provider
-        ~configuration
-        ~run:installation_observation
-        ()
-      |> Sol_cli_exit.of_msg
+      let* lines =
+        Sol_cli_installation_stage.reconcile
+          ~assets
+          ~provider:target_cfg.provider
+          ~configuration
+          ~run:installation_observation
+          ()
+        |> Sol_cli_exit.of_msg
+      in
+      List.iter (fun line -> Printf.printf "  %s\n%!" line) lines;
+      Ok ())
     else Ok ()
   in
   let verdicts =

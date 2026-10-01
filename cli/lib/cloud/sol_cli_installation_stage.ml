@@ -101,28 +101,28 @@ let parent_zone ~run ~provider ~domain =
      | Error reason -> Parent_unobservable reason)
 ;;
 
-let print_delegation_instruction ~provider ~domain ~chdir ~known_parent () =
+let delegation_lines ~provider ~domain ~chdir ~known_parent () =
   let parent = Option.value (parent_domain domain) ~default:domain in
   match zone_nameservers ~provider ~chdir with
   | Error message ->
-    Printf.printf "\nThe zone for %s is not observable yet: %s.\n%!" domain message
+    [ Printf.sprintf "the zone for %s is not observable yet: %s" domain message ]
   | Ok nameservers ->
     (match known_parent with
      | Parent_unobservable reason ->
-       Printf.printf
-         "\n\
-          Could not tell whether the zone that publishes %s (%s) is in this account \
-          (%s), so Sol did not write a delegation it cannot judge.\n\
-          %!"
-         domain
-         parent
-         reason
-     | Parent_in_this_account _ | Parent_beyond_this_account -> ());
-    Printf.printf
-      "\nAdd these NS records for %s at the zone that publishes it (%s):\n%!"
-      domain
-      parent;
-    List.iter (fun nameserver -> Printf.printf "  NS  %s\n%!" nameserver) nameservers
+       [ Printf.sprintf
+           "could not tell whether the zone that publishes %s (%s) is in this account \
+            (%s), so Sol did not write a delegation it cannot judge"
+           domain
+           parent
+           reason
+       ]
+     | Parent_in_this_account _ | Parent_beyond_this_account -> [])
+    @ [ Printf.sprintf
+          "add these NS records for %s at the zone that publishes it (%s):"
+          domain
+          parent
+      ]
+    @ List.map (fun nameserver -> Printf.sprintf "  NS  %s" nameserver) nameservers
 ;;
 
 let await_delegation ~run ~report ~attempts ~interval ~domain ?(expected = []) () =
@@ -213,57 +213,59 @@ let reconcile ~assets ~provider ~configuration ~run () =
       backend_config
   in
   let manage_dns_zone = Sol_cli_installation.owns_the_zone configuration.zone in
-  let* () =
+  let* installation_lines =
     if not manage_dns_zone
-    then Ok ()
+    then Ok []
     else
       let open Result.Syntax in
       let* owned = owns_the_delegated_zone ~provider ~chdir in
       let domain = Sol_cli_installation.zone_domain configuration.zone in
       if owned
-      then (
-        Printf.printf
-          "\n\
-           The durable root already owns the zone for %s; nothing to create or adopt.\n\
-           %!"
-          (Option.value ~default:"the declared domain" domain);
-        Ok ())
+      then
+        Ok
+          [ Printf.sprintf
+              "the durable root already owns the zone for %s; nothing to create or adopt"
+              (Option.value ~default:"the declared domain" domain)
+          ]
       else (
         match domain with
-        | None -> Ok ()
+        | None -> Ok []
         | Some domain ->
           let* existing = existing_zone_id ~run ~provider ~domain in
           (match existing with
            | None ->
-             Printf.printf
-               "\nNo zone exists for %s yet, so the durable root creates it.\n%!"
-               domain;
-             Ok ()
+             Ok
+               [ Printf.sprintf
+                   "no zone exists for %s yet, so the durable root creates it"
+                   domain
+               ]
            | Some identity ->
-             Printf.printf
-               "\n\
-                A zone for %s already exists and the durable root does not own it: \
-                adopting it (%s) instead of creating a second zone with different \
-                nameservers.\n\
-                %!"
-               domain
-               identity;
-             Sol_cli_terraform.import_
-               ~chdir
-               ~var_files:[]
-               ~vars:
-                 (Sol_cli_terraform.kv_args
-                    (Sol_cli_provider_capabilities.installation_vars
-                       provider
-                       ~manage_dns_zone
-                       configuration))
-               ~address:
-                 (Sol_cli_provider_capabilities.capabilities_of provider)
-                   .installation_zone_import_address
-               ~import_identity:identity
-               ()
-             |> Result.map (fun _ -> ())
-             |> Result.map_error Sol_cli_process.error_to_string))
+             let* () =
+               Sol_cli_terraform.import_
+                 ~chdir
+                 ~var_files:[]
+                 ~vars:
+                   (Sol_cli_terraform.kv_args
+                      (Sol_cli_provider_capabilities.installation_vars
+                         provider
+                         ~manage_dns_zone
+                         configuration))
+                 ~address:
+                   (Sol_cli_provider_capabilities.capabilities_of provider)
+                     .installation_zone_import_address
+                 ~import_identity:identity
+                 ()
+               |> Result.map (fun _ -> ())
+               |> Result.map_error Sol_cli_process.error_to_string
+             in
+             Ok
+               [ Printf.sprintf
+                   "a zone for %s already exists and the durable root does not own it: \
+                    adopting it (%s) instead of creating a second zone with different \
+                    nameservers"
+                   domain
+                   identity
+               ]))
   in
   let* parent =
     match Sol_cli_installation.zone_domain configuration.zone, manage_dns_zone with
@@ -292,22 +294,23 @@ let reconcile ~assets ~provider ~configuration ~run () =
               configuration))
       ()
   in
-  match configuration.Sol_cli_installation.zone with
-  | Sol_cli_installation.Service_zone { domain; ownership = Sol_created } ->
-    (match parent with
-     | Parent_in_this_account identity ->
-       Printf.printf
-         "\n\
-          The zone that publishes %s is in this account (%s), so the durable root writes \
-          the NS delegation itself: a re-run keeps it, and nothing here needs a \
-          registrar.\n\
-          %!"
-         domain
-         identity
-     | Parent_beyond_this_account | Parent_unobservable _ ->
-       print_delegation_instruction ~provider ~domain ~chdir ~known_parent:parent ());
-    Ok ()
-  | Sol_cli_installation.No_zone
-  | Sol_cli_installation.Service_zone
-      { ownership = User_supplied | Externally_delegated; _ } -> Ok ()
+  let delegation_lines =
+    match configuration.Sol_cli_installation.zone with
+    | Sol_cli_installation.Service_zone { domain; ownership = Sol_created } ->
+      (match parent with
+       | Parent_in_this_account identity ->
+         [ Printf.sprintf
+             "the zone that publishes %s is in this account (%s), so the durable root \
+              writes the NS delegation itself: a re-run keeps it, and nothing here needs \
+              a registrar"
+             domain
+             identity
+         ]
+       | Parent_beyond_this_account | Parent_unobservable _ ->
+         delegation_lines ~provider ~domain ~chdir ~known_parent:parent ())
+    | Sol_cli_installation.No_zone
+    | Sol_cli_installation.Service_zone
+        { ownership = User_supplied | Externally_delegated; _ } -> []
+  in
+  Ok (installation_lines @ delegation_lines)
 ;;
