@@ -71,3 +71,35 @@ with an unhealthy workload.
 
 - This page waits on `FEAT-108` so that the uninstall section ships true rather
   than describing a command that does not exist.
+
+## Completion notes (2026-10-01)
+
+The page is `docs/guides/operations.md`, published: "Operating a deployed environment".
+It follows the ticket's outline section for section — the day-two command table with
+per-command addressing and scope rules (including why `sol logs` is unit-only and what to
+use instead), health from the cluster's own diagnosis plus the observability reachability
+block, the Loki-first snapshot path with its `kubectl logs` fallback and why it exists, the
+release/rollback contract (whole-release restore, the `--commit` disambiguation, the
+contracting-migration refusal), `sol check` and its exit-status vocabulary, `sol open`,
+environment destroy versus installation uninstall, and pointers to the recovery pages.
+
+Every command and flag on the page is real on current `main`, and each **Target** item is
+marked with its ticket: cloud health/drift (`FEAT-090`), traces (`OBS-045`),
+infrastructure view (`INFRA-027`), and target/scope diagnostics.
+
+The environment/installation distinction is stated once, in §7/§8, with the DNS consequence
+of removing a Sol-created zone named and the `--confirm-dns-zone <domain>` spelling shown;
+the uninstall half describes the shipped command (`FEAT-108`, merged as part of this work's
+predecessor), not a plan. `docs/README.md` marks the page **Published** and links it.
+
+The premise ("today these are help strings and tutorial fragments; the page does not exist")
+was checked with `ls docs/guides/` — no `operations.md` existed — and the pages it links
+(`docs/guides/deployment.md`, `docs/guides/application-authoring.md`,
+`docs/deployment/*`, `docs/reference/cli.md`) are all present; every relative link on the new
+page resolves.
+
+**Demo/example coverage:** this ticket *is* documentation, so there is no code or example to
+change; the runnable counterpart it points at is `examples/pluto/README.md`'s teardown
+section and `docs/guides/deployment.md`.
+
+**Language parity:** no impact — operator documentation; nothing application-facing changes.
