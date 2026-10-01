@@ -655,6 +655,21 @@ let test_pending_migrations_workspace_scaffold () =
     (count_unapplied ~root:"testapp" = 1)
 ;;
 
+let test_scaffold_event_topic_matches_module () =
+  in_temp_dir
+  @@ fun () ->
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
+  let topic = "testapp-payments-charges" in
+  assert_contains
+    "scaffolded events/payments/sol.toml"
+    (read_file "testapp/events/payments/sol.toml")
+    (Printf.sprintf "topics = [%S]" topic);
+  assert_contains
+    "scaffolded events/payments/charged.ml"
+    (read_file "testapp/events/payments/charged.ml")
+    (Printf.sprintf "topic_name_exn %S" topic)
+;;
+
 let test_golden_ci_workflow () =
   in_temp_dir
   @@ fun () ->
@@ -1048,6 +1063,10 @@ let () =
             "scaffold workspace → 1 migration"
             `Quick
             test_pending_migrations_workspace_scaffold
+        ; Alcotest.test_case
+            "scaffolded event topic matches its module"
+            `Quick
+            test_scaffold_event_topic_matches_module
         ] )
     ; ( "golden"
       , [ Alcotest.test_case "sol-ci.yml" `Quick test_golden_ci_workflow

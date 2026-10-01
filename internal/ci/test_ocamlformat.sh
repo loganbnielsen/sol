@@ -52,6 +52,20 @@ if ! "$CHECK" --staged >/dev/null 2>&1; then
 fi
 echo "  [OK]   the check is per file, not sticky"
 
+mkdir -p platform/shared/templates/workspace/events
+printf 'let h  z   =   z\n' > platform/shared/templates/workspace/events/charged.ml
+git add unformatted.ml platform/shared/templates/workspace/events/charged.ml
+out="$("$CHECK" --staged 2>&1)" && {
+  echo "  [FAIL] the template exemption let an unformatted staged file through" >&2
+  exit 1
+}
+case "$out" in
+  *charged.ml*) echo "  [FAIL] the exempt scaffold template was named: $out" >&2; exit 1 ;;
+  *unformatted.ml*) echo "  [OK]   a scaffold template is exempt while other files are still checked" ;;
+  *) echo "  [FAIL] refusal did not name the checked file: $out" >&2; exit 1 ;;
+esac
+git restore --staged unformatted.ml platform/shared/templates/workspace/events/charged.ml
+
 if "$CHECK" --nonsense >/dev/null 2>&1; then
   echo "  [FAIL] an unknown mode should not pass" >&2
   exit 1

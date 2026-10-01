@@ -24,7 +24,6 @@ let copy ~kind ~dest ~vars ~rule =
 let workspace_vars ~name rel =
   let v = [ "name", name; "Name", cap name; "basename", Filename.basename name ] in
   match rel with
-  | "events/payments/sol.toml" -> ("team", "payments") :: v
   | "app/payments/charge_svc/Dockerfile" ->
     ("repo_dir", "app/payments/charge_svc") :: ("binary", name ^ "-charge-svc") :: v
   | "app/comms/notify_worker/Dockerfile" ->

@@ -3,6 +3,7 @@ set -uo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 MODE="${1:---all}"
+EXEMPT='platform/shared/templates/'
 
 report() {
   echo "" >&2
@@ -18,6 +19,13 @@ case "$MODE" in
       echo "$preview" >&2
       report "the project (dune fmt --preview could not run)"
     fi
+    if printf '%s\n' "$preview" | grep -qF "$EXEMPT"; then
+      echo "$preview" >&2
+      echo "" >&2
+      echo "✗ dune fmt reports $EXEMPT, which the staged check exempts." >&2
+      echo "  Make both modes agree before landing." >&2
+      exit 1
+    fi
     if printf '%s\n' "$preview" | grep -q '^Promoting '; then
       echo "$preview" >&2
       report "at least one file (listed above)"
@@ -29,7 +37,12 @@ case "$MODE" in
       echo "  (ocamlformat not installed — staged format check skipped; CI still checks it)"
       exit 0
     fi
-    files="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ml|mli)$' || true)"
+    files="$(
+      git diff --cached --name-only --diff-filter=ACM \
+        | grep -E '\.(ml|mli)$' \
+        | grep -vF "$EXEMPT" \
+        || true
+    )"
     [ -z "$files" ] && exit 0
     bad=""
     while IFS= read -r f; do

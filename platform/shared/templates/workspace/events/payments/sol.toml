@@ -1,4 +1,4 @@
 # Sol event metadata.
 
 [service]
-topics = ["{{team}}-{{name}}s"]
+topics = ["{{name}}-payments-charges"]
