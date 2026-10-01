@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HOOKS_SRC="$REPO_ROOT/internal/tooling/hooks"
-HOOKS_DEST="$REPO_ROOT/.git/hooks"
+HOOKS_DEST="$(git -C "$REPO_ROOT" rev-parse --git-path hooks)"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
