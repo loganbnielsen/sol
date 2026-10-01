@@ -254,6 +254,27 @@ jobs:
           opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
           opam exec -- dune test framework/ocaml/sol-jobs/ framework/ocaml/sol-outbox/
 
+      # VERIF-001: the supported application architecture, end to end and with
+      # its failure boundaries — domain state and outbox intent commit in one
+      # transaction; the relay publishes an ordered Kafka fact; a worker
+      # acknowledges it after idempotently enqueueing an independent effect;
+      # sol-jobs retries that effect. The boundaries are exercised
+      # deterministically: a forced rollback, a broker outage and recovery, a
+      # duplicate delivery, a handler Fail, a transient job failure, a blocked
+      # earlier event for one key, and a crash between the broker ack and the
+      # row mark. Runs after the step above so it reuses the same broker and
+      # Postgres; LOKI_URL is unset, so the Loki assertions self-skip.
+      - name: Facts-to-jobs golden-path smoke (broker and database backed)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        env:
+          KAFKA_SECURITY_PROTOCOL: plaintext
+          KAFKA_BROKERS: localhost:9092
+          SCHEMA_REGISTRY_URL: http://localhost:8081
+          REDPANDA_ADMIN_URL: http://localhost:9644
+          POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
+        run: opam exec -- dune test internal/fixtures/local-demo/test/ --force
+
       # INFRA-006: formatting check runs after unit tests on purpose — running
       # `dune fmt --preview` first populates _build/default/framework, which
       # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
