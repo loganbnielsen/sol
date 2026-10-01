@@ -138,6 +138,11 @@ type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
 
+type workload_release =
+  | Workloads_released
+  | Workloads_not_applicable of string
+  | Workloads_unestablished of string
+
 type failure =
   | Credentials_failed of string
   | Init_failed of string
@@ -146,6 +151,7 @@ type failure =
   | Substrate_destroy_failed of string
   | Verification_failed of string
   | Elevated_access_not_removed of string
+  | Workload_release_unestablished of string
 
 type outcome =
   | Destroy_succeeded of
@@ -171,6 +177,7 @@ let failure_message = function
   | Substrate_destroy_failed message -> message
   | Verification_failed message -> message
   | Elevated_access_not_removed message -> message
+  | Workload_release_unestablished message -> message
 ;;
 
 let exit_clean = 0
@@ -206,6 +213,11 @@ let completion_message = function
       "Destruction is blocked by a guarantee this target declared, so nothing was \
        destroyed: %s"
       guarantee
+  | Destroy_failed { failure = Workload_release_unestablished message; _ } ->
+    Printf.sprintf
+      "Destruction stopped before the substrate: %s. Nothing was destroyed, and no \
+       absence is claimed."
+      message
   | Destroy_failed { failure; _ } ->
     Printf.sprintf
       "Destruction did not converge: %s. What remains is whatever the verification above \
@@ -224,7 +236,8 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
-  ; release_workloads : unit -> (unit, string) result
+  ; release_workloads : unit -> workload_release
+  ; accept_unreleased : bool
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read
@@ -343,29 +356,39 @@ let execute ~deps =
            "  lifecycle phase: %s"
            (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Destroying));
     deps.report "\nReleasing the application workloads...";
-    (match deps.release_workloads () with
-     | Ok () -> ()
-     | Error message ->
-       degrade
-         "the workloads this target deployed could not be released"
-         (Printf.sprintf
-            "%s. A managed database whose sessions they still hold refuses to be \
-             dropped, so the teardown below may not converge; if it does not, nothing \
-             here claims it did"
-            message));
-    match deps.destroy_substrate () with
-    | Error message -> fail ~cleanup (Substrate_destroy_failed message)
+    let released =
+      match deps.release_workloads () with
+      | Workloads_released -> Ok ()
+      | Workloads_not_applicable reason ->
+        degrade "the workload release" reason;
+        Ok ()
+      | Workloads_unestablished message when deps.accept_unreleased ->
+        degrade
+          "the workloads this target deployed could not be released"
+          (Printf.sprintf
+             "%s. --accept-unreleased was given, so the teardown continues; a managed \
+              database whose sessions they still hold may refuse to be dropped, and the \
+              absence check decides"
+             message);
+        Ok ()
+      | Workloads_unestablished message -> Error message
+    in
+    match released with
+    | Error message -> fail ~cleanup (Workload_release_unestablished message)
     | Ok () ->
-      deps.report "\nVerifying teardown...";
-      let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
-      let verdict = Sol_cli_destroy_verification.classify observation in
-      if Sol_cli_destroy_verification.is_verified verdict
-      then succeed ~cleanup ~verification:observation preparation
-      else
-        fail
-          ~cleanup
-          ~verification:observation
-          (Verification_failed (Sol_cli_destroy_verification.verdict_message verdict))
+      (match deps.destroy_substrate () with
+       | Error message -> fail ~cleanup (Substrate_destroy_failed message)
+       | Ok () ->
+         deps.report "\nVerifying teardown...";
+         let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
+         let verdict = Sol_cli_destroy_verification.classify observation in
+         if Sol_cli_destroy_verification.is_verified verdict
+         then succeed ~cleanup ~verification:observation preparation
+         else
+           fail
+             ~cleanup
+             ~verification:observation
+             (Verification_failed (Sol_cli_destroy_verification.verdict_message verdict)))
   in
   match deps.require_credentials () with
   | Error message -> fail (Credentials_failed message)

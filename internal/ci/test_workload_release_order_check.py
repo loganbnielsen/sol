@@ -65,14 +65,8 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        "(match deps.release_workloads () with",
-        "(match deps.destroy_substrate () with",
-    )
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        "    match deps.destroy_substrate () with",
-        "    match deps.remove_elevated_access () with",
+        "      match deps.release_workloads () with",
+        "      match deps.destroy_substrate () with",
     )
     expect_rejected("no-release", tmp, "no longer releases the workloads")
 
@@ -80,16 +74,43 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        """    (match deps.release_workloads () with
-     | Ok () -> ()
-     | Error message ->
-       degrade""",
-        """    (match deps.release_workloads () with
-     | Ok () -> ()
-     | Error message ->
-       ignore""",
+        """    match released with
+    | Error message -> fail ~cleanup (Workload_release_unestablished message)""",
+        """    match released with
+    | Error message -> ignore message""",
     )
-    expect_rejected("release-failure-no-longer-degrades", tmp, "no longer degrades the teardown")
+    expect_rejected(
+        "unestablished-release-no-longer-stops",
+        tmp,
+        "no longer stops the destroy before the substrate",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
+        "| Workloads_unestablished message when deps.accept_unreleased ->",
+        "| Workloads_unestablished message when false ->",
+    )
+    expect_rejected(
+        "the-explicit-override-is-dropped",
+        tmp,
+        "no longer consulted",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
+        "Sol_cli_kubectl.cluster_unreachable e",
+        "false",
+        count=2,
+    )
+    expect_rejected(
+        "an-unreachable-cluster-is-no-longer-distinguished",
+        tmp,
+        "no longer tells an unreachable cluster apart",
+    )
 
     tmp = scratch()
     mutate(
@@ -183,8 +204,8 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_cloud_wiring.ml",
-        "Sol_cli_config.destination_of_target target_cfg in\n",
-        "Ok (Sol_cli_kube_destination.context_of_destination Sol_cli_kube_destination.local) in\n",
+        "match Sol_cli_config.destination_of_target target_cfg with",
+        "match Ok Sol_cli_kube_destination.local with",
     )
     expect_rejected("release-runs-as-the-platform-identity", tmp, "no longer runs as the target's deploy identity")
 
@@ -217,14 +238,15 @@ def main():
     expect_rejected("scope-read-from-the-release-store", tmp, "reads release-store state")
 
     print("test_workload_release_order_check: the guard accepts the real tree and rejects a destroy")
-    print("  that drops the release, one that stops degrading, one that reads cluster-wide, one that")
-    print("  selects a different label, one that stops waiting, one that reads the workload object")
-    print("  instead of its pod template, one that forgets where a CronJob's template is, one that")
-    print("  drops the progressive-delivery Rollout from the kinds it covers, one that reads the")
-    print("  kinds in a single listing again, one that reads an unserved kind as a failed release,")
-    print("  one that selects the objects instead of naming them, one that keeps the platform")
-    print("  identity, one that drops the declared scope, one that inverts the layer graph, and one")
-    print("  that reads the scope from the release store")
+    print("  that drops the release, one that no longer stops before the substrate when the release")
+    print("  is unestablished, one that drops the explicit override, one that stops distinguishing an")
+    print("  unreachable cluster, one that reads cluster-wide, one that selects a different label,")
+    print("  one that stops waiting, one that reads the workload object instead of its pod template,")
+    print("  one that forgets where a CronJob's template is, one that drops the progressive-delivery")
+    print("  Rollout from the kinds it covers, one that reads the kinds in a single listing again, one")
+    print("  that reads an unserved kind as a failed release, one that selects the objects instead of")
+    print("  naming them, one that keeps the platform identity, one that drops the declared scope, one")
+    print("  that inverts the layer graph, and one that reads the scope from the release store")
 
 
 main()

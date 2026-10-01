@@ -299,6 +299,10 @@ JSON
     fi
     ;;
   *cloud/gcp/cluster*" destroy "*|*cloud/aws/cluster*" destroy "*)
+    if [ "${RELEASE_DELETE_FAILS:-}" = 1 ] || [ "${RELEASE_WAIT_FAILS:-}" = 1 ]; then
+      printf 'Error: Error when reading or editing Database: googleapi: Error 400: Invalid request: failed to delete database app. Detail: pq: database "app" is being accessed by other users., invalid\n' >&2
+      exit 40
+    fi
     [ "${STATE_RESIDUE_AFTER_DESTROY:-}" = 1 ] || : >"${LIFECYCLE_LOG}.destroyed"
     ;;
   *cloud/gcp/cluster*" apply "*"-target=google_sql_database_instance.postgres"*)

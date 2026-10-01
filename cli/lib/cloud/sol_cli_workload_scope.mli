@@ -7,6 +7,7 @@ type workload_kind
 
 val kinds : workload_kind list
 val optional_kind : workload_kind -> bool
+val resource_of_kind : workload_kind -> string
 val list_args : namespace:string -> kind:workload_kind -> string list
 
 val delete_args

@@ -65,6 +65,23 @@ let classify (error : Sol_cli_process.error) =
   | Spawn_failed _ | Timeout _ -> Other
 ;;
 
+let cluster_unreachable (error : Sol_cli_process.error) =
+  match error with
+  | Non_zero f ->
+    let text = f.stderr ^ "\n" ^ f.stdout in
+    List.exists
+      (fun needle -> Sol_cli_string.contains ~needle text)
+      [ "Unable to connect to the server"
+      ; "The connection to the server"
+      ; "connection refused"
+      ; "no such host"
+      ; "no configuration has been provided"
+      ; "couldn't get current server API group list"
+      ; "dial tcp"
+      ]
+  | Spawn_failed _ | Timeout _ -> false
+;;
+
 let get_if_present ~ctx ~args =
   match kubectl ~ctx args with
   | Ok (o : Sol_cli_process.output) -> Ok (Some o.stdout)

@@ -157,6 +157,16 @@ workloads through supported lifecycle operations. It is target-addressed and app
 same plan-then-apply discipline as `sol cloud apply`; without `--apply` it previews and
 changes nothing.
 
+Destroy releases the environment's application workloads before it destroys the substrate,
+and **stops before the substrate** when it cannot establish that they are gone (`DEC-059`): a
+managed database must not be asked to drop while the workloads that own it still hold
+connections. The failure names the namespace, the kind and the operation, nothing is
+destroyed, and no absence is claimed. `--accept-unreleased` proceeds anyway, accepting that
+their sessions may make the teardown fail or leave the database to be dropped with the
+application still attached. A release that could not run because no cluster was reachable is
+reported and destruction continues — there the workloads cannot be running, and blocking
+would strand the substrate.
+
 Destroy **verifies absence independently** (`DEC-044`, `DEC-040`): after Terraform
 converges, Sol re-observes the provider and reports what is absent, what is retained, and
 what it could not observe. An unqueryable answer is `UNKNOWN` and fails closed — a command

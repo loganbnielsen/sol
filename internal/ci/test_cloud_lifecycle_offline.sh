@@ -593,23 +593,80 @@ fi
 
 
 release_fail_log="$tmp/release-fail-destroy.log"
-if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
-        LIFECYCLE_LOG="$release_fail_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
+      LIFECYCLE_LOG="$release_fail_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$release_fail_log.out" 2>&1
 then
   cat "$release_fail_log.out" >&2
-  echo "a workload-release failure must degrade the teardown, not block it (FND-0077)" >&2
+  echo "an unestablished workload release must stop the destroy before the substrate (DEC-059)" >&2
   exit 1
 fi
-grep -F 'the workloads this target deployed could not be released' "$release_fail_log.out" >/dev/null || {
-  echo "the workload-release failure was not reported:" >&2
+grep -F 'Destruction stopped before the substrate' "$release_fail_log.out" >/dev/null || {
+  echo "the destroy did not report stopping before the substrate:" >&2
   cat "$release_fail_log.out" >&2
   exit 1
 }
-grep -F 'Done' "$release_fail_log.out" >/dev/null || {
-  echo "the teardown did not continue past the release failure:" >&2
+grep -F 'deleting deployment/charge-svc in namespace' "$release_fail_log.out" >/dev/null || {
+  echo "the stop did not name the operation and the workload it could not remove:" >&2
   cat "$release_fail_log.out" >&2
+  exit 1
+}
+if grep -F 'Done' "$release_fail_log.out" >/dev/null; then
+  echo "the destroy claimed completion although it stopped before the substrate:" >&2
+  cat "$release_fail_log.out" >&2
+  exit 1
+fi
+if grep -E -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_fail_log" >/dev/null; then
+  echo "the destroy destroyed the substrate although the release was unestablished (DEC-059):" >&2
+  grep -F 'cloud/gcp/cluster' "$release_fail_log" >&2
+  exit 1
+fi
+
+release_override_log="$tmp/release-override-destroy.log"
+if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
+      LIFECYCLE_LOG="$release_override_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply --accept-unreleased) \
+  >"$release_override_log.out" 2>&1
+then
+  cat "$release_override_log.out" >&2
+  echo "an overridden release must still fail when the provider refuses the drop (DEC-059)" >&2
+  exit 1
+fi
+grep -F -- '--accept-unreleased was given' "$release_override_log.out" >/dev/null || {
+  echo "the explicit override was not recorded:" >&2
+  cat "$release_override_log.out" >&2
+  exit 1
+}
+grep -E -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_override_log" >/dev/null || {
+  echo "the override did not reach the substrate destroy:" >&2
+  cat "$release_override_log.out" >&2
+  exit 1
+}
+if grep -F 'verified absence' "$release_override_log.out" >/dev/null; then
+  echo "the destroy claimed verified absence although the database refused the drop:" >&2
+  cat "$release_override_log.out" >&2
+  exit 1
+fi
+
+release_unreachable_log="$tmp/release-unreachable-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 CLUSTER_UNREACHABLE=1 \
+        LIFECYCLE_LOG="$release_unreachable_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$release_unreachable_log.out" 2>&1
+then
+  cat "$release_unreachable_log.out" >&2
+  echo "a release that could not reach the cluster must not block the destroy (DEC-059)" >&2
+  exit 1
+fi
+grep -F 'the cluster could not be reached' "$release_unreachable_log.out" >/dev/null || {
+  echo "the unreachable cluster was not reported as a degradation:" >&2
+  cat "$release_unreachable_log.out" >&2
+  exit 1
+}
+grep -E -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_unreachable_log" >/dev/null || {
+  echo "the destroy did not proceed to the substrate with no reachable cluster (DEC-059):" >&2
+  cat "$release_unreachable_log.out" >&2
   exit 1
 }
 
