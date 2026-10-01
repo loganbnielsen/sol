@@ -1,17 +1,16 @@
 type scope =
   { namespace : string
-  ; pods : string list
+  ; workloads : string list
   }
 
-val selector : workspace:string -> string
-val list_args : namespace:string -> workspace:string -> string list
+val list_workloads_args : namespace:string -> string list
 
 val delete_args
   :  namespace:string
-  -> workspace:string
+  -> names:string list
   -> timeout_seconds:int
   -> string list
 
 val wait_args : namespace:string -> workspace:string -> timeout_seconds:int -> string list
-val pods_of_pods_json : string -> (string list, string) result
+val workloads_of_json : string -> workspace:string -> (string list, string) result
 val to_string : scope -> string

@@ -95,11 +95,11 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_workload_scope.ml",
-        '  ; "-n"\n',
-        '  ; "--all-namespaces"\n',
-        count=3,
+        '"-n"; namespace',
+        '"--all-namespaces"; namespace',
+        count=2,
     )
-    expect_rejected("read-is-cluster-wide", tmp, "no longer a namespaced pod listing")
+    expect_rejected("read-is-cluster-wide", tmp, "cluster-wide again")
 
     tmp = scratch()
     mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"workspace=" ^ workspace', '"app=" ^ workspace')
@@ -108,6 +108,41 @@ def main():
     tmp = scratch()
     mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"--for=delete"', '"--for=ready"')
     expect_rejected("release-stops-waiting-for-the-pods", tmp, "no longer waits")
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        '[ "spec"; "template"; "metadata"; "labels" ]',
+        '[ "metadata"; "labels" ]',
+    )
+    expect_rejected(
+        "selection-reads-the-object-rather-than-its-pod-template",
+        tmp,
+        "no longer selects workloads by the ownership labels",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        '[ "spec"; "jobTemplate" ]',
+        '[ "metadata" ]',
+    )
+    expect_rejected(
+        "cronjob-template-forgotten",
+        tmp,
+        "no longer knows where a CronJob's pod template is",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        "  @ names\n",
+        "  @ [ \"deployment,cronjob,job\" ]\n",
+    )
+    expect_rejected("removal-goes-back-to-a-selector", tmp, "no longer names the workloads")
 
     tmp = scratch()
     mutate(
@@ -148,8 +183,11 @@ def main():
 
     print("test_workload_release_order_check: the guard accepts the real tree and rejects a destroy")
     print("  that drops the release, one that stops degrading, one that reads cluster-wide, one that")
-    print("  selects a different label, one that stops waiting, one that keeps the platform identity,")
-    print("  one that drops the declared scope, and one that inverts the layer graph")
+    print("  selects a different label, one that stops waiting, one that reads the workload object")
+    print("  instead of its pod template, one that forgets where a CronJob's template is, one that")
+    print("  selects the objects instead of naming them, one that keeps the platform identity, one")
+    print("  that drops the declared scope, one that inverts the layer graph, and one that reads the")
+    print("  scope from the release store")
 
 
 main()

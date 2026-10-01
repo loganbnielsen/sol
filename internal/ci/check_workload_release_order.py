@@ -10,15 +10,19 @@ encodes the reverse of the deployment order, and the scope of that work has a de
     -> destroy the substrate
     -> independently verify absence
 
-Two failures shaped this. Listing pods cluster-wide ran as the provisioner identity, which by design
-has no cluster-wide pod authority, so the release could never run. Reading the release store was the
-other obvious source, and it would invert the library graph (`base <- kube <- workspace <- cloud <-
-deploy`) besides depending on a record that can be stale or absent.
+Three failures shaped this. Listing pods cluster-wide ran as the provisioner identity, which by
+design has no cluster-wide pod authority, so the release could never run. Reading the release store
+was the other obvious source, and it would invert the library graph (`base <- kube <- workspace <-
+cloud <- deploy`) besides depending on a record that can be stale or absent. And selecting the
+workload objects by the ownership label matched nothing, because Sol renders that label on each
+workload's pod template rather than on the object's own metadata, so the objects were never removed
+and their pods stayed up holding the sessions.
 
 This guard holds the parts that are cheap to check and easy to undo by accident: the read is scoped
 to a declared namespace rather than the cluster, it runs as the deploy identity rather than the
-platform's, it selects the ownership label Sol renders, it waits for the pods, it precedes the
-substrate destroy, and a release failure degrades rather than blocking.
+platform's, it selects the ownership labels Sol renders on the pod template, it removes the objects
+it discovered by name, it waits for the pods, it precedes the substrate destroy, and a release
+failure degrades rather than blocking.
 """
 
 import pathlib
@@ -73,20 +77,31 @@ if "degrade" not in release_block:
 if re.search(r"\bfail\b\s*\(", release_block):
     fail("a workload-release failure now fails the destroy outright instead of degrading it")
 
-if '"get"' not in scope_ml or '"pods"' not in scope_ml or '"-n"' not in scope_ml:
-    fail("the workload read is no longer a namespaced pod listing, so its scope is not the")
+if '"get"' not in scope_ml or '"-n"' not in scope_ml:
+    fail("the workload read is no longer a namespaced listing, so its scope is not the")
     fail("  declared namespace")
 if '"--all-namespaces"' in scope_ml:
-    fail("the workload read is cluster-wide again, which the platform identity is not allowed to")
-    fail("  do and which is why the release could never run")
+    fail("a read is cluster-wide again, which the platform identity is not allowed to do and")
+    fail("  which is why the release could never run")
 if '"workspace=" ^ workspace' not in scope_ml:
-    fail("the workload read no longer selects the ownership label Sol renders for a workspace, so")
-    fail("  what it finds is no longer tied to what Sol deployed")
-if '"--for=delete"' not in scope_ml or '"--wait=true"' not in scope_ml:
-    fail("the release no longer waits, so the pods may still hold their database sessions when the")
-    fail("  substrate destroy asks the provider to drop the database")
+    fail("the workload read no longer selects the ownership label Sol renders for a workspace,")
+    fail("  so what it finds is no longer tied to what Sol deployed")
+if '"--for=delete"' not in scope_ml or '"--wait=true"' not in scope_ml or '"pod"' not in scope_ml:
+    fail("the release no longer waits for the pods, so they may still hold their database")
+    fail("  sessions when the substrate destroy asks the provider to drop the database")
 if "deployment,cronjob,job" not in scope_ml:
-    fail("the release no longer names the workload kinds it removes")
+    fail("the read is no longer a listing of the workload kinds Sol deploys, so the release")
+    fail("  cannot see the objects whose pods hold the sessions")
+if '"spec"; "template"; "metadata"; "labels"' not in scope_ml:
+    fail("the release no longer selects workloads by the ownership labels on their pod template;")
+    fail("  the objects themselves carry no labels, so a selector on them matches nothing and the")
+    fail("  pods stay up holding their database sessions")
+if '"spec"; "jobTemplate"' not in scope_ml:
+    fail("the release no longer knows where a CronJob's pod template is, so the pods of a scheduled")
+    fail("  function keep their database sessions through the substrate destroy")
+if "@ names" not in scope_ml:
+    fail("the removal no longer names the workloads it found, so it cannot delete objects that carry")
+    fail("  no labels of their own")
 
 if "Sol_cli_config.destination_of_target target_cfg" not in wiring_ml:
     fail("the release no longer runs as the target's deploy identity, which is the authority the")
