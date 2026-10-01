@@ -153,6 +153,12 @@ let test_kubectl_classify () =
   is Sol_cli_kubectl.Unreachable "no kubeconfig context names a cluster" no_context;
   let no_server = failed {|error: no server found for cluster "sol-qualification"|} in
   is Sol_cli_kubectl.Unreachable "the kubeconfig names no server" no_server;
+  let missing_context = failed {|error: context "no-such-context-xyz" does not exist|} in
+  is
+    Sol_cli_kubectl.Unreachable
+    "the context the target names does not exist, which is the answer rather than a \
+     failure to look"
+    missing_context;
   let answered_but_sick =
     failed "error: the server is currently unable to handle the request"
   in

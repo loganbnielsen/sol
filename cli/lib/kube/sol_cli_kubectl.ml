@@ -39,6 +39,7 @@ let unreachable_needles =
   ; "dial tcp"
   ; "current-context is not set"
   ; "no context exists with the name"
+  ; "does not exist"
   ; "no server found for cluster"
   ; "error loading config file"
   ]

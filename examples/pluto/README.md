@@ -226,6 +226,24 @@ into the deploy. An observation Sol could not make — a refused read, or a CI
 identity that is not allowed to read the durable layer — is `UNKNOWN`, never
 treated as an absent prerequisite (`DEC-052`).
 
+The same vocabulary covers the substrate this workspace runs on. `sol target show
+--target prod/aws/us-east-1 --check` reports each self-hosted input
+(`docs/reference/substrate.md`) as `Established`, `Unmet` or `UNKNOWN`, so you can see
+which parts of the contract Sol actually observed for this target and which ones only
+the cluster's own network can answer:
+
+```text
+kubernetes    reachable
+substrate: kubernetes cluster Established
+substrate: container registry UNKNOWN: the prefix is registry.example.test/pluto; Sol
+cannot make a node pull an image, so whether the cluster can pull from it is unverified
+substrate: postgres connection Established
+substrate: kafka and schema registry UNKNOWN: the broker addresses and schema-registry
+URL are workspace configuration; whether the workloads can reach them, and the broker's
+security posture, are properties of the cluster's network, and are observed there rather
+than here
+```
+
 Declining, or running where no one can answer (CI, `--dry-run`, `--emit-to`),
 never prompts and never sets anything up: it prints the same observation and the
 command that does it explicitly, so a pipeline fails with an explanation instead

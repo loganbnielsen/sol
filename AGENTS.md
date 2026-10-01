@@ -483,6 +483,16 @@ synchronously.
   hook runs the `--staged` check too, once installed
   (`internal/tooling/scripts/install-hooks.sh`) — it is not installed by
   default.
+- **Run a guard's mutation suite, not just the guard, when your change touches a
+  file that guard inspects.** The guards and their `test_*_check.py` mutation
+  suites are part of CI's `test` job, but the suites are not wired into `dune
+  test`, so a green local suite says nothing about them. A mutation whose anchor
+  another change made ambiguous *aborts the suite* rather than mutating: one
+  change naming `Release_unestablished` a second time in
+  `sol_cli_cloud_destroy.ml` cost a full CI cycle on an anchor that had been
+  unique when it was written. Find them with `rg -l '<changed file>'
+  internal/ci/*.py internal/ci/*.sh` and run both the guard and any
+  `test_<guard>.py` beside it.
 - **`gh` gaps in this environment:** `gh pr update-branch` does not exist (update
   locally instead), and `gh pr edit` fails with a Projects-classic GraphQL
   deprecation — set the body via

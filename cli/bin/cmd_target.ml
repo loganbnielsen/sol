@@ -35,9 +35,17 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
       with
       | Ok Sol_cli_kubectl.Succeeded -> Sol_cli_target_report.Reachable context
       | Ok (Sol_cli_kubectl.Failed failure) ->
-        Sol_cli_target_report.Unreachable
-          (context, first_line (Sol_cli_process.failure_message failure))
-      | Error message -> Sol_cli_target_report.Unreachable (context, message))
+        let reason = first_line (Sol_cli_process.failure_message failure) in
+        (match Sol_cli_kubectl.classify (Sol_cli_process.Non_zero failure) with
+         | Sol_cli_kubectl.Unreachable ->
+           Sol_cli_target_report.Unreachable (context, reason)
+         | Sol_cli_kubectl.Refused
+         | Sol_cli_kubectl.Not_found
+         | Sol_cli_kubectl.Already_exists
+         | Sol_cli_kubectl.Conflict
+         | Sol_cli_kubectl.No_resource_type
+         | Sol_cli_kubectl.Other -> Sol_cli_target_report.Unreadable (context, reason))
+      | Error message -> Sol_cli_target_report.Unreadable (context, message))
 ;;
 
 let platform_status ~check (target : Sol_cli_config.target) =
@@ -85,6 +93,33 @@ let drift_status (target : Sol_cli_config.target) =
   Sol_cli_environment_stage.drift_to_string drift
 ;;
 
+let substrate_status
+      ~check
+      ~verbose
+      (target : Sol_cli_config.target)
+      (status : Sol_cli_target_report.kubernetes_status)
+  =
+  if not check
+  then None
+  else (
+    let reason context why = Sol_cli_target_report.redact_context ~verbose ~context why in
+    let cluster =
+      match status with
+      | Sol_cli_target_report.Reachable _ -> `Reachable
+      | Unreachable (context, why) -> `Unmet (reason context why)
+      | Unreadable (context, why) -> `Unknown (reason context why)
+      | Not_configured -> `Unmet "the target declares no explicit Kubernetes destination"
+      | Configured _ -> `Unknown "the cluster was not probed"
+    in
+    Some
+      (Sol_cli_substrate_contract.lines
+         { cluster
+         ; registry = target.registry
+         ; postgres_url = Sol_cli_string.env "POSTGRES_URL"
+         ; base_domain = target.base_domain
+         }))
+;;
+
 open Result.Syntax
 
 let declared_target target =
@@ -112,6 +147,7 @@ let show target verbose json check =
   let platform = platform_status ~check target_config in
   let cloud = if check then Some (cloud_status target_config) else None in
   let drift = if check then Some (drift_status target_config) else None in
+  let substrate = substrate_status ~check ~verbose target_config status in
   if json
   then
     print_endline
@@ -120,11 +156,19 @@ let show target verbose json check =
             ?platform
             ?cloud
             ?drift
+            ?substrate
             ~verbose
             target_config
             status))
   else
-    Sol_cli_target_report.rows ?platform ?cloud ?drift ~verbose target_config status
+    Sol_cli_target_report.rows
+      ?platform
+      ?cloud
+      ?drift
+      ?substrate
+      ~verbose
+      target_config
+      status
     |> List.iter (fun (label, value) -> Printf.printf "%-14s %s\n" label value);
   Ok ()
 ;;
@@ -164,13 +208,17 @@ let check_arg =
     & info
         [ "check" ]
         ~doc:
-          "Report live state as well as identity: probe whether the cluster is \
-           reachable, observe whether the provider's installation is established, and \
-           read whether Terraform's recorded state has drifted from observed reality. \
-           Off by default: the summary is also what you read while diagnosing an \
-           unreachable cluster, so it must not block before printing. `last operation` \
-           is reported either way: it needs no read because Sol keeps no target-scoped \
-           record for it.")
+          "Report live state as well as identity: probe whether the cluster is reachable \
+           and report the substrate contract (docs/reference/substrate.md) as \
+           Established, Unmet or UNKNOWN per input, observe whether the provider's \
+           installation is established, and read whether Terraform's recorded state has \
+           drifted from observed reality. An input Sol cannot observe from the CLI is \
+           UNKNOWN with its reason rather than reported as satisfied, and a refused or \
+           unauthenticated probe is UNKNOWN rather than a missing prerequisite \
+           (DEC-052). Off by default: the summary is also what you read while diagnosing \
+           an unreachable cluster, so it must not block before printing. `last \
+           operation` is reported either way: it needs no read because Sol keeps no \
+           target-scoped record for it.")
 ;;
 
 let show_cmd =
@@ -189,6 +237,13 @@ let show_cmd =
          recorded state with observed reality without changing either. `last operation` \
          has no target-scoped authority to read, and ADR 0003 forbids adding one, so it \
          is reported as unavailable rather than as `none`."
+    ; `P
+        "With --check it also reports the self-hosted substrate contract \
+         (docs/reference/substrate.md) input by input, in the same Established / Unmet / \
+         UNKNOWN vocabulary as the durable prerequisites: an input Sol cannot observe \
+         from the CLI is reported UNKNOWN with its reason rather than as satisfied, and \
+         a refused or unauthenticated probe is UNKNOWN rather than a missing \
+         prerequisite (DEC-052)."
     ]
   in
   Cmd.v
