@@ -82,3 +82,40 @@ a failed run.
 
 **TypeScript parity:** out of scope for this run; the TypeScript outbox does not exist
 (FEAT-119's family records that gap).
+
+## Completion notes (2026-10-01)
+
+### The run
+
+Record: [`internal/qualification/records/2026-10-01-outbox-failure-qualification.md`](../../../qualification/records/2026-10-01-outbox-failure-qualification.md),
+at `main @ 44e3061b`. It is the run-local path — `examples/pluto`'s own
+`notify_worker/bin/main.exe` against a dedicated database and an **isolated** Redpanda container
+(`sol-qual-redpanda`), so the outage scenario never touched the shared broker.
+
+### Acceptance mapping
+
+| Required evidence | Result |
+|---|---|
+| Rollback — no domain row, no job, no outbox record, no fact | **PASS** (S2): a seeded conflicting outbox row made the transaction's insert fail; `notifications=0`, `jobs=0`, only the seeded outbox row, no fact |
+| Worker `Fail` — offset uncommitted, consumer stops, failure telemetry | **PASS** (S3): `sol_worker_messages_total{status=fail}`, "the offset is not committed and the consumer stops", `handler returned without calling ack()` |
+| Duplicate delivery / dedupe | **PASS with a finding** (S1): the independent effect did not run twice, but the domain insert duplicated the notification row → **BUG-112** |
+| Kafka unavailable after commit, then recovery | **PASS** (S4): the row was held while the broker was down (`outbox=1`), then published and removed on recovery, the fact present — no loss |
+| Same-key ordering | **PASS** (S5): `ord=2` inserted before `ord=1`, published `seq1` then `seq2` |
+| Relay restart / recovery | **PASS** (S6): restarted between scenarios and resumed without a gap |
+| Crash between broker ack and the database mark | **NOT REACHED** (S7): no hook to kill the relay in that window; the package test asserts it, the run did not observe it |
+| Job retry in `sol-jobs`, not a Kafka retry topic | **NOT REACHED** (S8): the demo's job handler cannot fail; the isolated broker's topics show no retry topic, only the framework's decode-error DLQ |
+
+### What the run does not establish
+
+It is not the deployed `sol up` path, and it does not observe the crash-boundary duplicate or
+job retry/backoff. The `Charged` events were produced out of band because the example's
+`charge_svc` accepts through Postgres by design; a live `sol up` run and a failure-injectable
+job would close those two.
+
+**Demo/example coverage:** the run *is* the example; the duplicate-delivery gap it found is
+filed as BUG-112.
+
+**TypeScript parity (DEC-022):** unchanged — the TypeScript outbox does not exist (FEAT-119's
+family records that gap); BUG-112 carries the duplicate-delivery question to the TypeScript
+consumer.
+
