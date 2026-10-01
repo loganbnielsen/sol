@@ -177,6 +177,19 @@ unaffected. The verdict is still never promoted to healthy and the run names the
 command that observes it. This is the one place this ticket's "an unobservable
 answer fails closed" is applied to the *verdict* rather than to the whole deploy.
 
+**Absence has to be named, which the removal path already wanted.** Because the
+classification requires the provider to say *what* is missing, a probe that fails with
+no message at all is `UNKNOWN`, not `Absent` — the behaviour `FEAT-108`'s removal
+verification wants, and a silent failure is not evidence of removal. Two test fakes
+had encoded the old assumption that any non-zero exit means absence, and now emit the
+provider's real vocabulary instead: `test_cloud_bootstrap.sh`'s refusing provider, and
+`test_uninstall_cli.sh`'s, whose `head-bucket`, `describe-table` and `get-role`
+answered with a bare exit 254. Real AWS names each of these (`(404) ... Not Found`,
+`ResourceNotFoundException`, `NoSuchEntity`), so the product behaves as before on the
+real path; the fakes were the unrealistic part. Both were found by CI rather than
+locally, because this machine has no external NS resolver and the cases without a
+stubbed `dig` fell into a different branch here.
+
 ## What remains (part B)
 
 AC1's "accepting it reaches a deployed application" and AC6's

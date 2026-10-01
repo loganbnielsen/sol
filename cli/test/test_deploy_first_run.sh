@@ -82,7 +82,7 @@ stale:
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 EOF
 
-mkdir -p "$tmp/bin-absent" "$tmp/bin-partial" "$tmp/bin-denied" "$tmp/bin-installed" "$tmp/bin-first" "$tmp/bin-tf"
+mkdir -p "$tmp/bin-absent" "$tmp/bin-partial" "$tmp/bin-denied" "$tmp/bin-unresolvable" "$tmp/bin-installed" "$tmp/bin-first" "$tmp/bin-tf"
 
 cat >"$tmp/bin-absent/aws" <<EOF
 #!/bin/sh
@@ -129,6 +129,17 @@ cat >"$tmp/bin-denied/aws" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'An error occurred (AccessDenied) when calling the operation: User is not authorized to perform this action' >&2
 exit 255
+EOF
+cat >"$tmp/bin-denied/dig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ns-1.awsdns-08.org.'
+printf '%s\n' 'ns-2.awsdns-08.org.'
+exit 0
+EOF
+
+cat >"$tmp/bin-unresolvable/dig" <<'EOF'
+#!/bin/sh
+exit 0
 EOF
 
 cat >"$tmp/bin-installed/aws" <<EOF
@@ -377,6 +388,18 @@ check_contains \
   "sol cloud bootstrap prod/aws/us-east-1" \
   "$output"
 check_absent "an unobservable installation is not set up" " apply " "$(terraform_log)"
+
+run "$tmp/bin-unresolvable:$tmp/bin-denied:/usr/bin:/bin"
+check "a denied provider beside a decisive observation exits 1" 1 "$rc"
+check_contains \
+  "the one prerequisite the provider did not answer for stays UNKNOWN" \
+  "UNKNOWN: An error occurred (AccessDenied)" \
+  "$output"
+check_contains \
+  "a delegation that does not resolve is decisive even beside seven UNKNOWNs" \
+  "Sol is not installed for prod/aws/us-east-1" \
+  "$output"
+check_absent "the refused run is not set up" " apply " "$(terraform_log)"
 
 run "$tmp/bin-installed:/usr/bin:/bin"
 check "an installed account still exits 1 at the missing cluster" 1 "$rc"
