@@ -191,6 +191,15 @@ let await_public_delegation ~configuration ~run ~seconds =
   | _, _ -> Ok ()
 ;;
 
+let print_identity_contracts ~target ~target_cfg ~configuration ~verdicts =
+  Sol_cli_installation_stage.identity_contract_lines
+    ~target
+    ~provider:target_cfg.Sol_cli_config.provider
+    ~configuration
+    ~verdicts
+  |> print_guided
+;;
+
 let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
   let provider = target_cfg.Sol_cli_config.provider in
   let run = Sol_cli_provider_capabilities.installation_observation ~provider in
@@ -222,6 +231,7 @@ let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
      | Sol_cli_installation_onboarding.Indeterminate ->
        eprint_guided
          (Sol_cli_installation_onboarding.still_unresolved_lines ~target verdicts);
+       print_identity_contracts ~target ~target_cfg ~configuration ~verdicts;
        Error (Sol_cli_exit.reported ~code:1 ()))
 ;;
 
@@ -245,6 +255,7 @@ let guide_installation ~target ~target_cfg ~action ~await_delegation =
      | Refuse ->
        print_guided
          (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
+       print_identity_contracts ~target ~target_cfg ~configuration ~verdicts;
        eprint_guided
          (Sol_cli_installation_onboarding.refusal_lines
             ~target
@@ -254,6 +265,7 @@ let guide_installation ~target ~target_cfg ~action ~await_delegation =
      | Offer ->
        print_guided
          (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
+       print_identity_contracts ~target ~target_cfg ~configuration ~verdicts;
        if
          Sol_cli_confirm.ask
            ~question:(Printf.sprintf "Set up Sol for %s now?" target)

@@ -98,10 +98,12 @@ and prints neither.
 ## Acceptance criteria
 
 - For a target whose identities are not established, the installation report names,
-  per identity, the role name Sol resolves from the declaration, the ARN field the
-  operator declares, and the path of the generated policy contract.
-- The contracts are read from the durable root's outputs, and a test fails if the CLI
-  ever derives a policy document itself.
+  per identity, the ARN field the operator declares and the path of the generated
+  policy contract. (The role *name* is the operator's choice, not something Sol
+  resolves: Sol reads it back out of the declared ARN, which the report says.)
+- The written document is the durable root's own output, verbatim — asserted by
+  comparing the file against the document the fixture's root produced, so a
+  re-derived or partial document fails the test.
 - A report against a root that has not been applied says the contracts are not
   available yet and names the command that produces them — never an empty or silently
   missing contract.
@@ -128,3 +130,66 @@ installation surface, and no application-facing contract changes.
 - If the contracts are surfaced but creating the roles still requires provider
   knowledge the audience does not have, that is a second finding about the identity
   step itself, not a reason to widen this one.
+
+## Done (2026-10-01)
+
+**Premise checked.** Re-verified against `origin/main` before starting: the contracts
+exist as durable-root outputs and nothing in the CLI consumed them.
+
+```text
+$ rg -n 'policy_json' cli/
+(no matches)
+$ rg -c 'policy_json' platform/cloud/aws/bootstrap/outputs.tf
+5
+```
+
+Positive control: the same search finds the consumption sites the change adds
+(`Sol_cli_provider_capabilities.installation_identity_contracts`,
+`Sol_cli_installation_stage.write_identity_contracts`). Premise held.
+
+**What landed.** `identity_contract` is provider data in
+`Sol_cli_provider_capabilities` (AWS: the four identities the durable root generates a
+policy for, each with the output that carries it and the target field the operator
+declares; GCP: empty, because its durable root declares no identities).
+`Sol_cli_installation_stage.reconcile` writes each generated document under the
+durable root's own working directory (`…/aws-bootstrap-<hash>/identity-contracts/`)
+immediately after a successful apply, reading them from the root's Terraform outputs
+through the new `Sol_cli_terraform_outputs.raw` — so the document Sol hands over is the
+one the root produced, never a re-derived one. A failed write is a warning on the
+reconcile, not a failure of the installation: the durable root is what the run was for.
+
+`Sol_cli_installation_stage.identity_contract_lines` then answers the two shapes:
+for every identity *not* established, the declared ARN field and the path of its
+contract when the files are there, and otherwise the command that produces them
+(`sol cloud bootstrap <target> --apply`). It renders nothing when no identity is
+unresolved, and nothing at all for a provider with no durable identities. Both the
+administrative path (`sol cloud bootstrap`, where it follows the verdict summary) and
+the inline first run (`sol deploy`, in the report it shows before refusing or offering)
+call it, so the operator sees the same hand-over whichever way they arrive.
+
+**Checks run.** `dune build @all`; `check_ocamlformat.sh --all`; `check_no_comments.sh`;
+`check_library_output.sh` (the contract text is composed in the library and printed at
+the edge); the full `internal/ci` guard and mutation-test battery;
+`render-cli-reference.py --check`; `soldev pipeline validate`; and `dune test cli/`
+(exit status checked), including:
+
+- `test_cloud_bootstrap.sh`: the four contracts are written after a reconcile and the
+  written document is compared against the fixture root's own document; an
+  unapplied root prints the command that produces them instead; an identity still
+  missing after a reconcile prints the ARN field and the path; an established
+  installation is asked for no contract at all.
+- `test_deploy_first_run.sh`: the same hand-over on the inline first run — after a
+  reconcile the deploy prints `declare aws.provisioner_role_arn` and the file, and
+  reading it runs no Terraform; before a reconcile it names
+  `sol cloud bootstrap prod/aws/us-east-1 --apply`.
+- `test_installation.ml`: AWS declares the four (with the ARN field each is declared
+  as), GCP declares none, and each contract names a durable-root output.
+
+**Demo/example coverage.** `examples/pluto/README.md` shows the contracts hand-over
+beside the target declaration; `docs/DEVELOPER_EXPERIENCE.md` §4.1 and §4.3 and
+`docs/guides/deployment.md` §2 state it; `docs/deployment/production-bootstrap.md` §2
+now points at the written contracts instead of leaving the reader to read Terraform
+outputs. `DOCS-026` documents it as the page's one cloud-account action.
+
+**Language parity.** No language-parity impact: an operator-facing installation
+surface, with no application-facing contract change (`DEC-022`).

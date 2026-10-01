@@ -179,6 +179,98 @@ let await_delegation ~run ~report ~attempts ~interval ~domain ?(expected = []) (
   else go 1
 ;;
 
+type contract_file = Sol_cli_provider_capabilities.identity_contract * string
+
+let identity_contract_files ~provider ~configuration : (contract_file list, string) result
+  =
+  let open Result.Syntax in
+  let* backend =
+    Sol_cli_provider_capabilities.installation_backend provider configuration
+  in
+  let dir =
+    Filename.concat
+      (Sol_cli_terraform_workdir.dir
+         ~provider
+         ~role:Sol_cli_platform_assets.Bootstrap
+         ~backend_config:backend)
+      "identity-contracts"
+  in
+  Ok
+    (Sol_cli_provider_capabilities.installation_identity_contracts provider
+     |> List.map (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
+       contract, Filename.concat dir (contract.policy_output ^ ".json")))
+;;
+
+let write_identity_contracts ~provider ~configuration ~chdir =
+  let open Result.Syntax in
+  let* files = identity_contract_files ~provider ~configuration in
+  match files with
+  | [] -> Ok ()
+  | (_, first_path) :: _ ->
+    let* output =
+      Sol_cli_terraform.output_json ~chdir ()
+      |> Result.map_error Sol_cli_process.error_to_string
+    in
+    let* () = Sol_cli_fs.mkdir_p (Filename.dirname first_path) in
+    List.fold_left
+      (fun accumulated
+        ((contract : Sol_cli_provider_capabilities.identity_contract), path) ->
+         let* () = accumulated in
+         match
+           Sol_cli_terraform_outputs.raw output.stdout ~name:contract.policy_output
+         with
+         | Error message -> Error message
+         | Ok None ->
+           Error
+             (Printf.sprintf
+                "the durable root reports no %s output"
+                contract.policy_output)
+         | Ok (Some document) -> Sol_cli_fs.write_atomic path (document ^ "\n"))
+      (Ok ())
+      files
+;;
+
+let identity_contract_lines ~target ~provider ~configuration ~verdicts =
+  let is_unresolved (contract : Sol_cli_provider_capabilities.identity_contract) =
+    match List.assoc_opt contract.identity verdicts with
+    | Some Sol_cli_installation.Established -> false
+    | Some (Sol_cli_installation.Unmet _ | Sol_cli_installation.Unknown _) | None -> true
+  in
+  let contracts =
+    Sol_cli_provider_capabilities.installation_identity_contracts provider
+  in
+  if not (List.exists is_unresolved contracts)
+  then []
+  else (
+    let locate =
+      "  the identity policy contracts are written when the durable root is reconciled; \n\
+      \  create each role from its contract and declare its ARN:"
+    in
+    match identity_contract_files ~provider ~configuration with
+    | Error message -> [ locate; Printf.sprintf "    %s" message ]
+    | Ok files ->
+      let all_written = List.for_all (fun (_, path) -> Sys.file_exists path) files in
+      if not all_written
+      then [ locate; Printf.sprintf "    sol cloud bootstrap %s --apply" target ]
+      else
+        [ "  the identities are yours to create: Sol owns each policy contract \n\
+          \  (AUDIT-072), you create the role and declare its ARN — Sol looks the role \n\
+          \  up by the name in that ARN:"
+        ]
+        @ List.filter_map
+            (fun ((contract : Sol_cli_provider_capabilities.identity_contract), path) ->
+               if not (is_unresolved contract)
+               then None
+               else
+                 Some
+                   (Printf.sprintf
+                      "    %-24s declare %s\n      contract: %s"
+                      (Sol_cli_installation.prerequisite_label contract.identity)
+                      contract.declared_as
+                      path))
+            files)
+;;
+
 let reconcile ~assets ~provider ~configuration ~run () =
   let open Result.Syntax in
   let run_log = Sol_cli_run_log.create ~prefix:"installation-bootstrap" () in
@@ -312,5 +404,14 @@ let reconcile ~assets ~provider ~configuration ~run () =
     | Sol_cli_installation.Service_zone
         { ownership = User_supplied | Externally_delegated; _ } -> []
   in
-  Ok (installation_lines @ delegation_lines)
+  let contract_lines =
+    match write_identity_contracts ~provider ~configuration ~chdir with
+    | Ok () -> []
+    | Error message ->
+      [ Printf.sprintf
+          "warning: the identity policy contracts could not be written: %s"
+          message
+      ]
+  in
+  Ok (installation_lines @ delegation_lines @ contract_lines)
 ;;

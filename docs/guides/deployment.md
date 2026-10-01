@@ -72,6 +72,11 @@ sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
 
 The report is observed, not inferred: each prerequisite is asked for at the provider, `Unmet`
 means the provider answered that it is not there, and `UNKNOWN` (Sol could not look) fails closed.
+
+The identities are the one part of the installation you create: reconciling the durable root writes
+each generated least-privilege policy document to the root's working directory, and the report
+prints, per identity, the ARN field to declare and the path of its contract (`AUDIT-072` — Sol owns
+the contract, you own the role).
 `--apply` reconciles the durable root and stops when a plan would replace or destroy a durable
 resource, because a recreated DNS zone gets different nameservers than the registrar delegation
 names. The identities it needs, and how to create them, are in

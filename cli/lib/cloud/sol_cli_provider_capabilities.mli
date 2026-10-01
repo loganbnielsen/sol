@@ -3,6 +3,12 @@ type platform_storage =
   ; csi_driver : string
   }
 
+type identity_contract =
+  { identity : Sol_cli_installation.prerequisite
+  ; policy_output : string
+  ; declared_as : string
+  }
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -37,6 +43,7 @@ type t =
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
   ; installation_failure_means_absent : string -> bool
+  ; installation_identity_contracts : identity_contract list
   ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
   ; installation_state_backend_address : string
   ; installation_retire_state_backend :
@@ -72,6 +79,7 @@ val aws : t
 val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t
 val installation_nameservers_output : Sol_cli_provider.t -> string
+val installation_identity_contracts : Sol_cli_provider.t -> identity_contract list
 
 val installation_prerequisites
   :  Sol_cli_provider.t
