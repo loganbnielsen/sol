@@ -812,33 +812,34 @@ let destroy_deps
     let* destination = Sol_cli_config.destination_of_target target_cfg in
     let ctx = Sol_cli_kube_destination.context_of_destination destination in
     let workspace = workspace_name () in
+    let kubectl args =
+      Sol_cli_kubectl.run ~ctx args
+      |> Result.map_error Sol_cli_process.error_to_string
+      |> Result.map (fun _ -> ())
+    in
     let release namespace =
       let* listing =
-        Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_args ~namespace ~workspace)
+        Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_workloads_args ~namespace)
         |> Result.map_error Sol_cli_process.error_to_string
       in
-      let* pods =
-        Sol_cli_workload_scope.pods_of_pods_json listing.Sol_cli_process.stdout
+      let* workloads =
+        Sol_cli_workload_scope.workloads_of_json listing.Sol_cli_process.stdout ~workspace
       in
-      match pods with
+      match workloads with
       | [] -> Ok ()
-      | pods ->
-        Sol_cli_report.app "  %s" (Sol_cli_workload_scope.to_string { namespace; pods });
+      | workloads ->
+        Sol_cli_report.app
+          "  %s"
+          (Sol_cli_workload_scope.to_string { namespace; workloads });
         let* () =
-          Sol_cli_kubectl.run
-            ~ctx
+          kubectl
             (Sol_cli_workload_scope.delete_args
                ~namespace
-               ~workspace
+               ~names:workloads
                ~timeout_seconds:300)
-          |> Result.map_error Sol_cli_process.error_to_string
-          |> Result.map (fun _ -> ())
         in
-        Sol_cli_kubectl.run
-          ~ctx
+        kubectl
           (Sol_cli_workload_scope.wait_args ~namespace ~workspace ~timeout_seconds:300)
-        |> Result.map_error Sol_cli_process.error_to_string
-        |> Result.map (fun _ -> ())
     in
     List.fold_left
       (fun released namespace ->

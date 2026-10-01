@@ -65,29 +65,38 @@ discover the Sol-owned workload scope from the cluster
   -> independently verify absence
 ```
 
-`Sol_cli_workload_scope` performs the discovery: it lists pods across every namespace selected by
-the ownership label Sol already renders on every workload it deploys (the taxonomy labels —
-`workspace`, `domain`, `service`, `primitive`, `release`), and removes each namespace that holds
-one with `--wait=true`, so the pods and their pooled sessions are gone before the provider is asked
-to drop the database. Removal does not depend on the release store, which the cloud layer cannot
-read without inverting the library graph (`base <- kube <- workspace <- cloud <- deploy`).
+`Sol_cli_workload_scope` performs the discovery. The scope comes from the target's declared
+namespaces, read as the deploy identity; what is in them comes from the cluster. In each declared
+namespace it lists the workloads Sol deploys, keeps the ones whose **pod template** carries the
+ownership label Sol renders (the taxonomy labels — `workspace`, `domain`, `service`, `primitive`,
+`release`), removes those by name with `--wait=true`, and waits for the workspace-labelled pods to go
+— so the pods and their pooled sessions are gone before the provider is asked to drop the database.
+Removal does not depend on the release store, which the cloud layer cannot read without inverting the
+library graph (`base <- kube <- workspace <- cloud <- deploy`).
 
-**The inference it supports, narrowly:** a pod labelled `workspace=<workspace>` is a pod Sol
-rendered for that workspace, so the namespace holding it is a namespace Sol deployed into for this
-target — and destroying the target removes Sol's workloads in it. It is *not* a general claim that
-every object in that namespace is Sol's, and it is not a new ownership contract: if Sol later gains
-an explicit ownership label, the selector should move to it.
+Two corrections were needed to reach that, both recorded below: cluster-wide discovery ran as an
+identity that may not read pods, and selecting the workload *objects* by the ownership label matched
+nothing, because Sol labels their pod templates rather than the objects.
+
+**The inference it supports, narrowly:** a workload whose pod template is labelled
+`workspace=<workspace>` is a workload Sol rendered for that workspace, so the namespace holding it is
+a namespace Sol deployed into for this target — and destroying the target removes Sol's workloads in
+it. It is *not* a general claim that every object in that namespace is Sol's, and it is not a new
+ownership contract: if Sol later gains an explicit ownership label, the selector should move to it.
 
 A release failure is a **degradation**: it is reported and teardown continues, because a teardown
 must not be blocked by a step that can fail. Final success stays fail-closed — if the substrate
 destroy or the independent absence verification cannot establish convergence, no absence is claimed.
 
-Coverage: `check_workload_release_order.py` with `test_workload_release_order_check.py` (six
-mutations: release dropped, release failure no longer degrading, a different label, removal no
-longer waiting, the library graph inverted, the scope read from the release store), four unit tests
-including the release-before-substrate ordering, and two offline lifecycle scenarios — one proving
-the namespace removals precede the substrate destroy in the run's own log, one proving a release
-failure degrades and the teardown still finishes.
+Coverage: `check_workload_release_order.py` with `test_workload_release_order_check.py` (twelve
+mutations: release dropped, release failure no longer degrading, a read that goes cluster-wide, a
+different label, a release that stops waiting, a selection that reads the workload object instead of
+its pod template, a CronJob whose template is no longer located, a removal that selects the objects
+instead of naming them, the platform identity instead of the deploy identity, the declared scope
+dropped, the library graph inverted, the scope read from the release store), five unit tests on the
+workload scope plus the release-before-substrate ordering and the degrading release, and two offline
+lifecycle scenarios — one proving the removal precedes the pod wait and the substrate destroy in the
+run's own log, one proving a release failure degrades and the teardown still finishes.
 
 ## The live acceptance test, and what it disproved
 
@@ -132,4 +141,66 @@ declared namespaces, read with the identity Sol deploys applications with (`sol-
 is the same authority the deploy path already uses — the alternative seam that was considered and
 set aside in favour of cluster-wide discovery. This finding stays **not met live** until a single
 supported destroy converges on a specimen whose application is running with active database pools.
+
+## The second attempt: the release runs, finds the workloads, and cannot remove them
+
+Specimen `sol-qual-gcp-32` reached `Ready` with the namespace-scoped release, deployed
+`payments/charge_svc` and `comms/notify_worker`, and ran the transaction — `charge ch_262097`
+accepted, consumed by the worker, and read back out of PostgreSQL by the service. A single supported
+destroy then invoked the release in the right place, as the right identity:
+
+```
+Destroying cloud infrastructure (gcp)...
+  lifecycle phase: Destroying
+
+Releasing the application workloads...
+  pluto-comms: releasing notify-worker-dbfbc8474-qrcrz, notify-worker-dbfbc8474-tn887
+warning: the workloads this target deployed could not be released: exited with code 1: timed out waiting for the condition on pods/notify-worker-dbfbc8474-qrcrz
+timed out waiting for the condition on pods/notify-worker-dbfbc8474-tn887. A managed database whose sessions they still hold refuses to be dropped, so the teardown below may not converge; if it does not, nothing here claims it did
+[...]
+[terraform-destroy] FAILED (613.2s)
+    Error: Error when reading or editing Database: googleapi: Error 400: Invalid request: failed to delete database app. Detail: pq: database "app" is being accessed by other users., invalid
+```
+
+It *found* the workloads — by their pods — and could not remove them. The release deleted
+`deployment,cronjob,job` selected by `workspace=<workspace>` (the pre-fix
+`Sol_cli_workload_scope.delete_args`), and **Sol renders the ownership labels on each workload's pod
+template, not on the Deployment/Job object's own metadata**. In `sol_cli_manifest_yaml.ml` a
+Deployment's own `metadata` is `metadata ~ns ~name` — name and namespace only — while the taxonomy
+labels ride on `spec.template.metadata.labels`; a CronJob's ride on
+`spec.jobTemplate.spec.template.metadata.labels`. A selector on the objects therefore matched
+nothing, `kubectl delete` reported success having deleted nothing, the pod wait then timed out, and
+the database drop failed exactly as this finding describes.
+
+The failure degraded rather than blocking, and nothing claimed absence. The harness's own
+independent inventory recorded `gke-cluster absent`, `subnetwork/router/NAT/disks/forwarding-rules
+absent`, and:
+
+```
+  ✗ sql-instance still exists (PRESENT)
+  ✗ network still exists (PRESENT)
+  ✗ address-regional still exists (PRESENT)
+  ✗ address-global still exists (PRESENT)
+teardown NOT verified: resources remain
+```
+
+**The correction changes only the discovery, and keeps the seam.** The release lists the workloads in
+each declared namespace, selects the ones whose *pod template* carries the workspace label, removes
+those by name — `deployment/<name>`, `cronjob/<name>`, `job/<name>`, which is also how
+`Sol_cli_rollback.prune_workloads` already removes a workload — and then waits for the
+workspace-labelled pods to go. Naming the objects rather than selecting them also keeps the removal
+off the deploy identity's permissions for the other objects that can share a workload's name in the
+same namespace, and keeps a partial failure from skipping the wait that closes the sessions.
+
+Coverage moved with it: the unit tests pin the pod-template shape for `Deployment`, `Job` and
+`CronJob` explicitly, pin that an object labelled on its own metadata is *not* selected, and pin that
+the removal names what it found instead of selecting it; `check_workload_release_order.py` and its
+mutation suite gained the two corresponding checks; and the offline lifecycle scenario now asserts
+the removal precedes the pod wait, and the wait precedes the substrate destroy.
+
+Two limits are worth stating rather than leaving implicit. A Sol-rendered migration or contract `Job`
+carries no taxonomy labels on its template at all, so it is not discoverable this way — those are
+short-lived and hold no pool, which is why the ownership label is still the right selector. And a
+workload kind that Sol deploys but this listing does not name would not be seen: today that is only
+an Argo `Rollout`, which the `-svc` primitive renders for a progressive-delivery service.
 

@@ -511,19 +511,14 @@ grep -F 'Releasing the application workloads' "$release_log.out" >/dev/null || {
   cat "$release_log.out" >&2
   exit 1
 }
-grep -F 'get pods -n work-payments' "$release_log" >/dev/null || {
-  echo "the destroy did not scope its read to the declared namespace:" >&2
-  grep -F 'kubectl' "$release_log" >&2
-  exit 1
-}
 if grep -F -- '--all-namespaces' "$release_log" >/dev/null; then
-  echo "the destroy read pods cluster-wide rather than within the declared namespaces:" >&2
+  echo "the destroy read the cluster rather than the declared namespaces:" >&2
   grep -F 'kubectl' "$release_log" >&2
   exit 1
 fi
 for namespace in work-payments work-comms; do
-  grep -F "delete deployment,cronjob,job -n $namespace" "$release_log" >/dev/null || {
-    echo "the destroy did not release the workloads in $namespace:" >&2
+  grep -F "get deployment,cronjob,job -n $namespace" "$release_log" >/dev/null || {
+    echo "the destroy did not list the workloads in $namespace:" >&2
     grep -F 'kubectl' "$release_log" >&2
     exit 1
   }
@@ -533,15 +528,29 @@ for namespace in work-payments work-comms; do
     exit 1
   }
 done
-release_line="$(
-  grep -n -m1 'delete deployment,cronjob,job -n work-payments' "$release_log" | cut -d: -f1
-)"
+grep -F 'delete deployment/charge-svc -n work-payments' "$release_log" >/dev/null || {
+  echo "the destroy did not delete the workload it found:" >&2
+  grep -F 'kubectl' "$release_log" >&2
+  exit 1
+}
+if grep -F 'delete deployment,cronjob,job' "$release_log" >/dev/null; then
+  echo "the destroy selected the workload objects by a label they do not carry (FND-0077):" >&2
+  grep -F 'kubectl' "$release_log" >&2
+  exit 1
+fi
+delete_line="$(grep -n -m1 'delete deployment/charge-svc -n work-payments' "$release_log" | cut -d: -f1)"
+wait_line="$(grep -n -m1 'wait --for=delete pod -n work-payments' "$release_log" | cut -d: -f1)"
+if [ -z "$delete_line" ] || [ -z "$wait_line" ] || [ "$delete_line" -ge "$wait_line" ]; then
+  echo "the destroy waited for the pods before it removed the workloads that own them (delete=$delete_line wait=$wait_line):" >&2
+  grep -nE 'delete deployment/charge-svc|wait --for=delete pod -n work-payments' "$release_log" >&2
+  exit 1
+fi
 substrate_line="$(
   grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster destroy ' "$release_log" | head -1 | cut -d: -f1
 )"
-if [ -z "$release_line" ] || [ -z "$substrate_line" ] || [ "$release_line" -ge "$substrate_line" ]; then
-  echo "the workloads were not released before the substrate was destroyed (release=$release_line substrate=$substrate_line):" >&2
-  grep -nE 'delete deployment|cloud/gcp/cluster .* destroy ' "$release_log" >&2
+if [ -z "$substrate_line" ] || [ "$wait_line" -ge "$substrate_line" ]; then
+  echo "the pods were not gone before the substrate was destroyed (wait=$wait_line substrate=$substrate_line):" >&2
+  grep -nE 'delete deployment/charge-svc|wait --for=delete pod|cloud/gcp/cluster .* destroy ' "$release_log" >&2
   exit 1
 fi
 

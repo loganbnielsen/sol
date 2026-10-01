@@ -74,20 +74,20 @@ case " $* " in
     esac
 esac
 case " $* " in
-  *" get pods -n "*)
+  *" get deployment,cronjob,job -n "*)
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
-      printf '%s\n' '{"items":[{"metadata":{"name":"charge-svc-qual","namespace":"lifecycle-test-payments"}}]}'
+      printf '%s\n' '{"items":[{"kind":"Deployment","metadata":{"name":"charge-svc"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
     else
       printf '{"items":[]}\n'
     fi
     exit 0
     ;;
-  *" delete deployment,cronjob,job -n "*)
+  *" delete deployment/charge-svc -n "*)
     if [ "${RELEASE_DELETE_FAILS:-}" = 1 ]; then
       printf 'error: the workload could not be deleted\n' >&2
       exit 1
     fi
-    printf 'deployment.apps deleted\n'
+    printf 'deployment.apps "charge-svc" deleted\n'
     exit 0
     ;;
   *" wait --for=delete pod -n "*)
