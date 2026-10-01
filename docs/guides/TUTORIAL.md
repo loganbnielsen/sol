@@ -223,6 +223,10 @@ breaks it and a runtime never rewrites the contract. `partitions` is the count S
 creates the topic with, and `key` is what keeps every record for one entity on a
 single partition — and therefore in order.
 
+`events/payments/sol.toml` declares the same topic name, which is what `sol plan` reads;
+a scaffold test holds the two equal so they cannot drift, and `sol new event` generates
+its `sol.toml` and its module from one template pair for the same reason.
+
 ### The HTTP service
 
 `app/payments/charge_svc/lib/handler.ml` defines routes:
