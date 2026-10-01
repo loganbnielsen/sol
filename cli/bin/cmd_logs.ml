@@ -131,6 +131,9 @@ let run_unit ~ctx ~target (options : log_options) scope =
   let name = svc.name in
   let primitive = svc.primitive in
   let* ns, k8s_name = unit_names ~workspace svc in
+  let unit : Sol_cli_log_selector.t =
+    { workspace; domain = svc.domain; service = k8s_name }
+  in
   let* backend, base_domain = backend_and_base_domain ~target observability in
   (match
      Sol_cli_observability_url.resolve
@@ -140,7 +143,7 @@ let run_unit ~ctx ~target (options : log_options) scope =
        ()
    with
    | Sol_cli_observability_url.Url base_url ->
-     let url = Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name in
+     let url = Sol_cli_logs.grafana_explore_url ~base_url ~unit in
      Printf.printf "Grafana logs: %s\n%!" url
    | Sol_cli_observability_url.No_url reason ->
      Printf.printf "Grafana logs: (%s)\n%!" reason);
@@ -184,7 +187,7 @@ let run_unit ~ctx ~target (options : log_options) scope =
     | Some loki_base_url ->
       let* credentials = loki_credentials observability in
       (match
-         Sol_cli_loki.query ~base_url:loki_base_url ~k8s_name ?credentials ~limit:tail ()
+         Sol_cli_loki.query ~base_url:loki_base_url ~unit ?credentials ~limit:tail ()
        with
        | Ok [] ->
          Printf.printf
@@ -220,14 +223,14 @@ let run_release ~ctx ~target (options : log_options) release =
   let { tail; observability; _ } = options in
   let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
   let target_name = Option.value target ~default:"local" in
-  let* scope =
+  let* unit =
     match options.scope with
     | None -> Ok None
     | Some scope ->
       let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
       let* svc = resolve_unit ~facts ~scope in
-      let* names = unit_names ~workspace svc in
-      Ok (Some names)
+      let* _ns, service = unit_names ~workspace svc in
+      Ok (Some { Sol_cli_log_selector.workspace; domain = svc.domain; service })
   in
   let records = lazy (Sol_cli_release_store.list ~ctx ~workspace) in
   let known id =
@@ -238,7 +241,7 @@ let run_release ~ctx ~target (options : log_options) release =
         String.equal r.release_id (Sol_cli_release_id.to_string id))
     | Error _ -> false
   in
-  match Sol_cli_logs.release_query ~release ~target:target_name ~known ?scope () with
+  match Sol_cli_logs.release_query ~release ~target:target_name ~known ?unit () with
   | Sol_cli_logs.Release_invalid msg -> Error (Sol_cli_exit.error msg)
   | Sol_cli_logs.Release_unknown { release_id; target } ->
     let* records = Lazy.force records |> Sol_cli_exit.of_msg in

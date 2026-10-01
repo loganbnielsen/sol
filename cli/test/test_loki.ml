@@ -99,23 +99,40 @@ let test_query_range_argv_contains_logql_labels () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~k8s_name:"charge-svc"
+      ~unit:
+        { Sol_cli_log_selector.workspace = "acme"
+        ; domain = "payments"
+        ; service = "charge-svc"
+        }
       ~limit:50
       ~timeout_s:5.0
       ()
   in
   let joined = String.concat " " argv in
   check_int
-    "mentions service selector"
+    "carries the exact identity selector"
     1
-    (if Sol_cli_string.contains ~needle:{|service=~".*charge-svc.*"|} joined then 1 else 0)
+    (if
+       Sol_cli_string.contains
+         ~needle:{|query={workspace="acme", domain="payments", service="charge-svc"}|}
+         joined
+     then 1
+     else 0);
+  check_int
+    "with no regex match on the service name"
+    0
+    (if Sol_cli_string.contains ~needle:"=~" joined then 1 else 0)
 ;;
 
 let test_query_range_argv_no_config_omits_config_flag () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~k8s_name:"charge-svc"
+      ~unit:
+        { Sol_cli_log_selector.workspace = "acme"
+        ; domain = "payments"
+        ; service = "charge-svc"
+        }
       ~limit:50
       ~timeout_s:5.0
       ()
@@ -127,7 +144,11 @@ let test_query_range_argv_config_adds_config_path_not_secret () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~k8s_name:"charge-svc"
+      ~unit:
+        { Sol_cli_log_selector.workspace = "acme"
+        ; domain = "payments"
+        ; service = "charge-svc"
+        }
       ~limit:50
       ~timeout_s:5.0
       ~curl_config:"/tmp/sol-loki-curl.conf"

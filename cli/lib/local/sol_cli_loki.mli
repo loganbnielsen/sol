@@ -10,7 +10,7 @@ type credentials =
 
 val query_range_argv
   :  base_url:string
-  -> k8s_name:string
+  -> unit:Sol_cli_log_selector.t
   -> limit:int
   -> timeout_s:float
   -> ?curl_config:string
@@ -47,7 +47,7 @@ val resolve_credentials
 
 val query
   :  base_url:string
-  -> k8s_name:string
+  -> unit:Sol_cli_log_selector.t
   -> ?credentials:credentials
   -> ?limit:int
   -> ?timeout_s:float

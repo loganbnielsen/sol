@@ -63,8 +63,12 @@ let test_encode_hash () =
     (Sol_cli_logs.url_encode_logql "a#b")
 ;;
 
-let make_url ?(base_url = "http://localhost:3000") ?(k8s_name = "charge-svc") () =
-  Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name
+let make_unit ?(workspace = "acme") ?(domain = "payments") ?(service = "charge-svc") () =
+  { Sol_cli_log_selector.workspace; domain; service }
+;;
+
+let make_url ?(base_url = "http://localhost:3000") ?(service = "charge-svc") () =
+  Sol_cli_logs.grafana_explore_url ~base_url ~unit:(make_unit ~service ())
 ;;
 
 let test_url_contains_base_url () =
@@ -91,7 +95,7 @@ let test_url_contains_service_selector () =
 ;;
 
 let test_url_contains_k8s_name () =
-  let url = make_url ~k8s_name:"invoice-worker" () in
+  let url = make_url ~service:"invoice-worker" () in
   check_bool
     "k8s_name appears in URL"
     true
@@ -134,7 +138,9 @@ let test_url_no_raw_double_quotes () =
 
 let test_url_default_base () =
   let url =
-    Sol_cli_logs.grafana_explore_url ~base_url:"http://localhost:3000" ~k8s_name:"my-svc"
+    Sol_cli_logs.grafana_explore_url
+      ~base_url:"http://localhost:3000"
+      ~unit:(make_unit ~service:"my-svc" ())
   in
   check_bool
     "starts with default base"
@@ -235,13 +241,17 @@ let test_release_query_scoped_selector_narrows_to_the_unit () =
       ~release:"r-0123456789abcdef"
       ~target:"staging"
       ~known:(fun _ -> true)
-      ~scope:("myapp-payments", "charge-svc")
+      ~unit:
+        { Sol_cli_log_selector.workspace = "myapp"
+        ; domain = "payments"
+        ; service = "charge-svc"
+        }
       ()
   with
   | Sol_cli_logs.Release_logs { logql; _ } ->
     check_string
-      "selector adds release to the unit selector"
-      {|{service=~".*charge-svc.*",release="r-0123456789abcdef"}|}
+      "selector adds release to the unit's identity selector"
+      {|{workspace="myapp", domain="payments", service="charge-svc", release="r-0123456789abcdef"}|}
       logql
   | _ -> Alcotest.fail "expected Release_logs"
 ;;

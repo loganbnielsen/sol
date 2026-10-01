@@ -528,7 +528,7 @@ let run_golden_path () =
       in
       let body =
         Printf.sprintf
-          {|{"streams":[{"stream":{"service":"sol-e2e-auth-read"},"values":[[%S,%S]]}]}|}
+          {|{"streams":[{"stream":{"workspace":"sol-e2e","domain":"e2e","service":"auth-read"},"values":[[%S,%S]]}]}|}
           ts_ns
           "sol logs authenticated read e2e"
       in
@@ -551,7 +551,11 @@ let run_golden_path () =
         match
           Sol_cli_loki.query
             ~base_url:url
-            ~k8s_name:"auth-read"
+            ~unit:
+              { Sol_cli_log_selector.workspace = "sol-e2e"
+              ; domain = "e2e"
+              ; service = "auth-read"
+              }
             ?credentials
             ~limit:5
             ~timeout_s:5.0
