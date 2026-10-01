@@ -33,10 +33,10 @@ type reason =
   | Conflict
   | No_resource_type
   | Refused
+  | Unreachable
   | Other
 
 val classify : Sol_cli_process.error -> reason
-val cluster_unreachable : Sol_cli_process.error -> bool
 
 val get_if_present
   :  ctx:Sol_cli_kube_destination.context

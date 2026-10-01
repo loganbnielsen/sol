@@ -26,7 +26,27 @@ type reason =
   | Conflict
   | No_resource_type
   | Refused
+  | Unreachable
   | Other
+
+let unreachable_needles =
+  [ "Unable to connect to the server"
+  ; "The connection to the server"
+  ; "connection refused"
+  ; "no such host"
+  ; "no configuration has been provided"
+  ; "couldn't get current server API group list"
+  ; "dial tcp"
+  ; "current-context is not set"
+  ; "no context exists with the name"
+  ; "no server found for cluster"
+  ; "error loading config file"
+  ]
+;;
+
+let says_unreachable text =
+  List.exists (fun needle -> Sol_cli_string.contains ~needle text) unreachable_needles
+;;
 
 let status_reason text =
   let prefix = "Error from server (" in
@@ -55,6 +75,8 @@ let classify (error : Sol_cli_process.error) =
       says "You must be logged in"
       || says "the server has asked for the client to provide credentials"
     then Refused
+    else if says_unreachable text
+    then Unreachable
     else (
       match status_reason text with
       | Some "NotFound" -> Not_found
@@ -63,23 +85,6 @@ let classify (error : Sol_cli_process.error) =
       | Some ("Unauthorized" | "Forbidden") -> Refused
       | _ -> Other)
   | Spawn_failed _ | Timeout _ -> Other
-;;
-
-let cluster_unreachable (error : Sol_cli_process.error) =
-  match error with
-  | Non_zero f ->
-    let text = f.stderr ^ "\n" ^ f.stdout in
-    List.exists
-      (fun needle -> Sol_cli_string.contains ~needle text)
-      [ "Unable to connect to the server"
-      ; "The connection to the server"
-      ; "connection refused"
-      ; "no such host"
-      ; "no configuration has been provided"
-      ; "couldn't get current server API group list"
-      ; "dial tcp"
-      ]
-  | Spawn_failed _ | Timeout _ -> false
 ;;
 
 let get_if_present ~ctx ~args =

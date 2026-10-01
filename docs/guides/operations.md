@@ -157,15 +157,20 @@ workloads through supported lifecycle operations. It is target-addressed and app
 same plan-then-apply discipline as `sol cloud apply`; without `--apply` it previews and
 changes nothing.
 
-Destroy releases the environment's application workloads before it destroys the substrate,
-and **stops before the substrate** when it cannot establish that they are gone (`DEC-059`): a
-managed database must not be asked to drop while the workloads that own it still hold
-connections. The failure names the namespace, the kind and the operation, nothing is
-destroyed, and no absence is claimed. `--accept-unreleased` proceeds anyway, accepting that
-their sessions may make the teardown fail or leave the database to be dropped with the
-application still attached. A release that could not run because no cluster was reachable is
-reported and destruction continues — there the workloads cannot be running, and blocking
-would strand the substrate.
+Before anything is destroyed, Sol **releases the workloads this target deployed** (`DEC-059`):
+it discovers them in the target's declared namespaces by the ownership labels Sol renders,
+removes them by name, and waits for their pods to go. The point is the managed database — a
+provider must not be asked to drop durable application state while the workloads that hold
+sessions to it are still running.
+
+If Sol cannot establish that those workloads are released, the destroy **stops before it
+destroys anything**: it names the namespace, the kind and the operation that failed, destroys
+nothing, claims no absence, and exits 1. Resolve the release — bring the workload down, or
+repair the deploy identity's authority over the namespace — and re-run. The precondition does
+not apply when there is no cluster to release from: a target whose substrate is already absent
+is still idempotent, and a cluster that cannot be reached is recorded as a degradation rather
+than blocking a teardown that would otherwise be stranded. `--accept-unreleased` destroys
+anyway, and the run records that the absence check, not the release, decided the outcome.
 
 Destroy **verifies absence independently** (`DEC-044`, `DEC-040`): after Terraform
 converges, Sol re-observes the provider and reports what is absent, what is retained, and

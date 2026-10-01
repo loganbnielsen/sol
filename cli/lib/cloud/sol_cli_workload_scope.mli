@@ -19,3 +19,27 @@ val delete_args
 val wait_args : namespace:string -> workspace:string -> timeout_seconds:int -> string list
 val workloads_of_json : string -> workspace:string -> (string list, string) result
 val to_string : scope -> string
+
+type release_failure =
+  { namespace : string
+  ; kind : string option
+  ; operation : string
+  ; reason : string
+  }
+
+type release =
+  | Workloads_released
+  | Workloads_not_releasable of string
+  | Workloads_unestablished of release_failure
+
+val failure_to_string : release_failure -> string
+
+type read_error =
+  | No_cluster of string
+  | Read_unestablished of release_failure
+
+val read_workloads
+  :  run:(string list -> (string, Sol_cli_process.error) result)
+  -> namespaces:string list
+  -> workspace:string
+  -> (scope list, read_error) result

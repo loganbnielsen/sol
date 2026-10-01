@@ -147,12 +147,16 @@ The policy of a phase is fixed: `Bootstrap` for `CloudBootstrap`,
    `Ready` and `PlatformInstalling`, so a destroy decides only Absent-ness, and
    never depends on a probe that could fail and block teardown.
 
-   The pre-substrate workload release is not such a probe. It enforces a data boundary —
-   a managed database is not asked to drop while the workloads that own it hold
-   connections — so a destroy that cannot establish the workloads are gone stops before
-   the substrate, and only a target whose cluster cannot be reached proceeds (there the
-   workloads cannot be running, and blocking would strand the substrate). `DEC-059` records
-   the contract and the explicit `--accept-unreleased` escape hatch.
+   What that licenses is deliberately narrower than "any failing step" (`DEC-059`).
+   It covers a read or probe whose only job is to classify the target. It does not
+   cover the pre-substrate workload release, which enforces a data boundary: a
+   managed database is not asked to drop while the workloads that own it hold
+   connections. A destroy that cannot establish those workloads are released
+   therefore stops before it destroys anything, and names what it could not
+   establish. The abort edge still holds for what the rule is for — a target whose
+   cluster is absent or unreachable is not blocked, because there the workloads
+   cannot be running and blocking would strand the substrate — and the operator can
+   always override with the explicit `--accept-unreleased` escape hatch.
 
 ### The phase record is not infrastructure truth
 

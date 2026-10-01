@@ -184,7 +184,7 @@ let fake_deps
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
-      ?(release_workloads = fun () -> Workloads_released)
+      ?(release_workloads = fun () -> Sol_cli_workload_scope.Workloads_released)
       ?(accept_unreleased = false)
       ?(destroy_substrate = fun () -> Ok ())
       ?(verify_destruction = fun ~pre_destroy:_ ~preparation:_ -> verified_observation)
@@ -713,6 +713,187 @@ let test_only_a_controller_installed_kind_may_read_as_absence () =
     absence_is_expected
 ;;
 
+let cluster_refusal stderr =
+  Sol_cli_process.Non_zero { exit_code = 1; stdout = ""; stderr }
+;;
+
+let unreachable_read =
+  cluster_refusal "Unable to connect to the server: dial tcp 34.1.2.3:443: i/o timeout"
+;;
+
+let refused_read =
+  cluster_refusal
+    {|Error from server (Forbidden): deployments.apps is forbidden: User "sol-deploy" cannot list resource "deployments"|}
+;;
+
+let unserved_kind =
+  cluster_refusal {|error: the server doesn't have a resource type "rollouts"|}
+;;
+
+let absent_namespace =
+  cluster_refusal {|Error from server (NotFound): namespaces "pluto-payments" not found|}
+;;
+
+let workspace_deployment =
+  {|{"items":[{"kind":"Deployment","metadata":{"name":"charge-svc"},
+      "spec":{"template":{"metadata":{"labels":{"workspace":"pluto"}}}}}]}|}
+;;
+
+type cluster_replies =
+  { mutable read : string list
+  ; replies : (string * (string, Sol_cli_process.error) result) list
+  }
+
+let cluster_answering ?(replies = []) () = { read = []; replies }
+
+let run_cluster cluster args =
+  let resource = List.nth args 1 in
+  cluster.read <- resource :: cluster.read;
+  match List.assoc_opt resource cluster.replies with
+  | Some reply -> reply
+  | None -> Ok {|{"items":[]}|}
+;;
+
+let read_cluster ?(replies = []) namespaces =
+  let cluster = cluster_answering ~replies () in
+  let read =
+    Sol_cli_workload_scope.read_workloads
+      ~run:(run_cluster cluster)
+      ~namespaces
+      ~workspace:"pluto"
+  in
+  cluster, read
+;;
+
+let test_a_scope_with_no_declared_namespace_reads_nothing () =
+  let cluster, read = read_cluster [] in
+  (match read with
+   | Ok [] -> ()
+   | Ok _ -> Alcotest.fail "no declared namespace is no scope"
+   | Error _ ->
+     Alcotest.fail
+       "no declared namespace must not be a failed read: there is nothing to read");
+  Alcotest.(check (list string))
+    "and it runs no kubectl at all, so a target with no services cannot be blocked by a \
+     cluster it never needed"
+    []
+    cluster.read
+;;
+
+let test_an_unserved_kind_is_absence_not_a_failed_read () =
+  let cluster, read =
+    read_cluster ~replies:[ "rollout", Error unserved_kind ] [ "pluto-payments" ]
+  in
+  (match read with
+   | Ok [ { Sol_cli_workload_scope.workloads = []; _ } ] -> ()
+   | Ok _ -> Alcotest.fail "a cluster that serves none of this workspace's workloads is "
+   | Error _ ->
+     Alcotest.fail
+       "an unserved custom resource is absence of that kind, not a failed release: the \
+        kinds the cluster does serve are still released");
+  Alcotest.(check (list string))
+    "every kind is still read, one at a time"
+    [ "cronjob"; "deployment"; "job"; "rollout" ]
+    (List.sort String.compare cluster.read)
+;;
+
+let test_a_namespace_that_does_not_exist_holds_no_workload () =
+  let replies =
+    List.map
+      (fun resource -> resource, Error absent_namespace)
+      [ "deployment"; "cronjob"; "job"; "rollout" ]
+  in
+  let _, read = read_cluster ~replies [ "pluto-payments" ] in
+  match read with
+  | Ok [ { Sol_cli_workload_scope.workloads = []; _ } ] -> ()
+  | Ok _ ->
+    Alcotest.fail "a declared namespace that does not exist has no workload of this one"
+  | Error _ ->
+    Alcotest.fail
+      "a namespace that is not there is absence of that scope, not an unestablished \
+       release: a target whose apply never created it must stay destructible"
+;;
+
+let test_a_live_cluster_that_refuses_a_read_is_unestablished () =
+  let _, read =
+    read_cluster ~replies:[ "deployment", Error refused_read ] [ "pluto-payments" ]
+  in
+  match read with
+  | Error
+      (Sol_cli_workload_scope.Read_unestablished
+         { namespace = "pluto-payments"
+         ; kind = Some "deployment"
+         ; operation = "reading"
+         ; reason
+         }) ->
+    Alcotest.(check bool)
+      "and the reason keeps kubectl's own words"
+      true
+      (Sol_cli_string.contains ~needle:"Forbidden" reason)
+  | Error (Sol_cli_workload_scope.Read_unestablished _) ->
+    Alcotest.fail "the failure must name the namespace, the kind and the operation"
+  | Error (Sol_cli_workload_scope.No_cluster _) ->
+    Alcotest.fail
+      "a cluster that answered and refused is not a cluster that cannot be reached"
+  | Ok _ -> Alcotest.fail "a refused read is not absence"
+;;
+
+let test_a_listing_that_cannot_be_decoded_is_unestablished () =
+  let _, read =
+    read_cluster ~replies:[ "deployment", Ok "not json" ] [ "pluto-payments" ]
+  in
+  match read with
+  | Error
+      (Sol_cli_workload_scope.Read_unestablished
+         { kind = Some "deployment"; operation = "reading"; reason; _ }) ->
+    Alcotest.(check bool)
+      "the decode failure is carried rather than read as an empty scope"
+      true
+      (reason <> "")
+  | _ -> Alcotest.fail "a listing that cannot be read is an unestablished release"
+;;
+
+let test_an_unreachable_cluster_is_not_a_failed_release () =
+  let replies =
+    List.map
+      (fun resource -> resource, Error unreachable_read)
+      [ "deployment"; "cronjob"; "job"; "rollout" ]
+  in
+  let cluster, read = read_cluster ~replies [ "pluto-payments" ] in
+  (match read with
+   | Error (Sol_cli_workload_scope.No_cluster reason) ->
+     Alcotest.(check bool)
+       "the carve-out names what could not be reached"
+       true
+       (Sol_cli_string.contains ~needle:"could not be reached" reason)
+   | Error (Sol_cli_workload_scope.Read_unestablished _) ->
+     Alcotest.fail
+       "a cluster that could not be reached at all is the carve-out, not an \
+        unestablished release that would strand the target"
+   | Ok _ -> Alcotest.fail "an unreachable cluster is not absence");
+  Alcotest.(check int)
+    "and the read stops at the first kind rather than failing every kind in turn"
+    1
+    (List.length cluster.read)
+;;
+
+let test_a_cluster_that_answered_then_went_away_is_unestablished () =
+  let replies =
+    [ "deployment", Ok workspace_deployment; "cronjob", Error unreachable_read ]
+  in
+  let _, read = read_cluster ~replies [ "pluto-payments" ] in
+  match read with
+  | Error
+      (Sol_cli_workload_scope.Read_unestablished
+         { kind = Some "cronjob"; operation = "reading"; _ }) -> ()
+  | Error (Sol_cli_workload_scope.No_cluster _) ->
+    Alcotest.fail
+      "once the cluster has answered and a workload was found, losing it is an \
+       unestablished release: the fail-closed direction, recoverable by re-running"
+  | _ ->
+    Alcotest.fail "a cluster that answered and then went away is an unestablished release"
+;;
+
 let test_the_removal_names_the_workloads_and_waits () =
   let args =
     Sol_cli_workload_scope.delete_args
@@ -727,6 +908,11 @@ let test_the_removal_names_the_workloads_and_waits () =
     (List.mem "deployment/charge-svc" args
      && List.mem "cronjob/notify-worker" args
      && not (List.exists (fun arg -> arg = "--selector") args));
+  Alcotest.(check bool)
+    "and a workload that is already gone is a satisfied removal, not a failed one: an \
+     object that vanishes between the read and the removal must not stop a teardown"
+    true
+    (List.exists (fun arg -> arg = "--ignore-not-found") args);
   Alcotest.(check bool)
     "the removal waits and is bounded, so the sessions are closed before the database is \
      touched but a stuck removal cannot hang the teardown forever"
@@ -751,7 +937,7 @@ let test_the_removal_names_the_workloads_and_waits () =
 ;;
 
 let test_the_workloads_are_released_before_the_substrate_is_destroyed () =
-  let deps, calls = fake_deps () in
+  let deps, calls = fake_deps ~state:(Ok (show_json_resources gcp_cluster)) () in
   ignore (execute ~deps);
   Alcotest.(check (list string))
     "the workloads that hold the managed database's sessions are released first"
@@ -759,68 +945,144 @@ let test_the_workloads_are_released_before_the_substrate_is_destroyed () =
     (List.rev calls.order)
 ;;
 
+let test_a_target_with_no_substrate_has_no_release_to_run () =
+  let deps, calls = fake_deps ~state:(Ok {|{}|}) () in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = []; _ } -> ()
+   | Destroy_succeeded _ ->
+     Alcotest.fail
+       "a target whose substrate is already absent is idempotent: the release is not \
+        applicable and must not be recorded as a degradation"
+   | _ -> Alcotest.fail "a re-destroy of an absent target must still succeed");
+  Alcotest.(check (list string))
+    "the release is not attempted at all, so it neither warns nor waits on a cluster \
+     that is not there"
+    [ "substrate" ]
+    (List.rev calls.order);
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
+;;
+
+let unestablished_release =
+  Sol_cli_workload_scope.Workloads_unestablished
+    { namespace = "pluto-payments"
+    ; kind = Some "deployment"
+    ; operation = "reading"
+    ; reason =
+        "exited with code 1: Error from server (Forbidden): deployments.apps is forbidden"
+    }
+;;
+
 let test_an_unestablished_release_stops_before_the_substrate () =
   let deps, calls =
     fake_deps
-      ~release_workloads:(fun () ->
-        Workloads_unestablished "the cluster refused the request")
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~release_workloads:(fun () -> unestablished_release)
       ()
   in
   let outcome = execute ~deps in
+  let text = Sol_cli_cloud_destroy.completion_message outcome in
   (match outcome with
-   | Destroy_failed { failure = Workload_release_unestablished message; _ } ->
+   | Destroy_failed { failure = Release_unestablished _; verification = None; cleanup; _ }
+     ->
      Alcotest.(check bool)
-       "the failure names the release"
+       "the stop names the namespace, the kind and the operation that failed"
        true
-       (Sol_cli_string.contains ~needle:"refused the request" message)
-   | _ -> Alcotest.fail "an unestablished release must stop the destroy");
-  Alcotest.(check int) "the substrate is not destroyed" 0 calls.substrate;
-  Alcotest.(check int) "absence is not verified" 0 calls.verify;
-  Alcotest.(check int) "and the destroy exits non-zero" exit_failure (exit_code outcome)
+       (Sol_cli_string.contains ~needle:"pluto-payments" text
+        && Sol_cli_string.contains ~needle:"deployment" text
+        && Sol_cli_string.contains ~needle:"reading" text);
+     Alcotest.(check bool)
+       "and it names the override that accepts the precondition"
+       true
+       (Sol_cli_string.contains
+          ~needle:("--" ^ Sol_cli_cloud_destroy.accept_unreleased_flag)
+          text);
+     Alcotest.(check bool)
+       "the stop claims no absence"
+       true
+       (Sol_cli_string.contains ~needle:"no absence is claimed" text
+        && not (Sol_cli_string.contains ~needle:"verified absence" text));
+     Alcotest.(check bool)
+       "and it destroys nothing, so no elevated access was opened either"
+       true
+       (cleanup = Cleanup_not_needed)
+   | _ ->
+     Alcotest.fail
+       "a destroy that cannot establish its workloads are released must stop before the \
+        substrate, not proceed and not claim absence");
+  Alcotest.(check int) "the substrate was not destroyed" 0 calls.substrate;
+  Alcotest.(check int) "and absence was never verified" 0 calls.verify;
+  Alcotest.(check int)
+    "the platform was left standing too, so a re-run starts from unchanged state"
+    0
+    calls.platform;
+  Alcotest.(check int) "and no destruction authority was acquired" 0 calls.reconcile;
+  Alcotest.(check int)
+    "the release runs before the whole destruction, not only before the substrate"
+    0
+    calls.remove;
+  Alcotest.(check int) "the stop is a failure" exit_failure (exit_code outcome)
 ;;
 
-let test_an_unestablished_release_proceeds_with_the_override () =
+let test_the_override_destroys_with_the_release_unestablished () =
   let deps, calls =
     fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~release_workloads:(fun () -> unestablished_release)
       ~accept_unreleased:true
-      ~release_workloads:(fun () ->
-        Workloads_unestablished "the cluster refused the request")
       ()
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Destroy_succeeded { degradations; _ } ->
+   | Destroy_succeeded { degradations; verification; _ } ->
      Alcotest.(check bool)
-       "the override is recorded rather than swallowed"
+       "the run records that the workloads are not released"
        true
        (List.exists
           (fun degradation ->
-             Sol_cli_string.contains ~needle:"--accept-unreleased" degradation)
-          degradations)
-   | _ -> Alcotest.fail "the explicit override must let the destroy proceed");
-  Alcotest.(check int) "the substrate is destroyed" 1 calls.substrate;
-  Alcotest.(check int) "and absence is verified" 1 calls.verify
+             Sol_cli_string.contains ~needle:"are not released" degradation)
+          degradations);
+     Alcotest.(check bool)
+       "and it records that the absence check, not the release, decided"
+       true
+       (List.exists
+          (fun degradation ->
+             Sol_cli_string.contains ~needle:"absence check below" degradation)
+          degradations);
+     Alcotest.(check bool)
+       "the absence evidence is the verification's, and it is the verified one"
+       true
+       (verification = verified_observation)
+   | _ -> Alcotest.fail "the override must destroy despite an unestablished release");
+  Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
+  Alcotest.(check int) "the absence check still ran" 1 calls.verify
 ;;
 
-let test_a_release_with_no_reachable_cluster_proceeds () =
+let test_a_release_that_does_not_apply_is_recorded_and_the_teardown_continues () =
   let deps, calls =
     fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
       ~release_workloads:(fun () ->
-        Workloads_not_applicable "the cluster could not be reached")
+        Sol_cli_workload_scope.Workloads_not_releasable
+          "the cloud substrate is absent, so there is no cluster to release from")
       ()
   in
   let outcome = execute ~deps in
   (match outcome with
    | Destroy_succeeded { degradations; _ } ->
      Alcotest.(check bool)
-       "the not-applicable release is recorded rather than swallowed"
+       "the carve-out is reported rather than hidden, so the run record can state it"
        true
        (List.exists
           (fun degradation ->
-             Sol_cli_string.contains ~needle:"could not be reached" degradation)
+             Sol_cli_string.contains
+               ~needle:"the cloud substrate is absent, so there is no cluster"
+               degradation)
           degradations)
-   | _ -> Alcotest.fail "a release with no reachable cluster must not stop the destroy");
-  Alcotest.(check int) "the substrate is destroyed" 1 calls.substrate
+   | _ ->
+     Alcotest.fail
+       "a release that does not apply must not block a teardown, and must be recorded");
+  Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate
 ;;
 
 let test_destroy_that_cannot_converge_claims_no_absence () =
@@ -1993,6 +2255,34 @@ let () =
             `Quick
             test_only_a_controller_installed_kind_may_read_as_absence
         ; Alcotest.test_case
+            "a scope with no declared namespace reads nothing"
+            `Quick
+            test_a_scope_with_no_declared_namespace_reads_nothing
+        ; Alcotest.test_case
+            "an unserved kind is absence, not a failed read (INFRA-097)"
+            `Quick
+            test_an_unserved_kind_is_absence_not_a_failed_read
+        ; Alcotest.test_case
+            "a namespace that does not exist holds no workload"
+            `Quick
+            test_a_namespace_that_does_not_exist_holds_no_workload
+        ; Alcotest.test_case
+            "a live cluster that refuses a read is unestablished"
+            `Quick
+            test_a_live_cluster_that_refuses_a_read_is_unestablished
+        ; Alcotest.test_case
+            "a listing that cannot be decoded is unestablished"
+            `Quick
+            test_a_listing_that_cannot_be_decoded_is_unestablished
+        ; Alcotest.test_case
+            "an unreachable cluster is not a failed release"
+            `Quick
+            test_an_unreachable_cluster_is_not_a_failed_release
+        ; Alcotest.test_case
+            "a cluster that answered and then went away is unestablished"
+            `Quick
+            test_a_cluster_that_answered_then_went_away_is_unestablished
+        ; Alcotest.test_case
             "the removal names the workloads and waits"
             `Quick
             test_the_removal_names_the_workloads_and_waits
@@ -2001,17 +2291,21 @@ let () =
             `Quick
             test_the_workloads_are_released_before_the_substrate_is_destroyed
         ; Alcotest.test_case
-            "an unestablished release stops before the substrate"
+            "a target with no substrate has no release to run"
+            `Quick
+            test_a_target_with_no_substrate_has_no_release_to_run
+        ; Alcotest.test_case
+            "an unestablished release stops before the substrate (DEC-059)"
             `Quick
             test_an_unestablished_release_stops_before_the_substrate
         ; Alcotest.test_case
-            "an unestablished release proceeds with the explicit override"
+            "--accept-unreleased destroys with the release unestablished"
             `Quick
-            test_an_unestablished_release_proceeds_with_the_override
+            test_the_override_destroys_with_the_release_unestablished
         ; Alcotest.test_case
-            "a release with no reachable cluster proceeds"
+            "a release that does not apply is recorded and teardown continues"
             `Quick
-            test_a_release_with_no_reachable_cluster_proceeds
+            test_a_release_that_does_not_apply_is_recorded_and_the_teardown_continues
         ; Alcotest.test_case "missing retention fails" `Quick test_missing_retention_fails
         ; Alcotest.test_case "fully clean exits 0" `Quick test_fully_clean_is_exit_0
         ; Alcotest.test_case

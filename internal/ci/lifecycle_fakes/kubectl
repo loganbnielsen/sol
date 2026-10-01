@@ -123,6 +123,7 @@ case " $* " in
       printf 'error: timed out waiting for the pods to go\n' >&2
       exit 1
     fi
+    : >"$FAIL_MARKER_DIR/pods-released"
     printf 'pod deleted\n'
     exit 0
     ;;

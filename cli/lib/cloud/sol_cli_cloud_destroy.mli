@@ -37,11 +37,6 @@ type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
 
-type workload_release =
-  | Workloads_released
-  | Workloads_not_applicable of string
-  | Workloads_unestablished of string
-
 type failure =
   | Credentials_failed of string
   | Init_failed of string
@@ -50,7 +45,7 @@ type failure =
   | Substrate_destroy_failed of string
   | Verification_failed of string
   | Elevated_access_not_removed of string
-  | Workload_release_unestablished of string
+  | Release_unestablished of string
 
 type outcome =
   | Destroy_succeeded of
@@ -69,6 +64,7 @@ type outcome =
       }
 
 val failure_message : failure -> string
+val accept_unreleased_flag : string
 val exit_clean : int
 val exit_failure : int
 val exit_code : outcome -> int
@@ -85,7 +81,7 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
-  ; release_workloads : unit -> workload_release
+  ; release_workloads : unit -> Sol_cli_workload_scope.release
   ; accept_unreleased : bool
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :

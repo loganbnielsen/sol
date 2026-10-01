@@ -88,6 +88,16 @@ A release failure is a **degradation**: it is reported and teardown continues, b
 must not be blocked by a step that can fail. Final success stays fail-closed — if the substrate
 destroy or the independent absence verification cannot establish convergence, no absence is claimed.
 
+> **Superseded by `DEC-059` (2026-10-01).** The rule above was right about what it was written
+> for — a probe whose only job is to classify the target — and wrong for the release, which exists
+> to keep a provider from dropping durable application state while the workloads that own it are
+> still running. The live record below shows the cost: the release could not remove the workloads,
+> the run warned, `terraform destroy` ran anyway, the database refused, and the target was left
+> half destroyed. `sol cloud destroy` now stops before it destroys anything when it cannot
+> establish the release, keeps a carve-out for a cluster that is absent or unreachable, and takes
+> the explicit `--accept-unreleased` override. The paragraph above is kept as the record of what
+> was decided then; `DEC-059` is the current contract.
+
 Coverage: `check_workload_release_order.py` with `test_workload_release_order_check.py` (twelve
 mutations: release dropped, release failure no longer degrading, a read that goes cluster-wide, a
 different label, a release that stops waiting, a selection that reads the workload object instead of

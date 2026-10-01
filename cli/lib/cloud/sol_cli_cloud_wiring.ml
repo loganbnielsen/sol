@@ -809,113 +809,68 @@ let destroy_deps
         ~chdir:platform_dir
         ~vars:platform_vars)
   in
-  let release_workloads_result () : Sol_cli_cloud_destroy.workload_release =
-    let released =
-      match Sol_cli_config.destination_of_target target_cfg with
-      | Error reason ->
-        Error
-          (`Not_applicable
-              (Printf.sprintf
-                 "the target's deploy context could not be resolved (%s), so there is no \
-                  cluster to release the workloads from"
-                 reason))
-      | Ok destination ->
-        let ctx = Sol_cli_kube_destination.context_of_destination destination in
-        let workspace = workspace_name () in
-        let unreachable what error =
-          `Not_applicable
-            (Printf.sprintf
-               "%s: the cluster could not be reached (%s)"
-               what
-               (Sol_cli_process.error_to_string error))
-        in
-        let failed what error =
-          `Unestablished
-            (Printf.sprintf "%s: %s" what (Sol_cli_process.error_to_string error))
-        in
-        let kubectl what args =
-          match Sol_cli_kubectl.run ~ctx args with
-          | Ok _ -> Ok ()
-          | Error e when Sol_cli_kubectl.cluster_unreachable e ->
-            Error (unreachable what e)
-          | Error e -> Error (failed what e)
-        in
-        let read_workloads namespace =
-          let rec go found = function
-            | [] -> Ok (List.concat (List.rev found))
-            | kind :: rest ->
-              let what =
-                Printf.sprintf
-                  "reading %s in namespace %s"
-                  (Sol_cli_workload_scope.resource_of_kind kind)
-                  namespace
-              in
-              (match
-                 Sol_cli_kubectl.run
-                   ~ctx
-                   (Sol_cli_workload_scope.list_args ~namespace ~kind)
-               with
-               | Ok listing ->
-                 (match
-                    Sol_cli_workload_scope.workloads_of_json
-                      listing.Sol_cli_process.stdout
-                      ~workspace
-                  with
-                  | Ok workloads -> go (workloads :: found) rest
-                  | Error message ->
-                    Error (`Unestablished (Printf.sprintf "%s: %s" what message)))
-               | Error e
-                 when Sol_cli_workload_scope.optional_kind kind
-                      && Sol_cli_kubectl.classify e = Sol_cli_kubectl.No_resource_type ->
-                 go found rest
-               | Error e when Sol_cli_kubectl.cluster_unreachable e ->
-                 Error (unreachable what e)
-               | Error e -> Error (failed what e))
-          in
-          go [] Sol_cli_workload_scope.kinds
-        in
-        let release namespace =
-          let* workloads = read_workloads namespace in
-          match workloads with
-          | [] -> Ok ()
-          | workloads ->
-            Sol_cli_report.app
-              "  %s"
-              (Sol_cli_workload_scope.to_string { namespace; workloads });
-            let* () =
-              kubectl
-                (Printf.sprintf
-                   "deleting %s in namespace %s"
-                   (String.concat ", " workloads)
-                   namespace)
-                (Sol_cli_workload_scope.delete_args
-                   ~namespace
-                   ~names:workloads
-                   ~timeout_seconds:300)
-            in
-            kubectl
-              (Printf.sprintf
-                 "waiting for the pods of %s in namespace %s to terminate"
-                 (String.concat ", " workloads)
-                 namespace)
-              (Sol_cli_workload_scope.wait_args
-                 ~namespace
-                 ~workspace
-                 ~timeout_seconds:300)
-        in
-        List.fold_left
-          (fun released namespace ->
-             let* () = released in
-             release namespace)
-          (Ok ())
-          workload_namespaces
-    in
-    match released with
-    | Ok () -> Sol_cli_cloud_destroy.Workloads_released
-    | Error (`Not_applicable reason) ->
-      Sol_cli_cloud_destroy.Workloads_not_applicable reason
-    | Error (`Unestablished message) ->
-      Sol_cli_cloud_destroy.Workloads_unestablished message
+  let release_workloads_result () : Sol_cli_workload_scope.release =
+    let open Sol_cli_workload_scope in
+    match Sol_cli_config.destination_of_target target_cfg with
+    | Error message ->
+      Workloads_not_releasable
+        (Printf.sprintf
+           "the target's cluster could not be addressed, so there is no cluster to \
+            release from (%s)"
+           message)
+    | Ok destination ->
+      let ctx = Sol_cli_kube_destination.context_of_destination destination in
+      let workspace = workspace_name () in
+      let run args =
+        Sol_cli_kubectl.run ~ctx args
+        |> Result.map (fun (listing : Sol_cli_process.output) -> listing.stdout)
+      in
+      (match read_workloads ~run ~namespaces:workload_namespaces ~workspace with
+       | Error (No_cluster reason) -> Workloads_not_releasable reason
+       | Error (Read_unestablished failure) -> Workloads_unestablished failure
+       | Ok scopes ->
+         let unreleased namespace operation reason =
+           Workloads_unestablished { namespace; kind = None; operation; reason }
+         in
+         let remove scope : (unit, release) result =
+           match scope.workloads with
+           | [] -> Ok ()
+           | workloads ->
+             Sol_cli_report.app "  %s" (to_string scope);
+             let delete =
+               Sol_cli_kubectl.run
+                 ~ctx
+                 (delete_args
+                    ~namespace:scope.namespace
+                    ~names:workloads
+                    ~timeout_seconds:300)
+             in
+             (match delete with
+              | Error e ->
+                Error
+                  (unreleased
+                     scope.namespace
+                     "removing the workloads it found"
+                     (Sol_cli_process.error_to_string e))
+              | Ok _ ->
+                Sol_cli_kubectl.run
+                  ~ctx
+                  (wait_args ~namespace:scope.namespace ~workspace ~timeout_seconds:300)
+                |> Result.map (fun _ -> ())
+                |> Result.map_error (fun e ->
+                  unreleased
+                    scope.namespace
+                    "waiting for the pods to go"
+                    (Sol_cli_process.error_to_string e)))
+         in
+         let rec release = function
+           | [] -> Workloads_released
+           | scope :: rest ->
+             (match remove scope with
+              | Ok () -> release rest
+              | Error unreleased -> unreleased)
+         in
+         release scopes)
   in
   let deps : Sol_cli_cloud_destroy.deps =
     { require_credentials =

@@ -138,11 +138,6 @@ type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
 
-type workload_release =
-  | Workloads_released
-  | Workloads_not_applicable of string
-  | Workloads_unestablished of string
-
 type failure =
   | Credentials_failed of string
   | Init_failed of string
@@ -151,7 +146,7 @@ type failure =
   | Substrate_destroy_failed of string
   | Verification_failed of string
   | Elevated_access_not_removed of string
-  | Workload_release_unestablished of string
+  | Release_unestablished of string
 
 type outcome =
   | Destroy_succeeded of
@@ -169,6 +164,8 @@ type outcome =
       ; verification : Sol_cli_destroy_verification.observation option
       }
 
+let accept_unreleased_flag = "accept-unreleased"
+
 let failure_message = function
   | Credentials_failed message -> message
   | Init_failed message -> message
@@ -177,7 +174,17 @@ let failure_message = function
   | Substrate_destroy_failed message -> message
   | Verification_failed message -> message
   | Elevated_access_not_removed message -> message
-  | Workload_release_unestablished message -> message
+  | Release_unestablished message ->
+    Printf.sprintf
+      "the application workloads could not be established as released, so nothing was \
+       destroyed and no absence is claimed. A supported destroy releases the workloads \
+       this target deployed before the substrate, because a provider must not be asked \
+       to drop durable application state while the workloads that own it may still be \
+       running: %s. Bring the workload down (or repair the deploy identity's authority \
+       over the declared namespace) and re-run; pass --%s to destroy anyway, which \
+       records that the absence check, not the release, decided the outcome"
+      message
+      accept_unreleased_flag
 ;;
 
 let exit_clean = 0
@@ -213,11 +220,8 @@ let completion_message = function
       "Destruction is blocked by a guarantee this target declared, so nothing was \
        destroyed: %s"
       guarantee
-  | Destroy_failed { failure = Workload_release_unestablished message; _ } ->
-    Printf.sprintf
-      "Destruction stopped before the substrate: %s. Nothing was destroyed, and no \
-       absence is claimed."
-      message
+  | Destroy_failed { failure = Release_unestablished _ as failure; _ } ->
+    failure_message failure
   | Destroy_failed { failure; _ } ->
     Printf.sprintf
       "Destruction did not converge: %s. What remains is whatever the verification above \
@@ -236,7 +240,7 @@ type deps =
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
-  ; release_workloads : unit -> workload_release
+  ; release_workloads : unit -> Sol_cli_workload_scope.release
   ; accept_unreleased : bool
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
@@ -348,6 +352,28 @@ let execute ~deps =
       { failure; degradations = List.rev !degradations; cleanup; verification }
   in
   let block guarantee = Destroy_blocked { guarantee } in
+  let release_decision release =
+    match release with
+    | Sol_cli_workload_scope.Workloads_released -> Ok ()
+    | Sol_cli_workload_scope.Workloads_not_releasable reason ->
+      degrade "the workload release does not apply" reason;
+      Ok ()
+    | Sol_cli_workload_scope.Workloads_unestablished failure ->
+      if deps.accept_unreleased
+      then (
+        degrade
+          "the workloads this target deployed are not released"
+          (Printf.sprintf
+             "%s. --%s was given, so the substrate is destroyed anyway and the absence \
+              check below, not the release, decides the outcome"
+             (Sol_cli_workload_scope.failure_to_string failure)
+             accept_unreleased_flag);
+        Ok ())
+      else
+        Error
+          (fail
+             (Release_unestablished (Sol_cli_workload_scope.failure_to_string failure)))
+  in
   let destroy_and_verify ~cloud_exists ~cleanup ~preparation =
     if cloud_exists
     then
@@ -355,40 +381,19 @@ let execute ~deps =
         (Printf.sprintf
            "  lifecycle phase: %s"
            (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Destroying));
-    deps.report "\nReleasing the application workloads...";
-    let released =
-      match deps.release_workloads () with
-      | Workloads_released -> Ok ()
-      | Workloads_not_applicable reason ->
-        degrade "the workload release" reason;
-        Ok ()
-      | Workloads_unestablished message when deps.accept_unreleased ->
-        degrade
-          "the workloads this target deployed could not be released"
-          (Printf.sprintf
-             "%s. --accept-unreleased was given, so the teardown continues; a managed \
-              database whose sessions they still hold may refuse to be dropped, and the \
-              absence check decides"
-             message);
-        Ok ()
-      | Workloads_unestablished message -> Error message
-    in
-    match released with
-    | Error message -> fail ~cleanup (Workload_release_unestablished message)
+    match deps.destroy_substrate () with
+    | Error message -> fail ~cleanup (Substrate_destroy_failed message)
     | Ok () ->
-      (match deps.destroy_substrate () with
-       | Error message -> fail ~cleanup (Substrate_destroy_failed message)
-       | Ok () ->
-         deps.report "\nVerifying teardown...";
-         let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
-         let verdict = Sol_cli_destroy_verification.classify observation in
-         if Sol_cli_destroy_verification.is_verified verdict
-         then succeed ~cleanup ~verification:observation preparation
-         else
-           fail
-             ~cleanup
-             ~verification:observation
-             (Verification_failed (Sol_cli_destroy_verification.verdict_message verdict)))
+      deps.report "\nVerifying teardown...";
+      let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
+      let verdict = Sol_cli_destroy_verification.classify observation in
+      if Sol_cli_destroy_verification.is_verified verdict
+      then succeed ~cleanup ~verification:observation preparation
+      else
+        fail
+          ~cleanup
+          ~verification:observation
+          (Verification_failed (Sol_cli_destroy_verification.verdict_message verdict))
   in
   match deps.require_credentials () with
   | Error message -> fail (Credentials_failed message)
@@ -432,23 +437,33 @@ let execute ~deps =
              | Sol_cli_cloud_lifecycle.Nothing_to_prepare
              | Sol_cli_cloud_lifecycle.Preparation_failed _ -> Nothing_prepared
            in
-           (match teardown ~deps ~substrate with
-            | Error (failure, cleanup) -> fail ~cleanup failure
-            | Ok (cleanup, teardown_degradations) ->
-              teardown_degradations
-              |> List.iter (fun message -> degradations := message :: !degradations);
-              (match cleanup with
-               | Cleanup_failed message ->
-                 degrade
-                   "elevated access"
-                   (Printf.sprintf
-                      "%s -- the binding this removes lives inside the cluster, so it is \
-                       removed with the substrate; destruction continues and the absence \
-                       check decides whether anything is left"
-                      message);
-                 destroy_and_verify ~cloud_exists ~cleanup ~preparation
-               | Cleanup_not_needed | Cleanup_succeeded ->
-                 destroy_and_verify ~cloud_exists ~cleanup ~preparation))))
+           let release =
+             if substrate = Substrate_absent
+             then Ok ()
+             else (
+               deps.report "\nReleasing the application workloads...";
+               release_decision (deps.release_workloads ()))
+           in
+           (match release with
+            | Error stopped -> stopped
+            | Ok () ->
+              (match teardown ~deps ~substrate with
+               | Error (failure, cleanup) -> fail ~cleanup failure
+               | Ok (cleanup, teardown_degradations) ->
+                 teardown_degradations
+                 |> List.iter (fun message -> degradations := message :: !degradations);
+                 (match cleanup with
+                  | Cleanup_failed message ->
+                    degrade
+                      "elevated access"
+                      (Printf.sprintf
+                         "%s -- the binding this removes lives inside the cluster, so it \
+                          is removed with the substrate; destruction continues and the \
+                          absence check decides whether anything is left"
+                         message);
+                    destroy_and_verify ~cloud_exists ~cleanup ~preparation
+                  | Cleanup_not_needed | Cleanup_succeeded ->
+                    destroy_and_verify ~cloud_exists ~cleanup ~preparation)))))
 ;;
 
 let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =
