@@ -998,3 +998,17 @@ contract is component availability (`readiness_checks`), the module requests cer
 unconditionally, and there is no supported "no TLS" configuration despite the refusal sentence that
 described one — so whether certificate issuance belongs in `Ready` is a product-semantic choice, with the
 unpublished-delegation case as its sharp edge. Nothing in the lifecycle changed.
+
+## Transactional outbox — local failure run (2026-10-01, `main @ 44e3061b`)
+
+Not a provider run. `FEAT-120` exercised the recommended composition
+(`domain transaction + outbox → Kafka fact → sol-worker → sol-jobs → retryable effect`) on the
+run-local path against an isolated broker and a dedicated database, because the failure
+scenarios need a broker that can be stopped without disturbing the shared one.
+
+Record: [`internal/qualification/records/2026-10-01-outbox-failure-qualification.md`](../qualification/records/2026-10-01-outbox-failure-qualification.md).
+
+Results: rollback, worker `Fail`, Kafka-unavailable-then-recovery, same-key ordering and relay
+restart observed (`PASS`); the crash-between-ack-and-mark and job-retry rows were not reached and
+are recorded as such. One finding: the representative consumer duplicates its domain row under a
+redelivered fact — **BUG-112**.
