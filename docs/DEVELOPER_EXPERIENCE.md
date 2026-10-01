@@ -9,7 +9,7 @@ build next.
 It is a *contract of intent*, not a status report. Every capability below is
 marked with where it stands today, so a reader is never told that something
 planned already works. The decisions this document rests on are recorded in
-[DEC-057](../internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-057.md) (the OSS developer
+[DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md) (the OSS developer
 experience contract) and `DEC-019` (the OSS/hosted boundary); the implementation
 of anything marked **Target** is tracked by a ticket, listed in
 [§ Where this is tracked](#where-this-is-tracked).
@@ -124,7 +124,7 @@ Internally, Sol has explicit `bootstrap`, `preflight`, `provision`, `platform`,
 `migration`, `deployment`, `verification` and `reconciliation` stages. Those
 stages exist for correctness and diagnosis. **They are not user-facing
 complexity**: on the happy path the user runs one command. The stage model is
-decided in [DEC-057](../internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-057.md), extending the
+decided in [DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md), extending the
 `bootstrap → preflight → apply` contract `DEC-043` left open.
 
 **Today:** the stages exist as code and as separate commands
@@ -320,9 +320,14 @@ authority over, and must ask for only the part that lives outside that authority
 - Surface ownership clearly: Sol-created durable zone, user-supplied zone, or
   externally managed parent delegation.
 
-**Today:** a durable delegated zone and its ownership rule exist for the
-qualification path and are decided in `DEC-042`/`DEC-043`; the product-level
-create/adopt/instruct/wait/verify flow is **Target** (FEAT-107).
+**Today:** the product-level flow exists (FEAT-107, decided in
+`DEC-042`/`DEC-043`): the durable root creates or adopts the delegated zone and
+records whose it is, prints the exact NS records to add when the publishing zone
+is elsewhere, and then waits for the delegation and confirms it **from a public
+resolver** rather than from written configuration (`sol cloud bootstrap <target>
+--apply`, bounded by `--await-delegation`). A resolver Sol cannot query is
+UNKNOWN, never a silent success. The ownership rules are enforced at teardown: a
+zone you supplied is never deleted.
 
 ---
 
@@ -444,7 +449,7 @@ into provider tools for the normal path.
 
 | Command / capability | Expected experience | Today |
 |---|---|---|
-| `sol deploy <target>` | Build, provision/reconcile, migrate, deploy, verify, return endpoints | **Today** (steps exist; first-run guidance **Target**) |
+| `sol deploy <target>` | Build, provision/reconcile, migrate, deploy, verify, return endpoints | **Today** (first run guides the installation, drives the environment and reaches it as the deploy identity — FEAT-106, DEC-058) |
 | `sol status [SCOPE]` | Environment and workload health in Sol terms | **Today**; cloud health/drift/last-operation **Target** (FEAT-090) |
 | `sol logs <unit>` | Application logs without `kubectl` or observability-tool knowledge | **Today** (Loki, with a `kubectl` fallback) |
 | `sol rollback` | Return to a recorded known release via Sol's release contract | **Today** |
@@ -726,7 +731,7 @@ The experience is achieved when:
 
 | Area | Record |
 |---|---|
-| The experience contract and its decisions | [DEC-057](../internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-057.md) |
+| The experience contract and its decisions | [DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md) |
 | OSS / hosted boundary | `DEC-019` |
 | Target addressing (no `--env`) | `DEC-016`, `DEC-032`, `DEC-031` |
 | Installation lifecycle implementation | INFRA-096 |
