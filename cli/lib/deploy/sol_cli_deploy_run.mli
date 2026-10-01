@@ -59,9 +59,17 @@ val surplus_workloads
   -> Sol_cli_deployment_plan.t
   -> Sol_cli_rollback.workload_identity list
 
+val confirm_consumer_groups
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> confirm_group_change:bool
+  -> Sol_cli_deployment_plan.t
+  -> (unit, string) result
+
 val apply
   :  context
   -> push_events:(Sol_cli_deploy_event.t list -> unit)
   -> report_success:(Sol_cli_executor.result list -> unit)
+  -> confirm_group_change:bool
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result

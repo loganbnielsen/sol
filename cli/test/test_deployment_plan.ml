@@ -1080,6 +1080,74 @@ let charge_svc_service : Sol_cli_manifest.service =
   }
 ;;
 
+let worker_unit ~domain ~name : Sol_cli_manifest.service =
+  { domain
+  ; name
+  ; primitive = Sol_cli_manifest.Worker
+  ; dir = Printf.sprintf "app/%s/%s" domain name
+  }
+;;
+
+let test_a_scoped_plan_carries_the_whole_workspace_group_set () =
+  let tmp = Filename.temp_dir "sol_test_plan_scoped_groups" "" in
+  with_cwd tmp (fun () ->
+    let notify = worker_unit ~domain:"comms" ~name:"notify_worker" in
+    let charge = worker_unit ~domain:"payments" ~name:"charge_worker" in
+    List.iter
+      (fun (s : Sol_cli_manifest.service) ->
+         mkdirs s.dir;
+         write_file (Filename.concat s.dir "sol.toml") "")
+      [ notify; charge ];
+    let declared =
+      Sol_cli_config.declared_of_config
+        (kafka_config [ "notify_worker"; "charge_worker" ])
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        ~facts:(facts ())
+        ~declared
+        ~inventory:[ notify; charge ]
+        ~requested_scope:"comms"
+        [ notify ]
+    with
+    | Ok plan ->
+      check_ids
+        "a scoped plan reports the workspace's complete group set, so the units it does \
+         not deploy are not read as removals"
+        Sol_cli_plan_ids.Consumer_group.to_string
+        [ consumer_group_exn "myworkspace.comms.notify_worker"
+        ; consumer_group_exn "myworkspace.payments.charge_worker"
+        ]
+        plan.Sol_cli_deployment_plan.consumer_groups
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
+let test_a_group_the_workspace_no_longer_declares_is_not_reported () =
+  let tmp = Filename.temp_dir "sol_test_plan_removed_group" "" in
+  with_cwd tmp (fun () ->
+    let notify = worker_unit ~domain:"comms" ~name:"notify_worker" in
+    mkdirs notify.dir;
+    write_file (Filename.concat notify.dir "sol.toml") "";
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        ~facts:(facts ())
+        ~declared:(Sol_cli_config.declared_of_config (kafka_config [ "notify_worker" ]))
+        [ notify ]
+    with
+    | Ok plan ->
+      check_ids
+        "a group whose worker is gone from the workspace is reported as removed, which \
+         is what the confirmation asks about"
+        Sol_cli_plan_ids.Consumer_group.to_string
+        [ consumer_group_exn "myworkspace.comms.notify_worker" ]
+        plan.Sol_cli_deployment_plan.consumer_groups
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
 let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
   { project = None
   ; target = Result.get_ok (Sol_cli_config.parse_target "prod/aws/us-east-1")
@@ -1808,6 +1876,14 @@ let () =
             `Quick
             test_consumer_groups_excludes_svc
         ; Alcotest.test_case "sorted" `Quick test_consumer_groups_sorted
+        ; Alcotest.test_case
+            "a scoped plan carries the whole workspace group set (BUG-088)"
+            `Quick
+            test_a_scoped_plan_carries_the_whole_workspace_group_set
+        ; Alcotest.test_case
+            "a group the workspace no longer declares is not reported (BUG-088)"
+            `Quick
+            test_a_group_the_workspace_no_longer_declares_is_not_reported
         ] )
     ; ( "of_services"
       , [ Alcotest.test_case

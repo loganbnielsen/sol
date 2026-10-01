@@ -209,6 +209,141 @@ let test_deploy_events_one_per_service () =
       (List.map (fun (e : Sol_cli_deploy_event.t) -> e.env) events))
 ;;
 
+let write_file path contents =
+  let oc = open_out path in
+  output_string oc contents;
+  close_out oc
+;;
+
+let read_file path =
+  try In_channel.with_open_text path In_channel.input_all with
+  | Sys_error _ -> ""
+;;
+
+let fake_kubectl ~dir =
+  Printf.sprintf
+    {|#!/bin/sh
+echo "$*" >> %s/calls.log
+name=""
+file=""
+previous=""
+for a in "$@"; do
+  if [ "$previous" = "-f" ]; then file="$a"; fi
+  case "$a" in
+    sol-boundary-lease-*|sol-deploy-state-*) name="$a" ;;
+  esac
+  previous="$a"
+done
+case " $* " in
+  *" create "*|*" replace "*)
+    if [ -n "$file" ] && grep -q sol-boundary-lease "$file" 2>/dev/null; then
+      cp "$file" %s/lease.json
+    fi
+    exit 0
+    ;;
+esac
+case "$name" in
+  sol-boundary-lease-*)
+    if [ -f %s/lease.json ]; then
+      cat %s/lease.json
+    else
+      printf 'Error from server (NotFound): configmaps "lease" not found\n' >&2
+      exit 1
+    fi
+    ;;
+  sol-deploy-state-*) printf 'alpha\nbravo' ;;
+esac
+exit 0
+|}
+    dir
+    dir
+    dir
+    dir
+;;
+
+let with_fake_kubectl f =
+  let dir = Filename.temp_file "sol-fake-kubectl-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let bin = Filename.concat dir "kubectl" in
+  write_file bin (fake_kubectl ~dir);
+  Unix.chmod bin 0o755;
+  let old_path =
+    try Sys.getenv "PATH" with
+    | Not_found -> ""
+  in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv "PATH" old_path)
+    (fun () -> f ~calls:(fun () -> read_file (Filename.concat dir "calls.log")))
+;;
+
+let consumer_group_exn s =
+  match Sol_cli_plan_ids.Consumer_group.of_string s with
+  | Ok group -> group
+  | Error message -> Alcotest.fail message
+;;
+
+let first_line_matching log needle =
+  let lines = String.split_on_char '\n' log in
+  let rec go index = function
+    | [] -> None
+    | line :: rest ->
+      if Sol_cli_string.contains ~needle line then Some index else go (index + 1) rest
+  in
+  go 0 lines
+;;
+
+let test_the_group_check_reads_the_record_under_the_lease () =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      let notify =
+        spec
+          ~domain:"comms"
+          ~name:"notify_worker"
+          ~k8s:"notify-worker"
+          Sol_cli_deployment_plan.Worker
+      in
+      let plan =
+        { (plan [ notify ]) with
+          consumer_groups = [ consumer_group_exn "myapp.comms.notify_worker" ]
+        }
+      in
+      let outcome =
+        Sol_cli_deploy_run.apply
+          ctx
+          ~confirm_group_change:false
+          ~push_events:(fun _ -> ())
+          ~report_success:(fun _ -> ())
+          plan
+      in
+      (match outcome with
+       | Ok () ->
+         Alcotest.fail
+           "a record the plan no longer carries must refuse the deploy before it applies"
+       | Error message ->
+         Alcotest.(check bool)
+           "the refusal names the groups the plan no longer carries"
+           true
+           (Sol_cli_string.contains ~needle:"no longer present" message));
+      let log = calls () in
+      let lease_at = first_line_matching log "sol-boundary-lease-myapp" in
+      let recorded_at = first_line_matching log "sol-deploy-state-myapp" in
+      (match lease_at, recorded_at with
+       | Some lease_at, Some recorded_at ->
+         Alcotest.(check bool)
+           "the record is read only after the lease boundary is written, so an update \
+            that landed in between cannot be missed"
+           true
+           (lease_at < recorded_at)
+       | None, _ -> Alcotest.failf "the deploy never took its boundary lease:\n%s" log
+       | _, None -> Alcotest.failf "the recorded groups were never read:\n%s" log);
+      Alcotest.(check bool)
+        "and nothing was applied, because the check refused first"
+        false
+        (Sol_cli_string.contains ~needle:" apply " log)))
+;;
+
 let () =
   Alcotest.run
     "deploy run"
@@ -226,5 +361,11 @@ let () =
     ; ( "deploy events (FEAT-071)"
       , [ Alcotest.test_case "one per service" `Quick test_deploy_events_one_per_service ]
       )
+    ; ( "consumer-group guard (BUG-088)"
+      , [ Alcotest.test_case
+            "the record is read under the boundary lease"
+            `Quick
+            test_the_group_check_reads_the_record_under_the_lease
+        ] )
     ]
 ;;

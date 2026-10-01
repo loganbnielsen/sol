@@ -27,21 +27,6 @@ let ensure_postgres_url () =
   | Some _ -> Ok ()
 ;;
 
-let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
-  match
-    Sol_cli_deployment_state.check_removed_groups
-      ~ctx
-      ~workspace
-      ~confirm_group_change
-      ~next:
-        (List.map
-           Sol_cli_plan_ids.Consumer_group.to_string
-           plan.Sol_cli_deployment_plan.consumer_groups)
-  with
-  | Ok () -> Ok ()
-  | Error msg -> Error (Sol_cli_exit.failure msg)
-;;
-
 let check_apply_environment ~facts ~services =
   let* () = check_contract ~facts ~services in
   ensure_postgres_url ()
@@ -614,13 +599,6 @@ let run_apply
       ()
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
-  let* () =
-    check_consumer_group_changes
-      ~ctx:ctx.execution.cluster
-      ~workspace:ctx.execution.workspace
-      ~confirm_group_change
-      plan
-  in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
   let* () =
@@ -637,6 +615,7 @@ let run_apply
   record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
     ctx
+    ~confirm_group_change
     ~push_events:
       (push_deploy_events
          ~ctx:ctx.execution.cluster

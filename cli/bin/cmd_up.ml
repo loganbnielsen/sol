@@ -35,21 +35,6 @@ let ensure_postgres_url () =
   | Some _ -> ()
 ;;
 
-let check_consumer_group_changes ~workspace ~confirm_group_change plan =
-  match
-    Sol_cli_deployment_state.check_removed_groups
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~workspace
-      ~confirm_group_change
-      ~next:
-        (List.map
-           Sol_cli_plan_ids.Consumer_group.to_string
-           plan.Sol_cli_deployment_plan.consumer_groups)
-  with
-  | Ok () -> Ok ()
-  | Error msg -> Error (Sol_cli_exit.failure msg)
-;;
-
 let prepare_context ~repo_root =
   Printf.printf "Preparing build context...\n%!";
   Sol_cli_up_execution.prepare_build_context ~repo_root
@@ -375,7 +360,6 @@ let run_apply
       ~declared
       ~services
   in
-  let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
   let pf_failed = ref false in
   let result =
     Sol_cli_boundary_epoch.run
@@ -389,7 +373,15 @@ let run_apply
               ~wait_s:0.
               f)
       ; read_boundary_holding =
-          (fun _lease ->
+          (fun lease ->
+            let* () = Sol_cli_boundary_lease.ensure_held lease in
+            let* () =
+              Sol_cli_deploy_run.confirm_consumer_groups
+                ~ctx:cluster
+                ~workspace
+                ~confirm_group_change
+                plan
+            in
             Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan)
       ; apply =
           (fun lease retained ->

@@ -193,6 +193,17 @@ let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_i
     })
 ;;
 
+let confirm_consumer_groups ~ctx ~workspace ~confirm_group_change plan =
+  Sol_cli_deployment_state.check_removed_groups
+    ~ctx
+    ~workspace
+    ~confirm_group_change
+    ~next:
+      (List.map
+         Sol_cli_plan_ids.Consumer_group.to_string
+         plan.Sol_cli_deployment_plan.consumer_groups)
+;;
+
 let read_previous_release ctx =
   match
     Sol_cli_release_store.current
@@ -298,7 +309,7 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
         ~image)
 ;;
 
-let apply ctx ~push_events ~report_success plan =
+let apply ctx ~push_events ~report_success ~confirm_group_change plan =
   Sol_cli_boundary_lease.with_boundary_lease
     ~ctx:ctx.execution.cluster
     ~workspace:ctx.execution.workspace
@@ -306,6 +317,14 @@ let apply ctx ~push_events ~report_success plan =
     ~ttl:Sol_cli_boundary_lease.default_ttl_s
     ~wait_s:0.
     (fun lease ->
+       let* () = Sol_cli_boundary_lease.ensure_held lease in
+       let* () =
+         confirm_consumer_groups
+           ~ctx:ctx.execution.cluster
+           ~workspace:ctx.execution.workspace
+           ~confirm_group_change
+           plan
+       in
        let previous = read_previous_release ctx in
        let* retained =
          Sol_cli_release_store.retained_for_plan
