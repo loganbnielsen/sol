@@ -686,6 +686,53 @@ grep -E -- 'cloud/gcp/cluster destroy ' "$unreachable_log" >/dev/null || {
   exit 1
 }
 
+rm -f "$FAIL_MARKER_DIR/pods-released"
+unreadable_state_log="$tmp/state-unreadable-destroy.log"
+if (cd "$tmp/work" && DESTROYING=1 STATE_LIST_FAILS=1 \
+      LIFECYCLE_LOG="$unreadable_state_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$unreadable_state_log.out" 2>&1
+then
+  cat "$unreadable_state_log.out" >&2
+  echo "a destroy whose state cannot be listed must refuse, not proceed (BUG-094)" >&2
+  exit 1
+fi
+grep -F 'terraform state list failed with exit 1' "$unreadable_state_log.out" >/dev/null || {
+  echo "the refusal did not carry the command that failed (BUG-094):" >&2
+  cat "$unreadable_state_log.out" >&2
+  exit 1
+}
+grep -F 'not an absence' "$unreadable_state_log.out" >/dev/null || {
+  echo "the unreadable listing was not distinguished from an absent one (BUG-094):" >&2
+  cat "$unreadable_state_log.out" >&2
+  exit 1
+}
+if grep -E -- 'cloud/gcp/(cluster|platform) destroy ' "$unreadable_state_log" >/dev/null; then
+  echo "the refusal destroyed part of the target anyway (BUG-094):" >&2
+  grep -F 'terraform' "$unreadable_state_log" >&2
+  exit 1
+fi
+
+unreadable_apply_log="$tmp/state-unreadable-apply.log"
+rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && STATE_LIST_FAILS=1 LIFECYCLE_LOG="$unreadable_apply_log" \
+      "$sol" cloud apply prod/gcp/us-central1) >"$unreadable_apply_log.out" 2>&1
+then
+  cat "$unreadable_apply_log.out" >&2
+  echo "an apply whose state cannot be listed must refuse, not plan as if nothing is there" >&2
+  exit 1
+fi
+grep -F 'terraform state list failed with exit 1' "$unreadable_apply_log.out" >/dev/null || {
+  echo "the apply did not carry the command that failed (BUG-094):" >&2
+  cat "$unreadable_apply_log.out" >&2
+  exit 1
+}
+if grep -F 'requires cloud substrate to exist' "$unreadable_apply_log.out" >/dev/null; then
+  echo "the apply reported the unknown state as a confirmed absence (BUG-094):" >&2
+  cat "$unreadable_apply_log.out" >&2
+  exit 1
+fi
+
 gcp_destroy_log="$tmp/gcp-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$gcp_destroy_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \

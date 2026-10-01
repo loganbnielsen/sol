@@ -161,6 +161,7 @@ type calls =
   ; mutable init : int
   ; mutable observe : int
   ; mutable prepare : state_read list
+  ; mutable outputs : int
   ; mutable reconcile : int
   ; mutable platform : int
   ; mutable remove : int
@@ -195,6 +196,7 @@ let fake_deps
     ; init = 0
     ; observe = 0
     ; prepare = []
+    ; outputs = 0
     ; reconcile = 0
     ; platform = 0
     ; remove = 0
@@ -217,7 +219,10 @@ let fake_deps
         (fun () ->
           calls.observe <- calls.observe + 1;
           state)
-    ; cloud_outputs = (fun () -> outputs)
+    ; cloud_outputs =
+        (fun () ->
+          calls.outputs <- calls.outputs + 1;
+          outputs)
     ; prepare =
         (fun ~state ->
           calls.prepare <- state :: calls.prepare;
@@ -960,7 +965,125 @@ let test_a_target_with_no_substrate_has_no_release_to_run () =
      that is not there"
     [ "substrate" ]
     (List.rev calls.order);
-  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate;
+  Alcotest.(check int)
+    "and the install outputs are not read: with nothing represented there is no platform \
+     to wire, so there is no cloud read to fail on either"
+    0
+    calls.outputs
+;;
+
+let test_an_unreadable_state_listing_refuses_before_anything_is_destroyed () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~outputs:(Outputs_unreadable "terraform state list failed with exit 1")
+      ()
+  in
+  let outcome = execute ~deps in
+  let text = Sol_cli_cloud_destroy.completion_message outcome in
+  (match outcome with
+   | Destroy_failed
+       { failure = Outputs_unreadable message; verification = None; cleanup; _ } ->
+     Alcotest.(check bool)
+       "the refusal carries the read that failed, which is the state listing"
+       true
+       (Sol_cli_string.contains ~needle:"terraform state list failed with exit 1" message);
+     Alcotest.(check bool)
+       "and the refusal says what an unreadable listing means, so it is not read as an \
+        absence"
+       true
+       (Sol_cli_string.contains ~needle:"could not be listed" text
+        && Sol_cli_string.contains ~needle:"not an absence" text);
+     Alcotest.(check bool)
+       "the completion message is a refusal, not a teardown that failed to converge"
+       true
+       (not (Sol_cli_string.contains ~needle:"did not converge" text));
+     Alcotest.(check bool)
+       "and it destroys nothing, so no elevated access was opened either"
+       true
+       (cleanup = Cleanup_not_needed)
+   | _ ->
+     Alcotest.fail
+       "a destroy with a represented substrate whose state cannot be listed must refuse \
+        before it destroys anything, rather than skip the platform teardown");
+  Alcotest.(check (list string))
+    "nothing at all runs, not even the workload release, so a refusal leaves the target \
+     as it found it"
+    []
+    calls.order;
+  Alcotest.(check int) "no elevated access was acquired" 0 calls.reconcile;
+  Alcotest.(check int) "the platform teardown never ran" 0 calls.platform;
+  Alcotest.(check int) "the binding was not removed" 0 calls.remove;
+  Alcotest.(check int) "the substrate was not destroyed" 0 calls.substrate;
+  Alcotest.(check int) "and absence was never verified" 0 calls.verify;
+  Alcotest.(check int) "the refusal is a failure" exit_failure (exit_code outcome)
+;;
+
+let test_a_confirmed_absent_listing_keeps_the_degraded_destroy_policy () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~outputs:(Outputs_unavailable "no install outputs are published")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = []; _ } -> ()
+   | Destroy_succeeded _ ->
+     Alcotest.fail
+       "a confirmed absent listing is a warning about a skipped platform teardown, not a \
+        degradation of the destroy itself"
+   | _ ->
+     Alcotest.fail
+       "a confirmed absent listing keeps the existing degraded-destroy policy instead of \
+        refusing");
+  Alcotest.(check int)
+    "the platform teardown could not be wired, so it was skipped rather than attempted"
+    0
+    calls.platform;
+  Alcotest.(check int) "so no elevated access was needed either" 0 calls.reconcile;
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate;
+  Alcotest.(check int) "and absence was still verified" 1 calls.verify;
+  Alcotest.(check int) "so the destroy is clean" exit_clean (exit_code outcome)
+;;
+
+let test_an_unreadable_state_observation_is_not_the_refusal () =
+  let deps, calls =
+    fake_deps
+      ~state:(Error "the state backend refused the read")
+      ~outputs:(Outputs_unreadable "terraform state list failed with exit 1")
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        { Sol_cli_destroy_verification.state =
+            Sol_cli_destroy_verification.State_unreadable "permission denied"
+        ; sweep =
+            Sol_cli_destroy_verification.Sweep_ran { residues = []; indeterminate = [] }
+        ; retention =
+            Sol_cli_destroy_verification.Retention_not_required
+              "this target declares none"
+        })
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed _; _ } -> ()
+   | Destroy_failed { failure = Outputs_unreadable _; _ } ->
+     Alcotest.fail
+       "when the state observation itself failed there is no represented substrate and \
+        no platform teardown to protect, so this is not the state-listing refusal"
+   | _ ->
+     Alcotest.fail
+       "an unreadable state observation proceeds to the substrate destroy, where the \
+        absence check is what fails closed");
+  Alcotest.(check int)
+    "the refusal needs a represented substrate, so the install outputs are not even read"
+    0
+    calls.outputs;
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate;
+  Alcotest.(check int)
+    "and the run does not claim a clean destruction"
+    exit_failure
+    (exit_code outcome)
 ;;
 
 let unestablished_release =
@@ -2294,6 +2417,18 @@ let () =
             "a target with no substrate has no release to run"
             `Quick
             test_a_target_with_no_substrate_has_no_release_to_run
+        ; Alcotest.test_case
+            "an unreadable state listing refuses before anything is destroyed (BUG-094)"
+            `Quick
+            test_an_unreadable_state_listing_refuses_before_anything_is_destroyed
+        ; Alcotest.test_case
+            "a confirmed absent listing keeps the degraded destroy policy"
+            `Quick
+            test_a_confirmed_absent_listing_keeps_the_degraded_destroy_policy
+        ; Alcotest.test_case
+            "an unreadable state observation is not the refusal"
+            `Quick
+            test_an_unreadable_state_observation_is_not_the_refusal
         ; Alcotest.test_case
             "an unestablished release stops before the substrate (DEC-059)"
             `Quick

@@ -410,7 +410,10 @@ let apply_deps
            ()))
   in
   { Sol_cli_cloud_apply.substrate_exists =
-      (fun () -> cluster_of ~target_cfg provider infra_dir |> Result.map Option.is_some)
+      (fun () ->
+        cluster_of ~target_cfg provider infra_dir
+        |> Result.map Option.is_some
+        |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
   ; plan =
       (fun () ->
         let* () =
@@ -446,7 +449,10 @@ let apply_deps
           (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
              Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
   ; discard_plan
-  ; outputs = (fun () -> cluster_of ~target_cfg provider infra_dir)
+  ; outputs =
+      (fun () ->
+        cluster_of ~target_cfg provider infra_dir
+        |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
   ; open_window =
       (fun cluster ->
         match cluster.bootstrap_window with
@@ -602,7 +608,10 @@ let plan ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs) =
       "Platform substrate"
       (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist");
     Ok ()
-  | Error message -> Error (Sol_cli_cloud_apply.Refused message)
+  | Error failure ->
+    Error
+      (Sol_cli_cloud_apply.Refused
+         (Sol_cli_provider_registry.resolution_failure_to_string failure))
   | Ok (Some cluster) ->
     let* platform_vars = platform_vars_of_result ~cloud_target ~cluster () |> refused in
     with_cluster_access
@@ -711,11 +720,11 @@ let destroy_preview ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs)
         "  Platform destroy DEFERRED — no install outputs are published, so the platform \
          teardown cannot be wired.";
       Ok ()
-    | Error reason ->
+    | Error failure ->
       Sol_cli_report.app
         "  Platform destroy DEFERRED — install outputs are unavailable (%s), so the \
          platform teardown cannot be wired."
-        reason;
+        (Sol_cli_provider_registry.resolution_failure_to_string failure);
       Ok ()
   in
   terraform_outcome
@@ -906,7 +915,11 @@ let destroy_deps
             Sol_cli_cloud_destroy.Outputs_available
           | Ok None ->
             Sol_cli_cloud_destroy.Outputs_unavailable "no install outputs are published"
-          | Error reason -> Sol_cli_cloud_destroy.Outputs_unavailable reason)
+          | Error (Sol_cli_provider_registry.State_unreadable reason) ->
+            Sol_cli_cloud_destroy.Outputs_unreadable reason
+          | Error failure ->
+            Sol_cli_cloud_destroy.Outputs_unavailable
+              (Sol_cli_provider_registry.resolution_failure_to_string failure))
     ; prepare =
         (fun ~state ->
           let outcome =

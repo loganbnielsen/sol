@@ -172,6 +172,14 @@ is still idempotent, and a cluster that cannot be reached is recorded as a degra
 than blocking a teardown that would otherwise be stranded. `--accept-unreleased` destroys
 anyway, and the run records that the absence check, not the release, decided the outcome.
 
+A target whose **Terraform state cannot be listed** is refused rather than destroyed. The
+state listing is what distinguishes a readable `terraform output` from a confirmed absence, so
+a listing that fails while the outputs are readable is the shape of a transient or an
+authorization failure — not evidence that no cluster exists. Destroy exits 1 having destroyed
+nothing and says so, and `sol cloud apply` reports the same read failure rather than planning
+as though the target were never provisioned. A state that lists nothing is a confirmed
+absence, and keeps the documented degraded destroy.
+
 Destroy **verifies absence independently** (`DEC-044`, `DEC-040`): after Terraform
 converges, Sol re-observes the provider and reports what is absent, what is retained, and
 what it could not observe. An unqueryable answer is `UNKNOWN` and fails closed — a command

@@ -87,7 +87,12 @@ def main():
     )
 
     tmp = scratch()
-    mutate(tmp, DESTROY, "(Release_unestablished", "(Verification_failed")
+    mutate(
+        tmp,
+        DESTROY,
+        "(Release_unestablished (Sol_cli_workload_scope.failure_to_string failure))",
+        "(Verification_failed (Sol_cli_workload_scope.failure_to_string failure))",
+    )
     expect_rejected(
         "the-release-no-longer-raises-the-stop",
         tmp,
