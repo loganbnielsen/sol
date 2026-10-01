@@ -330,7 +330,7 @@ let declared_workload_namespaces () =
     |> List.sort_uniq String.compare
 ;;
 
-let cloud_destroy ~target ~var_file ~vars ~accept_unreleased ~action () =
+let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
   let* () = check_terraform () in
   let* provider = provider_of_target_path target in
   let pname = Sol_cli_provider.to_string provider in
@@ -870,14 +870,14 @@ let accept_unreleased_flag =
     value
     & flag
     & info
-        [ "accept-unreleased" ]
+        [ Sol_cli_cloud_destroy.accept_unreleased_flag ]
         ~doc:
-          "Destroy the substrate although the application workloads could not be \
-           released. Without it a destroy that cannot establish the workloads are gone \
-           stops before it destroys anything, because a managed database whose sessions \
-           they still hold may refuse the drop or, on a provider that does not refuse, \
-           be dropped while the application is still attached. Use it only when the \
-           workloads are known to be gone or the data is expendable.")
+          "Destroy even though the application workloads this target deployed could not \
+           be established as released. A supported destroy releases those workloads and \
+           waits for their pods before it destroys the substrate, so a provider is never \
+           asked to drop durable application state while the workloads that own it may \
+           still be running. Without this flag such a destroy stops before the substrate \
+           and destroys nothing.")
 ;;
 
 let plan_cmd =
@@ -920,46 +920,46 @@ let destroy_cmd =
   let man =
     [ `S Manpage.s_description
     ; `P
-        "Destruction stops before the substrate when the application workloads cannot be \
-         released. The release exists so a managed database is not asked to drop while \
-         the workloads that own it still hold connections; when it cannot establish that \
-         they are gone, the failure is reported, nothing is destroyed, and no absence is \
-         claimed. `--accept-unreleased` proceeds anyway, accepting that their sessions \
-         may make the teardown fail or leave the database to be dropped with the \
-         application still attached. A release that could not run because there is no \
-         reachable cluster is reported and destruction continues: there the workloads \
-         cannot be running, and blocking would strand the substrate."
+        "Destruction proceeds even when a best-effort preparation -- lowering a deletion \
+         guard -- fails or its plan is refused: the failure is reported, the unsafe \
+         apply is never executed, and what Terraform represents is still destroyed. Only \
+         a failure that stands for a destruction-time guarantee the target itself \
+         declared (such as `destroy_retention: final-snapshot`, which could not be \
+         prepared) blocks destruction and leaves the target standing."
     ; `P
-        "A best-effort preparation -- lowering a deletion guard -- that fails or whose \
-         plan is refused is different: the failure is reported, the unsafe apply is \
-         never executed, and what Terraform represents is still destroyed. Only a \
-         failure that stands for a destruction-time guarantee the target itself declared \
-         (such as `destroy_retention: final-snapshot`, which could not be prepared) or \
-         an unestablished workload release blocks destruction and leaves the target \
-         standing."
+        "Before the substrate is destroyed, the workloads this target deployed are \
+         released -- discovered in the target's declared namespaces, removed by name, \
+         and waited on until their pods are gone -- so a provider is never asked to drop \
+         durable application state while the workloads that own it may still be running. \
+         A destroy that cannot establish that the workloads are gone stops before the \
+         substrate: it destroys nothing, claims no absence, and exits 1 naming the \
+         namespace, the kind and the operation that failed. The precondition does not \
+         apply when there is no cluster to release from (the substrate is absent, or the \
+         cluster cannot be reached), and `--accept-unreleased` destroys anyway, \
+         recording that the absence check, not the release, decided the outcome."
     ; `S "EXIT STATUS"
     ; `P
         "0 -- destruction reached absence and it was verified. A best-effort preparation \
          that failed or was refused does not change this (REFAC-094): each one is \
-         reported on stderr as a warning, as is a release that could not run because no \
-         cluster was reachable."
+         reported on stderr as a warning."
     ; `P
         "1 -- destruction did not reach its postcondition: it failed, it was blocked by \
-         a declared guarantee, it stopped because the application workloads could not be \
-         released, absence could not be verified, or the elevated bootstrap access could \
-         not be removed. The reason is named on stderr."
+         a declared guarantee, the application workloads could not be established as \
+         released (nothing was destroyed, and nothing is claimed absent), absence could \
+         not be verified, or the elevated bootstrap access could not be removed. The \
+         reason is named on stderr."
     ; `P "No other code is used by this command."
     ]
   in
   Cmd.v
     (Cmd.info "destroy" ~doc ~man)
     Term.(
-      const (fun target var_file vars accept_unreleased action ->
+      const (fun target var_file vars action accept_unreleased ->
         Sol_cli_exit.exit_on
-          (cloud_destroy ~target ~var_file ~vars ~accept_unreleased ~action ()))
+          (cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased ()))
       $ target_arg
       $ var_file_arg
       $ var_arg
-      $ accept_unreleased_flag
-      $ action_term)
+      $ action_term
+      $ accept_unreleased_flag)
 ;;

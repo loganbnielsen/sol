@@ -54,6 +54,11 @@ def expect_rejected(name, tmp, needle):
     print(f"  rejected: {name}")
 
 
+DESTROY = "cli/lib/cloud/sol_cli_cloud_destroy.ml"
+SCOPE = "cli/lib/cloud/sol_cli_workload_scope.ml"
+WIRING = "cli/lib/cloud/sol_cli_cloud_wiring.ml"
+
+
 def main():
     result = run(ROOT)
     if result.returncode != 0:
@@ -62,78 +67,95 @@ def main():
         sys.exit(1)
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        "      match deps.release_workloads () with",
-        "      match deps.destroy_substrate () with",
-    )
+    mutate(tmp, DESTROY, "release_decision (deps.release_workloads ())", "Ok ()")
     expect_rejected("no-release", tmp, "no longer releases the workloads")
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        """    match released with
-    | Error message -> fail ~cleanup (Workload_release_unestablished message)""",
-        """    match released with
-    | Error message -> ignore message""",
-    )
+    mutate(tmp, DESTROY, "| Error stopped -> stopped", "| Error _ -> Ok ()")
     expect_rejected(
-        "unestablished-release-no-longer-stops",
+        "release-stop-discarded",
         tmp,
-        "no longer stops the destroy before the substrate",
+        "no longer returns the unestablished release",
+    )
+
+    tmp = scratch()
+    mutate(tmp, DESTROY, "if deps.accept_unreleased", "if true")
+    expect_rejected(
+        "override-no-longer-gates-the-stop",
+        tmp,
+        "no longer gates the stop",
+    )
+
+    tmp = scratch()
+    mutate(tmp, DESTROY, "(Release_unestablished", "(Verification_failed")
+    expect_rejected(
+        "the-release-no-longer-raises-the-stop",
+        tmp,
+        "no longer fails the destroy",
     )
 
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        "| Workloads_unestablished message when deps.accept_unreleased ->",
-        "| Workloads_unestablished message when false ->",
+        "cli/lib/cloud/sol_cli_cloud_destroy.mli",
+        "| Release_unestablished of string",
+        "| Verification_failed of string",
     )
     expect_rejected(
-        "the-explicit-override-is-dropped",
+        "the-stop-is-not-its-own-failure",
         tmp,
-        "no longer consulted",
+        "no longer names an unestablished workload release as its own failure",
+    )
+
+    tmp = scratch()
+    mutate(tmp, DESTROY, "if substrate = Substrate_absent", "if false")
+    expect_rejected(
+        "no-substrate-carve-out",
+        tmp,
+        "no longer skips the release",
+    )
+
+    tmp = scratch()
+    mutate(tmp, DESTROY, "let release_decision release =", "let release_decision _ =")
+    expect_rejected(
+        "the-release-outcome-is-not-classified",
+        tmp,
+        "longer classifies its outcome",
     )
 
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
-        "Sol_cli_kubectl.cluster_unreachable e",
-        "false",
-        count=2,
+        DESTROY,
+        'deps.report "\\nReleasing the application workloads...";',
+        'deps.report "\\nReleasing the application workloads...";\n               ignore Sol_cli_release_store.list;',
     )
-    expect_rejected(
-        "an-unreachable-cluster-is-no-longer-distinguished",
-        tmp,
-        "no longer tells an unreachable cluster apart",
-    )
+    expect_rejected("scope-read-from-the-release-store", tmp, "reads release-store state")
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
-        '"-n"; namespace',
-        '"--all-namespaces"; namespace',
-        count=2,
-    )
+    mutate(tmp, SCOPE, '"-n"; namespace', '"--all-namespaces"; namespace')
     expect_rejected("read-is-cluster-wide", tmp, "cluster-wide again")
 
     tmp = scratch()
-    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"workspace=" ^ workspace', '"app=" ^ workspace')
+    mutate(tmp, SCOPE, '"workspace=" ^ workspace', '"app=" ^ workspace')
     expect_rejected("read-selects-a-different-label", tmp, "ownership label Sol renders")
 
     tmp = scratch()
-    mutate(tmp, "cli/lib/cloud/sol_cli_workload_scope.ml", '"--for=delete"', '"--for=ready"')
+    mutate(tmp, SCOPE, '"--for=delete"', '"--for=ready"')
     expect_rejected("release-stops-waiting-for-the-pods", tmp, "no longer waits")
+
+    tmp = scratch()
+    mutate(tmp, SCOPE, '"--ignore-not-found"', '"--wait=false"')
+    expect_rejected(
+        "removal-stops-tolerating-an-absent-object",
+        tmp,
+        "no longer tolerates a workload that is already gone",
+    )
 
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        SCOPE,
         '[ "spec"; "template"; "metadata"; "labels" ]',
         '[ "metadata"; "labels" ]',
     )
@@ -144,12 +166,7 @@ def main():
     )
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
-        '[ "spec"; "jobTemplate" ]',
-        '[ "metadata" ]',
-    )
+    mutate(tmp, SCOPE, '[ "spec"; "jobTemplate" ]', '[ "metadata" ]')
     expect_rejected(
         "cronjob-template-forgotten",
         tmp,
@@ -159,7 +176,7 @@ def main():
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        SCOPE,
         "let kinds = [ Deployment; CronJob; Job; Rollout ]",
         "let kinds = [ Deployment; CronJob; Job ]",
     )
@@ -168,7 +185,7 @@ def main():
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        SCOPE,
         '[ "get"; resource_of_kind kind; "-n"; namespace; "--output"; "json" ]',
         '[ "get"; "deployment,cronjob,job,rollout"; "-n"; namespace; "--output"; "json" ]',
     )
@@ -181,9 +198,9 @@ def main():
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
-        "Sol_cli_workload_scope.optional_kind kind",
-        "true",
+        SCOPE,
+        "Sol_cli_kubectl.No_resource_type when optional_kind kind",
+        "Sol_cli_kubectl.No_resource_type when true",
     )
     expect_rejected(
         "an-unserved-kind-is-no-longer-absence",
@@ -192,22 +209,53 @@ def main():
     )
 
     tmp = scratch()
-    mutate(
+    mutate(tmp, SCOPE, "Sol_cli_kubectl.Not_found", "Sol_cli_kubectl.Conflict")
+    expect_rejected(
+        "namespace-absence-is-no-longer-absence",
         tmp,
-        "cli/lib/cloud/sol_cli_workload_scope.ml",
-        "  @ names\n",
-        "  @ [ \"deployment,cronjob,job\" ]\n",
+        "no longer absence of that scope",
     )
+
+    tmp = scratch()
+    mutate(tmp, SCOPE, "Unreachable when not contacted", "Unreachable when not false")
+    expect_rejected(
+        "an-unreachable-cluster-is-unbounded",
+        tmp,
+        "no longer bounded to before the",
+    )
+
+    tmp = scratch()
+    mutate(tmp, SCOPE, "  @ names\n", "  @ [ \"deployment,cronjob,job\" ]\n")
     expect_rejected("removal-goes-back-to-a-selector", tmp, "no longer names the workloads")
 
     tmp = scratch()
     mutate(
         tmp,
-        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
+        WIRING,
         "match Sol_cli_config.destination_of_target target_cfg with",
-        "match Ok Sol_cli_kube_destination.local with",
+        "match Ok (Sol_cli_kube_destination.context_of_destination Sol_cli_kube_destination.local) with",
     )
-    expect_rejected("release-runs-as-the-platform-identity", tmp, "no longer runs as the target's deploy identity")
+    expect_rejected(
+        "release-runs-as-the-platform-identity",
+        tmp,
+        "no longer runs as the target's deploy identity",
+    )
+
+    tmp = scratch()
+    mutate(tmp, WIRING, "read_workloads ~run", "read_nothing")
+    expect_rejected(
+        "the-release-no-longer-runs-discovery",
+        tmp,
+        "no longer runs the workload discovery",
+    )
+
+    tmp = scratch()
+    mutate(tmp, WIRING, "~accept_unreleased", "~accept_unreleased_removed")
+    expect_rejected(
+        "the-override-is-not-passed-through",
+        tmp,
+        "no longer carries the operator's override",
+    )
 
     tmp = scratch()
     mutate(
@@ -222,31 +270,47 @@ def main():
     tmp = scratch()
     mutate(
         tmp,
+        "cli/bin/cmd_cloud_tf.ml",
+        "[ Sol_cli_cloud_destroy.accept_unreleased_flag ]",
+        "[ Sol_cli_cloud_destroy.accept_unreleased_flag; \"--force\" ]",
+    )
+    expect_rejected("the-override-becomes-a-generic-force", tmp, "a blanket --force was added")
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/bin/cmd_cloud_tf.ml",
+        "Sol_cli_cloud_destroy.accept_unreleased_flag",
+        '"accept-it-anyway"',
+    )
+    expect_rejected(
+        "the-override-is-declared-under-another-name",
+        tmp,
+        "no longer declares the override under the one name",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
         "cli/lib/cloud/dune",
         "(libraries sol_cli_base sol_cli_kube sol_cli_workspace unix yojson)",
         "(libraries sol_cli_base sol_cli_kube sol_cli_workspace sol_cli_deploy unix yojson)",
     )
     expect_rejected("cloud-depends-on-deploy", tmp, "inverting the library graph")
 
-    tmp = scratch()
-    mutate(
-        tmp,
-        "cli/lib/cloud/sol_cli_cloud_destroy.ml",
-        "    deps.report \"\\nReleasing the application workloads...\";",
-        "    deps.report \"\\nReleasing the application workloads...\";\n    ignore Sol_cli_release_store.list;",
-    )
-    expect_rejected("scope-read-from-the-release-store", tmp, "reads release-store state")
-
     print("test_workload_release_order_check: the guard accepts the real tree and rejects a destroy")
-    print("  that drops the release, one that no longer stops before the substrate when the release")
-    print("  is unestablished, one that drops the explicit override, one that stops distinguishing an")
-    print("  unreachable cluster, one that reads cluster-wide, one that selects a different label,")
-    print("  one that stops waiting, one that reads the workload object instead of its pod template,")
-    print("  one that forgets where a CronJob's template is, one that drops the progressive-delivery")
-    print("  Rollout from the kinds it covers, one that reads the kinds in a single listing again, one")
-    print("  that reads an unserved kind as a failed release, one that selects the objects instead of")
-    print("  naming them, one that keeps the platform identity, one that drops the declared scope, one")
-    print("  that inverts the layer graph, and one that reads the scope from the release store")
+    print("  that drops the release, one that discards the stop, one whose override no longer gates")
+    print("  it, one that reports the stop as another failure, one with no absent-substrate")
+    print("  carve-out, one that stops classifying the outcome, one that reads the scope from the")
+    print("  release store, ones that read cluster-wide or under a different label, one that stops")
+    print("  waiting, one that stops tolerating an absent object, ones that read the workload object")
+    print("  instead of its pod template or forget a CronJob's template, ones that drop the")
+    print("  progressive-delivery Rollout or read the kinds in one listing, ones that stop reading")
+    print("  an unserved kind or an absent namespace as absence, one that leaves the reachable-cluster")
+    print("  carve-out unbounded, one that selects the objects instead of naming them, one that keeps")
+    print("  the platform identity, one that stops running discovery, one that drops the override on")
+    print("  the way to the destroy, one that drops the declared scope, ones that widen the override")
+    print("  into a generic force or rename it, and one that inverts the layer graph")
 
 
 main()

@@ -148,11 +148,29 @@ let test_kubectl_classify () =
   let unrelated =
     failed "Unable to connect to the server: net/http: TLS handshake timeout"
   in
-  is Sol_cli_kubectl.Other "unreachable is Other" unrelated;
+  is Sol_cli_kubectl.Unreachable "no server to talk to" unrelated;
+  let no_context = failed "error: current-context is not set" in
+  is Sol_cli_kubectl.Unreachable "no kubeconfig context names a cluster" no_context;
+  let no_server = failed {|error: no server found for cluster "sol-qualification"|} in
+  is Sol_cli_kubectl.Unreachable "the kubeconfig names no server" no_server;
+  let answered_but_sick =
+    failed "error: the server is currently unable to handle the request"
+  in
+  is
+    Sol_cli_kubectl.Other
+    "a server that answered and refused to serve is not unreachable"
+    answered_but_sick;
   let prose = failed "the configmap was NotFound in my notes" in
   is Sol_cli_kubectl.Other "a reason word in prose is not a reason" prose;
   let timeout = Sol_cli_process.Timeout 15. in
   is Sol_cli_kubectl.Other "timeout is Other" timeout;
+  let kubectl_missing =
+    Sol_cli_process.Spawn_failed "kubectl: No such file or directory"
+  in
+  is
+    Sol_cli_kubectl.Other
+    "a kubectl that could not run at all is not a cluster that cannot be reached"
+    kubectl_missing;
   let forbidden =
     failed {|Error from server (Forbidden): secrets is forbidden: User "x" cannot get|}
   in
