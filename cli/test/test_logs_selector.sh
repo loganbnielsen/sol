@@ -37,7 +37,8 @@ run_logs() {
     "$sol" local logs --scope "$scope" --no-follow 2>&1)"
   rc=$?
   set -e
-  selector="$(rg -N --no-line-number -o -P '(?<=query=).*' "$tmp/argv" 2>/dev/null || echo MISSING)"
+  selector="$(sed -n 's/^query=//p' "$tmp/argv" 2>/dev/null | head -n 1 || true)"
+  if [ -z "$selector" ]; then selector=MISSING; fi
 }
 
 run_logs payments/charge-svc
@@ -51,8 +52,6 @@ esac
 run_logs comms/notify-worker
 check "another unit in this workspace selects its own identity" \
   '{workspace="acme", domain="comms", service="notify-worker"}' "$selector"
-
-run_logs payments/charge-svc
 
 set +e
 output="$(cd "$tmp/acme" && "$sol" open logs payments/charge-svc --links 2>&1)"
