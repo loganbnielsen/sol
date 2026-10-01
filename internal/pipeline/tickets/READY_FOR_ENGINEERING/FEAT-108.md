@@ -100,3 +100,47 @@ what each leaves behind.
 
 **TypeScript parity:** No language-parity impact — installation removal is
 app-language neutral.
+
+## Part A landed (2026-10-01): what uninstall removes, and what it refuses to touch
+
+`Sol_cli_installation_uninstall` is the decision model the command will be built on, so there is one
+definition of what the installation contains — the ticket's own remediation, and the same rule
+FEAT-107 followed for the zone.
+
+It reuses `Sol_cli_installation.prerequisite` as the resource vocabulary rather than inventing a
+second model, and answers four questions:
+
+- **`removes`** — every durable prerequisite the provider declares, *minus* the delegated zone
+  unless the **declaration** says Sol owns it. A user-supplied or externally delegated zone is never
+  in the removal list, whatever the root's state holds. This is the acceptance criterion "a test
+  fails if uninstall removes a user-supplied zone", expressed as a property of the plan rather than a
+  comment.
+- **`retains`** — what is kept and why, in the words the run will show: a zone the operator supplied
+  ("Sol did not create it and does not remove it"), and the registrar NS records, which live outside
+  every provider API Sol can call.
+- **`unmanages_the_zone`** — the ambiguity rule from the ticket's remediation. When the target says
+  the operator supplied the zone but the durable root's *state* owns it, a whole-root destroy would
+  delete it. The plan says so, and the command's mechanism is `state_rm` first: the zone survives and
+  the run reports that it was taken out of state. Sol never guesses which side is right; it refuses
+  to destroy what the declaration does not claim.
+- **`dns_confirmation`** — the exact domain when a Sol-created zone is going away, with
+  `confirmed_dns_zone_matches` failing closed: no confirmation, or a different domain, never matches.
+  That is the separately-confirmed DNS removal the ticket requires.
+
+**Evidence:** four cases in `cli/test/test_installation.ml` (29 total) — a Sol-created zone is removed
+and needs its own confirmation naming the domain; a user-supplied zone is never removed and needs
+none; a zone the declaration disowns is unmanaged only when the state owns it; an unobservable
+answer is reported as a failed observation rather than as absence.
+
+## What remains (part B)
+
+The command surface itself: `cli/bin/cmd_uninstall.ml` registered in `main.ml` with `--confirm` and
+`--confirm-dns-zone <domain>`; the destroy of the durable root with the `state_rm` step for an
+unmanaged zone; absence verified by observation after removal (the installation's own probes, which
+fail closed, plus `Sol_cli_destroy_verification`'s residue model where it fits) with the retained
+resources named in the output; a CLI surface test driving fakes for the refusals, the retained zone
+and the verified absence; and the documentation the ticket's demo/example line requires
+(`docs/DEVELOPER_EXPERIENCE.md` §3/§10, DOCS-029, the `examples/pluto` walkthrough), then a
+regenerated `docs/reference/cli.md`.
+
+**Language parity:** no impact — installation removal is app-language neutral.

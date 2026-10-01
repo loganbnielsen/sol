@@ -778,10 +778,142 @@ let test_the_wait_without_an_expectation_accepts_any_answer () =
     Alcotest.fail "a zero-attempt wait returned a verdict about the delegation"
 ;;
 
+let uninstall_plan ?(zone_in_state = false) zone =
+  Sol_cli_installation_uninstall.plan
+    ~prerequisites:
+      (Sol_cli_provider_capabilities.installation_prerequisites Sol_cli_provider.Aws)
+    ~zone_in_state
+    (with_ownership zone)
+;;
+
+let test_a_sol_created_zone_is_removed_with_its_own_confirmation () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  check_bool
+    "the zone is part of what uninstall removes"
+    true
+    (List.mem Sol_cli_installation.Delegated_zone plan.removes);
+  check_bool
+    "and removing it needs a separate confirmation naming the domain"
+    true
+    (plan.dns_confirmation = Some "api.acme.example");
+  check_bool
+    "the confirmation is not satisfied by a different domain"
+    false
+    (Sol_cli_installation_uninstall.confirmed_dns_zone_matches
+       ~confirmation:(Some "other.acme.example")
+       ~domain:"api.acme.example");
+  check_bool
+    "nor by no confirmation at all"
+    false
+    (Sol_cli_installation_uninstall.confirmed_dns_zone_matches
+       ~confirmation:None
+       ~domain:"api.acme.example");
+  check_bool
+    "the exact domain does satisfy it"
+    true
+    (Sol_cli_installation_uninstall.confirmed_dns_zone_matches
+       ~confirmation:(Some " api.acme.example ")
+       ~domain:"api.acme.example")
+;;
+
+let test_a_user_supplied_zone_is_never_removed () =
+  let plan = uninstall_plan Sol_cli_installation.User_supplied in
+  check_bool
+    "a zone the operator supplied is not in the removal list"
+    false
+    (List.mem Sol_cli_installation.Delegated_zone plan.removes);
+  check_bool
+    "the rest of the installation is still removed"
+    true
+    (List.mem Sol_cli_installation.State_backend plan.removes
+     && List.mem Sol_cli_installation.State_lock plan.removes);
+  check_bool
+    "and it needs no DNS confirmation, because nothing Sol owns is going away"
+    true
+    (plan.dns_confirmation = None);
+  check_bool
+    "the result names the zone and says it is retained"
+    true
+    (List.exists
+       (fun (what, why) ->
+          what = "api.acme.example"
+          && Sol_cli_string.contains ~needle:"supplied by the operator" why)
+       plan.retains);
+  let lines = Sol_cli_installation_uninstall.lines plan in
+  check_bool
+    "the report shows both what is removed and what is retained"
+    true
+    (List.exists
+       (fun line ->
+          Sol_cli_string.contains ~needle:"remove  terraform state backend" line)
+       lines
+     && List.exists
+          (fun line -> Sol_cli_string.contains ~needle:"retain  api.acme.example" line)
+          lines)
+;;
+
+let test_a_zone_the_declaration_disowns_is_taken_out_of_state_first () =
+  let declared_yours =
+    uninstall_plan ~zone_in_state:true Sol_cli_installation.User_supplied
+  in
+  check_bool
+    "a zone the target says the operator supplied, which the root's state owns, is \
+     unmanaged first"
+    true
+    declared_yours.unmanages_the_zone;
+  check_bool
+    "so the zone survives the destroy"
+    false
+    (List.mem Sol_cli_installation.Delegated_zone declared_yours.removes);
+  check_bool
+    "a zone that is not in the state needs no unmanaging"
+    false
+    (uninstall_plan ~zone_in_state:false Sol_cli_installation.User_supplied)
+      .unmanages_the_zone;
+  check_bool
+    "and neither does a Sol-created zone, which is simply removed"
+    false
+    (uninstall_plan ~zone_in_state:true Sol_cli_installation.Sol_created)
+      .unmanages_the_zone;
+  check_bool
+    "the report says the zone was taken out of state"
+    true
+    (List.exists
+       (fun line -> Sol_cli_string.contains ~needle:"taken out of state first" line)
+       (Sol_cli_installation_uninstall.lines declared_yours))
+;;
+
+let test_an_unobservable_answer_is_not_absence () =
+  check_bool
+    "the refusal says the observation failed rather than that the installation is gone"
+    true
+    (Sol_cli_string.contains
+       ~needle:"does not claim the installation is gone"
+       (Sol_cli_installation_uninstall.refusal_of_unobservable "aws: spawn failed"))
+;;
+
 let () =
   Alcotest.run
     "installation"
-    [ ( "delegation wait"
+    [ ( "uninstall plan"
+      , [ Alcotest.test_case
+            "a Sol-created zone is removed, with its own confirmation"
+            `Quick
+            test_a_sol_created_zone_is_removed_with_its_own_confirmation
+        ; Alcotest.test_case
+            "a user-supplied zone is never removed"
+            `Quick
+            test_a_user_supplied_zone_is_never_removed
+        ; Alcotest.test_case
+            "a zone the declaration disowns is taken out of state first"
+            `Quick
+            test_a_zone_the_declaration_disowns_is_taken_out_of_state_first
+        ; Alcotest.test_case
+            "an unobservable answer is not absence"
+            `Quick
+            test_an_unobservable_answer_is_not_absence
+        ] )
+    ; ( "delegation wait"
       , [ Alcotest.test_case
             "Established when the resolver names the zone's nameservers"
             `Quick
