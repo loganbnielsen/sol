@@ -37,7 +37,7 @@ point for "what is Sol and what is it promising".
 |---|---|---|
 | [`DEVELOPER_EXPERIENCE.md`](DEVELOPER_EXPERIENCE.md) | Evaluators, all users | **Published** |
 | [`guides/TUTORIAL.md`](guides/TUTORIAL.md) | New users | **Published** — local path, end to end |
-| Installation and first deploy | New users | **Planned** — DOCS-026 |
+| [`guides/installation.md`](guides/installation.md) | New users | **Published** — DOCS-026; installation and the first production deploy |
 | [`guides/application-authoring.md`](guides/application-authoring.md) | Application authors | **Published** — DOCS-027 |
 | [`guides/deployment.md`](guides/deployment.md) | Operators | **Published** — DOCS-028; the operator detail stays in `deployment/*` |
 | [`guides/operations.md`](guides/operations.md) | Operators | **Published** — DOCS-029 |
@@ -54,13 +54,15 @@ never needs a source checkout to complete the ordinary path.
 ### 1. Getting started
 
 - **Installation** — install the CLI, verify the install, and understand what
-  `sol` is about to do on your machine. *DOCS-026.*
+  `sol` is about to do on your machine.
+  [`guides/installation.md`](guides/installation.md) §1–2. *DOCS-026.*
 - **Quickstart** — local cluster to a running service in one sitting; the
   existing [`TUTORIAL.md`](guides/TUTORIAL.md) is the reference implementation of
   this page.
 - **First production deploy** — the guided first-run experience: detect the
-  account, set up the installation, delegate DNS, reach a live endpoint. *DOCS-026
-  with FEAT-106/FEAT-107.*
+  account, set up the installation, delegate DNS, reach a live endpoint.
+  [`guides/installation.md`](guides/installation.md) §4. *DOCS-026, with
+  FEAT-106/FEAT-107.*
 
 ### 2. Framework / application authoring
 
