@@ -139,8 +139,9 @@ claimed absence that had not been established.
 **The correction is not a widening of platform authority.** The scope must come from the target's
 declared namespaces, read with the identity Sol deploys applications with (`sol-deployers`), which
 is the same authority the deploy path already uses — the alternative seam that was considered and
-set aside in favour of cluster-wide discovery. This finding stays **not met live** until a single
-supported destroy converges on a specimen whose application is running with active database pools.
+set aside in favour of cluster-wide discovery. At that point the finding was **not met live**: it
+needed a single supported destroy to converge on a specimen whose application was running with
+active database pools. It has since been met — see *The acceptance run* below.
 
 ## The second attempt: the release runs, finds the workloads, and cannot remove them
 
@@ -202,5 +203,94 @@ Two limits are worth stating rather than leaving implicit. A Sol-rendered migrat
 carries no taxonomy labels on its template at all, so it is not discoverable this way — those are
 short-lived and hold no pool, which is why the ownership label is still the right selector. And a
 workload kind that Sol deploys but this listing does not name would not be seen: today that is only
-an Argo `Rollout`, which the `-svc` primitive renders for a progressive-delivery service.
+an Argo `Rollout`, which the `-svc` primitive renders for a progressive-delivery service. That second
+limit is filed as FND-0079 and tracked by INFRA-097.
+
+## The acceptance run
+
+Specimen `sol-qual-gcp-33`, from the landed revision `44e3061b`. Everything below is one run of one
+specimen: `cloud` → `app` → a **single** supported `destroy`, with no second invocation and no
+provider-side action by hand.
+
+The application: platform `Ready`, `payments/charge_svc` and `comms/notify_worker` deployed, and the
+transaction completed —
+
+```
+health: ok
+charge: {"id":"ch_340732","accepted":true}
+notifications: [{"charge_id":"ch_340732","customer_id":"cus_qualification","amount_cents":4999,"currency":"usd"}]
+the worker consumed the charge and wrote it back: ch_340732
+```
+
+Three workspace-labelled pods were `Running`, and the provider itself reported the application's
+pooled sessions. The deployment's own `metadata.labels` is empty; the ownership label is on the pod
+template, which is the whole reason the pre-fix selector matched nothing:
+
+```
+$ kubectl get deploy -n pluto-payments -o jsonpath='{.items[*].metadata.labels}'
+                                                    <- empty
+$ kubectl get deploy -n pluto-payments -o jsonpath='{.items[*].spec.template.metadata.labels}'
+{"app":"charge-svc","domain":"payments","env":"qual","primitive":"svc",
+ "release":"r-86109b7f23f97c8d","service":"charge-svc","workspace":"pluto"}
+```
+
+The destroy, in the run's own words:
+
+```
+  lifecycle phase: Destroying
+
+Releasing the application workloads...
+  pluto-comms: releasing deployment/notify-worker
+  pluto-payments: releasing deployment/charge-svc
+```
+
+No degradation, and note what it names: the workload **objects** it discovered in each declared
+namespace, where the pre-fix run named pods and never got past the first namespace.
+
+**The ordering, observed independently of Sol.** Two observers ran alongside the destroy: a wrapper in
+front of `kubectl`/`terraform` that logs the invocation with a UTC timestamp and then `exec`s the real
+tool without changing its behaviour, and a sampler reading the cluster through the run's own
+kubeconfig and the provider's `cloudsql.googleapis.com/database/postgresql/num_backends`.
+
+| UTC | Observed | Observer |
+|---|---|---|
+| 13:33:00 | `num_backends` **4** — the pools are open | Cloud SQL Monitoring |
+| 13:35:14 | 3 workspace pods `Running` | sampler |
+| 13:39:45–46 | `get deployment,cronjob,job -n pluto-checkout`, `-n pluto-comms` | wrapper |
+| 13:39:46 | `delete deployment/notify-worker -n pluto-comms --wait=true --timeout=300s` | wrapper |
+| 13:39:47 | `wait --for=delete pod -n pluto-comms --selector workspace=pluto` | wrapper |
+| 13:39:48 | `get deployment,cronjob,job -n pluto-demo-ts`, `-n pluto-payments` | wrapper |
+| 13:39:49 | `delete deployment/charge-svc -n pluto-payments --wait=true` | wrapper |
+| 13:39:49 | `wait --for=delete pod -n pluto-payments --selector workspace=pluto` | wrapper |
+| 13:39:53 → 13:40:08 | workspace pods: **none** | sampler |
+| **13:39:55** | `terraform … cluster destroy` — **the substrate destroy begins** | wrapper |
+| 13:40:00 | `num_backends` **1** | Cloud SQL Monitoring |
+| 13:39:55 + 638.5s | `[terraform-destroy] ok` — the database was dropped, not refused | Sol |
+
+The release's removal and its pod wait complete at 13:39:49; the substrate destroy is not invoked
+until 13:39:55. By 13:40:08 the pods are gone and by 13:40:00 the provider's session count has
+fallen, while the substrate destroy is still running — and was still running when the database was
+dropped 638.5s later, in the same invocation, with no `database "app" is being accessed by other
+users`.
+
+**Absence, established twice.** Sol: *"Done. Destruction reached verified absence."* — with its own
+evidence, `terraform state (disposable root): empty`, `residue Terraform does not own …: none found`.
+The harness's independent inventory: `teardown verified: absent`, every resource `✓ … absent`. And my
+own reads of the provider afterwards:
+
+```
+$ gcloud sql instances list --project sol-qualification     -> Listed 0 items.
+$ gcloud container clusters list --project sol-qualification -> (none)
+$ gcloud compute networks list --project sol-qualification   -> default
+$ gcloud compute addresses list --project sol-qualification  -> Listed 0 items.
+$ gcloud dns managed-zones list --project sol-qualification  -> qual-gcp-sol-fab-dev
+$ gcloud storage buckets list --project sol-qualification    -> sol-qualification-tfstate
+```
+
+Only the durable DNS zone and state bucket remain, as intended.
+
+**Met.** A functioning deployed application with active PostgreSQL pools went to independently
+verified absence in one supported destroy, with the workload release — discovery, removal and the pod
+wait — observed to complete before the substrate destroy was invoked and before the database was
+dropped.
 
