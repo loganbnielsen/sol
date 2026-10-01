@@ -128,8 +128,11 @@ decided in [DEC-057](../internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-057.
 `bootstrap → preflight → apply` contract `DEC-043` left open.
 
 **Today:** the stages exist as code and as separate commands
-(`sol cloud plan|apply|destroy`, `sol deploy`, `sol migrate`). Their unified,
-guided, first-run presentation is **Target** (FEAT-106, FEAT-107).
+(`sol cloud plan|apply|destroy`, `sol deploy`, `sol migrate`). The durable
+installation among them is guided in place: a first `sol deploy` observes it and
+offers to set it up (FEAT-106). The environment stages remain explicit — a deploy
+that cannot reach the target's cluster names `sol cloud apply <target>` rather
+than provisioning it itself.
 
 ---
 
@@ -160,6 +163,17 @@ separate bootstrap command to get started. An explicit `sol init`-style
 administrative workflow may exist, but the ordinary path is that `sol deploy`
 detects an uninitialised account and guides the user through initialisation in
 place. The user experiences one command.
+
+**Today.** `sol deploy <target>` does exactly this for the durable installation:
+when it cannot reach the target's cluster it observes the instance at the
+provider, reports what it found, and offers to set it up — reconciling the
+durable root, printing the one external action (the delegation, with the exact
+records), waiting for the delegation to become visible and confirming it from a
+public resolver, then re-observing rather than assuming. Declining, or running
+where no one can answer (CI, `--dry-run`, `--emit-to`), prints the same
+explanation and the command that establishes it (`sol cloud bootstrap <target>
+--apply`) instead of prompting or silently skipping. The environment stages stay
+explicit: the run names `sol cloud apply <target>` as the next step.
 
 ### 4.3 Inspecting and reconciling the installation
 
@@ -337,8 +351,12 @@ Two properties matter more than the wording:
    never make a user wonder what is happening or where they are needed.
 
 **Today:** direct and GitOps cloud deployment work
-(`sol deploy <target> --image-tag … --registry …`); the guided first-run
-onboarding is **Target** (FEAT-106 inline onboarding, FEAT-107 DNS).
+(`sol deploy <target> --image-tag … --registry …`), and the durable installation
+is guided inline by the first run (FEAT-106): the run reports what it observed,
+separates the work Sol does from the one external action, and names the exact
+records to add. The environment's own provisioning is still the explicit
+`sol cloud apply <target>` stage, which the guided run names when that is what
+the target is missing.
 
 ---
 
@@ -379,7 +397,10 @@ The lifecycle behind that output:
 
 **Today:** steps 1–11 exist across `sol plan`, `sol cloud plan|apply`, and
 `sol deploy`, with direct and GitOps modes (`DEC-043`, ADR 0002/0003). The
-single-command first-run and the inline installation are **Target** (FEAT-106).
+installation among them is inline: a first `sol deploy` observes it and offers to
+set it up (FEAT-106). The single-command first run that also provisions the
+environment is **Target** — today the guided run names `sol cloud apply <target>`
+as that step.
 
 ---
 

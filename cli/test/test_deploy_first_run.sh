@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sol="$(realpath "${1:-}")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+fail=0
+check() {
+  local what="$1" expected="$2" actual="$3"
+  if [ "$expected" != "$actual" ]; then
+    echo "test_deploy_first_run: $what: expected $expected, got $actual" >&2
+    fail=1
+  fi
+}
+check_contains() {
+  local what="$1" needle="$2" haystack="$3"
+  case "$haystack" in
+    *"$needle"*) ;;
+    *)
+      echo "test_deploy_first_run: $what: expected to find '$needle' in:" >&2
+      echo "$haystack" >&2
+      fail=1
+      ;;
+  esac
+}
+check_absent() {
+  local what="$1" needle="$2" haystack="$3"
+  case "$haystack" in
+    *"$needle"*)
+      echo "test_deploy_first_run: $what: did not expect '$needle' in:" >&2
+      echo "$haystack" >&2
+      fail=1
+      ;;
+  esac
+}
+
+mkdir -p "$tmp/work/sol" "$tmp/work/app/payments/charge_svc" "$tmp/data"
+cat >"$tmp/work/sol.yml" <<'EOF'
+project: first-run-test
+resources:
+  app_db:
+    type: postgres
+services:
+  charge_svc:
+    language: ocaml
+EOF
+cat >"$tmp/work/app/payments/charge_svc/sol.toml" <<'EOF'
+[infra.scale]
+replicas = 1
+EOF
+cat >"$tmp/work/app/payments/charge_svc/Dockerfile" <<'EOF'
+FROM scratch
+EOF
+cat >"$tmp/work/sol/environments.yml" <<'EOF'
+prod:
+  base_domain: prod.example.test
+  dns_zone_ownership: sol
+  targets:
+    aws/us-east-1:
+      cluster_name: first-run-prod
+      state_bucket: first-run-tfstate
+      aws:
+        state_lock_table: first-run-tflock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+stale:
+  base_domain: stale.example.test
+  dns_zone_ownership: sol
+  targets:
+    aws/us-east-1:
+      cluster_name: first-run-stale
+      kube_context: first-run-stale
+      state_bucket: first-run-tfstate
+      aws:
+        state_lock_table: first-run-tflock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+EOF
+
+mkdir -p "$tmp/bin-absent" "$tmp/bin-partial" "$tmp/bin-denied" "$tmp/bin-installed" "$tmp/bin-first" "$tmp/bin-tf"
+
+cat >"$tmp/bin-absent/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "dynamodb describe-table")
+    printf '%s\n' 'An error occurred (ResourceNotFoundException) when calling the DescribeTable operation: Requested resource not found' >&2
+    exit 254
+    ;;
+  "iam get-role")
+    printf '%s\n' 'An error occurred (NoSuchEntity) when calling the GetRole operation: The role cannot be found.' >&2
+    exit 254
+    ;;
+  "route53 list-hosted-zones-by-name")
+    printf '%s\n' '{"HostedZones":[]}'
+    ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-partial/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "iam get-role")
+    printf '%s\n' '{"Role":{"Arn":"arn:aws:iam::111122223333:role/sol-deploy"}}'
+    ;;
+  "route53 list-hosted-zones-by-name")
+    printf '%s\n' '{"HostedZones":[]}'
+    ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-denied/aws" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'An error occurred (AccessDenied) when calling the operation: User is not authorized to perform this action' >&2
+exit 255
+EOF
+
+cat >"$tmp/bin-installed/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "iam get-role")
+    printf '%s\n' '{"Role":{"Arn":"arn:aws:iam::111122223333:role/sol-deploy"}}'
+    ;;
+  "route53 list-hosted-zones-by-name")
+    zone=""
+    previous=""
+    for argument in "\$@"; do
+      if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
+      previous="\$argument"
+    done
+    case " \$* " in
+      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
+      *) printf '{"HostedZones":[{"Name":"%s."}]}\n' "\$zone" ;;
+    esac
+    ;;
+esac
+exit 0
+EOF
+
+mkdir -p "$tmp/bin-kubectl"
+cat >"$tmp/bin-kubectl/kubectl" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'error: no context exists with the name "first-run-stale"' >&2
+exit 1
+EOF
+
+cat >"$tmp/bin-installed/dig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ns-1.awsdns-08.org.'
+printf '%s\n' 'ns-2.awsdns-08.org.'
+exit 0
+EOF
+cp "$tmp/bin-installed/dig" "$tmp/bin-first/dig" 2>/dev/null || true
+
+mkdir -p "$tmp/bin-stuck"
+cat >"$tmp/bin-stuck/dig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ns-1.awsdns-08.org.'
+printf '%s\n' 'ns-2.awsdns-08.org.'
+exit 0
+EOF
+cat >"$tmp/bin-stuck/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-first/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
+  "route53 list-hosted-zones-by-name")
+    if [ -f "$tmp/applied" ]; then
+      case " \$* " in
+        *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
+        *) printf '%s\n' '{"HostedZones":[{"Name":"prod.example.test."}]}' ;;
+      esac
+      exit 0
+    fi
+    printf '%s\n' '{"HostedZones":[]}'
+    exit 0
+    ;;
+esac
+if [ -f "$tmp/applied" ]; then
+  case "\$1 \$2" in
+    "iam get-role") printf '%s\n' '{"Role":{"Arn":"arn:aws:iam::111122223333:role/sol-deploy"}}' ;;
+  esac
+  exit 0
+fi
+case "\$1 \$2" in
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "dynamodb describe-table")
+    printf '%s\n' 'An error occurred (ResourceNotFoundException) when calling the DescribeTable operation: not found' >&2
+    exit 254
+    ;;
+  "iam get-role")
+    printf '%s\n' 'An error occurred (NoSuchEntity) when calling the GetRole operation: cannot be found' >&2
+    exit 254
+    ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-tf/terraform" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/terraform.log"
+case " \$* " in
+  *" state list "*) printf '%s\n' 'aws_s3_bucket.state'; exit 0 ;;
+  *" init "*) exit 0 ;;
+  *" plan "*)
+    for argument in "\$@"; do
+      case "\$argument" in
+        -out=*) : >"\${argument#-out=}" ;;
+      esac
+    done
+    exit 0
+    ;;
+  *" show "*) cat "$tmp/plan.json"; exit 0 ;;
+  *" output -json "*) cat "$tmp/outputs.json"; exit 0 ;;
+  *" apply "*) touch "$tmp/applied"; exit 0 ;;
+esac
+exit 0
+EOF
+
+chmod +x "$tmp"/bin-*/*
+
+printf '%s\n' \
+  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns-08.org","ns-2.awsdns-08.org"]}}' \
+  >"$tmp/outputs.json"
+printf '%s\n' \
+  '{"resource_changes":[{"address":"aws_s3_bucket.state","type":"aws_s3_bucket","mode":"managed","change":{"actions":["create"]}}]}' \
+  >"$tmp/plan.json"
+
+run_with() {
+  local target="$1" path="$2"
+  shift 2
+  rm -rf "$tmp/data/sol/runs"
+  rm -f "$tmp/terraform.log"
+  set +e
+  output="$(
+    cd "$tmp/work" &&
+      XDG_DATA_HOME="$tmp/data" PATH="$path" POSTGRES_URL=postgresql://user:pass@localhost:5432/db \
+        "$sol" deploy "$target" --image-tag deadbeef --registry registry.example.test/first "$@" 2>&1 </dev/null
+  )"
+  rc=$?
+  set -e
+}
+
+run() {
+  local path="$1"
+  shift
+  run_with prod/aws/us-east-1 "$path" "$@"
+}
+
+run_interactive_with() {
+  local path="$1" answer="$2"
+  shift 2
+  rm -rf "$tmp/data/sol/runs"
+  rm -f "$tmp/terraform.log" "$tmp/applied"
+  local command
+  command="cd '$tmp/work' && XDG_DATA_HOME='$tmp/data' PATH='$path' '$sol' deploy prod/aws/us-east-1 --image-tag deadbeef --registry registry.example.test/first $*"
+  set +e
+  output="$(printf '%s\n' "$answer" | script -qec "$command" /dev/null 2>&1 | tr -d '\r')"
+  rc=$?
+  set -e
+}
+
+run_interactive() {
+  local answer="$1"
+  shift
+  run_interactive_with "$tmp/bin-first:$tmp/bin-tf:/usr/bin:/bin" "$answer" "$@"
+}
+
+terraform_log() {
+  cat "$tmp/terraform.log" 2>/dev/null || true
+}
+
+run "$tmp/bin-absent:/usr/bin:/bin"
+check "an uninstalled account with no interactive terminal exits 1" 1 "$rc"
+check_contains \
+  "the report says the installation is not there" \
+  "Sol is not installed for prod/aws/us-east-1" \
+  "$output"
+check_contains "the report names the state backend as missing" "terraform state backend" "$output"
+check_contains "the report names the target's declared installation" "state bucket" "$output"
+check_contains \
+  "the report separates Sol's automated work" \
+  "Sol does this for you:" \
+  "$output"
+check_contains \
+  "the report separates the external action" \
+  "One action may be required from you:" \
+  "$output"
+check_contains \
+  "the refusal names the command that establishes the installation" \
+  "sol cloud bootstrap prod/aws/us-east-1 --apply" \
+  "$output"
+check_absent "a non-interactive run never prompts" "[Y/n]" "$output"
+check_absent "a non-interactive run changes nothing" " apply " "$(terraform_log)"
+check_absent "a non-interactive run plans nothing" " plan " "$(terraform_log)"
+
+run "$tmp/bin-absent:/usr/bin:/bin" --dry-run
+check "a dry run against an uninstalled account exits 1" 1 "$rc"
+check_contains \
+  "a dry run explains why it will not set installation up" \
+  "this run is \`--dry-run\`" \
+  "$output"
+check_absent "a dry run never prompts" "[Y/n]" "$output"
+check_absent "a dry run changes nothing" " apply " "$(terraform_log)"
+
+run "$tmp/bin-partial:/usr/bin:/bin"
+check "a partly installed account exits 1" 1 "$rc"
+check_contains \
+  "a partly present installation is reported as such" \
+  "Sol is only partly installed for prod/aws/us-east-1" \
+  "$output"
+check_contains \
+  "the missing prerequisite is named" \
+  "terraform state backend      Unmet" \
+  "$output"
+check_absent \
+  "an established prerequisite is not listed as missing" \
+  "provisioning identity        Unmet" \
+  "$output"
+check_absent "a partly installed account is not set up non-interactively" " apply " "$(terraform_log)"
+
+run "$tmp/bin-denied:/usr/bin:/bin"
+check "an unobservable installation exits 1" 1 "$rc"
+check_contains \
+  "a denied probe is UNKNOWN, not a missing prerequisite" \
+  "UNKNOWN: An error occurred (AccessDenied)" \
+  "$output"
+check_contains \
+  "an unobservable installation is reported neither established nor absent" \
+  "reports it neither established nor absent" \
+  "$output"
+check_absent \
+  "a denied probe is never reported as an absent prerequisite" \
+  "Sol is not installed" \
+  "$output"
+check_contains \
+  "the report says how to observe the installation" \
+  "sol cloud bootstrap prod/aws/us-east-1" \
+  "$output"
+check_absent "an unobservable installation is not set up" " apply " "$(terraform_log)"
+
+run "$tmp/bin-installed:/usr/bin:/bin"
+check "an installed account still exits 1 at the missing cluster" 1 "$rc"
+check_contains \
+  "an established installation is reported observed" \
+  "every durable prerequisite is established" \
+  "$output"
+check_contains \
+  "the next stage is named" \
+  "sol cloud apply prod/aws/us-east-1" \
+  "$output"
+check_absent "an installed account is not prompted" "[Y/n]" "$output"
+check_absent \
+  "an installed account repeats no installation work" \
+  " init " \
+  "$(terraform_log)"
+
+run_with stale/aws/us-east-1 "$tmp/bin-installed:$tmp/bin-kubectl:/usr/bin:/bin" --confirm-group-change
+check "a target whose cluster is unreachable exits 1" 1 "$rc"
+check_contains \
+  "an unreachable cluster observes the installation" \
+  "every durable prerequisite is established" \
+  "$output"
+check_contains \
+  "the environment stage is named for the unreachable target" \
+  "sol cloud apply stale/aws/us-east-1" \
+  "$output"
+check_absent "an installed account is not prompted for its unreachable cluster" "[Y/n]" "$output"
+check_absent \
+  "an unreachable cluster repeats no installation work" \
+  " init " \
+  "$(terraform_log)"
+
+if ! command -v script >/dev/null 2>&1; then
+  echo "test_deploy_first_run: 'script' is unavailable, so the interactive paths cannot be driven" >&2
+  fail=1
+else
+  run_interactive "y" --await-delegation=5
+  check "accepting the setup still exits 1 at the missing cluster" 1 "$rc"
+  check_contains \
+    "Sol offers to set the installation up" \
+    "Set up Sol for prod/aws/us-east-1 now? [Y/n]" \
+    "$output"
+  check_contains \
+    "the accepted setup reconciles the durable root" \
+    " apply " \
+    "$(terraform_log)"
+  check_contains \
+    "the accepted setup initializes the durable root's own state" \
+    "aws-bootstrap" \
+    "$(terraform_log)"
+  check_contains \
+    "the setup prints the one external action" \
+    "the zone that publishes prod.example.test is in this account" \
+    "$output"
+  check_contains \
+    "the setup reports the installation established" \
+    "The installation for prod/aws/us-east-1 is established" \
+    "$output"
+  check_contains \
+    "the setup re-observes rather than assuming" \
+    "every durable prerequisite is established" \
+    "$output"
+  check_contains \
+    "the run continues into the deploy and names the next stage" \
+    "sol cloud apply prod/aws/us-east-1" \
+    "$output"
+
+  run_interactive_with "$tmp/bin-stuck:$tmp/bin-tf:/usr/bin:/bin" "y" --await-delegation=5
+  check "a setup that does not establish the installation exits 1" 1 "$rc"
+  check_contains \
+    "the run says the installation is still not established" \
+    "is still not established after reconciling the durable root" \
+    "$output"
+  check_contains \
+    "the run names what it could not establish" \
+    "terraform state backend" \
+    "$output"
+
+  run_interactive "n" --await-delegation=5
+  check "declining the setup exits 1" 1 "$rc"
+  check_contains \
+    "declining is reported" \
+    "you chose not to set it up" \
+    "$output"
+  check_absent "declining does not set the installation up" " apply " "$(terraform_log)"
+fi
+
+exit "$fail"

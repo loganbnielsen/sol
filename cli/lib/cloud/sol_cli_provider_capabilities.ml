@@ -3,6 +3,28 @@ type platform_storage =
   ; csi_driver : string
   }
 
+let failure_mentions markers message =
+  let lowercased = String.lowercase_ascii message in
+  List.exists (fun marker -> Sol_cli_string.contains ~needle:marker lowercased) markers
+;;
+
+let aws_failure_means_absent =
+  failure_mentions
+    [ "nosuchbucket"
+    ; "nosuchentity"
+    ; "resourcenotfound"
+    ; "(404)"
+    ; "not found"
+    ; "does not exist"
+    ; "cannot be found"
+    ]
+;;
+
+let gcp_failure_means_absent =
+  failure_mentions
+    [ "notfound"; "not found"; "does not exist"; "was not found"; "(404)"; "status: 404" ]
+;;
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -36,6 +58,7 @@ type t =
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
+  ; installation_failure_means_absent : string -> bool
   ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
   ; installation_state_backend_address : string
   ; installation_retire_state_backend :
@@ -331,6 +354,7 @@ let aws =
         ; "text"
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
+  ; installation_failure_means_absent = aws_failure_means_absent
   ; installation_created_prerequisites =
       [ Sol_cli_installation.State_backend
       ; Sol_cli_installation.State_lock
@@ -501,6 +525,7 @@ let gcp =
         ; "--format=value(name)"
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
+  ; installation_failure_means_absent = gcp_failure_means_absent
   ; installation_created_prerequisites =
       [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
   ; installation_state_backend_address = "google_storage_bucket.state"
@@ -539,4 +564,17 @@ let installation_vars provider ~manage_dns_zone ?parent_zone_id configuration =
     ~manage_dns_zone
     ?parent_zone_id
     configuration
+;;
+
+let installation_observation ~provider argv =
+  let absent_when = (capabilities_of provider).installation_failure_means_absent in
+  match Sol_cli_process.run (Sol_cli_process.cmd argv) with
+  | Ok output -> Sol_cli_installation.Observed output.stdout
+  | Error (Sol_cli_process.Non_zero failure) ->
+    let message = Sol_cli_process.failure_message failure in
+    if absent_when message
+    then Sol_cli_installation.Absent message
+    else Sol_cli_installation.Unobservable message
+  | Error error ->
+    Sol_cli_installation.Unobservable (Sol_cli_process.error_to_string error)
 ;;

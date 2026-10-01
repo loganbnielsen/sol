@@ -656,13 +656,8 @@ let reconcile_cmd =
       $ explain_flag)
 ;;
 
-let installation_observation argv =
-  match Sol_cli_process.run (Sol_cli_process.cmd argv) with
-  | Ok output -> Sol_cli_installation.Observed output.stdout
-  | Error (Sol_cli_process.Non_zero failure) ->
-    Sol_cli_installation.Absent (Sol_cli_process.failure_message failure)
-  | Error error ->
-    Sol_cli_installation.Unobservable (Sol_cli_process.error_to_string error)
+let installation_observation ~provider =
+  Sol_cli_provider_capabilities.installation_observation ~provider
 ;;
 
 let declared_target target =
@@ -680,6 +675,7 @@ let declared_target target =
 
 let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   let* target_cfg = declared_target target in
+  let run = installation_observation ~provider:target_cfg.provider in
   let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
   let* () =
     if reconcile
@@ -691,7 +687,7 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
           ~assets
           ~provider:target_cfg.provider
           ~configuration
-          ~run:installation_observation
+          ~run
           ()
         |> Sol_cli_exit.of_msg
       in
@@ -701,7 +697,7 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   in
   let verdicts =
     Sol_cli_provider_capabilities.installation_probes target_cfg.provider configuration
-    |> Sol_cli_installation.observe ~run:installation_observation
+    |> Sol_cli_installation.observe ~run
   in
   Printf.printf
     "\n\
@@ -726,7 +722,7 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
         attempts;
       (match
          Sol_cli_installation_stage.await_delegation
-           ~run:installation_observation
+           ~run
            ~report:(fun line -> Printf.printf "  %s\n%!" line)
            ~attempts
            ~interval:5.

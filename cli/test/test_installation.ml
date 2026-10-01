@@ -1259,10 +1259,306 @@ let test_an_unobservable_answer_is_not_absence () =
        (Sol_cli_installation_uninstall.refusal_of_unobservable "aws: spawn failed"))
 ;;
 
+let report_of verdicts target configuration =
+  String.concat
+    "\n"
+    (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts)
+;;
+
+let test_the_first_run_state_comes_from_the_verdicts () =
+  let open Sol_cli_installation in
+  let state = Sol_cli_installation_onboarding.state_of_verdicts in
+  check_string
+    "every prerequisite established is present"
+    "present"
+    (match
+       state
+         [ State_backend, Established
+         ; Provisioning_identity, Established
+         ; Delegated_zone, Established
+         ]
+     with
+     | Sol_cli_installation_onboarding.Present -> "present"
+     | Absent -> "absent"
+     | Partial -> "partial"
+     | Indeterminate -> "indeterminate");
+  check_string
+    "every prerequisite refused is absent"
+    "absent"
+    (match
+       state
+         [ State_backend, Unmet "no bucket"
+         ; Provisioning_identity, Unmet "no role"
+         ; Delegated_zone, Unmet "no zone"
+         ]
+     with
+     | Sol_cli_installation_onboarding.Present -> "present"
+     | Absent -> "absent"
+     | Partial -> "partial"
+     | Indeterminate -> "indeterminate");
+  check_string
+    "an established prerequisite beside a refused one is partial"
+    "partial"
+    (match
+       state [ State_backend, Established; Provisioning_identity, Unmet "no role" ]
+     with
+     | Sol_cli_installation_onboarding.Present -> "present"
+     | Absent -> "absent"
+     | Partial -> "partial"
+     | Indeterminate -> "indeterminate");
+  check_string
+    "an installation Sol could not look at is indeterminate"
+    "indeterminate"
+    (match
+       state
+         [ State_backend, Unknown "AccessDenied"
+         ; Provisioning_identity, Unknown "spawn failed"
+         ]
+     with
+     | Sol_cli_installation_onboarding.Present -> "present"
+     | Absent -> "absent"
+     | Partial -> "partial"
+     | Indeterminate -> "indeterminate");
+  check_string
+    "a refused prerequisite stays decisive beside an unobservable one"
+    "absent"
+    (match
+       state
+         [ State_backend, Unmet "no bucket"
+         ; Provisioning_identity, Unknown "AccessDenied"
+         ; Delegated_zone, Unknown "spawn failed"
+         ]
+     with
+     | Sol_cli_installation_onboarding.Present -> "present"
+     | Absent -> "absent"
+     | Partial -> "partial"
+     | Indeterminate -> "indeterminate")
+;;
+
+let test_the_decision_follows_interactivity () =
+  let open Sol_cli_installation_onboarding in
+  let decision = decision in
+  check_string
+    "an established installation is never offered a setup"
+    "proceed"
+    (match decision ~interactive:true Present with
+     | Proceed -> "proceed"
+     | Offer -> "offer"
+     | Refuse -> "refuse"
+     | Report -> "report");
+  check_string
+    "an interactive run is offered the setup"
+    "offer"
+    (match decision ~interactive:true Absent with
+     | Proceed -> "proceed"
+     | Offer -> "offer"
+     | Refuse -> "refuse"
+     | Report -> "report");
+  check_string
+    "a non-interactive run is refused rather than prompted"
+    "refuse"
+    (match decision ~interactive:false Absent with
+     | Proceed -> "proceed"
+     | Offer -> "offer"
+     | Refuse -> "refuse"
+     | Report -> "report");
+  check_string
+    "a partly present installation is offered too"
+    "offer"
+    (match decision ~interactive:true Partial with
+     | Proceed -> "proceed"
+     | Offer -> "offer"
+     | Refuse -> "refuse"
+     | Report -> "report");
+  check_string
+    "an unobservable installation is reported, not offered and not refused"
+    "report"
+    (match decision ~interactive:true Indeterminate with
+     | Proceed -> "proceed"
+     | Offer -> "offer"
+     | Refuse -> "refuse"
+     | Report -> "report")
+;;
+
+let test_the_report_separates_work_from_the_external_action () =
+  let verdicts =
+    [ Sol_cli_installation.State_backend, Sol_cli_installation.Unmet "no bucket"
+    ; ( Sol_cli_installation.Provisioning_identity
+      , Sol_cli_installation.Unknown "AccessDenied" )
+    ]
+  in
+  let report = report_of verdicts "prod/aws/us-east-1" aws_config in
+  let contains needle = Sol_cli_string.contains ~needle report in
+  check_bool "the report names the target" true (contains "prod/aws/us-east-1");
+  check_bool
+    "the report lists the missing prerequisites"
+    true
+    (contains "terraform state backend");
+  check_bool "the report shows the declared installation" true (contains "sol-state-test");
+  check_bool "the automated work is named" true (contains "Sol does this for you:");
+  check_bool
+    "the external action is separated"
+    true
+    (contains "One action may be required from you:");
+  check_bool "the DNS hand-off names the zone" true (contains "qual-aws.example.test");
+  check_bool
+    "an unobservable prerequisite is labelled UNKNOWN rather than missing"
+    true
+    (contains "UNKNOWN")
+;;
+
+let test_the_refusal_names_how_to_establish_it () =
+  let verdicts =
+    [ Sol_cli_installation.State_backend, Sol_cli_installation.Unmet "no bucket" ]
+  in
+  let refusal =
+    String.concat
+      "\n"
+      (Sol_cli_installation_onboarding.refusal_lines
+         ~target:"prod/aws/us-east-1"
+         ~because:"this run is not interactive"
+         verdicts)
+  in
+  check_bool
+    "the refusal names the command that establishes the installation"
+    true
+    (Sol_cli_string.contains
+       ~needle:"sol cloud bootstrap prod/aws/us-east-1 --apply"
+       refusal);
+  check_bool
+    "the refusal says why it will not set it up"
+    true
+    (Sol_cli_string.contains ~needle:"this run is not interactive" refusal)
+;;
+
+let test_an_unobservable_installation_is_never_absent () =
+  let verdicts =
+    [ Sol_cli_installation.State_backend, Sol_cli_installation.Unknown "AccessDenied" ]
+  in
+  let report =
+    String.concat
+      "\n"
+      (Sol_cli_installation_onboarding.indeterminate_lines
+         ~target:"prod/aws/us-east-1"
+         verdicts)
+  in
+  check_bool
+    "an unobservable installation is neither established nor absent"
+    true
+    (Sol_cli_string.contains ~needle:"neither established nor absent" report);
+  check_bool
+    "the report says how to observe it"
+    true
+    (Sol_cli_string.contains ~needle:"sol cloud bootstrap prod/aws/us-east-1" report);
+  check_bool
+    "an unobservable installation is never called absent"
+    false
+    (Sol_cli_string.contains ~needle:"is not installed" report)
+;;
+
+let test_the_next_stage_is_named () =
+  let present =
+    String.concat
+      "\n"
+      (Sol_cli_installation_onboarding.present_lines ~target:"prod/aws/us-east-1")
+  in
+  let undeclared =
+    String.concat
+      "\n"
+      (Sol_cli_installation_onboarding.undeclared_lines
+         ~target:"prod/aws/us-east-1"
+         ~reason:"the installation requires the target's state_bucket")
+  in
+  check_bool
+    "an established installation names the environment stage"
+    true
+    (Sol_cli_string.contains ~needle:"sol cloud apply prod/aws/us-east-1" present);
+  check_bool
+    "an undeclared installation is named with its reason"
+    true
+    (Sol_cli_string.contains ~needle:"state_bucket" undeclared)
+;;
+
+let test_a_refused_provider_answer_is_not_absence () =
+  let absent provider message =
+    (Sol_cli_provider_capabilities.capabilities_of provider)
+      .installation_failure_means_absent
+      message
+  in
+  check_bool
+    "AWS's HeadBucket 404 is absence"
+    true
+    (absent
+       Sol_cli_provider.Aws
+       "An error occurred (404) when calling the HeadBucket operation: Not Found");
+  check_bool
+    "an IAM NoSuchEntity is absence"
+    true
+    (absent
+       Sol_cli_provider.Aws
+       "An error occurred (NoSuchEntity) when calling the GetRole operation: cannot be \
+        found");
+  check_bool
+    "an AWS AccessDenied is not absence"
+    false
+    (absent
+       Sol_cli_provider.Aws
+       "An error occurred (AccessDenied) when calling the GetRole operation: not \
+        authorized");
+  check_bool
+    "an AWS 403 is not absence"
+    false
+    (absent
+       Sol_cli_provider.Aws
+       "An error occurred (403) when calling the HeadBucket operation: Forbidden");
+  check_bool
+    "credentials Sol does not have are not absence"
+    false
+    (absent Sol_cli_provider.Aws "Unable to locate credentials");
+  check_bool
+    "a missing GCS bucket is absence"
+    true
+    (absent Sol_cli_provider.Gcp "HTTPError 404: The specified bucket does not exist.");
+  check_bool
+    "a GCP permission denial is not absence"
+    false
+    (absent
+       Sol_cli_provider.Gcp
+       "HTTPError 403: does not have storage.buckets.get access to the Google Cloud \
+        Storage bucket.")
+;;
+
 let () =
   Alcotest.run
     "installation"
-    [ ( "uninstall plan"
+    [ ( "first-run onboarding"
+      , [ Alcotest.test_case
+            "the state comes from the observed verdicts"
+            `Quick
+            test_the_first_run_state_comes_from_the_verdicts
+        ; Alcotest.test_case
+            "the decision follows interactivity"
+            `Quick
+            test_the_decision_follows_interactivity
+        ; Alcotest.test_case
+            "the report separates Sol's work from the external action"
+            `Quick
+            test_the_report_separates_work_from_the_external_action
+        ; Alcotest.test_case
+            "the refusal names how to establish the installation"
+            `Quick
+            test_the_refusal_names_how_to_establish_it
+        ; Alcotest.test_case
+            "an unobservable installation is never called absent"
+            `Quick
+            test_an_unobservable_installation_is_never_absent
+        ; Alcotest.test_case "the next stage is named" `Quick test_the_next_stage_is_named
+        ; Alcotest.test_case
+            "a refused provider answer is not absence"
+            `Quick
+            test_a_refused_provider_answer_is_not_absence
+        ] )
+    ; ( "uninstall plan"
       , [ Alcotest.test_case
             "a Sol-created zone is removed, with its own confirmation"
             `Quick

@@ -99,3 +99,134 @@ surface, so a runnable example or tutorial section must demonstrate it end to en
 
 **TypeScript parity:** No language-parity impact — onboarding is app-language
 neutral and no application-facing contract changes.
+
+## Premise checked (2026-10-01)
+
+The premise is that `sol deploy` has no first-run path: the knowledge lives in an
+operator runbook, and `sol cloud apply` fails on an absent installation. Checked at
+`origin/main` `438267c9`:
+
+```text
+$ git show origin/main:cli/bin/cmd_deploy.ml | rg -n 'installation|bootstrap'
+(no matches)
+```
+
+Positive control: the same search over `cli/bin/cmd_cloud_tf.ml` finds the
+installation surface (`installation_observation`, `installation_probes`,
+`installation_stage`), so the search does find installation code where it exists.
+The deploy command never observed the installation; its only cluster gate was
+`destination_of_target`, whose failure is the bare `kube_context` message.
+Premise holds.
+
+## Part A landed (2026-10-01): the first run observes the installation and guides it
+
+`sol deploy <target>` now observes the target's durable installation and guides it
+in place, as `DEC-057` §2 requires, using the stage `INFRA-096` provides
+(`Sol_cli_installation_stage.reconcile`) — no second lifecycle implementation.
+
+**When it runs.** The deploy's own preconditions are unchanged and are checked
+first; the installation is observed when the run cannot reach the target's cluster,
+which is the first-run shape:
+
+- the target declares no `kube_context`, so `destination_of_target` refuses, or
+- the declared cluster is unreachable, so the substrate prerequisite fails.
+
+That bounds the change: an ordinary deploy against a reachable cluster is
+untouched and invokes no provider CLI (AC2 — verified by asserting that an
+established installation runs no Terraform at all).
+
+**What it decides.** `Sol_cli_installation_onboarding.state_of_verdicts` classifies
+the observed verdicts into `Present` / `Absent` / `Partial` / `Indeterminate`: every
+prerequisite Established is `Present`; any `Unmet` is decisive (the provider
+answered), giving `Absent`, or `Partial` when something else is Established; only
+`Unknown` verdicts give `Indeterminate`. `decision` drives the presentation: with
+the installation `Present` the run names the environment stage
+(`sol cloud apply <target>`) and stops; `Absent`/`Partial` is offered on an
+interactive `--apply` run and refused with the command that establishes it
+otherwise; `Indeterminate` is reported and never claimed either way.
+
+**What the user sees.** The report separates Sol's automated work from the one
+external action (AC3) and prints the resolved configuration it would reconcile.
+Accepting runs the durable root, prints the delegation instruction, waits for the
+delegation — bounded by the new `sol deploy --await-delegation=SECONDS` (300s by
+default, `0` disables) — confirms it from a public resolver rather than from
+written configuration, and then re-observes: an interrupted run resumes at whatever
+is still unmet, and an established installation repeats nothing (AC4).
+
+**Non-interactive honesty (AC5).** With no terminal, or under `--dry-run` /
+`--emit-to`, the run never prompts and never sets anything up: it prints the
+observation, the reason it will not act, and `sol cloud bootstrap <target> --apply`.
+That is the whole CI path, and the exit code is the deploy's own failure.
+
+**Honest detection, and the correction it forced.** A provider CLI failure that
+does not name the resource as missing is now `UNKNOWN`, not `Unmet`:
+`Sol_cli_provider_capabilities.installation_observation` consults the provider
+tier's `installation_failure_means_absent`. Before this, an `AccessDenied` or a
+missing credential was reported as "the provider answered that the prerequisite is
+not there" — a false negative `DEC-052` forbids, and on the deploy path one that
+would have refused an ordinary CI deploy run with the deploy identity, whose policy
+deliberately denies `iam:*` and has no state-bucket read
+(`platform/cloud/aws/bootstrap/main.tf`, `data.aws_iam_policy_document.deploy`).
+
+**Where the boundary is, recorded rather than hidden.** An installation Sol cannot
+observe is *reported*, not fatal, for the deploy: refusing the run because a deploy
+identity cannot read the durable layer would make that supported identity unusable,
+which is a security-model change (`docs/deployment/production-bootstrap.md`), and
+the deploy's real gates — contract, images, migrations, cluster reachability — are
+unaffected. The verdict is still never promoted to healthy and the run names the
+command that observes it. This is the one place this ticket's "an unobservable
+answer fails closed" is applied to the *verdict* rather than to the whole deploy.
+
+## What remains (part B)
+
+AC1's "accepting it reaches a deployed application" and AC6's
+provisioning ordering need `sol deploy` to drive the *environment* stages as well:
+`DEC-057` §1 puts `provision` and `platform` on the happy path, and today the
+guided run stops at them and names `sol cloud apply <target>`. Two pieces:
+
+1. run the provisioning stage from the guided run when the environment is absent,
+   reusing `sol cloud apply`'s code path rather than a second implementation;
+2. establish the run's own cluster access afterwards, because `sol cloud apply`
+   prints the `deploy_kubeconfig_command` for the operator to run and deliberately
+   does not write the user's kubeconfig or target file (`AUDIT-072`), and the
+   deploy identity is a separate trust domain with its own access entry.
+   `Sol_cli_aws_cluster.provisioner_kubeconfig` is the existing
+   ephemeral-kubeconfig pattern this would follow, and GCP has no equivalent yet.
+
+(2) is a security-model question — whether Sol may establish ephemeral
+deploy-identity cluster access for a run on the operator's behalf, and whether a
+provider without an equivalent path should refuse rather than degrade — and this
+ticket's non-goals do not settle it. It is recorded here for the operator instead
+of being assumed.
+
+## Coverage (part A)
+
+- `examples/pluto/README.md` gains the inline first-run walkthrough beside the
+  explicit `sol cloud bootstrap` pair.
+- `docs/DEVELOPER_EXPERIENCE.md` §3, §4.2, §5 and §6 state what is implemented
+  today, and `docs/guides/deployment.md` §2 replaces "Target (FEAT-106)" with it.
+- `docs/reference/cli.md` regenerated: the new flag, and the first-run paragraph in
+  `sol deploy`'s own help.
+
+## Checks run (part A)
+
+- `dune build @all`; `internal/ci/check_ocamlformat.sh --all`;
+  `internal/ci/check_no_comments.sh`.
+- `dune test cli/`, including a new `cli/test/test_deploy_first_run.sh` that drives
+  the command against fake `aws` / `terraform` / `kubectl` / `dig`: uninstalled and
+  non-interactive, uninstalled and `--dry-run`, partly installed, a denied provider
+  (UNKNOWN, never "missing"), installed through an unreachable cluster, and (under a
+  pty) an accepted and a declined setup — asserting exit codes, that nothing is
+  provisioned without a terminal, and that an established installation runs no
+  Terraform; and 7 new cases in `cli/test/test_installation.ml` for the onboarding
+  model and the provider absence vocabulary.
+- `render-cli-reference.py --check`.
+
+**Language parity (part A):** no application-facing contract changes — no
+`sol.toml` field, framework primitive or generated manifest — so `DEC-022` carries
+no per-language verdict for this change.
+
+**Ticket state:** stays in `READY_FOR_ENGINEERING`. Part A's criteria hold; AC1's
+environment clause and AC6's provisioning ordering do not yet, so the ticket is not
+moved to `DONE`.
+

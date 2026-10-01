@@ -135,11 +135,156 @@ let check_migration_prerequisite ~ctx ~plan ~live =
     | Failed report -> Sol_cli_exit.failure report)
 ;;
 
-let check_substrate_prerequisite ~ctx ~plan ~live =
-  Sol_cli_deploy_run.substrate_prerequisite ctx ~plan ~live
-  |> Result.map_error (function
-    | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
-    | Failed report -> Sol_cli_exit.failure report)
+let print_guided lines = List.iter (fun line -> Printf.printf "%s\n%!" line) lines
+let eprint_guided lines = List.iter (fun line -> Printf.eprintf "%s\n%!" line) lines
+
+let observe_installation target_cfg =
+  let provider = target_cfg.Sol_cli_config.provider in
+  match Sol_cli_installation.of_target target_cfg with
+  | Error message -> Error message
+  | Ok configuration ->
+    let verdicts =
+      Sol_cli_provider_capabilities.installation_probes provider configuration
+      |> Sol_cli_installation.observe
+           ~run:(Sol_cli_provider_capabilities.installation_observation ~provider)
+    in
+    Ok (configuration, verdicts)
+;;
+
+let setup_refusal_reason = function
+  | Sol_cli_command_request.Deploy_apply -> "this run is not interactive"
+  | Deploy_dry_run _ -> "this run is `--dry-run`, which changes nothing"
+  | Deploy_emit_to _ -> "this run only writes manifests for another actor to apply"
+;;
+
+let allow_setup = function
+  | Sol_cli_command_request.Deploy_apply -> true
+  | Deploy_dry_run _ | Deploy_emit_to _ -> false
+;;
+
+let await_public_delegation ~configuration ~run ~seconds =
+  match
+    Sol_cli_installation.zone_domain configuration.Sol_cli_installation.zone, seconds
+  with
+  | Some domain, seconds when seconds > 0 ->
+    let attempts = max 1 (seconds / 5) in
+    Printf.printf
+      "\n\
+       Waiting up to %d seconds for the delegation of %s to appear in public DNS (%d \
+       attempt(s)):\n\
+       %!"
+      seconds
+      domain
+      attempts;
+    (match
+       Sol_cli_installation_stage.await_delegation
+         ~run
+         ~report:(fun line -> Printf.printf "  %s\n%!" line)
+         ~attempts
+         ~interval:5.
+         ~domain
+         ()
+     with
+     | Sol_cli_installation.Established -> Ok ()
+     | Sol_cli_installation.Unmet reason | Sol_cli_installation.Unknown reason ->
+       Error (Sol_cli_exit.error reason))
+  | _, _ -> Ok ()
+;;
+
+let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
+  let provider = target_cfg.Sol_cli_config.provider in
+  let run = Sol_cli_provider_capabilities.installation_observation ~provider in
+  let* () = Cmd_cloud_tf.check_terraform () in
+  let* assets = Cmd_cloud_tf.resolve_assets () in
+  Printf.printf "\nSetting up the installation for %s...\n%!" target;
+  let* lines =
+    Sol_cli_installation_stage.reconcile ~assets ~provider ~configuration ~run ()
+    |> Sol_cli_exit.of_msg
+  in
+  print_guided (List.map (fun line -> "  " ^ line) lines);
+  let* () = await_public_delegation ~configuration ~run ~seconds:await_delegation in
+  match observe_installation target_cfg with
+  | Error message ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "the installation for %s can no longer be resolved: %s"
+            target
+            message))
+  | Ok (_, verdicts) ->
+    (match Sol_cli_installation_onboarding.state_of_verdicts verdicts with
+     | Sol_cli_installation_onboarding.Present ->
+       print_guided (Sol_cli_installation_onboarding.established_lines ~target);
+       print_guided (Sol_cli_installation_onboarding.present_lines ~target);
+       Ok ()
+     | Sol_cli_installation_onboarding.Absent
+     | Sol_cli_installation_onboarding.Partial
+     | Sol_cli_installation_onboarding.Indeterminate ->
+       eprint_guided
+         (Sol_cli_installation_onboarding.still_unresolved_lines ~target verdicts);
+       Error (Sol_cli_exit.reported ~code:1 ()))
+;;
+
+let guide_installation ~target ~target_cfg ~action ~await_delegation =
+  match observe_installation target_cfg with
+  | Error message ->
+    eprint_guided
+      (Sol_cli_installation_onboarding.undeclared_lines ~target ~reason:message);
+    Ok ()
+  | Ok (configuration, verdicts) ->
+    let state = Sol_cli_installation_onboarding.state_of_verdicts verdicts in
+    let can_set_up = allow_setup action && Sol_cli_confirm.interactive () in
+    (match Sol_cli_installation_onboarding.decision ~interactive:can_set_up state with
+     | Proceed ->
+       print_guided (Sol_cli_installation_onboarding.present_lines ~target);
+       Ok ()
+     | Report ->
+       eprint_guided
+         (Sol_cli_installation_onboarding.indeterminate_lines ~target verdicts);
+       Ok ()
+     | Refuse ->
+       print_guided
+         (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
+       eprint_guided
+         (Sol_cli_installation_onboarding.refusal_lines
+            ~target
+            ~because:(setup_refusal_reason action)
+            verdicts);
+       Ok ()
+     | Offer ->
+       print_guided
+         (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
+       if
+         Sol_cli_confirm.ask
+           ~question:(Printf.sprintf "Set up Sol for %s now?" target)
+           ~default:true
+       then set_up_installation ~target ~target_cfg ~configuration ~await_delegation
+       else (
+         eprint_guided
+           (Sol_cli_installation_onboarding.refusal_lines
+              ~target
+              ~because:"you chose not to set it up"
+              verdicts);
+         Ok ()))
+;;
+
+let guide_installation_of_ctx ~ctx ~action ~await_delegation =
+  guide_installation
+    ~target:ctx.Sol_cli_deploy_run.target_name
+    ~target_cfg:ctx.Sol_cli_deploy_run.target_cfg
+    ~action
+    ~await_delegation
+;;
+
+let check_substrate_prerequisite ~ctx ~plan ~live ~action ~await_delegation =
+  match Sol_cli_deploy_run.substrate_prerequisite ctx ~plan ~live with
+  | Ok () -> Ok ()
+  | Error error ->
+    let* () = guide_installation_of_ctx ~ctx ~action ~await_delegation in
+    Error
+      (match error with
+       | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
+       | Failed report -> Sol_cli_exit.failure report)
 ;;
 
 let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
@@ -158,12 +303,19 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
       (Printexc.to_string exn)
 ;;
 
-let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to =
+let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan ctx ~emit_to in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
-  let* () = check_substrate_prerequisite ~ctx ~plan ~live:false in
+  let* () =
+    check_substrate_prerequisite
+      ~ctx
+      ~plan
+      ~live:false
+      ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
+      ~await_delegation
+  in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
   let* _ = run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan in
@@ -221,7 +373,12 @@ let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
   report_surplus_workloads (Sol_cli_deploy_run.surplus_workloads ctx plan)
 ;;
 
-let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_push_url =
+let run_apply
+      (ctx : Sol_cli_deploy_run.context)
+      ~confirm_group_change
+      ~loki_push_url
+      ~await_delegation
+  =
   let* () = check_apply_environment ~facts:ctx.facts ~services:ctx.services in
   let* () =
     Sol_cli_deploy_run.verify_image_refs_exist ~image_refs:ctx.image_refs
@@ -238,7 +395,14 @@ let run_apply (ctx : Sol_cli_deploy_run.context) ~confirm_group_change ~loki_pus
   in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
-  let* () = check_substrate_prerequisite ~ctx ~plan ~live:true in
+  let* () =
+    check_substrate_prerequisite
+      ~ctx
+      ~plan
+      ~live:true
+      ~action:Sol_cli_command_request.Deploy_apply
+      ~await_delegation
+  in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
@@ -307,8 +471,27 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let secret_backend =
     Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
   in
+  let declared_context =
+    match target_cfg.Sol_cli_config.kube_context with
+    | Some context -> not (Sol_cli_string.is_blank context)
+    | None -> false
+  in
+  let await_delegation = Option.value req.await_delegation ~default:300 in
   let* destination =
-    Sol_cli_config.destination_of_target target_cfg |> Sol_cli_exit.of_msg
+    match Sol_cli_config.destination_of_target target_cfg with
+    | Ok destination -> Ok destination
+    | Error message ->
+      let* () =
+        if declared_context
+        then Ok ()
+        else
+          guide_installation
+            ~target:req.target
+            ~target_cfg
+            ~action:req.action
+            ~await_delegation
+      in
+      Error (Sol_cli_exit.error message)
   in
   let ctx : Sol_cli_deploy_run.context =
     { execution =
@@ -334,13 +517,15 @@ let run (req : Sol_cli_command_request.deploy_request) =
     }
   in
   match req.action with
-  | Sol_cli_command_request.Deploy_dry_run { emit_to } -> run_dry_run ctx ~emit_to
+  | Sol_cli_command_request.Deploy_dry_run { emit_to } ->
+    run_dry_run ctx ~emit_to ~await_delegation
   | Deploy_emit_to dir -> run_emit ctx ~dir
   | Deploy_apply ->
     run_apply
       ctx
       ~confirm_group_change:req.confirm_group_change
       ~loki_push_url:req.loki_push_url
+      ~await_delegation
 ;;
 
 let target_arg =
@@ -590,6 +775,59 @@ let keep_releases_arg =
              Sol_cli_release_retention.default_keep))
 ;;
 
+let await_delegation_arg =
+  Arg.(
+    value
+    & opt (some int) None
+    & info
+        [ "await-delegation" ]
+        ~docv:"SECONDS"
+        ~doc:
+          "Bound the wait for the domain this target serves to answer with NS records \
+           from a public resolver during the inline first-run setup, in five-second \
+           checks. Omitted, that wait runs for up to 300 seconds; 0 disables it. The \
+           exact records to add are printed either way, and an unqueryable resolver is \
+           UNKNOWN rather than a silent success.")
+;;
+
+let man =
+  [ `S Manpage.s_description
+  ; `P
+      "Like 'sol up' without the build step: the images must already be in the registry, \
+       addressed by --image-tag or by an immutable --image-ref."
+  ; `P
+      "The first run for an account is guided in place (DEC-057 §2): when this deploy \
+       cannot reach the target's cluster, Sol observes the target's durable installation \
+       at the provider — never inferring it from configuration — and reports what it \
+       found. An installation that is not established is reported with the prerequisites \
+       that are missing, the work Sol would do to set it up, and the one external action \
+       the operator may have to take (today, the DNS delegation), and Sol offers to set \
+       it up without a separate administrative command. An account that already has an \
+       installation is deployed to without any one-time setup and without a prompt."
+  ; `P
+      "Every prerequisite is an observation: Established, Unmet (the provider answered \
+       that it is not there) or UNKNOWN (Sol could not look). A refused or \
+       unauthenticated provider answer is UNKNOWN, never treated as an absent \
+       prerequisite, because a deploy identity is not required to be able to read the \
+       durable resources; UNKNOWN is reported and never promoted to healthy (DEC-052)."
+  ; `P
+      "A run that is not interactive, or that changes nothing (--dry-run, --emit-to), \
+       never prompts and never sets an installation up: it reports the same observation \
+       and the command that establishes it, so a CI run fails with an explanation \
+       instead of hanging or silently skipping the installation."
+  ; `S "EXIT STATUS"
+  ; `P
+      "0 -- the deployment was applied (or emitted) and verified as the selected profile \
+       requires."
+  ; `P
+      "1 -- the run failed: a prerequisite is unmet, unknown or was refused; a migration \
+       is not applied; the deployment did not converge; or the operator declined (or was \
+       not asked) to set an unestablished installation up. The reason is named on \
+       stderr, and nothing is assumed healthy."
+  ; `P "No other code is used by this command."
+  ]
+;;
+
 let cmd =
   Cmd.v
     (Cmd.info
@@ -599,7 +837,10 @@ let cmd =
           skips the build step — images must already be in the registry. Takes a \
           required TARGET positional (<env>/<provider>/<region>, e.g. \
           dev/aws/us-east-1), unlike 'sol up' whose positional is the optional \
-          service-path filter — 'sol up' is local-only and has no target to resolve.")
+          service-path filter — 'sol up' is local-only and has no target to resolve. A \
+          first run against an uninstalled account is guided in place rather than \
+          requiring 'sol cloud bootstrap' first."
+       ~man)
     Term.(
       const
         (fun
@@ -615,6 +856,7 @@ let cmd =
              confirm_group_change
              loki_push_url
              keep_releases
+             await_delegation
            ->
            Sol_cli_exit.exit_on
              (let* req =
@@ -631,6 +873,7 @@ let cmd =
                   ~confirm_group_change
                   ~loki_push_url
                   ~keep_releases
+                  ~await_delegation
                   ~git_sha:Sol_cli_command_request.git_sha
                 |> Sol_cli_exit.of_msg
               in
@@ -646,5 +889,6 @@ let cmd =
       $ secret_backend_term
       $ confirm_group_change_flag
       $ loki_push_url_arg
-      $ keep_releases_arg)
+      $ keep_releases_arg
+      $ await_delegation_arg)
 ;;

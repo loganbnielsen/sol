@@ -89,6 +89,7 @@ let uninstall ~target ~var_file ~vars ~confirm ~confirm_dns_zone () =
     Sol_cli_run_log.run_phase run_log ~name run
     |> Sol_cli_terraform_steps.terraform_outcome
   in
+  let installation_observation = Cmd_cloud_tf.installation_observation ~provider in
   let deps : Sol_cli_installation_uninstall_stage.deps =
     { release_state_backend =
         (fun () ->
@@ -111,12 +112,12 @@ let uninstall ~target ~var_file ~vars ~confirm ~confirm_dns_zone () =
     ; retire_state_backend =
         (fun () ->
           capabilities.installation_retire_state_backend
-            ~run:Cmd_cloud_tf.installation_observation
+            ~run:installation_observation
             configuration)
     ; observe =
         (fun () ->
           Sol_cli_provider_capabilities.installation_probes provider configuration
-          |> Sol_cli_installation.observe ~run:Cmd_cloud_tf.installation_observation)
+          |> Sol_cli_installation.observe ~run:installation_observation)
     ; warn = (fun line -> Printf.eprintf "%s\n%!" line)
     }
   in

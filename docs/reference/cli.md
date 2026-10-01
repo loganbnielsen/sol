@@ -71,10 +71,10 @@ The reference covers what the binary registers, so the documented-but-planned op
 not appear here, and each names the ticket that will add it:
 
 - `sol ci init github` — FEAT-109.
-- The guided DNS create/adopt flow — FEAT-107. The stage it will call, `sol cloud bootstrap`,
-  *is* registered and is documented below.
-- Inline first-run onboarding — FEAT-106, which drives the same stages rather than adding a
-  command of its own.
+
+Inline first-run onboarding (FEAT-106) adds no command of its own: `sol deploy`
+observes the target's durable installation and guides it in place, so it is
+documented with that command rather than listed here.
 
 ## Target-addressed commands
 
@@ -89,7 +89,7 @@ The target is the positional; `--scope` narrows to a domain or unit.
 | `sol cloud destroy` | TARGET | `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Destroy cloud infrastructure via Terraform. |
 | `sol cloud plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview cloud infrastructure changes for a target. |
 | `sol cloud reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
-| `sol deploy` | TARGET | `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--scope=DOMAIN[/UNIT]`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Deploy pre-built images to a cluster (CI/CD integration). |
+| `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--scope=DOMAIN[/UNIT]`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Deploy pre-built images to a cluster (CI/CD integration). |
 | `sol deployments` | — | `--target=ENV/PROVIDER/REGION` | documented | List the deployment events the target's cluster |
 | `sol logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N`, `--target=ENV/PROVIDER/REGION` | documented | Stream logs from a deployed service. Wraps 'kubectl logs' |
 | `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--registry=URL`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |

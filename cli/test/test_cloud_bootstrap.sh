@@ -35,7 +35,7 @@ check_absent() {
   esac
 }
 
-mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing" "$tmp/bin-tf" "$tmp/data"
+mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing" "$tmp/bin-denied" "$tmp/bin-tf" "$tmp/data"
 cat >"$tmp/bin-tf/terraform" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
@@ -147,7 +147,12 @@ case "$1 $2" in
     printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
-  "s3api head-bucket" | "dynamodb describe-table")
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "dynamodb describe-table")
+    printf '%s\n' 'An error occurred (ResourceNotFoundException) when calling the DescribeTable operation: Requested resource not found' >&2
     exit 254
     ;;
   "iam get-role")
@@ -160,7 +165,18 @@ case "$1 $2" in
 esac
 exit 0
 EOF
-chmod +x "$tmp/bin-ok/aws" "$tmp/bin-refusing/aws"
+cat >"$tmp/bin-denied/aws" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
+esac
+printf '%s\n' 'An error occurred (AccessDenied) when calling the operation: not authorized to perform this action' >&2
+exit 255
+EOF
+chmod +x "$tmp/bin-ok/aws" "$tmp/bin-refusing/aws" "$tmp/bin-denied/aws"
 
 run() {
   local path="$1" target="$2"
@@ -215,6 +231,21 @@ check_contains \
 check_contains \
   "an empty hosted-zone answer is Unmet, not Established" \
   "delegated DNS zone           Unmet: no Route53 hosted zone named qual-aws.example.test, although the target declares it sol-created" \
+  "$output"
+
+run "$tmp/bin-denied:/usr/bin:/bin" qual/aws/us-east-1
+check "a provider that refuses to answer exits 1" 1 "$rc"
+check_contains \
+  "a denied answer is UNKNOWN, not an absent prerequisite" \
+  "terraform state backend      UNKNOWN: An error occurred (AccessDenied)" \
+  "$output"
+check_contains \
+  "a denied identity read is UNKNOWN too" \
+  "provisioning identity        UNKNOWN: An error occurred (AccessDenied)" \
+  "$output"
+check_absent \
+  "a denied answer is never reported as Unmet" \
+  "terraform state backend      Unmet" \
   "$output"
 
 run "/usr/bin:/bin" qual/aws/us-east-1
