@@ -35,7 +35,7 @@ check_absent() {
   esac
 }
 
-mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing" "$tmp/bin-denied" "$tmp/bin-tf" "$tmp/data"
+mkdir -p "$tmp/work/sol" "$tmp/bin-ok" "$tmp/bin-refusing" "$tmp/bin-denied" "$tmp/bin-no-roles" "$tmp/bin-tf" "$tmp/data"
 cat >"$tmp/bin-tf/terraform" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
@@ -58,7 +58,11 @@ exit 0
 EOF
 chmod +x "$tmp/bin-tf/terraform"
 printf '%s\n' \
-  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns.test","ns-2.awsdns.test"]}}' \
+  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns.test","ns-2.awsdns.test"]},
+    "provisioner_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-provisioner"}]}},
+    "cluster_access_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-cluster-access"}]}},
+    "deploy_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-deploy"}]}},
+    "operator_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-operator"}]}}}' \
   >"$tmp/outputs.json"
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: bootstrap-test
@@ -176,7 +180,23 @@ esac
 printf '%s\n' 'An error occurred (AccessDenied) when calling the operation: not authorized to perform this action' >&2
 exit 255
 EOF
-chmod +x "$tmp/bin-ok/aws" "$tmp/bin-refusing/aws" "$tmp/bin-denied/aws"
+cat >"$tmp/bin-no-roles/aws" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+  "iam get-role")
+    printf '%s\n' 'An error occurred (NoSuchEntity) when calling the GetRole operation: The role cannot be found.' >&2
+    exit 254
+    ;;
+  "route53 list-hosted-zones-by-name")
+    case " $* " in
+      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
+      *) printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}' ;;
+    esac
+    ;;
+esac
+exit 0
+EOF
+chmod +x "$tmp/bin-ok/aws" "$tmp/bin-refusing/aws" "$tmp/bin-denied/aws" "$tmp/bin-no-roles/aws"
 
 run() {
   local path="$1" target="$2"
@@ -232,6 +252,10 @@ check_contains \
   "an empty hosted-zone answer is Unmet, not Established" \
   "delegated DNS zone           Unmet: no Route53 hosted zone named qual-aws.example.test, although the target declares it sol-created" \
   "$output"
+check_contains \
+  "an unapplied durable root has no contracts yet, and the report says how to get them" \
+  "sol cloud bootstrap qual/aws/us-east-1 --apply" \
+  "$output"
 
 run "$tmp/bin-denied:/usr/bin:/bin" qual/aws/us-east-1
 check "a provider that refuses to answer exits 1" 1 "$rc"
@@ -284,12 +308,47 @@ check_contains \
   "aws-bootstrap" \
   "$(cat "$tmp/terraform.log")"
 check_contains "the installation is established after the reconcile" "The installation is established" "$output"
+check_absent \
+  "an established installation is asked for no identity contract" \
+  "declare aws." \
+  "$output"
+check_contains \
+  "the durable root's identity contract is written where Sol keeps the target's state" \
+  "sol-provisioner" \
+  "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
+check_contains \
+  "every identity contract is written" \
+  "sol-operator" \
+  "$(cat "$(find "$tmp/data" -name 'operator_policy_json.json' -print -quit)" 2>/dev/null)"
 check_contains \
   "the delegation instruction names the zone's domain and parent" \
   "add these NS records for qual-aws.example.test at the zone that publishes it (example.test)" \
   "$output"
 check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
 check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
+run "$tmp/bin-no-roles:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1
+check "a report with the identities still missing exits 1" 1 "$rc"
+check_contains \
+  "the report hands over the contract for the missing identity" \
+  "declare aws.provisioner_role_arn" \
+  "$output"
+check_contains \
+  "the report names the file that holds the contract" \
+  "contract: " \
+  "$output"
+check_contains \
+  "the contract path is the file Sol wrote" \
+  "identity-contracts/provisioner_policy_json.json" \
+  "$output"
+check_contains \
+  "the written contract is the durable root's own document, verbatim" \
+  '"Sid": "sol-provisioner"' \
+  "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
+check_contains \
+  "and it carries the whole document, not a re-derived fragment" \
+  '"Version": "2012-10-17"' \
+  "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
+
 mv "$tmp/outputs.json" "$tmp/outputs.hidden"
 run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
 check_contains \

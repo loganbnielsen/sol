@@ -82,7 +82,7 @@ stale:
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 EOF
 
-mkdir -p "$tmp/bin-absent" "$tmp/bin-partial" "$tmp/bin-denied" "$tmp/bin-unresolvable" "$tmp/bin-installed" "$tmp/bin-first" "$tmp/bin-tf"
+mkdir -p "$tmp/bin-absent" "$tmp/bin-partial" "$tmp/bin-denied" "$tmp/bin-unresolvable" "$tmp/bin-installed" "$tmp/bin-first" "$tmp/bin-no-identity" "$tmp/bin-tf"
 
 cat >"$tmp/bin-absent/aws" <<EOF
 #!/bin/sh
@@ -111,6 +111,10 @@ cat >"$tmp/bin-partial/aws" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/aws.log"
 case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
   "s3api head-bucket")
     printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
     exit 254
@@ -120,6 +124,42 @@ case "\$1 \$2" in
     ;;
   "route53 list-hosted-zones-by-name")
     printf '%s\n' '{"HostedZones":[]}'
+    ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-no-identity/aws" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/aws.log"
+case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "dynamodb describe-table")
+    printf '%s\n' 'An error occurred (ResourceNotFoundException) when calling the DescribeTable operation: Requested resource not found' >&2
+    exit 254
+    ;;
+  "iam get-role")
+    printf '%s\n' 'An error occurred (NoSuchEntity) when calling the GetRole operation: The role cannot be found.' >&2
+    exit 254
+    ;;
+  "route53 list-hosted-zones-by-name")
+    zone=""
+    previous=""
+    for argument in "\$@"; do
+      if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
+      previous="\$argument"
+    done
+    case " \$* " in
+      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
+      *) printf '{"HostedZones":[{"Name":"%s."}]}\n' "\$zone" ;;
+    esac
     ;;
 esac
 exit 0
@@ -267,10 +307,15 @@ esac
 exit 0
 EOF
 
+cp "$tmp/bin-installed/dig" "$tmp/bin-no-identity/dig" 2>/dev/null || true
 chmod +x "$tmp"/bin-*/*
 
 printf '%s\n' \
-  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns-08.org","ns-2.awsdns-08.org"]}}' \
+  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns-08.org","ns-2.awsdns-08.org"]},
+    "provisioner_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-provisioner"}]}},
+    "cluster_access_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-cluster-access"}]}},
+    "deploy_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-deploy"}]}},
+    "operator_policy_json":{"sensitive":false,"value":{"Version":"2012-10-17","Statement":[{"Sid":"sol-operator"}]}}}' \
   >"$tmp/outputs.json"
 printf '%s\n' \
   '{"resource_changes":[{"address":"aws_s3_bucket.state","type":"aws_s3_bucket","mode":"managed","change":{"actions":["create"]}}]}' \
@@ -343,6 +388,31 @@ check_contains \
 check_absent "a non-interactive run never prompts" "[Y/n]" "$output"
 check_absent "a non-interactive run changes nothing" " apply " "$(terraform_log)"
 check_absent "a non-interactive run plans nothing" " plan " "$(terraform_log)"
+check_contains \
+  "the deploy names the external action that writes the identity contracts" \
+  "sol cloud bootstrap prod/aws/us-east-1 --apply" \
+  "$output"
+
+(
+  cd "$tmp/work" &&
+    XDG_DATA_HOME="$tmp/data" PATH="$tmp/bin-no-identity:$tmp/bin-tf:/usr/bin:/bin" \
+      "$sol" cloud bootstrap prod/aws/us-east-1 --apply
+) >"$tmp/bootstrap.out" 2>&1 || true
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-no-identity:/usr/bin:/bin"
+check_contains \
+  "a reconciled durable root hands the deploy the contract to attach" \
+  "declare aws.provisioner_role_arn" \
+  "$output"
+check_contains \
+  "and the deploy names the file that holds it" \
+  "identity-contracts/provisioner_policy_json.json" \
+  "$output"
+check_contains \
+  "the contract the deploy points at is the root's own document" \
+  '"Sid": "sol-provisioner"' \
+  "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
+check_absent "printing the contract runs no terraform" " apply " "$(terraform_log)"
 
 run "$tmp/bin-absent:/usr/bin:/bin" --dry-run
 check "a dry run against an uninstalled account exits 1" 1 "$rc"

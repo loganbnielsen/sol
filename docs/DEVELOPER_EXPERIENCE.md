@@ -151,8 +151,11 @@ environment.
   is a separate durable layer rather than part of an environment.
 - **Identities.** Least-privilege identities for provisioning, cluster access,
   deploy, and observation, distinct from the cluster-creator admin. Sol owns the
-  *policy contract*; how a given provider realises it differs, and the
-  provider-symmetric contract is a target of the installation work.
+  *policy contract* and you own the role: reconciling the durable root writes each
+  generated policy document to the root's own working directory and prints its path,
+  so the role can be created from it without reading Terraform outputs by hand. How a
+  given provider realises the identities differs, and the provider-symmetric contract
+  is a target of the installation work.
 - **The delegated DNS zone,** when Sol is responsible for one, with durable
   ownership separate from disposable target state (`DEC-042`).
 
@@ -225,6 +228,24 @@ planned, a plan that would **replace or destroy** a durable resource stops the r
 and asks a human, and a root already at its declared state applies nothing, so a
 second run is a no-op. The state backend is the one prerequisite whose presence is
 checked first, because a root cannot create the backend that stores its own state.
+
+The identities are the one part of the installation Sol deliberately does not create
+(`AUDIT-072`): it generates the least-privilege policy documents, and the operator
+creates the roles and declares their ARNs. A reconciliation writes those documents to
+the durable root's working directory — `identity-contracts/` beneath it — and the
+report prints, for each identity not yet established, the ARN field to declare and the
+path of its contract:
+
+```text
+  the identities are yours to create: Sol owns each policy contract
+  (AUDIT-072), you create the role and declare its ARN — Sol looks the role
+  up by the name in that ARN:
+    provisioning identity        declare aws.provisioner_role_arn
+      contract: ~/.local/share/sol/terraform/aws-bootstrap-…/identity-contracts/provisioner_policy_json.json
+```
+
+That is the whole hand-over: the contract's contents are the operator's to attach, and
+Sol never creates, attaches or rotates a role.
 
 ### Create or adopt, never duplicate
 

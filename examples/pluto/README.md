@@ -159,6 +159,17 @@ prod:
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 ```
 
+Sol creates the durable state, but the four identities are yours to create: it
+generates each least-privilege policy document and you attach it to a role of your
+own (`AUDIT-072`). Reconciling the durable root writes those documents beneath the
+root's working directory and prints their paths, so no Terraform output has to be
+read by hand:
+
+```text
+    provisioning identity        declare aws.provisioner_role_arn
+      contract: ~/.local/share/sol/terraform/aws-bootstrap-…/identity-contracts/provisioner_policy_json.json
+```
+
 Then observe it, and reconcile it once:
 
 ```bash

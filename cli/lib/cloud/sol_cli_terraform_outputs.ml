@@ -44,3 +44,17 @@ let line (name, value) =
   | Texts vs -> Printf.sprintf "  %-28s  [%s]" name (String.concat ", " vs)
   | Null -> Printf.sprintf "  %-28s  (none)" name
 ;;
+
+let raw json ~name =
+  match Yojson.Safe.from_string json with
+  | `Assoc outputs ->
+    (match List.assoc_opt name outputs with
+     | None -> Ok None
+     | Some (`Assoc fields) ->
+       (match List.assoc_opt "value" fields with
+        | None | Some `Null -> Ok None
+        | Some value -> Ok (Some (Yojson.Safe.pretty_to_string value)))
+     | Some _ -> Error (Printf.sprintf "terraform output %S is not an output object" name))
+  | _ -> Error "terraform output -json is not an object of outputs"
+  | exception Yojson.Json_error msg -> Error msg
+;;

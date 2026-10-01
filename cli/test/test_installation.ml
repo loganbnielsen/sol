@@ -1528,6 +1528,44 @@ let test_a_refused_provider_answer_is_not_absence () =
         Storage bucket.")
 ;;
 
+let test_identity_contracts_are_declared_per_provider () =
+  let contracts provider =
+    Sol_cli_provider_capabilities.installation_identity_contracts provider
+  in
+  let aws = contracts Sol_cli_provider.Aws in
+  let gcp = contracts Sol_cli_provider.Gcp in
+  Alcotest.(check int) "AWS declares the four identities Sol resolves" 4 (List.length aws);
+  Alcotest.(check int) "GCP's durable root declares no identities" 0 (List.length gcp);
+  let declared provider prerequisite =
+    contracts provider
+    |> List.find_opt (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
+      contract.identity = prerequisite)
+    |> Option.map (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
+      contract.declared_as)
+  in
+  Alcotest.(check (option string))
+    "the provisioning identity is declared as the provisioner role"
+    (Some "aws.provisioner_role_arn")
+    (declared Sol_cli_provider.Aws Sol_cli_installation.Provisioning_identity);
+  Alcotest.(check (option string))
+    "the deploy identity is declared as the deploy role"
+    (Some "aws.deploy_role_arn")
+    (declared Sol_cli_provider.Aws Sol_cli_installation.Deploy_identity);
+  Alcotest.(check (option string))
+    "the operator identity is declared as the operator role"
+    (Some "aws.operator_role_arn")
+    (declared Sol_cli_provider.Aws Sol_cli_installation.Operator_identity);
+  List.iter
+    (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
+       Alcotest.(check bool)
+         (Printf.sprintf
+            "the contract for %s names a durable-root output"
+            (Sol_cli_installation.prerequisite_label contract.identity))
+         true
+         (String.length contract.policy_output > 0))
+    aws
+;;
+
 let () =
   Alcotest.run
     "installation"
@@ -1557,6 +1595,12 @@ let () =
             "a refused provider answer is not absence"
             `Quick
             test_a_refused_provider_answer_is_not_absence
+        ] )
+    ; ( "identity contracts"
+      , [ Alcotest.test_case
+            "each provider declares the contracts its durable root carries"
+            `Quick
+            test_identity_contracts_are_declared_per_provider
         ] )
     ; ( "uninstall plan"
       , [ Alcotest.test_case

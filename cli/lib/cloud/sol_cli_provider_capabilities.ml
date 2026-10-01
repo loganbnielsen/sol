@@ -25,6 +25,12 @@ let gcp_failure_means_absent =
     [ "notfound"; "not found"; "does not exist"; "was not found"; "(404)"; "status: 404" ]
 ;;
 
+type identity_contract =
+  { identity : Sol_cli_installation.prerequisite
+  ; policy_output : string
+  ; declared_as : string
+  }
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -59,6 +65,7 @@ type t =
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
   ; installation_failure_means_absent : string -> bool
+  ; installation_identity_contracts : identity_contract list
   ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
   ; installation_state_backend_address : string
   ; installation_retire_state_backend :
@@ -355,6 +362,24 @@ let aws =
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = aws_failure_means_absent
+  ; installation_identity_contracts =
+      [ { identity = Sol_cli_installation.Provisioning_identity
+        ; policy_output = "provisioner_policy_json"
+        ; declared_as = "aws.provisioner_role_arn"
+        }
+      ; { identity = Sol_cli_installation.Cluster_access_identity
+        ; policy_output = "cluster_access_policy_json"
+        ; declared_as = "aws.cluster_access_role_arn"
+        }
+      ; { identity = Sol_cli_installation.Deploy_identity
+        ; policy_output = "deploy_policy_json"
+        ; declared_as = "aws.deploy_role_arn"
+        }
+      ; { identity = Sol_cli_installation.Operator_identity
+        ; policy_output = "operator_policy_json"
+        ; declared_as = "aws.operator_role_arn"
+        }
+      ]
   ; installation_created_prerequisites =
       [ Sol_cli_installation.State_backend
       ; Sol_cli_installation.State_lock
@@ -526,6 +551,7 @@ let gcp =
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = gcp_failure_means_absent
+  ; installation_identity_contracts = []
   ; installation_created_prerequisites =
       [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
   ; installation_state_backend_address = "google_storage_bucket.state"
@@ -541,6 +567,10 @@ let capabilities_of = function
 
 let installation_nameservers_output provider =
   (capabilities_of provider).installation_nameservers_output
+;;
+
+let installation_identity_contracts provider =
+  (capabilities_of provider).installation_identity_contracts
 ;;
 
 let installation_prerequisites provider =

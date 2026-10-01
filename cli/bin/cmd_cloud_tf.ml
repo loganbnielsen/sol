@@ -708,6 +708,12 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   Sol_cli_installation.resolved_configuration_to_lines configuration
   |> List.iter print_endline;
   Printf.printf "\n%s\n%!" (Sol_cli_installation.summary verdicts);
+  Sol_cli_installation_stage.identity_contract_lines
+    ~target
+    ~provider:target_cfg.provider
+    ~configuration
+    ~verdicts
+  |> List.iter print_endline;
   let* () =
     match configuration.Sol_cli_installation.zone, await_delegation with
     | Sol_cli_installation.Service_zone { domain; _ }, seconds when seconds > 0 ->

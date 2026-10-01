@@ -73,7 +73,10 @@ create a repository or operator-managed `backend.tf` for the normal lifecycle.
 The bootstrap root outputs four least-privilege policy documents
 (`provisioner_policy_json`, `publisher_policy_json`, `deploy_policy_json`,
 `operator_policy_json`). Sol owns the *contract*; it does not create roles,
-attach policies, or manage their lifecycle. Create the roles in your account
+attach policies, or manage their lifecycle. `sol cloud bootstrap <target> --apply`
+writes them to the durable root's working directory (`identity-contracts/`) and the
+installation report prints each path beside the ARN field to declare, so the roles can
+be created without reading Terraform outputs by hand. Create the roles in your account
 and declare the three ARNs `sol deploy` actually reads:
 
 ```yaml
