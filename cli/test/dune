@@ -262,3 +262,9 @@
  (deps ../bin/main.exe test_target_status.sh)
  (action
   (run bash %{dep:test_target_status.sh} %{dep:../bin/main.exe})))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_open_infra.sh)
+ (action
+  (run bash %{dep:test_open_infra.sh} %{dep:../bin/main.exe})))

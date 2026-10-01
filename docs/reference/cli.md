@@ -111,6 +111,7 @@ The scope is the positional (omitted means the workspace); `--target` selects th
 |---|---|---|---|---|
 | `sol check` | — | `--scope=DOMAIN[/UNIT]` | documented | Validate Sol workload declarations without Docker or |
 | `sol open dashboard` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana workspace/service |
+| `sol open infra` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the target-scoped infrastructure view |
 | `sol open logs` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana Explore logs view. |
 | `sol open metrics` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana metrics dashboard. |
 | `sol status` | SCOPE | `--base-domain=DOMAIN`, `--loki-base-url=URL`, `--observability-backend=BACKEND`, `--prometheus-base-url=URL`, `--target=ENV/PROVIDER/REGION` | documented | Show workspace/domain/service health and observability |

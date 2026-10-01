@@ -92,6 +92,9 @@
     "common": {
       "auth": {
         "database": "dev"
+      },
+      "metrics": {
+        "enabled": true
       }
     },
     "local": {
@@ -141,6 +144,15 @@
         },
         "service": {
           "targetPort": 8080
+        }
+      },
+      "statefulset": {
+        "podTemplate": {
+          "annotations": {
+            "prometheus.io/scrape": "true",
+            "prometheus.io/port": "9644",
+            "prometheus.io/path": "/public_metrics"
+          }
         }
       }
     },

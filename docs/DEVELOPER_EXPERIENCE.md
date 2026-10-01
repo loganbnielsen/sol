@@ -454,7 +454,7 @@ into provider tools for the normal path.
 | `sol logs <unit>` | Application logs without `kubectl` or observability-tool knowledge | **Today** (Loki, with a `kubectl` fallback) |
 | `sol rollback` | Return to a recorded known release via Sol's release contract | **Today** |
 | `sol check` | Diagnostics against the selected target/scope, with explained failures | **Partial** — declaration validity today; target/scope diagnostics **Target** |
-| `sol open <view>` | Open the relevant local/white-labelled operational UI | **Today** (logs, metrics, dashboard); traces/infra **Target** (OBS-045, INFRA-027) |
+| `sol open <view>` | Open the relevant local/white-labelled operational UI | **Today** (logs, metrics, dashboard, and the target-scoped `infra` view — INFRA-027); traces **Target** (OBS-045) |
 | `sol cloud destroy <target>` | Remove disposable environment resources and verify absence | **Today** |
 | `sol uninstall <target>` | Remove Sol's persistent installation, explicitly | **Today** |
 

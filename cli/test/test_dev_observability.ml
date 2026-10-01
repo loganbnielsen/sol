@@ -29,10 +29,46 @@ let test_dashboard_configmap () =
   assert_contains "service uid" yaml "\"uid\": \"sol-service-template\"";
   assert_contains "release timeline uid" yaml "\"uid\": \"sol-release-timeline\"";
   assert_contains
+    "target infrastructure uid"
+    yaml
+    "\"uid\": \"sol-target-infrastructure\"";
+  assert_contains
     "release timeline query"
     yaml
     "{workspace=\\\"$workspace\\\", domain=\\\"$domain\\\", service=\\\"$service\\\"} | \
      logfmt | event=\\\"deploy\\\""
+;;
+
+let test_infrastructure_view_sources_are_scraped () =
+  let component name =
+    Sol_cli_platform_component.merged_values_yaml
+      ~assets:(assets ())
+      ~component:name
+      ~profile:"local"
+    |> ok
+    |> Yojson.Safe.from_string
+  in
+  let member path json =
+    List.fold_left (fun json key -> Yojson.Safe.Util.member key json) json path
+  in
+  check_bool
+    "the postgres exporter is started, so the Postgres panels have a Prometheus source"
+    true
+    (member [ "metrics"; "enabled" ] (component "postgresql") = `Bool true);
+  check_bool
+    "Redpanda's pods are annotated for scraping, so the Redpanda panels have a source"
+    true
+    (member
+       [ "statefulset"; "podTemplate"; "annotations"; "prometheus.io/scrape" ]
+       (component "redpanda")
+     = `String "true");
+  check_bool
+    "and the annotation points at Redpanda's public metrics"
+    true
+    (member
+       [ "statefulset"; "podTemplate"; "annotations"; "prometheus.io/path" ]
+       (component "redpanda")
+     = `String "/public_metrics")
 ;;
 
 let test_prometheus_datasource_configmap () =
@@ -260,6 +296,10 @@ let () =
             "tempo datasource configmap"
             `Quick
             test_tempo_datasource_configmap
+        ; Alcotest.test_case
+            "the infrastructure view's sources are scraped"
+            `Quick
+            test_infrastructure_view_sources_are_scraped
         ] )
     ; ( "alloy"
       , [ Alcotest.test_case
