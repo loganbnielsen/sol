@@ -258,6 +258,9 @@ let guide_installation ~target ~target_cfg ~action ~await_delegation =
          Sol_cli_confirm.ask
            ~question:(Printf.sprintf "Set up Sol for %s now?" target)
            ~default:true
+           ~print:(fun text ->
+             print_string text;
+             flush stdout)
        then set_up_installation ~target ~target_cfg ~configuration ~await_delegation
        else (
          eprint_guided

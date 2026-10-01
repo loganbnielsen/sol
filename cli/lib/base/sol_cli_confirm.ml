@@ -8,8 +8,12 @@ let recognize ~default answer =
   | _ -> false
 ;;
 
-let ask ~question ~default =
-  Printf.printf "%s [%s] %!" question (if default then "Y/n" else "y/N");
+let prompt ~question ~default =
+  Printf.sprintf "%s [%s] " question (if default then "Y/n" else "y/N")
+;;
+
+let ask ~question ~default ~print =
+  print (prompt ~question ~default);
   match input_line stdin with
   | answer -> recognize ~default answer
   | exception End_of_file -> false
