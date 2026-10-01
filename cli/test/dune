@@ -115,6 +115,12 @@
  (action
   (run bash %{dep:test_cloud_bootstrap.sh} %{dep:../bin/main.exe})))
 
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_deploy_first_run.sh)
+ (action
+  (run bash %{dep:test_deploy_first_run.sh} %{dep:../bin/main.exe})))
+
 (executable
  (name print_providers)
  (libraries sol_cli))

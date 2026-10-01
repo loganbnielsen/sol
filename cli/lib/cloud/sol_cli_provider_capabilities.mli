@@ -36,6 +36,7 @@ type t =
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
+  ; installation_failure_means_absent : string -> bool
   ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
   ; installation_state_backend_address : string
   ; installation_retire_state_backend :
@@ -96,3 +97,8 @@ val installation_vars
   -> ?parent_zone_id:string
   -> Sol_cli_installation.installation_config
   -> (string * string) list
+
+val installation_observation
+  :  provider:Sol_cli_provider.t
+  -> string list
+  -> Sol_cli_installation.observation

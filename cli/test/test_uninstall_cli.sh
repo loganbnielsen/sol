@@ -91,7 +91,16 @@ case "\$1 \$2" in
     printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
-  "s3api head-bucket" | "dynamodb describe-table" | "iam get-role")
+  "s3api head-bucket")
+    printf '%s\n' 'An error occurred (404) when calling the HeadBucket operation: Not Found' >&2
+    exit 254
+    ;;
+  "dynamodb describe-table")
+    printf '%s\n' 'An error occurred (ResourceNotFoundException) when calling the DescribeTable operation: Requested resource not found' >&2
+    exit 254
+    ;;
+  "iam get-role")
+    printf '%s\n' 'An error occurred (NoSuchEntity) when calling the GetRole operation: The role cannot be found.' >&2
     exit 254
     ;;
   "route53 list-hosted-zones-by-name")

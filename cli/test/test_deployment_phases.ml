@@ -267,6 +267,7 @@ let deploy_without_tag ~git_sha =
     ~confirm_group_change:false
     ~loki_push_url:None
     ~keep_releases:20
+    ~await_delegation:None
     ~git_sha
 ;;
 
@@ -326,6 +327,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Alcotest.fail "git_sha should not be called")
   in
   match r with
@@ -348,6 +350,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   match r with
@@ -376,6 +379,7 @@ let test_deploy_request_gitops_action () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   match r with
@@ -404,6 +408,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   match r with
@@ -432,6 +437,7 @@ let test_deploy_request_rejects_empty_target () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "empty target rejected" true (Result.is_error r)
@@ -452,6 +458,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   match r with
@@ -475,6 +482,7 @@ let test_deploy_request_accepts_image_refs () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   match r with
@@ -497,6 +505,7 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "mutable reference rejected" true (Result.is_error r)
@@ -1074,6 +1083,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:0
+      ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)

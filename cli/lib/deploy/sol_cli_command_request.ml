@@ -28,6 +28,7 @@ type deploy_request =
   ; confirm_group_change : bool
   ; loki_push_url : string option
   ; keep_releases : int
+  ; await_delegation : int option
   }
 
 let git_sha () =
@@ -91,6 +92,7 @@ let make_deploy_request
       ~confirm_group_change
       ~loki_push_url
       ~keep_releases
+      ~await_delegation
       ~git_sha
   =
   match invalid_image_ref image_refs with
@@ -144,5 +146,6 @@ let make_deploy_request
           ; confirm_group_change
           ; loki_push_url
           ; keep_releases
+          ; await_delegation
           })
 ;;

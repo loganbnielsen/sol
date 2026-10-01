@@ -166,6 +166,74 @@ sol cloud bootstrap prod/aws/us-east-1          # report: what is established, w
 sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
 ```
 
+### The ordinary path: `sol deploy` detects it
+
+That pair is the explicit administrative route. The ordinary one needs no
+separate command: `sol deploy` observes the same installation, and when it is not
+established — which is what a target with no cluster to reach looks like on a
+fresh account — it reports what it found and offers to set it up:
+
+```text
+$ sol deploy prod/aws/us-east-1 --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$DIGEST"
+
+Sol is not installed for prod/aws/us-east-1 yet:
+
+  what Sol observed at the provider, never inferred from configuration:
+  terraform state backend      Unmet: An error occurred (404) ... Not Found
+  terraform state lock         Unmet: An error occurred (ResourceNotFoundException) ...
+  provisioning identity        Unmet: An error occurred (NoSuchEntity) ...
+  ...
+  delegated DNS zone           Unmet: no Route53 hosted zone named pluto.example.com, ...
+
+  the installation the target declares:
+  state bucket             pluto-tfstate
+  state prefix             bootstrap/aws
+  region                   us-east-1
+  lock table               pluto-tflock
+  ...
+
+  Sol does this for you:
+  reconcile the durable installation root, which keeps a Terraform state of its own:
+    its state backend and its locking, and the durable resources it declares
+  create the DNS zone for pluto.example.com, or adopt the zone that is already
+  there rather than create a second one with different nameservers, ...
+
+  One action may be required from you:
+    when the zone that publishes pluto.example.com is not in this account, add the
+    exact NS records Sol prints at that zone; Sol then waits for the delegation and
+    confirms it from a public resolver, never from written configuration
+Set up Sol for prod/aws/us-east-1 now? [Y/n]
+```
+
+Accepting reconciles the durable root, prints the exact NS records to add when
+the parent zone is outside the account, waits for the delegation to become
+visible and confirms it from a public resolver, then re-observes and continues
+into the deploy. An observation Sol could not make — a refused read, or a CI
+identity that is not allowed to read the durable layer — is `UNKNOWN`, never
+treated as an absent prerequisite (`DEC-052`).
+
+Declining, or running where no one can answer (CI, `--dry-run`, `--emit-to`),
+never prompts and never sets anything up: it prints the same observation and the
+command that does it explicitly, so a pipeline fails with an explanation instead
+of hanging or skipping installation:
+
+```text
+Sol is not installed for prod/aws/us-east-1, and this run is not interactive, so
+Sol will not set it up and will not continue as if it were there.
+...
+Set the installation up once, then run this deploy again:
+  sol cloud bootstrap prod/aws/us-east-1 --apply
+```
+
+An account that already has an installation is deployed to with no one-time setup
+and no prompt; and because the run only ever *observes* it in that case, no
+durable resource is touched again. The environment itself is still created by its
+own stage, which the run names when that is what the target is missing:
+
+```bash
+sol cloud apply prod/aws/us-east-1
+```
+
 A second environment needs **no** installation work: it deploys against the
 installation that already exists, which is why redeploying never means redoing
 registrar or DNS work.

@@ -1,0 +1,20 @@
+let interactive () = Unix.isatty Unix.stdin && Unix.isatty Unix.stdout
+
+let recognize ~default answer =
+  match String.lowercase_ascii (String.trim answer) with
+  | "" -> default
+  | "y" | "yes" -> true
+  | "n" | "no" -> false
+  | _ -> false
+;;
+
+let prompt ~question ~default =
+  Printf.sprintf "%s [%s] " question (if default then "Y/n" else "y/N")
+;;
+
+let ask ~question ~default ~print =
+  print (prompt ~question ~default);
+  match input_line stdin with
+  | answer -> recognize ~default answer
+  | exception End_of_file -> false
+;;

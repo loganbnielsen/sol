@@ -28,6 +28,7 @@ type deploy_request =
   ; confirm_group_change : bool
   ; loki_push_url : string option
   ; keep_releases : int
+  ; await_delegation : int option
   }
 
 val git_sha : unit -> (string, string) result
@@ -54,5 +55,6 @@ val make_deploy_request
   -> confirm_group_change:bool
   -> loki_push_url:string option
   -> keep_releases:int
+  -> await_delegation:int option
   -> git_sha:(unit -> (string, string) result)
   -> (deploy_request, string) result

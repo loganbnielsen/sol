@@ -79,8 +79,15 @@ names. The identities it needs, and how to create them, are in
 
 **Guided first-run.** The ordinary path is that `sol deploy` detects an uninstalled account and
 walks you through this in place, so you never have to invoke an administrative command to get
-started — that inline experience is **FEAT-106**, and the guided DNS create/adopt flow is
-**FEAT-107**. Until they land, the explicit pair above is the path.
+started. When the deploy cannot reach the target's cluster it observes the installation at the
+provider, reports what it found — separating the work Sol does from the one external action (the
+delegation, with the exact NS records) — and offers to set it up: reconcile the durable root, wait
+for the delegation to become visible, and confirm it from a public resolver rather than from
+written configuration. An installation that already exists is deployed to with no setup and no
+prompt; a run that cannot be asked (CI, `--dry-run`, `--emit-to`) prints the same observation and
+`sol cloud bootstrap <target> --apply` instead of prompting. The explicit pair above remains the
+administrative route, and the *environment* is still step 3 below — the guided run names
+`sol cloud apply <target>` when that is what the target is missing.
 
 ## 3. Provision the substrate
 
