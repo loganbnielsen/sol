@@ -79,6 +79,21 @@
   sol-runtime))
 
 (package
+ (name sol-outbox)
+ (synopsis "Sol's Postgres transactional outbox: atomic state change and publication intent")
+ (depends
+  (ocaml (>= 5.4.0))
+  (dune (>= 3.0))
+  caqti
+  eio
+  obs-eio
+  obs-prometheus-eio
+  pg-eio
+  sol-env
+  sol-obs
+  sol-runtime))
+
+(package
  (name sol-svc)
  (synopsis "Sol's HTTP service application shape")
  (depends
