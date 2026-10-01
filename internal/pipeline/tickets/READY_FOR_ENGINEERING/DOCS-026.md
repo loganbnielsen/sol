@@ -6,7 +6,15 @@ title: Write the installation and first-deploy guide
 source: docs/README.md documentation roadmap; DEC-057 and docs/DEVELOPER_EXPERIENCE.md §3-5 (2026-09-29)
 ---
 
-**Depends on:** INFRA-096, FEAT-106.
+**Depends on:** INFRA-096, FEAT-106, FEAT-122.
+
+`FEAT-122` was added to this line on 2026-10-01 during the page's reconnaissance: the
+audience's first cloud-account step — creating the four installation identities from
+the policy contract Sol generated — is neither performed nor surfaced by the product,
+so the page cannot yet show a reader without Terraform knowledge how to take it. See
+that ticket for the evidence. `INFRA-096` and `FEAT-107` are implemented; `FEAT-106`'s
+inline installation is landed and its remaining part (driving the environment stages
+from `sol deploy`) is recorded in that ticket.
 
 **Related:** `FEAT-107` (the DNS hand-off the page documents), `FEAT-108` (the
 teardown the page must distinguish), `DOCS-030` (CLI reference), `DOCS-028`
