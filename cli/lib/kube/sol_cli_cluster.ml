@@ -31,6 +31,7 @@ type t =
       'a. (env:(string * string) list -> ('a, string) result) -> ('a, string) result
   ; ready : unit -> bool
   ; bootstrap_window : bootstrap_window
+  ; deploy_access : unit -> (Sol_cli_kube_destination.t option, string) result
   }
 
 let provisioner_kube_env path =

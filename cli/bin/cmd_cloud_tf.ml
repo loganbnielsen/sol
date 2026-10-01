@@ -83,20 +83,6 @@ let guard_previous_operation ~constructive ~accept_unresolved ~chdir ~backend_co
   |> Sol_cli_exit.of_msg
 ;;
 
-let require_credentials ~provider ~operation ~leaves_target_standing =
-  Sol_cli_provider_registry.credentials provider ~operation ~leaves_target_standing
-  |> Sol_cli_exit.of_msg
-;;
-
-let of_apply_failure r =
-  Result.map_error
-    (function
-      | Sol_cli_cloud_apply.Terraform_failed message ->
-        Sol_cli_exit.failure ("\n" ^ message)
-      | Sol_cli_cloud_apply.Refused message -> Sol_cli_exit.error message)
-    r
-;;
-
 let refuse_sensitive_vars ~infra_dir ~vars =
   match
     Result.bind (Sol_cli_sensitive_vars.declared ~root:infra_dir) (fun sensitive ->
@@ -125,65 +111,19 @@ let workdir provider role ~backend_config =
   Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
 ;;
 
-let reconcile_ownership_at
-      ~provider
-      ~target
-      ~(target_cfg : Sol_cli_config.target)
-      ~infra_dir
-      ~var_files
-      ~vars
-  =
-  match target_cfg.cluster_name with
-  | Some cluster_name when not (Sol_cli_string.is_blank cluster_name) ->
-    let reconciliation =
-      Sol_cli_cloud_wiring.reconcile_ownership
-        ~provider
-        ~target_cfg
-        ~cluster_name
-        ~infra_dir
-        ~var_files
-        ~vars
-        ~act:true
-    in
-    (match reconciliation with
-     | Error message ->
-       Printf.eprintf
-         "warning: ownership reconciliation could not complete -- %s\n%!"
-         message;
-       Ok ()
-     | Ok reconciliation ->
-       if reconciliation.restored <> []
-       then
-         Printf.printf
-           "\n%s%!"
-           (Sol_cli_ownership_reconciliation.outcome reconciliation.dispositions);
-       let refused =
-         List.filter
-           (function
-             | Sol_cli_ownership_reconciliation.Cannot_recover _
-             | Sol_cli_ownership_reconciliation.Unmapped _ -> true
-             | Sol_cli_ownership_reconciliation.Unresolved _ -> false
-             | Sol_cli_ownership_reconciliation.Recover _
-             | Sol_cli_ownership_reconciliation.Already_owned _
-             | Sol_cli_ownership_reconciliation.By_contract _ -> false)
-           reconciliation.dispositions
-       in
-       if refused <> []
-       then
-         Printf.eprintf
-           "warning: %d resource(s) the provider holds for this target cannot be \
-            attributed to a Terraform address automatically; run 'sol cloud reconcile %s \
-            --explain' to see what was checked.\n\
-            %!"
-           (List.length refused)
-           target;
-       Ok ())
-  | _ ->
-    Printf.eprintf
-      "warning: ownership reconciliation is skipped: the target declares no cluster_name \
-       to attribute provider resources by.\n\
-       %!";
-    Ok ()
+let reconcile_ownership_at ~provider ~target_cfg ~infra_dir ~var_files ~vars =
+  Sol_cli_environment_stage.reconcile_ownership_at
+    ~provider
+    ~target_cfg
+    ~infra_dir
+    ~var_files
+    ~vars
+;;
+
+let exit_of_environment_failure = function
+  | Sol_cli_environment_stage.Terraform_failed message ->
+    Sol_cli_exit.failure ("\n" ^ message)
+  | Sol_cli_environment_stage.Refused message -> Sol_cli_exit.error message
 ;;
 
 let cloud_init
@@ -196,107 +136,37 @@ let cloud_init
       ()
   =
   let* () = check_terraform () in
-  let* provider = provider_of_target_path target in
-  let pname = Sol_cli_provider.to_string provider in
+  let* _provider = provider_of_target_path target in
   let* assets = resolve_assets () in
-  let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
-  let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
-  let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
-  let vars =
-    Sol_cli_config.vars_with_profile_precedence
-      ~has_profile:(Option.is_some target_cfg.profile)
-      ~cli_vars:vars
-      ~config_vars
-  in
-  let* cloud_target =
-    Sol_cli_cloud_lifecycle.cloud_target target_cfg |> Sol_cli_exit.of_msg
-  in
-  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
-  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-  let infra_dir =
-    workdir provider Sol_cli_platform_assets.Cluster ~backend_config:cloud_backend
-  in
-  let platform_dir =
-    workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
-  in
-  let var_files = Option.to_list var_file in
-  let inputs : Sol_cli_cloud_wiring.terraform_inputs = { var_files; vars } in
-  let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
-  Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
-  let* () =
-    match action with
-    | Plan -> Ok ()
-    | Apply ->
-      require_credentials ~provider ~operation:"applying" ~leaves_target_standing:false
-  in
-  let* () =
-    guard_previous_operation
-      ~constructive:(action = Apply)
-      ~accept_unresolved
-      ~chdir:infra_dir
-      ~backend_config:cloud_backend
-  in
-  let* () =
-    if action = Apply
-    then
-      guard_previous_operation
-        ~constructive:true
-        ~accept_unresolved
-        ~chdir:platform_dir
-        ~backend_config:platform_backend
-    else Ok ()
-  in
-  let* () =
-    Sol_cli_cloud_wiring.init
-      ~assets
-      run_log
-      ~provider
-      ~role:Sol_cli_platform_assets.Cluster
-      cloud_backend
-    |> of_apply_failure
-  in
-  let* () =
-    if action = Apply
-    then reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
-    else Ok ()
-  in
   match action with
   | Plan ->
-    let* () =
-      Sol_cli_cloud_wiring.plan ~assets ~run_log ~cloud_target ~inputs |> of_apply_failure
-    in
-    Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!";
-    Ok ()
+    (match Sol_cli_environment_stage.plan ~assets ~run_log ~target ~var_file ~vars () with
+     | Error failure -> Error (exit_of_environment_failure failure)
+     | Ok () ->
+       Printf.printf
+         "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!";
+       Ok ())
   | Apply ->
-    let outcome =
-      Sol_cli_cloud_apply.execute
-        ~deps:
-          (Sol_cli_cloud_wiring.apply_deps
-             ~assets
-             ~confirm_ecr_removal
-             ~run_log
-             ~cloud_target
-             ~inputs)
-    in
-    (match outcome with
-     | Sol_cli_cloud_apply.Applied ->
+    (match
+       Sol_cli_environment_stage.apply
+         ~confirm_ecr_removal
+         ~accept_unresolved
+         ~assets
+         ~run_log
+         ~target
+         ~var_file
+         ~vars
+         ()
+     with
+     | Ok (Sol_cli_environment_stage.Applied { infra_dir; _ }) ->
        Printf.printf "\nProvisioned endpoints:\n%!";
        print_outputs infra_dir;
        Printf.printf "\nDone.\n%!";
        Ok ()
-     | Sol_cli_cloud_apply.Apply_failed { failure; cleanup } ->
-       report_cleanup_evidence cleanup;
-       Printf.eprintf
-         "\n\
-          warning: the apply failed, so Terraform's error is not evidence about what the \
-          provider holds. Observing the provider independently and reconciling what can \
-          be attributed exactly:\n\
-          %!";
-       let* () =
-         reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
-       in
-       Error failure |> of_apply_failure)
+     | Ok (Sol_cli_environment_stage.Apply_failed { failure; _ }) ->
+       Error (exit_of_environment_failure failure)
+     | Error failure -> Error (exit_of_environment_failure failure))
 ;;
 
 let report_degradations = function
@@ -386,7 +256,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let* () =
     if action = Apply
-    then
+    then (
       let* () =
         Sol_cli_cloud_wiring.init_result
           ~assets
@@ -396,7 +266,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           cloud_backend
         |> Sol_cli_exit.of_msg
       in
-      reconcile_ownership_at ~provider ~target ~target_cfg ~infra_dir ~var_files ~vars
+      reconcile_ownership_at ~provider ~target_cfg ~infra_dir ~var_files ~vars;
+      Ok ())
     else Ok ()
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;

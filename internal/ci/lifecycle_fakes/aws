@@ -118,6 +118,35 @@ case " $* " in
     exit 0
     ;;
 esac
+if [ "${INSTALLATION_PRESENT:-}" = 1 ]; then
+  role_name=""
+  want_role=0
+  for arg in "$@"; do
+    if [ "$want_role" = 1 ]; then role_name="$arg"; want_role=0; continue; fi
+    [ "$arg" = "--role-name" ] && want_role=1
+  done
+  case "$1 $2" in
+    "s3api head-bucket")
+      if [ "${INSTALLATION_BACKEND_ABSENT:-}" = 1 ]; then exit 254; fi
+      printf '{"Bucket":"harness-state"}\n'
+      exit 0
+      ;;
+    "dynamodb describe-table")
+      if [ "${INSTALLATION_LOCK_ABSENT:-}" = 1 ]; then exit 254; fi
+      printf '{"Table":{"TableName":"harness-lock"}}\n'
+      exit 0
+      ;;
+    "iam get-role")
+      if [ "${INSTALLATION_ROLE_ABSENT:-}" = 1 ]; then exit 254; fi
+      printf '{"Role":{"Arn":"arn:aws:iam::111122223333:role/%s"}}\n' "${role_name:-sol}"
+      exit 0
+      ;;
+    "route53 list-hosted-zones-by-name")
+      printf '{"HostedZones":[{"Name":"example.test."}]}\n'
+      exit 0
+      ;;
+  esac
+fi
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
 case " $* " in
   *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*)
@@ -125,6 +154,9 @@ case " $* " in
     ;;
   *" --role-arn arn:aws:iam::111122223333:role/sol-provisioner "*)
     printf 'sol-provisioner\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *" --role-arn arn:aws:iam::111122223333:role/sol-deploy "*)
+    printf 'sol-deploy\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
     ;;
   *) exit 91 ;;
 esac

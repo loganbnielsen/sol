@@ -154,6 +154,16 @@ target:
   kube_context: <cluster>-deploy
 ```
 
+`sol deploy` does not need that persistent entry for its own first run: when it
+has no destination it can reach, it reconciles the environment and assembles the
+deploy identity's access for that run only — a temporary kubeconfig under
+`KUBECONFIG`, cleaned up at exit, never written into your home (DEC-058). The
+printed command and the `kube_context` line above remain what the *other*
+commands need: `sol status`, `sol logs` and `sol migrate` use the target's
+declared destination, and a provider that declares no deploy identity (GCP today)
+gets no ephemeral access at all — the deploy stops after provisioning and prints
+exactly this command and context for you to add.
+
 ## 3. No standing cluster-creator admin
 
 The AWS module sets `enable_cluster_creator_admin_permissions = false`. During

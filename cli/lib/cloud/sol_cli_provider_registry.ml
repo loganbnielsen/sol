@@ -17,7 +17,8 @@ let builder provider ~(target : Sol_cli_config.target) =
           (Sol_cli_aws_cluster.cluster
              ~region
              ~provisioner_role_arn:
-               (Sol_cli_config.provider_field target "provisioner_role_arn"))
+               (Sol_cli_config.provider_field target "provisioner_role_arn")
+             ~deploy_role_arn:(Sol_cli_config.provider_field target "deploy_role_arn"))
     }
   | Sol_cli_provider.Gcp ->
     { label = Sol_cli_gcp_cluster.label

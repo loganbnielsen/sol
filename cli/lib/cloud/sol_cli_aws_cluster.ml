@@ -1,6 +1,7 @@
 type aws_outputs =
   { cluster_name : string
   ; cluster_access_role_arn : string
+  ; deploy_kube_context : string option
   ; cert_manager_irsa_role_arn : string
   ; loki_s3_bucket : string option
   ; loki_irsa_role_arn : string option
@@ -18,6 +19,7 @@ let aws_outputs_of_json text =
   in
   let* cluster_name = string "cluster_name" in
   let* cluster_access_role_arn = string "cluster_access_role_arn" in
+  let* deploy_kube_context = optional_string "deploy_kube_context" in
   let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
   let* loki_s3_bucket = optional_string "loki_s3_bucket" in
   let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
@@ -48,6 +50,7 @@ let aws_outputs_of_json text =
     Ok
       { cluster_name
       ; cluster_access_role_arn
+      ; deploy_kube_context
       ; cert_manager_irsa_role_arn
       ; loki_s3_bucket
       ; loki_irsa_role_arn
@@ -92,6 +95,48 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
     with
     | Ok _ -> Ok (f env)
     | Error _ -> Error "could not establish ephemeral provisioner cluster access")
+;;
+
+let deploy_access ~region (outputs : aws_outputs) ~deploy_role_arn () =
+  match deploy_role_arn, outputs.deploy_kube_context with
+  | Some role_arn, Some context when not (Sol_cli_string.is_blank role_arn) ->
+    let path = Filename.temp_file "sol-platform-deploy-" ".kubeconfig" in
+    at_exit (fun () -> Sol_cli_fs.remove_reporting path);
+    let env = Sol_cli_cluster.provisioner_kube_env path in
+    (match
+       Sol_cli_process.run
+         (Sol_cli_process.cmd
+            ~env
+            [ "aws"
+            ; "eks"
+            ; "update-kubeconfig"
+            ; "--region"
+            ; region
+            ; "--name"
+            ; outputs.cluster_name
+            ; "--alias"
+            ; context
+            ; "--role-arn"
+            ; role_arn
+            ; "--kubeconfig"
+            ; path
+            ])
+     with
+     | Ok _ ->
+       Sol_cli_report.app "  cluster access identity: %s (this run, ephemeral)" role_arn;
+       Sol_cli_kube_destination.of_context ~kubeconfig:path context
+       |> Result.map Option.some
+     | Error error ->
+       Error
+         (Printf.sprintf
+            "could not establish this run's ephemeral deploy-identity cluster access \
+             (%s). The environment was provisioned; the deploy identity reaches the \
+             cluster only if your credentials may assume %s, and the role's trust policy \
+             is yours to set (AUDIT-072). %s"
+            role_arn
+            role_arn
+            (Sol_cli_process.error_to_string error)))
+  | _ -> Ok None
 ;;
 
 let bootstrap_only_capabilities =
@@ -663,7 +708,7 @@ let platform_vars outputs _context ~cluster_issuer:_ ~region =
 let label = "AWS"
 let of_outputs_json = aws_outputs_of_json
 
-let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
+let cluster ~region ~provisioner_role_arn ~deploy_role_arn outputs : Sol_cli_cluster.t =
   { name = outputs.cluster_name
   ; check_identity =
       (fun ~cluster_access_role_arn ->
@@ -675,6 +720,7 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
   ; with_access =
       (fun f -> provisioner_kubeconfig ~region outputs (fun env -> f ~env) |> Result.join)
   ; ready = (fun () -> aws_cloud_ready ~region outputs)
+  ; deploy_access = (fun () -> deploy_access ~region outputs ~deploy_role_arn ())
   ; bootstrap_window =
       (let window_role_arn = outputs.cluster_access_role_arn in
        let assumable_role_arn = Option.value ~default:"" provisioner_role_arn in

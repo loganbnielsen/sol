@@ -51,6 +51,22 @@ let provider_name (target : Sol_cli_config.target) =
   Sol_cli_provider.to_string target.provider
 ;;
 
+let context_is_configured (destination : Sol_cli_kube_destination.t) =
+  let named name =
+    String.equal (String.trim name) destination.Sol_cli_kube_destination.context
+  in
+  match
+    Sol_cli_process.run
+      ~echo:false
+      (Sol_cli_process.cmd
+         ~env:(Sol_cli_kube_destination.environment destination)
+         [ "kubectl"; "config"; "get-contexts"; "-o"; "name" ])
+  with
+  | Ok result ->
+    result.Sol_cli_process.stdout |> String.split_on_char '\n' |> List.exists named
+  | Error _ -> true
+;;
+
 let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
   let core =
     [ "provider", provider_name target

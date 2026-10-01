@@ -207,6 +207,7 @@ let test_cluster_identity_check () =
     Sol_cli_aws_cluster.cluster
       ~region:"us-east-1"
       ~provisioner_role_arn:None
+      ~deploy_role_arn:None
       (Result.get_ok (parse outputs))
   in
   Alcotest.(check bool)
@@ -219,6 +220,98 @@ let test_cluster_identity_check () =
     true
     (Result.is_ok
        (L.platform_inputs aws_target (cluster "arn:aws:iam::1:role/cluster-access")))
+;;
+
+let fake_aws () =
+  let dir = Filename.temp_file "sol-deploy-access" "" in
+  (try Sys.remove dir with
+   | Sys_error _ -> ());
+  Unix.mkdir dir 0o755;
+  let log = Filename.concat dir "calls" in
+  let script = Filename.concat dir "aws" in
+  let out = open_out script in
+  output_string
+    out
+    (Printf.sprintf "#!/bin/sh\nprintf '%%s\\n' \"$*\" >>%s\nexit 0\n" log);
+  close_out out;
+  Unix.chmod script 0o755;
+  dir, log
+;;
+
+let test_cluster_deploy_access () =
+  let dir, log = fake_aws () in
+  let previous = Sys.getenv_opt "PATH" in
+  Unix.putenv "PATH" (dir ^ ":" ^ Option.value previous ~default:"");
+  Fun.protect
+    ~finally:(fun () ->
+      (match previous with
+       | Some path -> Unix.putenv "PATH" path
+       | None -> ());
+      Sol_cli_fs.remove_reporting (Filename.concat dir "aws");
+      Sol_cli_fs.remove_reporting log;
+      try Unix.rmdir dir with
+      | Unix.Unix_error _ -> ())
+    (fun () ->
+       let outputs_with context =
+         match valid_outputs () with
+         | `Assoc fields ->
+           `Assoc
+             (("deploy_kube_context", `Assoc [ "value", `String context ])
+              :: List.remove_assoc "deploy_kube_context" fields)
+         | _ -> assert false
+       in
+       let cluster ~deploy_role_arn context =
+         Sol_cli_aws_cluster.cluster
+           ~region:"us-east-1"
+           ~provisioner_role_arn:None
+           ~deploy_role_arn
+           (Result.get_ok (parse (outputs_with context)))
+       in
+       (match
+          (cluster ~deploy_role_arn:(Some "arn:aws:iam::1:role/sol-deploy") "acme-deploy")
+            .Sol_cli_cluster.deploy_access
+            ()
+        with
+        | Ok (Some destination) ->
+          Alcotest.(check string)
+            "the run's destination is the root's deploy context"
+            "acme-deploy"
+            destination.Sol_cli_kube_destination.context;
+          Alcotest.(check bool)
+            "and it carries a kubeconfig scoped to this run"
+            true
+            (Option.is_some destination.Sol_cli_kube_destination.kubeconfig)
+        | Ok None ->
+          Alcotest.fail "a declared deploy identity must establish cluster access"
+        | Error message -> Alcotest.fail message);
+       let calls = In_channel.with_open_text log In_channel.input_all in
+       Alcotest.(check bool)
+         "the run assumes the deploy identity (DEC-058 option A)"
+         true
+         (Sol_cli_string.contains
+            ~needle:"--role-arn arn:aws:iam::1:role/sol-deploy"
+            calls);
+       Alcotest.(check bool)
+         "and never the provisioning identity (DEC-034)"
+         false
+         (Sol_cli_string.contains ~needle:"provisioner" calls);
+       (match
+          (cluster ~deploy_role_arn:None "acme-deploy").Sol_cli_cluster.deploy_access ()
+        with
+        | Ok None -> ()
+        | Ok (Some _) ->
+          Alcotest.fail "a target that declares no deploy identity must not be given one"
+        | Error message -> Alcotest.fail message);
+       let gcp =
+         Sol_cli_gcp_cluster.cluster
+           ~region:"us-central1"
+           (Result.get_ok (parse_gcp (valid_gcp_outputs ())))
+       in
+       match gcp.Sol_cli_cluster.deploy_access () with
+       | Ok None -> ()
+       | Ok (Some _) ->
+         Alcotest.fail "a provider with no deploy identity must not fabricate one"
+       | Error message -> Alcotest.fail message)
 ;;
 
 let test_platform_terraform_vars () =
@@ -235,6 +328,7 @@ let test_platform_terraform_vars () =
     Sol_cli_aws_cluster.cluster
       ~region:"us-east-1"
       ~provisioner_role_arn:None
+      ~deploy_role_arn:None
       (Result.get_ok (parse (valid_outputs ())))
   in
   let aws_target = Result.get_ok (L.cloud_target target) in
@@ -1562,6 +1656,10 @@ let () =
             `Quick
             test_platform_terraform_vars
         ; Alcotest.test_case "cluster identity check" `Quick test_cluster_identity_check
+        ; Alcotest.test_case
+            "the deploy identity reaches the cluster (DEC-058)"
+            `Quick
+            test_cluster_deploy_access
         ; Alcotest.test_case
             "a preparation failure's policy decides"
             `Quick

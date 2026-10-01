@@ -190,28 +190,69 @@ real path; the fakes were the unrealistic part. Both were found by CI rather tha
 locally, because this machine has no external NS resolver and the cases without a
 stubbed `dig` fell into a different branch here.
 
-## What remains (part B)
+## Part B landed (2026-10-01): the run drives the environment stage and reaches it as the deploy identity
 
-AC1's "accepting it reaches a deployed application" and AC6's
-provisioning ordering need `sol deploy` to drive the *environment* stages as well:
-`DEC-057` §1 puts `provision` and `platform` on the happy path, and today the
-guided run stops at them and names `sol cloud apply <target>`. Two pieces:
+`sol deploy <target>` now drives the environment stages when it has no destination
+it can reach, and reaches the cluster it provisioned as the target's *deploy*
+identity, as **DEC-058** (decided 2026-10-01, Option C) requires. No second
+lifecycle implementation: the stage is `Sol_cli_environment_stage`, extracted from
+`cmd_cloud_tf`'s apply path so `sol cloud apply` and `sol deploy` call one
+implementation, and `sol cloud apply` still prints its own result from the same
+typed outcome.
 
-1. run the provisioning stage from the guided run when the environment is absent,
-   reusing `sol cloud apply`'s code path rather than a second implementation;
-2. establish the run's own cluster access afterwards, because `sol cloud apply`
-   prints the `deploy_kubeconfig_command` for the operator to run and deliberately
-   does not write the user's kubeconfig or target file (`AUDIT-072`), and the
-   deploy identity is a separate trust domain with its own access entry.
-   `Sol_cli_aws_cluster.provisioner_kubeconfig` is the existing
-   ephemeral-kubeconfig pattern this would follow, and GCP has no equivalent yet.
+**What triggers it.** The first-run shape: the target names no `kube_context`, or
+names one whose context is not in the effective kubeconfig, so the run has nothing
+it can reach (`Sol_cli_target_report.context_is_configured`). A kubeconfig Sol
+cannot read is not evidence of that and keeps the ordinary path, and a declared
+context *is* trusted (`DEC-020`): an unreachable-but-present context keeps part A's
+report and names `sol cloud apply`, rather than provisioning on an API-server blip.
 
-(2) is a security-model question — whether Sol may establish ephemeral
-deploy-identity cluster access for a run on the operator's behalf, and whether a
-provider without an equivalent path should refuse rather than degrade — and this
-ticket's non-goals do not settle it. It is **DEC-058**'s, with the options and what
-each costs; part B cannot start until that decision is recorded, so the two pieces
-above wait on it rather than on more engineering.
+**The order is the cheap one first (AC6).** The contract check, the profile
+preflight and the rendered plan are built before the environment stage runs, so a
+knowable blocker is named before the billable boundary. `test_deploy_environment_stage.sh`
+holds this: a `production-single-region` target whose alert delivery is not
+established is refused with `preflight found …` and `Nothing was changed.`, and no
+`terraform` or `aws` invocation is recorded at all.
+
+**What the run does.** The installation stage runs first (part A, unchanged), and an
+established installation prints its observation and continues. The environment
+stage then reconciles the target's environment through `sol cloud apply`'s own code
+path — cluster root, bootstrap window, platform, verified de-escalation — and
+`Sol_cli_environment_stage` returns the cluster it read back. Only then does the run
+assemble its own access: for AWS, `Sol_cli_aws_cluster.deploy_access` runs
+`aws eks update-kubeconfig --role-arn <deploy_role_arn> --kubeconfig <temp>` with
+`KUBECONFIG` scoped to the child processes, so the destination is the cluster the
+root's own `deploy_kube_context` output names, the credential is never written into
+the user's home, and the run continues into substrate, migration and deployment as
+`sol-deploy` (namespace-scoped `sol:deployers` RBAC; `INFRA-025`). Where the
+provider declares no deploy identity — GCP today — the run provisions, then stops
+and prints the root's kubeconfig command and `kube_context` as the operator's one
+remaining action, rather than degrading to the provisioning identity (`DEC-034`).
+
+**What did not change.** Nothing is written to `~/.kube/config` or the target file,
+no ambient kubectl context is used, the four identities keep their scopes, and
+`DEC-030` stays open: this gives a *deploy run* its own access, not the operator a
+persistent one.
+
+**One behaviour correction found while wiring it.** After a successful environment
+stage, a later substrate failure no longer runs part A's installation guidance: the
+environment was just reconciled, so re-offering it would be advice about the wrong
+thing. The guidance remains for the ordinary path, where the destination was
+already usable and the cluster went unreachable.
+
+## What remains after part B
+
+- **GCP's first run is the recorded deferral** in `DEC-058`, with its trigger: GCP
+  becomes Option A once it has a deploy identity, an access entry and its
+  namespace-scoped RBAC. Until then a GCP first run provisions and names the
+  operator's kubeconfig steps — which is Option B, deliberately.
+- **`DOCS-026`** (the installation and first-deploy guide) was blocked on this
+  ticket; it is now unblocked.
+- **AC1's "a deployed application"** is demonstrated end to end by the fake-driven
+  tests as far as the deploy's own prerequisites, and on a real cluster by the
+  existing `example-dockerfile-smoke` / qualification paths. The offline harness
+  cannot carry a full Kubernetes API, so "the application came up" remains a real-
+  cluster claim, not a shell-fixture one.
 
 ## Coverage (part A)
 
@@ -244,3 +285,49 @@ no per-language verdict for this change.
 environment clause and AC6's provisioning ordering do not yet, so the ticket is not
 moved to `DONE`.
 
+
+## Checks run (part B)
+
+- `dune build @all`; `dune build @cli/test/runtest --force`;
+  `internal/ci/check_ocamlformat.sh --all`;
+  `internal/ci/check_no_comments.sh`; `internal/ci/check_result_syntax.sh`;
+  `render-cli-reference.py --check` (no command surface changed).
+- New `cli/test/test_deploy_environment_stage.sh`, driving the command against the
+  shared `internal/ci/lifecycle_fakes` (extended: `deploy_kube_context` in the AWS
+  cluster root's outputs, the deploy role's `update-kubeconfig`, a `dig`, and
+  opt-in installation probes) plus a `docker` stub: the preflight-before-provisioning
+  ordering above, the environment stage provisioning the cluster and platform roots,
+  the run establishing its *own* deploy-identity access
+  (`--role-arn …/sol-deploy`, and that role being the last one configured), the run
+  then reaching its own prerequisites, and `--dry-run` provisioning nothing.
+- `cli/test/test_deploy_first_run.sh`: the two cases whose contract part B changed
+  now assert the environment stage is entered and driven (cluster root
+  `init`/`plan`/`apply`) rather than a named `sol cloud apply`; the installation
+  cases are otherwise unchanged.
+- `cli/test/test_cloud_lifecycle.ml`: a new case pins
+  `Sol_cli_aws_cluster.deploy_access` — the declared deploy role produces a
+  destination carrying this run's own kubeconfig, the provisioning identity is never
+  assumed, a target with no `deploy_role_arn` gets no access, and GCP's
+  `deploy_access` is `None`.
+
+**Two behaviours the refactor had to keep, found by CI rather than by reading:**
+
+- `sol cloud plan|apply <malformed or unsupported target>` still fails with the
+  command's own message (`target must look like <env>/<provider>/<region>.`,
+  `unsupported provider "zzz" in target …`). Moving the apply path into the
+  environment stage had dropped `provider_of_target_path` from `cloud_init`, so the
+  error came from the config layer instead, with a different spelling; the
+  command's own target-path check runs first again.
+- `--dry-run` and `--emit-to` never enter the environment stage, exactly as they
+  never entered the installation you could only set up interactively: they resolve
+  the declared destination, and where there is none they name
+  `sol cloud apply <target>` and change nothing. Only a run that may change
+  something establishes an environment or reaches a cluster.
+
+**Language parity (part B):** no application-facing contract changed — no `sol.toml`
+field, framework primitive or generated manifest — so `DEC-022` carries no
+per-language verdict for this change.
+
+**Ticket state:** all criteria hold on the provider with a deploy identity. AC1's
+remaining clause is GCP's, which `DEC-058` records as an explicit deferral with a
+trigger rather than silent drift. Moves to `DONE` with `DEC-058` in the same commit.

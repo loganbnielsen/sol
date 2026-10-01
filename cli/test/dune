@@ -121,6 +121,15 @@
  (action
   (run bash %{dep:test_deploy_first_run.sh} %{dep:../bin/main.exe})))
 
+(rule
+ (alias runtest)
+ (deps
+  ../bin/main.exe
+  test_deploy_environment_stage.sh
+  (source_tree ../../internal/ci/lifecycle_fakes))
+ (action
+  (run bash %{dep:test_deploy_environment_stage.sh} %{dep:../bin/main.exe})))
+
 (executable
  (name print_providers)
  (libraries sol_cli))

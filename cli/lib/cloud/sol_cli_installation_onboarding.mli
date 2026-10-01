@@ -40,5 +40,6 @@ val indeterminate_lines
   -> (Sol_cli_installation.prerequisite * Sol_cli_installation.verdict) list
   -> string list
 
+val observed_lines : target:string -> string list
 val present_lines : target:string -> string list
 val established_lines : target:string -> string list

@@ -73,8 +73,10 @@ not appear here, and each names the ticket that will add it:
 - `sol ci init github` — FEAT-109.
 
 Inline first-run onboarding (FEAT-106) adds no command of its own: `sol deploy`
-observes the target's durable installation and guides it in place, so it is
-documented with that command rather than listed here.
+observes the target's durable installation, guides it in place, then reconciles
+the target's environment and reaches the cluster as the target's deploy identity
+(DEC-058) — so the whole first run is documented with that command rather than
+listed here.
 
 ## Target-addressed commands
 
