@@ -22,6 +22,10 @@ case "$*" in
     case "$*" in *cloud/aws/platform* | *cloud/gcp/platform*) if fail_once platform-init; then exit 20; fi ;; esac
     ;;
   *" state list"*)
+    if [ "${STATE_LIST_FAILS:-}" = 1 ]; then
+      printf 'Error: Failed to read state: the state backend refused the read\n' >&2
+      exit 1
+    fi
     if [ "${OUTPUT_ABSENT:-}" = 1 ] || [ "${STATE_EMPTY:-}" = 1 ]; then exit 0; fi
     case " $* " in
       *cloud/gcp/cluster*) printf 'google_container_cluster.main\n' ;;

@@ -1,8 +1,14 @@
+type resolution_failure =
+  | Outputs_unreadable of string
+  | State_unreadable of string
+
+val resolution_failure_to_string : resolution_failure -> string
+
 val of_root
   :  Sol_cli_provider.t
   -> target:Sol_cli_config.target
   -> chdir:string
-  -> (Sol_cli_cluster.t option, string) result
+  -> (Sol_cli_cluster.t option, resolution_failure) result
 
 val destruction
   :  Sol_cli_provider.t

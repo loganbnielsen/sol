@@ -137,11 +137,17 @@ type cleanup =
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
+  | Outputs_unreadable of string
+
+type platform_outputs =
+  | Platform_available
+  | Platform_unavailable of string
 
 type failure =
   | Credentials_failed of string
   | Init_failed of string
   | Preparation_refused of string
+  | Outputs_unreadable of string
   | Platform_destroy_failed of string
   | Substrate_destroy_failed of string
   | Verification_failed of string
@@ -170,6 +176,14 @@ let failure_message = function
   | Credentials_failed message -> message
   | Init_failed message -> message
   | Preparation_refused message -> message
+  | Outputs_unreadable message ->
+    Printf.sprintf
+      "the target's Terraform state could not be listed, so Sol cannot establish whether \
+       a platform is installed to tear down, and it destroys nothing while that is \
+       unknown (%s). This is not an absence: the listing failed while the state was \
+       readable enough to publish outputs, which is the shape of a transient or an \
+       authorization failure. Restore access to the state and re-run"
+      message
   | Platform_destroy_failed message -> message
   | Substrate_destroy_failed message -> message
   | Verification_failed message -> message
@@ -220,7 +234,8 @@ let completion_message = function
       "Destruction is blocked by a guarantee this target declared, so nothing was \
        destroyed: %s"
       guarantee
-  | Destroy_failed { failure = Release_unestablished _ as failure; _ } ->
+  | Destroy_failed
+      { failure = (Release_unestablished _ | Outputs_unreadable _) as failure; _ } ->
     failure_message failure
   | Destroy_failed { failure; _ } ->
     Printf.sprintf
@@ -282,38 +297,41 @@ let with_elevated_access ~deps =
   operation, cleanup
 ;;
 
-let teardown ~deps ~substrate : (cleanup * string list, failure * cleanup) result =
-  match substrate with
-  | Substrate_absent -> Ok (Cleanup_not_needed, [])
-  | Substrate_unknown -> Ok (Cleanup_not_needed, [])
-  | Substrate_present ->
-    (match deps.cloud_outputs () with
-     | Outputs_unavailable reason ->
-       deps.warn
-         (Printf.sprintf
-            "warning: the install outputs are unavailable (%s), so the platform teardown \
-             cannot be wired and is skipped. What Terraform represents is still \
-             destroyed, and this is not a refusal."
-            reason);
-       Ok (Cleanup_not_needed, [])
-     | Outputs_available ->
-       let operation, cleanup = with_elevated_access ~deps in
-       (match cleanup with
-        | Cleanup_succeeded ->
-          deps.verify_window_after ()
-          |> Result.iter_error (fun message -> deps.warn ("warning: " ^ message))
-        | Cleanup_not_needed | Cleanup_failed _ -> ());
-       (match operation with
-        | Protected_ran -> Ok (cleanup, [])
-        | Protected_skipped message ->
-          Ok
-            ( cleanup
-            , [ Printf.sprintf
-                  "the platform teardown was skipped because the bootstrap authority it \
-                   needs could not be obtained (%s)"
-                  message
-              ] )
-        | Protected_failed message -> Error (Platform_destroy_failed message, cleanup)))
+let platform_outputs_of_read = function
+  | Outputs_available -> Ok (Some Platform_available)
+  | Outputs_unavailable reason -> Ok (Some (Platform_unavailable reason))
+  | Outputs_unreadable reason -> Error reason
+;;
+
+let teardown ~deps ~platform : (cleanup * string list, failure * cleanup) result =
+  match platform with
+  | None -> Ok (Cleanup_not_needed, [])
+  | Some (Platform_unavailable reason) ->
+    deps.warn
+      (Printf.sprintf
+         "warning: the install outputs are unavailable (%s), so the platform teardown \
+          cannot be wired and is skipped. What Terraform represents is still destroyed, \
+          and this is not a refusal."
+         reason);
+    Ok (Cleanup_not_needed, [])
+  | Some Platform_available ->
+    let operation, cleanup = with_elevated_access ~deps in
+    (match cleanup with
+     | Cleanup_succeeded ->
+       deps.verify_window_after ()
+       |> Result.iter_error (fun message -> deps.warn ("warning: " ^ message))
+     | Cleanup_not_needed | Cleanup_failed _ -> ());
+    (match operation with
+     | Protected_ran -> Ok (cleanup, [])
+     | Protected_skipped message ->
+       Ok
+         ( cleanup
+         , [ Printf.sprintf
+               "the platform teardown was skipped because the bootstrap authority it \
+                needs could not be obtained (%s)"
+               message
+           ] )
+     | Protected_failed message -> Error (Platform_destroy_failed message, cleanup))
 ;;
 
 let execute ~deps =
@@ -437,33 +455,41 @@ let execute ~deps =
              | Sol_cli_cloud_lifecycle.Nothing_to_prepare
              | Sol_cli_cloud_lifecycle.Preparation_failed _ -> Nothing_prepared
            in
-           let release =
-             if substrate = Substrate_absent
-             then Ok ()
-             else (
-               deps.report "\nReleasing the application workloads...";
-               release_decision (deps.release_workloads ()))
+           let platform =
+             if substrate = Substrate_present
+             then platform_outputs_of_read (deps.cloud_outputs ())
+             else Ok None
            in
-           (match release with
-            | Error stopped -> stopped
-            | Ok () ->
-              (match teardown ~deps ~substrate with
-               | Error (failure, cleanup) -> fail ~cleanup failure
-               | Ok (cleanup, teardown_degradations) ->
-                 teardown_degradations
-                 |> List.iter (fun message -> degradations := message :: !degradations);
-                 (match cleanup with
-                  | Cleanup_failed message ->
-                    degrade
-                      "elevated access"
-                      (Printf.sprintf
-                         "%s -- the binding this removes lives inside the cluster, so it \
-                          is removed with the substrate; destruction continues and the \
-                          absence check decides whether anything is left"
-                         message);
-                    destroy_and_verify ~cloud_exists ~cleanup ~preparation
-                  | Cleanup_not_needed | Cleanup_succeeded ->
-                    destroy_and_verify ~cloud_exists ~cleanup ~preparation)))))
+           (match platform with
+            | Error reason -> fail (Outputs_unreadable reason)
+            | Ok platform ->
+              let release =
+                if substrate = Substrate_absent
+                then Ok ()
+                else (
+                  deps.report "\nReleasing the application workloads...";
+                  release_decision (deps.release_workloads ()))
+              in
+              (match release with
+               | Error stopped -> stopped
+               | Ok () ->
+                 (match teardown ~deps ~platform with
+                  | Error (failure, cleanup) -> fail ~cleanup failure
+                  | Ok (cleanup, teardown_degradations) ->
+                    teardown_degradations
+                    |> List.iter (fun message -> degradations := message :: !degradations);
+                    (match cleanup with
+                     | Cleanup_failed message ->
+                       degrade
+                         "elevated access"
+                         (Printf.sprintf
+                            "%s -- the binding this removes lives inside the cluster, so \
+                             it is removed with the substrate; destruction continues and \
+                             the absence check decides whether anything is left"
+                            message);
+                       destroy_and_verify ~cloud_exists ~cleanup ~preparation
+                     | Cleanup_not_needed | Cleanup_succeeded ->
+                       destroy_and_verify ~cloud_exists ~cleanup ~preparation))))))
 ;;
 
 let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =

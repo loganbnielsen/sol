@@ -808,6 +808,13 @@ let destroy_cmd =
          apply when there is no cluster to release from (the substrate is absent, or the \
          cluster cannot be reached), and `--accept-unreleased` destroys anyway, \
          recording that the absence check, not the release, decided the outcome."
+    ; `P
+        "A target whose Terraform state cannot be listed is refused, not destroyed: the \
+         listing is what tells `terraform output` apart from a confirmed absence, so a \
+         read that failed while the state was readable enough to publish outputs is the \
+         shape of a transient or an authorization failure. Such a destroy exits 1 having \
+         destroyed nothing, and says so; a state that lists nothing is a confirmed \
+         absence, and keeps the documented degraded destroy."
     ; `S "EXIT STATUS"
     ; `P
         "0 -- destruction reached absence and it was verified. A best-effort preparation \
@@ -816,9 +823,10 @@ let destroy_cmd =
     ; `P
         "1 -- destruction did not reach its postcondition: it failed, it was blocked by \
          a declared guarantee, the application workloads could not be established as \
-         released (nothing was destroyed, and nothing is claimed absent), absence could \
-         not be verified, or the elevated bootstrap access could not be removed. The \
-         reason is named on stderr."
+         released (nothing was destroyed, and nothing is claimed absent), the state \
+         could not be listed (nothing was destroyed, and no absence is claimed), absence \
+         could not be verified, or the elevated bootstrap access could not be removed. \
+         The reason is named on stderr."
     ; `P "No other code is used by this command."
     ]
   in

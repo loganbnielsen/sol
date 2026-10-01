@@ -36,11 +36,13 @@ type cleanup =
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
+  | Outputs_unreadable of string
 
 type failure =
   | Credentials_failed of string
   | Init_failed of string
   | Preparation_refused of string
+  | Outputs_unreadable of string
   | Platform_destroy_failed of string
   | Substrate_destroy_failed of string
   | Verification_failed of string

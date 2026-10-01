@@ -293,12 +293,12 @@ let apply
         Sol_cli_provider_registry.of_root provider ~target:target_cfg ~chdir:infra_dir
       with
       | Ok cluster -> cluster
-      | Error message ->
+      | Error failure ->
         Sol_cli_report.warn
           "warning: the apply completed but the environment could not be read back from \
            Terraform's outputs (%s), so this run cannot name the cluster it just \
            provisioned."
-          message;
+          (Sol_cli_provider_registry.resolution_failure_to_string failure);
         None
     in
     Ok (Applied { cluster; infra_dir })
