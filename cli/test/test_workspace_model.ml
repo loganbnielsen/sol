@@ -112,7 +112,7 @@ let test_pluto_events_migrations_and_targets () =
     ]
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
-   | [ notifications; sol_jobs; sol_outbox ] ->
+   | [ notifications; sol_jobs; sol_outbox; charge_id_unique ] ->
      Alcotest.(check string)
        "file"
        "0001_notifications.sql"
@@ -136,13 +136,24 @@ let test_pluto_events_migrations_and_targets () =
      Alcotest.(check (option string))
        "sol-outbox name"
        (Some "sol_outbox")
-       sol_outbox.name
+       sol_outbox.name;
+     Alcotest.(check string)
+       "charge-id-unique migration file"
+       "0004_notifications_charge_id_unique.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string charge_id_unique.file);
+     Alcotest.(check (option int))
+       "charge-id-unique version"
+       (Some 4)
+       charge_id_unique.version;
+     Alcotest.(check (option string))
+       "charge-id-unique name"
+       (Some "notifications_charge_id_unique")
+       charge_id_unique.name
    | other ->
-     Alcotest.fail
-       (Printf.sprintf "expected three migrations, got %d" (List.length other)));
+     Alcotest.fail (Printf.sprintf "expected four migrations, got %d" (List.length other)));
   Alcotest.(check int)
     "unapplied migrations"
-    3
+    4
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
