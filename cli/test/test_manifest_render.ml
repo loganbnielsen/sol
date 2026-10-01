@@ -2276,6 +2276,36 @@ let test_contract_job_manifest () =
     "sol-secrets"
 ;;
 
+let test_contract_scope_rule () =
+  let ocaml_spec = { svc_spec with language = Some Sol_cli_compat.Ocaml } in
+  let ts_spec = { worker_spec with language = Some Sol_cli_compat.Typescript } in
+  let undeclared = { svc_spec with language = None } in
+  Alcotest.(check bool)
+    "an all-TypeScript scope is skipped"
+    false
+    (Sol_cli_contract.scope_has_ocaml [ ts_spec ]);
+  Alcotest.(check bool)
+    "an OCaml scope is reconciled"
+    true
+    (Sol_cli_contract.scope_has_ocaml [ ocaml_spec ]);
+  Alcotest.(check bool)
+    "a mixed scope is reconciled"
+    true
+    (Sol_cli_contract.scope_has_ocaml [ ts_spec; ocaml_spec ]);
+  Alcotest.(check bool)
+    "an undeclared language is reconciled (it errs toward OCaml)"
+    true
+    (Sol_cli_contract.scope_has_ocaml [ undeclared ]);
+  Alcotest.(check (option (pair string string)))
+    "no OCaml image for an all-TypeScript scope"
+    None
+    (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec ]);
+  Alcotest.(check (option (pair string string)))
+    "the OCaml image is chosen from a mixed scope"
+    (Some ("myapp-payments", svc_spec.image))
+    (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec; ocaml_spec ])
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
@@ -2816,6 +2846,10 @@ let () =
             "the contract Job runs the deployed image's contract binary"
             `Quick
             test_contract_job_manifest
+        ; Alcotest.test_case
+            "reconciliation is gated on an OCaml workload in scope"
+            `Quick
+            test_contract_scope_rule
         ] )
     ]
 ;;

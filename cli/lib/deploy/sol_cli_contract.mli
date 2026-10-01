@@ -13,6 +13,11 @@ val run
 val has_projection : workspace:string -> bool
 val report : workspace:string -> registry_url:string -> mode:mode -> (unit, string) result
 val plan_report : workspace:string -> registry_url:string option -> (unit, string) result
+val scope_has_ocaml : Sol_cli_deployment_plan.service_spec list -> bool
+
+val ocaml_reconciliation_image
+  :  Sol_cli_deployment_plan.service_spec list
+  -> (string * string) option
 
 val reconcile_in_destination
   :  ctx:Sol_cli_kube_destination.context
