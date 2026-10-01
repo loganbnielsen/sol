@@ -200,22 +200,27 @@ let indeterminate_lines ~target verdicts =
     ]
 ;;
 
-let present_lines ~target =
+let observed_lines ~target =
   [ Printf.sprintf
       "Sol observed the installation for %s at the provider: every durable prerequisite \
        is established, so the installation is not what stopped this run."
       target
   ]
-  @ blank
-  @ [ "The environment for this target is not usable from here. When it does not exist \
-       yet,"
-    ; "create it — network, cluster, database and platform — with:"
-    ; Printf.sprintf "  sol cloud apply %s" target
-    ; "then name the context that command prints as this target's `kube_context`. When it"
-    ; "does exist, check that its context is in your kubeconfig and that this target's"
-    ; "identity can reach the cluster: Sol never falls back to whatever kubectl is"
-    ; "currently pointed at (DEC-020)."
-    ]
+;;
+
+let environment_guidance_lines ~target =
+  [ "The environment for this target is not usable from here. When it does not exist yet,"
+  ; "create it — network, cluster, database and platform — with:"
+  ; Printf.sprintf "  sol cloud apply %s" target
+  ; "then name the context that command prints as this target's `kube_context`. When it"
+  ; "does exist, check that its context is in your kubeconfig and that this target's"
+  ; "identity can reach the cluster: Sol never falls back to whatever kubectl is"
+  ; "currently pointed at (DEC-020)."
+  ]
+;;
+
+let present_lines ~target =
+  observed_lines ~target @ blank @ environment_guidance_lines ~target
 ;;
 
 let established_lines ~target =

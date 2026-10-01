@@ -5,6 +5,7 @@ type kubernetes_status =
   | Unreachable of string * string
 
 val describe : verbose:bool -> kubernetes_status -> string
+val context_is_configured : Sol_cli_kube_destination.t -> bool
 
 val rows
   :  ?platform:string

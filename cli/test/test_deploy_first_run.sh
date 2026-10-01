@@ -3,6 +3,8 @@ set -euo pipefail
 
 sol="$(realpath "${1:-}")"
 tmp="$(mktemp -d)"
+export SOL_WHOAMI_RETRY_INTERVAL_S=0
+export SOL_PLATFORM_READINESS_TIMEOUT_S=0
 trap 'rm -rf "$tmp"' EXIT
 
 fail=0
@@ -59,6 +61,8 @@ prod:
   targets:
     aws/us-east-1:
       cluster_name: first-run-prod
+      letsencrypt_email: ops@example.test
+      cluster_endpoint_cidr: 203.0.113.0/24
       state_bucket: first-run-tfstate
       aws:
         state_lock_table: first-run-tflock
@@ -72,6 +76,8 @@ stale:
   targets:
     aws/us-east-1:
       cluster_name: first-run-stale
+      letsencrypt_email: ops@example.test
+      cluster_endpoint_cidr: 203.0.113.0/24
       kube_context: first-run-stale
       state_bucket: first-run-tfstate
       aws:
@@ -186,6 +192,13 @@ cat >"$tmp/bin-installed/aws" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/aws.log"
 case "\$1 \$2" in
+  "configure export-credentials")
+    printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
+    printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
+    ;;
+  "eks describe-cluster"|"eks describe-addon")
+    printf 'ACTIVE\n'
+    ;;
   "iam get-role")
     printf '%s\n' '{"Role":{"Arn":"arn:aws:iam::111122223333:role/sol-deploy"}}'
     ;;
@@ -289,8 +302,20 @@ EOF
 cat >"$tmp/bin-tf/terraform" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
+tf_chdir=
+for argument in "\$@"; do
+  case "\$argument" in
+    -chdir=*) tf_chdir="\${argument#-chdir=}" ;;
+  esac
+done
 case " \$* " in
-  *" state list "*) printf '%s\n' 'aws_s3_bucket.state'; exit 0 ;;
+  *" state list "*)
+    case "\$tf_chdir" in
+      *cloud/aws/cluster*) printf '%s\n' 'module.eks.aws_eks_cluster.this[0]' ;;
+      *) printf '%s\n' 'aws_s3_bucket.state' ;;
+    esac
+    exit 0
+    ;;
   *" init "*) exit 0 ;;
   *" plan "*)
     for argument in "\$@"; do
@@ -301,8 +326,26 @@ case " \$* " in
     exit 0
     ;;
   *" show "*) cat "$tmp/plan.json"; exit 0 ;;
-  *" output -json "*) cat "$tmp/outputs.json"; exit 0 ;;
+  *" output -json "*)
+    case "\$tf_chdir" in
+      *cloud/aws/cluster*) cat "$tmp/cluster-outputs.json" ;;
+      *) cat "$tmp/outputs.json" ;;
+    esac
+    exit 0
+    ;;
   *" apply "*) touch "$tmp/applied"; exit 0 ;;
+esac
+exit 0
+EOF
+
+cat >"$tmp/bin-tf/kubectl" <<'EOF'
+#!/bin/sh
+case "\$1 \$2" in
+  "auth whoami")
+    printf '%s\n' '{"status":{"userInfo":{"username":"first-run","extra":{"canonicalArn":"arn:aws:iam::111122223333:role/sol-cluster-access"}}}}'
+    ;;
+  "auth can-i") printf 'yes\n' ;;
+  *) printf 'ok\n' ;;
 esac
 exit 0
 EOF
@@ -321,11 +364,15 @@ printf '%s\n' \
   '{"resource_changes":[{"address":"aws_s3_bucket.state","type":"aws_s3_bucket","mode":"managed","change":{"actions":["create"]}}]}' \
   >"$tmp/plan.json"
 
+printf '%s\n' \
+  '{"cluster_name":{"sensitive":false,"value":"first-run-prod"},"cluster_access_role_arn":{"sensitive":false,"value":"arn:aws:iam::111122223333:role/sol-cluster-access"},"deploy_kube_context":{"sensitive":false,"value":"first-run-prod-deploy"},"deploy_kubeconfig_command":{"sensitive":false,"value":"aws eks update-kubeconfig --region us-east-1 --name first-run-prod --alias first-run-prod-deploy --role-arn arn:aws:iam::111122223333:role/sol-deploy"},"kubeconfig_command":{"sensitive":false,"value":"aws eks update-kubeconfig --region us-east-1 --name first-run-prod"},"kube_context":{"sensitive":false,"value":"first-run-prod"},"cert_manager_irsa_arn":{"sensitive":false,"value":"arn:aws:iam::111122223333:role/cert-manager"},"managed_resource_dashboards":{"sensitive":false,"value":{}},"database_egress_cidrs":{"sensitive":false,"value":[]}}' \
+  >"$tmp/cluster-outputs.json"
+
 run_with() {
   local target="$1" path="$2"
   shift 2
   rm -rf "$tmp/data/sol/runs"
-  rm -f "$tmp/terraform.log"
+  rm -f "$tmp/terraform.log" "$tmp/aws.log"
   set +e
   output="$(
     cd "$tmp/work" &&
@@ -346,9 +393,9 @@ run_interactive_with() {
   local path="$1" answer="$2"
   shift 2
   rm -rf "$tmp/data/sol/runs"
-  rm -f "$tmp/terraform.log" "$tmp/applied"
+  rm -f "$tmp/terraform.log" "$tmp/aws.log" "$tmp/applied"
   local command
-  command="cd '$tmp/work' && XDG_DATA_HOME='$tmp/data' PATH='$path' '$sol' deploy prod/aws/us-east-1 --image-tag deadbeef --registry registry.example.test/first $*"
+  command="cd '$tmp/work' && XDG_DATA_HOME='$tmp/data' PATH='$path' POSTGRES_URL=postgresql://user:pass@localhost:5432/db SOL_API_KEY=first-run-key '$sol' deploy prod/aws/us-east-1 --image-tag deadbeef --registry registry.example.test/first $*"
   set +e
   output="$(printf '%s\n' "$answer" | script -qec "$command" /dev/null 2>&1 | tr -d '\r')"
   rc=$?
@@ -471,20 +518,28 @@ check_contains \
   "$output"
 check_absent "the refused run is not set up" " apply " "$(terraform_log)"
 
-run "$tmp/bin-installed:/usr/bin:/bin"
-check "an installed account still exits 1 at the missing cluster" 1 "$rc"
+run "$tmp/bin-installed:$tmp/bin-tf:/usr/bin:/bin"
+check "an installed account with no environment exits 1" 1 "$rc"
 check_contains \
   "an established installation is reported observed" \
   "every durable prerequisite is established" \
   "$output"
 check_contains \
-  "the next stage is named" \
-  "sol cloud apply prod/aws/us-east-1" \
+  "the environment stage is named as Sol's own work" \
+  "reconcile the environment for prod/aws/us-east-1" \
   "$output"
+check_contains \
+  "the run provisions the environment rather than naming a separate command" \
+  "cloud/aws/cluster" \
+  "$(terraform_log)"
+check_contains \
+  "and applies it" \
+  " apply " \
+  "$(terraform_log)"
 check_absent "an installed account is not prompted" "[Y/n]" "$output"
 check_absent \
   "an installed account repeats no installation work" \
-  " init " \
+  "aws-bootstrap" \
   "$(terraform_log)"
 
 run_with stale/aws/us-east-1 "$tmp/bin-installed:$tmp/bin-kubectl:/usr/bin:/bin" --confirm-group-change
@@ -508,7 +563,7 @@ if ! command -v script >/dev/null 2>&1; then
   fail=1
 else
   run_interactive "y" --await-delegation=5
-  check "accepting the setup still exits 1 at the missing cluster" 1 "$rc"
+  check "accepting the setup runs on into the environment stage" 1 "$rc"
   check_contains \
     "Sol offers to set the installation up" \
     "Set up Sol for prod/aws/us-east-1 now? [Y/n]" \
@@ -534,9 +589,14 @@ else
     "every durable prerequisite is established" \
     "$output"
   check_contains \
-    "the run continues into the deploy and names the next stage" \
-    "sol cloud apply prod/aws/us-east-1" \
+    "the run continues into the environment stage" \
+    "reconcile the environment for prod/aws/us-east-1" \
     "$output"
+  check_contains \
+    "and provisions the environment's cluster root" \
+    "cloud/aws/cluster" \
+    "$(terraform_log)"
+
 
   run_interactive_with "$tmp/bin-stuck:$tmp/bin-tf:/usr/bin:/bin" "y" --await-delegation=5
   check "a setup that does not establish the installation exits 1" 1 "$rc"

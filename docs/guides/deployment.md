@@ -91,8 +91,11 @@ for the delegation to become visible, and confirm it from a public resolver rath
 written configuration. An installation that already exists is deployed to with no setup and no
 prompt; a run that cannot be asked (CI, `--dry-run`, `--emit-to`) prints the same observation and
 `sol cloud bootstrap <target> --apply` instead of prompting. The explicit pair above remains the
-administrative route, and the *environment* is still step 3 below — the guided run names
-`sol cloud apply <target>` when that is what the target is missing.
+administrative route, and the *environment* is reconciled in place too: a run with no destination it
+can reach drives steps 3–5 below itself, then reaches the cluster it created as the target's deploy
+identity (DEC-058) and continues into migration and deployment. Where a provider declares no deploy
+identity — today, GCP — the run stops after provisioning and names the kubeconfig command and
+`kube_context` the operator must add.
 
 ## 3. Provision the substrate
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -eu
+printf 'dig %s\n' "$*" >>"$LIFECYCLE_LOG"
+printf 'ns-1.awsdns-08.org.\n'
+printf 'ns-2.awsdns-08.org.\n'

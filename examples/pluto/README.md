@@ -238,12 +238,38 @@ Set the installation up once, then run this deploy again:
 
 An account that already has an installation is deployed to with no one-time setup
 and no prompt; and because the run only ever *observes* it in that case, no
-durable resource is touched again. The environment itself is still created by its
-own stage, which the run names when that is what the target is missing:
+durable resource is touched again.
 
-```bash
-sol cloud apply prod/aws/us-east-1
+The environment is created in place as well, and that is the same stage
+`sol cloud apply` drives — not a second implementation. Once the installation is
+established, the run reconciles the environment (network, cluster, database and
+platform) and then reaches the cluster it created as the *deploy* identity, so it
+continues straight into migration and deployment:
+
+```text
+$ sol deploy prod/aws/us-east-1 --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$DIGEST"
+
+Profile: production-single-region/v1 (preflight passed)
+
+Sol does this for you: reconcile the environment for prod/aws/us-east-1 — network,
+cluster, database and platform — from the durable installation, and establish this
+run's own cluster access.
+...
+The environment for prod/aws/us-east-1 is provisioned.
+  cluster access identity: arn:aws:iam::<account>:role/sol-deploy (this run, ephemeral)
+...
 ```
+
+The plan and the profile preflight are built *before* anything is provisioned, so
+a blocker that can be named now is named now rather than after the billable
+boundary. The deploy identity's cluster access is a temporary kubeconfig for that
+run: Sol never writes your `~/.kube/config` or the target file, and never reaches
+the cluster as the provisioning identity (`DEC-058`, `DEC-034`). `sol cloud apply
+prod/aws/us-east-1` remains the explicit route for the same stage, and is what
+`sol status`, `sol logs` and `sol migrate` need: those read the target's declared
+`kube_context`, so run the printed `deploy_kubeconfig_command` once and add the
+context name it writes. Where a provider declares no deploy identity — GCP today —
+the deploy stops after provisioning and prints exactly that command and context.
 
 A second environment needs **no** installation work: it deploys against the
 installation that already exists, which is why redeploying never means redoing

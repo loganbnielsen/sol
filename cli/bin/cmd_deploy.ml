@@ -53,21 +53,7 @@ let print_header ~workspace ~sha ?mode_line () =
   Printf.printf "\n%!"
 ;;
 
-let build_plan (ctx : Sol_cli_deploy_run.context) ~emit_to =
-  let input : Sol_cli_deploy_selection.Planning_input.t =
-    { workspace = ctx.execution.workspace
-    ; registry = ctx.registry
-    ; sha = ctx.sha
-    ; emit_to
-    ; secret_backend = ctx.secret_backend
-    ; config = ctx.resolved_config
-    ; facts = ctx.facts
-    ; inventory = ctx.inventory
-    ; requested_scope = ctx.requested_scope
-    ; image_refs = ctx.image_refs
-    ; services = ctx.services
-    }
-  in
+let build_plan (input : Sol_cli_deploy_selection.Planning_input.t) =
   let* plan =
     Sol_cli_deploy_selection.plan input
     |> Result.map_error (function
@@ -81,6 +67,23 @@ let build_plan (ctx : Sol_cli_deploy_run.context) ~emit_to =
       "Profile: %s (preflight passed)\n%!"
       (Sol_cli_profile.to_string claim.profile));
   Ok plan
+;;
+
+let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
+  : Sol_cli_deploy_selection.Planning_input.t
+  =
+  { workspace = ctx.execution.workspace
+  ; registry = ctx.registry
+  ; sha = ctx.sha
+  ; emit_to
+  ; secret_backend = ctx.secret_backend
+  ; config = ctx.resolved_config
+  ; facts = ctx.facts
+  ; inventory = ctx.inventory
+  ; requested_scope = ctx.requested_scope
+  ; image_refs = ctx.image_refs
+  ; services = ctx.services
+  }
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =
@@ -224,7 +227,6 @@ let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
     (match Sol_cli_installation_onboarding.state_of_verdicts verdicts with
      | Sol_cli_installation_onboarding.Present ->
        print_guided (Sol_cli_installation_onboarding.established_lines ~target);
-       print_guided (Sol_cli_installation_onboarding.present_lines ~target);
        Ok ()
      | Sol_cli_installation_onboarding.Absent
      | Sol_cli_installation_onboarding.Partial
@@ -235,23 +237,25 @@ let set_up_installation ~target ~target_cfg ~configuration ~await_delegation =
        Error (Sol_cli_exit.reported ~code:1 ()))
 ;;
 
-let guide_installation ~target ~target_cfg ~action ~await_delegation =
+type installation_state =
+  | Installation_established
+  | Installation_reported
+
+let installation_stage ~target ~target_cfg ~action ~await_delegation () =
   match observe_installation target_cfg with
   | Error message ->
     eprint_guided
       (Sol_cli_installation_onboarding.undeclared_lines ~target ~reason:message);
-    Ok ()
+    Ok Installation_reported
   | Ok (configuration, verdicts) ->
     let state = Sol_cli_installation_onboarding.state_of_verdicts verdicts in
     let can_set_up = allow_setup action && Sol_cli_confirm.interactive () in
     (match Sol_cli_installation_onboarding.decision ~interactive:can_set_up state with
-     | Proceed ->
-       print_guided (Sol_cli_installation_onboarding.present_lines ~target);
-       Ok ()
+     | Proceed -> Ok Installation_established
      | Report ->
        eprint_guided
          (Sol_cli_installation_onboarding.indeterminate_lines ~target verdicts);
-       Ok ()
+       Ok Installation_reported
      | Refuse ->
        print_guided
          (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
@@ -261,7 +265,7 @@ let guide_installation ~target ~target_cfg ~action ~await_delegation =
             ~target
             ~because:(setup_refusal_reason action)
             verdicts);
-       Ok ()
+       Ok Installation_reported
      | Offer ->
        print_guided
          (Sol_cli_installation_onboarding.report_lines ~target ~configuration verdicts);
@@ -273,14 +277,27 @@ let guide_installation ~target ~target_cfg ~action ~await_delegation =
            ~print:(fun text ->
              print_string text;
              flush stdout)
-       then set_up_installation ~target ~target_cfg ~configuration ~await_delegation
+       then
+         let* () =
+           set_up_installation ~target ~target_cfg ~configuration ~await_delegation
+         in
+         Ok Installation_established
        else (
          eprint_guided
            (Sol_cli_installation_onboarding.refusal_lines
               ~target
               ~because:"you chose not to set it up"
               verdicts);
-         Ok ()))
+         Ok Installation_reported))
+;;
+
+let guide_installation ~target ~target_cfg ~action ~await_delegation =
+  let* state = installation_stage ~target ~target_cfg ~action ~await_delegation () in
+  (match state with
+   | Installation_reported -> ()
+   | Installation_established ->
+     print_guided (Sol_cli_installation_onboarding.present_lines ~target));
+  Ok ()
 ;;
 
 let guide_installation_of_ctx ~ctx ~action ~await_delegation =
@@ -291,11 +308,184 @@ let guide_installation_of_ctx ~ctx ~action ~await_delegation =
     ~await_delegation
 ;;
 
-let check_substrate_prerequisite ~ctx ~plan ~live ~action ~await_delegation =
+let destination_output_lines ~infra_dir =
+  let wanted =
+    [ "deploy_kubeconfig_command"
+    ; "deploy_kube_context"
+    ; "kubeconfig_command"
+    ; "kube_context"
+    ]
+  in
+  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+  | Error _ -> []
+  | Ok output ->
+    (match Sol_cli_terraform_outputs.displayable output.stdout with
+     | Error _ -> []
+     | Ok outputs ->
+       outputs
+       |> List.filter (fun (name, _) -> List.mem name wanted)
+       |> List.map Sol_cli_terraform_outputs.line)
+;;
+
+let no_deploy_identity_lines ~target ~infra_dir =
+  [ Printf.sprintf
+      "The environment for %s is provisioned, but this run cannot reach its cluster as a \
+       deploy identity:"
+      target
+  ; "  this provider declares no deploy identity, and Sol does not reach a cluster as the"
+  ; "  provisioning identity it has just used (DEC-034)."
+  ; ""
+  ; "One action required — configure kubectl as the identity that deploys to this target,"
+  ; "then name the context it writes as this target's kube_context:"
+  ]
+  @ List.map (fun line -> "  " ^ line) (destination_output_lines ~infra_dir)
+  @ [ ""; Printf.sprintf "Then re-run `sol deploy %s`." target ]
+;;
+
+let environment_destination ~target ~cluster ~infra_dir =
+  match cluster with
+  | None ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "the environment for %s was provisioned, but Sol cannot read back the \
+             cluster it created from Terraform's outputs, so this run cannot name the \
+             cluster it would deploy to. Observe it with `sol cloud apply %s --plan` and \
+             re-run."
+            target
+            target))
+  | Some cluster ->
+    (match cluster.Sol_cli_cluster.deploy_access () with
+     | Ok (Some destination) -> Ok destination
+     | Ok None ->
+       eprint_guided (no_deploy_identity_lines ~target ~infra_dir);
+       Error (Sol_cli_exit.reported ~code:1 ())
+     | Error message -> Error (Sol_cli_exit.error message))
+;;
+
+let environment_refusal_lines ~target ~because =
+  [ Printf.sprintf
+      "The environment for %s is not provisioned yet, and Sol will not create it in this \
+       run: %s."
+      target
+      because
+  ; ""
+  ; "Sol does this for you on a run that changes things: reconcile the environment for \
+     this"
+  ; "target — network, cluster, database and platform — and establish this run's own \
+     cluster"
+  ; "access."
+  ; ""
+  ; "Create it with:"
+  ; Printf.sprintf "  sol cloud apply %s" target
+  ; Printf.sprintf
+      "then name the context that command prints as this target's kube_context, and run \
+       `sol depl       oy %s` again."
+      target
+  ]
+;;
+
+let environment_stage ~target ~run_log ~action () =
+  if not (allow_setup action)
+  then (
+    eprint_guided
+      (environment_refusal_lines ~target ~because:(setup_refusal_reason action));
+    Error (Sol_cli_exit.reported ~code:1 ()))
+  else
+    let* () = Cmd_cloud_tf.check_terraform () in
+    let* assets = Cmd_cloud_tf.resolve_assets () in
+    print_guided
+      [ ""
+      ; Printf.sprintf
+          "Sol does this for you: reconcile the environment for %s — network, cluster, \
+           database and platform — from the durable installation, and establish this \
+           run's own cluster access."
+          target
+      ];
+    match
+      Sol_cli_environment_stage.apply ~assets ~run_log ~target ~var_file:None ~vars:[] ()
+    with
+    | Ok (Sol_cli_environment_stage.Applied { cluster; infra_dir }) ->
+      print_guided [ Printf.sprintf "The environment for %s is provisioned." target ];
+      environment_destination ~target ~cluster ~infra_dir
+    | Ok (Sol_cli_environment_stage.Apply_failed { failure; _ }) ->
+      Error
+        (Sol_cli_exit.failure
+           ("\n" ^ Sol_cli_environment_stage.failure_to_string failure))
+    | Error failure ->
+      Error
+        (Sol_cli_exit.failure
+           ("\n" ^ Sol_cli_environment_stage.failure_to_string failure))
+;;
+
+let first_run ~target ~target_cfg ~action ~await_delegation ~run_log () =
+  print_guided
+    [ ""
+    ; Printf.sprintf
+        "This target names no Kubernetes destination Sol can reach from here, so this is \
+         the first run for %s:"
+        target
+    ];
+  let* () =
+    match installation_stage ~target ~target_cfg ~action ~await_delegation () with
+    | Ok Installation_established ->
+      print_guided (Sol_cli_installation_onboarding.observed_lines ~target);
+      Ok ()
+    | Ok Installation_reported -> Error (Sol_cli_exit.reported ~code:1 ())
+    | Error exit -> Error exit
+  in
+  environment_stage ~target ~run_log ~action ()
+;;
+
+let destination_or_environment_stage
+      ~planning
+      ~target
+      ~run_log
+      ~action
+      ~await_delegation
+      ()
+  =
+  let target_cfg =
+    planning.Sol_cli_deploy_selection.Planning_input.config.Sol_cli_config.target
+  in
+  let declared_context =
+    match target_cfg.Sol_cli_config.kube_context with
+    | Some context -> not (Sol_cli_string.is_blank context)
+    | None -> false
+  in
+  let first_run () =
+    let* destination =
+      first_run ~target ~target_cfg ~action ~await_delegation ~run_log ()
+    in
+    Ok (destination, true)
+  in
+  match Sol_cli_config.destination_of_target target_cfg with
+  | Ok destination when not (allow_setup action) -> Ok (destination, false)
+  | Ok destination when Sol_cli_target_report.context_is_configured destination ->
+    Ok (destination, false)
+  | Ok _ -> first_run ()
+  | Error message when declared_context -> Error (Sol_cli_exit.error message)
+  | Error _ when allow_setup action -> first_run ()
+  | Error message ->
+    let* () = guide_installation ~target ~target_cfg ~action ~await_delegation in
+    Error (Sol_cli_exit.error message)
+;;
+
+let check_substrate_prerequisite
+      ~ctx
+      ~plan
+      ~live
+      ~action
+      ~await_delegation
+      ?(guide = true)
+      ()
+  =
   match Sol_cli_deploy_run.substrate_prerequisite ctx ~plan ~live with
   | Ok () -> Ok ()
   | Error error ->
-    let* () = guide_installation_of_ctx ~ctx ~action ~await_delegation in
+    let* () =
+      if guide then guide_installation_of_ctx ~ctx ~action ~await_delegation else Ok ()
+    in
     Error
       (match error with
        | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
@@ -320,7 +510,7 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
-  let* plan = build_plan ctx ~emit_to in
+  let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
   let* () =
@@ -330,6 +520,7 @@ let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
       ~live:false
       ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
       ~await_delegation
+      ()
   in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
@@ -343,7 +534,7 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~sha:ctx.sha
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
-  let* plan = build_plan ctx ~emit_to:(Some dir) in
+  let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
@@ -389,18 +580,40 @@ let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
 ;;
 
 let run_apply
-      (ctx : Sol_cli_deploy_run.context)
+      ~planning
+      ~context_of
+      ~target
+      ~run_log
       ~confirm_group_change
       ~loki_push_url
       ~await_delegation
+      ()
   =
-  let* () = check_apply_environment ~facts:ctx.facts ~services:ctx.services in
   let* () =
-    Sol_cli_deploy_run.verify_image_refs_exist ~image_refs:ctx.image_refs
+    check_apply_environment
+      ~facts:planning.Sol_cli_deploy_selection.Planning_input.facts
+      ~services:planning.Sol_cli_deploy_selection.Planning_input.services
+  in
+  let* () =
+    Sol_cli_deploy_run.verify_image_refs_exist
+      ~image_refs:planning.Sol_cli_deploy_selection.Planning_input.image_refs
     |> Sol_cli_exit.of_msg
   in
-  print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
-  let* plan = build_plan ctx ~emit_to:None in
+  print_header
+    ~workspace:planning.Sol_cli_deploy_selection.Planning_input.workspace
+    ~sha:planning.Sol_cli_deploy_selection.Planning_input.sha
+    ();
+  let* plan = build_plan planning in
+  let* destination, established =
+    destination_or_environment_stage
+      ~planning
+      ~target
+      ~run_log
+      ~action:Sol_cli_command_request.Deploy_apply
+      ~await_delegation
+      ()
+  in
+  let ctx : Sol_cli_deploy_run.context = context_of ~destination in
   let* () =
     check_consumer_group_changes
       ~ctx:ctx.execution.cluster
@@ -417,6 +630,8 @@ let run_apply
       ~live:true
       ~action:Sol_cli_command_request.Deploy_apply
       ~await_delegation
+      ~guide:(not established)
+      ()
   in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   record_plan ctx.run_log plan;
@@ -486,29 +701,22 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let secret_backend =
     Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
   in
-  let declared_context =
-    match target_cfg.Sol_cli_config.kube_context with
-    | Some context -> not (Sol_cli_string.is_blank context)
-    | None -> false
-  in
   let await_delegation = Option.value req.await_delegation ~default:300 in
-  let* destination =
-    match Sol_cli_config.destination_of_target target_cfg with
-    | Ok destination -> Ok destination
-    | Error message ->
-      let* () =
-        if declared_context
-        then Ok ()
-        else
-          guide_installation
-            ~target:req.target
-            ~target_cfg
-            ~action:req.action
-            ~await_delegation
-      in
-      Error (Sol_cli_exit.error message)
+  let planning : Sol_cli_deploy_selection.Planning_input.t =
+    { workspace
+    ; registry
+    ; sha
+    ; emit_to = emit_intent
+    ; secret_backend
+    ; config = resolved_config
+    ; facts
+    ; inventory
+    ; requested_scope
+    ; image_refs
+    ; services
+    }
   in
-  let ctx : Sol_cli_deploy_run.context =
+  let context_of ~destination : Sol_cli_deploy_run.context =
     { execution =
         Sol_cli_execution.context
           ~cluster:(Sol_cli_kube_destination.context_of_destination destination)
@@ -532,15 +740,38 @@ let run (req : Sol_cli_command_request.deploy_request) =
     }
   in
   match req.action with
-  | Sol_cli_command_request.Deploy_dry_run { emit_to } ->
-    run_dry_run ctx ~emit_to ~await_delegation
-  | Deploy_emit_to dir -> run_emit ctx ~dir
-  | Deploy_apply ->
+  | Sol_cli_command_request.Deploy_apply ->
     run_apply
-      ctx
+      ~planning
+      ~context_of
+      ~target:req.target
+      ~run_log
       ~confirm_group_change:req.confirm_group_change
       ~loki_push_url:req.loki_push_url
       ~await_delegation
+      ()
+  | Deploy_dry_run { emit_to } ->
+    let* destination, _ =
+      destination_or_environment_stage
+        ~planning
+        ~target:req.target
+        ~run_log
+        ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
+        ~await_delegation
+        ()
+    in
+    run_dry_run (context_of ~destination) ~emit_to ~await_delegation
+  | Deploy_emit_to dir ->
+    let* destination, _ =
+      destination_or_environment_stage
+        ~planning
+        ~target:req.target
+        ~run_log
+        ~action:(Sol_cli_command_request.Deploy_emit_to dir)
+        ~await_delegation
+        ()
+    in
+    run_emit (context_of ~destination) ~dir
 ;;
 
 let target_arg =

@@ -197,6 +197,7 @@ let cluster ~region outputs : Sol_cli_cluster.t =
   ; with_access = (fun f -> gcp_provisioner_kubeconfig_result ~region outputs f)
   ; ready = (fun () -> gcp_cloud_ready outputs)
   ; bootstrap_window = Sol_cli_cluster.Closed_by_platform_root
+  ; deploy_access = (fun () -> Ok None)
   }
 ;;
 

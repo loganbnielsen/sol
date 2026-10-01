@@ -130,9 +130,13 @@ decided in [DEC-057](../internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-057.
 **Today:** the stages exist as code and as separate commands
 (`sol cloud plan|apply|destroy`, `sol deploy`, `sol migrate`). The durable
 installation among them is guided in place: a first `sol deploy` observes it and
-offers to set it up (FEAT-106). The environment stages remain explicit — a deploy
-that cannot reach the target's cluster names `sol cloud apply <target>` rather
-than provisioning it itself.
+offers to set it up (FEAT-106). The environment stage is driven in place too: a
+`sol deploy` that has no destination it can reach reconciles the environment
+itself — the same `Sol_cli_environment_stage` `sol cloud apply` drives, not a
+second implementation — and then reaches the cluster it created as the target's
+own deploy identity (DEC-058), continuing into migration and application without
+the user invoking another command. The explicit stages remain for diagnosis and
+for work a deploy is not asked to do.
 
 ---
 
@@ -175,8 +179,13 @@ records), waiting for the delegation to become visible and confirming it from a
 public resolver, then re-observing rather than assuming. Declining, or running
 where no one can answer (CI, `--dry-run`, `--emit-to`), prints the same
 explanation and the command that establishes it (`sol cloud bootstrap <target>
---apply`) instead of prompting or silently skipping. The environment stages stay
-explicit: the run names `sol cloud apply <target>` as the next step.
+--apply`) instead of prompting or silently skipping. Once the installation is
+established the same run continues into the environment stage: it reconciles the
+target's environment (`provision` → `platform`) and then reaches the cluster as
+the deploy identity DEC-058 selected for that provider, rather than naming a
+separate command. Where the provider has no deploy identity — today, GCP — the
+run stops after provisioning and names the operator's two steps: the kubeconfig
+command the root prints, and the `kube_context` to declare.
 
 ### 4.3 Inspecting and reconciling the installation
 
@@ -375,9 +384,10 @@ Two properties matter more than the wording:
 (`sol deploy <target> --image-tag … --registry …`), and the durable installation
 is guided inline by the first run (FEAT-106): the run reports what it observed,
 separates the work Sol does from the one external action, and names the exact
-records to add. The environment's own provisioning is still the explicit
-`sol cloud apply <target>` stage, which the guided run names when that is what
-the target is missing.
+records to add. The environment's own provisioning is driven in place as well:
+when the run has nothing it can reach, it reconciles the environment and
+establishes this run's own deploy-identity cluster access, then continues into
+migration and deployment (DEC-058).
 
 ---
 
@@ -418,10 +428,12 @@ The lifecycle behind that output:
 
 **Today:** steps 1–11 exist across `sol plan`, `sol cloud plan|apply`, and
 `sol deploy`, with direct and GitOps modes (`DEC-043`, ADR 0002/0003). The
-installation among them is inline: a first `sol deploy` observes it and offers to
-set it up (FEAT-106). The single-command first run that also provisions the
-environment is **Target** — today the guided run names `sol cloud apply <target>`
-as that step.
+installation among them is inline, and so is the environment: a first
+`sol deploy` observes the installation, offers to set it up, reconciles the
+environment, and continues into migration and deployment as the target's deploy
+identity (FEAT-106, DEC-058). What remains **Target** is the residue: a provider
+without a deploy identity (GCP) stops after provisioning and names the operator's
+kubeconfig steps.
 
 ---
 
