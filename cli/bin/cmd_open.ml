@@ -26,8 +26,7 @@ let provider_console ~kind target =
       |> Sol_cli_exit.of_error Sol_cli_config.error_to_string)
 ;;
 
-let run kind scope_str links explicit_backend explicit_base_domain target grafana_base_url
-  =
+let run kind scope_str links (observability : Cmd_logs.observability_options) target =
   let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
   let* scope = Sol_cli_open.parse_scope scope_str |> Sol_cli_exit.of_msg in
   let* () =
@@ -35,16 +34,13 @@ let run kind scope_str links explicit_backend explicit_base_domain target grafan
     |> Sol_cli_exit.of_msg
   in
   let* console = provider_console ~kind target in
-  let* backend, base_domain =
-    Sol_cli_observability_url.effective_backend_and_base_domain
-      ~explicit_backend
-      ~explicit_base_domain
-      ~target
-      ()
-    |> Sol_cli_exit.of_msg
-  in
+  let* backend, base_domain = Cmd_logs.backend_and_base_domain ~target observability in
   match
-    Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
+    Sol_cli_observability_url.resolve
+      ~backend
+      ?base_domain
+      ?override:observability.Cmd_logs.grafana_base_url
+      ()
   with
   | Sol_cli_observability_url.No_url reason ->
     Printf.printf "%s: (%s)\n%!" (kind_label kind) reason;
@@ -74,6 +70,21 @@ let links_flag =
     & info [ "links" ] ~doc:"Print the raw URL only; don't attempt to open a browser.")
 ;;
 
+let observability_term =
+  Term.(
+    const (fun backend base_domain grafana_base_url ->
+      { Cmd_logs.backend
+      ; base_domain
+      ; grafana_base_url
+      ; loki_base_url = None
+      ; loki_username = None
+      ; loki_password = None
+      })
+    $ Cmd_logs.observability_backend_arg
+    $ Cmd_logs.base_domain_arg
+    $ Cmd_logs.grafana_base_url_arg)
+;;
+
 let make_subcmd ?(scope_doc = scope_doc) name kind doc =
   Cmd.v
     (Cmd.info name ~doc)
@@ -82,10 +93,8 @@ let make_subcmd ?(scope_doc = scope_doc) name kind doc =
       $ (const (run kind)
          $ scope_arg scope_doc
          $ links_flag
-         $ Cmd_logs.observability_backend_arg
-         $ Cmd_logs.base_domain_arg
-         $ Cmd_logs.target_arg
-         $ Cmd_logs.grafana_base_url_arg))
+         $ observability_term
+         $ Cmd_logs.target_arg))
 ;;
 
 let cmd =

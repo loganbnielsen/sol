@@ -268,3 +268,9 @@
  (deps ../bin/main.exe test_open_infra.sh)
  (action
   (run bash %{dep:test_open_infra.sh} %{dep:../bin/main.exe})))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_open_options.sh)
+ (action
+  (run bash %{dep:test_open_options.sh} %{dep:../bin/main.exe})))
