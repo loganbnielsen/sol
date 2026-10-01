@@ -690,6 +690,7 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
         ~assets
         ~provider:target_cfg.provider
         ~configuration
+        ~run:installation_observation
         ()
       |> Sol_cli_exit.of_msg
     else Ok ()

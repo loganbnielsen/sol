@@ -212,6 +212,23 @@ and asks a human, and a root already at its declared state applies nothing, so a
 second run is a no-op. The state backend is the one prerequisite whose presence is
 checked first, because a root cannot create the backend that stores its own state.
 
+### Create or adopt, never duplicate
+
+When the target declares that Sol owns the domain (`dns_zone_ownership: sol`), reconciling the
+durable root either creates the zone or **adopts the one that is already there** — it asks the
+provider first, because creating a second zone with the same name would give the domain different
+nameservers than the ones already delegated, and the delegation would silently point nowhere:
+
+```text
+The durable root already owns the zone for api.acme.com; nothing to create or adopt.
+A zone for api.acme.com already exists and the durable root does not own it: adopting it
+(/hostedzone/Z0123...) instead of creating a second zone with different nameservers.
+No zone exists for api.acme.com yet, so the durable root creates it.
+```
+
+A provider CLI Sol cannot run is an error here rather than a guess: without an answer about
+whether a zone exists, Sol would risk creating the duplicate.
+
 ### Delegation: one action, then verification
 
 A zone Sol owns is only reachable once the zone that publishes it delegates to it, and that step

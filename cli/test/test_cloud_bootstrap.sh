@@ -40,7 +40,7 @@ cat >"$tmp/bin-tf/terraform" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
 case " \$* " in
-  *" state list "*) printf 'aws_s3_bucket.state\n'; exit 0 ;;
+  *" state list "*) cat "$tmp/state-list" 2>/dev/null || printf 'aws_s3_bucket.state\n'; exit 0 ;;
   *" init "*) exit 0 ;;
   *" plan "*)
     for argument in "\$@"; do
@@ -127,7 +127,10 @@ case "\$1 \$2" in
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
   "route53 list-hosted-zones-by-name")
-    printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}'
+    case " \$* " in
+      *" --query "*) cat "$tmp/existing-zone-id" 2>/dev/null ;;
+      *) printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}' ;;
+    esac
     ;;
 esac
 exit 0
@@ -251,6 +254,37 @@ check_contains \
   "$output"
 check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
 check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
+
+printf '%s\n' '/hostedzone/ZADOPTED' >"$tmp/existing-zone-id"
+rm -f "$tmp/state-list" "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "adopting an existing zone exits 0" 0 "$rc"
+check_contains "the run says it is adopting, not creating" "adopting it" "$output"
+check_contains \
+  "the counted zone is imported, not created" \
+  "aws_route53_zone.qualification[0]" \
+  "$(cat "$tmp/terraform.log")"
+check_contains \
+  "the import identity is the zone that already exists" \
+  "/hostedzone/ZADOPTED" \
+  "$(cat "$tmp/terraform.log")"
+
+rm -f "$tmp/existing-zone-id" "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "creating a zone that does not exist exits 0" 0 "$rc"
+check_contains "the run says the root creates it" "creates it" "$output"
+check_absent "nothing is imported when there is nothing to adopt" " import " "$(cat "$tmp/terraform.log")"
+
+printf '%s\n' 'aws_s3_bucket.state' 'aws_route53_zone.qualification[0]' >"$tmp/state-list"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a zone the root already owns exits 0" 0 "$rc"
+check_contains \
+  "the counted instance counts as owned" \
+  "already owns the zone for qual-aws.example.test" \
+  "$output"
+check_absent "an owned zone is not imported again" " import " "$(cat "$tmp/terraform.log")"
+rm -f "$tmp/state-list"
 
 run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" byo/aws/us-east-1 --apply
 check_absent \

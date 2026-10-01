@@ -32,6 +32,8 @@ type t =
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
+  ; installation_zone_import_address : string
+  ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
   ; own_vars :
       Sol_cli_config.target
@@ -307,6 +309,19 @@ let aws =
       ]
   ; state_locking = Some "state_lock_table"
   ; installation_zone_address = "aws_route53_zone.qualification"
+  ; installation_zone_import_address = "aws_route53_zone.qualification[0]"
+  ; installation_zone_lookup =
+      (fun domain ->
+        [ "aws"
+        ; "route53"
+        ; "list-hosted-zones-by-name"
+        ; "--dns-name"
+        ; domain
+        ; "--query"
+        ; "HostedZones[0].Id"
+        ; "--output"
+        ; "text"
+        ])
   ; installation_nameservers_output = "name_servers"
   ; scoped_identities =
       [ "provisioner_role_arn"
@@ -458,6 +473,17 @@ let gcp =
   ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
   ; installation_zone_address = "google_dns_managed_zone.qualification"
+  ; installation_zone_import_address = "google_dns_managed_zone.qualification[0]"
+  ; installation_zone_lookup =
+      (fun domain ->
+        [ "gcloud"
+        ; "dns"
+        ; "managed-zones"
+        ; "list"
+        ; "--filter"
+        ; Printf.sprintf "dnsName=%s." domain
+        ; "--format=value(name)"
+        ])
   ; installation_nameservers_output = "name_servers"
   ; scoped_identities = []
   }

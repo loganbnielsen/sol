@@ -32,6 +32,8 @@ type t =
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
+  ; installation_zone_import_address : string
+  ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
   ; own_vars :
       Sol_cli_config.target

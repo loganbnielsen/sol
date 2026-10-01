@@ -34,8 +34,30 @@ let owns_the_delegated_zone ~provider ~chdir =
     (Sol_cli_provider_capabilities.capabilities_of provider).installation_zone_address
   in
   let* addresses = state_addresses ~chdir in
-  Ok
-    (List.exists (fun listed -> Sol_cli_string.contains ~needle:address listed) addresses)
+  let owns listed =
+    listed = address
+    || (String.length listed > String.length address
+        && String.sub listed 0 (String.length address + 1) = address ^ "[")
+  in
+  Ok (List.exists owns addresses)
+;;
+
+let existing_zone_id ~run ~provider ~domain =
+  let argv =
+    (Sol_cli_provider_capabilities.capabilities_of provider).installation_zone_lookup
+      domain
+  in
+  match run argv with
+  | Sol_cli_installation.Observed output when not (Sol_cli_string.is_blank output) ->
+    Ok (Some (String.trim output))
+  | Sol_cli_installation.Observed _ | Sol_cli_installation.Absent _ -> Ok None
+  | Sol_cli_installation.Unobservable reason ->
+    Error
+      (Printf.sprintf
+         "cannot tell whether a zone for %s already exists (%s), and Sol will not risk \
+          creating a second one"
+         domain
+         reason)
 ;;
 
 let zone_nameservers ~provider ~chdir : (string list, string) result =
@@ -134,7 +156,7 @@ let await_delegation ~run ~report ~attempts ~interval ~domain ?(expected = []) (
   else go 1
 ;;
 
-let reconcile ~assets ~provider ~configuration () =
+let reconcile ~assets ~provider ~configuration ~run () =
   let open Result.Syntax in
   let run_log = Sol_cli_run_log.create ~prefix:"installation-bootstrap" () in
   let* backend_config =
@@ -167,10 +189,58 @@ let reconcile ~assets ~provider ~configuration () =
       ~role:Sol_cli_platform_assets.Bootstrap
       backend_config
   in
-  let* manage_dns_zone =
-    if Sol_cli_installation.owns_the_zone configuration.zone
-    then owns_the_delegated_zone ~provider ~chdir
-    else Ok false
+  let manage_dns_zone = Sol_cli_installation.owns_the_zone configuration.zone in
+  let* () =
+    if not manage_dns_zone
+    then Ok ()
+    else
+      let open Result.Syntax in
+      let* owned = owns_the_delegated_zone ~provider ~chdir in
+      let domain = Sol_cli_installation.zone_domain configuration.zone in
+      if owned
+      then (
+        Printf.printf
+          "\n\
+           The durable root already owns the zone for %s; nothing to create or adopt.\n\
+           %!"
+          (Option.value ~default:"the declared domain" domain);
+        Ok ())
+      else (
+        match domain with
+        | None -> Ok ()
+        | Some domain ->
+          let* existing = existing_zone_id ~run ~provider ~domain in
+          (match existing with
+           | None ->
+             Printf.printf
+               "\nNo zone exists for %s yet, so the durable root creates it.\n%!"
+               domain;
+             Ok ()
+           | Some identity ->
+             Printf.printf
+               "\n\
+                A zone for %s already exists and the durable root does not own it: \
+                adopting it (%s) instead of creating a second zone with different \
+                nameservers.\n\
+                %!"
+               domain
+               identity;
+             Sol_cli_terraform.import_
+               ~chdir
+               ~var_files:[]
+               ~vars:
+                 (Sol_cli_terraform.kv_args
+                    (Sol_cli_provider_capabilities.installation_vars
+                       provider
+                       ~manage_dns_zone
+                       configuration))
+               ~address:
+                 (Sol_cli_provider_capabilities.capabilities_of provider)
+                   .installation_zone_import_address
+               ~import_identity:identity
+               ()
+             |> Result.map (fun _ -> ())
+             |> Result.map_error Sol_cli_process.error_to_string))
   in
   let* () =
     Sol_cli_terraform_steps.apply_asserted

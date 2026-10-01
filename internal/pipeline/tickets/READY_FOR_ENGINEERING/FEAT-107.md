@@ -204,3 +204,33 @@ installation and never in the cluster root), then delegation — automatic when 
 Sol-managed, exact records when it is not. C: the bounded, visible wait with public-resolution
 verification, and the zone's survival asserted by name in the destroy-boundary test. FEAT-108 needs
 A's model and has it; it does not need B or C.
+
+## Create and adopt (2026-10-01)
+
+The durable roots already gate the zone on `manage_dns_zone`, so the remaining work was deciding
+that value and adopting rather than duplicating:
+
+- **the declaration decides**: `manage_dns_zone` is `owns_the_zone configuration.zone`, no longer
+  "the root's own state already owns it". The old derivation meant a zone the root did *not* yet
+  manage could never be created, and — worse — a root whose state *did* own one was told
+  `manage_dns_zone=false`, which plans a destroy of a durable resource. The durable-root policy
+  refused that plan, so the failure was loud rather than destructive, but the feature did not work.
+- **adoption**: when the declaration says Sol owns the domain and the root's state does not own the
+  zone, the provider is asked whether a zone for the domain already exists (per provider:
+  `aws route53 list-hosted-zones-by-name --dns-name … --query HostedZones[0].Id`, or
+  `gcloud dns managed-zones list --filter dnsName=…`). If one does, it is imported rather than
+  recreated — the counted address, `aws_route53_zone.qualification[0]` /
+  `google_dns_managed_zone.qualification[0]`, because both roots use `count = var.manage_dns_zone
+  ? 1 : 0`. If none does, the root creates it. An unqueryable provider CLI is an **error**: without
+  an answer, Sol would risk creating the duplicate that DEC-043 forbids.
+- **state ownership recognises counted instances**: `owns_the_delegated_zone` matched the address as
+  a substring, which worked for `…qualification[0]` by luck and would also have matched
+  `…qualification_extra`; it now accepts the address or the address with an instance index.
+
+Covered by the CLI surface test, which drives all three paths against fakes: an existing zone the
+root does not own (import of `…qualification[0]` with the observed id), no zone at all (creation,
+no import), and a state that already lists `…qualification[0]` (recognised as owned, no import).
+
+**Still open:** the automatic delegation record when the parent zone is in the same account
+(AWS `aws_route53_record`, GCP `google_dns_record_set`, with the parent's identity observed by the
+CLI and passed as a variable), which is the last piece of the ticket's create/adopt/delegate ACs.
