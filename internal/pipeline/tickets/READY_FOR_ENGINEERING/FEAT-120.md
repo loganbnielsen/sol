@@ -6,10 +6,15 @@ title: Qualify the outbox path end to end under failure, not just the happy path
 source: "FEAT-111 (transactional outbox); the standing qualification ledger's live-run rule"
 ---
 
-**Depends on:** None.
+**Depends on:** FEAT-121.
 
-**Blocked On:** FEAT-111. The path this qualifies does not exist until the outbox lands;
-the ticket stays in BACKLOG (and this run is gated on explicit authorization) until then.
+**Authorized (2026-10-01):** the operator's Stream B handoff authorizes this live run, so the
+ticket leaves `BACKLOG` and is promoted to `READY_FOR_ENGINEERING`. The path it qualifies is on
+`main`: the outbox (`FEAT-111`) and the pluto demo wiring (`FEAT-121`).
+
+**Premise verified (2026-10-01):** the outbox exists (`framework/ocaml/sol-outbox`, FEAT-111)
+and the demo publishes through it (FEAT-121); the run's record lands under
+`internal/qualification/records/`.
 
 **Related:** FEAT-111 (the outbox under qualification), EXP-033 (the transaction-scoped
 handle the outbox publishes through), FEAT-112 (idempotent enqueue), DEC-021's 2026-09-29
