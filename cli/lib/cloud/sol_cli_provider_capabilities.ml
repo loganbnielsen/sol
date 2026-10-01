@@ -36,6 +36,12 @@ type t =
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
+  ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
+  ; installation_state_backend_address : string
+  ; installation_retire_state_backend :
+      run:(string list -> Sol_cli_installation.observation)
+      -> Sol_cli_installation.installation_config
+      -> (unit, string) result
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -325,6 +331,13 @@ let aws =
         ; "text"
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
+  ; installation_created_prerequisites =
+      [ Sol_cli_installation.State_backend
+      ; Sol_cli_installation.State_lock
+      ; Sol_cli_installation.Delegated_zone
+      ]
+  ; installation_state_backend_address = "aws_s3_bucket.state"
+  ; installation_retire_state_backend = Sol_cli_aws_state_backend.retire
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -488,6 +501,10 @@ let gcp =
         ; "--format=value(name)"
         ])
   ; installation_nameservers_output = "dns_zone_nameservers"
+  ; installation_created_prerequisites =
+      [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
+  ; installation_state_backend_address = "google_storage_bucket.state"
+  ; installation_retire_state_backend = Sol_cli_gcp_state_backend.retire
   ; scoped_identities = []
   }
 ;;
@@ -503,6 +520,10 @@ let installation_nameservers_output provider =
 
 let installation_prerequisites provider =
   (capabilities_of provider).installation_prerequisites
+;;
+
+let installation_created_prerequisites provider =
+  (capabilities_of provider).installation_created_prerequisites
 ;;
 
 let installation_probes provider configuration =

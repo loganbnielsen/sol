@@ -36,6 +36,12 @@ type t =
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
   ; installation_nameservers_output : string
+  ; installation_created_prerequisites : Sol_cli_installation.prerequisite list
+  ; installation_state_backend_address : string
+  ; installation_retire_state_backend :
+      run:(string list -> Sol_cli_installation.observation)
+      -> Sol_cli_installation.installation_config
+      -> (unit, string) result
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -67,6 +73,10 @@ val capabilities_of : Sol_cli_provider.t -> t
 val installation_nameservers_output : Sol_cli_provider.t -> string
 
 val installation_prerequisites
+  :  Sol_cli_provider.t
+  -> Sol_cli_installation.prerequisite list
+
+val installation_created_prerequisites
   :  Sol_cli_provider.t
   -> Sol_cli_installation.prerequisite list
 

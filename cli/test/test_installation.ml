@@ -778,12 +778,379 @@ let test_the_wait_without_an_expectation_accepts_any_answer () =
     Alcotest.fail "a zero-attempt wait returned a verdict about the delegation"
 ;;
 
+let aws_prerequisites =
+  Sol_cli_provider_capabilities.installation_prerequisites Sol_cli_provider.Aws
+;;
+
+let aws_created =
+  Sol_cli_provider_capabilities.installation_created_prerequisites Sol_cli_provider.Aws
+;;
+
 let uninstall_plan ?(zone_in_state = false) zone =
   Sol_cli_installation_uninstall.plan
-    ~prerequisites:
-      (Sol_cli_provider_capabilities.installation_prerequisites Sol_cli_provider.Aws)
+    ~prerequisites:aws_prerequisites
+    ~created:aws_created
     ~zone_in_state
     (with_ownership zone)
+;;
+
+let test_the_durable_root_does_not_create_the_identities () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  check_bool
+    "the operator-created identities are never in the removal list"
+    false
+    (List.exists
+       (fun prerequisite -> List.mem prerequisite plan.removes)
+       [ Sol_cli_installation.Provisioning_identity
+       ; Sol_cli_installation.Cluster_access_identity
+       ; Sol_cli_installation.Deploy_identity
+       ; Sol_cli_installation.Operator_identity
+       ]);
+  check_bool
+    "and the result names each as retained, with the reason"
+    true
+    (List.for_all
+       (fun label ->
+          List.exists
+            (fun (what, why) ->
+               what = label
+               && Sol_cli_string.contains
+                    ~needle:"the durable root does not create it"
+                    why)
+            plan.retains)
+       [ "provisioning identity"
+       ; "cluster-access identity"
+       ; "deploy identity"
+       ; "operator identity"
+       ])
+;;
+
+let test_the_gcp_installation_creates_only_its_state_and_zone () =
+  let created =
+    Sol_cli_provider_capabilities.installation_created_prerequisites Sol_cli_provider.Gcp
+  in
+  check_bool
+    "GCP's durable root creates the state bucket and the optional zone, and no identities"
+    true
+    (List.sort compare created
+     = List.sort
+         compare
+         [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ])
+;;
+
+let test_removal_is_classified_from_the_observation () =
+  let removes = [ Sol_cli_installation.State_backend; Sol_cli_installation.State_lock ] in
+  let observed =
+    [ Sol_cli_installation.State_backend, Sol_cli_installation.unmet "no bucket"
+    ; Sol_cli_installation.State_lock, Sol_cli_installation.establish
+    ]
+  in
+  let verification = Sol_cli_installation_uninstall.classify_removal ~removes observed in
+  check_bool
+    "an Unmet probe is absence, so the resource is reported removed"
+    true
+    (verification.removed = [ Sol_cli_installation.State_backend ]);
+  check_bool
+    "an Established probe is still present"
+    true
+    (List.map fst verification.present = [ Sol_cli_installation.State_lock ]);
+  check_bool
+    "absence is not established"
+    false
+    (Sol_cli_installation_uninstall.removal_established verification);
+  let unknown =
+    Sol_cli_installation_uninstall.classify_removal
+      ~removes
+      [ Sol_cli_installation.State_backend, Sol_cli_installation.unmet "no bucket"
+      ; Sol_cli_installation.State_lock, Sol_cli_installation.unknown "aws: spawn failed"
+      ]
+  in
+  check_bool
+    "an UNKNOWN probe is neither removed nor present"
+    true
+    (List.map fst unknown.unknown = [ Sol_cli_installation.State_lock ]
+     && unknown.present = []);
+  check_bool
+    "and an unobserved resource is UNKNOWN rather than absent"
+    true
+    (let missing = Sol_cli_installation_uninstall.classify_removal ~removes [] in
+     missing.removed = [] && List.length missing.unknown = 2);
+  check_bool
+    "absence is established only when every removal was observed absent"
+    true
+    (Sol_cli_installation_uninstall.removal_established
+       (Sol_cli_installation_uninstall.classify_removal
+          ~removes
+          [ Sol_cli_installation.State_backend, Sol_cli_installation.unmet "gone"
+          ; Sol_cli_installation.State_lock, Sol_cli_installation.unmet "gone"
+          ]))
+;;
+
+type stage_fakes =
+  { calls : string list ref
+  ; deps : Sol_cli_installation_uninstall_stage.deps
+  }
+
+let no_calls name =
+  Alcotest.fail (name ^ " reached " ^ "a destructive step without a confirmation")
+;;
+
+let stage_fakes
+      ?(verdicts = fun () -> [])
+      ?(release = Ok ())
+      ?(unmanage = Ok ())
+      ?(destroy = Ok ())
+      ?(retire = Ok ())
+      ()
+  =
+  let calls = ref [] in
+  let record name outcome =
+    calls := name :: !calls;
+    outcome
+  in
+  { calls
+  ; deps =
+      { Sol_cli_installation_uninstall_stage.release_state_backend =
+          (fun () -> record "release" release)
+      ; unmanage_zone = (fun () -> record "unmanage" unmanage)
+      ; destroy = (fun () -> record "destroy" destroy)
+      ; retire_state_backend = (fun () -> record "retire" retire)
+      ; observe = (fun () -> record "observe" (verdicts ()))
+      ; warn = (fun _ -> ())
+      }
+  }
+;;
+
+let all_absent plan =
+  List.map
+    (fun prerequisite ->
+       prerequisite, Sol_cli_installation.unmet "the provider does not hold it")
+    plan.Sol_cli_installation_uninstall.removes
+;;
+
+let successful_execution
+      ?verdicts
+      ~plan
+      ~state_backend_in_state
+      ~confirm
+      ~dns_confirmation
+      ()
+  =
+  let fakes =
+    stage_fakes ~verdicts:(fun () -> Option.value verdicts ~default:(all_absent plan)) ()
+  in
+  let outcome =
+    Sol_cli_installation_uninstall_stage.execute
+      ~deps:fakes.deps
+      ~plan
+      ~state_backend_in_state
+      ~confirm
+      ~dns_confirmation
+  in
+  outcome, List.rev !(fakes.calls)
+;;
+
+let test_without_confirmation_nothing_is_destroyed () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  let outcome, calls =
+    successful_execution
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:false
+      ~dns_confirmation:(Some "api.acme.example")
+      ()
+  in
+  (match outcome with
+   | Sol_cli_installation_uninstall_stage.Uninstall_refused reason ->
+     check_bool
+       "the refusal names --confirm"
+       true
+       (Sol_cli_string.contains ~needle:"--confirm" reason)
+   | _ -> no_calls "an unconfirmed uninstall");
+  check_bool "no step ran" true (calls = [])
+;;
+
+let test_the_dns_confirmation_must_name_the_exact_zone () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  List.iter
+    (fun (name, confirmation) ->
+       let outcome, calls =
+         successful_execution
+           ~plan
+           ~state_backend_in_state:true
+           ~confirm:true
+           ~dns_confirmation:confirmation
+           ()
+       in
+       (match outcome with
+        | Sol_cli_installation_uninstall_stage.Uninstall_refused reason ->
+          check_bool
+            (name ^ ": the refusal names the exact zone and its confirmation flag")
+            true
+            (Sol_cli_string.contains ~needle:"api.acme.example" reason
+             && Sol_cli_string.contains ~needle:"--confirm-dns-zone" reason)
+        | _ -> no_calls (name ^ ": an unconfirmed zone removal"));
+       check_bool (name ^ ": nothing ran") true (calls = []))
+    [ "no confirmation", None; "the wrong zone", Some "other.acme.example" ]
+;;
+
+let test_a_user_supplied_zone_is_preserved_without_a_dns_confirmation () =
+  let plan = uninstall_plan ~zone_in_state:false Sol_cli_installation.User_supplied in
+  let outcome, calls =
+    successful_execution
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:true
+      ~dns_confirmation:None
+      ()
+  in
+  (match outcome with
+   | Sol_cli_installation_uninstall_stage.Uninstall_succeeded removed ->
+     check_bool
+       "the zone is not among the removals"
+       false
+       (List.mem Sol_cli_installation.Delegated_zone removed)
+   | _ -> Alcotest.fail "a user-supplied zone blocked an otherwise confirmed uninstall");
+  check_bool
+    "the zone was never taken out of state, because the state did not own it"
+    false
+    (List.mem "unmanage" calls)
+;;
+
+let test_preservation_happens_before_destruction () =
+  let plan = uninstall_plan ~zone_in_state:true Sol_cli_installation.User_supplied in
+  check_bool "the plan unmanages the zone" true plan.unmanages_the_zone;
+  let outcome, calls =
+    successful_execution
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:true
+      ~dns_confirmation:None
+      ()
+  in
+  (match outcome with
+   | Sol_cli_installation_uninstall_stage.Uninstall_succeeded _ -> ()
+   | _ -> Alcotest.fail "the confirmed uninstall did not reach verified absence");
+  let index name =
+    let rec find position = function
+      | [] -> Alcotest.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
+      | step :: rest -> if step = name then position else find (position + 1) rest
+    in
+    find 0 calls
+  in
+  check_bool
+    "the zone leaves the root's state before the root is destroyed"
+    true
+    (index "unmanage" < index "destroy");
+  check_bool
+    "and the state backend is released before the destroy too"
+    true
+    (index "release" < index "destroy")
+;;
+
+let test_absence_is_observed_after_the_destroy () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  let outcome, calls =
+    successful_execution
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:true
+      ~dns_confirmation:(Some "api.acme.example")
+      ()
+  in
+  (match outcome with
+   | Sol_cli_installation_uninstall_stage.Uninstall_succeeded removed ->
+     check_bool
+       "the removed set is the plan's removals, established by observation"
+       true
+       (removed = plan.removes)
+   | _ -> Alcotest.fail "a fully observed uninstall was not reported successful");
+  let order name =
+    let rec find position = function
+      | [] -> Alcotest.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
+      | step :: rest -> if step = name then position else find (position + 1) rest
+    in
+    find 0 calls
+  in
+  check_bool
+    "the observation runs after the destroy and after the state backend is retired"
+    true
+    (order "destroy" < order "observe" && order "retire" < order "observe")
+;;
+
+let test_an_unobservable_result_fails_closed () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  let verdicts () =
+    List.map
+      (fun prerequisite ->
+         ( prerequisite
+         , if prerequisite = Sol_cli_installation.Delegated_zone
+           then Sol_cli_installation.unknown "dig: spawn failed"
+           else Sol_cli_installation.unmet "the provider does not hold it" ))
+      plan.Sol_cli_installation_uninstall.removes
+  in
+  let fakes = stage_fakes ~verdicts () in
+  let outcome =
+    Sol_cli_installation_uninstall_stage.execute
+      ~deps:fakes.deps
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:true
+      ~dns_confirmation:(Some "api.acme.example")
+  in
+  match outcome with
+  | Sol_cli_installation_uninstall_stage.Uninstall_succeeded _ ->
+    Alcotest.fail "an UNKNOWN observation was reported as successful removal"
+  | Sol_cli_installation_uninstall_stage.Uninstall_failed
+      { failure = Sol_cli_installation_uninstall_stage.Verification_failed _
+      ; verification
+      } ->
+    check_bool
+      "the zone is reported UNKNOWN, never removed"
+      true
+      (List.map fst verification.unknown = [ Sol_cli_installation.Delegated_zone ]
+       && not (List.mem Sol_cli_installation.Delegated_zone verification.removed))
+  | Sol_cli_installation_uninstall_stage.Uninstall_failed { failure; _ } ->
+    Alcotest.fail
+      ("expected a verification failure, got "
+       ^ Sol_cli_installation_uninstall_stage.failure_message failure)
+  | Sol_cli_installation_uninstall_stage.Uninstall_refused reason ->
+    Alcotest.fail ("a confirmed uninstall was refused: " ^ reason)
+;;
+
+let test_a_failed_state_backend_retirement_still_observes () =
+  let plan = uninstall_plan Sol_cli_installation.Sol_created in
+  let fakes =
+    stage_fakes
+      ~retire:(Error "s3: access denied")
+      ~verdicts:(fun () ->
+        List.map
+          (fun prerequisite ->
+             ( prerequisite
+             , if prerequisite = Sol_cli_installation.State_backend
+               then Sol_cli_installation.establish
+               else Sol_cli_installation.unmet "gone" ))
+          plan.Sol_cli_installation_uninstall.removes)
+      ()
+  in
+  let outcome =
+    Sol_cli_installation_uninstall_stage.execute
+      ~deps:fakes.deps
+      ~plan
+      ~state_backend_in_state:true
+      ~confirm:true
+      ~dns_confirmation:(Some "api.acme.example")
+  in
+  match outcome with
+  | Sol_cli_installation_uninstall_stage.Uninstall_failed
+      { failure = Sol_cli_installation_uninstall_stage.Retirement_failed _; verification }
+    ->
+    check_bool
+      "the state backend is reported present, so absence is not claimed"
+      true
+      (List.map fst verification.present = [ Sol_cli_installation.State_backend ])
+  | _ ->
+    Alcotest.fail "a state backend that survived its retirement was reported as removed"
 ;;
 
 let test_a_sol_created_zone_is_removed_with_its_own_confirmation () =
@@ -909,9 +1276,51 @@ let () =
             `Quick
             test_a_zone_the_declaration_disowns_is_taken_out_of_state_first
         ; Alcotest.test_case
+            "the durable root does not create the identities, so it retains them"
+            `Quick
+            test_the_durable_root_does_not_create_the_identities
+        ; Alcotest.test_case
+            "GCP's durable root creates only the state bucket and the zone"
+            `Quick
+            test_the_gcp_installation_creates_only_its_state_and_zone
+        ; Alcotest.test_case
             "an unobservable answer is not absence"
             `Quick
             test_an_unobservable_answer_is_not_absence
+        ] )
+    ; ( "install removal"
+      , [ Alcotest.test_case
+            "removal is classified from the observation"
+            `Quick
+            test_removal_is_classified_from_the_observation
+        ; Alcotest.test_case
+            "without --confirm nothing is destroyed"
+            `Quick
+            test_without_confirmation_nothing_is_destroyed
+        ; Alcotest.test_case
+            "the DNS confirmation must name the exact zone"
+            `Quick
+            test_the_dns_confirmation_must_name_the_exact_zone
+        ; Alcotest.test_case
+            "a user-supplied zone is preserved without a DNS confirmation"
+            `Quick
+            test_a_user_supplied_zone_is_preserved_without_a_dns_confirmation
+        ; Alcotest.test_case
+            "preservation happens before destruction"
+            `Quick
+            test_preservation_happens_before_destruction
+        ; Alcotest.test_case
+            "absence is observed after the destroy"
+            `Quick
+            test_absence_is_observed_after_the_destroy
+        ; Alcotest.test_case
+            "an unobservable result fails closed"
+            `Quick
+            test_an_unobservable_result_fails_closed
+        ; Alcotest.test_case
+            "a failed state-backend retirement is still observed"
+            `Quick
+            test_a_failed_state_backend_retirement_still_observes
         ] )
     ; ( "delegation wait"
       , [ Alcotest.test_case

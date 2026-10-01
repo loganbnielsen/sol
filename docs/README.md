@@ -85,7 +85,7 @@ never needs a source checkout to complete the ordinary path.
 - **Everyday operations** — `status`, `logs`, `open`, `check`. *DOCS-029.*
 - **Releases and rollback** — the release contract and `sol rollback`. *DOCS-029.*
 - **Destroy and uninstall** — the environment/installation distinction, and the
-  explicit teardown of each. *DOCS-029, FEAT-108.*
+  explicit teardown of each (`sol cloud destroy`, `sol uninstall`). *DOCS-029.*
 - **Recovery** — [`deployment/application-data-recovery.md`](deployment/application-data-recovery.md),
   [`deployment/credential-rotation.md`](deployment/credential-rotation.md),
   [`deployment/workload-availability.md`](deployment/workload-availability.md),

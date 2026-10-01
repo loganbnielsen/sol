@@ -70,7 +70,6 @@ Machine-readable output exists where the tables' flags say so (`--json`, `--emit
 The reference covers what the binary registers, so the documented-but-planned operations do
 not appear here, and each names the ticket that will add it:
 
-- `sol uninstall` — FEAT-108.
 - `sol ci init github` — FEAT-109.
 - The guided DNS create/adopt flow — FEAT-107. The stage it will call, `sol cloud bootstrap`,
   *is* registered and is documented below.
@@ -98,6 +97,7 @@ The target is the positional; `--scope` narrows to a domain or unit.
 | `sol releases` | — | `--target=ENV/PROVIDER/REGION` | documented | List the release records the target's cluster holds for |
 | `sol secret list` | — | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | List secret keys without values |
 | `sol target show` | — | `--check`, `--json`, `--target=ENV/PROVIDER/REGION`, `-v` | documented | Show a deployment target |
+| `sol uninstall` | TARGET | `--confirm`, `--confirm-dns-zone=DOMAIN`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Remove a Sol installation: its Sol-owned durable |
 <!-- END GENERATED: target -->
 
 ## Scope-addressed commands

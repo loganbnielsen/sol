@@ -1,30 +1,26 @@
+open Sol_cli_installation
+
 type plan =
-  { removes : Sol_cli_installation.prerequisite list
+  { removes : prerequisite list
   ; retains : (string * string) list
   ; unmanages_the_zone : bool
   ; dns_confirmation : string option
   }
 
-let unmanages ~zone_in_state zone =
-  (not (Sol_cli_installation.owns_the_zone zone)) && zone_in_state
+let unmanages ~zone_in_state zone = (not (owns_the_zone zone)) && zone_in_state
+
+let removal_candidate prerequisite ~created ~zone =
+  List.mem prerequisite created && (prerequisite <> Delegated_zone || owns_the_zone zone)
 ;;
 
-let plan
-      ~prerequisites
-      ~zone_in_state
-      (configuration : Sol_cli_installation.installation_config)
-  =
+let plan ~prerequisites ~created ~zone_in_state configuration =
   let zone = configuration.zone in
-  let keeps_the_zone = not (Sol_cli_installation.owns_the_zone zone) in
+  let keeps_the_zone = not (owns_the_zone zone) in
   let removes =
-    List.filter
-      (fun prerequisite ->
-         prerequisite <> Sol_cli_installation.Delegated_zone
-         || Sol_cli_installation.owns_the_zone zone)
-      prerequisites
+    List.filter (fun item -> removal_candidate item ~created ~zone) prerequisites
   in
-  let retains =
-    match Sol_cli_installation.zone_domain zone with
+  let zone_retains =
+    match zone_domain zone with
     | Some domain when keeps_the_zone ->
       [ ( domain
         , "the zone was supplied by the operator, so Sol did not create it and does not \
@@ -40,19 +36,29 @@ let plan
       ]
     | None -> []
   in
+  let other_retains =
+    prerequisites
+    |> List.filter (fun item -> not (List.mem item removes))
+    |> List.filter_map (fun item ->
+      if item = Delegated_zone || item = Public_delegation
+      then None
+      else
+        Some
+          ( prerequisite_label item
+          , "the durable root does not create it; the operator does, so Sol does not \
+             remove it" ))
+  in
   let dns_confirmation =
-    match Sol_cli_installation.zone_domain zone with
-    | Some domain when Sol_cli_installation.owns_the_zone zone -> Some domain
+    match zone_domain zone with
+    | Some domain when owns_the_zone zone -> Some domain
     | _ -> None
   in
   { removes
-  ; retains
+  ; retains = zone_retains @ other_retains
   ; unmanages_the_zone = unmanages ~zone_in_state zone
   ; dns_confirmation
   }
 ;;
-
-let prerequisite_line prerequisite = Sol_cli_installation.prerequisite_label prerequisite
 
 let lines (plan : plan) =
   let removes =
@@ -60,7 +66,8 @@ let lines (plan : plan) =
     | [] -> [ "nothing durable: this installation owns no account-level resource" ]
     | prerequisites ->
       List.map
-        (fun prerequisite -> Printf.sprintf "remove  %s" (prerequisite_line prerequisite))
+        (fun prerequisite ->
+           Printf.sprintf "remove  %s" (prerequisite_label prerequisite))
         prerequisites
   in
   let retains =
@@ -100,4 +107,61 @@ let refusal_of_unobservable reason =
     "Sol could not observe what remains (%s), so it does not claim the installation is \
      gone"
     reason
+;;
+
+type removal_verification =
+  { removed : prerequisite list
+  ; present : (prerequisite * string) list
+  ; unknown : (prerequisite * string) list
+  }
+
+let classify_removal ~removes verdicts =
+  let classify (verification : removal_verification) prerequisite =
+    match List.assoc_opt prerequisite verdicts with
+    | Some (Unmet _) ->
+      { verification with removed = prerequisite :: verification.removed }
+    | Some Established ->
+      { verification with
+        present = (prerequisite, "the provider still holds it") :: verification.present
+      }
+    | Some (Unknown reason) ->
+      { verification with unknown = (prerequisite, reason) :: verification.unknown }
+    | None ->
+      { verification with
+        unknown = (prerequisite, "no observation was made") :: verification.unknown
+      }
+  in
+  let classified =
+    List.fold_left classify { removed = []; present = []; unknown = [] } removes
+  in
+  { removed = List.rev classified.removed
+  ; present = List.rev classified.present
+  ; unknown = List.rev classified.unknown
+  }
+;;
+
+let removal_established verification =
+  verification.present = [] && verification.unknown = []
+;;
+
+let verification_lines (verification : removal_verification) =
+  let removed =
+    List.map
+      (fun prerequisite ->
+         Printf.sprintf "removed  %s -- observed absent" (prerequisite_label prerequisite))
+      verification.removed
+  in
+  let present =
+    List.map
+      (fun (prerequisite, why) ->
+         Printf.sprintf "NOT removed  %s -- %s" (prerequisite_label prerequisite) why)
+      verification.present
+  in
+  let unknown =
+    List.map
+      (fun (prerequisite, why) ->
+         Printf.sprintf "UNKNOWN  %s -- %s" (prerequisite_label prerequisite) why)
+      verification.unknown
+  in
+  removed @ present @ unknown
 ;;
