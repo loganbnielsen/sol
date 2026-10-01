@@ -906,7 +906,7 @@ let of_services_result
     resolved_services
     |> List.map (fun svc ->
       let called_by =
-        resolved_services
+        workspace_services
         |> List.filter_map (fun caller ->
           if
             List.exists

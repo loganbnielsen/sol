@@ -636,6 +636,10 @@ sol local secret set|list|delete ...                                            
 # held, so the release a scoped `sol up` records describes the workspace as it
 # was at apply time: a deploy or rollback that won the lease first is what the
 # new release builds on, never a snapshot taken before the lease was acquired.
+# A scoped deploy keeps the callers it did not select: deploying a callee alone
+# renders its NetworkPolicy from the whole workspace declaration, so a
+# cross-domain caller that is already running keeps the ingress rule that
+# admits it.
 # A scoped deploy refuses before mutating anything when the current boundary
 # cannot be read; deploy the whole workspace to establish it. A scoped deploy
 # also compares and records the workspace's complete consumer-group set, not only
