@@ -145,20 +145,15 @@ resolved target's environment. Two properties are deliberate:
 The resolved target is authoritative: a `SOL_ENV` declared in a service's own
 `config` is replaced by the target's environment rather than shadowing it.
 
-## Migration file convention — filenames only, SQL content unchecked
+## Migration file convention
 
-`sol migrate --dry-run` (`cmd_migrate.ml`'s `print_pending_sql`) previews
-`db/migrations/*.sql` with a raw lexicographic filename sort, skipping
-`*.down.sql`. The path that actually determines applied order is different
-and more specific: `sol migrate apply` delegates to the external `pg-eio`
-package's `Migration` module, which parses each filename as
-`<integer version>_<name>.sql` and sorts numerically on the parsed integer —
-not on the filename string. These two orderings only coincide because
-migration filenames are conventionally zero-padded (`0001_...`, `0002_...`);
-a non-padded scheme could make the dry-run preview and the real applied order
-disagree. Either way, the SQL content itself is never validated by Sol or
-`pg-eio` — only by whatever the database driver accepts or rejects when it
-actually runs.
+Migration filenames use `<decimal version>_<name>.sql`, with an optional
+companion `<decimal version>_<name>.down.sql` for rollback. `001_...` and
+`0001_...` both work; rollback uses the original filename. Invalid `.sql`
+names and duplicate versions are errors. `sol migrate apply --dry-run`
+connects to the database and prints only pending files in numeric version
+order. It does not execute or validate their SQL; the database validates SQL
+when the migration runs.
 
 ## What genuinely *is* compiler-enforced — and the real scope of that
 

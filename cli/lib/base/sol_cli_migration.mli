@@ -7,6 +7,7 @@ val default_dir : string
 val table_name : workspace:string -> string
 val parse_version : string -> (int * string) option
 val required : dir:string -> (prerequisite list, string) result
+val required_if_present : dir:string -> (prerequisite list, string) result
 val parse_status_json : string -> (int list, string) result
 val unsatisfied : required:prerequisite list -> applied:int list -> prerequisite list
 val to_string : prerequisite -> string

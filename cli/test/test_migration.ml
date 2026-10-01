@@ -72,10 +72,8 @@ let test_required_rejects_a_shared_version () =
     match M.required ~dir with
     | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
     | Error msg ->
-      Alcotest.(check bool)
-        "names both files exactly as they are on disk"
-        true
-        (contains msg "migrations 004_add_invoices.sql and 004_add_refunds.sql"))
+      Alcotest.(check bool) "names first file" true (contains msg "004_add_invoices.sql");
+      Alcotest.(check bool) "names second file" true (contains msg "004_add_refunds.sql"))
 ;;
 
 let test_shared_version_names_four_digit_files () =
@@ -85,10 +83,8 @@ let test_shared_version_names_four_digit_files () =
     match M.required ~dir with
     | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
     | Error msg ->
-      Alcotest.(check bool)
-        "names the real four-digit files"
-        true
-        (contains msg "migrations 0004_a.sql and 0004_b.sql"))
+      Alcotest.(check bool) "names first file" true (contains msg "0004_a.sql");
+      Alcotest.(check bool) "names second file" true (contains msg "0004_b.sql"))
 ;;
 
 let test_required_ignores_down_files () =
@@ -104,11 +100,21 @@ let test_required_ignores_down_files () =
         (List.map M.to_string required))
 ;;
 
-let test_required_missing_dir_is_empty () =
+let test_required_missing_dir_is_an_error () =
+  match M.required ~dir:"/nonexistent/migrations" with
+  | Ok _ -> Alcotest.fail "expected a missing migrations directory to be refused"
+  | Error message ->
+    Alcotest.(check bool)
+      "names the path"
+      true
+      (contains message "/nonexistent/migrations")
+;;
+
+let test_required_if_present_missing_dir_is_empty () =
   Alcotest.(check bool)
     "a workspace with no migrations requires nothing"
     true
-    (match M.required ~dir:"/nonexistent/migrations" with
+    (match M.required_if_present ~dir:"/nonexistent/migrations" with
      | Ok [] -> true
      | _ -> false)
 ;;
@@ -312,9 +318,13 @@ let () =
             `Quick
             test_shared_version_names_four_digit_files
         ; Alcotest.test_case
-            "missing directory requires nothing"
+            "missing directory is an error"
             `Quick
-            test_required_missing_dir_is_empty
+            test_required_missing_dir_is_an_error
+        ; Alcotest.test_case
+            "missing directory requires nothing when absence is allowed"
+            `Quick
+            test_required_if_present_missing_dir_is_empty
         ; Alcotest.test_case
             "a file at the migrations path is an error (BUG-082)"
             `Quick

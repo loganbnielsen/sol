@@ -57,42 +57,29 @@ let with_pool url f =
       | Ok pool -> f ~fs:env#fs pool))
 ;;
 
-let print_pending_sql dir =
-  let migration_ext = ".sql" in
-  let down_ext = ".down.sql" in
-  let* files =
-    match Sys.readdir dir with
-    | exception Sys_error msg -> Error ("cannot read migrations dir: " ^ msg)
-    | arr ->
-      Ok
-        (Array.to_list arr
-         |> List.filter (fun f ->
-           Filename.check_suffix f migration_ext && not (Filename.check_suffix f down_ext))
-         |> List.sort String.compare)
+let print_pending_sql ~url ~fs pool ~table dir =
+  let* pending =
+    Migration.pending ~table ~fs pool ~dir |> Result.map_error (pg_error_to_string ~url)
   in
-  (match files with
-   | [] -> Printf.printf "(no migration files found in %s)\n" dir
-   | files ->
-     files
-     |> List.iter (fun fname ->
-       let path = Filename.concat dir fname in
+  (match pending with
+   | [] -> Printf.printf "(no pending migrations in %s)\n" dir
+   | pending ->
+     pending
+     |> List.iter (fun (_, _, path) ->
        let content = In_channel.with_open_text path In_channel.input_all in
-       Printf.printf "-- %s\n%s\n\n" fname content));
+       Printf.printf "-- %s\n%s\n\n" (Filename.basename path) content));
   Ok ()
 ;;
 
-let run_apply_local ~ctx dir table dry_run =
-  if dry_run
-  then print_pending_sql dir
-  else
-    let* url = get_postgres_url ~ctx () in
-    with_pool url (fun ~fs pool ->
-      Printf.printf "Applying migrations from %s...\n%!" dir;
-      let* () =
-        Migration.apply ~table pool ~dir ~fs |> Result.map_error (pg_error_to_string ~url)
-      in
-      Printf.printf "Done.\n";
-      Ok ())
+let run_apply_local ~ctx dir table =
+  let* url = get_postgres_url ~ctx () in
+  with_pool url (fun ~fs pool ->
+    Printf.printf "Applying migrations from %s...\n%!" dir;
+    let* () =
+      Migration.apply ~table pool ~dir ~fs |> Result.map_error (pg_error_to_string ~url)
+    in
+    Printf.printf "Done.\n";
+    Ok ())
 ;;
 
 let report_job_logs ~ctx (job : Sol_cli_migration_job.job) =
@@ -225,10 +212,19 @@ let run_rollback ~ctx dir table () =
 let run_apply ~ctx dir table dry_run target registry =
   let* () = require_valid_migrations dir in
   if dry_run
-  then print_pending_sql dir
+  then
+    let* url =
+      match target with
+      | None -> get_postgres_url ~ctx ()
+      | Some _ ->
+        (match Sol_cli_string.env "POSTGRES_URL" with
+         | Some url -> Ok url
+         | None -> Error "--dry-run for a target requires POSTGRES_URL for that database")
+    in
+    with_pool url (fun ~fs pool -> print_pending_sql ~url ~fs pool ~table dir)
   else (
     match target with
-    | None -> run_apply_local ~ctx dir table dry_run
+    | None -> run_apply_local ~ctx dir table
     | Some target ->
       run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override:registry)
 ;;

@@ -96,7 +96,9 @@ let discover_migrations ?root () =
   let root = Option.value root ~default:"" in
   let* files =
     fold_dir_result (in_root root "db/migrations") ~init:[] ~f:(fun acc f _path ->
-      if Filename.check_suffix f ".sql" then f :: acc else acc)
+      if Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql")
+      then f :: acc
+      else acc)
   in
   let sorted = List.sort String.compare files in
   Ok
