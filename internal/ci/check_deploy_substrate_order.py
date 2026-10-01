@@ -18,6 +18,7 @@ group with namespaced rolebindings it does not have today.
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 DEPLOY_RUN = "cli/lib/deploy/sol_cli_deploy_run.ml"
@@ -35,6 +36,24 @@ def read(root: pathlib.Path, relative: str) -> str:
         raise SystemExit(f"cannot read {relative}")
 
     return path.read_text()
+
+
+CALL_ENDS = re.compile(r"\n\s*(?:in\b|\)|;;)")
+
+
+def call_sites(text: str, name: str) -> list[tuple[int, str]]:
+    """Every call of `name`, as (index, the argument text that follows it).
+
+    The arguments are read up to the end of the call expression rather than matched as one literal
+    string, so reformatting a call across lines cannot make this guard either report a held
+    invariant as broken, or read the arguments of the call that follows.
+    """
+    sites = []
+    for match in re.finditer(rf"\b{re.escape(name)}\b", text):
+        rest = text[match.end() :]
+        terminator = CALL_ENDS.search(rest)
+        sites.append((match.start(), rest[: terminator.start() if terminator else len(rest)]))
+    return sites
 
 
 def function_body(text: str, header: str) -> str:
@@ -85,22 +104,22 @@ def check(root: pathlib.Path) -> list[str]:
     else:
         dry = cmd.find('run_plan ctx ~phase:"dry-run"')
         apply = cmd.find("Sol_cli_deploy_run.apply")
-        calls = [
+        live_calls = [
             index
-            for index in range(len(cmd))
-            if cmd.startswith("check_substrate_prerequisite ~ctx ~plan ~live:true", index)
+            for index, arguments in call_sites(cmd, "check_substrate_prerequisite")
+            if "~live:true" in arguments
         ]
         dry_calls = [
             index
-            for index in range(len(cmd))
-            if cmd.startswith("check_substrate_prerequisite ~ctx ~plan ~live:false", index)
+            for index, arguments in call_sites(cmd, "check_substrate_prerequisite")
+            if "~live:false" in arguments
         ]
-        if dry == -1 or apply == -1 or not calls or not dry_calls:
+        if dry == -1 or apply == -1 or not live_calls or not dry_calls:
             problems.append(
                 f"{CMD_DEPLOY}: the substrate prerequisite is not invoked for both the "
                 "side-effect-free and the live deploy paths"
             )
-        elif min(calls) > apply or min(dry_calls) > dry:
+        elif min(live_calls) > apply or min(dry_calls) > dry:
             problems.append(
                 f"{CMD_DEPLOY}: a dry-run or apply is reached before the substrate "
                 "prerequisite, which is the ordering this guard exists to keep"

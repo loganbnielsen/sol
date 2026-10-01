@@ -8,6 +8,7 @@ namespace or only one of the two bindings, or compensated for by widening the pl
 provisioner or the cluster-access entry. Each must be rejected for its own reason.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,20 @@ def mutate(tmp, relative, old, new):
     if old not in text:
         raise SystemExit(f"mutation anchor not found in {relative}: {old!r}")
     path.write_text(text.replace(old, new, 1))
+
+
+def mutate_live_call(tmp, old, new):
+    """The live deploy path stops asking for the live substrate check.
+
+    The call is located by its shape rather than by one spelling of it, so reformatting the call
+    across lines does not make this case mutate something else or nothing at all.
+    """
+    path = tmp / "cli/bin/cmd_deploy.ml"
+    text = path.read_text()
+    pattern = re.compile(r"check_substrate_prerequisite\s+~ctx\s+~plan\s+" + re.escape(old))
+    if not pattern.search(text):
+        raise SystemExit(f"mutation anchor not found in cli/bin/cmd_deploy.ml: {old!r}")
+    path.write_text(pattern.sub(lambda match: match.group(0).replace(old, new), text, count=1))
 
 
 def main():
@@ -108,13 +123,8 @@ def main():
     cases.append(("no-side-effect-free-refusal", tmp, "no side-effect-free path"))
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "cli/bin/cmd_deploy.ml",
-        "  let* () = check_substrate_prerequisite ~ctx ~plan ~live:true in\n",
-        "",
-    )
-    cases.append(("live-path-call-removed", tmp, "not invoked for both"))
+    mutate_live_call(tmp, "~live:true", "~live:false")
+    cases.append(("live-path-loses-its-live-check", tmp, "not invoked for both"))
 
     tmp = scratch()
     mutate(
