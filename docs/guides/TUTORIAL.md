@@ -756,7 +756,7 @@ sol deploy prod/aws/us-east-1 \
   --registry  "123456789.dkr.ecr.us-east-1.amazonaws.com"
 ```
 
-Sol generates the same Kubernetes manifests as `sol up` but uses the provided registry and tag for the image reference. The cluster must be reachable (kubeconfig active).
+Sol generates the same Kubernetes manifests as `sol up` but uses the provided registry and tag for the image reference. A run whose target names a `kube_context` uses it; a run that has no destination it can reach treats itself as the first run for that target, reconciles the environment and establishes its own deploy-identity access (DEC-058) — see the [installation and first-deploy guide](installation.md) §4.
 
 ### GitOps deploy (Argo CD watches a manifest repo)
 

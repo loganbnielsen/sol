@@ -68,10 +68,12 @@ curl localhost:8080/health
 That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
 
 This is the **local** path, and it needs no cloud account. Deploying the same
-workspace to your own AWS or GCP runs `sol deploy <env>/<provider>/<region>`. The
-durable, account-level setup (state backend, identities, delegated DNS) is
-designed to be established inline on the first run and reused after; today that
-part is still a separate step, and the guided flow is planned (FEAT-106, FEAT-107).
+workspace to your own AWS or GCP runs `sol deploy <env>/<provider>/<region>`: the
+first run observes the account's durable installation, sets it up in place if it is
+missing, reconciles the environment, establishes its own cluster access as the
+target's deploy identity, and continues into the application. The
+**[installation and first-deploy guide](docs/guides/installation.md)** is that path
+end to end, from an empty account to a live endpoint.
 The intended first-run flow, its current status, and what stays your
 responsibility are in **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md)**.
 

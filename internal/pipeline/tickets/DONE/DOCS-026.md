@@ -78,3 +78,54 @@ a step the product does not perform, it has failed.
   short quickstart and links here.
 - If the guided flow is not yet built, this ticket waits on INFRA-096/FEAT-106
   rather than documenting a path that does not work.
+
+## Completion notes (2026-10-01)
+
+The page is `docs/guides/installation.md`, written against the flow as it stands
+after `FEAT-106` part B: one command does the first run in order — preflight,
+installation, environment, the run's own deploy-identity cluster access,
+migration, application, endpoint.
+
+**Premise checked at branch start.** All three dependencies are in `DONE`
+(`INFRA-096`, `FEAT-106`, `FEAT-122`), and every step the outline asks for is a
+step some command performs; nothing in the page shows behaviour marked *Target*
+except the one place DEC-058 records as a deferral.
+
+- **Install (§1).** The released tarball, `sol assets` as the install check, and an
+  honest table of the tools Sol drives (`aws`, `terraform`, `kubectl`, `docker`,
+  `dig`) plus which providers are qualified today — AWS; GCP exists and is not yet
+  production-qualified.
+- **The two units (§2).** The lifetime table links
+  `docs/DEVELOPER_EXPERIENCE.md` §2–3 rather than restating it, and adds the two
+  boundaries a reader has to act on: Sol owns the policy *contracts*, the operator
+  owns the roles (`AUDIT-072`), and the infrastructure is theirs.
+- **Local first (§3).** Points at `TUTORIAL.md` and says what carries over.
+- **First production deploy (§4).** The declared target with every field the
+  production profile requires, the contracts and how to turn one into a role, the
+  deploy command and the ordered stages it runs, the DNS hand-off with
+  `--await-delegation`, the one persistent `kube_context` line the *other* commands
+  need (and the statement that a deploy run does not need it, DEC-058), the
+  provider-without-a-deploy-identity case with DEC-058's trigger for closing it, and
+  the unattended/`--dry-run` behaviour.
+- **Second deploy (§5).** No one-time setup, and a second target under the same
+  installation needs none either.
+- **What is yours (§6)** and **teardown (§7)**: destroy vs uninstall as a table,
+  with the DNS consequence named — a Sol-created zone whose registrar records go
+  stale, and the guarantee that a user-supplied zone is never deleted.
+- **The demo/example rule:** §3 and §8 link `TUTORIAL.md` for the local loop and
+  `examples/pluto/README.md` as the runnable workspace that carries the same
+  first-run walkthrough and is what the CI smoke matrix builds.
+
+Also updated so the set stays consistent: `docs/README.md` marks the page
+Published and links it from the getting-started list, the root `README.md`
+quickstart paragraph now describes the inline first run instead of calling it
+planned, `docs/guides/TUTORIAL.md`'s production section no longer claims the
+cluster must already be reachable, and `docs/reference/cli.md`'s note about
+inline onboarding names the environment stage too.
+
+**Checks:** every relative link in `docs/` resolves, including the new page's;
+`dune build @all` and the ticket guards are unaffected (documentation only).
+
+**Language parity:** no application-facing contract changes — this is a page and
+its links — so `DEC-022` carries no per-language verdict for this change.
+
