@@ -241,6 +241,7 @@ let test_existing_files_still_generated () =
     ; "testapp/app/comms/notify_worker/bin/main.ml"
     ; "testapp/app/comms/notify_worker/sol.toml"
     ; "testapp/db/migrations/0001_notifications.sql"
+    ; "testapp/db/migrations/0002_sol_outbox.sql"
     ; "testapp/sol/environments.yml"
     ; "testapp/.gitignore"
     ]
@@ -650,9 +651,9 @@ let test_pending_migrations_workspace_scaffold () =
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   check_bool
-    "scaffold workspace → 1 migration file"
+    "scaffold workspace → 2 migration files"
     true
-    (count_unapplied ~root:"testapp" = 1)
+    (count_unapplied ~root:"testapp" = 2)
 ;;
 
 let test_scaffold_event_topic_matches_module () =

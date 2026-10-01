@@ -14,6 +14,7 @@ FRAMEWORK_PACKAGES=(
   sol-worker
   sol-fn
   sol-jobs
+  sol-outbox
 )
 
 echo "Preparing Sol framework dev dependencies from: $SOL_ROOT"
@@ -28,7 +29,7 @@ for pkg in "${FRAMEWORK_PACKAGES[@]}"; do
 done
 
 echo "  installing framework (this compiles it into the switch)"
-opam install -y sol-svc sol-worker sol-fn sol-jobs
+opam install -y sol-svc sol-worker sol-fn sol-jobs sol-outbox
 
 echo
 echo "Done. The framework is installed into the current opam switch:"

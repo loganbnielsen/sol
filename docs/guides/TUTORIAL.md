@@ -140,7 +140,7 @@ cd pluto
 
 > **Framework packages:** the generated workspace declares its framework dependency (`sol-svc`, `sol-worker`, …) in its own `.opam` file, and your opam switch provides it (DEC-025). Until those packages are published to opam (RELEASE-005), install them from a Sol checkout with `bash platform/local/scripts/prepare-framework-deps.sh`; otherwise `dune build` fails with "Library not found: sol_svc".
 
-This generates 29 files. Here is what was created and why:
+This generates 35 files. Here is what was created and why:
 
 ```
 pluto/
@@ -186,6 +186,7 @@ pluto/
   db/migrations/
     0001_notifications.sql        ← initial schema
     0001_notifications.down.sql   ← companion rollback migration (used by `sol local migrate rollback`)
+    0002_sol_outbox.sql           ← transactional outbox table (durable publication intent)
 
   test/
     test_schemas.ml               ← schema backward-compatibility CI gate
@@ -276,9 +277,11 @@ end) = struct
   let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
     Pg_db.transaction Config.pool (fun tx ->
       let open Result.Syntax in
-      let* () = Notification.insert pool ~charge_id:msg.id ... in
-      Jobs.enqueue tx ~dedupe_key:msg.id
-        Email_job.{ charge_id = msg.id; customer_id = msg.customer_id })
+      let* () = Notification.insert tx ~charge_id:msg.id ... in
+      let* () = Jobs.enqueue tx ~dedupe_key:msg.id
+                  Email_job.{ charge_id = msg.id; customer_id = msg.customer_id } in
+      Notification_sent_outbox.publish tx ~key:msg.id ~ord:1L
+        Notification_sent.{ charge_id = msg.id; customer_id = msg.customer_id; ... })
     |> function
     | Ok () -> Worker.Ack
     | Error _ -> Worker.Fail
@@ -289,7 +292,9 @@ end
 
 `handle` returns `Worker.outcome`, which is exactly `Ack` or `Fail`. `Ack` applies the fact and advances the offset. `Fail` declines it: the offset is not committed and the consumer stops, so a contract failure surfaces to an operator instead of being a fact the runtime silently skipped. There is no retry outcome and no application-level dead-letter outcome — a transient dependency failure is handled at the operation level (retry the dependency call, not the whole handler), never by re-running `handle`.
 
-Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../framework/ocaml/sol-jobs/sol-jobs.md)).
+Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../../framework/ocaml/sol-jobs/sol-jobs.md)).
+
+Publishing the fact is the other half of that transaction. The same `Pg_db.transaction` writes a `Notification_sent` record through `Notification_sent_outbox.publish`, so the notification row, the retried email job and the publication intent commit together or roll back together. The handler does not publish to Kafka itself: the relay in `bin/main.ml` reads the unpublished record, publishes it keyed by the aggregate (`msg.id`), and removes it only after the broker acknowledges. That is the transactional outbox — `events/` declares the fact, the domain transaction records the intent atomically, the relay distributes it at-least-once, and the worker stays idempotent because **a duplicate is a legal outcome**: the relay may publish a record twice if it dies between the acknowledgement and the removal, but it never publishes a later record for a key before an earlier one, and never leaves a gap. Order is per key, not global; a record that cannot publish holds only its own key and surfaces as publication lag ([`sol-outbox.md`](../../framework/ocaml/sol-outbox/sol-outbox.md)).
 
 The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
 

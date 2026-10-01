@@ -2,8 +2,10 @@
  (name main)
  (libraries
   pluto_comms_notify
+  pluto_comms_events
   sol-worker
   sol-jobs
+  sol-outbox
   kafka-eio-service
   obs-eio
   sol-obs
@@ -11,4 +13,5 @@
   caqti-eio
   caqti-eio.unix
   caqti-driver-postgresql
+  yojson
   eio_main))

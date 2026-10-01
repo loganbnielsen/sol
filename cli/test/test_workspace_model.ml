@@ -97,7 +97,7 @@ let test_pluto_events_migrations_and_targets () =
   let facts = load "examples/pluto" in
   Alcotest.(check (list string))
     "schema subjects"
-    [ "payments.Charged" ]
+    [ "comms.Notification_sent"; "payments.Charged" ]
     (subject_strings facts);
   Alcotest.(check (list string))
     "topics (pluto's events declare none)"
@@ -112,7 +112,7 @@ let test_pluto_events_migrations_and_targets () =
     ]
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
-   | [ notifications; sol_jobs ] ->
+   | [ notifications; sol_jobs; sol_outbox ] ->
      Alcotest.(check string)
        "file"
        "0001_notifications.sql"
@@ -127,12 +127,22 @@ let test_pluto_events_migrations_and_targets () =
        "0002_sol_jobs.sql"
        (Sol_cli_plan_ids.Migration_file.to_string sol_jobs.file);
      Alcotest.(check (option int)) "sol-jobs version" (Some 2) sol_jobs.version;
-     Alcotest.(check (option string)) "sol-jobs name" (Some "sol_jobs") sol_jobs.name
+     Alcotest.(check (option string)) "sol-jobs name" (Some "sol_jobs") sol_jobs.name;
+     Alcotest.(check string)
+       "sol-outbox migration file"
+       "0003_sol_outbox.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string sol_outbox.file);
+     Alcotest.(check (option int)) "sol-outbox version" (Some 3) sol_outbox.version;
+     Alcotest.(check (option string))
+       "sol-outbox name"
+       (Some "sol_outbox")
+       sol_outbox.name
    | other ->
-     Alcotest.fail (Printf.sprintf "expected two migrations, got %d" (List.length other)));
+     Alcotest.fail
+       (Printf.sprintf "expected three migrations, got %d" (List.length other)));
   Alcotest.(check int)
     "unapplied migrations"
-    2
+    3
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
@@ -156,7 +166,7 @@ let test_venus_reads_both_domains () =
     facts.Sol_cli_workspace_model.targets;
   Alcotest.(check int)
     "unapplied migrations"
-    2
+    3
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 

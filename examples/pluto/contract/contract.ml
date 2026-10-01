@@ -1,5 +1,5 @@
 let events : (string * (module Kafka_service.MESSAGE)) list =
-  [ "Charged", (module Charged) ]
+  [ "Charged", (module Charged); "Notification_sent", (module Notification_sent) ]
 ;;
 
 let with_registry f =

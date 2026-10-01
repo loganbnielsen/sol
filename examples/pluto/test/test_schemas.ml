@@ -8,7 +8,7 @@ let () =
           ~net:env#net
           ~clock:env#clock
           ~registry_url
-          [ (module Charged) ]
+          [ (module Charged); (module Notification_sent) ]
       with
       | Ok () -> Printf.printf "schema compatibility: ok\n%!"
       | Error e ->

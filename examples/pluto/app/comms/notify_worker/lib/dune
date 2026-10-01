@@ -5,8 +5,10 @@
  (libraries
   pluto_storage
   pluto_payments_events
+  pluto_comms_events
   sol-worker
   sol-jobs
+  sol-outbox
   kafka-eio-service
   obs-eio
   pg-eio
