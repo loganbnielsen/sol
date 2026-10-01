@@ -40,7 +40,7 @@ point for "what is Sol and what is it promising".
 | Installation and first deploy | New users | **Planned** — DOCS-026 |
 | [`guides/application-authoring.md`](guides/application-authoring.md) | Application authors | **Published** — DOCS-027 |
 | [`guides/deployment.md`](guides/deployment.md) | Operators | **Published** — DOCS-028; the operator detail stays in `deployment/*` |
-| Operations and lifecycle | Operators | **Planned** — DOCS-029 |
+| [`guides/operations.md`](guides/operations.md) | Operators | **Published** — DOCS-029 |
 | [`reference/README.md`](reference/README.md), [`reference/runtime.md`](reference/runtime.md), [`reference/substrate.md`](reference/substrate.md) | Application authors | **Published** |
 | CLI reference | All users | **Published** — [`reference/cli.md`](reference/cli.md) |
 | [`architecture/PRODUCT_ARCHITECTURE.md`](architecture/PRODUCT_ARCHITECTURE.md) and [`architecture/adr/`](architecture/adr/) | Evaluators, contributors | **Published** |
@@ -82,10 +82,13 @@ never needs a source checkout to complete the ordinary path.
 
 ### 4. Operations
 
-- **Everyday operations** — `status`, `logs`, `open`, `check`. *DOCS-029.*
-- **Releases and rollback** — the release contract and `sol rollback`. *DOCS-029.*
+The published page is [`guides/operations.md`](guides/operations.md): the day-two command
+set, health, logs, rollback, diagnostics, the operational UIs, destroy, and uninstall.
+
+- **Everyday operations** — `status`, `logs`, `open`, `check`.
+- **Releases and rollback** — the release contract and `sol rollback`.
 - **Destroy and uninstall** — the environment/installation distinction, and the
-  explicit teardown of each (`sol cloud destroy`, `sol uninstall`). *DOCS-029.*
+  explicit teardown of each (`sol cloud destroy`, `sol uninstall`).
 - **Recovery** — [`deployment/application-data-recovery.md`](deployment/application-data-recovery.md),
   [`deployment/credential-rotation.md`](deployment/credential-rotation.md),
   [`deployment/workload-availability.md`](deployment/workload-availability.md),
