@@ -107,7 +107,11 @@ async function main() {
   const producer = kafka.producer();
   await producer.connect();
   const relay = kafkaRetryRelay(producer);
-  await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID, partitions: PARTITIONS });
+  await provisionRelayTopics({
+    kafka,
+    groupId: GROUP_ID,
+    source: { name: TOPIC_NAME, partitions: PARTITIONS },
+  });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
   wireCrashListener(consumer, {

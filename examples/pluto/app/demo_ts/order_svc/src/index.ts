@@ -4,7 +4,7 @@ import { Pushgateway } from "@prometheus-io/client";
 import { context, propagation, SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
-import { encodeWire, registerTopic } from "@sol-fab/kafka";
+import { registerTopic, publish, type TopicContract } from "@sol-fab/kafka";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
 import { runService } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
@@ -52,6 +52,20 @@ const ORDER_PLACED_SCHEMA = JSON.stringify({
   required: ["order_id", "item", "quantity", "correlation_id"],
 });
 
+interface OrderPlaced {
+  order_id: string;
+  item: string;
+  quantity: number;
+  correlation_id: string;
+}
+
+const ORDER_PLACED: TopicContract<OrderPlaced> = {
+  name: TOPIC_NAME,
+  schema: ORDER_PLACED_SCHEMA,
+  partitions: PARTITIONS,
+  key: (order) => order.order_id,
+};
+
 const log = makeLokiPusher(LOKI_URL, "order-svc-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_URL);
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();
@@ -61,14 +75,12 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
 
-  const { schemaId } = await registerTopic({
+  const topic = await registerTopic({
     kafka,
     registryUrl: SCHEMA_REGISTRY_URL,
-    topicName: TOPIC_NAME,
-    schema: ORDER_PLACED_SCHEMA,
-    partitions: PARTITIONS,
+    contract: ORDER_PLACED,
   });
-  console.log(`[order-svc-ts] schema registered, id=${schemaId}`);
+  console.log(`[order-svc-ts] schema registered, id=${topic.schemaId}`);
 
   const producer = kafka.producer();
   await producer.connect();
@@ -136,18 +148,13 @@ async function main() {
         trace_id: span.spanContext().traceId,
       });
 
-      const message = {
+      const message: OrderPlaced = {
         order_id: body.order_id,
         item: body.item,
         quantity: body.quantity,
         correlation_id: correlationId,
       };
-      const wire = encodeWire(schemaId, message);
-
-      await producer.send({
-        topic: TOPIC_NAME,
-        messages: [{ key: body.order_id, value: wire, headers: { traceparent } }],
-      });
+      await publish(producer, topic, message, { headers: { traceparent } });
 
       reply.code(202);
       return { accepted: true };
