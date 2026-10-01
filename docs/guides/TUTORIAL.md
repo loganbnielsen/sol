@@ -636,7 +636,13 @@ sol local secret set|list|delete ...                                            
 # was at apply time: a deploy or rollback that won the lease first is what the
 # new release builds on, never a snapshot taken before the lease was acquired.
 # A scoped deploy refuses before mutating anything when the current boundary
-# cannot be read; deploy the whole workspace to establish it. `sol logs` accepts a single unit only; use `sol open logs` for a
+# cannot be read; deploy the whole workspace to establish it. A scoped deploy
+# also compares and records the workspace's complete consumer-group set, not only
+# the units it selected: a worker it did not select is not read as a removed
+# group, while a group whose worker really is gone from the workspace still
+# refuses until `--confirm-group-change` acknowledges it. That check reads the
+# recorded set while the workspace lease is held, so an update that won the lease
+# before the check is what the deploy measures against. `sol logs` accepts a single unit only; use `sol open logs` for a
 # domain or workspace view. `sol secret` takes `--domain` rather than
 # `--scope`, because secrets are addressed by Kubernetes namespace, not by
 # workload.

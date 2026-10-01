@@ -159,10 +159,16 @@ Both modes take the same inputs, and both are honest about what they would do:
 - `--dry-run` runs everything except the change.
 - `--emit-plan-to plan.json` captures the typed deployment intent without rendering, which is what
   a review gate should consume.
-- `--scope payments/checkout-svc` deploys one unit, or `--scope payments` one domain.
+- `--scope payments/checkout-svc` deploys one unit, or `--scope payments` one domain. A scoped
+  deploy still knows the whole workspace: it records, and compares against, the complete
+  consumer-group set the workspace declares, so a worker it did not select is not read as a
+  removed group, and the units it never touched keep their recorded consumer groups.
 - `--keep-releases N`, `--refresh-interval`, `--secret-*`, `--key-prefix`, `--loki-push-url` and
   `--confirm-group-change` cover release retention, rollout refresh, secret backends and
-  telemetry destinations.
+  telemetry destinations. `--confirm-group-change` is only for a group that is really going
+  away; the check that asks for it reads the recorded set while the deploy holds the workspace
+  lease, so it decides on the boundary as it is at apply time rather than as it was when the
+  command started.
 
 Never rebuild the plan/render/execute logic in your own CI: all deployment decisions (image tags,
 namespaces, discovery, secrets) belong to `sol deploy`, and CI's job is to supply the inputs

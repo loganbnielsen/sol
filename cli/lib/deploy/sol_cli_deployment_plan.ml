@@ -901,6 +901,7 @@ let of_services_result
     List.filter (fun (svc, _) -> List.mem (selection_key svc) selection_keys) loaded
   in
   let* resolved_services = collect [] deployable in
+  let* workspace_services = collect [] loaded in
   let resolved_services =
     resolved_services
     |> List.map (fun svc ->
@@ -947,7 +948,7 @@ let of_services_result
     ; topics
     ; migrations
     ; schema_subjects
-    ; consumer_groups = derive_consumer_groups ?declared workspace resolved_services
+    ; consumer_groups = derive_consumer_groups ?declared workspace workspace_services
     ; requested_scope
     ; profile =
         profile_claim

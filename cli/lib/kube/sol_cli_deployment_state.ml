@@ -47,8 +47,7 @@ let load_deployed_groups ~ctx workspace =
 let removed_groups_message removed =
   String.concat
     ""
-    [ "\n\
-       error: the following consumer group(s) are no longer present in this deploy plan:\n"
+    [ "the following consumer group(s) are no longer present in this deploy plan:\n"
     ; String.concat "" (List.map (fun g -> Printf.sprintf "  - %s\n" g) removed)
     ; "\n\
        While a group is absent, nothing consumes its messages. If it is added back, it \
