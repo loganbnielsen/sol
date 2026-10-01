@@ -29,9 +29,13 @@ type t =
       Sol_cli_installation.installation_config -> (string list, string) result
   ; installation_vars :
       manage_dns_zone:bool
+      -> ?parent_zone_id:string
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
+  ; installation_zone_import_address : string
+  ; installation_zone_lookup : string -> string list
+  ; installation_nameservers_output : string
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -60,6 +64,7 @@ val required : string -> string option -> (string, string) result
 val aws : t
 val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t
+val installation_nameservers_output : Sol_cli_provider.t -> string
 
 val installation_prerequisites
   :  Sol_cli_provider.t
@@ -78,5 +83,6 @@ val installation_backend
 val installation_vars
   :  Sol_cli_provider.t
   -> manage_dns_zone:bool
+  -> ?parent_zone_id:string
   -> Sol_cli_installation.installation_config
   -> (string * string) list

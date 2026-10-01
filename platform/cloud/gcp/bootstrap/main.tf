@@ -17,6 +17,16 @@ provider "google" {
 }
 
 
+resource "google_dns_record_set" "delegation" {
+  count = var.manage_dns_zone && var.parent_zone_id != "" ? 1 : 0
+
+  managed_zone = var.parent_zone_id
+  name         = google_dns_managed_zone.qualification[0].dns_name
+  type         = "NS"
+  ttl          = 172800
+  rrdatas      = google_dns_managed_zone.qualification[0].name_servers
+}
+
 resource "google_storage_bucket" "state" {
   name                        = var.state_bucket
   location                    = var.region

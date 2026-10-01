@@ -29,9 +29,13 @@ type t =
       Sol_cli_installation.installation_config -> (string list, string) result
   ; installation_vars :
       manage_dns_zone:bool
+      -> ?parent_zone_id:string
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
+  ; installation_zone_import_address : string
+  ; installation_zone_lookup : string -> string list
+  ; installation_nameservers_output : string
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -55,6 +59,17 @@ type t =
   ; state_locking : string option
   ; scoped_identities : string list
   }
+
+let public_delegation_probe domain =
+  Sol_cli_installation.present_if_output_names
+    ~reason:
+      (Printf.sprintf
+         "no public NS records resolve for %s, so nothing outside Sol can reach the zone \
+          yet: the delegation has not propagated, or it has not been added"
+         domain)
+    Sol_cli_installation.Public_delegation
+    [ "dig"; "+short"; "NS"; domain ]
+;;
 
 let dns_declaration
       ~manage_dns_zone
@@ -111,6 +126,7 @@ let aws =
       ; Sol_cli_installation.Deploy_identity
       ; Sol_cli_installation.Operator_identity
       ; Sol_cli_installation.Delegated_zone
+      ; Sol_cli_installation.Public_delegation
       ]
   ; installation_probes =
       (fun configuration ->
@@ -206,7 +222,11 @@ let aws =
                     | Externally_delegated -> "(external)"))
               Delegated_zone
               [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
-          ])
+          ]
+          @
+            (match configuration.zone with
+            | No_zone -> []
+            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
   ; installation_backend =
       (fun configuration ->
         match configuration.lock_table with
@@ -224,12 +244,13 @@ let aws =
             ; "encrypt=true"
             ])
   ; installation_vars =
-      (fun ~manage_dns_zone configuration ->
+      (fun ~manage_dns_zone ?parent_zone_id configuration ->
         [ "region", configuration.region
         ; "state_bucket", configuration.state_bucket
         ; "state_lock_table", Option.value configuration.lock_table ~default:""
         ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
         ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ; "parent_zone_id", Option.value parent_zone_id ~default:""
         ])
   ; own_vars =
       (fun target ~workspace shared ->
@@ -290,6 +311,20 @@ let aws =
       ]
   ; state_locking = Some "state_lock_table"
   ; installation_zone_address = "aws_route53_zone.qualification"
+  ; installation_zone_import_address = "aws_route53_zone.qualification[0]"
+  ; installation_zone_lookup =
+      (fun domain ->
+        [ "aws"
+        ; "route53"
+        ; "list-hosted-zones-by-name"
+        ; "--dns-name"
+        ; domain
+        ; "--query"
+        ; "HostedZones[0].Id"
+        ; "--output"
+        ; "text"
+        ])
+  ; installation_nameservers_output = "dns_zone_nameservers"
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -317,7 +352,10 @@ let gcp =
         (fun ~outputs_json ~region ->
           Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
   ; installation_prerequisites =
-      [ Sol_cli_installation.State_backend; Sol_cli_installation.Delegated_zone ]
+      [ Sol_cli_installation.State_backend
+      ; Sol_cli_installation.Delegated_zone
+      ; Sol_cli_installation.Public_delegation
+      ]
   ; installation_probes =
       (fun configuration ->
         let open Sol_cli_installation in
@@ -387,7 +425,11 @@ let gcp =
               ; name
               ; "--format=value(name)"
               ]
-          ])
+          ]
+          @
+            (match configuration.zone with
+            | No_zone -> []
+            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
   ; installation_backend =
       (fun configuration ->
         Ok
@@ -395,12 +437,13 @@ let gcp =
           ; "prefix=" ^ configuration.state_prefix
           ])
   ; installation_vars =
-      (fun ~manage_dns_zone configuration ->
+      (fun ~manage_dns_zone ?parent_zone_id configuration ->
         [ "project_id", Option.value configuration.project_id ~default:""
         ; "region", configuration.region
         ; "state_bucket", configuration.state_bucket
         ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
         ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ; "parent_zone_id", Option.value parent_zone_id ~default:""
         ])
   ; own_vars =
       (fun target ~workspace:_ shared ->
@@ -433,6 +476,18 @@ let gcp =
   ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
   ; installation_zone_address = "google_dns_managed_zone.qualification"
+  ; installation_zone_import_address = "google_dns_managed_zone.qualification[0]"
+  ; installation_zone_lookup =
+      (fun domain ->
+        [ "gcloud"
+        ; "dns"
+        ; "managed-zones"
+        ; "list"
+        ; "--filter"
+        ; Printf.sprintf "dnsName=%s." domain
+        ; "--format=value(name)"
+        ])
+  ; installation_nameservers_output = "dns_zone_nameservers"
   ; scoped_identities = []
   }
 ;;
@@ -440,6 +495,10 @@ let gcp =
 let capabilities_of = function
   | Sol_cli_provider.Aws -> aws
   | Sol_cli_provider.Gcp -> gcp
+;;
+
+let installation_nameservers_output provider =
+  (capabilities_of provider).installation_nameservers_output
 ;;
 
 let installation_prerequisites provider =
@@ -454,6 +513,9 @@ let installation_backend provider configuration =
   (capabilities_of provider).installation_backend configuration
 ;;
 
-let installation_vars provider ~manage_dns_zone configuration =
-  (capabilities_of provider).installation_vars ~manage_dns_zone configuration
+let installation_vars provider ~manage_dns_zone ?parent_zone_id configuration =
+  (capabilities_of provider).installation_vars
+    ~manage_dns_zone
+    ?parent_zone_id
+    configuration
 ;;

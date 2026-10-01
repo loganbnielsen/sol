@@ -629,6 +629,11 @@ let reconcile_cmd =
          must be resolvable exactly as an apply needs them, including any the operator \
          supplies through the environment (TF_VAR_*). Sol never takes a secret on the \
          command line."
+    ; `P
+        "--await-delegation waits for the public delegation: the domain this target \
+         serves must answer with NS records before the command reports success, each \
+         attempt is printed so the wait is visible, and an unqueryable resolver is \
+         UNKNOWN rather than a silent success (DEC-052)."
     ; `S "EXIT STATUS"
     ; `P
         "0 -- reconciled: every resource the provider holds for this target is either \
@@ -673,20 +678,25 @@ let declared_target target =
          (Sol_cli_config.target_source config.target))
 ;;
 
-let cloud_bootstrap ~target ~reconcile () =
+let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   let* target_cfg = declared_target target in
   let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
   let* () =
     if reconcile
-    then
+    then (
       let* () = check_terraform () in
       let* assets = resolve_assets () in
-      Sol_cli_installation_stage.reconcile
-        ~assets
-        ~provider:target_cfg.provider
-        ~configuration
-        ()
-      |> Sol_cli_exit.of_msg
+      let* lines =
+        Sol_cli_installation_stage.reconcile
+          ~assets
+          ~provider:target_cfg.provider
+          ~configuration
+          ~run:installation_observation
+          ()
+        |> Sol_cli_exit.of_msg
+      in
+      List.iter (fun line -> Printf.printf "  %s\n%!" line) lines;
+      Ok ())
     else Ok ()
   in
   let verdicts =
@@ -702,6 +712,34 @@ let cloud_bootstrap ~target ~reconcile () =
   Sol_cli_installation.resolved_configuration_to_lines configuration
   |> List.iter print_endline;
   Printf.printf "\n%s\n%!" (Sol_cli_installation.summary verdicts);
+  let* () =
+    match configuration.Sol_cli_installation.zone, await_delegation with
+    | Sol_cli_installation.Service_zone { domain; _ }, seconds when seconds > 0 ->
+      let attempts = max 1 (seconds / 5) in
+      Printf.printf
+        "\n\
+         Waiting up to %d seconds for the delegation of %s to appear in public DNS (%d \
+         attempt(s)):\n\
+         %!"
+        seconds
+        domain
+        attempts;
+      (match
+         Sol_cli_installation_stage.await_delegation
+           ~run:installation_observation
+           ~report:(fun line -> Printf.printf "  %s\n%!" line)
+           ~attempts
+           ~interval:5.
+           ~domain
+           ()
+       with
+       | Sol_cli_installation.Established ->
+         Printf.printf "\n  public delegation           Established\n%!";
+         Ok ()
+       | Sol_cli_installation.Unmet reason | Sol_cli_installation.Unknown reason ->
+         Error (Sol_cli_exit.error reason))
+    | Sol_cli_installation.No_zone, _ | Sol_cli_installation.Service_zone _, _ -> Ok ()
+  in
   let* () = Sol_cli_installation.all_established verdicts |> Sol_cli_exit.of_msg in
   Printf.printf
     "\n\
@@ -710,6 +748,20 @@ let cloud_bootstrap ~target ~reconcile () =
      `sol cloud destroy` removes an environment, never this.\n\
      %!";
   Ok ()
+;;
+
+let bootstrap_await_delegation_flag =
+  Arg.(
+    value
+    & opt int 0
+    & info
+        [ "await-delegation" ]
+        ~docv:"SECONDS"
+        ~doc:
+          "Wait up to SECONDS (in five-second checks) for the domain this target serves \
+           to answer with NS records from a public resolver, reporting each attempt, and \
+           exit non-zero when the delegation is still not visible. 0, the default, does \
+           not wait: the single-shot public-delegation verdict already appears above.")
 ;;
 
 let bootstrap_apply_flag =
@@ -757,10 +809,11 @@ let bootstrap_cmd =
   Cmd.v
     (Cmd.info "bootstrap" ~doc ~man)
     Term.(
-      const (fun target reconcile ->
-        Sol_cli_exit.exit_on (cloud_bootstrap ~target ~reconcile ()))
+      const (fun target reconcile await_delegation ->
+        Sol_cli_exit.exit_on (cloud_bootstrap ~target ~reconcile ~await_delegation ()))
       $ target_arg
-      $ bootstrap_apply_flag)
+      $ bootstrap_apply_flag
+      $ bootstrap_await_delegation_flag)
 ;;
 
 let plan_flag =

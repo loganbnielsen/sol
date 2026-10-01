@@ -19,6 +19,12 @@ variable "manage_dns_zone" {
   default     = false
 }
 
+variable "parent_zone_id" {
+  description = "The hosted zone that publishes this installation's domain, when that zone is in the same account. Sol observes it and passes the id so the durable root can write the NS delegation itself; empty means the operator adds the records at the zone they control."
+  type        = string
+  default     = ""
+}
+
 variable "base_domain" {
   description = "The delegated qualification name (e.g. qual-aws.sol-fab.dev). Required when manage_dns_zone is true."
   type        = string

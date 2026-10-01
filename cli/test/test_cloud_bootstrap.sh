@@ -40,7 +40,7 @@ cat >"$tmp/bin-tf/terraform" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
 case " \$* " in
-  *" state list "*) printf 'aws_s3_bucket.state\n'; exit 0 ;;
+  *" state list "*) cat "$tmp/state-list" 2>/dev/null || printf 'aws_s3_bucket.state\n'; exit 0 ;;
   *" init "*) exit 0 ;;
   *" plan "*)
     for argument in "\$@"; do
@@ -51,11 +51,15 @@ case " \$* " in
     exit 0
     ;;
   *" show "*) cat "$tmp/plan.json"; exit 0 ;;
+  *" output -json "*) cat "$tmp/outputs.json"; exit 0 ;;
   *" apply "*) exit 0 ;;
 esac
 exit 0
 EOF
 chmod +x "$tmp/bin-tf/terraform"
+printf '%s\n' \
+  '{"dns_zone_nameservers":{"sensitive":false,"value":["ns-1.awsdns.test","ns-2.awsdns.test"]}}' \
+  >"$tmp/outputs.json"
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: bootstrap-test
 EOF
@@ -107,6 +111,13 @@ byo:
         deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
 EOF
+cat >"$tmp/bin-ok/dig" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ns-1.awsdns.test.'
+printf '%s\n' 'ns-2.awsdns.test.'
+exit 0
+EOF
+chmod +x "$tmp/bin-ok/dig"
 cat >"$tmp/bin-ok/aws" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >>"$tmp/aws.log"
@@ -116,7 +127,15 @@ case "\$1 \$2" in
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
   "route53 list-hosted-zones-by-name")
-    printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}'
+    case " \$* " in
+      *" --query "*)
+        case " \$* " in
+          *"--dns-name example.test "*) cat "$tmp/parent-zone-id" 2>/dev/null ;;
+          *) cat "$tmp/existing-zone-id" 2>/dev/null ;;
+        esac
+        ;;
+      *) printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}' ;;
+    esac
     ;;
 esac
 exit 0
@@ -166,6 +185,17 @@ check_contains \
   "delegated DNS zone           Established" \
   "$output"
 check_contains "the installation is reported established" "The installation is established" "$output"
+check_contains \
+  "the delegation is observed through a public resolver" \
+  "public delegation            Established" \
+  "$output"
+
+run "$tmp/bin-ok:/usr/bin:/bin" qual/aws/us-east-1 --await-delegation=5
+check "waiting for a delegation that is already public exits 0" 0 "$rc"
+check_contains \
+  "the waited verdict is printed" \
+  "public delegation           Established" \
+  "$output"
 check_contains \
   "the probe asks for the role by name, not by ARN" \
   "iam get-role --role-name sol-provisioner" \
@@ -223,6 +253,74 @@ check_contains \
   "aws-bootstrap" \
   "$(cat "$tmp/terraform.log")"
 check_contains "the installation is established after the reconcile" "The installation is established" "$output"
+check_contains \
+  "the delegation instruction names the zone's domain and parent" \
+  "add these NS records for qual-aws.example.test at the zone that publishes it (example.test)" \
+  "$output"
+check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
+check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
+mv "$tmp/outputs.json" "$tmp/outputs.hidden"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check_contains \
+  "a root with no zone yet says so instead of printing an empty list" \
+  "is not observable yet" \
+  "$output"
+mv "$tmp/outputs.hidden" "$tmp/outputs.json"
+
+printf '%s\n' '/hostedzone/ZADOPTED' >"$tmp/existing-zone-id"
+rm -f "$tmp/state-list" "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "adopting an existing zone exits 0" 0 "$rc"
+check_contains "the run says it is adopting, not creating" "adopting it" "$output"
+check_contains \
+  "the counted zone is imported, not created" \
+  "aws_route53_zone.qualification[0]" \
+  "$(cat "$tmp/terraform.log")"
+check_contains \
+  "the import identity is the zone that already exists" \
+  "/hostedzone/ZADOPTED" \
+  "$(cat "$tmp/terraform.log")"
+
+rm -f "$tmp/existing-zone-id" "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "creating a zone that does not exist exits 0" 0 "$rc"
+check_contains "the run says the root creates it" "creates it" "$output"
+check_absent "nothing is imported when there is nothing to adopt" " import " "$(cat "$tmp/terraform.log")"
+
+printf '%s\n' '/hostedzone/ZPARENT' >"$tmp/parent-zone-id"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a parent zone in the account exits 0" 0 "$rc"
+check_contains \
+  "the durable root writes the delegation when the parent is in the account" \
+  "the durable root writes the NS delegation itself" \
+  "$output"
+check_contains \
+  "and the parent's identity is passed to the root" \
+  "parent_zone_id=/hostedzone/ZPARENT" \
+  "$(cat "$tmp/terraform.log")"
+check_absent \
+  "nothing is asked of the operator when Sol can write the delegation" \
+  "add these NS records" \
+  "$output"
+rm -f "$tmp/parent-zone-id"
+
+printf '%s\n' 'aws_s3_bucket.state' 'aws_route53_zone.qualification[0]' >"$tmp/state-list"
+rm -f "$tmp/terraform.log"
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
+check "a zone the root already owns exits 0" 0 "$rc"
+check_contains \
+  "the counted instance counts as owned" \
+  "already owns the zone for qual-aws.example.test" \
+  "$output"
+check_absent "an owned zone is not imported again" " import " "$(cat "$tmp/terraform.log")"
+rm -f "$tmp/state-list"
+
+run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" byo/aws/us-east-1 --apply
+check_absent \
+  "a zone Sol does not own gets no delegation instruction" \
+  "add these NS records" \
+  "$output"
 
 printf '%s\n' '{"resource_changes":[]}' >"$tmp/plan.json"
 rm -f "$tmp/terraform.log"

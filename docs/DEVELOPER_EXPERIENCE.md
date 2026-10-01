@@ -212,6 +212,53 @@ and asks a human, and a root already at its declared state applies nothing, so a
 second run is a no-op. The state backend is the one prerequisite whose presence is
 checked first, because a root cannot create the backend that stores its own state.
 
+### Create or adopt, never duplicate
+
+When the target declares that Sol owns the domain (`dns_zone_ownership: sol`), reconciling the
+durable root either creates the zone or **adopts the one that is already there** — it asks the
+provider first, because creating a second zone with the same name would give the domain different
+nameservers than the ones already delegated, and the delegation would silently point nowhere:
+
+```text
+The durable root already owns the zone for api.acme.com; nothing to create or adopt.
+A zone for api.acme.com already exists and the durable root does not own it: adopting it
+(/hostedzone/Z0123...) instead of creating a second zone with different nameservers.
+No zone exists for api.acme.com yet, so the durable root creates it.
+```
+
+A provider CLI Sol cannot run is an error here rather than a guess: without an answer about
+whether a zone exists, Sol would risk creating the duplicate.
+
+### Delegation: one action, then verification
+
+A zone Sol owns is only reachable once the zone that publishes it delegates to it, and that step
+is the one a user cannot guess. Reconciling the durable root therefore ends by naming the exact
+records to add, with both zones named:
+
+```text
+One action is required at the zone that publishes api.acme.com (acme.com):
+add these NS records for api.acme.com,
+or let the durable root create the delegation when that zone is in this account.
+  NS  ns-1.awsdns-08.org
+  NS  ns-2.awsdns-08.org
+```
+
+Which of the two applies is **observed, not assumed**: Sol asks the provider whether the zone that
+publishes the domain is in this account. When it is, the durable root writes the NS delegation
+itself and the operator has nothing to do; when it is not, the records above are the action. Nothing
+is printed for a zone Sol does not own (`user`, `external`): delegating is not Sol's to do there, and
+a question Sol cannot put to the provider is reported rather than answered with a guess. And because a written delegation is not evidence, the delegation is confirmed by
+**observing public resolution, never by configuration**:
+
+```bash
+sol cloud bootstrap prod/aws/us-east-1 --await-delegation=120
+```
+
+That waits in bounded five-second checks for the domain to answer with NS records from a public
+resolver, printing each attempt so the wait is visible, and exits non-zero when the delegation
+is still not visible. A resolver it cannot query is `UNKNOWN`, never a silent success
+(`DEC-052`).
+
 ### 4.4 DNS and domain onboarding
 
 DNS is an unavoidable external boundary: Sol can automate everything it has
