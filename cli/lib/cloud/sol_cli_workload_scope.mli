@@ -3,7 +3,11 @@ type scope =
   ; workloads : string list
   }
 
-val list_workloads_args : namespace:string -> string list
+type workload_kind
+
+val kinds : workload_kind list
+val optional_kind : workload_kind -> bool
+val list_args : namespace:string -> kind:workload_kind -> string list
 
 val delete_args
   :  namespace:string

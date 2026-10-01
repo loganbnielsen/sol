@@ -517,17 +517,25 @@ if grep -F -- '--all-namespaces' "$release_log" >/dev/null; then
   exit 1
 fi
 for namespace in work-payments work-comms; do
-  grep -F "get deployment,cronjob,job -n $namespace" "$release_log" >/dev/null || {
-    echo "the destroy did not list the workloads in $namespace:" >&2
-    grep -F 'kubectl' "$release_log" >&2
-    exit 1
-  }
+  for kind in deployment cronjob job rollout; do
+    grep -F "get $kind -n $namespace" "$release_log" >/dev/null || {
+      echo "the destroy did not read $kind workloads in $namespace:" >&2
+      grep -F 'kubectl' "$release_log" >&2
+      exit 1
+    }
+  done
   grep -F "wait --for=delete pod -n $namespace" "$release_log" >/dev/null || {
     echo "the destroy did not wait for $namespace's pods to go:" >&2
     grep -F 'kubectl' "$release_log" >&2
     exit 1
   }
 done
+if grep -F 'could not be released' "$release_log.out" >/dev/null; then
+  echo "a cluster that does not serve the Rollouts custom resource failed the release" >&2
+  echo "instead of releasing the workload kinds that are there (FND-0079):" >&2
+  cat "$release_log.out" >&2
+  exit 1
+fi
 grep -F 'delete deployment/charge-svc -n work-payments' "$release_log" >/dev/null || {
   echo "the destroy did not delete the workload it found:" >&2
   grep -F 'kubectl' "$release_log" >&2
@@ -551,6 +559,35 @@ substrate_line="$(
 if [ -z "$substrate_line" ] || [ "$wait_line" -ge "$substrate_line" ]; then
   echo "the pods were not gone before the substrate was destroyed (wait=$wait_line substrate=$substrate_line):" >&2
   grep -nE 'delete deployment/charge-svc|wait --for=delete pod|cloud/gcp/cluster .* destroy ' "$release_log" >&2
+  exit 1
+fi
+
+rollout_log="$tmp/rollout-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 ROLLOUT_SERVED=1 \
+        LIFECYCLE_LOG="$rollout_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$rollout_log.out" 2>&1
+then
+  cat "$rollout_log.out" >&2
+  echo "cloud destroy with a progressive-delivery Rollout failed (FND-0079)" >&2
+  exit 1
+fi
+grep -F 'rollout/charge-canary' "$rollout_log" >/dev/null || {
+  echo "the destroy did not remove the Rollout it found (FND-0079):" >&2
+  grep -F 'kubectl' "$rollout_log" >&2
+  exit 1
+}
+if grep -F 'could not be released' "$rollout_log.out" >/dev/null; then
+  echo "the release failed on a cluster that serves the Rollouts custom resource (FND-0079):" >&2
+  cat "$rollout_log.out" >&2
+  exit 1
+fi
+rollout_delete_line="$(grep -n -m1 'rollout/charge-canary' "$rollout_log" | cut -d: -f1)"
+rollout_wait_line="$(grep -n -m1 'wait --for=delete pod -n work-payments' "$rollout_log" | cut -d: -f1)"
+if [ -z "$rollout_delete_line" ] || [ -z "$rollout_wait_line" ] ||
+  [ "$rollout_delete_line" -ge "$rollout_wait_line" ]; then
+  echo "the Rollout was not removed before its pods were awaited (delete=$rollout_delete_line wait=$rollout_wait_line):" >&2
+  grep -nE 'rollout/charge-canary|wait --for=delete pod -n work-payments' "$rollout_log" >&2
   exit 1
 fi
 

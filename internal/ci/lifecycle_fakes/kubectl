@@ -74,7 +74,7 @@ case " $* " in
     esac
 esac
 case " $* " in
-  *" get deployment,cronjob,job -n "*)
+  *" get deployment -n "*)
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
       printf '%s\n' '{"items":[{"kind":"Deployment","metadata":{"name":"charge-svc"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
     else
@@ -82,7 +82,23 @@ case " $* " in
     fi
     exit 0
     ;;
-  *" delete deployment/charge-svc -n "*)
+  *" get cronjob -n "*|*" get job -n "*)
+    printf '{"items":[]}\n'
+    exit 0
+    ;;
+  *" get rollout -n "*)
+    if [ "${ROLLOUT_SERVED:-}" != 1 ]; then
+      printf "error: the server doesn't have a resource type \"rollout\"\n" >&2
+      exit 1
+    fi
+    if [ "${WORKSPACE_PODS:-}" = 1 ]; then
+      printf '%s\n' '{"items":[{"kind":"Rollout","metadata":{"name":"charge-canary"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
+    else
+      printf '{"items":[]}\n'
+    fi
+    exit 0
+    ;;
+  *" delete deployment/charge-svc "*)
     if [ "${RELEASE_DELETE_FAILS:-}" = 1 ]; then
       printf 'error: the workload could not be deleted\n' >&2
       exit 1
