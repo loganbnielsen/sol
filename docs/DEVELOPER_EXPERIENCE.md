@@ -243,8 +243,11 @@ or let the durable root create the delegation when that zone is in this account.
   NS  ns-2.awsdns-08.org
 ```
 
-Nothing is printed for a zone Sol does not own (`user`, `external`): delegating is not Sol's to
-do there. And because a written delegation is not evidence, the delegation is confirmed by
+Which of the two applies is **observed, not assumed**: Sol asks the provider whether the zone that
+publishes the domain is in this account. When it is, the durable root writes the NS delegation
+itself and the operator has nothing to do; when it is not, the records above are the action. Nothing
+is printed for a zone Sol does not own (`user`, `external`): delegating is not Sol's to do there, and
+a question Sol cannot put to the provider is reported rather than answered with a guess. And because a written delegation is not evidence, the delegation is confirmed by
 **observing public resolution, never by configuration**:
 
 ```bash

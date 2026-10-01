@@ -234,3 +234,60 @@ no import), and a state that already lists `…qualification[0]` (recognised as 
 **Still open:** the automatic delegation record when the parent zone is in the same account
 (AWS `aws_route53_record`, GCP `google_dns_record_set`, with the parent's identity observed by the
 CLI and passed as a variable), which is the last piece of the ticket's create/adopt/delegate ACs.
+
+## Delegation (2026-10-01): automatic where Sol can, exact where it cannot
+
+The parent axis needed no new declaration — it is **observed**, which is what DEC-052 asks for. The
+installation asks the provider whether the zone that publishes the domain is in this account and
+passes its identity to the durable root as `parent_zone_id`; the roots gained
+`aws_route53_record.delegation` / `google_dns_record_set.delegation`
+(`count = var.manage_dns_zone && var.parent_zone_id != "" ? 1 : 0`), so:
+
+- **in this account** — the durable root writes the NS delegation itself and the operator is asked
+  for nothing; the run says so, naming the parent zone's identity;
+- **beyond this account** — the run prints the exact records to add at the zone that publishes the
+  domain, naming both zones, with no "or let Sol do it" hedge, because Sol has established that it
+  cannot;
+- **unobservable** — the provider could not be asked, so Sol writes no delegation it cannot judge
+  and says why; the operator still gets the records.
+
+A delegation written by the root also cannot be dropped by silence: the parent identity comes from
+the same observation each run, and a run that loses it plans a destroy of the record, which the
+durable-root policy refuses.
+
+## Completion notes (2026-10-01)
+
+All of the ticket's acceptance criteria are met:
+
+- the three ownership cases are distinguishable in the resolved configuration and in the
+  observations (`sol`/`user` observed at the provider, `external` unobservable and `UNKNOWN`) —
+  part A;
+- create or adopt: `manage_dns_zone` follows the declaration, an existing zone is imported at the
+  counted address rather than duplicated, and an unqueryable provider is an error;
+- delegation is automatic when the parent is in the account and an exact, unambiguous instruction
+  otherwise, with the delegation confirmed by public resolution and a bounded, visible wait
+  (`--await-delegation`);
+- destroy cannot remove a durable prerequisite: the durable root is never touched by a target
+  destroy, and the offline lifecycle test now asserts by name that
+  `aws_route53_zone.qualification` / `google_dns_managed_zone.qualification` never appears in a
+  destroy invocation or its residue report.
+
+**Evidence for the surface**: `cli/test/test_installation.ml` (25 cases) covers the model, the
+declaration, the wait, and the root's variables; `cli/test/test_cloud_bootstrap.sh` drives the
+command end to end against fake aws/terraform/resolver — adoption (import of
+`…qualification[0]` with the observed id), creation, an already-owned counted instance, the
+instruction, the automatic delegation with the parent's identity in the terraform variables, and
+the not-observable fallback.
+
+**Two defects found by driving the real contract rather than assuming it**, both recorded here
+because they are the reason the tests use the roots' actual shapes: the nameservers output is
+`dns_zone_nameservers` (the code first read a `name_servers` that no root exports, and the fake
+agreed with the code), and the state-ownership check matched the zone address as a substring, which
+would also have matched `…qualification_extra`.
+
+**Demo/example coverage:** `examples/pluto/sol/environments.yml` declares all three ownership cases
+(prod/pilot `sol`, dev `user`, customer_cloud `external`) and `docs/DEVELOPER_EXPERIENCE.md` §4.3
+documents create-or-adopt, the instruction and the wait.
+
+**Language parity:** no impact — DNS onboarding is a target declaration and a provider call, not an
+application-language surface.

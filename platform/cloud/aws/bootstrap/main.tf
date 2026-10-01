@@ -21,6 +21,16 @@ resource "aws_route53_zone" "qualification" {
   name = var.base_domain
 }
 
+resource "aws_route53_record" "delegation" {
+  count = var.manage_dns_zone && var.parent_zone_id != "" ? 1 : 0
+
+  zone_id = var.parent_zone_id
+  name    = aws_route53_zone.qualification[0].name
+  type    = "NS"
+  ttl     = 172800
+  records = aws_route53_zone.qualification[0].name_servers
+}
+
 resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket
 }

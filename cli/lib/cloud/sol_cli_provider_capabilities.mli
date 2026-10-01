@@ -29,6 +29,7 @@ type t =
       Sol_cli_installation.installation_config -> (string list, string) result
   ; installation_vars :
       manage_dns_zone:bool
+      -> ?parent_zone_id:string
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
@@ -82,5 +83,6 @@ val installation_backend
 val installation_vars
   :  Sol_cli_provider.t
   -> manage_dns_zone:bool
+  -> ?parent_zone_id:string
   -> Sol_cli_installation.installation_config
   -> (string * string) list

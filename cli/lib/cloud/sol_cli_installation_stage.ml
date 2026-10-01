@@ -80,25 +80,48 @@ let zone_nameservers ~provider ~chdir : (string list, string) result =
          output_name)
 ;;
 
-let print_delegation_instruction ~provider ~domain ~chdir () =
-  let parent =
-    match String.split_on_char '.' domain with
-    | _ :: (_ :: _ as rest) -> String.concat "." rest
-    | _ -> domain
-  in
+type parent_zone =
+  | Parent_in_this_account of string
+  | Parent_beyond_this_account
+  | Parent_unobservable of string
+
+let parent_domain domain =
+  match String.split_on_char '.' domain with
+  | _ :: (_ :: _ :: _ as rest) -> Some (String.concat "." rest)
+  | _ -> None
+;;
+
+let parent_zone ~run ~provider ~domain =
+  match parent_domain domain with
+  | None -> Parent_beyond_this_account
+  | Some parent ->
+    (match existing_zone_id ~run ~provider ~domain:parent with
+     | Ok (Some identity) -> Parent_in_this_account identity
+     | Ok None -> Parent_beyond_this_account
+     | Error reason -> Parent_unobservable reason)
+;;
+
+let print_delegation_instruction ~provider ~domain ~chdir ~known_parent () =
+  let parent = Option.value (parent_domain domain) ~default:domain in
   match zone_nameservers ~provider ~chdir with
   | Error message ->
     Printf.printf "\nThe zone for %s is not observable yet: %s.\n%!" domain message
   | Ok nameservers ->
+    (match known_parent with
+     | Parent_unobservable reason ->
+       Printf.printf
+         "\n\
+          Could not tell whether the zone that publishes %s (%s) is in this account \
+          (%s), so Sol did not write a delegation it cannot judge.\n\
+          %!"
+         domain
+         parent
+         reason
+     | Parent_in_this_account _ | Parent_beyond_this_account -> ());
     Printf.printf
-      "\n\
-       One action is required at the zone that publishes %s (%s): add these NS records \
-       for %s,\n\
-       or let the durable root create the delegation when that zone is in this account.\n\
-       %!"
+      "\nAdd these NS records for %s at the zone that publishes it (%s):\n%!"
       domain
-      parent
-      domain;
+      parent;
     List.iter (fun nameserver -> Printf.printf "  NS  %s\n%!" nameserver) nameservers
 ;;
 
@@ -242,6 +265,16 @@ let reconcile ~assets ~provider ~configuration ~run () =
              |> Result.map (fun _ -> ())
              |> Result.map_error Sol_cli_process.error_to_string))
   in
+  let* parent =
+    match Sol_cli_installation.zone_domain configuration.zone, manage_dns_zone with
+    | Some domain, true -> Ok (parent_zone ~run ~provider ~domain)
+    | _ -> Ok Parent_beyond_this_account
+  in
+  let parent_zone_id =
+    match parent with
+    | Parent_in_this_account identity -> identity
+    | Parent_beyond_this_account | Parent_unobservable _ -> ""
+  in
   let* () =
     Sol_cli_terraform_steps.apply_asserted
       ~run_log
@@ -255,12 +288,24 @@ let reconcile ~assets ~provider ~configuration ~run () =
            (Sol_cli_provider_capabilities.installation_vars
               provider
               ~manage_dns_zone
+              ~parent_zone_id
               configuration))
       ()
   in
   match configuration.Sol_cli_installation.zone with
   | Sol_cli_installation.Service_zone { domain; ownership = Sol_created } ->
-    print_delegation_instruction ~provider ~domain ~chdir ();
+    (match parent with
+     | Parent_in_this_account identity ->
+       Printf.printf
+         "\n\
+          The zone that publishes %s is in this account (%s), so the durable root writes \
+          the NS delegation itself: a re-run keeps it, and nothing here needs a \
+          registrar.\n\
+          %!"
+         domain
+         identity
+     | Parent_beyond_this_account | Parent_unobservable _ ->
+       print_delegation_instruction ~provider ~domain ~chdir ~known_parent:parent ());
     Ok ()
   | Sol_cli_installation.No_zone
   | Sol_cli_installation.Service_zone

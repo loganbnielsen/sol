@@ -29,6 +29,7 @@ type t =
       Sol_cli_installation.installation_config -> (string list, string) result
   ; installation_vars :
       manage_dns_zone:bool
+      -> ?parent_zone_id:string
       -> Sol_cli_installation.installation_config
       -> (string * string) list
   ; installation_zone_address : string
@@ -243,12 +244,13 @@ let aws =
             ; "encrypt=true"
             ])
   ; installation_vars =
-      (fun ~manage_dns_zone configuration ->
+      (fun ~manage_dns_zone ?parent_zone_id configuration ->
         [ "region", configuration.region
         ; "state_bucket", configuration.state_bucket
         ; "state_lock_table", Option.value configuration.lock_table ~default:""
         ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
         ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ; "parent_zone_id", Option.value parent_zone_id ~default:""
         ])
   ; own_vars =
       (fun target ~workspace shared ->
@@ -322,7 +324,7 @@ let aws =
         ; "--output"
         ; "text"
         ])
-  ; installation_nameservers_output = "name_servers"
+  ; installation_nameservers_output = "dns_zone_nameservers"
   ; scoped_identities =
       [ "provisioner_role_arn"
       ; "cluster_access_role_arn"
@@ -435,12 +437,13 @@ let gcp =
           ; "prefix=" ^ configuration.state_prefix
           ])
   ; installation_vars =
-      (fun ~manage_dns_zone configuration ->
+      (fun ~manage_dns_zone ?parent_zone_id configuration ->
         [ "project_id", Option.value configuration.project_id ~default:""
         ; "region", configuration.region
         ; "state_bucket", configuration.state_bucket
         ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
         ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+        ; "parent_zone_id", Option.value parent_zone_id ~default:""
         ])
   ; own_vars =
       (fun target ~workspace:_ shared ->
@@ -484,7 +487,7 @@ let gcp =
         ; Printf.sprintf "dnsName=%s." domain
         ; "--format=value(name)"
         ])
-  ; installation_nameservers_output = "name_servers"
+  ; installation_nameservers_output = "dns_zone_nameservers"
   ; scoped_identities = []
   }
 ;;
@@ -510,6 +513,9 @@ let installation_backend provider configuration =
   (capabilities_of provider).installation_backend configuration
 ;;
 
-let installation_vars provider ~manage_dns_zone configuration =
-  (capabilities_of provider).installation_vars ~manage_dns_zone configuration
+let installation_vars provider ~manage_dns_zone ?parent_zone_id configuration =
+  (capabilities_of provider).installation_vars
+    ~manage_dns_zone
+    ?parent_zone_id
+    configuration
 ;;

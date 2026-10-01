@@ -390,6 +390,7 @@ let test_the_durable_root_is_configured_from_the_declaration () =
      ; (_, "acme-tflock")
      ; ("manage_dns_zone", "true")
      ; ("base_domain", "api.acme.example")
+     ; ("parent_zone_id", "")
      ] -> ()
    | vars ->
      Alcotest.fail
