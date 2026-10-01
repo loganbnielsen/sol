@@ -12,6 +12,7 @@
   sol_svc
   sol_worker
   sol_jobs
+  sol_outbox
   pg-eio
   caqti
   caqti-eio
