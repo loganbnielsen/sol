@@ -453,6 +453,14 @@ failure this reconciliation exists to prevent.
   `retry_policy` with `jitter_ratio`), FEAT-077 (`sol-jobs`, a second
   programming model, DEC-021) and FEAT-079 (`-fn`
   `scheduled_concurrency`/`backoff_limit` + `sol fn run`).
+- **Both sides — declared partitioning and message key (re-verdict
+  2026-10-01).** BUG-099 made the partition count and the message key part
+  of the OCaml event contract (`MESSAGE.partitions` / `MESSAGE.key`, with
+  retry/DLQ topics inheriting the count). FEAT-117 part A declared both in
+  the TS golden path; part B gave `@sol-fab/kafka` the contract itself
+  (`TopicContract`, `registerTopic`, `publish`, and a relay that inherits
+  the source topic's live count), with a mutation-checked multi-partition
+  ordering test. The verdict row below is `implemented`.
 
 ### Verdicts
 
@@ -467,6 +475,7 @@ failure this reconciliation exists to prevent.
 | Kafka topic provisioning | `ensure_topic` | `registerTopic` | implemented (FEAT-034) |
 | Schema registration order/fatality | `kafka_service.ml` `register` | `registerTopic` | implemented |
 | Confluent wire format | `Confluent_wire` | `encodeWire`/`decodeWire` | implemented |
+| Declared partitioning + message key (`partitions`, `key`) | `MESSAGE.partitions`/`MESSAGE.key`; the topic is created at the declared count, the count is never reduced, and the retry/DLQ topics inherit it (BUG-099) | `TopicContract` carries `partitions` + `key`; `registerTopic` refuses a reduction, `publish` keys the record, `provisionRelayTopics` inherits the source topic's live count (FEAT-117) | implemented (FEAT-117 part B, 2026-10-01) — golden path declares 3 partitions and the record key; a mutation-checked multi-partition test in `sol-kafka` shows same-key records consumed once, in order, by one member |
 | Decode-reject vs. handler-retry vs. crash | `wrap_on_decode_error` | `wrapEachMessage`/`wireCrashListener` | implemented |
 | W3C `traceparent` propagation | `sol-obs` | `@sol/obs` | implemented (dedup'd in FEAT-038) |
 | PostgreSQL | `pg-eio` | `pg` | already equivalent |
