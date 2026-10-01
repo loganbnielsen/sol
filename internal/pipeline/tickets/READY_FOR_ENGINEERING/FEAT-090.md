@@ -8,6 +8,16 @@ source: Sol Unified Operational Interface design review, 2026-09-18
 
 **Depends on:** None.
 
+**Premise verified 2026-10-01** (base `d75f2aca`), still actionable:
+
+```text
+$ rg -n 'drift' cli/ | wc -l
+0
+$ rg -c 'Cloud:' cli/bin/cmd_target.ml
+(no match)
+```
+
+
 **Related:** DEC-032, INFRA-027, OBS-044, ADR 0003.
 
 **Reconciled with `DEC-057` (2026-09-29):** the experience contract puts this field
@@ -128,3 +138,80 @@ quotes the old shape.
 
 **TypeScript parity:** No language-parity impact — target inspection is
 language-neutral and no application-facing contract changes.
+
+## Checkpoint (2026-10-01) — authority per field, and where the work starts
+
+Branch `FEAT-090/target-status`. Nothing is implemented yet; `Sol_cli_target_report`
+still has no cloud/drift/operation field. Everything below was verified by reading
+the code named, so the next session starts at "write it", not at "find it".
+
+**The projection.** `cli/bin/cmd_target.ml:80` computes each status in the bin
+(`kubernetes_status`, `platform_status`) and hands it to
+`Sol_cli_target_report.rows` / `to_json` (`cli/lib/cloud/sol_cli_target_report.ml`).
+The new fields belong there too: one projection, one command family (this ticket's
+"exactly one surface" constraint), `--json` included for free.
+
+**`Cloud:` — authority is the provider's own answer, and it already exists.**
+`Sol_cli_provider_capabilities.installation_probes provider configuration` gives the
+`Inspect`/`Unavailable`/`Unverifiable` probe set, and
+`Sol_cli_installation.observe ~run:(Sol_cli_provider_capabilities.installation_observation
+~provider)` runs them and returns `(prerequisite, verdict) list` with the
+`Established | Unmet | Unknown` vocabulary — the same observation `sol cloud
+bootstrap` and the deploy's installation stage use (`cli/bin/cmd_deploy.ml:144`,
+`observe_installation`). So the row is a projection of an existing observation, not
+a new probe family: all established → `Healthy`; anything `Unmet`/`Unknown` →
+`Unmet — <prerequisite>: <reason>` (never `Healthy` by default, and `Unknown` is
+never promoted). Move that helper out of `cmd_deploy` into
+`Sol_cli_installation` (or `Sol_cli_provider_capabilities`) so both callers share
+it, rather than copying it into `cmd_target`.
+
+**`Drift:` — a read-only refresh, and it needs one new Terraform wrapper.**
+`Sol_cli_terraform.plan` (`cli/lib/cloud/sol_cli_terraform.ml:87`) already returns
+`Sol_cli_process.output`, which carries `exit_code` (`cli/lib/base/sol_cli_process.mli`).
+Add `plan_refresh_only` beside it, appending `-refresh-only -detailed-exitcode`, and
+read the code: `0` → `None` (no drift), `2` → drift detected, `1`/spawn failure →
+`Unknown — <reason>`, never "no drift". It must not mutate: `-refresh-only` writes
+state refresh results only, and the ticket's non-goal list forbids remediation.
+Wiring is the same prepare/init path `Sol_cli_environment_stage.plan` uses
+(`prepare ~strict:false` → `Sol_cli_cloud_wiring.init`), so the drift read belongs in
+`Sol_cli_environment_stage` as a `drift` entry point and `cmd_target` calls it — the
+bin must not assemble Terraform workdirs itself.
+
+**`Last operation:` — the honest answer today is `unavailable`, with its reason.**
+The ticket's own evidence stands: no target-scoped record of the last operation
+exists, and `ADR 0003` forbids adding one (no phase pointer, no second state
+database). The AC already anticipates this: "If last operation has no authority
+available, it reports as unavailable — not as 'none'". Local run history is the
+only existing candidate and is **not** target-scoped: `Sol_cli_run_log` writes
+`<XDG_DATA_HOME>/sol/runs/<prefix>-<timestamp>.log` with no target in the record, so
+deriving a target's last operation from it would be inference, not observation.
+Report `unavailable — Sol keeps no target-scoped operation record (ADR 0003)`. If a
+later ticket makes the run record target-scoped, this row reads it and the
+`unavailable` reason disappears; that is the trigger to revisit, recorded here so it
+is not discovered twice.
+
+**What sits behind `--check`, and what does not.** The AC requires the offline
+invocation to stay offline, so all three rows are opt-in and mirror `Platform:`:
+without `--check` the row is omitted/`not checked`; the default summary stays what
+an operator reads while diagnosing an unreachable cluster. `Cloud:` and `Drift:`
+both touch the network (provider APIs; Terraform refresh), `Last operation:` does
+not.
+
+**Remaining work, in order** (none of it design-blocked):
+
+1. `Sol_cli_environment_stage.drift` + `Sol_cli_terraform.plan_refresh_only`, with a
+   unit case for the three exit-code verdicts.
+2. Share the installation-observation helper with `cmd_deploy`.
+3. `Sol_cli_target_report`: `Cloud:` / `Drift:` / `Last operation:` rows and JSON
+   fields, with `?cloud ?drift ?last_operation` mirroring `?platform`.
+4. `cli/bin/cmd_target.ml`: compute all three under `--check`.
+5. Tests: a fake-driven case for each verdict (established/unmet/unknown; drift
+   none/detected/unknown; last operation unavailable), plus the JSON shape.
+6. Docs and the demo the AC names: `examples/pluto`/`TUTORIAL.md` output, and
+   `docs/deployment/production-bootstrap.md` if it quotes the old shape.
+
+**Not blocked on an operator decision.** Where the ticket leaves a choice ("whether
+`sol cloud status` becomes a thin alias or is not added at all"), the answer here is
+**not added at all**: nothing else in this stream needs a second entry point, and
+adding then keeping two surfaces agreeing is more machinery than the problem is
+worth today.
