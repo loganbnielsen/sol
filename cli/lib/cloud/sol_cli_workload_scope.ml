@@ -7,11 +7,27 @@ type workload_kind =
   | Deployment
   | CronJob
   | Job
+  | Rollout
 
+let kinds = [ Deployment; CronJob; Job; Rollout ]
 let selector ~workspace = "workspace=" ^ workspace
+let pod_template_labels = [ "spec"; "template"; "metadata"; "labels" ]
+let job_template_prefix = [ "spec"; "jobTemplate" ]
 
-let list_workloads_args ~namespace =
-  [ "get"; "deployment,cronjob,job"; "-n"; namespace; "--output"; "json" ]
+let resource_of_kind = function
+  | Deployment -> "deployment"
+  | CronJob -> "cronjob"
+  | Job -> "job"
+  | Rollout -> "rollout"
+;;
+
+let optional_kind = function
+  | Rollout -> true
+  | Deployment | CronJob | Job -> false
+;;
+
+let list_args ~namespace ~kind =
+  [ "get"; resource_of_kind kind; "-n"; namespace; "--output"; "json" ]
 ;;
 
 let delete_args ~namespace ~names ~timeout_seconds =
@@ -32,24 +48,16 @@ let wait_args ~namespace ~workspace ~timeout_seconds =
   ]
 ;;
 
-let pod_template_labels = [ "spec"; "template"; "metadata"; "labels" ]
-let job_template_prefix = [ "spec"; "jobTemplate" ]
-
 let kind_of_name = function
   | "Deployment" -> Some Deployment
   | "CronJob" -> Some CronJob
   | "Job" -> Some Job
+  | "Rollout" -> Some Rollout
   | _ -> None
 ;;
 
-let resource_of_kind = function
-  | Deployment -> "deployment"
-  | CronJob -> "cronjob"
-  | Job -> "job"
-;;
-
 let template_labels_of_kind = function
-  | Deployment | Job -> pod_template_labels
+  | Deployment | Job | Rollout -> pod_template_labels
   | CronJob -> job_template_prefix @ pod_template_labels
 ;;
 

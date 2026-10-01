@@ -10,19 +10,29 @@ encodes the reverse of the deployment order, and the scope of that work has a de
     -> destroy the substrate
     -> independently verify absence
 
-Three failures shaped this. Listing pods cluster-wide ran as the provisioner identity, which by
+Four failures shaped this. Listing pods cluster-wide ran as the provisioner identity, which by
 design has no cluster-wide pod authority, so the release could never run. Reading the release store
 was the other obvious source, and it would invert the library graph (`base <- kube <- workspace <-
-cloud <- deploy`) besides depending on a record that can be stale or absent. And selecting the
+cloud <- deploy`) besides depending on a record that can be stale or absent. Selecting the
 workload objects by the ownership label matched nothing, because Sol renders that label on each
 workload's pod template rather than on the object's own metadata, so the objects were never removed
-and their pods stayed up holding the sessions.
+and their pods stayed up holding the sessions. And the listing named only some of the kinds Sol
+deploys: a service that opts into progressive delivery renders an Argo `Rollout` (FEAT-011), whose
+pods carry the same ownership label on the same pod template, and a destroy that never read the kind
+left that workload's sessions open — FND-0077's failure for a shape the read did not reach.
+
+Naming `rollout` beside the built-in kinds in one listing is not the fix. It is a custom resource: a
+cluster where the controller that serves it is not installed fails that whole read, so the release
+would lose the kinds that are there. The read therefore names one kind at a time, and an unserved
+kind is absence only where the kind is one a controller installs — never for the built-in kinds the
+platform itself installs, where a failed read must stay a failed read rather than an empty scope.
 
 This guard holds the parts that are cheap to check and easy to undo by accident: the read is scoped
 to a declared namespace rather than the cluster, it runs as the deploy identity rather than the
-platform's, it selects the ownership labels Sol renders on the pod template, it removes the objects
-it discovered by name, it waits for the pods, it precedes the substrate destroy, and a release
-failure degrades rather than blocking.
+platform's, it names every workload kind Sol deploys one at a time and reads an unserved
+controller-installed kind as absence, it selects the ownership labels Sol renders on the pod
+template, it removes the objects it discovered by name, it waits for the pods, it precedes the
+substrate destroy, and a release failure degrades rather than blocking.
 """
 
 import pathlib
@@ -89,9 +99,21 @@ if '"workspace=" ^ workspace' not in scope_ml:
 if '"--for=delete"' not in scope_ml or '"--wait=true"' not in scope_ml or '"pod"' not in scope_ml:
     fail("the release no longer waits for the pods, so they may still hold their database")
     fail("  sessions when the substrate destroy asks the provider to drop the database")
-if "deployment,cronjob,job" not in scope_ml:
-    fail("the read is no longer a listing of the workload kinds Sol deploys, so the release")
-    fail("  cannot see the objects whose pods hold the sessions")
+covered = re.search(r"let kinds = \[([^\]]*)\]", scope_ml)
+if covered is None:
+    fail("the workload kinds the release covers are no longer declared in one list, so the set of")
+    fail("  objects whose pods can hold the database sessions cannot be checked")
+declared_kinds = {kind.strip() for kind in covered.group(1).split(";")}
+for kind in ("Deployment", "CronJob", "Job", "Rollout"):
+    if kind not in declared_kinds:
+        fail(f"the release no longer covers {kind}, so a service deployed in that shape keeps its")
+        fail("  database sessions through the substrate destroy, which is how an Argo Rollout was")
+        fail("  left running and the managed database refused the drop")
+listing = re.search(r"let list_args [^=]*=\s*\[([^\]]*)\]", scope_ml)
+if listing is None or "resource_of_kind kind" not in listing.group(1):
+    fail("the release no longer reads one workload kind at a time, so where the controller-installed")
+    fail("  Rollouts custom resource is not served the whole read fails and the workloads that are")
+    fail("  there go unreleased")
 if '"spec"; "template"; "metadata"; "labels"' not in scope_ml:
     fail("the release no longer selects workloads by the ownership labels on their pod template;")
     fail("  the objects themselves carry no labels, so a selector on them matches nothing and the")
@@ -103,14 +125,23 @@ if "@ names" not in scope_ml:
     fail("the removal no longer names the workloads it found, so it cannot delete objects that carry")
     fail("  no labels of their own")
 
-if "Sol_cli_config.destination_of_target target_cfg" not in wiring_ml:
+release_wiring = wiring_ml[wiring_ml.find("let release_workloads_result") : wiring_ml.find("let deps : Sol_cli_cloud_destroy.deps =")]
+if "Sol_cli_config.destination_of_target target_cfg" not in release_wiring:
     fail("the release no longer runs as the target's deploy identity, which is the authority the")
     fail("  deploy path uses and the only one that may read these namespaces")
-if "with_cluster_access_result" in wiring_ml[wiring_ml.find("let release_workloads_result") : wiring_ml.find("let deps : Sol_cli_cloud_destroy.deps =")]:
+if "with_cluster_access_result" in release_wiring:
     fail("the release runs as the platform's cluster-access identity again, which cannot read")
     fail("  application namespaces")
 if "workload_namespaces" not in wiring_ml:
     fail("the release no longer takes the declared namespaces as its scope")
+if "Sol_cli_workload_scope.kinds" not in release_wiring:
+    fail("the release no longer walks the kinds Sol deploys, so a kind it stopped naming would go")
+    fail("  unreleased with nothing said about it")
+if "optional_kind" not in release_wiring or "No_resource_type" not in release_wiring:
+    fail("an unserved workload kind is no longer read as absence: where the controller-installed")
+    fail("  Rollouts custom resource is not served the release fails instead of releasing the kinds")
+    fail("  that are there, and where a built-in kind cannot be read it must still fail rather than")
+    fail("  read as an empty scope")
 
 if "declared_workload_namespaces" not in cli_tf:
     fail("the destroy command no longer supplies the declared namespace scope")
@@ -132,6 +163,8 @@ if "Sol_cli_release_store" in destroy_ml or "Sol_cli_release_store" in scope_ml:
     fail("  depend on a record that can be stale or absent; discovery comes from the cluster")
 
 print("check_workload_release_order: the destroy takes its scope from the declared configuration,")
-print("                            reads ownership from the cluster as the deploy identity, waits")
-print("                            for the pods, releases before destroying the substrate, and")
-print("                            degrades rather than blocks when the release cannot run")
+print("                            reads ownership from the cluster as the deploy identity, names")
+print("                            every workload kind Sol deploys one at a time -- reading an")
+print("                            unserved controller-installed kind as absence -- waits for the")
+print("                            pods, releases before destroying the substrate, and degrades")
+print("                            rather than blocks when the release cannot run")

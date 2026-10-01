@@ -817,14 +817,30 @@ let destroy_deps
       |> Result.map_error Sol_cli_process.error_to_string
       |> Result.map (fun _ -> ())
     in
+    let read_workloads namespace =
+      let rec go found = function
+        | [] -> Ok (List.concat (List.rev found))
+        | kind :: rest ->
+          (match
+             Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_args ~namespace ~kind)
+           with
+           | Ok listing ->
+             let* workloads =
+               Sol_cli_workload_scope.workloads_of_json
+                 listing.Sol_cli_process.stdout
+                 ~workspace
+             in
+             go (workloads :: found) rest
+           | Error e
+             when Sol_cli_workload_scope.optional_kind kind
+                  && Sol_cli_kubectl.classify e = Sol_cli_kubectl.No_resource_type ->
+             go found rest
+           | Error e -> Error (Sol_cli_process.error_to_string e))
+      in
+      go [] Sol_cli_workload_scope.kinds
+    in
     let release namespace =
-      let* listing =
-        Sol_cli_kubectl.run ~ctx (Sol_cli_workload_scope.list_workloads_args ~namespace)
-        |> Result.map_error Sol_cli_process.error_to_string
-      in
-      let* workloads =
-        Sol_cli_workload_scope.workloads_of_json listing.Sol_cli_process.stdout ~workspace
-      in
+      let* workloads = read_workloads namespace in
       match workloads with
       | [] -> Ok ()
       | workloads ->

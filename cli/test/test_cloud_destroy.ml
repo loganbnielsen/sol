@@ -620,9 +620,35 @@ let test_the_workload_selection_reads_the_pod_template () =
       ]}|}
   in
   Alcotest.(check (result (list string) string))
-    "the workloads whose pod template belongs to this workspace, and only those; an item \
-     that names no kind, or no name, is not a workload this can remove"
-    (Ok [ "cronjob/invoice-fn"; "deployment/charge-svc"; "job/invoice-fn-invoke" ])
+    "the workloads whose pod template belongs to this workspace, and only those — \
+     including the progressive-delivery Rollout, which carries the ownership label on \
+     the same pod template; an item that names no kind, or no name, is not a workload \
+     this can remove"
+    (Ok
+       [ "cronjob/invoice-fn"
+       ; "deployment/charge-svc"
+       ; "job/invoice-fn-invoke"
+       ; "rollout/progressive"
+       ])
+    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto")
+;;
+
+let test_a_rollout_listing_is_read_from_its_pod_template () =
+  let listing =
+    {|{"items":[
+        {"kind":"Rollout","metadata":{"name":"charge-svc"},
+         "spec":{"template":{"metadata":{"labels":{"workspace":"pluto","release":"r-1"}}}}},
+        {"kind":"Rollout","metadata":{"name":"someone-else"},
+         "spec":{"template":{"metadata":{"labels":{"workspace":"other"}}}}},
+        {"kind":"Rollout","metadata":{"name":"labelled-on-the-object","labels":{"workspace":"pluto"}},
+         "spec":{"template":{"metadata":{"labels":{}}}}}
+      ]}|}
+  in
+  Alcotest.(check (result (list string) string))
+    "a service that opts into progressive delivery renders a Rollout, and its pods carry \
+     the workspace label on spec.template.metadata.labels exactly where a Deployment's \
+     do, so the release can find and remove it before the database is dropped"
+    (Ok [ "rollout/charge-svc" ])
     (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto")
 ;;
 
@@ -642,17 +668,47 @@ let test_the_label_is_read_from_the_template_not_the_object () =
 ;;
 
 let test_the_workload_read_is_scoped_to_the_declared_namespace () =
-  let listing = Sol_cli_workload_scope.list_workloads_args ~namespace:"pluto-payments" in
+  let reads =
+    List.map
+      (fun kind -> Sol_cli_workload_scope.list_args ~namespace:"pluto-payments" ~kind)
+      Sol_cli_workload_scope.kinds
+  in
+  Alcotest.(check (list (list string)))
+    "each kind below is read on its own, in the declared namespace, so one kind the \
+     cluster does not serve cannot fail the reads of the kinds it does, and nothing \
+     reads cluster-wide"
+    [ [ "get"; "deployment"; "-n"; "pluto-payments"; "--output"; "json" ]
+    ; [ "get"; "cronjob"; "-n"; "pluto-payments"; "--output"; "json" ]
+    ; [ "get"; "job"; "-n"; "pluto-payments"; "--output"; "json" ]
+    ; [ "get"; "rollout"; "-n"; "pluto-payments"; "--output"; "json" ]
+    ]
+    reads;
   Alcotest.(check bool)
-    "the read is scoped to one namespace rather than the whole cluster"
+    "no read is a multi-kind listing, which is what would fail whole where the Rollouts \
+     custom resource is not served"
     true
-    (List.exists (fun arg -> arg = "-n") listing
-     && List.exists (fun arg -> arg = "pluto-payments") listing
-     && not (List.exists (fun arg -> arg = "--all-namespaces") listing));
-  Alcotest.(check bool)
-    "and it reads the workload kinds Sol deploys"
-    true
-    (List.exists (fun arg -> arg = "deployment,cronjob,job") listing)
+    (List.for_all
+       (fun args ->
+          not (List.exists (fun arg -> Sol_cli_string.contains ~needle:"," arg) args))
+       reads)
+;;
+
+let test_only_a_controller_installed_kind_may_read_as_absence () =
+  let absence_is_expected =
+    List.filter_map
+      (fun kind ->
+         match Sol_cli_workload_scope.list_args ~namespace:"pluto-payments" ~kind with
+         | [ "get"; resource; "-n"; _; "--output"; "json" ]
+           when Sol_cli_workload_scope.optional_kind kind -> Some resource
+         | _ -> None)
+      Sol_cli_workload_scope.kinds
+  in
+  Alcotest.(check (list string))
+    "only the kind a controller installs may read as absence; for the built-in kinds the \
+     platform itself installs, an unreadable listing stays a failed release rather than \
+     an empty scope"
+    [ "rollout" ]
+    absence_is_expected
 ;;
 
 let test_the_removal_names_the_workloads_and_waits () =
@@ -1873,6 +1929,10 @@ let () =
             `Quick
             test_the_workload_selection_reads_the_pod_template
         ; Alcotest.test_case
+            "a Rollout listing is read from its pod template"
+            `Quick
+            test_a_rollout_listing_is_read_from_its_pod_template
+        ; Alcotest.test_case
             "the ownership label is read from the pod template, not the object"
             `Quick
             test_the_label_is_read_from_the_template_not_the_object
@@ -1880,6 +1940,10 @@ let () =
             "the workload read is scoped to the declared namespace"
             `Quick
             test_the_workload_read_is_scoped_to_the_declared_namespace
+        ; Alcotest.test_case
+            "only a controller-installed kind may read as absence"
+            `Quick
+            test_only_a_controller_installed_kind_may_read_as_absence
         ; Alcotest.test_case
             "the removal names the workloads and waits"
             `Quick

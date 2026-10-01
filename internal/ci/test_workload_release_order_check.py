@@ -139,6 +139,41 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_workload_scope.ml",
+        "let kinds = [ Deployment; CronJob; Job; Rollout ]",
+        "let kinds = [ Deployment; CronJob; Job ]",
+    )
+    expect_rejected("the-rollout-kind-is-dropped", tmp, "no longer covers Rollout")
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
+        '[ "get"; resource_of_kind kind; "-n"; namespace; "--output"; "json" ]',
+        '[ "get"; "deployment,cronjob,job,rollout"; "-n"; namespace; "--output"; "json" ]',
+    )
+    expect_rejected(
+        "the-kinds-are-read-in-one-listing",
+        tmp,
+        "no longer reads one workload kind at a time",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_cloud_wiring.ml",
+        "Sol_cli_workload_scope.optional_kind kind",
+        "true",
+    )
+    expect_rejected(
+        "an-unserved-kind-is-no-longer-absence",
+        tmp,
+        "no longer read as absence",
+    )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_workload_scope.ml",
         "  @ names\n",
         "  @ [ \"deployment,cronjob,job\" ]\n",
     )
@@ -185,9 +220,11 @@ def main():
     print("  that drops the release, one that stops degrading, one that reads cluster-wide, one that")
     print("  selects a different label, one that stops waiting, one that reads the workload object")
     print("  instead of its pod template, one that forgets where a CronJob's template is, one that")
-    print("  selects the objects instead of naming them, one that keeps the platform identity, one")
-    print("  that drops the declared scope, one that inverts the layer graph, and one that reads the")
-    print("  scope from the release store")
+    print("  drops the progressive-delivery Rollout from the kinds it covers, one that reads the")
+    print("  kinds in a single listing again, one that reads an unserved kind as a failed release,")
+    print("  one that selects the objects instead of naming them, one that keeps the platform")
+    print("  identity, one that drops the declared scope, one that inverts the layer graph, and one")
+    print("  that reads the scope from the release store")
 
 
 main()
