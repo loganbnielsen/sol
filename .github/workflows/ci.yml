@@ -955,6 +955,15 @@ jobs:
           dune build
 
           sol local infra up
+
+          # BUG-054: ordinary deploy delivers secret references and never
+          # writes a value, so seed the workspace secrets first. `sol local
+          # secret set` is the only Sol path that writes one, and it creates
+          # the namespace it needs.
+          sol local secret set POSTGRES_URL \
+            --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+          sol local secret set SOL_API_KEY --value dev-internal-key
+
           sol up
 
           # FEAT-042/BUG-021: `sol local infra up` installs ingress-nginx and forwards
@@ -1500,6 +1509,13 @@ jobs:
           cd examples/pluto
 
           sol local infra up
+
+          # BUG-054: seed the demo_ts namespace's secrets before the deploy;
+          # ordinary deploy verifies them and never writes a value.
+          sol local secret set POSTGRES_URL --domain demo_ts \
+            --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+          sol local secret set SOL_API_KEY --domain demo_ts --value dev-internal-key
+
           sol up --scope=demo_ts
 
           demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
