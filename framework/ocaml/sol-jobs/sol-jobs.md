@@ -20,6 +20,7 @@
 ```ocaml
 module type JOB = sig
   type t
+  val workspace : string
   val kind : t -> string
   val kinds : string list
   val encode : t -> string
@@ -28,7 +29,7 @@ module type JOB = sig
 end
 ```
 
-One `Make(J)` instance owns one shared job table and one polling loop. An app's `t` is its own sum type covering every kind of job it enqueues:
+One `Make(J)` instance owns one workspace's rows in the shared job table and one polling loop. An app's `t` is its own sum type covering every kind of job it enqueues:
 
 ```ocaml
 type job =
@@ -60,6 +61,7 @@ Multiple job "kinds" are just constructors of one `t` — the same way an app's 
 ```sql
 CREATE TABLE IF NOT EXISTS sol_jobs (
   id           SERIAL      PRIMARY KEY,
+  workspace    TEXT        NOT NULL,
   kind         TEXT        NOT NULL,
   payload      TEXT        NOT NULL,
   status       TEXT        NOT NULL DEFAULT 'pending',  -- 'pending' | 'completed' | 'failed'
@@ -73,11 +75,11 @@ CREATE TABLE IF NOT EXISTS sol_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS sol_jobs_claim_idx
-  ON sol_jobs (run_at)
+  ON sol_jobs (workspace, run_at)
   WHERE status = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
-  ON sol_jobs (kind, dedupe_key)
+  ON sol_jobs (workspace, kind, dedupe_key)
   WHERE dedupe_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx
@@ -85,7 +87,9 @@ CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx
   WHERE status <> 'pending';
 ```
 
-The table name (`sol_jobs`) is fixed, not configurable — one app, one job table, matching FEAT-077's non-goal against a pluggable/configurable backend surface.
+The table name (`sol_jobs`) is fixed, not configurable — one app, one job table, matching FEAT-077's non-goal against a pluggable/configurable backend surface. Two apps *can* share the database, though (AUDIT-024 is why the migration table is workspace-prefixed), so `J.workspace` is a required row identity rather than a property of the table: every enqueue writes it and the claim, retry, completion, failure, lease-renewal and retention-sweep statements all filter by it. A `Make(J)` therefore cannot claim, handle, retry or finalize another workspace's job even when both declare the same `kind` and different payload codecs, and the dedupe key is scoped per workspace too.
+
+`J.workspace` is validated the same way `J.kinds` is, and for the same reason: `run` returns `` Error (`Config msg) `` and `enqueue` returns an error before either touches a row, so a missing, oversized (over 63 bytes) or malformed workspace refuses rather than falling back to a queue every workspace shares. Use the workspace directory name Sol already uses for the migration table and the Kubernetes namespace.
 
 ## Deduplication: the Kafka → jobs handoff
 

@@ -154,6 +154,7 @@ module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 module EmailJobCodec = struct
   type t = { order_id : string }
 
+  let workspace = "local-demo"
   let kind (_ : t) = "send_confirmation_email"
   let kinds = [ "send_confirmation_email" ]
 

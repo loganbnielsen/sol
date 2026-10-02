@@ -80,6 +80,7 @@ module Outbox = Sol_outbox.Make (Ev)
 module Email = struct
   type t = { id : string }
 
+  let workspace = "test"
   let kind (_ : t) = "send_email"
   let kinds = [ "send_email" ]
   let encode (t : t) = t.id

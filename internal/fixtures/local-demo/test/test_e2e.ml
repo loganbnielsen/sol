@@ -128,6 +128,7 @@ module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 module EmailJobCodec = struct
   type t = { order_id : string }
 
+  let workspace = "local-demo"
   let kind (_ : t) = "send_confirmation_email"
   let kinds = [ "send_confirmation_email" ]
 
@@ -795,6 +796,7 @@ let run_outbox_path () =
     let module Effect = struct
       type t = { effect_id : string }
 
+      let workspace = "local-demo"
       let kind (_ : t) = "outbox_e2e_effect"
       let kinds = [ "outbox_e2e_effect" ]
 

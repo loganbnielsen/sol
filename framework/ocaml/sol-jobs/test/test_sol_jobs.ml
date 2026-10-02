@@ -149,6 +149,7 @@ let contains ~needle haystack =
 module Email = struct
   type t = string
 
+  let workspace = "test"
   let kind (_ : t) = "send_email"
   let kinds = [ "send_email" ]
   let encode t = t
