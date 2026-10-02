@@ -59,6 +59,17 @@ let test_validate_retry_policy_rejects_zero_max_attempts () =
      | Error (`Database _) | Ok () -> false)
 ;;
 
+let test_validate_workspace () =
+  let ok value = Result.is_ok (Sol_jobs.For_testing.validate_workspace value) in
+  Alcotest.(check bool) "a plain name is accepted" true (ok "myapp");
+  Alcotest.(check bool) "dots, dashes and case are accepted" true (ok "My_App.v2-x");
+  Alcotest.(check bool) "empty is refused" false (ok "");
+  Alcotest.(check bool) "whitespace only is refused" false (ok "   ");
+  Alcotest.(check bool) "an inner space is refused" false (ok "my app");
+  Alcotest.(check bool) "a slash is refused" false (ok "my/app");
+  Alcotest.(check bool) "over 63 characters is refused" false (ok (String.make 64 'a'))
+;;
+
 let test_validate_kinds () =
   let ok kinds = Result.is_ok (Sol_jobs.For_testing.validate_kinds kinds) in
   Alcotest.(check bool) "typical kinds accepted" true (ok [ "send_email"; "report.v2-x" ]);
@@ -184,7 +195,13 @@ let () =
   let open Alcotest in
   run
     "sol_jobs"
-    [ "kinds", [ test_case "validate_kinds" `Quick test_validate_kinds ]
+    [ ( "kinds"
+      , [ test_case "validate_kinds" `Quick test_validate_kinds
+        ; test_case
+            "validate_workspace accepts a name and refuses the rest (BUG-115)"
+            `Quick
+            test_validate_workspace
+        ] )
     ; ( "backoff_s"
       , [ test_case
             "early attempt within jittered bounds"

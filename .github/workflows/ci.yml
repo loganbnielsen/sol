@@ -239,6 +239,10 @@ jobs:
       # skips itself when POSTGRES_URL is unset, which is why the variable is
       # part of this step rather than the suite being excluded from it.
       # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
+      # --force, and one suite per invocation: without it dune serves these
+      # targets from the unit step's cache, where POSTGRES_URL was unset and the
+      # database cases skipped themselves, and in one invocation either suite can
+      # drop the sol_jobs table under the other while both are running.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         timeout-minutes: 20
@@ -252,7 +256,8 @@ jobs:
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
-          opam exec -- dune test framework/ocaml/sol-jobs/ framework/ocaml/sol-outbox/
+          opam exec -- dune test framework/ocaml/sol-jobs/ --force
+          opam exec -- dune test framework/ocaml/sol-outbox/ --force
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one

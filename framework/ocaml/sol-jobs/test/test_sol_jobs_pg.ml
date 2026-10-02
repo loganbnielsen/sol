@@ -163,6 +163,40 @@ let test_another_workspace_rows_are_never_claimed () =
       (rows pool))
 ;;
 
+let test_a_poller_sweeps_only_its_own_terminal_rows () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    let module Other = Sol_jobs.Make (Other_workspace_email) in
+    (match Pg_db.transaction pool (fun tx -> Emails.enqueue tx "alice") with
+     | Ok () -> ()
+     | Error e -> Alcotest.failf "enqueue alpha: %s" (Pg_error.to_string e));
+    (match Emails.run ~env ~pool ~poll_interval_s:0.05 ~max_jobs:1 () with
+     | Ok () -> ()
+     | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e));
+    exec_sql
+      pool
+      "UPDATE sol_jobs SET finished_at = now() - interval '30 days' WHERE workspace = \
+       'alpha'";
+    Eio.Fiber.first
+      (fun () ->
+         match
+           Other.run
+             ~env
+             ~pool
+             ~poll_interval_s:0.05
+             ~terminal_retention_s:0.0
+             ~sweep_interval_s:0.0
+             ()
+         with
+         | Ok () -> ()
+         | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e))
+      (fun () -> Eio.Time.sleep env#clock 0.4);
+    Alcotest.(check (list (triple string string int)))
+      "beta's sweep reclaimed nothing alpha still owns"
+      [ "send_email", "completed", 1 ]
+      (rows pool))
+;;
+
 let test_missing_table_is_a_startup_error () =
   with_pool (fun env pool ->
     exec_sql pool "DROP TABLE IF EXISTS sol_jobs";
@@ -612,6 +646,10 @@ let () =
             "another workspace's rows are never claimed"
             `Quick
             test_another_workspace_rows_are_never_claimed
+        ; Alcotest.test_case
+            "a poller sweeps only its own terminal rows"
+            `Quick
+            test_a_poller_sweeps_only_its_own_terminal_rows
         ; Alcotest.test_case
             "enqueue refuses an undeclared kind"
             `Quick
