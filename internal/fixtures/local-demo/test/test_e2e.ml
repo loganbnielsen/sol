@@ -491,50 +491,49 @@ let run_golden_path () =
     match loki_url with
     | None -> None
     | Some url ->
-      let p = loki_port url in
-      let ts_ns =
-        Int64.to_string (Int64.of_float (Unix.gettimeofday () *. 1_000_000_000.))
+      let emitted =
+        Sol_obs.of_env
+          ~sw
+          ~net:env#net
+          ~clock:env#clock
+          ~mono_clock:env#mono_clock
+          ~service:"auth-read"
+          ~context:[ "workspace", "sol-e2e"; "domain", "e2e" ]
+          ()
       in
-      let body =
-        Printf.sprintf
-          {|{"streams":[{"stream":{"workspace":"sol-e2e","domain":"e2e","service":"auth-read"},"values":[[%S,%S]]}]}|}
-          ts_ns
-          "sol logs authenticated read e2e"
-      in
-      let pushed =
-        try http_post env ~sw ~port:p ~path:"/loki/api/v1/push" ~body () = 204 with
-        | _ -> false
-      in
-      if not pushed
-      then None
-      else (
-        let credentials =
-          match
-            Sol_cli_loki.resolve_credentials
-              ~flag_username:None
-              ~flag_password:None
-              ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-              ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
-          with
-          | Ok (Some c) -> Some c
-          | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
-          | Error msg -> failwith msg
-        in
+      Sol_obs.log_info emitted "sol logs authenticated read e2e";
+      Sol_obs.flush emitted;
+      let credentials =
         match
-          Sol_cli_loki.query
-            ~base_url:url
-            ~unit:
-              { Sol_cli_log_selector.workspace = "sol-e2e"
-              ; domain = "e2e"
-              ; service = "auth-read"
-              }
-            ?credentials
-            ~limit:5
-            ~timeout_s:5.0
-            ()
+          Sol_cli_loki.resolve_credentials
+            ~flag_username:None
+            ~flag_password:None
+            ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+            ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
         with
-        | Ok lines -> Some (List.length lines)
-        | Error _ -> Some 0)
+        | Ok (Some c) -> Some c
+        | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
+        | Error msg -> failwith msg
+      in
+      let unit =
+        { Sol_cli_log_selector.workspace = "sol-e2e"
+        ; domain = "e2e"
+        ; service = "auth-read"
+        }
+      in
+      let deadline = Eio.Time.now env#clock +. 10.0 in
+      let rec count_until_visible () =
+        match
+          Sol_cli_loki.query ~base_url:url ~unit ?credentials ~limit:5 ~timeout_s:5.0 ()
+        with
+        | Ok lines when lines <> [] -> List.length lines
+        | (Ok _ | Error _) when Eio.Time.now env#clock < deadline ->
+          Eio.Time.sleep env#clock 0.2;
+          count_until_visible ()
+        | Ok lines -> List.length lines
+        | Error _ -> 0
+      in
+      Some (count_until_visible ())
   in
   let db_rows =
     match db_pool with

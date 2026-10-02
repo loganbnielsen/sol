@@ -90,10 +90,19 @@ ticket's path is now `cli/test/inline/test_scaffold.ml`).
 - **`EPERM` at `bind()` is a reported host requirement.** `sol-obs`'s `with_mock_server` and
   `sol-worker`'s `/metrics` case now fail via `Windtrap.fail` naming the host requirement instead of
   printing `[skip]` and passing.
-- **The E2E class requires Loki.** The three Loki cases fail naming the dependency when the query
-  returns `None`, and the `Facts-to-jobs golden-path smoke` step starts Loki
-  (`platform/local/scripts/ensure-loki.sh`) before `dune build @ci-e2e`, so the class that claims
-  Loki is the class that has it. `run_tests.sh e2e` already provisions Loki.
+- **The E2E class requires Loki, through the production emission path.** The three Loki cases fail
+  naming the dependency when the query returns `None`, and the `Facts-to-jobs golden-path smoke`
+  step starts Loki (`platform/local/scripts/ensure-loki.sh`) before `dune build @ci-e2e`, so the
+  class that claims Loki is the class that has it. The first CI run with Loki up then failed the
+  `sol logs` case because its fixture was a hand-rolled `POST /loki/api/v1/push` that duplicated
+  `obs-loki-eio`'s production push. That push was rejected deterministically, not by a readiness
+  race: the same run's `Sol_obs` push succeeded (the `service="order-svc"` stream was queryable
+  before the manual push ran), the hand-rolled request is well-formed and parses a `204` against a
+  local mock, and `http_post` works for the `/orders` POST in the same suite. The fixture now emits
+  the line through `Sol_obs` — the boundary a real service uses — with the
+  `workspace`/`domain`/`service` labels the CLI selector reads, flushes the backend, and polls
+  `Sol_cli_loki.query` only for the bounded time Loki needs to make a flushed line visible.
+  `run_tests.sh e2e` already provisions Loki.
 - **The scaffolded schema gate's authoritative branch is exercised.** `test_scaffold_compiles` keeps
   the `CI=false` success run and adds a `CI=true`, `SCHEMA_REGISTRY_URL=""` run whose
   `dune runtest test` must fail; the assertion also checks the failure names
