@@ -131,6 +131,13 @@ jobs:
           dune build
 
           sol local infra up
+
+          # BUG-054: seed the workspace secrets before the deploy; ordinary
+          # deploy verifies them and never writes a value.
+          sol local secret set POSTGRES_URL \
+            --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+          sol local secret set SOL_API_KEY --value dev-internal-key
+
           sol up
 
           fn_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-ops$' | head -1)
