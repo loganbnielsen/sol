@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
-guard="$root/ci/check_test_reachability.py"
+here="$(cd "$(dirname "$0")" && pwd)"
+guard="$here/check_test_reachability.py"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

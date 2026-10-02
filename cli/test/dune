@@ -53,23 +53,23 @@
  (alias runtest)
  (deps
   print_readiness_invocations.exe
-  ../../internal/ci/check_readiness_invocations.sh)
+  ../../internal/ci/context/check_readiness_invocations.sh)
  (action
   (pipe-stdout
    (run %{dep:print_readiness_invocations.exe})
-   (run bash %{dep:../../internal/ci/check_readiness_invocations.sh}))))
+   (run bash %{dep:../../internal/ci/context/check_readiness_invocations.sh}))))
 
 (rule
  (alias runtest-lifecycle)
  (deps
   ../bin/main.exe
-  ../../internal/ci/test_cloud_lifecycle_offline.sh
+  ../../internal/ci/context/test_cloud_lifecycle_offline.sh
   ../../internal/ci/qualification_assertions.sh
   (source_tree ../../internal/ci/lifecycle_fakes))
  (action
   (run
    bash
-   %{dep:../../internal/ci/test_cloud_lifecycle_offline.sh}
+   %{dep:../../internal/ci/context/test_cloud_lifecycle_offline.sh}
    %{dep:../bin/main.exe})))
 
 (rule

@@ -9,7 +9,7 @@ fi
 STAGED_TICKETS="$(git diff --cached --name-only | grep -E '^(internal/)?pipeline/tickets/' || true)"
 if [ -n "$STAGED_TICKETS" ]; then
   TICKET_STATUS="$(git diff --cached --name-status -M10% -- pipeline/tickets/ internal/pipeline/tickets/)"
-  if ! REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | "$(git rev-parse --show-toplevel)/internal/ci/check_ticket_transitions.sh")"; then
+  if ! REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | "$(git rev-parse --show-toplevel)/internal/ci/context/check_ticket_transitions.sh")"; then
     echo ""
     echo "✗ Invalid pipeline ticket state change."
     printf '%s\n' "$REFUSAL"

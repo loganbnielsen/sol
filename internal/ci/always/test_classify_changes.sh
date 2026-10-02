@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 set -uo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
+CI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$CI/lib/scratch_repo.sh"
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLASSIFY="$HERE/classify-changes.sh"
+CLASSIFY="$CI/classify-changes.sh"
 
 FAILURES=0
 TOTAL=0

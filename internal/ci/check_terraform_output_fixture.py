@@ -36,7 +36,7 @@ def fixture_problems(payload):
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     fixture = root / FIXTURE
-    harness = root / "internal/ci/test_cloud_lifecycle_offline.sh"
+    harness = root / "internal/ci/context/test_cloud_lifecycle_offline.sh"
     stub = root / "internal/ci/lifecycle_fakes/terraform"
     parser = root / "cli/lib/cloud/sol_cli_gcp_cluster.ml"
     for path in (fixture, harness, stub, parser):

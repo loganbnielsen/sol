@@ -28,7 +28,7 @@ fixed number of levels.
 | Module | Model | Reason |
 |---|---|---|
 | `print_providers.ml` | explicit executable | its stdout is the input to the internal provider-inventory check, so it must be the process under test with its own `argv` |
-| `print_readiness_invocations.ml` | explicit executable | its stdout is piped to `internal/ci/check_readiness_invocations.sh`, so it must be the process under test with its own `argv` |
+| `print_readiness_invocations.ml` | explicit executable | its stdout is piped to `internal/ci/context/check_readiness_invocations.sh`, so it must be the process under test with its own `argv` |
 | `test_alert_test.ml` | inline |  |
 | `test_alerting.ml` | inline |  |
 | `test_aws_absence.ml` | inline |  |

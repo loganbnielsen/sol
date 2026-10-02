@@ -4,8 +4,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-GUARD = REPO / "internal/ci/check_framework_doc_signatures.py"
+REPO = Path(__file__).resolve().parents[3]
+GUARD = REPO / "internal/ci/always/check_framework_doc_signatures.py"
 SVC = "framework/ocaml/sol-svc/sol-svc.md"
 KAFKA = "framework/ocaml/kafka-eio-service/kafka-eio-service.md"
 

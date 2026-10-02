@@ -4,7 +4,7 @@
 # that is `examples/pluto/sol/environments.local.yml` — and replace every
 # placeholder (FEAT-100: a qualification target is a whole environment in the
 # gitignored local file). It must stay **untracked**:
-# `internal/ci/check_no_account_artifacts.sh` fails on a tracked
+# `internal/ci/always/check_no_account_artifacts.sh` fails on a tracked
 # `sol/environments.local.yml` (and on any tracked `sol/qual*/` path), because a real
 # qualification target carries a real account, registry and role ARNs, and
 # HARDEN-002 run 2 is the incident where one was committed and had to be removed.
