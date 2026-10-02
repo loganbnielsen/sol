@@ -1,6 +1,7 @@
 let () =
   Sol_cli_report.install_terminal ();
   Sol_cli_supervised.dispatch_if_supervisor ();
+  Sol_cli_port_forward.dispatch_if_supervisor ();
   let cmd =
     Cmdliner.Cmd.group
       (Cmdliner.Cmd.info

@@ -329,6 +329,16 @@ let stop { pid } =
   | Unix.Unix_error _ -> ()
 ;;
 
+let join { pid } =
+  let rec wait () =
+    match Unix.waitpid [] pid with
+    | _, _ -> ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+    | exception Unix.Unix_error _ -> ()
+  in
+  wait ()
+;;
+
 let failure_message { exit_code; stdout; stderr } =
   match String.trim stderr, String.trim stdout with
   | "", "" -> Printf.sprintf "exited with code %d" exit_code

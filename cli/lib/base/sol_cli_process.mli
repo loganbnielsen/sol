@@ -34,6 +34,7 @@ val run : ?echo:bool -> cmd -> (output, error) result
 
 type background
 
+val join : background -> unit
 val spawn : ?output:Unix.file_descr -> cmd -> (background, error) result
 val pid : background -> int
 val stop : background -> unit

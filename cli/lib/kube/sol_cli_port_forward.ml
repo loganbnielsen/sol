@@ -74,9 +74,24 @@ let records () =
 ;;
 
 let is_running name =
-  Result.is_error
-    (Sol_cli_process.run
-       (Sol_cli_process.cmd [ "flock"; "-n"; Sol_cli_state.lock_file name; "true" ]))
+  match
+    Unix.openfile (Sol_cli_state.lock_file name) [ Unix.O_RDWR; Unix.O_CREAT ] 0o600
+  with
+  | exception Unix.Unix_error _ -> false
+  | fd ->
+    Fun.protect
+      ~finally:(fun () ->
+        try Unix.close fd with
+        | Unix.Unix_error _ -> ())
+      (fun () ->
+         match Unix.lockf fd Unix.F_TLOCK 0 with
+         | () ->
+           (match Unix.lockf fd Unix.F_ULOCK 0 with
+            | () -> ()
+            | exception Unix.Unix_error _ -> ());
+           false
+         | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) -> true
+         | exception Unix.Unix_error _ -> false)
 ;;
 
 let read_pid name =
@@ -108,68 +123,129 @@ let stop_all () =
 ;;
 
 let max_fail_streak = 30
-let quick_fail_threshold_s = 5
+let quick_fail_threshold_s = 5.
 
-let wrapper_script ~ctx (pf : spec) =
-  let lf = Filename.quote (Sol_cli_state.log_file pf.name) in
-  let context_name = ctx.Sol_cli_kube_destination.destination.context in
-  let kubectl_invocation =
-    Printf.sprintf
-      "kubectl --context %s port-forward -n %s %s %d:%d"
-      (Filename.quote context_name)
-      (Filename.quote pf.namespace)
-      (Filename.quote pf.target)
-      pf.local_port
-      pf.remote_port
-  in
-  [ "#!/bin/sh"
-  ; Printf.sprintf "exec 9>%s" (Filename.quote (Sol_cli_state.lock_file pf.name))
-  ; Printf.sprintf
-      "flock -w 2 9 || { echo \"[sol port-forward] %s is already running; not starting a \
-       second\" >> %s; exit 0; }"
-      pf.name
-      lf
-  ; Printf.sprintf "echo $$ > %s" (Filename.quote (Sol_cli_state.pid_file pf.name))
-  ; "fails=0"
-  ; Printf.sprintf "max_fails=%d" max_fail_streak
-  ; "while true; do"
-  ; "  t0=$(date +%s)"
-  ; Printf.sprintf "  %s </dev/null >> %s 2>&1" kubectl_invocation lf
-  ; "  t1=$(date +%s)"
-  ; Printf.sprintf "  if [ $((t1 - t0)) -lt %d ]; then" quick_fail_threshold_s
-  ; "    fails=$((fails + 1))"
-  ; "  else"
-  ; "    fails=0"
-  ; "  fi"
-  ; "  if [ \"$fails\" -ge \"$max_fails\" ]; then"
-  ; Printf.sprintf
-      "    echo \"[sol port-forward] giving up after $max_fails consecutive failed \
-       attempts (pinned context %s unreachable or gone)\" >> %s"
-      context_name
-      lf
-  ; "    exit 1"
-  ; "  fi"
-  ; "  sleep 1"
-  ; "done"
-  ; ""
-  ]
-  |> String.concat "\n"
+let next_fail_streak ~streak ~elapsed_s =
+  if elapsed_s < quick_fail_threshold_s then streak + 1 else 0
 ;;
 
-let start ~ctx (pf : spec) =
+let exhausted streak = streak >= max_fail_streak
+
+let kubectl_argv ~context (pf : spec) =
+  [ "kubectl"
+  ; "--context"
+  ; context
+  ; "port-forward"
+  ; "-n"
+  ; pf.namespace
+  ; pf.target
+  ; Printf.sprintf "%d:%d" pf.local_port pf.remote_port
+  ]
+;;
+
+let run_kubectl ~context (pf : spec) =
+  match
+    Sol_cli_process.spawn
+      ~output:Unix.stdout
+      (Sol_cli_process.cmd (kubectl_argv ~context pf))
+  with
+  | Ok background -> Sol_cli_process.join background
+  | Error _ -> ()
+;;
+
+let already_running_message name =
+  Printf.sprintf "[sol port-forward] %s is already running; not starting a second" name
+;;
+
+let give_up_message ~context =
+  Printf.sprintf
+    "[sol port-forward] giving up after %d consecutive failed attempts (pinned context \
+     %s unreachable or gone)"
+    max_fail_streak
+    context
+;;
+
+let rec acquire_lock fd remaining =
+  match Unix.lockf fd Unix.F_TLOCK 0 with
+  | () -> true
+  | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) when remaining > 0 ->
+    Unix.sleepf 0.1;
+    acquire_lock fd (remaining - 1)
+  | exception Unix.Unix_error _ -> false
+;;
+
+let supervise ~name ~context =
+  match read_record (Sol_cli_state.record_file name) with
+  | Error why ->
+    Sol_cli_report.err "[sol port-forward] %s: %s" name why;
+    exit 2
+  | Ok pf ->
+    let lock =
+      Unix.openfile (Sol_cli_state.lock_file name) [ Unix.O_RDWR; Unix.O_CREAT ] 0o600
+    in
+    if not (acquire_lock lock 20)
+    then (
+      Sol_cli_report.err "%s" (already_running_message name);
+      exit 0);
+    write_file (Sol_cli_state.pid_file name) (string_of_int (Unix.getpid ()))
+    |> Result.iter_error (fun why ->
+      Sol_cli_report.err "[sol port-forward] %s: %s" name why);
+    let rec loop streak =
+      let started = Unix.gettimeofday () in
+      run_kubectl ~context pf;
+      let streak =
+        next_fail_streak ~streak ~elapsed_s:(Unix.gettimeofday () -. started)
+      in
+      if exhausted streak
+      then (
+        Sol_cli_report.err "%s" (give_up_message ~context);
+        exit 1)
+      else (
+        Unix.sleepf 1.;
+        loop streak)
+    in
+    loop 0
+;;
+
+let dispatch_if_supervisor () =
+  match Array.to_list Sys.argv with
+  | _ :: "__port-forward" :: name :: context :: _ ->
+    (try supervise ~name ~context with
+     | e ->
+       Sol_cli_report.err "sol __port-forward: %s" (Printexc.to_string e);
+       exit 125)
+  | _ -> ()
+;;
+
+let start ?(supervisor = Sys.executable_name) ~ctx (pf : spec) =
   let* () = Sol_cli_state.ensure () in
-  let script = Sol_cli_state.script_file pf.name in
   let* () = write_record pf in
-  let* () = write_file script (wrapper_script ~ctx pf) in
-  let* () =
-    match Unix.chmod script 0o755 with
-    | () -> Ok ()
-    | exception Unix.Unix_error (e, _, _) -> Error (script ^ ": " ^ Unix.error_message e)
-  in
-  Sol_cli_process.run_shell
-    (Printf.sprintf "setsid %s </dev/null >/dev/null 2>&1 &" (Filename.quote script))
-  |> Result.map ignore
-  |> Result.map_error Sol_cli_process.error_to_string
+  let context = ctx.Sol_cli_kube_destination.destination.context in
+  flush_all ();
+  match Unix.fork () with
+  | 0 ->
+    (try
+       ignore (Unix.setsid ());
+       let devnull = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
+       let log =
+         Unix.openfile
+           (Sol_cli_state.log_file pf.name)
+           [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND ]
+           0o600
+       in
+       Unix.dup2 devnull Unix.stdin;
+       Unix.dup2 log Unix.stdout;
+       Unix.dup2 log Unix.stderr;
+       Unix.close devnull;
+       Unix.close log;
+       Unix.execve
+         supervisor
+         (Array.of_list [ supervisor; "__port-forward"; pf.name; context ])
+         (Unix.environment ())
+     with
+     | _ -> Unix._exit 127)
+  | _ -> Ok ()
+  | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
 ;;
 
 type liveness =
