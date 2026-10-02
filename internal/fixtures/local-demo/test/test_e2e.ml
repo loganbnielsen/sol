@@ -162,43 +162,10 @@ let truncate_tables pool tables =
   | Error _ -> ()
 ;;
 
-let fixture_ddl =
-  [ "CREATE TABLE IF NOT EXISTS fulfilled_orders (order_id TEXT PRIMARY KEY, item TEXT \
-     NOT NULL, quantity INT NOT NULL, correlation_id TEXT NOT NULL, fulfilled_at \
-     TIMESTAMPTZ NOT NULL DEFAULT now())"
-  ; "CREATE TABLE IF NOT EXISTS sol_jobs (id SERIAL PRIMARY KEY, workspace TEXT NOT \
-     NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT \
-     'pending', attempts INT NOT NULL DEFAULT 0, run_at TIMESTAMPTZ NOT NULL DEFAULT \
-     now(), locked_until TIMESTAMPTZ, last_error TEXT, inserted_at TIMESTAMPTZ NOT NULL \
-     DEFAULT now())"
-  ; "ALTER TABLE sol_jobs ADD COLUMN IF NOT EXISTS dedupe_key TEXT"
-  ; "ALTER TABLE sol_jobs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ"
-  ; "CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, \
-     dedupe_key) WHERE dedupe_key IS NOT NULL"
-  ; "CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx ON sol_jobs (finished_at) WHERE \
-     status <> 'pending'"
-  ; "CREATE TABLE IF NOT EXISTS sol_outbox (id BIGSERIAL PRIMARY KEY, kind TEXT NOT \
-     NULL, aggregate_key TEXT NOT NULL, ord BIGINT NOT NULL, payload TEXT NOT NULL, \
-     created_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-  ; "CREATE UNIQUE INDEX IF NOT EXISTS sol_outbox_key_ord_idx ON sol_outbox \
-     (aggregate_key, ord)"
-  ; "CREATE TABLE IF NOT EXISTS outbox_e2e_domain (id TEXT PRIMARY KEY, seq INT NOT NULL)"
-  ; "CREATE TABLE IF NOT EXISTS outbox_e2e_effects (effect_id TEXT PRIMARY KEY)"
-  ]
-;;
-
-let ensure_schema pool =
-  List.iter
-    (fun sql ->
-       match
-         Pg_db.exec
-           pool
-           (Caqti_request.Infix.(Caqti_type.unit ->. Caqti_type.unit) sql)
-           ()
-       with
-       | Ok () -> ()
-       | Error e -> failwith (Printf.sprintf "schema %s: %s" sql (Pg_error.to_string e)))
-    fixture_ddl
+let ensure_schema ~fs pool =
+  match Migration.apply pool ~fs ~dir:"../migrations" with
+  | Ok () -> ()
+  | Error e -> failwith (Printf.sprintf "migrations: %s" (Pg_error.to_string e))
 ;;
 
 let run_golden_path () =
@@ -267,7 +234,7 @@ let run_golden_path () =
       (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
        | Error _ -> None
        | Ok pool ->
-         ensure_schema pool;
+         ensure_schema ~fs:env#fs pool;
          truncate_tables pool [ "fulfilled_orders"; "sol_jobs" ];
          Some pool)
   in
@@ -758,7 +725,7 @@ let run_outbox_path () =
       | Ok () -> ()
       | Error e -> if force_rollback then ignore e else failwith (Pg_error.to_string e)
     in
-    ensure_schema pool;
+    ensure_schema ~fs:env#fs pool;
     truncate_tables
       pool
       [ "sol_outbox"; "outbox_e2e_domain"; "outbox_e2e_effects"; "sol_jobs" ];

@@ -1,5 +1,7 @@
 (tests
  (names test_e2e)
+ (deps
+  (source_tree ../migrations))
  (libraries
   demo_events
   eio
