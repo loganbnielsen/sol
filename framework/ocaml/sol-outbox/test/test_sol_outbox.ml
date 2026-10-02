@@ -8,9 +8,17 @@ let postgres_url () =
   | _ -> None
 ;;
 
+let test_schema = "sol_test_sol_outbox"
+
+let schema_setup =
+  [ "DROP SCHEMA IF EXISTS " ^ test_schema ^ " CASCADE"
+  ; "CREATE SCHEMA " ^ test_schema
+  ; "SET search_path TO " ^ test_schema
+  ]
+;;
+
 let ddl =
-  [ "DROP TABLE IF EXISTS sol_outbox"
-  ; "CREATE TABLE sol_outbox (\n\
+  [ "CREATE TABLE sol_outbox (\n\
     \  id BIGSERIAL PRIMARY KEY,\n\
     \  kind TEXT NOT NULL,\n\
     \  aggregate_key TEXT NOT NULL,\n\
@@ -22,8 +30,7 @@ let ddl =
 ;;
 
 let jobs_ddl =
-  [ "DROP TABLE IF EXISTS sol_jobs"
-  ; "CREATE TABLE sol_jobs (\n\
+  [ "CREATE TABLE sol_jobs (\n\
     \  id SERIAL PRIMARY KEY,\n\
     \  workspace TEXT NOT NULL,\n\
     \  kind TEXT NOT NULL,\n\
@@ -59,9 +66,13 @@ let with_pool f =
     @@ fun env ->
     Eio.Switch.run
     @@ fun sw ->
-    (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
+    (match
+       Pg_db.create_pool ~url ~pool_size:1 ~sw ~stdenv:(env :> Caqti_eio.stdenv) ()
+     with
      | Error e -> Windtrap.failf "pool: %s" (Pg_error.to_string e)
-     | Ok pool -> f env sw pool)
+     | Ok pool ->
+       List.iter (exec_sql pool) schema_setup;
+       f env sw pool)
 ;;
 
 module Ev = struct
