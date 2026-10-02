@@ -31,15 +31,6 @@ val of_plan_with_boundary
 val workload_of_spec : Sol_cli_deployment_plan.service_spec -> workload
 val applied_by : string -> workload -> recorded_workload
 val workload_identity : recorded_workload -> workload
-
-val boundary_id
-  :  workspace:string
-  -> environment:string option
-  -> deployed:workload list
-  -> inherited:(workload * string) list
-  -> string
-
-val partition_boundary : t -> recorded_workload list * recorded_workload list
 val derived_release_id : t -> Sol_cli_release_id.t
 val validate : name:string -> t -> (unit, string) result
 val to_json : t -> Yojson.Safe.t

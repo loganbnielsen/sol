@@ -43,6 +43,7 @@ let deployment_mode_to_string (m : Sol_cli_deployment_plan.deployment_mode) =
 ;;
 
 let of_plan
+      ?release_id
       ~(deployment_id : Sol_cli_deployment_id.t)
       ~(now : float)
       ~(git_commit : string)
@@ -54,7 +55,7 @@ let of_plan
   : t
   =
   { deployment_id
-  ; release_id = plan.release_id
+  ; release_id = Option.value release_id ~default:plan.release_id
   ; workspace = plan.workspace
   ; environment = plan.environment.Sol_cli_deployment_plan.env
   ; created_at = rfc3339_utc now

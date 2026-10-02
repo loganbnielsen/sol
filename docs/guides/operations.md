@@ -94,6 +94,16 @@ sol rollback r-1a2b3c4d5e6f7890                 # restore that release
 sol rollback --commit 4f2a1c9                    # the release that commit deployed
 ```
 
+For a scoped update, deploy one unit and resolve its complete release by commit:
+
+```bash
+sol deploy prod/aws/us-east-1 --scope payments/charge_svc --image-tag "$GIT_SHA" --registry "$REGISTRY"
+sol rollback --commit "$GIT_SHA" --scope payments/charge_svc
+```
+
+The release still includes untouched units. Each unit keeps the provenance of the
+deploy that last changed it, while the release id identifies the complete workload set.
+
 `sol rollback` refuses to guess. `--commit` lists the candidate releases and refuses when
 more than one matches; `--scope` narrows which of a commit's releases to resolve and never
 means "restore part of a release" — a release's workload set is always restored whole. If

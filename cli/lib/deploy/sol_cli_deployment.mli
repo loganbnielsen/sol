@@ -21,7 +21,8 @@ type t =
 val rfc3339_utc : float -> string
 
 val of_plan
-  :  deployment_id:Sol_cli_deployment_id.t
+  :  ?release_id:Sol_cli_release_id.t
+  -> deployment_id:Sol_cli_deployment_id.t
   -> now:float
   -> git_commit:string
   -> git_dirty:bool

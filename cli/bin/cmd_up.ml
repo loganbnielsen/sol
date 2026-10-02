@@ -386,31 +386,42 @@ let run_apply
       ; apply =
           (fun lease retained ->
             let previous = read_previous_release ~workspace in
+            let boundary =
+              Sol_cli_release.of_plan_with_boundary
+                ~apply_mode:Sol_cli_release.Direct
+                ~retained
+                plan
+            in
+            let* release_id = Sol_cli_release_id.of_string boundary.release_id in
             let attempt = Sol_cli_deployment_attempt.start () in
             let applied =
               apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
+            in
+            let completed =
+              let* () = applied in
+              Sol_cli_release.finish_deployment
+                ~record_release:(fun () ->
+                  let* () = Sol_cli_boundary_lease.ensure_held lease in
+                  let* () =
+                    record_release_and_prune
+                      ~workspace
+                      ~keep:keep_releases
+                      ~previous
+                      ~retained
+                      plan
+                  in
+                  Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
+                ~report_success:(fun () -> report_apply_success ~workspace ~facts plan)
             in
             ignore
               (Sol_cli_deployment_attempt.record
                  ~ctx:cluster
                  ~target:(Some "local")
+                 ~release_id
                  plan
                  attempt
-                 (Sol_cli_deployment_attempt.outcome_of applied));
-            let* () = applied in
-            Sol_cli_release.finish_deployment
-              ~record_release:(fun () ->
-                let* () = Sol_cli_boundary_lease.ensure_held lease in
-                let* () =
-                  record_release_and_prune
-                    ~workspace
-                    ~keep:keep_releases
-                    ~previous
-                    ~retained
-                    plan
-                in
-                Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
-              ~report_success:(fun () -> report_apply_success ~workspace ~facts plan))
+                 (Sol_cli_deployment_attempt.outcome_of completed));
+            completed)
       }
   in
   Result.map_error run_failed

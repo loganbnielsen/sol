@@ -116,7 +116,9 @@ let of_plan_with_boundary
   { release_id
   ; workspace = plan.workspace
   ; environment = plan.environment.env
-  ; workloads = List.map (applied_by release_id) deployed @ inherited
+  ; workloads =
+      List.map (applied_by (Sol_cli_release_id.to_string plan.release_id)) deployed
+      @ inherited
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   ; apply_mode
   }
@@ -126,19 +128,11 @@ let of_plan ~(apply_mode : apply_mode) (plan : Sol_cli_deployment_plan.t) : t =
   of_plan_with_boundary ~apply_mode ~retained:[] plan
 ;;
 
-let partition_boundary (t : t) =
-  List.partition
-    (fun (w : recorded_workload) -> String.equal w.applied_by t.release_id)
-    t.workloads
-;;
-
 let derived_release_id (t : t) : Sol_cli_release_id.t =
-  let deployed, inherited = partition_boundary t in
-  Sol_cli_release_id.of_boundary
+  Sol_cli_release_id.of_recorded_boundary
     ~workspace:t.workspace
     ~environment:t.environment
-    ~deployed:(List.map workload_identity deployed)
-    ~inherited:(List.map (fun w -> w.Sol_cli_release_id.spec, w.applied_by) inherited)
+    t.workloads
 ;;
 
 let validate ~(name : string) (t : t) : (unit, string) result =

@@ -44,6 +44,12 @@ val of_boundary
   -> inherited:(workload * string) list
   -> t
 
+val of_recorded_boundary
+  :  workspace:string
+  -> environment:string option
+  -> recorded_workload list
+  -> t
+
 val to_string : t -> string
 val of_string : string -> (t, string) result
 val canonical_string : content -> string
