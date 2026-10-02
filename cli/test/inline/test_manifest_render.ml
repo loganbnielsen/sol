@@ -2128,14 +2128,18 @@ let test_undeclared_language_readiness_stays_on_healthz () =
     (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
 ;;
 
-let test_ts_svc_readiness_stays_on_healthz () =
+let test_ts_svc_readiness_uses_readyz () =
   let _, workload =
     render_spec_ok { svc_spec with language = Some Sol_cli_compat.Typescript }
   in
   check_bool
-    "TypeScript readinessProbe path is /healthz"
+    "TypeScript readinessProbe path is /readyz"
     true
-    (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
+    (contains workload "readinessProbe:\n          httpGet:\n            path: /readyz");
+  check_bool
+    "TypeScript livenessProbe path is /healthz"
+    true
+    (contains workload "livenessProbe:\n          httpGet:\n            path: /healthz")
 ;;
 
 let parse_documents text =
@@ -2362,8 +2366,8 @@ let%test "svc readiness (INFRA-073): readiness uses /readyz" =
   test_svc_readiness_probe_uses_readyz ()
 ;;
 
-let%test "svc readiness (INFRA-073): TypeScript stays on /healthz" =
-  test_ts_svc_readiness_stays_on_healthz ()
+let%test "svc readiness (INFRA-073): TypeScript uses /readyz" =
+  test_ts_svc_readiness_uses_readyz ()
 ;;
 
 let%test "svc readiness (INFRA-073): undeclared language stays on /healthz" =

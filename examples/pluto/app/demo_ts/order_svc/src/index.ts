@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 
 import { kafkaConfigFromEnv, registerTopic, publish, type TopicContract } from "@sol-fab/kafka";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
-import { runService } from "@sol-fab/svc";
+import { runService, type ServiceLifecycle } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
@@ -91,6 +91,8 @@ async function main() {
 
   const app = Fastify({ logger: false });
 
+  let lifecycle: ServiceLifecycle | undefined;
+
   app.addHook("onResponse", async (req, reply) => {
     const route = routeLabel(req.routeOptions?.url);
     const statusClass = statusClassOf(reply.statusCode);
@@ -109,6 +111,10 @@ async function main() {
   });
 
   app.get("/healthz", async () => ({ status: "ok" }));
+  app.get("/readyz", async (_req, reply) => {
+    if (lifecycle?.isReady() ?? true) return { status: "ready" };
+    return reply.code(503).send({ status: "shutting down" });
+  });
   app.get("/metrics", async (_req, reply) => {
     reply.header("content-type", metricsRegister.contentType);
     return metricsRegister.metrics();
@@ -184,7 +190,7 @@ async function main() {
       }, 3000)
     : undefined;
 
-  runService({
+  lifecycle = runService({
     drain: () => app.close(),
     onDrainStart: () => {
       console.log("[order-svc-ts] draining...");
