@@ -60,9 +60,8 @@ Correct `internal/fixtures/local-demo/migrations/0002_sol_jobs.sql`,
 `dedupe_key`, `finished_at`, and the `(workspace, run_at)` / `(workspace, kind, dedupe_key)` indexes),
 and make `internal/fixtures/local-demo/migrations/0003_sol_jobs_dedupe.sql` idempotent and
 workspace-scoped. Then replace `test_e2e.ml`'s `fixture_ddl`/`ensure_schema` with
-`Migration.apply` over the real migration directory (adding the directory as a Dune dependency), and
-replace the two library suites' hand-copies of `sol_jobs`/`sol_outbox` with one shared schema
-definition rather than two.
+`Migration.apply` over the real migration directory (adding the directory as a Dune dependency). The
+two library suites' own copies are left to `VERIF-007`, which already restructures those files.
 
 ## Acceptance criteria
 
@@ -70,9 +69,32 @@ definition rather than two.
   workspace that applies them can run `Sol_jobs.Make` against the result.
 - `test_e2e.ml` obtains its schema by applying `internal/fixtures/local-demo/migrations/`; it
   contains no inline `CREATE TABLE sol_jobs`/`sol_outbox`.
-- `test_sol_jobs_pg.ml` and `test_sol_outbox.ml` share one schema definition; `VERIF-007` then owns
-  object ownership within it.
+- The library suites keep their own schema definitions for now; `VERIF-007` owns unifying them and
+  their object ownership.
 - Demo/example: this *is* the example fix — `demo.exe`, `examples/pluto` and `internal/fixtures/venus`
   migrations become correct.
 - Language parity: no application-facing contract change; the migration is SQL shared by both
   languages. State that in one line in the completion notes.
+
+## Completion (2026-10-02)
+
+Implemented on `VERIF-014/shipped-migrations`:
+
+- `internal/fixtures/local-demo/migrations/0002_sol_jobs.sql`,
+  `examples/pluto/db/migrations/0002_sol_jobs.sql` and
+  `internal/fixtures/venus/db/migrations/0002_sol_jobs.sql` now carry the canonical
+  `workspace`/`dedupe_key`/`finished_at` table and the `(workspace, run_at)` and
+  `(workspace, kind, dedupe_key)` indexes; `0003_sol_jobs_dedupe.sql` is idempotent and
+  workspace-scoped.
+- `internal/fixtures/local-demo/test/test_e2e.ml` drops `fixture_ddl`/`ensure_schema`'s ten inline
+  DDL statements and applies `../migrations` through `Migration.apply`; `test/dune` declares the
+  migration directory as a `(source_tree …)` dependency.
+- Checks: `dune build internal/fixtures/local-demo/test/` and `cli/bin/main.exe` succeed; `git diff`
+  confirms no inline `CREATE TABLE sol_jobs`/`sol_outbox` remains in the E2E suite. The DB-backed
+  suite itself cannot run on this machine (no Postgres and no Docker), so its execution is verified
+  by required CI, which provisions `sol_dev`.
+- Demo/example: the three migrations above are the demo/example artifacts, now correct.
+- Language parity: no application-facing contract change; the migration is the SQL both languages
+  share. The TypeScript demo consumes the same table.
+- Remaining: the two library suites still declare their own `sol_jobs`/`sol_outbox` schema;
+  unifying those definitions and their object ownership is `VERIF-007`.

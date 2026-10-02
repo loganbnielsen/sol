@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS sol_jobs (
   id           SERIAL      PRIMARY KEY,
+  workspace    TEXT        NOT NULL,
   kind         TEXT        NOT NULL,
   payload      TEXT        NOT NULL,
   status       TEXT        NOT NULL DEFAULT 'pending',
@@ -13,11 +14,11 @@ CREATE TABLE IF NOT EXISTS sol_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS sol_jobs_claim_idx
-  ON sol_jobs (run_at)
+  ON sol_jobs (workspace, run_at)
   WHERE status = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
-  ON sol_jobs (kind, dedupe_key)
+  ON sol_jobs (workspace, kind, dedupe_key)
   WHERE dedupe_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx
