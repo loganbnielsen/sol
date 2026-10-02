@@ -13,7 +13,6 @@ type post_deploy_summary =
   }
 
 val push_registry : string
-val build_context_dir : repo_root:string -> string
 
 val local_plan
   :  requested_scope:string
@@ -39,8 +38,6 @@ val dry_run_spec
   -> Sol_cli_deployment_plan.service_spec
   -> Sol_cli_deployment_plan.service_spec
 
-val prepare_build_context : repo_root:string -> (string, string) result
-val remove_build_context : ctx_dir:string -> unit
 val build_image : service_execution -> (unit, string) result
 val push_image : service_execution -> (unit, string) result
 

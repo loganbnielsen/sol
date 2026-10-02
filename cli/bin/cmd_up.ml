@@ -35,11 +35,6 @@ let ensure_postgres_url () =
   | Some _ -> ()
 ;;
 
-let prepare_context ~repo_root =
-  Printf.printf "Preparing build context...\n%!";
-  Sol_cli_up_execution.prepare_build_context ~repo_root
-;;
-
 let to_manifest_primitive = Sol_cli_up_execution.manifest_primitive
 
 let print_service_start spec =
@@ -276,24 +271,19 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
           ~mode:Sol_cli_contract.Apply
       else Ok ()
     in
-    let* ctx_dir = prepare_context ~repo_root in
-    let applied =
-      plan.services
-      |> List.fold_left
-           (fun acc spec ->
-              let* () = acc in
-              let* () = Sol_cli_boundary_lease.ensure_held lease in
-              apply_service
-                ~workspace
-                ~ctx_dir
-                ~sha
-                ~pf_failed
-                ~release_id:plan.Sol_cli_deployment_plan.release_id
-                spec)
-           (Ok ())
-    in
-    Sol_cli_up_execution.remove_build_context ~ctx_dir;
-    applied)
+    plan.services
+    |> List.fold_left
+         (fun acc spec ->
+            let* () = acc in
+            let* () = Sol_cli_boundary_lease.ensure_held lease in
+            apply_service
+              ~workspace
+              ~ctx_dir:repo_root
+              ~sha
+              ~pf_failed
+              ~release_id:plan.Sol_cli_deployment_plan.release_id
+              spec)
+         (Ok ()))
 ;;
 
 let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =

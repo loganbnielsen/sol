@@ -13,7 +13,6 @@ type post_deploy_summary =
   }
 
 let push_registry = "localhost:5000"
-let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
 let local_plan ~requested_scope ~workspace ~sha ~facts ~declared services =
   let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
@@ -58,26 +57,6 @@ let service_execution
 
 let dry_run_spec ~workspace ~sha spec =
   { spec with Sol_cli_deployment_plan.image = push_image_ref ~workspace ~sha spec }
-;;
-
-let prepare_build_context ~repo_root =
-  let open Result.Syntax in
-  let ctx_dir = build_context_dir ~repo_root in
-  let failed reason =
-    Printf.sprintf "failed to copy workspace for docker build context: %s" reason
-  in
-  let* () = Sol_cli_fs.remove_tree ctx_dir |> Result.map_error failed in
-  let* () =
-    Sol_cli_fs.copy_tree ~exclude:[ "_build"; ".git" ] ~src:repo_root ~dst:ctx_dir
-    |> Result.map_error failed
-  in
-  Ok ctx_dir
-;;
-
-let remove_build_context ~ctx_dir =
-  Sol_cli_fs.remove_tree ctx_dir
-  |> Result.iter_error
-       (Sol_cli_report.warn "warning: could not remove the build context: %s")
 ;;
 
 let build_image exec =
