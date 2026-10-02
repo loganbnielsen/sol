@@ -211,21 +211,22 @@ let test_push_uses_env_url_and_workload_job () =
 ;;
 
 let test_lambda_trigger_requires_runtime_api () =
-  if Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" <> None
-  then
-    Printf.printf
-      "[skip] AWS_LAMBDA_RUNTIME_API is set in this environment — skipping\n%!"
-  else
+  match Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" with
+  | Some _ ->
+    Alcotest.fail
+      "AWS_LAMBDA_RUNTIME_API is set, so this case cannot establish that a Lambda \
+       trigger fails closed without it; unset the variable for this run"
+  | None ->
     Eio_main.run
     @@ fun env ->
     let module M = Fn.Make (Lambda_fn) in
-    match M.run ~env () with
-    | Error (`Config msg) ->
-      Alcotest.(check bool)
-        "reports missing runtime api"
-        true
-        (contains "AWS_LAMBDA_RUNTIME_API is not set" msg)
-    | _ -> Alcotest.fail "expected config error"
+    (match M.run ~env () with
+     | Error (`Config msg) ->
+       Alcotest.(check bool)
+         "reports missing runtime api"
+         true
+         (contains "AWS_LAMBDA_RUNTIME_API is not set" msg)
+     | _ -> Alcotest.fail "expected config error")
 ;;
 
 let () =

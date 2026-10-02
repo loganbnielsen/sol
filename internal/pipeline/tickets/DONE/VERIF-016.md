@@ -35,7 +35,11 @@ resembles Lambda — the case prints a line and returns, and the suite is still 
 passing run and cannot tell that the one negative path this case exists for was not exercised.
 Unlike the `EPERM` skips (`framework/ocaml/sol-obs/test/test_sol_obs.ml:17-18`,
 `framework/ocaml/sol-worker/test/test_worker.ml:243-246`, owned by `VERIF-006`), the missing input
-here is a variable the test can control, so the skip is avoidable rather than environmental.
+here is a single environment variable. It cannot be *unset* from OCaml — `Unix` exposes
+`getenv`/`putenv`/`environment` but no `unsetenv` (verified: compiling `Unix.unsetenv "X"` against
+this switch's `unix.mli` is `Error: Unbound value Unix.unsetenv`) — so the case cannot create the
+condition it needs. That is exactly why it must fail rather than pass when it cannot: the current
+`[skip]` reports the opposite of what happened.
 
 ## Desired invariant
 
@@ -44,13 +48,25 @@ distinct, visible, non-passing outcome, or the case sets up the condition it nee
 
 ## Remediation
 
-Add an `unset_env` sibling to the existing `with_env` helper and run the case with
-`AWS_LAMBDA_RUNTIME_API` removed for its duration, so it exercises its claim on every host.
+Because `AWS_LAMBDA_RUNTIME_API` cannot be unset from OCaml, make the case fail closed: when the
+variable is set, `Alcotest.fail` naming the precondition; when it is unset, run the assertion.
+Setting it to `""` is not equivalent — `lambda-eio`'s `runtime_api_base` accepts `Some ""` as a
+usable base, so an empty value reaches a different branch.
 
 ## Acceptance criteria
 
-- `test_lambda_trigger_requires_runtime_api` runs and asserts on a host where
-  `AWS_LAMBDA_RUNTIME_API` is set; it no longer prints `[skip]` and returns.
-- No unit case chooses to skip on an environment variable it could unset.
-- Demo/example: not applicable — test-only change. Language parity: no application-facing contract
-  change; state that in one line.
+- `test_lambda_trigger_requires_runtime_api` asserts the missing-runtime-API config error when the
+  variable is unset, and fails loudly naming the precondition when it is set; it never prints
+  `[skip]` and returns.
+- No unit case reports success on ambient state it could not establish.
+
+## Completion (2026-10-02)
+
+Implemented on `VERIF-016/lambda-skip`: `framework/ocaml/sol-fn/test/test_fn.ml` now matches on
+`Sys.getenv_opt` and `Alcotest.fail`s when the variable is set, otherwise runs the original
+assertion. Verified locally both ways — the suite reports `10 tests run` and success with the
+variable absent, and one named failure ("unset the variable for this run") with it present.
+Demo/example: not applicable — test-only. Language parity: no application-facing contract change.
+Remaining limitation: because OCaml cannot unset the variable, a developer running under a Lambda
+Runtime Interface Emulator gets a failure they must dismiss by unsetting it; that is the intended
+fail-closed signal rather than a silent pass.
