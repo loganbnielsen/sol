@@ -44,12 +44,12 @@ fi
 
 SUBJECTS="$(git log --format=%s "$BASE..HEAD" 2>/dev/null || true)"
 
-lower_id_tokens() { tr 'A-Z' 'a-z' | grep -oE '[a-z]+-[0-9]+' || true; }
+lower_id_tokens() { tr 'A-Z' 'a-z' | grep -oE '[a-z_]+-[0-9]+' || true; }
 
 CANDIDATES="$(
   {
     printf '%s\n%s\n%s\n' "$BRANCH" "$WORKTREE" "$EXTRA" | lower_id_tokens
-    printf '%s\n' "$SUBJECTS" | tr 'A-Z' 'a-z' | grep -oE '\([a-z]+-[0-9]+' | tr -d '(' || true
+    printf '%s\n' "$SUBJECTS" | tr 'A-Z' 'a-z' | grep -oE '\([a-z_]+-[0-9]+' | tr -d '(' || true
   } | grep -v '^$' | sort -u
 )"
 
