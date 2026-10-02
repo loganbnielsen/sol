@@ -44,3 +44,27 @@ state in `@sol-fab/svc`; have `examples/pluto/app/demo_ts/order_svc` serve
 - A TS `-svc` pod's readiness turns 503 on SIGTERM before its listener closes.
 - Rendered TS `-svc` manifests use `/readyz`.
 - Demo/example: `demo_ts/order_svc` updated.
+
+## Blocked On
+
+Publishing `@sol-fab/svc`. The readiness contract is implemented on
+`loganbnielsen/sol-typescript` main (`sol-typescript#5`, merged `a21bd72`):
+`runService` takes `shutdownDelayMs` (default 5000, `sol-svc`'s
+`shutdown_delay_s`), returns `isReady()`, and flips it before the delay and the
+drain.
+
+The package cannot be released: `sol-typescript`'s release workflow publishes
+over OIDC trusted publishing, which is not configured for these packages, so a
+`svc-v0.2.0` tag fails at `npm publish`. That is a 2FA-gated operator action
+(`npm trust github @sol-fab/svc --file release.yml --allow-publish`, and the same
+for `@sol-fab/worker`).
+
+Once a release publishes, the remaining work is the Sol-side render change
+(`Sol_cli_deployment_render`'s TypeScript `readiness_path` to `/readyz`) and the
+`demo_ts/order_svc` `/readyz` route mounted on `isReady()`.
+
+## Premise check (2026-10-02)
+
+Verified at `sol-typescript@a858953`: `packages/svc/src/index.ts` had no
+`shutdownDelayMs` and `ServiceLifecycle` had no `isReady`. Premise held.
+
