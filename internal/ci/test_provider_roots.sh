@@ -9,7 +9,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   for p in aws gcp; do
-    for role in bootstrap cluster platform; do
+    for role in bootstrap cluster platform authorization; do
       mkdir -p "$tmp/repo/platform/cloud/$p/$role"
       echo '# fixture' >"$tmp/repo/platform/cloud/$p/$role/main.tf"
     done

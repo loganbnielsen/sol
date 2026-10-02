@@ -161,6 +161,7 @@ type cloud_role =
   | Bootstrap
   | Cluster
   | Platform
+  | Authorization
 
 let cloud_root_rel provider role =
   Printf.sprintf
@@ -169,7 +170,8 @@ let cloud_root_rel provider role =
     (match role with
      | Bootstrap -> "bootstrap"
      | Cluster -> "cluster"
-     | Platform -> "platform")
+     | Platform -> "platform"
+     | Authorization -> "authorization")
 ;;
 
 let under t rel = Filename.concat t.dir rel
