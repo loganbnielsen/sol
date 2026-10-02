@@ -125,7 +125,7 @@ The discipline, since relying on remembering the current directory has now faile
 - `pipeline merge` — orchestration: verifies prerequisites and non-draft status. It queues native squash auto-merge by default, which lands the PR when required checks pass; `--immediate` is the opt-in synchronous merge, and only when required CI is already green. Targets a ticket id, a pull request via `--pr <n|#n|url>`, or with neither sweeps every open ready PR; a PR target is also refused when its base branch has no required checks configured. Head-pinned; no admin bypass or worktree cleanup.
 - `pipeline merge-finish` — optional informational test run in an owned checkout after a merge. It reports performance comparisons without writing or committing the baseline, and does not gate or revert merges.
 - `pipeline check-reverts` — safety diagnostic over git history.
-- Pre-commit and pre-push hooks — convenience local gates (pre-push runs `internal/ci/run_fast_checks.sh`); GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
+- Pre-commit (format + build) and pre-push (`internal/ci/run_fast_checks.sh`: unit tests + fast CI checks) hooks — convenience local gates; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
 - Ticket filings and promotions go through PRs too; there is no direct-to-main bookkeeping exception.
 

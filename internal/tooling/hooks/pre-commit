@@ -27,21 +27,10 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 if [ "$("$REPO_ROOT/internal/ci/classify-changes.sh" --staged)" = "docs-only" ]; then
   echo ""
-  echo "  (docs/tickets only — skipping test suite)"
+  echo "  (docs/tickets only — skipping format and build)"
   exit 0
 fi
-RUNNER="$REPO_ROOT/internal/tooling/scripts/run_tests.sh"
-
-if [ ! -x "$RUNNER" ]; then
-  echo "✗ Test runner not found or not executable: $RUNNER"
-  exit 1
-fi
-
 eval "$(opam env)"
-
-BROKER_UP=0;   rpk cluster info &>/dev/null 2>&1            && BROKER_UP=1
-LOKI_UP=0;     curl -sf http://localhost:3100/ready &>/dev/null && LOKI_UP=1
-POSTGRES_UP=0; bash -c 'echo > /dev/tcp/localhost/5432' &>/dev/null && POSTGRES_UP=1
 
 echo ""
 echo "▶ pre-commit: ocamlformat"
@@ -53,47 +42,11 @@ fi
 
 echo ""
 echo "▶ pre-commit: build"
-if ! dune build --root "$REPO_ROOT" 2>&1; then
+if ! (unset $(git rev-parse --local-env-vars) && dune build --root "$REPO_ROOT" 2>&1); then
   echo "✗ Build failed — commit blocked."
   exit 1
 fi
 
-run_suite() {
-  local name="$1"
-  echo ""
-  echo "▶ pre-commit: $name"
-  "$RUNNER" "$name" --no-infra
-  local rc=$?
-  if [ $rc -eq 1 ]; then
-    echo ""
-    echo "✗ ${name} tests failed — commit blocked."
-    echo "  Skip once: SOL_SKIP_HOOKS=1 git commit ..."
-    exit 1
-  elif [ $rc -eq 2 ]; then
-    echo ""
-    echo "✗ Performance regression in ${name} suite — commit blocked."
-    echo "  If intentional: bash $RUNNER ${name} --update-baseline"
-    echo "  Skip once:      SOL_SKIP_HOOKS=1 git commit ..."
-    exit 2
-  fi
-}
-
-run_suite unit
-
-if [ $BROKER_UP -eq 1 ]; then
-  run_suite kafka
-else
-  echo ""
-  echo "  (Redpanda not running — kafka + e2e tests skipped)"
-  exit 0
-fi
-
-if [ $LOKI_UP -eq 1 ] && [ $POSTGRES_UP -eq 1 ]; then
-  run_suite e2e
-else
-  echo ""
-  [ $LOKI_UP    -eq 0 ] && echo "  (Loki not running — e2e skipped)"
-  [ $POSTGRES_UP -eq 0 ] && echo "  (Postgres not running — e2e skipped)"
-fi
-
+echo ""
+echo "  (tests and the fast CI checks run at push: internal/ci/run_fast_checks.sh)"
 exit 0

@@ -60,5 +60,31 @@ git_test -C "$linked" commit -q -m linked
   || fail "a commit in a linked worktree did not run that worktree's own hook"
 pass "a linked worktree runs its own checkout's hooks with no install of its own"
 
+mkdir -p "$linked/internal/ci"
+cp "$root/internal/tooling/hooks/pre-push" "$linked/internal/tooling/hooks/pre-push"
+cat >"$linked/internal/ci/run_fast_checks.sh" <<'RUNNER'
+#!/usr/bin/env bash
+cd "$(dirname "$0")/../.."
+for name in $(git rev-parse --local-env-vars); do
+  [ -z "${!name+set}" ] || echo "leaked $name"
+done >runner-report
+echo "toplevel $(git rev-parse --show-toplevel)" >>runner-report
+echo "branch $(git rev-parse --abbrev-ref HEAD)" >>runner-report
+RUNNER
+printf 'runner-report\n' >>"$linked/.gitignore"
+git_test -C "$linked" add -A
+git_test -C "$linked" commit -q -m "pre-push under test"
+git init -q --bare "$tmp/remote.git"
+git -C "$linked" push -q "$tmp/remote.git" linked \
+  || fail "git push through the tracked pre-push hook failed"
+[ -e "$linked/runner-report" ] || fail "git push did not run the pre-push runner"
+! grep -q '^leaked ' "$linked/runner-report" \
+  || fail "the pre-push runner inherited git's repository-local variables: $(grep '^leaked ' "$linked/runner-report")"
+grep -qx "toplevel $(cd "$linked" && pwd -P)" "$linked/runner-report" \
+  || fail "a nested git call under git push resolved the wrong worktree: $(grep '^toplevel ' "$linked/runner-report")"
+grep -qx "branch linked" "$linked/runner-report" \
+  || fail "a nested git call under git push saw the wrong branch: $(grep '^branch ' "$linked/runner-report")"
+pass "under a real git push, nested git calls in the runner see the pushing worktree"
+
 echo ""
 echo "hook install: all expectations hold."

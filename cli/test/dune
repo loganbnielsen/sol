@@ -155,7 +155,7 @@
    (run bash %{dep:../../internal/ci/check_readiness_invocations.sh}))))
 
 (rule
- (alias runtest)
+ (alias runtest-lifecycle)
  (deps
   ../bin/main.exe
   ../../internal/ci/test_cloud_lifecycle_offline.sh
