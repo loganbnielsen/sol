@@ -10,7 +10,6 @@ let dir =
 let ensure () = Sol_cli_fs.mkdir_p dir
 let pid_file name = Printf.sprintf "%s/pf-%s.pid" dir name
 let log_file name = Printf.sprintf "/tmp/sol-pf-%s.log" name
-let script_file name = Printf.sprintf "/tmp/sol-pf-%s.sh" name
 let record_suffix = ".forward"
 let record_file name = Printf.sprintf "%s/pf-%s%s" dir name record_suffix
 let lock_file name = Printf.sprintf "%s/pf-%s.lock" dir name

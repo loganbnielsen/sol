@@ -29,16 +29,24 @@ let write path text = Out_channel.with_open_text path (fun oc -> output_string o
 
 let hold_lock name =
   Sol_cli_state.ensure () |> Result.get_ok;
-  let pid =
-    Sol_cli_process.spawn
-      (Sol_cli_process.cmd
-         [ "setsid"; "flock"; Sol_cli_state.lock_file name; "sleep"; "30" ])
-    |> Result.get_ok
-    |> Sol_cli_process.pid
-  in
-  write (Sol_cli_state.pid_file name) (string_of_int pid);
-  if not (wait_until (fun () -> P.is_running name)) then Windtrap.fail "lock not taken";
-  pid
+  match Unix.fork () with
+  | 0 ->
+    (try
+       ignore (Unix.setsid ());
+       let fd =
+         Unix.openfile (Sol_cli_state.lock_file name) [ Unix.O_RDWR; Unix.O_CREAT ] 0o600
+       in
+       (match Unix.lockf fd Unix.F_TLOCK 0 with
+        | () -> ()
+        | exception Unix.Unix_error _ -> Unix._exit 2);
+       Unix.sleepf 30.;
+       Unix._exit 0
+     with
+     | _ -> Unix._exit 2)
+  | pid ->
+    write (Sol_cli_state.pid_file name) (string_of_int pid);
+    if not (wait_until (fun () -> P.is_running name)) then Windtrap.fail "lock not taken";
+    pid
 ;;
 
 let reap pid =
@@ -140,6 +148,53 @@ let test_dead_forward_reports_its_log () =
   Sys.remove (Sol_cli_state.log_file name)
 ;;
 
+let test_fail_streak_policy () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a quick failure starts the streak"
+    1
+    (P.next_fail_streak ~streak:0 ~elapsed_s:1.);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"quick failures accumulate"
+    4
+    (P.next_fail_streak ~streak:3 ~elapsed_s:0.);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a lasting run resets the streak"
+    0
+    (P.next_fail_streak ~streak:7 ~elapsed_s:30.);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"exactly the threshold is a lasting run"
+    0
+    (P.next_fail_streak ~streak:2 ~elapsed_s:P.quick_fail_threshold_s);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"below the limit does not give up"
+    false
+    (P.exhausted (P.max_fail_streak - 1));
+  let streak =
+    List.fold_left
+      (fun streak _ -> P.next_fail_streak ~streak ~elapsed_s:0.)
+      0
+      (List.init P.max_fail_streak Fun.id)
+  in
+  Windtrap.equal Windtrap.int ~msg:"N quick failures reach N" P.max_fail_streak streak;
+  Windtrap.equal Windtrap.bool ~msg:"and that gives up" true (P.exhausted streak)
+;;
+
+let sol_binary () =
+  let candidates =
+    [ Filename.concat (Sys.getcwd ()) "../../bin/main.exe"
+    ; Filename.concat (Source_root.find ()) "_build/default/cli/bin/main.exe"
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Windtrap.fail "cannot locate the sol binary for the port-forward supervisor"
+;;
+
 let test_start_and_stop_end_to_end () =
   let bin = Filename.concat (Sys.getcwd ()) "fake-kubectl-bin" in
   (try Unix.mkdir bin 0o755 with
@@ -154,6 +209,7 @@ let test_start_and_stop_end_to_end () =
   let name = "e2e" in
   ok
     (P.start
+       ~supervisor:(sol_binary ())
        ~ctx:Sol_cli_kube_destination.local_context
        (spec ~name ~local_port:18090 ()));
   Windtrap.equal
@@ -214,3 +270,5 @@ let%test "records and liveness (REFAC-126): dead forward reports its log" =
 let%test "records and liveness (REFAC-126): start and stop end to end" =
   test_start_and_stop_end_to_end ()
 ;;
+
+let%test "port-forward policy: the fail streak and its limit" = test_fail_streak_policy ()
