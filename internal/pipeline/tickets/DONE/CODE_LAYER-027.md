@@ -63,3 +63,12 @@ the substrate tests exist to prevent.
   this is an internal-only refactor.
 - Record the per-language capability verdict for framework/application
   contracts, or explain why language parity is unaffected.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `8cb09659`: `docs_for_namespaces` was called only by `cli/test/inline/test_substrate.ml`, `ensure` rebuilt the same document list inline, and `reconcile_operator_bindings` recomputed the namespace set `operator_binding_docs` already computed.
+- **Fix.** `ensure` now creates `docs_for_namespaces namespaces`, so the tested function *is* the production document set. Extracted `namespaces_of_services ~workspace services` and used it in both `operator_binding_docs` and `reconcile_operator_bindings`, removing the second inline derivation. Every namespace is still created before any RoleBinding, and the created/refused set is unchanged.
+- **Tests.** `cli/test/inline/test_substrate.ml` passes; because `ensure` calls `docs_for_namespaces`, a change to that function now changes the production path by construction.
+- **Guards.** `check_deploy_substrate_order.py`, `check_operator_diagnostics.py`, `check_managed_database_egress.py` and their mutation suites pass.
+- Validation: full `dune build`; `dune fmt` clean.
+- **Demo/example: not applicable** — internal deploy-substrate plumbing. **Language parity: no impact.**

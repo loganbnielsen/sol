@@ -158,11 +158,6 @@ let patch ~doc ~name ~language =
          , Declared ))
 ;;
 
-let read_file path =
-  try Ok (In_channel.with_open_bin path In_channel.input_all) with
-  | Sys_error msg -> Error msg
-;;
-
 let write_atomic path text =
   let perm =
     match Unix.stat path with
@@ -206,7 +201,7 @@ let verify ~path ~text ~name ~language =
 
 let plan ~root ~name ~dir ~language =
   let path = manifest_path root in
-  let* text = read_file path in
+  let* text = Sol_cli_fs.read_file path in
   let* services =
     Sol_cli_config.sol_yml_services ~root
     |> Result.map_error Sol_cli_config.error_to_string

@@ -25,14 +25,17 @@ duplicated:
 - The `Terraform state bucket` `External` observation inside
   `durable_observations` is word-for-word shared; only its `identity` string
   differs.
-- `not_found` has the same shape but two phrase sets, and they have already
-  drifted: GCP accepts `was not found` and AWS does not.
+- `not_found` has the same shape but two phrase sets that are not identical:
+  AWS lists `no such`; GCP lists `was not found`.
 
-The drift is the dangerous part. `not_found` decides whether a provider answer
-becomes `Absent` — a claim that the resource is gone, which destroy
-verification relies on — or `Unobservable`, which is fail-closed. Two adapters
-disagreeing about the wording is a correctness difference living in duplicated
-code, not a style question.
+The difference is **live**. AWS accepts `no such` and GCP does not, so a provider
+message like `no such file or directory` becomes `Absent` under AWS and
+`Unobservable` under GCP; GCP's extra `was not found` is itself subsumed by its
+own `not found`, so that needle is dead. `not_found` decides whether a provider
+answer becomes `Absent` (a claim that the resource is gone, which destroy
+verification relies on) or `Unobservable` (fail-closed), so this is a real
+classification difference between two copies of one predicate — not a style
+question. GCP's side is the conservative one.
 
 ## Remediation
 
@@ -64,3 +67,12 @@ code, not a style question.
   this is an internal-only refactor.
 - Record the per-language capability verdict for framework/application
   contracts, or explain why language parity is unaffected.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `8cb09659`, with a correction found by writing the test: the phrase sets differ in **two** ways, not one. AWS lists `no such` and GCP does not, so `no such file or directory` is `Absent` under AWS and `Unobservable` under GCP — a live classification difference. GCP lists `was not found`, which its own `not found` subsumes, so that needle is dead. The audit and this ticket were corrected to say this precisely; they had first stated the divergence backwards.
+- **Fix.** Moved `lines`, `unresolved` and the shared state-bucket `External` observation (`Sol_cli_absence.durable_state_bucket ~identity`) into `Sol_cli_absence`, and factored the scan as `Sol_cli_absence.not_found ~needles reason`. Each adapter keeps its own phrase list explicitly and unchanged, so classification is byte-for-byte what it was; `Sol_cli_{aws,gcp}_absence.unresolved` remain aliases, so their destruction callers are unchanged.
+- **Tests.** New `cli/test/inline/test_aws_absence.ml` case pins both lists: they agree on `ResourceNotFoundException`, `NOT_FOUND`/`was not found`, `does not exist`, an unrelated failure and the empty string, and diverge only on `no such` (AWS matches, GCP is fail-closed). Existing AWS/GCP absence tests pass.
+- **Guards.** `check_durable_dns_zone.py` and `test_resource_identity_check.py` pass.
+- Validation: full `dune build`; `dune fmt` clean.
+- **Demo/example: not applicable** — provider-absence adapters, internal. **Language parity: no impact.**

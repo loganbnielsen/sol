@@ -179,6 +179,42 @@ let await_delegation ~run ~report ~attempts ~interval ~domain ?(expected = []) (
   else go 1
 ;;
 
+let await_public_delegation
+      ~(configuration : Sol_cli_installation.installation_config)
+      ~(run : string list -> Sol_cli_installation.observation)
+      ~seconds
+      ~(report : string -> unit)
+      ~(on_established : unit -> (unit, string) result)
+  : (unit, string) result
+  =
+  match
+    Sol_cli_installation.zone_domain configuration.Sol_cli_installation.zone, seconds
+  with
+  | Some domain, seconds when seconds > 0 ->
+    let attempts = max 1 (seconds / 5) in
+    report "";
+    report
+      (Printf.sprintf
+         "Waiting up to %d seconds for the delegation of %s to appear in public DNS (%d \
+          attempt(s)):"
+         seconds
+         domain
+         attempts);
+    (match
+       await_delegation
+         ~run
+         ~report:(fun line -> report ("  " ^ line))
+         ~attempts
+         ~interval:5.
+         ~domain
+         ()
+     with
+     | Sol_cli_installation.Established -> on_established ()
+     | Sol_cli_installation.Unmet reason | Sol_cli_installation.Unknown reason ->
+       Error reason)
+  | _, _ -> Ok ()
+;;
+
 type contract_file = Sol_cli_provider_capabilities.identity_contract * string
 
 let identity_contract_files ~provider ~configuration : (contract_file list, string) result

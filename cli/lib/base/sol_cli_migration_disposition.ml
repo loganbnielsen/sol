@@ -44,12 +44,7 @@ let of_file_content content =
 ;;
 
 let read_file ~path =
-  match
-    let ic = open_in_bin path in
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () -> really_input_string ic (in_channel_length ic))
-  with
-  | exception Sys_error msg -> Error (Printf.sprintf "could not read %s: %s" path msg)
-  | content -> of_file_content content
+  match Sol_cli_fs.read_file path with
+  | Error msg -> Error (Printf.sprintf "could not read %s: %s" path msg)
+  | Ok content -> of_file_content content
 ;;

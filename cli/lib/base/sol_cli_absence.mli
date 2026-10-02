@@ -42,3 +42,7 @@ val residue : verdict -> string list
 val to_sweep : observation list -> Sol_cli_destroy_verification.sweep
 val report : observation list -> string
 val attribution_rule : attribution -> string
+val lines : string -> string list
+val not_found : needles:string list -> string -> bool
+val unresolved : reason:string -> observation list
+val durable_state_bucket : identity:string -> observation

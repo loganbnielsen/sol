@@ -138,32 +138,13 @@ let allow_setup = function
 ;;
 
 let await_public_delegation ~configuration ~run ~seconds =
-  match
-    Sol_cli_installation.zone_domain configuration.Sol_cli_installation.zone, seconds
-  with
-  | Some domain, seconds when seconds > 0 ->
-    let attempts = max 1 (seconds / 5) in
-    Printf.printf
-      "\n\
-       Waiting up to %d seconds for the delegation of %s to appear in public DNS (%d \
-       attempt(s)):\n\
-       %!"
-      seconds
-      domain
-      attempts;
-    (match
-       Sol_cli_installation_stage.await_delegation
-         ~run
-         ~report:(fun line -> Printf.printf "  %s\n%!" line)
-         ~attempts
-         ~interval:5.
-         ~domain
-         ()
-     with
-     | Sol_cli_installation.Established -> Ok ()
-     | Sol_cli_installation.Unmet reason | Sol_cli_installation.Unknown reason ->
-       Error (Sol_cli_exit.error reason))
-  | _, _ -> Ok ()
+  Sol_cli_installation_stage.await_public_delegation
+    ~configuration
+    ~run
+    ~seconds
+    ~report:(fun line -> Printf.printf "%s\n%!" line)
+    ~on_established:(fun () -> Ok ())
+  |> Result.map_error Sol_cli_exit.error
 ;;
 
 let print_identity_contracts ~target ~target_cfg ~configuration ~verdicts =
@@ -352,7 +333,7 @@ let environment_refusal_lines ~target ~because =
   ; Printf.sprintf "  sol cloud apply %s" target
   ; Printf.sprintf
       "then name the context that command prints as this target's kube_context, and run \
-       `sol depl       oy %s` again."
+       `sol deploy %s` again."
       target
   ]
 ;;

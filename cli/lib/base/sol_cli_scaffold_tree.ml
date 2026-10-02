@@ -6,14 +6,6 @@ type rule =
   | Patch_modules of string
 
 let kinds = [ "workspace"; "svc"; "worker"; "fn"; "event" ]
-
-let read_file path =
-  match In_channel.with_open_text path In_channel.input_all with
-  | content -> Ok content
-  | exception Sys_error message ->
-    Error (Printf.sprintf "could not read %s: %s" path message)
-;;
-
 let dir_of ~root ~kind = Filename.concat root kind
 
 let plan ~root ~kind =
@@ -41,7 +33,11 @@ let plan ~root ~kind =
   walk "" [] |> Result.map (List.sort String.compare)
 ;;
 
-let text ~root ~kind ~rel = read_file (Filename.concat (dir_of ~root ~kind) rel)
+let text ~root ~kind ~rel =
+  let path = Filename.concat (dir_of ~root ~kind) rel in
+  Sol_cli_fs.read_file path
+  |> Result.map_error (fun message -> Printf.sprintf "could not read %s: %s" path message)
+;;
 
 let patch_modules_stanza path new_mod =
   let ic = open_in path in

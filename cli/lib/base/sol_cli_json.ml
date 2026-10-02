@@ -7,12 +7,6 @@ let decode ~what text =
     Error (Printf.sprintf "%s: not JSON (%s)" what message)
 ;;
 
-let read_file ~what path =
-  match In_channel.with_open_bin path In_channel.input_all with
-  | text -> decode ~what text
-  | exception Sys_error message -> Error (Printf.sprintf "%s: %s" what message)
-;;
-
 let rec field path (j : t) : t =
   match path, j with
   | [], j -> j
