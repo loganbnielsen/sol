@@ -229,7 +229,7 @@ let alloy_values_yaml ~assets =
   let* config =
     render_alloy_config
       ~assets
-      ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
+      ~taxonomy_labels:[ "workspace"; "env"; "domain"; "service"; "primitive"; "release" ]
       ~loki_push_url:"http://loki:3100/loki/api/v1/push"
       ~loki_push_basic_auth_username:""
       ~loki_push_basic_auth_password:""

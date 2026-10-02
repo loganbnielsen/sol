@@ -10,6 +10,7 @@ GUARD = REPO / "internal/ci/check_platform_component_drift.py"
 FILES = [
     "cli/bin/cmd_local.ml",
     "cli/lib/local/sol_cli_local_platform.ml",
+    "cli/lib/local/sol_cli_dev_observability.ml",
     "platform/cloud/modules/platform/main.tf",
     "platform/shared/components.json",
 ]
@@ -30,6 +31,24 @@ def break_layers(root):
     path.write_text(json.dumps(data))
 
 
+def drop_env_from_tf(root):
+    path = root / "platform/cloud/modules/platform/main.tf"
+    text = path.read_text()
+    path.write_text(text.replace('"workspace", "env", "domain"', '"workspace", "domain"', 1))
+
+
+def drop_env_from_ocaml(root):
+    path = root / "cli/lib/local/sol_cli_dev_observability.ml"
+    text = path.read_text()
+    path.write_text(text.replace('"workspace"; "env"; "domain"', '"workspace"; "domain"', 1))
+
+
+def drift_the_ocaml_mirror(root):
+    path = root / "cli/lib/local/sol_cli_dev_observability.ml"
+    text = path.read_text()
+    path.write_text(text.replace('"primitive"; "release" ]', '"primitive"; "release"; "region" ]', 1))
+
+
 CASES = [
     ("a migrated key back in the local platform", "fail",
      append("cli/lib/local/sol_cli_local_platform.ml", '\nlet _ = "deploymentMode"\n')),
@@ -41,6 +60,9 @@ CASES = [
     ("a local-only key in main.tf is allowed", "pass",
      append("platform/cloud/modules/platform/main.tf", '\nlocals {\n  allowed = "statefulset.replicas"\n}\n')),
     ("a component keyed by environment", "fail", break_layers),
+    ("env dropped from the cloud log taxonomy", "fail", drop_env_from_tf),
+    ("env dropped from the local log taxonomy mirror", "fail", drop_env_from_ocaml),
+    ("the local log taxonomy mirror drifts from the cloud", "fail", drift_the_ocaml_mirror),
     ("the real tree", "pass", lambda root: None),
 ]
 

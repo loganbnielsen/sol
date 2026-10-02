@@ -319,7 +319,7 @@ locals {
   loki_push_basic_auth_username = var.observability_backend == "external" ? var.external_loki_username : ""
   loki_push_basic_auth_password = var.observability_backend == "external" ? var.external_loki_password : ""
 
-  observability_taxonomy_labels = ["workspace", "domain", "service", "primitive", "release"]
+  observability_taxonomy_labels = ["workspace", "env", "domain", "service", "primitive", "release"]
 
   loki_infra_bindings_gcs_yaml = yamlencode({
     loki = {
