@@ -840,7 +840,7 @@ prerequisites standing. **No `Ready`, so no Ready-state destruction**: that clai
 
 ## INFRA-093 landed — GKE Standard is the supported GCP substrate (2026-09-26)
 
-`DEC-049` / `FND-0064` → `FIXED_UNQUALIFIED`. The GCP driver provisions Standard
+`DEC-060` / `FND-0064` → `FIXED_UNQUALIFIED`. The GCP driver provisions Standard
 (`enable_autopilot = false`, a pool Sol owns, sizing from driver variable defaults: 3 x
 e2-standard-2, 100 GiB pd-balanced, one zone, regional control plane). The profile refuses an
 existing Autopilot cluster read-only **before any plan exists**, describing the profile's

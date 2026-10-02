@@ -1032,9 +1032,22 @@ let run_validate () =
         |> List.sort String.compare
         |> List.map (Filename.concat state_dir))
   in
+  let seen = Hashtbl.create (List.length paths) in
+  let duplicates =
+    paths
+    |> List.filter_map (fun path ->
+      let id = Filename.chop_suffix (Filename.basename path) ".md" in
+      match Hashtbl.find_opt seen id with
+      | None ->
+        Hashtbl.add seen id path;
+        None
+      | Some prior ->
+        Some (Printf.sprintf "%s: duplicate ticket id %s (also %s)" path id prior))
+  in
   let unreadable =
     missing_dirs
     @ List.filter_map (fun path -> Soldev_ticket.unreadable ~path (read_file path)) paths
+    @ duplicates
   in
   List.iter (fun reason -> Printf.eprintf "error: %s\n%!" reason) unreadable;
   match unreadable with

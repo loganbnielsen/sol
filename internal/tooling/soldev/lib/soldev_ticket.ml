@@ -79,7 +79,18 @@ let unreadable ~path content =
         | Some field ->
           Some
             (Printf.sprintf "%s: frontmatter field `%s` is missing or blank" path field)
-        | None -> None))
+        | None ->
+          let id = List.assoc "id" fields in
+          let filename_id = Filename.chop_suffix (Filename.basename path) ".md" in
+          if id = filename_id
+          then None
+          else
+            Some
+              (Printf.sprintf
+                 "%s: frontmatter id %s does not match filename id %s"
+                 path
+                 id
+                 filename_id)))
 ;;
 
 let fm_get fields key = List.assoc_opt key fields
