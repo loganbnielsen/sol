@@ -329,14 +329,94 @@ type premise_verdict =
 
 let premise_of content = fm_get (fields content) "premise"
 
-let premise_verdict ~exit_code =
-  if exit_code = 0
-  then Premise_stale
-  else if exit_code = 127
-  then Premise_unverified "the probe command was not found (exit 127)"
-  else if exit_code = 126
-  then Premise_unverified "the probe command is not executable (exit 126)"
-  else Premise_holds
+let unquote token =
+  let n = String.length token in
+  if
+    n >= 2
+    && ((token.[0] = '\'' && token.[n - 1] = '\'')
+        || (token.[0] = '"' && token.[n - 1] = '"'))
+  then String.sub token 1 (n - 2)
+  else token
+;;
+
+let probe_shell_metachars = "><|&;()$`*?[]{}~"
+let existence_test_flags = [ "-e"; "-f"; "-d"; "-s"; "-h"; "-L" ]
+
+let path_like token =
+  let token = unquote token in
+  let n = String.length token in
+  n > 0
+  && token.[0] <> '-'
+  && token <> "."
+  && token <> ".."
+  && String.contains token '/'
+  && (not (String.contains token ':'))
+  && not (String.exists (fun c -> String.contains probe_shell_metachars c) token)
+;;
+
+let named_paths probe =
+  let tokens = String.split_on_char ' ' probe in
+  let rec go previous acc = function
+    | [] -> List.rev acc
+    | token :: rest ->
+      let trimmed = String.trim token in
+      let quoted =
+        String.length trimmed >= 2
+        && ((trimmed.[0] = '\'' && trimmed.[String.length trimmed - 1] = '\'')
+            || (trimmed.[0] = '"' && trimmed.[String.length trimmed - 1] = '"'))
+      in
+      let follows_existence_test =
+        Option.fold ~none:false ~some:(fun p -> List.mem p existence_test_flags) previous
+      in
+      let acc =
+        if (not quoted) && (not follows_existence_test) && path_like token
+        then token :: acc
+        else acc
+      in
+      go (Some (unquote trimmed)) acc rest
+  in
+  go None [] tokens
+;;
+
+let missing_named_paths ~root probe =
+  named_paths probe
+  |> List.filter (fun named ->
+    let path = if Filename.is_relative named then Filename.concat root named else named in
+    not (Sys.file_exists path))
+  |> List.sort_uniq String.compare
+;;
+
+let first_line text =
+  match String.split_on_char '\n' text with
+  | [] -> ""
+  | line :: _ -> String.trim line
+;;
+
+let cap_description text =
+  if String.length text <= 120 then text else String.sub text 0 120 ^ "..."
+;;
+
+let premise_verdict ~exit_code ~missing_paths ~output =
+  match missing_paths with
+  | _ :: _ ->
+    Premise_unverified
+      (Printf.sprintf
+         "the probe names %s, which does not exist in the tree, so it cannot decide the \
+          premise"
+         (String.concat ", " missing_paths))
+  | [] ->
+    (match exit_code with
+     | 0 -> Premise_stale
+     | 1 -> Premise_holds
+     | code ->
+       let detail = first_line output in
+       let detail = if detail = "" then "" else " — " ^ cap_description detail in
+       Premise_unverified
+         (Printf.sprintf
+            "the probe exited %d (0 = premise stale, 1 = premise holds), which decides \
+             nothing%s"
+            code
+            detail))
 ;;
 
 let ticket_title content =

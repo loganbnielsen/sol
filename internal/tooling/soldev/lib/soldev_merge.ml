@@ -981,6 +981,19 @@ let worktree_annotation_for_ticket ticket_id =
     else Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path)
 ;;
 
+let evaluate_premise ~echo probe =
+  let result = Soldev_shell.run_cmd_captured ~echo probe in
+  let output = String.trim result.stderr in
+  let missing_paths = Soldev_ticket.missing_named_paths ~root:(Sys.getcwd ()) probe in
+  let verdict =
+    Soldev_ticket.premise_verdict
+      ~exit_code:(Sol_process.exit_code result)
+      ~missing_paths
+      ~output
+  in
+  verdict, output
+;;
+
 let run_ls include_done =
   let open Result.Syntax in
   let* prs = open_prs () in
@@ -1034,10 +1047,7 @@ let run_ls include_done =
                       match Soldev_ticket.premise_of content with
                       | None -> ready
                       | Some probe ->
-                        (match
-                           Soldev_ticket.premise_verdict
-                             ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
-                         with
+                        (match fst (evaluate_premise ~echo:false probe) with
                          | Soldev_ticket.Premise_holds -> ready
                          | Soldev_ticket.Premise_stale ->
                            "premise-stale — the probe succeeded, so this may be done \
@@ -1162,7 +1172,9 @@ let run_check ticket_id =
       match Soldev_ticket.premise_of content with
       | None -> Ok ()
       | Some probe ->
-        (match Soldev_ticket.premise_verdict ~exit_code:(Soldev_shell.run_cmd probe) with
+        let verdict, output = evaluate_premise ~echo:true probe in
+        if output <> "" then Printf.printf "%s\n" output;
+        (match verdict with
          | Soldev_ticket.Premise_holds ->
            Printf.printf "premise: holds\n";
            Ok ()
