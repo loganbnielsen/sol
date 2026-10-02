@@ -34,7 +34,7 @@ bash internal/tooling/scripts/perf.sh set-baseline [suite|all]  # mark latest ru
 bash internal/tooling/scripts/perf.sh clear [suite|all]   # wipe history for a suite
 ```
 
-### Git hook (runs unit tests automatically on every commit)
+### Git hooks (format + build on commit; unit tests and fast CI checks on push)
 
 ```bash
 bash internal/tooling/scripts/install-hooks.sh   # one-time setup

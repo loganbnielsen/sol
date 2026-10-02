@@ -226,6 +226,10 @@ jobs:
         # internal/ci/check_framework_ci_coverage.py holds both facts.
         run: opam exec -- dune test framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-jobs/ framework/ocaml/sol-obs/ framework/ocaml/sol-outbox/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
 
+      - name: Offline cloud lifecycle (cli/test runtest-lifecycle)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        run: opam exec -- dune build @cli/test/runtest-lifecycle
+
       # The other half of the same invariant: a framework suite that needs
       # infrastructure still has to run on the PR gate, not only in
       # run_tests.sh. The two things the framework packages ask for are a
