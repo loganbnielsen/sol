@@ -34,6 +34,65 @@ let test_table_name () =
     (M.table_name ~workspace:"My-WS")
 ;;
 
+let test_table_name_is_bounded () =
+  let at_limit = String.make 41 'a' in
+  let over_limit = String.make 42 'a' in
+  Alcotest.(check string)
+    "a name that lands exactly on the limit keeps the readable form"
+    (Printf.sprintf "sol_%s_schema_migrations" at_limit)
+    (M.table_name ~workspace:at_limit);
+  let shortened = M.table_name ~workspace:over_limit in
+  Alcotest.(check bool)
+    "one byte past the limit is shortened"
+    true
+    (String.length shortened <= M.postgres_identifier_max_bytes && shortened <> over_limit);
+  List.iter
+    (fun workspace ->
+       let table = M.table_name ~workspace in
+       Alcotest.(check bool)
+         (Printf.sprintf
+            "a %d-byte workspace name stays within the identifier limit"
+            (String.length workspace))
+         true
+         (String.length table <= M.postgres_identifier_max_bytes))
+    [ ""; "pluto"; String.make 300 'a'; "wörk"; "My-WS"; over_limit ]
+;;
+
+let test_long_workspace_names_stay_distinct () =
+  let table workspace = M.table_name ~workspace in
+  let fifty_nine suffix = String.make 59 'a' ^ suffix in
+  let fifty_eight suffix = String.make 58 'a' ^ suffix in
+  Alcotest.(check bool)
+    "two 60-byte workspace names no longer share a truncated table"
+    true
+    (String.compare (table (fifty_nine "x")) (table (fifty_nine "y")) <> 0);
+  Alcotest.(check bool)
+    "the 59-byte control stays distinct too"
+    true
+    (String.compare (table (fifty_eight "x")) (table (fifty_eight "y")) <> 0);
+  Alcotest.(check string)
+    "the shortened name is stable across calls"
+    (table (fifty_nine "x"))
+    (table (fifty_nine "x"))
+;;
+
+let test_table_length_error () =
+  Alcotest.(check (option string))
+    "a normal override is accepted"
+    None
+    (M.table_length_error ~table:"sol_pluto_schema_migrations");
+  Alcotest.(check (option string))
+    "an override exactly on the limit is accepted"
+    None
+    (M.table_length_error ~table:(String.make M.postgres_identifier_max_bytes 'a'));
+  Alcotest.(check bool)
+    "an override PostgreSQL would truncate is refused"
+    true
+    (Option.is_some
+       (M.table_length_error
+          ~table:(String.make (M.postgres_identifier_max_bytes + 1) 'a')))
+;;
+
 let test_parse_version () =
   let check = Alcotest.(check @@ option @@ pair int string) in
   check "standard" (Some (1, "create_orders")) (M.parse_version "001_create_orders.sql");
@@ -299,6 +358,12 @@ let () =
     "migration"
     [ ( "prerequisite"
       , [ Alcotest.test_case "table name" `Quick test_table_name
+        ; Alcotest.test_case "table name stays bounded" `Quick test_table_name_is_bounded
+        ; Alcotest.test_case
+            "long workspace names stay distinct"
+            `Quick
+            test_long_workspace_names_stay_distinct
+        ; Alcotest.test_case "table override length" `Quick test_table_length_error
         ; Alcotest.test_case "parse version" `Quick test_parse_version
         ; Alcotest.test_case "required set" `Quick test_required
         ; Alcotest.test_case

@@ -4,8 +4,12 @@ type prerequisite =
   }
 
 let default_dir = "db/migrations"
+let postgres_identifier_max_bytes = 63
+let table_prefix = "sol_"
+let table_suffix = "_schema_migrations"
+let distinct_suffix_hex_length = 12
 
-let table_name ~workspace =
+let sanitize_workspace workspace =
   let buf = Buffer.create (String.length workspace) in
   workspace
   |> String.iter (fun c ->
@@ -14,7 +18,45 @@ let table_name ~workspace =
     else if c >= 'A' && c <= 'Z'
     then Buffer.add_char buf (Char.lowercase_ascii c)
     else Buffer.add_char buf '_');
-  Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
+  Buffer.contents buf
+;;
+
+let table_name ~workspace =
+  let sanitized = sanitize_workspace workspace in
+  let readable = table_prefix ^ sanitized ^ table_suffix in
+  if String.length readable <= postgres_identifier_max_bytes
+  then readable
+  else (
+    let distinct =
+      String.sub (Digest.to_hex (Digest.string workspace)) 0 distinct_suffix_hex_length
+    in
+    let room =
+      postgres_identifier_max_bytes
+      - String.length table_prefix
+      - String.length table_suffix
+      - distinct_suffix_hex_length
+      - 1
+    in
+    Printf.sprintf
+      "%s%s_%s%s"
+      table_prefix
+      (String.sub sanitized 0 (min room (String.length sanitized)))
+      distinct
+      table_suffix)
+;;
+
+let table_length_error ~table =
+  let length = String.length table in
+  if length <= postgres_identifier_max_bytes
+  then None
+  else
+    Some
+      (Printf.sprintf
+         "%s is %d bytes; PostgreSQL truncates identifiers to %d bytes, which can leave \
+          two workspaces sharing one migration table"
+         table
+         length
+         postgres_identifier_max_bytes)
 ;;
 
 let parse_version = Migration.parse_filename

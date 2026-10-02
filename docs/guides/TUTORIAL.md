@@ -396,7 +396,18 @@ Done.
 
 The migration runner applies SQL files in numeric order and records each applied version in a `sol_<workspace>_schema_migrations` table (for example, `sol_pluto_schema_migrations` when your workspace directory is `pluto`). Re-running `sol local migrate` is safe — already-applied versions are skipped.
 
-The table name is derived from your workspace directory name. Use `--table <name>` to override the default if you need a custom tracking table.
+The table name is derived from your workspace directory name. Use `--table <name>` to override the default if you need a custom tracking table. An explicit `--table` that would exceed PostgreSQL's 63-byte identifier limit is refused rather than silently truncated.
+
+Long directory names are shortened rather than truncated. PostgreSQL truncates identifiers
+past 63 bytes, which would have let two long-named workspaces share one tracking table and
+skip each other's migrations; the derived name therefore keeps a readable prefix plus a
+stable hash of the full directory name. Two workspaces sharing one database each read only
+their own table:
+
+```console
+$ cd checkout-svc && sol migrate status
+$ cd ../billing-svc && sol migrate status
+```
 
 Check migration status at any time:
 

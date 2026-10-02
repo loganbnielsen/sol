@@ -20,7 +20,9 @@ required (db/migrations in this revision)  ⊆  applied (schema_migrations)
   name both files. Two branches that each add "the next" number produce exactly
   this; renumber one of them (BUG-041).
 - **Applied** is what the workspace's tracking table
-  (`sol_<workspace>_schema_migrations`, the table `sol migrate` writes) reports.
+  (`sol_<workspace>_schema_migrations`, the table `sol migrate` writes, shortened to a
+  readable prefix plus a stable hash of the full workspace name when the readable form
+  would exceed PostgreSQL's 63-byte identifier limit) reports.
 - Sol keeps **no second record** of "which migrations matter". A declaration in
   the target or `sol.yml` would let `db/migrations`, the deployment record and
   `schema_migrations` disagree about the schema.
