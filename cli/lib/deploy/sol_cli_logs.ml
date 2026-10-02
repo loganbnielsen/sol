@@ -28,15 +28,11 @@ let explore_url ~base_url ~logql =
     encoded
 ;;
 
-let grafana_explore_url ~base_url ~k8s_name =
-  explore_url ~base_url ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
+let grafana_explore_url ~base_url ~unit =
+  explore_url ~base_url ~logql:(Sol_cli_log_selector.unit unit)
 ;;
 
 let release_logql ~release_id = Printf.sprintf {|{release="%s"}|} release_id
-
-let unit_release_logql ~k8s_name ~release_id =
-  Printf.sprintf {|{service=~".*%s.*",release="%s"}|} k8s_name release_id
-;;
 
 type release_query =
   | Release_invalid of string
@@ -49,7 +45,7 @@ type release_query =
       ; logql : string
       }
 
-let release_query ~release ~target ~known ?scope () =
+let release_query ~release ~target ~known ?unit () =
   match Sol_cli_release_id.of_string release with
   | Error msg -> Release_invalid msg
   | Ok id ->
@@ -58,9 +54,9 @@ let release_query ~release ~target ~known ?scope () =
     then Release_unknown { release_id; target }
     else (
       let logql =
-        match scope with
+        match unit with
         | None -> release_logql ~release_id
-        | Some (_ns, k8s_name) -> unit_release_logql ~k8s_name ~release_id
+        | Some unit -> Sol_cli_log_selector.unit_release unit ~release_id
       in
       Release_logs { release_id; logql })
 ;;

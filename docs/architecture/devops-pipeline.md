@@ -198,9 +198,15 @@ Derives the Kubernetes namespace and service name from a `domain/name` argument
 emits one or both of:
 
 - A `kubectl logs -n <ns> -l app=<name> --follow` command/stream.
-- A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using LogQL
-  `{service=~".*<name>.*"}` (FRIC-029: Sol's Loki streams are keyed by
-  `service`/`team`, never `namespace`/`app`).
+- A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using the
+  unit's identity selector `{workspace="<ws>", domain="<domain>",
+  service="<k8s-name>"}` — an exact match on the labels Sol writes from
+  `Sol_cli_manifest_yaml.taxonomy_labels` (FRIC-029: Sol's Loki streams are keyed
+  by `service`/`team`, never `namespace`/`app`). The selector is built once, in
+  `Sol_cli_log_selector`, and shared by the Explore link, the printed-log query
+  and `--release` narrowing. It used to be a `service=~".*<name>.*"` substring,
+  which also returned a same-named unit in another workspace or domain, or a
+  longer name such as `fulfillment-worker-ts` (BUG-101).
 
 `--release <id>` (FEAT-069) narrows to one released identity, adding
 `release="<id>"` to the selector — or using `{release="<id>"}` alone when no

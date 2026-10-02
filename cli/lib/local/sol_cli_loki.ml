@@ -26,10 +26,10 @@ let query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
     ]
 ;;
 
-let query_range_argv ~base_url ~k8s_name ~limit ~timeout_s ?curl_config () =
+let query_range_argv ~base_url ~unit ~limit ~timeout_s ?curl_config () =
   query_range_argv_logql
     ~base_url
-    ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
+    ~logql:(Sol_cli_log_selector.unit unit)
     ~limit
     ~timeout_s
     ?curl_config
@@ -179,10 +179,10 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
         | Error msg -> Error (Other msg)))
 ;;
 
-let query ~base_url ~k8s_name ?credentials ?limit ?timeout_s () =
+let query ~base_url ~unit ?credentials ?limit ?timeout_s () =
   query_logql
     ~base_url
-    ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
+    ~logql:(Sol_cli_log_selector.unit unit)
     ?credentials
     ?limit
     ?timeout_s

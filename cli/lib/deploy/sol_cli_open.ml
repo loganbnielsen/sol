@@ -123,7 +123,10 @@ let logs_url ~base_url ~workspace scope =
      | Error e, _ | _, Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
      | Ok _ns, Ok k8s_name ->
        let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
-       Ok (Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name))
+       Ok
+         (Sol_cli_logs.grafana_explore_url
+            ~base_url
+            ~unit:{ workspace; domain; service = k8s_name }))
   | Resource (resource_type, _) ->
     Error
       (Printf.sprintf

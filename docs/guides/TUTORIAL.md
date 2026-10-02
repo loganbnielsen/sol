@@ -447,10 +447,10 @@ Open Grafana at `http://localhost:3000` (admin / dev).
 Go to **Explore → Loki** and query:
 
 ```
-{service=~"pluto-.*"} | logfmt
+{workspace="pluto"} | logfmt
 ```
 
-You will see structured log lines from both services. Each line includes `level`, `msg`, `span`, `trace_id`, and any fields the handler added. W3C `traceparent` headers propagate across the Kafka boundary, so a charge request's `trace_id` appears in both the `charge-svc` logs and the `notify-worker` logs when the event is consumed. The `/checkout-quote` path also forwards `traceparent` over HTTP via `Peer`, so the checkout response includes the propagated `trace_id`.
+You will see structured log lines from both services — the `workspace` label Sol writes on every workload pod, so the query cannot pick up a same-named unit from another workspace. Each line includes `level`, `msg`, `span`, `trace_id`, and any fields the handler added. W3C `traceparent` headers propagate across the Kafka boundary, so a charge request's `trace_id` appears in both the `charge-svc` logs and the `notify-worker` logs when the event is consumed. The `/checkout-quote` path also forwards `traceparent` over HTTP via `Peer`, so the checkout response includes the propagated `trace_id`.
 
 ### Ingress
 

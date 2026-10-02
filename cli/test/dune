@@ -20,6 +20,7 @@
   test_release_inspection
   test_scaffold
   test_logs
+  test_log_selector
   test_process
   test_tool_adapters
   test_aws_absence
@@ -275,3 +276,9 @@
  (deps ../bin/main.exe test_open_options.sh)
  (action
   (run bash %{dep:test_open_options.sh} %{dep:../bin/main.exe})))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe test_logs_selector.sh)
+ (action
+  (run bash %{dep:test_logs_selector.sh} %{dep:../bin/main.exe})))
