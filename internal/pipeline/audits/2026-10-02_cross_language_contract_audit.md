@@ -36,7 +36,7 @@ were stale, so `git show origin/main:<path>` was used):
 | Repository | `origin/main` | Package version |
 |---|---|---|
 | `loganbnielsen/sol` (this repo) | `54f53c8e` | — |
-| `loganbnielsen/sol-kafka` | `3956fea` (`@sol-fab/kafka`) | 0.2.0 |
+| `loganbnielsen/sol-kafka` | `3956fea` (`@sol-fab/kafka`) | 0.3.0 |
 | `loganbnielsen/sol-obs` | `13128e6` (`@sol-fab/obs`) | 0.1.1 |
 | `loganbnielsen/sol-typescript` | `9d48eca` (`@sol-fab/svc`, `@sol-fab/worker`) | 0.1.0 |
 
