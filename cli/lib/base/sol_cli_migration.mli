@@ -4,7 +4,9 @@ type prerequisite =
   }
 
 val default_dir : string
+val postgres_identifier_max_bytes : int
 val table_name : workspace:string -> string
+val table_length_error : table:string -> string option
 val parse_version : string -> (int * string) option
 val required : dir:string -> (prerequisite list, string) result
 val required_if_present : dir:string -> (prerequisite list, string) result

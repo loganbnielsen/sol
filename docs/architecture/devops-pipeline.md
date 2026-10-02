@@ -298,7 +298,11 @@ network by design (e.g. RDS with `publicly_accessible = false`), currently
 `status`/`rollback` do not yet accept a `TARGET` and remain local-mode only.
 
 The migration tracking table defaults to `sol_<workspace>_schema_migrations`,
-derived from the workspace directory name. Override with `--table`.
+derived from the workspace directory name. Override with `--table`, which refuses a
+name PostgreSQL would truncate. A workspace directory name long enough to push the
+derived name past PostgreSQL's 63-byte identifier limit yields a shorter readable
+prefix plus a stable hash of the full name, so long-named workspaces sharing one
+database still track migrations separately.
 
 ---
 

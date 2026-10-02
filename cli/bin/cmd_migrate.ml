@@ -275,17 +275,31 @@ let dir_arg =
     $ explicit)
 ;;
 
+let table_override_conv =
+  let parse table =
+    match Sol_cli_migration.table_length_error ~table with
+    | Some message -> Error message
+    | None ->
+      (match Cmdliner.Arg.conv_parser Sol_cli_args.text table with
+       | Error (`Msg message) -> Error message
+       | Ok table -> Ok table)
+  in
+  Cmdliner.Arg.conv' ~docv:"TABLE" (parse, Format.pp_print_string)
+;;
+
 let table_arg =
   let explicit =
     Arg.(
       value
-      & opt (some Sol_cli_args.text) None
+      & opt (some table_override_conv) None
       & info
           [ "table" ]
           ~docv:"TABLE"
           ~doc:
-            "Migration tracking table name (default: sol_<workspace>_schema_migrations; \
-             override with this flag to share a table across workspaces)")
+            "Migration tracking table name (default: sol_<workspace>_schema_migrations, \
+             which stays within PostgreSQL's 63-byte identifier limit; longer workspace \
+             names get a truncated name plus a stable hash. Override with this flag to \
+             share a table across workspaces)")
   in
   Term.(
     const (fun table ->
