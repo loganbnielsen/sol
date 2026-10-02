@@ -199,13 +199,24 @@ edited; pass `--force` when you mean to replace one. The generated workflow is c
 [`examples/pluto/.github/workflows/sol-ci.yml`](../../examples/pluto/.github/workflows/sol-ci.yml).
 
 The workflow authenticates with **GitHub OIDC** — no long-lived cloud credentials are stored in the
-repository. Configure the provider side once:
+repository. It uses two identities, deliberately separate (`DEC-062` rule 1): the **deploy** identity
+runs the deploy, and the **reconciler** identity runs workload authorization, so the identity that
+deploys cannot grant cloud authority. The exact subjects, jobs and variables are in
+[`deployment/ci.md`](../deployment/ci.md). Configure the provider side once:
 
-- **AWS**: an IAM role whose trust policy accepts `token.actions.githubusercontent.com` for this
-  repository (and branch or environment), then set `SOL_DEPLOY_ROLE_ARN` to it. This is the target's
-  `deploy_role_arn` — the same identity a human operator would assume (DEC-061).
+- **AWS**: an IAM OIDC provider for `token.actions.githubusercontent.com`, then a deploy role scoped
+  to the `production` environment (`SOL_DEPLOY_ROLE_ARN`, the target's `deploy_role_arn`) and a
+  reconciler role scoped to the `sol-authorization` environment (`SOL_AUTHORIZATION_ROLE_ARN`, the
+  target's `reconciler_role_arn`).
 - **GCP**: a Workload Identity Federation provider bound to this repository, plus the deploy service
-  account; set `SOL_WORKLOAD_IDENTITY_PROVIDER` and `SOL_DEPLOY_SERVICE_ACCOUNT`.
+  account (`SOL_WORKLOAD_IDENTITY_PROVIDER`, `SOL_DEPLOY_SERVICE_ACCOUNT`) and the reconciler
+  service account (`SOL_AUTHORIZATION_SERVICE_ACCOUNT`).
+
+Protect the `sol-authorization` environment with required reviewers: the `authorize` job runs under
+it (`sol grants plan`, then `sol grants apply`), so adopting, dropping or widening a workload cloud
+grant is a reviewed action separate from the deploy. The `deploy` job depends on `authorize`, so a
+declared grant is established before the deploy that consumes it — and `sol deploy` still fails
+closed if it is not effective.
 
 `SOL_TARGET` is a repository variable and is passed to `sol deploy` verbatim; the workflow never
 infers a destination from the branch or the event (DEC-016). Workload secret values are never held
@@ -214,7 +225,9 @@ deploy fails closed naming any key that is missing.
 
 The deploy step is the same lifecycle as local execution — `sol deploy <target>` then
 `sol migrate <target>` — so nothing about the plan, the render or the apply exists in the workflow.
-The full Argo CD variant lives in `platform/cloud/delivery/ci/`.
+GitOps mode uses the same workflow with `--emit-to` in place of the direct deploy, and the
+`platform/cloud/delivery/argocd/application.yaml` `Application` reconciles what it writes; Sol
+ships one CI workflow, not a separate copy per mode.
 
 ## 6. What you bring, and what Sol brings
 

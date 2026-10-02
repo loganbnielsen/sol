@@ -251,7 +251,6 @@ production substrate:
 | `platform/cloud/aws/cluster/` | AWS: VPC, EKS cluster, ECR registry, RDS PostgreSQL, IAM OIDC |
 | `platform/cloud/gcp/cluster/` | GCP: GKE Autopilot, Artifact Registry, Cloud SQL, Workload Identity |
 | `platform/cloud/delivery/argocd/` | Argo CD `Application` manifest for GitOps mode |
-| `platform/cloud/delivery/ci/` | GitHub Actions workflows for direct and GitOps CI modes |
 
 These modules are **starting points**. They express Sol's opinion about a
 minimal, secure substrate. Modify them freely to match your organization's

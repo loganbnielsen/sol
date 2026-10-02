@@ -110,21 +110,12 @@ let test_ci_workflow_created () =
   check_bool "sol-ci.yml created" true (Sys.file_exists path)
 ;;
 
-let test_deploy_workflow_created () =
+let test_deploy_workflow_removed () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let path = "testapp/.github/workflows/deploy.yml" in
-  check_bool "deploy.yml created" true (Sys.file_exists path)
-;;
-
-let test_deploy_workflow_passes_target () =
-  in_temp_dir
-  @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
-  let content = read_file "testapp/.github/workflows/deploy.yml" in
-  assert_contains "deploy.yml" content "SOL_TARGET";
-  assert_contains "deploy.yml" content "sol deploy \"$SOL_TARGET\""
+  check_bool "the legacy deploy.yml is not written" false (Sys.file_exists path)
 ;;
 
 let test_ci_contains_sol_deploy () =
@@ -132,7 +123,7 @@ let test_ci_contains_sol_deploy () =
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "sol deploy"
+  assert_contains "sol-ci.yml" content {|migrate "$SOL_TARGET"|}
 ;;
 
 let test_ci_deploy_steps_pass_target () =
@@ -144,20 +135,29 @@ let test_ci_deploy_steps_pass_target () =
   assert_contains "sol-ci.yml" content {|main.exe deploy "$SOL_TARGET"|}
 ;;
 
-let test_ci_contains_emit_plan_to () =
+let test_ci_has_gated_authorization_job () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "--emit-plan-to"
+  assert_contains "sol-ci.yml" content "environment: sol-authorization";
+  assert_contains "sol-ci.yml" content {|grants plan "$SOL_TARGET"|};
+  assert_contains "sol-ci.yml" content {|grants apply "$SOL_TARGET"|};
+  check_bool
+    "the deploy waits for the authorization job"
+    true
+    (contains content "needs: authorize")
 ;;
 
-let test_ci_contains_emit_to () =
+let test_ci_uses_oidc_not_a_kubeconfig () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "--emit-to"
+  assert_contains "sol-ci.yml" content "id-token: write";
+  assert_contains "sol-ci.yml" content "role-to-assume";
+  assert_contains "sol-ci.yml" content "workload_identity_provider";
+  check_bool "no kubeconfig credential" false (contains content "KUBECONFIG")
 ;;
 
 let test_ci_contains_dune_commands () =
@@ -190,33 +190,26 @@ let test_ci_no_kubeconfig_in_build_job () =
   check_bool "no KUBECONFIG in sol-ci.yml" false (contains content "KUBECONFIG_B64")
 ;;
 
-let test_ci_registry_secrets () =
+let test_ci_registry_is_a_variable () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "secrets.REGISTRY";
-  assert_contains "sol-ci.yml" content "secrets.REGISTRY_USER";
-  assert_contains "sol-ci.yml" content "secrets.REGISTRY_PASSWORD"
+  assert_contains "sol-ci.yml" content "vars.SOL_REGISTRY"
 ;;
 
-let test_ci_contract_comment_present () =
+let test_ci_is_the_canonical_template () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "Sol CI contract";
-  assert_contains "sol-ci.yml" content "PHASE 1";
-  assert_contains "sol-ci.yml" content "PHASE 2"
-;;
-
-let test_ci_contract_deploy_phase_uses_sol_deploy () =
-  in_temp_dir
-  @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
-  let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "sol deploy <target> --emit-plan-to";
-  assert_contains "sol-ci.yml" content "sol deploy <target> --emit-to"
+  let canonical = tpl ~kind:"workspace" ".github/workflows/sol-ci.yml" in
+  check_bool
+    "the scaffolded workflow is the canonical template, rendered"
+    true
+    (String.equal
+       (Sol_cli_scaffold.subst [ "name", "testapp"; "Name", "Testapp" ] canonical)
+       content)
 ;;
 
 let test_ci_no_raw_kubectl_apply () =
@@ -225,14 +218,6 @@ let test_ci_no_raw_kubectl_apply () =
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   check_bool "no raw kubectl apply in sol-ci.yml" false (contains content "kubectl apply")
-;;
-
-let test_ci_build_images_has_todo_sol_build () =
-  in_temp_dir
-  @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
-  let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  assert_contains "sol-ci.yml" content "TODO(sol-build)"
 ;;
 
 let test_existing_files_still_generated () =
@@ -938,12 +923,22 @@ let%test "generated workspace report: names the README it generated" =
 ;;
 
 let%test "ci_workflow: sol-ci.yml created" = test_ci_workflow_created ()
-let%test "ci_workflow: deploy.yml still created" = test_deploy_workflow_created ()
-let%test "ci_workflow: deploy.yml passes target" = test_deploy_workflow_passes_target ()
+
+let%test "ci_workflow: the legacy deploy.yml is not written" =
+  test_deploy_workflow_removed ()
+;;
+
 let%test "ci_workflow: contains sol deploy" = test_ci_contains_sol_deploy ()
 let%test "ci_workflow: deploy steps pass target" = test_ci_deploy_steps_pass_target ()
-let%test "ci_workflow: --emit-plan-to present" = test_ci_contains_emit_plan_to ()
-let%test "ci_workflow: --emit-to present" = test_ci_contains_emit_to ()
+
+let%test "ci_workflow: the authorization job is gated and runs grants" =
+  test_ci_has_gated_authorization_job ()
+;;
+
+let%test "ci_workflow: authentication is OIDC, not a kubeconfig" =
+  test_ci_uses_oidc_not_a_kubeconfig ()
+;;
+
 let%test "ci_workflow: dune build + runtest" = test_ci_contains_dune_commands ()
 let%test "ci_workflow: schema gate runs in CI" = test_schema_gate_is_run_in_ci ()
 
@@ -951,18 +946,15 @@ let%test "ci_workflow: no KUBECONFIG_B64 in workflow" =
   test_ci_no_kubeconfig_in_build_job ()
 ;;
 
-let%test "ci_workflow: registry secret placeholders" = test_ci_registry_secrets ()
-let%test "ci_workflow: CI contract comment present" = test_ci_contract_comment_present ()
+let%test "ci_workflow: the registry is a repository variable" =
+  test_ci_registry_is_a_variable ()
+;;
 
-let%test "ci_workflow: deploy phase uses sol deploy" =
-  test_ci_contract_deploy_phase_uses_sol_deploy ()
+let%test "ci_workflow: the scaffold renders the canonical template" =
+  test_ci_is_the_canonical_template ()
 ;;
 
 let%test "ci_workflow: no raw kubectl apply" = test_ci_no_raw_kubectl_apply ()
-
-let%test "ci_workflow: build-images has TODO(sol-build)" =
-  test_ci_build_images_has_todo_sol_build ()
-;;
 
 let%test
     "generated_workloads_declare_their_language: sol new records the workload's declared \

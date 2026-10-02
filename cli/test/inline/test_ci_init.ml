@@ -51,6 +51,15 @@ let test_writes_an_oidc_workflow () =
       assert_contains "GCP Workload Identity" content "workload_identity_provider";
       assert_contains "explicit target" content {|deploy "$SOL_TARGET"|};
       assert_contains "migrate runs the same lifecycle" content {|migrate "$SOL_TARGET"|};
+      assert_contains "gated authorization job" content "environment: sol-authorization";
+      assert_contains
+        "authorization runs grants apply"
+        content
+        {|grants apply "$SOL_TARGET"|};
+      check_bool
+        "the deploy waits for authorization"
+        true
+        (contains content "needs: authorize");
       check_bool "no kubeconfig credential" false (contains content "KUBECONFIG"))
 ;;
 
