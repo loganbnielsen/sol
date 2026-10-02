@@ -334,8 +334,8 @@ let render_spec
     ; consumes_kafka = s.consumes_kafka
     ; readiness_path =
         (match s.language with
-         | Some Sol_cli_compat.Ocaml -> "/readyz"
-         | Some Sol_cli_compat.Typescript | None -> "/healthz")
+         | Some (Sol_cli_compat.Ocaml | Sol_cli_compat.Typescript) -> "/readyz"
+         | None -> "/healthz")
     }
   in
   let workload =

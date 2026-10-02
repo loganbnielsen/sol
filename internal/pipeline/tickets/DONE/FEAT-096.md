@@ -45,26 +45,44 @@ state in `@sol-fab/svc`; have `examples/pluto/app/demo_ts/order_svc` serve
 - Rendered TS `-svc` manifests use `/readyz`.
 - Demo/example: `demo_ts/order_svc` updated.
 
-## Blocked On
-
-Publishing `@sol-fab/svc`. The readiness contract is implemented on
-`loganbnielsen/sol-typescript` main (`sol-typescript#5`, merged `a21bd72`):
-`runService` takes `shutdownDelayMs` (default 5000, `sol-svc`'s
-`shutdown_delay_s`), returns `isReady()`, and flips it before the delay and the
-drain.
-
-The package cannot be released: `sol-typescript`'s release workflow publishes
-over OIDC trusted publishing, which is not configured for these packages, so a
-`svc-v0.2.0` tag fails at `npm publish`. That is a 2FA-gated operator action
-(`npm trust github @sol-fab/svc --file release.yml --allow-publish`, and the same
-for `@sol-fab/worker`).
-
-Once a release publishes, the remaining work is the Sol-side render change
-(`Sol_cli_deployment_render`'s TypeScript `readiness_path` to `/readyz`) and the
-`demo_ts/order_svc` `/readyz` route mounted on `isReady()`.
-
 ## Premise check (2026-10-02)
 
 Verified at `sol-typescript@a858953`: `packages/svc/src/index.ts` had no
 `shutdownDelayMs` and `ServiceLifecycle` had no `isReady`. Premise held.
+
+## Done (2026-10-02)
+
+**What landed.**
+
+- `loganbnielsen/sol-typescript#5` (merged `a21bd72`) adds the readiness contract
+  to `runService`: `shutdownDelayMs` (default 5000, `sol-svc`'s
+  `shutdown_delay_s`) and `isReady()`, flipped false synchronously when shutdown
+  begins and before the delay and the drain. Released as `@sol-fab/svc@0.2.0`
+  (tag `svc-v0.2.0`) over OIDC trusted publishing, with provenance.
+- `Sol_cli_deployment_render`'s `readiness_path` now maps **both** declared
+  languages to `/readyz`; an undeclared language still stays on `/healthz` (it is
+  unknown, never assumed OCaml — DEC-022 §7). `test_manifest_render`'s
+  TypeScript case was inverted to match.
+- `examples/pluto/app/demo_ts/order_svc` mounts `GET /readyz` on the lifecycle's
+  `isReady()` and returns 503 once shutdown begins, keeps `GET /healthz`, and
+  moves its pin to `@sol-fab/svc@^0.2.0` (lockfile regenerated).
+
+**Checks run.** `dune build` clean; `dune test cli/test/` green (54 + 8 tests,
+including the inverted TypeScript readiness assertion). Demo
+`npm run build -w order-svc -w fulfillment-worker` clean against the published
+`0.2.0`. CI's `golden-path-smoke-ts` exercises the rendered `/readyz` probe
+end to end.
+
+**Demo/example coverage.** `demo_ts/order_svc` is the example update.
+
+**Language parity.** The readiness row is now aligned: a TypeScript `-svc` and an
+OCaml `-svc` present the same `/readyz` contract to the same probe, and
+`docs/deployment/workload-availability.md` states it.
+
+**Note on the earlier blocker.** The blocked-on gate this ticket briefly carried
+was wrong: `npm trust list` showed `@sol-fab/svc` and `@sol-fab/worker` already
+had trusted publishers for `loganbnielsen/sol-typescript` + `release.yml`. The
+`release.yml` comment claiming the trust was still pending is stale and should be
+corrected.
+
 
