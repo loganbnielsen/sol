@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_result_syntax.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib" "$tmp/repo/framework/ocaml/x/lib" "$tmp/repo/examples/app"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'open Result.Syntax\nlet f x = let* y = x in Ok y\n' >"$tmp/repo/cli/lib/a.ml"
   printf 'let g x =\n  let open Result.Syntax in\n  let* y = x in\n  Ok y\n' \
     >"$tmp/repo/framework/ocaml/x/lib/b.ml"

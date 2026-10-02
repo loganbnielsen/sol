@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_json_decode_boundary.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/deploy" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let n j = Sol_cli_json.field [ "metadata"; "name" ] j |> Sol_cli_json.string\n' \
     >"$tmp/repo/cli/lib/deploy/a.ml"
   printf 'let x j = Yojson.Safe.Util.member "a" j\n' >"$tmp/repo/cli/test/test_x.ml"

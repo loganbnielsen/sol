@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_workflow_paths.py"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/.github/workflows" "$tmp/repo/examples/app" "$tmp/repo/scripts"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   echo x >"$tmp/repo/examples/app/a.txt"
   echo x >"$tmp/repo/scripts/run.sh"
   git -C "$tmp/repo" add -A

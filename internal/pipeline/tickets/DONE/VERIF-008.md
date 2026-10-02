@@ -57,3 +57,45 @@ real-`git push` regression rather than adding a mock of Git's environment.
   pattern (drive the real boundary, assert the environment) is what the new cases follow.
 - Demo/example: not applicable — repository tooling only. Language parity: no application-facing
   contract changes; state that in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise verified** against `origin/main @ 287f13dc`: the unique `git rev-parse --local-env-vars`
+sanitization lived in `internal/tooling/hooks/pre-push:6` (and pre-commit's build), while
+`run_fast_checks.sh` did not sanitize and invoked ~17 helpers that create and mutate scratch
+repositories.
+
+**Implemented — one shared helper, wired in at every scratch-repo creation.**
+
+- `internal/ci/lib/scratch_repo.sh` defines `scratch_repo_sanitize`, `scratch_repo_assert`,
+  `scratch_repo_leak_vars`, `scratch_repo_inside` and `scratch_repo_init`.
+- `run_fast_checks.sh` sources it and calls `scratch_repo_sanitize` at its entry, so it no longer
+  trusts its caller's environment.
+- Every `git … init` that creates a scratch repository became `scratch_repo_init …`, which refuses
+  to create anything while a Git-invoked process has any repository-local variable set (naming the
+  variable and its value), then asserts `git -C <scratch> rev-parse --absolute-git-dir` resolves
+  inside the scratch directory and fails naming the resolved path when it does not. 17 helper
+  scripts (19 init sites) were converted; no bare `git … init` remains under `internal/ci/`.
+- `internal/ci/test_scratch_repo.sh` (wired into `run_fast_checks.sh` and the `test` job) follows
+  `test_hook_install.sh`'s pattern: it creates a real repository, asserts the resolver accepts it,
+  then exports `GIT_DIR` at another real repository and asserts the helper refuses, names the
+  variable, and leaves that repository's HEAD and status unchanged; it also proves
+  `scratch_repo_sanitize` clears the leak.
+
+**Evidence** (worktree, pinned kubectl on PATH):
+
+```
+(a) GIT_DIR=/tmp/verif008-real/.git bash internal/ci/test_ticket_move.sh
+    exit=1  scratch-repo: refusing to create . while a Git-invoked process has repository-local
+            variables set (GIT_DIR=/tmp/verif008-real/.git); run this outside a hook or unset them
+(b) GIT_DIR=/tmp/verif008-real/.git bash internal/ci/run_fast_checks.sh
+    fast checks: 0/67 failed in 17s ; FAST_EXIT=0
+    leaked repository: HEAD unchanged, git status --porcelain empty
+```
+
+All 18 transformed helper tests pass; `test_hook_install.sh`'s leak and worktree-resolution
+assertions still hold. `check_no_comments.sh` (785 files), `check_workflow_paths.py`,
+`test_unconditional_guard_tooling.sh` and `test_docs_only_path.py` all pass.
+
+**Demo/example:** not applicable — repository tooling only. **Language parity (DEC-022):** no
+application-facing contract change.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_no_comments.sh"
@@ -10,7 +11,7 @@ run() {
   local want="$1" name="$2" file="$3" content="$4"
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/$(dirname "$file")"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf '%s\n' "$content" >"$tmp/repo/$file"
   git -C "$tmp/repo" add -A
   if "$CHECK" "$tmp/repo" >/dev/null 2>&1; then got=pass; else got=fail; fi

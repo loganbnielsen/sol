@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_manifests_are_values.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/workspace" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let d = Sol_cli_yaml.(map [ "apiVersion", string "v1" ])\n' \
     >"$tmp/repo/cli/lib/workspace/sol_cli_manifest_yaml.ml"
   printf 'let j = `Assoc [ "apiVersion", `String "v1" ]\n' >"$tmp/repo/cli/bin/cmd_ok.ml"

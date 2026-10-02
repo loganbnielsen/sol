@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_no_exception_control_flow.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/deploy" "$tmp/repo/cli/lib/base" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let f x = match x with Ok v -> Ok v | Error e -> Error e\n' >"$tmp/repo/cli/lib/deploy/a.ml"
   printf 'let t s = invalid_arg "Sol_cli_time: x is not a representable time"\n' >"$tmp/repo/cli/lib/base/sol_cli_time.ml"
   printf 'let g f = try f () with Eio.Cancel.Cancelled _ as exn -> raise exn\n(* this can raise, and *)\n' \

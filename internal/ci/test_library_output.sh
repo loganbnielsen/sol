@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_library_output.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/base" "$tmp/repo/cli/lib/cloud" "$tmp/repo/cli/bin"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let f () = Sol_cli_report.app "  prepare: %%s" "x"\n' >"$tmp/repo/cli/lib/cloud/a.ml"
   printf 'let terminal s = output_string stdout s\n' >"$tmp/repo/cli/lib/base/sol_cli_report.ml"
   printf 'let exit_on m = Printf.eprintf "%%s" m\n' >"$tmp/repo/cli/lib/base/sol_cli_exit.ml"

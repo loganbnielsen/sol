@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_ticket_move.sh"
@@ -7,7 +8,7 @@ CHECK="$ROOT/internal/ci/check_ticket_move.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
-git init -q -b main .
+scratch_repo_init . -b main
 git config user.email t@example.invalid
 git config user.name test
 
