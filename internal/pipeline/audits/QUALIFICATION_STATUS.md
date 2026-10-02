@@ -1046,3 +1046,13 @@ The matrix also records what it does **not** establish: the decode-error/DLQ pat
 next row, needing only a crafted record), broker-loss and telemetry-loss alerts, and every
 cluster/cloud-gated row.
 
+**Both actionable findings were fixed the same day.** `BUG-121` landed as #925 (the probe now
+uses `--ignore-not-found`; an empty successful read is `Absent`, every other failure is
+`Uncheckable` naming the reason; re-verified with the real binary against a refused kubeconfig),
+and `OBS-049` landed as #926 (`env` is in both Alloy promotion lists, and
+`check_platform_component_drift.py` now requires the cloud and local lists to match and to be the
+documented six, with three new mutations). `OBS-050` stays in `BACKLOG` pending the decision its
+ticket records. The run record and the matrix keep the discovery-time observations unchanged and
+cite the fixes by PR; nothing above becomes `LIVE`.
+
+
