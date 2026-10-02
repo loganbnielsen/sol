@@ -47,21 +47,12 @@ let exec_sql pool sql =
   | Error e -> Alcotest.failf "%s: %s" sql (Pg_error.to_string e)
 ;;
 
-let database_required () =
-  match Sys.getenv_opt "SOL_REQUIRE_DATABASE" with
-  | Some value -> value <> "" && value <> "0"
-  | None -> false
-;;
-
 let with_pool f =
   match postgres_url () with
   | None ->
-    if database_required ()
-    then
-      Alcotest.fail
-        "SOL_REQUIRE_DATABASE is set and POSTGRES_URL is not: the database cases must \
-         run in          this environment"
-    else print_endline "[skip] POSTGRES_URL not set"
+    Alcotest.fail
+      "POSTGRES_URL is not set: this target exists to exercise Postgres, and a run \
+       without a database is not a passing run"
   | Some url ->
     Eio_main.run
     @@ fun env ->

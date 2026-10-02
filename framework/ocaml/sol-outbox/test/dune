@@ -1,3 +1,9 @@
-(test
+(executable
  (name test_sol_outbox)
+ (modules test_sol_outbox)
  (libraries alcotest eio_main eio.unix sol-outbox sol-jobs pg-eio caqti))
+
+(rule
+ (alias runtest-integration)
+ (action
+  (run ./test_sol_outbox.exe)))

@@ -29,7 +29,6 @@ checks=(
   "bash internal/ci/test_classify_changes.sh"
   "bash internal/ci/test_examples_self_contained.sh"
   "bash internal/ci/test_framework_ci_coverage.sh"
-  "bash internal/ci/test_integration_suites_ran_check.sh"
   "bash internal/ci/test_hook_install.sh"
   "bash internal/ci/test_json_decode_boundary.sh"
   "bash internal/ci/test_library_output.sh"

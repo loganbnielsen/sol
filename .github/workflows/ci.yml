@@ -217,10 +217,6 @@ jobs:
       - name: Test reachability guard mutation coverage
         run: bash internal/ci/test_test_reachability.sh
 
-      - name: Integration suites ran guard mutation coverage
-        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
-        run: bash internal/ci/test_integration_suites_ran_check.sh
-
       - name: Unit tests (no broker/Postgres/Loki required)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         # Every framework package is here. kafka-eio-service's broker-requiring
@@ -245,19 +241,15 @@ jobs:
       # `rpk`, which a clean runner does not have, and these suites register
       # their own topics through the schema registry. sol-jobs' Postgres case
       # skips itself when POSTGRES_URL is unset, which is why the variable is
-      # part of this step rather than the suite being excluded from it.
+      # part of this step rather than the suite being excluded from it, and the
+      # suites now live behind runtest-integration for that reason.
       # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
-      # --force, and one suite per invocation: without it dune serves these
-      # targets from the unit step's cache, where POSTGRES_URL was unset and the
-      # database cases skipped themselves, and in one invocation either suite can
-      # drop the sol_jobs table under the other while both are running. Each
-      # suite's output is captured and check_integration_suites_ran.sh reads those
-      # logs to require that the database cases actually executed -- a cached run
-      # leaves them empty, and an empty log is a failed step rather than a green
-      # one. That check, not the --force above, is what makes a false success here
-      # impossible. SOL_REQUIRE_DATABASE makes a suite fail rather than skip when
-      # it cannot reach its database, so the other half -- running with the
-      # variable unset -- cannot pass either.
+      # The database suites are their own targets, `runtest-integration`, not the
+      # unit targets with a different ambient environment: they are not built by
+      # the unit step, they cannot be served from its cache, and they fail rather
+      # than skip when POSTGRES_URL is missing, so this step's exit status is the
+      # statement that the Postgres-backed cases ran and passed. One alias per
+      # invocation, because both suites destructively own the one sol_jobs table.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         timeout-minutes: 20
@@ -267,16 +259,12 @@ jobs:
           SCHEMA_REGISTRY_URL: http://localhost:8081
           REDPANDA_ADMIN_URL: http://localhost:9644
           POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
-          SOL_REQUIRE_DATABASE: "1"
         run: |
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
-          opam exec -- dune test framework/ocaml/sol-jobs/ --force > /tmp/sol-jobs-integration.log 2>&1
-          cat /tmp/sol-jobs-integration.log
-          opam exec -- dune test framework/ocaml/sol-outbox/ --force > /tmp/sol-outbox-integration.log 2>&1
-          cat /tmp/sol-outbox-integration.log
-          bash internal/ci/check_integration_suites_ran.sh /tmp/sol-jobs-integration.log /tmp/sol-outbox-integration.log
+          opam exec -- dune build @framework/ocaml/sol-jobs/test/runtest-integration
+          opam exec -- dune build @framework/ocaml/sol-outbox/test/runtest-integration
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
