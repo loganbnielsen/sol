@@ -578,37 +578,154 @@ let verify_workloads
 let display_actual actual = if String.equal actual "" then "<none>" else actual
 let kind_resource kind = fst (live_kind_path kind)
 
-let prune_workloads ~(ctx : Sol_cli_kube_destination.context) surplus
-  : (unit, string) result
-  =
-  let errors =
-    surplus
-    |> List.filter_map (fun ((id : workload_identity), _actual) ->
-      match
-        Sol_cli_kubectl.delete
-          ~ctx
-          ~resource:(kind_resource id.kind)
-          ~name:id.name
-          ~namespace:id.namespace
-      with
-      | Ok () -> None
-      | Error e ->
-        Some
-          (Printf.sprintf
-             "%s %s/%s: %s"
-             (kind_resource id.kind)
-             id.namespace
-             id.name
-             (Sol_cli_process.error_to_string e)))
+let live_kind_volumes_path = function
+  | Live_deployment | Live_rollout -> [ "spec"; "template"; "spec"; "volumes" ]
+  | Live_cronjob -> [ "spec"; "jobTemplate"; "spec"; "template"; "spec"; "volumes" ]
+;;
+
+type prune_target =
+  { resource : string
+  ; namespace : string
+  ; name : string
+  }
+
+type prune_report =
+  { removed : prune_target list
+  ; retained : prune_target list
+  }
+
+let named_target (id : workload_identity) resource name =
+  { resource; namespace = id.namespace; name }
+;;
+
+let auxiliary_targets ~live_names (id : workload_identity) =
+  let named resource name = named_target id resource name in
+  let base =
+    [ named "serviceaccount" id.name
+    ; named "configmap" (id.name ^ "-env")
+    ; named "networkpolicy" id.name
+    ; named "service" id.name
+    ; named "ingress" id.name
+    ; named "poddisruptionbudget" id.name
+    ]
   in
-  match errors with
-  | [] -> Ok ()
-  | _ ->
+  let progressive =
+    match id.kind with
+    | Live_deployment | Live_cronjob -> []
+    | Live_rollout ->
+      let occupied suffix = List.exists (String.equal (id.name ^ suffix)) live_names in
+      [ "-active", named "service" (id.name ^ "-active")
+      ; "-preview", named "service" (id.name ^ "-preview")
+      ; "-active", named "ingress" (id.name ^ "-active")
+      ]
+      |> List.filter_map (fun (suffix, target) ->
+        if occupied suffix then None else Some target)
+  in
+  base @ progressive
+;;
+
+let plan_prune ~surplus ~live_names ~claims : prune_report =
+  let removed =
+    surplus
+    |> List.concat_map (fun id ->
+      named_target id (kind_resource id.kind) id.name :: auxiliary_targets ~live_names id)
+  in
+  let retained =
+    surplus
+    |> List.concat_map (fun id ->
+      claims id |> List.map (named_target id "persistentvolumeclaim"))
+  in
+  { removed; retained }
+;;
+
+let claim_names_of_json kind json =
+  match Sol_cli_json.field (live_kind_volumes_path kind) json with
+  | `List volumes ->
+    volumes
+    |> List.filter_map (fun volume ->
+      Sol_cli_json.field [ "persistentVolumeClaim"; "claimName" ] volume
+      |> Sol_cli_json.string)
+  | _ -> []
+;;
+
+let live_claim_names ~ctx (id : workload_identity) =
+  match
+    Sol_cli_kubectl.get
+      ~ctx
+      ~resource:(kind_resource id.kind)
+      ~name:id.name
+      ~namespace:id.namespace
+      ~output:"json"
+  with
+  | Error e ->
+    Sol_cli_report.warn
+      "could not read %s %s/%s to enumerate the volumes it owned (%s); any \
+       PersistentVolumeClaim it created is retained but cannot be listed."
+      (kind_resource id.kind)
+      id.namespace
+      id.name
+      (Sol_cli_process.error_to_string e);
+    []
+  | Ok output ->
+    (match Sol_cli_json.decode ~what:"live workload" output.Sol_cli_process.stdout with
+     | Error msg ->
+       Sol_cli_report.warn
+         "could not read %s %s/%s to enumerate the volumes it owned (%s); any \
+          PersistentVolumeClaim it created is retained but cannot be listed."
+         (kind_resource id.kind)
+         id.namespace
+         id.name
+         msg;
+       []
+     | Ok json -> claim_names_of_json id.kind json)
+;;
+
+let delete_target ~ctx (t : prune_target) =
+  match
+    Sol_cli_kubectl.delete ~ctx ~resource:t.resource ~name:t.name ~namespace:t.namespace
+  with
+  | Ok () -> None
+  | Error e ->
+    Some
+      (Printf.sprintf
+         "%s %s/%s: %s"
+         t.resource
+         t.namespace
+         t.name
+         (Sol_cli_process.error_to_string e))
+;;
+
+let prune_workloads ~(ctx : Sol_cli_kube_destination.context) ~live ~surplus
+  : (prune_report, string) result
+  =
+  let live_names = List.map (fun ((id : workload_identity), _) -> id.name) live in
+  let report =
+    plan_prune ~surplus:(List.map fst surplus) ~live_names ~claims:(live_claim_names ~ctx)
+  in
+  match List.filter_map (delete_target ~ctx) report.removed with
+  | [] -> Ok report
+  | errors ->
     Error
       (Printf.sprintf
-         "could not prune %d surplus workload(s):\n%s"
+         "could not prune %d surplus object(s):\n%s"
          (List.length errors)
          (String.concat "\n" errors))
+;;
+
+let retained_message ~(release : Sol_cli_release.t) retained =
+  Printf.sprintf
+    "rollback retained %d object(s) it does not delete:\n\
+     %s\n\
+     Storage lifetime is not rollback's decision (DEC-033). The workloads and the \
+     pointer name release %s, but these objects were deliberately left in place."
+    (List.length retained)
+    (String.concat
+       "\n"
+       (List.map
+          (fun (t : prune_target) ->
+             Printf.sprintf "  %s %s/%s" t.resource t.namespace t.name)
+          retained))
+    release.release_id
 ;;
 
 let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_report)
@@ -684,7 +801,10 @@ type transaction_deps =
   ; applied_migrations : unit -> (int list, string) result
   ; apply : (Sol_cli_deployment_plan.service_spec * string) list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
-  ; prune : (workload_identity * string) list -> (unit, string) result
+  ; prune :
+      live:(workload_identity * string) list
+      -> surplus:(workload_identity * string) list
+      -> (prune_report, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
   ; record_consumer_groups : string list -> (unit, string) result
@@ -739,7 +859,7 @@ let execute
            msg
            release.release_id)
   in
-  let* () =
+  let* prune_report =
     match deps.live_workloads () with
     | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
     | Ok live ->
@@ -757,8 +877,8 @@ let execute
         match deps.ensure_held () with
         | Error msg -> Error msg
         | Ok () ->
-          (match deps.prune report.unexpected with
-           | Ok () -> Ok ()
+          (match deps.prune ~live ~surplus:report.unexpected with
+           | Ok prune_report -> Ok prune_report
            | Error msg ->
              Error
                (Printf.sprintf
@@ -781,7 +901,10 @@ let execute
   else (
     let groups = consumer_groups_of_release release in
     match deps.record_consumer_groups groups with
-    | Ok () -> Ok ()
+    | Ok () ->
+      if prune_report.retained <> []
+      then Sol_cli_report.warn "%s" (retained_message ~release prune_report.retained);
+      Ok ()
     | Error msg ->
       Error
         (Printf.sprintf

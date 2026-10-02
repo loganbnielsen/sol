@@ -67,7 +67,7 @@ let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
           ~release
     ; live_workloads =
         (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
-    ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
+    ; prune = (fun ~live ~surplus -> Sol_cli_rollback.prune_workloads ~ctx ~live ~surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
     ; record_consumer_groups =

@@ -90,10 +90,28 @@ val verify_workloads
 val workload_report_to_string : release:Sol_cli_release.t -> workload_report -> string
 val kind_resource : live_kind -> string
 
+type prune_target =
+  { resource : string
+  ; namespace : string
+  ; name : string
+  }
+
+type prune_report =
+  { removed : prune_target list
+  ; retained : prune_target list
+  }
+
+val plan_prune
+  :  surplus:workload_identity list
+  -> live_names:string list
+  -> claims:(workload_identity -> string list)
+  -> prune_report
+
 val prune_workloads
   :  ctx:Sol_cli_kube_destination.context
-  -> (workload_identity * string) list
-  -> (unit, string) result
+  -> live:(workload_identity * string) list
+  -> surplus:(workload_identity * string) list
+  -> (prune_report, string) result
 
 type pointer_report =
   { pointer_actual : string
@@ -113,7 +131,10 @@ type transaction_deps =
   ; applied_migrations : unit -> (int list, string) result
   ; apply : (Sol_cli_deployment_plan.service_spec * string) list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
-  ; prune : (workload_identity * string) list -> (unit, string) result
+  ; prune :
+      live:(workload_identity * string) list
+      -> surplus:(workload_identity * string) list
+      -> (prune_report, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
   ; record_consumer_groups : string list -> (unit, string) result
