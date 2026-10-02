@@ -408,17 +408,11 @@ let base_domain_arg =
 ;;
 
 let target_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "target" ]
-        ~docv:"ENV/PROVIDER/REGION"
-        ~doc:
-          "Deployment target path (same as sol plan/sol cloud tf, e.g. \
-           prod/aws/us-east-1). When given, its sol.yml config supplies the \
-           observability_backend/base_domain defaults instead of the hardcoded local \
-           default.")
+  Sol_cli_target_arg.flag
+    ~doc:
+      "Deployment target path (same as sol plan/sol cloud tf, e.g. prod/aws/us-east-1). \
+       When given, its sol.yml config supplies the observability_backend/base_domain \
+       defaults instead of the hardcoded local default."
 ;;
 
 let loki_base_url_arg =

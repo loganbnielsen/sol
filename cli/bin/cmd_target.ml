@@ -176,15 +176,10 @@ let show target verbose json check =
 open Cmdliner
 
 let target_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "target" ]
-        ~docv:"ENV/PROVIDER/REGION"
-        ~doc:
-          "The target to show, as a path (e.g. `prod/aws/us-east-1`). Required: there is \
-           no current target, and no default (DEC-016).")
+  Sol_cli_target_arg.flag
+    ~doc:
+      "The target to show, as a path (e.g. `prod/aws/us-east-1`). Required: there is no \
+       current target, and no default (DEC-016)."
 ;;
 
 let verbose_arg =
