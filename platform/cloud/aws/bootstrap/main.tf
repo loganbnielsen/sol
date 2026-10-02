@@ -150,6 +150,21 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
+    sid    = "ObserveEffectiveWorkloadAccess"
+    effect = "Allow"
+    actions = [
+      "iam:SimulatePrincipalPolicy",
+      "iam:GetRole",
+      "iam:GetRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:GetPolicy",
+      "iam:GetPolicyVersion",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "NoInfrastructureOrIdentityMutation"
     effect = "Deny"
     actions = [
@@ -159,7 +174,22 @@ data "aws_iam_policy_document" "deploy" {
       "eks:UpdateClusterConfig",
       "eks:CreateAccessEntry",
       "eks:AssociateAccessPolicy",
-      "iam:*",
+      "iam:Create*",
+      "iam:Delete*",
+      "iam:Put*",
+      "iam:Attach*",
+      "iam:Detach*",
+      "iam:Update*",
+      "iam:Add*",
+      "iam:Remove*",
+      "iam:Set*",
+      "iam:Tag*",
+      "iam:Untag*",
+      "iam:PassRole",
+      "iam:Deactivate*",
+      "iam:Enable*",
+      "iam:Upload*",
+      "iam:Resync*",
     ]
     resources = ["*"]
   }

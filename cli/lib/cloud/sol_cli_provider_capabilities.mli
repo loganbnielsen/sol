@@ -13,6 +13,12 @@ type authorization_reconciler =
   | Reconciler_role of string
   | Reconciler_service_account of string
 
+type authorization_workload =
+  { unit : string
+  ; namespace : string
+  ; secrets : string list
+  }
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -87,7 +93,21 @@ type t =
       authorization_reconciler -> ((string * string) list, string) result
   ; authorization_principal_matches :
       authorization_reconciler -> principal:string -> (unit, string) result
+  ; authorization_effective_access :
+      Sol_cli_config.target -> authorization_workload list -> (unit, string) result
   }
+
+val aws_effective_access
+  :  run:(string list -> (string, string) result)
+  -> Sol_cli_config.target
+  -> authorization_workload list
+  -> (unit, string) result
+
+val gcp_effective_access
+  :  run:(string list -> (string, string) result)
+  -> Sol_cli_config.target
+  -> authorization_workload list
+  -> (unit, string) result
 
 val required : string -> string option -> (string, string) result
 val aws : t

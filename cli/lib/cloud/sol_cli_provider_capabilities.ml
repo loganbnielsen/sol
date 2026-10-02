@@ -35,6 +35,12 @@ type authorization_reconciler =
   | Reconciler_role of string
   | Reconciler_service_account of string
 
+type authorization_workload =
+  { unit : string
+  ; namespace : string
+  ; secrets : string list
+  }
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -109,6 +115,8 @@ type t =
       authorization_reconciler -> ((string * string) list, string) result
   ; authorization_principal_matches :
       authorization_reconciler -> principal:string -> (unit, string) result
+  ; authorization_effective_access :
+      Sol_cli_config.target -> authorization_workload list -> (unit, string) result
   }
 
 let public_delegation_probe domain =
@@ -505,6 +513,191 @@ let gcp_authorization_principal_matches (reconciler : authorization_reconciler) 
         (Printf.sprintf "the GCP principal %s is not the declared reconciler" principal)
 ;;
 
+let authorization_refusal (target : Sol_cli_config.target) ~unit ~capability ~resource =
+  Printf.sprintf
+    "unit %s does not have effective access to %s/%s in %s: the reconciler has not \
+     established the grant. Run `sol grants apply %s`, then re-run this deploy (DEC-062 \
+     rule 3)."
+    unit
+    capability
+    resource
+    target.name
+    target.name
+;;
+
+let aws_simulation_decisions output =
+  match Yojson.Safe.from_string output with
+  | `List items ->
+    let rec collect acc = function
+      | [] -> Ok (List.rev acc)
+      | `String decision :: rest -> collect (decision :: acc) rest
+      | _ :: _ -> Error "iam:SimulatePrincipalPolicy returned a non-string decision"
+    in
+    collect [] items
+  | _ -> Error "iam:SimulatePrincipalPolicy did not return a JSON array"
+  | exception Yojson.Json_error message ->
+    Error ("iam:SimulatePrincipalPolicy returned invalid JSON: " ^ message)
+;;
+
+let aws_effective_access ~run (target : Sol_cli_config.target) workloads =
+  let open Result.Syntax in
+  let workloads =
+    List.filter (fun (w : authorization_workload) -> w.secrets <> []) workloads
+  in
+  match workloads with
+  | [] -> Ok ()
+  | _ ->
+    let* account =
+      Result.bind
+        (run
+           [ "aws"
+           ; "sts"
+           ; "get-caller-identity"
+           ; "--query"
+           ; "Account"
+           ; "--output"
+           ; "text"
+           ])
+        (fun output ->
+           match Sol_cli_string.non_blank_opt (Some (String.trim output)) with
+           | Some account -> Ok account
+           | None -> Error "aws sts get-caller-identity returned no account id")
+    in
+    let check_workload (workload : authorization_workload) =
+      let role =
+        Printf.sprintf
+          "arn:aws:iam::%s:role/sol/%s/sol-%s-%s"
+          account
+          target.env
+          target.env
+          workload.unit
+      in
+      let rec check_keys = function
+        | [] -> Ok ()
+        | key :: rest ->
+          let resource =
+            Printf.sprintf
+              "arn:aws:secretsmanager:%s:%s:secret:sol/%s/%s"
+              target.region
+              account
+              target.env
+              key
+          in
+          let* decisions =
+            Result.bind
+              (run
+                 [ "aws"
+                 ; "iam"
+                 ; "simulate-principal-policy"
+                 ; "--policy-source-arn"
+                 ; role
+                 ; "--action-names"
+                 ; "secretsmanager:GetSecretValue"
+                 ; "--resource-arns"
+                 ; resource
+                 ; "--query"
+                 ; "EvaluationResults[*].EvalDecision"
+                 ; "--output"
+                 ; "json"
+                 ])
+              aws_simulation_decisions
+          in
+          let allowed =
+            decisions <> []
+            && List.for_all
+                 (fun decision ->
+                    String.equal (String.lowercase_ascii decision) "allowed")
+                 decisions
+          in
+          if allowed
+          then check_keys rest
+          else
+            Error
+              (authorization_refusal
+                 target
+                 ~unit:workload.unit
+                 ~capability:"secret"
+                 ~resource:key)
+      in
+      check_keys workload.secrets
+    in
+    Sol_cli_result.map_list check_workload workloads |> Result.map ignore
+;;
+
+let gcp_secret_accessor_members output =
+  let member_of = function
+    | `Assoc fields ->
+      (match List.assoc_opt "role" fields, List.assoc_opt "members" fields with
+       | Some (`String "roles/secretmanager.secretAccessor"), Some (`List members) ->
+         List.filter_map
+           (function
+             | `String member -> Some member
+             | _ -> None)
+           members
+       | _ -> [])
+    | _ -> []
+  in
+  match Yojson.Safe.from_string output with
+  | `Assoc fields ->
+    (match List.assoc_opt "bindings" fields with
+     | Some (`List bindings) -> Ok (List.concat_map member_of bindings)
+     | Some _ | None -> Ok [])
+  | `List bindings -> Ok (List.concat_map member_of bindings)
+  | _ -> Error "gcloud secrets get-iam-policy did not return a JSON object"
+  | exception Yojson.Json_error message ->
+    Error ("gcloud secrets get-iam-policy returned invalid JSON: " ^ message)
+;;
+
+let gcp_effective_access ~run (target : Sol_cli_config.target) workloads =
+  let open Result.Syntax in
+  let workloads =
+    List.filter (fun (w : authorization_workload) -> w.secrets <> []) workloads
+  in
+  match workloads with
+  | [] -> Ok ()
+  | _ ->
+    let* project = required_field target "project_id" in
+    let check_workload (workload : authorization_workload) =
+      let member =
+        Printf.sprintf
+          "serviceAccount:%s.svc.id.goog[%s/%s]"
+          project
+          workload.namespace
+          workload.unit
+      in
+      let rec check_keys = function
+        | [] -> Ok ()
+        | key :: rest ->
+          let secret = Printf.sprintf "sol-%s-%s" target.env key in
+          let* members =
+            Result.bind
+              (run
+                 [ "gcloud"
+                 ; "secrets"
+                 ; "get-iam-policy"
+                 ; secret
+                 ; "--project"
+                 ; project
+                 ; "--format"
+                 ; "json"
+                 ])
+              gcp_secret_accessor_members
+          in
+          if List.mem member members
+          then check_keys rest
+          else
+            Error
+              (authorization_refusal
+                 target
+                 ~unit:workload.unit
+                 ~capability:"secret"
+                 ~resource:key)
+      in
+      check_keys workload.secrets
+    in
+    Sol_cli_result.map_list check_workload workloads |> Result.map ignore
+;;
+
 let aws_root_declared_vars
   :  has_postgres:bool
   -> production_postgres:bool
@@ -639,6 +832,8 @@ let aws : t =
   ; authorization_reconciler = aws_authorization_reconciler
   ; authorization_assumption = aws_authorization_assumption
   ; authorization_principal_matches = aws_authorization_principal_matches
+  ; authorization_effective_access =
+      (fun target workloads -> aws_effective_access ~run:run_command target workloads)
   }
 ;;
 
@@ -834,6 +1029,8 @@ let gcp : t =
   ; authorization_reconciler = gcp_authorization_reconciler
   ; authorization_assumption = gcp_authorization_assumption
   ; authorization_principal_matches = gcp_authorization_principal_matches
+  ; authorization_effective_access =
+      (fun target workloads -> gcp_effective_access ~run:run_command target workloads)
   }
 ;;
 

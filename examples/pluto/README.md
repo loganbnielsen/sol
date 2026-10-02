@@ -342,6 +342,25 @@ for AWS, `gcp.reconciler_trust_principal` for GCP) and the reconciler's own iden
 skips the authorization lifecycle, and `sol grants` refuses to run as the deploy
 identity.
 
+`sol deploy` proves the grants are effective before it applies anything, read-only: on
+AWS it simulates `secretsmanager:GetSecretValue` against the unit's role for the
+declared secret (`iam:SimulatePrincipalPolicy`; its fidelity is `VERIF-021`), on GCP it
+reads the secret's IAM policy for the unit's Workload Identity principal. A grant that
+is declared but not yet established fails the deploy at plan time, naming the unit, the
+grant and the reconciliation to run — so no pod is left waiting in `ContainerCreating`
+for a credential that does not exist:
+
+```text
+$ sol deploy prod/aws/us-east-1
+unit charge-svc does not have effective access to secret/stripe in prod/aws/us-east-1:
+the reconciler has not established the grant. Run `sol grants apply prod/aws/us-east-1`,
+then re-run this deploy (DEC-062 rule 3).
+```
+
+The deploy identity holds no IAM-mutating permission at all — only read-only IAM
+visibility — so it can observe effective access but can never create, widen or repair a
+grant (`check_deploy_identity_iam.py` holds that structurally).
+
 ## Tearing down: destroy an environment, or uninstall Sol
 
 The two operations remove different things, and neither removes the other's.

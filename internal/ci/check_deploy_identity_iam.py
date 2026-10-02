@@ -8,10 +8,11 @@ therefore must not hold any IAM-mutating permission at all -- not because a
 particular call site is careful, but because the capability would let it grant
 itself or a workload anything.
 
-The generated policy in `platform/cloud/aws/bootstrap/main.tf` already denies
-`iam:*`; this guard reads that document structurally so a later edit that widens
-the deploy identity (an Allow that slips an IAM write in, or a Deny narrowed
-away from `iam:*`) fails here rather than at a live qualification.
+The generated policy in `platform/cloud/aws/bootstrap/main.tf` allows only
+read-only IAM visibility (`iam:Get`, `iam:List`, `iam:Simulate`) and denies every
+IAM-mutation family; this guard reads that document structurally so a later edit
+that widens the deploy identity (an Allow that slips an IAM write in, or a denied
+family narrowed away) fails here rather than at a live qualification.
 """
 
 from __future__ import annotations
@@ -27,6 +28,25 @@ BOOTSTRAP = "platform/cloud/aws/bootstrap/main.tf"
 DOCUMENT = "data.aws_iam_policy_document.deploy"
 
 READ_ONLY_IAM_PREFIXES = ("iam:Get", "iam:List", "iam:Simulate")
+
+REQUIRED_DENIED_IAM_PREFIXES = (
+    "iam:Create",
+    "iam:Delete",
+    "iam:Put",
+    "iam:Attach",
+    "iam:Detach",
+    "iam:Update",
+    "iam:Add",
+    "iam:Remove",
+    "iam:Set",
+    "iam:Tag",
+    "iam:Untag",
+    "iam:PassRole",
+    "iam:Deactivate",
+    "iam:Enable",
+    "iam:Upload",
+    "iam:Resync",
+)
 
 
 def actions_of(statement):
@@ -48,6 +68,10 @@ def mutates_iam(action):
     return not action.startswith(READ_ONLY_IAM_PREFIXES)
 
 
+def denies_prefix(denied, prefix):
+    return any(action == "iam:*" or action == prefix or action.startswith(f"{prefix}*") for action in denied)
+
+
 def main():
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     path = root / BOOTSTRAP
@@ -59,7 +83,7 @@ def main():
         sys.exit(f"check_deploy_identity_iam: {BOOTSTRAP} has no {DOCUMENT} policy document")
 
     problems = []
-    denies_iam_wildcard = False
+    denied_iam = set()
     statements = documents[0].body.get("statement", [])
     if isinstance(statements, dict):
         statements = [statements]
@@ -74,14 +98,15 @@ def main():
                     f"the deploy identity's Allow statement {sid!r} grants "
                     f"IAM-mutating action(s): {', '.join(mutating)}"
                 )
-        elif effect == "Deny" and "iam:*" in granted:
-            denies_iam_wildcard = True
+        elif effect == "Deny":
+            denied_iam.update(action for action in granted if is_iam_action(action))
 
-    if not denies_iam_wildcard:
-        problems.append(
-            "the deploy identity's policy has no Deny covering 'iam:*', so it may "
-            "hold IAM-mutating authority"
-        )
+    for prefix in REQUIRED_DENIED_IAM_PREFIXES:
+        if not denies_prefix(denied_iam, prefix):
+            problems.append(
+                f"the deploy identity's policy has no Deny covering IAM mutation "
+                f"'{prefix}*', so a future Allow could grant it authority"
+            )
 
     if problems:
         for problem in problems:
@@ -94,8 +119,8 @@ def main():
         sys.exit(1)
 
     print(
-        "check_deploy_identity_iam: the deploy identity allows no IAM-mutating action and "
-        "denies iam:*"
+        "check_deploy_identity_iam: the deploy identity allows only read-only IAM "
+        "visibility and denies every IAM-mutation family"
     )
 
 
