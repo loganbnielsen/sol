@@ -725,7 +725,20 @@ let execute
   in
   let* specs = service_specs_of_release release in
   let* () = deps.ensure_held () in
-  let* () = deps.apply specs in
+  let* () =
+    match deps.apply specs with
+    | Ok () -> Ok ()
+    | Error msg ->
+      Error
+        (Printf.sprintf
+           "%s\n\
+            rollback incomplete: not every workload could be applied, so the ones that \
+            were may already carry release %s while the current-release pointer still \
+            names the previous release. Re-run the rollback (or redeploy) to finish, and \
+            verify cluster state before relying on it."
+           msg
+           release.release_id)
+  in
   let* () =
     match deps.live_workloads () with
     | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
