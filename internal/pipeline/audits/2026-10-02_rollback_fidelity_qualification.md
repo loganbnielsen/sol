@@ -91,3 +91,51 @@ rollback leaves behind rather than which callbacks it invoked:
 - The model reproduces the transaction's own contract; it does not independently
   prove that a real `kubectl apply` of the rendered manifests produces the
   asserted cluster state.
+
+## Re-run after remediation — 2026-10-02, `main` at `810bd602d9d54ce09fe53e3d7538d2f6084eeca1`
+
+`BUG-118`, `BUG-119` and `BUG-120` landed after the run above, and the harness
+was extended to assert the state a rollback leaves rather than only the workload
+labels. The matrix was re-run against the resulting `main`:
+
+```
+$ dune build && dune test cli/test/inline
+…… All tests passed …  (every group green, exit 0)
+$ dune test framework/
+exit 0
+```
+
+What changed since the first run:
+
+- **BUG-118 (fixed).** `decode_workload` fails closed on an unreadable recorded
+  `availability` instead of silently downgrading it to `Single`.
+- **BUG-119 (fixed).** A failed apply returns a message naming the target release
+  and the state left behind (pointer unchanged, workloads already applied
+  possibly relabelled) instead of the raw apply error.
+- **BUG-120 (fixed; decision recorded in `DONE/BUG-120.md`).** A dropped
+  workload's stateless auxiliaries — the workload, `ServiceAccount`,
+  `<name>-env` `ConfigMap`, `NetworkPolicy`, `Service`, `Ingress`,
+  `PodDisruptionBudget`, and the blue-green `-active`/`-preview`
+  `Service`/`Ingress` — are pruned by the deterministic names the renderer
+  produces, with a guard so a sibling workload's name is never selected. PVCs
+  and the independently managed secret are never deleted; the retained claims
+  are read from the live workload before deletion and reported by name after a
+  successful restore. The restore case now seeds the dropped workload's object
+  set and asserts, after the rollback, that every stateless object is gone and
+  the volume claim is still present.
+
+| Invariant | Verdict |
+|---|---|
+| A bad deploy is restored: workloads re-labelled, pointer moved, surplus removed, config/image re-rendered | PASS |
+| A dropped workload's stateless auxiliaries are pruned while its storage and secret are left | PASS |
+| A partial apply fails closed and names the state it left behind: pointer unmoved, no prune, Secret untouched | PASS |
+| An interrupted rollback (lost lease) leaves the pointer unmoved | PASS (existing tests) |
+| Rollback never restores or overwrites secret values; renders references only | PASS |
+| The restored artifact equals the artifact that was deployed | **FAIL — owned by FEAT-096**, still `READY_FOR_ENGINEERING` |
+
+The evidence class is unchanged: repository-derived plus modelled-cluster
+behavioural evidence, not a live run. The live row in
+`internal/pipeline/audits/QUALIFICATION_STATUS.md` — **B deploy / pointer /
+rollback** — remains **NOT RUN**; running it is `VERIF-020`/`VERIF-021`, gated on
+operator authorization. No live claim is made or substituted here.
+
