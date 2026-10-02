@@ -101,10 +101,11 @@ if ! build_output="$(dune build 2>&1)"; then
 fi
 
 echo "fast checks: unit tests (serial: they hold dune's build lock)"
+unit_failed=0
 if ! unit_output="$(dune test "${unit_test_dirs[@]}" 2>&1)"; then
+  unit_failed=1
   printf '%s\n' "$unit_output"
-  echo "fast checks: unit tests failed; no further checks run"
-  exit 1
+  echo "fast checks: unit tests failed; running the guards anyway"
 fi
 
 results="$(mktemp -d)"
@@ -145,5 +146,8 @@ for index in "${failed[@]}"; do
 done
 
 echo ""
-echo "fast checks: ${#failed[@]}/${#checks[@]} failed in $((SECONDS - started))s"
-[ "${#failed[@]}" -eq 0 ]
+if [ "$unit_failed" -ne 0 ]; then
+  echo "fast checks: unit tests FAILED (the guard results above still ran)"
+fi
+echo "fast checks: ${#failed[@]}/${#checks[@]} checks failed in $((SECONDS - started))s"
+[ "${#failed[@]}" -eq 0 ] && [ "$unit_failed" -eq 0 ]
