@@ -126,6 +126,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
 | `sol assets` | — | — | documented | Show where this sol's own assets come from (a source |
+| `sol ci init` | PROVIDER | `--force` | documented | Write the supported CI workflow into the current |
 | `sol fn run` | DOMAIN/NAME | `--target=ENV/PROVIDER/REGION` | documented | Manually invoke a deployed -fn: creates one Kubernetes |
 | `sol migrate rollback` | — | `--dir=DIR`, `--table=TABLE` | documented | Roll back the last applied migration |
 | `sol migrate status` | — | `--dir=DIR`, `--json`, `--table=TABLE` | documented | Show per-file applied/pending status |

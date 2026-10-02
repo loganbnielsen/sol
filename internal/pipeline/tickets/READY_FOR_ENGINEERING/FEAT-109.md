@@ -85,3 +85,29 @@ user can see the generated workflow and the identity configuration it expects.
 
 **TypeScript parity:** No language-parity impact — the CI path is app-language
 neutral; a TypeScript workspace uses the same generated workflow.
+
+## Progress (2026-10-02, part A)
+
+**Landed:** `sol ci init github` (`cmd_ci.ml` + `Sol_cli_ci`) writes
+`.github/workflows/sol-ci.yml` into an existing workspace from a dedicated
+template (`platform/shared/templates/ci/github/sol-ci.yml`), refusing to
+overwrite a workflow the user has edited unless `--force`, and idempotent on a
+re-run. The generated workflow authenticates with **GitHub OIDC**
+(`id-token: write`, `aws-actions/configure-aws-credentials` role assumption,
+GCP Workload Identity), reads `SOL_TARGET` from a repository variable and passes
+it verbatim to `sol deploy` and `sol migrate` (no inference, DEC-016), and holds
+no workload secret values. The command prints the repository variables and the
+provider-side trust it expects. `examples/pluto` now carries the generated
+workflow (its old kubeconfig `deploy.yml` is removed), §5 of
+`docs/guides/deployment.md` documents the OIDC setup, and
+`docs/reference/cli.md` is regenerated. Tests: `cli/test/inline/test_ci_init.ml`
+(write, idempotent re-run, refuse-to-clobber, `--force`).
+
+**Still open (ticket stays `READY_FOR_ENGINEERING`):** the gated authorization
+job that assumes DEC-062's separately privileged reconciler is not in the
+generated workflow yet, because the reconciler's CLI entry point is itself still
+open (DEC-062's stage/plan integration); it lands with that command and the
+`SOL_AUTHORIZATION_ROLE_ARN` trust it needs. Also open: unifying the scaffold's
+own `templates/workspace/.github/workflows/` copy with this template so
+`sol new workspace` writes the same OIDC workflow and the legacy `deploy.yml`
+disappears everywhere.
