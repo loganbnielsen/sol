@@ -1012,3 +1012,37 @@ Results: rollback, worker `Fail`, Kafka-unavailable-then-recovery, same-key orde
 restart observed (`PASS`); the crash-between-ack-and-mark and job-retry rows were not reached and
 are recorded as such. One finding: the representative consumer duplicates its domain row under a
 redelivered fact — **BUG-112**.
+
+## Observability workstream opened — local qualification only (2026-10-02, `main @ 2a2c5a7c`)
+
+Not a provider run. A dedicated workstream now qualifies the observability and diagnostic
+contract through failure scenarios (symptom → detection → investigation → cause → recovery),
+with evidence classes `MODELED` / `MECHANISM` / `LOCAL` / `LIVE` and an explicit rule that no
+class is promoted to another.
+
+- Charter and evidence rules: [`internal/qualification/observability/README.md`](../qualification/observability/README.md)
+- Executable contract: [`internal/qualification/observability/observability-diagnostic-matrix.md`](../qualification/observability/observability-diagnostic-matrix.md)
+- Run record: [`internal/qualification/records/2026-10-02-observability-local-qualification.md`](../qualification/records/2026-10-02-observability-local-qualification.md)
+
+The run stood up real backends on this host (native Loki 3.0.0 / Prometheus 2.53.0 / Tempo 2.5.0 /
+Pushgateway 1.9.0, plus the native Redpanda broker) because this host has no Docker and therefore
+no Kubernetes. It qualified, `LOCAL`: the svc → Kafka → worker green path's metrics and logs; the
+`trace_id` ↔ Tempo trace correlation (both spans, one trace); `sol logs`' Loki-first snapshot and
+exact unit selector; the visible degradation when Loki is down; `sol status`' observability block
+and `UNKNOWN` for an unanswerable workload read; dashboard definitions and `sol open` link/uids.
+Alert firing/delivery, the `kubectl` log fallback, Grafana rendering, `self_hosted_durable`,
+`external`, and the deploy → rollback → recovery loop are `NOT REACHED`/`BLOCKED` and are named as
+such — **nothing is `LIVE`.**
+
+Three findings:
+
+| Finding | Evidence | Ticket |
+|---|---|---|
+| An unreachable cluster is reported as "not deployed" by `sol logs`/`sol fn run` — the residual of FND-0024 that INFRA-063's third state did not cover (kubectl ran, exit non-zero) | LOCAL | `BUG-121` (`READY_FOR_ENGINEERING`) |
+| `env` is a pod label and a metric label but never a Loki stream label — both Alloy promotion lists omit it, contradicting the six-label identity | MECHANISM + LOCAL | `OBS-049` (`READY_FOR_ENGINEERING`) |
+| Traces carry only `service.name`; no `workspace`/`env`/`domain`/`primitive`/`release` resource attributes | LOCAL | `OBS-050` (`BACKLOG`, decision required) |
+
+The matrix also records what it does **not** establish: the decode-error/DLQ path (the cheapest
+next row, needing only a crafted record), broker-loss and telemetry-loss alerts, and every
+cluster/cloud-gated row.
+
