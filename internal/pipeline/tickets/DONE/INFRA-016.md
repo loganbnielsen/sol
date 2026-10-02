@@ -6,8 +6,9 @@ source: architecture discussion 2026-09-15 (refining INFRA-015's "wait for a
   real user to hit this" gate into a testable, pre-registered experiment)
 ---
 
-**Depends on:** FEAT-079 (done — `sol fn run` is this spike's burst-firing
-mechanism).
+**Depends on:** FEAT-079.
+
+FEAT-079 is done: `sol fn run` is this spike's burst-firing mechanism.
 
 **Related:** INFRA-015 (this spike's result decides whether INFRA-015 gets
 promoted, what mechanism it actually specifies, or whether it stays

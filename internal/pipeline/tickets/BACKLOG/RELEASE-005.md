@@ -8,9 +8,11 @@ source: DEC-025 (2026-09-16) — publication work split out as release engineeri
 Publish the Sol OCaml framework, and the dependencies it needs, to the public
 opam-repository.
 
-**Depends on:** INFRA-007's opam half (licence and dependency inventory of the
-opam graph — still not inventoried; distribution is what triggers the
-obligations, so this gates publication).
+**Depends on:** INFRA-007.
+
+Specifically INFRA-007's opam half: the licence and dependency inventory of the opam
+graph is still not done, and distribution is what triggers the obligations, so this
+gates publication.
 
 **Related:** DEC-025, DEC-013, FEAT-085, FEAT-088, INFRA-007.
 

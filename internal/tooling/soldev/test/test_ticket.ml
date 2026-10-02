@@ -378,6 +378,25 @@ let test_invalid_yaml_is_unreadable () =
     check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" reason)
 ;;
 
+let test_wrapped_depends_is_unreadable () =
+  let path = "internal/pipeline/tickets/BACKLOG/BUG-999.md" in
+  let content = readable_ticket ^ "\n**Depends on:** DEC-026, SEC-004,\nDEC-027.\n" in
+  match Soldev_ticket.unreadable ~path content with
+  | None -> Alcotest.fail "a wrapped Depends on field was accepted"
+  | Some reason ->
+    check_bool "names the file" true (contains_substring ~needle:path reason);
+    check_bool "names the field" true (contains_substring ~needle:"Depends on" reason)
+;;
+
+let test_one_line_depends_is_readable () =
+  check_option_string
+    "a one-line field followed by a blank line is readable"
+    None
+    (Soldev_ticket.unreadable
+       ~path:"internal/pipeline/tickets/BACKLOG/BUG-999.md"
+       (readable_ticket ^ "\n**Depends on:** DEC-026, DEC-027.\n\nCommentary.\n"))
+;;
+
 let test_missing_field_is_unreadable () =
   let path = "internal/pipeline/tickets/BACKLOG/BUG-998.md" in
   let content =
@@ -490,6 +509,14 @@ let () =
             `Quick
             test_no_frontmatter_block_is_unreadable
         ; Alcotest.test_case "invalid YAML" `Quick test_invalid_yaml_is_unreadable
+        ; Alcotest.test_case
+            "wrapped Depends on"
+            `Quick
+            test_wrapped_depends_is_unreadable
+        ; Alcotest.test_case
+            "one-line Depends on"
+            `Quick
+            test_one_line_depends_is_readable
         ; Alcotest.test_case "a blank field" `Quick test_missing_field_is_unreadable
         ; Alcotest.test_case "each required field" `Quick test_each_required_field
         ] )

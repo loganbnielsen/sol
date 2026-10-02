@@ -6,9 +6,11 @@ title: Example workspaces are not independently buildable under the DEC-024 work
 source: FEAT-082 resumed golden-path walk 2026-09-15 (after BUG-034 / PR #271)
 ---
 
-**Depends on:** DEC-025 (how an OCaml workspace obtains the Sol framework outside
-the Sol source tree). The OCaml half cannot be made self-contained until that
-mechanism exists.
+**Depends on:** DEC-025.
+
+DEC-025 decides how an OCaml workspace obtains the Sol framework outside the Sol
+source tree. The OCaml half cannot be made self-contained until that mechanism
+exists.
 
 The TypeScript half is **done** and was gated by DEC-023, recorded under
 **Related** rather than on the `Depends on` line on purpose. The OCaml half now
