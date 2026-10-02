@@ -37,8 +37,12 @@ The distinction is worth stating plainly because it is easy to conflate: a sign-
 dune build && dune test && dune fmt --preview
 ```
 
-A pre-commit hook runs the build and unit suites; install it with
-`bash internal/tooling/scripts/install-hooks.sh`.
+A pre-commit hook runs the build and unit suites, and a pre-push hook runs
+`internal/ci/run_fast_checks.sh`: a build, then the fast `internal/ci/` guards and
+their mutation tests in parallel, with a pass/fail line per check (about 12s warm).
+Install both once per clone with `bash internal/tooling/scripts/install-hooks.sh`,
+which sets `core.hooksPath`, so every worktree runs its own checkout's hooks. Run the
+same battery by hand with `bash internal/ci/run_fast_checks.sh`.
 
 The repository guards under `internal/ci/` are the same checks CI runs, and some
 of them need their own tooling: the structural Terraform and YAML guards read
@@ -213,9 +217,10 @@ bash internal/tooling/scripts/install-hooks.sh
 ```
 
 That path is guarded by `internal/ci/test_hook_install.sh`, which runs the
-installer in a scratch repository, seeds a dangling symlink, and asserts every
-hook lands as a resolving, executable symlink. The test exists because a stale
-install is otherwise indistinguishable from a clean one.
+installer in a scratch repository with a dangling `.git/hooks` symlink, and asserts
+that `core.hooksPath` points at the tracked hooks and that a commit, in the main
+checkout and in a linked worktree, runs that checkout's own hook. The test exists
+because a stale install is otherwise indistinguishable from a clean one.
 
 ## Code conventions
 

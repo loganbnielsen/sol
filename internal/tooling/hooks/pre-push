@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+[ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+exec bash "$(git rev-parse --show-toplevel)/internal/ci/run_fast_checks.sh"
