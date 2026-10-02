@@ -254,6 +254,7 @@ let test_alloy_values_yaml_against_real_file () =
       yaml
       "__meta_kubernetes_pod_label_workspace";
     assert_contains "taxonomy label: release" yaml "__meta_kubernetes_pod_label_release";
+    assert_contains "taxonomy label: env" yaml "__meta_kubernetes_pod_label_env";
     check_bool
       "no basic_auth block for sol local infra up"
       false
@@ -267,7 +268,8 @@ let test_alloy_values_yaml_carries_the_config_exactly () =
     ok
       (Sol_cli_dev_observability.render_alloy_config
          ~assets:a
-         ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
+         ~taxonomy_labels:
+           [ "workspace"; "env"; "domain"; "service"; "primitive"; "release" ]
          ~loki_push_url:"http://loki:3100/loki/api/v1/push"
          ~loki_push_basic_auth_username:""
          ~loki_push_basic_auth_password:"")
