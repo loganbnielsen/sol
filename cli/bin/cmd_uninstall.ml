@@ -56,11 +56,7 @@ let uninstall ~target ~var_file ~vars ~confirm ~confirm_dns_zone () =
     |> Sol_cli_exit.of_msg
   in
   let zone_address = capabilities.installation_zone_address in
-  let addresses_the_zone address =
-    String.equal address zone_address
-    || (String.length address > String.length zone_address
-        && String.sub address 0 (String.length zone_address + 1) = zone_address ^ "[")
-  in
+  let addresses_the_zone = Sol_cli_installation.address_in_zone ~zone:zone_address in
   let plan =
     Sol_cli_installation_uninstall.plan
       ~prerequisites:(Sol_cli_provider_capabilities.installation_prerequisites provider)

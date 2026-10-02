@@ -1916,3 +1916,22 @@ let%test "public delegation: an answering resolver establishes and reports" =
 let%test "public delegation: an unqueryable resolver fails closed" =
   test_await_public_delegation_fails_closed ()
 ;;
+
+let test_address_in_zone () =
+  let zone = "api.example.com" in
+  check_bool "the zone itself" true (Sol_cli_installation.address_in_zone ~zone zone);
+  check_bool
+    "a record under the zone"
+    true
+    (Sol_cli_installation.address_in_zone ~zone (zone ^ "[0]"));
+  check_bool
+    "a different zone"
+    false
+    (Sol_cli_installation.address_in_zone ~zone "other.example.com");
+  check_bool
+    "a name that merely starts with the zone text is not in it"
+    false
+    (Sol_cli_installation.address_in_zone ~zone:"a.example.com" "ab.example.com")
+;;
+
+let%test "address_in_zone: the zone or a record under it" = test_address_in_zone ()

@@ -168,18 +168,7 @@ let aws =
       (fun configuration ->
         let open Sol_cli_installation in
         let role_name arn =
-          let after needle =
-            let n = String.length needle in
-            let rec scan i =
-              if i + n > String.length arn
-              then None
-              else if String.sub arn i n = needle
-              then Some (String.sub arn (i + n) (String.length arn - i - n))
-              else scan (i + 1)
-            in
-            scan 0
-          in
-          match after ":role/" with
+          match Sol_cli_string.after_opt ~needle:":role/" arn with
           | Some name -> name
           | None ->
             (match String.rindex_opt arn '/' with

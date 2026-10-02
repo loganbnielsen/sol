@@ -63,11 +63,7 @@ let required_fields = [ "id"; "type"; "severity"; "source" ]
 
 let wrapped_depends ~path content =
   let prefix = "**Depends on:**" in
-  let is_field line =
-    let line = String.trim line in
-    String.length line >= String.length prefix
-    && String.sub line 0 (String.length prefix) = prefix
-  in
+  let is_field line = String.starts_with ~prefix (String.trim line) in
   let continues next =
     let next = String.trim next in
     next <> "" && next.[0] <> '*' && next.[0] <> '#'
@@ -121,29 +117,6 @@ let unreadable ~path content =
 ;;
 
 let fm_get fields key = List.assoc_opt key fields
-
-let starts_with ~prefix s =
-  let lp = String.length prefix in
-  String.length s >= lp && String.sub s 0 lp = prefix
-;;
-
-let contains_substring ~needle s =
-  let ln = String.length needle in
-  let ls = String.length s in
-  if ln = 0
-  then true
-  else if ln > ls
-  then false
-  else (
-    let rec go i =
-      if i > ls - ln
-      then false
-      else if String.sub s i ln = needle
-      then true
-      else go (i + 1)
-    in
-    go 0)
-;;
 
 let strip_trailing_period s =
   let s = String.trim s in
@@ -220,7 +193,7 @@ let parse_depends content =
     | [] -> []
     | line :: rest ->
       let line = String.trim line in
-      if starts_with ~prefix line
+      if String.starts_with ~prefix line
       then (
         let raw =
           String.sub
@@ -237,7 +210,7 @@ let parse_depends content =
 
 let has_human_decision_gate content =
   List.exists
-    (fun marker -> contains_substring ~needle:marker content)
+    (fun marker -> Soldev_string.contains_substring ~needle:marker content)
     [ "## Decision Required"
     ; "## Blocked On"
     ; "## Open Questions"
@@ -264,12 +237,13 @@ let human_decision_details content =
   let marker_lines = [ "TBD"; "TODO(decide)"; "NEEDS HUMAN" ] in
   let is_bold_heading line =
     let line = String.trim line in
-    starts_with ~prefix:"**" line && contains_substring ~needle:":**" line
+    String.starts_with ~prefix:"**" line
+    && Soldev_string.contains_substring ~needle:":**" line
   in
   let is_boundary marker line =
     let line = String.trim line in
-    if starts_with ~prefix:"## " marker
-    then starts_with ~prefix:"## " line && line <> marker
+    if String.starts_with ~prefix:"## " marker
+    then String.starts_with ~prefix:"## " line && line <> marker
     else is_bold_heading line && line <> marker
   in
   let rec collect_section marker acc = function
@@ -291,7 +265,7 @@ let human_decision_details content =
   let marker_hits =
     lines
     |> List.filter (fun line ->
-      List.exists (fun m -> contains_substring ~needle:m line) marker_lines)
+      List.exists (fun m -> Soldev_string.contains_substring ~needle:m line) marker_lines)
   in
   String.concat "\n\n" (sections @ marker_hits)
 ;;

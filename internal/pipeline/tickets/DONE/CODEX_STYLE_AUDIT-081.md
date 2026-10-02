@@ -39,3 +39,12 @@ that boundary.
 - `sol local up`'s release selection (`releases`, `endpoints`) builds the same
   releases with the same `values_yaml`; the existing inline tests pass.
 - Full `dune build`; `dune fmt` clean.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `e72cc96a`: `components` was a bare string list, `component_values` a `(string * string) list`, and `values_of` a raising `List.assoc`.
+- **Fix.** `component` is now `Redpanda | Postgresql | Loki | Grafana | Tempo | Prometheus`, with `name` and a total `value : component_values -> component -> string`; `component_values` is a record with one field per component, and `read_assets` binds each component once through `read_component`. `values_of` cannot raise, and the six names appear only in `name`.
+- **Deviation, recorded.** The ticket's `all` list was dropped: the six `let*` binds build the record directly, so there is nothing to iterate, and an unused `all` would be the dead code this audit exists to remove. The compile-time guard is the exhaustive `name`/`value` match — adding a constructor without an arm does not build, which is the acceptance criterion's intent.
+- **Tests.** `test_local_platform.ml`'s asset fixture is rebuilt against the typed record; its release/endpoint expectations are unchanged, which is the behaviour-preservation check.
+- Full `dune build`; `dune fmt` clean; `cli/test/inline` passes; all 72 fast guards pass.
+- **Demo/example: not applicable** — internal local-infra wiring, no app-author surface. **Language parity: no impact.**

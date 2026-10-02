@@ -18,7 +18,7 @@ let is_digest s =
     let suffix = String.sub s (at + 1) (String.length s - at - 1) in
     String.length repo > 0
     && String.length suffix = String.length digest_prefix + digest_hex_length
-    && String.sub suffix 0 (String.length digest_prefix) = digest_prefix
+    && String.starts_with ~prefix:digest_prefix suffix
     && is_lower_hex (String.sub suffix (String.length digest_prefix) digest_hex_length)
 ;;
 

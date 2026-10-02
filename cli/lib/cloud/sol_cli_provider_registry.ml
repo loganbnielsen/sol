@@ -44,11 +44,7 @@ let state_holds_any ~chdir prefixes =
        |> String.split_on_char '\n'
        |> List.exists (fun line ->
          let line = String.trim line in
-         List.exists
-           (fun prefix ->
-              String.length line >= String.length prefix
-              && String.sub line 0 (String.length prefix) = prefix)
-           prefixes))
+         List.exists (fun prefix -> String.starts_with ~prefix line) prefixes))
   | Error (Sol_cli_process.Non_zero result) ->
     Error
       (State_unreadable

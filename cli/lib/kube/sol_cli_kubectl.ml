@@ -50,19 +50,12 @@ let says_unreachable text =
 ;;
 
 let status_reason text =
-  let prefix = "Error from server (" in
-  let n = String.length prefix in
-  let rec find i =
-    if i + n > String.length text
-    then None
-    else if String.sub text i n = prefix
-    then (
-      match String.index_from_opt text (i + n) ')' with
-      | Some j -> Some (String.sub text (i + n) (j - i - n))
-      | None -> None)
-    else find (i + 1)
-  in
-  find 0
+  match Sol_cli_string.after_opt ~needle:"Error from server (" text with
+  | None -> None
+  | Some rest ->
+    (match String.index_opt rest ')' with
+     | Some j when j > 0 -> Some (String.sub rest 0 j)
+     | _ -> None)
 ;;
 
 let classify (error : Sol_cli_process.error) =

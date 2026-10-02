@@ -2,4 +2,10 @@
  (name soldev_lib)
  (wrapped false)
  (libraries sol_process yojson yaml)
- (modules Soldev_exit Soldev_shell Soldev_ticket Soldev_merge Soldev_cleanup))
+ (modules
+  Soldev_exit
+  Soldev_shell
+  Soldev_string
+  Soldev_ticket
+  Soldev_merge
+  Soldev_cleanup))

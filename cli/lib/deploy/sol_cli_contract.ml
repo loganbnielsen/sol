@@ -1,3 +1,5 @@
+open Result.Syntax
+
 let projection_dir ~workspace = Filename.concat workspace "contract"
 let has_projection ~workspace = Sys.file_exists (projection_dir ~workspace)
 
@@ -38,35 +40,53 @@ let report ~workspace ~registry_url ~mode =
     Ok ()
 ;;
 
-let print_declared_contract json =
-  let string_field fields name =
-    match List.assoc_opt name fields with
-    | Some (`String value) -> value
-    | _ -> "?"
+type declared_event =
+  { module_name : string
+  ; topic : string
+  ; partitions : int
+  }
+
+let decode_declared_contract json : (declared_event list, string) result =
+  let* payload = Sol_cli_json.decode ~what:"the declared contract" json in
+  let* events =
+    Sol_cli_json.require
+      ~what:"the declared contract"
+      [ "events" ]
+      Sol_cli_json.list
+      payload
   in
-  let int_field fields name =
-    match List.assoc_opt name fields with
-    | Some (`Int value) -> string_of_int value
-    | _ -> "?"
-  in
-  match Yojson.Safe.from_string json with
-  | `Assoc fields ->
-    (match List.assoc_opt "events" fields with
-     | Some (`List events) ->
-       List.iter
-         (fun event ->
-            match event with
-            | `Assoc fields ->
-              Sol_cli_report.app
-                "  - %s  topic %s  partitions %s\n"
-                (string_field fields "module")
-                (string_field fields "topic")
-                (int_field fields "partitions")
-            | _ -> ())
-         events
-     | _ -> ())
-  | _ -> ()
-  | exception _ -> ()
+  Sol_cli_result.map_list
+    (fun event ->
+       let* module_name =
+         Sol_cli_json.require
+           ~what:"a declared event"
+           [ "module" ]
+           Sol_cli_json.string
+           event
+       in
+       let* topic =
+         Sol_cli_json.require
+           ~what:"a declared event"
+           [ "topic" ]
+           Sol_cli_json.string
+           event
+       in
+       let* partitions =
+         Sol_cli_json.require
+           ~what:"a declared event"
+           [ "partitions" ]
+           Sol_cli_json.int
+           event
+       in
+       Ok { module_name; topic; partitions })
+    events
+;;
+
+let print_declared_contract events =
+  List.iter
+    (fun { module_name; topic; partitions } ->
+       Sol_cli_report.app "  - %s  topic %s  partitions %d\n" module_name topic partitions)
+    events
 ;;
 
 let plan_report ~workspace ~registry_url =
@@ -79,8 +99,12 @@ let plan_report ~workspace ~registry_url =
        Sol_cli_report.warn "warning: could not project the declared contract: %s" msg
      | Ok None -> ()
      | Ok (Some json) ->
-       Sol_cli_report.app "\nContract (declared):";
-       print_declared_contract json);
+       (match decode_declared_contract json with
+        | Ok events ->
+          Sol_cli_report.app "\nContract (declared):";
+          print_declared_contract events
+        | Error reason ->
+          Sol_cli_report.warn "warning: could not read the declared contract: %s" reason));
     (match registry_url with
      | "" ->
        Sol_cli_report.app
