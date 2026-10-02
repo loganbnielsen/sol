@@ -1195,6 +1195,7 @@ let recording_deps
       ?(live = [])
       ?(prune_result = Ok ())
       ?(apply_result = Ok ())
+      ?(retained = [])
       ?ensure_held
       ?applied_migrations
       ?(record_consumer_groups = fun _ -> Ok ())
@@ -1237,10 +1238,12 @@ let recording_deps
           record "live_workloads";
           Ok live)
     ; prune =
-        (fun surplus ->
+        (fun ~live:_ ~surplus ->
           record "prune";
           pruned := Some surplus;
-          prune_result)
+          match prune_result with
+          | Ok () -> Ok { Sol_cli_rollback.removed = []; retained }
+          | Error _ as e -> e)
     ; move_pointer =
         (fun () ->
           record "move_pointer";
@@ -1950,12 +1953,87 @@ let test_sequential_application_stops_on_error () =
     (List.rev !visited)
 ;;
 
+let test_plan_prune_prunes_stateless_auxiliaries_and_retains_volumes () =
+  let id : Sol_cli_rollback.workload_identity =
+    { kind = Sol_cli_rollback.Live_deployment
+    ; namespace = "myapp-payments"
+    ; name = "ghost-svc"
+    }
+  in
+  let report =
+    Sol_cli_rollback.plan_prune
+      ~surplus:[ id ]
+      ~live_names:[ "ledger-svc"; "ghost-svc" ]
+      ~claims:(fun _ -> [ "ghost-svc-data" ])
+  in
+  let named (t : Sol_cli_rollback.prune_target) = t.resource, t.name in
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the workload and its stateless auxiliaries are pruned"
+    [ "deployment", "ghost-svc"
+    ; "serviceaccount", "ghost-svc"
+    ; "configmap", "ghost-svc-env"
+    ; "networkpolicy", "ghost-svc"
+    ; "service", "ghost-svc"
+    ; "ingress", "ghost-svc"
+    ; "poddisruptionbudget", "ghost-svc"
+    ]
+    (List.map named report.removed);
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the volume claim is retained, never pruned"
+    [ "persistentvolumeclaim", "ghost-svc-data" ]
+    (List.map named report.retained)
+;;
+
+let test_plan_prune_guards_blue_green_names_against_a_sibling () =
+  let id : Sol_cli_rollback.workload_identity =
+    { kind = Sol_cli_rollback.Live_rollout
+    ; namespace = "myapp-payments"
+    ; name = "ghost-svc"
+    }
+  in
+  let names ~live_names =
+    let report =
+      Sol_cli_rollback.plan_prune ~surplus:[ id ] ~live_names ~claims:(fun _ -> [])
+    in
+    List.map (fun (t : Sol_cli_rollback.prune_target) -> t.name) report.removed
+  in
+  let free = names ~live_names:[ "ghost-svc" ] in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a free blue-green name is pruned"
+    true
+    (List.mem "ghost-svc-active" free && List.mem "ghost-svc-preview" free);
+  let occupied =
+    names ~live_names:[ "ghost-svc"; "ghost-svc-active"; "ghost-svc-preview" ]
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a sibling's -active/-preview names are left alone"
+    false
+    (List.mem "ghost-svc-active" occupied || List.mem "ghost-svc-preview" occupied);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the base names are still pruned"
+    true
+    (List.mem "ghost-svc" occupied)
+;;
+
 type modelled_cluster =
   { mutable live : (Sol_cli_rollback.workload_identity * string) list
   ; mutable pointer : string
   ; mutable secret : (string * string) list
   ; mutable manifests : string list
+  ; mutable objects : Sol_cli_rollback.prune_target list
+  ; claims : Sol_cli_rollback.workload_identity -> string list
   }
+
+let same_target (a : Sol_cli_rollback.prune_target) (b : Sol_cli_rollback.prune_target) =
+  String.equal a.resource b.resource
+  && String.equal a.namespace b.namespace
+  && String.equal a.name b.name
+;;
 
 let same_identity
       (a : Sol_cli_rollback.workload_identity)
@@ -2018,13 +2096,28 @@ let modelled_deps ~release ~cluster ?(fail_at = None) ()
   ; apply = apply_all 0
   ; live_workloads = (fun () -> Ok cluster.live)
   ; prune =
-      (fun surplus ->
+      (fun ~live ~surplus ->
+        let live_names =
+          List.map (fun ((id : Sol_cli_rollback.workload_identity), _) -> id.name) live
+        in
+        let report =
+          Sol_cli_rollback.plan_prune
+            ~surplus:(List.map fst surplus)
+            ~live_names
+            ~claims:cluster.claims
+        in
         let removed = List.map fst surplus in
         cluster.live
         <- List.filter
              (fun (id, _) -> not (List.exists (same_identity id) removed))
              cluster.live;
-        Ok ())
+        cluster.objects
+        <- List.filter
+             (fun object_ ->
+                not
+                  (List.exists (fun target -> same_target target object_) report.removed))
+             cluster.objects;
+        Ok report)
   ; move_pointer =
       (fun () ->
         cluster.pointer <- release_id;
@@ -2052,6 +2145,9 @@ let test_qualification_restores_after_a_bad_deploy () =
   let initial_secret =
     [ "POSTGRES_URL", "postgresql://prod"; "SOL_API_KEY", "api-key-material" ]
   in
+  let ghost_object resource name =
+    { Sol_cli_rollback.resource; namespace = qualification_ghost.namespace; name }
+  in
   let cluster =
     { live =
         List.map (fun spec -> Sol_cli_rollback.identity_of_spec spec, bad) target
@@ -2059,6 +2155,19 @@ let test_qualification_restores_after_a_bad_deploy () =
     ; pointer = bad
     ; secret = initial_secret
     ; manifests = []
+    ; objects =
+        [ ghost_object "deployment" "ghost-svc"
+        ; ghost_object "serviceaccount" "ghost-svc"
+        ; ghost_object "configmap" "ghost-svc-env"
+        ; ghost_object "networkpolicy" "ghost-svc"
+        ; ghost_object "service" "ghost-svc"
+        ; ghost_object "ingress" "ghost-svc"
+        ; ghost_object "poddisruptionbudget" "ghost-svc"
+        ; ghost_object "persistentvolumeclaim" "ghost-svc-data"
+        ]
+    ; claims =
+        (fun (id : Sol_cli_rollback.workload_identity) ->
+          if same_identity id qualification_ghost then [ "ghost-svc-data" ] else [])
     }
   in
   let deps = modelled_deps ~release ~cluster () in
@@ -2117,7 +2226,20 @@ let test_qualification_restores_after_a_bad_deploy () =
          ~msg:"secret referenced by key"
          true
          (contains "secretKeyRef"))
-    cluster.manifests
+    cluster.manifests;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:
+      "a dropped workload's stateless auxiliaries are pruned and its volume is retained"
+    [ "persistentvolumeclaim" ]
+    (List.map (fun (t : Sol_cli_rollback.prune_target) -> t.resource) cluster.objects);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the retained object is the dropped workload's volume claim"
+    "ghost-svc-data"
+    (match cluster.objects with
+     | [ t ] -> t.name
+     | _ -> "<none>")
 ;;
 
 let test_qualification_partial_apply_leaves_the_pointer () =
@@ -2130,6 +2252,8 @@ let test_qualification_partial_apply_leaves_the_pointer () =
     ; pointer = bad
     ; secret = initial_secret
     ; manifests = []
+    ; objects = []
+    ; claims = (fun _ -> [])
     }
   in
   let deps = modelled_deps ~release ~cluster ~fail_at:(Some 1) () in
@@ -2209,6 +2333,14 @@ let%test "qualification: a partial apply leaves the pointer and secrets alone" =
 
 let%test "qualification: rollback render never carries secret material" =
   test_qualification_render_never_carries_secret_material ()
+;;
+
+let%test "prune_plan: stateless auxiliaries pruned, volumes retained (BUG-120)" =
+  test_plan_prune_prunes_stateless_auxiliaries_and_retains_volumes ()
+;;
+
+let%test "prune_plan: blue-green names are left when a sibling owns them (BUG-120)" =
+  test_plan_prune_guards_blue_green_names_against_a_sibling ()
 ;;
 
 let%test "reconstruction_gate: A: decode correctness" = test_gate_a_decode_correctness ()
