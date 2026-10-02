@@ -61,9 +61,6 @@ let frontmatter content =
 let fields content = Result.value (frontmatter content) ~default:[]
 let required_fields = [ "id"; "type"; "severity"; "source" ]
 
-(* Only the `**Depends on:**` line itself is parsed (BUG-114), so a field wrapped onto
-   the next line would silently drop the ids there. Reject the wrap instead of reading the
-   paragraph: prose ids would otherwise become dependencies. *)
 let wrapped_depends ~path content =
   let prefix = "**Depends on:**" in
   let is_field line =
@@ -71,8 +68,6 @@ let wrapped_depends ~path content =
     String.length line >= String.length prefix
     && String.sub line 0 (String.length prefix) = prefix
   in
-  (* Like [parse_depends], only the first field counts; a following bold field or
-     heading starts a new block rather than continuing this one. *)
   let continues next =
     let next = String.trim next in
     next <> "" && next.[0] <> '*' && next.[0] <> '#'
