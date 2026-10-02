@@ -1,3 +1,14 @@
-(tests
- (names test_sol_jobs test_sol_jobs_pg)
- (libraries sol_jobs pg-eio caqti caqti-eio eio_main alcotest))
+(test
+ (name test_sol_jobs)
+ (modules test_sol_jobs)
+ (libraries sol_jobs pg-eio caqti caqti-eio eio_main alcotest unix))
+
+(executable
+ (name test_sol_jobs_pg)
+ (modules test_sol_jobs_pg)
+ (libraries sol_jobs pg-eio caqti caqti-eio eio_main alcotest unix))
+
+(rule
+ (alias runtest-integration)
+ (action
+  (run ./test_sol_jobs_pg.exe)))

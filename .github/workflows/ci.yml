@@ -241,8 +241,15 @@ jobs:
       # `rpk`, which a clean runner does not have, and these suites register
       # their own topics through the schema registry. sol-jobs' Postgres case
       # skips itself when POSTGRES_URL is unset, which is why the variable is
-      # part of this step rather than the suite being excluded from it.
+      # part of this step rather than the suite being excluded from it, and the
+      # suites now live behind runtest-integration for that reason.
       # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
+      # The database suites are their own targets, `runtest-integration`, not the
+      # unit targets with a different ambient environment: they are not built by
+      # the unit step, they cannot be served from its cache, and they fail rather
+      # than skip when POSTGRES_URL is missing, so this step's exit status is the
+      # statement that the Postgres-backed cases ran and passed. One alias per
+      # invocation, because both suites destructively own the one sol_jobs table.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         timeout-minutes: 20
@@ -256,7 +263,8 @@ jobs:
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
-          opam exec -- dune test framework/ocaml/sol-jobs/ framework/ocaml/sol-outbox/
+          opam exec -- dune build @framework/ocaml/sol-jobs/test/runtest-integration
+          opam exec -- dune build @framework/ocaml/sol-outbox/test/runtest-integration
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
