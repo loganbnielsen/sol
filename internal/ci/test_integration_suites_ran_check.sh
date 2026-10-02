@@ -22,39 +22,62 @@ report() {
 
 executed_jobs="$scratch/integration-jobs.log"
 cat >"$executed_jobs" <<'LOG'
-  [OK]          claim by kind (BUG-044 a)                       1   another workspace's rows are never claimed....
-  [OK]          claim by kind (BUG-044 a)                       2   a poller sweeps only its own terminal rows....
-Test Successful in 5.294s. 24 tests run.
+Testing `sol_jobs_pg'.
+This run has ID `OC851A3A'.
+
+  [OK]          claim by kind (BUG-044 a)                       0   two Make ...
+  [OK]          claim by kind (BUG-044 a)                       1   another w...
+  [OK]          claim by kind (BUG-044 a)                       2   a poller ...
+  [OK]          claim by kind (BUG-044 a)                       3   enqueue r...
+  [OK]          database failures are loud (BUG-044 c)          0   missing t...
+
+Full test results in `/home/runner/work/sol/sol/_build/default/framework/ocaml/sol-jobs/test/_build/_tests/sol_jobs_pg'.
+Test Successful in 4.675s. 20 tests run.
 LOG
 
 executed_outbox="$scratch/integration-outbox.log"
 cat >"$executed_outbox" <<'LOG'
-  [OK]          composition                                      6   the outbox and sol-jobs share one transaction...
-Test Successful in 1.053s. 7 tests run.
+Testing `sol_outbox'.
+This run has ID `HG5R9ITK'.
+
+  [OK]          composition                                      0   the outbox and sol-jobs share one tr...
+  [OK]          relay                                            1   a failed publish does not advance th...
+
+Full test results in `/home/runner/work/sol/sol/_build/default/framework/ocaml/sol-outbox/test/_build/_tests/sol_outbox'.
+Test Successful in 0.989s. 7 tests run.
 LOG
 
 cached_jobs="$scratch/cached-jobs.log"
 : >"$cached_jobs"
 
 cached_outbox="$scratch/cached-outbox.log"
-printf '[skip] POSTGRES_URL not set\n' >"$scratch/skipped-outbox.log"
+: >"$cached_outbox"
+
+no_cases="$scratch/integration-outbox-no-cases.log"
+cat >"$no_cases" <<'LOG'
+Testing `sol_outbox'.
+This run has ID `HG5R9ITK'.
+
+Full test results in `/home/logan/Code/sol-cloud/sol/_build/default/framework/ocaml/sol-outbox/test/_build/_tests/sol_outbox'.
+Test Successful in 0.002s. 7 tests run.
+LOG
 
 if bash "$guard" "$executed_jobs" "$executed_outbox" >/dev/null 2>&1; then
-  report 1 "a log showing the database cases passes"
+  report 1 "CI-shaped logs showing the database groups pass"
 else
-  report 0 "a log showing the database cases passes"
+  report 0 "CI-shaped logs showing the database groups pass"
 fi
 
 if bash "$guard" "$cached_jobs" "$executed_outbox" >/dev/null 2>&1; then
-  report 0 "a cached run (no case output) is refused"
+  report 0 "a cached run (no output at all) is refused"
 else
-  report 1 "a cached run (no case output) is refused"
+  report 1 "a cached run (no output at all) is refused"
 fi
 
-if bash "$guard" "$executed_jobs" "$scratch/skipped-outbox.log" >/dev/null 2>&1; then
-  report 0 "a log without an executed database case is refused"
+if bash "$guard" "$no_cases" >/dev/null 2>&1; then
+  report 0 "a suite run that never reached its database group is refused"
 else
-  report 1 "a log without an executed database case is refused"
+  report 1 "a suite run that never reached its database group is refused"
 fi
 
 if bash "$guard" "$cached_outbox" >/dev/null 2>&1; then
