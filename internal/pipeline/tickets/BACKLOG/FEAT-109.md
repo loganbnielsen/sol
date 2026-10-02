@@ -6,7 +6,7 @@ title: Add `sol ci init github` so an existing workspace gets a supported CI wor
 source: DEC-057 and docs/DEVELOPER_EXPERIENCE.md §8 (2026-09-29)
 ---
 
-**Depends on:** DEC-030.
+**Depends on:** DEC-061.
 
 **Related:** `DEC-057` (the contract), `DEC-016` (target selection is explicit; CI
 must not infer one), `FEAT-012` (the scaffolded `.github/workflows/sol-ci.yml`
@@ -50,8 +50,10 @@ identity story.
   be applied to a workspace, sharing the template with `sol new workspace`.
 - Decide and document the provider-native identity mechanism (OIDC trust or its
   provider equivalent), and make the workflow's failure mode explain a missing or
-  mistrusted identity clearly. This is why the ticket depends on `DEC-030`: the
-  deploy identity model is the input the trust configuration must match.
+  mistrusted identity clearly. This is why the ticket depends on `DEC-061`: its
+  destination/identity contract (declaration decides where, execution identity
+  decides whether, ambient config decides neither) is the input the trust
+  configuration must match. Do not reproduce a human kubeconfig setup flow.
 - Ensure the generated workflow and the docs (DOCS-026/DOCS-028) agree, and that
   a reader can tell which secrets/OIDC subjects must be configured where.
 
