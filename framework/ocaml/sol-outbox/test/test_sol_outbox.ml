@@ -3,9 +3,9 @@ open Caqti_type
 open Result.Syntax
 
 let postgres_url () =
-  match Sys.getenv_opt "POSTGRES_URL" with
-  | Some "" -> None
-  | v -> v
+  match Array.to_list Sys.argv with
+  | _ :: url :: _ when String.trim url <> "" -> Some url
+  | _ -> None
 ;;
 
 let ddl =
@@ -51,8 +51,9 @@ let with_pool f =
   match postgres_url () with
   | None ->
     Windtrap.fail
-      "POSTGRES_URL is not set: this target exists to exercise Postgres, and a run \
-       without a database is not a passing run"
+      "no Postgres address: the runtest-integration alias in \
+       framework/ocaml/sol-outbox/test/dune pins one, and a run without a database is \
+       not a passing run"
   | Some url ->
     Eio_main.run
     @@ fun env ->

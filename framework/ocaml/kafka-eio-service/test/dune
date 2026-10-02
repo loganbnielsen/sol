@@ -22,4 +22,16 @@
 (rule
  (alias runtest-integration)
  (action
-  (run ./test_kafka_service_integration.exe)))
+  (setenv
+   KAFKA_SECURITY_PROTOCOL
+   "plaintext"
+   (setenv
+    KAFKA_BROKERS
+    "localhost:9092"
+    (setenv
+     SCHEMA_REGISTRY_URL
+     "http://localhost:8081"
+     (setenv
+      REDPANDA_ADMIN_URL
+      "http://localhost:9644"
+      (run ./test_kafka_service_integration.exe)))))))

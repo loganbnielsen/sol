@@ -501,7 +501,10 @@ let run_golden_path () =
           ts_ns
           "sol logs authenticated read e2e"
       in
-      let pushed = http_post env ~sw ~port:p ~path:"/loki/api/v1/push" ~body () = 204 in
+      let pushed =
+        try http_post env ~sw ~port:p ~path:"/loki/api/v1/push" ~body () = 204 with
+        | _ -> false
+      in
       if not pushed
       then None
       else (

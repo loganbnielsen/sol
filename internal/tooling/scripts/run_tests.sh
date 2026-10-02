@@ -46,20 +46,13 @@ run_unit() {
 run_kafka() {
   info "Kafka integration tests (requires broker at localhost:9092)"
   eval $(opam env)
-  KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 \
-    dune build --root "$REPO_ROOT" @framework/ocaml/kafka-eio-service/test/runtest-integration --force 2>&1
+  dune build --root "$REPO_ROOT" @framework/ocaml/kafka-eio-service/test/runtest-integration 2>&1
 }
 
 run_e2e() {
   info "End-to-end golden workflow tests"
   eval $(opam env)
-  KAFKA_SECURITY_PROTOCOL=plaintext \
-  KAFKA_BROKERS=localhost:9092 \
-  SCHEMA_REGISTRY_URL=http://localhost:8081 \
-  REDPANDA_ADMIN_URL=http://localhost:9644 \
-  LOKI_URL=http://localhost:3100 \
-  POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-    dune test --root "$REPO_ROOT" internal/fixtures/local-demo/test/ --force 2>&1
+  dune build --root "$REPO_ROOT" @internal/fixtures/local-demo/test/runtest 2>&1
 }
 
 ensure_infra() {

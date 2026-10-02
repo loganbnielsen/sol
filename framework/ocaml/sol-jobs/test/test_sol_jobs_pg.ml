@@ -1,4 +1,8 @@
-let postgres_url = Sys.getenv_opt "POSTGRES_URL"
+let postgres_url =
+  match Array.to_list Sys.argv with
+  | _ :: url :: _ when String.trim url <> "" -> Some url
+  | _ -> None
+;;
 
 let ddl =
   [ "DROP TABLE IF EXISTS sol_jobs"
@@ -95,8 +99,9 @@ let with_pool f =
   match postgres_url with
   | None ->
     Windtrap.fail
-      "POSTGRES_URL is not set: this target exists to exercise Postgres, and a run \
-       without a database is not a passing run"
+      "no Postgres address: the runtest-integration alias in \
+       framework/ocaml/sol-jobs/test/dune pins one, and a run without a database is not \
+       a passing run"
   | Some url ->
     Eio_main.run
     @@ fun env ->

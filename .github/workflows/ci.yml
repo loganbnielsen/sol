@@ -248,26 +248,18 @@ jobs:
       # (9092/8081/9644). The broker step is `start-redpanda.sh`, not
       # `ensure-broker.sh`: the latter also creates the demo topics with a host
       # `rpk`, which a clean runner does not have, and these suites register
-      # their own topics through the schema registry. sol-jobs' Postgres case
-      # skips itself when POSTGRES_URL is unset, which is why the variable is
-      # part of this step rather than the suite being excluded from it, and the
-      # suites now live behind runtest-integration for that reason.
+      # their own topics through the schema registry.
       # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
-      # The database suites are their own targets, `runtest-integration`, not the
-      # unit targets with a different ambient environment: they are not built by
-      # the unit step, they cannot be served from its cache, and they fail rather
-      # than skip when POSTGRES_URL is missing, so this step's exit status is the
-      # statement that the Postgres-backed cases ran and passed. One alias per
-      # invocation, because both suites destructively own the one sol_jobs table.
+      # Each suite's dependency is pinned in its own `test/dune` (VERIF-002): the
+      # database alias passes the Postgres URL as an argument and the broker
+      # alias sets the Kafka endpoints, so this step supplies only the
+      # containers. That also means a target built under one ambient environment
+      # can never be served from another's cache, and no invocation needs
+      # `--force` to be believed. One alias per invocation, because both database
+      # suites destructively own the one sol_jobs table.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
-        env:
-          KAFKA_SECURITY_PROTOCOL: plaintext
-          KAFKA_BROKERS: localhost:9092
-          SCHEMA_REGISTRY_URL: http://localhost:8081
-          REDPANDA_ADMIN_URL: http://localhost:9644
-          POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
         run: |
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
@@ -284,17 +276,13 @@ jobs:
       # duplicate delivery, a handler Fail, a transient job failure, a blocked
       # earlier event for one key, and a crash between the broker ack and the
       # row mark. Runs after the step above so it reuses the same broker and
-      # Postgres; LOKI_URL is unset, so the Loki assertions self-skip.
+      # Postgres. The target pins its own addresses (VERIF-002), including the
+      # Loki URL; this job starts no Loki, so the Loki assertions find nothing
+      # and self-skip, which VERIF-006 owns turning into a failure.
       - name: Facts-to-jobs golden-path smoke (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 15
-        env:
-          KAFKA_SECURITY_PROTOCOL: plaintext
-          KAFKA_BROKERS: localhost:9092
-          SCHEMA_REGISTRY_URL: http://localhost:8081
-          REDPANDA_ADMIN_URL: http://localhost:9644
-          POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
-        run: opam exec -- dune test internal/fixtures/local-demo/test/ --force
+        run: opam exec -- dune build @internal/fixtures/local-demo/test/runtest
 
       - name: Install formatter
         if: needs.classify.outputs.kind != 'docs-only'
