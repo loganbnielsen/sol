@@ -44,6 +44,7 @@ val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
 val workload_secret_name : string -> string
+val required_secret_keys : string list -> string list
 val config_hash : (string * string) list -> string
 val sanitize_label_value : string -> string
 val namespace_doc : ns:string -> Sol_cli_yaml.document

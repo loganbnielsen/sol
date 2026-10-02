@@ -315,17 +315,32 @@ The `lib/dune` file publishes this as `pluto_storage`, a library both services d
 
 ## Part 3 — Deploy to the local cluster
 
+Secrets are the one input Sol never writes during a deploy, so create them first
+(`sol local secret set` is the only Sol path that writes a secret value, and it
+also creates the namespace when it is missing):
+
 ```bash
-SOL_API_KEY=dev-internal-key sol up
+sol local secret set POSTGRES_URL --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+sol local secret set SOL_API_KEY --value dev-internal-key
+```
+
+Then deploy:
+
+```bash
+sol up
 ```
 
 For each service that has a `Dockerfile`, Sol:
 
 1. Builds the Docker image and tags it with the short git SHA
 2. Pushes it to the local registry (`sol-registry:5000`)
-3. Generates Kubernetes manifests (Namespace, Deployment, Service, ServiceAccount, ConfigMap)
-4. Validates them against the live API server (`kubectl apply --dry-run=server`)
-5. Applies them live
+3. Verifies the service's Secret exists with every required non-empty key
+4. Generates Kubernetes manifests (Namespace, Deployment, Service, ServiceAccount, ConfigMap)
+5. Validates them against the live API server (`kubectl apply --dry-run=server`)
+6. Applies them live
+
+If a required key is absent or blank, Sol stops before applying anything and names
+the keys to set — a deploy never creates or overwrites a Secret value.
 
 > The generated `Dockerfile` is a two-stage build, and its rationale -- the glibc
 > pin, where its dependencies come from, and the uid it runs as -- is documented
@@ -342,9 +357,11 @@ LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
 TEMPO_URL           http://tempo.monitoring.svc.cluster.local:4318
 ```
 
-Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are emitted through a
-Kubernetes Secret instead of the ConfigMap. The `SOL_API_KEY=... sol up`
-prefix fills the shared internal key used by the checkout example.
+Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are delivered through a
+Kubernetes Secret instead of the ConfigMap. Sol creates the per-workload
+`<service>-secrets` object only through `sol local secret set`; the deploy itself
+just verifies and mounts it. Rotating a value is the same command followed by a
+verified restart — see [`docs/deployment/credential-rotation.md`](../deployment/credential-rotation.md).
 
 When a service needs a synchronous call to another service, declare it in the
 caller:

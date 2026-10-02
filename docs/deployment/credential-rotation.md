@@ -44,10 +44,28 @@ necessarily:
 sol secret set --target prod/aws/us-east-1 DATABASE_URL
 ```
 
-`sol secret set` is therefore both the create path and the rotation path. The
-previous value is revoked by updating the same object in place (there is no
-second copy to leave behind), so no secret value appears in a plan, release
-record, or conformance bundle — DEC-026 §7's invariant.
+`sol secret set` is therefore both the create path and the rotation path, and it is
+the **only** Sol CLI path that writes a secret value. The previous value is revoked
+by updating the same object in place (there is no second copy to leave behind), so
+no secret value appears in a plan, release record, or conformance bundle —
+DEC-026 §7's invariant.
+
+### Ordinary deploy and rollback never write a secret value
+
+An ordinary `sol deploy`, `sol up` or `sol rollback` delivers secret *references*
+only. It renders no Secret object, reads no value from the deploying process's
+environment, and never mutates a Secret. Before it applies a workload it verifies
+that the live `<svc>-secrets` object exists and carries every required non-empty
+key — the unit's declared `[infra.env] secrets` keys plus the platform defaults
+`POSTGRES_URL` and `SOL_API_KEY` — and that the workspace runtime Secret
+`sol-secrets` carries the defaults. If any is absent or blank, the operation stops
+before applying anything and names the keys to set.
+
+That division is what makes a rotation durable: a later deploy cannot revert it to
+whatever the deploying shell happened to hold, and it cannot blank a key an earlier
+deploy never had. `sol secret set` also creates the target namespace when it is
+missing, so it can bootstrap a fresh cluster before the first deploy; the workflow
+is `sol secret set <KEY> ...` for each required key, then deploy.
 
 ### When something else owns the Secret
 

@@ -59,6 +59,10 @@ let default_cluster_env =
 let default_secrets = [ "POSTGRES_URL", ""; "SOL_API_KEY", "" ]
 let runtime_secret_name = "sol-secrets"
 
+let required_secret_keys declared =
+  List.sort_uniq String.compare (List.map fst default_secrets @ declared)
+;;
+
 module Y = Sol_cli_yaml
 
 let config_hash extra_env =

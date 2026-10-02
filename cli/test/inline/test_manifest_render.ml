@@ -419,36 +419,53 @@ let test_fn_env_label_present_when_resolved () =
   assert_contains "fn env label" workload {|env: "dev"|}
 ;;
 
-let test_svc_default_postgres_url () =
-  let _ns, workload = render_spec_ok svc_spec in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "svc default postgres url in secret" secret_block {|POSTGRES_URL: ""|}
-;;
-
 let test_postgres_url_not_in_configmap () =
   let _ns, workload = render_spec_ok svc_spec in
   let cm_block = extract_kind_block workload "kind: ConfigMap" in
   assert_absent "POSTGRES_URL absent from ConfigMap" cm_block "POSTGRES_URL"
 ;;
 
-let test_postgres_url_in_secret () =
+let test_live_render_emits_no_secret_values () =
+  Unix.putenv "POSTGRES_URL" "postgresql://user:pass@db.example.com:5432/app";
+  Unix.putenv "SOL_API_KEY" "dev-internal-key";
   let _ns, workload = render_spec_ok svc_spec in
-  assert_contains "Secret resource present" workload "kind: Secret";
-  assert_contains "stringData section" workload "stringData:";
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "POSTGRES_URL in stringData" secret_block {|POSTGRES_URL: ""|};
-  assert_contains "SOL_API_KEY in stringData" secret_block {|SOL_API_KEY: ""|}
+  Unix.putenv "POSTGRES_URL" "";
+  Unix.putenv "SOL_API_KEY" "";
+  assert_absent
+    "ordinary deploy render contains no Secret object to apply"
+    workload
+    "kind: Secret";
+  assert_absent "no stringData section" workload "stringData";
+  assert_absent
+    "no POSTGRES_URL value"
+    workload
+    "postgresql://user:pass@db.example.com:5432/app";
+  assert_absent "no SOL_API_KEY value" workload "dev-internal-key";
+  assert_contains
+    "the workload still references its per-workload Secret"
+    workload
+    "name: charge-svc-secrets"
 ;;
 
-let test_live_secret_uses_postgres_url_env () =
+let test_placeholder_render_redacts_values () =
   Unix.putenv "POSTGRES_URL" "postgresql://user:pass@db.example.com:5432/app";
-  let _ns, workload = render_spec_ok svc_spec in
+  let _ns, workload =
+    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder svc_spec
+  in
+  Unix.putenv "POSTGRES_URL" "";
   let secret_block = extract_kind_block workload "kind: Secret" in
   assert_contains
-    "POSTGRES_URL env value in live Secret"
+    "GitOps placeholder keeps POSTGRES_URL key"
     secret_block
-    {|POSTGRES_URL: "postgresql://user:pass@db.example.com:5432/app"|};
-  Unix.putenv "POSTGRES_URL" ""
+    {|POSTGRES_URL: ""|};
+  assert_contains
+    "GitOps placeholder keeps SOL_API_KEY key"
+    secret_block
+    {|SOL_API_KEY: ""|};
+  assert_absent
+    "GitOps placeholder redacts the value"
+    secret_block
+    "postgresql://user:pass@db.example.com:5432/app"
 ;;
 
 let test_svc_default_redpanda_admin_url () =
@@ -1406,72 +1423,31 @@ let test_render_spec_eso_backend_no_stringdata () =
   assert_absent "no stringData in ESO output" workload "stringData"
 ;;
 
-let test_render_spec_k8s_placeholder_default () =
+let test_render_default_backend_emits_no_secret () =
   let _ns, workload = render_spec_ok svc_spec in
-  assert_contains "kind Secret present" workload "kind: Secret";
-  assert_absent "no ExternalSecret" workload "kind: ExternalSecret"
+  assert_absent "no Secret object in a direct deploy" workload "kind: Secret";
+  assert_absent "no ExternalSecret either" workload "kind: ExternalSecret"
 ;;
 
-let test_live_backend_missing_user_secret_returns_error () =
-  (try Unix.putenv "MISSING_SECRET_KEY_FOR_TEST" "" with
-   | _ -> ());
-  Unix.putenv "MISSING_SECRET_KEY_FOR_TEST" "__marker__";
-  let spec_with_secret =
-    { svc_spec with secrets = [ "MISSING_SECRET_KEY_FOR_TEST", "" ] }
+let test_live_backend_render_never_reads_env () =
+  let absent = "__SOL_TEST_ABSENT_KEY_XQ9Z2__" in
+  Unix.putenv absent "";
+  let spec = { svc_spec with secrets = [ absent, "" ] } in
+  let _ns, workload =
+    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_live spec
   in
-  (match
-     Sol_cli_deployment_render.render_spec
-       ~workspace:"myapp"
-       ~release_id:release_id_of_test
-       ~secret_backend:Sol_cli_manifest.Kubernetes_live
-       spec_with_secret
-   with
-   | Ok _ -> ()
-   | Error e -> Alcotest.fail ("Expected Ok when env var set, got Error: " ^ e));
-  Unix.putenv "MISSING_SECRET_KEY_FOR_TEST" "";
-  let absent_key = "__SOL_TEST_ABSENT_KEY_XQ9Z2__" in
-  let spec_missing = { svc_spec with secrets = [ absent_key, "" ] } in
-  match
-    Sol_cli_deployment_render.render_spec
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~secret_backend:Sol_cli_manifest.Kubernetes_live
-      spec_missing
-  with
-  | Error msg ->
-    check_bool "error mentions the missing key" true (contains msg absent_key)
-  | Ok _ -> Alcotest.fail "Expected Error when required secret env var is absent, got Ok"
-;;
-
-let test_live_backend_multiple_missing_secrets_all_reported () =
-  let absent1 = "__SOL_TEST_ABSENT_A_XQ9Z2__" in
-  let absent2 = "__SOL_TEST_ABSENT_B_XQ9Z2__" in
-  let spec = { svc_spec with secrets = [ absent1, ""; absent2, "" ] } in
-  match
-    Sol_cli_deployment_render.render_spec
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~secret_backend:Sol_cli_manifest.Kubernetes_live
-      spec
-  with
-  | Error msg ->
-    check_bool "error mentions first absent key" true (contains msg absent1);
-    check_bool "error mentions second absent key" true (contains msg absent2)
-  | Ok _ ->
-    Alcotest.fail "Expected Error when required secret env vars are absent, got Ok"
+  assert_absent
+    "live render emits no Secret regardless of the environment"
+    workload
+    "kind: Secret"
 ;;
 
 let test_live_backend_no_user_secrets_always_succeeds () =
   let spec = { svc_spec with secrets = [] } in
-  match
-    Sol_cli_deployment_render.render_spec
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~secret_backend:Sol_cli_manifest.Kubernetes_live
-      spec
-  with
-  | Ok (_ns, workload) -> assert_contains "kind Secret present" workload "kind: Secret"
-  | Error e -> Alcotest.fail ("Expected Ok with no user secrets, got Error: " ^ e)
+  let _ns, workload =
+    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_live spec
+  in
+  assert_absent "no Secret with no declared keys" workload "kind: Secret"
 ;;
 
 let assert_k8s_invariants label yaml =
@@ -2416,12 +2392,14 @@ let%test "svc: SOL_ENV config uses target" =
   test_svc_sol_env_configmap_target_overrides_config ()
 ;;
 
-let%test "svc: default postgres url" = test_svc_default_postgres_url ()
 let%test "svc: POSTGRES_URL not in ConfigMap" = test_postgres_url_not_in_configmap ()
-let%test "svc: POSTGRES_URL in Secret" = test_postgres_url_in_secret ()
 
-let%test "svc: POSTGRES_URL env in live Secret" =
-  test_live_secret_uses_postgres_url_env ()
+let%test "svc: ordinary deploy render emits no Secret values" =
+  test_live_render_emits_no_secret_values ()
+;;
+
+let%test "svc: GitOps placeholder render redacts values" =
+  test_placeholder_render_redacts_values ()
 ;;
 
 let%test "svc: default redpanda admin" = test_svc_default_redpanda_admin_url ()
@@ -2649,19 +2627,15 @@ let%test "external_secrets: render_spec ESO: no stringData" =
   test_render_spec_eso_backend_no_stringdata ()
 ;;
 
-let%test "external_secrets: render_spec default: k8s placeholder" =
-  test_render_spec_k8s_placeholder_default ()
+let%test "secrets: direct deploy render emits no Secret object" =
+  test_render_default_backend_emits_no_secret ()
 ;;
 
-let%test "config_parsing_policy: live: missing user secret → Error" =
-  test_live_backend_missing_user_secret_returns_error ()
+let%test "secrets: live render never reads the environment" =
+  test_live_backend_render_never_reads_env ()
 ;;
 
-let%test "config_parsing_policy: live: multiple missing secrets all reported" =
-  test_live_backend_multiple_missing_secrets_all_reported ()
-;;
-
-let%test "config_parsing_policy: live: no user secrets → always Ok" =
+let%test "secrets: live: no user secrets → no Secret object" =
   test_live_backend_no_user_secrets_always_succeeds ()
 ;;
 

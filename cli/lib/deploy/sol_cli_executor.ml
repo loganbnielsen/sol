@@ -37,10 +37,11 @@ let local_development_spec (spec : Sol_cli_deployment_plan.service_spec) =
 ;;
 
 let local ~ctx ~workspace ~release_id ~dry_run spec =
+  let open Result.Syntax in
   let spec = local_development_spec spec in
-  Sol_cli_deployment_render.render_spec ~workspace ~release_id spec
-  |> Fun.flip Result.bind (fun yaml ->
-    dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml)
+  let* yaml = Sol_cli_deployment_render.render_spec ~workspace ~release_id spec in
+  let* () = if dry_run then Ok () else Sol_cli_secret.verify_workload_secret ~ctx spec in
+  dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
 
 let artifact_backend backend =
@@ -52,6 +53,18 @@ let artifact_backend backend =
        (with --secret-store-ref) or kubernetes-placeholder."
   | Sol_cli_manifest.Kubernetes_placeholder | Sol_cli_manifest.External_secrets _ ->
     Ok backend
+;;
+
+let apply_backend backend =
+  match backend with
+  | Sol_cli_manifest.Kubernetes_live -> Ok backend
+  | Sol_cli_manifest.Kubernetes_placeholder | Sol_cli_manifest.External_secrets _ ->
+    Error
+      "refusing to apply a manifest rendered with kubernetes-placeholder or \
+       external-secrets: those backends emit secret references without values for a \
+       GitOps repository, and applying one directly would blank the live Secret. Use the \
+       kubernetes-live backend (the direct-deploy default) or --emit-to a GitOps \
+       repository."
 ;;
 
 let gitops
@@ -92,7 +105,8 @@ let run_plan
   let* backend =
     match mode with
     | Emit_to _ -> artifact_backend secret_backend
-    | Dry_run | Apply -> Ok secret_backend
+    | Dry_run -> Ok secret_backend
+    | Apply -> apply_backend secret_backend
   in
   let render spec =
     Sol_cli_deployment_render.render_spec
@@ -125,6 +139,11 @@ let run_plan
     | [] -> Ok (List.rev acc)
     | ((spec : Sol_cli_deployment_plan.service_spec), yaml) :: rest ->
       let* () = before_apply_result spec in
+      let* () =
+        match mode with
+        | Apply -> Sol_cli_secret.verify_workload_secret ~ctx:execution.cluster spec
+        | Dry_run | Emit_to _ -> Ok ()
+      in
       let* result = dispatch_rendered ~ctx:execution.cluster ~mode spec yaml in
       execute (result :: acc) rest
   in

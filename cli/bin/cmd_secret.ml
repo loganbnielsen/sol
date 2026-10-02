@@ -38,6 +38,18 @@ let discover_namespaces ~facts ~domain =
 
 let read_stdin () = String.trim (In_channel.input_all stdin)
 
+let declared_workload_secrets ~facts ~workspace ~namespaces =
+  Sol_cli_workspace_model.services facts
+  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+    match
+      ( Sol_cli_deployment_plan.namespace_name ~workspace ~domain:s.domain
+      , Sol_cli_deployment_plan.k8s_name s.name )
+    with
+    | Ok ns, Ok name when List.mem ns namespaces ->
+      Some (ns, Sol_cli_manifest.workload_secret_name name)
+    | _ -> None)
+;;
+
 let print_result result =
   let* result = Sol_cli_exit.of_msg result in
   let out = Sol_cli_secret.redacted_result result in
@@ -55,8 +67,9 @@ let run_set ~ctx value key domain =
   in
   let* facts = load_facts () in
   let* namespaces = discover_namespaces ~facts ~domain in
-  Sol_cli_secret.set ~ctx ~workspace:(workspace_name ()) ~namespaces ~key ~value
-  |> print_result
+  let workspace = workspace_name () in
+  let declared = declared_workload_secrets ~facts ~workspace ~namespaces in
+  Sol_cli_secret.set ~ctx ~workspace ~namespaces ~declared ~key ~value |> print_result
 ;;
 
 let run_list ~ctx domain =

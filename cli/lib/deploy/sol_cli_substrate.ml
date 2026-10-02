@@ -9,54 +9,10 @@ let namespaces (plan : Sol_cli_deployment_plan.t) : string list =
   |> List.sort_uniq String.compare
 ;;
 
-let value_from_env key =
-  match Sys.getenv_opt key with
-  | Some value -> value
-  | None -> ""
-;;
-
-let secret_docs ?(secrets = Sol_cli_manifest.default_secrets) namespaces =
-  let missing =
-    secrets
-    |> List.filter_map (fun (key, _) ->
-      match Sys.getenv_opt key with
-      | Some _ -> None
-      | None -> Some key)
-  in
-  match missing with
-  | first :: _ ->
-    Error
-      (Printf.sprintf
-         "required secret env var(s) not set: %s. The workspace substrate (its runtime \
-          Secret) cannot be established without them, and every workspace-scoped \
-          operation -- migrations included -- needs it."
-         first)
-  | [] ->
-    Ok
-      (namespaces
-       |> List.map (fun ns ->
-         Sol_cli_manifest.secret_doc
-           ~base_secrets:(List.map (fun (k, _) -> k, value_from_env k) secrets)
-           ~ns
-           ~name:Sol_cli_manifest.runtime_secret_name
-           ()))
-;;
-
-let docs_for_namespaces ?secrets namespaces : (Sol_cli_yaml.document list, string) result =
-  match secret_docs ?secrets namespaces with
-  | Error _ as e -> e
-  | Ok secret_docs ->
-    Ok
-      (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces
-       @ List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
-       @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
-       @ secret_docs)
-;;
-
-let docs ?secrets (plan : Sol_cli_deployment_plan.t)
-  : (Sol_cli_yaml.document list, string) result
-  =
-  docs_for_namespaces ?secrets (namespaces plan)
+let docs_for_namespaces namespaces : Sol_cli_yaml.document list =
+  List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces
+  @ List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
+  @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
 ;;
 
 let create_idempotent = Sol_cli_manifest.create_idempotent
@@ -164,9 +120,14 @@ let ensure ~workloads ~ctx ~namespaces : (unit, string) result =
                 Sol_cli_manifest.managed_database_egress_doc ~cidrs ~port ~ns ~name)
              workloads)
     in
-    (match secret_docs namespaces with
-     | Error _ as e -> e
-     | Ok docs -> apply_all docs)
+    namespaces
+    |> List.find_map (fun ns ->
+      match Sol_cli_secret.verify_runtime_secret ~ctx ~namespace:ns with
+      | Ok () -> None
+      | Error message -> Some message)
+    |> (function
+     | None -> Ok ()
+     | Some message -> Error message)
 ;;
 
 let established ~ctx ~namespaces : (unit, string) result =

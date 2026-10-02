@@ -92,79 +92,50 @@ let render
     let ns_yaml = namespace_doc ~ns in
     let secret_resource_result =
       match secret_backend with
-      | Kubernetes_live ->
-        let value_from_env key =
-          match Sys.getenv_opt key with
-          | Some value -> value
-          | None -> ""
-        in
-        let missing_keys =
-          secrets
-          |> List.filter_map (fun (k, _) ->
-            match Sys.getenv_opt k with
-            | Some _ -> None
-            | None -> Some k)
-        in
-        (match missing_keys with
-         | _ :: _ ->
-           Error
-             (Printf.sprintf
-                "Kubernetes_live render failed: required secret env var(s) not set: %s"
-                (String.concat ", " missing_keys))
-         | [] ->
-           let extra_secrets = List.map (fun (k, _) -> k, value_from_env k) secrets in
-           let base_secrets =
-             List.map (fun (k, _) -> k, value_from_env k) default_secrets
-           in
-           Ok
-             (secret_doc
-                ~base_secrets
-                ~extra_secrets
-                ~ns
-                ~name:(workload_secret_name name)
-                ()))
+      | Kubernetes_live -> Ok None
       | Kubernetes_placeholder ->
         let extra_secrets = List.map (fun (k, _) -> k, "") secrets in
         Ok
-          (secret_doc
-             ~extra_secrets
-             ~redact:true
-             ~ns
-             ~name:(workload_secret_name name)
-             ())
+          (Some
+             (secret_doc
+                ~extra_secrets
+                ~redact:true
+                ~ns
+                ~name:(workload_secret_name name)
+                ()))
       | External_secrets { store_ref; store_kind; key_prefix; refresh_interval } ->
         let all_keys = List.map fst default_secrets @ List.map fst secrets in
         Ok
-          (external_secret_doc
-             ~store_ref
-             ~store_kind
-             ~key_prefix
-             ~refresh_interval
-             ~secret_keys:all_keys
-             ~ns
-             ~name)
+          (Some
+             (external_secret_doc
+                ~store_ref
+                ~store_kind
+                ~key_prefix
+                ~refresh_interval
+                ~secret_keys:all_keys
+                ~ns
+                ~name))
     in
     Result.map
       (fun secret_resource ->
          let common_resources =
-           [ service_account_doc ~ns ~name
-           ; configmap_doc ~extra_env:config ~ns ~name ()
-           ; secret_resource
-           ; network_policy_doc
-               ~egress_to:
-                 (calls
-                  |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
-                    ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                    , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
-               ~ingress_from:
-                 (called_by
-                  |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
-                    ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                    , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
-               ~ns
-               ~name
-               ()
-           ]
+           [ service_account_doc ~ns ~name; configmap_doc ~extra_env:config ~ns ~name () ]
+           @ Option.to_list secret_resource
+           @ [ network_policy_doc
+                 ~egress_to:
+                   (calls
+                    |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
+                      ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                      , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
+                 ~ingress_from:
+                   (called_by
+                    |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
+                      ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                      , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
+                 ~ns
+                 ~name
+                 ()
+             ]
          in
          let deployment_resources
                ~shape

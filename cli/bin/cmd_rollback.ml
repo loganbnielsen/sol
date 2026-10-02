@@ -20,6 +20,7 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
           message)
     in
     let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
+    let* () = Sol_cli_secret.verify_workload_secret ~ctx spec in
     let* yaml =
       Sol_cli_deployment_render.render_spec
         ~workspace:release.Sol_cli_release.workspace

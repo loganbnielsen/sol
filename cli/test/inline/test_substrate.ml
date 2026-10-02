@@ -3,18 +3,13 @@ module S = Sol_cli_substrate
 let check_bool = Alcotest.(check bool)
 let check_int = Alcotest.(check int)
 
-let docs_or_fail ?secrets namespaces =
-  match S.docs_for_namespaces ?secrets namespaces with
-  | Ok docs -> List.map (fun doc -> Sol_cli_yaml.render [ doc ]) docs
-  | Error msg -> Alcotest.fail msg
+let docs_or_fail namespaces =
+  S.docs_for_namespaces namespaces |> List.map (fun doc -> Sol_cli_yaml.render [ doc ])
 ;;
 
-let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
-  let docs = docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-payments" ] in
-  check_int
-    "namespace + deploy RoleBinding + operator RoleBinding + runtime Secret"
-    4
-    (List.length docs);
+let test_substrate_is_namespace_and_role_bindings_only () =
+  let docs = docs_or_fail [ "pluto-payments" ] in
+  check_int "namespace + deploy RoleBinding + operator RoleBinding" 3 (List.length docs);
   check_bool
     "the namespace comes first"
     true
@@ -34,11 +29,6 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
      && Sol_cli_string.contains ~needle:"namespace: pluto-payments" (List.nth docs 2)
      && Sol_cli_string.contains ~needle:"name: sol-operator-diagnostics" (List.nth docs 2)
      && Sol_cli_string.contains ~needle:"name: sol:operators" (List.nth docs 2));
-  check_bool
-    "then the runtime Secret"
-    true
-    (Sol_cli_string.contains ~needle:"kind: Secret" (List.nth docs 3)
-     && Sol_cli_string.contains ~needle:"sol-secrets" (List.nth docs 3));
   docs
   |> List.iter (fun doc ->
     List.iter
@@ -51,32 +41,21 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
       ; "kind: Service"
       ; "kind: PodDisruptionBudget"
       ; "kind: Ingress"
+      ; "kind: Secret"
       ])
 ;;
 
-let test_every_namespace_and_binding_precedes_every_secret () =
-  let docs =
-    docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-checkout"; "pluto-payments" ]
-  in
+let test_every_namespace_and_binding_is_present () =
+  let docs = docs_or_fail [ "pluto-checkout"; "pluto-payments" ] in
   check_int
-    "two namespaces + four RoleBindings (deploy and operator, per namespace) + two \
-     runtime Secrets"
-    8
+    "two namespaces + four RoleBindings (deploy and operator, per namespace)"
+    6
     (List.length docs);
-  let first_secret =
-    let rec find i = function
-      | [] -> Alcotest.fail "expected a Secret document"
-      | doc :: rest ->
-        if Sol_cli_string.contains ~needle:"kind: Secret" doc
-        then i
-        else find (i + 1) rest
-    in
-    find 0 docs
-  in
   check_bool
-    "both namespaces and all four RoleBindings are applied before the first Secret"
+    "no substrate document is a Secret: ordinary deploy never writes one"
     true
-    (first_secret = 6);
+    (not
+       (List.exists (fun doc -> Sol_cli_string.contains ~needle:"kind: Secret" doc) docs));
   List.iter
     (fun ns ->
        check_bool
@@ -84,24 +63,6 @@ let test_every_namespace_and_binding_precedes_every_secret () =
          true
          (List.exists (fun doc -> Sol_cli_string.contains ~needle:ns doc) docs))
     [ "pluto-checkout"; "pluto-payments" ]
-;;
-
-let test_missing_credential_fails_closed_before_applying_anything () =
-  match
-    S.docs_for_namespaces
-      ~secrets:[ "SOL_QUALIFICATION_ABSENT_KEY", "" ]
-      [ "pluto-payments" ]
-  with
-  | Ok _ -> Alcotest.fail "expected the substrate to refuse without its credential"
-  | Error msg ->
-    check_bool
-      "names the missing key"
-      true
-      (Sol_cli_string.contains ~needle:"SOL_QUALIFICATION_ABSENT_KEY" msg);
-    check_bool
-      "says the substrate cannot be established"
-      true
-      (Sol_cli_string.contains ~needle:"substrate" msg)
 ;;
 
 let test_ensure_refuses_a_reserved_platform_namespace () =
@@ -118,16 +79,6 @@ let test_ensure_refuses_a_reserved_platform_namespace () =
       true
       (Sol_cli_string.contains ~needle:"cert-manager" msg);
     check_bool "says it is reserved" true (Sol_cli_string.contains ~needle:"reserved" msg)
-;;
-
-let test_present_credential_is_accepted () =
-  match S.docs_for_namespaces ~secrets:[ "HOME", "" ] [ "pluto-payments" ] with
-  | Ok docs ->
-    check_int
-      "namespace + deploy RoleBinding + operator RoleBinding + Secret"
-      4
-      (List.length docs)
-  | Error msg -> Alcotest.fail ("expected success, got: " ^ msg)
 ;;
 
 let read_file path =
@@ -285,20 +236,12 @@ let test_operator_bindings_cover_every_workload_namespace () =
       (Sol_cli_string.contains ~needle:"kind: Deployment" doc))
 ;;
 
-let%test "workspace substrate: namespace, RoleBinding and runtime Secret only" =
-  test_substrate_is_namespace_role_binding_and_runtime_secret_only ()
+let%test "workspace substrate: namespace and RoleBindings only" =
+  test_substrate_is_namespace_and_role_bindings_only ()
 ;;
 
-let%test "workspace substrate: every namespace and binding precedes every Secret" =
-  test_every_namespace_and_binding_precedes_every_secret ()
-;;
-
-let%test "workspace substrate: missing credential fails closed" =
-  test_missing_credential_fails_closed_before_applying_anything ()
-;;
-
-let%test "workspace substrate: present credential is accepted" =
-  test_present_credential_is_accepted ()
+let%test "workspace substrate: every namespace and binding is present" =
+  test_every_namespace_and_binding_is_present ()
 ;;
 
 let%test "workspace substrate: ensure refuses a reserved platform namespace" =

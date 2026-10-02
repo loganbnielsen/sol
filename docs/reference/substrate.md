@@ -66,10 +66,12 @@ The following substrate inputs must exist before running `sol deploy`.
 - A Kubernetes Secret containing a `POSTGRES_URL` key with a valid libpq
   connection string, e.g.
   `postgresql://user:password@host:5432/dbname?sslmode=require`.
-- Sol renders a per-workload Secret named `<service>-secrets` and injects it
-  through `envFrom`. In live direct deploys, `POSTGRES_URL` must be present in
-  the caller's environment. In GitOps output, the value is emitted empty or via
-  an `ExternalSecret`, depending on `--secret-backend`.
+- Sol delivers a per-workload Secret named `<service>-secrets` through `envFrom`,
+  but it does not create or write it in an ordinary deploy: `sol secret set` is
+  the create and rotation path, and an ordinary deploy verifies the live Secret
+  exists with every required non-empty key before it applies a workload. In GitOps
+  output, the value is emitted empty or via an `ExternalSecret`, depending on
+  `--secret-backend`.
 - Sol does not create the database in the application deploy path, run
   migrations at cluster startup, or manage credentials rotation. Use
   `sol migrate` to apply migrations after `POSTGRES_URL` is available.
@@ -138,7 +140,7 @@ not look) — and **an answer Sol could not obtain is never promoted to satisfie
 | Kubernetes cluster | a reachable cluster and a kubeconfig context that reaches it | `kubectl cluster-info` through the target's context; a connection-level failure is `Unmet`, a refused or unauthenticated answer is `UNKNOWN` | `sol target show <target> --check` |
 | Container registry | a registry prefix the cluster's nodes can pull from | the prefix is read from the target; **pullability is not observable from the CLI**, because only a node in the cluster pulls | `sol target show <target> --check` |
 | Kafka and schema registry | broker addresses and a schema-registry URL the workloads reach, with `KAFKA_SECURITY_PROTOCOL` set (`SEC-007`) | the addresses are workspace configuration (`[infra.env] config`); reachability and the broker's security posture are properties of the cluster's network, which the CLI does not sit in | `sol deploy` (the workloads observe it at runtime) |
-| Postgres connection | a `POSTGRES_URL` the workspace's runtime Secret carries | read from the environment of the identity running the deploy; without it the Secret cannot carry the key, and Sol refuses rather than rendering one without it | `sol deploy`, `sol target show <target> --check` |
+| Postgres connection | a `POSTGRES_URL` the workspace's runtime Secret carries | read from the live runtime Secret in the cluster; a deploy that cannot find the key, or finds it blank, refuses before applying rather than rendering one without it | `sol deploy`, `sol target show <target> --check` |
 | Observability endpoints | Loki and Pushgateway endpoints the workloads reach | the URLs are workspace configuration; reachability is again a property of the cluster's network | `sol deploy` (the workloads observe it at runtime) |
 | Base domain and TLS | a certificate Issuer and a DNS entry when a service declares an ingress host | the Issuer lives in the cluster and the record in the DNS provider, neither of which the deploy check reads | `sol deploy` (`--check` reports it `UNKNOWN`, with the reason) |
 
@@ -166,7 +168,7 @@ objects for each service in your workspace:
 | Namespace | Always. One namespace per `<workspace>-<domain>` pair. |
 | ServiceAccount | Always. One per service, in its namespace. |
 | ConfigMap | Always. Contains Sol's platform defaults plus any `[infra.env] config` keys from `sol.toml`. |
-| Secret | Always. Direct deploy reads required secret values such as `POSTGRES_URL` from the caller's environment. GitOps mode (`--emit-to`) emits empty `stringData` placeholders or `ExternalSecret` resources, depending on `--secret-backend`. |
+| Secret | Never in a direct deploy: the workload references `<service>-secrets` and the deploy verifies it exists with non-empty required keys, but `sol secret set` is the only thing that writes it. GitOps mode (`--emit-to`) emits empty `stringData` placeholders or `ExternalSecret` resources, depending on `--secret-backend`. |
 | Deployment | For every `-svc` and `-worker`. |
 | Service (ClusterIP) | For every `-svc`. |
 | CronJob | For every `-fn`, using the `schedule:` field from `sol.toml`. |

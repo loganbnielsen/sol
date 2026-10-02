@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 substrate="$root/cli/lib/deploy/sol_cli_substrate.ml"
+secret="$root/cli/lib/deploy/sol_cli_secret.ml"
 migrate="$root/cli/lib/deploy/sol_cli_migration_job.ml"
 manifest="$root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
 
@@ -16,15 +17,18 @@ require() {
   fi
 }
 
-require "the substrate does not name the runtime Secret from the shared constant" \
-  "$substrate" '^[[:space:]]*~name:Sol_cli_manifest\.runtime_secret_name$'
+require "the substrate verifies the runtime Secret through the shared helper" \
+  "$substrate" 'Sol_cli_secret\.verify_runtime_secret'
 
-require "the migration Job runner does not render its Job through Sol_cli_manifest.migration_job_doc" \
+require "the runtime Secret verification names it from the shared constant" \
+  "$secret" '~secret_name:Sol_cli_manifest\.runtime_secret_name'
+
+require "the migration Job runner renders its Job through Sol_cli_manifest.migration_job_doc" \
   "$migrate" 'Sol_cli_manifest\.migration_job_doc'
-require "the migration Job builder does not reference the shared runtime Secret" \
+require "the migration Job builder references the shared runtime Secret" \
   "$manifest" '"secretRef", Y\.map \[ "name", Y\.string runtime_secret_name \]'
 
-require "the workload suffix does not have a single home" \
+require "the workload suffix has a single home" \
   "$manifest" 'let workload_secret_name name ='
 
 if [ "$fail" -ne 0 ]; then
