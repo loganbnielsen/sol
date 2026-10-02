@@ -1,0 +1,319 @@
+open Sol_cli_destroy_verification
+
+let gcp_absence_message = Sol_cli_gcloud.says_not_found
+let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
+let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
+let answered ?(stdout = "") status stderr = Answered { status; stdout; stderr }
+
+let observation
+      ?(state = State_absent)
+      ?(sweep = Sweep_ran { residues = []; indeterminate = [] })
+      ?(retention = Retention_not_required "this fixture declares no retention")
+      ()
+  =
+  { state; sweep; retention }
+;;
+
+let test_state_empty () =
+  Alcotest.(check bool)
+    "an empty read is absent"
+    true
+    (state_evidence (Ok []) = State_absent)
+;;
+
+let test_state_residue () =
+  let state = state_evidence (Ok [ "google_container_cluster.main" ]) in
+  Alcotest.(check bool)
+    "a represented address is residue"
+    true
+    (match state with
+     | State_residue [ "google_container_cluster.main" ] -> true
+     | _ -> false);
+  let verdict = classify (observation ~state ()) in
+  Alcotest.(check int) "it is a violation" 1 (List.length verdict.violations);
+  Alcotest.(check bool)
+    "and it names the address that remains"
+    true
+    (contains "google_container_cluster.main" (List.hd verdict.violations))
+;;
+
+let test_state_unreadable () =
+  let verdict =
+    classify (observation ~state:(state_evidence (Error "terraform show exited 1")) ())
+  in
+  Alcotest.(check (list string)) "no absence is inferred" [] verdict.violations;
+  Alcotest.(check int) "it is an unknown" 1 (List.length verdict.unknowns);
+  Alcotest.(check bool) "not verified" false (is_verified verdict)
+;;
+
+let test_combined_verified () =
+  let verdict = classify (observation ()) in
+  Alcotest.(check bool) "verified" true (is_verified verdict);
+  Alcotest.(check string)
+    "and says so"
+    "the destruction postcondition is established"
+    (verdict_message verdict)
+;;
+
+let test_sweep () =
+  let verdict =
+    classify
+      (observation
+         ~sweep:
+           (Sweep_ran { residues = [ "AWS EBS volumes remain" ]; indeterminate = [] })
+         ())
+  in
+  Alcotest.(check int) "a residue is a violation" 1 (List.length verdict.violations);
+  let verdict =
+    classify
+      (observation
+         ~sweep:
+           (Sweep_ran
+              { residues = []; indeterminate = [ "the peering could not be checked" ] })
+         ())
+  in
+  Alcotest.(check (list string))
+    "an inconclusive check is not a violation"
+    []
+    verdict.violations;
+  Alcotest.(check bool)
+    "and does not by itself block an otherwise-verified result"
+    true
+    (is_verified verdict);
+  Alcotest.(check bool)
+    "a residue with an empty state still fails: the empty state speaks only for what \
+     Terraform manages"
+    false
+    (is_verified
+       (classify
+          (observation
+             ~state:State_absent
+             ~sweep:
+               (Sweep_ran { residues = [ "a load balancer remains" ]; indeterminate = [] })
+             ())))
+;;
+
+let test_gcp_not_found_subject_must_match () =
+  Alcotest.(check bool)
+    "a not-found naming our project is absence"
+    true
+    (gcp_absence_message
+       ~project:"captured-project"
+       "ERROR: code=404 Not found: projects/captured-project/x");
+  Alcotest.(check bool)
+    "a not-found naming another project is not"
+    false
+    (gcp_absence_message
+       ~project:"captured-project"
+       "ERROR: code=404 Not found: projects/other-project/x");
+  Alcotest.(check bool)
+    "a not-found naming no project has no subject to contradict"
+    true
+    (gcp_absence_message
+       ~project:"captured-project"
+       "ERROR: NOT_FOUND: Resource was not found");
+  Alcotest.(check bool)
+    "a permission error is not absence"
+    false
+    (gcp_absence_message ~project:"captured-project" "ERROR: PERMISSION_DENIED")
+;;
+
+let final_snapshot stdout = answered ~stdout 0 ""
+let declared = Sol_cli_cloud_lifecycle.Retain_final_snapshot
+
+let test_retention_final_snapshot_observed () =
+  match
+    classify_final_snapshot
+      ~declared
+      ~snapshot_id:"snap-1"
+      (final_snapshot
+         {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"available"}]}|})
+  with
+  | Sol_cli_aws_destruction.Settled (Retention_required_and_observed evidence) ->
+    Alcotest.(check bool)
+      "the observation names the identifier and the state"
+      true
+      (contains "snap-1" evidence && contains "available" evidence)
+  | Sol_cli_aws_destruction.Settled _ ->
+    Alcotest.fail "an available snapshot is a met retention guarantee"
+  | Sol_cli_aws_destruction.Pending message ->
+    Alcotest.failf "an available snapshot is not pending: %s" message
+;;
+
+let test_retention_final_snapshot_missing () =
+  let lookup =
+    answered
+      254
+      "An error occurred (DBSnapshotNotFound) when calling the DescribeDBSnapshots \
+       operation"
+  in
+  (match classify_final_snapshot ~declared ~snapshot_id:"snap-1" lookup with
+   | Sol_cli_aws_destruction.Settled (Retention_violated reason) ->
+     Alcotest.(check bool)
+       "the failure names the identifier and the declaration"
+       true
+       (contains "snap-1" reason && contains "final-snapshot" reason)
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "a missing promised snapshot must fail");
+  (match
+     classify_final_snapshot
+       ~declared
+       ~snapshot_id:"snap-1"
+       (final_snapshot
+          {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-other","SnapshotType":"manual","Status":"available"}]}|})
+   with
+   | Sol_cli_aws_destruction.Settled (Retention_violated _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "an answer about another snapshot must not establish this one");
+  match
+    classify_final_snapshot
+      ~declared
+      ~snapshot_id:"snap-1"
+      (final_snapshot
+         {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"failed"}]}|})
+  with
+  | Sol_cli_aws_destruction.Settled (Retention_violated _) -> ()
+  | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+    Alcotest.fail "a failed snapshot must not read as retained"
+;;
+
+let test_retention_final_snapshot_unknown () =
+  (match
+     classify_final_snapshot
+       ~declared
+       ~snapshot_id:"snap-1"
+       (Unavailable "aws CLI missing")
+   with
+   | Sol_cli_aws_destruction.Settled (Retention_unknown _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "an unavailable provider is UNKNOWN, not success");
+  (match
+     classify_final_snapshot
+       ~declared
+       ~snapshot_id:"snap-1"
+       (answered 1 "ERROR: request timed out")
+   with
+   | Sol_cli_aws_destruction.Settled (Retention_unknown _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "a timeout is UNKNOWN, not success");
+  (match
+     classify_final_snapshot
+       ~declared
+       ~snapshot_id:"snap-1"
+       (final_snapshot
+          {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"creating"}]}|})
+   with
+   | Sol_cli_aws_destruction.Pending message ->
+     Alcotest.(check bool)
+       "the pending report says what it is waiting for"
+       true
+       (contains "creating" message)
+   | Sol_cli_aws_destruction.Settled _ ->
+     Alcotest.fail "a snapshot still being created is not a met guarantee");
+  let verdict =
+    classify (observation ~retention:(Retention_unknown "the snapshot query failed") ())
+  in
+  Alcotest.(check bool) "retention UNKNOWN is not verified" false (is_verified verdict)
+;;
+
+let test_retention_none_observed () =
+  (match classify_instance_snapshots (final_snapshot {|{"DBSnapshots":[]}|}) with
+   | Retention_required_and_observed evidence ->
+     Alcotest.(check bool)
+       "the observation says what was checked"
+       true
+       (contains "none observed" evidence)
+   | retention ->
+     Alcotest.failf "no residue must be observed, got %s" (retention_to_string retention));
+  match
+    classify_instance_snapshots
+      (answered 254 "An error occurred (DBInstanceNotFound) when calling the operation")
+  with
+  | Retention_required_and_observed _ -> ()
+  | retention ->
+    Alcotest.failf
+      "a gone instance retains nothing, got %s"
+      (retention_to_string retention)
+;;
+
+let test_retention_none_residual () =
+  match
+    classify_instance_snapshots
+      (final_snapshot
+         {|{"DBSnapshots":[{"DBSnapshotIdentifier":"leaked-snap","SnapshotType":"manual","Status":"available"},{"DBSnapshotIdentifier":"leaked-auto","SnapshotType":"automated","Status":"available"}]}|})
+  with
+  | Retention_violated reason ->
+    Alcotest.(check bool)
+      "the failure names the residue and how many"
+      true
+      (contains "leaked-snap" reason
+       && contains "leaked-auto" reason
+       && contains "2 snapshot" reason)
+  | retention ->
+    Alcotest.failf "residual snapshots must fail, got %s" (retention_to_string retention)
+;;
+
+let test_retention_none_unknown () =
+  (match classify_instance_snapshots (Unavailable "aws CLI missing") with
+   | Retention_unknown msg ->
+     Alcotest.(check bool)
+       "the unknown says what could not be observed"
+       true
+       (contains "no-residue" msg)
+   | retention ->
+     Alcotest.failf
+       "an unavailable provider is UNKNOWN, got %s"
+       (retention_to_string retention));
+  match classify_instance_snapshots (answered 1 "ERROR: throttled") with
+  | Retention_unknown _ -> ()
+  | retention ->
+    Alcotest.failf "a failed query is UNKNOWN, got %s" (retention_to_string retention)
+;;
+
+let test_report_is_diagnostic () =
+  let obs =
+    observation
+      ~state:(state_evidence (Ok [ "google_container_cluster.main" ]))
+      ~sweep:
+        (Sweep_ran
+           { residues = [ "the service-networking peering survived the destroy: p1" ]
+           ; indeterminate = [ "the EBS volumes could not be checked" ]
+           })
+      ~retention:
+        (Retention_violated "final-snapshot NOT observed: the snapshot does not exist")
+      ()
+  in
+  let report = report obs in
+  List.iter
+    (fun (label, needle) -> Alcotest.(check bool) label true (contains needle report))
+    [ "the state postcondition", "STILL REPRESENTS google_container_cluster.main"
+    ; "the residue", "the service-networking peering survived the destroy"
+    ; "the inconclusive check", "the EBS volumes could not be checked"
+    ; "the retention violation", "final-snapshot NOT observed"
+    ];
+  Alcotest.(check bool)
+    "an empty state names Terraform's authority (DEC-045)"
+    true
+    (contains "DEC-045" (Sol_cli_destroy_verification.report (observation ())));
+  let verdict = classify obs in
+  Alcotest.(check bool) "not verified" false (is_verified verdict);
+  Alcotest.(check bool)
+    "the verdict message states the violation"
+    true
+    (contains "violated" (verdict_message verdict))
+;;
+
+let%test "state: empty read is absence" = test_state_empty ()
+let%test "state: residue is a violation" = test_state_residue ()
+let%test "state: unreadable is UNKNOWN" = test_state_unreadable ()
+let%test "combined: clean is verified" = test_combined_verified ()
+let%test "combined: residue and inconclusive checks" = test_sweep ()
+let%test "combined: GCP not-found subject" = test_gcp_not_found_subject_must_match ()
+let%test "retention: final snapshot observed" = test_retention_final_snapshot_observed ()
+let%test "retention: final snapshot missing" = test_retention_final_snapshot_missing ()
+let%test "retention: final snapshot unknown" = test_retention_final_snapshot_unknown ()
+let%test "retention: retain-nothing observed" = test_retention_none_observed ()
+let%test "retention: retain-nothing residual" = test_retention_none_residual ()
+let%test "retention: retain-nothing unknown" = test_retention_none_unknown ()
+let%test "report: the report is diagnostic" = test_report_is_diagnostic ()
