@@ -11,6 +11,11 @@ every ordinary module: the shared registry no longer names anything, and
 with the same process isolation. Each moved module keeps its existing assertions
 inside the test bodies, so only discovery changed.
 
+A later refactor replaced those assertions: `Alcotest.check` became
+`Windtrap.equal`, `Alcotest.fail`/`failf` became `Windtrap.fail`/`failf`, and the
+retained executables' `Alcotest.run`/`test_case` runners became
+`Windtrap.run`/`group`/`test`. Nothing links Alcotest any more.
+
 Batch 1 added two shared path helpers rather than hard-coding the inline
 runner's depth: `cli/test/inline/cli_binary.ml` locates the built `sol` binary
 for the binary-driven tests, and `cli/test/support/source_root.ml` locates the

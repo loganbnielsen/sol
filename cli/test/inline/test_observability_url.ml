@@ -1,15 +1,15 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module U = Sol_cli_observability_url
 
 let url_of = function
   | U.Url s -> s
-  | U.No_url reason -> Alcotest.fail ("expected Url, got No_url " ^ reason)
+  | U.No_url reason -> Windtrap.fail ("expected Url, got No_url " ^ reason)
 ;;
 
 let reason_of = function
-  | U.Url s -> Alcotest.fail ("expected No_url, got Url " ^ s)
+  | U.Url s -> Windtrap.fail ("expected No_url, got Url " ^ s)
   | U.No_url reason -> reason
 ;;
 
@@ -119,11 +119,11 @@ target:
 
 let ok_pair = function
   | Ok pair -> pair
-  | Error msg -> Alcotest.fail ("expected Ok, got Error " ^ msg)
+  | Error msg -> Windtrap.fail ("expected Ok, got Error " ^ msg)
 ;;
 
 let err_msg = function
-  | Ok _ -> Alcotest.fail "expected Error, got Ok"
+  | Ok _ -> Windtrap.fail "expected Error, got Ok"
   | Error msg -> msg
 ;;
 

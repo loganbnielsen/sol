@@ -1,10 +1,10 @@
-let check_str = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let assert_error result =
   match result with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected error but got Ok"
+  | Ok _ -> Windtrap.fail "expected error but got Ok"
 ;;
 
 let test_kubectl_apply_argv () =
@@ -110,7 +110,11 @@ let test_kubectl_classify () =
     Sol_cli_process.Non_zero { exit_code = 1; stdout; stderr }
   in
   let is expected message actual =
-    Alcotest.(check bool) message true (Sol_cli_kubectl.classify actual = expected)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:message
+      true
+      (Sol_cli_kubectl.classify actual = expected)
   in
   is
     Sol_cli_kubectl.Not_found
@@ -180,8 +184,9 @@ let test_kubectl_classify () =
   let forbidden =
     failed {|Error from server (Forbidden): secrets is forbidden: User "x" cannot get|}
   in
-  Alcotest.(check bool)
-    "the message keeps kubectl's words"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the message keeps kubectl's words"
     true
     (Sol_cli_string.contains
        ~needle:{|secrets is forbidden: User "x" cannot get|}
@@ -230,7 +235,7 @@ let test_kubectl_presence_classification () =
   with
   | Sol_cli_kubectl.Absent reason ->
     check_bool "the reason carries what kubectl said" true (String.length reason > 0)
-  | _ -> Alcotest.fail "expected Absent for a non-zero exit"
+  | _ -> Windtrap.fail "expected Absent for a non-zero exit"
 ;;
 
 let test_docker_build_argv () =

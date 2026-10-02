@@ -4,7 +4,7 @@
   sol_worker
   eio
   eio_main
-  alcotest
+  windtrap
   sol_obs
   kafka_eio_service
   kafka-eio

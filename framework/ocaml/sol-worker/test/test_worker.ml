@@ -71,7 +71,7 @@ let one_message_with_ack msg ~ack ~result_r ~handler () =
 let run_ok result =
   match result with
   | Ok () -> ()
-  | Error e -> Alcotest.fail (Worker.run_error_to_string e)
+  | Error e -> Windtrap.fail (Worker.run_error_to_string e)
 ;;
 
 let test_handle_ok () =
@@ -101,13 +101,14 @@ let test_handle_fail_stops_without_acking () =
                 ~trace_ctx:None))
       ()
     |> run_ok;
-    Alcotest.(check bool)
-      "a fact the handler declined to apply is not acknowledged"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a fact the handler declined to apply is not acknowledged"
       false
       !acked;
     match !result_r with
     | Some Kafka.Consumer.Stop -> ()
-    | _ -> Alcotest.fail "expected Fail to stop the consumer")
+    | _ -> Windtrap.fail "expected Fail to stop the consumer")
 ;;
 
 let test_metrics_ok_counter () =
@@ -135,8 +136,9 @@ let test_metrics_ok_counter () =
       ()
     |> run_ok;
     let output = render () in
-    Alcotest.(check bool)
-      "messages_total counter present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"messages_total counter present"
       true
       (let needle = "sol_worker_messages_total" in
        let n = String.length needle
@@ -146,8 +148,9 @@ let test_metrics_ok_counter () =
          if String.sub output i n = needle then found := true
        done;
        !found);
-    Alcotest.(check bool)
-      "status=ok label present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"status=ok label present"
       true
       (let needle = {|status="ok"|} in
        let n = String.length needle
@@ -184,8 +187,9 @@ let test_metrics_fail_counter () =
       ()
     |> run_ok;
     let output = render () in
-    Alcotest.(check bool)
-      "status=fail label present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"status=fail label present"
       true
       (let needle = {|status="fail"|} in
        let n = String.length needle
@@ -222,8 +226,9 @@ let test_metrics_duration () =
       ()
     |> run_ok;
     let output = render () in
-    Alcotest.(check bool)
-      "duration histogram present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"duration histogram present"
       true
       (let needle = "sol_worker_message_duration_seconds" in
        let n = String.length needle
@@ -276,12 +281,14 @@ let test_metrics_endpoint_served () =
           let uri = Uri.of_string (Printf.sprintf "http://127.0.0.1:%d/metrics" port) in
           let resp, body = Cohttp_eio.Client.call client ~sw `GET uri in
           let body = Eio.Buf_read.(parse_exn take_all) body ~max_size:(64 * 1024) in
-          Alcotest.(check int)
-            "GET /metrics status"
+          Windtrap.equal
+            Windtrap.int
+            ~msg:"GET /metrics status"
             200
             (Http.Status.to_int (Http.Response.status resp));
-          Alcotest.(check bool)
-            "serves worker metric"
+          Windtrap.equal
+            Windtrap.bool
+            ~msg:"serves worker metric"
             true
             (let needle = "sol_worker_messages_total" in
              let n = String.length needle
@@ -315,8 +322,9 @@ let test_stop_requested_after_a_message_stops_before_the_next () =
     let module W = Worker.For_testing.Make (StopWorker) in
     W.run ~env ~config:fake_config ~stop:stop_p ~test_consume_loop:(two_messages msgs) ()
     |> run_ok;
-    Alcotest.(check int)
-      "the in-flight message completed and the next one never started"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"the in-flight message completed and the next one never started"
       1
       !processed)
 ;;
@@ -331,33 +339,38 @@ let test_stop_handle_wakes_from_either_source () =
       let caller, caller_r = Eio.Promise.create () in
       let handle = handle_of ~signal ~caller () in
       Eio.Fiber.yield ();
-      Alcotest.(check bool)
-        "unresolved while neither source has fired"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"unresolved while neither source has fired"
         false
         (Eio.Promise.is_resolved handle);
       Eio.Promise.resolve caller_r ();
       Eio.Fiber.yield ();
-      Alcotest.(check bool)
-        "the caller's promise wakes the handle"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the caller's promise wakes the handle"
         true
         (Eio.Promise.is_resolved handle);
       Eio.Promise.resolve signal_r ();
       Eio.Fiber.yield ();
-      Alcotest.(check bool)
-        "a second source firing is harmless"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"a second source firing is harmless"
         true
         (Eio.Promise.is_resolved handle);
       let signal_only, signal_only_r = Eio.Promise.create () in
       let handle_signal = handle_of ~signal:signal_only () in
       Eio.Fiber.yield ();
-      Alcotest.(check bool)
-        "the signal source alone starts unresolved"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the signal source alone starts unresolved"
         false
         (Eio.Promise.is_resolved handle_signal);
       Eio.Promise.resolve signal_only_r ();
       Eio.Fiber.yield ();
-      Alcotest.(check bool)
-        "the signal source wakes the handle"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the signal source wakes the handle"
         true
         (Eio.Promise.is_resolved handle_signal)))
 ;;
@@ -395,7 +408,11 @@ let test_max_messages_stops_cleanly () =
           msgs)
       ()
     |> run_ok;
-    Alcotest.(check int) "stops after max_messages successful messages" 3 !processed)
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"stops after max_messages successful messages"
+      3
+      !processed)
 ;;
 
 let test_ack_failure_non_fatal_continues_and_is_metered () =
@@ -429,10 +446,11 @@ let test_ack_failure_non_fatal_continues_and_is_metered () =
     |> run_ok;
     (match !result_r with
      | Some Kafka.Consumer.Continue -> ()
-     | _ -> Alcotest.fail "expected Continue after a non-fatal ack failure");
+     | _ -> Windtrap.fail "expected Continue after a non-fatal ack failure");
     let output = render () in
-    Alcotest.(check bool)
-      "status=ack_failed label present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"status=ack_failed label present"
       true
       (let needle = {|status="ack_failed"|} in
        let n = String.length needle
@@ -458,8 +476,12 @@ let test_ack_failure_fatal_escalates () =
     |> run_ok;
     match !result_r with
     | Some (Kafka.Consumer.Error e) ->
-      Alcotest.(check bool) "escalated error is fatal" true (Kafka.Error.is_fatal e)
-    | _ -> Alcotest.fail "expected the handler to return Error for a fatal ack failure")
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"escalated error is fatal"
+        true
+        (Kafka.Error.is_fatal e)
+    | _ -> Windtrap.fail "expected the handler to return Error for a fatal ack failure")
 ;;
 
 let test_external_stop_flag_skips_messages () =
@@ -481,22 +503,32 @@ let test_external_stop_flag_skips_messages () =
     let module W = Worker.For_testing.Make (StopWorker) in
     W.run ~env ~config:fake_config ~stop ~test_consume_loop:(two_messages msgs) ()
     |> run_ok;
-    Alcotest.(check int) "W.handle never called when stop pre-set" 0 !processed)
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"W.handle never called when stop pre-set"
+      0
+      !processed)
 ;;
 
 let test_ready_without_owning_a_partition () =
   let now = ref 0.0 in
   let health = Worker_health.create ~now:(fun () -> !now) in
-  Alcotest.(check bool) "not ready before joining" false (Worker_health.is_ready health);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ready before joining"
+    false
+    (Worker_health.is_ready health);
   Worker_health.on_assignment health 0;
-  Alcotest.(check bool)
-    "a member owning no partition is ready"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a member owning no partition is ready"
     true
     (Worker_health.is_ready health);
   Worker_health.on_assignment health 2;
   Worker_health.on_assignment health 0;
-  Alcotest.(check bool)
-    "a rebalance that takes the partitions away stays ready"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a rebalance that takes the partitions away stays ready"
     true
     (Worker_health.is_ready health)
 ;;
@@ -504,18 +536,21 @@ let test_ready_without_owning_a_partition () =
 let test_owned_partitions_are_observable () =
   let now = ref 0.0 in
   let health = Worker_health.create ~now:(fun () -> !now) in
-  Alcotest.(check int)
-    "nothing owned before joining"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"nothing owned before joining"
     0
     (Worker_health.assigned_partitions health);
   Worker_health.on_assignment health 3;
-  Alcotest.(check int)
-    "the owned count follows the assignment"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the owned count follows the assignment"
     3
     (Worker_health.assigned_partitions health);
   Worker_health.on_assignment health 0;
-  Alcotest.(check int)
-    "an idle standby reports zero"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"an idle standby reports zero"
     0
     (Worker_health.assigned_partitions health)
 ;;
@@ -523,73 +558,62 @@ let test_owned_partitions_are_observable () =
 let test_liveness_is_poll_cadence () =
   let now = ref 0.0 in
   let health = Worker_health.create ~now:(fun () -> !now) in
-  Alcotest.(check bool) "fresh is live" true (Worker_health.is_live health);
+  Windtrap.equal Windtrap.bool ~msg:"fresh is live" true (Worker_health.is_live health);
   now := Worker_health.liveness_bound_s +. 1.0;
-  Alcotest.(check bool)
-    "a stalled poll loop is not live"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a stalled poll loop is not live"
     false
     (Worker_health.is_live health);
   Worker_health.on_poll health;
-  Alcotest.(check bool)
-    "a successful poll restores liveness"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a successful poll restores liveness"
     true
     (Worker_health.is_live health)
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "sol_worker"
-    [ ( "lifecycle"
-      , [ Alcotest.test_case "handle ok returns normally" `Quick test_handle_ok
-        ; Alcotest.test_case
+    [ Windtrap.group
+        "lifecycle"
+        [ Windtrap.test "handle ok returns normally" test_handle_ok
+        ; Windtrap.test
             "Fail stops without acking the fact"
-            `Quick
             test_handle_fail_stops_without_acking
-        ; Alcotest.test_case "no ot — no crash" `Quick test_no_metrics_without_ot
-        ; Alcotest.test_case
+        ; Windtrap.test "no ot — no crash" test_no_metrics_without_ot
+        ; Windtrap.test
             "a stop request after a message stops before the next"
-            `Quick
             test_stop_requested_after_a_message_stops_before_the_next
-        ; Alcotest.test_case
+        ; Windtrap.test
             "stop handle wakes from the signal or the caller"
-            `Quick
             test_stop_handle_wakes_from_either_source
-        ; Alcotest.test_case
-            "max_messages stops cleanly"
-            `Quick
-            test_max_messages_stops_cleanly
-        ; Alcotest.test_case
+        ; Windtrap.test "max_messages stops cleanly" test_max_messages_stops_cleanly
+        ; Windtrap.test
             "external stop flag skips messages"
-            `Quick
             test_external_stop_flag_skips_messages
-        ; Alcotest.test_case
+        ; Windtrap.test
             "non-fatal ack failure continues"
-            `Quick
             test_ack_failure_non_fatal_continues_and_is_metered
-        ; Alcotest.test_case
+        ; Windtrap.test
             "fatal ack failure escalates to Error"
-            `Quick
             test_ack_failure_fatal_escalates
-        ] )
-    ; ( "metrics"
-      , [ Alcotest.test_case "ok counter emitted" `Quick test_metrics_ok_counter
-        ; Alcotest.test_case "fail counter emitted" `Quick test_metrics_fail_counter
-        ; Alcotest.test_case "duration histogram emitted" `Quick test_metrics_duration
-        ; Alcotest.test_case "metrics endpoint served" `Quick test_metrics_endpoint_served
-        ] )
-    ; ( "readiness follows membership, not ownership"
-      , [ Alcotest.test_case
-            "an idle standby is ready"
-            `Quick
-            test_ready_without_owning_a_partition
-        ; Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "metrics"
+        [ Windtrap.test "ok counter emitted" test_metrics_ok_counter
+        ; Windtrap.test "fail counter emitted" test_metrics_fail_counter
+        ; Windtrap.test "duration histogram emitted" test_metrics_duration
+        ; Windtrap.test "metrics endpoint served" test_metrics_endpoint_served
+        ]
+    ; Windtrap.group
+        "readiness follows membership, not ownership"
+        [ Windtrap.test "an idle standby is ready" test_ready_without_owning_a_partition
+        ; Windtrap.test
             "the owned count is observable"
-            `Quick
             test_owned_partitions_are_observable
-        ; Alcotest.test_case
-            "liveness is poll cadence"
-            `Quick
-            test_liveness_is_poll_cadence
-        ] )
+        ; Windtrap.test "liveness is poll cadence" test_liveness_is_poll_cadence
+        ]
     ]
 ;;

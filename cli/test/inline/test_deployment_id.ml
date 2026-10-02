@@ -1,6 +1,6 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
-let check_int = Alcotest.(check int)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
 
 module D = Sol_cli_deployment_id
 
@@ -51,18 +51,18 @@ let test_round_trip () =
   let id = mk t0 "abc" in
   match D.of_string id with
   | Ok parsed -> check_string "round trip" id (D.to_string parsed)
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_rejects_a_release_id () =
   match D.of_string "r-0123456789abcdef" with
-  | Ok _ -> Alcotest.fail "expected a release id to be rejected as a deployment id"
+  | Ok _ -> Windtrap.fail "expected a release id to be rejected as a deployment id"
   | Error msg -> check_bool "names the input" true (String.length msg > 0)
 ;;
 
 let reject label s =
   match D.of_string s with
-  | Ok _ -> Alcotest.fail (label ^ ": expected rejection of " ^ s)
+  | Ok _ -> Windtrap.fail (label ^ ": expected rejection of " ^ s)
   | Error _ -> ()
 ;;
 

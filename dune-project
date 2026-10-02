@@ -161,6 +161,6 @@
   otoml
   jose
   ptime
-  (alcotest :with-test)
+  windtrap
   (mirage-crypto-pk :with-test)
   (mirage-crypto-rng :with-test)))

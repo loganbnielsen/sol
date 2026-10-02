@@ -16,10 +16,11 @@ let test_files_are_sql_only_and_sorted () =
   write dir "001_a.sql" "a";
   write dir "README.md" "not a migration";
   match Sol_cli_migration_gate.migration_files dir with
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
   | Ok files ->
-    Alcotest.(check (list (pair string string)))
-      "sorted .sql files"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+      ~msg:"sorted .sql files"
       [ "001_a.sql", "a"; "002_b.sql", "b" ]
       files
 ;;
@@ -28,17 +29,18 @@ let test_nul_is_refused_by_name () =
   let dir = temp_dir () in
   write dir "001_a.sql" "a\000b";
   match Sol_cli_migration_gate.migration_files dir with
-  | Ok _ -> Alcotest.fail "expected a NUL character to be refused"
+  | Ok _ -> Windtrap.fail "expected a NUL character to be refused"
   | Error e ->
-    Alcotest.(check bool)
-      "names the file"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the file"
       true
       (Sol_cli_string.contains ~needle:"001_a.sql" e)
 ;;
 
 let test_missing_dir_is_an_error () =
   match Sol_cli_migration_gate.migration_files "/nonexistent/sol-migrations" with
-  | Ok _ -> Alcotest.fail "expected a missing directory to be an error"
+  | Ok _ -> Windtrap.fail "expected a missing directory to be an error"
   | Error _ -> ()
 ;;
 
@@ -57,10 +59,10 @@ let test_verify_absent_and_empty_dirs_are_no_migrations () =
   let empty = temp_dir () in
   (match verify (Filename.concat empty "never-created") with
    | Sol_cli_migration_gate.No_migrations -> ()
-   | _ -> Alcotest.fail "an absent migrations directory must mean no migrations");
+   | _ -> Windtrap.fail "an absent migrations directory must mean no migrations");
   match verify empty with
   | Sol_cli_migration_gate.No_migrations -> ()
-  | _ -> Alcotest.fail "an empty migrations directory must mean no migrations"
+  | _ -> Windtrap.fail "an empty migrations directory must mean no migrations"
 ;;
 
 let test_verify_refuses_a_file_at_the_migrations_path () =
@@ -69,11 +71,11 @@ let test_verify_refuses_a_file_at_the_migrations_path () =
   write dir "db-migrations" "";
   match verify path with
   | Sol_cli_migration_gate.Unavailable message ->
-    Alcotest.(check bool) "names the path" true (contains message path)
+    Windtrap.equal Windtrap.bool ~msg:"names the path" true (contains message path)
   | Sol_cli_migration_gate.No_migrations ->
-    Alcotest.fail "a file at the migrations path must not read as 'no migrations'"
+    Windtrap.fail "a file at the migrations path must not read as 'no migrations'"
   | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
-    Alcotest.fail "a file at the migrations path must not be verified"
+    Windtrap.fail "a file at the migrations path must not be verified"
 ;;
 
 let test_verify_refuses_an_unreadable_migrations_dir () =
@@ -87,17 +89,18 @@ let test_verify_refuses_an_unreadable_migrations_dir () =
        else (
          match verify dir with
          | Sol_cli_migration_gate.Unavailable message ->
-           Alcotest.(check bool) "names the path" true (contains message dir)
+           Windtrap.equal Windtrap.bool ~msg:"names the path" true (contains message dir)
          | Sol_cli_migration_gate.No_migrations ->
-           Alcotest.fail
+           Windtrap.fail
              "an unreadable migrations directory must not read as 'no migrations'"
          | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
-           Alcotest.fail "an unreadable migrations directory must not be verified"))
+           Windtrap.fail "an unreadable migrations directory must not be verified"))
 ;;
 
 let test_registry_override_wins () =
-  Alcotest.(check (result string string))
-    "override"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"override"
     (Ok "override.example")
     (Sol_cli_migration_gate.registry_of
        ~configured:(Some "target.example")
@@ -106,8 +109,9 @@ let test_registry_override_wins () =
 ;;
 
 let test_registry_absent_says_how_to_set () =
-  Alcotest.(check (result string string))
-    "absent"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"absent"
     (Error "no registry configured for this target -- set it.")
     (Sol_cli_migration_gate.registry_of
        ~configured:None

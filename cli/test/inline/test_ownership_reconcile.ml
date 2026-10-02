@@ -89,29 +89,40 @@ let imports log =
 let failed_show_is_refused_before_any_import () =
   with_fake_terraform ~stdout:"" ~exit_code:1 (fun ~log ~infra ->
     match reconcile ~infra ~act:true with
-    | Ok _ -> Alcotest.fail "an unreadable state must not reconcile successfully"
+    | Ok _ -> Windtrap.fail "an unreadable state must not reconcile successfully"
     | Error message ->
-      Alcotest.(check bool)
-        "the refusal names the unreadable state"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the refusal names the unreadable state"
         true
         (Sol_cli_string.contains ~needle:"could not be read" message);
-      Alcotest.(check bool)
-        "the refusal says nothing is imported"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the refusal says nothing is imported"
         true
         (Sol_cli_string.contains ~needle:"ownership is unknown" message);
-      Alcotest.(check (list string)) "no import was attempted" [] (imports log))
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"no import was attempted"
+        []
+        (imports log))
 ;;
 
 let malformed_state_is_refused_before_any_import () =
   with_fake_terraform ~stdout:"{ not json" ~exit_code:0 (fun ~log ~infra ->
     match reconcile ~infra ~act:true with
-    | Ok _ -> Alcotest.fail "a malformed state must not reconcile successfully"
+    | Ok _ -> Windtrap.fail "a malformed state must not reconcile successfully"
     | Error message ->
-      Alcotest.(check bool)
-        "the refusal names the malformed state"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the refusal names the malformed state"
         true
         (Sol_cli_string.contains ~needle:"invalid" message);
-      Alcotest.(check (list string)) "no import was attempted" [] (imports log))
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"no import was attempted"
+        []
+        (imports log))
 ;;
 
 let with_unobservable_provider f =
@@ -144,10 +155,18 @@ let readable_empty_state_is_not_refused () =
   with_fake_terraform ~stdout:{|{"values": null}|} ~exit_code:0 (fun ~log ~infra ->
     match reconcile ~infra ~act:false with
     | Error message ->
-      Alcotest.failf "a readable empty state must not be refused: %s" message
+      Windtrap.failf "a readable empty state must not be refused: %s" message
     | Ok reconciliation ->
-      Alcotest.(check int) "nothing was restored" 0 (List.length reconciliation.restored);
-      Alcotest.(check (list string)) "no import was attempted" [] (imports log))
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"nothing was restored"
+        0
+        (List.length reconciliation.restored);
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"no import was attempted"
+        []
+        (imports log))
 ;;
 
 let%test "unreadable state: a failed terraform show refuses before importing" =

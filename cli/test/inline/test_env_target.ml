@@ -1,4 +1,4 @@
-let check_string = Alcotest.(check string)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let test_local_registry () =
   let t = Sol_cli_env_target.local_defaults ~image_tag:"abc123" in
@@ -12,8 +12,9 @@ let test_local_image_tag () =
 
 let test_local_constructor () =
   let t = Sol_cli_env_target.local_defaults ~image_tag:"dev" in
-  Alcotest.(check bool)
-    "constructor is Local"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"constructor is Local"
     true
     (match t with
      | Sol_cli_env_target.Local _ -> true
@@ -28,7 +29,7 @@ let test_customer_direct_registry () =
       ~emit_to:None
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     check_string
       "ECR registry"
@@ -44,10 +45,11 @@ let test_customer_direct_constructor () =
       ~emit_to:None
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
-    Alcotest.(check bool)
-      "constructor is Customer_direct"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"constructor is Customer_direct"
       true
       (match t with
        | Sol_cli_env_target.Customer_direct _ -> true
@@ -62,10 +64,11 @@ let test_customer_gitops_constructor () =
       ~emit_to:(Some "/tmp/manifests")
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
-    Alcotest.(check bool)
-      "constructor is Customer_gitops"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"constructor is Customer_gitops"
       true
       (match t with
        | Sol_cli_env_target.Customer_gitops _ -> true
@@ -80,7 +83,7 @@ let test_empty_registry_fails () =
       ~emit_to:None
       ()
   with
-  | Ok _ -> Alcotest.fail "expected Error but got Ok"
+  | Ok _ -> Windtrap.fail "expected Error but got Ok"
   | Error msg ->
     let contains_registry =
       let needle = "registry" in
@@ -92,12 +95,13 @@ let test_empty_registry_fails () =
       done;
       !found
     in
-    Alcotest.(check bool) "error mentions registry" true contains_registry
+    Windtrap.equal Windtrap.bool ~msg:"error mentions registry" true contains_registry
 ;;
 
 let test_whitespace_registry_fails () =
-  Alcotest.(check bool)
-    "whitespace registry fails"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"whitespace registry fails"
     true
     (Result.is_error
        (Sol_cli_env_target.customer_cloud_defaults
@@ -113,7 +117,11 @@ let test_to_env_config_local () =
   check_string "name" "local" cfg.name;
   check_string "registry" "sol-registry:5000" cfg.registry;
   check_string "image_tag" "abc123" cfg.image_tag;
-  Alcotest.(check bool) "mode Local" true (cfg.mode = Sol_cli_deployment_plan.Local)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"mode Local"
+    true
+    (cfg.mode = Sol_cli_deployment_plan.Local)
 ;;
 
 let test_to_env_config_customer () =
@@ -124,19 +132,21 @@ let test_to_env_config_customer () =
       ~emit_to:None
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     let cfg = Sol_cli_env_target.to_env_config ~name:"production" t in
     check_string "name" "production" cfg.name;
-    Alcotest.(check bool)
-      "mode Customer_cloud"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"mode Customer_cloud"
       true
       (cfg.mode = Sol_cli_deployment_plan.Customer_cloud)
 ;;
 
 let check_backend label expected actual =
-  Alcotest.(check string)
-    label
+  Windtrap.equal
+    Windtrap.string
+    ~msg:label
     (Sol_cli_manifest.secret_backend_to_string expected)
     (Sol_cli_manifest.secret_backend_to_string actual)
 ;;
@@ -157,7 +167,7 @@ let test_customer_direct_default_backend () =
       ~emit_to:None
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     check_backend
       "Customer_direct → Kubernetes_live"
@@ -173,7 +183,7 @@ let test_customer_gitops_default_backend () =
       ~emit_to:(Some "/tmp/manifests")
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     check_backend
       "Customer_gitops → Kubernetes_placeholder"
@@ -198,7 +208,7 @@ let test_to_env_config_gitops_backend () =
       ~emit_to:(Some "/tmp/manifests")
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     let cfg = Sol_cli_env_target.to_env_config ~name:"prod" t in
     check_backend
@@ -216,7 +226,7 @@ let customer_direct_target () =
       ()
   with
   | Ok t -> t
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let customer_gitops_target () =
@@ -228,16 +238,18 @@ let customer_gitops_target () =
       ()
   with
   | Ok t -> t
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let backend_is ~expected ?explicit t =
   let actual = Sol_cli_env_target.resolve_secret_backend ?explicit t in
-  Alcotest.(check bool)
-    (Printf.sprintf
-       "expected %s, got %s"
-       (Sol_cli_manifest.secret_backend_to_string expected)
-       (Sol_cli_manifest.secret_backend_to_string actual))
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:
+      (Printf.sprintf
+         "expected %s, got %s"
+         (Sol_cli_manifest.secret_backend_to_string expected)
+         (Sol_cli_manifest.secret_backend_to_string actual))
     true
     (actual = expected)
 ;;

@@ -30,7 +30,7 @@ services:
 |});
        Option.iter (Targets_fixture.write ~target:"dev/aws/us-east-1") target_body;
        match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
-       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+       | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
        | Ok config -> f config)
 ;;
 
@@ -39,7 +39,7 @@ let omit_charge = Some "services:\n  charge_svc:\n    omit: true\n"
 let select ?(image_refs = []) scope =
   match Sol_cli_deploy_selection.select ~scope ~image_refs inventory with
   | Ok selection -> selection
-  | Error msg -> Alcotest.fail ("unexpected selection error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected selection error: " ^ msg)
 ;;
 
 let apply ~config selection =
@@ -51,10 +51,10 @@ let names (deployed : Sol_cli_deploy_selection.deployed) =
 ;;
 
 let expect_refusal ~containing = function
-  | Ok _ -> Alcotest.fail "expected a refusal"
+  | Ok _ -> Windtrap.fail "expected a refusal"
   | Error msg ->
     if not (Sol_cli_string.contains ~needle:containing msg)
-    then Alcotest.failf "refusal %S does not mention %S" msg containing
+    then Windtrap.failf "refusal %S does not mention %S" msg containing
 ;;
 
 let test_undeclared_target_is_refused () =
@@ -65,12 +65,17 @@ let test_undeclared_target_is_refused () =
 let test_domain_scope_excludes_omitted_unit () =
   with_workspace ~target_body:omit_charge (fun config ->
     match apply ~config (select (Some "payments")) with
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
     | Ok deployed ->
-      Alcotest.(check (list string)) "kept" [ "invoice_svc" ] (names deployed);
-      Alcotest.(check int) "one note" 1 (List.length deployed.notes);
-      Alcotest.(check bool)
-        "the note says excluded"
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"kept"
+        [ "invoice_svc" ]
+        (names deployed);
+      Windtrap.equal Windtrap.int ~msg:"one note" 1 (List.length deployed.notes);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the note says excluded"
         true
         (Sol_cli_string.contains ~needle:"excluded" (List.hd deployed.notes)))
 ;;
@@ -78,11 +83,16 @@ let test_domain_scope_excludes_omitted_unit () =
 let test_unit_scope_names_omitted_unit_back_in () =
   with_workspace ~target_body:omit_charge (fun config ->
     match apply ~config (select (Some "payments/charge_svc")) with
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
     | Ok deployed ->
-      Alcotest.(check (list string)) "included" [ "charge_svc" ] (names deployed);
-      Alcotest.(check bool)
-        "the note says included"
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"included"
+        [ "charge_svc" ]
+        (names deployed);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the note says included"
         true
         (Sol_cli_string.contains ~needle:"included" (List.hd deployed.notes)))
 ;;
@@ -109,7 +119,7 @@ let test_image_ref_outside_scope_fails_before_target () =
       ~image_refs:[ Some "charge_svc", digest ]
       inventory
   with
-  | Ok _ -> Alcotest.fail "expected --image-ref outside the scope to be refused"
+  | Ok _ -> Windtrap.fail "expected --image-ref outside the scope to be refused"
   | Error _ -> ()
 ;;
 

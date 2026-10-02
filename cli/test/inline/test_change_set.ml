@@ -5,25 +5,25 @@ let release_id_of_test =
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let svc_spec : Sol_cli_deployment_plan.service_spec =
@@ -127,29 +127,29 @@ let run_ok ~mode ?secret_backend plan =
       plan
   with
   | Ok rs -> rs
-  | Error e -> Alcotest.fail ("run_plan unexpectedly failed: " ^ e)
+  | Error e -> Windtrap.fail ("run_plan unexpectedly failed: " ^ e)
 ;;
 
 let test_dry_run_result_count () =
   let plan = make_plan [ svc_spec; worker_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
-  Alcotest.(check int) "result count" 2 (List.length results)
+  Windtrap.equal Windtrap.int ~msg:"result count" 2 (List.length results)
 ;;
 
 let test_dry_run_result_fields () =
   let plan = make_plan [ svc_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
   let r = List.hd results in
-  Alcotest.(check string) "namespace" "myapp-payments" r.namespace;
-  Alcotest.(check string) "name" "charge-svc" r.name
+  Windtrap.equal Windtrap.string ~msg:"namespace" "myapp-payments" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"name" "charge-svc" r.name
 ;;
 
 let test_dry_run_worker () =
   let plan = make_plan [ worker_spec ] in
   let results = run_ok ~mode:Sol_cli_executor.Dry_run plan in
   let r = List.hd results in
-  Alcotest.(check string) "worker namespace" "myapp-comms" r.namespace;
-  Alcotest.(check string) "worker name" "notify-worker" r.name
+  Windtrap.equal Windtrap.string ~msg:"worker namespace" "myapp-comms" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"worker name" "notify-worker" r.name
 ;;
 
 let test_emit_to_writes_file () =
@@ -164,7 +164,7 @@ let test_emit_to_writes_file () =
    | _ -> ());
   (try Unix.rmdir dir with
    | _ -> ());
-  Alcotest.(check bool) "emit_to file created" true exists
+  Windtrap.equal Windtrap.bool ~msg:"emit_to file created" true exists
 ;;
 
 let test_emit_to_result_fields () =
@@ -178,10 +178,10 @@ let test_emit_to_result_fields () =
    | _ -> ());
   (try Unix.rmdir dir with
    | _ -> ());
-  Alcotest.(check int) "result count" 1 (List.length results);
+  Windtrap.equal Windtrap.int ~msg:"result count" 1 (List.length results);
   let r = List.hd results in
-  Alcotest.(check string) "namespace" "myapp-comms" r.namespace;
-  Alcotest.(check string) "name" "notify-worker" r.name
+  Windtrap.equal Windtrap.string ~msg:"namespace" "myapp-comms" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"name" "notify-worker" r.name
 ;;
 
 let%test "dry_run: result count" = test_dry_run_result_count ()

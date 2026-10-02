@@ -4,45 +4,47 @@ let release_id_of_test =
 
 let ok = function
   | Ok r -> r
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
-  Alcotest.(check bool)
-    (Printf.sprintf "%s: contains %S" label needle)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(Printf.sprintf "%s: contains %S" label needle)
     true
     (contains haystack needle)
 ;;
 
 let assert_absent label haystack needle =
-  Alcotest.(check bool)
-    (Printf.sprintf "%s: absent %S" label needle)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(Printf.sprintf "%s: absent %S" label needle)
     false
     (contains haystack needle)
 ;;
@@ -189,11 +191,11 @@ let test_up_request_uses_explicit_tag () =
       ~confirm_group_change:false
       ~keep_releases:20
       ~git_sha:(fun () ->
-        Alcotest.fail "git_sha should not be called when tag is explicit")
+        Windtrap.fail "git_sha should not be called when tag is explicit")
   in
   match r with
-  | Ok req -> Alcotest.(check string) "explicit tag" "v1.2.3" req.image_tag
-  | Error msg -> Alcotest.fail msg
+  | Ok req -> Windtrap.equal Windtrap.string ~msg:"explicit tag" "v1.2.3" req.image_tag
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_up_request_falls_back_to_git_sha () =
@@ -207,8 +209,9 @@ let test_up_request_falls_back_to_git_sha () =
       ~git_sha:(fun () -> Ok "sha-deadbeef")
   in
   match r with
-  | Ok req -> Alcotest.(check string) "git sha fallback" "sha-deadbeef" req.image_tag
-  | Error msg -> Alcotest.fail msg
+  | Ok req ->
+    Windtrap.equal Windtrap.string ~msg:"git sha fallback" "sha-deadbeef" req.image_tag
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let git_unavailable () = Error "fatal: not a git repository"
@@ -223,18 +226,20 @@ let test_up_request_warns_on_fallback_tag () =
       ~keep_releases:20
       ~git_sha:git_unavailable
   with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok req ->
-    Alcotest.(check string) "fallback tag" "dev" req.image_tag;
+    Windtrap.equal Windtrap.string ~msg:"fallback tag" "dev" req.image_tag;
     (match req.image_tag_warning with
-     | None -> Alcotest.fail "expected a warning for the fallback tag"
+     | None -> Windtrap.fail "expected a warning for the fallback tag"
      | Some w ->
-       Alcotest.(check bool)
-         ("names git's reason: " ^ w)
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:("names git's reason: " ^ w)
          true
          (Sol_cli_string.contains ~needle:"not a git repository" w);
-       Alcotest.(check bool)
-         ("names --image-tag: " ^ w)
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:("names --image-tag: " ^ w)
          true
          (Sol_cli_string.contains ~needle:"--image-tag" w))
 ;;
@@ -249,8 +254,13 @@ let test_up_request_resolved_sha_has_no_warning () =
       ~keep_releases:20
       ~git_sha:(fun () -> Ok "abc1234")
   with
-  | Error msg -> Alcotest.fail msg
-  | Ok req -> Alcotest.(check (option string)) "no warning" None req.image_tag_warning
+  | Error msg -> Windtrap.fail msg
+  | Ok req ->
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"no warning"
+      None
+      req.image_tag_warning
 ;;
 
 let deploy_without_tag ~git_sha =
@@ -273,22 +283,24 @@ let deploy_without_tag ~git_sha =
 
 let test_deploy_request_refuses_unresolvable_sha () =
   match deploy_without_tag ~git_sha:git_unavailable with
-  | Ok req -> Alcotest.fail ("deploy tagged images " ^ req.image_tag)
+  | Ok req -> Windtrap.fail ("deploy tagged images " ^ req.image_tag)
   | Error msg ->
-    Alcotest.(check bool)
-      ("names --image-tag: " ^ msg)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:("names --image-tag: " ^ msg)
       true
       (Sol_cli_string.contains ~needle:"--image-tag" msg);
-    Alcotest.(check bool)
-      ("names git's reason: " ^ msg)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:("names git's reason: " ^ msg)
       true
       (Sol_cli_string.contains ~needle:"not a git repository" msg)
 ;;
 
 let test_deploy_request_tags_with_resolved_sha () =
   match deploy_without_tag ~git_sha:(fun () -> Ok "abc1234") with
-  | Error msg -> Alcotest.fail msg
-  | Ok req -> Alcotest.(check string) "sha tag" "abc1234" req.image_tag
+  | Error msg -> Windtrap.fail msg
+  | Ok req -> Windtrap.equal Windtrap.string ~msg:"sha tag" "abc1234" req.image_tag
 ;;
 
 let test_up_request_preserves_mode () =
@@ -303,13 +315,14 @@ let test_up_request_preserves_mode () =
   in
   match r with
   | Ok req ->
-    Alcotest.(check bool)
-      "dry-run mode"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"dry-run mode"
       true
       (match req.mode with
        | Sol_cli_command_request.Dry_run -> true
        | Apply -> false)
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_uses_explicit_tag () =
@@ -328,11 +341,11 @@ let test_deploy_request_uses_explicit_tag () =
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
-      ~git_sha:(fun () -> Alcotest.fail "git_sha should not be called")
+      ~git_sha:(fun () -> Windtrap.fail "git_sha should not be called")
   in
   match r with
-  | Ok req -> Alcotest.(check string) "explicit tag" "sha-abc" req.image_tag
-  | Error msg -> Alcotest.fail msg
+  | Ok req -> Windtrap.equal Windtrap.string ~msg:"explicit tag" "sha-abc" req.image_tag
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_local_mode_builds_request () =
@@ -355,13 +368,14 @@ let test_deploy_request_local_mode_builds_request () =
   in
   match r with
   | Ok req ->
-    Alcotest.(check bool)
-      "deploy apply"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"deploy apply"
       true
       (match req.action with
        | Sol_cli_command_request.Deploy_apply -> true
        | Deploy_dry_run _ | Deploy_emit_to _ -> false)
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_gitops_action () =
@@ -384,13 +398,14 @@ let test_deploy_request_gitops_action () =
   in
   match r with
   | Ok req ->
-    Alcotest.(check bool)
-      "gitops action"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"gitops action"
       true
       (match req.action with
        | Sol_cli_command_request.Deploy_emit_to "/tmp/gitops" -> true
        | Deploy_apply | Deploy_dry_run _ | Deploy_emit_to _ -> false)
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_dry_run_action_preserves_emit_to () =
@@ -413,13 +428,14 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
   in
   match r with
   | Ok req ->
-    Alcotest.(check bool)
-      "dry-run action preserves emit_to"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"dry-run action preserves emit_to"
       true
       (match req.action with
        | Sol_cli_command_request.Deploy_dry_run { emit_to = Some "/tmp/gitops" } -> true
        | Deploy_apply | Deploy_emit_to _ | Deploy_dry_run _ -> false)
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_rejects_empty_target () =
@@ -440,7 +456,7 @@ let test_deploy_request_rejects_empty_target () =
       ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
-  Alcotest.(check bool) "empty target rejected" true (Result.is_error r)
+  Windtrap.equal Windtrap.bool ~msg:"empty target rejected" true (Result.is_error r)
 ;;
 
 let test_deploy_request_registry_omitted_stays_none () =
@@ -462,8 +478,13 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~git_sha:(fun () -> Ok "")
   in
   match r with
-  | Ok req -> Alcotest.(check (option string)) "registry stays None" None req.registry
-  | Error msg -> Alcotest.fail msg
+  | Ok req ->
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"registry stays None"
+      None
+      req.registry
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_accepts_image_refs () =
@@ -486,8 +507,13 @@ let test_deploy_request_accepts_image_refs () =
       ~git_sha:(fun () -> Ok "")
   in
   match r with
-  | Ok req -> Alcotest.(check int) "one reference carried" 1 (List.length req.image_refs)
-  | Error msg -> Alcotest.fail msg
+  | Ok req ->
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"one reference carried"
+      1
+      (List.length req.image_refs)
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_deploy_request_rejects_mutable_image_ref () =
@@ -508,38 +534,42 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
-  Alcotest.(check bool) "mutable reference rejected" true (Result.is_error r)
+  Windtrap.equal Windtrap.bool ~msg:"mutable reference rejected" true (Result.is_error r)
 ;;
 
 let test_plan_local_mode_fields () =
   let plan = make_plan ~env:local_env [ svc_spec ] in
-  Alcotest.(check string) "workspace" "myapp" plan.workspace;
-  Alcotest.(check bool)
-    "mode Local"
+  Windtrap.equal Windtrap.string ~msg:"workspace" "myapp" plan.workspace;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"mode Local"
     true
     (plan.environment.Sol_cli_deployment_plan.mode = Sol_cli_deployment_plan.Local);
-  Alcotest.(check string)
-    "registry"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"registry"
     "sol-registry:5000"
     plan.environment.Sol_cli_deployment_plan.registry
 ;;
 
 let test_plan_customer_cloud_mode_fields () =
   let plan = make_plan ~env:customer_env [ svc_spec ] in
-  Alcotest.(check bool)
-    "mode Customer_cloud"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"mode Customer_cloud"
     true
     (plan.environment.Sol_cli_deployment_plan.mode
      = Sol_cli_deployment_plan.Customer_cloud);
-  Alcotest.(check string)
-    "ECR registry"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"ECR registry"
     "123456789.dkr.ecr.us-east-1.amazonaws.com"
     plan.environment.Sol_cli_deployment_plan.registry
 ;;
 
 let test_plan_service_count () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
-  Alcotest.(check int) "three services" 3 (List.length plan.services)
+  Windtrap.equal Windtrap.int ~msg:"three services" 3 (List.length plan.services)
 ;;
 
 let test_plan_service_primitives () =
@@ -547,15 +577,21 @@ let test_plan_service_primitives () =
   let primitives =
     plan.services |> List.map (fun s -> s.Sol_cli_deployment_plan.primitive)
   in
-  Alcotest.(check bool)
-    "Svc present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Svc present"
     true
     (List.mem Sol_cli_deployment_plan.Svc primitives);
-  Alcotest.(check bool)
-    "Worker present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Worker present"
     true
     (List.mem Sol_cli_deployment_plan.Worker primitives);
-  Alcotest.(check bool) "Fn present" true (List.mem Sol_cli_deployment_plan.Fn primitives)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Fn present"
+    true
+    (List.mem Sol_cli_deployment_plan.Fn primitives)
 ;;
 
 let test_plan_consumer_groups_derived_from_workers () =
@@ -594,19 +630,21 @@ let test_plan_consumer_groups_derived_from_workers () =
           (make_plan [ svc_spec; worker_spec ]).Sol_cli_deployment_plan.services
     }
   in
-  Alcotest.(check int)
-    "one consumer group for one worker"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"one consumer group for one worker"
     1
     (List.length plan.consumer_groups);
-  Alcotest.(check (list string))
-    "group name"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"group name"
     [ "myapp.comms.notify_worker" ]
     (List.map Sol_cli_plan_ids.Consumer_group.to_string plan.consumer_groups)
 ;;
 
 let test_plan_svc_does_not_produce_consumer_group () =
   let groups = Sol_cli_deployment_plan.derive_consumer_groups "myapp" [ svc_spec ] in
-  Alcotest.(check int) "Svc yields no consumer groups" 0 (List.length groups)
+  Windtrap.equal Windtrap.int ~msg:"Svc yields no consumer groups" 0 (List.length groups)
 ;;
 
 let render_ok spec =
@@ -618,7 +656,7 @@ let render_ok spec =
       spec
   with
   | Ok (ns_yaml, workload_yaml) -> ns_yaml, workload_yaml
-  | Error e -> Alcotest.fail ("render_spec failed: " ^ e)
+  | Error e -> Windtrap.fail ("render_spec failed: " ^ e)
 ;;
 
 let run_plan_ok ~mode ?secret_backend plan =
@@ -633,7 +671,7 @@ let run_plan_ok ~mode ?secret_backend plan =
       plan
   with
   | Ok rs -> rs
-  | Error e -> Alcotest.fail ("run_plan failed: " ^ e)
+  | Error e -> Windtrap.fail ("run_plan failed: " ^ e)
 ;;
 
 let test_render_svc_produces_deployment_and_service () =
@@ -656,21 +694,26 @@ let test_render_fn_produces_cronjob () =
 
 let test_render_namespace_yaml_is_non_empty () =
   let ns_yaml, _ = render_ok svc_spec in
-  Alcotest.(check bool) "namespace_yaml non-empty" true (String.length ns_yaml > 0)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"namespace_yaml non-empty"
+    true
+    (String.length ns_yaml > 0)
 ;;
 
 let test_render_artifact_count_matches_services () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
   let results = run_plan_ok ~mode:Sol_cli_executor.Dry_run plan in
-  Alcotest.(check int) "one result per service" 3 (List.length results)
+  Windtrap.equal Windtrap.int ~msg:"one result per service" 3 (List.length results)
 ;;
 
 let test_render_artifact_image_matches_spec () =
   let plan = make_plan [ svc_spec ] in
   let results = run_plan_ok ~mode:Sol_cli_executor.Dry_run plan in
   let r = List.hd results in
-  Alcotest.(check string)
-    "artifact image"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"artifact image"
     "registry.example.com/myapp/charge-svc:abc123"
     r.image
 ;;
@@ -678,7 +721,11 @@ let test_render_artifact_image_matches_spec () =
 let test_render_no_docker_or_k8s_calls () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
   let results = run_plan_ok ~mode:Sol_cli_executor.Dry_run plan in
-  Alcotest.(check bool) "renders without side effects" true (List.length results = 3)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"renders without side effects"
+    true
+    (List.length results = 3)
 ;;
 
 let with_temp_dir f =
@@ -704,7 +751,7 @@ let test_gitops_emit_creates_file () =
     let plan = make_plan [ svc_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
-    Alcotest.(check bool) "gitops file created" true (Sys.file_exists path))
+    Windtrap.equal Windtrap.bool ~msg:"gitops file created" true (Sys.file_exists path))
 ;;
 
 let test_gitops_emit_file_contains_yaml_separator () =
@@ -761,14 +808,23 @@ let test_gitops_emit_one_file_per_service () =
     let plan = make_plan [ svc_spec; worker_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let files = Sys.readdir dir |> Array.to_list in
-    Alcotest.(check int) "two service files + two release files" 4 (List.length files);
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"two service files + two release files"
+      4
+      (List.length files);
     let record =
       Sol_cli_release.(
         configmap_name (of_plan ~apply_mode:Sol_cli_release.Gitops plan) ^ ".yaml")
     in
-    Alcotest.(check bool) "release record emitted" true (List.mem record files);
-    Alcotest.(check bool)
-      "current-release pointer emitted"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"release record emitted"
+      true
+      (List.mem record files);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"current-release pointer emitted"
       true
       (List.mem "sol-current-release.yaml" files))
 ;;
@@ -790,12 +846,14 @@ let test_gitops_release_artifact_is_deterministic () =
         close_in ic;
         s
       in
-      Alcotest.(check string)
-        "record bytes identical"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"record bytes identical"
         (read dir_a record)
         (read dir_b record);
-      Alcotest.(check string)
-        "pointer bytes identical"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"pointer bytes identical"
         (read dir_a "sol-current-release.yaml")
         (read dir_b "sol-current-release.yaml")))
 ;;
@@ -810,10 +868,11 @@ let test_local_executor_result_fields () =
       svc_spec
     |> ok
   in
-  Alcotest.(check string) "local namespace" "myapp-payments" r.namespace;
-  Alcotest.(check string) "local name" "charge-svc" r.name;
-  Alcotest.(check string)
-    "local image"
+  Windtrap.equal Windtrap.string ~msg:"local namespace" "myapp-payments" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"local name" "charge-svc" r.name;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"local image"
     "registry.example.com/myapp/charge-svc:abc123"
     r.image
 ;;
@@ -828,10 +887,11 @@ let test_direct_executor_result_fields () =
       svc_spec
     |> ok
   in
-  Alcotest.(check string) "direct namespace" "myapp-payments" r.namespace;
-  Alcotest.(check string) "direct name" "charge-svc" r.name;
-  Alcotest.(check string)
-    "direct image"
+  Windtrap.equal Windtrap.string ~msg:"direct namespace" "myapp-payments" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"direct name" "charge-svc" r.name;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"direct image"
     "registry.example.com/myapp/charge-svc:abc123"
     r.image
 ;;
@@ -847,10 +907,11 @@ let test_gitops_executor_result_fields () =
         svc_spec
       |> ok
     in
-    Alcotest.(check string) "gitops namespace" "myapp-payments" r.namespace;
-    Alcotest.(check string) "gitops name" "charge-svc" r.name;
-    Alcotest.(check string)
-      "gitops image"
+    Windtrap.equal Windtrap.string ~msg:"gitops namespace" "myapp-payments" r.namespace;
+    Windtrap.equal Windtrap.string ~msg:"gitops name" "charge-svc" r.name;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"gitops image"
       "registry.example.com/myapp/charge-svc:abc123"
       r.image)
 ;;
@@ -865,8 +926,8 @@ let test_local_worker_executor_result_fields () =
       worker_spec
     |> ok
   in
-  Alcotest.(check string) "local worker namespace" "myapp-comms" r.namespace;
-  Alcotest.(check string) "local worker name" "notify-worker" r.name
+  Windtrap.equal Windtrap.string ~msg:"local worker namespace" "myapp-comms" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"local worker name" "notify-worker" r.name
 ;;
 
 let test_direct_fn_executor_result_fields () =
@@ -879,13 +940,14 @@ let test_direct_fn_executor_result_fields () =
       fn_spec
     |> ok
   in
-  Alcotest.(check string) "direct fn namespace" "myapp-billing" r.namespace;
-  Alcotest.(check string) "direct fn name" "invoice-fn" r.name
+  Windtrap.equal Windtrap.string ~msg:"direct fn namespace" "myapp-billing" r.namespace;
+  Windtrap.equal Windtrap.string ~msg:"direct fn name" "invoice-fn" r.name
 ;;
 
 let test_state_dry_run_is_noop () =
-  Alcotest.(check bool)
-    "no-op outcome is Ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no-op outcome is Ok"
     true
     (Result.is_ok
        (Sol_cli_deployment_state.record_outcome
@@ -895,8 +957,9 @@ let test_state_dry_run_is_noop () =
 ;;
 
 let test_state_failed_is_noop () =
-  Alcotest.(check bool)
-    "no-op outcome is Ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no-op outcome is Ok"
     true
     (Result.is_ok
        (Sol_cli_deployment_state.record_outcome
@@ -906,8 +969,9 @@ let test_state_failed_is_noop () =
 ;;
 
 let test_state_emitted_is_noop () =
-  Alcotest.(check bool)
-    "no-op outcome is Ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no-op outcome is Ok"
     true
     (Result.is_ok
        (Sol_cli_deployment_state.record_outcome
@@ -921,8 +985,9 @@ let test_state_removed_consumer_groups () =
   let prev = [ "myapp.comms.notify_worker"; "myapp.billing.invoice_fn" ] in
   let next = [ "myapp.comms.notify_worker" ] in
   let removed = Sol_cli_deployment_state.removed_consumer_groups ~prev ~next in
-  Alcotest.(check (list string))
-    "invoice_fn worker removed"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"invoice_fn worker removed"
     [ "myapp.billing.invoice_fn" ]
     removed
 ;;
@@ -932,7 +997,11 @@ let test_state_no_removal_when_stable () =
   let removed =
     Sol_cli_deployment_state.removed_consumer_groups ~prev:groups ~next:groups
   in
-  Alcotest.(check (list string)) "stable plan: no removals" [] removed
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"stable plan: no removals"
+    []
+    removed
 ;;
 
 let test_local_and_direct_share_plan_type () =
@@ -957,15 +1026,20 @@ let test_local_and_direct_share_plan_type () =
       plan.services
     |> List.map ok
   in
-  Alcotest.(check int)
-    "same result count"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"same result count"
     (List.length local_results)
     (List.length direct_results);
   let lr = List.hd local_results
   and dr = List.hd direct_results in
-  Alcotest.(check string) "local namespace = direct namespace" lr.namespace dr.namespace;
-  Alcotest.(check string) "local name = direct name" lr.name dr.name;
-  Alcotest.(check string) "local image = direct image" lr.image dr.image
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"local namespace = direct namespace"
+    lr.namespace
+    dr.namespace;
+  Windtrap.equal Windtrap.string ~msg:"local name = direct name" lr.name dr.name;
+  Windtrap.equal Windtrap.string ~msg:"local image = direct image" lr.image dr.image
 ;;
 
 let test_gitops_shares_plan_type () =
@@ -993,12 +1067,13 @@ let test_gitops_shares_plan_type () =
     in
     let gr = List.hd gitops_results
     and dr = List.hd direct_results in
-    Alcotest.(check string)
-      "gitops namespace = direct namespace"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"gitops namespace = direct namespace"
       gr.namespace
       dr.namespace;
-    Alcotest.(check string) "gitops name = direct name" gr.name dr.name;
-    Alcotest.(check string) "gitops image = direct image" gr.image dr.image)
+    Windtrap.equal Windtrap.string ~msg:"gitops name = direct name" gr.name dr.name;
+    Windtrap.equal Windtrap.string ~msg:"gitops image = direct image" gr.image dr.image)
 ;;
 
 let test_change_set_build_is_path_agnostic () =
@@ -1009,7 +1084,11 @@ let test_change_set_build_is_path_agnostic () =
     in
     let id_dry = id (List.hd (run_plan_ok ~mode:Sol_cli_executor.Dry_run plan)) in
     let id_emit = id (List.hd (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan)) in
-    Alcotest.(check bool) "dry vs emit: identity identical" true (id_dry = id_emit))
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"dry vs emit: identity identical"
+      true
+      (id_dry = id_emit))
 ;;
 
 let test_all_paths_start_from_same_plan_workspace () =
@@ -1027,11 +1106,16 @@ let test_all_paths_start_from_same_plan_workspace () =
   in
   List.iter
     (fun plan ->
-       Alcotest.(check string)
-         "workspace consistent"
+       Windtrap.equal
+         Windtrap.string
+         ~msg:"workspace consistent"
          "myapp"
          plan.Sol_cli_deployment_plan.workspace;
-       Alcotest.(check int) "service count consistent" 1 (List.length plan.services))
+       Windtrap.equal
+         Windtrap.int
+         ~msg:"service count consistent"
+         1
+         (List.length plan.services))
     [ plan_local; plan_direct; plan_gitops; plan_hosted ]
 ;;
 
@@ -1043,15 +1127,21 @@ let test_up_execution_descriptor_uses_host_push_image () =
       ~sha:"abc123"
       svc_spec
   in
-  Alcotest.(check string) "k8s name" "charge-svc" exec.k8s_name;
-  Alcotest.(check string) "namespace" "myapp-payments" exec.namespace;
-  Alcotest.(check string) "Docker context is the workspace" "/tmp/myapp" exec.context;
-  Alcotest.(check string)
-    "push image"
+  Windtrap.equal Windtrap.string ~msg:"k8s name" "charge-svc" exec.k8s_name;
+  Windtrap.equal Windtrap.string ~msg:"namespace" "myapp-payments" exec.namespace;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"Docker context is the workspace"
+    "/tmp/myapp"
+    exec.context;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"push image"
     "localhost:5000/myapp/charge-svc:abc123"
     exec.push_image;
-  Alcotest.(check string)
-    "dockerfile"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"dockerfile"
     "/tmp/myapp/app/payments/charge_svc/Dockerfile"
     exec.dockerfile
 ;;
@@ -1066,7 +1156,7 @@ let test_up_request_rejects_nonpositive_keep () =
       ~keep_releases:0
       ~git_sha:(fun () -> Ok "")
   in
-  Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
+  Windtrap.equal Windtrap.bool ~msg:"zero keep rejected" true (Result.is_error r)
 ;;
 
 let test_deploy_request_rejects_nonpositive_keep () =
@@ -1087,7 +1177,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~await_delegation:None
       ~git_sha:(fun () -> Ok "")
   in
-  Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
+  Windtrap.equal Windtrap.bool ~msg:"zero keep rejected" true (Result.is_error r)
 ;;
 
 let%test "request_validation: up: explicit tag used" =

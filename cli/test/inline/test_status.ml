@@ -1,4 +1,4 @@
-let check_bool = Alcotest.(check bool)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module S = Sol_cli_status
 module D = Sol_cli_rollout_diagnosis
@@ -35,7 +35,7 @@ let test_unreadable_is_unknown_not_healthy () =
   check_bool "an unreadable workload is not Healthy" false (status = S.Healthy);
   (match status with
    | S.Unknown why -> check_bool "the verdict carries why" true (contains "Forbidden" why)
-   | other -> Alcotest.fail ("expected Unknown, got " ^ S.domain_status_to_string other));
+   | other -> Windtrap.fail ("expected Unknown, got " ^ S.domain_status_to_string other));
   check_bool
     "a successful read with nothing wrong is still Healthy"
     true
@@ -46,7 +46,7 @@ let test_unreadable_namespace_is_unknown_not_absent () =
   (match S.rollup_domain_status ~ns_presence:(Ns_unreadable "forbidden") [] with
    | S.Unknown _ -> ()
    | other ->
-     Alcotest.fail
+     Windtrap.fail
        ("an unreadable namespace must be Unknown, got " ^ S.domain_status_to_string other));
   check_bool
     "a confirmed absent namespace is still Not_deployed"

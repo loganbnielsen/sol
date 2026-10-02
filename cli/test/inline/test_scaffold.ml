@@ -1,4 +1,4 @@
-let check_bool = Alcotest.(check bool)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
@@ -25,14 +25,14 @@ let template_root () =
   match Sol_cli_platform_assets.resolve () with
   | Ok assets -> Sol_cli_platform_assets.templates_root assets
   | Error error ->
-    Alcotest.fail
+    Windtrap.fail
       ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
 ;;
 
 let tpl ~kind rel =
   match Sol_cli_scaffold_tree.text ~root:(template_root ()) ~kind ~rel with
   | Ok text -> text
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let in_temp_dir f =
@@ -285,7 +285,7 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
   Sys.chdir "testapp";
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
   | Error e ->
-    Alcotest.fail ("load_for_target failed: " ^ Sol_cli_config.error_to_string e)
+    Windtrap.fail ("load_for_target failed: " ^ Sol_cli_config.error_to_string e)
   | Ok cfg ->
     let target = cfg.target in
     check_bool
@@ -446,8 +446,9 @@ let test_workspace_startup_helpers_are_flattened () =
 ;;
 
 let test_parse_domain_name_normalizes_valid_name () =
-  Alcotest.(check (result (pair string string) string))
-    "normalized domain/name"
+  Windtrap.equal
+    (Windtrap.result (Windtrap.pair Windtrap.string Windtrap.string) Windtrap.string)
+    ~msg:"normalized domain/name"
     (Ok ("payments", "charge_svc"))
     (Sol_cli_cmd_new.parse_domain_name "Payments/Charge-Svc")
 ;;
@@ -457,7 +458,7 @@ let test_parse_domain_name_rejects_malformed_names () =
     (fun arg ->
        match Sol_cli_cmd_new.parse_domain_name arg with
        | Ok (domain, name) ->
-         Alcotest.failf "expected %S to be rejected, got (%S, %S)" arg domain name
+         Windtrap.failf "expected %S to be rejected, got (%S, %S)" arg domain name
        | Error msg ->
          assert_contains ("error for " ^ arg) msg "expected domain/name";
          assert_contains ("error for " ^ arg) msg arg)
@@ -604,7 +605,7 @@ let test_worker_has_no_ack_param () =
 let count_unapplied ~root =
   match Sol_cli_workspace_model.load ~root with
   | Ok facts -> Sol_cli_workspace_model.count_unapplied_migrations facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
 let test_pending_migrations_no_dir () =
@@ -699,7 +700,7 @@ let test_golden_ci_workflow () =
       [ "name", "testapp"; "Name", "Testapp" ]
       (tpl ~kind:"workspace" ".github/workflows/sol-ci.yml")
   in
-  Alcotest.(check string) "sol-ci.yml golden" expected actual
+  Windtrap.equal Windtrap.string ~msg:"sol-ci.yml golden" expected actual
 ;;
 
 let test_golden_dockerfile () =
@@ -717,7 +718,7 @@ let test_golden_dockerfile () =
       ]
       (tpl ~kind:"workspace" "app/payments/charge_svc/Dockerfile")
   in
-  Alcotest.(check string) "Dockerfile golden" expected actual
+  Windtrap.equal Windtrap.string ~msg:"Dockerfile golden" expected actual
 ;;
 
 let test_golden_svc_bin_ml () =
@@ -730,7 +731,7 @@ let test_golden_svc_bin_ml () =
       [ "name", "testapp"; "Name", "Testapp" ]
       (tpl ~kind:"workspace" "app/payments/charge_svc/bin/main.ml")
   in
-  Alcotest.(check string) "svc bin/main.ml golden" expected actual
+  Windtrap.equal Windtrap.string ~msg:"svc bin/main.ml golden" expected actual
 ;;
 
 let test_golden_worker_bin_ml () =
@@ -743,7 +744,7 @@ let test_golden_worker_bin_ml () =
       [ "name", "testapp"; "Name", "Testapp" ]
       (tpl ~kind:"workspace" "app/comms/notify_worker/bin/main.ml")
   in
-  Alcotest.(check string) "worker bin/main.ml golden" expected actual
+  Windtrap.equal Windtrap.string ~msg:"worker bin/main.ml golden" expected actual
 ;;
 
 let test_golden_test_dune () =
@@ -756,7 +757,7 @@ let test_golden_test_dune () =
       [ "name", "testapp"; "Name", "Testapp" ]
       (tpl ~kind:"workspace" "test/dune")
   in
-  Alcotest.(check string) "test/dune golden" expected actual
+  Windtrap.equal Windtrap.string ~msg:"test/dune golden" expected actual
 ;;
 
 let component_vars ~suffix ~mod_ =
@@ -775,7 +776,7 @@ let component_vars ~suffix ~mod_ =
 
 let check_generated_file label path expected =
   let actual = read_file path in
-  Alcotest.(check string) label expected actual
+  Windtrap.equal Windtrap.string ~msg:label expected actual
 ;;
 
 let test_golden_new_svc_files () =
@@ -881,28 +882,31 @@ let test_generated_workload_declares_its_language () =
   assert_contains "declares the workload" after_first "charge_svc:";
   assert_contains "declares the language" after_first "language: ocaml";
   (match Sol_cli_config.sol_yml_services ~root:"." with
-   | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+   | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
    | Ok services ->
      let svc =
        List.find
          (fun (s : Sol_cli_config.service) -> String.equal s.name "charge_svc")
          services
      in
-     Alcotest.(check (option string))
-       "the reader sees the declaration"
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"the reader sees the declaration"
        (Some "ocaml")
        (Option.map Sol_cli_compat.to_string svc.language));
   (match Sol_cli_workspace_model.load ~root:"." with
-   | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+   | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
    | Ok facts ->
      let findings = Sol_cli_check.run ~facts in
-     Alcotest.(check bool)
-       "a scaffolded workspace is check-clean"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"a scaffolded workspace is check-clean"
        true
        (List.length findings = 0));
   Sol_cli_cmd_new.new_svc "payments/charge" |> Result.get_ok;
-  Alcotest.(check string)
-    "sol.yml is untouched by the second run"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"sol.yml is untouched by the second run"
     after_first
     (read_file "sol.yml")
 ;;

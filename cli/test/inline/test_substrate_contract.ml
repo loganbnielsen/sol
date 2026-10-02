@@ -7,28 +7,35 @@ let observed_cluster =
 let verdict_of input observations =
   match List.assoc_opt input (evaluate observations) with
   | Some verdict -> verdict
-  | None -> Alcotest.failf "the contract has no verdict for %s" (name input)
+  | None -> Windtrap.failf "the contract has no verdict for %s" (name input)
 ;;
 
 let check_verdict label expected actual =
-  Alcotest.(check string) label expected (Sol_cli_installation.verdict_label actual)
+  Windtrap.equal
+    Windtrap.string
+    ~msg:label
+    expected
+    (Sol_cli_installation.verdict_label actual)
 ;;
 
 let test_every_input_is_answered_once () =
   let verdicts = evaluate observed_cluster in
   List.iter
     (fun input ->
-       Alcotest.(check int)
-         (Printf.sprintf "one verdict for %s" (name input))
+       Windtrap.equal
+         Windtrap.int
+         ~msg:(Printf.sprintf "one verdict for %s" (name input))
          1
          (List.length (List.filter (fun (i, _) -> i = input) verdicts));
-       Alcotest.(check bool)
-         (Printf.sprintf "%s has a statement" (name input))
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(Printf.sprintf "%s has a statement" (name input))
          true
          (String.trim (statement input) <> ""))
     all;
-  Alcotest.(check int)
-    "a verdict for every input"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a verdict for every input"
     (List.length all)
     (List.length verdicts)
 ;;
@@ -64,7 +71,7 @@ let test_unobservable_inputs_are_never_satisfied () =
     (fun input ->
        match verdict_of input observed_cluster with
        | Established ->
-         Alcotest.failf
+         Windtrap.failf
            "%s is reported satisfied from the target surface, which cannot observe it"
            (name input)
        | Unmet _ | Unknown _ -> ())
@@ -73,8 +80,9 @@ let test_unobservable_inputs_are_never_satisfied () =
 
 let test_an_unresolved_input_is_named () =
   let unresolved = unmet_or_unknown (evaluate observed_cluster) in
-  Alcotest.(check (list string))
-    "only the cluster is established here"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"only the cluster is established here"
     [ "container registry"
     ; "kafka and schema registry"
     ; "postgres connection"
@@ -82,18 +90,23 @@ let test_an_unresolved_input_is_named () =
     ; "base domain and tls"
     ]
     (List.map (fun (input, _) -> name input) unresolved);
-  Alcotest.(check int) "and the unresolved count matches" 5 (List.length unresolved)
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"and the unresolved count matches"
+    5
+    (List.length unresolved)
 ;;
 
 let test_a_registry_prefix_is_named_in_its_verdict () =
   match verdict_of Registry { observed_cluster with registry = Some "ghcr.io/acme" } with
   | Unknown reason ->
-    Alcotest.(check bool)
-      "names the prefix"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the prefix"
       true
       (Sol_cli_string.contains ~needle:"ghcr.io/acme" reason)
-  | Established -> Alcotest.fail "a prefix Sol cannot verify is not Established"
-  | Unmet reason -> Alcotest.failf "a configured prefix is not Unmet: %s" reason
+  | Established -> Windtrap.fail "a prefix Sol cannot verify is not Established"
+  | Unmet reason -> Windtrap.failf "a configured prefix is not Unmet: %s" reason
 ;;
 
 let%test "the contract (DEC-052): every input is answered once" =

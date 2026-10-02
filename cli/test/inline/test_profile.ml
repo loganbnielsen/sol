@@ -4,12 +4,15 @@ module Pre = Sol_cli_profile_preflight
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
-let check_str = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
-let check_strs = Alcotest.(check (list string))
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+
+let check_strs msg expected actual =
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
+;;
 
 let write path content =
   let oc = open_out path in
@@ -42,12 +45,12 @@ let selecting = "target:\n  profile: production-single-region\n"
 let load target =
   match Sol_cli_config.load_for_target ~target with
   | Ok cfg -> cfg
-  | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
 ;;
 
 let load_error target =
   match Sol_cli_config.load_for_target ~target with
-  | Ok _ -> Alcotest.fail "expected load_for_target to fail"
+  | Ok _ -> Windtrap.fail "expected load_for_target to fail"
   | Error e -> e.message
 ;;
 
@@ -199,18 +202,18 @@ let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
       services
   with
   | Ok plan -> plan
-  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
 ;;
 
 let requirements_of plan =
   match plan.Sol_cli_deployment_plan.profile with
-  | None -> Alcotest.fail "expected a profile claim"
+  | None -> Windtrap.fail "expected a profile claim"
   | Some claim -> claim.requirements
 ;;
 
 let findings_of plan =
   match plan.Sol_cli_deployment_plan.profile with
-  | None -> Alcotest.fail "expected a profile claim"
+  | None -> Windtrap.fail "expected a profile claim"
   | Some claim -> claim.application_findings
 ;;
 
@@ -232,7 +235,7 @@ let node_failure_tolerant_plan target =
       [ charge_svc ]
   with
   | Ok plan -> plan
-  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
 ;;
 
 let availability_rejection service ~toml =
@@ -246,9 +249,9 @@ let availability_rejection service ~toml =
       ~declared:(Sol_cli_config.declared_of_config (load "prod/aws/us-east-1"))
       [ service ]
   with
-  | Ok _ -> Alcotest.fail "expected the availability claim to be refused"
+  | Ok _ -> Windtrap.fail "expected the availability claim to be refused"
   | Error (Sol_cli_deployment_plan.Unsupported_availability { message; _ }) -> message
-  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
 ;;
 
 let charge_fn = unit ~domain:"payments" ~name:"charge_fn" Sol_cli_manifest.Fn
@@ -258,7 +261,7 @@ let test_plan_carries_claim_and_requirements () =
     write_target prod_aws selecting;
     let plan = plan_for "prod/aws/us-east-1" in
     match plan.profile with
-    | None -> Alcotest.fail "expected a profile claim"
+    | None -> Windtrap.fail "expected a profile claim"
     | Some claim ->
       check_str "identity" "production-single-region/v1" (P.to_string claim.profile);
       check_bool
@@ -293,7 +296,7 @@ let test_declared_data_resources_make_durability_applicable () =
       \    type: kafka\n";
     write_target prod_aws selecting;
     match (plan_for "prod/aws/us-east-1").profile with
-    | None -> Alcotest.fail "expected a profile claim"
+    | None -> Windtrap.fail "expected a profile claim"
     | Some claim ->
       check_bool
         "postgres resource requires Postgres durability"
@@ -343,8 +346,9 @@ let test_declared_kafka_use_applies_durability_policy () =
       "semantic durability policy"
       "single-broker-loss"
       (List.assoc "SOL_KAFKA_DURABILITY" worker.config);
-    Alcotest.(check int)
-      "declared Kafka worker group"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"declared Kafka worker group"
       1
       (List.length plan.consumer_groups))
 ;;
@@ -488,7 +492,7 @@ let preflight ?establish ?plan ~apply_mode target =
 ;;
 
 let findings = function
-  | Ok () -> Alcotest.fail "expected preflight to fail closed"
+  | Ok () -> Windtrap.fail "expected preflight to fail closed"
   | Error (_, fs) -> fs
 ;;
 
@@ -541,7 +545,7 @@ let test_remote_state_requires_a_backend () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Remote_state) fs with
-    | None -> Alcotest.fail "expected a remote-state finding"
+    | None -> Windtrap.fail "expected a remote-state finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -579,7 +583,7 @@ let test_scoped_identities_require_roles_and_cidr () =
       |> List.find_opt (fun (f : Pre.finding) ->
         f.capability = P.Scoped_operator_identities)
     with
-    | None -> Alcotest.fail "expected a scoped-identity finding"
+    | None -> Windtrap.fail "expected a scoped-identity finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -608,7 +612,7 @@ let test_world_reachable_endpoint_is_rejected () =
       |> List.find_opt (fun (f : Pre.finding) ->
         f.capability = P.Scoped_operator_identities)
     with
-    | None -> Alcotest.fail "expected a scoped-identity finding for 0.0.0.0/0"
+    | None -> Windtrap.fail "expected a scoped-identity finding for 0.0.0.0/0"
     | Some f ->
       check_bool
         "explains the restriction"
@@ -648,7 +652,7 @@ let test_mutable_tag_is_an_application_finding () =
     match
       List.find_opt (fun (f : Pre.finding) -> f.capability = P.Immutable_artifacts) fs
     with
-    | None -> Alcotest.fail "expected an artifact finding for a tag image"
+    | None -> Windtrap.fail "expected an artifact finding for a tag image"
     | Some f ->
       check_bool "application side" true (f.side = Pre.Application);
       check_bool
@@ -674,7 +678,7 @@ let test_digest_plan_establishes_artifact_guarantee () =
       (List.exists (fun (f : Pre.finding) -> f.capability = P.Immutable_artifacts) fs);
     match plan.services with
     | [ spec ] -> check_str "plan image is the digest" digest spec.image
-    | _ -> Alcotest.fail "expected exactly one planned service")
+    | _ -> Windtrap.fail "expected exactly one planned service")
 ;;
 
 let finding_for capability fs =
@@ -688,7 +692,7 @@ let test_undeclared_language_is_an_application_finding () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match finding_for P.Qualified_versions fs with
-    | None -> Alcotest.fail "expected an undeclared-language finding"
+    | None -> Windtrap.fail "expected an undeclared-language finding"
     | Some f ->
       check_bool "application side" true (f.side = Pre.Application);
       check_bool
@@ -718,7 +722,7 @@ let test_typescript_is_not_qualified () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match finding_for P.Qualified_versions fs with
-    | None -> Alcotest.fail "expected a TypeScript-not-qualified finding"
+    | None -> Windtrap.fail "expected a TypeScript-not-qualified finding"
     | Some f ->
       check_bool "application side" true (f.side = Pre.Application);
       check_bool
@@ -734,7 +738,7 @@ let test_missing_alert_receiver_is_a_target_finding () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Alert_delivery) fs with
-    | None -> Alcotest.fail "expected an alert-delivery finding"
+    | None -> Windtrap.fail "expected an alert-delivery finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -776,7 +780,7 @@ let test_unroutable_alert_receiver_is_a_target_finding () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Alert_delivery) fs with
-    | None -> Alcotest.fail "expected an unroutable-receiver finding"
+    | None -> Windtrap.fail "expected an unroutable-receiver finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -794,7 +798,7 @@ let test_unqualified_provider_is_a_target_finding () =
     match
       List.find_opt (fun (f : Pre.finding) -> f.capability = P.Qualified_substrate) fs
     with
-    | None -> Alcotest.fail "expected a substrate finding"
+    | None -> Windtrap.fail "expected a substrate finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -878,7 +882,7 @@ let test_kafka_durability_requires_the_rendered_requirement () =
         "names the missing durability requirement"
         true
         (Sol_cli_string.contains ~needle:"SOL_KAFKA_DURABILITY" reason)
-    | _ -> Alcotest.fail "expected an application finding for a consumer without it")
+    | _ -> Windtrap.fail "expected an application finding for a consumer without it")
 ;;
 
 let test_credential_posture_is_established () =
@@ -906,7 +910,7 @@ let test_node_failure_tolerant_requires_headroom () =
     match
       List.find_opt (fun (f : Pre.finding) -> f.capability = P.Workload_availability) fs
     with
-    | None -> Alcotest.fail "expected a workload-availability finding"
+    | None -> Windtrap.fail "expected a workload-availability finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool
@@ -1003,7 +1007,7 @@ let test_postgres_resource_declaration_required () =
     match
       List.find_opt (fun (f : Pre.finding) -> f.capability = P.Postgres_durability) fs
     with
-    | None -> Alcotest.fail "expected a missing Postgres resource finding"
+    | None -> Windtrap.fail "expected a missing Postgres resource finding"
     | Some finding ->
       check_bool "application side" true (finding.side = Pre.Application);
       check_bool
@@ -1071,7 +1075,7 @@ let test_event_records_claim () =
       true
       (event.profile = Some P.Production_single_region);
     match Sol_cli_deployment.of_json (Sol_cli_deployment.to_json event) with
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
     | Ok back -> check_bool "round-trips" true (back.profile = event.profile))
 ;;
 
@@ -1085,13 +1089,13 @@ let with_profile_field value =
             (kvs
              |> List.filter_map (fun (k, v) ->
                if k <> "profile" then Some (k, v) else Option.map (fun v -> k, v) value)))
-    | _ -> Alcotest.fail "expected an object")
+    | _ -> Windtrap.fail "expected an object")
 ;;
 
 let test_event_without_profile_field_claims_nothing () =
   match with_profile_field None with
   | Ok event -> check_bool "no claim" true (event.profile = None)
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_event_with_unknown_profile_rejected () =
@@ -1105,7 +1109,7 @@ let test_recommended_shape_satisfies_the_envelope () =
   let shape = P.recommended_node_shape in
   P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
   |> Result.iter_error (fun reason ->
-    Alcotest.fail
+    Windtrap.fail
       (Printf.sprintf
          "the profile's own recommended shape must satisfy its own capacity contract, \
           but it does not: %s"
@@ -1174,7 +1178,7 @@ let test_profile_target_pins_the_node_shape () =
         Sol_cli_terraform_vars.of_config ~workspace:"pluto" (load "prod/aws/us-east-1")
       with
       | Ok vars -> vars
-      | Error e -> Alcotest.fail e
+      | Error e -> Windtrap.fail e
     in
     check_str
       "node instance types are profile-derived"
@@ -1198,7 +1202,7 @@ let test_ordinary_target_keeps_its_own_shape () =
         Sol_cli_terraform_vars.of_config ~workspace:"pluto" (load "prod/aws/us-east-1")
       with
       | Ok vars -> vars
-      | Error e -> Alcotest.fail e
+      | Error e -> Windtrap.fail e
     in
     check_bool
       "an ordinary target makes no capacity claim and keeps full control"

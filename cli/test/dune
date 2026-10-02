@@ -6,7 +6,7 @@
 (test
  (name test_supervised)
  (modules test_supervised)
- (libraries sol_cli alcotest unix str))
+ (libraries sol_cli windtrap unix str))
 
 (executable
  (name print_readiness_invocations)

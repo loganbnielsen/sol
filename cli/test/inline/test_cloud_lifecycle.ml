@@ -74,13 +74,17 @@ let parse json = Sol_cli_aws_cluster.aws_outputs_of_json (Yojson.Safe.to_string 
 let test_outputs () =
   (match parse (valid_outputs ()) with
    | Ok _ -> ()
-   | Error message -> Alcotest.fail message);
+   | Error message -> Windtrap.fail message);
   let missing =
     match valid_outputs () with
     | `Assoc fields -> `Assoc (List.remove_assoc "cluster_name" fields)
     | _ -> assert false
   in
-  Alcotest.(check bool) "missing required" true (Result.is_error (parse missing));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"missing required"
+    true
+    (Result.is_error (parse missing));
   let wrong =
     match valid_outputs () with
     | `Assoc fields ->
@@ -89,7 +93,7 @@ let test_outputs () =
          :: List.remove_assoc "cluster_name" fields)
     | _ -> assert false
   in
-  Alcotest.(check bool) "wrong type" true (Result.is_error (parse wrong))
+  Windtrap.equal Windtrap.bool ~msg:"wrong type" true (Result.is_error (parse wrong))
 ;;
 
 let test_outputs_absent_optional () =
@@ -110,14 +114,15 @@ let test_outputs_absent_optional () =
   (match parse without_optional with
    | Ok _ -> ()
    | Error message ->
-     Alcotest.fail ("absent optional outputs must parse, not crash: " ^ message));
+     Windtrap.fail ("absent optional outputs must parse, not crash: " ^ message));
   let without_required =
     match without_optional with
     | `Assoc fields -> `Assoc (List.remove_assoc "cert_manager_irsa_arn" fields)
     | _ -> assert false
   in
-  Alcotest.(check bool)
-    "a missing required output still fails closed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a missing required output still fails closed"
     true
     (Result.is_error (parse without_required))
 ;;
@@ -154,15 +159,20 @@ let without_output name json =
 let test_gcp_outputs () =
   (match parse_gcp (valid_gcp_outputs ()) with
    | Ok outputs ->
-     Alcotest.(check string) "cluster" "sol-qual" outputs.cluster_name;
-     Alcotest.(check string) "project" "sol-qualification" outputs.project_id;
-     Alcotest.(check string) "region" "us-central1" outputs.region;
-     Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
-   | Error message -> Alcotest.fail message);
+     Windtrap.equal Windtrap.string ~msg:"cluster" "sol-qual" outputs.cluster_name;
+     Windtrap.equal Windtrap.string ~msg:"project" "sol-qualification" outputs.project_id;
+     Windtrap.equal Windtrap.string ~msg:"region" "us-central1" outputs.region;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"no loki bucket"
+       None
+       outputs.loki_gcs_bucket
+   | Error message -> Windtrap.fail message);
   List.iter
     (fun name ->
-       Alcotest.(check bool)
-         (name ^ " is required")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name ^ " is required")
          true
          (Result.is_error (parse_gcp (without_output name (valid_gcp_outputs ())))))
     [ "cluster_name"
@@ -175,7 +185,7 @@ let test_gcp_outputs () =
     (fun name ->
        match parse_gcp (without_output name (valid_gcp_outputs ())) with
        | Ok _ -> ()
-       | Error message -> Alcotest.fail ("absent optional " ^ name ^ ": " ^ message))
+       | Error message -> Windtrap.fail ("absent optional " ^ name ^ ": " ^ message))
     [ "loki_gcs_bucket"
     ; "thanos_gcs_bucket"
     ; "loki_workload_identity_sa_email"
@@ -210,13 +220,15 @@ let test_cluster_identity_check () =
       ~deploy_role_arn:None
       (Result.get_ok (parse outputs))
   in
-  Alcotest.(check bool)
-    "a different role is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a different role is refused"
     true
     (Result.is_error
        (L.platform_inputs aws_target (cluster "arn:aws:iam::1:role/somebody-else")));
-  Alcotest.(check bool)
-    "the declared role is accepted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the declared role is accepted"
     true
     (Result.is_ok
        (L.platform_inputs aws_target (cluster "arn:aws:iam::1:role/cluster-access")))
@@ -273,26 +285,30 @@ let test_cluster_deploy_access () =
             ()
         with
         | Ok (Some destination) ->
-          Alcotest.(check string)
-            "the run's destination is the root's deploy context"
+          Windtrap.equal
+            Windtrap.string
+            ~msg:"the run's destination is the root's deploy context"
             "acme-deploy"
             destination.Sol_cli_kube_destination.context;
-          Alcotest.(check bool)
-            "and it carries a kubeconfig scoped to this run"
+          Windtrap.equal
+            Windtrap.bool
+            ~msg:"and it carries a kubeconfig scoped to this run"
             true
             (Option.is_some destination.Sol_cli_kube_destination.kubeconfig)
         | Ok None ->
-          Alcotest.fail "a declared deploy identity must establish cluster access"
-        | Error message -> Alcotest.fail message);
+          Windtrap.fail "a declared deploy identity must establish cluster access"
+        | Error message -> Windtrap.fail message);
        let calls = In_channel.with_open_text log In_channel.input_all in
-       Alcotest.(check bool)
-         "the run assumes the deploy identity (DEC-058 option A)"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the run assumes the deploy identity (DEC-058 option A)"
          true
          (Sol_cli_string.contains
             ~needle:"--role-arn arn:aws:iam::1:role/sol-deploy"
             calls);
-       Alcotest.(check bool)
-         "and never the provisioning identity (DEC-034)"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"and never the provisioning identity (DEC-034)"
          false
          (Sol_cli_string.contains ~needle:"provisioner" calls);
        (match
@@ -300,8 +316,8 @@ let test_cluster_deploy_access () =
         with
         | Ok None -> ()
         | Ok (Some _) ->
-          Alcotest.fail "a target that declares no deploy identity must not be given one"
-        | Error message -> Alcotest.fail message);
+          Windtrap.fail "a target that declares no deploy identity must not be given one"
+        | Error message -> Windtrap.fail message);
        let gcp =
          Sol_cli_gcp_cluster.cluster
            ~region:"us-central1"
@@ -310,15 +326,15 @@ let test_cluster_deploy_access () =
        match gcp.Sol_cli_cluster.deploy_access () with
        | Ok None -> ()
        | Ok (Some _) ->
-         Alcotest.fail "a provider with no deploy identity must not fabricate one"
-       | Error message -> Alcotest.fail message)
+         Windtrap.fail "a provider with no deploy identity must not fabricate one"
+       | Error message -> Windtrap.fail message)
 ;;
 
 let test_platform_terraform_vars () =
   let vars inputs =
     match L.platform_terraform_vars inputs with
     | Ok vars -> vars
-    | Error message -> Alcotest.fail message
+    | Error message -> Windtrap.fail message
   in
   let has vars entry = List.mem entry vars in
   let prefixed vars prefix =
@@ -334,14 +350,24 @@ let test_platform_terraform_vars () =
   let aws_target = Result.get_ok (L.cloud_target target) in
   let aws_inputs = Result.get_ok (L.platform_inputs aws_target aws_cloud) in
   let aws = vars aws_inputs in
-  Alcotest.(check bool) "AWS selects its own provider" true (has aws "cloud_provider=aws");
-  Alcotest.(check bool) "AWS passes its region" true (has aws "aws_region=us-east-1");
-  Alcotest.(check bool)
-    "AWS passes the cert-manager role its issuer branch reads"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS selects its own provider"
+    true
+    (has aws "cloud_provider=aws");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS passes its region"
+    true
+    (has aws "aws_region=us-east-1");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS passes the cert-manager role its issuer branch reads"
     true
     (has aws "cert_manager_irsa_role_arn=arn:aws:iam::1:role/cert-manager");
-  Alcotest.(check (list string))
-    "AWS passes no GCS inputs to a root that does not declare them"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"AWS passes no GCS inputs to a root that does not declare them"
     []
     (prefixed aws "loki_gcs_bucket=" @ prefixed aws "thanos_gcs_bucket=");
   let gcp = Result.get_ok (L.cloud_target (gcp_target ())) in
@@ -352,16 +378,19 @@ let test_platform_terraform_vars () =
   in
   let gcp_inputs = Result.get_ok (L.platform_inputs gcp gcp_cloud) in
   let gcp_vars = vars gcp_inputs in
-  Alcotest.(check bool)
-    "GCP selects its own provider"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP selects its own provider"
     true
     (has gcp_vars "cloud_provider=gcp");
-  Alcotest.(check bool)
-    "GCP names the StorageClass it adopts"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP names the StorageClass it adopts"
     true
     (has gcp_vars "storage_class_name=standard-rwo");
-  Alcotest.(check bool)
-    "GCP passes no AWS inputs to a root that does not declare them"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP passes no AWS inputs to a root that does not declare them"
     true
     (prefixed gcp_vars "aws_region="
      @ prefixed gcp_vars "cert_manager_irsa_role_arn="
@@ -372,15 +401,17 @@ let test_platform_terraform_vars () =
   let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
   match L.platform_inputs tls_cloud gcp_cloud |> Result.map L.platform_terraform_vars with
   | Ok (Ok vars) ->
-    Alcotest.(check bool)
-      "a GCP target asking for TLS is installed, with the identity its solver \
-       authenticates as"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:
+        "a GCP target asking for TLS is installed, with the identity its solver \
+         authenticates as"
       true
       (has
          vars
          "cert_manager_workload_identity_sa_email=sol-qual-cert-manager@sol-qualification.iam.gserviceaccount.com")
-  | Ok (Error message) -> Alcotest.fail message
-  | Error message -> Alcotest.fail message
+  | Ok (Error message) -> Windtrap.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let test_preparation_failure_policies () =
@@ -393,32 +424,39 @@ let test_preparation_failure_policies () =
     Preparation_failed
       { reason = "final snapshot could not be prepared"; policy = Block_destroy }
   in
-  Alcotest.(check (option string))
-    "an ordinary failure is reported"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"an ordinary failure is reported"
     (Some "guard-lowering apply exited 1")
     (preparation_failure ordinary);
-  Alcotest.(check (option string))
-    "and it does NOT block destruction"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"and it does NOT block destruction"
     None
     (destruction_blocked ordinary);
-  Alcotest.(check (option string))
-    "a required-preparation failure is reported"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a required-preparation failure is reported"
     (Some "final snapshot could not be prepared")
     (preparation_failure required);
-  Alcotest.(check (option string))
-    "and it blocks, with the reason the target's own guarantee gives"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"and it blocks, with the reason the target's own guarantee gives"
     (Some "final snapshot could not be prepared")
     (destruction_blocked required);
-  Alcotest.(check (option string))
-    "nothing to prepare never blocks"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"nothing to prepare never blocks"
     None
     (destruction_blocked Nothing_to_prepare);
-  Alcotest.(check (option string))
-    "a success never blocks"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a success never blocks"
     None
     (destruction_blocked (Prepared "snap-1"));
-  Alcotest.(check (option string))
-    "a success is not a failure"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a success is not a failure"
     None
     (preparation_failure (Prepared "snap-1"))
 ;;
@@ -428,39 +466,48 @@ let test_preparations_eligible () =
     [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
   in
   let eligible state = L.preparations_eligible ~state ~desired in
-  Alcotest.(check (list string))
-    "both represented: both are eligible"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"both represented: both are eligible"
     desired
     (eligible desired);
-  Alcotest.(check (list string))
-    "the half-built case: the cluster exists in the provider but not in state, so it is \
-     NOT prepared -- preparing it would create it"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:
+      "the half-built case: the cluster exists in the provider but not in state, so it \
+       is NOT prepared -- preparing it would create it"
     [ "google_sql_database_instance.postgres" ]
     (eligible [ "google_sql_database_instance.postgres" ]);
-  Alcotest.(check (list string))
-    "nothing represented: nothing to prepare"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing represented: nothing to prepare"
     []
     (eligible []);
-  Alcotest.(check (list string))
-    "state that holds neither of the desired resources yields nothing"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"state that holds neither of the desired resources yields nothing"
     []
     (eligible [ "aws_db_instance.postgres" ]);
-  Alcotest.(check (list string))
-    "order follows the configuration, not the state"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"order follows the configuration, not the state"
     desired
     (eligible (List.rev desired));
-  Alcotest.(check (list string))
-    "the unrepresented set is the complement of the eligible one"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the unrepresented set is the complement of the eligible one"
     [ "google_container_cluster.main" ]
     (L.preparations_unrepresented
        ~state:[ "google_sql_database_instance.postgres" ]
        ~desired);
-  Alcotest.(check (list string))
-    "nothing unrepresented when state holds everything"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing unrepresented when state holds everything"
     []
     (L.preparations_unrepresented ~state:desired ~desired);
-  Alcotest.(check (list string))
-    "everything is unrepresented when state holds nothing"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"everything is unrepresented when state holds nothing"
     desired
     (L.preparations_unrepresented ~state:[] ~desired)
 ;;
@@ -476,33 +523,37 @@ let test_platform_vars_destruction_context () =
   let inputs = Result.get_ok (L.platform_inputs tls_cloud gcp_cloud) in
   (match L.platform_terraform_vars inputs with
    | Error message ->
-     Alcotest.fail
+     Windtrap.fail
        ("installation must accept a GCP target asking for TLS once the issuer path is \
          wired          (DEC-055), but it refused: "
         ^ message)
    | Ok vars ->
-     Alcotest.(check bool)
-       "installation passes cert-manager's Workload Identity service account"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"installation passes cert-manager's Workload Identity service account"
        true
        (List.mem
           "cert_manager_workload_identity_sa_email=sol-qual-cert-manager@sol-qualification.iam.gserviceaccount.com"
           vars);
-     Alcotest.(check bool)
-       "installation names the project the Cloud DNS zone lives in"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"installation names the project the Cloud DNS zone lives in"
        true
        (List.mem "cert_manager_dns01_project=sol-qualification" vars);
-     Alcotest.(check bool)
-       "and still carries the issuer the target declared"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"and still carries the issuer the target declared"
        true
        (List.mem "cluster_issuer=letsencrypt-prod" vars));
   match L.platform_terraform_vars ~context:L.Destruction inputs with
   | Ok vars ->
-    Alcotest.(check bool)
-      "destruction gets the variables it needs to remove the platform"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"destruction gets the variables it needs to remove the platform"
       true
       (List.mem "cluster_issuer=letsencrypt-prod" vars)
   | Error message ->
-    Alcotest.fail
+    Windtrap.fail
       ("destruction must not be refused by an install-time requirement: " ^ message)
 ;;
 
@@ -510,30 +561,43 @@ let test_provisioner_kube_env () =
   let path = "/tmp/sol-platform-provisioner-test.kubeconfig" in
   let env = Sol_cli_cluster.provisioner_kube_env path in
   List.iter
-    (fun key -> Alcotest.(check (option string)) key (Some path) (List.assoc_opt key env))
+    (fun key ->
+       Windtrap.equal
+         (Windtrap.option Windtrap.string)
+         ~msg:key
+         (Some path)
+         (List.assoc_opt key env))
     [ "KUBECONFIG"; "KUBE_CONFIG_PATH"; "KUBE_CONFIG_PATHS" ]
 ;;
 
 let test_lifecycle_phases () =
   let open L in
   let name = phase_to_string in
-  Alcotest.(check bool)
-    "PlatformInstalling uses Installation policy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"PlatformInstalling uses Installation policy"
     true
     (policy_of_phase Platform_installing = Installation);
-  Alcotest.(check bool)
-    "Ready uses Production policy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ready uses Production policy"
     true
     (policy_of_phase Ready = Production);
-  Alcotest.(check bool)
-    "PreparingDestroy uses Destroy policy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"PreparingDestroy uses Destroy policy"
     true
     (policy_of_phase Preparing_destroy = Destroy);
-  Alcotest.(check bool) "Ready policy applies in Ready" true (ready_policy_applies Ready);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ready policy applies in Ready"
+    true
+    (ready_policy_applies Ready);
   List.iter
     (fun p ->
-       Alcotest.(check bool)
-         (name p ^ " is not Ready policy")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name p ^ " is not Ready policy")
          false
          (ready_policy_applies p))
     [ Absent
@@ -545,8 +609,9 @@ let test_lifecycle_phases () =
     ];
   List.iter
     (fun (from, to_) ->
-       Alcotest.(check bool)
-         (name from ^ " -> " ^ name to_ ^ " is legal")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name from ^ " -> " ^ name to_ ^ " is legal")
          true
          (transition_allowed ~from ~to_))
     [ Absent, Cloud_bootstrap
@@ -560,8 +625,9 @@ let test_lifecycle_phases () =
     ];
   List.iter
     (fun (from, to_) ->
-       Alcotest.(check bool)
-         (name from ^ " -> " ^ name to_ ^ " is rejected")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name from ^ " -> " ^ name to_ ^ " is rejected")
          false
          (transition_allowed ~from ~to_))
     [ Preparing_destroy, Ready
@@ -573,18 +639,21 @@ let test_lifecycle_phases () =
     ; Cloud_bootstrap, Ready
     ; Platform_installing, Preparing_destroy
     ];
-  Alcotest.(check bool)
-    "the forward relation still rejects PlatformInstalling -> PreparingDestroy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the forward relation still rejects PlatformInstalling -> PreparingDestroy"
     false
     (transition_allowed ~from:Platform_installing ~to_:Preparing_destroy);
   List.iter
     (fun phase ->
-       Alcotest.(check bool)
-         (name phase ^ " admits destruction")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name phase ^ " admits destruction")
          (phase <> Absent)
          (destruction_available phase);
-       Alcotest.(check string)
-         (name phase ^ " enters destruction as expected")
+       Windtrap.equal
+         Windtrap.string
+         ~msg:(name phase ^ " enters destruction as expected")
          (if phase = Absent then "Absent" else "PreparingDestroy")
          (phase_to_string (enter_destruction ~from:phase)))
     [ Absent
@@ -597,8 +666,9 @@ let test_lifecycle_phases () =
     ];
   List.iter
     (fun phase ->
-       Alcotest.(check bool)
-         (name phase ^ " does not enter a Ready-policy phase by destroying")
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(name phase ^ " does not enter a Ready-policy phase by destroying")
          false
          (ready_policy_applies (enter_destruction ~from:phase)))
     [ Absent
@@ -616,20 +686,24 @@ let test_lifecycle_phases () =
       ~destroy_snapshot_id:"snap-1"
       ~retention:default_destroy_retention
   in
-  Alcotest.(check (option string))
-    "destroy policy disables RDS deletion protection"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"destroy policy disables RDS deletion protection"
     (Some "false")
     (List.assoc_opt "rds_deletion_protection" destroy_vars);
-  Alcotest.(check (option string))
-    "destroy policy carries the prepared final snapshot"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"destroy policy carries the prepared final snapshot"
     (Some "snap-1")
     (List.assoc_opt "rds_final_snapshot_identifier" destroy_vars);
-  Alcotest.(check int)
-    "destroy policy is exactly the three destroy vars"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"destroy policy is exactly the three destroy vars"
     3
     (List.length destroy_vars);
-  Alcotest.(check (list string))
-    "the GCP destroy policy carries both of GCP's guards"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the GCP destroy policy carries both of GCP's guards"
     [ "sql_deletion_protection"; "false"; "gke_deletion_protection"; "false" ]
     (List.concat_map
        (fun (k, v) -> [ k; v ])
@@ -638,8 +712,9 @@ let test_lifecycle_phases () =
           ~phase:Preparing_destroy
           ~destroy_snapshot_id:"snap-1"
           ~retention:default_destroy_retention));
-  Alcotest.(check int)
-    "Ready adds no policy overrides"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"Ready adds no policy overrides"
     0
     (List.length
        (policy_vars
@@ -647,8 +722,9 @@ let test_lifecycle_phases () =
           ~phase:Ready
           ~destroy_snapshot_id:"x"
           ~retention:default_destroy_retention));
-  Alcotest.(check int)
-    "GCP Ready adds no policy overrides either"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"GCP Ready adds no policy overrides either"
     0
     (List.length
        (policy_vars
@@ -656,48 +732,59 @@ let test_lifecycle_phases () =
           ~phase:Ready
           ~destroy_snapshot_id:"x"
           ~retention:default_destroy_retention));
-  Alcotest.(check string)
-    "no substrate observes as Absent"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"no substrate observes as Absent"
     "Absent"
     (phase_to_string (observed_phase ~cloud_exists:false ~platform_installed:false));
-  Alcotest.(check string)
-    "an absent substrate observes as Absent whatever else is claimed"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"an absent substrate observes as Absent whatever else is claimed"
     "Absent"
     (phase_to_string (observed_phase ~cloud_exists:false ~platform_installed:true));
-  Alcotest.(check string)
-    "an uninstalled platform observes as PlatformInstalling"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"an uninstalled platform observes as PlatformInstalling"
     "PlatformInstalling"
     (phase_to_string (observed_phase ~cloud_exists:true ~platform_installed:false));
-  Alcotest.(check string)
-    "a completed install observes as Ready"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a completed install observes as Ready"
     "Ready"
     (phase_to_string (observed_phase ~cloud_exists:true ~platform_installed:true));
-  Alcotest.(check bool)
-    "PlatformInstalling -> Ready is admitted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"PlatformInstalling -> Ready is admitted"
     true
     (Result.is_ok (enter ~from:Platform_installing ~to_:Ready));
-  Alcotest.(check bool)
-    "Ready -> PlatformUpdating is admitted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ready -> PlatformUpdating is admitted"
     true
     (Result.is_ok (enter ~from:Ready ~to_:Platform_updating));
-  Alcotest.(check bool)
-    "PlatformUpdating -> Ready is admitted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"PlatformUpdating -> Ready is admitted"
     true
     (Result.is_ok (enter ~from:Platform_updating ~to_:Ready));
-  Alcotest.(check bool)
-    "Ready -> PlatformInstalling is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ready -> PlatformInstalling is refused"
     true
     (Result.is_error (enter ~from:Ready ~to_:Platform_installing));
-  Alcotest.(check bool)
-    "PreparingDestroy -> Ready is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"PreparingDestroy -> Ready is refused"
     true
     (Result.is_error (enter ~from:Preparing_destroy ~to_:Ready));
-  Alcotest.(check bool)
-    "CloudBootstrap -> Ready is refused (the install is not skippable)"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"CloudBootstrap -> Ready is refused (the install is not skippable)"
     true
     (Result.is_error (enter ~from:Cloud_bootstrap ~to_:Ready));
-  Alcotest.(check string)
-    "a refused transition names both phases"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a refused transition names both phases"
     "illegal lifecycle transition Ready -> PlatformInstalling"
     (Result.get_error (enter ~from:Ready ~to_:Platform_installing))
 ;;
@@ -706,19 +793,21 @@ let test_backends () =
   let get t root = Result.get_ok (L.backend_config t ~root) in
   let cloud = get target `Cloud
   and platform = get target `Platform in
-  Alcotest.(check bool) "distinct" true (cloud <> platform);
-  Alcotest.(check bool)
-    "cloud key"
+  Windtrap.equal Windtrap.bool ~msg:"distinct" true (cloud <> platform);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"cloud key"
     true
     (List.mem "key=sol/prod/aws/us-east-1/cloud.tfstate" cloud);
-  Alcotest.(check bool)
-    "platform key"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"platform key"
     true
     (List.mem "key=sol/prod/aws/us-east-1/platform.tfstate" platform);
   let aws_without_lock = without_aws_field "state_lock_table" target in
   (match L.backend_config aws_without_lock ~root:`Cloud with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "an AWS target without a lock table must be refused");
+   | Ok _ -> Windtrap.fail "an AWS target without a lock table must be refused");
   let gcp =
     { target with
       name = "prod/gcp/us-central1"
@@ -728,12 +817,14 @@ let test_backends () =
     }
   in
   let gcp_cloud = get gcp `Cloud in
-  Alcotest.(check (list string))
-    "GCS addresses the object by prefix and names no lock resource"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"GCS addresses the object by prefix and names no lock resource"
     [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/cloud.tfstate" ]
     gcp_cloud;
-  Alcotest.(check bool)
-    "GCS platform state is its own object"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCS platform state is its own object"
     true
     (get gcp `Platform
      = [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]);
@@ -743,16 +834,17 @@ let test_backends () =
        ~root:`Cloud
    with
    | Ok config ->
-     Alcotest.(check (list string))
-       "a GCP target's lock table is not a backend attribute at all"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"a GCP target's lock table is not a backend attribute at all"
        [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/cloud.tfstate" ]
        config
-   | Error message -> Alcotest.fail ("a GCP lock table must not be an error: " ^ message));
+   | Error message -> Windtrap.fail ("a GCP lock table must not be an error: " ^ message));
   List.iter
     (fun t ->
        match L.backend_config { t with state_bucket = None } ~root:`Cloud with
        | Error _ -> ()
-       | Ok _ -> Alcotest.fail "a target without a state bucket must be refused")
+       | Ok _ -> Windtrap.fail "a target without a state bucket must be refused")
     [ target; gcp ]
 ;;
 
@@ -766,47 +858,58 @@ let test_cloud_target () =
     }
   in
   let aws = Result.get_ok (L.cloud_target target) in
-  Alcotest.(check bool)
-    "AWS carries the provisioner role it must assume"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS carries the provisioner role it must assume"
     true
     (aws.cluster_access_role_arn = Some "arn:aws:iam::1:role/cluster-access");
   let gcp = Result.get_ok (L.cloud_target gcp) in
-  Alcotest.(check bool)
-    "GCP carries no role ARN and is not refused for it"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP carries no role ARN and is not refused for it"
     true
     (gcp.cluster_access_role_arn = None);
-  Alcotest.(check string) "region travels from the target" "us-central1" gcp.target.region;
-  Alcotest.(check (list string))
-    "the target's own backends are the ones selected"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"region travels from the target"
+    "us-central1"
+    gcp.target.region;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the target's own backends are the ones selected"
     [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]
     gcp.platform_backend;
   (match L.cloud_target (without_aws_field "cluster_access_role_arn" target) with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "an AWS target without a cluster-access role must be refused");
+   | Ok _ -> Windtrap.fail "an AWS target without a cluster-access role must be refused");
   match L.cloud_target { target with base_domain = None } with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "a target without a base domain must be refused"
+  | Ok _ -> Windtrap.fail "a target without a base domain must be refused"
 ;;
 
 let test_platform_root_selection () =
-  Alcotest.(check string)
-    "AWS has a root that declares the S3 backend"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"AWS has a root that declares the S3 backend"
     "platform/cloud/aws/platform"
     (Sol_cli_platform_assets.cloud_root_rel
        Sol_cli_provider.Aws
        Sol_cli_platform_assets.Platform);
-  Alcotest.(check string)
-    "GCP has a root that declares the GCS backend"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"GCP has a root that declares the GCS backend"
     "platform/cloud/gcp/platform"
     (Sol_cli_platform_assets.cloud_root_rel
        Sol_cli_provider.Gcp
        Sol_cli_platform_assets.Platform);
-  Alcotest.(check string)
-    "an address goes through the module that reaches the definition"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"an address goes through the module that reaches the definition"
     "module.platform.kubernetes_namespace.cert_manager"
     (L.platform_address "kubernetes_namespace.cert_manager");
-  Alcotest.(check bool)
-    "the two providers do not select the same platform root"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the two providers do not select the same platform root"
     true
     (Sol_cli_platform_assets.cloud_root_rel
        Sol_cli_provider.Aws
@@ -825,7 +928,7 @@ let test_deferred () =
        ~crds_established:false
    with
    | Deferred _, Deferred _ -> ()
-   | _ -> Alcotest.fail "fresh target must defer both platform phases");
+   | _ -> Windtrap.fail "fresh target must defer both platform phases");
   (match
      platform_plan_phases
        ~cluster_exists:true
@@ -833,7 +936,7 @@ let test_deferred () =
        ~crds_established:false
    with
    | Deferred _, Deferred _ -> ()
-   | _ -> Alcotest.fail "a cluster without provisioner RBAC must defer both phases");
+   | _ -> Windtrap.fail "a cluster without provisioner RBAC must defer both phases");
   (match
      platform_plan_phases
        ~cluster_exists:true
@@ -841,7 +944,7 @@ let test_deferred () =
        ~crds_established:false
    with
    | Plannable, Deferred _ -> ()
-   | _ -> Alcotest.fail "existing cluster must plan prerequisites only");
+   | _ -> Windtrap.fail "existing cluster must plan prerequisites only");
   match
     platform_plan_phases
       ~cluster_exists:true
@@ -849,7 +952,7 @@ let test_deferred () =
       ~crds_established:true
   with
   | Plannable, Plannable -> ()
-  | _ -> Alcotest.fail "fully established cluster must plan both phases"
+  | _ -> Windtrap.fail "fully established cluster must plan both phases"
 ;;
 
 let converged_cluster provider =
@@ -870,8 +973,9 @@ let test_readiness_fails_each_predicate () =
   |> List.iter (fun p ->
     let succeeds = converged_cluster p in
     let all = L.readiness ~provider:p ~run:succeeds in
-    Alcotest.(check string)
-      (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
+    Windtrap.equal
+      Windtrap.string
+      ~msg:(Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
       "Ready"
       (L.readiness_summary all);
     all
@@ -882,11 +986,13 @@ let test_readiness_fails_each_predicate () =
           incr index;
           if !index = failed then None else succeeds argv)
       in
-      Alcotest.(check bool)
-        (Printf.sprintf
-           "predicate %d fails closed (%s)"
-           failed
-           (Sol_cli_provider.to_string p))
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:
+          (Printf.sprintf
+             "predicate %d fails closed (%s)"
+             failed
+             (Sol_cli_provider.to_string p))
         true
         (L.readiness_summary checks <> "Ready")))
 ;;
@@ -904,20 +1010,24 @@ let test_ready_requires_the_declared_certificates () =
   |> List.iter (fun provider ->
     let label = Sol_cli_provider.to_string provider in
     let summary = L.readiness_summary (readiness_with_unready_certificates ~provider) in
-    Alcotest.(check bool)
-      (Printf.sprintf
-         "a cluster whose declared certificates are unready is not Ready (%s)"
-         label)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:
+        (Printf.sprintf
+           "a cluster whose declared certificates are unready is not Ready (%s)"
+           label)
       false
       (String.equal summary "Ready");
     Sol_cli_platform_tls.certificates
     |> List.iter (fun (declared : Sol_cli_platform_tls.declared_certificate) ->
-      Alcotest.(check bool)
-        (Printf.sprintf
-           "the unmet reason names %s/%s (%s)"
-           declared.namespace
-           declared.certificate
-           label)
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:
+          (Printf.sprintf
+             "the unmet reason names %s/%s (%s)"
+             declared.namespace
+             declared.certificate
+             label)
         true
         (Sol_cli_string.contains ~needle:declared.certificate summary)))
 ;;
@@ -934,10 +1044,18 @@ let test_storage_contract_is_provider_specific () =
   let aws = Sol_cli_provider.Aws in
   let gcp = Sol_cli_provider.Gcp in
   let check_ready provider label output =
-    Alcotest.(check string) label "Ready" (readiness_with_storage ~provider output)
+    Windtrap.equal
+      Windtrap.string
+      ~msg:label
+      "Ready"
+      (readiness_with_storage ~provider output)
   in
   let check_unmet provider label output =
-    Alcotest.(check bool) label true (readiness_with_storage ~provider output <> "Ready")
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:label
+      true
+      (readiness_with_storage ~provider output <> "Ready")
   in
   check_ready
     aws
@@ -974,24 +1092,29 @@ let test_readiness_invocations_are_provider_specific () =
   let mentions needle checks =
     List.exists (fun (_, argv) -> List.exists (fun arg -> arg = needle) argv) checks
   in
-  Alcotest.(check bool)
-    "AWS asserts the EBS CSI driver"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS asserts the EBS CSI driver"
     true
     (mentions "csidriver/ebs.csi.aws.com" aws);
-  Alcotest.(check bool)
-    "GCP asserts the PD CSI driver"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP asserts the PD CSI driver"
     true
     (mentions "csidriver/pd.csi.storage.gke.io" gcp);
-  Alcotest.(check bool)
-    "AWS does not assert the GCP driver"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"AWS does not assert the GCP driver"
     false
     (mentions "csidriver/pd.csi.storage.gke.io" aws);
-  Alcotest.(check bool)
-    "GCP does not assert the AWS driver"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"GCP does not assert the AWS driver"
     false
     (mentions "csidriver/ebs.csi.aws.com" gcp);
-  Alcotest.(check int)
-    "both providers assert the same number of checks"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"both providers assert the same number of checks"
     (List.length aws)
     (List.length gcp)
 ;;
@@ -1007,32 +1130,42 @@ let test_destroy_retention () =
   let round_trip raw =
     Result.map L.destroy_retention_to_string (L.destroy_retention_of_string raw)
   in
-  Alcotest.(check (result string string))
-    "final-snapshot parses"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"final-snapshot parses"
     (Ok "final-snapshot")
     (round_trip "final-snapshot");
-  Alcotest.(check (result string string)) "none parses" (Ok "none") (round_trip "none");
-  Alcotest.(check bool)
-    "an unknown mode is refused rather than defaulted"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"none parses"
+    (Ok "none")
+    (round_trip "none");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unknown mode is refused rather than defaulted"
     true
     (Result.is_error (L.destroy_retention_of_string "keep-everything"));
-  Alcotest.(check bool)
-    "the default retains a final snapshot"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the default retains a final snapshot"
     true
     (List.mem_assoc
        "rds_final_snapshot_identifier"
        (destroy_vars L.Retain_final_snapshot));
-  Alcotest.(check bool)
-    "retaining nothing passes no snapshot identity"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"retaining nothing passes no snapshot identity"
     true
     (List.assoc_opt "rds_final_snapshot_identifier" (destroy_vars L.Retain_nothing) = None);
-  Alcotest.(check bool)
-    "retaining nothing skips the final snapshot"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"retaining nothing skips the final snapshot"
     true
     (List.assoc_opt "rds_skip_final_snapshot" (destroy_vars L.Retain_nothing)
      = Some "true");
-  Alcotest.(check bool)
-    "retention still lifts deletion protection either way"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"retention still lifts deletion protection either way"
     true
     (List.assoc_opt "rds_deletion_protection" (destroy_vars L.Retain_nothing)
      = Some "false")
@@ -1046,8 +1179,12 @@ let test_convergence_predicates () =
       | other -> converged_cluster provider other)
     |> L.readiness_summary
   in
-  let check_ready label summary = Alcotest.(check string) label "Ready" summary in
-  let check_unmet label summary = Alcotest.(check bool) label true (summary <> "Ready") in
+  let check_ready label summary =
+    Windtrap.equal Windtrap.string ~msg:label "Ready" summary
+  in
+  let check_unmet label summary =
+    Windtrap.equal Windtrap.bool ~msg:label true (summary <> "Ready")
+  in
   check_ready
     "every daemonset pod scheduled and ready"
     (summary_with "daemonset" "4/4 4/4 ");
@@ -1090,7 +1227,9 @@ let test_can_i_classification () =
     | Sol_cli_cloud_lifecycle.Denied -> "denied"
     | Sol_cli_cloud_lifecycle.Indeterminate _ -> "indeterminate"
   in
-  let check name expected actual = Alcotest.(check string) name expected (label actual) in
+  let check name expected actual =
+    Windtrap.equal Windtrap.string ~msg:name expected (label actual)
+  in
   check "yes" "permitted" (classify ~exit_code:0 "yes\n");
   check "no" "denied" (classify ~exit_code:1 "no\n");
   check
@@ -1120,8 +1259,9 @@ let test_deescalation_requires_the_effective_surface () =
     =
     Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes
   in
-  Alcotest.(check string)
-    "all denied -> de-escalated"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"all denied -> de-escalated"
     "de-escalated"
     (match
        verdict
@@ -1139,14 +1279,15 @@ let test_deescalation_requires_the_effective_surface () =
        ]
    with
    | Sol_cli_cloud_lifecycle.Still_elevated still ->
-     Alcotest.(check (list string))
-       "the permitted capability is named"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"the permitted capability is named"
        [ "escalate clusterroles" ]
        still
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a permitted capability was read as de-escalated"
+     Windtrap.fail "a permitted capability was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
-     Alcotest.fail "a permitted capability was read as undetermined");
+     Windtrap.fail "a permitted capability was read as undetermined");
   (match
      verdict
        [ permitted (capability "escalate" "clusterroles")
@@ -1154,46 +1295,49 @@ let test_deescalation_requires_the_effective_surface () =
        ]
    with
    | Sol_cli_cloud_lifecycle.Still_elevated still ->
-     Alcotest.(check (list string))
-       "the permitted capability is named despite the indeterminate one"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"the permitted capability is named despite the indeterminate one"
        [ "escalate clusterroles" ]
        still
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
-     Alcotest.fail "an indeterminate probe masked a capability that was permitted"
+     Windtrap.fail "an indeterminate probe masked a capability that was permitted"
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a permitted capability was read as de-escalated");
+     Windtrap.fail "a permitted capability was read as de-escalated");
   (match verdict [] with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "no evidence was read as de-escalated"
+     Windtrap.fail "no evidence was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "no evidence was read as elevated");
+     Windtrap.fail "no evidence was read as elevated");
   (match
      verdict [ indeterminate (capability "create" "clusterroles") "connection refused" ]
    with
    | Sol_cli_cloud_lifecycle.Undetermined why ->
-     Alcotest.(check bool)
-       "the indeterminate capability is named"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the indeterminate capability is named"
        true
        (Sol_cli_string.contains ~needle:"connection refused" why)
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "an indeterminate probe was read as de-escalated"
+     Windtrap.fail "an indeterminate probe was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "an indeterminate probe was read as elevated");
+     Windtrap.fail "an indeterminate probe was read as elevated");
   (match
      verdict
        ~principal:(Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
        [ denied (capability "create" "clusterroles") ]
    with
    | Sol_cli_cloud_lifecycle.Undetermined why ->
-     Alcotest.(check bool)
-       "the unexpected principal is named"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the unexpected principal is named"
        true
        (Sol_cli_string.contains ~needle:"sol-cluster-access" why)
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "another principal's refusal was read as de-escalation"
+     Windtrap.fail "another principal's refusal was read as de-escalation"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "another principal's answers were treated as answers");
+     Windtrap.fail "another principal's answers were treated as answers");
   (match
      verdict
        ~principal:
@@ -1203,9 +1347,9 @@ let test_deescalation_requires_the_effective_surface () =
    with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "a refused principal was read as still elevated"
+     Windtrap.fail "a refused principal was read as still elevated"
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
-     Alcotest.fail "a refused principal was read as undetermined");
+     Windtrap.fail "a refused principal was read as undetermined");
   match
     verdict
       ~principal:
@@ -1215,33 +1359,37 @@ let test_deescalation_requires_the_effective_surface () =
   with
   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
   | Sol_cli_cloud_lifecycle.Deescalated ->
-    Alcotest.fail "a measurement failure was read as de-escalation"
+    Windtrap.fail "a measurement failure was read as de-escalation"
   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-    Alcotest.fail "a measurement failure was read as still elevated"
+    Windtrap.fail "a measurement failure was read as still elevated"
 ;;
 
 let test_successor_authority_requires_demonstration () =
   let caps = [ capability "create" "namespaces"; capability "create" "clusterroles" ] in
-  Alcotest.(check bool)
-    "a permitted successor set establishes the successor's authority"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a permitted successor set establishes the successor's authority"
     true
     (Result.is_ok (Sol_cli_cloud_lifecycle.successor_authority (List.map permitted caps)));
-  Alcotest.(check bool)
-    "a denied successor capability is not a demonstrated handoff"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a denied successor capability is not a demonstrated handoff"
     true
     (Result.is_error
        (Sol_cli_cloud_lifecycle.successor_authority
           [ permitted (List.nth caps 0); denied (List.nth caps 1) ]));
-  Alcotest.(check bool)
-    "an unanswered successor capability is not a demonstrated handoff"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unanswered successor capability is not a demonstrated handoff"
     true
     (Result.is_error
        (Sol_cli_cloud_lifecycle.successor_authority
           [ permitted (List.nth caps 0)
           ; indeterminate (List.nth caps 1) "the probe never reached the server"
           ]));
-  Alcotest.(check bool)
-    "proving nothing is not proving the successor works"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"proving nothing is not proving the successor works"
     true
     (Result.is_error (Sol_cli_cloud_lifecycle.successor_authority []))
 ;;
@@ -1265,10 +1413,10 @@ let test_deescalation_requires_a_transition () =
     with
     | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
     | Sol_cli_cloud_lifecycle.Deescalated ->
-      Alcotest.fail
+      Windtrap.fail
         "a capability never observed granted was read as a verified transition"
     | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-      Alcotest.fail "a capability never observed granted was read as still elevated"
+      Windtrap.fail "a capability never observed granted was read as still elevated"
   in
   not_a_transition [];
   not_a_transition refused;
@@ -1283,8 +1431,8 @@ let test_deescalation_requires_a_transition () =
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a different principal's denial was read as a verified transition"
-   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+     Windtrap.fail "a different principal's denial was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Windtrap.fail "unexpected verdict");
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1294,8 +1442,8 @@ let test_deescalation_requires_a_transition () =
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a measurement failure was read as a verified transition"
-   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+     Windtrap.fail "a measurement failure was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Windtrap.fail "unexpected verdict");
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1304,9 +1452,9 @@ let test_deescalation_requires_a_transition () =
    with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "a demonstrated transition was read as still elevated"
+     Windtrap.fail "a demonstrated transition was read as still elevated"
    | Sol_cli_cloud_lifecycle.Undetermined why ->
-     Alcotest.fail ("a demonstrated transition was read as undetermined: " ^ why));
+     Windtrap.fail ("a demonstrated transition was read as undetermined: " ^ why));
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1319,8 +1467,8 @@ let test_deescalation_requires_a_transition () =
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "an indeterminate post-de-escalation probe was read as de-escalated"
-   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+     Windtrap.fail "an indeterminate post-de-escalation probe was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Windtrap.fail "unexpected verdict");
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1332,8 +1480,8 @@ let test_deescalation_requires_a_transition () =
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a capability the after-probe never covered was read as removed"
-   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+     Windtrap.fail "a capability the after-probe never covered was read as removed"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Windtrap.fail "unexpected verdict");
   (match
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
@@ -1344,14 +1492,15 @@ let test_deescalation_requires_a_transition () =
          ]
    with
    | Sol_cli_cloud_lifecycle.Still_elevated still ->
-     Alcotest.(check (list string))
-       "the permitted capability is named despite the indeterminate one"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"the permitted capability is named despite the indeterminate one"
        [ "escalate clusterroles" ]
        still
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
-     Alcotest.fail "an indeterminate probe masked a capability that was permitted"
+     Windtrap.fail "an indeterminate probe masked a capability that was permitted"
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a permitted capability was read as de-escalated");
+     Windtrap.fail "a permitted capability was read as de-escalated");
   match
     Sol_cli_cloud_lifecycle.deescalation_transition
       ~before:granted
@@ -1359,10 +1508,10 @@ let test_deescalation_requires_a_transition () =
       ~after:granted
   with
   | Sol_cli_cloud_lifecycle.Still_elevated still ->
-    Alcotest.(check int) "all three capabilities named" 3 (List.length still)
+    Windtrap.equal Windtrap.int ~msg:"all three capabilities named" 3 (List.length still)
   | Sol_cli_cloud_lifecycle.Deescalated ->
-    Alcotest.fail "a still-permitted capability was read as de-escalated"
-  | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
+    Windtrap.fail "a still-permitted capability was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> Windtrap.fail "unexpected verdict"
 ;;
 
 let test_whoami_identity_shapes () =
@@ -1379,19 +1528,22 @@ let test_whoami_identity_shapes () =
   let role_of body =
     match Sol_cli_aws_cluster.whoami_identity_of_json body with
     | Ok i -> Sol_cli_aws_cluster.principal_role_name i
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
   in
-  Alcotest.(check (option string))
-    "eks shape yields the role"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"eks shape yields the role"
     (Some "sol-provisioner")
     (role_of (eks_body "EKSGetTokenAuth"));
-  Alcotest.(check (option string))
-    "a new session is still the same principal"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a new session is still the same principal"
     (role_of (eks_body "EKSGetTokenAuth"))
     (role_of (eks_body "some-other-session"));
   let flat = Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} canonical in
-  Alcotest.(check (option string))
-    "flat string form"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"flat string form"
     (Some "sol-provisioner")
     (role_of flat);
   let pretty =
@@ -1409,8 +1561,9 @@ let test_whoami_identity_shapes () =
 }|}
       canonical
   in
-  Alcotest.(check (option string))
-    "pretty-printed"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"pretty-printed"
     (Some "sol-provisioner")
     (role_of pretty);
   (match
@@ -1418,26 +1571,29 @@ let test_whoami_identity_shapes () =
        {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|}
    with
    | Ok i ->
-     Alcotest.(check (option string))
-       "username is the last resort"
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"username is the last resort"
        (Some "system:node:ip-10-0-1-1")
        (Sol_cli_aws_cluster.principal_role_name i)
-   | Error e -> Alcotest.fail e);
+   | Error e -> Windtrap.fail e);
   (match Sol_cli_aws_cluster.whoami_identity_of_json {|{"status":{"userInfo":{}}}|} with
    | Error _ -> ()
    | Ok i ->
-     Alcotest.fail
+     Windtrap.fail
        ("a response naming no principal produced "
         ^ Option.value (Sol_cli_aws_cluster.principal_role_name i) ~default:"?"));
   (match Sol_cli_aws_cluster.whoami_identity_of_json "error: You must be logged in" with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "a non-JSON response was accepted");
-  Alcotest.(check string)
-    "assumed-role ARN"
+   | Ok _ -> Windtrap.fail "a non-JSON response was accepted");
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"assumed-role ARN"
     "sol-provisioner"
     (Sol_cli_aws_cluster.role_name_of_arn sts);
-  Alcotest.(check string)
-    "role ARN"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"role ARN"
     "sol-provisioner"
     (Sol_cli_aws_cluster.role_name_of_arn canonical)
 ;;
@@ -1447,34 +1603,39 @@ let test_principal_comparison_fails_closed () =
   let identity ?canonical ?arn ?username () =
     Sol_cli_aws_cluster.{ canonical_arn = canonical; arn; username; source = "test" }
   in
-  Alcotest.(check (option bool))
-    "exact match"
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"exact match"
     (Some true)
     (Sol_cli_aws_cluster.principal_matches ~expected (identity ~canonical:expected ()));
-  Alcotest.(check (option bool))
-    "same role name in another account"
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"same role name in another account"
     (Some false)
     (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity
           ~canonical:("arn:aws:iam::" ^ String.make 12 '9' ^ ":role/sol-provisioner")
           ()));
-  Alcotest.(check (option bool))
-    "same role behind a different path"
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"same role behind a different path"
     (Some false)
     (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity ~canonical:"arn:aws:iam::111122223333:role/team/sol-provisioner" ()));
-  Alcotest.(check (option bool))
-    "a session-carrying arn is not a role arn"
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"a session-carrying arn is not a role arn"
     (Some false)
     (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity
           ~arn:"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"
           ()));
-  Alcotest.(check (option bool))
-    "no arn at all is None, not a default"
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"no arn at all is None, not a default"
     None
     (Sol_cli_aws_cluster.principal_matches ~expected (identity ~username:"somebody" ()))
 ;;
@@ -1486,15 +1647,15 @@ let test_parse_failure_is_undetermined () =
   let parse_failure =
     match Sol_cli_aws_cluster.whoami_identity_of_json "error: You must be logged in" with
     | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why
-    | Ok _ -> Alcotest.fail "a non-JSON response was accepted by the parser"
+    | Ok _ -> Windtrap.fail "a non-JSON response was accepted by the parser"
   in
   let check_undetermined label verdict =
     match verdict with
     | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
     | Sol_cli_cloud_lifecycle.Deescalated ->
-      Alcotest.fail (label ^ ": a parse failure was read as de-escalated")
+      Windtrap.fail (label ^ ": a parse failure was read as de-escalated")
     | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-      Alcotest.fail (label ^ ": a parse failure was read as still elevated")
+      Windtrap.fail (label ^ ": a parse failure was read as still elevated")
   in
   check_undetermined
     "after"
@@ -1517,7 +1678,7 @@ let test_ambiguous_array_does_not_proceed () =
   match Sol_cli_aws_cluster.whoami_identity_of_json two_entries with
   | Error _ -> ()
   | Ok identity ->
-    Alcotest.fail
+    Windtrap.fail
       (Printf.sprintf
          "a two-entry canonicalArn was accepted and produced %s; taking one element is a \
           default in disguise, and the array is ambiguous about which principal this is"
@@ -1528,20 +1689,23 @@ let test_identity_reports_its_source () =
   let source_of body =
     match Sol_cli_aws_cluster.whoami_identity_of_json body with
     | Ok i -> i.source
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
   in
-  Alcotest.(check string)
-    "canonicalArn from extra"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"canonicalArn from extra"
     "extra.canonicalArn"
     (source_of
        {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/p"]}}}}|});
-  Alcotest.(check string)
-    "arn from extra when there is no canonicalArn"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"arn from extra when there is no canonicalArn"
     "extra.arn"
     (source_of
        {|{"status":{"userInfo":{"extra":{"arn":["arn:aws:iam::111122223333:role/p"]}}}}|});
-  Alcotest.(check string)
-    "the username fallback is named as such"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the username fallback is named as such"
     "username"
     (source_of {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|})
 ;;
@@ -1558,19 +1722,19 @@ let test_refusal_needs_a_good_identity () =
   in
   (match verdict_of Sol_cli_aws_cluster.Credential_assumable with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
-   | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
+   | _ -> Windtrap.fail "a refusal with a working identity was not read as de-escalated");
   (match verdict_of Sol_cli_aws_cluster.Credential_refused with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
-     Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
+     Windtrap.fail "a refusal with an unassumable role was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-     Alcotest.fail "a refusal with an unassumable role was read as still elevated");
+     Windtrap.fail "a refusal with an unassumable role was read as still elevated");
   match verdict_of Sol_cli_aws_cluster.Credential_unchecked with
   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
   | Sol_cli_cloud_lifecycle.Deescalated ->
-    Alcotest.fail "a refusal with no identity check was read as de-escalated"
+    Windtrap.fail "a refusal with no identity check was read as de-escalated"
   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-    Alcotest.fail "a refusal with no identity check was read as still elevated"
+    Windtrap.fail "a refusal with no identity check was read as still elevated"
 ;;
 
 let test_effective_authorization () =
@@ -1582,16 +1746,18 @@ let test_effective_authorization () =
     with
     | Some Required -> true
     | Some Forbidden -> false
-    | None -> Alcotest.fail "authorization check was not declared"
+    | None -> Windtrap.fail "authorization check was not declared"
   in
-  Alcotest.(check bool)
-    "declared boundary"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"declared boundary"
     true
     (provisioner_authorization_established ~can_i);
   expected
   |> List.iter (fun (_, failed) ->
-    Alcotest.(check bool)
-      (String.concat " " failed)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(String.concat " " failed)
       false
       (provisioner_authorization_established ~can_i:(fun args ->
          if args = failed then not (can_i args) else can_i args)))
@@ -1601,9 +1767,14 @@ let test_terraform_layout_derives_from_cloud_target () =
   let layout_for cloud_target = Sol_cli_cloud_wiring.terraform_layout ~cloud_target in
   let aws = Result.get_ok (L.cloud_target target) in
   let layout = layout_for aws in
-  Alcotest.(check string) "provider name follows the target" "aws" layout.pname;
-  Alcotest.(check bool)
-    "the cluster workdir is derived from the target's provider and backend"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"provider name follows the target"
+    "aws"
+    layout.pname;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the cluster workdir is derived from the target's provider and backend"
     true
     (String.equal
        layout.infra_dir
@@ -1611,8 +1782,9 @@ let test_terraform_layout_derives_from_cloud_target () =
           ~provider:Sol_cli_provider.Aws
           ~role:Sol_cli_platform_assets.Cluster
           ~backend_config:aws.L.cloud_backend));
-  Alcotest.(check bool)
-    "the platform workdir is derived from the target's provider and backend"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the platform workdir is derived from the target's provider and backend"
     true
     (String.equal
        layout.platform_dir
@@ -1620,22 +1792,28 @@ let test_terraform_layout_derives_from_cloud_target () =
           ~provider:Sol_cli_provider.Aws
           ~role:Sol_cli_platform_assets.Platform
           ~backend_config:aws.L.platform_backend));
-  Alcotest.(check bool)
-    "the two roles never share a workdir"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the two roles never share a workdir"
     true
     (not (String.equal layout.infra_dir layout.platform_dir));
   let gcp = layout_for (Result.get_ok (L.cloud_target (gcp_target ()))) in
-  Alcotest.(check string) "a second provider derives its own name" "gcp" gcp.pname;
-  Alcotest.(check bool)
-    "a second provider derives a different workdir"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a second provider derives its own name"
+    "gcp"
+    gcp.pname;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a second provider derives a different workdir"
     true
     (not (String.equal layout.infra_dir gcp.infra_dir))
 ;;
 
 let test_terraform_scope () =
   ignore (Sol_cli_terraform.targets "helm_release.cert_manager" []);
-  Alcotest.check_raises
-    "empty target rejected"
+  Windtrap.raises
+    ~msg:"empty target rejected"
     (Invalid_argument "Terraform target must not be empty")
     (fun () -> ignore (Sol_cli_terraform.targets "" []));
   ignore Sol_cli_terraform.whole_root

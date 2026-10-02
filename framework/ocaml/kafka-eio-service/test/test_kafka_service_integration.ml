@@ -142,22 +142,22 @@ let test_single_broker_loss_rejects_under_replicated_topic () =
   let create config =
     match Kafka_service.create config ~sw with
     | Ok service -> service
-    | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+    | Error e -> Windtrap.fail (Kafka_service.error_to_string e)
   in
   let broker_default = create (make_config ()) in
   (match register broker_default ~net:env#net ~clock:env#clock (module RawTestEvent) with
    | Ok _ -> ()
-   | Error e -> Alcotest.fail (Kafka_service.error_to_string e));
+   | Error e -> Windtrap.fail (Kafka_service.error_to_string e));
   let durable =
     create { (make_config ()) with topic_durability = Kafka_service.Single_broker_loss }
   in
   match register durable ~net:env#net ~clock:env#clock (module RawTestEvent) with
   | Error (Kafka_service.Insufficient_replication { current = 1; required = 3; _ }) -> ()
   | Error e ->
-    Alcotest.failf
+    Windtrap.failf
       "expected insufficient replication, got %s"
       (Kafka_service.error_to_string e)
-  | Ok _ -> Alcotest.fail "under-replicated existing topic was accepted"
+  | Ok _ -> Windtrap.fail "under-replicated existing topic was accepted"
 ;;
 
 let test_schema_check_new_topic () =
@@ -182,7 +182,7 @@ let test_schema_check_new_topic () =
     Kafka_service.Schema.check ~net:env#net ~clock:env#clock ~registry_url (module Fresh)
   with
   | Error e ->
-    Alcotest.failf
+    Windtrap.failf
       "expected Ok for new topic, got Error: %s"
       (Kafka_service.error_to_string e)
   | Ok () -> ()
@@ -194,10 +194,10 @@ let test_schema_check_compatible () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        (match
           Kafka_service.Schema.check
@@ -207,7 +207,7 @@ let test_schema_check_compatible () =
             (module PaymentEvent)
         with
         | Error e ->
-          Alcotest.failf
+          Windtrap.failf
             "compatible schema returned Error: %s"
             (Kafka_service.error_to_string e)
         | Ok () -> ()))
@@ -219,10 +219,10 @@ let test_schema_check_incompatible () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        (match
           Kafka_service.Schema.check
@@ -231,7 +231,7 @@ let test_schema_check_incompatible () =
             ~registry_url
             (module PaymentEventBreaking)
         with
-        | Ok () -> Alcotest.fail "expected Error for incompatible schema, got Ok"
+        | Ok () -> Windtrap.fail "expected Error for incompatible schema, got Ok"
         | Error _ -> ()))
 ;;
 
@@ -241,10 +241,10 @@ let test_schema_check_all_fails_fast () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok _ ->
        let result =
          Kafka_service.Schema.check_all
@@ -256,7 +256,7 @@ let test_schema_check_all_fails_fast () =
            ]
        in
        (match result with
-        | Ok () -> Alcotest.fail "expected Error for list containing incompatible schema"
+        | Ok () -> Windtrap.fail "expected Error for list containing incompatible schema"
         | Error _ -> ()))
 ;;
 
@@ -266,10 +266,10 @@ let test_publish_consume_roundtrip () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic ->
        let group_id =
          Printf.sprintf "sol-test-roundtrip-%d-%d" (Unix.getpid ()) (Random.int 9999)
@@ -298,24 +298,26 @@ let test_publish_consume_roundtrip () =
             Ok (Eio.Promise.await consumer_ready_p))
         with
         | Error `Timeout ->
-          Alcotest.fail "timed out waiting for consumer partition assignment (on_ready)"
+          Windtrap.fail "timed out waiting for consumer partition assignment (on_ready)"
         | Ok () -> ());
        let expected = PaymentEvent.{ payment_id = "pay-e2e-001"; amount_cents = 9900 } in
        (match Eio.Promise.await (Kafka_service.publish svc topic expected) with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Error e -> Windtrap.failf "publish failed: %s" (Kafka.Error.to_string e)
         | Ok () -> ());
        (match
           Eio.Time.with_timeout env#clock 15.0 (fun () ->
             Ok (Eio.Promise.await received_p))
         with
-        | Error `Timeout -> Alcotest.fail "timed out waiting for consumed message"
+        | Error `Timeout -> Windtrap.fail "timed out waiting for consumed message"
         | Ok msg ->
-          Alcotest.(check string)
-            "payment_id"
+          Windtrap.equal
+            Windtrap.string
+            ~msg:"payment_id"
             expected.payment_id
             msg.PaymentEvent.payment_id;
-          Alcotest.(check int)
-            "amount_cents"
+          Windtrap.equal
+            Windtrap.int
+            ~msg:"amount_cents"
             expected.amount_cents
             msg.PaymentEvent.amount_cents))
 ;;
@@ -340,10 +342,10 @@ let test_consume_returns_promptly_when_idle_and_stop_resolves () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.fail (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module IdleTopic) with
-     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.fail (Kafka_service.error_to_string e)
      | Ok topic ->
        let stop_p, stop_r = Eio.Promise.create () in
        let done_p, done_r = Eio.Promise.create () in
@@ -360,8 +362,9 @@ let test_consume_returns_promptly_when_idle_and_stop_resolves () =
               ~handler:(fun () ~ack:_ ~trace_ctx:_ -> Kafka.Consumer.Continue)
               ()));
        Eio.Time.sleep env#clock 1.0;
-       Alcotest.(check bool)
-         "nothing to consume, so the loop is still parked on the topic"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"nothing to consume, so the loop is still parked on the topic"
          true
          (not (Eio.Promise.is_resolved done_p));
        Eio.Promise.resolve stop_r ();
@@ -369,7 +372,7 @@ let test_consume_returns_promptly_when_idle_and_stop_resolves () =
           Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await done_p)
         with
         | Ok () -> ()
-        | Error e -> Alcotest.fail (Kafka.Error.to_string e)))
+        | Error e -> Windtrap.fail (Kafka.Error.to_string e)))
 ;;
 
 let test_schema_check_wrong_registry_path_is_an_error () =
@@ -382,7 +385,7 @@ let test_schema_check_wrong_registry_path_is_an_error () =
       ~registry_url:(registry_url ^ "/not-the-registry")
       (module PaymentEvent)
   with
-  | Ok () -> Alcotest.fail "a 404 that is not 'subject not found' must not pass the gate"
+  | Ok () -> Windtrap.fail "a 404 that is not 'subject not found' must not pass the gate"
   | Error _ -> ()
 ;;
 
@@ -447,7 +450,7 @@ let serve_stub_registry ~sw ~net ~log =
         flow));
   match Eio.Net.listening_addr socket with
   | `Tcp (_, port) -> Printf.sprintf "http://127.0.0.1:%d" port
-  | _ -> Alcotest.fail "stub registry has no port"
+  | _ -> Windtrap.fail "stub registry has no port"
 ;;
 
 let test_contract_register_sets_full_before_registering_and_fails_loudly () =
@@ -464,19 +467,22 @@ let test_contract_register_sets_full_before_registering_and_fails_loudly () =
        ~registry_url:stub_url
        (module StubRegistryEvent)
    with
-   | Ok _ -> Alcotest.fail "a failed compatibility PUT must fail contract registration"
+   | Ok _ -> Windtrap.fail "a failed compatibility PUT must fail contract registration"
    | Error (Kafka_service.Schema_registry _) -> ()
    | Error e ->
-     Alcotest.failf "expected Schema_registry, got %s" (Kafka_service.error_to_string e));
+     Windtrap.failf "expected Schema_registry, got %s" (Kafka_service.error_to_string e));
   let requests = List.rev !log in
-  Alcotest.(check bool)
-    "the compatibility PUT was attempted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the compatibility PUT was attempted"
     true
     (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
-  Alcotest.(check bool)
-    (Printf.sprintf
-       "no schema version was registered after the failed PUT (%s)"
-       (String.concat " | " requests))
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:
+      (Printf.sprintf
+         "no schema version was registered after the failed PUT (%s)"
+         (String.concat " | " requests))
     false
     (List.exists
        (fun r ->
@@ -494,7 +500,7 @@ let test_runtime_register_never_writes_the_registry () =
   let stub_url = serve_stub_registry ~sw ~net:env#net ~log in
   let config = { (make_config ()) with schema_registry_url = stub_url } in
   (match Kafka_service.create config ~sw with
-   | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+   | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
    | Ok svc ->
      (match
         Kafka_service.register
@@ -504,18 +510,22 @@ let test_runtime_register_never_writes_the_registry () =
           (module StubRegistryEvent)
       with
       | Ok _ -> ()
-      | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)));
+      | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)));
   let requests = List.rev !log in
-  Alcotest.(check bool)
-    (Printf.sprintf
-       "runtime register issued no compatibility PUT (%s)"
-       (String.concat " | " requests))
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:
+      (Printf.sprintf
+         "runtime register issued no compatibility PUT (%s)"
+         (String.concat " | " requests))
     false
     (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
-  Alcotest.(check bool)
-    (Printf.sprintf
-       "runtime register issued no schema version POST (%s)"
-       (String.concat " | " requests))
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:
+      (Printf.sprintf
+         "runtime register issued no schema version POST (%s)"
+         (String.concat " | " requests))
     false
     (List.exists
        (fun r ->
@@ -534,7 +544,7 @@ let produce_undecodable ~sw ~topic_name =
     }
   in
   match Kafka.Producer.create producer_cfg ~sw with
-  | Error e -> Alcotest.failf "raw producer create failed: %s" (Kafka.Error.to_string e)
+  | Error e -> Windtrap.failf "raw producer create failed: %s" (Kafka.Error.to_string e)
   | Ok producer ->
     (match
        Eio.Promise.await
@@ -546,7 +556,7 @@ let produce_undecodable ~sw ~topic_name =
             ~headers:[ "app-header", Some "kept" ]
             ())
      with
-     | Error e -> Alcotest.failf "raw publish failed: %s" (Kafka.Error.to_string e)
+     | Error e -> Windtrap.failf "raw publish failed: %s" (Kafka.Error.to_string e)
      | Ok () -> ());
     Kafka.Producer.close producer
 ;;
@@ -564,7 +574,7 @@ let read_first ~sw ~clock ~topic ~timeout_s =
     }
   in
   match Kafka.Consumer.create ~clock cfg ~sw with
-  | Error e -> Alcotest.failf "dlq reader create failed: %s" (Kafka.Error.to_string e)
+  | Error e -> Windtrap.failf "dlq reader create failed: %s" (Kafka.Error.to_string e)
   | Ok consumer ->
     let seen = ref None in
     (match
@@ -602,10 +612,10 @@ let with_registered (type a) (module M : Kafka_service.MESSAGE with type t = a) 
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module M) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic -> f env sw svc topic)
 ;;
 
@@ -648,7 +658,7 @@ let test_an_unacked_record_is_redelivered_to_the_same_group () =
           Eio.Promise.await
             (Kafka_service.publish svc topic RawTestEvent.{ id = "must-redeliver" })
         with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Error e -> Windtrap.failf "publish failed: %s" (Kafka.Error.to_string e)
         | Ok () -> ());
        let stopped_on, stopped_on_r = Eio.Promise.create () in
        while_consuming
@@ -669,7 +679,7 @@ let test_an_unacked_record_is_redelivered_to_the_same_group () =
               Eio.Time.with_timeout env#clock 30.0 (fun () ->
                 Ok (Eio.Promise.await stopped_on))
             with
-            | Error `Timeout -> Alcotest.fail "the first consumer never saw the record"
+            | Error `Timeout -> Windtrap.fail "the first consumer never saw the record"
             | Ok () -> ());
        let redelivered, redelivered_r = Eio.Promise.create () in
        while_consuming
@@ -692,11 +702,15 @@ let test_an_unacked_record_is_redelivered_to_the_same_group () =
                 Ok (Eio.Promise.await redelivered))
             with
             | Error `Timeout ->
-              Alcotest.fail
+              Windtrap.fail
                 "a fact the handler did not acknowledge must come back to the group, not \
                  be skipped"
             | Ok id ->
-              Alcotest.(check string) "the same record came back" "must-redeliver" id))
+              Windtrap.equal
+                Windtrap.string
+                ~msg:"the same record came back"
+                "must-redeliver"
+                id))
 ;;
 
 let test_decode_error_routes_to_dlq () =
@@ -710,7 +724,7 @@ let test_decode_error_routes_to_dlq () =
        (match
           Eio.Promise.await (Kafka_service.publish svc topic Drop_event.{ id = "good" })
         with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Error e -> Windtrap.failf "publish failed: %s" (Kafka.Error.to_string e)
         | Ok () -> ());
        let got_good, got_good_r = Eio.Promise.create () in
        while_consuming
@@ -733,7 +747,7 @@ let test_decode_error_routes_to_dlq () =
                 Ok (Eio.Promise.await got_good))
             with
             | Error `Timeout ->
-              Alcotest.fail "the record after the undecodable one was never reached"
+              Windtrap.fail "the record after the undecodable one was never reached"
             | Ok () -> ());
        let dlq =
          Kafka_service.Dlq.dlq_topic_name
@@ -742,17 +756,19 @@ let test_decode_error_routes_to_dlq () =
        in
        match read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:15.0 with
        | None ->
-         Alcotest.fail
+         Windtrap.fail
            "a record the framework could not decode must be parked on the group's DLQ, \
             not dropped"
        | Some record ->
-         Alcotest.(check (option string))
-           "the parked record carries the originating group (BUG-030)"
+         Windtrap.equal
+           (Windtrap.option Windtrap.string)
+           ~msg:"the parked record carries the originating group (BUG-030)"
            (Some group_id)
            (List.assoc_opt "X-Sol-Origin-Group" record.Kafka.Consumer.headers
             |> Option.join);
-         Alcotest.(check bool)
-           "the parked record carries a decode diagnostic"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the parked record carries a decode diagnostic"
            true
            (Option.is_some
               (List.assoc_opt "X-Sol-Decode-Error" record.Kafka.Consumer.headers)))
@@ -769,7 +785,7 @@ let test_ack_and_drop_opt_in_skips () =
        (match
           Eio.Promise.await (Kafka_service.publish svc topic Drop_event.{ id = "good" })
         with
-        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Error e -> Windtrap.failf "publish failed: %s" (Kafka.Error.to_string e)
         | Ok () -> ());
        let got_good, got_good_r = Eio.Promise.create () in
        while_consuming
@@ -793,15 +809,16 @@ let test_ack_and_drop_opt_in_skips () =
                 Ok (Eio.Promise.await got_good))
             with
             | Error `Timeout ->
-              Alcotest.fail "the record after the undecodable one was never reached"
+              Windtrap.fail "the record after the undecodable one was never reached"
             | Ok () -> ());
        let dlq =
          Kafka_service.Dlq.dlq_topic_name
            ~source:(Kafka_service.topic_name_to_string Drop_event.topic_name)
            ~group_id
        in
-       Alcotest.(check bool)
-         "nothing was dead-lettered"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"nothing was dead-lettered"
          true
          (Option.is_none (read_first ~sw ~clock:env#clock ~topic:dlq ~timeout_s:5.0)))
 ;;
@@ -846,10 +863,10 @@ let test_same_key_records_keep_their_order_across_partitions () =
   Eio.Switch.run
   @@ fun sw ->
   match Kafka_service.create (make_config ()) ~sw with
-  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Error e -> Windtrap.failf "create failed: %s" (Kafka_service.error_to_string e)
   | Ok svc ->
     (match register svc ~net:env#net ~clock:env#clock (module OrderingEvent) with
-     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Error e -> Windtrap.failf "register failed: %s" (Kafka_service.error_to_string e)
      | Ok topic ->
        (match
           Kafka_service.Admin.query_topic_partitions
@@ -859,14 +876,15 @@ let test_same_key_records_keep_their_order_across_partitions () =
             ~topic_name:(Kafka_service.topic_name_to_string OrderingEvent.topic_name)
         with
         | Ok (Kafka_service.Admin.Topic_partitions { partitions; _ }) ->
-          Alcotest.(check int)
-            "the topic got the count the event declares, not a default"
+          Windtrap.equal
+            Windtrap.int
+            ~msg:"the topic got the count the event declares, not a default"
             3
             partitions
         | Ok Kafka_service.Admin.Topic_not_found ->
-          Alcotest.fail "the registered topic does not exist"
+          Windtrap.fail "the registered topic does not exist"
         | Error e ->
-          Alcotest.failf
+          Windtrap.failf
             "topic metadata: %s"
             (Kafka_service.Admin.topic_partition_error_to_string e));
        let keys = [ "alpha"; "beta"; "gamma" ] in
@@ -884,7 +902,7 @@ let test_same_key_records_keep_their_order_across_partitions () =
                  with
                  | Ok () -> ()
                  | Error e ->
-                   Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e))
+                   Windtrap.failf "publish failed: %s" (Kafka.Error.to_string e))
               keys)
          (List.init per_key (fun i -> i + 1));
        let group_id = Printf.sprintf "sol-test-ordering-%d" (Unix.getpid ()) in
@@ -922,7 +940,7 @@ let test_same_key_records_keep_their_order_across_partitions () =
         with
         | Ok () -> ()
         | Error `Timeout ->
-          Alcotest.failf
+          Windtrap.failf
             "only %d of %d records were processed by two members of one group"
             !processed
             target);
@@ -939,78 +957,100 @@ let test_same_key_records_keep_their_order_across_partitions () =
        in
        List.iter
          (fun key ->
-            Alcotest.(check (list int))
-              (Printf.sprintf "every record for %s arrived once, in order" key)
+            Windtrap.equal
+              (Windtrap.list Windtrap.int)
+              ~msg:(Printf.sprintf "every record for %s arrived once, in order" key)
               (List.init per_key (fun i -> i + 1))
               (arrival_order_for key);
-            Alcotest.(check int)
-              (Printf.sprintf "one member handled every record for %s" key)
+            Windtrap.equal
+              Windtrap.int
+              ~msg:(Printf.sprintf "one member handled every record for %s" key)
               1
               (List.length (members_for key)))
          keys)
 ;;
 
 let () =
-  let open Alcotest in
+  let open Windtrap in
   run
     "kafka_service_integration"
-    [ ( "schema_check"
-      , [ test_case "new topic returns ok" `Slow test_schema_check_new_topic
-        ; test_case "compatible schema returns ok" `Slow test_schema_check_compatible
-        ; test_case
+    [ Windtrap.group
+        "schema_check"
+        [ test
+            "new topic returns ok"
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
+            test_schema_check_new_topic
+        ; test
+            "compatible schema returns ok"
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
+            test_schema_check_compatible
+        ; test
             "incompatible schema returns error"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_schema_check_incompatible
-        ; test_case "check_all fails fast" `Slow test_schema_check_all_fails_fast
-        ; test_case
+        ; test
+            "check_all fails fast"
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
+            test_schema_check_all_fails_fast
+        ; test
             "wrong registry path is an error, not compatible"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_schema_check_wrong_registry_path_is_an_error
-        ; test_case
+        ; test
             "contract register sets FULL first and fails loudly"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_contract_register_sets_full_before_registering_and_fails_loudly
-        ; test_case
+        ; test
             "runtime register never writes the registry"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_runtime_register_never_writes_the_registry
-        ] )
-    ; ( "roundtrip"
-      , [ test_case "publish and consume" `Slow test_publish_consume_roundtrip ] )
-    ; ( "partitioning"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "roundtrip"
+        [ test
+            "publish and consume"
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
+            test_publish_consume_roundtrip
+        ]
+    ; Windtrap.group
+        "partitioning"
+        [ test
             "same-key records keep their order across partitions"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_same_key_records_keep_their_order_across_partitions
-        ] )
-    ; ( "durability"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "durability"
+        [ test
             "under-replicated existing topic is rejected"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_single_broker_loss_rejects_under_replicated_topic
-        ] )
-    ; ( "idle_stop"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "idle_stop"
+        [ test
             "an idle consume returns promptly when stop resolves (BUG-067)"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_consume_returns_promptly_when_idle_and_stop_resolves
-        ] )
-    ; ( "ack_ownership"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "ack_ownership"
+        [ test
             "a fact the handler did not acknowledge is redelivered to its group \
              (FEAT-113)"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_an_unacked_record_is_redelivered_to_the_same_group
-        ] )
-    ; ( "decode_error_policy"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "decode_error_policy"
+        [ test
             "a decode failure is parked on the group's DLQ and the next record flows"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_decode_error_routes_to_dlq
-        ; test_case
+        ; test
             "Ack_and_drop opt-in skips and acks"
-            `Slow
+            ~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)
             test_ack_and_drop_opt_in_skips
-        ] )
+        ]
     ]
 ;;

@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let contains = Sol_cli_string.contains
 
 let unit ?(workspace = "acme") ?(domain = "payments") ?(service = "charge-svc") () =

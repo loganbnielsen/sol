@@ -36,33 +36,35 @@ let test_sol_home_wins_over_discovery () =
     fake_checkout dir;
     with_sol_home dir (fun () ->
       match resolved_dir () with
-      | Ok got -> Alcotest.(check string) "SOL_HOME is the root" dir got
-      | Error e -> Alcotest.fail (A.error_to_string e)))
+      | Ok got -> Windtrap.equal Windtrap.string ~msg:"SOL_HOME is the root" dir got
+      | Error e -> Windtrap.fail (A.error_to_string e)))
 ;;
 
 let test_invalid_sol_home_is_an_error () =
   with_tmpdir (fun dir ->
     with_sol_home dir (fun () ->
       match A.resolve () with
-      | Ok t -> Alcotest.fail ("fell through to " ^ A.dir t)
+      | Ok t -> Windtrap.fail ("fell through to " ^ A.dir t)
       | Error (A.Invalid_sol_home got) ->
-        Alcotest.(check string) "names the bad value" dir got;
+        Windtrap.equal Windtrap.string ~msg:"names the bad value" dir got;
         let msg = A.error_to_string (A.Invalid_sol_home got) in
-        Alcotest.(check bool)
-          ("says how to fix it: " ^ msg)
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:("says how to fix it: " ^ msg)
           true
           (Sol_cli_string.contains ~needle:"export SOL_HOME" msg)
-      | Error e -> Alcotest.fail ("expected Invalid_sol_home: " ^ A.error_to_string e)))
+      | Error e -> Windtrap.fail ("expected Invalid_sol_home: " ^ A.error_to_string e)))
 ;;
 
 let test_unset_discovers_the_checkout () =
   with_sol_home "" (fun () ->
     match A.resolve () with
-    | Error e -> Alcotest.fail (A.error_to_string e)
+    | Error e -> Windtrap.fail (A.error_to_string e)
     | Ok t ->
-      Alcotest.(check bool) "a checkout" true (A.is_checkout (A.dir t));
-      Alcotest.(check bool)
-        "its components.json exists"
+      Windtrap.equal Windtrap.bool ~msg:"a checkout" true (A.is_checkout (A.dir t));
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"its components.json exists"
         true
         (Sys.file_exists (A.components_json t)))
 ;;
@@ -71,7 +73,7 @@ let test_build_tree_is_not_a_checkout () =
   with_tmpdir (fun dir ->
     let mirrored = Filename.concat dir "_build/default" in
     fake_checkout mirrored;
-    Alcotest.(check bool) "rejected" false (A.is_checkout mirrored))
+    Windtrap.equal Windtrap.bool ~msg:"rejected" false (A.is_checkout mirrored))
 ;;
 
 let test_asset_paths () =
@@ -79,23 +81,30 @@ let test_asset_paths () =
     fake_checkout dir;
     with_sol_home dir (fun () ->
       let t = A.resolve () |> Result.get_ok in
-      Alcotest.(check string)
-        "cluster root"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"cluster root"
         (dir ^ "/platform/cloud/gcp/cluster")
         (A.cloud_root t Sol_cli_provider.Gcp A.Cluster);
-      Alcotest.(check string)
-        "components"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"components"
         (dir ^ "/platform/shared/components.json")
         (A.components_json t);
-      Alcotest.(check string)
-        "dashboard"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"dashboard"
         (dir ^ "/platform/shared/observability/dashboards/x.json")
         (A.dashboard t "x.json");
       match A.migration_runner t with
       | Ok (A.Build_from_source { context }) ->
-        Alcotest.(check string) "a checkout builds its runner from itself" dir context
-      | Ok (A.Published r) -> Alcotest.fail ("a checkout used a published runner " ^ r)
-      | Error msg -> Alcotest.fail msg))
+        Windtrap.equal
+          Windtrap.string
+          ~msg:"a checkout builds its runner from itself"
+          dir
+          context
+      | Ok (A.Published r) -> Windtrap.fail ("a checkout used a published runner " ^ r)
+      | Error msg -> Windtrap.fail msg))
 ;;
 
 let write path text =
@@ -126,7 +135,9 @@ let form_name = function
   | Error A.Not_found -> "not-found"
 ;;
 
-let check_form name want got = Alcotest.(check string) name want (form_name got)
+let check_form name want got =
+  Windtrap.equal Windtrap.string ~msg:name want (form_name got)
+;;
 
 let with_layout f =
   with_tmpdir (fun root ->
@@ -213,11 +224,15 @@ let test_empty_sol_home_is_unset () =
   Unix.putenv "SOL_HOME" "";
   let read = Sol_cli_string.env "SOL_HOME" in
   Unix.putenv "SOL_HOME" (Option.value saved ~default:"");
-  Alcotest.(check (option string)) "SOL_HOME=\"\" reads as unset" None read;
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"SOL_HOME=\"\" reads as unset"
+    None
+    read;
   Unix.putenv "SOL_HOME" "  ";
   let read = Sol_cli_string.env "SOL_HOME" in
   Unix.putenv "SOL_HOME" (Option.value saved ~default:"");
-  Alcotest.(check (option string)) "blank reads as unset" None read
+  Windtrap.equal (Windtrap.option Windtrap.string) ~msg:"blank reads as unset" None read
 ;;
 
 let installed_runner ~file =
@@ -230,18 +245,19 @@ let installed_runner ~file =
 
 let test_installed_runner_is_published_by_digest () =
   (match installed_runner ~file:(Some (digest ^ "\n")) with
-   | Ok (A.Published r) -> Alcotest.(check string) "the bundle's digest" digest r
-   | Ok (A.Build_from_source _) -> Alcotest.fail "an installed release built its runner"
-   | Error msg -> Alcotest.fail msg);
+   | Ok (A.Published r) ->
+     Windtrap.equal Windtrap.string ~msg:"the bundle's digest" digest r
+   | Ok (A.Build_from_source _) -> Windtrap.fail "an installed release built its runner"
+   | Error msg -> Windtrap.fail msg);
   (match installed_runner ~file:(Some "ghcr.io/o/sol-migration-runner:latest\n") with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "a floating tag was accepted as the runner");
+   | Ok _ -> Windtrap.fail "a floating tag was accepted as the runner");
   (match installed_runner ~file:None with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "a bundle without a runner reference was accepted");
+   | Ok _ -> Windtrap.fail "a bundle without a runner reference was accepted");
   match installed_runner ~file:(Some "") with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "an empty runner reference was accepted"
+  | Ok _ -> Windtrap.fail "an empty runner reference was accepted"
 ;;
 
 let test_empty_version_is_not_a_bundle () =

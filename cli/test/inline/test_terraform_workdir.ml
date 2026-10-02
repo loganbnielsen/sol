@@ -41,7 +41,7 @@ let fake_assets root =
     A.resolve_from ~sol_home:(Some root) ~exe_dir:"/nonexistent" ~release_version:None
   with
   | Ok t -> t
-  | Error e -> Alcotest.fail (A.error_to_string e)
+  | Error e -> Windtrap.fail (A.error_to_string e)
 ;;
 
 let backend target = [ "bucket=b"; Printf.sprintf "key=sol/cloud/%s.tfstate" target ]
@@ -55,7 +55,7 @@ let materialize assets ?(role = A.Cluster) ?(target = "prod/aws/us-east-1") () =
       ~backend_config:(backend target)
   with
   | Ok chdir -> chdir
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let dir_of ?(provider = Sol_cli_provider.Aws) ?(role = A.Cluster) backend_config =
@@ -64,24 +64,29 @@ let dir_of ?(provider = Sol_cli_provider.Aws) ?(role = A.Cluster) backend_config
 
 let test_identity () =
   let a = dir_of (backend "prod/aws/us-east-1") in
-  Alcotest.(check bool)
-    "two targets never share"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"two targets never share"
     true
     (a <> dir_of (backend "dev/aws/us-east-1"));
-  Alcotest.(check bool)
-    "cluster and platform never share"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"cluster and platform never share"
     true
     (a <> dir_of ~role:A.Platform (backend "prod/aws/us-east-1"));
-  Alcotest.(check bool)
-    "providers never share"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"providers never share"
     true
     (a <> dir_of ~provider:Sol_cli_provider.Gcp (backend "prod/aws/us-east-1"));
-  Alcotest.(check string)
-    "the backend's order does not change the identity"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the backend's order does not change the identity"
     a
     (dir_of (List.rev (backend "prod/aws/us-east-1")));
-  Alcotest.(check bool)
-    "absolute, under Sol's state"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"absolute, under Sol's state"
     true
     ((not (Filename.is_relative a))
      && String.ends_with ~suffix:"sol/terraform" (Filename.dirname a))
@@ -91,8 +96,9 @@ let test_materializes_the_assets () =
   with_tmpdir (fun root ->
     let assets = fake_assets root in
     let chdir = materialize assets () in
-    Alcotest.(check string)
-      "chdir is the root's copy"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"chdir is the root's copy"
       (Filename.concat
          (W.dir
             ~provider:Sol_cli_provider.Aws
@@ -100,16 +106,19 @@ let test_materializes_the_assets () =
             ~backend_config:(backend "prod/aws/us-east-1"))
          "platform/cloud/aws/cluster")
       chdir;
-    Alcotest.(check string)
-      "root"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"root"
       "# cluster v1\n"
       (read (Filename.concat chdir "main.tf"));
-    Alcotest.(check string)
-      "the shared module, at its relative path"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the shared module, at its relative path"
       "# module\n"
       (read (Filename.concat chdir "../../modules/platform/main.tf"));
-    Alcotest.(check string)
-      "the shared tree the module reads"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the shared tree the module reads"
       "{}\n"
       (read (Filename.concat chdir "../../../shared/components.json")))
 ;;
@@ -120,12 +129,14 @@ let test_runtime_artifacts_in_the_source_are_not_copied () =
     write (Filename.concat root "platform/cloud/aws/cluster/.terraform/providers/x") "p";
     write (Filename.concat root "platform/cloud/aws/cluster/errored.tfstate") "old";
     let chdir = materialize assets ~target:"artifacts/aws/us-east-1" () in
-    Alcotest.(check bool)
-      "no .terraform copied"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no .terraform copied"
       false
       (Sys.file_exists (Filename.concat chdir ".terraform/providers/x"));
-    Alcotest.(check bool)
-      "no errored.tfstate copied"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no errored.tfstate copied"
       false
       (Sys.file_exists (Filename.concat chdir "errored.tfstate")))
 ;;
@@ -140,31 +151,37 @@ let test_rematerialize_is_authoritative_and_preserves () =
     write (Filename.concat root "platform/cloud/aws/cluster/main.tf") "# cluster v2\n";
     write (Filename.concat root "platform/cloud/aws/cluster/added.tf") "# new\n";
     let chdir' = materialize assets ~target:"recover/aws/us-east-1" () in
-    Alcotest.(check string) "same working directory" chdir chdir';
-    Alcotest.(check string)
-      "edited source follows the assets"
+    Windtrap.equal Windtrap.string ~msg:"same working directory" chdir chdir';
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"edited source follows the assets"
       "# cluster v2\n"
       (read (Filename.concat chdir "main.tf"));
-    Alcotest.(check string)
-      "added source appears"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"added source appears"
       "# new\n"
       (read (Filename.concat chdir "added.tf"));
     Sys.remove (Filename.concat root "platform/cloud/aws/cluster/added.tf");
     ignore (materialize assets ~target:"recover/aws/us-east-1" ());
-    Alcotest.(check bool)
-      "a source the assets dropped is removed"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a source the assets dropped is removed"
       false
       (Sys.file_exists (Filename.concat chdir "added.tf"));
-    Alcotest.(check string)
-      "errored.tfstate is never touched"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"errored.tfstate is never touched"
       "the only record"
       (read (Filename.concat chdir "errored.tfstate"));
-    Alcotest.(check string)
-      ".terraform is kept"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:".terraform is kept"
       "plugins"
       (read (Filename.concat chdir ".terraform/fake"));
-    Alcotest.(check string)
-      "a file Sol did not write is kept"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"a file Sol did not write is kept"
       "mine"
       (read (Filename.concat chdir "notes.txt")))
 ;;
@@ -175,10 +192,15 @@ let test_read_only_assets () =
     chmod_tree (fun perm -> perm land lnot 0o222) (Filename.concat root "platform");
     let chdir = materialize assets ~target:"readonly/aws/us-east-1" () in
     let perm = (Unix.stat (Filename.concat chdir "main.tf")).Unix.st_perm in
-    Alcotest.(check bool) "the copy is owner-writable" true (perm land 0o200 <> 0);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the copy is owner-writable"
+      true
+      (perm land 0o200 <> 0);
     ignore (materialize assets ~target:"readonly/aws/us-east-1" ());
-    Alcotest.(check bool)
-      "the assets stayed read-only"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the assets stayed read-only"
       true
       ((Unix.stat (Filename.concat root "platform/cloud/aws/cluster/main.tf"))
          .Unix.st_perm

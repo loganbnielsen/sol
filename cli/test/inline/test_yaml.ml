@@ -3,10 +3,14 @@ let render_value v = Sol_cli_yaml.render [ Sol_cli_yaml.document v ]
 let read_back text =
   let prefix = "---\n" in
   let n = String.length prefix in
-  Alcotest.(check string) "a document starts with ---" prefix (String.sub text 0 n);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a document starts with ---"
+    prefix
+    (String.sub text 0 n);
   match Yaml.of_string (String.sub text n (String.length text - n)) with
   | Ok v -> v
-  | Error (`Msg m) -> Alcotest.failf "rendered YAML does not parse: %s\n%s" m text
+  | Error (`Msg m) -> Windtrap.failf "rendered YAML does not parse: %s\n%s" m text
 ;;
 
 let hostile =
@@ -67,9 +71,10 @@ let round_trips_exactly make label =
   |> List.iter (fun s ->
     let text = render_value (Sol_cli_yaml.map [ "v", make s ]) in
     match read_back text with
-    | `O [ ("v", `String got) ] -> Alcotest.(check string) (label ^ ": " ^ s) s got
+    | `O [ ("v", `String got) ] ->
+      Windtrap.equal Windtrap.string ~msg:(label ^ ": " ^ s) s got
     | other ->
-      Alcotest.failf
+      Windtrap.failf
         "%s: %S came back as %s (rendered:\n%s)"
         label
         s
@@ -91,10 +96,10 @@ let test_plain_where_safe () =
   ; "app@sha256:abc"
   ]
   |> List.iter (fun s ->
-    Alcotest.(check bool) ("plain: " ^ s) true (Sol_cli_yaml.plain_safe s));
+    Windtrap.equal Windtrap.bool ~msg:("plain: " ^ s) true (Sol_cli_yaml.plain_safe s));
   hostile @ typed_lookalikes
   |> List.iter (fun s ->
-    Alcotest.(check bool) ("quoted: " ^ s) false (Sol_cli_yaml.plain_safe s))
+    Windtrap.equal Windtrap.bool ~msg:("quoted: " ^ s) false (Sol_cli_yaml.plain_safe s))
 ;;
 
 let test_scalars_keep_their_types () =
@@ -108,7 +113,7 @@ let test_scalars_keep_their_types () =
   in
   match read_back text with
   | `O [ ("i", `Float 8080.); ("b", `Bool false); ("s", `String "x") ] -> ()
-  | _ -> Alcotest.failf "unexpected types in:\n%s" text
+  | _ -> Windtrap.failf "unexpected types in:\n%s" text
 ;;
 
 let test_literal_round_trips () =
@@ -121,13 +126,14 @@ let test_literal_round_trips () =
   |> List.iter (fun s ->
     let text = render_value (Sol_cli_yaml.map [ "v", Sol_cli_yaml.literal s ]) in
     match read_back text with
-    | `O [ ("v", `String got) ] -> Alcotest.(check string) ("literal: " ^ s) s got
-    | _ -> Alcotest.failf "literal %S did not come back as a string:\n%s" s text)
+    | `O [ ("v", `String got) ] ->
+      Windtrap.equal Windtrap.string ~msg:("literal: " ^ s) s got
+    | _ -> Windtrap.failf "literal %S did not come back as a string:\n%s" s text)
 ;;
 
 let test_nul_is_refused_not_truncated () =
-  Alcotest.check_raises
-    "a NUL cannot silently end a value"
+  Windtrap.raises
+    ~msg:"a NUL cannot silently end a value"
     (Invalid_argument "Sol_cli_yaml: a NUL character cannot be written to YAML")
     (fun () -> ignore (Sol_cli_yaml.quoted "before\000after"))
 ;;
@@ -137,17 +143,18 @@ let test_empty_collections () =
     render_value
       (Sol_cli_yaml.map [ "m", Sol_cli_yaml.map []; "l", Sol_cli_yaml.list [] ])
   in
-  Alcotest.(check string) "flow-style empties" "---\nm: {}\nl: []\n" text
+  Windtrap.equal Windtrap.string ~msg:"flow-style empties" "---\nm: {}\nl: []\n" text
 ;;
 
 let test_documents_and_comments () =
   let doc = Sol_cli_yaml.map [ "kind", Sol_cli_yaml.string "Secret" ] in
-  Alcotest.(check string)
-    "each document opens with ---, comments follow it"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"each document opens with ---, comments follow it"
     "---\n# fill me in\nkind: Secret\n---\nkind: Secret\n"
     (Sol_cli_yaml.render
        [ Sol_cli_yaml.document ~comments:[ "fill me in" ] doc; Sol_cli_yaml.document doc ]);
-  Alcotest.(check string) "no documents, no text" "" (Sol_cli_yaml.render [])
+  Windtrap.equal Windtrap.string ~msg:"no documents, no text" "" (Sol_cli_yaml.render [])
 ;;
 
 let%test "REFAC-131: string round-trips exactly" = test_string_round_trips ()

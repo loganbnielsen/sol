@@ -216,7 +216,7 @@ dune build
 ```
 
 **Prerequisite:** `sudo apt-get install -y librdkafka-dev`  
-**OCaml packages:** `eio`, `eio_main`, `alcotest`, `cohttp-eio`, `yojson`, `base64` (install via `opam install`)  
+**OCaml packages:** `eio`, `eio_main`, `cohttp-eio`, `yojson`, `base64` (install via `opam install`); tests use `windtrap`/`ppx_windtrap`  
 **Formatter:** `ocamlformat.0.29.0` is required to run `dune fmt` locally (`opam install ocamlformat.0.29.0`). CI checks formatting drift with `dune fmt --preview`, which fails on changes without modifying files.
 
 ## Tests

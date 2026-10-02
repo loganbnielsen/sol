@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let context_name (ctx : Sol_cli_kube_destination.context) = ctx.destination.context
 
 let write path contents =
@@ -45,12 +45,12 @@ let write_target kube_context =
 
 let ok_or_fail = function
   | Ok value -> value
-  | Error message -> Alcotest.fail ("unexpected error: " ^ message)
+  | Error message -> Windtrap.fail ("unexpected error: " ^ message)
 ;;
 
 let error_or_fail = function
   | Error message -> message
-  | Ok _ -> Alcotest.fail "expected the resolution to fail closed"
+  | Ok _ -> Windtrap.fail "expected the resolution to fail closed"
 ;;
 
 let test_local_entry_point_is_the_literal_local_cluster () =
@@ -149,7 +149,7 @@ let test_resolution_is_deterministic () =
   match resolve (), resolve () with
   | Error a, Error b -> check_string "same error twice" a b
   | Ok a, Ok b -> check_string "same context twice" (context_name a) (context_name b)
-  | _ -> Alcotest.fail "resolution disagreed with itself"
+  | _ -> Windtrap.fail "resolution disagreed with itself"
 ;;
 
 let%test "seam: local entry point is the literal local cluster" =

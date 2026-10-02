@@ -6,8 +6,8 @@ let expected_release_label =
   Printf.sprintf {|release: "%s"|} (Sol_cli_release_id.to_string release_id_of_test)
 ;;
 
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let render_spec_ok
       ?(workspace = "myapp")
@@ -27,31 +27,31 @@ let render_spec_ok
       spec
   with
   | Ok v -> v
-  | Error e -> Alcotest.fail ("render_spec unexpectedly failed: " ^ e)
+  | Error e -> Windtrap.fail ("render_spec unexpectedly failed: " ^ e)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let hostname s =
   match Sol_cli_toml.hostname_of_string s with
   | Ok host -> host
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let ingress_path s =
   match Sol_cli_toml.ingress_path_of_string s with
   | Ok path -> path
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
@@ -90,7 +90,7 @@ let workload
 let load_toml path =
   match Sol_cli_toml.load_result path with
   | Ok toml -> toml
-  | Error err -> Alcotest.fail (Sol_cli_toml.parse_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_toml.parse_error_to_string err)
 ;;
 
 let assert_contains label haystack needle =
@@ -110,13 +110,13 @@ let assert_absent label haystack needle =
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let extract_kind_block yaml kind_marker =
@@ -746,12 +746,14 @@ let test_fn_cpu_memory_request_equals_limit () =
     done;
     !count
   in
-  Alcotest.(check int)
-    "cpu: 500m appears twice (requests and limits)"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"cpu: 500m appears twice (requests and limits)"
     2
     (count_occurrences "cpu: 500m" cronjob_block);
-  Alcotest.(check int)
-    "memory: 1Gi appears twice (requests and limits)"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"memory: 1Gi appears twice (requests and limits)"
     2
     (count_occurrences "memory: 1Gi" cronjob_block)
 ;;
@@ -1061,7 +1063,11 @@ calls = ["checkout/checkout_svc"]
   close_out oc;
   let toml = load_toml path in
   Sys.remove path;
-  Alcotest.(check (list string)) "calls parsed" [ "checkout/checkout_svc" ] toml.calls
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"calls parsed"
+    [ "checkout/checkout_svc" ]
+    toml.calls
 ;;
 
 let test_toml_invalid_cpu_quantity () =
@@ -1078,9 +1084,9 @@ cpu = "250Mi"
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     assert_contains "invalid cpu quantity" message "cpu quantity"
-  | Ok _ -> Alcotest.fail "expected invalid CPU quantity to be rejected"
+  | Ok _ -> Windtrap.fail "expected invalid CPU quantity to be rejected"
   | Error (Sol_cli_toml.Toml_syntax _) ->
-    Alcotest.fail "expected validation error, got syntax error"
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_invalid_memory_quantity () =
@@ -1097,9 +1103,9 @@ memory = "many"
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     assert_contains "invalid memory quantity" message "memory quantity"
-  | Ok _ -> Alcotest.fail "expected invalid memory quantity to be rejected"
+  | Ok _ -> Windtrap.fail "expected invalid memory quantity to be rejected"
   | Error (Sol_cli_toml.Toml_syntax _) ->
-    Alcotest.fail "expected validation error, got syntax error"
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_invalid_ingress_host () =
@@ -1116,9 +1122,9 @@ ingress_host = "Bad_Host.example.com"
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     assert_contains "invalid ingress host" message "ingress_host"
-  | Ok _ -> Alcotest.fail "expected invalid ingress_host to be rejected"
+  | Ok _ -> Windtrap.fail "expected invalid ingress_host to be rejected"
   | Error (Sol_cli_toml.Toml_syntax _) ->
-    Alcotest.fail "expected validation error, got syntax error"
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_invalid_ingress_path () =
@@ -1135,9 +1141,9 @@ ingress_path = "api/v1"
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     assert_contains "invalid ingress path" message "ingress_path"
-  | Ok _ -> Alcotest.fail "expected invalid ingress_path to be rejected"
+  | Ok _ -> Windtrap.fail "expected invalid ingress_path to be rejected"
   | Error (Sol_cli_toml.Toml_syntax _) ->
-    Alcotest.fail "expected validation error, got syntax error"
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_secret_keys () =
@@ -1172,7 +1178,7 @@ steps = [10, 40, 100]
          { steps =
              [ Sol_cli_toml.Weight 10; Sol_cli_toml.Weight 40; Sol_cli_toml.Weight 100 ]
          }) -> ()
-  | _ -> Alcotest.fail "expected canary progressive_delivery from [infra.rollout]"
+  | _ -> Windtrap.fail "expected canary progressive_delivery from [infra.rollout]"
 ;;
 
 let test_toml_valid_blue_green_rollout () =
@@ -1255,9 +1261,9 @@ let test_toml_load_result_validation_error () =
   match result with
   | Error (Sol_cli_toml.Validation { path = _; message }) ->
     assert_contains "typed validation error" message "unsupported rollout_strategy"
-  | Ok _ -> Alcotest.fail "expected typed validation error"
+  | Ok _ -> Windtrap.fail "expected typed validation error"
   | Error (Sol_cli_toml.Toml_syntax _) ->
-    Alcotest.fail "expected validation error, got syntax error"
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_load_result_syntax_error () =
@@ -1270,9 +1276,9 @@ let test_toml_load_result_syntax_error () =
   match result with
   | Error (Sol_cli_toml.Toml_syntax { path = _; message }) ->
     assert_contains "typed syntax error" message "sol.toml:"
-  | Ok _ -> Alcotest.fail "expected typed syntax error"
+  | Ok _ -> Windtrap.fail "expected typed syntax error"
   | Error (Sol_cli_toml.Validation _) ->
-    Alcotest.fail "expected syntax error, got validation error"
+    Windtrap.fail "expected syntax error, got validation error"
 ;;
 
 let test_toml_multiline_array_secrets () =
@@ -1341,7 +1347,7 @@ steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
              ; Sol_cli_toml.Pause (Some 60)
              ]
          }) -> ()
-  | _ -> Alcotest.fail "expected canary steps with pause from [infra.rollout]"
+  | _ -> Windtrap.fail "expected canary steps with pause from [infra.rollout]"
 ;;
 
 let eso_backend =
@@ -1617,9 +1623,14 @@ let assert_release_label_at_verifier_path label kind workload release_id =
       let t = String.trim line in
       String.length t >= 8 && String.equal (String.sub t 0 8) "release:")
   in
-  Alcotest.(check int) (label ^ ": one release label line") 1 (List.length release_lines);
-  Alcotest.(check string)
-    (label ^ ": release label sits at the verifier's jsonpath")
+  Windtrap.equal
+    Windtrap.int
+    ~msg:(label ^ ": one release label line")
+    1
+    (List.length release_lines);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(label ^ ": release label sits at the verifier's jsonpath")
     expected
     (List.hd release_lines)
 ;;
@@ -1677,7 +1688,7 @@ let test_taxonomy_labels_match_dashboard_link_normalization () =
         (Sol_cli_open.Domain "Payments_Team")
     with
     | Ok url -> url
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
   in
   assert_contains
     "dashboard link uses the identical normalized workspace"
@@ -1814,10 +1825,11 @@ let test_selection_hyphenated_unit_resolves_to_discovered_name () =
         (Result.get_ok (Sol_cli_manifest.discover_services ()))
     with
     | Ok selected -> selected
-    | Error message -> Alcotest.fail message
+    | Error message -> Windtrap.fail message
   in
-  Alcotest.(check (list string))
-    "hyphenated unit resolves to the discovered name"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"hyphenated unit resolves to the discovered name"
     [ "charge_svc" ]
     (names selected.services)
 ;;
@@ -1831,9 +1843,13 @@ let test_selection_unknown_unit_fails_closed () =
       (Some "payments/nope")
       (Result.get_ok (Sol_cli_manifest.discover_services ()))
   with
-  | Ok _ -> Alcotest.fail "expected a fail-closed resolution"
+  | Ok _ -> Windtrap.fail "expected a fail-closed resolution"
   | Error message ->
-    Alcotest.(check bool) "error names what exists" true (String.length message > 0)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"error names what exists"
+      true
+      (String.length message > 0)
 ;;
 
 let replace_all haystack needle replacement =
@@ -1910,7 +1926,7 @@ let check_no_unexplained_differences label a b ~env_a ~env_b =
   let la = String.split_on_char '\n' a
   and lb = String.split_on_char '\n' b in
   if List.length la <> List.length lb
-  then Alcotest.fail (label ^ ": the two renders differ in line count");
+  then Windtrap.fail (label ^ ": the two renders differ in line count");
   List.iter2
     (fun x y ->
        if x <> y
@@ -1918,7 +1934,7 @@ let check_no_unexplained_differences label a b ~env_a ~env_b =
          let key = line_key x in
          if not (List.mem key environment_dependent_keys)
          then
-           Alcotest.fail
+           Windtrap.fail
              (Printf.sprintf
                 "%s: this line differs between environments, and only %s may: %s"
                 label
@@ -1946,16 +1962,19 @@ let test_environment_labels_but_does_not_re_address () =
     false
     (workload_alpha = workload_beta);
   check_string "the namespace document is identical" ns_alpha ns_beta;
-  Alcotest.(check (list string))
-    "resource names are identical"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"resource names are identical"
     (resource_names workload_alpha)
     (resource_names workload_beta);
-  Alcotest.(check (list string))
-    "image references are identical"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"image references are identical"
     (values_of_key "image" workload_alpha)
     (values_of_key "image" workload_beta);
-  Alcotest.(check (list string))
-    "internal addresses are identical"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"internal addresses are identical"
     (internal_addresses workload_alpha)
     (internal_addresses workload_beta);
   check_no_unexplained_differences
@@ -2025,7 +2044,7 @@ let test_fn_without_schedule_is_refused_at_render () =
       ~release_id:release_id_of_test
       { fn_spec with schedule = None }
   with
-  | Ok _ -> Alcotest.fail "a -fn spec without a schedule must not render hourly"
+  | Ok _ -> Windtrap.fail "a -fn spec without a schedule must not render hourly"
   | Error msg -> check_bool "names the schedule" true (contains msg "schedule")
 ;;
 
@@ -2047,8 +2066,8 @@ let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
-  | Ok _ -> Alcotest.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
-  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+  | Ok _ -> Windtrap.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
 ;;
 
 let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
@@ -2061,8 +2080,8 @@ let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
-  | Ok _ -> Alcotest.fail "a sol.toml secret must not be able to carry the opt-in"
-  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+  | Ok _ -> Windtrap.fail "a sol.toml secret must not be able to carry the opt-in"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
 ;;
 
 let test_sol_secret_rejects_unverified_jwt_opt_in () =
@@ -2132,7 +2151,7 @@ let parse_documents text =
   |> List.map (fun doc ->
     match Yaml.of_string doc with
     | Ok v -> v
-    | Error (`Msg m) -> Alcotest.failf "rendered document does not parse: %s\n%s" m doc)
+    | Error (`Msg m) -> Windtrap.failf "rendered document does not parse: %s\n%s" m doc)
 ;;
 
 let rec lookup path (v : Yaml.value) =
@@ -2145,7 +2164,7 @@ let rec lookup path (v : Yaml.value) =
 let find_kind kind docs =
   match List.find_opt (fun d -> lookup [ "kind" ] d = Some (`String kind)) docs with
   | Some d -> d
-  | None -> Alcotest.failf "no %s document" kind
+  | None -> Windtrap.failf "no %s document" kind
 ;;
 
 let test_hostile_values_round_trip () =
@@ -2161,19 +2180,22 @@ let test_hostile_values_round_trip () =
   let configmap = find_kind "ConfigMap" docs in
   [ "APP_NOTE", hostile; "APP_FLAG", "true"; "APP_VERSION", "1.10" ]
   |> List.iter (fun (key, expected) ->
-    Alcotest.(check (option string))
-      ("ConfigMap " ^ key)
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:("ConfigMap " ^ key)
       (Some expected)
       (match lookup [ "data"; key ] configmap with
        | Some (`String s) -> Some s
        | _ -> None));
-  Alcotest.(check bool)
-    "no injected key"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no injected key"
     true
     (lookup [ "data"; "INJECTED" ] configmap = None);
   let deployment = find_kind "Deployment" docs in
-  Alcotest.(check bool)
-    "a label that YAML 1.1 reads as a boolean stays a string"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a label that YAML 1.1 reads as a boolean stays a string"
     true
     (lookup [ "spec"; "template"; "metadata"; "labels"; "team" ] deployment
      = Some (`String "yes"))
@@ -2190,7 +2212,7 @@ let prefix_value ~prefix text =
     else None)
   |> function
   | first :: _ -> first
-  | [] -> Alcotest.fail (Printf.sprintf "no line starts with %S" prefix)
+  | [] -> Windtrap.fail (Printf.sprintf "no line starts with %S" prefix)
 ;;
 
 let template_dockerfile kind =
@@ -2198,12 +2220,12 @@ let template_dockerfile kind =
     match Sol_cli_platform_assets.resolve () with
     | Ok assets -> Sol_cli_platform_assets.templates_root assets
     | Error error ->
-      Alcotest.fail
+      Windtrap.fail
         ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
   in
   match Sol_cli_scaffold_tree.text ~root ~kind ~rel:"Dockerfile" with
   | Ok text -> text
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let test_image_user_matches_pod_security () =
@@ -2256,28 +2278,34 @@ let test_contract_scope_rule () =
   let ocaml_spec = { svc_spec with language = Some Sol_cli_compat.Ocaml } in
   let ts_spec = { worker_spec with language = Some Sol_cli_compat.Typescript } in
   let undeclared = { svc_spec with language = None } in
-  Alcotest.(check bool)
-    "an all-TypeScript scope is skipped"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an all-TypeScript scope is skipped"
     false
     (Sol_cli_contract.scope_has_ocaml [ ts_spec ]);
-  Alcotest.(check bool)
-    "an OCaml scope is reconciled"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an OCaml scope is reconciled"
     true
     (Sol_cli_contract.scope_has_ocaml [ ocaml_spec ]);
-  Alcotest.(check bool)
-    "a mixed scope is reconciled"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a mixed scope is reconciled"
     true
     (Sol_cli_contract.scope_has_ocaml [ ts_spec; ocaml_spec ]);
-  Alcotest.(check bool)
-    "an undeclared language is reconciled (it errs toward OCaml)"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an undeclared language is reconciled (it errs toward OCaml)"
     true
     (Sol_cli_contract.scope_has_ocaml [ undeclared ]);
-  Alcotest.(check (option (pair string string)))
-    "no OCaml image for an all-TypeScript scope"
+  Windtrap.equal
+    (Windtrap.option (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"no OCaml image for an all-TypeScript scope"
     None
     (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec ]);
-  Alcotest.(check (option (pair string string)))
-    "the OCaml image is chosen from a mixed scope"
+  Windtrap.equal
+    (Windtrap.option (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the OCaml image is chosen from a mixed scope"
     (Some ("myapp-payments", svc_spec.image))
     (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec; ocaml_spec ])
 ;;

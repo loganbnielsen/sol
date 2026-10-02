@@ -1,14 +1,14 @@
-let check_string msg expected actual = Alcotest.(check string) msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let check_list_string msg expected actual =
-  Alcotest.(check (list string)) msg expected actual
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
 ;;
 
 let check_option_string msg expected actual =
-  Alcotest.(check (option string)) msg expected actual
+  Windtrap.equal (Windtrap.option Windtrap.string) ~msg expected actual
 ;;
 
-let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let contains_substring ~needle haystack =
   let nl = String.length needle
@@ -18,18 +18,22 @@ let contains_substring ~needle haystack =
 ;;
 
 let ticket_state =
-  Alcotest.testable
-    (fun fmt state -> Format.pp_print_string fmt (Soldev_ticket.state_to_dir state))
-    ( = )
+  Windtrap.testable
+    ~pp:(fun fmt state -> Format.pp_print_string fmt (Soldev_ticket.state_to_dir state))
+    ()
 ;;
 
 let check_state_option msg expected actual =
-  Alcotest.(check (option ticket_state)) msg expected actual
+  Windtrap.equal (Windtrap.option ticket_state) ~msg expected actual
 ;;
 
 let test_parse_empty () =
   let fm = Soldev_ticket.fields "no frontmatter here" in
-  Alcotest.(check (list (pair string string))) "empty" [] fm
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"empty"
+    []
+    fm
 ;;
 
 let test_parse_basic () =
@@ -290,7 +294,7 @@ let test_yaml_comment_and_null () =
 
 let test_invalid_frontmatter_is_an_error () =
   match Soldev_ticket.frontmatter "---\nsource: operator: said so\n---\n" with
-  | Ok _ -> Alcotest.fail "an invalid frontmatter was accepted"
+  | Ok _ -> Windtrap.fail "an invalid frontmatter was accepted"
   | Error message ->
     check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" message)
 ;;
@@ -308,8 +312,9 @@ let test_every_ticket_is_readable () =
       let content = In_channel.with_open_bin path In_channel.input_all in
       Soldev_ticket.unreadable ~path content)
   in
-  Alcotest.(check (list string))
-    "every ticket in the pipeline tree is readable"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"every ticket in the pipeline tree is readable"
     []
     failures
 ;;
@@ -351,7 +356,7 @@ let test_no_frontmatter_block_is_unreadable () =
   match
     Soldev_ticket.unreadable ~path "# INFRA-042 - a ticket with no frontmatter\n\nBody.\n"
   with
-  | None -> Alcotest.fail "a ticket with no frontmatter block was accepted"
+  | None -> Windtrap.fail "a ticket with no frontmatter block was accepted"
   | Some reason ->
     check_bool "names the file" true (contains_substring ~needle:path reason);
     check_bool
@@ -372,7 +377,7 @@ let test_invalid_yaml_is_unreadable () =
      Body.\n"
   in
   match Soldev_ticket.unreadable ~path content with
-  | None -> Alcotest.fail "an invalid frontmatter was accepted"
+  | None -> Windtrap.fail "an invalid frontmatter was accepted"
   | Some reason ->
     check_bool "names the file" true (contains_substring ~needle:path reason);
     check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" reason)
@@ -382,7 +387,7 @@ let test_wrapped_depends_is_unreadable () =
   let path = "internal/pipeline/tickets/BACKLOG/BUG-999.md" in
   let content = readable_ticket ^ "\n**Depends on:** DEC-026, SEC-004,\nDEC-027.\n" in
   match Soldev_ticket.unreadable ~path content with
-  | None -> Alcotest.fail "a wrapped Depends on field was accepted"
+  | None -> Windtrap.fail "a wrapped Depends on field was accepted"
   | Some reason ->
     check_bool "names the file" true (contains_substring ~needle:path reason);
     check_bool "names the field" true (contains_substring ~needle:"Depends on" reason)
@@ -403,7 +408,7 @@ let test_missing_field_is_unreadable () =
     "---\nid: BUG-998\ntype: bug\nseverity:\nsource: a test\n---\n\nBody.\n"
   in
   match Soldev_ticket.unreadable ~path content with
-  | None -> Alcotest.fail "a blank required field was accepted"
+  | None -> Windtrap.fail "a blank required field was accepted"
   | Some reason ->
     check_bool "names the file" true (contains_substring ~needle:path reason);
     check_bool "names the field" true (contains_substring ~needle:"`severity`" reason)
@@ -421,7 +426,7 @@ let test_each_required_field () =
        in
        let content = "---\n" ^ String.concat "\n" lines ^ "\n---\n\nBody.\n" in
        match Soldev_ticket.unreadable ~path:"x.md" content with
-       | None -> Alcotest.fail (Printf.sprintf "a ticket without `%s` was accepted" field)
+       | None -> Windtrap.fail (Printf.sprintf "a ticket without `%s` was accepted" field)
        | Some reason ->
          check_bool
            (Printf.sprintf "names `%s`" field)
@@ -431,230 +436,211 @@ let test_each_required_field () =
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "soldev_ticket"
-    [ ( "parse_frontmatter"
-      , [ Alcotest.test_case "empty content" `Quick test_parse_empty
-        ; Alcotest.test_case "basic fields" `Quick test_parse_basic
-        ; Alcotest.test_case "missing key" `Quick test_fm_get_missing
-        ; Alcotest.test_case "colon in value" `Quick test_fm_get_colon_in_value
-        ] )
-    ; ( "parse_depends"
-      , [ Alcotest.test_case "none" `Quick test_depends_none
-        ; Alcotest.test_case "single dep" `Quick test_depends_single
-        ; Alcotest.test_case "multiple deps" `Quick test_depends_multiple
-        ; Alcotest.test_case "no depends line" `Quick test_depends_missing
-        ; Alcotest.test_case "annotated single" `Quick test_depends_annotated_single
-        ; Alcotest.test_case "annotated multiple" `Quick test_depends_annotated_multiple
-        ; Alcotest.test_case "prose, repeated id" `Quick test_depends_prose
-        ; Alcotest.test_case
-            "none w/ parenthetical"
-            `Quick
-            test_depends_none_with_parenthetical
-        ; Alcotest.test_case "underscore prefix" `Quick test_depends_underscore_prefix
-        ] )
-    ; ( "has_human_decision_gate"
-      , [ Alcotest.test_case "no gate" `Quick test_no_gate
-        ; Alcotest.test_case "TBD marker" `Quick test_gate_tbd
-        ; Alcotest.test_case "section marker" `Quick test_gate_section
-        ] )
-    ; ( "ticket_title"
-      , [ Alcotest.test_case "skips depends line" `Quick test_title_basic
-        ; Alcotest.test_case "no frontmatter" `Quick test_title_no_frontmatter
-        ; Alcotest.test_case
-            "explicit title field wins"
-            `Quick
-            test_title_explicit_field_wins
-        ; Alcotest.test_case
-            "heading markers stripped"
-            `Quick
-            test_title_strips_heading_markers
-        ; Alcotest.test_case
-            "any bold field skipped"
-            `Quick
-            test_title_skips_any_bold_field
-        ; Alcotest.test_case
-            "blank title field falls back"
-            `Quick
-            test_title_blank_field_falls_back
-        ] )
-    ; ( "dependency_summary"
-      , [ Alcotest.test_case "empty" `Quick test_dep_summary_empty
-        ; Alcotest.test_case "list" `Quick test_dep_summary_list
-        ] )
-    ; ( "ticket states"
-      , [ Alcotest.test_case "includes DONE" `Quick test_states_include_done
-        ; Alcotest.test_case "includes RFE" `Quick test_states_include_rfe
-        ; Alcotest.test_case "state roundtrip" `Quick test_state_roundtrip
-        ; Alcotest.test_case "unknown state" `Quick test_state_unknown
-        ; Alcotest.test_case
-            "removed states gone"
-            `Quick
-            test_states_no_longer_include_removed_states
-        ] )
-    ; ( "frontmatter is YAML (REFAC-137)"
-      , [ Alcotest.test_case "quoting is decoded" `Quick test_yaml_quoting_is_decoded
-        ; Alcotest.test_case "comments and null" `Quick test_yaml_comment_and_null
-        ; Alcotest.test_case
+    [ Windtrap.group
+        "parse_frontmatter"
+        [ Windtrap.test "empty content" test_parse_empty
+        ; Windtrap.test "basic fields" test_parse_basic
+        ; Windtrap.test "missing key" test_fm_get_missing
+        ; Windtrap.test "colon in value" test_fm_get_colon_in_value
+        ]
+    ; Windtrap.group
+        "parse_depends"
+        [ Windtrap.test "none" test_depends_none
+        ; Windtrap.test "single dep" test_depends_single
+        ; Windtrap.test "multiple deps" test_depends_multiple
+        ; Windtrap.test "no depends line" test_depends_missing
+        ; Windtrap.test "annotated single" test_depends_annotated_single
+        ; Windtrap.test "annotated multiple" test_depends_annotated_multiple
+        ; Windtrap.test "prose, repeated id" test_depends_prose
+        ; Windtrap.test "none w/ parenthetical" test_depends_none_with_parenthetical
+        ; Windtrap.test "underscore prefix" test_depends_underscore_prefix
+        ]
+    ; Windtrap.group
+        "has_human_decision_gate"
+        [ Windtrap.test "no gate" test_no_gate
+        ; Windtrap.test "TBD marker" test_gate_tbd
+        ; Windtrap.test "section marker" test_gate_section
+        ]
+    ; Windtrap.group
+        "ticket_title"
+        [ Windtrap.test "skips depends line" test_title_basic
+        ; Windtrap.test "no frontmatter" test_title_no_frontmatter
+        ; Windtrap.test "explicit title field wins" test_title_explicit_field_wins
+        ; Windtrap.test "heading markers stripped" test_title_strips_heading_markers
+        ; Windtrap.test "any bold field skipped" test_title_skips_any_bold_field
+        ; Windtrap.test "blank title field falls back" test_title_blank_field_falls_back
+        ]
+    ; Windtrap.group
+        "dependency_summary"
+        [ Windtrap.test "empty" test_dep_summary_empty
+        ; Windtrap.test "list" test_dep_summary_list
+        ]
+    ; Windtrap.group
+        "ticket states"
+        [ Windtrap.test "includes DONE" test_states_include_done
+        ; Windtrap.test "includes RFE" test_states_include_rfe
+        ; Windtrap.test "state roundtrip" test_state_roundtrip
+        ; Windtrap.test "unknown state" test_state_unknown
+        ; Windtrap.test "removed states gone" test_states_no_longer_include_removed_states
+        ]
+    ; Windtrap.group
+        "frontmatter is YAML (REFAC-137)"
+        [ Windtrap.test "quoting is decoded" test_yaml_quoting_is_decoded
+        ; Windtrap.test "comments and null" test_yaml_comment_and_null
+        ; Windtrap.test
             "invalid frontmatter is an error"
-            `Quick
             test_invalid_frontmatter_is_an_error
-        ; Alcotest.test_case "every ticket parses" `Quick test_every_ticket_is_readable
-        ] )
-    ; ( "unreadable tickets fail closed (BUG-060)"
-      , [ Alcotest.test_case "a complete ticket" `Quick test_readable
-        ; Alcotest.test_case "extra fields are fine" `Quick test_readable_extra_fields
-        ; Alcotest.test_case
-            "no frontmatter block"
-            `Quick
-            test_no_frontmatter_block_is_unreadable
-        ; Alcotest.test_case "invalid YAML" `Quick test_invalid_yaml_is_unreadable
-        ; Alcotest.test_case
-            "wrapped Depends on"
-            `Quick
-            test_wrapped_depends_is_unreadable
-        ; Alcotest.test_case
-            "one-line Depends on"
-            `Quick
-            test_one_line_depends_is_readable
-        ; Alcotest.test_case "a blank field" `Quick test_missing_field_is_unreadable
-        ; Alcotest.test_case "each required field" `Quick test_each_required_field
-        ] )
-    ; ( "dependency cycles"
-      , [ Alcotest.test_case "self cycle" `Quick (fun () ->
-            Alcotest.(check (option (list string)))
-              "a ticket depending on itself is a cycle"
+        ; Windtrap.test "every ticket parses" test_every_ticket_is_readable
+        ]
+    ; Windtrap.group
+        "unreadable tickets fail closed (BUG-060)"
+        [ Windtrap.test "a complete ticket" test_readable
+        ; Windtrap.test "extra fields are fine" test_readable_extra_fields
+        ; Windtrap.test "no frontmatter block" test_no_frontmatter_block_is_unreadable
+        ; Windtrap.test "invalid YAML" test_invalid_yaml_is_unreadable
+        ; Windtrap.test "wrapped Depends on" test_wrapped_depends_is_unreadable
+        ; Windtrap.test "one-line Depends on" test_one_line_depends_is_readable
+        ; Windtrap.test "a blank field" test_missing_field_is_unreadable
+        ; Windtrap.test "each required field" test_each_required_field
+        ]
+    ; Windtrap.group
+        "dependency cycles"
+        [ Windtrap.test "self cycle" (fun () ->
+            Windtrap.equal
+              (Windtrap.option (Windtrap.list Windtrap.string))
+              ~msg:"a ticket depending on itself is a cycle"
               (Some [ "A-1"; "A-1" ])
               (Soldev_ticket.find_dependency_cycle_from
                  ~deps_of:(fun id -> if String.equal id "A-1" then [ "A-1" ] else [])
                  "A-1"))
-        ; Alcotest.test_case "mutual cycle" `Quick (fun () ->
+        ; Windtrap.test "mutual cycle" (fun () ->
             let deps_of = function
               | "A-1" -> [ "B-2" ]
               | "B-2" -> [ "A-1" ]
               | _ -> []
             in
-            Alcotest.(check (option (list string)))
-              "each names the other"
+            Windtrap.equal
+              (Windtrap.option (Windtrap.list Windtrap.string))
+              ~msg:"each names the other"
               (Some [ "A-1"; "B-2"; "A-1" ])
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
-        ; Alcotest.test_case "cycle reached from outside" `Quick (fun () ->
+        ; Windtrap.test "cycle reached from outside" (fun () ->
             let deps_of = function
               | "X-9" -> [ "A-1" ]
               | "A-1" -> [ "B-2" ]
               | "B-2" -> [ "A-1" ]
               | _ -> []
             in
-            Alcotest.(check (option (list string)))
-              "reports the cycle and not the path taken to reach it"
+            Windtrap.equal
+              (Windtrap.option (Windtrap.list Windtrap.string))
+              ~msg:"reports the cycle and not the path taken to reach it"
               (Some [ "A-1"; "B-2"; "A-1" ])
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "X-9"))
-        ; Alcotest.test_case "no cycle" `Quick (fun () ->
+        ; Windtrap.test "no cycle" (fun () ->
             let deps_of = function
               | "A-1" -> [ "B-2" ]
               | "B-2" -> [ "C-3" ]
               | _ -> []
             in
-            Alcotest.(check (option (list string)))
-              "a chain is not a cycle"
+            Windtrap.equal
+              (Windtrap.option (Windtrap.list Windtrap.string))
+              ~msg:"a chain is not a cycle"
               None
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
-        ; Alcotest.test_case "shared dependency is not a cycle" `Quick (fun () ->
+        ; Windtrap.test "shared dependency is not a cycle" (fun () ->
             let deps_of = function
               | "A-1" -> [ "B-2"; "C-3" ]
               | "B-2" -> [ "C-3" ]
               | _ -> []
             in
-            Alcotest.(check (option (list string)))
-              "a diamond is not a cycle"
+            Windtrap.equal
+              (Windtrap.option (Windtrap.list Windtrap.string))
+              ~msg:"a diamond is not a cycle"
               None
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
-        ] )
-    ; ( "premise probes"
-      , [ Alcotest.test_case "declared probe is read" `Quick (fun () ->
+        ]
+    ; Windtrap.group
+        "premise probes"
+        [ Windtrap.test "declared probe is read" (fun () ->
             let content = "---\nid: X\npremise: \"rg -q foo bar.ml\"\n---\n\nBody\n" in
-            Alcotest.(check (option string))
-              "probe, with the documented quoting stripped"
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"probe, with the documented quoting stripped"
               (Some "rg -q foo bar.ml")
               (Soldev_ticket.premise_of content))
-        ; Alcotest.test_case "unquoted probe is read too" `Quick (fun () ->
+        ; Windtrap.test "unquoted probe is read too" (fun () ->
             let content = "---\nid: X\npremise: rg -q foo bar.ml\n---\n\nBody\n" in
-            Alcotest.(check (option string))
-              "probe"
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"probe"
               (Some "rg -q foo bar.ml")
               (Soldev_ticket.premise_of content))
-        ; Alcotest.test_case "no probe" `Quick (fun () ->
-            Alcotest.(check (option string))
-              "none"
+        ; Windtrap.test "no probe" (fun () ->
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"none"
               None
               (Soldev_ticket.premise_of "---\nid: X\n---\n\nBody\n"))
-        ; Alcotest.test_case "blank probe is no probe" `Quick (fun () ->
-            Alcotest.(check (option string))
-              "none"
+        ; Windtrap.test "blank probe is no probe" (fun () ->
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"none"
               None
               (Soldev_ticket.premise_of "---\nid: X\npremise: \"  \"\n---\n\nBody\n"))
-        ; Alcotest.test_case "exit 0 means stale" `Quick (fun () ->
+        ; Windtrap.test "exit 0 means stale" (fun () ->
             match
               Soldev_ticket.premise_verdict ~exit_code:0 ~missing_paths:[] ~output:""
             with
             | Soldev_ticket.Premise_stale -> ()
-            | Soldev_ticket.Premise_holds -> Alcotest.fail "exit 0 must mean stale"
+            | Soldev_ticket.Premise_holds -> Windtrap.fail "exit 0 must mean stale"
             | Soldev_ticket.Premise_unverified reason ->
-              Alcotest.fail ("unexpected unverified: " ^ reason))
-        ; Alcotest.test_case "exit 1 means the premise holds" `Quick (fun () ->
+              Windtrap.fail ("unexpected unverified: " ^ reason))
+        ; Windtrap.test "exit 1 means the premise holds" (fun () ->
             match
               Soldev_ticket.premise_verdict ~exit_code:1 ~missing_paths:[] ~output:""
             with
             | Soldev_ticket.Premise_holds -> ()
-            | _ -> Alcotest.fail "exit 1 means the premise still holds")
-        ; Alcotest.test_case
-            "an exit outside {0, 1} is unverified, naming the code"
-            `Quick
-            (fun () ->
-               match
-                 Soldev_ticket.premise_verdict
-                   ~exit_code:2
-                   ~missing_paths:[]
-                   ~output:"sh: 1: syntax error: unexpected end of file"
-               with
-               | Soldev_ticket.Premise_unverified reason ->
-                 if not (contains_substring ~needle:"2" reason)
-                 then Alcotest.fail ("the exit code is not named: " ^ reason)
-               | _ ->
-                 Alcotest.fail "a probe that did not reach a conclusion is not a verdict")
-        ; Alcotest.test_case "127 is unverified, not holds" `Quick (fun () ->
+            | _ -> Windtrap.fail "exit 1 means the premise still holds")
+        ; Windtrap.test "an exit outside {0, 1} is unverified, naming the code" (fun () ->
+            match
+              Soldev_ticket.premise_verdict
+                ~exit_code:2
+                ~missing_paths:[]
+                ~output:"sh: 1: syntax error: unexpected end of file"
+            with
+            | Soldev_ticket.Premise_unverified reason ->
+              if not (contains_substring ~needle:"2" reason)
+              then Windtrap.fail ("the exit code is not named: " ^ reason)
+            | _ ->
+              Windtrap.fail "a probe that did not reach a conclusion is not a verdict")
+        ; Windtrap.test "127 is unverified, not holds" (fun () ->
             match
               Soldev_ticket.premise_verdict ~exit_code:127 ~missing_paths:[] ~output:""
             with
             | Soldev_ticket.Premise_unverified _ -> ()
-            | _ -> Alcotest.fail "a probe that cannot run must not read as holds")
-        ; Alcotest.test_case "a quoted pattern is not a path" `Quick (fun () ->
+            | _ -> Windtrap.fail "a probe that cannot run must not read as holds")
+        ; Windtrap.test "a quoted pattern is not a path" (fun () ->
             check_list_string
               "paths"
               [ "cli/lib/deploy/sol_cli_open.ml" ]
               (Soldev_ticket.named_paths "rg -q 'Traces' cli/lib/deploy/sol_cli_open.ml"))
-        ; Alcotest.test_case
-            "an existence-test operand is not a must-exist path"
-            `Quick
-            (fun () ->
-               check_list_string
-                 "paths"
-                 [ "cli/actual.ml" ]
-                 (Soldev_ticket.named_paths
-                    "test ! -f gone/missing.yml ; rg -q x cli/actual.ml"))
-        ; Alcotest.test_case
-            "a named path that does not exist is reported"
-            `Quick
-            (fun () ->
-               check_list_string
-                 "missing"
-                 [ "gone/moved.ml" ]
-                 (Soldev_ticket.missing_named_paths
-                    ~root:(Sys.getcwd ())
-                    "rg -q x gone/moved.ml"))
-        ; Alcotest.test_case
+        ; Windtrap.test "an existence-test operand is not a must-exist path" (fun () ->
+            check_list_string
+              "paths"
+              [ "cli/actual.ml" ]
+              (Soldev_ticket.named_paths
+                 "test ! -f gone/missing.yml ; rg -q x cli/actual.ml"))
+        ; Windtrap.test "a named path that does not exist is reported" (fun () ->
+            check_list_string
+              "missing"
+              [ "gone/moved.ml" ]
+              (Soldev_ticket.missing_named_paths
+                 ~root:(Sys.getcwd ())
+                 "rg -q x gone/moved.ml"))
+        ; Windtrap.test
             "a negated probe over a missing path is unverified, not stale"
-            `Quick
             (fun () ->
                match
                  Soldev_ticket.premise_verdict
@@ -664,32 +650,26 @@ let () =
                with
                | Soldev_ticket.Premise_unverified _ -> ()
                | Soldev_ticket.Premise_stale ->
-                 Alcotest.fail "a read that never happened must not read as stale"
-               | Soldev_ticket.Premise_holds -> Alcotest.fail "unexpected holds")
-        ; Alcotest.test_case
-            "a planted probe over a nonexistent path is unverified"
-            `Quick
-            (fun () ->
-               let verdict, _ =
-                 Soldev_merge.evaluate_premise
-                   ~echo:false
-                   "grep -q sol definitely/not/here.ml"
-               in
-               match verdict with
-               | Soldev_ticket.Premise_unverified reason ->
-                 if not (contains_substring ~needle:"definitely/not/here.ml" reason)
-                 then Alcotest.fail ("the missing path is not named: " ^ reason)
-               | _ -> Alcotest.fail "a probe whose input does not exist must not decide")
-        ; Alcotest.test_case
-            "a planted shell syntax error is unverified"
-            `Quick
-            (fun () ->
-               let verdict, _ = Soldev_merge.evaluate_premise ~echo:false "if" in
-               match verdict with
-               | Soldev_ticket.Premise_unverified reason ->
-                 if not (contains_substring ~needle:"2" reason)
-                 then Alcotest.fail ("the exit code is not named: " ^ reason)
-               | _ -> Alcotest.fail "a probe that never ran must not be a verdict")
-        ] )
+                 Windtrap.fail "a read that never happened must not read as stale"
+               | Soldev_ticket.Premise_holds -> Windtrap.fail "unexpected holds")
+        ; Windtrap.test "a planted probe over a nonexistent path is unverified" (fun () ->
+            let verdict, _ =
+              Soldev_merge.evaluate_premise
+                ~echo:false
+                "grep -q sol definitely/not/here.ml"
+            in
+            match verdict with
+            | Soldev_ticket.Premise_unverified reason ->
+              if not (contains_substring ~needle:"definitely/not/here.ml" reason)
+              then Windtrap.fail ("the missing path is not named: " ^ reason)
+            | _ -> Windtrap.fail "a probe whose input does not exist must not decide")
+        ; Windtrap.test "a planted shell syntax error is unverified" (fun () ->
+            let verdict, _ = Soldev_merge.evaluate_premise ~echo:false "if" in
+            match verdict with
+            | Soldev_ticket.Premise_unverified reason ->
+              if not (contains_substring ~needle:"2" reason)
+              then Windtrap.fail ("the exit code is not named: " ^ reason)
+            | _ -> Windtrap.fail "a probe that never ran must not be a verdict")
+        ]
     ]
 ;;

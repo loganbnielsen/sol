@@ -2,12 +2,12 @@ let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
   if not (contains haystack needle)
-  then Alcotest.failf "%s: expected to find %S in:\n%s" label needle haystack
+  then Windtrap.failf "%s: expected to find %S in:\n%s" label needle haystack
 ;;
 
 let assert_absent label haystack needle =
   if contains haystack needle
-  then Alcotest.failf "%s: did not expect to find %S in:\n%s" label needle haystack
+  then Windtrap.failf "%s: did not expect to find %S in:\n%s" label needle haystack
 ;;
 
 let namespace = "pluto-checkout"
@@ -20,8 +20,9 @@ let test_substrate_secret_carries_the_runtime_identity () =
       ()
     |> fun doc -> Sol_cli_yaml.render [ doc ]
   in
-  Alcotest.(check string)
-    "one runtime identity, defined once"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"one runtime identity, defined once"
     "sol-secrets"
     Sol_cli_manifest.runtime_secret_name;
   assert_contains
@@ -39,8 +40,9 @@ let test_substrate_secret_carries_the_runtime_identity () =
 ;;
 
 let test_workload_secrets_keep_their_own_convention () =
-  Alcotest.(check string)
-    "a workload's Secret is its name plus the suffix"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a workload's Secret is its name plus the suffix"
     "charge-svc-secrets"
     (Sol_cli_manifest.workload_secret_name "charge-svc");
   assert_contains
@@ -95,8 +97,9 @@ let test_migration_job_reads_the_runtime_identity () =
        | _ -> None)
     | _ -> None
   in
-  Alcotest.(check (option string))
-    "the Job's secretRef is the runtime Secret"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the Job's secretRef is the runtime Secret"
     (Some Sol_cli_manifest.runtime_secret_name)
     secret_ref
 ;;

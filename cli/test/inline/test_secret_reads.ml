@@ -133,9 +133,10 @@ let is_error = function
 
 let test_set_refuses_an_unreadable_secret () =
   with_fake_kubectl ~mode:"unreachable" (fun ~calls ~manifests:_ ->
-    Alcotest.(check bool) "set returns Error" true (is_error (set ()));
-    Alcotest.(check bool)
-      "nothing is applied over a Secret that could not be read"
+    Windtrap.equal Windtrap.bool ~msg:"set returns Error" true (is_error (set ()));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"nothing is applied over a Secret that could not be read"
       false
       (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
@@ -145,9 +146,14 @@ let test_delete_refuses_an_unreadable_secret () =
     let result =
       Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"LEAKED_KEY"
     in
-    Alcotest.(check bool) "delete returns Error, not \"deleted\"" true (is_error result);
-    Alcotest.(check bool)
-      "no patch was sent"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"delete returns Error, not \"deleted\""
+      true
+      (is_error result);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no patch was sent"
       false
       (Sol_cli_string.contains ~needle:"patch" (calls ())))
 ;;
@@ -155,8 +161,9 @@ let test_delete_refuses_an_unreadable_secret () =
 let test_list_refuses_an_unreadable_secret () =
   with_fake_kubectl ~mode:"unreachable" (fun ~calls:_ ~manifests:_ ->
     let result = Sol_cli_secret.list ~ctx ~workspace:"demo" ~namespaces in
-    Alcotest.(check bool)
-      "list returns Error, not an empty key list"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"list returns Error, not an empty key list"
       true
       (is_error result))
 ;;
@@ -170,43 +177,48 @@ let nothing_written calls =
 
 let test_later_read_failure_writes_nothing mode () =
   with_fake_kubectl ~mode (fun ~calls ~manifests:_ ->
-    Alcotest.(check bool) "set returns Error" true (is_error (set ()));
-    Alcotest.(check bool)
-      "set wrote and restarted nothing"
+    Windtrap.equal Windtrap.bool ~msg:"set returns Error" true (is_error (set ()));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"set wrote and restarted nothing"
       true
       (nothing_written (calls ()));
     let deleted =
       Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"EXISTING"
     in
-    Alcotest.(check bool) "delete returns Error" true (is_error deleted);
-    Alcotest.(check bool)
-      "delete patched and restarted nothing"
+    Windtrap.equal Windtrap.bool ~msg:"delete returns Error" true (is_error deleted);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"delete patched and restarted nothing"
       true
       (nothing_written (calls ())))
 ;;
 
 let test_set_creates_a_secret_that_is_absent () =
   with_fake_kubectl ~mode:"missing" (fun ~calls:_ ~manifests ->
-    Alcotest.(check bool) "set succeeds on NotFound" false (is_error (set ()));
-    Alcotest.(check bool)
-      "the new key is applied"
+    Windtrap.equal Windtrap.bool ~msg:"set succeeds on NotFound" false (is_error (set ()));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the new key is applied"
       true
       (Sol_cli_string.contains ~needle:"NEW_KEY" (manifests ())))
 ;;
 
 let test_set_keeps_the_existing_keys () =
   with_fake_kubectl ~mode:"present" (fun ~calls:_ ~manifests ->
-    Alcotest.(check bool) "set succeeds" false (is_error (set ()));
-    Alcotest.(check bool)
-      "the applied manifest still carries the key it read"
+    Windtrap.equal Windtrap.bool ~msg:"set succeeds" false (is_error (set ()));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the applied manifest still carries the key it read"
       true
       (Sol_cli_string.contains ~needle:"EXISTING" (manifests ())))
 ;;
 
 let test_absent_rollout_kind_is_an_empty_listing () =
   with_fake_kubectl ~mode:"no-rollouts" (fun ~calls:_ ~manifests:_ ->
-    Alcotest.(check bool)
-      "a cluster without the Rollouts CRD still rotates"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a cluster without the Rollouts CRD still rotates"
       false
       (is_error (set ())))
 ;;
@@ -223,43 +235,48 @@ let verify ?(secret_name = "charge-svc-secrets") ?(required_keys = [ "EXISTING" 
 let test_verify_passes_when_required_keys_are_present () =
   match verify "present" with
   | Ok () -> ()
-  | Error message -> Alcotest.fail ("expected verification to pass: " ^ message)
+  | Error message -> Windtrap.fail ("expected verification to pass: " ^ message)
 ;;
 
 let test_verify_names_the_missing_key () =
   match verify ~required_keys:[ "EXISTING"; "MISSING_KEY" ] "present" with
-  | Ok () -> Alcotest.fail "a missing key must fail verification"
+  | Ok () -> Windtrap.fail "a missing key must fail verification"
   | Error message ->
-    Alcotest.(check bool)
-      "names the workload Secret"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the workload Secret"
       true
       (Sol_cli_string.contains ~needle:"payments/charge-svc-secrets" message);
-    Alcotest.(check bool)
-      "names the missing key"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the missing key"
       true
       (Sol_cli_string.contains ~needle:"MISSING_KEY" message);
-    Alcotest.(check bool)
-      "does not name the key it found"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"does not name the key it found"
       false
       (Sol_cli_string.contains ~needle:"EXISTING" message)
 ;;
 
 let test_verify_rejects_a_blank_value () =
   match verify ~required_keys:[ "BLANK" ] "blank" with
-  | Ok () -> Alcotest.fail "an empty secret value must fail verification"
+  | Ok () -> Windtrap.fail "an empty secret value must fail verification"
   | Error message ->
-    Alcotest.(check bool)
-      "names the blank key"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the blank key"
       true
       (Sol_cli_string.contains ~needle:"BLANK" message)
 ;;
 
 let test_verify_rejects_an_absent_secret () =
   match verify "missing" with
-  | Ok () -> Alcotest.fail "an absent Secret must fail verification"
+  | Ok () -> Windtrap.fail "an absent Secret must fail verification"
   | Error message ->
-    Alcotest.(check bool)
-      "names the secret"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the secret"
       true
       (Sol_cli_string.contains ~needle:"charge-svc-secrets" message)
 ;;
@@ -270,14 +287,16 @@ let test_verify_runtime_secret_reads_the_substrate_secret () =
       Sol_cli_secret.verify_runtime_secret ~ctx ~namespace:"payments")
   with
   | Ok () ->
-    Alcotest.fail "the substrate Secret lacks POSTGRES_URL; verification must fail"
+    Windtrap.fail "the substrate Secret lacks POSTGRES_URL; verification must fail"
   | Error message ->
-    Alcotest.(check bool)
-      "names the runtime Secret"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the runtime Secret"
       true
       (Sol_cli_string.contains ~needle:"payments/sol-secrets" message);
-    Alcotest.(check bool)
-      "names the missing contract key"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the missing contract key"
       true
       (Sol_cli_string.contains ~needle:"POSTGRES_URL" message)
 ;;

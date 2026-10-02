@@ -1,4 +1,4 @@
-let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let refresh ~exit_code = Sol_cli_process.completed ~exit_code ~stdout:"" ~stderr:""
 
@@ -17,9 +17,9 @@ let test_the_exit_code_decides_the_drift_verdict () =
    | Sol_cli_environment_stage.Unknown reason ->
      check_bool "a failing refresh says why" true (contains "exited with code 1" reason)
    | Sol_cli_environment_stage.In_sync ->
-     Alcotest.fail "a failing refresh was reported as no drift"
+     Windtrap.fail "a failing refresh was reported as no drift"
    | Sol_cli_environment_stage.Detected ->
-     Alcotest.fail "a failing refresh was reported as drift");
+     Windtrap.fail "a failing refresh was reported as drift");
   match
     Sol_cli_environment_stage.drift_of_refresh
       (Error (Sol_cli_process.Spawn_failed "terraform: No such file or directory"))
@@ -30,9 +30,9 @@ let test_the_exit_code_decides_the_drift_verdict () =
       true
       (contains "No such file" reason)
   | Sol_cli_environment_stage.In_sync ->
-    Alcotest.fail "an unrunnable refresh was reported as no drift"
+    Windtrap.fail "an unrunnable refresh was reported as no drift"
   | Sol_cli_environment_stage.Detected ->
-    Alcotest.fail "an unrunnable refresh was reported as drift"
+    Windtrap.fail "an unrunnable refresh was reported as drift"
 ;;
 
 let test_rendering_keeps_the_three_verdicts_distinct () =

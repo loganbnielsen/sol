@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module E = Sol_cli_deploy_event
 module U = Sol_cli_observability_url
@@ -51,29 +51,29 @@ let test_message_mentions_domain_service_and_release () =
 let explicit_url_case backend () =
   match E.resolve_push_url ~backend ~explicit_url:(Some "http://custom:9999") with
   | E.Explicit url -> check_string "explicit url" "http://custom:9999" url
-  | E.Auto_detect -> Alcotest.fail "expected Explicit, got Auto_detect"
-  | E.Skip reason -> Alcotest.fail ("expected Explicit, got Skip " ^ reason)
+  | E.Auto_detect -> Windtrap.fail "expected Explicit, got Auto_detect"
+  | E.Skip reason -> Windtrap.fail ("expected Explicit, got Skip " ^ reason)
 ;;
 
 let test_local_without_override_auto_detects () =
   match E.resolve_push_url ~backend:U.Local ~explicit_url:None with
   | E.Auto_detect -> ()
-  | E.Explicit url -> Alcotest.fail ("expected Auto_detect, got Explicit " ^ url)
-  | E.Skip reason -> Alcotest.fail ("expected Auto_detect, got Skip " ^ reason)
+  | E.Explicit url -> Windtrap.fail ("expected Auto_detect, got Explicit " ^ url)
+  | E.Skip reason -> Windtrap.fail ("expected Auto_detect, got Skip " ^ reason)
 ;;
 
 let test_self_hosted_durable_without_override_auto_detects () =
   match E.resolve_push_url ~backend:U.Self_hosted_durable ~explicit_url:None with
   | E.Auto_detect -> ()
-  | E.Explicit url -> Alcotest.fail ("expected Auto_detect, got Explicit " ^ url)
-  | E.Skip reason -> Alcotest.fail ("expected Auto_detect, got Skip " ^ reason)
+  | E.Explicit url -> Windtrap.fail ("expected Auto_detect, got Explicit " ^ url)
+  | E.Skip reason -> Windtrap.fail ("expected Auto_detect, got Skip " ^ reason)
 ;;
 
 let test_external_without_override_skips () =
   match E.resolve_push_url ~backend:U.External ~explicit_url:None with
   | E.Skip reason -> check_bool "non-empty reason" true (String.length reason > 0)
-  | E.Explicit url -> Alcotest.fail ("expected Skip, got Explicit " ^ url)
-  | E.Auto_detect -> Alcotest.fail "expected Skip, got Auto_detect"
+  | E.Explicit url -> Windtrap.fail ("expected Skip, got Explicit " ^ url)
+  | E.Auto_detect -> Windtrap.fail "expected Skip, got Auto_detect"
 ;;
 
 let%test "fields: includes event=deploy" = test_fields_includes_event_deploy ()

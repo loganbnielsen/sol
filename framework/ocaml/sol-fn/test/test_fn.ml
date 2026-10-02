@@ -20,7 +20,7 @@ end
 
 module Should_not_run_fn = struct
   let trigger = Fn.Cron
-  let run () = Alcotest.fail "stopped cron should not run"
+  let run () = Windtrap.fail "stopped cron should not run"
 end
 
 let contains needle haystack =
@@ -49,15 +49,16 @@ let test_run_ok () =
   Eio_main.run
   @@ fun env ->
   let module M = Fn.Make (Ok_fn) in
-  Alcotest.(check bool) "returns Ok" true (M.run ~env () = Ok ())
+  Windtrap.equal Windtrap.bool ~msg:"returns Ok" true (M.run ~env () = Ok ())
 ;;
 
 let test_run_error () =
   Eio_main.run
   @@ fun env ->
   let module M = Fn.Make (Err_fn) in
-  Alcotest.(check bool)
-    "returns run error"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"returns run error"
     true
     (M.run ~env () = Error (`Run "something went wrong"))
 ;;
@@ -68,8 +69,8 @@ let test_run_exception () =
   let module M = Fn.Make (Exn_fn) in
   match M.run ~env () with
   | Error (`Run msg) ->
-    Alcotest.(check bool) "exception captured" true (contains "boom" msg)
-  | _ -> Alcotest.fail "expected run error"
+    Windtrap.equal Windtrap.bool ~msg:"exception captured" true (contains "boom" msg)
+  | _ -> Windtrap.fail "expected run error"
 ;;
 
 let test_external_stop_before_cron_run () =
@@ -78,7 +79,11 @@ let test_external_stop_before_cron_run () =
   let module M = Fn.Make (Should_not_run_fn) in
   let stop, stop_r = Eio.Promise.create () in
   Eio.Promise.resolve stop_r ();
-  Alcotest.(check bool) "returns signalled" true (M.run ~env ~stop () = Error `Signalled)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"returns signalled"
+    true
+    (M.run ~env ~stop () = Error `Signalled)
 ;;
 
 let test_metrics_ok_counter () =
@@ -97,13 +102,18 @@ let test_metrics_ok_counter () =
       ()
   in
   let renderer = Sol_obs.metrics_renderer obs in
-  Alcotest.(check bool) "returns Ok" true (M.run ~env ~ot:obs () = Ok ());
+  Windtrap.equal Windtrap.bool ~msg:"returns Ok" true (M.run ~env ~ot:obs () = Ok ());
   let output = renderer () in
-  Alcotest.(check bool)
-    "counter family present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"counter family present"
     true
     (contains "sol_fn_invocations_total" output);
-  Alcotest.(check bool) "status=ok label present" true (contains {|status="ok"|} output)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"status=ok label present"
+    true
+    (contains {|status="ok"|} output)
 ;;
 
 let test_metrics_error_counter () =
@@ -124,8 +134,9 @@ let test_metrics_error_counter () =
   let renderer = Sol_obs.metrics_renderer obs in
   ignore (M.run ~env ~ot:obs ());
   let output = renderer () in
-  Alcotest.(check bool)
-    "status=error label present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"status=error label present"
     true
     (contains {|status="error"|} output)
 ;;
@@ -146,10 +157,11 @@ let test_metrics_duration () =
       ()
   in
   let renderer = Sol_obs.metrics_renderer obs in
-  Alcotest.(check bool) "returns Ok" true (M.run ~env ~ot:obs () = Ok ());
+  Windtrap.equal Windtrap.bool ~msg:"returns Ok" true (M.run ~env ~ot:obs () = Ok ());
   let output = renderer () in
-  Alcotest.(check bool)
-    "duration histogram present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"duration histogram present"
     true
     (contains "sol_fn_duration_seconds" output)
 ;;
@@ -158,8 +170,9 @@ let test_push_error_no_raise () =
   Eio_main.run
   @@ fun env ->
   let module M = Fn.Make (Ok_fn) in
-  Alcotest.(check bool)
-    "returns Ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"returns Ok"
     true
     (M.run ~env ~pushgateway_url:"http://127.0.0.1:1" () = Ok ())
 ;;
@@ -186,7 +199,7 @@ let test_push_uses_env_url_and_workload_job () =
   let port =
     match Eio.Net.listening_addr socket with
     | `Tcp (_, p) -> p
-    | _ -> Alcotest.fail "no port"
+    | _ -> Windtrap.fail "no port"
   in
   let request_line, request_line_r = Eio.Promise.create () in
   Eio.Fiber.fork_daemon ~sw (fun () ->
@@ -200,12 +213,13 @@ let test_push_uses_env_url_and_workload_job () =
   with_env "PUSHGATEWAY_URL" (Printf.sprintf "http://127.0.0.1:%d" port) (fun () ->
     with_env "SOL_PUSHGATEWAY_JOB" "myapp-billing.invoice-fn" (fun () ->
       let module M = Fn.Make (Ok_fn) in
-      Alcotest.(check bool) "run returns Ok" true (M.run ~env () = Ok ())));
+      Windtrap.equal Windtrap.bool ~msg:"run returns Ok" true (M.run ~env () = Ok ())));
   let line =
     Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await request_line)
   in
-  Alcotest.(check bool)
-    (Printf.sprintf "pushed to the workload's own group (%S)" line)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(Printf.sprintf "pushed to the workload's own group (%S)" line)
     true
     (contains "/metrics/job/myapp-billing.invoice-fn" line)
 ;;
@@ -213,7 +227,7 @@ let test_push_uses_env_url_and_workload_job () =
 let test_lambda_trigger_requires_runtime_api () =
   match Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" with
   | Some _ ->
-    Alcotest.fail
+    Windtrap.fail
       "AWS_LAMBDA_RUNTIME_API is set, so this case cannot establish that a Lambda \
        trigger fails closed without it; unset the variable for this run"
   | None ->
@@ -222,42 +236,42 @@ let test_lambda_trigger_requires_runtime_api () =
     let module M = Fn.Make (Lambda_fn) in
     (match M.run ~env () with
      | Error (`Config msg) ->
-       Alcotest.(check bool)
-         "reports missing runtime api"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"reports missing runtime api"
          true
          (contains "AWS_LAMBDA_RUNTIME_API is not set" msg)
-     | _ -> Alcotest.fail "expected config error")
+     | _ -> Windtrap.fail "expected config error")
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "sol-fn"
-    [ ( "lifecycle"
-      , [ Alcotest.test_case "run_ok" `Quick test_run_ok
-        ; Alcotest.test_case "run_error" `Quick test_run_error
-        ; Alcotest.test_case "run_exception" `Quick test_run_exception
-        ; Alcotest.test_case
-            "external stop before cron run"
-            `Quick
-            test_external_stop_before_cron_run
-        ] )
-    ; ( "metrics"
-      , [ Alcotest.test_case "metrics_ok_counter" `Quick test_metrics_ok_counter
-        ; Alcotest.test_case "metrics_error_counter" `Quick test_metrics_error_counter
-        ; Alcotest.test_case "metrics_duration" `Quick test_metrics_duration
-        ] )
-    ; ( "push"
-      , [ Alcotest.test_case "push_error_no_raise" `Quick test_push_error_no_raise
-        ; Alcotest.test_case
+    [ Windtrap.group
+        "lifecycle"
+        [ Windtrap.test "run_ok" test_run_ok
+        ; Windtrap.test "run_error" test_run_error
+        ; Windtrap.test "run_exception" test_run_exception
+        ; Windtrap.test "external stop before cron run" test_external_stop_before_cron_run
+        ]
+    ; Windtrap.group
+        "metrics"
+        [ Windtrap.test "metrics_ok_counter" test_metrics_ok_counter
+        ; Windtrap.test "metrics_error_counter" test_metrics_error_counter
+        ; Windtrap.test "metrics_duration" test_metrics_duration
+        ]
+    ; Windtrap.group
+        "push"
+        [ Windtrap.test "push_error_no_raise" test_push_error_no_raise
+        ; Windtrap.test
             "push uses PUSHGATEWAY_URL and SOL_PUSHGATEWAY_JOB"
-            `Quick
             test_push_uses_env_url_and_workload_job
-        ] )
-    ; ( "lambda"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "lambda"
+        [ Windtrap.test
             "requires AWS_LAMBDA_RUNTIME_API"
-            `Quick
             test_lambda_trigger_requires_runtime_api
-        ] )
+        ]
     ]
 ;;

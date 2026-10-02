@@ -44,8 +44,9 @@ let test_disposition_restored_after_the_switch_ends () =
       let _promise, resolver = Eio.Promise.create () in
       Sol_runtime.install_signal_handler ~sw resolver));
   let now = Sys.signal Sys.sigterm Sys.Signal_default in
-  Alcotest.(check bool)
-    "SIGTERM is back to the default disposition"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"SIGTERM is back to the default disposition"
     true
     (now = Sys.Signal_default)
 ;;
@@ -95,10 +96,10 @@ let test_concurrent_registration_restores_disposition () =
   match Unix.waitpid [] pid with
   | _, Unix.WEXITED 0 -> ()
   | _, Unix.WEXITED n ->
-    Alcotest.failf
+    Windtrap.failf
       "child exited %d; a SIGTERM handler was left installed after both runtimes closed"
       n
-  | _, (Unix.WSIGNALED _ | Unix.WSTOPPED _) -> Alcotest.fail "child ended unexpectedly"
+  | _, (Unix.WSIGNALED _ | Unix.WSTOPPED _) -> Windtrap.fail "child ended unexpectedly"
 ;;
 
 let double_signal_child () =
@@ -127,8 +128,8 @@ let test_second_signal_terminates () =
   match Unix.waitpid [] pid with
   | _, Unix.WSIGNALED s when s = Sys.sigterm -> ()
   | _, Unix.WEXITED n ->
-    Alcotest.failf "child exited %d; the second SIGTERM was swallowed" n
-  | _, (Unix.WSIGNALED _ | Unix.WSTOPPED _) -> Alcotest.fail "child ended unexpectedly"
+    Windtrap.failf "child exited %d; the second SIGTERM was swallowed" n
+  | _, (Unix.WSIGNALED _ | Unix.WSTOPPED _) -> Windtrap.fail "child ended unexpectedly"
 ;;
 
 let () =
@@ -138,33 +139,22 @@ let () =
     | "--double-signal-child" -> double_signal_child ()
     | "--concurrent-registration-child" -> concurrent_registration_child ()
     | _ -> ());
-  Alcotest.run
+  Windtrap.run
     "sol_runtime"
-    [ ( "install_signal_handler"
-      , [ Alcotest.test_case
-            "SIGTERM resolves the stop promise"
-            `Quick
-            test_sigterm_resolves_promise
-        ; Alcotest.test_case
-            "SIGINT resolves the stop promise"
-            `Quick
-            test_sigint_resolves_promise
-        ; Alcotest.test_case
+    [ Windtrap.group
+        "install_signal_handler"
+        [ Windtrap.test "SIGTERM resolves the stop promise" test_sigterm_resolves_promise
+        ; Windtrap.test "SIGINT resolves the stop promise" test_sigint_resolves_promise
+        ; Windtrap.test
             "one signal reaches every registration"
-            `Quick
             test_one_signal_reaches_every_registration
-        ; Alcotest.test_case
+        ; Windtrap.test
             "disposition restored after the switch ends"
-            `Quick
             test_disposition_restored_after_the_switch_ends
-        ; Alcotest.test_case
+        ; Windtrap.test
             "concurrent registration restores the original disposition (BUG-074)"
-            `Quick
             test_concurrent_registration_restores_disposition
-        ; Alcotest.test_case
-            "a second signal terminates"
-            `Quick
-            test_second_signal_terminates
-        ] )
+        ; Windtrap.test "a second signal terminates" test_second_signal_terminates
+        ]
     ]
 ;;

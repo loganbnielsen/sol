@@ -1,6 +1,6 @@
 let unwrap = function
   | Ok value -> value
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let test_bounded_command_bytes () =
@@ -68,25 +68,27 @@ let test_bounded_command_bytes () =
        let run args =
          match run_result args with
          | Ok output -> output
-         | Error error -> Alcotest.fail (Sol_cli_process.error_to_string error)
+         | Error error -> Windtrap.fail (Sol_cli_process.error_to_string error)
        in
        let check = run [ "check" ] in
-       Alcotest.(check string) "check stdout" "sol check: ok\n" check.stdout;
-       Alcotest.(check string) "check stderr" "" check.stderr;
+       Windtrap.equal Windtrap.string ~msg:"check stdout" "sol check: ok\n" check.stdout;
+       Windtrap.equal Windtrap.string ~msg:"check stderr" "" check.stderr;
        let alert = run [ "alert"; "test"; "--target"; "prod/aws/us-east-1" ] in
-       Alcotest.(check string)
-         "alert stdout"
+       Windtrap.equal
+         Windtrap.string
+         ~msg:"alert stdout"
          "Sent a synthetic alert through http://127.0.0.1:9093/api/v2/alerts.\n\
           Alertmanager accepted the synthetic alert.\n\n\
           This proves the route is configured and reachable. Confirm the named owner \
           received and acknowledged it: that delivered-and-acknowledged result is the \
           HARDEN-002 evidence, not this command's exit status.\n"
          alert.stdout;
-       Alcotest.(check string) "alert stderr" "" alert.stderr;
+       Windtrap.equal Windtrap.string ~msg:"alert stderr" "" alert.stderr;
        let assets = run [ "assets" ] in
-       Alcotest.(check string) "assets stderr" "" assets.stderr;
-       Alcotest.(check bool)
-         "assets reports every check present"
+       Windtrap.equal Windtrap.string ~msg:"assets stderr" "" assets.stderr;
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"assets reports every check present"
          true
          (String.ends_with ~suffix:"\nall assets present\n" assets.stdout);
        unwrap
@@ -94,16 +96,17 @@ let test_bounded_command_bytes () =
        Unix.chmod curl 0o755;
        match run_result [ "alert"; "test"; "--target"; "prod/aws/us-east-1" ] with
        | Error (Non_zero failure) ->
-         Alcotest.(check int) "rejected alert exit" 1 failure.exit_code;
-         Alcotest.(check string) "rejected alert stdout" "" failure.stdout;
-         Alcotest.(check string)
-           "rejected alert stderr"
+         Windtrap.equal Windtrap.int ~msg:"rejected alert exit" 1 failure.exit_code;
+         Windtrap.equal Windtrap.string ~msg:"rejected alert stdout" "" failure.stdout;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"rejected alert stderr"
            "error: Alertmanager rejected the synthetic alert (curl exit 7).\n\
             synthetic-failure\n\
             Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
             svc/prometheus-alertmanager 9093:9093`.\n"
            failure.stderr
-       | _ -> Alcotest.fail "rejected alert must fail")
+       | _ -> Windtrap.fail "rejected alert must fail")
 ;;
 
 let%test "command bytes: check, alert and assets" = test_bounded_command_bytes ()

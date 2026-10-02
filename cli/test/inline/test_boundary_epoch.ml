@@ -16,9 +16,10 @@ let test_the_boundary_is_read_while_the_lease_is_held () =
   in
   (match result with
    | Ok () -> ()
-   | Error message -> Alcotest.failf "the epoch must run: %s" message);
-  Alcotest.(check (option string))
-    "the release inherits the boundary that is current once the lease is held"
+   | Error message -> Windtrap.failf "the epoch must run: %s" message);
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the release inherits the boundary that is current once the lease is held"
     (Some "new")
     !applied
 ;;
@@ -27,8 +28,9 @@ let test_a_boundary_read_before_the_lease_would_see_the_stale_one () =
   let boundary = ref "old" in
   let stale = !boundary in
   boundary := "new";
-  Alcotest.(check bool)
-    "reading the pointer before acquiring the lease yields the stale boundary"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"reading the pointer before acquiring the lease yields the stale boundary"
     false
     (String.equal stale !boundary)
 ;;
@@ -47,13 +49,14 @@ let test_an_unreadable_boundary_refuses_before_applying () =
       }
   in
   (match result with
-   | Ok () -> Alcotest.fail "an unreadable boundary must refuse"
+   | Ok () -> Windtrap.fail "an unreadable boundary must refuse"
    | Error message ->
-     Alcotest.(check string)
-       "the reason is carried"
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"the reason is carried"
        "the current workspace boundary could not be read"
        message);
-  Alcotest.(check bool) "nothing was applied" false !applied
+  Windtrap.equal Windtrap.bool ~msg:"nothing was applied" false !applied
 ;;
 
 let%test "one boundary epoch per mutation: the boundary is read while the lease is held" =

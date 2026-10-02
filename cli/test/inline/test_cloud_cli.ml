@@ -8,7 +8,7 @@ let reason = function
 ;;
 
 let check_reason label expected actual =
-  Alcotest.(check string) label (reason expected) (reason actual)
+  Windtrap.equal Windtrap.string ~msg:label (reason expected) (reason actual)
 ;;
 
 let test_gcloud () =
@@ -51,20 +51,23 @@ let test_gcloud () =
 ;;
 
 let test_aws () =
-  Alcotest.(check (option string))
-    "the service code"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the service code"
     (Some "DBSnapshotNotFound")
     (Sol_cli_aws.error_code
        "An error occurred (DBSnapshotNotFound) when calling the DescribeDBSnapshots \
         operation: DBSnapshot sol-final not found.");
-  Alcotest.(check (option string))
-    "a dotted code"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a dotted code"
     (Some "InvalidDBInstanceId.NotFound")
     (Sol_cli_aws.error_code
        "An error occurred (InvalidDBInstanceId.NotFound) when calling the \
         DescribeDBInstances operation: ...");
-  Alcotest.(check (option string))
-    "no code in a client-side failure"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no code in a client-side failure"
     None
     (Sol_cli_aws.error_code "Unable to locate credentials. You can configure credentials")
 ;;

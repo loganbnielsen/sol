@@ -1,6 +1,6 @@
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module R = Sol_cli_run_log
 

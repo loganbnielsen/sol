@@ -1,19 +1,19 @@
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module L = Sol_cli_loki
 
 let test_split_body_and_status_normal () =
   let body, code = L.split_body_and_status "{\"a\":1}\n200" in
   check_string "body" "{\"a\":1}" body;
-  Alcotest.(check (option int)) "code" (Some 200) code
+  Windtrap.equal (Windtrap.option Windtrap.int) ~msg:"code" (Some 200) code
 ;;
 
 let test_split_body_and_status_no_newline () =
   let body, code = L.split_body_and_status "no newline here" in
   check_string "whole string is body" "no newline here" body;
-  Alcotest.(check (option int)) "no code" None code
+  Windtrap.equal (Windtrap.option Windtrap.int) ~msg:"no code" None code
 ;;
 
 let success_body =
@@ -38,33 +38,33 @@ let test_parse_success_orders_oldest_first () =
   | Ok [ a; b ] ->
     check_string "oldest first" "first" a.text;
     check_string "then newest" "second" b.text
-  | Ok _ -> Alcotest.fail "expected exactly two lines"
-  | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected exactly two lines"
+  | Error e -> Windtrap.fail ("expected Ok, got Error " ^ e)
 ;;
 
 let test_parse_empty_result_is_ok_empty () =
   match L.parse_query_range_body empty_body with
   | Ok [] -> ()
-  | Ok _ -> Alcotest.fail "expected an empty list"
-  | Error e -> Alcotest.fail ("expected Ok [], got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected an empty list"
+  | Error e -> Windtrap.fail ("expected Ok [], got Error " ^ e)
 ;;
 
 let test_parse_error_status_is_error () =
   match L.parse_query_range_body error_body with
-  | Ok _ -> Alcotest.fail "expected Error for status=error"
+  | Ok _ -> Windtrap.fail "expected Error for status=error"
   | Error _ -> ()
 ;;
 
 let test_parse_malformed_json_is_error () =
   match L.parse_query_range_body "not json at all {" with
-  | Ok _ -> Alcotest.fail "expected Error for malformed JSON"
+  | Ok _ -> Windtrap.fail "expected Error for malformed JSON"
   | Error _ -> ()
 ;;
 
 let test_classify_timeout () =
   match L.classify_process_error (Sol_cli_process.Timeout 5.0) with
   | L.Timeout -> ()
-  | _ -> Alcotest.fail "expected Timeout"
+  | _ -> Windtrap.fail "expected Timeout"
 ;;
 
 let test_classify_curl_timeout_exit_code () =
@@ -73,7 +73,7 @@ let test_classify_curl_timeout_exit_code () =
       (Sol_cli_process.Non_zero { exit_code = 28; stdout = ""; stderr = "" })
   with
   | L.Timeout -> ()
-  | _ -> Alcotest.fail "expected Timeout for curl exit 28"
+  | _ -> Windtrap.fail "expected Timeout for curl exit 28"
 ;;
 
 let test_classify_connection_failed () =
@@ -82,7 +82,7 @@ let test_classify_connection_failed () =
       (Sol_cli_process.Non_zero { exit_code = 7; stdout = ""; stderr = "" })
   with
   | L.Connection_failed -> ()
-  | _ -> Alcotest.fail "expected Connection_failed for curl exit 7"
+  | _ -> Windtrap.fail "expected Connection_failed for curl exit 7"
 ;;
 
 let test_classify_other () =
@@ -92,7 +92,7 @@ let test_classify_other () =
   with
   | L.Other msg ->
     check_int "message mentions exit code" 1 (if String.length msg > 0 then 1 else 0)
-  | _ -> Alcotest.fail "expected Other"
+  | _ -> Windtrap.fail "expected Other"
 ;;
 
 let test_query_range_argv_contains_logql_labels () =
@@ -166,7 +166,7 @@ let test_query_range_argv_config_adds_config_path_not_secret () =
       "secret absent from argv"
       0
       (if List.mem "tenant-1:s3cr3t" argv then 1 else 0)
-  | None -> Alcotest.fail "expected --config <path> in argv"
+  | None -> Windtrap.fail "expected --config <path> in argv"
 ;;
 
 let test_query_range_argv_logql_carries_exact_selector () =
@@ -199,8 +199,8 @@ let test_resolve_credentials_neither_set_is_ok_none () =
       ~env_password:None
   with
   | Ok None -> ()
-  | Ok (Some _) -> Alcotest.fail "expected Ok None"
-  | Error e -> Alcotest.fail ("expected Ok None, got Error " ^ e)
+  | Ok (Some _) -> Windtrap.fail "expected Ok None"
+  | Error e -> Windtrap.fail ("expected Ok None, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_empty_values_are_unset () =
@@ -212,8 +212,8 @@ let test_resolve_credentials_empty_values_are_unset () =
       ~env_password:None
   with
   | Ok None -> ()
-  | Ok (Some _) -> Alcotest.fail "expected empty values to behave as unset"
-  | Error e -> Alcotest.fail ("expected Ok None, got Error " ^ e)
+  | Ok (Some _) -> Windtrap.fail "expected empty values to behave as unset"
+  | Error e -> Windtrap.fail ("expected Ok None, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_flags_only () =
@@ -225,8 +225,8 @@ let test_resolve_credentials_flags_only () =
       ~env_password:None
   with
   | Ok (Some { L.username = "flag-user"; password = "flag-pass" }) -> ()
-  | Ok _ -> Alcotest.fail "expected flag-user/flag-pass"
-  | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected flag-user/flag-pass"
+  | Error e -> Windtrap.fail ("expected Ok, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_env_only () =
@@ -238,8 +238,8 @@ let test_resolve_credentials_env_only () =
       ~env_password:(Some "env-pass")
   with
   | Ok (Some { L.username = "env-user"; password = "env-pass" }) -> ()
-  | Ok _ -> Alcotest.fail "expected env-user/env-pass"
-  | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected env-user/env-pass"
+  | Error e -> Windtrap.fail ("expected Ok, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_flag_wins_over_env () =
@@ -251,8 +251,8 @@ let test_resolve_credentials_flag_wins_over_env () =
       ~env_password:(Some "env-pass")
   with
   | Ok (Some { L.username = "flag-user"; password = "flag-pass" }) -> ()
-  | Ok _ -> Alcotest.fail "expected flags to win over env"
-  | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected flags to win over env"
+  | Error e -> Windtrap.fail ("expected Ok, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_flag_username_wins_env_password_fills_in () =
@@ -264,8 +264,8 @@ let test_resolve_credentials_flag_username_wins_env_password_fills_in () =
       ~env_password:(Some "env-pass")
   with
   | Ok (Some { L.username = "flag-user"; password = "env-pass" }) -> ()
-  | Ok _ -> Alcotest.fail "expected flag-user/env-pass"
-  | Error e -> Alcotest.fail ("expected Ok, got Error " ^ e)
+  | Ok _ -> Windtrap.fail "expected flag-user/env-pass"
+  | Error e -> Windtrap.fail ("expected Ok, got Error " ^ e)
 ;;
 
 let test_resolve_credentials_username_without_password_is_error () =
@@ -277,7 +277,7 @@ let test_resolve_credentials_username_without_password_is_error () =
       ~env_password:None
   with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected Error for username set without password"
+  | Ok _ -> Windtrap.fail "expected Error for username set without password"
 ;;
 
 let test_resolve_credentials_password_without_username_is_error () =
@@ -289,7 +289,7 @@ let test_resolve_credentials_password_without_username_is_error () =
       ~env_password:(Some "env-pass")
   with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected Error for password set without username"
+  | Ok _ -> Windtrap.fail "expected Error for password set without username"
 ;;
 
 let%test "split_body_and_status: normal" = test_split_body_and_status_normal ()

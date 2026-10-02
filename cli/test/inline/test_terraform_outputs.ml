@@ -3,7 +3,7 @@ module O = Sol_cli_terraform_outputs
 let shown json =
   match O.displayable json with
   | Ok outputs -> List.map O.line outputs
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_selection () =
@@ -16,8 +16,9 @@ let test_selection () =
         "missing":    {"sensitive": false, "value": null},
         "count":      {"sensitive": false, "value": 3} }|}
   in
-  Alcotest.(check (list string))
-    "only non-sensitive strings, string lists and nulls, in order"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"only non-sensitive strings, string lists and nulls, in order"
     [ Printf.sprintf "  %-28s  %s" "endpoint" "https://k8s.test"
     ; Printf.sprintf "  %-28s  [%s]" "subnets" "a, b"
     ; Printf.sprintf "  %-28s  (none)" "missing"
@@ -28,10 +29,10 @@ let test_selection () =
 let test_unreadable () =
   (match O.displayable "{not json" with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "malformed JSON was read");
+   | Ok _ -> Windtrap.fail "malformed JSON was read");
   match O.displayable "[]" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "a non-object read as no outputs"
+  | Ok _ -> Windtrap.fail "a non-object read as no outputs"
 ;;
 
 let%test "outputs: selection" = test_selection ()

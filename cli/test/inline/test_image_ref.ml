@@ -1,5 +1,5 @@
-let check_bool = Alcotest.(check bool)
-let check_str = Alcotest.(check string)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let digest hex = "registry.example.com/pluto/charge-svc@sha256:" ^ hex
 let valid_digest = digest (String.make 64 'a')
 
@@ -44,23 +44,23 @@ let resolve = Sol_cli_image_ref.resolve
 let test_resolve_named () =
   match resolve ~service_names:[ "a"; "b" ] [ Some "b", valid_digest ] with
   | Ok [ ("b", ref) ] -> check_str "resolved" valid_digest ref
-  | Ok _ -> Alcotest.fail "expected a single resolved reference"
-  | Error msg -> Alcotest.fail msg
+  | Ok _ -> Windtrap.fail "expected a single resolved reference"
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_resolve_bare_requires_one_service () =
   (match resolve ~service_names:[ "only" ] [ None, valid_digest ] with
    | Ok [ ("only", _) ] -> ()
-   | Ok _ -> Alcotest.fail "expected the only service to be resolved"
-   | Error msg -> Alcotest.fail msg);
+   | Ok _ -> Windtrap.fail "expected the only service to be resolved"
+   | Error msg -> Windtrap.fail msg);
   match resolve ~service_names:[ "a"; "b" ] [ None, valid_digest ] with
-  | Ok _ -> Alcotest.fail "an ambiguous bare reference must fail"
+  | Ok _ -> Windtrap.fail "an ambiguous bare reference must fail"
   | Error msg -> check_bool "names the ambiguity" true (String.length msg > 0)
 ;;
 
 let test_resolve_rejects_unknown_service () =
   match resolve ~service_names:[ "a" ] [ Some "typo", valid_digest ] with
-  | Ok _ -> Alcotest.fail "an unknown service must fail"
+  | Ok _ -> Windtrap.fail "an unknown service must fail"
   | Error msg -> check_bool "explains the failure" true (String.length msg > 0)
 ;;
 
@@ -68,13 +68,13 @@ let test_resolve_rejects_duplicates () =
   match
     resolve ~service_names:[ "a" ] [ Some "a", valid_digest; Some "a", valid_digest ]
   with
-  | Ok _ -> Alcotest.fail "a duplicate service must fail"
+  | Ok _ -> Windtrap.fail "a duplicate service must fail"
   | Error _ -> ()
 ;;
 
 let test_resolve_rejects_mutable_reference () =
   match resolve ~service_names:[ "a" ] [ Some "a", "repo:tag" ] with
-  | Ok _ -> Alcotest.fail "a mutable reference must fail"
+  | Ok _ -> Windtrap.fail "a mutable reference must fail"
   | Error _ -> ()
 ;;
 

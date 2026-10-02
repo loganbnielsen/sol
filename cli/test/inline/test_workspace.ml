@@ -1,5 +1,5 @@
-let check_bool = Alcotest.(check bool)
-let check_string = Alcotest.(check string)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let mkdir_p path = Result.get_ok (Sol_cli_fs.mkdir_p path)
 
 let write_file path content =
@@ -108,17 +108,17 @@ let test_nested_workspace_is_rejected () =
     write_file (Filename.concat outer "sol.yml") "";
     write_file (Filename.concat inner "sol.yml") "";
     (match Sol_cli_workspace.validate ~root:outer with
-     | Ok () -> Alcotest.fail "expected the nested boundary to be rejected"
+     | Ok () -> Windtrap.fail "expected the nested boundary to be rejected"
      | Error (Sol_cli_workspace.Nested_workspace { outer = o; inner = i }) ->
        check_string "outer boundary" outer o;
        check_string "inner boundary" inner i
      | Error Sol_cli_workspace.Not_in_workspace ->
-       Alcotest.fail "expected Nested_workspace, got Not_in_workspace");
+       Windtrap.fail "expected Nested_workspace, got Not_in_workspace");
     match Sol_cli_workspace.resolve_validated ~dir:outer with
-    | Ok _ -> Alcotest.fail "expected resolve_validated to reject nesting"
+    | Ok _ -> Windtrap.fail "expected resolve_validated to reject nesting"
     | Error (Sol_cli_workspace.Nested_workspace _) -> ()
     | Error Sol_cli_workspace.Not_in_workspace ->
-      Alcotest.fail "expected Nested_workspace, got Not_in_workspace")
+      Windtrap.fail "expected Nested_workspace, got Not_in_workspace")
 ;;
 
 let test_absence_fails_closed_with_guidance () =
@@ -130,7 +130,7 @@ let test_absence_fails_closed_with_guidance () =
       true
       (Sol_cli_workspace.find_root ~dir:tmpdir = None);
     match Sol_cli_workspace.resolve ~dir:tmpdir with
-    | Ok _ -> Alcotest.fail "expected absence to fail closed"
+    | Ok _ -> Windtrap.fail "expected absence to fail closed"
     | Error Sol_cli_workspace.Not_in_workspace ->
       let message =
         Sol_cli_workspace.workspace_error_to_string Sol_cli_workspace.Not_in_workspace
@@ -140,7 +140,7 @@ let test_absence_fails_closed_with_guidance () =
         true
         (Sol_cli_string.contains ~needle:"sol new workspace" message)
     | Error (Sol_cli_workspace.Nested_workspace _) ->
-      Alcotest.fail "expected Not_in_workspace")
+      Windtrap.fail "expected Not_in_workspace")
 ;;
 
 let test_sol_yml_must_be_a_file () =
@@ -157,7 +157,7 @@ let local_infra sol_yml =
     write_file (Filename.concat tmpdir "sol.yml") sol_yml;
     match Sol_cli_config.local_infra ~root:tmpdir with
     | Ok req -> req
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e))
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e))
 ;;
 
 let test_declared_resources_decide_infra () =
@@ -211,12 +211,17 @@ let test_enter_from_a_subdirectory () =
       (fun () ->
          Sys.chdir deep;
          let entered = Sol_cli_workspace.enter_cwd () |> Result.get_ok in
-         Alcotest.(check string) "returns the root" root entered.root;
-         Alcotest.(check string)
-           "names the workspace"
+         Windtrap.equal Windtrap.string ~msg:"returns the root" root entered.root;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"names the workspace"
            (Filename.basename root)
            entered.name;
-         Alcotest.(check string) "cwd is the root" root (Unix.realpath (Sys.getcwd ()))))
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"cwd is the root"
+           root
+           (Unix.realpath (Sys.getcwd ()))))
 ;;
 
 let test_symlinked_checkout_is_not_nested () =
@@ -231,7 +236,7 @@ let test_symlinked_checkout_is_not_nested () =
     Unix.symlink other (Filename.concat outer "vendor/sol");
     match Sol_cli_workspace.validate ~root:outer with
     | Ok () -> ()
-    | Error e -> Alcotest.fail (Sol_cli_workspace.workspace_error_to_string e))
+    | Error e -> Windtrap.fail (Sol_cli_workspace.workspace_error_to_string e))
 ;;
 
 let test_migration_defaults_from_a_subdirectory () =

@@ -18,42 +18,49 @@ let lease ?(holder = Sol_cli_boundary_lease.Deploy) ?(heartbeat_at = 1000.) () =
 ;;
 
 let test_holder_round_trip () =
-  Alcotest.(check bool)
-    "deploy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"deploy"
     true
     (Sol_cli_boundary_lease.holder_of_string "deploy" = Ok Sol_cli_boundary_lease.Deploy);
-  Alcotest.(check bool)
-    "rollback"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"rollback"
     true
     (Sol_cli_boundary_lease.holder_of_string "rollback"
      = Ok Sol_cli_boundary_lease.Rollback);
   assert (Result.is_error (Sol_cli_boundary_lease.holder_of_string "deployer"));
-  Alcotest.(check string)
-    "back to string"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"back to string"
     "deploy"
     (Sol_cli_boundary_lease.holder_to_string Sol_cli_boundary_lease.Deploy)
 ;;
 
 let test_is_stale_boundary () =
   let t = lease ~heartbeat_at:1000. () in
-  Alcotest.(check bool)
-    "exactly at ttl is live"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"exactly at ttl is live"
     false
     (Sol_cli_boundary_lease.is_stale ~now:1100. ~ttl:100. t);
-  Alcotest.(check bool)
-    "past ttl is stale"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"past ttl is stale"
     true
     (Sol_cli_boundary_lease.is_stale ~now:1100.1 ~ttl:100. t)
 ;;
 
 let test_deploy_decision () =
-  Alcotest.(check bool)
-    "free"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"free"
     true
     (Sol_cli_boundary_lease.deploy_decision ~now:1000. ~ttl:100. None
      = Sol_cli_boundary_lease.Proceed);
-  Alcotest.(check bool)
-    "stale is taken over"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stale is taken over"
     true
     (Sol_cli_boundary_lease.deploy_decision
        ~now:1000.
@@ -69,17 +76,19 @@ let test_deploy_decision () =
   | Sol_cli_boundary_lease.Refuse msg ->
     assert (contains (Str.regexp "myapp") msg);
     assert (contains (Str.regexp "deploy") msg)
-  | Proceed | Request_abort _ -> Alcotest.fail "expected deploy to refuse a live holder"
+  | Proceed | Request_abort _ -> Windtrap.fail "expected deploy to refuse a live holder"
 ;;
 
 let test_rollback_decision () =
-  Alcotest.(check bool)
-    "free"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"free"
     true
     (Sol_cli_boundary_lease.rollback_decision ~now:1000. ~ttl:100. None
      = Sol_cli_boundary_lease.Proceed);
-  Alcotest.(check bool)
-    "stale deploy is taken over"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stale deploy is taken over"
     true
     (Sol_cli_boundary_lease.rollback_decision
        ~now:1000.
@@ -94,7 +103,7 @@ let test_rollback_decision () =
    with
    | Sol_cli_boundary_lease.Request_abort msg ->
      assert (contains (Str.regexp "deploy") msg)
-   | Proceed | Refuse _ -> Alcotest.fail "expected rollback to request an abort");
+   | Proceed | Refuse _ -> Windtrap.fail "expected rollback to request an abort");
   match
     Sol_cli_boundary_lease.rollback_decision
       ~now:1000.
@@ -103,7 +112,7 @@ let test_rollback_decision () =
   with
   | Sol_cli_boundary_lease.Refuse msg -> assert (contains (Str.regexp "rollback") msg)
   | Proceed | Request_abort _ ->
-    Alcotest.fail "expected rollback to refuse a live rollback"
+    Windtrap.fail "expected rollback to refuse a live rollback"
 ;;
 
 let test_serialization_round_trip () =
@@ -121,21 +130,35 @@ let test_serialization_round_trip () =
     Yojson.Safe.from_string (Sol_cli_boundary_lease.to_configmap_json original)
   in
   match Sol_cli_boundary_lease.of_configmap_item json with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok (parsed, resource_version) ->
-    Alcotest.(check string) "boundary" original.boundary parsed.boundary;
-    Alcotest.(check bool) "holder" true (parsed.holder = original.holder);
-    Alcotest.(check string) "run_id" original.run_id parsed.run_id;
-    Alcotest.(check bool) "started_at" true (parsed.started_at = original.started_at);
-    Alcotest.(check bool) "heartbeat_at" true (parsed.heartbeat_at = original.heartbeat_at);
-    Alcotest.(check bool) "abort_requested" true parsed.abort_requested;
-    Alcotest.(check (option string))
-      "abort_reason"
+    Windtrap.equal Windtrap.string ~msg:"boundary" original.boundary parsed.boundary;
+    Windtrap.equal Windtrap.bool ~msg:"holder" true (parsed.holder = original.holder);
+    Windtrap.equal Windtrap.string ~msg:"run_id" original.run_id parsed.run_id;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"started_at"
+      true
+      (parsed.started_at = original.started_at);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"heartbeat_at"
+      true
+      (parsed.heartbeat_at = original.heartbeat_at);
+    Windtrap.equal Windtrap.bool ~msg:"abort_requested" true parsed.abort_requested;
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"abort_reason"
       original.abort_reason
       parsed.abort_reason;
-    Alcotest.(check string) "no resourceVersion in our own output" "" resource_version;
-    Alcotest.(check string)
-      "object name is sanitized"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"no resourceVersion in our own output"
+      ""
+      resource_version;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"object name is sanitized"
       "sol-boundary-lease-my-app"
       (Sol_cli_boundary_lease.configmap_name ~workspace:"My_App")
 ;;
@@ -150,12 +173,12 @@ let test_replace_carries_resource_version () =
   in
   (match Sol_cli_boundary_lease.of_configmap_item (json "42") with
    | Ok (_, resource_version) ->
-     Alcotest.(check string) "resourceVersion carried" "42" resource_version
-   | Error msg -> Alcotest.fail msg);
+     Windtrap.equal Windtrap.string ~msg:"resourceVersion carried" "42" resource_version
+   | Error msg -> Windtrap.fail msg);
   match Sol_cli_boundary_lease.of_configmap_item (json "") with
   | Ok (_, resource_version) ->
-    Alcotest.(check string) "an empty version is omitted" "" resource_version
-  | Error msg -> Alcotest.fail msg
+    Windtrap.equal Windtrap.string ~msg:"an empty version is omitted" "" resource_version
+  | Error msg -> Windtrap.fail msg
 ;;
 
 let test_parse_fails_closed () =

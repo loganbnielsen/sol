@@ -32,7 +32,6 @@ depends: [
   "yaml"
   "jose"
   "ptime"
-  "alcotest"
   "windtrap" {>= "0.1.0"}
   "ppx_windtrap" {>= "0.1.0"}
   "mirage-crypto-pk" {with-test}

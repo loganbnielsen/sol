@@ -76,8 +76,9 @@ let test_default_env_logs_and_counts_without_network () =
        in
        reqs 1;
        let rendered = Sol_obs.metrics_renderer obs () in
-       Alcotest.(check bool)
-         "rendered output mentions the registered counter"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"rendered output mentions the registered counter"
          true
          (contains rendered "requests_total"))
 ;;
@@ -108,8 +109,16 @@ let test_gauge_and_histogram_round_trip () =
        in
        latency 0.05;
        let rendered = Sol_obs.metrics_renderer obs () in
-       Alcotest.(check bool) "gauge present" true (contains rendered "queue_depth");
-       Alcotest.(check bool) "histogram present" true (contains rendered "op_seconds"))
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"gauge present"
+         true
+         (contains rendered "queue_depth");
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"histogram present"
+         true
+         (contains rendered "op_seconds"))
 ;;
 
 let test_loki_url_wires_loki_backend () =
@@ -132,8 +141,9 @@ let test_loki_url_wires_loki_backend () =
          in
          Sol_obs.log_info obs "pushed to loki";
          let body = Eio.Promise.await body_promise in
-         Alcotest.(check bool)
-           "push body mentions the log message"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"push body mentions the log message"
            true
            (contains body "pushed to loki")))
 ;;
@@ -182,13 +192,15 @@ let test_loki_url_keeps_a_stdout_copy () =
              Sol_obs.log_info obs "also on stdout";
              Sol_obs.counter obs ~name:"test_total" ~help:"h" ~label_names:[] 1)
          in
-         Alcotest.(check bool)
-           "the line is on stdout"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the line is on stdout"
            true
            (contains out "also on stdout");
-         Alcotest.(check bool) "metrics are not" false (contains out "METRIC");
-         Alcotest.(check bool)
-           "and still pushed to Loki"
+         Windtrap.equal Windtrap.bool ~msg:"metrics are not" false (contains out "METRIC");
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"and still pushed to Loki"
            true
            (contains (Eio.Promise.await body_promise) "also on stdout")))
 ;;
@@ -215,12 +227,14 @@ let test_flush_delivers_queued_lines () =
            capture_stdout (fun () -> Sol_obs.log_info obs "queued then flushed")
          in
          Sol_obs.flush obs;
-         Alcotest.(check bool)
-           "delivered by the time flush returns"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"delivered by the time flush returns"
            true
            (Eio.Promise.is_resolved body_promise);
-         Alcotest.(check bool)
-           "the line"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the line"
            true
            (contains (Eio.Promise.await body_promise) "queued then flushed")))
 ;;
@@ -246,8 +260,9 @@ let test_context_promoted_to_loki_stream_labels () =
          in
          Sol_obs.log_info obs "hi";
          let body = Eio.Promise.await body_promise in
-         Alcotest.(check bool)
-           "push body carries the team stream label"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"push body carries the team stream label"
            true
            (contains body "\"team\":\"payments\"")))
 ;;
@@ -272,7 +287,11 @@ let test_tempo_url_wires_tempo_backend () =
          in
          Sol_obs.with_span obs "op" (fun _sp -> ());
          let body = Eio.Promise.await body_promise in
-         Alcotest.(check bool) "OTLP push body is non-empty" true (String.length body > 0)))
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"OTLP push body is non-empty"
+           true
+           (String.length body > 0)))
 ;;
 
 let test_metrics_renderer_matches_backend_and_renderer () =
@@ -295,8 +314,9 @@ let test_metrics_renderer_matches_backend_and_renderer () =
        let reqs = Sol_obs.counter obs ~name:"acc_total" ~help:"h" ~label_names:[] in
        reqs 1;
        let _backend, renderer_from_pair = Sol_obs.backend_and_renderer obs in
-       Alcotest.(check string)
-         "same renderer output both ways"
+       Windtrap.equal
+         Windtrap.string
+         ~msg:"same renderer output both ways"
          (Sol_obs.metrics_renderer obs ())
          (renderer_from_pair ()))
 ;;
@@ -319,8 +339,9 @@ let test_with_context_does_not_mutate_original () =
            ()
        in
        let derived = Sol_obs.with_context obs [ "req", "r-1" ] in
-       Alcotest.(check bool)
-         "obs_eio handles are distinct values"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"obs_eio handles are distinct values"
          true
          (Sol_obs.obs_eio obs != Sol_obs.obs_eio derived))
 ;;
@@ -345,8 +366,9 @@ let test_current_trace_context_links_child_span () =
        let parent_ctx = Sol_obs.with_span obs "parent" Sol_obs.current_trace_context in
        Sol_obs.with_span obs ~parent:parent_ctx "child" (fun child_span ->
          let child_ctx = Sol_obs.current_trace_context child_span in
-         Alcotest.(check string)
-           "child inherits the parent's trace id"
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"child inherits the parent's trace id"
            (Sol_obs.trace_id_string parent_ctx)
            (Sol_obs.trace_id_string child_ctx)))
 ;;
@@ -370,9 +392,10 @@ let test_trace_id_string_is_32_hex_chars () =
        in
        let ctx = Sol_obs.with_span obs "op" Sol_obs.current_trace_context in
        let s = Sol_obs.trace_id_string ctx in
-       Alcotest.(check int) "32 lowercase hex characters" 32 (String.length s);
-       Alcotest.(check bool)
-         "every character is lowercase hex"
+       Windtrap.equal Windtrap.int ~msg:"32 lowercase hex characters" 32 (String.length s);
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"every character is lowercase hex"
          true
          (String.for_all
             (function
@@ -382,57 +405,45 @@ let test_trace_id_string_is_32_hex_chars () =
 ;;
 
 let () =
-  let open Alcotest in
+  let open Windtrap in
   run
     "sol_obs"
-    [ ( "defaults"
-      , [ test_case
+    [ Windtrap.group
+        "defaults"
+        [ test
             "logs and counts without any network backend"
-            `Quick
             test_default_env_logs_and_counts_without_network
-        ; test_case
-            "gauge and histogram round trip"
-            `Quick
-            test_gauge_and_histogram_round_trip
-        ] )
-    ; ( "env-driven backends"
-      , [ test_case
-            "LOKI_URL wires the Loki backend"
-            `Quick
-            test_loki_url_wires_loki_backend
-        ; test_case
+        ; test "gauge and histogram round trip" test_gauge_and_histogram_round_trip
+        ]
+    ; Windtrap.group
+        "env-driven backends"
+        [ test "LOKI_URL wires the Loki backend" test_loki_url_wires_loki_backend
+        ; test
             "LOKI_URL keeps a stdout copy of log lines"
-            `Quick
             test_loki_url_keeps_a_stdout_copy
-        ; test_case "flush delivers queued lines" `Quick test_flush_delivers_queued_lines
-        ; test_case
+        ; test "flush delivers queued lines" test_flush_delivers_queued_lines
+        ; test
             "?context is promoted to Loki stream labels"
-            `Quick
             test_context_promoted_to_loki_stream_labels
-        ; test_case
-            "TEMPO_URL wires the Tempo backend"
-            `Quick
-            test_tempo_url_wires_tempo_backend
-        ] )
-    ; ( "accessors"
-      , [ test_case
+        ; test "TEMPO_URL wires the Tempo backend" test_tempo_url_wires_tempo_backend
+        ]
+    ; Windtrap.group
+        "accessors"
+        [ test
             "metrics_renderer matches backend_and_renderer's renderer"
-            `Quick
             test_metrics_renderer_matches_backend_and_renderer
-        ; test_case
+        ; test
             "with_context derives without mutating the original"
-            `Quick
             test_with_context_does_not_mutate_original
-        ] )
-    ; ( "trace context"
-      , [ test_case
+        ]
+    ; Windtrap.group
+        "trace context"
+        [ test
             "current_trace_context links a child span to its parent"
-            `Quick
             test_current_trace_context_links_child_span
-        ; test_case
+        ; test
             "trace_id_string is 32 lowercase hex characters"
-            `Quick
             test_trace_id_string_is_32_hex_chars
-        ] )
+        ]
     ]
 ;;

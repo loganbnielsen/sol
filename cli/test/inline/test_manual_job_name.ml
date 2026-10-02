@@ -28,16 +28,19 @@ let test_shape_is_stable_for_given_inputs () =
       ~entropy:"seed"
   in
   let expected_prefix = "order-svc-manual-1790050573-" in
-  Alcotest.(check bool)
-    "prefix is <k8s_name>-manual-<seconds>-"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"prefix is <k8s_name>-manual-<seconds>-"
     true
     (String.starts_with ~prefix:expected_prefix name);
-  Alcotest.(check bool)
-    "and the tail is hex entropy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and the tail is hex entropy"
     true
     (all_lower_hex (String.sub name (String.length expected_prefix) 8));
-  Alcotest.(check string)
-    "the same inputs give the same name"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the same inputs give the same name"
     name
     (Sol_cli_manual_job_name.of_parts
        ~k8s_name:"order-svc"
@@ -53,8 +56,9 @@ let test_same_second_different_runs_do_not_collide () =
   let second =
     Sol_cli_manual_job_name.of_parts ~k8s_name:"order-svc" ~now:at ~entropy:"run-two"
   in
-  Alcotest.(check bool)
-    "two runs in the same second produce different names"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"two runs in the same second produce different names"
     true
     (not (String.equal first second))
 ;;
@@ -62,12 +66,21 @@ let test_same_second_different_runs_do_not_collide () =
 let test_mint_in_immediate_succession_differs () =
   let first = Sol_cli_manual_job_name.mint ~k8s_name:"order-svc" in
   let second = Sol_cli_manual_job_name.mint ~k8s_name:"order-svc" in
-  Alcotest.(check bool)
-    "two successive mint calls differ"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"two successive mint calls differ"
     true
     (not (String.equal first second));
-  Alcotest.(check bool) "and both are legal names" true (is_valid_k8s_name first);
-  Alcotest.(check bool) "and both are legal names" true (is_valid_k8s_name second)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and both are legal names"
+    true
+    (is_valid_k8s_name first);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and both are legal names"
+    true
+    (is_valid_k8s_name second)
 ;;
 
 let test_long_base_is_shortened_not_the_entropy () =
@@ -78,14 +91,24 @@ let test_long_base_is_shortened_not_the_entropy () =
   let second =
     Sol_cli_manual_job_name.of_parts ~k8s_name ~now:1790050573. ~entropy:"run-two"
   in
-  Alcotest.(check bool) "the name fits the label cap" true (String.length first <= 63);
-  Alcotest.(check bool)
-    "the base was shortened to make room"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the name fits the label cap"
+    true
+    (String.length first <= 63);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the base was shortened to make room"
     true
     (String.length (base_of first) < String.length k8s_name);
-  Alcotest.(check bool) "it is still a legal name" true (is_valid_k8s_name first);
-  Alcotest.(check bool)
-    "and the same-second collision is still prevented"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"it is still a legal name"
+    true
+    (is_valid_k8s_name first);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and the same-second collision is still prevented"
     true
     (not (String.equal first second))
 ;;
@@ -95,12 +118,17 @@ let test_shortened_base_does_not_end_in_a_hyphen () =
   let name =
     Sol_cli_manual_job_name.of_parts ~k8s_name ~now:1790050573. ~entropy:"seed"
   in
-  Alcotest.(check bool) "the name fits the cap" true (String.length name <= 63);
-  Alcotest.(check bool) "the name is legal" true (is_valid_k8s_name name);
+  Windtrap.equal Windtrap.bool ~msg:"the name fits the cap" true (String.length name <= 63);
+  Windtrap.equal Windtrap.bool ~msg:"the name is legal" true (is_valid_k8s_name name);
   let base = base_of name in
-  Alcotest.(check string) "the cut dropped the exposed hyphen" (String.make 35 'a') base;
-  Alcotest.(check bool)
-    "so the base does not end in a hyphen"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the cut dropped the exposed hyphen"
+    (String.make 35 'a')
+    base;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"so the base does not end in a hyphen"
     false
     (String.ends_with ~suffix:"-" base)
 ;;

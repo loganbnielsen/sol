@@ -1,48 +1,56 @@
 open Sol_cli_cluster_substrate
 
 let test_standard_and_fresh_targets_are_accepted () =
-  Alcotest.(check bool)
-    "standard is the profile's substrate"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"standard is the profile's substrate"
     true
     (Result.is_ok (acceptable Standard));
-  Alcotest.(check bool)
-    "a fresh target is what Sol provisions Standard into"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a fresh target is what Sol provisions Standard into"
     true
     (Result.is_ok (acceptable Absent))
 ;;
 
 let test_autopilot_is_refused_by_the_support_contract () =
   match acceptable Autopilot with
-  | Ok () -> Alcotest.fail "Autopilot was accepted"
+  | Ok () -> Windtrap.fail "Autopilot was accepted"
   | Error message ->
-    Alcotest.(check bool)
-      "names Autopilot"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names Autopilot"
       true
       (Sol_cli_string.contains ~needle:"Autopilot" message);
-    Alcotest.(check bool)
-      "names GKE Standard as what to use"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names GKE Standard as what to use"
       true
       (Sol_cli_string.contains ~needle:"GKE Standard" message);
-    Alcotest.(check bool)
-      "gives the profile's reason"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"gives the profile's reason"
       true
       (Sol_cli_string.contains ~needle:"SYS_RESOURCE" message);
-    Alcotest.(check bool)
-      "and does not make one component the contract"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and does not make one component the contract"
       false
       (Sol_cli_string.contains ~needle:"helm_release" message)
 ;;
 
 let test_an_unreadable_cluster_is_never_absence () =
   (match acceptable (Unknown "the provider said nothing") with
-   | Ok () -> Alcotest.fail "an unreadable cluster was accepted"
+   | Ok () -> Windtrap.fail "an unreadable cluster was accepted"
    | Error message ->
-     Alcotest.(check bool)
-       "the refusal says why it could not tell"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the refusal says why it could not tell"
        true
        (Sol_cli_string.contains ~needle:"could not establish" message));
-  Alcotest.(check bool)
-    "and it is not read as a fresh target"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and it is not read as a fresh target"
     false
     (Result.is_ok (acceptable (Unknown "timeout")))
 ;;
@@ -50,8 +58,9 @@ let test_an_unreadable_cluster_is_never_absence () =
 let test_absence_wording () =
   List.iter
     (fun wording ->
-       Alcotest.(check bool)
-         (Printf.sprintf "%S reads as absent" wording)
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(Printf.sprintf "%S reads as absent" wording)
          true
          (Sol_cli_gcloud.says_not_found wording))
     [ "NOT_FOUND: Resource was not found"
@@ -62,8 +71,9 @@ let test_absence_wording () =
     ];
   List.iter
     (fun wording ->
-       Alcotest.(check bool)
-         (Printf.sprintf "%S is not absence" wording)
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(Printf.sprintf "%S is not absence" wording)
          false
          (Sol_cli_gcloud.says_not_found wording))
     [ "PERMISSION_DENIED: caller does not have permission"
@@ -78,16 +88,16 @@ let test_absence_wording () =
 let test_the_describe_field_is_read () =
   let check description json expected =
     match Sol_cli_gcp_cluster.autopilot_of_describe_json json with
-    | Ok value -> Alcotest.(check bool) description expected value
-    | Error message -> Alcotest.failf "%s: %s" description message
+    | Ok value -> Windtrap.equal Windtrap.bool ~msg:description expected value
+    | Error message -> Windtrap.failf "%s: %s" description message
   in
   check "autopilot on" {|{"autopilot":{"enabled":true}}|} true;
   check "autopilot off" {|{"autopilot":{"enabled":false}}|} false;
   (match Sol_cli_gcp_cluster.autopilot_of_describe_json {|{"name":"c"}|} with
-   | Ok _ -> Alcotest.fail "a describe with no autopilot field was read as a mode"
+   | Ok _ -> Windtrap.fail "a describe with no autopilot field was read as a mode"
    | Error _ -> ());
   match Sol_cli_gcp_cluster.autopilot_of_describe_json "not json" with
-  | Ok _ -> Alcotest.fail "an unparseable describe was read as a mode"
+  | Ok _ -> Windtrap.fail "an unparseable describe was read as a mode"
   | Error _ -> ()
 ;;
 

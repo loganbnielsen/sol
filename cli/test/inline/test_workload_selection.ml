@@ -11,7 +11,7 @@ let omit_charge (s : Sol_cli_manifest.service) = String.equal s.name "charge_svc
 let resolve scope services =
   match Sol_cli_workload_selection.resolve scope services with
   | Ok resolved -> resolved
-  | Error msg -> Alcotest.fail ("unexpected resolution error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected resolution error: " ^ msg)
 ;;
 
 let apply ?(is_omitted = omit_charge) scope =
@@ -25,48 +25,78 @@ let names (services : Sol_cli_manifest.service list) =
 
 let test_unit_scope_names_it_back_in () =
   let o = apply (Some "payments/charge_svc") in
-  Alcotest.(check (list string)) "it is deployed" [ "charge_svc" ] (names o.selected);
-  Alcotest.(check (list string))
-    "reported as included"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"it is deployed"
+    [ "charge_svc" ]
+    (names o.selected);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"reported as included"
     [ "charge_svc" ]
     (names o.included);
-  Alcotest.(check (list string)) "nothing dropped" [] (names o.excluded)
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing dropped"
+    []
+    (names o.excluded)
 ;;
 
 let test_domain_scope_excludes_it () =
   let o = apply (Some "payments") in
-  Alcotest.(check (list string))
-    "the rest of the domain still goes"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the rest of the domain still goes"
     [ "invoice_svc" ]
     (names o.selected);
-  Alcotest.(check (list string))
-    "reported as excluded"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"reported as excluded"
     [ "charge_svc" ]
     (names o.excluded);
-  Alcotest.(check (list string)) "not quietly re-included" [] (names o.included)
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"not quietly re-included"
+    []
+    (names o.included)
 ;;
 
 let test_whole_workspace_excludes_it () =
   let o = apply None in
-  Alcotest.(check (list string))
-    "the other units are unaffected"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the other units are unaffected"
     [ "checkout_svc"; "invoice_svc" ]
     (names o.selected);
-  Alcotest.(check (list string))
-    "reported as excluded"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"reported as excluded"
     [ "charge_svc" ]
     (names o.excluded);
-  Alcotest.(check (list string)) "not quietly re-included" [] (names o.included)
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"not quietly re-included"
+    []
+    (names o.included)
 ;;
 
 let test_untouched_when_nothing_is_omitted () =
   let o = apply ~is_omitted:(fun _ -> false) (Some "payments") in
-  Alcotest.(check (list string))
-    "the whole domain"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the whole domain"
     [ "charge_svc"; "invoice_svc" ]
     (names o.selected);
-  Alcotest.(check (list string)) "nothing excluded" [] (names o.excluded);
-  Alcotest.(check (list string)) "nothing specially included" [] (names o.included)
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing excluded"
+    []
+    (names o.excluded);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing specially included"
+    []
+    (names o.included)
 ;;
 
 let test_selected_and_excluded_partition_the_selection () =
@@ -76,15 +106,17 @@ let test_selected_and_excluded_partition_the_selection () =
        let o =
          Sol_cli_workload_selection.apply_omission ~is_omitted:omit_charge resolved
        in
-       Alcotest.(check (list string))
-         "every resolved unit is deployed or reported excluded, exactly once"
+       Windtrap.equal
+         (Windtrap.list Windtrap.string)
+         ~msg:"every resolved unit is deployed or reported excluded, exactly once"
          (names resolved.services)
          (names (o.selected @ o.excluded));
        let selected_names = names o.selected in
        names o.included
        |> List.iter (fun name ->
-         Alcotest.(check bool)
-           (Printf.sprintf "included %s is also selected" name)
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:(Printf.sprintf "included %s is also selected" name)
            true
            (List.mem name selected_names)))
     [ None; Some "payments"; Some "payments/charge_svc" ]
@@ -103,12 +135,14 @@ let test_the_predicate_sees_domain_and_name () =
     List.map (fun (s : Sol_cli_manifest.service) -> s.domain ^ "/" ^ s.name) services
     |> List.sort String.compare
   in
-  Alcotest.(check (list string))
-    "the payments one is excluded; the billing unit of the same name is not"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the payments one is excluded; the billing unit of the same name is not"
     [ "billing/invoice_svc"; "checkout/checkout_svc"; "payments/charge_svc" ]
     (ids o.selected);
-  Alcotest.(check (list string))
-    "reported as excluded"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"reported as excluded"
     [ "payments/invoice_svc" ]
     (ids o.excluded)
 ;;

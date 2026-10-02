@@ -1,6 +1,9 @@
-let check_bool = Alcotest.(check bool)
-let check_string = Alcotest.(check string)
-let check_strings = Alcotest.(check (list string))
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+
+let check_strings msg expected actual =
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
+;;
 
 let write_file path content =
   let rec mkdirs path =
@@ -28,7 +31,7 @@ let with_workspace files f =
 let facts_of root =
   match Sol_cli_workspace_model.load ~root with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
 let services_of facts = Sol_cli_workspace_model.services facts
@@ -46,7 +49,7 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
   let facts = facts_of root in
   match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
   | Error errors ->
-    Alcotest.fail
+    Windtrap.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
     (match plan.builds with
@@ -57,7 +60,7 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
          build.argv;
        check_string "in the workspace root" "" build.cwd
      | builds ->
-       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+       Windtrap.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
     (match plan.launches with
      | [ launch ] ->
        check_strings
@@ -67,7 +70,7 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
        check_string "artifact" "app/payments/charge_svc/bin/main.exe" launch.artifact;
        check_bool "declared OCaml" true (launch.language = Sol_cli_compat.Ocaml)
      | launches ->
-       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+       Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
 let typescript_unit =
@@ -95,7 +98,7 @@ let test_typescript_unit_builds_through_npm_and_runs_node () =
   let facts = facts_of root in
   match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
   | Error errors ->
-    Alcotest.fail
+    Windtrap.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
     (match plan.builds with
@@ -106,7 +109,7 @@ let test_typescript_unit_builds_through_npm_and_runs_node () =
          build.argv;
        check_string "in the npm project root" "app/demo_ts" build.cwd
      | builds ->
-       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+       Windtrap.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
     (match plan.launches with
      | [ launch ] ->
        check_strings
@@ -117,7 +120,7 @@ let test_typescript_unit_builds_through_npm_and_runs_node () =
        check_string "artifact" "app/demo_ts/order_svc/dist/index.js" launch.artifact;
        check_bool "declared TypeScript" true (launch.language = Sol_cli_compat.Typescript)
      | launches ->
-       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+       Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
 let test_a_standalone_typescript_unit_is_its_own_project () =
@@ -133,7 +136,7 @@ let test_a_standalone_typescript_unit_is_its_own_project () =
   let facts = facts_of root in
   match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
   | Error errors ->
-    Alcotest.fail
+    Windtrap.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
     (match plan.builds with
@@ -141,7 +144,7 @@ let test_a_standalone_typescript_unit_is_its_own_project () =
        check_strings "no workspace selector" [ "npm"; "run"; "build" ] build.argv;
        check_string "built in the unit" "app/api/api_svc" build.cwd
      | builds ->
-       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+       Windtrap.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
     (match plan.launches with
      | [ launch ] ->
        check_strings
@@ -149,20 +152,20 @@ let test_a_standalone_typescript_unit_is_its_own_project () =
          [ "node"; "build/index.js" ]
          launch.launch.argv
      | launches ->
-       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+       Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
 let build_of root =
   let facts = facts_of root in
   match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
   | Error errors ->
-    Alcotest.fail
+    Windtrap.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
     (match plan.builds with
      | [ build ] -> build
      | builds ->
-       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)))
+       Windtrap.fail (Printf.sprintf "expected one build, got %d" (List.length builds)))
 ;;
 
 let api_unit_package_json = {|{"name": "api", "scripts": {"build": "tsc"}}|}
@@ -254,7 +257,7 @@ let test_a_mixed_selection_uses_both_adapters () =
   let facts = facts_of root in
   match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
   | Error errors ->
-    Alcotest.fail
+    Windtrap.fail
       ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
   | Ok plan ->
     check_bool "two units" true (List.length plan.launches = 2);
@@ -269,7 +272,7 @@ let test_a_mixed_selection_uses_both_adapters () =
          [ "npm"; "run"; "build"; "--workspace"; "order-svc" ]
          npm_build.argv
      | builds ->
-       Alcotest.fail (Printf.sprintf "expected two builds, got %d" (List.length builds)));
+       Windtrap.fail (Printf.sprintf "expected two builds, got %d" (List.length builds)));
     let services = services_of facts in
     check_strings
       "both units are launched, in selection order"
@@ -278,7 +281,7 @@ let test_a_mixed_selection_uses_both_adapters () =
 ;;
 
 let expect_error ~needle = function
-  | Ok _ -> Alcotest.fail "expected the plan to refuse"
+  | Ok _ -> Windtrap.fail "expected the plan to refuse"
   | Error errors ->
     let messages = List.map (fun (label, message) -> label ^ " " ^ message) errors in
     check_bool
@@ -348,16 +351,19 @@ let test_one_bad_unit_refuses_the_whole_plan () =
 
 let test_shell_lines () =
   let command argv cwd = { Sol_cli_local_run.argv; cwd } in
-  Alcotest.(check string)
-    "a root build, under the opam env"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a root build, under the opam env"
     "eval $(opam env 2>/dev/null) 2>/dev/null; 'dune' 'build' './a b.exe'"
     (Sol_cli_local_run.build_line (command [ "dune"; "build"; "./a b.exe" ] ""));
-  Alcotest.(check string)
-    "a build in its npm project"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a build in its npm project"
     "eval $(opam env 2>/dev/null) 2>/dev/null; cd 'app/x' && 'npm' 'run' 'build'"
     (Sol_cli_local_run.build_line (command [ "npm"; "run"; "build" ] "app/x"));
-  Alcotest.(check string)
-    "a launch"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a launch"
     "'node' 'dist/main.js'"
     (Sol_cli_local_run.launch_line (command [ "node"; "dist/main.js" ] "."))
 ;;

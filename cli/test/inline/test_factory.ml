@@ -1,7 +1,7 @@
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
 let write path content =
@@ -63,19 +63,20 @@ let test_run_without_cmdliner () =
         ~facts:(facts ())
         services
     with
-    | Error msg -> Alcotest.fail ("factory run failed: " ^ msg)
+    | Error msg -> Windtrap.fail ("factory run failed: " ^ msg)
     | Ok execution ->
-      Alcotest.(check int) "one result" 1 (List.length execution.results);
-      Alcotest.(check string)
-        "requested scope recorded"
+      Windtrap.equal Windtrap.int ~msg:"one result" 1 (List.length execution.results);
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"requested scope recorded"
         "payments"
         execution.plan.requested_scope;
       let facts =
         Sol_cli_factory.affected_services ~plan:execution.plan ~results:execution.results
       in
-      Alcotest.(check int) "one release fact" 1 (List.length facts);
+      Windtrap.equal Windtrap.int ~msg:"one release fact" 1 (List.length facts);
       let emitted = Filename.concat emit_dir "myapp-payments-charge-svc.yaml" in
-      Alcotest.(check bool) "manifest emitted" true (Sys.file_exists emitted))
+      Windtrap.equal Windtrap.bool ~msg:"manifest emitted" true (Sys.file_exists emitted))
 ;;
 
 let test_discover_missing_app () =
@@ -83,8 +84,8 @@ let test_discover_missing_app () =
     match Sol_cli_manifest.discover_services () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
     | Error (Sol_cli_manifest.Workspace_error _) ->
-      Alcotest.fail "expected Missing_app_dir, got a workspace error"
-    | Ok _ -> Alcotest.fail "expected missing app error")
+      Windtrap.fail "expected Missing_app_dir, got a workspace error"
+    | Ok _ -> Windtrap.fail "expected missing app error")
 ;;
 
 let%test "boundary: run without cmdliner" = test_run_without_cmdliner ()

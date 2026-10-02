@@ -19,28 +19,38 @@ let parsed value = Result.map request_to_string (parse_request value)
 
 let expect_selected what = function
   | Selected selected -> selected
-  | Empty -> Alcotest.fail (what ^ ": expected a non-empty selection, got Empty")
+  | Empty -> Windtrap.fail (what ^ ": expected a non-empty selection, got Empty")
 ;;
 
 let test_absent_is_the_whole_workspace () =
-  Alcotest.(check (result string string)) "absent" (Ok "workspace") (parsed None);
-  Alcotest.(check (result string string)) "blank" (Ok "workspace") (parsed (Some "   "))
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"absent"
+    (Ok "workspace")
+    (parsed None);
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"blank"
+    (Ok "workspace")
+    (parsed (Some "   "))
 ;;
 
 let test_parses_domain_and_unit () =
-  Alcotest.(check (result string string))
-    "domain"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"domain"
     (Ok "payments")
     (parsed (Some "payments"));
-  Alcotest.(check (result string string))
-    "unit"
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"unit"
     (Ok "payments/charge_svc")
     (parsed (Some "payments/charge_svc"))
 ;;
 
 let test_rejects_what_it_cannot_understand () =
   match parse_request (Some "app/payments/charge_svc") with
-  | Ok _ -> Alcotest.fail "a path must not parse as a scope"
+  | Ok _ -> Windtrap.fail "a path must not parse as a scope"
   | Error message ->
     assert (Sol_cli_string.contains ~needle:"payments/charge_svc" message);
     assert (Sol_cli_string.contains ~needle:"got" message)
@@ -48,39 +58,40 @@ let test_rejects_what_it_cannot_understand () =
 
 let test_workspace_selects_everything () =
   match resolve Whole_workspace (units ()) with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok (scope, selection) ->
     let selected = expect_selected "selection" selection in
-    Alcotest.(check string) "scope" "workspace" (to_string scope);
-    Alcotest.(check int) "everything" 3 (List.length selected)
+    Windtrap.equal Windtrap.string ~msg:"scope" "workspace" (to_string scope);
+    Windtrap.equal Windtrap.int ~msg:"everything" 3 (List.length selected)
 ;;
 
 let test_domain_selects_its_units () =
   match resolve (Whole_domain "payments") (units ()) with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok (scope, selection) ->
     let selected = expect_selected "selection" selection in
-    Alcotest.(check string) "scope" "payments" (to_string scope);
-    Alcotest.(check (list string))
-      "only payments"
+    Windtrap.equal Windtrap.string ~msg:"scope" "payments" (to_string scope);
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"only payments"
       [ "payments/charge_svc"; "payments/settle_worker" ]
       (List.map (fun u -> u.domain ^ "/" ^ u.name) selected)
 ;;
 
 let test_unit_takes_its_kind_from_discovery () =
   match resolve (Unit_named ("payments", "settle_worker")) (units ()) with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok (scope, selection) ->
     let selected = expect_selected "selection" selection in
     (match scope with
      | Unit { kind = Worker; _ } -> ()
-     | _ -> Alcotest.fail "expected a worker scope, resolved from discovery");
-    Alcotest.(check int) "one unit" 1 (List.length selected)
+     | _ -> Windtrap.fail "expected a worker scope, resolved from discovery");
+    Windtrap.equal Windtrap.int ~msg:"one unit" 1 (List.length selected)
 ;;
 
 let test_unknown_domain_fails_closed () =
   match resolve (Whole_domain "logistics") (units ()) with
-  | Ok _ -> Alcotest.fail "an unknown domain must not resolve"
+  | Ok _ -> Windtrap.fail "an unknown domain must not resolve"
   | Error message ->
     assert (Sol_cli_string.contains ~needle:"logistics" message);
     assert (Sol_cli_string.contains ~needle:"comms" message);
@@ -89,7 +100,7 @@ let test_unknown_domain_fails_closed () =
 
 let test_unknown_unit_names_what_exists () =
   match resolve (Unit_named ("payments", "refund_svc")) (units ()) with
-  | Ok _ -> Alcotest.fail "an unknown unit must not resolve"
+  | Ok _ -> Windtrap.fail "an unknown unit must not resolve"
   | Error message ->
     assert (Sol_cli_string.contains ~needle:"payments/refund_svc" message);
     assert (Sol_cli_string.contains ~needle:"payments/charge_svc" message);
@@ -98,32 +109,48 @@ let test_unknown_unit_names_what_exists () =
 
 let test_unit_in_unknown_domain_lists_domains () =
   match resolve (Unit_named ("logistics", "ship_worker")) (units ()) with
-  | Ok _ -> Alcotest.fail "must not resolve"
+  | Ok _ -> Windtrap.fail "must not resolve"
   | Error message ->
     assert (Sol_cli_string.contains ~needle:"logistics/ship_worker" message);
     assert (Sol_cli_string.contains ~needle:"comms" message)
 ;;
 
 let test_kind_mapping () =
-  Alcotest.(check string) "svc" "service" (kind_to_string (kind_of_primitive Svc));
-  Alcotest.(check string) "worker" "worker" (kind_to_string (kind_of_primitive Worker));
-  Alcotest.(check string) "fn" "function" (kind_to_string (kind_of_primitive Fn))
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"svc"
+    "service"
+    (kind_to_string (kind_of_primitive Svc));
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"worker"
+    "worker"
+    (kind_to_string (kind_of_primitive Worker));
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"fn"
+    "function"
+    (kind_to_string (kind_of_primitive Fn))
 ;;
 
 let test_hyphenated_spelling_resolves_the_same_unit () =
   match resolve (Unit_named ("payments", "settle-worker")) (units ()) with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok (scope, Selected [ unit ]) ->
-    Alcotest.(check string) "canonical name" "settle_worker" unit.name;
-    Alcotest.(check string) "canonical span" "payments/settle_worker" (to_string scope)
-  | Ok _ -> Alcotest.fail "expected exactly one unit"
+    Windtrap.equal Windtrap.string ~msg:"canonical name" "settle_worker" unit.name;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"canonical span"
+      "payments/settle_worker"
+      (to_string scope)
+  | Ok _ -> Windtrap.fail "expected exactly one unit"
 ;;
 
 let test_nothing_discovered_is_empty_not_selected () =
   match resolve Whole_workspace [] with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok (_, Empty) -> ()
-  | Ok (_, Selected _) -> Alcotest.fail "an empty workspace cannot be a selection"
+  | Ok (_, Selected _) -> Windtrap.fail "an empty workspace cannot be a selection"
 ;;
 
 let services () =
@@ -154,18 +181,21 @@ let test_bridge_carries_requested_scope_and_resolved_set () =
   match
     Sol_cli_workload_selection.resolve ~what:"--scope" (Some "payments") (services ())
   with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok selected ->
-    Alcotest.(check string)
-      "requested scope"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"requested scope"
       "payments"
       (request_to_string selected.request);
-    Alcotest.(check string)
-      "requested_scope field matches the request (REFAC-111)"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"requested_scope field matches the request (REFAC-111)"
       "payments"
       selected.requested_scope;
-    Alcotest.(check (list string))
-      "resolved set"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"resolved set"
       [ "payments/charge_svc"; "payments/settle_worker" ]
       (service_names selected)
 ;;
@@ -177,34 +207,44 @@ let test_bridge_unit_is_canonical () =
       (Some "payments/settle-worker")
       (services ())
   with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok selected ->
-    Alcotest.(check (list string))
-      "canonical resolved name"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"canonical resolved name"
       [ "payments/settle_worker" ]
       (service_names selected)
 ;;
 
 let test_bridge_empty_workspace () =
   match Sol_cli_workload_selection.resolve ~what:"--scope" None [] with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok selected ->
-    Alcotest.(check bool) "empty" true (Sol_cli_workload_selection.is_empty selected)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"empty"
+      true
+      (Sol_cli_workload_selection.is_empty selected)
 ;;
 
 let test_nonempty_refuses_empty_workspace () =
   match Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None [] with
-  | Ok _ -> Alcotest.fail "an empty selection was accepted"
-  | Error message -> Alcotest.(check string) "the caller's message" "nothing here" message
+  | Ok _ -> Windtrap.fail "an empty selection was accepted"
+  | Error message ->
+    Windtrap.equal Windtrap.string ~msg:"the caller's message" "nothing here" message
 ;;
 
 let test_nonempty_accepts_a_selection () =
   match
     Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None (services ())
   with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok selected ->
-    Alcotest.(check string) "whole workspace" "workspace" selected.requested_scope
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"whole workspace"
+      "workspace"
+      selected.requested_scope
 ;;
 
 let test_nonempty_keeps_selector_errors () =
@@ -214,9 +254,13 @@ let test_nonempty_keeps_selector_errors () =
       (Some "nope")
       (services ())
   with
-  | Ok _ -> Alcotest.fail "unknown domain accepted"
+  | Ok _ -> Windtrap.fail "unknown domain accepted"
   | Error message ->
-    Alcotest.(check bool) ("selector error: " ^ message) true (message <> "nothing here")
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:("selector error: " ^ message)
+      true
+      (message <> "nothing here")
 ;;
 
 let%test "deployment_scope: absent means the whole workspace" =

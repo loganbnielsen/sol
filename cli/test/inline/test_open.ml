@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module O = Sol_cli_open
 
@@ -7,11 +7,11 @@ let contains url sub = Sol_cli_string.contains ~needle:sub url
 
 let ok_url = function
   | Ok s -> s
-  | Error msg -> Alcotest.fail ("expected Ok, got Error " ^ msg)
+  | Error msg -> Windtrap.fail ("expected Ok, got Error " ^ msg)
 ;;
 
 let err_msg = function
-  | Ok s -> Alcotest.fail ("expected Error, got Ok " ^ s)
+  | Ok s -> Windtrap.fail ("expected Error, got Ok " ^ s)
   | Error msg -> msg
 ;;
 
@@ -337,7 +337,7 @@ let test_provider_console_urls_are_provider_owned () =
    with
    | Some url ->
      check_bool "the AWS console names the region" true (contains url "region=us-east-1")
-   | None -> Alcotest.fail "an AWS target must have a console");
+   | None -> Windtrap.fail "an AWS target must have a console");
   (match
      Sol_cli_provider_capabilities.provider_console_url
        (target
@@ -350,7 +350,7 @@ let test_provider_console_urls_are_provider_owned () =
        "the GCP console names the project"
        true
        (contains url "project=sol-qualification")
-   | None -> Alcotest.fail "a GCP target with a project must have a console");
+   | None -> Windtrap.fail "a GCP target with a project must have a console");
   check_bool
     "a GCP target with no project has no console to offer"
     true

@@ -1,4 +1,8 @@
-# CLI test architecture
+# Test architecture
+
+Windtrap is Sol's only test framework. Every suite — the CLI inline tests and the
+executable framework, lifecycle and fixture suites — uses it; no test links
+Alcotest.
 
 Ordinary CLI tests are discovered through Windtrap inline testing. A test lives
 in a module of a library whose dune declares `(inline_tests)` and
@@ -23,10 +27,9 @@ adding a module to that library is the whole registration.
   edit/run/revert loop that every fix currently documents by hand.
 - It is linked only by tests and has no third-party runtime dependencies beyond
   `unix`, so its churn cannot reach a shipped Sol artifact. It is pinned beside
-  `alcotest` and `yaml` in `sol.opam`, which is the file CI installs from, and
-  those are plain rather than `{with-test}` dependencies in this project — a
-  `{with-test}` pin would leave the library unbuildable in the jobs that build
-  the default alias. It is young (0.1.0), which is accepted deliberately: a
+  `yaml` in `sol.opam`, which is the file CI installs from, as a plain rather
+  than a `{with-test}` dependency — a `{with-test}` pin would leave the library
+  unbuildable in the jobs that build the default alias. It is young (0.1.0), which is accepted deliberately: a
   breakage stops CI, not production.
 
 ## Layout

@@ -49,26 +49,31 @@ let test_unstartable_fails_fast () =
     (fun () ->
        match wait () with
        | Unstartable { reason; detail } ->
-         Alcotest.(check string) "the reason" "CreateContainerConfigError" reason;
-         Alcotest.(check (option string))
-           "the message naming the thing"
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"the reason"
+           "CreateContainerConfigError"
+           reason;
+         Windtrap.equal
+           (Windtrap.option Windtrap.string)
+           ~msg:"the message naming the thing"
            (Some {|secret "sol-secrets" not found|})
            detail
-       | _ -> Alcotest.fail "a container that cannot start was waited on")
+       | _ -> Windtrap.fail "a container that cannot start was waited on")
 ;;
 
 let test_succeeded () =
   with_fake_kubectl (fake ~succeeded:"1" ~waiting:"") (fun () ->
     match wait () with
     | Succeeded -> ()
-    | _ -> Alcotest.fail "a succeeded Job was not read as succeeded")
+    | _ -> Windtrap.fail "a succeeded Job was not read as succeeded")
 ;;
 
 let test_times_out_on_a_transient_wait () =
   with_fake_kubectl (fake ~succeeded:"" ~waiting:"ContainerCreating|") (fun () ->
     match wait () with
     | Timed_out _ -> ()
-    | _ -> Alcotest.fail "a transient waiting reason ended the wait")
+    | _ -> Windtrap.fail "a transient waiting reason ended the wait")
 ;;
 
 let service domain name : Sol_cli_manifest.service =
@@ -76,16 +81,18 @@ let service domain name : Sol_cli_manifest.service =
 ;;
 
 let test_namespace_and_repository () =
-  Alcotest.(check (result (pair string string) string))
-    "the first service by domain, then name"
+  Windtrap.equal
+    (Windtrap.result (Windtrap.pair Windtrap.string Windtrap.string) Windtrap.string)
+    ~msg:"the first service by domain, then name"
     (Ok ("pluto-checkout", "checkout-svc"))
     (Sol_cli_migration_job.namespace_and_repository
        ~workspace:"pluto"
        ~services:[ service "payments" "charge_svc"; service "checkout" "checkout_svc" ]
      |> Result.map (fun (ns, name) -> ns, Sol_cli_kubernetes_name.k8s_name_to_string name)
     );
-  Alcotest.(check bool)
-    "no services is an error"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no services is an error"
     true
     (Result.is_error
        (Sol_cli_migration_job.namespace_and_repository ~workspace:"pluto" ~services:[]))

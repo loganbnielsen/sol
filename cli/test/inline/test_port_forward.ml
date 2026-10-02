@@ -6,7 +6,7 @@ let spec ?(name = "t") ?(target = "svc/a") ?(local_port = 18080) () : P.spec =
 
 let ok = function
   | Ok v -> v
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let rec wait_until ?(tries = 200) cond =
@@ -37,7 +37,7 @@ let hold_lock name =
     |> Sol_cli_process.pid
   in
   write (Sol_cli_state.pid_file name) (string_of_int pid);
-  if not (wait_until (fun () -> P.is_running name)) then Alcotest.fail "lock not taken";
+  if not (wait_until (fun () -> P.is_running name)) then Windtrap.fail "lock not taken";
   pid
 ;;
 
@@ -52,29 +52,34 @@ let test_record_round_trip () =
   let s = spec ~name:"round" () in
   ok (P.write_record s);
   let recorded, unreadable = P.records () in
-  Alcotest.(check bool) "recorded as written" true (List.mem s recorded);
-  Alcotest.(check (list string)) "nothing unreadable" [] unreadable;
+  Windtrap.equal Windtrap.bool ~msg:"recorded as written" true (List.mem s recorded);
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg:"nothing unreadable" [] unreadable;
   P.stop "round";
-  Alcotest.(check bool) "stop removes the record" false (List.mem s (fst (P.records ())))
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stop removes the record"
+    false
+    (List.mem s (fst (P.records ())))
 ;;
 
 let test_corrupt_record_is_reported () =
   Sol_cli_state.ensure () |> Result.get_ok;
   write (Sol_cli_state.record_file "corrupt") "{not json";
   let _, unreadable = P.records () in
-  Alcotest.(check bool) "reported, not skipped" true (unreadable <> []);
+  Windtrap.equal Windtrap.bool ~msg:"reported, not skipped" true (unreadable <> []);
   Sys.remove (Sol_cli_state.record_file "corrupt")
 ;;
 
 let test_liveness_is_the_lock () =
   let name = "live" in
   ok (P.write_record (spec ~name ()));
-  Alcotest.(check bool) "no holder, not running" false (P.is_running name);
+  Windtrap.equal Windtrap.bool ~msg:"no holder, not running" false (P.is_running name);
   let pid = hold_lock name in
-  Alcotest.(check bool) "held, running" true (P.is_running name);
+  Windtrap.equal Windtrap.bool ~msg:"held, running" true (P.is_running name);
   P.stop name;
-  Alcotest.(check bool)
-    "stop ends the whole group"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stop ends the whole group"
     true
     (wait_until (fun () -> not (P.is_running name)));
   reap pid
@@ -91,7 +96,7 @@ let test_reused_pid_is_never_signalled () =
   write (Sol_cli_state.pid_file name) (string_of_int bystander);
   P.stop name;
   Unix.sleepf 0.1;
-  Alcotest.(check bool) "the bystander is untouched" true (alive bystander);
+  Windtrap.equal Windtrap.bool ~msg:"the bystander is untouched" true (alive bystander);
   Unix.kill bystander Sys.sigkill;
   ignore (Unix.waitpid [] bystander)
 ;;
@@ -106,12 +111,14 @@ let test_replace_conflicting () =
   let replaced =
     P.replace_conflicting ~local_port:18080 ~namespace:"ns" ~target:"svc/new"
   in
-  Alcotest.(check (list string))
-    "only the running forward for another target on the port"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"only the running forward for another target on the port"
     [ "other" ]
     (List.map (fun (pf : P.spec) -> pf.name) replaced);
-  Alcotest.(check bool)
-    "and it was stopped"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and it was stopped"
     true
     (wait_until (fun () -> not (P.is_running "other")));
   reap pid;
@@ -122,11 +129,12 @@ let test_dead_forward_reports_its_log () =
   let name = "dead" in
   write (Sol_cli_state.log_file name) "one\n\ntwo\nthree\nfour\nfive\nsix\n";
   (match P.check_alive ~name with
-   | P.Alive -> Alcotest.fail "nothing holds the lock"
+   | P.Alive -> Windtrap.fail "nothing holds the lock"
    | P.Dead { log; log_tail } ->
-     Alcotest.(check string) "log path" (Sol_cli_state.log_file name) log;
-     Alcotest.(check (list string))
-       "last five non-blank lines"
+     Windtrap.equal Windtrap.string ~msg:"log path" (Sol_cli_state.log_file name) log;
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"last five non-blank lines"
        [ "two"; "three"; "four"; "five"; "six" ]
        log_tail);
   Sys.remove (Sol_cli_state.log_file name)
@@ -148,22 +156,33 @@ let test_start_and_stop_end_to_end () =
     (P.start
        ~ctx:Sol_cli_kube_destination.local_context
        (spec ~name ~local_port:18090 ()));
-  Alcotest.(check bool)
-    "running once started"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"running once started"
     true
     (wait_until (fun () -> P.is_running name));
-  Alcotest.(check bool) "kubectl ran" true (wait_until (fun () -> Sys.file_exists marker));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"kubectl ran"
+    true
+    (wait_until (fun () -> Sys.file_exists marker));
   let kubectl_pid =
     int_of_string (String.trim (In_channel.with_open_text marker In_channel.input_all))
   in
-  Alcotest.(check bool)
-    "recorded"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"recorded"
     true
     (List.exists (fun (pf : P.spec) -> pf.name = name) (fst (P.records ())));
   P.stop name;
-  Alcotest.(check bool) "stopped" true (wait_until (fun () -> not (P.is_running name)));
-  Alcotest.(check bool)
-    "its kubectl is gone too"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stopped"
+    true
+    (wait_until (fun () -> not (P.is_running name)));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"its kubectl is gone too"
     true
     (wait_until (fun () -> not (alive kubectl_pid)));
   Unix.putenv "PATH" path;

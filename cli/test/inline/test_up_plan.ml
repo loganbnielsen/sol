@@ -1,7 +1,10 @@
-let check_bool = Alcotest.(check bool)
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_strings = Alcotest.(check (list string))
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+
+let check_strings msg expected actual =
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
+;;
 
 let contains ~needle haystack =
   let n = String.length needle in
@@ -88,7 +91,7 @@ let workspace =
 
 let fail_on_error what = function
   | Ok value -> value
-  | Error message -> Alcotest.fail (Printf.sprintf "%s: %s" what message)
+  | Error message -> Windtrap.fail (Printf.sprintf "%s: %s" what message)
 ;;
 
 let plans () =
@@ -133,7 +136,7 @@ let plans () =
     match result with
     | Ok plan -> plan
     | Error e ->
-      Alcotest.fail
+      Windtrap.fail
         (Printf.sprintf
            "of_services_result: %s"
            (Sol_cli_deployment_plan.plan_error_to_string e))
@@ -148,7 +151,7 @@ let spec_named plan name =
       plan.Sol_cli_deployment_plan.services
   with
   | Some spec -> spec
-  | None -> Alcotest.fail (Printf.sprintf "no spec for %s" name)
+  | None -> Windtrap.fail (Printf.sprintf "no spec for %s" name)
 ;;
 
 let test_up_and_target_plans_agree () =
@@ -222,7 +225,7 @@ let test_local_plan_renders_readyz () =
           charge_svc
       with
       | Ok (_, workload) -> workload
-      | Error e -> Alcotest.fail ("render_spec: " ^ e)
+      | Error e -> Windtrap.fail ("render_spec: " ^ e)
     in
     check_bool
       "readinessProbe points at /readyz"

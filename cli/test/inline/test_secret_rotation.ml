@@ -109,25 +109,33 @@ let test_mixed_selection_is_refused_before_any_write () =
          ~value:"rotated"
      with
      | Ok _ ->
-       Alcotest.failf
+       Windtrap.failf
          "a selection containing an ExternalSecret target was rotated; kubectl calls: %s"
          (calls ())
      | Error message ->
-       Alcotest.(check bool)
-         "names the managed target"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"names the managed target"
          true
          (Sol_cli_string.contains ~needle:"payment-svc-secrets" message);
-       Alcotest.(check bool)
-         "names the namespace"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"names the namespace"
          true
          (Sol_cli_string.contains ~needle:"payments" message);
-       Alcotest.(check bool)
-         "names the provider-side path"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"names the provider-side path"
          true
          (Sol_cli_string.contains ~needle:"provider store" message));
-    Alcotest.(check bool) "no Secret was written" false (made (calls ()) "apply -f");
-    Alcotest.(check bool)
-      "no workload was restarted"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no Secret was written"
+      false
+      (made (calls ()) "apply -f");
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no workload was restarted"
       false
       (made (calls ()) "rollout restart"))
 ;;
@@ -141,13 +149,18 @@ let test_delete_refuses_the_same_selection () =
          ~namespaces:[ "payments" ]
          ~key:"API_TOKEN"
      with
-     | Ok _ -> Alcotest.fail "an ExternalSecret-managed target was deleted directly"
+     | Ok _ -> Windtrap.fail "an ExternalSecret-managed target was deleted directly"
      | Error message ->
-       Alcotest.(check bool)
-         "names the managed target"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"names the managed target"
          true
          (Sol_cli_string.contains ~needle:"payment-svc-secrets" message));
-    Alcotest.(check bool) "no Secret was patched" false (made (calls ()) "patch secret"))
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no Secret was patched"
+      false
+      (made (calls ()) "patch secret"))
 ;;
 
 let test_live_selection_still_rotates () =
@@ -161,13 +174,22 @@ let test_live_selection_still_rotates () =
          ~key:"API_TOKEN"
          ~value:"rotated"
      with
-     | Error message -> Alcotest.failf "a Kubernetes-live Secret was refused: %s" message
+     | Error message -> Windtrap.failf "a Kubernetes-live Secret was refused: %s" message
      | Ok (Sol_cli_secret.Applied namespaces) ->
-       Alcotest.(check (list string)) "rotated namespace" [ "orders" ] namespaces
-     | Ok _ -> Alcotest.fail "unexpected result");
-    Alcotest.(check bool) "the Secret was written" true (made (calls ()) "apply -f");
-    Alcotest.(check bool)
-      "the workload was restarted"
+       Windtrap.equal
+         (Windtrap.list Windtrap.string)
+         ~msg:"rotated namespace"
+         [ "orders" ]
+         namespaces
+     | Ok _ -> Windtrap.fail "unexpected result");
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the Secret was written"
+      true
+      (made (calls ()) "apply -f");
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the workload was restarted"
       true
       (made (calls ()) "rollout restart"))
 ;;

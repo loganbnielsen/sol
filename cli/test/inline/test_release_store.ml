@@ -106,19 +106,22 @@ let verbs log =
 let test_absent_object_is_created () =
   with_fake_kubectl ~mode:"missing" ~live_json:"" (fun log ->
     Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
+    |> Result.iter_error (fun e -> Windtrap.fail ("expected success, got: " ^ e));
     let calls = verbs log in
-    Alcotest.(check (list string))
-      "one get, then one create, both without a resourceVersion"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"one get, then one create, both without a resourceVersion"
       [ "get rv=no"; "create rv=no" ]
       calls;
     let all = String.concat "\n" calls in
-    Alcotest.(check bool)
-      "never applied"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"never applied"
       false
       (Sol_cli_string.contains ~needle:"apply" all);
-    Alcotest.(check bool)
-      "never patched"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"never patched"
       false
       (Sol_cli_string.contains ~needle:"patch" all))
 ;;
@@ -129,8 +132,12 @@ let test_identical_object_is_left_alone () =
   in
   with_fake_kubectl ~mode:"present" ~live_json (fun log ->
     Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
-    Alcotest.(check (list string)) "only a get" [ "get rv=no" ] (verbs log))
+    |> Result.iter_error (fun e -> Windtrap.fail ("expected success, got: " ^ e));
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"only a get"
+      [ "get rv=no" ]
+      (verbs log))
 ;;
 
 let test_changed_object_is_replaced_with_a_precondition () =
@@ -139,19 +146,22 @@ let test_changed_object_is_replaced_with_a_precondition () =
   in
   with_fake_kubectl ~mode:"present" ~live_json (fun log ->
     Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
-    |> Result.iter_error (fun e -> Alcotest.fail ("expected success, got: " ^ e));
+    |> Result.iter_error (fun e -> Windtrap.fail ("expected success, got: " ^ e));
     let calls = verbs log in
-    Alcotest.(check (list string))
-      "one get, then a replace carrying the live resourceVersion"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"one get, then a replace carrying the live resourceVersion"
       [ "get rv=no"; "replace rv=yes" ]
       calls;
     let all = String.concat "\n" calls in
-    Alcotest.(check bool)
-      "never applied"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"never applied"
       false
       (Sol_cli_string.contains ~needle:"apply" all);
-    Alcotest.(check bool)
-      "never patched"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"never patched"
       false
       (Sol_cli_string.contains ~needle:"patch" all))
 ;;
@@ -161,16 +171,22 @@ let test_permission_failure_is_not_absence () =
     (match
        Sol_cli_release_store.move_pointer ~ctx (release ~release_id:"r-aaaabbbbccccdddd")
      with
-     | Ok () -> Alcotest.fail "a forbidden read must not be reported as success"
+     | Ok () -> Windtrap.fail "a forbidden read must not be reported as success"
      | Error msg ->
-       Alcotest.(check bool)
-         "the error names the read"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the error names the read"
          true
          (Sol_cli_string.contains ~needle:"kubectl get configmap" msg));
     let calls = verbs log in
-    Alcotest.(check (list string)) "a get and nothing else" [ "get rv=no" ] calls;
-    Alcotest.(check bool)
-      "no create was attempted"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"a get and nothing else"
+      [ "get rv=no" ]
+      calls;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no create was attempted"
       false
       (Sol_cli_string.contains ~needle:"create" (String.concat "\n" calls)))
 ;;
@@ -180,10 +196,11 @@ let test_missing_release_is_not_found () =
     match
       Sol_cli_release_store.get ~ctx ~workspace:"pluto" ~release_id:"r-aaaabbbbccccdddd"
     with
-    | Ok _ -> Alcotest.fail "a missing release was found"
+    | Ok _ -> Windtrap.fail "a missing release was found"
     | Error e ->
-      Alcotest.(check bool)
-        ("names it not found: " ^ e)
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:("names it not found: " ^ e)
         true
         (Sol_cli_string.contains ~needle:"release r-aaaabbbbccccdddd not found" e))
 ;;
@@ -193,14 +210,16 @@ let test_forbidden_release_read_is_not_absence () =
     match
       Sol_cli_release_store.get ~ctx ~workspace:"pluto" ~release_id:"r-aaaabbbbccccdddd"
     with
-    | Ok _ -> Alcotest.fail "a forbidden read succeeded"
+    | Ok _ -> Windtrap.fail "a forbidden read succeeded"
     | Error e ->
-      Alcotest.(check bool)
-        ("not reported as absence: " ^ e)
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:("not reported as absence: " ^ e)
         false
         (Sol_cli_string.contains ~needle:"not found" e);
-      Alcotest.(check bool)
-        ("carries kubectl's reason: " ^ e)
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:("carries kubectl's reason: " ^ e)
         true
         (Sol_cli_string.contains ~needle:"forbidden" e))
 ;;

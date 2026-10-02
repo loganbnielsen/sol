@@ -105,7 +105,7 @@ let with_calls ~list_out ~tags_out ~tags_exit f =
     let log =
       match Sys.getenv_opt "PATH" with
       | Some path -> Filename.concat (List.hd (String.split_on_char ':' path)) "calls.log"
-      | None -> Alcotest.fail "PATH is unset"
+      | None -> Windtrap.fail "PATH is unset"
     in
     f ~log ~observations)
 ;;
@@ -113,20 +113,30 @@ let with_calls ~list_out ~tags_out ~tags_exit f =
 let test_load_balancers_use_a_supported_command () =
   with_calls ~list_out:"" ~tags_out:"" ~tags_exit:0 (fun ~log ~observations:_ ->
     let list_calls = arguments_of ~log ~contains:"describe-load-balancers" in
-    Alcotest.(check bool) "the load balancers were listed" true (list_calls <> []);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the load balancers were listed"
+      true
+      (list_calls <> []);
     List.iter
       (fun call ->
-         Alcotest.(check bool)
-           (Printf.sprintf "no --filters in %S" call)
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:(Printf.sprintf "no --filters in %S" call)
            false
            (Sol_cli_string.contains ~needle:"--filters" call))
       list_calls;
     let ec2_calls = arguments_of ~log ~contains:"describe-vpcs" in
-    Alcotest.(check bool) "the volumes/vpcs still filter by tag" true (ec2_calls <> []);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the volumes/vpcs still filter by tag"
+      true
+      (ec2_calls <> []);
     List.iter
       (fun call ->
-         Alcotest.(check bool)
-           (Printf.sprintf "ec2 filters remain in %S" call)
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:(Printf.sprintf "ec2 filters remain in %S" call)
            true
            (Sol_cli_string.contains ~needle:"--filters" call))
       ec2_calls)
@@ -141,11 +151,12 @@ let test_tagged_load_balancer_is_present () =
     (fun ~log:_ ~observations ->
        match load_balancer observations with
        | Sol_cli_absence.Present p ->
-         Alcotest.(check (list string))
-           "the tagged load balancer is reported"
+         Windtrap.equal
+           (Windtrap.list Windtrap.string)
+           ~msg:"the tagged load balancer is reported"
            [ arn ]
            p.found
-       | _ -> Alcotest.fail "a tagged load balancer must be Present")
+       | _ -> Windtrap.fail "a tagged load balancer must be Present")
 ;;
 
 let test_untagged_inventory_is_absent () =
@@ -153,11 +164,12 @@ let test_untagged_inventory_is_absent () =
   with_calls ~list_out:(arn ^ "\n") ~tags_out:"" ~tags_exit:0 (fun ~log:_ ~observations ->
     match load_balancer observations with
     | Sol_cli_absence.Absent a ->
-      Alcotest.(check bool)
-        "the check names both steps"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the check names both steps"
         true
         (Sol_cli_string.contains ~needle:"describe-tags" a.checked_with)
-    | _ -> Alcotest.fail "an untagged inventory must be Absent")
+    | _ -> Windtrap.fail "an untagged inventory must be Absent")
 ;;
 
 let test_failed_tag_read_is_unobservable () =
@@ -169,11 +181,12 @@ let test_failed_tag_read_is_unobservable () =
     (fun ~log:_ ~observations ->
        match load_balancer observations with
        | Sol_cli_absence.Unobservable u ->
-         Alcotest.(check bool)
-           "the reason is the provider's"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the reason is the provider's"
            true
            (Sol_cli_string.contains ~needle:"AccessDenied" u.reason)
-       | _ -> Alcotest.fail "a failed tag read must be Unobservable")
+       | _ -> Windtrap.fail "a failed tag read must be Unobservable")
 ;;
 
 let%test "load balancer inventory: uses only supported AWS commands" =

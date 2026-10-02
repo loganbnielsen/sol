@@ -1,10 +1,12 @@
 let test_outcome_of () =
-  Alcotest.(check bool)
-    "Ok is Applied"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ok is Applied"
     true
     (Sol_cli_deployment_attempt.outcome_of (Ok 1) = Sol_cli_deployment.Applied);
-  Alcotest.(check bool)
-    "Error is Apply_failed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Error is Apply_failed"
     true
     (Sol_cli_deployment_attempt.outcome_of (Error "boom")
      = Sol_cli_deployment.Apply_failed)
@@ -13,8 +15,9 @@ let test_outcome_of () =
 let test_start_mints_an_id () =
   let attempt = Sol_cli_deployment_attempt.start () in
   let id = Sol_cli_deployment_attempt.deployment_id attempt in
-  Alcotest.(check bool)
-    "id is non-empty"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"id is non-empty"
     true
     (String.length (Sol_cli_deployment_id.to_string id) > 0)
 ;;
