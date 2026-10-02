@@ -437,6 +437,15 @@ let test_gate_failure_invalid_cpu () =
     assert (contains (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
 ;;
 
+let test_gate_failure_invalid_availability () =
+  let release = bad_workload_release (fun w -> { w with availability = "sometimes" }) in
+  match Sol_cli_rollback.service_specs_of_release release with
+  | Ok _ -> Windtrap.fail "expected reconstruction to fail on an invalid availability"
+  | Error msg ->
+    assert (contains (Str.regexp "ledger_svc") msg);
+    assert (contains (Str.regexp (Str.quote "sometimes")) msg)
+;;
+
 let with_migrations_dir files f =
   let dir = Filename.temp_file "sol-migrations-" "" in
   Sys.remove dir;
@@ -1915,6 +1924,267 @@ let test_sequential_application_stops_on_error () =
     (List.rev !visited)
 ;;
 
+type modelled_cluster =
+  { mutable live : (Sol_cli_rollback.workload_identity * string) list
+  ; mutable pointer : string
+  ; mutable secret : (string * string) list
+  ; mutable manifests : string list
+  }
+
+let same_identity
+      (a : Sol_cli_rollback.workload_identity)
+      (b : Sol_cli_rollback.workload_identity)
+  =
+  a.kind = b.kind && String.equal a.namespace b.namespace && String.equal a.name b.name
+;;
+
+let upsert_live cluster id label =
+  if List.exists (fun (existing, _) -> same_identity existing id) cluster.live
+  then
+    cluster.live
+    <- List.map
+         (fun (existing, current) ->
+            if same_identity existing id then existing, label else existing, current)
+         cluster.live
+  else cluster.live <- cluster.live @ [ id, label ]
+;;
+
+let render_for_release ~(release : Sol_cli_release.t) spec applied_by =
+  match Sol_cli_release_id.of_string applied_by with
+  | Error msg -> Error msg
+  | Ok id ->
+    (match
+       Sol_cli_deployment_render.render_spec
+         ~workspace:release.Sol_cli_release.workspace
+         ?env:release.Sol_cli_release.environment
+         ~release_id:id
+         ~secret_backend:Sol_cli_manifest.Kubernetes_live
+         spec
+     with
+     | Error msg -> Error msg
+     | Ok (ns_yaml, body) -> Ok (ns_yaml ^ body))
+;;
+
+let modelled_deps ~release ~cluster ?(fail_at = None) ()
+  : Sol_cli_rollback.transaction_deps
+  =
+  let release_id = release.Sol_cli_release.release_id in
+  let apply_one index (spec, applied_by) =
+    match fail_at with
+    | Some n when n = index -> Error "apply failed"
+    | _ ->
+      (match render_for_release ~release spec applied_by with
+       | Error msg -> Error msg
+       | Ok manifest ->
+         cluster.manifests <- cluster.manifests @ [ manifest ];
+         upsert_live cluster (Sol_cli_rollback.identity_of_spec spec) applied_by;
+         Ok ())
+  in
+  let rec apply_all index = function
+    | [] -> Ok ()
+    | spec :: rest ->
+      (match apply_one index spec with
+       | Error _ as e -> e
+       | Ok () -> apply_all (index + 1) rest)
+  in
+  { Sol_cli_rollback.ensure_held = (fun () -> Ok ())
+  ; applied_migrations = (fun () -> Ok [])
+  ; apply = apply_all 0
+  ; live_workloads = (fun () -> Ok cluster.live)
+  ; prune =
+      (fun surplus ->
+        let removed = List.map fst surplus in
+        cluster.live
+        <- List.filter
+             (fun (id, _) -> not (List.exists (same_identity id) removed))
+             cluster.live;
+        Ok ())
+  ; move_pointer =
+      (fun () ->
+        cluster.pointer <- release_id;
+        Ok ())
+  ; verify_pointer =
+      (fun () ->
+        { Sol_cli_rollback.pointer_actual = cluster.pointer
+        ; pointer_ok = String.equal cluster.pointer release_id
+        })
+  ; record_consumer_groups = (fun _ -> Ok ())
+  }
+;;
+
+let qualification_ghost : Sol_cli_rollback.workload_identity =
+  { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+  ; namespace = "myapp-payments"
+  ; name = "ghost-svc"
+  }
+;;
+
+let test_qualification_restores_after_a_bad_deploy () =
+  let target = [ ledger_spec; worker_spec () ] in
+  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct target in
+  let bad = "r-9999999999999999" in
+  let initial_secret =
+    [ "POSTGRES_URL", "postgresql://prod"; "SOL_API_KEY", "api-key-material" ]
+  in
+  let cluster =
+    { live =
+        List.map (fun spec -> Sol_cli_rollback.identity_of_spec spec, bad) target
+        @ [ qualification_ghost, bad ]
+    ; pointer = bad
+    ; secret = initial_secret
+    ; manifests = []
+    }
+  in
+  let deps = modelled_deps ~release ~cluster () in
+  (match
+     Sol_cli_rollback.execute
+       ~release
+       ~migrations_dir:"unused"
+       ~current_migrations:[]
+       ~deps
+   with
+   | Error msg -> Windtrap.fail ("rollback of a bad deploy must succeed: " ^ msg)
+   | Ok () -> ());
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the pointer names the restored release"
+    release.release_id
+    cluster.pointer;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the surplus workload is pruned"
+    (List.length target)
+    (List.length cluster.live);
+  List.iter
+    (fun spec ->
+       let id = Sol_cli_rollback.identity_of_spec spec in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(Printf.sprintf "restored %s/%s" id.namespace id.name)
+         true
+         (List.exists
+            (fun (live_id, label) ->
+               same_identity live_id id && String.equal label release.release_id)
+            cluster.live))
+    target;
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the live secret was never touched"
+    initial_secret
+    cluster.secret;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"every restored workload was re-rendered and applied"
+    2
+    (List.length cluster.manifests);
+  List.iter
+    (fun manifest ->
+       let contains needle = Sol_cli_string.contains ~needle manifest in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"no Secret object"
+         false
+         (contains "kind: Secret");
+       Windtrap.equal Windtrap.bool ~msg:"no stringData" false (contains "stringData");
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"secret referenced by key"
+         true
+         (contains "secretKeyRef"))
+    cluster.manifests
+;;
+
+let test_qualification_partial_apply_leaves_the_pointer () =
+  let target = [ ledger_spec; worker_spec () ] in
+  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct target in
+  let bad = "r-9999999999999999" in
+  let initial_secret = [ "POSTGRES_URL", "postgresql://prod" ] in
+  let cluster =
+    { live = List.map (fun spec -> Sol_cli_rollback.identity_of_spec spec, bad) target
+    ; pointer = bad
+    ; secret = initial_secret
+    ; manifests = []
+    }
+  in
+  let deps = modelled_deps ~release ~cluster ~fail_at:(Some 1) () in
+  (match
+     Sol_cli_rollback.execute
+       ~release
+       ~migrations_dir:"unused"
+       ~current_migrations:[]
+       ~deps
+   with
+   | Ok () -> Windtrap.fail "a partial apply must fail the rollback"
+   | Error msg ->
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the apply failure is reported"
+       true
+       (Sol_cli_string.contains ~needle:"apply failed" msg));
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the pointer still names the bad release"
+    bad
+    cluster.pointer;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the second workload was never applied"
+    1
+    (List.length cluster.manifests);
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the live secret was never touched"
+    initial_secret
+    cluster.secret
+;;
+
+let test_qualification_render_never_carries_secret_material () =
+  let spec = { ledger_spec with secrets = [ "DB_PASSWORD", "super-secret-material" ] } in
+  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct [ spec ] in
+  match Sol_cli_rollback.service_specs_of_release release with
+  | Error msg -> Windtrap.fail msg
+  | Ok reconstructed ->
+    List.iter
+      (fun ((spec, applied_by) : Sol_cli_deployment_plan.service_spec * string) ->
+         match render_for_release ~release spec applied_by with
+         | Error msg -> Windtrap.fail msg
+         | Ok manifest ->
+           let contains needle = Sol_cli_string.contains ~needle manifest in
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"secret material is never rendered"
+             false
+             (contains "super-secret-material");
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"no Secret object is rendered"
+             false
+             (contains "kind: Secret");
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"no stringData is rendered"
+             false
+             (contains "stringData");
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"the key is still referenced"
+             true
+             (contains "DB_PASSWORD"))
+      reconstructed
+;;
+
+let%test "qualification: a bad deploy is restored and the live secret is untouched" =
+  test_qualification_restores_after_a_bad_deploy ()
+;;
+
+let%test "qualification: a partial apply leaves the pointer and secrets alone" =
+  test_qualification_partial_apply_leaves_the_pointer ()
+;;
+
+let%test "qualification: rollback render never carries secret material" =
+  test_qualification_render_never_carries_secret_material ()
+;;
+
 let%test "reconstruction_gate: A: decode correctness" = test_gate_a_decode_correctness ()
 
 let%test "reconstruction_gate: B: identity correctness" =
@@ -1929,6 +2199,10 @@ let%test "reconstruction_gate: failure: unknown rollout encoding" =
 
 let%test "reconstruction_gate: failure: invalid cpu quantity" =
   test_gate_failure_invalid_cpu ()
+;;
+
+let%test "reconstruction_gate: failure: invalid availability (BUG-118)" =
+  test_gate_failure_invalid_availability ()
 ;;
 
 let%test "reconstruction_gate: failure: invalid persistence" =
