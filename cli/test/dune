@@ -17,6 +17,7 @@
   test_manifest_render
   test_executor
   test_secret
+  test_secret_rotation
   test_release_inspection
   test_scaffold
   test_logs
