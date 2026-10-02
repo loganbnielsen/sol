@@ -34,6 +34,14 @@ eval $(opam env)
 dune build
 ```
 
+## Schema compatibility in CI
+
+Set the GitHub Actions secret `SCHEMA_REGISTRY_URL` to the registry containing
+the published schema history. The generated `sol-ci.yml` runs `dune runtest`
+against it and fails when the URL is absent or compatibility cannot be checked.
+On a developer machine, `dune runtest` visibly skips this check when the URL
+is unset.
+
 ## Run locally
 
 ```bash

@@ -7,6 +7,7 @@
 #                        Docker Hub: docker.io/myorg
 #   REGISTRY_USER      registry username (or "AWS" for ECR)
 #   REGISTRY_PASSWORD  registry password / access token
+#   SCHEMA_REGISTRY_URL registry with published schema history (CI fails without it)
 #
 # Required GitHub repo variable (Settings -> Secrets and variables -> Actions ->
 # Variables -- not a secret, this is just a path):
@@ -75,6 +76,8 @@ jobs:
         run: eval $(opam env) && dune build
 
       - name: Test
+        env:
+          SCHEMA_REGISTRY_URL: ${{ secrets.SCHEMA_REGISTRY_URL }}
         run: eval $(opam env) && dune runtest
 
 # ── Job 2: build and push service images ────────────────────────────────── #

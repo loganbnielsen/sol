@@ -169,6 +169,19 @@ let test_ci_contains_dune_commands () =
   assert_contains "sol-ci.yml" content "dune runtest"
 ;;
 
+let test_schema_gate_is_run_in_ci () =
+  in_temp_dir
+  @@ fun () ->
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
+  let dune = read_file "testapp/test/dune" in
+  let workflow = read_file "testapp/.github/workflows/sol-ci.yml" in
+  assert_contains "test/dune" dune "(test\n (name test_schemas)";
+  assert_contains
+    "sol-ci.yml"
+    workflow
+    "SCHEMA_REGISTRY_URL: ${{ secrets.SCHEMA_REGISTRY_URL }}"
+;;
+
 let test_ci_no_kubeconfig_in_build_job () =
   in_temp_dir
   @@ fun () ->
@@ -939,6 +952,7 @@ let () =
         ; Alcotest.test_case "--emit-plan-to present" `Quick test_ci_contains_emit_plan_to
         ; Alcotest.test_case "--emit-to present" `Quick test_ci_contains_emit_to
         ; Alcotest.test_case "dune build + runtest" `Quick test_ci_contains_dune_commands
+        ; Alcotest.test_case "schema gate runs in CI" `Quick test_schema_gate_is_run_in_ci
         ; Alcotest.test_case
             "no KUBECONFIG_B64 in workflow"
             `Quick
