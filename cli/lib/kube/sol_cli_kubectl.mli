@@ -108,7 +108,7 @@ type presence =
   | Uncheckable of string
 
 type probe =
-  | Succeeded
+  | Succeeded of string
   | Failed of Sol_cli_process.failure
 
 val presence : ctx:Sol_cli_kube_destination.context -> args:string list -> presence

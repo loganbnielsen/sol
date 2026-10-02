@@ -134,12 +134,12 @@ let delete ~ctx ~resource ~name ~namespace =
 let probe_timeout_s = 15.0
 
 type probe =
-  | Succeeded
+  | Succeeded of string
   | Failed of Sol_cli_process.failure
 
 let probe_result ~ctx ~args =
   match kubectl ~timeout_s:probe_timeout_s ~ctx args with
-  | Ok _ -> Ok Succeeded
+  | Ok (o : Sol_cli_process.output) -> Ok (Succeeded o.stdout)
   | Error (Sol_cli_process.Non_zero failure) -> Ok (Failed failure)
   | Error e -> Error ("kubectl could not be run: " ^ Sol_cli_process.error_to_string e)
 ;;
@@ -149,14 +149,34 @@ type presence =
   | Absent of string
   | Uncheckable of string
 
+let presence_failure_reason (failure : Sol_cli_process.failure) =
+  let why =
+    match classify (Sol_cli_process.Non_zero failure) with
+    | Unreachable -> "the cluster could not be reached"
+    | Refused -> "the cluster refused the request"
+    | No_resource_type -> "the cluster has no such resource type"
+    | Not_found -> "not found"
+    | Already_exists -> "already exists"
+    | Conflict -> "conflict"
+    | Other -> "kubectl failed"
+  in
+  let message = Sol_cli_process.failure_message failure in
+  let first_line =
+    match String.index_opt message '\n' with
+    | Some i -> String.sub message 0 i
+    | None -> message
+  in
+  Printf.sprintf "kubectl exited %d (%s): %s" failure.exit_code why first_line
+;;
+
 let presence_of_probe_result = function
-  | Ok Succeeded -> Present
+  | Ok (Succeeded stdout) ->
+    if String.trim stdout = "" then Absent "kubectl reported no such object" else Present
   | Ok (Failed failure) ->
-    Absent
-      (Printf.sprintf
-         "kubectl exited %d: %s"
-         failure.exit_code
-         (Sol_cli_process.failure_message failure))
+    let reason = presence_failure_reason failure in
+    (match classify (Sol_cli_process.Non_zero failure) with
+     | Not_found -> Absent reason
+     | _ -> Uncheckable reason)
   | Error why -> Uncheckable why
 ;;
 

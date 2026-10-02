@@ -33,7 +33,7 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
           ~ctx:(Sol_cli_kube_destination.context_of_destination destination)
           ~args
       with
-      | Ok Sol_cli_kubectl.Succeeded -> Sol_cli_target_report.Reachable context
+      | Ok (Sol_cli_kubectl.Succeeded _) -> Sol_cli_target_report.Reachable context
       | Ok (Sol_cli_kubectl.Failed failure) ->
         let reason = first_line (Sol_cli_process.failure_message failure) in
         (match Sol_cli_kubectl.classify (Sol_cli_process.Non_zero failure) with
