@@ -1,4 +1,4 @@
-(executable
+(test
  (name test_schemas)
  (modules test_schemas)
  (libraries kafka-eio-service eio_main {{name}}_payments_events))
