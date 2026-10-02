@@ -6,97 +6,6 @@ cd "$root"
 source "$root/internal/ci/lib/scratch_repo.sh"
 scratch_repo_sanitize
 
-checks=(
-  "_build/default/internal/tooling/soldev/bin/main.exe pipeline validate"
-  "git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/check_ticket_transitions.sh"
-  "bash internal/ci/check_examples_self_contained.sh"
-  "bash internal/ci/check_gcloud_interface.sh"
-  "bash internal/ci/check_json_decode_boundary.sh"
-  "bash internal/ci/check_library_output.sh"
-  "bash internal/ci/check_manifests_are_values.sh"
-  "bash internal/ci/check_no_comments.sh"
-  "bash internal/ci/check_no_exception_control_flow.sh"
-  "bash internal/ci/check_platform_assets_owner.sh"
-  "bash internal/ci/check_result_syntax.sh"
-  "bash internal/ci/check_single_runner.sh"
-  "bash internal/ci/check_support_refs.sh"
-  "bash internal/ci/check_ts_demo.sh"
-  "bash internal/ci/test_authority_check.sh"
-  "bash internal/ci/test_classify_changes.sh"
-  "bash internal/ci/test_examples_self_contained.sh"
-  "bash internal/ci/test_hook_install.sh"
-  "bash internal/ci/test_scratch_repo.sh"
-  "bash internal/ci/test_json_decode_boundary.sh"
-  "bash internal/ci/test_library_output.sh"
-  "bash internal/ci/test_manifests_are_values.sh"
-  "bash internal/ci/test_no_comments.sh"
-  "bash internal/ci/test_no_exception_control_flow.sh"
-  "bash internal/ci/test_ocamlformat.sh"
-  "bash internal/ci/test_pipeline_validate.sh"
-  "bash internal/ci/test_platform_assets_owner.sh"
-  "bash internal/ci/test_result_syntax.sh"
-  "bash internal/ci/test_single_runner.sh"
-  "bash internal/ci/test_support_refs.sh"
-  "bash internal/ci/test_test_reachability.sh"
-  "bash internal/ci/test_ticket_move.sh"
-  "bash internal/ci/test_ticket_transitions.sh"
-  "bash internal/ci/test_workflow_paths.sh"
-  "internal/ci/check_no_account_artifacts.sh"
-  "internal/ci/check_ocamlformat.sh --all"
-  "internal/ci/check_provider_dispatch.sh ."
-  "internal/ci/check_provider_roots.sh ."
-  "internal/ci/check_runtime_secret_identity.sh"
-  "internal/ci/check_signal_handler_duplication.sh"
-  "internal/ci/test_cluster_access_identity.sh"
-  "internal/ci/test_destroy_completeness_check.sh"
-  "internal/ci/test_gcp_provisioner_role.sh"
-  "internal/ci/test_no_account_artifacts.sh"
-  "internal/ci/test_provider_dispatch_check.sh"
-  "internal/ci/test_provider_roots.sh"
-  "internal/ci/test_public_cloud_lifecycle.sh"
-  "internal/ci/test_publisher_deployer_boundary.sh"
-  "internal/ci/test_qualification_assertions.sh"
-  "internal/ci/test_qualification_transport_check.sh"
-  "internal/ci/test_readiness_invocations_check.sh"
-  "internal/ci/test_scrub_whoami_capture.sh"
-  "internal/ci/test_unconditional_guard_tooling.sh"
-  "python3 internal/ci/check_authorization_fence.py ."
-  "python3 internal/ci/check_cli_reference.py"
-  "python3 internal/ci/check_deploy_identity_iam.py ."
-  "python3 internal/ci/check_destroy_completeness.py ."
-  "python3 internal/ci/check_framework_doc_signatures.py"
-  "python3 internal/ci/check_operator_diagnostics.py"
-  "python3 internal/ci/check_qualification_transport.py"
-  "python3 internal/ci/check_resource_identity.py ."
-  "python3 internal/ci/check_test_reachability.py"
-  "python3 internal/ci/check_ticket_overwrites.py --base origin/main"
-  "python3 internal/ci/check_unconditional_guard_tooling.py ."
-  "python3 internal/ci/check_workflow_paths.py"
-  "python3 internal/ci/test_cli_reference_check.py"
-  "python3 internal/ci/test_authorization_fence_check.py"
-  "python3 internal/ci/test_cert_manager_readiness_check.py"
-  "python3 internal/ci/test_deploy_identity_iam_check.py"
-  "python3 internal/ci/test_deploy_substrate_order_check.py"
-  "python3 internal/ci/test_docs_only_path.py"
-  "python3 internal/ci/test_durable_dns_zone_check.py"
-  "python3 internal/ci/test_gcp_standard_substrate_check.py"
-  "python3 internal/ci/test_guard_mutations.py"
-  "python3 internal/ci/test_kubernetes_object_ownership_check.py"
-  "python3 internal/ci/test_managed_database_egress_check.py"
-  "python3 internal/ci/test_node_shape_fits_platform_check.py"
-  "python3 internal/ci/test_platform_component_drift.py"
-  "python3 internal/ci/test_platform_storage_requirement_check.py"
-  "python3 internal/ci/test_platform_tls_requirement_check.py"
-  "python3 internal/ci/test_production_infra_check.py"
-  "python3 internal/ci/test_provider_tls_path_check.py"
-  "python3 internal/ci/test_resource_identity_check.py"
-  "python3 internal/ci/test_terraform_output_fixture_check.py"
-  "python3 internal/ci/test_workload_release_order_check.py"
-  "python3 internal/ci/test_framework_doc_signatures.py"
-  "python3 internal/ci/test_operator_diagnostics_check.py"
-  "python3 internal/ci/test_ticket_overwrites.py"
-)
-
 if command -v opam >/dev/null; then
   eval "$(opam env 2>/dev/null)"
 fi
@@ -109,8 +18,8 @@ if ! build_output="$(dune build 2>&1)"; then
   exit 1
 fi
 
-echo "fast checks: unit tests (serial: they hold dune's build lock)"
 unit_failed=0
+echo "fast checks: unit tests (serial: they hold dune's build lock)"
 if ! unit_output="$(dune build @ci-unit 2>&1)"; then
   unit_failed=1
   printf '%s\n' "$unit_output"
@@ -125,49 +34,45 @@ if ! lifecycle_output="$(dune build @ci-lifecycle 2>&1)"; then
   echo "fast checks: lifecycle tests failed; running the guards anyway"
 fi
 
-results="$(mktemp -d)"
-trap 'rm -rf "$results"' EXIT
-
-run_check() {
-  local index=$1
-  local check_started=$SECONDS
-  bash -o pipefail -c "${checks[$index]}" >"$results/$index.out" 2>&1
-  echo "$? $((SECONDS - check_started))" >"$results/$index.status"
-}
-
-parallelism="$(nproc 2>/dev/null || echo 4)"
-echo "fast checks: running ${#checks[@]} checks, $parallelism at a time"
-for index in "${!checks[@]}"; do
-  while [ "$(jobs -rp | wc -l)" -ge "$parallelism" ]; do
-    wait -n
-  done
-  run_check "$index" &
-done
-wait
-
-failed=()
-for index in "${!checks[@]}"; do
-  read -r code seconds <"$results/$index.status"
-  if [ "$code" -eq 0 ]; then
-    printf 'PASS %4ss  %s\n' "$seconds" "${checks[$index]}"
-  else
-    printf 'FAIL %4ss  %s\n' "$seconds" "${checks[$index]}"
-    failed+=("$index")
+context_failed=0
+echo "fast checks: ticket validation and transitions (context-bound)"
+if [ -x "$root/_build/default/internal/tooling/soldev/bin/main.exe" ]; then
+  if ! "$root/_build/default/internal/tooling/soldev/bin/main.exe" pipeline validate; then
+    context_failed=1
   fi
-done
+else
+  echo "fast checks: soldev is not built, so pipeline validate did not run" >&2
+  context_failed=1
+fi
+if ! git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets |
+  bash internal/ci/context/check_ticket_transitions.sh; then
+  context_failed=1
+fi
 
-for index in "${failed[@]}"; do
-  echo ""
-  echo "──── FAIL: ${checks[$index]}"
-  cat "$results/$index.out"
-done
+guards_failed=0
+echo "fast checks: verification classes"
+if ! bash internal/tooling/scripts/verify.sh always; then
+  guards_failed=1
+fi
+if ! bash internal/tooling/scripts/verify.sh static; then
+  guards_failed=1
+fi
+if ! bash internal/ci/verify_test.sh; then
+  guards_failed=1
+fi
 
 echo ""
 if [ "$unit_failed" -ne 0 ]; then
-  echo "fast checks: unit tests FAILED (the guard results above still ran)"
+  echo "fast checks: unit tests FAILED"
 fi
 if [ "$lifecycle_failed" -ne 0 ]; then
-  echo "fast checks: lifecycle tests FAILED (the guard results above still ran)"
+  echo "fast checks: lifecycle tests FAILED"
 fi
-echo "fast checks: ${#failed[@]}/${#checks[@]} checks failed in $((SECONDS - started))s"
-[ "${#failed[@]}" -eq 0 ] && [ "$unit_failed" -eq 0 ] && [ "$lifecycle_failed" -eq 0 ]
+if [ "$context_failed" -ne 0 ]; then
+  echo "fast checks: context-bound guards FAILED"
+fi
+if [ "$guards_failed" -ne 0 ]; then
+  echo "fast checks: verification classes FAILED"
+fi
+echo "fast checks: finished in $((SECONDS - started))s"
+[ "$unit_failed" -eq 0 ] && [ "$lifecycle_failed" -eq 0 ] && [ "$context_failed" -eq 0 ] && [ "$guards_failed" -eq 0 ]

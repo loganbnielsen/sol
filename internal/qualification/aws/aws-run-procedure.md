@@ -302,14 +302,14 @@ In practice, for every behavioural row:
 1. **Static/configuration evidence** — Terraform variable defaults, RBAC
    rule text, IAM policy JSON shape. This session's offline additions
    (`internal/ci/check_production_infra.py`,
-   `internal/ci/test_cloud_lifecycle_offline.sh`,
+   `internal/ci/context/test_cloud_lifecycle_offline.sh`,
    `internal/ci/test_publisher_deployer_boundary.sh`) are entirely this
    tier. Necessary, never sufficient.
 2. **Mechanism/renderability evidence** — `sol cloud plan` producing correct
    Deferred/Plannable phases; `terraform validate`/`fmt` clean; an RBAC
    binding structurally namespace-scoped rather than cluster-wide; the
    lifecycle's transition/policy semantics as asserted by the unit tests and
-   `internal/ci/test_cloud_lifecycle_offline.sh`. All of this is already proven
+   `internal/ci/context/test_cloud_lifecycle_offline.sh`. All of this is already proven
    offline. Still not sufficient for any `A`–`I` matrix row's **behavioural**
    pass condition.
 3. **Real target behavioral qualification** — everything in the command

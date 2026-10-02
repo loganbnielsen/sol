@@ -3,7 +3,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-guard="$here/check_readiness_invocations.sh"
+guard="$here/context/check_readiness_invocations.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

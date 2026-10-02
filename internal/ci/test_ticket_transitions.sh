@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHECK="$ROOT/internal/ci/check_ticket_transitions.sh"
+CHECK="$ROOT/internal/ci/context/check_ticket_transitions.sh"
 
 pass() {
   printf '%b' "$2" | "$CHECK" >/dev/null

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# shellcheck source=qualification_assertions.sh
-. "$(cd "$(dirname "$0")" && pwd)/qualification_assertions.sh"
+# shellcheck source=../qualification_assertions.sh
+. "$(cd "$(dirname "$0")/.." && pwd)/qualification_assertions.sh"
 
 root="$(git rev-parse --show-toplevel)"
 export REPO_ROOT="$root"

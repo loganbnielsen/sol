@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
+CI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$CI/lib/scratch_repo.sh"
 
 root="$(git rev-parse --show-toplevel)"
-guard="$root/internal/ci/check_no_account_artifacts.sh"
+guard="$CI/always/check_no_account_artifacts.sh"
 
 "$guard" "$root" >/dev/null
 

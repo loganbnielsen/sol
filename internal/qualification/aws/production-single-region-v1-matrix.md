@@ -246,7 +246,7 @@ have changed since, and Run 8 is the first attempt that can spend them:
 **The target:** start from `internal/qualification/aws/run8-aws-target.example.yml` and copy
 it to `examples/pluto/sol/environments.local.yml` with real values (FEAT-100). That
 file is deliberately **untracked** — gitignored, and the repository forbids tracking it
-(`internal/ci/check_no_account_artifacts.sh`), so the run record
+(`internal/ci/always/check_no_account_artifacts.sh`), so the run record
 (`internal/qualification/records/2026-09-20-run8-aws.md`) carries the target's contents rather than
 relying on the revision to pin it.
 

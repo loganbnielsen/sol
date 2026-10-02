@@ -8,7 +8,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 GUARD = REPO / "internal/ci/check_terraform_output_fixture.py"
 FIXTURE = "cli/test/fixtures/terraform-output-gcp-cloud.json"
-HARNESS = "internal/ci/test_cloud_lifecycle_offline.sh"
+HARNESS = "internal/ci/context/test_cloud_lifecycle_offline.sh"
 STUB = "internal/ci/lifecycle_fakes/terraform"
 PARSER = "cli/lib/cloud/sol_cli_gcp_cluster.ml"
 

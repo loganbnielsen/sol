@@ -4,7 +4,7 @@ import sys
 if len(sys.argv) > 2 and sys.argv[1] == "--root":
     os.chdir(sys.argv[2])
 else:
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 
 import re, sys, pathlib
 MANIFEST = [

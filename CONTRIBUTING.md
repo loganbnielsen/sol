@@ -41,7 +41,7 @@ Commit is frequent, so its hook is cheap: pre-commit checks formatting of staged
 OCaml and builds (seconds). Push is the broader local gate: pre-push runs
 `internal/ci/run_fast_checks.sh`, which builds, runs the unit tests (the same
 directories as CI's unit step), then the fast `internal/ci/` guards and their
-mutation tests in parallel, with a pass/fail line per check (about 12s warm). CI
+mutation tests in parallel, with a pass/fail line per member (about 12s warm). CI
 runs the full contract, including the slow offline cloud-lifecycle test
 (`dune build @cli/test/runtest-lifecycle`, about 2 minutes). Install the hooks once
 per clone with `bash internal/tooling/scripts/install-hooks.sh`, which sets
@@ -49,6 +49,15 @@ per clone with `bash internal/tooling/scripts/install-hooks.sh`, which sets
 git's repository-local variables (`git rev-parse --local-env-vars`) before anything
 that runs nested git. Run the push battery by hand with
 `bash internal/ci/run_fast_checks.sh`.
+
+The guards are not enumerated anywhere. `internal/tooling/scripts/verify.sh <class>`
+discovers a class by directory — `internal/ci/` is `static`, `internal/ci/always/`
+runs on every path including a docs-only change — and runs each `check_*`/`test_*`
+member in parallel. Adding a guard is one file in its class and no edit to
+`.github/workflows/ci.yml`; an empty class, a class directory that is missing, an
+unknown class, and a member that produces no result are all errors. `internal/ci/context/`
+holds the few guards whose invocation is supplied by the caller (a piped diff, a
+branch name, a build rule's stdout) rather than by the class runner.
 
 The repository guards under `internal/ci/` are the same checks CI runs, and some
 of them need their own tooling: the structural Terraform and YAML guards read
@@ -118,7 +127,7 @@ classifier or a second approval state machine for this judgment.
 ### Ticket state moves land in order
 
 A ticket's directory is its state, and the transition guard
-(`internal/ci/check_ticket_transitions.sh`, also run by the pre-commit hook)
+(`internal/ci/context/check_ticket_transitions.sh`, also run by the pre-commit hook)
 holds the lifecycle: `BACKLOG ↔ READY_FOR_ENGINEERING`, `READY_FOR_ENGINEERING →
 DONE`, and `DONE → READY_FOR_ENGINEERING` for a revert. A new ticket must start
 in `BACKLOG` or `READY_FOR_ENGINEERING`; it can reach `DONE` only by moving

@@ -44,7 +44,7 @@ adding a module to that library is the whole registration.
 
 ## Reachability
 
-`internal/ci/check_test_reachability.py` enforces that every module under
+`internal/ci/always/check_test_reachability.py` enforces that every module under
 `cli/test/` is reachable: it is in a directory whose dune enables
 `(inline_tests)`, in a directory holding a `(library ...)` stanza, or named by a
 `(test ...)`, `(tests ...)`, `(executable ...)`, or `(executables ...)` stanza. A
@@ -52,7 +52,7 @@ module in none of those is compiled by nothing and run by nothing, which is how 
 test disappears without a failure. The check reads dune files structurally and
 keeps no manifest of its own; the legacy name list it consults is the one being
 migrated away, and the scan root is a command-line argument so the guard's own
-tests can point it at fixtures. `internal/ci/test_test_reachability.sh` exercises
+tests can point it at fixtures. `internal/ci/always/test_test_reachability.sh` exercises
 both directions, including a test-bearing module in a plain directory.
 
 ## Retaining an executable

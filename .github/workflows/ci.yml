@@ -10,7 +10,7 @@ jobs:
   # Classifies the diff ONCE for the whole run. Every job consumes this output;
   # none of them carries its own path list. The definition itself lives in
   # internal/ci/classify-changes.sh, shared with the local pre-commit hook, and
-  # its semantics are pinned by internal/ci/test_classify_changes.sh.
+  # its semantics are pinned by internal/ci/always/test_classify_changes.sh.
   #
   # continue-on-error: classification must never be able to fail the workflow.
   # If this job dies, `kind` is empty, and every consumer's condition
@@ -88,7 +88,13 @@ jobs:
 
       - name: Validate ticket transitions
         run: |
-          git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/check_ticket_transitions.sh
+          git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/context/check_ticket_transitions.sh
+
+      # The cheap, offline invariants that must hold on every path, docs-only
+      # included. Membership is the internal/ci/always directory, so a new member
+      # needs no edit here.
+      - name: "Verification class: always (every path)"
+        run: bash internal/tooling/scripts/verify.sh always
 
       - name: Install the CI guards' tooling
         if: needs.classify.outputs.kind != 'docs-only'
@@ -111,7 +117,7 @@ jobs:
             echo "run. Only ticket validation, transition/move checks, specification signatures,"
             echo "classification controls, and account-artifact checks run. Classification"
             echo "semantics are pinned by"
-            echo "\`internal/ci/test_classify_changes.sh\`."
+            echo "\`internal/ci/always/test_classify_changes.sh\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Classification alone decides whether the product suite runs. The
@@ -184,8 +190,8 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune build
 
-      # The full path supplies every binary its guards require (BUG-064).
-      - name: Tooling for the unconditional guards (BUG-064)
+      # The static class reads the built soldev, cli and provider-printer binaries (BUG-064).
+      - name: Tooling for the verification classes (BUG-064)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         run: |
@@ -209,12 +215,6 @@ jobs:
       - name: Install pinned kubectl (readiness-probe argument validation)
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/tooling/scripts/ci-toolchain.sh kubectl
-
-      - name: Test reachability guard
-        run: python3 internal/ci/check_test_reachability.py
-
-      - name: Test reachability guard mutation coverage
-        run: bash internal/ci/test_test_reachability.sh
 
       # Each package declares its own membership as `ci-unit` in its `test/dune`,
       # so this step names one class and cannot drift from the packages. A
@@ -282,15 +282,19 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: opam install ocamlformat.0.29.0 -y
 
-      - name: Format check
+      # The product, source and config invariants and their mutation self-tests,
+      # as one class. Membership is internal/ci/, so adding a guard is one file
+      # and no edit to this workflow; a class with no members is an error.
+      - name: "Verification class: static (source paths)"
         if: needs.classify.outputs.kind != 'docs-only'
-        # One definition, shared with the pre-commit hook's --staged mode, so the
-        # local check and this one cannot drift apart.
-        run: internal/ci/check_ocamlformat.sh --all
+        run: bash internal/tooling/scripts/verify.sh static
 
-      - name: ocamlformat guard mutation test
+      # The class runner is the gate's own mechanism, so its fail-closed contract
+      # is pinned here: an empty class, a missing result and an unknown class each
+      # stop the run rather than passing.
+      - name: Verification runner contract
         if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_ocamlformat.sh
+        run: bash internal/ci/verify_test.sh
 
       # The harness is part of the qualification system, not a script beside it: it
       # constructs part of the effective configuration handed to Sol/Terraform and it owns
@@ -311,129 +315,6 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: python3 internal/qualification/gcp/test_observer.py
 
-      - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_platform_component_drift.py
-          python3 internal/ci/test_platform_component_drift.py
-
-      - name: cert-manager readiness contract (FND-0010)
-        # Every GCP attempt failed the platform apply on cert-manager's post-install
-        # readiness check, because the Helm provider's default 300s `timeout` bounded a
-        # hook cert-manager designed to keep polling. The guard pins the contract that
-        # failure violated: the check stays enabled, its per-attempt budget is real, and
-        # the release wait is strictly longer than the check's worst case. Its mutation
-        # self-test includes the pre-fix configuration, which must be rejected.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_cert_manager_readiness.py .
-          python3 internal/ci/test_cert_manager_readiness_check.py
-
-      - name: Kubernetes object ownership (FND-0061)
-        # Two Terraform resources in the platform module wrote the same Kubernetes RoleBinding
-        # name, so whichever applied second failed with `already exists` and the GCP
-        # provisioner's authority could never be created on a fresh target. The guard enforces
-        # the invariant behind that -- one Kubernetes object, one Terraform owner -- and its
-        # mutation self-test includes the collision that failed the live apply.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_kubernetes_object_ownership.py .
-          python3 internal/ci/test_kubernetes_object_ownership_check.py
-
-      - name: Platform storage requirement (INFRA-090)
-        # The lifecycle compares a provider's *observed* disk quota against Sol's *declared*
-        # minimum before the platform asks for a volume (FND-0062). A declaration that has
-        # drifted from the platform it describes would read as a guarantee while being a false
-        # floor, so this pins the parts to the module's own declarations.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_platform_storage_requirement.py .
-          python3 internal/ci/test_platform_storage_requirement_check.py
-
-      - name: GCP substrate (INFRA-093)
-        # FND-0064: the GCP driver provisions GKE Standard. The guard holds the product contract --
-        # no Autopilot request, a pool Sol owns, sizing owned by driver defaults rather than the
-        # target -- without freezing today's numbers into the definition of GCP support.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_gcp_standard_substrate.py .
-          python3 internal/ci/test_gcp_standard_substrate_check.py
-
-      - name: Platform TLS requirement (DEC-056 / FND-0068)
-        # Attempt 19 reported the lifecycle Ready while the platform's own certificates were unready,
-        # because nothing in the readiness gate covered them. Sol declares those certificates
-        # unconditionally, so they are platform resources: the gate now requires exactly the set the
-        # module's annotated ingresses declare, and this guard keeps the declaration and the module
-        # from drifting apart in either direction.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_platform_tls_requirement.py .
-          python3 internal/ci/test_platform_tls_requirement_check.py
-
-      - name: Node shape fits the platform (FND-0066)
-        # Attempt 16 installed on the driver's own defaults -- 3 x e2-standard-2 -- and stopped with
-        # four pods the scheduler could not place: a redpanda broker asks 2 CPU and the loki chunk
-        # cache 9.6 GiB, against 1.93 CPU / 5.88 GiB allocatable per node. The requirements come from
-        # the profile's own capacity envelope, not from this guard, so the drivers cannot default to
-        # a shape the profile itself refuses, and a count that cannot carry the envelope after
-        # node-failure headroom is refused too.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_node_shape_fits_platform.py .
-          python3 internal/ci/test_node_shape_fits_platform_check.py
-
-      - name: Provider TLS path (DEC-055 / FND-0067)
-        # Attempt 17 reached Ready with cert-manager's only DNS-01 solver hardcoded to Route 53, so a
-        # GCP cluster created certificates it could never issue and the platform reported Ready anyway.
-        # The solver and the cert-manager pod's identity are now selected per provider, each provider
-        # root supplies its own scope and identity, and each cluster root owns a DNS permission set
-        # scoped to the workspace's zone. An empty identity fails closed rather than deploying a solver
-        # that runs without credentials.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_provider_tls_path.py .
-          python3 internal/ci/test_provider_tls_path_check.py
-
-      - name: Terraform output contract (INFRA-091)
-        # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
-        # what `terraform output -json` publishes. Attempt 13's defect was two artefacts agreeing
-        # with each other and with neither Terraform nor reality, so this ties them to one payload
-        # Terraform itself produced and forbids the invented shape from returning.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_terraform_output_fixture.py .
-          python3 internal/ci/test_terraform_output_fixture_check.py
-
-      - name: gcloud interface and install-authority guard
-        # Attempt 2 lost a live run to `gcloud container clusters get-credentials
-        # --kubeconfig`, a flag that does not exist: the offline harness could not
-        # catch it because its stub was written from the implementation. This checks
-        # Sol's argv against gcloud's own help, and that the impersonation grant is
-        # scoped to the named provisioner identity and the caller the target declares.
-        # It skips -- loudly -- on runners without gcloud, rather than passing.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_gcloud_interface.sh
-
-      - name: Change-classification semantics (internal/ci/classify-changes.sh)
-        # The classifier decides whether the expensive suite runs, so it is part
-        # of the gate rather than a convenience. Its boundaries are pinned here
-        # so a future refactor cannot silently widen the docs-only allowlist --
-        # "skip expensive CI" quietly becoming "skip CI for something important"
-        # would not be visible in a normal review of the diff.
-        run: bash internal/ci/test_classify_changes.sh
-
-      - name: Support-library revisions are declared, never floating (BUG-059)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_support_refs.sh
-
-      - name: Support-refs guard mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_support_refs.sh
-
-      - name: Ticket-state transition guard
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_ticket_transitions.sh
-
       - name: Ticket-move guard (INFRA-066)
         # Deliberately unconditional, with no `classify` condition: a ticket move is
         # itself a docs-only change, and that is exactly the PR shape this checks.
@@ -449,316 +330,7 @@ jobs:
           # reads -- while leaving the branch *name* visible, so a legitimate partial
           # PR would be refused. Deepen before running it.
           git fetch --no-tags --unshallow origin -q 2>/dev/null || git fetch --no-tags origin main -q
-          internal/ci/check_ticket_move.sh --base origin/main --branch "${{ github.head_ref }}"
-
-      - name: Ticket-move guard mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_ticket_move.sh
-
-      - name: Pipeline ticket validation guard (BUG-060)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Deliberately unconditional, and deliberately not gated on `classify`:
-        # filing or editing a ticket *is* a docs-only change, which is exactly the
-        # PR shape this covers, and the invariant is about the whole tree. It runs
-        # `soldev pipeline validate` -- the same parser `pipeline ls`/`check` read
-        # tickets with -- over BACKLOG, READY_FOR_ENGINEERING and DONE, so an
-        # unreadable ticket is an error naming the file instead of a ticket that
-        # quietly disappears from the queue view. The script is also the guard's
-        # mutation test: it plants malformed tickets in a throwaway tree and
-        # expects each to be rejected, against a readable control tree that passes.
-        run: bash internal/ci/test_pipeline_validate.sh
-
-      - name: Unconditional guards can run (BUG-064)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_unconditional_guard_tooling.py .
-
-      - name: Unconditional-guard-tooling mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          bash internal/ci/test_unconditional_guard_tooling.sh
-          python3 internal/ci/test_docs_only_path.py
-
-      - name: Workflow paths-filter guard (REFAC-099)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Unconditional: a stale `paths:` entry makes its workflow stop triggering
-        # silently, and the change that stales it can be any kind of move.
-        run: python3 internal/ci/check_workflow_paths.py
-
-      - name: Workflow paths-filter guard mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_workflow_paths.sh
-
-      - name: Examples are self-contained (REFAC-105)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Unconditional: an example that reaches into internal/ cannot run from a
-        # copy, and the change that introduces it can be a docs-classified YAML edit.
-        run: bash internal/ci/check_examples_self_contained.sh
-
-      - name: Examples self-containment mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_examples_self_contained.sh
-
-      - name: Sol's assets are located only by Sol_cli_platform_assets (REFAC-114)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Unconditional: a command that finds Sol's source tree itself works only
-        # from a checkout, which DEC-049 rules out for an installed release.
-        run: bash internal/ci/check_platform_assets_owner.sh
-
-      - name: Platform-assets ownership mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_platform_assets_owner.sh
-
-      - name: Manifests are built as values (REFAC-131)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Unconditional: a manifest written as text puts values into it unescaped.
-        run: bash internal/ci/check_manifests_are_values.sh
-
-      - name: Manifest-values mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_manifests_are_values.sh
-
-      - name: One process runner, one filesystem helper (REFAC-134)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_single_runner.sh
-
-      - name: Single-runner mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_single_runner.sh
-
-      - name: Library code does not print (REFAC-135)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_library_output.sh
-
-      - name: Library-output mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_library_output.sh
-
-      - name: No code comments (OCaml, shell, Terraform, TypeScript)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_no_comments.sh
-
-      - name: No-comments mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_no_comments.sh
-
-      - name: let* is Result.Syntax, repository-wide (REFAC-137)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_result_syntax.sh
-
-      - name: Result.Syntax mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_result_syntax.sh
-
-      - name: JSON is read through Sol_cli_json (REFAC-132)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_json_decode_boundary.sh
-
-      - name: JSON-decode-boundary mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_json_decode_boundary.sh
-      - name: Runtime failures are returned, not raised (REFAC-133)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/check_no_exception_control_flow.sh
-
-      - name: Exception-control-flow mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_no_exception_control_flow.sh
-
-      - name: Framework spec signature guard (DOCS-017)
-        # Unconditional, and deliberately so: a spec-only change is classified
-        # docs-only, and a spec-only change is exactly what drifts.
-        run: python3 internal/ci/check_framework_doc_signatures.py
-
-      - name: Framework spec signature guard mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Python 3 is what the guard uses to parse declarations; the runner has it.
-        run: python3 internal/ci/test_framework_doc_signatures.py
-
-      - name: Worktree/authority preflight (REFAC-090)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # Cheap and offline, and deliberately unconditional: the semantics it
-        # pins -- a declared context is enforced, an undeclared one is advisory,
-        # a branch with no upstream and a merge commit are never blocked -- are
-        # exactly as important to keep true in a docs-only change.
-        run: bash internal/ci/test_authority_check.sh
-
-      - name: Hook install integrity (REFAC-090)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # A stale hook install is silently inert rather than red, so the only
-        # way the repository can notice is a test that runs the installer in a
-        # scratch repository and seeds the dangling-symlink failure.
-        run: bash internal/ci/test_hook_install.sh
-
-      - name: Scratch-repository identity (VERIF-008)
-        if: needs.classify.outputs.kind != 'docs-only'
-        # A scratch-repository helper must not operate on whatever repository a
-        # Git-invoked caller exported; this pins the refusal and the sanitizer.
-        run: bash internal/ci/test_scratch_repo.sh
-
-      - name: Signal-handler duplication guardrail (REFAC-081)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_signal_handler_duplication.sh
-
-      - name: Qualification-artifact guardrail (HARDEN-002 run 2)
-        # No classification condition: a real account id or a provisioned target
-        # reaching the repo is exactly as bad in a docs-only change.
-        run: internal/ci/check_no_account_artifacts.sh
-
-      - name: Qualification-artifact guardrail mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_no_account_artifacts.sh
-
-      - name: Public cloud lifecycle guardrail (HARDEN-002 finding 5)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_public_cloud_lifecycle.sh
-
-      - name: Publisher/deployer identity boundary (ADR 0002)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_publisher_deployer_boundary.sh
-
-      # INFRA-035: the guard itself is exercised on every run, because a guard that
-      # would not have failed on the bug it exists for is worse than no guard — it
-      # buys confidence it has not earned. The guard proper runs as part of the
-      # unit-test step above (cli/test's runtest rule), so it only runs where
-      # kubectl exists; this proves it rejects the invocation that shipped broken.
-      - name: Readiness-probe invocation guard mutation test (INFRA-035)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_readiness_invocations_check.sh
-
-      # ADR 0004: normal lifecycle activity must never make a target undeletable.
-      # The mutation test runs first because the guard's whole value is that it
-      # can fail; the guard then checks this tree.
-      # HARDEN-003: an assertion must be demonstrably able to fail. This exercises
-      # the vacuous-assertion failure directly.
-      - name: Qualification assertion mutation test (HARDEN-003)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_qualification_assertions.sh
-
-      # INFRA-040: the substrate's Secret and the migration Job's reference must
-      # resolve the same identity, or no workload can be deployed.
-      - name: Runtime secret identity guard (INFRA-040)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_runtime_secret_identity.sh
-      - name: Check GCP provisioner IAM boundary
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_gcp_provisioner_role.sh
-
-      - name: Check steady-state cluster-access identity boundary
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_cluster_access_identity.sh
-
-      - name: Production infrastructure guard, and its mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_production_infra.py .
-          python3 internal/ci/test_production_infra_check.py
-
-      - name: Destroy-completeness guard mutation test (INFRA-037)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_destroy_completeness_check.sh
-
-      - name: Destroy-completeness guard (INFRA-037)
-        # Reads the provider list from the built printer (REFAC-100), so it runs
-        # where Build ran; a docs-only change cannot touch a Terraform root.
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_destroy_completeness.py .
-
-      - name: Every Terraform-managed resource declares how it is rediscovered (FND-0070)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_resource_identity.py .
-
-      - name: Target destruction does not reach project-wide resources (FND-0070)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_project_shared_resources.py .
-          python3 internal/ci/test_guard_mutations.py
-
-      - name: Destroy releases the workloads before the substrate (FND-0077)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          set -eu
-          python3 internal/ci/check_workload_release_order.py .
-          python3 internal/ci/test_workload_release_order_check.py
-
-      - name: A workload can reach the managed database Sol provisioned (FND-0075)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_managed_database_egress.py .
-          python3 internal/ci/test_managed_database_egress_check.py
-
-      - name: A deploy establishes a namespace's scoped RBAC before touching it (FND-0072)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_deploy_substrate_order.py .
-          python3 internal/ci/test_deploy_substrate_order_check.py
-
-      - name: The delegated DNS zone is a durable prerequisite, on every provider (DEC-042/DEC-043)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: |
-          python3 internal/ci/check_durable_dns_zone.py .
-          python3 internal/ci/test_durable_dns_zone_check.py
-
-      - name: Provider roots mirror by role (DEC-046 rule 4, REFAC-100)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_provider_roots.sh .
-
-      - name: Provider roots guard mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_provider_roots.sh
-
-      # REFAC-092: provider dispatch outside approved modules may only shrink, and no
-      # wildcard may stand in for a provider (SEC-010 was `Aws -> true | _ -> false`).
-      - name: Provider-dispatch guard mutation test (REFAC-092)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_provider_dispatch_check.sh
-
-      - name: Provider-dispatch guard (REFAC-092)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/check_provider_dispatch.sh .
-
-      # DOCS-030: docs/reference/cli.md documents every registered command from the binary's
-      # own help, so a command added in code cannot land undocumented, and the page cannot
-      # carry a command or a flag the binary does not have.
-      - name: CLI reference mutation test (DOCS-030)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/test_cli_reference_check.py
-      # Two actors can allocate the same ticket id concurrently, and the tree keeps one record
-      # per id, so the second would silently replace the first (BUG-110).
-      - name: Ticket-overwrite mutation test (BUG-110)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/test_ticket_overwrites.py
-
-      - name: Ticket-overwrite guard (BUG-110)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_ticket_overwrites.py --base origin/main
-
-      - name: CLI reference guard (DOCS-030)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_cli_reference.py
-
-      # DEC-038: the operator identity owns production observation and diagnosis,
-      # and its grant must follow the evidence Sol's read-only commands consume.
-      - name: Operator diagnostic grant (DEC-038 / INFRA-057)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_operator_diagnostics.py
-      - name: Operator diagnostic guard mutation test (INFRA-057)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/test_operator_diagnostics_check.py
-
-      # DEC-039: the qualification transport is harness-only. No production root may
-      # reference it, and it may not carry a verb beyond transport and addressing.
-      - name: Qualification transport boundary (DEC-039 / INFRA-060)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_qualification_transport.py
-      - name: Qualification transport guard mutation test (INFRA-060)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_qualification_transport_check.sh
-
-      # DEC-040: a captured whoami response must be scrubbable into a fixture without
-      # flattening the structure the parser depends on, or leaving an account id behind.
-      - name: whoami capture scrubber (DEC-040)
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/ci/test_scrub_whoami_capture.sh
+          internal/ci/context/check_ticket_move.sh --base origin/main --branch "${{ github.head_ref }}"
 
       # FEAT-101 / DEC-049: build the real release archive and prove it works
       # installed, where it cannot see this checkout. The runner digest is a
