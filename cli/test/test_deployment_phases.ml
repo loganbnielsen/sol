@@ -1039,19 +1039,20 @@ let test_up_execution_descriptor_uses_host_push_image () =
   let exec =
     Sol_cli_up_execution.service_execution
       ~workspace:"myapp"
-      ~ctx_dir:"/tmp/myapp.docker-ctx"
+      ~ctx_dir:"/tmp/myapp"
       ~sha:"abc123"
       svc_spec
   in
   Alcotest.(check string) "k8s name" "charge-svc" exec.k8s_name;
   Alcotest.(check string) "namespace" "myapp-payments" exec.namespace;
+  Alcotest.(check string) "Docker context is the workspace" "/tmp/myapp" exec.context;
   Alcotest.(check string)
     "push image"
     "localhost:5000/myapp/charge-svc:abc123"
     exec.push_image;
   Alcotest.(check string)
     "dockerfile"
-    "/tmp/myapp.docker-ctx/app/payments/charge_svc/Dockerfile"
+    "/tmp/myapp/app/payments/charge_svc/Dockerfile"
     exec.dockerfile
 ;;
 
