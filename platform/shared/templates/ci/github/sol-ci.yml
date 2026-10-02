@@ -11,7 +11,7 @@
 #                               branch or the event (DEC-016).
 #   SOL_REGISTRY                image registry prefix, e.g.
 #                                 123456789.dkr.ecr.us-east-1.amazonaws.com
-#                                 us-central1-docker.pkg.dev/my-project/pluto
+#                                 us-central1-docker.pkg.dev/my-project/{{name}}
 #   SOL_DEPLOY_ROLE_ARN         AWS: the deploy identity (the target's
 #                               `deploy_role_arn`); assumed through OIDC.
 #   SOL_DEPLOY_SERVICE_ACCOUNT  GCP: the deploy service account; impersonated
@@ -88,7 +88,7 @@ jobs:
           find app -name Dockerfile | while read -r dockerfile; do
             dir=$(dirname "$dockerfile")
             unit=$(basename "$dir" | tr '_' '-')
-            image="${SOL_REGISTRY}/pluto/${unit}:${short_sha}"
+            image="${SOL_REGISTRY}/{{name}}/${unit}:${short_sha}"
             docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
             docker push "$image"
           done

@@ -187,35 +187,34 @@ workloads cannot un-apply that.
 
 ## 5. CI
 
-Two modes are checked in as ordinary workflows in [`examples/pluto/.github/workflows/`](../../examples/pluto/.github/workflows),
-and either can be copied and edited — there is no generated-workflow command yet (**FEAT-109**).
-
-**GitOps**, `sol-ci.yml`: no cluster credentials at all. Build and push images, then let the CLI
-say what would change and render it:
+Generate the supported workflow into an existing workspace:
 
 ```bash
-sol deploy "$SOL_TARGET" --emit-plan-to plan.json --dry-run    # typed intent, as an artefact
-sol deploy "$SOL_TARGET" --emit-to manifests/ --image-tag "$SHA"
+sol ci init github
 ```
 
-Emitted manifests never contain secret values, so rotation stays a separate
-step either way: `sol secret set` for a Secret Sol owns, or the provider store
-when the target delivers secrets through the External Secrets Operator — Sol
-refuses to write over an `ExternalSecret`'s target rather than report a
-rotation the operator will undo. See
-[credential-rotation.md](../deployment/credential-rotation.md).
+It writes `.github/workflows/sol-ci.yml` (also scaffolded by `sol new workspace`) and prints the
+repository variables and provider-side trust it expects. It never overwrites a workflow you have
+edited; pass `--force` when you mean to replace one. The generated workflow is checked in at
+[`examples/pluto/.github/workflows/sol-ci.yml`](../../examples/pluto/.github/workflows/sol-ci.yml).
 
-**Direct**, `deploy.yml`: same build phase, then `sol deploy` with a registry and an image tag and
-a kubeconfig from a secret (`KUBECONFIG_B64`).
+The workflow authenticates with **GitHub OIDC** — no long-lived cloud credentials are stored in the
+repository. Configure the provider side once:
 
-Both follow the same contract, and it is the part worth keeping: **CI provides inputs, Sol decides
-everything else.** Phase 1 (compile, test, build and push images) is user-owned and will become
-`sol build`; phase 2 (deploy) is the typed contract above, and duplicating the plan/render/execute
-logic in a workflow is the mistake this contract exists to prevent.
+- **AWS**: an IAM role whose trust policy accepts `token.actions.githubusercontent.com` for this
+  repository (and branch or environment), then set `SOL_DEPLOY_ROLE_ARN` to it. This is the target's
+  `deploy_role_arn` — the same identity a human operator would assume (DEC-061).
+- **GCP**: a Workload Identity Federation provider bound to this repository, plus the deploy service
+  account; set `SOL_WORKLOAD_IDENTITY_PROVIDER` and `SOL_DEPLOY_SERVICE_ACCOUNT`.
 
-The full Argo CD variant lives in `platform/cloud/delivery/ci/`. Short-lived, least-privilege
-identities for CI — rather than long-lived keys — are the installation's business:
-[production-bootstrap.md](../deployment/production-bootstrap.md) and **FEAT-109**.
+`SOL_TARGET` is a repository variable and is passed to `sol deploy` verbatim; the workflow never
+infers a destination from the branch or the event (DEC-016). Workload secret values are never held
+by CI (FEAT-053): seed them with `sol secret set --target <env>/<provider>/<region> <KEY>`, and the
+deploy fails closed naming any key that is missing.
+
+The deploy step is the same lifecycle as local execution — `sol deploy <target>` then
+`sol migrate <target>` — so nothing about the plan, the render or the apply exists in the workflow.
+The full Argo CD variant lives in `platform/cloud/delivery/ci/`.
 
 ## 6. What you bring, and what Sol brings
 
