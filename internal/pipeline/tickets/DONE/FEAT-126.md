@@ -48,3 +48,51 @@ The package is implemented, tested against a real Postgres in CI (14 cases, 0
 skipped) and published, so the remaining work is the example update. Promotion to
 READY is recording that this ticket is now actionable.
 
+## Done (2026-10-02)
+
+**What landed.**
+
+- `loganbnielsen/sol-typescript#7` (merged `56aa7ac`) adds `packages/jobs` →
+  `@sol-fab/jobs@0.1.0`: `enqueue(client, contract, job, { runAt?, dedupeKey? })`
+  is a plain `INSERT ... ON CONFLICT (workspace, kind, dedupe_key) DO NOTHING`,
+  so passing a `PoolClient` from inside a transaction puts the job in the same
+  transaction as the state change that caused it; `runJobs` claims with
+  `FOR UPDATE SKIP LOCKED`, renews its lease while the handler runs, retries with
+  exponential backoff, fails terminally at the attempt budget and sweeps expired
+  terminal rows. Validation rules and `backoffS` mirror `sol_jobs.ml`.
+- The package lives in this repo's existing `sol-typescript` repository rather
+  than a new one, and CI now runs a Postgres service and passes `POSTGRES_URL`,
+  so the queue behaviour is tested for real. `release.yml` gains the `jobs-v*`
+  tag and the `jobs` dispatch choice.
+- `examples/pluto/app/demo_ts/fulfillment_worker` consumes it: handling an order
+  writes `fulfilled_orders_ts` **and** enqueues a `send_confirmation` job in one
+  transaction, and hosts the runner alongside its Kafka consumer, stopping it on
+  drain. This is the same fact-consumed → job-enqueued composition as the OCaml
+  `notify_worker` (which enqueues with `~dedupe_key:msg.id`).
+
+**Checks run.** `sol-typescript` CI: `tsc` clean; 14 jobs cases, 14 pass, 0
+skipped (8 pure, 6 against the CI Postgres — idempotent enqueue, enqueue joins
+and rolls back with the caller's transaction, claim/handle/complete once,
+retry-with-backoff, terminal failure, unreadable-table database error). Demo:
+`npm run build -w order-svc -w fulfillment_worker` clean against the published
+`@sol-fab/jobs@0.1.0`.
+
+**Publishing.** `npm trust github @sol-fab/jobs` now exists for
+`loganbnielsen/sol-typescript` + `release.yml`, but npm refuses to configure
+trust for a package that does not exist yet (`404 Package not found`), so
+`0.1.0` was bootstrapped with one interactive, 2FA-authenticated `npm publish`
+and has no provenance. Every release from `0.1.1` on goes through the
+tag-triggered OIDC workflow with provenance, like svc/worker.
+
+**Demo/example coverage.** This ticket *is* the TypeScript example update.
+
+**Language parity.** Closes the `sol-jobs` row of the capability matrix: the
+transactional, dedupe-keyed Kafka → job handoff now exists in both languages
+with the same observable semantics.
+
+**Follow-up (recorded, not blocking).** The `sol_jobs_processed_total` /
+`sol_jobs_job_duration_seconds` name constants are exported from `@sol-fab/jobs`
+rather than `@sol-fab/obs`, where the metric-naming vocabulary otherwise lives;
+moving them belongs with the next `@sol-fab/obs` release.
+
+

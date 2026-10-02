@@ -12,12 +12,14 @@ import {
   wrapEachMessage,
   type Outcome,
 } from "@sol-fab/kafka";
+import { runJobs } from "@sol-fab/jobs";
 import { makeLokiPusher } from "@sol-fab/obs";
 import { runWorker } from "@sol-fab/worker";
 import { decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
+import { enqueueConfirmation, makeConfirmationJobs } from "./jobs.js";
 
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -51,6 +53,7 @@ const log = makeLokiPusher({
 });
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
 const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
+const confirmationJobs = makeConfirmationJobs(log);
 
 async function handleOrder(
   order: ReturnType<typeof decodeOrderPlaced>,
@@ -67,7 +70,10 @@ async function handleOrder(
 
     if (db) {
       try {
-        await db.insertFulfilled(order);
+        await db.withTransaction(async (client) => {
+          await db!.insertFulfilled(order, client);
+          await enqueueConfirmation(client, confirmationJobs, order.order_id);
+        });
       } catch (err) {
         messagesTotal.inc({ status: "fail" });
         return fail(`db: ${String(err)}`);
@@ -150,8 +156,33 @@ async function main() {
       }, 3000)
     : undefined;
 
+  const jobsAbort = new AbortController();
+  const jobsRunning = db
+    ? runJobs({
+        pool: db.pool,
+        contract: confirmationJobs,
+        signal: jobsAbort.signal,
+        pollIntervalS: 0.5,
+        onOutcome: (outcome) => {
+          log("info", "job processed", {
+            kind: outcome.kind,
+            status: outcome.status,
+            duration_s: outcome.durationS.toFixed(3),
+          });
+        },
+        onWarning: (fields, message) => {
+          console.error(`[fulfillment-worker-ts] ${message}`, fields);
+          log("error", message, fields);
+        },
+      }).then((error) => {
+        if (error) console.error(`[fulfillment-worker-ts] jobs stopped: ${error.message}`);
+      })
+    : Promise.resolve();
+
   const lifecycle = runWorker({
     drain: async () => {
+      jobsAbort.abort();
+      await jobsRunning;
       await consumer.disconnect();
     },
     onDrainStart: () => {

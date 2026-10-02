@@ -2,7 +2,7 @@
 
 `order_svc` and `fulfillment_worker` are a real TypeScript service and worker
 running on Sol's deploy machinery (CLI, Docker builds, Kubernetes manifests
-are all language-neutral) and consuming Sol's own conventions via four published
+are all language-neutral) and consuming Sol's own conventions via five published
 npm packages:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — schema
@@ -16,14 +16,27 @@ npm packages:
 - [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
   worker lifecycle contract `fulfillment_worker` runs on, matching the OCaml
   `sol-worker`.
+- [`@sol-fab/jobs`](https://github.com/loganbnielsen/sol-typescript) — the durable
+  Postgres job queue, matching `sol-jobs`: a transactional, dedupe-keyed enqueue
+  and a leased runner.
 
-The four exist so a TypeScript service and an OCaml `sol-svc`/
+`fulfillment_worker` also demonstrates the Kafka → job handoff: handling an order
+writes `fulfilled_orders_ts` **and** enqueues a `send_confirmation` job in one
+Postgres transaction, so the job cannot exist without the state change that
+caused it (and a redelivered fact enqueues nothing new, because the dedupe key is
+the order id). It hosts the queue's runner alongside its consumer. As with
+`fulfilled_orders_ts`, `db.ts` provisions the demo's tables itself
+(`CREATE TABLE IF NOT EXISTS`), so the TypeScript smoke — which deliberately runs
+no `sol migrate` — is self-contained; a real app owns the same DDL as a
+migration.
+
+The five exist so a TypeScript service and an OCaml `sol-svc`/
 `sol-worker` land in the same Grafana panels and the same Tempo traces
 without an author having to reconstruct Sol's policy by hand — see each
 package's own tests for the specific bugs a hand-rolled first attempt hit
 (FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
 repository with their own CI, including the broker-backed DLQ/partitioning tests;
-`svc` and `worker` share
+`svc`, `worker` and `jobs` share
 [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
 
 This example is the *runnable* TypeScript path, not the scaffolded one: `sol new`
