@@ -602,7 +602,6 @@ let test_stale_binary_fails_after_rename () =
 let test_post_merge_action_of_rc () =
   let show = function
     | Soldev_merge.Report_success -> "pass"
-    | Soldev_merge.Report_perf_regression -> "perf"
     | Soldev_merge.Report_local_failure rc -> Printf.sprintf "report:%d" rc
   in
   Alcotest.(check string)
@@ -610,13 +609,13 @@ let test_post_merge_action_of_rc () =
     "pass"
     (show (Soldev_merge.post_merge_action_of_rc 0));
   Alcotest.(check string)
-    "2 is the perf-ratio verdict, informational"
-    "perf"
-    (show (Soldev_merge.post_merge_action_of_rc 2));
-  Alcotest.(check string)
     "1 is a failure to report, never a revert"
     "report:1"
     (show (Soldev_merge.post_merge_action_of_rc 1));
+  Alcotest.(check string)
+    "2 is no longer a perf verdict — the runner has no such exit"
+    "report:2"
+    (show (Soldev_merge.post_merge_action_of_rc 2));
   Alcotest.(check string)
     "an unrunnable suite is not a merged success"
     "report:127"

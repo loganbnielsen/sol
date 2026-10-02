@@ -9,7 +9,7 @@ Ensures the local environment is consistent, spins up infrastructure, and runs t
 
 ## Preferred: use the test runner
 
-`internal/tooling/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `internal/tooling/perf/perf_baseline.json`.
+`internal/tooling/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup and per-suite hang bounds, and exits on correctness only. Performance history is separate (`perf.sh`, below).
 
 ```bash
 # Full matrix (all suites, infra auto-provisioned)
@@ -20,19 +20,21 @@ bash internal/tooling/scripts/run_tests.sh unit kafka
 
 # Skip infra setup if broker/loki/postgres are already running
 bash internal/tooling/scripts/run_tests.sh --no-infra
-
-# After an intentional performance change, update the baseline
-bash internal/tooling/scripts/run_tests.sh --update-baseline
 ```
 
 ### Performance baseline management (`internal/tooling/scripts/perf.sh`)
 
 ```bash
-bash internal/tooling/scripts/perf.sh status              # all suites: baseline, latest, drift
+bash internal/tooling/scripts/perf.sh record [suite]              # run a suite and report its duration vs the same-host baseline
+bash internal/tooling/scripts/perf.sh record --update-baseline [suite]  # run and record it as the new baseline for this host class
+bash internal/tooling/scripts/perf.sh status              # all suites: baseline, latest, drift (same host class only)
 bash internal/tooling/scripts/perf.sh history [suite]     # full run history with regression markers
-bash internal/tooling/scripts/perf.sh set-baseline [suite|all]  # mark latest run as new baseline
+bash internal/tooling/scripts/perf.sh set-baseline [suite|all]  # mark latest stored run as new baseline
 bash internal/tooling/scripts/perf.sh clear [suite|all]   # wipe history for a suite
 ```
+
+After an intentional performance change, record and set the baseline in one step:
+`bash internal/tooling/scripts/perf.sh record --update-baseline unit`.
 
 ### Git hooks (format + build on commit; unit tests and fast CI checks on push)
 

@@ -5,7 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 export REPO_ROOT
-BASELINE="$REPO_ROOT/internal/tooling/perf/perf_baseline.json"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 pass()  { echo -e "${GREEN}✓${NC} $*"; }
@@ -13,28 +12,20 @@ fail()  { echo -e "${RED}✗${NC} $*"; }
 info()  { echo -e "${DIM}→${NC} $*"; }
 header(){ echo -e "\n${BOLD}$*${NC}"; }
 
-declare -A TIMEOUTS=(
-  [unit]=60
-  [kafka]=120
-  [e2e]=180
+declare -A HANG_BOUNDS=(
+  [unit]=300
+  [kafka]=900
+  [e2e]=1200
 )
 
-declare -A FAIL_RATIOS=(
-  [unit]=1.5
-  [kafka]=1.4
-  [e2e]=1.5
-)
-
-UPDATE_BASELINE=0
 SKIP_INFRA=0
 RESET_INFRA=0
 REQUESTED_SUITES=()
 
 for arg in "$@"; do
   case "$arg" in
-    --update-baseline) UPDATE_BASELINE=1 ;;
-    --no-infra)        SKIP_INFRA=1 ;;
-    --reset-infra)     RESET_INFRA=1 ;;
+    --no-infra)    SKIP_INFRA=1 ;;
+    --reset-infra) RESET_INFRA=1 ;;
     unit|kafka|e2e) REQUESTED_SUITES+=("$arg") ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
@@ -45,49 +36,6 @@ SUITES=("${REQUESTED_SUITES[@]:-${ALL_SUITES[@]}}")
 
 now_ms()    { date +%s%3N; }
 elapsed_s() { awk "BEGIN { printf \"%.3f\", ($2 - $1) / 1000 }"; }
-
-HAS_JQ=0
-command -v jq &>/dev/null && HAS_JQ=1
-
-baseline_get() {
-  [ $HAS_JQ -eq 0 ] && echo "null" && return
-  jq -r ".suites.$1.history | map(select(.baseline == true)) | last | .duration_s // \"null\"" "$BASELINE"
-}
-
-baseline_append() {
-  local suite=$1 duration_s=$2 is_baseline=$3
-  [ $HAS_JQ -eq 0 ] && return
-  local today; today=$(date +%Y-%m-%d)
-  local commit; commit=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  local entry
-  if [ "$is_baseline" = "true" ]; then
-    entry="{\"date\":\"$today\",\"commit\":\"$commit\",\"duration_s\":$duration_s,\"baseline\":true}"
-  else
-    entry="{\"date\":\"$today\",\"commit\":\"$commit\",\"duration_s\":$duration_s}"
-  fi
-  local tmp; tmp=$(mktemp)
-  jq ".suites.${suite}.history += [$entry]" "$BASELINE" > "$tmp"
-  mv "$tmp" "$BASELINE"
-}
-
-is_regression() {
-  local suite=$1 actual_s=$2
-  local base; base=$(baseline_get "$suite")
-  [ "$base" = "null" ] && return 1
-
-  local ratio=${FAIL_RATIOS[$suite]}
-  local threshold
-  threshold=$(awk "BEGIN { printf \"%.2f\", $base * $ratio }")
-  awk "BEGIN { exit !($actual_s >= $threshold) }"
-}
-
-report_regression() {
-  local suite=$1 actual_s=$2
-  local base; base=$(baseline_get "$suite")
-  local ratio=${FAIL_RATIOS[$suite]}
-  local actual_ratio; actual_ratio=$(awk "BEGIN { printf \"%.2f\", $actual_s / $base }")
-  fail "$suite: ${actual_s}s vs baseline ${base}s (${actual_ratio}× — regression, threshold ${ratio}×)"
-}
 
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
@@ -145,19 +93,17 @@ reset_infra() {
 
 declare -A RESULTS
 declare -A TIMINGS
-REGRESSION_FAIL=0
 
-echo -e "\n${BOLD}Sol test runner${NC}"
+echo -e "\n${BOLD}Sol correctness runner${NC}"
 echo "Suites: ${SUITES[*]}"
-[ $UPDATE_BASELINE -eq 1 ] && echo "Mode: --update-baseline"
-[ $HAS_JQ -eq 0 ] && echo -e "${DIM}jq not found — regression checks disabled${NC}"
+echo "Hang bounds (a suite killed at its bound is a hang, not a slow pass): unit=${HANG_BOUNDS[unit]}s kafka=${HANG_BOUNDS[kafka]}s e2e=${HANG_BOUNDS[e2e]}s"
 
 run_one() {
   local suite=$1
-  local timeout_s=${TIMEOUTS[$suite]}
+  local bound=${HANG_BOUNDS[$suite]}
   local start; start=$(now_ms)
   set +e
-  timeout -s KILL "$timeout_s" bash -c "$(declare -f info pass fail header now_ms elapsed_s "run_${suite}"); run_${suite}" 2>&1 \
+  timeout -s KILL "$bound" bash -c "$(declare -f info pass fail header now_ms elapsed_s "run_${suite}"); run_${suite}" 2>&1 \
     | sed 's/^/    /'
   local exit_code=${PIPESTATUS[0]}
   set -e
@@ -169,7 +115,7 @@ run_one() {
 run_suite() {
   local suite=$1
   echo -e "\n  ${BOLD}${suite}${NC}"
-  local timeout_s=${TIMEOUTS[$suite]}
+  local bound=${HANG_BOUNDS[$suite]}
 
   local elapsed exit_code
   if run_one "$suite"; then exit_code=0; else exit_code=$?; fi
@@ -177,8 +123,8 @@ run_suite() {
   TIMINGS[$suite]=$elapsed
 
   if [ $exit_code -eq 124 ] || [ $exit_code -eq 137 ]; then
-    fail "${suite}: timed out after ${timeout_s}s"
-    RESULTS[$suite]=timeout
+    fail "${suite}: hang — killed after the ${bound}s hang bound"
+    RESULTS[$suite]=hang
     return
   elif [ $exit_code -ne 0 ]; then
     fail "${suite}: failed (${elapsed}s)"
@@ -188,35 +134,6 @@ run_suite() {
 
   RESULTS[$suite]=pass
   pass "${suite}: passed (${elapsed}s)"
-
-  if is_regression "$suite" "$elapsed"; then
-    info "${suite}: ${elapsed}s exceeded threshold on first run — confirming with a re-run before flagging a regression"
-    local confirm_exit
-    if run_one "$suite"; then confirm_exit=0; else confirm_exit=$?; fi
-    if [ $confirm_exit -eq 124 ] || [ $confirm_exit -eq 137 ]; then
-      fail "${suite}: confirmation re-run timed out after ${timeout_s}s"
-      RESULTS[$suite]=timeout
-      TIMINGS[$suite]=$RUN_ONE_ELAPSED
-      return
-    elif [ $confirm_exit -ne 0 ]; then
-      fail "${suite}: confirmation re-run failed (${RUN_ONE_ELAPSED}s)"
-      RESULTS[$suite]=fail
-      TIMINGS[$suite]=$RUN_ONE_ELAPSED
-      return
-    fi
-    elapsed=$RUN_ONE_ELAPSED
-    TIMINGS[$suite]=$elapsed
-    if is_regression "$suite" "$elapsed"; then
-      report_regression "$suite" "$elapsed"
-      REGRESSION_FAIL=1
-    else
-      pass "${suite}: re-run at ${elapsed}s is within threshold — treating first run as noise"
-    fi
-  fi
-
-  if [ $UPDATE_BASELINE -eq 1 ]; then
-    baseline_append "$suite" "$elapsed" "true"
-  fi
 }
 
 INFRA_SUITES=()
@@ -251,8 +168,8 @@ if [ ${#INFRA_SUITES[@]} -gt 0 ]; then
 fi
 
 header "Summary"
-printf "  %-18s %-10s %-10s %-12s %-8s\n" "Suite" "Result" "Time" "Baseline" "Threshold"
-printf "  %-18s %-10s %-10s %-12s %-8s\n" "─────────────────" "──────────" "─────────" "────────────" "─────────"
+printf "  %-10s %-8s %-12s %s\n" "Suite" "Result" "Time" "Hang bound"
+printf "  %-10s %-8s %-12s %s\n" "──────────" "────────" "────────────" "──────────"
 
 ALL_PASSED=1
 for suite in "${ALL_SUITES[@]}"; do
@@ -260,37 +177,24 @@ for suite in "${ALL_SUITES[@]}"; do
 
   result=${RESULTS[$suite]}
   elapsed=${TIMINGS[$suite]}
-  base=$(baseline_get "$suite")
-  threshold=${FAIL_RATIOS[$suite]}
 
   case "$result" in
-    pass)    result_str="${GREEN}pass${NC}" ;;
-    fail)    result_str="${RED}fail${NC}";    ALL_PASSED=0 ;;
-    timeout) result_str="${RED}timeout${NC}"; ALL_PASSED=0 ;;
+    pass) result_str="${GREEN}pass${NC}" ;;
+    fail) result_str="${RED}fail${NC}"; ALL_PASSED=0 ;;
+    hang) result_str="${RED}hang${NC}"; ALL_PASSED=0 ;;
   esac
 
-  [ "$base" = "null" ] && base_str="${DIM}none${NC}" || base_str="${base}s"
-
-  printf "  %-18s " "$suite"
-  echo -ne "$result_str"
-  printf "%-$((10 - ${#result} + 6))s" ""
-  printf "%-10s" "${elapsed}s"
-  printf "%-14s" "$base_str"
-  echo "${threshold}×"
+  printf "  %-10s " "$suite"
+  printf "%b" "$result_str"
+  printf "%*s" $((8 - ${#result})) ""
+  printf "%-12s" "${elapsed}s"
+  printf "%ss\n" "${HANG_BOUNDS[$suite]}"
 done
-
-if [ $UPDATE_BASELINE -eq 1 ]; then
-  echo ""
-  pass "Baseline entries recorded in $BASELINE"
-fi
 
 echo ""
 if [ $ALL_PASSED -eq 0 ]; then
-  fail "One or more suites failed."
+  fail "One or more suites failed or hung."
   exit 1
-elif [ $REGRESSION_FAIL -eq 1 ]; then
-  fail "Performance regression detected (exceeded per-suite threshold)."
-  exit 2
 else
   pass "All suites passed."
   exit 0

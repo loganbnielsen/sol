@@ -730,18 +730,16 @@ let run_review ticket_id result_file =
 
 type post_merge_action =
   | Report_success
-  | Report_perf_regression
   | Report_local_failure of int
 
 let post_merge_action_of_rc = function
   | 0 -> Report_success
-  | 2 -> Report_perf_regression
   | rc -> Report_local_failure rc
 ;;
 
 let run_merge_finish ~ticket_id ~merge_sha =
-  let perf_rc = Soldev_shell.run_cmd "./internal/tooling/scripts/run_tests.sh" in
-  match post_merge_action_of_rc perf_rc with
+  let suite_rc = Soldev_shell.run_cmd "./internal/tooling/scripts/run_tests.sh" in
+  match post_merge_action_of_rc suite_rc with
   | Report_local_failure rc ->
     Soldev_exit.error
       (Printf.sprintf
@@ -758,11 +756,6 @@ let run_merge_finish ~ticket_id ~merge_sha =
          merge_sha)
   | Report_success ->
     Printf.printf "  ✓  local post-merge suite passed; %s remains merged\n%!" ticket_id;
-    Ok ()
-  | Report_perf_regression ->
-    Printf.eprintf
-      "  perf regression detected (informational only — %s remains merged)\n%!"
-      ticket_id;
     Ok ()
 ;;
 
