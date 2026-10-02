@@ -77,52 +77,38 @@ opam install -y \
 
 ### Kubernetes toolchain
 
-Tested versions — other versions may work but are not validated:
-
-| Tool | Version |
-|------|---------|
-| Docker | 29.x |
-| k3d | **v5.6.0** |
-| kubectl | **v1.29.0** |
-| helm | **v3.21.0** |
+Tested versions — other versions may work but are not validated. Docker 29.x is
+the daemon the local cluster is validated against; the k3d, kubectl and helm pins
+live in one place,
+[`internal/tooling/scripts/ci-toolchain.sh`](../../tooling/scripts/ci-toolchain.sh):
 
 ```bash
-# All three install user-locally with no root; ~/.local/bin is on PATH on most
-# setups. Pin the tested versions.
-BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-
-# k3d — release binary directly. The upstream install.sh targets /usr/local/bin
-# (root), and its K3D_INSTALL_DIR override has been observed to fall back to a
-# sudo prompt anyway (FRIC-019).
-curl -fsSL -o "$BIN/k3d" \
-  https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64
-chmod +x "$BIN/k3d"
-
-# helm — the official get-helm-3 script likewise defaults to /usr/local/bin.
-curl -fsSL https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz | tar xz -C /tmp
-install -m 0755 /tmp/linux-amd64/helm "$BIN/helm"
-
-# kubectl
-curl -fsSL -o "$BIN/kubectl" \
-  https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl
-chmod +x "$BIN/kubectl"
+# User-local install, no root; ~/.local/bin is on PATH on most setups. Drop
+# SOL_TOOLCHAIN_DEST to install into /usr/local/bin with sudo, as CI does.
+SOL_TOOLCHAIN_DEST="$HOME/.local/bin" bash internal/tooling/scripts/ci-toolchain.sh
 
 hash -r
 which sol k3d helm kubectl   # sol must be the binary you built, not /usr/games/sol
 ```
 
+The script downloads pinned release binaries directly rather than piping an
+upstream install script to a shell: k3d's own `install.sh` targets
+`/usr/local/bin` and its `K3D_INSTALL_DIR` override has been observed to fall
+back to a sudo prompt anyway (FRIC-019).
+
 If Docker was installed via apt and your user is not yet in the `docker` group,
 either re-login or run `newgrp docker` before `sol local infra up` — otherwise
 every k3d/kubectl call fails to reach the daemon.
 
-k3d v5.6.0 is pinned because `sol local infra up` passes chart values tuned against
-that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
-k3d versions may reject those values or install different chart defaults.
+k3d is pinned to the version in that script because `sol local infra up` passes
+chart values tuned against it (Redpanda CPU/replica settings, node-exporter
+disable flag). Older k3d versions may reject those values or install different
+chart defaults.
 
-Docker Engine 29 removed every Docker API below 1.44, while k3d v5.6.0's client
-still speaks 1.43. `sol local infra up` bridges that automatically: it pins
+Docker Engine 29 removed every Docker API below 1.44, while k3d's client still
+speaks 1.43. `sol local infra up` bridges that automatically: it pins
 `DOCKER_API_VERSION` to the daemon's minimum for its k3d calls (FRIC-017), so the
-combination in the table above works without any manual environment changes.
+combination works without any manual environment changes.
 
 `sol up` builds through BuildKit when the `docker-buildx` plugin is present
 (recommended: the generated Dockerfiles disable provenance/SBOM attestations,

@@ -36,7 +36,11 @@ def runs_on(step, fast):
 
 
 def resolve(name, root):
-    for candidate in (root / "internal/ci" / name, root / "internal/ci/lib" / name):
+    for candidate in (
+        root / "internal/ci" / name,
+        root / "internal/ci/lib" / name,
+        root / "internal/tooling/scripts" / name,
+    ):
         if candidate.exists():
             return candidate
     return None
