@@ -84,6 +84,20 @@ sol deploy pilot/aws/us-east-1 --scope payments/charge_svc --dry-run \
   --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$CHARGE_DIGEST"
 ```
 
+A scoped deploy keeps the cross-domain callers it did not select. This
+workspace's `payments/charge_svc` calls `checkout/checkout_svc`
+(`calls = ["checkout/checkout_svc"]` in `app/payments/charge_svc/sol.toml`), so
+deploying the callee alone:
+
+```bash
+sol deploy pilot/aws/us-east-1 --scope checkout --dry-run
+```
+
+deploys `checkout/checkout_svc` and nothing else, and the NetworkPolicy it
+renders still admits `payments/charge_svc` — the incoming edge comes from the
+whole workspace declaration rather than from the selection, so a caller that is
+already running keeps access to the callee it was pointed at.
+
 Either form runs the profile preflight before anything touches a cluster. It
 refuses until the target establishes every guarantee the profile requires — a
 tag reference is itself one unmet guarantee — and lists each unmet guarantee

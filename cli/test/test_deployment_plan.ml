@@ -1560,6 +1560,95 @@ calls = ["checkout/checkout_svcc"]
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
+let network_policy_doc workload =
+  Str.split (Str.regexp_string "\n---") workload
+  |> List.find_opt (fun block -> contains (Str.regexp_string "kind: NetworkPolicy") block)
+  |> Option.value ~default:""
+;;
+
+let rendered_workload spec =
+  match
+    Sol_cli_deployment_render.render_spec
+      ~workspace:"myworkspace"
+      ~release_id:release_id_of_test
+      spec
+  with
+  | Ok (_, workload) -> workload
+  | Error message -> Alcotest.fail ("render_spec failed: " ^ message)
+;;
+
+let test_a_scoped_callee_keeps_its_cross_domain_caller_ingress () =
+  let tmp = Filename.temp_dir "sol_test_plan_caller_ingress" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    mkdirs "app/orders/order_svc";
+    write_file "app/payments/charge_svc/sol.toml" "";
+    write_file
+      "app/orders/order_svc/sol.toml"
+      {|[service]
+calls = ["payments/charge_svc"]
+|};
+    let order_service : Sol_cli_manifest.service =
+      { domain = "orders"
+      ; name = "order_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/orders/order_svc"
+      }
+    in
+    let plan ?(selected = [ charge_svc_service ]) () =
+      match
+        Sol_cli_deployment_plan.of_services_result
+          ~facts:(facts ())
+          ~workspace:"myworkspace"
+          ~env:deploy_env
+          ~inventory:[ charge_svc_service; order_service ]
+          ~requested_scope:"payments"
+          selected
+      with
+      | Ok plan -> plan
+      | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    in
+    let callee plan =
+      match
+        List.find_opt
+          (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+             spec.source_name = "charge_svc")
+          plan.Sol_cli_deployment_plan.services
+      with
+      | Some callee -> callee
+      | None -> Alcotest.fail "the plan did not deploy the callee"
+    in
+    let ingress_of plan =
+      let callee = callee plan in
+      let policy = network_policy_doc (rendered_workload callee) in
+      Alcotest.(check bool)
+        "the rendered network policy allows the caller's namespace"
+        true
+        (contains
+           (Str.regexp_string "kubernetes.io/metadata.name: myworkspace-orders")
+           policy);
+      Alcotest.(check bool)
+        "and the caller's pod selector"
+        true
+        (contains (Str.regexp_string "app: order-svc") policy);
+      Alcotest.(check int)
+        "the callee keeps the cross-domain caller that was not selected"
+        1
+        (List.length callee.Sol_cli_deployment_plan.called_by);
+      policy
+    in
+    let scoped_plan = plan () in
+    Alcotest.(check (list string))
+      "a scoped deploy still deploys only the callee"
+      [ "charge_svc" ]
+      (List.map
+         (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.source_name)
+         scoped_plan.Sol_cli_deployment_plan.services);
+    let scoped = ingress_of scoped_plan in
+    let full = ingress_of (plan ~selected:[ charge_svc_service; order_service ] ()) in
+    Alcotest.(check string) "a full plan renders the same ingress edge" full scoped)
+;;
+
 let test_service_call_env_conflict_fails () =
   let tmp = Filename.temp_dir "sol_test_plan_call_env_conflict" "" in
   with_cwd tmp (fun () ->
@@ -1935,6 +2024,10 @@ let () =
             "a misspelled call target still fails, and names the units (DEC-036)"
             `Quick
             test_unknown_service_call_fails_and_names_the_units
+        ; Alcotest.test_case
+            "a scoped callee keeps its cross-domain caller ingress (BUG-089)"
+            `Quick
+            test_a_scoped_callee_keeps_its_cross_domain_caller_ingress
         ; Alcotest.test_case
             "service call env conflict fails"
             `Quick
