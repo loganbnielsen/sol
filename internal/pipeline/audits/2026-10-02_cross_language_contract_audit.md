@@ -92,6 +92,7 @@ deferred, not applicable}. A row with no verdict is the failure DEC-022 names.
 | 17 | Auth | `Auth` levels (`Public`/`Api_key`/`Jwt` with scopes) declared per route via `Route`; principal in `Request.t.auth` | none — left to the app's Fastify/Express plugins | intentionally deferred — trigger: the first TypeScript app that needs Sol-declared auth (see § 5) |
 | 18 | Synchronous peer calls | `Peer.url`/`Peer.headers` (`x-api-key` + `traceparent`), `sol.toml` `calls` opens the NetworkPolicy pair | none | intentionally deferred — trigger: the first TypeScript app that declares a `calls` edge |
 | 19 | Env access | `Sol_env.timed`, `Sol_runtime.setting` | `process.env`; the variable **names** are the contract | already equivalent |
+| 20 | Consumer idempotency (duplicate delivery) | A unique key plus `ON CONFLICT DO NOTHING` on the consumer's domain write, and a dedupe-keyed job for the follow-up effect (`BUG-112` in `notify_worker`) | Same: `fulfilled_orders_ts` primary key + `ON CONFLICT DO NOTHING`, and a `send_confirmation` job dedupe-keyed by the order id | implemented — FEAT-123 (2026-10-02), tested in `demo_ts/test/delivery.test.ts` |
 
 ## 3. Findings filed
 

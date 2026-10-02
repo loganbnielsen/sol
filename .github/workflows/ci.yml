@@ -948,9 +948,27 @@ jobs:
     # checks without revisiting the design above.
     needs: classify
     if: always() && needs.classify.outputs.kind != 'docs-only'
-    name: TypeScript demo (install + build/typecheck)
+    name: TypeScript demo (install + build/typecheck + tests)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    # FEAT-123: the demo's duplicate-delivery test observes a schema property
+    # (the row's primary key plus the enqueue's dedupe key) that Kafka cannot
+    # exercise and a mock cannot reproduce, so the job runs a Postgres and passes
+    # POSTGRES_URL. Without it the case self-skips rather than passing silently.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v5
 
@@ -969,6 +987,10 @@ jobs:
       - name: Build and typecheck both services
         working-directory: examples/pluto/app/demo_ts
         run: npm run build -w order-svc -w fulfillment-worker
+
+      - name: Demo tests (duplicate delivery)
+        working-directory: examples/pluto/app/demo_ts
+        run: npm test
 
       - name: Dependency advisories (AUDIT-068)
         # Production dependencies only, and only high or above: this is the bar
