@@ -3,99 +3,10 @@
   (env-vars
    (XDG_DATA_HOME .sol-test-data))))
 
-(tests
- (names
-  test_kube_destination
-  test_destination
-  test_deployment_scope
-  test_workload_selection
-  test_manual_job_name
-  test_deployment_plan
-  test_check
-  test_config
-  test_env_target
-  test_manifest_render
-  test_executor
-  test_secret
-  test_secret_rotation
-  test_release_inspection
-  test_scaffold
-  test_logs
-  test_log_selector
-  test_process
-  test_tool_adapters
-  test_aws_absence
-  test_boundary_epoch
-  test_gcp_absence
-  test_ownership_reconcile
-  test_port_forward
-  test_deployment_state
-  test_dev_observability
-  test_change_set
-  test_deployment_phases
-  test_factory
-  test_rollback
-  test_migration_disposition
-  test_secret_strategy
-  test_toml_keys
-  test_secret_reads
-  test_rollout_diagnosis
-  test_loki
-  test_run_log
-  test_release
-  test_release_store
-  test_release_id
-  test_release_retention
-  test_boundary_lease
-  test_deployment
-  test_deployment_id
-  test_deployment_attempt
-  test_observability_url
-  test_target_report
-  test_deploy_event
-  test_open
-  test_status
-  test_runtime_secret_identity
-  test_profile
-  test_alerting
-  test_workspace
-  test_platform_component
-  test_platform_assets
-  test_terraform_workdir
-  test_time
-  test_alert_test
-  test_terraform_outputs
-  test_string
-  test_image_ref
-  test_local_infra
-  test_cloud_lifecycle
-  test_cloud_destroy
-  test_cloud_apply
-  test_disk_quota
-  test_cluster_substrate
-  test_destroy_verification
-  test_terraform_plan
-  test_substrate
-  test_substrate_contract
-  test_migration
-  test_up_plan
-  test_workspace_model
-  test_yaml
-  test_fs
-  test_report
-  test_sol_yml
-  test_local_run
-  test_json
-  test_cloud_cli
-  test_local_platform
-  test_deploy_selection
-  test_migration_job
-  test_migration_gate
-  test_deploy_run
-  test_cloud_command
-  test_environment_stage)
- (deps ../bin/main.exe)
- (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
+(test
+ (name test_supervised)
+ (modules test_supervised)
+ (libraries sol_cli alcotest unix str))
 
 (executable
  (name print_readiness_invocations)
@@ -137,12 +48,6 @@
 (executable
  (name print_providers)
  (libraries sol_cli))
-
-(test
- (name test_bounded_output)
- (modules test_bounded_output)
- (deps ../bin/main.exe)
- (libraries sol_cli alcotest unix))
 
 (rule
  (alias runtest)
@@ -215,18 +120,6 @@
   (bash
    "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
 
-(test
- (name test_sensitive_vars)
- (modules test_sensitive_vars)
- (deps
-  (source_tree ../../platform/cloud))
- (libraries sol_cli alcotest str))
-
-(test
- (name test_supervised)
- (modules test_supervised)
- (libraries sol_cli alcotest unix str))
-
 (rule
  (alias runtest)
  (deps ../bin/main.exe)
@@ -249,16 +142,6 @@
  (action
   (bash
    "set -eu\nsol=$(pwd)/../bin/main.exe\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nexpect() {\n  want=$1; shift\n  if \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; then got=0; else got=$?; fi\n  if [ \"$got\" != \"$want\" ]; then\n    echo \"expected exit $want, got $got: $*\" >&2; cat \"$tmp/err\" >&2; exit 1\n  fi\n}\nmkdir -p \"$tmp/outside\" \"$tmp/ws/app/payments/charge_svc\"\ncd \"$tmp/outside\"\nexpect 1 \"$sol\" check\ngrep -F 'sol: not inside a Sol workspace' \"$tmp/err\" >/dev/null\ncd \"$tmp/ws\"\ntouch sol.yml\nexpect 1 \"$sol\" check\ngrep -F 'Dockerfile is missing' \"$tmp/err\" >/dev/null\nif [ -n \"$(tail -n 1 \"$tmp/err\")\" ]; then :; else echo 'sol check printed a blank line after its findings' >&2; exit 1; fi\nexpect 124 \"$sol\" open logs --links --observability-backend bogus\ngrep -F 'bogus' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback\ngrep -Fx 'error: pass a release id, or --commit <sha>.' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback --scope payments\ngrep -F -- '--scope only narrows --commit candidate resolution' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback r-test --scope payments\ngrep -F -- '--scope only narrows --commit candidate resolution' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback r-test --commit abc1234\ngrep -Fx 'error: pass either a release id or --commit, not both.' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback r-test --commit abc1234 --scope payments\ngrep -Fx 'error: pass either a release id or --commit, not both.' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" plan nope\ngrep -Fx 'error: nope: target must look like <env>/<provider>/<region>' \"$tmp/err\" >/dev/null\nmkdir -p app/billing/invoice_svc\necho 'FROM scratch' > app/billing/invoice_svc/Dockerfile\nexpect 1 \"$sol\" local fn run billing/invoice_svc\ngrep -F \"is a svc, not a -fn; 'sol fn run' only invokes -fn workloads.\" \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local logs --scope billing/invoice_svc --follow --no-follow\ngrep -F -- '--follow and --no-follow are mutually exclusive' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local logs\ngrep -Fx 'error: pass --scope DOMAIN/UNIT (or --release <id>)' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local logs --scope billing\ngrep -F 'error: sol logs addresses exactly one unit' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" deploy prod/aws/us-east-1 --dry-run --image-tag t1\ngrep -F 'error: target \"prod/aws/us-east-1\" is not declared in' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local migrate --dry-run --dir nope\ngrep -Fx 'error: cannot read migrations dir: nope: No such file or directory' \"$tmp/err\" >/dev/null\nmkdir -p m && touch m/001_a.sql m/001_b.sql\nexpect 1 \"$sol\" local migrate --dry-run --dir m\ngrep -F 'share version 1' \"$tmp/err\" >/dev/null\nif command -v terraform >/dev/null 2>&1; then\n  expect 1 \"$sol\" cloud plan nope\n  grep -Fx 'error: target must look like <env>/<provider>/<region>.' \"$tmp/err\" >/dev/null\n  expect 1 \"$sol\" cloud plan prod/zzz/us-east-1\n  grep -Fx 'error: unsupported provider \"zzz\" in target \"prod/zzz/us-east-1\".' \"$tmp/err\" >/dev/null\nfi\nexpect 1 \"$sol\" new svc bad\ngrep -Fx 'error: expected domain/name (e.g. payments/charge), got \"bad\"' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" new workspace sol.yml\ngrep -Fx 'error: \"sol.yml\" already exists' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local rollback --commit \"\"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" open logs --links --observability-backend self_hosted_durable --base-domain \"  \"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\n")))
-
-(test
- (name test_gcp_outputs)
- (libraries sol_cli alcotest yojson)
- (deps fixtures/terraform-output-gcp-cloud.json))
-
-(test
- (name test_installation)
- (modules test_installation)
- (libraries sol_cli alcotest str))
 
 (rule
  (alias runtest)

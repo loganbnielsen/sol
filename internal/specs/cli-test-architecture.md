@@ -35,9 +35,9 @@ adding a module to that library is the whole registration.
   here are ordinary tests; `cli_binary.ml` is the shared helper that locates the
   built `sol` binary.
 - `cli/test/support/` is a helper library (`sol_cli_test_support`).
-- `cli/test/dune` keeps the shrinking legacy `(tests (names ...))` stanza for
-  tests not yet migrated, plus the `(executable ...)` stanzas that must stay
-  explicit executables.
+- `cli/test/dune` holds only the `(executable ...)` and `(test ...)` stanzas that
+  must stay explicit executables; the legacy `(tests (names ...))` registry is
+  gone.
 
 ## Reachability
 
