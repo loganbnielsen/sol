@@ -115,7 +115,7 @@ Three declarations that were never reconciled:
    `chunksCache`, so the chart's separate memcached component and its `9830Mi` request are inherited
    unexamined. The substring `9830` appears nowhere under `platform/`.
 
-`DEC-049` / `INFRA-093` chose Standard with "sizing from driver variable defaults" and qualified the
+`DEC-060` / `INFRA-093` chose Standard with "sizing from driver variable defaults" and qualified the
 *substrate* change (no Autopilot admission refusal, no default node pool). This finding is the next
 consequence of that choice, and it is not GCP-specific in shape: the AWS driver's default is
 `node_instance_types = ["m6i.large"]` — the same 2 vCPU / 8 GiB class. **No AWS run in the ledger has

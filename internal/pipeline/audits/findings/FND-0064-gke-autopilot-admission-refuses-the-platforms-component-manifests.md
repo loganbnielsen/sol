@@ -9,7 +9,7 @@ source: GCP qualification Attempt 14 (2026-09-26), revision ae47d777
 
 **Depends on:** None.
 
-**State:** `FIXED_UNQUALIFIED` — decided and implemented 2026-09-26 in `DEC-049` / `INFRA-093`: the
+**State:** `FIXED_UNQUALIFIED` — decided and implemented 2026-09-26 in `DEC-060` / `INFRA-093`: the
 GCP driver provisions GKE Standard, and an existing Autopilot cluster is refused before any plan
 exists, with the refusal describing the profile's requirement rather than today's component list.
 **Not qualified:** no live run has installed on a Standard cluster yet; Attempt 15 is the

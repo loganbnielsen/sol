@@ -24,7 +24,7 @@ awk -F'\t' '
     delete old; delete new
     o = split_ticket($2, old); n = split_ticket($3, new)
     if (o == -1 || n == -1) next
-    if (!o || !n || old["id"] != new["id"] || !transition_ok(old["state"], new["state"])) {
+    if (!o || !n || (old["state"] != new["state"] && old["id"] != new["id"]) || !transition_ok(old["state"], new["state"])) {
       print "  invalid ticket move: " $2 " -> " $3
       bad = 1
     }

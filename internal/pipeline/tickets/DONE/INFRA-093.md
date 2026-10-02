@@ -2,7 +2,7 @@
 id: INFRA-093
 type: feature
 severity: high
-source: GCP qualification Attempt 14 (2026-09-26), DEC-049
+source: GCP qualification Attempt 14 (2026-09-26), DEC-060
 ---
 
 # INFRA-093 — the GCP driver provisions GKE Standard, and the profile refuses Autopilot
@@ -14,7 +14,7 @@ Attempt 14 measured the mismatch (FND-0064): Autopilot's admission webhook refus
 (`linux capability 'SYS_RESOURCE' on container 'tuning'`) after the cloud root and the platform
 prerequisites had been applied — ten minutes and one billable cluster, with no path to `Ready`.
 
-**Decision (DEC-049):** GKE Standard is the supported GCP substrate for the standard Sol platform
+**Decision (DEC-060):** GKE Standard is the supported GCP substrate for the standard Sol platform
 profile, and node sizing is a driver-owned default rather than target configuration.
 
 ## What lands
@@ -45,7 +45,7 @@ profile, and node sizing is a driver-owned default rather than target configurat
 
 ## Completion notes (2026-09-26)
 
-Landed as `DEC-049`. The driver produces Standard (`enable_autopilot = false`, no knob, no leftover
+Landed as `DEC-060`. The driver produces Standard (`enable_autopilot = false`, no knob, no leftover
 default pool) with a pool Sol owns, sized from driver-declared variable defaults — `3 x
 e2-standard-2`, 100 GiB `pd-balanced`, pinned to one zone while the control plane stays regional.
 

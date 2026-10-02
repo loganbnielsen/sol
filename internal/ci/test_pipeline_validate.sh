@@ -75,6 +75,18 @@ run_in "$WORK" pipeline validate
 [ "$RC" = 0 ] || fail "a fixture tree of readable tickets was rejected: $OUT"
 ok "a fixture tree of readable tickets passes (the mutation below is not vacuous)"
 
+readable BUG-900 "duplicate id" > "$TREE/DONE/BUG-900.md"
+run_in "$WORK" pipeline validate
+expect_rejected "validate, duplicate ticket id" "duplicate ticket id BUG-900"
+ok "validate rejects duplicate ids across ticket states"
+rm "$TREE/DONE/BUG-900.md"
+
+readable BUG-906 "mismatched id" > "$TREE/BACKLOG/BUG-907.md"
+run_in "$WORK" pipeline validate
+expect_rejected "validate, id differs from filename" "frontmatter id BUG-906 does not match filename id BUG-907"
+ok "validate rejects a frontmatter id that differs from its filename"
+rm "$TREE/BACKLOG/BUG-907.md"
+
 before="$(cat "$TREE/BACKLOG/BUG-900.md")"
 malformed BUG-900 "malformed frontmatter" > "$TREE/BACKLOG/BUG-900.md"
 after="$(cat "$TREE/BACKLOG/BUG-900.md")"
