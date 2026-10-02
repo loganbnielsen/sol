@@ -43,16 +43,11 @@ let run_test target alertmanager_url dry_run =
 open Cmdliner
 
 let target_arg =
-  Arg.(
-    required
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "target" ]
-        ~docv:"ENV/PROVIDER/REGION"
-        ~doc:
-          "The production target whose alert route to exercise (e.g. \
-           `pilot/aws/us-east-1`). Required: the target file is where the \
-           receiver/owner/runbook contract is declared.")
+  Sol_cli_target_arg.required_flag
+    ~doc:
+      "The production target whose alert route to exercise (e.g. `pilot/aws/us-east-1`). \
+       Required: the target file is where the receiver/owner/runbook contract is \
+       declared."
 ;;
 
 let alertmanager_url_arg =

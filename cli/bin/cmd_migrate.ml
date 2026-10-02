@@ -317,19 +317,14 @@ let dry_run_flag =
 ;;
 
 let target_arg =
-  Arg.(
-    value
-    & pos 0 (some Sol_cli_args.text) None
-    & info
-        []
-        ~docv:"TARGET"
-        ~doc:
-          "Deployment target path: <env>/<provider>/<region>. When given, migrations run \
-           from a one-shot Kubernetes Job inside the target's cluster instead of \
-           connecting directly from this machine — required for any real deployment \
-           whose database (e.g. RDS) isn't reachable from outside its network by design \
-           (FRIC-012). Omit for the local dev cluster, which remains directly reachable \
-           via kubectl port-forward.")
+  Sol_cli_target_arg.optional_positional
+    ~doc:
+      "Deployment target path: <env>/<provider>/<region>. When given, migrations run \
+       from a one-shot Kubernetes Job inside the target's cluster instead of connecting \
+       directly from this machine — required for any real deployment whose database \
+       (e.g. RDS) isn't reachable from outside its network by design (FRIC-012). Omit \
+       for the local dev cluster, which remains directly reachable via kubectl \
+       port-forward."
 ;;
 
 let registry_arg =

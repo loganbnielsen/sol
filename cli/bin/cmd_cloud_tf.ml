@@ -328,10 +328,7 @@ let var_file_arg =
 ;;
 
 let target_arg =
-  Arg.(
-    required
-    & pos 0 (some Sol_cli_args.text) None
-    & info [] ~docv:"TARGET" ~doc:"Deployment target path: <env>/<provider>/<region>.")
+  Sol_cli_target_arg.positional ~doc:"Deployment target path: <env>/<provider>/<region>."
 ;;
 
 let var_arg =

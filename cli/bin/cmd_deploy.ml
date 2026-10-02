@@ -741,17 +741,12 @@ let run (req : Sol_cli_command_request.deploy_request) =
 ;;
 
 let target_arg =
-  Arg.(
-    required
-    & pos 0 (some Sol_cli_args.text) None
-    & info
-        []
-        ~docv:"TARGET"
-        ~doc:
-          "Deployment target path: <env>/<provider>/<region>, e.g. dev/aws/us-east-1 — \
-           same convention as 'sol plan'. Resolves sol.yml, then the environment and \
-           target in sol/environments.yml, for registry/env defaults. Unlike 'sol up' \
-           (local-only, no target concept), this is required.")
+  Sol_cli_target_arg.positional
+    ~doc:
+      "Deployment target path: <env>/<provider>/<region>, e.g. dev/aws/us-east-1 — same \
+       convention as 'sol plan'. Resolves sol.yml, then the environment and target in \
+       sol/environments.yml, for registry/env defaults. Unlike 'sol up' (local-only, no \
+       target concept), this is required."
 ;;
 
 let scope_arg =
