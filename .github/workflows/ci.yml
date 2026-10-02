@@ -239,6 +239,9 @@ jobs:
       # skips itself when POSTGRES_URL is unset, which is why the variable is
       # part of this step rather than the suite being excluded from it.
       # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
+      # The two database suites run in sequence rather than in one invocation,
+      # with --force: they both create and drop the sol_jobs table in this one
+      # database, so a concurrent run tests neither of them.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         timeout-minutes: 20
@@ -248,11 +251,13 @@ jobs:
           SCHEMA_REGISTRY_URL: http://localhost:8081
           REDPANDA_ADMIN_URL: http://localhost:9644
           POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
+          SOL_WORKSPACE: sol
         run: |
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
-          opam exec -- dune test framework/ocaml/sol-jobs/ framework/ocaml/sol-outbox/
+          opam exec -- dune test framework/ocaml/sol-jobs/ --force
+          opam exec -- dune test framework/ocaml/sol-outbox/ --force
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
@@ -273,6 +278,7 @@ jobs:
           SCHEMA_REGISTRY_URL: http://localhost:8081
           REDPANDA_ADMIN_URL: http://localhost:9644
           POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
+          SOL_WORKSPACE: sol
         run: opam exec -- dune test internal/fixtures/local-demo/test/ --force
 
       # INFRA-006: formatting check runs after unit tests on purpose — running

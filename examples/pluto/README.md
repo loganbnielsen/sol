@@ -23,8 +23,11 @@ accepts by publishing a Kafka event.
 bash <path-to-sol>/platform/local/scripts/ensure-broker.sh
 bash <path-to-sol>/platform/local/scripts/ensure-postgres.sh
 
-# Run the worker (POSTGRES_URL is required — both services depend on Postgres)
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
+# Run the worker. POSTGRES_URL and SOL_WORKSPACE are both required: notify_worker
+# hosts sol-jobs, which scopes every job to the workspace that owns it, and a
+# process run outside a workload has to name that workspace itself. A deployed
+# workload gets SOL_WORKSPACE from the platform.
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev SOL_WORKSPACE=pluto \
   dune exec app/comms/notify_worker/bin/main.exe
 
 # In another terminal, run checkout. SOL_API_KEY is the shared internal key.

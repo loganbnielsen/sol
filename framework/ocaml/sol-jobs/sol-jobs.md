@@ -53,6 +53,12 @@ Multiple job "kinds" are just constructors of one `t` — the same way an app's 
 
 `decode`'s `Error _` is treated exactly like a `handle` failure: retried per the configured `retry_policy`, eventually terminal. There is no separate poison-message path the way Kafka's decode-error handling needs one — unlike a Kafka partition, one bad row can never block any other job's claim.
 
+## Workspace identity
+
+Every row belongs to the workspace that enqueued it, and `sol-jobs` refuses to enqueue or poll without knowing which workspace it is: two workspaces can share one Postgres database and even the same job `kind` (Sol's local path starts one database for every workspace), and without an identity one workspace's poller would claim, run, retry or terminally fail the other's jobs — or sweep their terminal rows.
+
+The identity is `SOL_WORKSPACE`, the workspace name. Sol's platform renders it into every workload's ConfigMap, so a deployed `-worker` has it without the app doing anything; a process run outside a workload (a local run, a test) must set it explicitly, the same way it sets `KAFKA_SECURITY_PROTOCOL`. There is no default: an absent, empty or malformed value is `` `Config `` from `run` and a refused enqueue from `enqueue`, never a shared queue. A workspace name is non-empty, at most 63 characters, and uses only `a-z`, `A-Z`, `0-9`, `_`, `.` and `-`.
+
 ## Job table
 
 `sol-jobs` does not create or migrate its own table — an app author adds a migration for it, same as any other Sol-managed table:
@@ -60,6 +66,7 @@ Multiple job "kinds" are just constructors of one `t` — the same way an app's 
 ```sql
 CREATE TABLE IF NOT EXISTS sol_jobs (
   id           SERIAL      PRIMARY KEY,
+  workspace    TEXT        NOT NULL,
   kind         TEXT        NOT NULL,
   payload      TEXT        NOT NULL,
   status       TEXT        NOT NULL DEFAULT 'pending',  -- 'pending' | 'completed' | 'failed'
@@ -73,19 +80,19 @@ CREATE TABLE IF NOT EXISTS sol_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS sol_jobs_claim_idx
-  ON sol_jobs (run_at)
+  ON sol_jobs (workspace, run_at)
   WHERE status = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
-  ON sol_jobs (kind, dedupe_key)
+  ON sol_jobs (workspace, kind, dedupe_key)
   WHERE dedupe_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx
-  ON sol_jobs (finished_at)
+  ON sol_jobs (workspace, finished_at)
   WHERE status <> 'pending';
 ```
 
-The table name (`sol_jobs`) is fixed, not configurable — one app, one job table, matching FEAT-077's non-goal against a pluggable/configurable backend surface.
+The table name (`sol_jobs`) is fixed, not configurable — one app, one job table, matching FEAT-077's non-goal against a pluggable/configurable backend surface. `workspace` is `NOT NULL` and every statement names it — enqueue, claim, completion, retry, terminal failure, lease renewal and sweep — so the row's owner is a column the database enforces, not a convention the queries remember.
 
 ## Deduplication: the Kafka → jobs handoff
 
@@ -96,7 +103,7 @@ Db.transaction pool (fun tx ->
   Jobs.enqueue tx ~dedupe_key:event.id (Send_confirmation_email { order_id }))
 ```
 
-- The uniqueness constraint on `(kind, dedupe_key)` lives in the database, not only in `enqueue`: two concurrent enqueues of the same key insert one row.
+- The uniqueness constraint on `(workspace, kind, dedupe_key)` lives in the database, not only in `enqueue`: two concurrent enqueues of the same key insert one row, and two workspaces reusing one key each keep their own.
 - **A duplicate is success.** `enqueue` returns `Ok ()` whether it inserted the row or found one already there — the caller cannot, and should not have to, tell those apart. No job id is returned, so nothing else about the existing row is observable.
 - Omitting `~dedupe_key` keeps the plain at-least-once insert: two calls enqueue two jobs. That is the right shape when the caller has no stable id to offer.
 

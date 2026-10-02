@@ -25,6 +25,7 @@ let jobs_ddl =
   [ "DROP TABLE IF EXISTS sol_jobs"
   ; "CREATE TABLE sol_jobs (\n\
     \  id SERIAL PRIMARY KEY,\n\
+    \  workspace TEXT NOT NULL,\n\
     \  kind TEXT NOT NULL,\n\
     \  payload TEXT NOT NULL,\n\
     \  status TEXT NOT NULL DEFAULT 'pending',\n\
@@ -35,8 +36,8 @@ let jobs_ddl =
     \  dedupe_key TEXT,\n\
     \  inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n\
     \  finished_at TIMESTAMPTZ)"
-  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (kind, dedupe_key) WHERE \
-     dedupe_key IS NOT NULL"
+  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, dedupe_key) \
+     WHERE dedupe_key IS NOT NULL"
   ]
 ;;
 

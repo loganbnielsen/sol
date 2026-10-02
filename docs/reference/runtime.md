@@ -125,6 +125,21 @@ environment variable by the name Sol/you expect (`POSTGRES_URL`,
 and nothing fails until the connection you expected to work doesn't, at
 runtime.
 
+### `SOL_WORKSPACE` — the workspace identity, always present
+
+Every generated workload's `<name>-env` ConfigMap carries `SOL_WORKSPACE`, set
+to the workspace being deployed. It is not optional and not defaulted: it is the
+identity a runtime uses when it must not act on another workspace's data. Two
+workspaces can share one Postgres database (Sol's local path starts one database
+for every workspace), so `sol-jobs` scopes every job row to this value and
+refuses to enqueue or poll when it is missing (BUG-091). A process run outside a
+workload — a local run, a test — must set it explicitly.
+
+Unlike `SOL_ENV`, this is not behaviour-only: it is the same name Sol uses for
+the workspace's namespaces, its release records and its deploy-state ConfigMap,
+so it is safe to key workspace-scoped data on, and unsafe to invent a second
+notion of "which workspace am I".
+
 ### `SOL_ENV` — the environment, for behaviour only
 
 Every generated workload's `<name>-env` ConfigMap carries `SOL_ENV`, set to the

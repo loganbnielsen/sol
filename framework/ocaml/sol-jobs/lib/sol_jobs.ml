@@ -120,22 +120,74 @@ let validate_kinds kinds =
   | None -> Ok ()
 ;;
 
+let workspace_setting = "SOL_WORKSPACE"
+
+let is_workspace_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '.' | '-' -> true
+  | _ -> false
+;;
+
+let validate_workspace value =
+  let value = String.trim value in
+  if value = ""
+  then
+    Error
+      (`Config
+          (Printf.sprintf
+             "%s is empty: sol-jobs scopes every job to the workspace that owns it, so a \
+              poller and an enqueue must both name one"
+             workspace_setting))
+  else if String.length value > 63
+  then
+    Error
+      (`Config
+          (Printf.sprintf "%s %S is longer than 63 characters" workspace_setting value))
+  else if not (String.for_all is_workspace_char value)
+  then
+    Error
+      (`Config
+          (Printf.sprintf
+             "%s %S is invalid: a workspace name uses only a-z, A-Z, 0-9, _, . and -"
+             workspace_setting
+             value))
+  else Ok value
+;;
+
+let workspace_identity () =
+  match Sol_runtime.setting workspace_setting with
+  | None ->
+    Error
+      (`Config
+          (Printf.sprintf
+             "%s is not set. sol-jobs scopes every job to a workspace so two workspaces \
+              sharing one database cannot claim, run or finalize each other's jobs. \
+              Sol's platform sets this in every workload; a process run outside one (a \
+              local run, a test) must set it explicitly, e.g. %s=myapp."
+             workspace_setting
+             workspace_setting))
+  | Some value -> validate_workspace value
+;;
+
 module For_testing = struct
   let backoff_s = backoff_s
   let validate_retry_policy = validate_retry_policy
   let validate_timing = validate_timing
   let validate_kinds = validate_kinds
+  let validate_workspace = validate_workspace
+  let workspace_identity = workspace_identity
 end
 
 let table = "sol_jobs"
 
 let claim_q =
   Caqti_request.Infix.(
-    Caqti_type.(t3 int float string) ->? Caqti_type.(t5 int string string int string))
+    Caqti_type.(t4 int float string string)
+    ->? Caqti_type.(t5 int string string int string))
     (Printf.sprintf
        {|WITH candidate AS (
            SELECT id, attempts, ?::int AS budget, ?::float8 AS lease FROM %s
-           WHERE status = 'pending'
+           WHERE workspace = ?
+             AND status = 'pending'
              AND kind = ANY(string_to_array(?, ','))
              AND run_at <= now()
              AND (locked_until IS NULL OR locked_until <= now())
@@ -167,53 +219,54 @@ let claim_q =
 ;;
 
 let complete_q =
-  Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
+  Caqti_request.Infix.(Caqti_type.(t3 int int string) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s
          SET status = 'completed', finished_at = now(), locked_until = NULL
-         WHERE id = ? AND attempts = ? AND status = 'pending'
+         WHERE id = ? AND attempts = ? AND workspace = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
 
 let retry_q =
-  Caqti_request.Infix.(Caqti_type.(t4 float string int int) ->? Caqti_type.int)
+  Caqti_request.Infix.(Caqti_type.(t5 float string int int string) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s
          SET run_at = now() + (?::float8 * interval '1 second'),
              locked_until = NULL,
              last_error = ?
-         WHERE id = ? AND attempts = ? AND status = 'pending'
+         WHERE id = ? AND attempts = ? AND workspace = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
 
 let fail_q =
-  Caqti_request.Infix.(Caqti_type.(t3 string int int) ->? Caqti_type.int)
+  Caqti_request.Infix.(Caqti_type.(t4 string int int string) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s
          SET status = 'failed', finished_at = now(), locked_until = NULL, last_error = ?
-         WHERE id = ? AND attempts = ? AND status = 'pending'
+         WHERE id = ? AND attempts = ? AND workspace = ? AND status = 'pending'
          RETURNING id|}
        table)
 ;;
 
 let renew_q =
-  Caqti_request.Infix.(Caqti_type.(t3 float int int) ->? Caqti_type.int)
+  Caqti_request.Infix.(Caqti_type.(t4 float int int string) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s
          SET locked_until = now() + (?::float8 * interval '1 second')
-         WHERE id = ? AND attempts = ? AND status = 'pending'
+         WHERE id = ? AND attempts = ? AND workspace = ? AND status = 'pending'
            AND locked_until > now()
          RETURNING id|}
        table)
 ;;
 
 let sweep_q =
-  Caqti_request.Infix.(Caqti_type.(float ->. Caqti_type.unit))
+  Caqti_request.Infix.(Caqti_type.(t2 string float ->. Caqti_type.unit))
     (Printf.sprintf
        {|DELETE FROM %s
-         WHERE status <> 'pending'
+         WHERE workspace = ?
+           AND status <> 'pending'
            AND finished_at IS NOT NULL
            AND finished_at < now() - (?::float8 * interval '1 second')|}
        table)
@@ -315,11 +368,11 @@ module Make (J : JOB) = struct
   let enqueue tx ?run_at ?dedupe_key (job : J.t) =
     let insert_q =
       Caqti_request.Infix.(
-        Caqti_type.(t4 string string float (option string)) ->. Caqti_type.unit)
+        Caqti_type.(t5 string string string float (option string)) ->. Caqti_type.unit)
         (Printf.sprintf
-           {|INSERT INTO %s (kind, payload, run_at, dedupe_key)
-             VALUES (?, ?, to_timestamp(?), ?)
-             ON CONFLICT (kind, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING|}
+           {|INSERT INTO %s (workspace, kind, payload, run_at, dedupe_key)
+             VALUES (?, ?, ?, to_timestamp(?), ?)
+             ON CONFLICT (workspace, kind, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING|}
            table)
     in
     let run_at = Option.value run_at ~default:(Unix.gettimeofday ()) in
@@ -331,7 +384,12 @@ module Make (J : JOB) = struct
            (Printf.sprintf
               "sol-jobs: kind %S is not in J.kinds; nothing would claim it"
               kind))
-    else Pg_db.exec tx insert_q (kind, J.encode job, run_at, dedupe_key)
+    else (
+      match workspace_identity () with
+      | Error (`Config message) -> Error (Pg_error.Query_error message)
+      | Error (`Database message) -> Error (Pg_error.Query_error message)
+      | Ok workspace ->
+        Pg_db.exec tx insert_q (workspace, kind, J.encode job, run_at, dedupe_key))
   ;;
 
   let run
@@ -355,6 +413,7 @@ module Make (J : JOB) = struct
     let* () = validate_timing ~poll_interval_s ~lease_s in
     let* () = validate_kinds J.kinds in
     let* () = validate_retention ~terminal_retention_s ~sweep_interval_s in
+    let* workspace = workspace_identity () in
     let* () =
       match Pg_db.find pool table_check_q () with
       | Ok _ -> Ok ()
@@ -400,7 +459,7 @@ module Make (J : JOB) = struct
              outcome was not recorded and the job may have run concurrently"
         in
         let finalize_success id ~kind ~attempts ~t0 =
-          (match Pg_db.find pool complete_q (id, attempts) with
+          (match Pg_db.find pool complete_q (id, attempts, workspace) with
            | Ok (Some _) -> ()
            | Ok None -> lease_lost id ~attempts ~action:"complete"
            | Error e ->
@@ -423,7 +482,7 @@ module Make (J : JOB) = struct
           in
           if exhausted
           then (
-            (match Pg_db.find pool fail_q (msg, id, attempts) with
+            (match Pg_db.find pool fail_q (msg, id, attempts, workspace) with
              | Ok (Some _) -> ()
              | Ok None -> lease_lost id ~attempts ~action:"fail"
              | Error e ->
@@ -434,7 +493,7 @@ module Make (J : JOB) = struct
             record_terminal ())
           else (
             let delay = locked_backoff_s retry_policy attempts in
-            (match Pg_db.find pool retry_q (delay, msg, id, attempts) with
+            (match Pg_db.find pool retry_q (delay, msg, id, attempts, workspace) with
              | Ok (Some _) -> ()
              | Ok None -> lease_lost id ~attempts ~action:"retry"
              | Error e ->
@@ -449,7 +508,7 @@ module Make (J : JOB) = struct
           let now = Eio.Time.now env#clock in
           if now -. !last_sweep >= sweep_interval_s
           then (
-            (match Pg_db.exec pool sweep_q terminal_retention_s with
+            (match Pg_db.exec pool sweep_q (workspace, terminal_retention_s) with
              | Ok () -> ()
              | Error e ->
                log_warn
@@ -463,7 +522,10 @@ module Make (J : JOB) = struct
           then Ok ()
           else (
             match
-              Pg_db.find pool claim_q (retry_policy.max_attempts, lease_s, kinds_param)
+              Pg_db.find
+                pool
+                claim_q
+                (retry_policy.max_attempts, lease_s, workspace, kinds_param)
             with
             | Error e when failures + 1 >= max_claim_failures ->
               Error
@@ -500,7 +562,9 @@ module Make (J : JOB) = struct
                   (fun () ->
                      let rec renew () =
                        Eio.Time.sleep env#clock (lease_s /. 3.0);
-                       match Pg_db.find pool renew_q (lease_s, id, attempts) with
+                       match
+                         Pg_db.find pool renew_q (lease_s, id, attempts, workspace)
+                       with
                        | Ok (Some _) -> renew ()
                        | Ok None ->
                          lease_lost id ~attempts ~action:"renew";

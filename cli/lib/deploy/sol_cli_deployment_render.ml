@@ -87,7 +87,7 @@ let render
       (key, ns ^ "." ^ name) :: List.filter (fun (k, _) -> k <> key) config
     | _ -> config
   in
-  let cfg_hash = Sol_cli_manifest.config_hash config in
+  let cfg_hash = Sol_cli_manifest.config_hash ~workspace config in
   Sol_cli_manifest.(
     let ns_yaml = namespace_doc ~ns in
     let secret_resource_result =
@@ -148,7 +148,7 @@ let render
       (fun secret_resource ->
          let common_resources =
            [ service_account_doc ~ns ~name
-           ; configmap_doc ~extra_env:config ~ns ~name ()
+           ; configmap_doc ~extra_env:config ~workspace ~ns ~name ()
            ; secret_resource
            ; network_policy_doc
                ~egress_to:

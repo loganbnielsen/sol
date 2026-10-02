@@ -61,8 +61,14 @@ let runtime_secret_name = "sol-secrets"
 
 module Y = Sol_cli_yaml
 
-let config_hash extra_env =
-  default_cluster_env @ extra_env
+let workspace_setting = "SOL_WORKSPACE"
+
+let workload_env ~workspace extra_env =
+  ((workspace_setting, workspace) :: default_cluster_env) @ extra_env
+;;
+
+let config_hash ~workspace extra_env =
+  workload_env ~workspace extra_env
   |> List.map (fun (k, v) -> k ^ "=" ^ v)
   |> String.concat "\n"
   |> Digest.string
@@ -131,12 +137,12 @@ let service_account_doc ~ns ~name =
     [ "automountServiceAccountToken", Y.bool false; "metadata", metadata ~ns ~name ]
 ;;
 
-let configmap_doc ?(extra_env = []) ~ns ~name () =
+let configmap_doc ?(extra_env = []) ~workspace ~ns ~name () =
   resource
     ~api_version:"v1"
     ~kind:"ConfigMap"
     [ "metadata", metadata ~ns ~name:(name ^ "-env")
-    ; "data", quoted_map (default_cluster_env @ extra_env)
+    ; "data", quoted_map (workload_env ~workspace extra_env)
     ]
 ;;
 

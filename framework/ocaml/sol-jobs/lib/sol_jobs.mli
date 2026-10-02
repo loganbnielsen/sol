@@ -55,4 +55,6 @@ module For_testing : sig
   val validate_retry_policy : retry_policy -> (unit, run_error) result
   val validate_timing : poll_interval_s:float -> lease_s:float -> (unit, run_error) result
   val validate_kinds : string list -> (unit, run_error) result
+  val validate_workspace : string -> (string, run_error) result
+  val workspace_identity : unit -> (string, run_error) result
 end

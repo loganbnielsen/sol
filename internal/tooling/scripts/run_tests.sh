@@ -111,6 +111,7 @@ run_e2e() {
   REDPANDA_ADMIN_URL=http://localhost:9644 \
   LOKI_URL=http://localhost:3100 \
   POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
+  SOL_WORKSPACE=sol \
     dune test --root "$REPO_ROOT" internal/fixtures/local-demo/test/ --force 2>&1
 }
 

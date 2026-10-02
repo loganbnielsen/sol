@@ -41,10 +41,12 @@ val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
 val discover_services : ?root:string -> unit -> (service list, discover_error) result
 val default_cluster_env : (string * string) list
+val workspace_setting : string
+val workload_env : workspace:string -> (string * string) list -> (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
 val workload_secret_name : string -> string
-val config_hash : (string * string) list -> string
+val config_hash : workspace:string -> (string * string) list -> string
 val sanitize_label_value : string -> string
 val namespace_doc : ns:string -> Sol_cli_yaml.document
 val deploy_role_binding_doc : ns:string -> Sol_cli_yaml.document
@@ -54,6 +56,7 @@ val pdb_doc : ns:string -> name:string -> replicas:int -> Sol_cli_yaml.document
 
 val configmap_doc
   :  ?extra_env:(string * string) list
+  -> workspace:string
   -> ns:string
   -> name:string
   -> unit

@@ -68,6 +68,55 @@ let test_validate_kinds () =
   Alcotest.(check bool) "uppercase refused" false (ok [ "SendEmail" ])
 ;;
 
+let test_validate_workspace () =
+  let accepted value =
+    match Sol_jobs.For_testing.validate_workspace value with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  Alcotest.(check bool) "a plain name is accepted" true (accepted "myapp");
+  Alcotest.(check bool) "dots, dashes and case are accepted" true (accepted "My_App.v2-x");
+  Alcotest.(check bool) "surrounding space is trimmed" true (accepted "  myapp  ");
+  Alcotest.(check bool) "empty is refused" false (accepted "");
+  Alcotest.(check bool) "whitespace only is refused" false (accepted "   ");
+  Alcotest.(check bool) "an inner space is refused" false (accepted "my app");
+  Alcotest.(check bool) "a slash is refused" false (accepted "my/app");
+  Alcotest.(check bool)
+    "over 63 characters is refused"
+    false
+    (accepted (String.make 64 'a'))
+;;
+
+let test_workspace_identity_refuses_an_unusable_setting () =
+  let previous = Sys.getenv_opt "SOL_WORKSPACE" in
+  let restore () =
+    match previous with
+    | Some value -> Unix.putenv "SOL_WORKSPACE" value
+    | None -> Unix.putenv "SOL_WORKSPACE" ""
+  in
+  Fun.protect ~finally:restore (fun () ->
+    Unix.putenv "SOL_WORKSPACE" "";
+    (match Sol_jobs.For_testing.workspace_identity () with
+     | Ok _ -> Alcotest.fail "an empty identity must be refused"
+     | Error (`Config message) ->
+       Alcotest.(check bool)
+         "names the variable"
+         true
+         (let n = String.length "SOL_WORKSPACE" in
+          let rec go i =
+            i + n <= String.length message
+            && (String.sub message i n = "SOL_WORKSPACE" || go (i + 1))
+          in
+          go 0)
+     | Error (`Database message) ->
+       Alcotest.failf "expected `Config, got `Database %s" message);
+    Unix.putenv "SOL_WORKSPACE" "myapp";
+    match Sol_jobs.For_testing.workspace_identity () with
+    | Ok value -> Alcotest.(check string) "reads the setting" "myapp" value
+    | Error (`Config message) -> Alcotest.failf "unexpected `Config %s" message
+    | Error (`Database message) -> Alcotest.failf "unexpected `Database %s" message)
+;;
+
 let test_validate_retry_policy_accepts_positive_and_negative () =
   let accepts max_attempts =
     match
@@ -213,6 +262,16 @@ let () =
             "rejects nonfinite or out-of-range timing (CODEX_STYLE_AUDIT-079)"
             `Quick
             test_validate_retry_policy_rejects_invalid_timings
+        ] )
+    ; ( "validate_workspace"
+      , [ test_case
+            "accepts a well-formed name and refuses the rest (BUG-091)"
+            `Quick
+            test_validate_workspace
+        ; test_case
+            "the identity setting is required and read from SOL_WORKSPACE (BUG-091)"
+            `Quick
+            test_workspace_identity_refuses_an_unusable_setting
         ] )
     ; ( "validate_timing"
       , [ test_case

@@ -4,6 +4,7 @@ let ddl =
   [ "DROP TABLE IF EXISTS sol_jobs"
   ; {|CREATE TABLE sol_jobs (
        id           SERIAL      PRIMARY KEY,
+       workspace    TEXT        NOT NULL,
        kind         TEXT        NOT NULL,
        payload      TEXT        NOT NULL,
        status       TEXT        NOT NULL DEFAULT 'pending',
@@ -14,10 +15,10 @@ let ddl =
        dedupe_key   TEXT,
        inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
        finished_at  TIMESTAMPTZ)|}
-  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (kind, dedupe_key) WHERE \
-     dedupe_key IS NOT NULL"
-  ; "CREATE INDEX sol_jobs_terminal_idx ON sol_jobs (finished_at) WHERE status <> \
-     'pending'"
+  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, dedupe_key) \
+     WHERE dedupe_key IS NOT NULL"
+  ; "CREATE INDEX sol_jobs_terminal_idx ON sol_jobs (workspace, finished_at) WHERE \
+     status <> 'pending'"
   ]
 ;;
 
@@ -81,17 +82,45 @@ module Report = Job (struct
 module Emails = Sol_jobs.Make (Email)
 module Reports = Sol_jobs.Make (Report)
 
+let default_workspace = "pg-test"
+
+let with_workspace name f =
+  let previous = Sys.getenv_opt "SOL_WORKSPACE" in
+  Unix.putenv "SOL_WORKSPACE" name;
+  Fun.protect
+    ~finally:(fun () ->
+      match previous with
+      | Some value -> Unix.putenv "SOL_WORKSPACE" value
+      | None -> Unix.putenv "SOL_WORKSPACE" default_workspace)
+    f
+;;
+
+let with_empty_workspace f =
+  let previous = Sys.getenv_opt "SOL_WORKSPACE" in
+  Unix.putenv "SOL_WORKSPACE" "";
+  Fun.protect
+    ~finally:(fun () ->
+      match previous with
+      | Some value -> Unix.putenv "SOL_WORKSPACE" value
+      | None -> Unix.putenv "SOL_WORKSPACE" "")
+    f
+;;
+
 let with_pool f =
   match postgres_url with
   | None -> print_endline "[skip] POSTGRES_URL not set"
   | Some url ->
-    Eio_main.run
-    @@ fun env ->
-    Eio.Switch.run
-    @@ fun sw ->
-    (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
-     | Error e -> Alcotest.failf "pool: %s" (Pg_error.to_string e)
-     | Ok pool -> f env pool)
+    Fun.protect
+      ~finally:(fun () -> ())
+      (fun () ->
+         with_workspace default_workspace (fun () ->
+           Eio_main.run
+           @@ fun env ->
+           Eio.Switch.run
+           @@ fun sw ->
+           match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
+           | Error e -> Alcotest.failf "pool: %s" (Pg_error.to_string e)
+           | Ok pool -> f env pool))
 ;;
 
 let test_make_instances_do_not_cross_claim () =
@@ -115,6 +144,144 @@ let test_make_instances_do_not_cross_claim () =
       "the report job was not claimed by the email poller"
       [ "build_report", "pending", 0; "send_email", "completed", 1 ]
       (rows pool))
+;;
+
+let enqueue_email pool value =
+  match Pg_db.transaction pool (fun tx -> Emails.enqueue tx value) with
+  | Ok () -> ()
+  | Error e -> Alcotest.failf "enqueue %s: %s" value (Pg_error.to_string e)
+;;
+
+let run_while_polling ~seconds env pool =
+  let run () =
+    match Emails.run ~env ~pool ~poll_interval_s:0.05 ~max_jobs:1 () with
+    | Ok () -> ()
+    | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e)
+  in
+  match Eio.Time.with_timeout env#clock seconds (fun () -> Ok (run ())) with
+  | Ok () -> ()
+  | Error `Timeout -> ()
+;;
+
+let test_two_workspaces_do_not_cross_claim_the_same_kind () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    with_workspace "ws-a" (fun () -> enqueue_email pool "for-a");
+    with_workspace "ws-b" (fun () ->
+      Email.handled := [];
+      run_while_polling ~seconds:0.5 env pool;
+      Alcotest.(check (list string))
+        "another workspace's poller claims nothing of its own"
+        []
+        !Email.handled);
+    Alcotest.(check (list (triple string string int)))
+      "the foreign poller left the row pending, not failed"
+      [ "send_email", "pending", 0 ]
+      (rows pool);
+    with_workspace "ws-a" (fun () ->
+      Email.handled := [];
+      run_while_polling ~seconds:5.0 env pool;
+      Alcotest.(check (list string))
+        "the owning workspace's poller runs it"
+        [ "for-a" ]
+        !Email.handled))
+;;
+
+let test_a_poller_without_an_identity_refuses_before_polling () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_email pool "orphan";
+    Email.handled := [];
+    with_empty_workspace (fun () ->
+      match Emails.run ~env ~pool ~poll_interval_s:0.05 ~max_jobs:1 () with
+      | Ok () -> Alcotest.fail "a poller without a usable workspace identity must refuse"
+      | Error (`Database m) -> Alcotest.failf "expected `Config, got `Database %s" m
+      | Error (`Config message) ->
+        let contains ~needle s =
+          let n = String.length needle
+          and m = String.length s in
+          let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
+          go 0
+        in
+        Alcotest.(check bool)
+          "names the variable"
+          true
+          (contains ~needle:"SOL_WORKSPACE" message));
+    Alcotest.(check (list string)) "no handler ran" [] !Email.handled;
+    Alcotest.(check (list (triple string string int)))
+      "the row is still pending"
+      [ "send_email", "pending", 0 ]
+      (rows pool))
+;;
+
+let test_an_enqueue_without_an_identity_is_refused () =
+  with_pool (fun _env pool ->
+    List.iter (exec_sql pool) ddl;
+    with_empty_workspace (fun () ->
+      match Pg_db.transaction pool (fun tx -> Emails.enqueue tx "nowhere") with
+      | Ok () ->
+        Alcotest.fail "an enqueue without a usable workspace identity must refuse"
+      | Error e ->
+        Alcotest.(check bool)
+          "the refusal names the variable"
+          true
+          (let s = Pg_error.to_string e in
+           let n = String.length "SOL_WORKSPACE" in
+           let rec go i =
+             i + n <= String.length s && (String.sub s i n = "SOL_WORKSPACE" || go (i + 1))
+           in
+           go 0));
+    Alcotest.(check int) "nothing was inserted" 0 (List.length (rows pool)))
+;;
+
+let test_a_dedupe_key_is_scoped_to_its_workspace () =
+  with_pool (fun _env pool ->
+    List.iter (exec_sql pool) ddl;
+    let enqueue_deduped value =
+      match
+        Pg_db.transaction pool (fun tx -> Emails.enqueue ~dedupe_key:"same-key" tx value)
+      with
+      | Ok () -> ()
+      | Error e -> Alcotest.failf "enqueue %s: %s" value (Pg_error.to_string e)
+    in
+    with_workspace "ws-a" (fun () -> enqueue_deduped "a");
+    with_workspace "ws-b" (fun () -> enqueue_deduped "b");
+    Alcotest.(check int) "each workspace keeps its own key" 2 (List.length (rows pool)))
+;;
+
+let test_a_poller_sweeps_only_its_own_terminal_rows () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    with_workspace "ws-a" (fun () ->
+      enqueue_email pool "old";
+      run_while_polling ~seconds:5.0 env pool;
+      exec_sql
+        pool
+        "UPDATE sol_jobs SET finished_at = now() - interval '30 days' WHERE workspace = \
+         'ws-a'");
+    with_workspace "ws-b" (fun () ->
+      enqueue_email pool "fresh";
+      run_while_polling ~seconds:5.0 env pool);
+    Alcotest.(check (list (triple string string int)))
+      "the sweep reclaimed nothing that another workspace still owns"
+      [ "send_email", "completed", 1; "send_email", "completed", 1 ]
+      (rows pool))
+;;
+
+let test_two_pollers_in_one_workspace_share_claims () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_email pool "one";
+    enqueue_email pool "two";
+    Email.handled := [];
+    run_while_polling ~seconds:5.0 env pool;
+    Eio.Fiber.both
+      (fun () -> run_while_polling ~seconds:1.0 env pool)
+      (fun () -> run_while_polling ~seconds:1.0 env pool);
+    Alcotest.(check (list string))
+      "both jobs ran exactly once"
+      [ "one"; "two" ]
+      (List.sort String.compare !Email.handled))
 ;;
 
 let test_missing_table_is_a_startup_error () =
@@ -565,6 +732,32 @@ let () =
             "enqueue refuses an undeclared kind"
             `Quick
             test_enqueue_refuses_an_undeclared_kind
+        ] )
+    ; ( "workspace isolation (BUG-091)"
+      , [ Alcotest.test_case
+            "two workspaces do not cross-claim the same kind"
+            `Quick
+            test_two_workspaces_do_not_cross_claim_the_same_kind
+        ; Alcotest.test_case
+            "a poller without an identity refuses before polling"
+            `Quick
+            test_a_poller_without_an_identity_refuses_before_polling
+        ; Alcotest.test_case
+            "an enqueue without an identity is refused"
+            `Quick
+            test_an_enqueue_without_an_identity_is_refused
+        ; Alcotest.test_case
+            "a dedupe key is scoped to its workspace"
+            `Quick
+            test_a_dedupe_key_is_scoped_to_its_workspace
+        ; Alcotest.test_case
+            "two pollers in one workspace share claims"
+            `Quick
+            test_two_pollers_in_one_workspace_share_claims
+        ; Alcotest.test_case
+            "a poller sweeps only its own terminal rows"
+            `Quick
+            test_a_poller_sweeps_only_its_own_terminal_rows
         ] )
     ; ( "database failures are loud (BUG-044 c)"
       , [ Alcotest.test_case

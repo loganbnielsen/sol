@@ -401,6 +401,25 @@ let test_svc_sol_env_configmap_absent_by_default () =
   assert_absent "svc SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
+let test_the_workload_env_names_its_workspace () =
+  let _ns, workload = render_spec_ok ~workspace:"myapp" svc_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains
+    "the ConfigMap carries the workspace identity (BUG-091)"
+    cm_block
+    {|SOL_WORKSPACE: "myapp"|};
+  let _ns, other = render_spec_ok ~workspace:"other-app" svc_spec in
+  let other_block = extract_kind_block other "kind: ConfigMap" in
+  assert_contains
+    "a different workspace renders a different identity"
+    other_block
+    {|SOL_WORKSPACE: "other-app"|};
+  assert_absent
+    "and not the first workspace identity"
+    other_block
+    {|SOL_WORKSPACE: "myapp"|}
+;;
+
 let test_svc_sol_env_configmap_target_overrides_config () =
   let spec = { svc_spec with config = [ "SOL_ENV", "user-value" ] } in
   let _ns, workload = render_spec_ok ~env:"prod" spec in
@@ -2420,6 +2439,10 @@ let () =
             "env label absent by default"
             `Quick
             test_svc_env_label_absent_by_default
+        ; Alcotest.test_case
+            "a workload's env names its workspace (BUG-091)"
+            `Quick
+            test_the_workload_env_names_its_workspace
         ; Alcotest.test_case
             "SOL_ENV config when resolved"
             `Quick

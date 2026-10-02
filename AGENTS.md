@@ -134,6 +134,12 @@ The discipline, since relying on remembering the current directory has now faile
 ## Core design principles every engineer must know
 
 
+**The workspace identity is required.** `SOL_WORKSPACE` names the workspace a
+job poller and an enqueue belong to, and `sol-jobs` refuses without it (BUG-091):
+two workspaces sharing one Postgres and one job kind must not claim each other's
+rows. Sol-rendered manifests set it from the workspace being deployed; a local
+process sets `SOL_WORKSPACE=<workspace>`.
+
 **Security on Day 1.** `Kafka_security.t` is a first-class field in every producer, consumer, and service config. `config_of_env()` reads `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SSL_CA_LOCATION`, `KAFKA_SASL_*` from the environment, and **`KAFKA_SECURITY_PROTOCOL` is required** (SEC-007): an absent value is an error, never a default. Sol-rendered manifests set it; a local process sets `KAFKA_SECURITY_PROTOCOL=plaintext`. The declared posture today is in-cluster plaintext with no SASL, in every profile; TLS/SASL for production is FEAT-093. Do not add Kafka config anywhere that lacks a `security` field.
 
 **Dev mirrors prod exactly.** `sol local infra up` runs the same Helm charts as production at single-replica scale. Port-forwards expose every service at the same address the service code expects. If there's a divergence between dev and prod addressing or configuration, that divergence is a bug.
@@ -228,7 +234,7 @@ eval $(opam env) && dune test framework/
 # Full integration tests (requires Redpanda + Loki running)
 bash platform/local/scripts/ensure-broker.sh
 bash platform/local/scripts/ensure-loki.sh
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 dune test --force
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 SOL_WORKSPACE=sol dune test --force
 ```
 
 If CLI tests report `Multiple rules generated` for `vendor/framework/...` paths
@@ -247,7 +253,7 @@ bash platform/local/scripts/ensure-grafana.sh
 bash platform/local/scripts/ensure-prometheus.sh
 
 # Run the full-stack demo (svc → Kafka → worker, with Loki logs + Prometheus metrics)
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 \
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 SOL_WORKSPACE=sol \
   dune exec internal/fixtures/local-demo/bin/demo.exe
 
 # Then browse to http://localhost:3000 (Grafana)
