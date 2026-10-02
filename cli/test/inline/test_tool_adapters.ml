@@ -210,15 +210,34 @@ let test_kubectl_presence_classification () =
     | _ -> false
   in
   check_bool
-    "zero exit is present"
+    "a get that returned an object is present"
     true
-    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok Sol_cli_kubectl.Succeeded)));
+    (is_present
+       (Sol_cli_kubectl.presence_of_probe_result
+          (Ok (Sol_cli_kubectl.Succeeded "deployment/payments-charge-svc\n"))));
   check_bool
-    "non-zero exit is absent"
+    "an --ignore-not-found get that returned nothing is absent"
+    true
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result (Ok (Sol_cli_kubectl.Succeeded "  \n"))));
+  check_bool
+    "an unreachable cluster is uncheckable"
+    true
+    (is_uncheckable
+       (Sol_cli_kubectl.presence_of_probe_result
+          (Ok (failed "The connection to the server 0.0.0.0:41467 was refused"))));
+  check_bool
+    "an unreachable cluster is not reported as absent"
+    false
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result
+          (Ok (failed "The connection to the server 0.0.0.0:41467 was refused"))));
+  check_bool
+    "a genuine NotFound is still absent"
     true
     (is_absent
        (Sol_cli_kubectl.presence_of_probe_result
-          (Ok (failed "Error from server (NotFound)"))));
+          (Ok (failed "Error from server (NotFound): deployments not found"))));
   check_bool
     "an unrunnable kubectl is uncheckable"
     true
@@ -231,11 +250,11 @@ let test_kubectl_presence_classification () =
        (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
   match
     Sol_cli_kubectl.presence_of_probe_result
-      (Ok (failed "Error from server (NotFound): deployments not found"))
+      (Ok (failed "Error from server (Forbidden): deployments is forbidden"))
   with
-  | Sol_cli_kubectl.Absent reason ->
+  | Sol_cli_kubectl.Uncheckable reason ->
     check_bool "the reason carries what kubectl said" true (String.length reason > 0)
-  | _ -> Windtrap.fail "expected Absent for a non-zero exit"
+  | _ -> Windtrap.fail "expected Uncheckable for a failure that is not an absence"
 ;;
 
 let test_docker_build_argv () =

@@ -28,7 +28,9 @@ let workload_presence ~ctx ~ns ~primitive ~k8s_name =
     | Fn -> "cronjob"
     | Svc | Worker -> "deployment"
   in
-  Sol_cli_kubectl.presence ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
+  Sol_cli_kubectl.presence
+    ~ctx
+    ~args:[ "get"; kind; k8s_name; "-n"; ns; "--ignore-not-found" ]
 ;;
 
 let unit_names ~workspace (svc : Sol_cli_manifest.service) =

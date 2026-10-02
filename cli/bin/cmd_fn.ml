@@ -28,7 +28,11 @@ let resolve_fn ~facts selector =
 ;;
 
 let require_deployed ~ctx ~domain ~name ~ns ~k8s_name =
-  match Sol_cli_kubectl.presence ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ] with
+  match
+    Sol_cli_kubectl.presence
+      ~ctx
+      ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "--ignore-not-found" ]
+  with
   | Sol_cli_kubectl.Present -> Ok ()
   | Sol_cli_kubectl.Absent _ ->
     Error
