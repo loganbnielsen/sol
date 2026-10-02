@@ -33,22 +33,48 @@ consciously prioritises it. Treat "belongs/actionable" and "should be done
 next" as separate decisions. What this section removes is only the *false*
 claim that the work cannot be scoped yet.
 
+## Correction (2026-10-02)
+
+The *goal* — a protocol/policy module boundary — still stands, but the policy
+half's description below is stale, and the boundary this ticket draws is now
+partly different from the one it was written against:
+
+- `kafka_service.ml`'s `register` no longer composes the schema-registry calls
+  "`register_schema` first and fatal, `set_subject_compatibility` second and
+  non-fatal". BUG-105 moved registration into a deployment step, and
+  `Kafka_service_schema.register_contract` (`kafka_service_schema.ml:143-149`)
+  sets `FULL` compatibility **first** and treats **either** failure as fatal.
+  The wrong-way-round description is corrected in place below.
+- `kafka_service_retry_topics.ml` no longer exists: FEAT-113 removed
+  message-level retry and the relay. The retry/crash policy this ticket cites as
+  the policy half is now the `Ack | Fail` stop contract in `worker.ml` plus
+  `Kafka_service_dlq`. Any split must be drawn against that, not the retry-topic
+  module.
+- The TypeScript re-derivation is now four published packages, and the
+  behavioural-parity inventory is `2026-10-02_cross_language_contract_audit.md`.
+  That audit found the schema-registration ordering still diverges between the
+  two languages (FEAT-119 owns the registration lifecycle), which is the same
+  "the policy half is unwritten-down" evidence this ticket was built on.
+
+Corrected by the cross-language contract audit
+(`2026-10-02_cross_language_contract_audit.md` § 6).
+
 ## The distinction this ticket is about
 
 `kafka-eio` (standalone opam package) is already cleanly separated from `kafka-eio-service` (lives in this repo) — that split exists and is correct: `kafka-eio` is a pure Kafka protocol client (produce/consume, no opinions), `kafka-eio-service` is Sol's policy layer on top. This ticket is about a *second*, finer split hiding inside `kafka-eio-service` itself:
 
 - **Protocol-generic, not Sol-specific:** `kafka_service_schema.ml`/`kafka_service_http.ml` implement the Confluent Schema Registry HTTP API — register a schema (`POST /subjects/{subject}/versions`), check compatibility (`POST /compatibility/subjects/{subject}/versions/latest`), set subject compatibility (`PUT /config/{subject}`), and the Confluent wire format (5-byte magic-byte + big-endian schema-ID header, `Confluent_wire` module). This is Confluent's public, documented protocol. Anyone using a Confluent-compatible registry (Redpanda's included) would implement the same calls regardless of what framework opinions sit on top. Nothing here is Sol-specific.
-- **Sol's actual opinion, not generic:** `kafka_service.ml`'s `register` function (`kafka_service.ml:144-178`) composes those protocol calls in a specific order with specific fatality semantics — `register_schema` first and fatal, `set_subject_compatibility` second and non-fatal (logged as a warning). `kafka_service_retry_topics.ml` and `kafka_service_intf.ml`'s `wrap_on_decode_error` encode Sol's reject-vs-retry-vs-crash policy. Nobody else would necessarily make the same calls Sol did here — this is the part that's genuinely Sol's, not the protocol's.
+- **Sol's actual opinion, not generic (corrected 2026-10-02):** `Kafka_service_schema.register_contract` (`kafka_service_schema.ml:143-149`) composes those protocol calls in a specific order with specific fatality semantics — `set_subject_compatibility` (`FULL`) **first** and fatal, `register_schema` **second** and fatal. `worker.ml`'s `Ack | Fail` stop contract, `kafka_service_dlq.ml` and `kafka_service_intf.ml`'s `wrap_on_decode_error` encode Sol's reject-vs-stop-vs-crash policy. Nobody else would necessarily make the same calls Sol did here — this is the part that's genuinely Sol's, not the protocol's.
 
 FEAT-033 is direct evidence this distinction is real and not academic: building the TS port required re-deriving both halves independently by reading OCaml source, and got the *policy* half wrong twice (schema-registration call order/fatality, and the retry/crash routing) while getting the *protocol* half (Confluent wire format encode/decode) right on the first try with zero review findings against it. That's exactly the signature you'd expect if one half is well-specified public protocol and the other is unwritten-down internal policy.
 
 ## What "done" looks like, when this is picked up
 
 1. Extract the protocol-generic pieces (schema registration, compatibility check/set, Confluent wire format) into their own package or clearly separated module boundary with its own `.mli` — decide standalone-opam-package vs. in-repo module split based on whether the second consumer (from FEAT-034 or elsewhere) is in-tree or genuinely external.
-2. `kafka_service.ml`'s `register` orchestration and `kafka_service_retry_topics.ml` stay as Sol's policy layer, now visibly built *on* the protocol module rather than interleaved with it.
+2. `Kafka_service_schema.register_contract`'s orchestration and `kafka_service_dlq.ml` stay as Sol's policy layer, now visibly built *on* the protocol module rather than interleaved with it.
 3. Before implementing the protocol-generic piece from scratch again: check whether a generic OCaml Confluent-Schema-Registry client already exists in the opam ecosystem, and separately whether the TS side of FEAT-034 found or should use an existing generic npm equivalent — if one exists on either side, that's evidence for what the OCaml module's actual public shape should be, not just an implementation detail to match. (FEAT-034 shipped without this check, because this ticket was blocked at the time; close that loop explicitly rather than assuming it was done.)
 
 ## Non-goals
 
-- Not a rewrite of `kafka_service.ml`'s actual behavior — same registration order, same fatality semantics, same retry/crash routing. This is a module-boundary change, not a policy change.
+- Not a rewrite of the registration/schema behavior — same ordering (compatibility first), same fatality semantics (both fatal), and the same `Ack | Fail`/DLQ policy. This is a module-boundary change, not a policy change.
 - Not blocking or gating FEAT-034 — it has since shipped (`@sol/kafka` ported from `kafka_service_schema.ml` as a reference) without this split having happened, exactly as intended.

@@ -16,9 +16,14 @@ two disagree, the linked definition wins, and this page is the one to fix.
   under [`framework/ocaml/`](../../framework/ocaml/). The TypeScript packages
   live in their own repositories; see [`framework/typescript/`](../../framework/typescript/README.md).
 - **Per-language verdicts** (implemented / already equivalent / intentionally
-  deferred / not applicable): the capability inventory in
-  [`2026-09-07_typescript_demo_spike.md`](../pipeline/dogfood/2026-09-07_typescript_demo_spike.md),
-  tracked by FEAT-080. Silence is not a verdict.
+  deferred / not applicable): the complete capability inventory in
+  [`2026-10-02_cross_language_contract_audit.md`](../pipeline/audits/2026-10-02_cross_language_contract_audit.md),
+  which covers every row below and names the ticket that owns each gap. The
+  earlier, demo-scoped snapshot is
+  [`2026-09-07_typescript_demo_spike.md`](../pipeline/dogfood/2026-09-07_typescript_demo_spike.md)
+  (FEAT-080). Silence is not a verdict. The secret/identity rows are deliberately
+  recorded as **in flux** while DEC-029/DEC-062/DEC-063 resolve, not assigned a
+  verdict this page would then have to retract.
 
 ## The conventions
 
