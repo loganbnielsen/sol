@@ -88,6 +88,11 @@ let test_asset_paths () =
         (A.cloud_root t Sol_cli_provider.Gcp A.Cluster);
       Windtrap.equal
         Windtrap.string
+        ~msg:"authorization root"
+        (dir ^ "/platform/cloud/aws/authorization")
+        (A.cloud_root t Sol_cli_provider.Aws A.Authorization);
+      Windtrap.equal
+        Windtrap.string
         ~msg:"components"
         (dir ^ "/platform/shared/components.json")
         (A.components_json t);

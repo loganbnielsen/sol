@@ -33,6 +33,7 @@ type cloud_role =
   | Bootstrap
   | Cluster
   | Platform
+  | Authorization
 
 val cloud_root_rel : Sol_cli_provider.t -> cloud_role -> string
 val cloud_root : t -> Sol_cli_provider.t -> cloud_role -> string

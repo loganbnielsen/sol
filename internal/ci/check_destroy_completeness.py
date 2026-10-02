@@ -17,7 +17,10 @@ def main():
         print(f"sol_providers: {e}", file=sys.stderr)
         sys.exit(f"{NAME}: could not read the provider list")
     target_roots = [
-        f"platform/cloud/{p}/cluster" for p in names if (root / f"platform/cloud/{p}/cluster").is_dir()
+        f"platform/cloud/{p}/{role}"
+        for p in names
+        for role in ("cluster", "authorization")
+        if (root / f"platform/cloud/{p}/{role}").is_dir()
     ]
     if not target_roots:
         sys.exit(

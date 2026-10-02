@@ -4,6 +4,7 @@ let role_name : A.cloud_role -> string = function
   | A.Bootstrap -> "bootstrap"
   | A.Cluster -> "cluster"
   | A.Platform -> "platform"
+  | A.Authorization -> "authorization"
 ;;
 
 let absolute path =

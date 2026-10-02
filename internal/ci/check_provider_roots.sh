@@ -4,7 +4,7 @@ set -euo pipefail
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cloud="$root/platform/cloud"
 
-roles="bootstrap cluster platform"
+roles="bootstrap cluster platform authorization"
 shared="modules delivery"
 
 # shellcheck source=providers.sh
