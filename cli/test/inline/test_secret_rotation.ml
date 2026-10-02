@@ -104,6 +104,7 @@ let test_mixed_selection_is_refused_before_any_write () =
          ~ctx
          ~workspace:"ws"
          ~namespaces:[ "payments"; "orders" ]
+         ~declared:[]
          ~key:"API_TOKEN"
          ~value:"rotated"
      with
@@ -156,6 +157,7 @@ let test_live_selection_still_rotates () =
          ~ctx
          ~workspace:"ws"
          ~namespaces:[ "orders" ]
+         ~declared:[]
          ~key:"API_TOKEN"
          ~value:"rotated"
      with

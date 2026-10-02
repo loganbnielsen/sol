@@ -359,7 +359,10 @@ closed rather than being reported as removed.
 
 ```bash
 sol local infra up        # provision local k3d cluster + infra
-SOL_API_KEY=dev-internal-key sol up
+# Secrets are the one input a deploy never writes; create them first.
+sol local secret set POSTGRES_URL --value postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+sol local secret set SOL_API_KEY --value dev-internal-key
+sol up                    # verify the secrets, then build and apply the workloads
 sol local status  # show running pods and endpoints
 sol local migrate # apply database migrations
 ```

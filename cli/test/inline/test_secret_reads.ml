@@ -53,6 +53,10 @@ if [ "$verb" = "get" ]; then
         echo '{"apiVersion":"v1","kind":"Secret","data":{"EXISTING":"ZXhpc3Rpbmc="}}'
         exit 0
       fi
+      if [ "$mode" = "blank" ]; then
+        echo '{"apiVersion":"v1","kind":"Secret","data":{"BLANK":""}}'
+        exit 0
+      fi
       echo 'Error from server (NotFound): secrets "sol-secrets" not found' >&2
       exit 1 ;;
     rollout)
@@ -113,7 +117,13 @@ let ctx = Sol_cli_kube_destination.local_context
 let namespaces = [ "payments" ]
 
 let set () =
-  Sol_cli_secret.set ~ctx ~workspace:"demo" ~namespaces ~key:"NEW_KEY" ~value:"v"
+  Sol_cli_secret.set
+    ~ctx
+    ~workspace:"demo"
+    ~namespaces
+    ~declared:[]
+    ~key:"NEW_KEY"
+    ~value:"v"
 ;;
 
 let is_error = function
@@ -201,12 +211,95 @@ let test_absent_rollout_kind_is_an_empty_listing () =
       (is_error (set ())))
 ;;
 
+let verify ?(secret_name = "charge-svc-secrets") ?(required_keys = [ "EXISTING" ]) mode =
+  with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
+    Sol_cli_secret.verify_required_keys
+      ~ctx
+      ~namespace:"payments"
+      ~secret_name
+      ~required_keys)
+;;
+
+let test_verify_passes_when_required_keys_are_present () =
+  match verify "present" with
+  | Ok () -> ()
+  | Error message -> Alcotest.fail ("expected verification to pass: " ^ message)
+;;
+
+let test_verify_names_the_missing_key () =
+  match verify ~required_keys:[ "EXISTING"; "MISSING_KEY" ] "present" with
+  | Ok () -> Alcotest.fail "a missing key must fail verification"
+  | Error message ->
+    Alcotest.(check bool)
+      "names the workload Secret"
+      true
+      (Sol_cli_string.contains ~needle:"payments/charge-svc-secrets" message);
+    Alcotest.(check bool)
+      "names the missing key"
+      true
+      (Sol_cli_string.contains ~needle:"MISSING_KEY" message);
+    Alcotest.(check bool)
+      "does not name the key it found"
+      false
+      (Sol_cli_string.contains ~needle:"EXISTING" message)
+;;
+
+let test_verify_rejects_a_blank_value () =
+  match verify ~required_keys:[ "BLANK" ] "blank" with
+  | Ok () -> Alcotest.fail "an empty secret value must fail verification"
+  | Error message ->
+    Alcotest.(check bool)
+      "names the blank key"
+      true
+      (Sol_cli_string.contains ~needle:"BLANK" message)
+;;
+
+let test_verify_rejects_an_absent_secret () =
+  match verify "missing" with
+  | Ok () -> Alcotest.fail "an absent Secret must fail verification"
+  | Error message ->
+    Alcotest.(check bool)
+      "names the secret"
+      true
+      (Sol_cli_string.contains ~needle:"charge-svc-secrets" message)
+;;
+
+let test_verify_runtime_secret_reads_the_substrate_secret () =
+  match
+    with_fake_kubectl ~mode:"present" (fun ~calls:_ ~manifests:_ ->
+      Sol_cli_secret.verify_runtime_secret ~ctx ~namespace:"payments")
+  with
+  | Ok () ->
+    Alcotest.fail "the substrate Secret lacks POSTGRES_URL; verification must fail"
+  | Error message ->
+    Alcotest.(check bool)
+      "names the runtime Secret"
+      true
+      (Sol_cli_string.contains ~needle:"payments/sol-secrets" message);
+    Alcotest.(check bool)
+      "names the missing contract key"
+      true
+      (Sol_cli_string.contains ~needle:"POSTGRES_URL" message)
+;;
+
 let%test "unreadable is not absent: set" = test_set_refuses_an_unreadable_secret ()
 let%test "unreadable is not absent: delete" = test_delete_refuses_an_unreadable_secret ()
 let%test "unreadable is not absent: list" = test_list_refuses_an_unreadable_secret ()
 
 let%test "unreadable is not absent: workload Secret listing fails" =
   (test_later_read_failure_writes_nothing "listing-fails") ()
+;;
+
+let%test "verify: present required keys pass" =
+  test_verify_passes_when_required_keys_are_present ()
+;;
+
+let%test "verify: a missing key fails and is named" = test_verify_names_the_missing_key ()
+let%test "verify: a blank value fails" = test_verify_rejects_a_blank_value ()
+let%test "verify: an absent Secret fails" = test_verify_rejects_an_absent_secret ()
+
+let%test "verify: runtime Secret check reads the substrate Secret" =
+  test_verify_runtime_secret_reads_the_substrate_secret ()
 ;;
 
 let%test "unreadable is not absent: Deployment listing fails" =

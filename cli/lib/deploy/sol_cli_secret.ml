@@ -110,6 +110,21 @@ let apply_manifest ~ctx yaml =
   |> Result.join
 ;;
 
+let ensure_namespace ~ctx namespace =
+  Sol_cli_fs.with_temp_file
+    ~prefix:"sol-secret-ns-"
+    ~suffix:".yaml"
+    (Sol_cli_yaml.render [ Sol_cli_manifest.namespace_doc ~ns:namespace ])
+    (fun path ->
+       Sol_cli_manifest.create_idempotent ~ctx ~file:path
+       |> Result.map_error (fun e ->
+         Printf.sprintf
+           "could not ensure namespace %s: %s"
+           namespace
+           (Sol_cli_process.error_to_string e)))
+  |> Result.join
+;;
+
 let get_named_secret_json ~ctx ~name namespace =
   match
     Sol_cli_kubectl.get_if_present
@@ -211,9 +226,12 @@ type rotation =
   ; workloads : string list
   }
 
-let read_rotation ~ctx namespace =
+let read_rotation ~ctx ?(declared = []) namespace =
   let* runtime = get_secret_json ~ctx namespace in
-  let* workload_secret_names = list_workload_secrets ~ctx namespace in
+  let* live_workload_secret_names = list_workload_secrets ~ctx namespace in
+  let workload_secret_names =
+    List.sort_uniq String.compare (declared @ live_workload_secret_names)
+  in
   let* workload_secrets =
     fold_namespaces workload_secret_names ~init:[] ~f:(fun acc name ->
       let* json = get_named_secret_json ~ctx ~name namespace in
@@ -230,10 +248,15 @@ let read_rotation ~ctx namespace =
     }
 ;;
 
-let read_rotations ~ctx namespaces =
+let read_rotations ~ctx ?(declared = []) namespaces =
   let* rotations =
     fold_namespaces namespaces ~init:[] ~f:(fun acc namespace ->
-      let* rotation = read_rotation ~ctx namespace in
+      let declared_here =
+        declared
+        |> List.filter_map (fun (ns, name) ->
+          if String.equal ns namespace then Some name else None)
+      in
+      let* rotation = read_rotation ~ctx ~declared:declared_here namespace in
       Ok (rotation :: acc))
   in
   Ok (List.rev rotations)
@@ -339,10 +362,11 @@ let restart_all ~ctx rotations =
     Ok ())
 ;;
 
-let set ~ctx ~workspace:_ ~namespaces ~key ~value =
+let set ~ctx ~workspace:_ ~namespaces ~declared ~key ~value =
   let* () = validate_key key in
   let* () = require_namespaces namespaces in
-  let* rotations = read_rotations ~ctx namespaces in
+  let* () = iter_namespaces namespaces ~f:(ensure_namespace ~ctx) in
+  let* rotations = read_rotations ~ctx ~declared namespaces in
   let* () = refuse_external_secret_rotation ~ctx rotations in
   let* () =
     iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
@@ -353,6 +377,48 @@ let set ~ctx ~workspace:_ ~namespaces ~key ~value =
   in
   let* () = restart_all ~ctx rotations in
   Ok (Applied namespaces)
+;;
+
+let verify_required_keys ~ctx ~namespace ~secret_name ~required_keys =
+  let* json = get_named_secret_json ~ctx ~name:secret_name namespace in
+  let data = existing_data json in
+  let missing =
+    required_keys
+    |> List.filter (fun key ->
+      match List.assoc_opt key data with
+      | Some value -> String.trim value = ""
+      | None -> true)
+  in
+  match missing with
+  | [] -> Ok ()
+  | _ ->
+    Error
+      (Printf.sprintf
+         "%s/%s does not hold the required non-empty secret key(s): %s. Sol's ordinary \
+          deploy and rollback deliver secret references only and never write values; \
+          create or update them with `sol secret set --target <env>/<provider>/<region> \
+          <KEY>` (or your secret authority), then try again."
+         namespace
+         secret_name
+         (String.concat ", " missing))
+;;
+
+let verify_workload_secret ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
+  verify_required_keys
+    ~ctx
+    ~namespace:(Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+    ~secret_name:
+      (Sol_cli_manifest.workload_secret_name
+         (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
+    ~required_keys:(Sol_cli_manifest.required_secret_keys (List.map fst spec.secrets))
+;;
+
+let verify_runtime_secret ~ctx ~namespace =
+  verify_required_keys
+    ~ctx
+    ~namespace
+    ~secret_name:Sol_cli_manifest.runtime_secret_name
+    ~required_keys:(Sol_cli_manifest.required_secret_keys [])
 ;;
 
 let read_keys ~ctx namespace =

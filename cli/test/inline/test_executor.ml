@@ -362,6 +362,77 @@ let test_gitops_placeholder_still_emits_secret () =
     (contains "kind: ExternalSecret" content)
 ;;
 
+let with_secretless_kubectl f =
+  let dir = temp_dir "sol-executor-kubectl-" in
+  let log = Filename.concat dir "calls.log" in
+  let bin = Filename.concat dir "kubectl" in
+  let script =
+    Printf.sprintf
+      {|#!/bin/sh
+verb=""
+kind=""
+next=0
+for a in "$@"; do
+  case "$a" in
+    apply|create|patch) [ -z "$verb" ] && verb="$a" ;;
+    get) [ -z "$verb" ] && verb="get" && next=1 ;;
+    *) if [ "$next" = 1 ]; then kind="$a"; next=0; fi ;;
+  esac
+done
+printf '%%s %%s\n' "$verb" "$kind" >> %s
+if [ "$verb" = "get" ] && [ "$kind" = "secret" ]; then
+  echo 'Error from server (NotFound): secrets "charge-svc-secrets" not found' >&2
+  exit 1
+fi
+exit 0
+|}
+      log
+  in
+  let oc = open_out bin in
+  output_string oc script;
+  close_out oc;
+  Unix.chmod bin 0o755;
+  let old_path =
+    try Sys.getenv "PATH" with
+    | Not_found -> ""
+  in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" old_path;
+      (try Sys.remove bin with
+       | _ -> ());
+      (try Sys.remove log with
+       | _ -> ());
+      try Unix.rmdir dir with
+      | _ -> ())
+    (fun () -> f ~calls:(fun () -> read_file log))
+;;
+
+let test_apply_fails_closed_when_the_workload_secret_is_absent () =
+  with_secretless_kubectl (fun ~calls ->
+    let outcome =
+      Sol_cli_executor.local
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~workspace:"myapp"
+        ~release_id:release_id_of_test
+        ~dry_run:false
+        svc_spec
+    in
+    (match outcome with
+     | Error message ->
+       Alcotest.(check bool)
+         "names the missing required key"
+         true
+         (contains "POSTGRES_URL" message);
+       Alcotest.(check bool)
+         "says deploy never writes values"
+         true
+         (contains "never write values" message)
+     | Ok _ -> Alcotest.fail "apply must fail closed when the workload Secret is absent");
+    Alcotest.(check bool) "no manifest was applied" false (contains "apply" (calls ())))
+;;
+
 let%test "local: result fields (svc)" = test_local_result_fields ()
 let%test "local: result fields (worker)" = test_local_worker_result ()
 let%test "direct: result fields (svc)" = test_direct_result_fields ()
@@ -380,4 +451,8 @@ let%test "gitops: kubernetes-live refused (BUG-081)" =
 
 let%test "gitops: placeholder still emits a Secret (BUG-081)" =
   test_gitops_placeholder_still_emits_secret ()
+;;
+
+let%test "apply: fails closed before apply when the workload Secret is absent (BUG-054)" =
+  test_apply_fails_closed_when_the_workload_secret_is_absent ()
 ;;
