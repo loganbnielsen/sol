@@ -360,6 +360,7 @@ let test_the_outbox_and_jobs_share_one_transaction () =
 
 let () =
   Windtrap.run
+    ~argv:[||]
     "sol_outbox"
     [ Windtrap.group
         "atomicity"

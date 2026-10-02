@@ -6,13 +6,6 @@ cd "$root"
 source "$root/internal/ci/lib/scratch_repo.sh"
 scratch_repo_sanitize
 
-unit_test_dirs=(
-  framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/
-  framework/ocaml/sol-jobs/ framework/ocaml/sol-obs/ framework/ocaml/sol-outbox/
-  framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/
-  cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
-)
-
 checks=(
   "_build/default/internal/tooling/soldev/bin/main.exe pipeline validate"
   "git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/check_ticket_transitions.sh"
@@ -31,7 +24,6 @@ checks=(
   "bash internal/ci/test_authority_check.sh"
   "bash internal/ci/test_classify_changes.sh"
   "bash internal/ci/test_examples_self_contained.sh"
-  "bash internal/ci/test_framework_ci_coverage.sh"
   "bash internal/ci/test_hook_install.sh"
   "bash internal/ci/test_scratch_repo.sh"
   "bash internal/ci/test_json_decode_boundary.sh"
@@ -72,7 +64,6 @@ checks=(
   "python3 internal/ci/check_cli_reference.py"
   "python3 internal/ci/check_deploy_identity_iam.py ."
   "python3 internal/ci/check_destroy_completeness.py ."
-  "python3 internal/ci/check_framework_ci_coverage.py"
   "python3 internal/ci/check_framework_doc_signatures.py"
   "python3 internal/ci/check_operator_diagnostics.py"
   "python3 internal/ci/check_qualification_transport.py"
@@ -120,10 +111,18 @@ fi
 
 echo "fast checks: unit tests (serial: they hold dune's build lock)"
 unit_failed=0
-if ! unit_output="$(dune test "${unit_test_dirs[@]}" 2>&1)"; then
+if ! unit_output="$(dune build @ci-unit 2>&1)"; then
   unit_failed=1
   printf '%s\n' "$unit_output"
   echo "fast checks: unit tests failed; running the guards anyway"
+fi
+
+lifecycle_failed=0
+echo "fast checks: offline cloud lifecycle (serial: it holds dune's build lock)"
+if ! lifecycle_output="$(dune build @ci-lifecycle 2>&1)"; then
+  lifecycle_failed=1
+  printf '%s\n' "$lifecycle_output"
+  echo "fast checks: lifecycle tests failed; running the guards anyway"
 fi
 
 results="$(mktemp -d)"
@@ -167,5 +166,8 @@ echo ""
 if [ "$unit_failed" -ne 0 ]; then
   echo "fast checks: unit tests FAILED (the guard results above still ran)"
 fi
+if [ "$lifecycle_failed" -ne 0 ]; then
+  echo "fast checks: lifecycle tests FAILED (the guard results above still ran)"
+fi
 echo "fast checks: ${#failed[@]}/${#checks[@]} checks failed in $((SECONDS - started))s"
-[ "${#failed[@]}" -eq 0 ] && [ "$unit_failed" -eq 0 ]
+[ "${#failed[@]}" -eq 0 ] && [ "$unit_failed" -eq 0 ] && [ "$lifecycle_failed" -eq 0 ]

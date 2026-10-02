@@ -35,3 +35,13 @@
       REDPANDA_ADMIN_URL
       "http://localhost:9644"
       (run ./test_kafka_service_integration.exe)))))))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))
+
+(alias
+ (name ci-integration-kafka)
+ (deps
+  (alias_rec runtest-integration)))

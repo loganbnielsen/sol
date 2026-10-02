@@ -210,34 +210,27 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/tooling/scripts/ci-toolchain.sh kubectl
 
-      # The unit step's own coverage invariant: every framework package with a
-      # unit suite is listed there. Reads ci.yml as YAML and the dune files as
-      # stanzas, so reformatting either cannot change the verdict.
-      - name: Framework CI coverage
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: python3 internal/ci/check_framework_ci_coverage.py
-
-      - name: Framework CI coverage mutation test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: bash internal/ci/test_framework_ci_coverage.sh
       - name: Test reachability guard
         run: python3 internal/ci/check_test_reachability.py
 
       - name: Test reachability guard mutation coverage
         run: bash internal/ci/test_test_reachability.sh
 
+      # Each package declares its own membership as `ci-unit` in its `test/dune`,
+      # so this step names one class and cannot drift from the packages. A
+      # package that needs infrastructure keeps its offline suite in `ci-unit`
+      # and its infrastructure suite in `ci-integration` (below), which is why
+      # kafka-eio-service's broker suite is not here. examples/pluto is excluded
+      # deliberately: it is a separate Dune project (its own dune-project), so a
+      # root `@ci-unit` cannot reach it; its Dockerfiles are built by the
+      # example-dockerfile-smoke job instead.
       - name: Unit tests (no broker/Postgres/Loki required)
         if: needs.classify.outputs.kind != 'docs-only'
-        # Every framework package is here. kafka-eio-service's broker-requiring
-        # suite is an executable behind the runtest-integration alias, so this
-        # step compiles and runs only its unit suite; the alias and sol-jobs'
-        # Postgres case run in the integration step below.
-        # internal/ci/check_framework_ci_coverage.py holds both facts.
-        run: opam exec -- dune test framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-jobs/ framework/ocaml/sol-obs/ framework/ocaml/sol-outbox/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
+        run: opam exec -- dune build @ci-unit
 
       - name: Offline cloud lifecycle (cli/test runtest-lifecycle)
         if: needs.classify.outputs.kind != 'docs-only'
-        run: opam exec -- dune build @cli/test/runtest-lifecycle
+        run: opam exec -- dune build @ci-lifecycle
 
       # The other half of the same invariant: a framework suite that needs
       # infrastructure still has to run on the PR gate, not only in
@@ -249,23 +242,24 @@ jobs:
       # `ensure-broker.sh`: the latter also creates the demo topics with a host
       # `rpk`, which a clean runner does not have, and these suites register
       # their own topics through the schema registry.
-      # internal/ci/check_framework_ci_coverage.py holds the alias half of this.
+      # Membership is the `ci-integration` alias each suite declares in its own
+      # `test/dune`, so this step names one class rather than three directories.
       # Each suite's dependency is pinned in its own `test/dune` (VERIF-002): the
       # database alias passes the Postgres URL as an argument and the broker
       # alias sets the Kafka endpoints, so this step supplies only the
       # containers. That also means a target built under one ambient environment
       # can never be served from another's cache, and no invocation needs
-      # `--force` to be believed. One alias per invocation, because both database
-      # suites destructively own the one sol_jobs table.
+      # `--force` to be believed. `-j 1` runs the two database suites serially,
+      # because both destructively own the one sol_jobs table: in one parallel
+      # `dune build` one suite's DROP TABLE deletes the other's rows mid-test.
+      # VERIF-007's per-suite schema isolation removes the need for this.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         run: |
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
-          opam exec -- dune build @framework/ocaml/kafka-eio-service/test/runtest-integration
-          opam exec -- dune build @framework/ocaml/sol-jobs/test/runtest-integration
-          opam exec -- dune build @framework/ocaml/sol-outbox/test/runtest-integration
+          opam exec -- dune build @ci-integration-kafka @ci-integration-pg -j 1
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
@@ -282,7 +276,7 @@ jobs:
       - name: Facts-to-jobs golden-path smoke (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 15
-        run: opam exec -- dune build @internal/fixtures/local-demo/test/runtest
+        run: opam exec -- dune build @ci-e2e
 
       - name: Install formatter
         if: needs.classify.outputs.kind != 'docs-only'

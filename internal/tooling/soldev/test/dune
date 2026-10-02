@@ -15,3 +15,8 @@
  (deps test_pr_inventory.py ../bin/main.exe)
  (action
   (run python3 %{dep:test_pr_inventory.py} %{dep:../bin/main.exe})))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

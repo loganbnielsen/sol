@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BASELINE="$REPO_ROOT/internal/tooling/perf/perf_baseline.json"
 
 ALL_SUITES=(unit kafka observability storage e2e)
-RECORDABLE_SUITES=(unit kafka e2e)
+RECORDABLE_SUITES=(unit kafka postgres e2e)
 
 declare -A FAIL_RATIOS=(
   [unit]=1.5

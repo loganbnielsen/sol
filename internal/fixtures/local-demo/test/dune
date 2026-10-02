@@ -47,3 +47,8 @@
         POSTGRES_URL
         "postgresql://postgres:dev@localhost:5432/sol_dev"
         (run ./test_e2e.exe)))))))))
+
+(alias
+ (name ci-e2e)
+ (deps
+  (alias_rec runtest)))

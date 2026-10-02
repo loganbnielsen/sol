@@ -7,3 +7,8 @@
  (deps main.exe test_style_audit.py)
  (action
   (run python3 %{dep:test_style_audit.py} %{dep:main.exe})))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

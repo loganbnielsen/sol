@@ -11,3 +11,8 @@
   cohttp-eio
   http
   uri))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

@@ -1,3 +1,8 @@
 (tests
  (names test_signal test_setting)
  (libraries sol_runtime eio eio_main windtrap unix))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

@@ -692,6 +692,7 @@ let test_expired_terminal_row_releases_its_key () =
 
 let () =
   Windtrap.run
+    ~argv:[||]
     "sol_jobs_pg"
     [ Windtrap.group
         "claim by kind (BUG-044 a)"
