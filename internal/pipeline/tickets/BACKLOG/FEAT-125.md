@@ -34,6 +34,24 @@ observed at `sol-obs@13128e6` (`origin/main`, `src/loki.ts:16-48`) against
    console side applies on the delivery side: with `LOKI_URL` set, a line can be
    neither on stdout (FEAT-099) nor in Loki (this ticket).
 
+## Decision (2026-10-02)
+
+**Land this with FEAT-099 in one `makeLokiPusher` change, as an
+`ofEnv`-shaped composition.** The API becomes
+`ofEnv({ lokiUrl?, service, labels? }) -> { log(level, msg, fields), flush() }`,
+mirroring `Sol_obs.of_env ?context` plus its `flush`: `labels` are fixed at
+construction (Loki requires a fixed label set, as the OCaml side already
+assumes), and `flush()` awaits the in-flight pushes so `runService`/`runWorker`
+can register it as a shutdown hook. The console line is written on every call
+(FEAT-099), independently of whether Loki is configured. Pre-alpha has no
+backwards-compatibility constraint (AGENTS.md), so the signature change is free.
+FEAT-099 keeps its own acceptance for the console-copy half; the two are the
+same function and are implemented together.
+
+This decision is recorded now so the change is mechanical when it is prioritised;
+it is **not** implemented in this session — it follows the FEAT-097/FEAT-096/
+FEAT-099 parity batch, and lands in `sol-obs` with the demo's shutdown hook.
+
 ## Remediation
 
 In `loganbnielsen/sol-obs`:

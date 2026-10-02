@@ -27,12 +27,14 @@ Checked 2026-09-24: `rg -n 'KAFKA_SECURITY_PROTOCOL' --glob '*.ts' .` (excluding
 `node_modules`) matches nothing, while the same search over `*.ml` matches
 `kafka_service_config.ml` (positive control).
 
-## Decision Required
+## Decision (2026-10-02)
 
-Where the helper lives: `@sol-fab/kafka` (github.com/loganbnielsen/sol-kafka)
-exporting a `kafkaConfigFromEnv()` that returns kafkajs `ssl`/`sasl` options and
-throws on an absent protocol, or a thinner in-example helper until the package
-grows a config surface.
+**The helper lives in `@sol-fab/kafka`, as `kafkaConfigFromEnv()`.** The posture
+is a Sol convention every TypeScript workload must apply, not an example detail
+— an in-example helper is exactly how two workloads drift, and the package is
+already the home of the Kafka policy (`registerTopic`, the wire format, DLQ). It
+returns the kafkajs `ssl`/`sasl` client options and throws when a required
+variable is absent or malformed, naming it, mirroring `config_of_env`.
 
 ## Remediation
 
