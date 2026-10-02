@@ -59,3 +59,39 @@ cannot recur.
   this is recorded as such.
 - Demo/example: not applicable — CI tooling only. Language parity: no application-facing contract
   changes; state that in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ 408bc4c4`: `internal/ci/check_*` and `test_*` are
+`static` class members discovered by `internal/tooling/scripts/verify.sh`, so each runs in CI and in
+the pre-push gate unless it is deliberately caller-invoked.
+
+**Made structural by VERIF-005.** Membership is the filename inside the class directory:
+
+- `internal/ci/test_resource_identity_check.py` now runs in both gates, and its output names the
+  guard it covers.
+- `internal/ci/check_cluster_access_identity.py` and `internal/ci/check_gcp_provisioner_role.py`
+  run against the repository tree (their default roots are repo-relative), not only on a mutated
+  copy.
+- A guard or mutation self-test cannot be unwired again: a new `check_*`/`test_*` file is a class
+  member by construction, and an empty class is an error. The four caller-invoked members
+  (`check_ticket_move.sh`, `check_ticket_transitions.sh`, `check_readiness_invocations.sh`,
+  `test_cloud_lifecycle_offline.sh`) live in `context/` and are invoked by their caller — a ci.yml
+  step, the pre-commit hook or a Dune rule — which the ticket already recorded as correct.
+
+**Evidence.**
+
+```
+$ bash -c 'source internal/tooling/scripts/verify.sh; discover "$root/internal/ci"; \
+           printf "%s\n" "${members[@]}"' | rg 'cluster_access_identity|gcp_provisioner_role|resource_identity'
+.../internal/ci/check_cluster_access_identity.py
+.../internal/ci/check_gcp_provisioner_role.py
+.../internal/ci/check_resource_identity.py
+.../internal/ci/test_cluster_access_identity.sh
+.../internal/ci/test_gcp_provisioner_role.sh
+.../internal/ci/test_resource_identity_check.py
+$ python3 internal/ci/test_resource_identity_check.py   # names the guard it covers
+```
+
+**Demo/example:** not applicable — CI tooling only. **Language parity (DEC-022):** no
+application-facing contract changes.
