@@ -27,6 +27,7 @@ checks=(
   "bash internal/ci/check_result_syntax.sh"
   "bash internal/ci/check_single_runner.sh"
   "bash internal/ci/check_support_refs.sh"
+  "bash internal/ci/check_ts_demo.sh"
   "bash internal/ci/test_authority_check.sh"
   "bash internal/ci/test_classify_changes.sh"
   "bash internal/ci/test_examples_self_contained.sh"
