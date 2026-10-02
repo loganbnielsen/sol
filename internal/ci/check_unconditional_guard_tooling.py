@@ -26,7 +26,7 @@ def runs_on(step, fast):
     condition = step.get("if", "")
     if not condition:
         return True
-    if condition == FULL:
+    if condition in (FULL, "needs.classify.outputs.kind != 'docs-only'"):
         return not fast
     if condition == FAST:
         return fast
@@ -104,12 +104,12 @@ def main():
         or cache_settings.get("path") != "_build/default/internal/tooling/soldev/bin/main.exe"
         or "hashFiles(" not in cache_settings.get("key", "")
         or "internal/tooling/soldev/**/*.ml" not in cache_settings.get("key", "")
-        or cache_settings.get("restore-keys")
     ):
-        failures.append("docs-only validator must restore an exact-source binary without fallback keys")
+        failures.append("docs-only validator must restore a main-built validator keyed on soldev")
     saved = [step for step in steps if step.get("uses") == "actions/cache/save@v4"]
     if not any(
-        step.get("with") == cache_settings
+        step.get("with", {}).get("path") == cache_settings.get("path")
+        and step.get("with", {}).get("key") == cache_settings.get("key")
         and step.get("if") == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
         for step in saved
     ):

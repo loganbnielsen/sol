@@ -39,7 +39,7 @@ for step in workflow["jobs"]["test"]["steps"]:
     if change == "clear-run":
         step["run"] = "true"
     elif change == "gate":
-        step["if"] = "needs.classify.outputs.kind != 'docs-only'"
+        step["if"] = "false"
     elif change == "subset":
         step["run"] = "opam exec -- dune build internal/tooling/soldev/bin/main.exe"
     elif change == "mention-only":
