@@ -315,6 +315,33 @@ sol deploy prod/aws/us-east-1     # first environment
 sol deploy pilot/aws/us-east-1    # a second one, same installation
 ```
 
+## Granting a workload cloud authority: `sol grants`, then `sol deploy`
+
+A unit that declares `secrets = ["stripe"]` needs a cloud identity and an IAM grant
+of its own. That is a lifecycle separate from infrastructure and from deployment
+(DEC-062): a fenced reconciler reconciles the whole target's workload identities and
+grants, `sol cloud apply` creates that reconciler's identity and its fence, and
+`sol deploy` only *observes* the resulting access — it never creates or repairs it.
+
+```bash
+sol grants plan prod/aws/us-east-1   # review: + payments-api → secret/stripe
+sol grants apply prod/aws/us-east-1  # the reconciler establishes it
+sol deploy prod/aws/us-east-1        # consumes it; grants nothing
+```
+
+The plan names the unit, the capability and the resource, so a production credential
+being granted is visible before it is granted. The reconciler is target-wide with no
+`--scope`: a partial reconcile would revoke every unselected unit's grants, so the
+operation does not accept one. A removal is revoked only when the declarations no
+longer require it *and* no deployed workload still records using it; when the deployed
+state cannot be observed, nothing is revoked.
+
+The target must declare the reconciler's trust principal (`aws.reconciler_trust_principal_arn`
+for AWS, `gcp.reconciler_trust_principal` for GCP) and the reconciler's own identity
+(`aws.reconciler_role_arn` / `gcp.reconciler_service_account`). A target without them
+skips the authorization lifecycle, and `sol grants` refuses to run as the deploy
+identity.
+
 ## Tearing down: destroy an environment, or uninstall Sol
 
 The two operations remove different things, and neither removes the other's.

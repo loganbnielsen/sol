@@ -12,3 +12,8 @@ output "permissions_boundary_arn" {
   description = "Boundary that must be attached to every workload role at creation."
   value       = aws_iam_policy.workload_boundary.arn
 }
+
+output "established_grants" {
+  description = "The safe grant set this root established; Sol reads it back to compute the next plan (DEC-062 rule 4)."
+  value       = local.realized_grants
+}

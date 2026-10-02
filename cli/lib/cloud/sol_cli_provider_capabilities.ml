@@ -31,6 +31,10 @@ type identity_contract =
   ; declared_as : string
   }
 
+type authorization_reconciler =
+  | Reconciler_role of string
+  | Reconciler_service_account of string
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -94,6 +98,17 @@ type t =
   ; sol_keys : string list
   ; state_locking : string option
   ; scoped_identities : string list
+  ; authorization_reconciler_field : string
+  ; authorization_trust_field : string
+  ; authorization_root_vars :
+      Sol_cli_config.target -> ((string * string) list, string) result
+  ; authorization_fence_addresses : string list
+  ; authorization_reconciler :
+      Sol_cli_config.target -> (authorization_reconciler, string) result
+  ; authorization_assumption :
+      authorization_reconciler -> ((string * string) list, string) result
+  ; authorization_principal_matches :
+      authorization_reconciler -> principal:string -> (unit, string) result
   }
 
 let public_delegation_probe domain =
@@ -312,6 +327,184 @@ let aws_own_vars
   |> add_opt "workspace_name" (Some workspace)
 ;;
 
+let required_field target field =
+  match Sol_cli_config.provider_field target field with
+  | Some value when not (Sol_cli_string.is_blank value) -> Ok value
+  | Some _ | None ->
+    Error
+      (Printf.sprintf
+         "target %s must declare %s.%s for the authorization reconciler to run"
+         target.name
+         (Sol_cli_provider.to_string target.provider)
+         field)
+;;
+
+let authorization_role_path arn =
+  let marker = ":role/" in
+  let width = String.length marker in
+  let rec scan i =
+    if i + width > String.length arn
+    then None
+    else if String.sub arn i width = marker
+    then Some (String.sub arn (i + width) (String.length arn - i - width))
+    else scan (i + 1)
+  in
+  Option.value (scan 0) ~default:(Filename.basename arn)
+;;
+
+let run_command args =
+  Sol_cli_process.run (Sol_cli_process.cmd args)
+  |> Result.map (fun (output : Sol_cli_process.output) -> output.stdout)
+  |> Result.map_error Sol_cli_process.error_to_string
+;;
+
+let aws_authorization_root_vars target =
+  let open Result.Syntax in
+  let* trust = required_field target "reconciler_trust_principal_arn" in
+  Ok
+    [ "region", target.region
+    ; "environment", target.env
+    ; "cluster_name", Option.value target.cluster_name ~default:""
+    ; "reconciler_trust_principal_arn", trust
+    ]
+;;
+
+let gcp_authorization_root_vars target =
+  let open Result.Syntax in
+  let* trust = required_field target "reconciler_trust_principal" in
+  let* project = required_field target "project_id" in
+  Ok
+    [ "region", target.region
+    ; "environment", target.env
+    ; "project_id", project
+    ; "reconciler_trust_principal", trust
+    ]
+;;
+
+let aws_authorization_reconciler target =
+  Result.map
+    (fun role_arn -> Reconciler_role role_arn)
+    (required_field target "reconciler_role_arn")
+;;
+
+let gcp_authorization_reconciler target =
+  Result.map
+    (fun account -> Reconciler_service_account account)
+    (required_field target "reconciler_service_account")
+;;
+
+let aws_authorization_assumption (reconciler : authorization_reconciler) =
+  match reconciler with
+  | Reconciler_service_account _ ->
+    Error "the AWS authorization reconciler must be an IAM role, not a service account"
+  | Reconciler_role role_arn ->
+    let open Result.Syntax in
+    let* output =
+      run_command
+        [ "aws"
+        ; "sts"
+        ; "assume-role"
+        ; "--role-arn"
+        ; role_arn
+        ; "--role-session-name"
+        ; "sol-authorization"
+        ; "--duration-seconds"
+        ; "3600"
+        ; "--output"
+        ; "json"
+        ]
+    in
+    let field key credentials =
+      match List.assoc_opt key credentials with
+      | Some (`String value) -> Ok value
+      | Some _ -> Error (Printf.sprintf "sts:AssumeRole returned a non-string %s" key)
+      | None -> Error (Printf.sprintf "sts:AssumeRole returned no %s" key)
+    in
+    let* credentials =
+      match Yojson.Safe.from_string output with
+      | `Assoc fields ->
+        (match List.assoc_opt "Credentials" fields with
+         | Some (`Assoc credentials) -> Ok credentials
+         | Some _ -> Error "sts:AssumeRole returned a non-object Credentials"
+         | None -> Error "sts:AssumeRole returned no Credentials")
+      | _ -> Error "sts:AssumeRole did not return a JSON object"
+      | exception Yojson.Json_error message ->
+        Error ("sts:AssumeRole returned invalid JSON: " ^ message)
+    in
+    let* access_key_id = field "AccessKeyId" credentials in
+    let* secret_access_key = field "SecretAccessKey" credentials in
+    let* session_token = field "SessionToken" credentials in
+    Ok
+      [ "AWS_ACCESS_KEY_ID", access_key_id
+      ; "AWS_SECRET_ACCESS_KEY", secret_access_key
+      ; "AWS_SESSION_TOKEN", session_token
+      ]
+;;
+
+let gcp_authorization_assumption (reconciler : authorization_reconciler) =
+  match reconciler with
+  | Reconciler_role _ ->
+    Error "the GCP authorization reconciler must be a service account, not an IAM role"
+  | Reconciler_service_account account ->
+    let open Result.Syntax in
+    let* token =
+      run_command
+        [ "gcloud"
+        ; "auth"
+        ; "print-access-token"
+        ; "--impersonate-service-account"
+        ; account
+        ]
+    in
+    (match Sol_cli_string.non_blank_opt (Some (String.trim token)) with
+     | Some token -> Ok [ "GOOGLE_OAUTH_ACCESS_TOKEN", token ]
+     | None ->
+       Error
+         "gcloud returned no access token for the reconciler service account; is it \
+          impersonatable by this caller?")
+;;
+
+let aws_authorization_principal_matches (reconciler : authorization_reconciler) ~principal
+  =
+  match reconciler with
+  | Reconciler_service_account _ -> Error "the AWS reconciler is not a service account"
+  | Reconciler_role arn ->
+    if Sol_cli_string.is_blank principal
+    then
+      Error
+        "the AWS caller identity could not be observed, so the reconciler is not \
+         established"
+    else if String.equal principal arn
+    then Ok ()
+    else (
+      let assumed = "assumed-role/" ^ authorization_role_path arn ^ "/" in
+      if Sol_cli_string.contains ~needle:assumed principal
+      then Ok ()
+      else
+        Error
+          (Printf.sprintf
+             "the AWS caller %s is not the declared reconciler %s; run this command with \
+              the reconciler identity, not another identity"
+             principal
+             arn))
+;;
+
+let gcp_authorization_principal_matches (reconciler : authorization_reconciler) ~principal
+  =
+  match reconciler with
+  | Reconciler_role _ -> Error "the GCP reconciler is not an IAM role"
+  | Reconciler_service_account account ->
+    if Sol_cli_string.is_blank principal
+    then
+      Error
+        "the GCP principal could not be observed, so the reconciler is not established"
+    else if Sol_cli_string.contains ~needle:account principal
+    then Ok ()
+    else
+      Error
+        (Printf.sprintf "the GCP principal %s is not the declared reconciler" principal)
+;;
+
 let aws_root_declared_vars
   :  has_postgres:bool
   -> production_postgres:bool
@@ -435,6 +628,17 @@ let aws : t =
       ; "deploy_role_arn"
       ; "operator_role_arn"
       ]
+  ; authorization_reconciler_field = "reconciler_role_arn"
+  ; authorization_trust_field = "reconciler_trust_principal_arn"
+  ; authorization_root_vars = aws_authorization_root_vars
+  ; authorization_fence_addresses =
+      [ "aws_iam_policy.workload_boundary"
+      ; "aws_iam_role.reconciler"
+      ; "aws_iam_role_policy.reconciler"
+      ]
+  ; authorization_reconciler = aws_authorization_reconciler
+  ; authorization_assumption = aws_authorization_assumption
+  ; authorization_principal_matches = aws_authorization_principal_matches
   }
 ;;
 
@@ -618,6 +822,18 @@ let gcp : t =
   ; installation_state_backend_address = "google_storage_bucket.state"
   ; installation_retire_state_backend = Sol_cli_gcp_state_backend.retire
   ; scoped_identities = []
+  ; authorization_reconciler_field = "reconciler_service_account"
+  ; authorization_trust_field = "reconciler_trust_principal"
+  ; authorization_root_vars = gcp_authorization_root_vars
+  ; authorization_fence_addresses =
+      [ "google_service_account.reconciler"
+      ; "google_project_iam_custom_role.authorization"
+      ; "google_project_iam_member.reconciler_authorization"
+      ; "google_service_account_iam_member.reconciler_impersonation"
+      ]
+  ; authorization_reconciler = gcp_authorization_reconciler
+  ; authorization_assumption = gcp_authorization_assumption
+  ; authorization_principal_matches = gcp_authorization_principal_matches
   }
 ;;
 

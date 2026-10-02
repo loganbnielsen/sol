@@ -1,7 +1,9 @@
 val backend_config
   :  Sol_cli_config.target
-  -> root:[ `Cloud | `Platform ]
+  -> root:[ `Cloud | `Platform | `Authorization ]
   -> (string list, string) result
+
+val authorization_backend : Sol_cli_config.target -> (string list, string) result
 
 type cloud_target =
   { target : Sol_cli_config.target

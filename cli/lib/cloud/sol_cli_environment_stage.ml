@@ -351,6 +351,12 @@ let apply
           (Sol_cli_provider_registry.resolution_failure_to_string failure);
         None
     in
+    let* () =
+      Sol_cli_authorization_stage.fence ~assets ~run_log ~target:target_cfg
+      |> Result.map (fun outcome ->
+        Sol_cli_report.app "  %s" (Sol_cli_authorization_stage.outcome_to_string outcome))
+      |> Result.map_error (fun message -> Refused message)
+    in
     Ok (Applied { cluster; infra_dir })
   | Sol_cli_cloud_apply.Apply_failed { failure; cleanup } ->
     report_cleanup_evidence cleanup;

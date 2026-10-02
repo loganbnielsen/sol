@@ -24,6 +24,7 @@ type t =
   }
 
 val services : t -> Sol_cli_manifest.service list
+val workloads : t -> workload list
 val migration_files : t -> Sol_cli_plan_ids.Migration_file.t list
 val count_unapplied_migrations : t -> int
 val load : root:string -> (t, string) result

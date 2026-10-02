@@ -313,7 +313,17 @@ let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
        verification |> Option.iter report_verification;
        Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.completion_message outcome));
     (match Sol_cli_cloud_destroy.exit_code outcome with
-     | 0 -> Ok ()
+     | 0 ->
+       (match Sol_cli_authorization_stage.destroy ~assets ~run_log ~target:target_cfg with
+        | Ok outcome ->
+          Printf.printf "%s\\n%!" (Sol_cli_authorization_stage.outcome_to_string outcome)
+        | Error message ->
+          Printf.eprintf
+            "warning: the environment was destroyed but the authorization reconciler \
+             identity and its fence were not (%s); remove them explicitly before the \
+             durable installation is retired.\\n%!"
+            message);
+       Ok ()
      | code -> Error (Sol_cli_exit.reported ~code ()))
 ;;
 
