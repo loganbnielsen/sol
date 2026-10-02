@@ -2,6 +2,7 @@ type workload =
   { domain : string
   ; name : string
   ; primitive : string
+  ; language : string option
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
@@ -76,6 +77,13 @@ let enc_table b rows =
     List.iter (enc_string b) row)
 ;;
 
+let enc_recorded_language b = function
+  | None -> ()
+  | Some language ->
+    enc_string b "language";
+    enc_string b language
+;;
+
 let enc_workload b (w : workload) =
   enc_string b w.domain;
   enc_string b w.name;
@@ -101,7 +109,8 @@ let enc_workload b (w : workload) =
   enc_string b w.cluster_issuer;
   enc_table
     b
-    (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls))
+    (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls));
+  enc_recorded_language b w.language
 ;;
 
 let compare_workload_spec a b =

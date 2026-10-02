@@ -154,6 +154,18 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
       w.ingress_path
   in
   let* calls = decode_calls ~release_id ~workload_name:w.name w.calls in
+  let* language =
+    match w.language with
+    | None -> Ok None
+    | Some raw ->
+      Sol_cli_compat.of_string raw
+      |> Result.map Option.some
+      |> Result.map_error (fun msg ->
+        reconstruct_error
+          ~release_id
+          ~workload:w.name
+          ~fact:(Printf.sprintf "has an invalid language %S: %s" raw msg))
+  in
   let spec =
     { Sol_cli_deployment_plan.domain = w.domain
     ; source_name = w.name
@@ -169,7 +181,7 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; scheduled_concurrency
     ; backoff_limit = w.backoff_limit
     ; replicas = w.replicas
-    ; language = None
+    ; language
     ; availability =
         (match Sol_cli_availability.of_string w.availability with
          | Ok a -> a

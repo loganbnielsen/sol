@@ -2,6 +2,7 @@ type workload =
   { domain : string
   ; name : string
   ; primitive : string
+  ; language : string option
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list

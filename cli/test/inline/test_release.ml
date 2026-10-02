@@ -23,6 +23,7 @@ let sample_workload : R.workload =
   { domain = "payments"
   ; name = "charge_svc"
   ; primitive = "svc"
+  ; language = None
   ; image = "reg/myworkspace/charge-svc:abc1234"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DATABASE_URL", "db-secret" ]
@@ -92,6 +93,55 @@ let test_json_round_trip () =
       ~msg:"migrations preserved"
       [ "0001_notifications.sql" ]
       r.migrations
+;;
+
+let record_with_language language =
+  let workload = { sample_workload with language } in
+  let release_id =
+    Sol_cli_release_id.to_string
+      (Sol_cli_release_id.of_content
+         { workspace = sample_record.workspace
+         ; environment = sample_record.environment
+         ; workloads = [ workload ]
+         })
+  in
+  { sample_record with release_id; workloads = [ R.applied_by release_id workload ] }
+;;
+
+let serialized_language json =
+  match json with
+  | `Assoc fields ->
+    (match List.assoc_opt "workloads" fields with
+     | Some (`List (`Assoc workload :: _)) ->
+       (match List.assoc_opt "language" workload with
+        | Some (`String language) -> language
+        | _ -> "<absent>")
+     | _ -> "<absent>")
+  | _ -> "<absent>"
+;;
+
+let test_language_json_round_trip () =
+  let record = record_with_language (Some "ocaml") in
+  (match R.of_json (R.to_json record) with
+   | Error msg -> Windtrap.fail msg
+   | Ok r ->
+     let w = Sol_cli_release.workload_identity (List.hd r.workloads) in
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"language preserved"
+       (Some "ocaml")
+       w.language);
+  (match R.validate ~name:(R.configmap_name record) record with
+   | Ok () -> ()
+   | Error msg -> Windtrap.fail ("a record carrying a language must validate: " ^ msg));
+  check_string
+    "a recorded language is serialized"
+    "ocaml"
+    (serialized_language (R.to_json record));
+  check_string
+    "an unrecorded language is not serialized"
+    "<absent>"
+    (serialized_language (R.to_json sample_record))
 ;;
 
 let test_configmap_object () =
@@ -865,6 +915,7 @@ let test_recorded_release_reports_success () =
 
 let%test "sanitization" = test_sanitize_label ()
 let%test "record: json round trip" = test_json_round_trip ()
+let%test "record: language json round trip (BUG-118)" = test_language_json_round_trip ()
 let%test "record: configmap object" = test_configmap_object ()
 let%test "record: pointer is minimal" = test_current_pointer_is_minimal ()
 let%test "record: apply_mode round-trips" = test_apply_mode_round_trips ()

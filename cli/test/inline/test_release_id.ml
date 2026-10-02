@@ -4,6 +4,7 @@ let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected 
 let wl
       ?(domain = "payments")
       ?(primitive = "svc")
+      ?(language = None)
       ?(config = [])
       ?(secrets = [])
       ?(schedule = None)
@@ -27,6 +28,7 @@ let wl
   { Sol_cli_release_id.domain
   ; name
   ; primitive
+  ; language
   ; image
   ; config
   ; secrets
@@ -224,6 +226,54 @@ let test_known_vector () =
           ]))
 ;;
 
+let test_language_is_semantic () =
+  let ocaml = id (content [ wl ~language:(Some "ocaml") "charge_svc" "acme/charge:1" ]) in
+  let typescript =
+    id (content [ wl ~language:(Some "typescript") "charge_svc" "acme/charge:1" ])
+  in
+  let unrecorded = id (content [ wl "charge_svc" "acme/charge:1" ]) in
+  check_bool "ocaml differs from typescript" true (ocaml <> typescript);
+  check_bool "ocaml differs from an unrecorded language" true (ocaml <> unrecorded);
+  check_bool
+    "typescript differs from an unrecorded language"
+    true
+    (typescript <> unrecorded)
+;;
+
+let test_language_extends_the_encoding_additively () =
+  let contains needle s = Sol_cli_string.contains ~needle s in
+  let unrecorded =
+    Sol_cli_release_id.canonical_string (content [ wl "charge_svc" "acme/charge:1" ])
+  in
+  let with_language =
+    Sol_cli_release_id.canonical_string
+      (content [ wl ~language:(Some "ocaml") "charge_svc" "acme/charge:1" ])
+  in
+  check_bool
+    "an unrecorded language adds nothing to the encoding"
+    false
+    (contains "language" unrecorded);
+  check_bool
+    "a recorded language is part of the encoding"
+    true
+    (contains "language" with_language)
+;;
+
+let test_known_vector_with_language () =
+  check_string
+    "known id for a fixed content with a recorded language"
+    "r-8caeacc6de9875ac"
+    (id
+       (content
+          [ wl
+              ~language:(Some "ocaml")
+              ~config:[ "LOG_LEVEL", "info" ]
+              ~secrets:[ "DATABASE_URL", "db-prod" ]
+              "charge_svc"
+              "acme/charge:1"
+          ]))
+;;
+
 let test_environment_identity_counts_not_just_resolved_state () =
   let same_state =
     [ wl ~config:[ "FOO", "1" ] ~replicas:2 "charge_svc" "acme/charge:1" ]
@@ -334,6 +384,15 @@ let%test "identity: secret references count, values do not" =
 
 let%test "identity: encoding is unambiguous" = test_encoding_is_unambiguous ()
 let%test "identity: known vector" = test_known_vector ()
+let%test "identity: a recorded language is semantic" = test_language_is_semantic ()
+
+let%test "identity: language extends the encoding additively" =
+  test_language_extends_the_encoding_additively ()
+;;
+
+let%test "identity: known vector with a recorded language" =
+  test_known_vector_with_language ()
+;;
 
 let%test "identity: environment identity counts, not just resolved state" =
   test_environment_identity_counts_not_just_resolved_state ()

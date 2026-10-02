@@ -196,6 +196,7 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
        | Svc -> "svc"
        | Worker -> "worker"
        | Fn -> "fn")
+  ; language = Option.map Sol_cli_compat.to_string spec.language
   ; image = spec.image
   ; config = spec.config
   ; secrets = spec.secrets

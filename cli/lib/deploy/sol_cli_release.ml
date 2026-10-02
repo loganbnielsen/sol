@@ -202,37 +202,41 @@ let rows_to_json rows =
 
 let workload_to_json (w : workload) : Yojson.Safe.t =
   `Assoc
-    [ "domain", `String w.domain
-    ; "name", `String w.name
-    ; "primitive", `String w.primitive
-    ; "image", `String w.image
-    ; "config", pairs_to_assoc w.config
-    ; "secrets", pairs_to_assoc w.secrets
-    ; ( "schedule"
-      , match w.schedule with
-        | None -> `Null
-        | Some s -> `String s )
-    ; "scheduled_concurrency", `String w.scheduled_concurrency
-    ; "backoff_limit", `Int w.backoff_limit
-    ; "replicas", `Int w.replicas
-    ; "availability", `String w.availability
-    ; "consumes_kafka", `Bool w.consumes_kafka
-    ; "cpu", `String w.cpu
-    ; "memory", `String w.memory
-    ; "extra_labels", pairs_to_assoc w.extra_labels
-    ; "volumes", rows_to_json w.volumes
-    ; "rollout", `String w.rollout
-    ; ( "ingress_host"
-      , match w.ingress_host with
-        | None -> `Null
-        | Some h -> `String h )
-    ; ( "ingress_path"
-      , match w.ingress_path with
-        | None -> `Null
-        | Some p -> `String p )
-    ; "cluster_issuer", `String w.cluster_issuer
-    ; "calls", rows_to_json w.calls
-    ]
+    ([ "domain", `String w.domain
+     ; "name", `String w.name
+     ; "primitive", `String w.primitive
+     ; "image", `String w.image
+     ; "config", pairs_to_assoc w.config
+     ; "secrets", pairs_to_assoc w.secrets
+     ; ( "schedule"
+       , match w.schedule with
+         | None -> `Null
+         | Some s -> `String s )
+     ; "scheduled_concurrency", `String w.scheduled_concurrency
+     ; "backoff_limit", `Int w.backoff_limit
+     ; "replicas", `Int w.replicas
+     ; "availability", `String w.availability
+     ; "consumes_kafka", `Bool w.consumes_kafka
+     ; "cpu", `String w.cpu
+     ; "memory", `String w.memory
+     ; "extra_labels", pairs_to_assoc w.extra_labels
+     ; "volumes", rows_to_json w.volumes
+     ; "rollout", `String w.rollout
+     ; ( "ingress_host"
+       , match w.ingress_host with
+         | None -> `Null
+         | Some h -> `String h )
+     ; ( "ingress_path"
+       , match w.ingress_path with
+         | None -> `Null
+         | Some p -> `String p )
+     ; "cluster_issuer", `String w.cluster_issuer
+     ; "calls", rows_to_json w.calls
+     ]
+     @
+     match w.language with
+     | None -> []
+     | Some language -> [ "language", `String language ])
 ;;
 
 let recorded_workload_to_json (w : recorded_workload) : Yojson.Safe.t =
@@ -327,6 +331,7 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   { domain = str "domain" json
   ; name = str "name" json
   ; primitive = str "primitive" json
+  ; language = string_option "language" json
   ; image = str "image" json
   ; config = pairs "config" json
   ; secrets = pairs "secrets" json
