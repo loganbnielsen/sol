@@ -4,6 +4,7 @@ let ddl =
   [ "DROP TABLE IF EXISTS sol_jobs"
   ; {|CREATE TABLE sol_jobs (
        id           SERIAL      PRIMARY KEY,
+       workspace    TEXT        NOT NULL,
        kind         TEXT        NOT NULL,
        payload      TEXT        NOT NULL,
        status       TEXT        NOT NULL DEFAULT 'pending',
@@ -14,8 +15,8 @@ let ddl =
        dedupe_key   TEXT,
        inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
        finished_at  TIMESTAMPTZ)|}
-  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (kind, dedupe_key) WHERE \
-     dedupe_key IS NOT NULL"
+  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, dedupe_key) \
+     WHERE dedupe_key IS NOT NULL"
   ; "CREATE INDEX sol_jobs_terminal_idx ON sol_jobs (finished_at) WHERE status <> \
      'pending'"
   ]
@@ -47,10 +48,12 @@ let rows pool =
 
 module Job (K : sig
     val kind : string
+    val workspace : string
   end) =
 struct
   type t = string
 
+  let workspace = K.workspace
   let kind (_ : t) = K.kind
   let kinds = [ K.kind ]
   let encode t = K.kind ^ ":" ^ t
@@ -72,10 +75,17 @@ end
 
 module Email = Job (struct
     let kind = "send_email"
+    let workspace = "alpha"
   end)
 
 module Report = Job (struct
     let kind = "build_report"
+    let workspace = "alpha"
+  end)
+
+module Other_workspace_email = Job (struct
+    let kind = "send_email"
+    let workspace = "beta"
   end)
 
 module Emails = Sol_jobs.Make (Email)
@@ -114,6 +124,42 @@ let test_make_instances_do_not_cross_claim () =
     Alcotest.(check (list (triple string string int)))
       "the report job was not claimed by the email poller"
       [ "build_report", "pending", 0; "send_email", "completed", 1 ]
+      (rows pool))
+;;
+
+let test_another_workspace_rows_are_never_claimed () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    let module Other = Sol_jobs.Make (Other_workspace_email) in
+    (match
+       Pg_db.transaction pool (fun tx -> Other.enqueue tx ~dedupe_key:"evt-1" "bob")
+     with
+     | Ok () -> ()
+     | Error e -> Alcotest.failf "enqueue beta: %s" (Pg_error.to_string e));
+    (match
+       Pg_db.transaction pool (fun tx -> Emails.enqueue tx ~dedupe_key:"evt-1" "alice")
+     with
+     | Ok () -> ()
+     | Error e -> Alcotest.failf "enqueue alpha: %s" (Pg_error.to_string e));
+    Email.handled := [];
+    Other_workspace_email.handled := [];
+    Eio.Fiber.first
+      (fun () ->
+         match Emails.run ~env ~pool ~poll_interval_s:0.05 () with
+         | Ok () -> ()
+         | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e))
+      (fun () -> Eio.Time.sleep env#clock 0.4);
+    Alcotest.(check (list string))
+      "the alpha poller ran only its own job"
+      [ "alice" ]
+      !Email.handled;
+    Alcotest.(check (list string))
+      "the beta handler never ran"
+      []
+      !Other_workspace_email.handled;
+    Alcotest.(check (list (triple string string int)))
+      "one dedupe key per workspace: the beta row is still pending"
+      [ "send_email", "pending", 0; "send_email", "completed", 1 ]
       (rows pool))
 ;;
 
@@ -195,6 +241,7 @@ let reclaim_now () =
 module Slow = struct
   type t = string
 
+  let workspace = "alpha"
   let kind (_ : t) = "slow"
   let kinds = [ "slow" ]
   let encode t = t
@@ -561,6 +608,10 @@ let () =
             "two Make instances do not cross-claim"
             `Quick
             test_make_instances_do_not_cross_claim
+        ; Alcotest.test_case
+            "another workspace's rows are never claimed"
+            `Quick
+            test_another_workspace_rows_are_never_claimed
         ; Alcotest.test_case
             "enqueue refuses an undeclared kind"
             `Quick

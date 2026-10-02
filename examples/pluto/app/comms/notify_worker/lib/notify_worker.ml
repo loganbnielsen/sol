@@ -4,6 +4,7 @@ module Email_job = struct
     ; customer_id : string
     }
 
+  let workspace = "pluto"
   let kind (_ : t) = "send_confirmation_email"
   let kinds = [ "send_confirmation_email" ]
 

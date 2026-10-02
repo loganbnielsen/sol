@@ -6,6 +6,7 @@ module Email_job = struct
     ; currency : string
     }
 
+  let workspace = "venus"
   let kind (_ : t) = "send_receipt_email"
   let kinds = [ "send_receipt_email" ]
 
