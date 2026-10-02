@@ -2,16 +2,18 @@
 id: INFRA-017
 type: feature
 severity: medium
+title: "Test whether shared compute isolates `-fn` bursts under real post-admission contention"
 source: architecture discussion 2026-09-15 (INFRA-016's real runs showed
   neither preregistered case actually tested post-admission runtime
   contention -- Case A fit within capacity, Case B was mostly a scheduler-
   admission test since Kubernetes only ever admitted 1/4 burst pods)
 ---
 
-**Depends on:** INFRA-016 (done — established the end-to-end `sol fn run`
-→ real concurrent Pods path works, and that neither tested case showed
-material interference, but also that neither actually created serious
-post-admission compute contention).
+**Depends on:** INFRA-016.
+
+INFRA-016 is done. It established that the end-to-end `sol fn run` → real concurrent
+Pods path works, and that neither tested case showed material interference, but also
+that neither actually created serious post-admission compute contention.
 
 **Related:** INFRA-015 (this ticket's result is what INFRA-015 actually
 needs before its own gate can be resolved either way).

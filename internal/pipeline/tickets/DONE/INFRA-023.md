@@ -6,9 +6,11 @@ title: RDS destroy preparation — finding 9b
 source: HARDEN-002 run 2 finding 9b; ADR 0002
 ---
 
-**Depends on:** None. Finding 9a (the `rds_deletion_protection` /
-`rds_skip_final_snapshot` / `rds_final_snapshot_identifier` variables and
-their production-safe defaults) already landed; this is the remaining half.
+**Depends on:** None.
+
+Finding 9a (the `rds_deletion_protection` / `rds_skip_final_snapshot` /
+`rds_final_snapshot_identifier` variables and their production-safe defaults)
+already landed; this is the remaining half.
 
 **Related:** ADR 0002, INFRA-022, HARDEN-002.
 

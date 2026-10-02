@@ -5,8 +5,9 @@ severity: medium
 source: worker retry semantics and product-positioning review 2026-09-14
 ---
 
-**Depends on:** BUG-028, BUG-029, BUG-030 (retry delivery must be correct before the
-generated golden path recommends it).
+**Depends on:** BUG-028, BUG-029, BUG-030.
+
+Retry delivery must be correct before the generated golden path recommends it.
 
 **Related:** DEC-021, FEAT-076, FEAT-077, DOCS-015.
 

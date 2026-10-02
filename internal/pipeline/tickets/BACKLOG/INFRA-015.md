@@ -2,12 +2,14 @@
 id: INFRA-015
 type: feature
 severity: low
+title: "Give `-fn` executions isolated capacity so a burst cannot starve `-svc`/`-worker` Pods on the shared node pool"
 source: "architecture discussion 2026-09-14 (spun off FEAT-079: -fn resource consumption made explicit, but isolated execution capacity deliberately deferred as a separate concern)"
 ---
 
-**Depends on:** FEAT-079 (resource requests/limits must be explicit and
-configurable before isolating where those requests get scheduled is
-meaningful).
+**Depends on:** FEAT-079.
+
+FEAT-079 first: resource requests/limits must be explicit and configurable before
+isolating where those requests get scheduled is meaningful.
 
 **Related:** INFRA-014 (self-hosted substrate contract).
 

@@ -61,6 +61,38 @@ let frontmatter content =
 let fields content = Result.value (frontmatter content) ~default:[]
 let required_fields = [ "id"; "type"; "severity"; "source" ]
 
+(* Only the `**Depends on:**` line itself is parsed (BUG-114), so a field wrapped onto
+   the next line would silently drop the ids there. Reject the wrap instead of reading the
+   paragraph: prose ids would otherwise become dependencies. *)
+let wrapped_depends ~path content =
+  let prefix = "**Depends on:**" in
+  let is_field line =
+    let line = String.trim line in
+    String.length line >= String.length prefix
+    && String.sub line 0 (String.length prefix) = prefix
+  in
+  (* Like [parse_depends], only the first field counts; a following bold field or
+     heading starts a new block rather than continuing this one. *)
+  let continues next =
+    let next = String.trim next in
+    next <> "" && next.[0] <> '*' && next.[0] <> '#'
+  in
+  let rec find = function
+    | line :: rest when is_field line ->
+      (match rest with
+       | next :: _ when continues next ->
+         Some
+           (Printf.sprintf
+              "%s: `**Depends on:**` wraps onto the next line, which is never parsed; \
+               keep the field on one line and put commentary in its own paragraph"
+              path)
+       | _ -> None)
+    | _ :: rest -> find rest
+    | [] -> None
+  in
+  find (String.split_on_char '\n' content)
+;;
+
 let unreadable ~path content =
   match frontmatter_block content with
   | None ->
@@ -83,7 +115,7 @@ let unreadable ~path content =
           let id = List.assoc "id" fields in
           let filename_id = Filename.chop_suffix (Filename.basename path) ".md" in
           if id = filename_id
-          then None
+          then wrapped_depends ~path content
           else
             Some
               (Printf.sprintf
