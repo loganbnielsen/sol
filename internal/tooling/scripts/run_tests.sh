@@ -15,6 +15,7 @@ header(){ echo -e "\n${BOLD}$*${NC}"; }
 declare -A HANG_BOUNDS=(
   [unit]=300
   [kafka]=900
+  [postgres]=900
   [e2e]=1200
 )
 
@@ -26,12 +27,12 @@ for arg in "$@"; do
   case "$arg" in
     --no-infra)    SKIP_INFRA=1 ;;
     --reset-infra) RESET_INFRA=1 ;;
-    unit|kafka|e2e) REQUESTED_SUITES+=("$arg") ;;
+    unit|kafka|postgres|e2e) REQUESTED_SUITES+=("$arg") ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
 
-ALL_SUITES=(unit kafka e2e)
+ALL_SUITES=(unit kafka postgres e2e)
 SUITES=("${REQUESTED_SUITES[@]:-${ALL_SUITES[@]}}")
 
 now_ms()    { date +%s%3N; }
@@ -40,19 +41,25 @@ elapsed_s() { awk "BEGIN { printf \"%.3f\", ($2 - $1) / 1000 }"; }
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
   eval $(opam env)
-  dune test --root "$REPO_ROOT" framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ --force 2>&1
+  dune build --root "$REPO_ROOT" @ci-unit --force 2>&1
 }
 
 run_kafka() {
   info "Kafka integration tests (requires broker at localhost:9092)"
   eval $(opam env)
-  dune build --root "$REPO_ROOT" @framework/ocaml/kafka-eio-service/test/runtest-integration 2>&1
+  dune build --root "$REPO_ROOT" @ci-integration-kafka 2>&1
+}
+
+run_postgres() {
+  info "Postgres integration tests (requires Postgres at localhost:5432)"
+  eval $(opam env)
+  dune build --root "$REPO_ROOT" @ci-integration-pg -j 1 2>&1
 }
 
 run_e2e() {
   info "End-to-end golden workflow tests"
   eval $(opam env)
-  dune build --root "$REPO_ROOT" @internal/fixtures/local-demo/test/runtest 2>&1
+  dune build --root "$REPO_ROOT" @ci-e2e 2>&1
 }
 
 ensure_infra() {
@@ -61,7 +68,9 @@ ensure_infra() {
 
   for suite in "${SUITES[@]}"; do
     case "$suite" in
-      kafka|e2e) needs_kafka=1; needs_loki=1; needs_postgres=1 ;;
+      kafka)    needs_kafka=1 ;;
+      postgres) needs_postgres=1 ;;
+      e2e)      needs_kafka=1; needs_loki=1; needs_postgres=1 ;;
     esac
   done
 
@@ -89,7 +98,7 @@ declare -A TIMINGS
 
 echo -e "\n${BOLD}Sol correctness runner${NC}"
 echo "Suites: ${SUITES[*]}"
-echo "Hang bounds (a suite killed at its bound is a hang, not a slow pass): unit=${HANG_BOUNDS[unit]}s kafka=${HANG_BOUNDS[kafka]}s e2e=${HANG_BOUNDS[e2e]}s"
+echo "Hang bounds (a suite killed at its bound is a hang, not a slow pass): unit=${HANG_BOUNDS[unit]}s kafka=${HANG_BOUNDS[kafka]}s postgres=${HANG_BOUNDS[postgres]}s e2e=${HANG_BOUNDS[e2e]}s"
 
 run_one() {
   local suite=$1

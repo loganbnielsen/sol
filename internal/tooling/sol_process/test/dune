@@ -1,3 +1,8 @@
 (test
  (name test_sol_process)
  (libraries sol_process windtrap))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

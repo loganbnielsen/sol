@@ -16,7 +16,7 @@ Ensures the local environment is consistent, spins up infrastructure, and runs t
 bash internal/tooling/scripts/run_tests.sh
 
 # Specific suites only
-bash internal/tooling/scripts/run_tests.sh unit kafka
+bash internal/tooling/scripts/run_tests.sh unit kafka postgres
 
 # Skip infra setup if broker/loki/postgres are already running
 bash internal/tooling/scripts/run_tests.sh --no-infra
@@ -43,6 +43,11 @@ bash internal/tooling/scripts/install-hooks.sh   # one-time setup
 # Skip once: SOL_SKIP_PERF_HOOK=1 git commit ...
 ```
 
+The pre-push hook runs `internal/ci/run_fast_checks.sh`: it builds, then runs the
+offline `@ci-unit` and `@ci-lifecycle` classes before the fast guards. The
+infrastructure classes (`@ci-integration-kafka`, `@ci-integration-pg`, `@ci-e2e`)
+need containers, so they stay in `run_tests.sh` and CI.
+
 If netcat checks fail: `sudo apt-get install -y netcat-openbsd`
 
 ## Manual suite commands (fallback / debugging)
@@ -51,13 +56,19 @@ Use these when you need to run a single suite directly without the full runner h
 
 ### Unit tests (no infrastructure)
 ```bash
-eval $(opam env) && dune test framework/ 2>&1
+eval $(opam env) && dune build @ci-unit 2>&1
 ```
 
 ### Kafka integration tests
 ```bash
 bash platform/local/scripts/ensure-broker.sh
-eval $(opam env) && KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 dune test framework/ocaml/kafka-eio-service/ --force 2>&1
+eval $(opam env) && dune build @ci-integration-kafka 2>&1
+```
+
+### Postgres integration tests
+```bash
+bash platform/local/scripts/ensure-postgres.sh
+eval $(opam env) && dune build @ci-integration-pg 2>&1
 ```
 
 `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio` no longer have a test suite in this repo —

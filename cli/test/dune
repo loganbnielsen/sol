@@ -166,3 +166,13 @@
  (deps ../bin/main.exe test_logs_selector.sh)
  (action
   (run bash %{dep:test_logs_selector.sh} %{dep:../bin/main.exe})))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))
+
+(alias
+ (name ci-lifecycle)
+ (deps
+  (alias_rec runtest-lifecycle)))

@@ -9,3 +9,13 @@
   (run
    ./test_sol_outbox.exe
    "postgresql://postgres:dev@localhost:5432/sol_dev")))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))
+
+(alias
+ (name ci-integration-pg)
+ (deps
+  (alias_rec runtest-integration)))

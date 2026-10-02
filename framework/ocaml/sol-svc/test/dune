@@ -22,3 +22,8 @@
   https-eio
   mirage-crypto-pk
   mirage-crypto-rng.unix))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))
