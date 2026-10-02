@@ -54,4 +54,34 @@ The demo can now carry a test: CI gives the TypeScript job a Postgres service in
 the pattern `sol-typescript`'s `@sol-fab/jobs` suite already uses, and cases
 self-skip without `POSTGRES_URL`.
 
+## Done (2026-10-02)
+
+**What landed.**
+
+- `examples/pluto/app/demo_ts/test/delivery.test.ts` delivers the same
+  `OrderPlaced` fact twice through `db.withTransaction` (the row insert plus the
+  dedupe-keyed enqueue) and asserts three things: one `fulfilled_orders_ts` row,
+  one `sol_jobs` row, and exactly one handler invocation when the queue's runner
+  processes it. The case self-skips unless `POSTGRES_URL` is set.
+- The demo became testable: `demo_ts/package.json` gains a `test` script, a
+  `tsx` devDependency and `"type": "module"` (the ESM condition `@sol-fab/jobs`
+  exports requires it — without it tsx loaded the test as CJS and Node rejected
+  the package's exports map).
+- CI's `ts-tests` job now runs a Postgres and passes `POSTGRES_URL`, so the case
+  executes rather than silently skipping, and the job's name says it tests.
+- `README.md` states the guard and the two effects; the capability matrix gains a
+  consumer-idempotency row marking it implemented for both languages.
+
+**Checks run.** `npm test` in `demo_ts`: the case loads, resolves
+`@sol-fab/jobs` and reports `skipped 1, fail 0` locally (no Postgres on this
+machine); CI's `ts-tests` job runs it against the service Postgres.
+
+**Demo/example coverage.** This ticket *is* the golden-path change.
+
+**Language parity.** The consumer-idempotency row is now recorded for both
+languages: OCaml's `notify_worker` (unique key + `ON CONFLICT DO NOTHING`, and
+`~dedupe_key:msg.id`) and the TypeScript pair's equivalent row guard + job dedupe
+key.
+
+
 

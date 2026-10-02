@@ -30,6 +30,21 @@ the order id). It hosts the queue's runner alongside its consumer. As with
 no `sol migrate` — is self-contained; a real app owns the same DDL as a
 migration.
 
+Duplicate delivery is absorbed at both effects. Kafka is at-least-once, and a
+duplicate is a legal outcome (DEC-022), so a redelivered `OrderPlaced` is handled
+like this:
+
+- the row insert is `ON CONFLICT (order_id) DO NOTHING` against the primary key,
+  and
+- the follow-up job's dedupe key is the order id, so a second enqueue is a no-op.
+
+One fact therefore leaves one row, one job and one effect. `npm test` (see
+`test/delivery.test.ts`) delivers the same fact twice against a real Postgres and
+asserts exactly that; the case self-skips without `POSTGRES_URL`, and CI provides
+one. This is the guard `BUG-112` had to add on the OCaml side (`notify_worker`
+enqueues with `~dedupe_key:msg.id`).
+
+
 The five exist so a TypeScript service and an OCaml `sol-svc`/
 `sol-worker` land in the same Grafana panels and the same Tempo traces
 without an author having to reconstruct Sol's policy by hand — see each
