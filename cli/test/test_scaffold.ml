@@ -351,7 +351,11 @@ let test_scaffold_compiles () =
     true
     (Result.is_ok built);
   let tested =
-    Sol_cli_process.run (Sol_cli_process.cmd ~cwd:"testapp" [ "dune"; "runtest"; "test" ])
+    Sol_cli_process.run
+      (Sol_cli_process.cmd
+         ~cwd:"testapp"
+         ~env:[ "CI", "false" ]
+         [ "dune"; "runtest"; "test" ])
   in
   tested |> Result.iter_error (fun e -> prerr_endline (Sol_cli_process.error_to_string e));
   check_bool "generated charge operation tests pass" true (Result.is_ok tested)
