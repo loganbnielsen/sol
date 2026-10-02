@@ -41,3 +41,46 @@ The `@sol-fab` packages live in their own repositories, outside this one. Align 
 ## Scope note
 
 The transactional `sol-jobs` handoff that this ticket originally bundled is **FEAT-126**: it needs a new published `@sol-fab/*` package, which is operator-gated on repository and trusted-publishing setup. Splitting it keeps this ticket's outcome/DLQ half closeable now; FEAT-080's `sol-jobs` obligation is carried by FEAT-126.
+
+## Done (2026-10-02)
+
+**Premise checked.** Confirmed at `sol-kafka@17b4356`: `outcome.ts` still declared
+`Ack | Retry | Dead_letter` with `RetryStrategy`, and the demo worker imported
+`kafkaRetryRelay`/`runRetryRelayConsumer`/`wrapEachRetryableMessage`. Premise held.
+
+**What landed.**
+
+- `loganbnielsen/sol-kafka#6` (merged `8fd2b1c`) replaces the retry-topic relay with
+  the `Ack | Fail` contract: `ACK` commits; `fail(reason)` throws
+  `MessageFailError`, and `wireCrashListener` stops the consumer and exits 0
+  (mirroring `worker.ml`'s `| Fail -> ... Consumer.Stop`). Retries, the retry
+  topic, `RetryStrategy`, the backoff policy and `routing.ts` are gone. Released
+  as `@sol-fab/kafka@0.4.0` (tag `v0.4.0`).
+- The group-scoped decode DLQ is kept, in `dlq.ts`: `dlqTopicName` / the
+  always-12-hex `canonicalGroupSegment` (BUG-117), `decodeFailureHeaders`
+  (`X-Sol-Decode-Error` / `X-Sol-Origin-Group`), and `provisionDlqTopic`, which
+  creates the DLQ at the source's live-or-declared partition count — mirroring
+  `Kafka_service.consume`'s `ensure_topic` under `Route_to_dlq`. A `route-to-dlq`
+  offset commits only once the publish lands; a failed publish throws.
+- `loganbnielsen/sol-obs#7` (merged `d0b8aac`) narrows `WorkerMessageStatus` to
+  `ok | fail | ack_failed`, matching `worker.ml`; released as
+  `@sol-fab/obs@0.3.0` (tag `v0.3.0`).
+- `examples/pluto/app/demo_ts/fulfillment_worker` consumes both: `provisionDlqTopic`,
+  `wrapEachMessage` with a `dlq` publisher, an `ACK`/`fail("db: …")` handler, and
+  `wireCrashListener`'s `onFailStop` wired to `runWorker`'s `lifecycle.shutdown()`
+  so a `Fail` drains and flushes before exiting.
+
+**Checks run.** `sol-kafka`: `tsc` clean; 48 tests, 47 pass + 1 broker-gated skip
+(new `consume.test.ts` and `dlq.test.ts` cover the DLQ route, the failed-publish
+throw, `ack-and-drop`, the `Ack`/`Fail` outcomes, the fail-stop, and the DLQ
+naming/headers against the OCaml fixtures). `sol-obs`: `tsc` clean, 16 tests pass.
+Demo: `npm run build -w order-svc -w fulfillment-worker` clean against
+`kafka@0.4.0` / `obs@0.3.0`.
+
+**Demo/example coverage.** This ticket *is* the TypeScript example update.
+
+**Language parity.** Closes the outcome, DLQ-routing and worker-metric rows of the
+capability matrix; the matrix (`2026-10-02_cross_language_contract_audit.md`) now
+records those verdicts as implemented. The independent-retryable-work half is
+FEAT-126, so the `sol-jobs` row stays deferred and is not claimed here.
+
