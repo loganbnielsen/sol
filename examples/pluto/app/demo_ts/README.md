@@ -24,9 +24,11 @@ npm packages:
 writes `fulfilled_orders_ts` **and** enqueues a `send_confirmation` job in one
 Postgres transaction, so the job cannot exist without the state change that
 caused it (and a redelivered fact enqueues nothing new, because the dedupe key is
-the order id). It hosts the queue's runner alongside its consumer. The job table
-comes from the workspace's own migration
-(`examples/pluto/db/migrations/0002_sol_jobs.sql`), which `sol local up` applies.
+the order id). It hosts the queue's runner alongside its consumer. As with
+`fulfilled_orders_ts`, `db.ts` provisions the demo's tables itself
+(`CREATE TABLE IF NOT EXISTS`), so the TypeScript smoke — which deliberately runs
+no `sol migrate` — is self-contained; a real app owns the same DDL as a
+migration.
 
 The five exist so a TypeScript service and an OCaml `sol-svc`/
 `sol-worker` land in the same Grafana panels and the same Tempo traces

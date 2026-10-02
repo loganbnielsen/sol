@@ -21,6 +21,30 @@ export async function makeDb(postgresUrl: string) {
       fulfilled_at   TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sol_jobs (
+      id           SERIAL      PRIMARY KEY,
+      workspace    TEXT        NOT NULL,
+      kind         TEXT        NOT NULL,
+      payload      TEXT        NOT NULL,
+      status       TEXT        NOT NULL DEFAULT 'pending',
+      attempts     INT         NOT NULL DEFAULT 0,
+      run_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      locked_until TIMESTAMPTZ,
+      last_error   TEXT,
+      dedupe_key   TEXT,
+      inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      finished_at  TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS sol_jobs_claim_idx
+      ON sol_jobs (workspace, run_at) WHERE status = 'pending'
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
+      ON sol_jobs (workspace, kind, dedupe_key) WHERE dedupe_key IS NOT NULL
+  `);
   return {
     pool,
     insertFulfilled: async (order: FulfilledOrder, client?: pg.PoolClient) => {
