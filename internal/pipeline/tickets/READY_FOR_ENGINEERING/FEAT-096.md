@@ -20,18 +20,24 @@ only `/healthz`. So INFRA-073 part B keeps TypeScript services (sol.yml
 `language: typescript`) on `/healthz` readiness, and they still stop accepting before
 Kubernetes removes their endpoint.
 
-## Decision Required
+## Decision (2026-10-02)
 
-Where the TS readiness endpoint lives: in `@sol-fab/svc` (the lifecycle it already
-installs knows when shutdown begins), or in each app, documented. The first matches
-the OCaml contract.
+**The readiness state machine lives in `@sol-fab/svc`; the route is mounted by the
+app.** `@sol-fab/svc` deliberately does not own routing, so it cannot register an
+HTTP route itself without coupling to Fastify/Express. Instead the lifecycle
+owns readiness — `runService` marks the service unready when shutdown begins,
+keeps serving for `shutdownDelayMs` (matching OCaml's `shutdown_delay_s`, default
+5000 ms), and only then drains — and exposes `isReady()` (plus a
+`readinessHandler`-shaped helper) for the app's `GET /readyz`. This matches the
+OCaml contract: the framework owns shutdown, the app exposes the endpoint the
+generated manifest probes.
 
 ## Remediation
 
-Per the decision: serve `/readyz` (503 once shutdown begins, then a delay before the
-server closes) in `@sol-fab/svc`, update `examples/pluto/app/demo_ts`, then drop the
-TypeScript exception in `Sol_cli_deployment_render` (the `readiness_path` match) and its
-render test.
+Per the decision: give `runService` a bounded `shutdownDelayMs` and a readiness
+state in `@sol-fab/svc`; have `examples/pluto/app/demo_ts/order_svc` serve
+`/readyz` from it; then drop the TypeScript exception in
+`Sol_cli_deployment_render` (the `readiness_path` match) and its render test.
 
 ## Acceptance criteria
 
