@@ -52,7 +52,11 @@ const RETRY_STRATEGY: RetryStrategy = {
   policy: { baseDelayS: 1, maxDelayS: 60, maxAttempts: 5, jitterRatio: 0.1 },
 };
 
-const log = makeLokiPusher(LOKI_URL, "fulfillment-worker-ts");
+const log = makeLokiPusher({
+  lokiUrl: LOKI_URL,
+  service: "fulfillment-worker-ts",
+  labels: { team: "demo_ts" },
+});
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
 const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
 
@@ -177,6 +181,7 @@ async function main() {
       if (pushInterval) clearInterval(pushInterval);
     },
     shutdownHooks: [
+      () => log.flush(),
       () => producer.disconnect(),
       async () => {
         metricsServer.close();

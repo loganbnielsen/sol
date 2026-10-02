@@ -80,3 +80,40 @@ bump the `@sol-fab/obs` pin and show the labelled stream once the package is
 released.
 
 **Language parity:** this ticket *is* the parity fix for the logging convention.
+
+## Done (2026-10-02)
+
+**Premise checked.** Confirmed at `sol-obs@4b2ad72`: `makeLokiPusher` hard-coded
+`stream: { service }` and had no flush point; `Sol_obs.of_env ?context` promotes
+context keys to stream labels and `flush` drains the async export. Premise held.
+
+**What landed.** `loganbnielsen/sol-obs#5` (merged `03ff835`) changes
+`makeLokiPusher` to take `{ lokiUrl?, service, labels? }` and return a callable
+pusher with `flush()`:
+
+- `labels` are fixed at construction and carried as Loki **stream labels**
+  (`{ ...labels, service }`, so `service` wins), mirroring `Sol_obs.of_env`'s
+  `?context`.
+- `flush()` awaits the pushes still in flight, so a service or worker can
+  register it as a shutdown hook.
+
+Released as `@sol-fab/obs@0.2.0` (tag `v0.2.0`; breaking signature, which
+pre-alpha permits). Both `demo_ts` workloads move to `^0.2.0`, pass
+`labels: { team: "demo_ts" }`, and register `() => log.flush()` as the first
+shutdown hook. The lockfile is regenerated.
+
+**Checks run.** `sol-obs`: `npm run build` (`tsc`) clean; `npm test` → 16 tests,
+0 fail, including a label-carrying test (`stream` equals
+`{ team, service }`), a `flush()`-awaits-an-in-flight-push test that fails if
+`flush` resolves early, and a `flush()`-with-nothing-pending test. Demo:
+`npm run build -w order-svc -w fulfillment-worker` clean against the published
+`0.2.0`.
+
+**Demo/example coverage.** This ticket *is* the example update: both demo_ts
+units label their streams from a context and flush on shutdown.
+
+**Language parity.** Closes the labels-and-delivery half of the logging
+convention; FEAT-099 closed the console-copy half. With both landed, the
+`Sol_obs` logging contract (stdout always, context-derived stream labels, an
+explicit flush point) holds in both languages.
+

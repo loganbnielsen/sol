@@ -66,7 +66,11 @@ const ORDER_PLACED: TopicContract<OrderPlaced> = {
   key: (order) => order.order_id,
 };
 
-const log = makeLokiPusher(LOKI_URL, "order-svc-ts");
+const log = makeLokiPusher({
+  lokiUrl: LOKI_URL,
+  service: "order-svc-ts",
+  labels: { team: "demo_ts" },
+});
 const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_URL);
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();
 
@@ -186,7 +190,7 @@ async function main() {
       console.log("[order-svc-ts] draining...");
       if (pushInterval) clearInterval(pushInterval);
     },
-    shutdownHooks: [() => producer.disconnect(), () => shutdownTracing()],
+    shutdownHooks: [() => log.flush(), () => producer.disconnect(), () => shutdownTracing()],
   });
 }
 
