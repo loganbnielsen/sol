@@ -532,6 +532,32 @@ let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
   report_surplus_workloads (Sol_cli_deploy_run.surplus_workloads ctx plan)
 ;;
 
+let namespace_of_facts ~workspace (facts : Sol_cli_workspace_model.t) =
+  Sol_cli_workspace_model.workloads facts
+  |> Sol_cli_result.map_list (fun (workload : Sol_cli_workspace_model.workload) ->
+    let open Result.Syntax in
+    let* unit = Sol_cli_authorization_reconcile.unit_name workload.service in
+    Sol_cli_deployment_plan.namespace_name
+      ~workspace
+      ~domain:workload.service.Sol_cli_manifest.domain
+    |> Result.map (fun namespace -> unit, namespace))
+  |> Result.map (fun pairs -> fun unit -> List.assoc_opt unit pairs)
+;;
+
+let verify_effective_access
+      (planning : Sol_cli_deploy_selection.Planning_input.t)
+      ~target_cfg
+  =
+  let open Result.Syntax in
+  let* grants = Sol_cli_authorization_reconcile.desired planning.facts in
+  let* namespace_of = namespace_of_facts ~workspace:planning.workspace planning.facts in
+  let* workloads = Sol_cli_authorization_reconcile.workloads ~grants ~namespace_of in
+  (Sol_cli_provider_capabilities.capabilities_of target_cfg.Sol_cli_config.provider)
+    .authorization_effective_access
+    target_cfg
+    workloads
+;;
+
 let run_apply
       ~planning
       ~context_of
@@ -580,6 +606,9 @@ let run_apply
       ()
   in
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
+  let* () =
+    verify_effective_access planning ~target_cfg:ctx.target_cfg |> Sol_cli_exit.of_msg
+  in
   record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
     ctx

@@ -12,6 +12,16 @@ let secret_grant ~unit ~key =
   }
 ;;
 
+let unit_name (service : Sol_cli_manifest.service) =
+  Sol_cli_kubernetes_name.k8s_name_of_source service.name
+  |> Result.map Sol_cli_kubernetes_name.k8s_name_to_string
+  |> Result.map_error (fun message ->
+    Printf.sprintf
+      "service %s has no addressable Kubernetes identity: %s"
+      service.name
+      message)
+;;
+
 let desired workspace =
   Sol_cli_workspace_model.workloads workspace
   |> Sol_cli_result.map_list (fun (workload : Sol_cli_workspace_model.workload) ->
@@ -24,10 +34,11 @@ let desired workspace =
            workload.service.Sol_cli_manifest.name
            (Sol_cli_toml.parse_error_to_string parse_error))
     | Ok config ->
-      Ok
-        (List.map
-           (fun key -> secret_grant ~unit:workload.service.Sol_cli_manifest.name ~key)
-           config.Sol_cli_toml.secret_keys))
+      (match unit_name workload.service with
+       | Error message -> Error message
+       | Ok unit ->
+         Ok
+           (List.map (fun key -> secret_grant ~unit ~key) config.Sol_cli_toml.secret_keys)))
   |> Result.map List.concat
 ;;
 
@@ -48,6 +59,27 @@ let terraform_grants ~grants ~namespace_of =
            "unit %s has no Kubernetes namespace in this workspace, so its identity \
             cannot be addressed"
            grant.unit))
+;;
+
+let workloads ~grants ~namespace_of =
+  let open Result.Syntax in
+  let* mapped = terraform_grants ~grants ~namespace_of in
+  let units = List.sort_uniq String.compare (List.map (fun grant -> grant.unit) mapped) in
+  Ok
+    (units
+     |> List.filter_map (fun unit ->
+       match List.find_opt (fun grant -> String.equal grant.unit unit) mapped with
+       | None -> None
+       | Some first ->
+         let secrets =
+           mapped
+           |> List.filter (fun grant ->
+             String.equal grant.unit unit
+             && String.equal grant.capability Sol_cli_grant.secret_capability)
+           |> List.map (fun grant -> grant.resource)
+         in
+         Some { Sol_cli_provider_capabilities.unit; namespace = first.namespace; secrets })
+    )
 ;;
 
 let terraform_var grants =

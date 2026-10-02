@@ -67,10 +67,16 @@ def main():
             "IAM-mutating",
         ),
         (
-            "the iam:* deny is narrowed",
-            '"eks:AssociateAccessPolicy",\n      "iam:*",',
-            '"eks:AssociateAccessPolicy",\n      "iam:GetRole",',
+            "a denied IAM-mutation family is narrowed to a read-only action",
+            '"iam:Create*",',
+            '"iam:Describe*",',
             "no Deny covering",
+        ),
+        (
+            "the read-only observation Allow is widened to a mutation",
+            '"iam:SimulatePrincipalPolicy",',
+            '"iam:PutRolePolicy",',
+            "IAM-mutating",
         ),
     ]
 

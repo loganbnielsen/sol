@@ -41,10 +41,12 @@ let resolve_var_file ~flag ~target =
 let namespace_of_workspace ~workspace model =
   Sol_cli_workspace_model.workloads model
   |> Sol_cli_result.map_list (fun (workload : Sol_cli_workspace_model.workload) ->
+    let open Result.Syntax in
+    let* unit = Sol_cli_authorization_reconcile.unit_name workload.service in
     Sol_cli_deployment_plan.namespace_name
       ~workspace
       ~domain:workload.service.Sol_cli_manifest.domain
-    |> Result.map (fun namespace -> workload.service.Sol_cli_manifest.name, namespace))
+    |> Result.map (fun namespace -> unit, namespace))
   |> Result.map (fun pairs -> fun unit -> List.assoc_opt unit pairs)
 ;;
 
@@ -138,7 +140,9 @@ let run ~action ~target ~var_file ~vars () =
   let namespaces =
     Sol_cli_workspace_model.workloads model
     |> List.filter_map (fun (workload : Sol_cli_workspace_model.workload) ->
-      namespace_of workload.service.Sol_cli_manifest.name)
+      match Sol_cli_authorization_reconcile.unit_name workload.service with
+      | Ok unit -> namespace_of unit
+      | Error _ -> None)
   in
   let deployed = observe_deployed ~target_cfg ~namespaces in
   let plan = Sol_cli_authorization.compute ~desired ~current ~deployed in
