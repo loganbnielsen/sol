@@ -31,3 +31,14 @@ record the verdict in the capability matrix.
 - Delivering the same fact twice leaves one row and one independent effect in the TypeScript pair.
 - The TypeScript golden path shows the guard.
 - The capability matrix records the consumer-idempotency verdict for both languages.
+
+## Premise check (2026-10-02)
+
+Partly stale. `examples/pluto/app/demo_ts/fulfillment_worker/src/db.ts` already
+declares `order_id TEXT PRIMARY KEY` and inserts with
+`ON CONFLICT (order_id) DO NOTHING`, so a redelivered fact cannot duplicate the
+row — the guard exists. What is missing is the *statement* in the golden path and
+a *test*; the demo has no test harness, so demonstrating the property needs
+either a Postgres-backed test or a documented manual check. Re-scope this ticket
+to that before implementing, or close it as covered by the existing guard.
+
