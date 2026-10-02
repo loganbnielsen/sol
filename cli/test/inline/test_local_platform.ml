@@ -1,6 +1,12 @@
 let assets =
   { Sol_cli_local_platform.component_values =
-      List.map (fun c -> c, c ^ "-values") Sol_cli_local_platform.components
+      { Sol_cli_local_platform.redpanda = "redpanda-values"
+      ; postgresql = "postgresql-values"
+      ; loki = "loki-values"
+      ; grafana = "grafana-values"
+      ; tempo = "tempo-values"
+      ; prometheus = "prometheus-values"
+      }
   ; alloy_values = "alloy-values"
   ; dashboards = "dashboards"
   }

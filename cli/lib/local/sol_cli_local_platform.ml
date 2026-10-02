@@ -1,32 +1,76 @@
 open Result.Syntax
 
+type component =
+  | Redpanda
+  | Postgresql
+  | Loki
+  | Grafana
+  | Tempo
+  | Prometheus
+
+let name = function
+  | Redpanda -> "redpanda"
+  | Postgresql -> "postgresql"
+  | Loki -> "loki"
+  | Grafana -> "grafana"
+  | Tempo -> "tempo"
+  | Prometheus -> "prometheus"
+;;
+
+type component_values =
+  { redpanda : string
+  ; postgresql : string
+  ; loki : string
+  ; grafana : string
+  ; tempo : string
+  ; prometheus : string
+  }
+
+let value (values : component_values) = function
+  | Redpanda -> values.redpanda
+  | Postgresql -> values.postgresql
+  | Loki -> values.loki
+  | Grafana -> values.grafana
+  | Tempo -> values.tempo
+  | Prometheus -> values.prometheus
+;;
+
 type assets =
-  { component_values : (string * string) list
+  { component_values : component_values
   ; alloy_values : string
   ; dashboards : string
   }
 
-let components = [ "redpanda"; "postgresql"; "loki"; "grafana"; "tempo"; "prometheus" ]
+let read_component ~platform_assets component =
+  Sol_cli_platform_component.merged_values_yaml
+    ~assets:platform_assets
+    ~component:(name component)
+    ~profile:"local"
+;;
 
 let read_assets () =
   let* assets =
     Sol_cli_platform_assets.resolve ()
     |> Result.map_error Sol_cli_platform_assets.error_to_string
   in
-  let* component_values =
-    components
-    |> Sol_cli_result.map_list (fun component ->
-      Sol_cli_platform_component.merged_values_yaml ~assets ~component ~profile:"local"
-      |> Result.map (fun values -> component, values))
-  in
+  let* redpanda = read_component ~platform_assets:assets Redpanda in
+  let* postgresql = read_component ~platform_assets:assets Postgresql in
+  let* loki = read_component ~platform_assets:assets Loki in
+  let* grafana = read_component ~platform_assets:assets Grafana in
+  let* tempo = read_component ~platform_assets:assets Tempo in
+  let* prometheus = read_component ~platform_assets:assets Prometheus in
   let* alloy_values = Sol_cli_dev_observability.alloy_values_yaml ~assets in
   let* dashboards =
     Sol_cli_dev_observability.dashboard_configmap_yaml ~assets ~namespace:"monitoring"
   in
-  Ok { component_values; alloy_values; dashboards }
+  Ok
+    { component_values = { redpanda; postgresql; loki; grafana; tempo; prometheus }
+    ; alloy_values
+    ; dashboards
+    }
 ;;
 
-let values_of assets component = List.assoc component assets.component_values
+let values_of assets component = value assets.component_values component
 
 let needs_grafana (req : Sol_cli_workspace.infra_requirements) =
   req.loki || req.prometheus || req.tempo
@@ -78,7 +122,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
             ; "external.addresses[0]", Str "localhost"
             ; "listeners.kafka.external.default.advertisedPorts[0]", Float 9092.
             ]
-          ~values_yaml:(values_of assets "redpanda")
+          ~values_yaml:(values_of assets Redpanda)
           ()
       ]
     else []
@@ -92,7 +136,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "bitnami/postgresql"
           ~namespace:"postgresql"
           ~version:"18.8.17"
-          ~values_yaml:(values_of assets "postgresql")
+          ~values_yaml:(values_of assets Postgresql)
           ()
       ]
     else []
@@ -106,7 +150,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "grafana-community/loki"
           ~namespace:"monitoring"
           ~version:"18.12.1"
-          ~values_yaml:(values_of assets "loki")
+          ~values_yaml:(values_of assets Loki)
           ()
       ; release
           ~label:"Grafana"
@@ -115,7 +159,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~namespace:"monitoring"
           ~version:"13.2.1"
           ~values:[ "adminPassword", Str "dev" ]
-          ~values_yaml:(values_of assets "grafana")
+          ~values_yaml:(values_of assets Grafana)
           ()
       ; release
           ~label:"Alloy"
@@ -137,7 +181,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "grafana-community/tempo"
           ~namespace:"monitoring"
           ~version:"2.3.0"
-          ~values_yaml:(values_of assets "tempo")
+          ~values_yaml:(values_of assets Tempo)
           ()
       ]
     else []
@@ -152,7 +196,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~namespace:"monitoring"
           ~version:"25.20.1"
           ~values:[ "prometheus-node-exporter.enabled", Bool false ]
-          ~values_yaml:(values_of assets "prometheus")
+          ~values_yaml:(values_of assets Prometheus)
           ()
       ]
     else []
