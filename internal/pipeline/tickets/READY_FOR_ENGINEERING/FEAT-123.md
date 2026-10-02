@@ -42,3 +42,16 @@ a *test*; the demo has no test harness, so demonstrating the property needs
 either a Postgres-backed test or a documented manual check. Re-scope this ticket
 to that before implementing, or close it as covered by the existing guard.
 
+## Unblocked (2026-10-02)
+
+FEAT-126 resolved the "independent effect" half: `fulfillment_worker` now
+enqueues a `send_confirmation` job in the same transaction as its row, keyed by
+the order id, so a redelivered fact leaves one row **and** one job. Both halves
+of the property are therefore implemented; what remains is the statement in the
+golden path, a Postgres-backed test for it, and the capability-matrix verdict.
+
+The demo can now carry a test: CI gives the TypeScript job a Postgres service in
+the pattern `sol-typescript`'s `@sol-fab/jobs` suite already uses, and cases
+self-skip without `POSTGRES_URL`.
+
+
