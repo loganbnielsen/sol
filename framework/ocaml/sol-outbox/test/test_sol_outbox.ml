@@ -25,6 +25,7 @@ let jobs_ddl =
   [ "DROP TABLE IF EXISTS sol_jobs"
   ; "CREATE TABLE sol_jobs (\n\
     \  id SERIAL PRIMARY KEY,\n\
+    \  workspace TEXT NOT NULL,\n\
     \  kind TEXT NOT NULL,\n\
     \  payload TEXT NOT NULL,\n\
     \  status TEXT NOT NULL DEFAULT 'pending',\n\
@@ -35,8 +36,8 @@ let jobs_ddl =
     \  dedupe_key TEXT,\n\
     \  inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n\
     \  finished_at TIMESTAMPTZ)"
-  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (kind, dedupe_key) WHERE \
-     dedupe_key IS NOT NULL"
+  ; "CREATE UNIQUE INDEX sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, dedupe_key) \
+     WHERE dedupe_key IS NOT NULL"
   ]
 ;;
 
@@ -46,9 +47,21 @@ let exec_sql pool sql =
   | Error e -> Alcotest.failf "%s: %s" sql (Pg_error.to_string e)
 ;;
 
+let database_required () =
+  match Sys.getenv_opt "SOL_REQUIRE_DATABASE" with
+  | Some value -> value <> "" && value <> "0"
+  | None -> false
+;;
+
 let with_pool f =
   match postgres_url () with
-  | None -> print_endline "[skip] POSTGRES_URL not set"
+  | None ->
+    if database_required ()
+    then
+      Alcotest.fail
+        "SOL_REQUIRE_DATABASE is set and POSTGRES_URL is not: the database cases must \
+         run in          this environment"
+    else print_endline "[skip] POSTGRES_URL not set"
   | Some url ->
     Eio_main.run
     @@ fun env ->
