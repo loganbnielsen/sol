@@ -69,7 +69,11 @@ The run that produced the LOCAL evidence is
   show the app-pushed labels, and the deployed path's promotion list was read
   from the artifact that owns it.
 - **Verdict:** `DEFECT` — `env` reaches metric labels (the Prometheus chart's pod
-  label map) but **never** a Loki stream label. Filed as **OBS-049**.
+  label map) but **never** a Loki stream label. Filed as **OBS-049**, and
+  **resolved 2026-10-02** by #926: both promotion lists carry `env` now, and
+  `check_platform_component_drift.py` requires the two to match and to be the
+  documented six. The discovery evidence above is unchanged — it is what the run
+  saw.
 - **Failure walk:**
   - *Symptom:* a LogQL query filtering on `env` (e.g. a prod-only log view)
     returns nothing while the same series exists in Prometheus.
@@ -243,7 +247,11 @@ The run that produced the LOCAL evidence is
   (`presence_of_probe_result`) maps *any* non-zero `kubectl` exit to `Absent`;
   INFRA-063 fixed only the "kubectl could not be run" case
   (`Error`), not "kubectl ran and could not reach the cluster".
-- **Verdict:** `DEFECT` — residual of FND-0024. Filed as **BUG-121**.
+- **Verdict:** `DEFECT` — residual of FND-0024. Filed as **BUG-121**, and
+  **resolved 2026-10-02** by #925: the probe uses `--ignore-not-found`, an empty
+  successful read is `Absent`, and every other failure is `Uncheckable` naming
+  the reason. Re-verified with the real binary against a refused kubeconfig,
+  which now prints `could not check … (the cluster could not be reached)`.
 
 ### OB-S4 — `sol open` opens or prints the right surface per scope
 
@@ -355,11 +363,11 @@ The run that produced the LOCAL evidence is
 
 ## Findings filed
 
-| Id | Row | Severity | Evidence | Ticket |
-|---|---|---|---|---|
-| `env` is not a Loki stream label | OB-L3 | low | MECHANISM + LOCAL | `OBS-049` |
-| An unreachable cluster is reported as "not deployed" | OB-S3 | medium | LOCAL | `BUG-121` |
-| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` |
+| Finding | Row | Severity | Evidence | Ticket | Status |
+|---|---|---|---|---|---|
+| `env` is not a Loki stream label | OB-L3 | low | MECHANISM + LOCAL | `OBS-049` | fixed, `DONE` (#926) |
+| An unreachable cluster is reported as "not deployed" | OB-S3 | medium | LOCAL | `BUG-121` | fixed, `DONE` (#925) |
+| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | filed, `BACKLOG` (decision required) |
 
 ## What would move the most rows
 
