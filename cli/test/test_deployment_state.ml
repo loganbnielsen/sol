@@ -9,29 +9,43 @@ let read_file path =
   | Sys_error _ -> ""
 ;;
 
-let fake_kubectl ~log ~mode_file =
+let fake_kubectl ~log ~mode_file ~state_file =
   Printf.sprintf
     {|#!/bin/sh
 verb=""
+file=""
+previous=""
 for a in "$@"; do
-  case "$a" in apply|get) verb="$a"; break ;; esac
+  case "$a" in apply|get) verb="$a" ;; esac
+  if [ "$previous" = "-f" ]; then file="$a"; fi
+  previous="$a"
 done
 echo "$verb" >> %s
 mode=$(cat %s)
+if [ "$verb" = "apply" ]; then
+  if [ "$mode" = "apply-fails" ]; then
+    echo 'Error from server (Forbidden): cannot patch configmaps' >&2; exit 1
+  fi
+  if [ -n "$file" ]; then
+    sed -n 's/.*"consumer_groups":"\([^"]*\)".*/\1/p' "$file" > %s
+  fi
+  exit 0
+fi
 if [ "$verb" = "get" ]; then
   case "$mode" in
     missing) echo 'Error from server (NotFound): configmaps "sol-deploy-state-ws" not found' >&2; exit 1 ;;
     forbidden) echo 'Error from server (Forbidden): configmaps "sol-deploy-state-ws" is forbidden' >&2; exit 1 ;;
+    recorded) if [ -f %s ]; then cat %s; else exit 0; fi ;;
     *) printf 'a\nb'; exit 0 ;;
   esac
-fi
-if [ "$verb" = "apply" ] && [ "$mode" = "apply-fails" ]; then
-  echo 'Error from server (Forbidden): cannot patch configmaps' >&2; exit 1
 fi
 exit 0
 |}
     log
     mode_file
+    state_file
+    state_file
+    state_file
 ;;
 
 let with_fake_kubectl ~mode f =
@@ -40,9 +54,10 @@ let with_fake_kubectl ~mode f =
   Unix.mkdir dir 0o755;
   let log = Filename.concat dir "calls.log" in
   let mode_file = Filename.concat dir "mode" in
+  let state_file = Filename.concat dir "recorded" in
   write_file mode_file mode;
   let bin = Filename.concat dir "kubectl" in
-  write_file bin (fake_kubectl ~log ~mode_file);
+  write_file bin (fake_kubectl ~log ~mode_file ~state_file);
   Unix.chmod bin 0o755;
   let old_path =
     try Sys.getenv "PATH" with
@@ -56,7 +71,7 @@ let with_fake_kubectl ~mode f =
         (fun f ->
            try Sys.remove f with
            | Sys_error _ -> ())
-        [ bin; mode_file; log ];
+        [ bin; mode_file; log; state_file ];
       try Unix.rmdir dir with
       | Unix.Unix_error _ -> ())
     (fun () -> f ~calls:(fun () -> read_file log))
@@ -204,6 +219,40 @@ let test_configmap_name_sanitizes_workspace () =
     (Sol_cli_deployment_state.deploy_state_configmap_name "My_App")
 ;;
 
+let test_a_corrected_record_is_what_the_next_check_reads () =
+  with_fake_kubectl ~mode:"recorded" (fun ~calls:_ ->
+    Alcotest.(check bool)
+      "the rollback records the restored release's groups (BUG-090)"
+      true
+      (Result.is_ok
+         (Sol_cli_deployment_state.record_consumer_groups
+            ~ctx
+            ~workspace:"ws"
+            [ "myapp.comms.notify_worker" ]));
+    Alcotest.(check bool)
+      "a plan that still holds that worker's group is not a removal"
+      true
+      (Result.is_ok
+         (Sol_cli_deployment_state.check_removed_groups
+            ~ctx
+            ~workspace:"ws"
+            ~confirm_group_change:false
+            ~next:[ "myapp.comms.notify_worker" ]));
+    match
+      Sol_cli_deployment_state.check_removed_groups
+        ~ctx
+        ~workspace:"ws"
+        ~confirm_group_change:false
+        ~next:[]
+    with
+    | Ok () -> Alcotest.fail "a plan without the restored worker must be refused"
+    | Error msg ->
+      Alcotest.(check bool)
+        "and a real removal is reported against the corrected record"
+        true
+        (Sol_cli_string.contains ~needle:"myapp.comms.notify_worker" msg))
+;;
+
 let () =
   Alcotest.run
     "deployment_state"
@@ -220,6 +269,10 @@ let () =
             "failed write is an error"
             `Quick
             test_failed_write_is_an_error
+        ; Alcotest.test_case
+            "a corrected record is what the next check reads (BUG-090)"
+            `Quick
+            test_a_corrected_record_is_what_the_next_check_reads
         ] )
     ; ( "load_deployed_groups"
       , [ Alcotest.test_case "present" `Quick test_load_present

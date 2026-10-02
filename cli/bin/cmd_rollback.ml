@@ -69,6 +69,9 @@ let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
     ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
+    ; record_consumer_groups =
+        (fun groups ->
+          Sol_cli_deployment_state.record_consumer_groups ~ctx ~workspace groups)
     }
   in
   let* () = Sol_cli_rollback.execute ~release ~migrations_dir ~current_migrations ~deps in

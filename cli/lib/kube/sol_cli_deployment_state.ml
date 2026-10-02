@@ -87,9 +87,14 @@ let save_deployed_groups ~ctx workspace groups =
   |> Result.join
 ;;
 
+let record_consumer_groups ~ctx ~workspace groups =
+  save_deployed_groups ~ctx workspace groups
+;;
+
 let record_outcome ~ctx workspace outcome =
   match outcome with
-  | Applied { consumer_groups; _ } -> save_deployed_groups ~ctx workspace consumer_groups
+  | Applied { consumer_groups; _ } ->
+    record_consumer_groups ~ctx ~workspace consumer_groups
   | Emitted _ | Dry_run | Failed _ -> Ok ()
 ;;
 

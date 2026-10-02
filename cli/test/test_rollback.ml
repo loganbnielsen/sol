@@ -1103,6 +1103,7 @@ let recording_deps
       ?(prune_result = Ok ())
       ?ensure_held
       ?applied_migrations
+      ?(record_consumer_groups = fun _ -> Ok ())
       ()
   =
   let calls = ref [] in
@@ -1154,6 +1155,10 @@ let recording_deps
         (fun () ->
           record "verify_pointer";
           { Sol_cli_rollback.pointer_actual = "r-3333333333333333"; pointer_ok = true })
+    ; record_consumer_groups =
+        (fun groups ->
+          record (Printf.sprintf "record_consumer_groups:%s" (String.concat "," groups));
+          record_consumer_groups groups)
     }
   in
   calls, pruned, deps
@@ -1182,9 +1187,125 @@ let test_execute_success_calls_every_dep_in_order () =
       ; "ensure_held"
       ; "move_pointer"
       ; "verify_pointer"
+      ; "record_consumer_groups:"
       ]
       (List.rev !calls);
     Alcotest.(check int) "prune ran with no surplus" 0 (List.length (Option.get !pruned))
+;;
+
+let worker_spec ?(domain = "comms") ?(name = "notify_worker") ()
+  : Sol_cli_deployment_plan.service_spec
+  =
+  { ledger_spec with
+    domain
+  ; source_name = name
+  ; k8s_name = k8s_name (String.concat "-" (String.split_on_char '_' name))
+  ; namespace = namespace ~workspace:"myapp" ~domain
+  ; primitive = Sol_cli_deployment_plan.Worker
+  ; consumes_kafka = true
+  }
+;;
+
+let release_with_workloads ~apply_mode specs : Sol_cli_release.t =
+  let base = transaction_release ~apply_mode in
+  { base with
+    workloads =
+      List.map
+        (fun spec ->
+           Sol_cli_release.applied_by
+             base.release_id
+             (Sol_cli_deployment_plan.release_workload_of_spec spec))
+        specs
+  }
+;;
+
+let live_for specs =
+  List.map
+    (fun spec -> Sol_cli_rollback.identity_of_spec spec, "r-3333333333333333")
+    specs
+;;
+
+let test_execute_records_the_restored_consumer_groups () =
+  let groups_for specs =
+    let calls, _pruned, deps = recording_deps ~live:(live_for specs) () in
+    let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct specs in
+    match
+      Sol_cli_rollback.execute
+        ~release
+        ~migrations_dir:"unused"
+        ~current_migrations:[]
+        ~deps
+    with
+    | Error msg -> Alcotest.fail msg
+    | Ok () ->
+      (match !calls with
+       | last :: _ -> last
+       | [] -> Alcotest.fail "no deps were called")
+  in
+  let notify = worker_spec () in
+  let fulfill = worker_spec ~domain:"logistics" ~name:"fulfillment_worker" () in
+  Alcotest.(check string)
+    "rolling back to A+B records both workers' groups, last, after the pointer verified"
+    "record_consumer_groups:myapp.comms.notify_worker,myapp.logistics.fulfillment_worker"
+    (groups_for [ notify; fulfill ]);
+  Alcotest.(check string)
+    "rolling back to A records only A, so the next deploy's removal check describes the \
+     restored set"
+    "record_consumer_groups:myapp.comms.notify_worker"
+    (groups_for [ notify ]);
+  Alcotest.(check string)
+    "a non-worker release records no groups"
+    "record_consumer_groups:"
+    (groups_for [ ledger_spec ])
+;;
+
+let test_execute_leaves_the_guard_alone_when_verification_fails () =
+  let calls, _pruned, deps = recording_deps ~live:[] () in
+  let release =
+    release_with_workloads ~apply_mode:Sol_cli_release.Direct [ worker_spec () ]
+  in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the missing workload to block the rollback"
+  | Error _ ->
+    Alcotest.(check bool)
+      "the guard record still describes the release that is still live"
+      true
+      (List.for_all
+         (fun call -> not (Sol_cli_string.contains ~needle:"record_consumer_groups" call))
+         !calls)
+;;
+
+let test_execute_reports_an_uncorrected_guard_record () =
+  let notify = worker_spec () in
+  let calls, _pruned, deps =
+    recording_deps
+      ~live:(live_for [ notify ])
+      ~record_consumer_groups:(fun _ -> Error "the ConfigMap is forbidden")
+      ()
+  in
+  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct [ notify ] in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "an uncorrected guard record must be reported"
+  | Error msg ->
+    assert (contains (Str.regexp_string "rollback incomplete") msg);
+    assert (contains (Str.regexp_string "could not be corrected") msg);
+    assert (contains (Str.regexp_string "the ConfigMap is forbidden") msg);
+    Alcotest.(check bool)
+      "the rollback itself did happen, so the pointer was moved"
+      true
+      (List.exists (fun call -> String.equal call "move_pointer") !calls)
 ;;
 
 let test_execute_apply_mode_refusal_calls_no_deps () =
@@ -1256,6 +1377,7 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
       ; "ensure_held"
       ; "move_pointer"
       ; "verify_pointer"
+      ; "record_consumer_groups:"
       ]
       (List.rev !calls);
     (match !pruned with
@@ -1838,6 +1960,18 @@ let () =
             "mismatched workload skips prune and pointer move"
             `Quick
             test_execute_mismatched_workload_skips_prune_and_pointer_move
+        ; Alcotest.test_case
+            "the restored release's consumer groups are recorded last (BUG-090)"
+            `Quick
+            test_execute_records_the_restored_consumer_groups
+        ; Alcotest.test_case
+            "a failed verification leaves the guard record alone (BUG-090)"
+            `Quick
+            test_execute_leaves_the_guard_alone_when_verification_fails
+        ; Alcotest.test_case
+            "an uncorrected guard record is reported (BUG-090)"
+            `Quick
+            test_execute_reports_an_uncorrected_guard_record
         ] )
     ; ( "commit_release_selection"
       , [ Alcotest.test_case "commit_matches: exact" `Quick test_commit_matches_exact

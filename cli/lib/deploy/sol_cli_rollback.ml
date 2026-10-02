@@ -682,7 +682,18 @@ type transaction_deps =
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
+  ; record_consumer_groups : string list -> (unit, string) result
   }
+
+let consumer_groups_of_release (release : Sol_cli_release.t) =
+  release.workloads
+  |> List.filter_map (fun (recorded : Sol_cli_release_id.recorded_workload) ->
+    let workload = recorded.spec in
+    if String.equal workload.primitive "worker" && workload.consumes_kafka
+    then Some (Printf.sprintf "%s.%s.%s" release.workspace workload.domain workload.name)
+    else None)
+  |> List.sort_uniq String.compare
+;;
 
 let execute
       ~(release : Sol_cli_release.t)
@@ -741,15 +752,28 @@ let execute
   let* () = deps.ensure_held () in
   let* () = deps.move_pointer () in
   let pointer = deps.verify_pointer () in
-  if pointer_report_ok pointer
-  then Ok ()
-  else
+  if not (pointer_report_ok pointer)
+  then
     Error
       (Printf.sprintf
          "%s\n\
           rollback incomplete: the pointer was moved but does not read back as the \
           restored release; verify cluster state before relying on this rollback."
          (pointer_report_to_string ~release pointer))
+  else (
+    let groups = consumer_groups_of_release release in
+    match deps.record_consumer_groups groups with
+    | Ok () -> Ok ()
+    | Error msg ->
+      Error
+        (Printf.sprintf
+           "%s\n\
+            rollback incomplete: the workloads and the pointer were restored, but the \
+            workspace's consumer-group safety record could not be corrected, so the next \
+            deploy's removal check will describe the release that was rolled back. Fix \
+            access to the deploy-state ConfigMap and roll back again, or pass \
+            --confirm-group-change to the next deploy."
+           msg))
 ;;
 
 let commit_matches ~commit stored =
