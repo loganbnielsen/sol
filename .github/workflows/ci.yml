@@ -185,8 +185,9 @@ jobs:
       # INFRA-035: the unit-test step below runs cli/test's runtest rule that
       # validates the readiness checks' kubectl argv against a real kubectl (*), so
       # kubectl has to exist. Pinned to the version the dogfood job installs
-      # (internal/pipeline/dogfood/DOGFOOD.md), because whether an argv is accepted is a property
-      # of a kubectl version — a check is only as strong as the version it ran on.
+      # (internal/tooling/scripts/ci-toolchain.sh), because whether an argv is
+      # accepted is a property of a kubectl version — a check is only as strong as
+      # the version it ran on.
       #
       # (*) The lifecycle harness cannot cover this. Its fake kubectl accepts any
       # argv, so `kubectl rollout status deployment --all` — a flag kubectl does not
@@ -194,12 +195,7 @@ jobs:
       # target, which read as nine unhealthy platform components.
       - name: Install pinned kubectl (readiness-probe argument validation)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
-        run: |
-          # Direct pinned-release download, not a curl-pipe-to-shell installer.
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client
+        run: bash internal/tooling/scripts/ci-toolchain.sh kubectl
 
       # The unit step's own coverage invariant: every framework package with a
       # unit suite is listed there. Reads ci.yml as YAML and the dune files as
@@ -795,11 +791,10 @@ jobs:
   # `runs-on` ever changes to a self-hosted label, re-check this before
   # assuming Docker is still there.
   #
-  # Version pins (k3d/helm/kubectl below) must stay in sync with
-  # internal/pipeline/dogfood/DOGFOOD.md's "Kubernetes toolchain" table — that doc
-  # explains *why* k3d is pinned to this exact version (chart-value
-  # compatibility). No automated drift check between the two files exists
-  # yet; update both by hand on any bump.
+  # The k3d/helm/kubectl pins live in internal/tooling/scripts/ci-toolchain.sh;
+  # DOGFOOD.md's "Kubernetes toolchain" section points at that script for the
+  # versions and explains *why* k3d is pinned to this exact version (chart-value
+  # compatibility).
   golden-path-smoke:
     # Not a required check, so a job-level condition is safe here: skipping it
     # cannot leave a required status unreported. Consumes the SAME classifier
@@ -879,24 +874,13 @@ jobs:
         timeout-minutes: 5
         run: opam exec -- dune build cli/bin/main.exe
 
-      - name: Install k3d/kubectl/helm (pinned versions — internal/pipeline/dogfood/DOGFOOD.md)
+      # The pinned-release downloads live in the shared script, not `curl | bash`:
+      # k3d's and helm's own install scripts live on mutable branches, so piping
+      # them to a shell would trust unreviewed content. The versions themselves are
+      # defined once in internal/tooling/scripts/ci-toolchain.sh.
+      - name: Install k3d/kubectl/helm (pinned versions — internal/tooling/scripts/ci-toolchain.sh)
         timeout-minutes: 5
-        run: |
-          # Direct pinned-release binary downloads, not `curl | bash` —
-          # k3d's/helm's own install scripts live on their mutable default
-          # branch, so piping them to a shell would trust unreviewed,
-          # unpinned script content on every CI run even though the
-          # *installed tool version* is pinned via TAG/DESIRED_VERSION.
-          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
-          chmod +x k3d
-          sudo mv k3d /usr/local/bin/k3d
-
-          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
+        run: bash internal/tooling/scripts/ci-toolchain.sh
 
       - name: Golden-path smoke test
         env:
@@ -1254,6 +1238,29 @@ jobs:
             done
           done
 
+  dockerfile-matrix:
+    # Not a required check. Consumes the SAME classifier output as `test` so it
+    # fails closed on an empty `kind`; the two smoke jobs consume its output, so
+    # adding a Dockerfile under examples/ or internal/fixtures/ makes it build
+    # without a second hand-maintained list.
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      examples: ${{ steps.derive.outputs.examples }}
+      demo_ts: ${{ steps.derive.outputs.demo_ts }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Derive the Dockerfile matrices
+        id: derive
+        run: |
+          examples="$(python3 internal/tooling/scripts/dockerfile_matrix.py examples)"
+          demo_ts="$(python3 internal/tooling/scripts/dockerfile_matrix.py demo-ts)"
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+          echo "demo_ts=$demo_ts" >> "$GITHUB_OUTPUT"
+
   # FRIC-014: nothing else catches the checked-in example workspaces
   # (examples/pluto, internal/fixtures/venus) drifting out of sync with what `sol
   # new`'s scaffold template (tpl_dockerfile in
@@ -1284,24 +1291,13 @@ jobs:
     #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
-    needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    needs: [classify, dockerfile-matrix]
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.dockerfile-matrix.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - dockerfile: examples/pluto/app/payments/charge_svc/Dockerfile
-            context: examples/pluto
-          - dockerfile: examples/pluto/app/checkout/checkout_svc/Dockerfile
-            context: examples/pluto
-          - dockerfile: examples/pluto/app/comms/notify_worker/Dockerfile
-            context: examples/pluto
-          - dockerfile: internal/fixtures/venus/app/comms/notify_worker/Dockerfile
-            context: internal/fixtures/venus
-          - dockerfile: internal/fixtures/venus/app/logistics/fulfillment_worker/Dockerfile
-            context: internal/fixtures/venus
+      matrix: ${{ fromJson(needs.dockerfile-matrix.outputs.examples) }}
     steps:
       - uses: actions/checkout@v5
 
@@ -1333,14 +1329,13 @@ jobs:
     #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
-    needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    needs: [classify, dockerfile-matrix]
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.dockerfile-matrix.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix:
-        service: [order_svc, fulfillment_worker]
+      matrix: ${{ fromJson(needs.dockerfile-matrix.outputs.demo_ts) }}
     steps:
       - uses: actions/checkout@v5
 
@@ -1482,19 +1477,9 @@ jobs:
         timeout-minutes: 5
         run: opam exec -- dune build cli/bin/main.exe
 
-      - name: Install k3d/kubectl/helm (pinned versions — internal/pipeline/dogfood/DOGFOOD.md)
+      - name: Install k3d/kubectl/helm (pinned versions — internal/tooling/scripts/ci-toolchain.sh)
         timeout-minutes: 5
-        run: |
-          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
-          chmod +x k3d
-          sudo mv k3d /usr/local/bin/k3d
-
-          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
+        run: bash internal/tooling/scripts/ci-toolchain.sh
 
       - name: TypeScript golden-path smoke test
         timeout-minutes: 18
