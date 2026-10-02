@@ -77,3 +77,38 @@ name `cli/sol/lib/sol_cli_open.ml`, which no longer exists.
   shell syntax error, and both are reported unverified.
 - Demo/example: not applicable — pipeline tooling. Language parity: not applicable; state it in one
   line.
+
+## Completion notes (2026-10-02)
+
+**Premise verified** against `origin/main @ 310917dd`: `premise_verdict` mapped only 126/127 to
+unverified and every other non-zero exit to `Premise_holds`; both `BACKLOG/OBS-045` and
+`DONE/OBS-046` named `cli/sol/lib/sol_cli_open.ml`, which REFAC-099 moved to
+`cli/lib/deploy/sol_cli_open.ml`.
+
+**Implemented.** `premise_verdict` is now three-valued over the exit status: 0 ⇒ `Premise_stale`,
+1 ⇒ `Premise_holds`, anything else ⇒ `Premise_unverified` carrying the code and the command's
+captured stderr. A probe that names a path-like token which does not exist in the tree is
+`Premise_unverified` regardless of exit status, which closes the negated form (`! rg -q x gone/file`
+would otherwise read "stale" from a failed read). `named_paths`/`missing_named_paths` expose the
+extraction; existence-test operands (`test ! -f …`) are not treated as must-exist paths, so a probe
+that asserts absence still works.
+
+**Evidence** (worktree, `_build/default/internal/tooling/soldev/bin/main.exe pipeline ls`):
+
+```
+planted "! rg -q Byo no/such/planted.ml"             -> premise-unverified: the probe names no/such/planted.ml, …
+planted "if"                                         -> premise-unverified: the probe exited 2 (0 = premise stale, 1 = premise holds), …
+control "! rg -q Byo cli/lib/deploy/sol_cli_open.ml" -> premise-stale
+```
+
+Both moved-path probes were corrected: OBS-045 now names `cli/lib/deploy/sol_cli_open.ml` and
+`cli/bin/cmd_open.ml` (probe exits 1, so the Traces surface is still missing and the ticket stays
+actionable); OBS-046 now probes `namespace=` in the real file (probe exits 0, so its fix is
+genuinely stale). The contract is stated in AGENTS.md § *Ticket premises*.
+
+**Tests:** `dune test internal/tooling/soldev/test/` — 60 + 27 pass, including six new premise cases
+(exit 2, quoted-pattern-not-a-path, existence-test-operand, missing path, negated-probe-over-missing-
+path, planted probes through `evaluate_premise`).
+
+**Demo/example:** not applicable — pipeline tooling. **Language parity (DEC-022):** not applicable;
+the probe mechanism is language-neutral tooling.

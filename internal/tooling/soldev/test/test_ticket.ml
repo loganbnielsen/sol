@@ -594,19 +594,102 @@ let () =
               None
               (Soldev_ticket.premise_of "---\nid: X\npremise: \"  \"\n---\n\nBody\n"))
         ; Alcotest.test_case "exit 0 means stale" `Quick (fun () ->
-            match Soldev_ticket.premise_verdict ~exit_code:0 with
+            match
+              Soldev_ticket.premise_verdict ~exit_code:0 ~missing_paths:[] ~output:""
+            with
             | Soldev_ticket.Premise_stale -> ()
             | Soldev_ticket.Premise_holds -> Alcotest.fail "exit 0 must mean stale"
             | Soldev_ticket.Premise_unverified reason ->
               Alcotest.fail ("unexpected unverified: " ^ reason))
-        ; Alcotest.test_case "non-zero means the premise holds" `Quick (fun () ->
-            match Soldev_ticket.premise_verdict ~exit_code:1 with
+        ; Alcotest.test_case "exit 1 means the premise holds" `Quick (fun () ->
+            match
+              Soldev_ticket.premise_verdict ~exit_code:1 ~missing_paths:[] ~output:""
+            with
             | Soldev_ticket.Premise_holds -> ()
-            | _ -> Alcotest.fail "a failing probe means the premise still holds")
+            | _ -> Alcotest.fail "exit 1 means the premise still holds")
+        ; Alcotest.test_case
+            "an exit outside {0, 1} is unverified, naming the code"
+            `Quick
+            (fun () ->
+               match
+                 Soldev_ticket.premise_verdict
+                   ~exit_code:2
+                   ~missing_paths:[]
+                   ~output:"sh: 1: syntax error: unexpected end of file"
+               with
+               | Soldev_ticket.Premise_unverified reason ->
+                 if not (contains_substring ~needle:"2" reason)
+                 then Alcotest.fail ("the exit code is not named: " ^ reason)
+               | _ ->
+                 Alcotest.fail "a probe that did not reach a conclusion is not a verdict")
         ; Alcotest.test_case "127 is unverified, not holds" `Quick (fun () ->
-            match Soldev_ticket.premise_verdict ~exit_code:127 with
+            match
+              Soldev_ticket.premise_verdict ~exit_code:127 ~missing_paths:[] ~output:""
+            with
             | Soldev_ticket.Premise_unverified _ -> ()
             | _ -> Alcotest.fail "a probe that cannot run must not read as holds")
+        ; Alcotest.test_case "a quoted pattern is not a path" `Quick (fun () ->
+            check_list_string
+              "paths"
+              [ "cli/lib/deploy/sol_cli_open.ml" ]
+              (Soldev_ticket.named_paths "rg -q 'Traces' cli/lib/deploy/sol_cli_open.ml"))
+        ; Alcotest.test_case
+            "an existence-test operand is not a must-exist path"
+            `Quick
+            (fun () ->
+               check_list_string
+                 "paths"
+                 [ "cli/actual.ml" ]
+                 (Soldev_ticket.named_paths
+                    "test ! -f gone/missing.yml ; rg -q x cli/actual.ml"))
+        ; Alcotest.test_case
+            "a named path that does not exist is reported"
+            `Quick
+            (fun () ->
+               check_list_string
+                 "missing"
+                 [ "gone/moved.ml" ]
+                 (Soldev_ticket.missing_named_paths
+                    ~root:(Sys.getcwd ())
+                    "rg -q x gone/moved.ml"))
+        ; Alcotest.test_case
+            "a negated probe over a missing path is unverified, not stale"
+            `Quick
+            (fun () ->
+               match
+                 Soldev_ticket.premise_verdict
+                   ~exit_code:0
+                   ~missing_paths:[ "gone/moved.ml" ]
+                   ~output:""
+               with
+               | Soldev_ticket.Premise_unverified _ -> ()
+               | Soldev_ticket.Premise_stale ->
+                 Alcotest.fail "a read that never happened must not read as stale"
+               | Soldev_ticket.Premise_holds -> Alcotest.fail "unexpected holds")
+        ; Alcotest.test_case
+            "a planted probe over a nonexistent path is unverified"
+            `Quick
+            (fun () ->
+               let verdict, _ =
+                 Soldev_merge.evaluate_premise
+                   ~echo:false
+                   "grep -q sol definitely/not/here.ml"
+               in
+               match verdict with
+               | Soldev_ticket.Premise_unverified reason ->
+                 if not (contains_substring ~needle:"definitely/not/here.ml" reason)
+                 then Alcotest.fail ("the missing path is not named: " ^ reason)
+               | _ -> Alcotest.fail "a probe whose input does not exist must not decide")
+        ; Alcotest.test_case
+            "a planted shell syntax error is unverified"
+            `Quick
+            (fun () ->
+               let verdict, _ = Soldev_merge.evaluate_premise ~echo:false "if" in
+               match verdict with
+               | Soldev_ticket.Premise_unverified reason ->
+                 if not (contains_substring ~needle:"2" reason)
+                 then Alcotest.fail ("the exit code is not named: " ^ reason)
+               | _ -> Alcotest.fail "a probe that never ran must not be a verdict")
         ] )
     ]
 ;;

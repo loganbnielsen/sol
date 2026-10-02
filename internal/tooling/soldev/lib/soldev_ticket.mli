@@ -24,7 +24,14 @@ type premise_verdict =
   | Premise_unverified of string
 
 val premise_of : string -> string option
-val premise_verdict : exit_code:int -> premise_verdict
+val named_paths : string -> string list
+val missing_named_paths : root:string -> string -> string list
+
+val premise_verdict
+  :  exit_code:int
+  -> missing_paths:string list
+  -> output:string
+  -> premise_verdict
 
 val find_dependency_cycle_from
   :  deps_of:(string -> string list)
