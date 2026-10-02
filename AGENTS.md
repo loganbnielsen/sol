@@ -123,7 +123,7 @@ The discipline, since relying on remembering the current directory has now faile
 - `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
 - `pipeline review` — orchestration: posts optional structured review findings as PR comments.
 - `pipeline merge` — orchestration: verifies prerequisites and non-draft status. It queues native squash auto-merge by default, which lands the PR when required checks pass; `--immediate` is the opt-in synchronous merge, and only when required CI is already green. Targets a ticket id, a pull request via `--pr <n|#n|url>`, or with neither sweeps every open ready PR; a PR target is also refused when its base branch has no required checks configured. Head-pinned; no admin bypass or worktree cleanup.
-- `pipeline merge-finish` — optional informational maintenance: records perf baseline/history in an owned checkout after a merge. It does not gate or revert merges and is not run automatically.
+- `pipeline merge-finish` — optional informational test run in an owned checkout after a merge. It reports performance comparisons without writing or committing the baseline, and does not gate or revert merges.
 - `pipeline check-reverts` — safety diagnostic over git history.
 - Pre-commit hook — convenience local gate; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
@@ -472,8 +472,8 @@ synchronously.
   reflects this machine, not the branch of record. Nothing to undo, so no
   `git reset` dance — if you want a real revert, do it deliberately on the remote
   (`git revert <sha> && git push origin main`). `rc=2` is a perf ratio and is
-  informational only. The one local commit `merge-finish` still makes is the perf
-  baseline, which is why it reminds you to push.
+  informational only. `merge-finish` does not write or commit the perf baseline;
+  update it explicitly on a PR branch with `run_tests.sh --update-baseline` when needed.
 - **Run the format check before pushing.** CI's *Format check* step is
   `internal/ci/check_ocamlformat.sh --all` (ocamlformat 0.29.0, janestreet
   profile); a local `dune build` does **not** cover it, so unformatted code is a

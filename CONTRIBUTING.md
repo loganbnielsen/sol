@@ -67,6 +67,10 @@ including internal/pipeline/planning/bookkeeping under `internal/pipeline/`, doc
 branch → push → pull request → required checks green → squash merge
 ```
 
+The informational perf baseline follows the same PR path. Optional
+`soldev pipeline merge-finish` only reports local test and performance results;
+it leaves both the baseline and protected `main` untouched.
+
 `main` is protected with required status check `test`, no mandatory approving review,
 and admin enforcement enabled — so the rule
 binds maintainers and administrators too, not only contributors. Direct pushes
