@@ -1194,6 +1194,7 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
 let recording_deps
       ?(live = [])
       ?(prune_result = Ok ())
+      ?(apply_result = Ok ())
       ?ensure_held
       ?applied_migrations
       ?(record_consumer_groups = fun _ -> Ok ())
@@ -1230,7 +1231,7 @@ let recording_deps
     ; apply =
         (fun _specs ->
           record "apply";
-          Ok ())
+          apply_result)
     ; live_workloads =
         (fun () ->
           record "live_workloads";
@@ -1659,6 +1660,31 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
       (Windtrap.list Windtrap.string)
       ~msg:"apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
       [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads" ]
+      (List.rev !calls);
+    Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
+;;
+
+let test_execute_apply_failure_reports_the_incomplete_rollback () =
+  let calls, pruned, deps =
+    recording_deps ~apply_result:(Error "kubectl apply failed on notify-worker") ()
+  in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Windtrap.fail "a failed apply must fail the rollback"
+  | Error msg ->
+    assert (contains (Str.regexp "kubectl apply failed on notify-worker") msg);
+    assert (contains (Str.regexp "pointer") msg);
+    assert (contains (Str.regexp "still names the previous release") msg);
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"the failure stopped before verifying, pruning or moving the pointer"
+      [ "applied_migrations"; "ensure_held"; "apply" ]
       (List.rev !calls);
     Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
 ;;
@@ -2353,6 +2379,10 @@ let%test "rollback_transaction: prune failure skips pointer move" =
 
 let%test "rollback_transaction: missing workload skips prune and pointer move" =
   test_execute_missing_workload_skips_prune_and_pointer_move ()
+;;
+
+let%test "rollback_transaction: a failed apply reports the incomplete rollback (BUG-119)" =
+  test_execute_apply_failure_reports_the_incomplete_rollback ()
 ;;
 
 let%test "rollback_transaction: mismatched workload skips prune and pointer move" =
