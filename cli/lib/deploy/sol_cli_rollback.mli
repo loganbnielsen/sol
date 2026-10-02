@@ -116,7 +116,10 @@ type transaction_deps =
   ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
+  ; record_consumer_groups : string list -> (unit, string) result
   }
+
+val consumer_groups_of_release : Sol_cli_release.t -> string list
 
 val execute
   :  release:Sol_cli_release.t
