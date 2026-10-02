@@ -302,11 +302,6 @@ let base_required_checks_configured ~base_ref =
 let review_pass_marker = "SOLDEV-REVIEW: PASS"
 let review_fail_marker = "SOLDEV-REVIEW: FAIL"
 
-let starts_with ~prefix s =
-  String.length s >= String.length prefix
-  && String.sub s 0 (String.length prefix) = prefix
-;;
-
 type merge_mode =
   | Auto_merge
   | Immediate
@@ -323,19 +318,6 @@ let merge_command ~mode pr =
      | Immediate -> "")
 ;;
 
-let contains_substring ~needle haystack =
-  let nlen = String.length needle
-  and hlen = String.length haystack in
-  let rec go i =
-    if i + nlen > hlen
-    then false
-    else if String.sub haystack i nlen = needle
-    then true
-    else go (i + 1)
-  in
-  go 0
-;;
-
 let parse_pr_number raw =
   let trimmed = String.trim raw in
   let digits value =
@@ -347,13 +329,15 @@ let parse_pr_number raw =
     | None -> value
   in
   let bare =
-    if starts_with ~prefix:"#" trimmed
+    if String.starts_with ~prefix:"#" trimmed
     then String.sub trimmed 1 (String.length trimmed - 1)
     else trimmed
   in
   if digits bare
   then int_of_string_opt bare
-  else if contains_substring ~needle:"/pull/" trimmed && digits (after_last_slash trimmed)
+  else if
+    Soldev_string.contains_substring ~needle:"/pull/" trimmed
+    && digits (after_last_slash trimmed)
   then int_of_string_opt (after_last_slash trimmed)
   else None
 ;;
@@ -884,7 +868,7 @@ let parse_worktree_porcelain lines =
          | Some wt -> wt :: acc
          | None -> acc)
     | line :: rest ->
-      if starts_with ~prefix:"worktree " line
+      if String.starts_with ~prefix:"worktree " line
       then (
         let path = String.sub line 9 (String.length line - 9) in
         let acc =
@@ -893,7 +877,7 @@ let parse_worktree_porcelain lines =
           | None -> acc
         in
         go (Some (path, None)) acc rest)
-      else if starts_with ~prefix:"branch refs/heads/" line
+      else if String.starts_with ~prefix:"branch refs/heads/" line
       then (
         match current with
         | Some (path, None) ->

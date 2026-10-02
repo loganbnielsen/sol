@@ -247,30 +247,13 @@ let syntax_error_line text =
 ;;
 
 let yaml_problem message =
-  let prefix = "error calling parser: " in
   let m =
-    if
-      String.length message >= String.length prefix
-      && String.sub message 0 (String.length prefix) = prefix
-    then
-      String.sub
-        message
-        (String.length prefix)
-        (String.length message - String.length prefix)
-    else message
+    Sol_cli_string.strip_prefix_opt ~prefix:"error calling parser: " message
+    |> Option.value ~default:message
   in
   match String.index_opt m '\n' with
   | Some i -> String.sub m 0 i
-  | None ->
-    let marker = " character " in
-    let rec find i =
-      if i + String.length marker > String.length m
-      then m
-      else if String.sub m i (String.length marker) = marker
-      then String.sub m 0 i
-      else find (i + 1)
-    in
-    find 0
+  | None -> Sol_cli_string.before_opt ~needle:" character " m |> Option.value ~default:m
 ;;
 
 let parse_yaml ~path text =

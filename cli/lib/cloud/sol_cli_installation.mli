@@ -53,6 +53,7 @@ type installation_config =
 
 val zone_domain : zone -> string option
 val owns_the_zone : zone -> bool
+val address_in_zone : zone:string -> string -> bool
 val of_target : Sol_cli_config.target -> (installation_config, string) result
 val resolved_configuration_to_lines : installation_config -> string list
 

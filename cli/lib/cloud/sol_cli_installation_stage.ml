@@ -34,11 +34,7 @@ let owns_the_delegated_zone ~provider ~chdir =
     (Sol_cli_provider_capabilities.capabilities_of provider).installation_zone_address
   in
   let* addresses = state_addresses ~chdir in
-  let owns listed =
-    listed = address
-    || (String.length listed > String.length address
-        && String.sub listed 0 (String.length address + 1) = address ^ "[")
-  in
+  let owns = Sol_cli_installation.address_in_zone ~zone:address in
   Ok (List.exists owns addresses)
 ;;
 

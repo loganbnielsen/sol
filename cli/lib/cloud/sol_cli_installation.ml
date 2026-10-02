@@ -168,6 +168,10 @@ let owns_the_zone = function
   | No_zone | Service_zone _ -> false
 ;;
 
+let address_in_zone ~zone address =
+  String.equal address zone || String.starts_with ~prefix:(zone ^ "[") address
+;;
+
 let resolved_configuration_to_lines configuration =
   let named label = function
     | None -> Printf.sprintf "  %-24s (none)" label

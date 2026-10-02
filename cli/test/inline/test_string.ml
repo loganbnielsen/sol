@@ -40,7 +40,37 @@ let test_contains () =
   Windtrap.equal Windtrap.bool ~msg:"empty needle" true (S.contains ~needle:"" "abc")
 ;;
 
+let test_cut () =
+  Windtrap.equal
+    opt
+    ~msg:"strip_prefix absent"
+    None
+    (S.strip_prefix_opt ~prefix:"ab" "cd");
+  Windtrap.equal
+    opt
+    ~msg:"strip_prefix present"
+    (Some "cd")
+    (S.strip_prefix_opt ~prefix:"ab" "abcd");
+  Windtrap.equal
+    opt
+    ~msg:"strip_prefix whole"
+    (Some "")
+    (S.strip_prefix_opt ~prefix:"ab" "ab");
+  Windtrap.equal
+    opt
+    ~msg:"strip_prefix empty"
+    (Some "ab")
+    (S.strip_prefix_opt ~prefix:"" "ab");
+  Windtrap.equal opt ~msg:"before absent" None (S.before_opt ~needle:"z" "abc");
+  Windtrap.equal opt ~msg:"before present" (Some "a") (S.before_opt ~needle:"bc" "abcd");
+  Windtrap.equal opt ~msg:"before at start" (Some "") (S.before_opt ~needle:"a" "abc");
+  Windtrap.equal opt ~msg:"after absent" None (S.after_opt ~needle:"z" "abc");
+  Windtrap.equal opt ~msg:"after present" (Some "cd") (S.after_opt ~needle:"ab" "abcd");
+  Windtrap.equal opt ~msg:"after to end" (Some "") (S.after_opt ~needle:"c" "abc")
+;;
+
 let%test "string: blank" = test_blank ()
 let%test "string: non_empty" = test_non_empty ()
 let%test "string: env" = test_env ()
 let%test "string: contains" = test_contains ()
+let%test "string: cut helpers" = test_cut ()

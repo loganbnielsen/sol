@@ -786,12 +786,8 @@ let commit_matches ~commit stored =
   let stored = String.lowercase_ascii (String.trim stored) in
   if commit = "" || stored = ""
   then false
-  else (
-    let is_prefix ~prefix s =
-      String.length prefix <= String.length s
-      && String.sub s 0 (String.length prefix) = prefix
-    in
-    is_prefix ~prefix:commit stored || is_prefix ~prefix:stored commit)
+  else
+    String.starts_with ~prefix:commit stored || String.starts_with ~prefix:stored commit
 ;;
 
 type commit_resolution =

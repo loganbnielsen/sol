@@ -2,17 +2,16 @@ let qualified_receiver_types = [ "webhook" ]
 let normalize s = String.lowercase_ascii (String.trim s)
 let receiver_type_qualified typ = List.mem (normalize typ) qualified_receiver_types
 
-let has_prefix ~prefix s =
-  let pl = String.length prefix in
-  String.length s >= pl && String.equal (String.sub s 0 pl) prefix
-;;
-
 let url_is_routable url =
   let u = String.trim url in
-  let scheme_len = if has_prefix ~prefix:"https://" u then 8 else 7 in
-  (has_prefix ~prefix:"https://" u || has_prefix ~prefix:"http://" u)
-  && String.length u > scheme_len
-  && u.[scheme_len] <> '/'
+  let scheme_len =
+    if String.starts_with ~prefix:"https://" u
+    then 8
+    else if String.starts_with ~prefix:"http://" u
+    then 7
+    else 0
+  in
+  scheme_len > 0 && String.length u > scheme_len && u.[scheme_len] <> '/'
 ;;
 
 let validate ~receiver_type ~receiver_url ~owner ~runbook_url =
