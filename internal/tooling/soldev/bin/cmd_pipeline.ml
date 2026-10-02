@@ -82,7 +82,7 @@ let merge_sha_arg =
     & info
         []
         ~docv:"MERGE-SHA"
-        ~doc:"The merged commit being measured in this owned checkout")
+        ~doc:"The merged commit being checked in this owned checkout")
 ;;
 
 let run_merge_finish ticket_id merge_sha =
@@ -94,9 +94,9 @@ let merge_finish_cmd =
     (Cmd.info
        "merge-finish"
        ~doc:
-         "Optional post-merge maintenance in an owned checkout: run tests and record the \
-          perf baseline. Does not gate merges or revert failures. Not invoked \
-          automatically by merge.")
+         "Optional post-merge test run in an owned checkout. Reports performance \
+          regressions without writing a baseline, gating merges, or reverting failures. \
+          Not invoked automatically by merge.")
     Term.(const run_merge_finish $ ticket_arg $ merge_sha_arg)
 ;;
 

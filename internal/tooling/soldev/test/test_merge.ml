@@ -585,17 +585,17 @@ let test_stale_binary_fails_after_rename () =
 
 let test_post_merge_action_of_rc () =
   let show = function
-    | Soldev_merge.Record_baseline -> "record"
-    | Soldev_merge.Record_baseline_after_perf_regression -> "record-perf"
+    | Soldev_merge.Report_success -> "pass"
+    | Soldev_merge.Report_perf_regression -> "perf"
     | Soldev_merge.Report_local_failure rc -> Printf.sprintf "report:%d" rc
   in
   Alcotest.(check string)
     "0 is a clean suite"
-    "record"
+    "pass"
     (show (Soldev_merge.post_merge_action_of_rc 0));
   Alcotest.(check string)
     "2 is the perf-ratio verdict, informational"
-    "record-perf"
+    "perf"
     (show (Soldev_merge.post_merge_action_of_rc 2));
   Alcotest.(check string)
     "1 is a failure to report, never a revert"
@@ -619,6 +619,38 @@ let rev_parse ref =
   let line = In_channel.input_line ic |> Option.value ~default:"" in
   ignore (Unix.close_process_in ic);
   String.trim line
+;;
+
+let test_merge_finish_does_not_write_a_baseline_commit () =
+  in_temp_dir (fun () ->
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/tooling" 0o755;
+    Unix.mkdir "internal/tooling/scripts" 0o755;
+    Unix.mkdir "internal/tooling/perf" 0o755;
+    let baseline = "internal/tooling/perf/perf_baseline.json" in
+    write_file baseline "original\n";
+    let runner = "internal/tooling/scripts/run_tests.sh" in
+    write_file
+      runner
+      "#!/bin/sh\n\
+       if [ \"$1\" = \"--update-baseline\" ]; then printf 'changed\\n' > \
+       internal/tooling/perf/perf_baseline.json; fi\n\
+       exit 0\n";
+    Unix.chmod runner 0o755;
+    git_ok "add .";
+    git_ok "commit -qm initial";
+    let initial = rev_parse "HEAD" in
+    (match Soldev_merge.run_merge_finish ~ticket_id:"BUG-038" ~merge_sha:initial with
+     | Ok () -> ()
+     | Error _ -> Alcotest.fail "unexpected merge-finish failure");
+    check_string "no local commit" initial (rev_parse "HEAD");
+    check_string
+      "baseline untouched"
+      "original\n"
+      (In_channel.with_open_bin baseline In_channel.input_all))
 ;;
 
 let unpushed_of branch =
@@ -732,6 +764,10 @@ let () =
             "a local post-merge failure is reported, never acted on"
             `Quick
             test_post_merge_action_of_rc
+        ; Alcotest.test_case
+            "merge-finish leaves HEAD and baseline untouched"
+            `Quick
+            test_merge_finish_does_not_write_a_baseline_commit
         ] )
     ; ( "CI-gated merges"
       , [ Alcotest.test_case

@@ -639,13 +639,13 @@ let run_review ticket_id result_file =
 ;;
 
 type post_merge_action =
-  | Record_baseline
-  | Record_baseline_after_perf_regression
+  | Report_success
+  | Report_perf_regression
   | Report_local_failure of int
 
 let post_merge_action_of_rc = function
-  | 0 -> Record_baseline
-  | 2 -> Record_baseline_after_perf_regression
+  | 0 -> Report_success
+  | 2 -> Report_perf_regression
   | rc -> Report_local_failure rc
 ;;
 
@@ -666,32 +666,13 @@ let run_merge_finish ~ticket_id ~merge_sha =
          rc
          ticket_id
          merge_sha)
-  | Record_baseline | Record_baseline_after_perf_regression ->
-    if perf_rc = 2
-    then
-      Printf.eprintf
-        "  perf regression detected (informational only — recording baseline, not \
-         reverting)\n\
-         %!";
-    ignore
-      (Soldev_shell.run_cmd
-         ~echo:false
-         "./internal/tooling/scripts/run_tests.sh --update-baseline");
-    let message =
-      if perf_rc = 2
-      then
-        Printf.sprintf
-          "pipeline: update perf baseline after %s (perf regression recorded)"
-          ticket_id
-      else Printf.sprintf "pipeline: update perf baseline after %s" ticket_id
-    in
-    ignore
-      (Soldev_shell.run_cmd
-         ~echo:false
-         (Printf.sprintf
-            "git add internal/tooling/perf/perf_baseline.json && git commit -m %s"
-            (Filename.quote message)));
-    Printf.printf "  ✓  merged\n%!";
+  | Report_success ->
+    Printf.printf "  ✓  local post-merge suite passed; %s remains merged\n%!" ticket_id;
+    Ok ()
+  | Report_perf_regression ->
+    Printf.eprintf
+      "  perf regression detected (informational only — %s remains merged)\n%!"
+      ticket_id;
     Ok ()
 ;;
 
