@@ -1055,4 +1055,24 @@ documented six, with three new mutations). `OBS-050` stays in `BACKLOG` pending 
 ticket records. The run record and the matrix keep the discovery-time observations unchanged and
 cite the fixes by PR; nothing above becomes `LIVE`.
 
+## Observability run 2 — decode/DLQ, FND-0027, Grafana, and the Kafka alert (2026-10-02, `main @ 1eace495`)
+
+Still no Kubernetes. Run 2 stood up the same native substrate plus **Grafana 11.3.0** and worked
+the cheapest open rows. Record:
+[`2026-10-02-observability-run2-local.md`](../qualification/records/2026-10-02-observability-run2-local.md).
+
+| Row | Before | After |
+|---|---|---|
+| OB-F2 decode error → diagnostic → DLQ → offset ordering | `UNQUALIFIED` | `QUALIFIED (LOCAL)` — an undecodable record against the venus `notify_worker` produced the structured Loki line, `sol_worker_decode_errors_total` (and no `sol_worker_messages_total`), the DLQ record with `X-Sol-Decode-Error`/`X-Sol-Origin-Group` and the raw bytes preserved, and the source offset advancing. The DLQ-publish-*failure* branch is code-verified only |
+| OB-L4 / FND-0027 malformed backend response | `UNQUALIFIED`, finding `OPEN` | `QUALIFIED (LOCAL)`; **FND-0027 `SUPERSEDED`** — the rewritten parser rejects three malformed shapes with the reason and never returns a partial result |
+| OB-D1 Grafana dashboards/datasources | `QUALIFIED (MECHANISM)` | `QUALIFIED (LOCAL)` — native Grafana loaded all six dashboards and the Loki/Tempo/Prometheus datasources and served proxy queries with real data |
+| OB-F3 Kafka lag/broker-loss alert | `UNQUALIFIED (live)` | **`DEFECT`** — Redpanda v26.2.2 exposes no consumer-group lag metric, so `SolKafkaConsumerLagHigh` can never fire; its annotations name labels that do not exist. Filed `BUG-122` (`READY_FOR_ENGINEERING`); the broker-down half holds once a scrape exists |
+| OB-T3 trace identity | `BACKLOG` with a decision | `DEC-064` decided — framework instrumentation emits Sol's semantic workload identity; collectors enrich infrastructure identity. `OBS-050` promoted to `READY_FOR_ENGINEERING` |
+
+Also filed: `BUG-123` (low) — `sol logs` reports a malformed-but-reachable backend response as
+"couldn't reach". Still `NOT REACHED`/`BLOCKED`: workload health, the `kubectl` log fallback,
+Alertmanager firing/delivery, `self_hosted_durable`/`external`, managed-resource dashboards, and the
+deploy → rollback → recovery loop. **Nothing here is `LIVE`.**
+
+
 

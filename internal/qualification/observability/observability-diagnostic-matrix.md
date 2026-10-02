@@ -11,8 +11,11 @@ Evidence classes: `MODELED` / `MECHANISM` / `LOCAL` / `LIVE` — see `README.md`
 so nothing was observed on a deployed cluster or a cloud target. Rows that
 require that are `UNQUALIFIED (live)` or `BLOCKED`, never weakened.
 
-The run that produced the LOCAL evidence is
-[`../records/2026-10-02-observability-local-qualification.md`](../records/2026-10-02-observability-local-qualification.md).
+The runs that produced the LOCAL evidence are
+[`../records/2026-10-02-observability-local-qualification.md`](../records/2026-10-02-observability-local-qualification.md)
+(run 1) and
+[`../records/2026-10-02-observability-run2-local.md`](../records/2026-10-02-observability-run2-local.md)
+(run 2).
 
 ---
 
@@ -82,14 +85,19 @@ The run that produced the LOCAL evidence is
   - *Cause:* the Alloy/Derived-promotion list has five labels, not six.
   - *Recovery:* add `env` to both promotion lists (OBS-049).
 
-### OB-L4 — An unparseable backend response does not silently disappear
+### OB-L4 — An unparseable backend response is rejected, not silently dropped
 
 - **Claim (implicit):** `sol logs` is complete for the lines the backend holds.
-  **Finding on record:** FND-0027 — Loki stream parse failures are dropped
-  without a trace.
-- **Evidence:** MECHANISM (code read); not induced on a real Loki (the API
-  always returns `[ts, line]` pairs, so the failure is hard to produce honestly).
-- **Verdict:** `UNQUALIFIED` (inherits FND-0027; no ticket in the tree).
+  `FND-0027` recorded an older parser that filtered malformed values and returned
+  `Ok`, silently truncating.
+- **Evidence:** LOCAL — run 2 pointed `sol logs` at a stub returning three
+  malformed shapes (a non-pair value; a stream with no `values`; a good stream
+  beside a malformed one). Every case was rejected with the reason and degraded
+  explicitly; no partial result was returned. See the run-2 record §3.
+- **Verdict:** `QUALIFIED (LOCAL)`; **FND-0027 is `SUPERSEDED`** by the parser
+  rewrite. One new low observation: the message says "couldn't reach" for a
+  response that was reached (a parse error reported as a transport failure).
+  Filed as **BUG-123**.
 
 ## B. Metrics
 
@@ -188,14 +196,16 @@ The run that produced the LOCAL evidence is
 - **Claim:** four/five dashboards are provisioned and `sol open <view> <scope>`
   builds a URL that selects the same labels (`observability-design.md`,
   `observability-backends.md` §Dashboards).
-- **Evidence:** MECHANISM — every JSON parses; uids match `Sol_cli_open`
-  (`sol-workspace-overview`, `sol-service-template`, `sol-domain-overview`,
-  `sol-release-timeline`, `sol-target-infrastructure`); the template variables
-  a link sets (`var-workspace`, `var-domain`, `var-service`) exist on the
-  dashboards; the Loki/Prometheus datasource uids (`loki`, `prometheus`) match
-  the provisioned ConfigMaps.
-- **Verdict:** `QUALIFIED (MECHANISM)`; `UNQUALIFIED (live)` — the panels were
-  not rendered against a live Grafana (the doc's own "Known gaps" say so).
+- **Evidence:** MECHANISM + LOCAL — run 2 ran a native Grafana 11.3.0 with the
+  repo's dashboards and datasource definitions file-provisioned. Grafana loaded
+  all six dashboards (their uids match `Sol_cli_open`, and the template variables
+  a link sets exist), provisioned the Loki/Tempo/Prometheus datasources, and
+  served queries through its proxy: Loki label values, a Prometheus `up` query,
+  and a Tempo trace search each returned real data. See the run-2 record §4.
+- **Verdict:** `QUALIFIED (LOCAL)` for the definitions, the datasource wiring,
+  and query execution; panel *data* under the taxonomy labels is `NOT REACHED`
+  without a cluster whose scrape promotes the pod labels (the local static scrape
+  does not).
 - **Observed:** `sol open dashboard --links` →
   `http://localhost:3000/d/sol-workspace-overview?var-workspace=obsdemo`;
   `sol open logs payments/charge_svc --links` → a Loki Explore URL whose
@@ -297,21 +307,35 @@ The run that produced the LOCAL evidence is
   error and topic; the record is parked on `<topic>.<group>.dlq` (or legitimately
   acked-and-dropped), and its source offset advances only after the DLQ publish
   (`alert-runbooks.md` §Message drop; OBS-047).
-- **Evidence:** MODELED/MECHANISM — the counter and its help text were observed
-  at `0` in the green path; the failure itself was **not** induced.
-- **Verdict:** `UNQUALIFIED` — the next run must inject an undecodable record and
-  observe the counter, the log line, the DLQ topic, and the offset ordering.
-  This is the highest-value open row in the workstream.
+- **Evidence:** LOCAL — run 2 induced an undecodable record at the real broker
+  against the venus `notify_worker` and read the result back independently:
+  the structured Loki line (error, raw length, topic, trace id), the
+  `sol_worker_decode_errors_total` counter (`1`, then `2`, and no
+  `sol_worker_messages_total` sample), the DLQ record (raw value + key preserved,
+  `X-Sol-Decode-Error` and `X-Sol-Origin-Group` present), and the source offset
+  advancing (`15 → 16`). See the run-2 record §2.
+- **Verdict:** `QUALIFIED (LOCAL)` for the default `Route_to_dlq` path. The
+  `Ack_and_drop` alternative is covered by the repository's Kafka integration
+  suite, not re-run here. The DLQ-**publish-failure** branch (publish fails ⇒ no
+  ack) is code-verified only — `NOT REACHED`.
 
 ### OB-F3 — Kafka lag and broker loss are detectable
 
 - **Claim:** `SolKafkaConsumerLagHigh`/`SolKafkaBrokerDown` fire on Redpanda's
   own metrics.
-- **Evidence:** MECHANISM + a documented gap: the platform does not scrape
-  Redpanda by default, so the rules are silent until the target exposes the
-  scrape (`observability-backends.md` §Alerting). The live group state was
-  reachable (`rpk group describe`), but no Sol surface consumed it.
-- **Verdict:** `UNQUALIFIED (live)`; the silence is documented, not a defect.
+- **Evidence:** LOCAL — `DEFECT` for the lag rule. Redpanda v26.2.2 exposes no
+  consumer-group lag metric on `/public_metrics` (146 families, no `*lag*`) or on
+  the internal `/metrics`, so `redpanda_kafka_consumer_group_lag > 10000` can
+  never fire even with a scrape; its annotations also name
+  `{{ $labels.group }}`/`{{ $labels.topic }}` where the metrics carry
+  `redpanda_group`/`redpanda_topic`. A correct derivation exists and was
+  validated against the broker's own `rpk group describe` LAG (0 when caught up,
+  5 after five unconsumed records). `SolKafkaBrokerDown`'s
+  `up{job=~".*redpanda.*"}` is sound once a scrape exists; the platform
+  deliberately configures none, which `observability-backends.md` documents.
+  Filed as **BUG-122**.
+- **Verdict:** `DEFECT` (filed); the broker-down half is `QUALIFIED (LOCAL)`
+  conditional on a Redpanda scrape.
 
 ### OB-F4 — A deploy failure is visible as "the current release is bad"
 
@@ -367,7 +391,9 @@ The run that produced the LOCAL evidence is
 |---|---|---|---|---|---|
 | `env` is not a Loki stream label | OB-L3 | low | MECHANISM + LOCAL | `OBS-049` | fixed, `DONE` (#926) |
 | An unreachable cluster is reported as "not deployed" | OB-S3 | medium | LOCAL | `BUG-121` | fixed, `DONE` (#925) |
-| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | filed, `BACKLOG` (decision required) |
+| `SolKafkaConsumerLagHigh` uses a metric Redpanda does not expose, and annotation labels that do not exist | OB-F3 | medium | LOCAL | `BUG-122` | filed, `READY_FOR_ENGINEERING` |
+| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | decision `DEC-064` recorded; promoted to `READY_FOR_ENGINEERING` |
+| FND-0027 malformed-response silent drop | OB-L4 | — | LOCAL | — | `SUPERSEDED` (parser rewritten; fails closed) |
 
 ## What would move the most rows
 
@@ -377,5 +403,8 @@ The run that produced the LOCAL evidence is
 2. An Alertmanager with a real receiver — OB-F1's firing/delivery and the
    alert-routing contract.
 3. A cloud target — OB-M3, OB-R2, OB-O1.
-4. The decode-error injection — OB-F2, which needs only a broker and a crafted
-   record and is the cheapest next row to close.
+4. Any remaining LOCAL row. Run 2 closed OB-F2 (decode/DLQ), OB-L4/FND-0027,
+   OB-D1, and OB-F3's defect; the executable-without-a-cluster surface is now
+   down to the alert *route* (`sol alert test` against a local Alertmanager) and
+   re-running `Ack_and_drop` end to end. Everything else needs a substrate this
+   host does not have.
