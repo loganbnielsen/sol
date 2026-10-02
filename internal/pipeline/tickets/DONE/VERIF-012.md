@@ -57,3 +57,32 @@ Fix the baseline's `note` to name the current script.
 - `perf_baseline.json`'s `note` names a path that exists.
 - Demo/example: not applicable — comments, classification and one data field. Language parity: not
   applicable; state that in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise verified** against `origin/main @ 287f13dc`: `classify-changes.sh` listed
+`internal/tooling/perf/perf_baseline.json` among the docs-only paths, and `ci.yml` carried the
+INFRA-006 comment claiming the format check must run after the unit step.
+
+**Decision — the baseline no longer rides the docs-only path.** The allowlist special case is
+removed, so a change to `internal/tooling/perf/perf_baseline.json` falls through to the
+`*)` branch and is classified `source` — the full gate runs. A verification input cannot
+silently skip verification, and with the file source-classified nothing further is needed if
+performance ever becomes a gate. `test_classify_changes.sh` gains a named section asserting the
+new classification (bare, mixed with docs/tickets, and mixed with source).
+
+**Comment corrected.** The INFRA-006 note claimed `dune fmt --preview` must not run before the
+unit step because it populates `_build/default/framework` and would make the CLI tests' `SOL_HOME`
+walk resolve to `_build/default`. The code already prevents that:
+`cli/lib/base/sol_cli_platform_assets.ml:62-68`'s `inside_build_context` excludes any directory
+with a `_build` component before `is_checkout` is consulted by `find_ancestor` (line 145). The
+comment is deleted; the step order is left unchanged because nothing else depends on it. The
+`Format check` step's own comment is accurate.
+
+**Baseline `note`:** already corrected by VERIF-003 (`perf.sh record --update-baseline`), which is
+queued ahead of this change; this ticket does not edit the same line to avoid a conflict.
+
+**Checks:** `test_classify_changes.sh` → 39/39; `internal/ci/run_fast_checks.sh` → 0/66 failed.
+
+**Demo/example:** not applicable — classification, a comment and one data field. **Language
+parity (DEC-022):** not applicable.

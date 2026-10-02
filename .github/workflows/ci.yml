@@ -287,10 +287,6 @@ jobs:
           POSTGRES_URL: postgresql://postgres:dev@localhost:5432/sol_dev
         run: opam exec -- dune test internal/fixtures/local-demo/test/ --force
 
-      # INFRA-006: formatting check runs after unit tests on purpose — running
-      # `dune fmt --preview` first populates _build/default/framework, which
-      # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
-      # instead of the source checkout.
       - name: Install formatter
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: opam install ocamlformat.0.29.0 -y

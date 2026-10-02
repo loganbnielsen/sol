@@ -46,9 +46,13 @@ check docs-only docs/foo.md
 check docs-only docs/architecture/deep/nested.md
 check docs-only internal/pipeline/tickets/DONE/FEAT-036.md
 check docs-only internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-025.md
-check docs-only internal/tooling/perf/perf_baseline.json
 check docs-only README.md docs/foo.md
-check docs-only docs/foo.md internal/pipeline/tickets/X.md internal/tooling/perf/perf_baseline.json
+
+echo
+echo "classify-changes: a verification input does not ride the docs-only path"
+check source internal/tooling/perf/perf_baseline.json
+check source docs/foo.md internal/pipeline/tickets/X.md internal/tooling/perf/perf_baseline.json
+check source internal/tooling/perf/perf_baseline.json cli/bin/main.ml
 
 echo
 echo "classify-changes: generated documents are source-like, the prose beside them is not"
