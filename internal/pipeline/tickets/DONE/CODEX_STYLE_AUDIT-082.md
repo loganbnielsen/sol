@@ -44,3 +44,11 @@ caller reports the reason with `Sol_cli_report.warn` and skips the block, as
 - `sol deploy` still prints the declared-contract block for a workspace with a
   `contract/` projection; the existing inline tests pass.
 - Full `dune build`; `dune fmt` clean.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `e72cc96a`: `print_declared_contract` used `List.assoc_opt` with `"?"` fallbacks and ended in `exception _ -> ()`, so the declared-contract block vanished on any parse error.
+- **Fix.** `decode_declared_contract : string -> (declared_event list, string) result` decodes `events[].module/topic/partitions` through `Sol_cli_json` (`decode`, `require`) and names the missing path on failure; `print_declared_contract` renders the typed events; `plan_report` warns with the decode reason instead of printing nothing. Both `"?"` and the catch-all exception arm are gone.
+- **Tests.** New `cli/test/inline/test_contract.ml` covers a well-formed projection, malformed JSON (the reason names it), an event missing `partitions`, and a projection with no `events`.
+- Full `dune build`; `dune fmt` clean; `cli/test/inline` passes; all 72 fast guards pass.
+- **Demo/example: not applicable** — the contract block is CLI output, not an app-author API; the decoding already had a runnable path through `sol deploy`. **Language parity: no impact** — the projection JSON shape is unchanged.

@@ -60,3 +60,13 @@ own semantics — this is a consolidation, not a behaviour change.
 - `yaml_problem`'s existing tests (malformed-YAML messages) still pass, and a
   new case pins the `" character "` cut so the moved scan keeps its behaviour.
 - Full `dune build`; `dune fmt` clean; `cli/test/inline` passes.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `e72cc96a`: `Sol_cli_alerting.has_prefix`, the `yaml_problem` and `status_reason` recursive scans, the inline prefix test in `state_holds_any`, `role_name`'s `after`, and both `soldev` copies were present.
+- **Fix.** `Sol_cli_string` gained `index_of` (behind `contains`) plus `strip_prefix_opt`/`before_opt`/`after_opt`. `has_prefix` is gone (`String.starts_with`); `yaml_problem`, `status_reason` and `role_name` use the new helpers; `state_holds_any`, `is_digest` and `commit_matches` use `String.starts_with`; `soldev_merge`/`soldev_ticket` lose both private helper pairs and share `Soldev_string.contains_substring`.
+- **Extra consolidation found while implementing.** `cmd_uninstall.addresses_the_zone` and `sol_cli_installation_stage.owns` were the same zone-membership predicate written twice; both now call `Sol_cli_installation.address_in_zone`.
+- **Tests.** `test_string.ml` covers the three cut helpers (absent/present/at-start/whole/empty); `test_installation.ml` covers `address_in_zone`, including the `a.example.com` vs `ab.example.com` case that a plain `starts_with` would get wrong.
+- **Deviation, recorded.** `internal/tooling/soldev/test/test_ticket.ml` keeps a test-local `contains_substring`; it is a fixture helper in the test target, not shipped code, and the checklist keeps duplicates that small. `yaml_problem` is module-private, so its newline-before-marker precedence is covered indirectly by `test_config.ml`'s `invalid YAML: ` assertions rather than a direct case.
+- Full `dune build`; `dune fmt` clean; `dune test cli/test/ internal/tooling/soldev/test/` passes; all 72 fast guards pass.
+- **Demo/example: not applicable** — internal string/domain plumbing. **Language parity: no impact.**
