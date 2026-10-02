@@ -220,3 +220,47 @@ gives every datatype a fresh type — broke `Aws.Error.t`'s identity with
 `Aws_error.t`. Both packages now install their modules and alias them from the
 facade, which removes the copies without either hazard. The reasoning is recorded
 on REFAC-158 and in each package's `CHANGES.md`.
+
+## Implementation-quality pass (2026-10-02)
+
+A second pass over `main` at `2c8d9ea8` looking past the type-checker checklist
+at execution shape: exception/control-flow usage, Result composition,
+duplicated helpers, mutation and branching, parsing boundaries, shell logic
+that belongs in OCaml, oversized functions, parameter smells, naming and error
+semantics, and dead compatibility code.
+
+**Folders walked.** `cli/lib/` (base, kube, workspace, cloud, deploy, local),
+`cli/bin/`, `framework/ocaml/*/lib`, `internal/tooling/soldev/lib`. Seeded with
+`Sys.command`/`Unix.open_process`, `failwith`/`raise`/`assert`, `[@deprecated]`/
+`legacy`/`compat`, `Option.get`/`List.hd`/`List.nth`, identity `Error x -> Error x`,
+catch-all `exception _ ->`, `exit` from `cli/lib`, and a top-level function
+length scan.
+
+**Filed.** CODEX_STYLE_AUDIT-080 (one substring toolkit),
+-081 (local component variant), -082 (typed declared-contract decode),
+-083 (port-forward retry policy out of a generated shell script),
+-084 (provider capability records from named values).
+
+**Retained candidates, with reasons.**
+
+- `Sol_cli_compat` is the language type (`Ocaml | Typescript`), not a
+  compatibility shim; its name is misleading. A rename to `Sol_cli_language`
+  touches ~23 files including `sol_cli_deployment_render.ml`, which BUG-054
+  owns, so it is deferred rather than filed as a rename that would collide.
+- `Sol_cli_compat.supported_by_profile` returns `[ Ocaml ]` for every profile
+  while `all` includes `Typescript`. Whether a profile should ever accept
+  TypeScript is a product decision (DEC-022, FEAT-082), not a mechanical fix,
+  so it is recorded and not filed.
+- `sol_cli_config.ml` (1445 lines) and its `decode_layer` (292 lines) are
+  REFAC-140's split; the format-parsing pieces touched here are only the
+  helpers, not the split.
+- `sol_cli_supervised.run` (131 lines) and `sol_cli_installation_stage.reconcile`
+  (145 lines) are controller-shaped by design — they fork/exec and arbitrate
+  interrupts — and the checklist exempts child-process forwarding. Left.
+- The 14 `| Error e -> Error e` identity arms were read; the ones that are the
+  whole body of a match (`sol_cli_workload_scope.workloads_of_json`) could be a
+  `Result.map`, but each remaining one carries a preceding multi-line match and
+  the forwarding arm is the clearest form. Left, per the checklist's
+  "candidates, not automatic findings".
+- `sol_process`'s `open_process_in`/`Sys.command` shell family is CODE_LAYER-030
+  (filed, awaiting the verification workstream's `sol_process/test` move).
