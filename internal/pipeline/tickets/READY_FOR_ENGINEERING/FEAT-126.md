@@ -34,6 +34,17 @@ Add `@sol-fab/jobs` (Node/TypeScript), mirroring `sol-jobs`'s contract while kee
 
 **Demo/example coverage:** this ticket updates the TypeScript example once the package is published.
 
-## Blocked On
+## Unblocked (2026-10-02)
 
-A published `@sol-fab/jobs`. The package needs a repository home and npm trusted publishing (`npm trust github …`, 2FA-gated) before it can be released through the normal mechanism — operator action, not an engineering blocker. Until then this ticket stays in BACKLOG; FEAT-118 (the outcome/DLQ half) does not depend on it.
+`@sol-fab/jobs` now lives in the existing `loganbnielsen/sol-typescript` repo
+alongside `@sol-fab/svc` and `@sol-fab/worker` (no new repository was needed), and
+its trusted publisher for `release.yml` is configured. `npm trust` cannot be set
+for a package that does not exist yet (`404 Package not found`), so `0.1.0` was
+bootstrapped with one authenticated publish and carries no provenance; every
+release from `0.1.1` on goes through the tag-triggered OIDC workflow with
+provenance, like the other packages.
+
+The package is implemented, tested against a real Postgres in CI (14 cases, 0
+skipped) and published, so the remaining work is the example update. Promotion to
+READY is recording that this ticket is now actionable.
+
