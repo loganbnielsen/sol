@@ -249,17 +249,17 @@ jobs:
       # alias sets the Kafka endpoints, so this step supplies only the
       # containers. That also means a target built under one ambient environment
       # can never be served from another's cache, and no invocation needs
-      # `--force` to be believed. `-j 1` runs the two database suites serially,
-      # because both destructively own the one sol_jobs table: in one parallel
-      # `dune build` one suite's DROP TABLE deletes the other's rows mid-test.
-      # VERIF-007's per-suite schema isolation removes the need for this.
+      # `--force` to be believed. The two database suites share the server but
+      # own separate schemas (VERIF-007: each derives and creates its own, and
+      # drops only its own), so one invocation is safe and they may build in
+      # parallel — there is no serialization rule here to maintain.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         run: |
           bash platform/local/scripts/start-redpanda.sh
           bash platform/local/scripts/ensure-postgres.sh
-          opam exec -- dune build @ci-integration-kafka @ci-integration-pg -j 1
+          opam exec -- dune build @ci-integration-kafka @ci-integration-pg
 
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one

@@ -53,7 +53,7 @@ run_kafka() {
 run_postgres() {
   info "Postgres integration tests (requires Postgres at localhost:5432)"
   eval $(opam env)
-  dune build --root "$REPO_ROOT" @ci-integration-pg -j 1 2>&1
+  dune build --root "$REPO_ROOT" @ci-integration-pg 2>&1
 }
 
 run_e2e() {

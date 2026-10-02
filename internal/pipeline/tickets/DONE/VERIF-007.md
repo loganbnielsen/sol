@@ -55,3 +55,33 @@ reach for serial execution if unique naming is this cheap.
 - Demo/example: not applicable — test fixtures only. Language parity (DEC-022): the TypeScript
   golden path's Postgres usage should follow the same naming convention if it acquires a
   database-backed suite; record the outcome in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ eddfe1f9` (after VERIF-002/004): both suites read
+their address from the alias, both ran under `sol_dev`, and each began by dropping and recreating
+`sol_jobs` — so the integration step had to serialize them (`-j 1`, previously "one alias per
+invocation"), and a local `dune test` could still interleave them.
+
+**Implemented.**
+
+- `framework/ocaml/sol-jobs/test/test_sol_jobs_pg.ml` owns schema `sol_test_sol_jobs_pg` and
+  `framework/ocaml/sol-outbox/test/test_sol_outbox.ml` owns `sol_test_sol_outbox`. Each drops and
+  recreates *its own* schema at the start of every test (`DROP SCHEMA IF EXISTS … CASCADE`,
+  `CREATE SCHEMA`, `SET search_path TO …`) on a `~pool_size:1` pool, so the `search_path` applies to
+  every statement the suite's library issues.
+- The suites' `DROP TABLE IF EXISTS sol_jobs` / `sol_outbox` statements are gone: each suite now
+  drops only the schema it created, and the table it queries is unqualified but lands in that
+  schema. Two suites may share the server; they no longer share a destructive object.
+- `ci.yml`'s integration step drops `-j 1`, and the serialization rationale is replaced by the
+  schema ownership; `run_tests.sh`'s `postgres` suite likewise. No step exists to keep the two from
+  colliding.
+
+**Evidence.** Postgres and Docker are unavailable in this environment, so the DDL was not executed
+here; **CI's integration step is the authority** (`@ci-integration-kafka @ci-integration-pg` in one
+parallel invocation, which is exactly the acceptance's first criterion). Local: `dune build`,
+`dune fmt`, `check_no_comments.sh`, `ci.yml` parses, and `run_fast_checks.sh` 0/88.
+
+**Demo/example:** not applicable — test fixtures only. **Language parity (DEC-022):** the TypeScript
+golden path has no database-backed Dune suite, so there is no schema convention to mirror yet;
+recorded here.

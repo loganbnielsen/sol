@@ -4,9 +4,17 @@ let postgres_url =
   | _ -> None
 ;;
 
+let test_schema = "sol_test_sol_jobs_pg"
+
+let schema_setup =
+  [ "DROP SCHEMA IF EXISTS " ^ test_schema ^ " CASCADE"
+  ; "CREATE SCHEMA " ^ test_schema
+  ; "SET search_path TO " ^ test_schema
+  ]
+;;
+
 let ddl =
-  [ "DROP TABLE IF EXISTS sol_jobs"
-  ; {|CREATE TABLE sol_jobs (
+  [ {|CREATE TABLE sol_jobs (
        id           SERIAL      PRIMARY KEY,
        workspace    TEXT        NOT NULL,
        kind         TEXT        NOT NULL,
@@ -107,9 +115,13 @@ let with_pool f =
     @@ fun env ->
     Eio.Switch.run
     @@ fun sw ->
-    (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
+    (match
+       Pg_db.create_pool ~url ~pool_size:1 ~sw ~stdenv:(env :> Caqti_eio.stdenv) ()
+     with
      | Error e -> Windtrap.failf "pool: %s" (Pg_error.to_string e)
-     | Ok pool -> f env pool)
+     | Ok pool ->
+       List.iter (exec_sql pool) schema_setup;
+       f env pool)
 ;;
 
 let test_make_instances_do_not_cross_claim () =
