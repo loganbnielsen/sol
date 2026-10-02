@@ -17,3 +17,14 @@ variable "reconciler_trust_principal" {
   description = "Principal permitted to impersonate the reconciler service account: the gated CI authorization job's own identity, never the deploy identity."
   type        = string
 }
+
+variable "grants" {
+  description = "The safe grant set Sol computed: only grants DEC-062 rule 4 permits the reconciler to establish. This is the generated input the reconciler feeds Terraform."
+  type = list(object({
+    unit       = string
+    capability = string
+    resource   = string
+    namespace  = string
+  }))
+  default = []
+}

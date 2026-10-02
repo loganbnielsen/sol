@@ -57,3 +57,21 @@ resource "google_service_account_iam_member" "reconciler_impersonation" {
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = var.reconciler_trust_principal
 }
+
+locals {
+  realized_grants = [
+    for grant in var.grants : grant
+    if grant.capability == "secret"
+  ]
+}
+
+resource "google_secret_manager_secret_iam_member" "workload" {
+  for_each = {
+    for grant in local.realized_grants : "${grant.unit}/${grant.resource}" => grant
+  }
+
+  project   = var.project_id
+  secret_id = "sol-${var.environment}-${each.value.resource}"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.project_id}.svc.id.goog[${each.value.namespace}/${each.value.unit}]"
+}

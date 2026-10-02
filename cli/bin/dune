@@ -44,5 +44,6 @@
   cmd_alert
   cmd_cloud
   cmd_cloud_tf
+  cmd_grants
   cmd_uninstall
   cmd_assets))

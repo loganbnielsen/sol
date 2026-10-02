@@ -12,3 +12,8 @@ output "secret_prefix" {
   description = "Name prefix every secret this environment owns must carry."
   value       = local.secret_prefix
 }
+
+output "established_grants" {
+  description = "The safe grant set this root established; Sol reads it back to compute the next plan (DEC-062 rule 4)."
+  value       = local.realized_grants
+}

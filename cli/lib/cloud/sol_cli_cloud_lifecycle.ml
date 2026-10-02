@@ -3,6 +3,7 @@ let backend_config (target : Sol_cli_config.target) ~root =
     match root with
     | `Cloud -> "cloud"
     | `Platform -> "platform"
+    | `Authorization -> "authorization"
   in
   let object_key = Printf.sprintf "sol/%s/%s.tfstate" target.name layer in
   match target.state_bucket with
@@ -14,6 +15,8 @@ let backend_config (target : Sol_cli_config.target) ~root =
   | None ->
     Error "target must declare state_bucket before `sol cloud` can use durable state"
 ;;
+
+let authorization_backend target = backend_config target ~root:`Authorization
 
 type cloud_target =
   { target : Sol_cli_config.target

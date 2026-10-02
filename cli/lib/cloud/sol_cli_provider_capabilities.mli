@@ -9,6 +9,10 @@ type identity_contract =
   ; declared_as : string
   }
 
+type authorization_reconciler =
+  | Reconciler_role of string
+  | Reconciler_service_account of string
+
 type t =
   { backend_config :
       Sol_cli_config.target
@@ -72,6 +76,17 @@ type t =
   ; sol_keys : string list
   ; state_locking : string option
   ; scoped_identities : string list
+  ; authorization_reconciler_field : string
+  ; authorization_trust_field : string
+  ; authorization_root_vars :
+      Sol_cli_config.target -> ((string * string) list, string) result
+  ; authorization_fence_addresses : string list
+  ; authorization_reconciler :
+      Sol_cli_config.target -> (authorization_reconciler, string) result
+  ; authorization_assumption :
+      authorization_reconciler -> ((string * string) list, string) result
+  ; authorization_principal_matches :
+      authorization_reconciler -> principal:string -> (unit, string) result
   }
 
 val required : string -> string option -> (string, string) result

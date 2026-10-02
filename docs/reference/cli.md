@@ -93,6 +93,8 @@ The target is the positional; `--scope` narrows to a domain or unit.
 | `sol cloud reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
 | `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--scope=DOMAIN[/UNIT]`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Deploy pre-built images to a cluster (CI/CD integration). |
 | `sol deployments` | — | `--target=ENV/PROVIDER/REGION` | documented | List the deployment events the target's cluster |
+| `sol grants apply` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile the target-wide workload authorization: |
+| `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |
 | `sol logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N`, `--target=ENV/PROVIDER/REGION` | documented | Stream logs from a deployed service. Wraps 'kubectl logs' |
 | `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--registry=URL`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |
 | `sol plan` | TARGET | — | documented | Print the merged Sol app/resource/service plan for a |

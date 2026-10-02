@@ -359,12 +359,21 @@ let pod_template
         @ extra_labels
         |> List.map (fun (k, v) -> k, Y.quoted v))
   in
+  let deployed_grants =
+    match secret_keys with
+    | [] -> []
+    | keys ->
+      [ ( Sol_cli_grant.annotation_key
+        , Sol_cli_grant.encode_tags (List.map Sol_cli_grant.tag_of_secret_key keys) )
+      ]
+  in
   let annotations =
     quoted_map
-      [ "sol.dev/config-hash", config_hash
-      ; "prometheus.io/scrape", "true"
-      ; "prometheus.io/port", string_of_int port
-      ]
+      ([ "sol.dev/config-hash", config_hash
+       ; "prometheus.io/scrape", "true"
+       ; "prometheus.io/port", string_of_int port
+       ]
+       @ deployed_grants)
   in
   let spread =
     if Sol_cli_availability.is_node_failure_tolerant availability
@@ -743,6 +752,20 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
        @ non_empty_list "env" (secret_key_refs ~name secret_keys)
        @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ])
   in
+  let pod_metadata =
+    match secret_keys with
+    | [] -> Y.map [ "labels", Y.map labels ]
+    | keys ->
+      Y.map
+        [ "labels", Y.map labels
+        ; ( "annotations"
+          , quoted_map
+              [ ( Sol_cli_grant.annotation_key
+                , Sol_cli_grant.encode_tags
+                    (List.map Sol_cli_grant.tag_of_secret_key keys) )
+              ] )
+        ]
+  in
   resource
     ~api_version:"batch/v1"
     ~kind:"CronJob"
@@ -758,7 +781,7 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
                       [ "backoffLimit", Y.int backoff_limit
                       ; ( "template"
                         , Y.map
-                            [ "metadata", Y.map [ "labels", Y.map labels ]
+                            [ "metadata", pod_metadata
                             ; ( "spec"
                               , Y.map
                                   [ "serviceAccountName", Y.string name

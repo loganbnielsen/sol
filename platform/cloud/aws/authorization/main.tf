@@ -125,6 +125,18 @@ data "aws_iam_policy_document" "reconciler" {
   }
 
   statement {
+    sid    = "AssociateEnvironmentPodsWithTheirWorkloadRoles"
+    effect = "Allow"
+    actions = [
+      "eks:CreatePodIdentityAssociation",
+      "eks:DeletePodIdentityAssociation",
+      "eks:DescribePodIdentityAssociation",
+      "eks:ListPodIdentityAssociations",
+    ]
+    resources = ["arn:aws:eks:${var.region}:${local.account_id}:cluster/${var.cluster_name == "" ? "*" : var.cluster_name}"]
+  }
+
+  statement {
     sid       = "ReadTheBoundary"
     effect    = "Allow"
     actions   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
@@ -174,4 +186,80 @@ resource "aws_iam_role_policy" "reconciler" {
   name   = "sol-${var.environment}-authorization"
   role   = aws_iam_role.reconciler.id
   policy = data.aws_iam_policy_document.reconciler.json
+}
+
+locals {
+  capability_actions = {
+    secret = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+    ]
+  }
+
+  realized_grants = [
+    for grant in var.grants : grant
+    if contains(keys(local.capability_actions), grant.capability)
+  ]
+
+  grant_units = toset([for grant in local.realized_grants : grant.unit])
+
+  grants_by_unit = {
+    for unit in local.grant_units : unit => [
+      for grant in local.realized_grants : grant if grant.unit == unit
+    ]
+  }
+
+  grant_statements = {
+    for unit in local.grant_units : unit => [
+      for i, grant in local.grants_by_unit[unit] : {
+        Sid    = "Sol${i}"
+        Effect = "Allow"
+        Action = local.capability_actions[grant.capability]
+        Resource = (
+          grant.capability == "secret"
+          ? ["arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:sol/${var.environment}/${grant.resource}*"]
+          : ["*"]
+        )
+      }
+    ]
+  }
+}
+
+data "aws_iam_policy_document" "workload_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "workload" {
+  for_each             = local.grant_units
+  name                 = "sol-${var.environment}-${each.value}"
+  path                 = "/${local.role_path}"
+  permissions_boundary = aws_iam_policy.workload_boundary.arn
+  assume_role_policy   = data.aws_iam_policy_document.workload_trust.json
+  description          = "Sol workload identity for ${each.value} in ${var.environment} (DEC-062)."
+}
+
+resource "aws_iam_role_policy" "workload" {
+  for_each = local.grant_units
+  name     = "sol-${var.environment}-${each.value}"
+  role     = aws_iam_role.workload[each.value].id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.grant_statements[each.value]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "workload" {
+  for_each        = var.cluster_name == "" ? toset([]) : local.grant_units
+  cluster_name    = var.cluster_name
+  namespace       = local.grants_by_unit[each.value][0].namespace
+  service_account = each.value
+  role_arn        = aws_iam_role.workload[each.value].arn
 }

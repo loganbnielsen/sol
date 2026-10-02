@@ -28,6 +28,7 @@ let services t =
   |> List.filter_map (fun w -> if w.has_dockerfile then Some w.service else None)
 ;;
 
+let workloads t = t.workloads
 let migration_files t = List.map (fun m -> m.file) t.migrations
 
 let count_unapplied_migrations t =
