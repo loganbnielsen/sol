@@ -11,4 +11,6 @@
 (rule
  (alias runtest-integration)
  (action
-  (run ./test_sol_jobs_pg.exe)))
+  (run
+   ./test_sol_jobs_pg.exe
+   "postgresql://postgres:dev@localhost:5432/sol_dev")))

@@ -6,4 +6,6 @@
 (rule
  (alias runtest-integration)
  (action
-  (run ./test_sol_outbox.exe)))
+  (run
+   ./test_sol_outbox.exe
+   "postgresql://postgres:dev@localhost:5432/sol_dev")))

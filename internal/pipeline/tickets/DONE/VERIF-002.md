@@ -63,3 +63,58 @@ new place.
   surface changes. Language parity (DEC-022): no application-facing contract changes, but the
   TypeScript golden-path suite needs the same treatment if it acquires a database-backed target;
   note the outcome in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ 19ab44ab` (after REFAC-161): all three
+infrastructure targets took their address from the caller. `test_sol_jobs_pg.ml` and
+`test_sol_outbox.ml` read `POSTGRES_URL`; `test_kafka_service_integration.ml` read the `KAFKA_*`
+variables; `ci.yml` supplied them in the step `env:`, and the golden path ran under
+`dune test internal/fixtures/local-demo/test/ --force`.
+
+**Implemented.**
+
+- `framework/ocaml/sol-jobs/test/dune` and `sol-outbox/test/dune` pass the Postgres URL as an
+  argument in their `runtest-integration` rule; the suites read `Sys.argv` and fail naming the dune
+  file when no address is given (the BUG-115 fail-closed behaviour, kept).
+- `framework/ocaml/kafka-eio-service/test/dune` sets `KAFKA_SECURITY_PROTOCOL`, `KAFKA_BROKERS`,
+  `SCHEMA_REGISTRY_URL` and `REDPANDA_ADMIN_URL` in its rule.
+- `internal/fixtures/local-demo/test/dune` becomes an `(executable …)` plus a `runtest` rule that
+  pins the six addresses the golden path reads; `ci.yml` and `run_tests.sh` no longer supply them
+  and no longer use `--force` for these targets.
+- `ci.yml`'s integration step keeps only `start-redpanda.sh`/`ensure-postgres.sh`; the golden-path
+  step invokes `@internal/fixtures/local-demo/test/runtest` without `--force`. The Loki push in the
+  suite is now non-fatal, so an unreachable Loki skips rather than aborting the golden path; the
+  local runner still starts Loki, so its assertions run there.
+
+**Evidence** — the audit's scratch reproduction, inverted, in `/tmp/verif002`:
+
+```
+$ ADDRESS=one dune build @ambient            # address comes from the caller
+ran against one
+$ ADDRESS=two dune build @ambient            # cache hit: exit 0, executed nothing
+$ ADDRESS=two dune build @ambient --force
+ran against two
+$ ADDRESS=one dune build @pinned             # address is part of the definition
+ran against postgresql://postgres:dev@localhost:5432/sol_dev
+$ ADDRESS=two dune build @pinned             # same action; ambient value ignored
+```
+
+With the address in the definition the two invocations are one action, so the second is a
+legitimate cache hit of a run that really happened; the ambient target's second run is a false
+success. Fail-closed: `_build/default/framework/ocaml/sol-jobs/test/test_sol_jobs_pg.exe` with no
+argument fails all 20 cases with *"no Postgres address: the runtest-integration alias in
+framework/ocaml/sol-jobs/test/dune pins one…"*, and sol-outbox's 7 cases likewise.
+
+**Checks:** `dune build`; `check_framework_ci_coverage.py` (7 unit packages and 3 integration
+aliases, all covered); `check_no_comments.sh`; `ci.yml` parses; `run_fast_checks.sh` 0/67. Docker
+is unavailable in this environment, so the real Postgres/broker aliases were not executed here —
+CI's integration step is the authority for that.
+
+**Out of scope here:** `run_tests.sh`'s unit step keeps `--force` (it is not an integration
+target). VERIF-007 owns per-suite schema isolation; VERIF-006 owns the Loki self-skip the golden
+path now pins a URL for.
+
+**Demo/example:** not applicable — test topology and dependency declaration only. **Language
+parity (DEC-022):** no application-facing contract change; the TypeScript golden path has no
+database-backed Dune target, so there is nothing to mirror.

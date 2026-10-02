@@ -1,7 +1,6 @@
-(tests
- (names test_e2e)
- (deps
-  (source_tree ../migrations))
+(executable
+ (name test_e2e)
+ (modules test_e2e)
  (libraries
   demo_events
   eio
@@ -23,3 +22,28 @@
   unix
   yojson
   windtrap))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree ../migrations))
+ (action
+  (setenv
+   KAFKA_SECURITY_PROTOCOL
+   "plaintext"
+   (setenv
+    KAFKA_BROKERS
+    "localhost:9092"
+    (setenv
+     SCHEMA_REGISTRY_URL
+     "http://localhost:8081"
+     (setenv
+      REDPANDA_ADMIN_URL
+      "http://localhost:9644"
+      (setenv
+       LOKI_URL
+       "http://localhost:3100"
+       (setenv
+        POSTGRES_URL
+        "postgresql://postgres:dev@localhost:5432/sol_dev"
+        (run ./test_e2e.exe)))))))))
