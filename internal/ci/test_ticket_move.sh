@@ -17,6 +17,7 @@ mkdir -p "$T/READY_FOR_ENGINEERING" "$T/DONE" "$T/BACKLOG" app/payments/charge_s
 
 printf -- '---\nid: INFRA-900\n---\nready\n' > "$T/READY_FOR_ENGINEERING/INFRA-900.md"
 printf -- '---\nid: INFRA-901\n---\nready\n' > "$T/READY_FOR_ENGINEERING/INFRA-901.md"
+printf -- '---\nid: CODE_LAYER-900\n---\nready\n' > "$T/READY_FOR_ENGINEERING/CODE_LAYER-900.md"
 printf -- '---\nid: INFRA-902\n---\nbacklog\n' > "$T/BACKLOG/INFRA-902.md"
 printf -- '---\nid: INFRA-903\n---\ndone\n' > "$T/DONE/INFRA-903.md"
 printf 'FROM scratch\n' > app/payments/charge_svc/Dockerfile
@@ -48,6 +49,25 @@ if ! run_check --branch fix/infra-900-something; then
   exit 1
 fi
 echo "  [OK]   landing the ticket satisfies the guard"
+
+git checkout -q -b fix/code_layer-900-undo main
+echo "code" > app/payments/charge_svc/underscore.ml
+git add -A >/dev/null
+git commit -qm "fix: do the underscore thing (CODE_LAYER-900)"
+if run_check --branch fix/code_layer-900-undo; then
+  echo "  [FAIL] an underscore ticket id (CODE_LAYER-900) left behind was not refused" >&2
+  exit 1
+fi
+echo "  [OK]   an underscore ticket id is recognised and refused when left behind"
+
+git mv "$T/READY_FOR_ENGINEERING/CODE_LAYER-900.md" "$T/DONE/CODE_LAYER-900.md"
+git commit -qm "ticket: land CODE_LAYER-900"
+if ! run_check --branch fix/code_layer-900-undo; then
+  echo "  [FAIL] a branch that lands its underscore ticket was refused" >&2
+  exit 1
+fi
+echo "  [OK]   landing the underscore ticket satisfies the guard"
+git checkout -q main
 
 git checkout -q -b chore/format-cleanup main
 echo "x" > notes.txt
