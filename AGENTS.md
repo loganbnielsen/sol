@@ -129,7 +129,7 @@ The discipline, since relying on remembering the current directory has now faile
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
 - Ticket filings and promotions go through PRs too; there is no direct-to-main bookkeeping exception.
 
-**Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `run_tests.sh` writes it only with `--update-baseline`; pre-commit never stages it into code commits; merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
+**Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `perf.sh record --update-baseline` is the only writer, recording the host class beside each entry so comparisons happen only within one host class; `run_tests.sh` is correctness-only and never touches it, and `perf.sh record` without the flag reports a comparison without writing. Pre-commit never stages it into code commits, and merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
 
 ## Core design principles every engineer must know
 
@@ -471,9 +471,10 @@ synchronously.
   correct: the merge already passed GitHub's required checks, and a local suite
   reflects this machine, not the branch of record. Nothing to undo, so no
   `git reset` dance — if you want a real revert, do it deliberately on the remote
-  (`git revert <sha> && git push origin main`). `rc=2` is a perf ratio and is
-  informational only. `merge-finish` does not write or commit the perf baseline;
-  update it explicitly on a PR branch with `run_tests.sh --update-baseline` when needed.
+  (`git revert <sha> && git push origin main`). `run_tests.sh` exits 0 or 1 for
+  correctness only — it has no perf exit code. `merge-finish` does not write or commit
+  the perf baseline; update it explicitly on a PR branch with
+  `perf.sh record --update-baseline` when needed.
 - **Run the format check before pushing.** CI's *Format check* step is
   `internal/ci/check_ocamlformat.sh --all` (ocamlformat 0.29.0, janestreet
   profile); a local `dune build` does **not** cover it, so unformatted code is a

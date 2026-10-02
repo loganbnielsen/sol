@@ -63,3 +63,53 @@ thin wrapper over the class targets plus provisioning.
   not exist.
 - Demo/example: not applicable — repository tooling only. Language parity: no application-facing
   contract changes; state that in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ 310917dd`: `run_tests.sh` held `FAIL_RATIOS` and
+returned `2` on a green-but-slower tree; the audit recorded `run_tests.sh unit` printing
+`unit pass 7.859s 2.310s 1.5×` and exiting 2 with every test passing. `perf.sh` held a second,
+different ratio table and only read the baseline.
+
+**Implemented.**
+
+- `run_tests.sh` is correctness-only: no `FAIL_RATIOS`, no `baseline_get`/`baseline_append`, no
+  regression exit. It exits 0 when every suite passed and 1 otherwise. `TIMEOUTS` became
+  `HANG_BOUNDS` (unit 300s, kafka 900s, e2e 1200s), printed at startup and in the summary; a suite
+  killed at its bound is reported as `hang`, naming the suite and the bound.
+- `perf.sh` owns every ratio, threshold and comparison. It adds `record`: run a suite (through
+  `run_tests.sh`, so membership stays single-sourced) and report its duration against the same-host
+  baseline. `record --update-baseline` is the only writer — it appends an entry carrying `host`
+  (`uname -srm`) and marks it the baseline; without the flag nothing is written (verified with
+  `cmp`). `status` compares only when baseline and latest carry the same host; otherwise drift is
+  `n/a` and the two hosts are named under the table. `perf.sh` always exits 0 — a report, not a gate.
+- `soldev merge-finish` no longer has a perf verdict: `Report_perf_regression` is removed and
+  `post_merge_action_of_rc` is `0 → success`, anything else → local failure.
+- `perf_baseline.json`'s `note` names `perf.sh record --update-baseline` (the old
+  `./cli/platform/local/scripts/run_tests.sh` path did not exist). AGENTS.md and the `/e2e` skill
+  were corrected; `run_tests.sh` no longer accepts `--update-baseline`.
+
+**Evidence** (worktree, pinned kubectl v1.29.0 on PATH):
+
+```
+run_tests.sh unit                                  -> unit passed (7.736s), exit 0
+```
+
+Before this change the same ~7.7s run against the 2.310s baseline (1.5× ⇒ 3.465s) exited 2.
+
+```
+perf.sh record unit                     -> 9.322s … no same-host baseline; writes nothing (cmp: identical)
+perf.sh record unit --update-baseline   -> 9.335s recorded as the new baseline on Linux-6.6.87.2-…-x86_64
+perf.sh record unit                     -> 6.873s vs baseline 6.883s on Linux-… (-0%)
+planted 6× entry in status              -> +500% shown in red; perf.sh status exits 0
+```
+
+**Checks:** `bash internal/ci/run_fast_checks.sh` → `0/66 failed`; `check_ocamlformat.sh --all`
+clean; `dune test internal/tooling/soldev/test/` → 53 + 27 pass (the `post_merge_action_of_rc`
+case now expects exit 2 to be a plain failure).
+
+**Demo/example:** not applicable — repository tooling only. **Language parity (DEC-022):** no
+application-facing contract change; the runner is language-neutral.
+
+**Left for VERIF-004:** suite membership is still written in `run_tests.sh` and `perf.sh`
+(`RECORDABLE_SUITES`); unifying it onto the class aliases is VERIF-004's scope.

@@ -1,5 +1,5 @@
 {
-  "note": "Performance history per suite. Each run appends an entry. Entries marked baseline:true are the reference points for regression checks. Set a new baseline with: ./cli/platform/local/scripts/run_tests.sh --update-baseline",
+  "note": "Performance history per suite. Each entry records the host class it ran on; perf.sh compares only within one host class. Record with: internal/tooling/scripts/perf.sh record [--update-baseline]",
   "suites": {
     "unit": {
       "history": [
