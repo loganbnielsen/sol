@@ -115,12 +115,7 @@ let operations_dir ~key =
 
 let latest_file ~key = Filename.concat (operations_dir ~key) "latest"
 let file dir name = Filename.concat dir name
-
-let read_file path =
-  match In_channel.with_open_bin path In_channel.input_all with
-  | s -> Some s
-  | exception Sys_error _ -> None
-;;
+let read_file = Sol_cli_fs.read_file_opt
 
 let write_atomic path contents =
   let tmp = path ^ ".tmp" in

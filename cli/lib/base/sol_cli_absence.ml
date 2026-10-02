@@ -41,6 +41,39 @@ let attribution_rule = function
   | Within_target rule -> rule
 ;;
 
+let lines output =
+  output
+  |> String.split_on_char '\n'
+  |> List.map String.trim
+  |> List.filter (fun line -> line <> "")
+;;
+
+let not_found ~needles reason =
+  List.exists
+    (fun needle -> Sol_cli_string.contains ~needle (String.lowercase_ascii reason))
+    needles
+;;
+
+let unresolved ~reason =
+  [ Unobservable
+      { resource_class = "the provider inventory"
+      ; reason
+      ; checked_with = "(not run: the target could not be identified)"
+      }
+  ]
+;;
+
+let durable_state_bucket ~identity =
+  External
+    { resource_class = "Terraform state bucket"
+    ; identity
+    ; reason =
+        "the state bucket is explicitly durable and outside the target's disposable \
+         surface: Sol documents that it survives destroy, so its presence is the \
+         contract, not residue"
+    }
+;;
+
 let verdict observations =
   let present = ref [] in
   let unknown = ref [] in

@@ -64,6 +64,31 @@ let test_write_atomic () =
       (Array.to_list (Sys.readdir root)))
 ;;
 
+let test_read_file () =
+  in_temp (fun root ->
+    let path = Filename.concat root "f" in
+    write path "line one\nline two\n";
+    Windtrap.equal
+      (Windtrap.result Windtrap.string Windtrap.string)
+      ~msg:"reads the exact bytes, with no newline translation"
+      (Ok "line one\nline two\n")
+      (Sol_cli_fs.read_file path);
+    check_bool
+      "read_file_opt reads the same bytes"
+      true
+      (Sol_cli_fs.read_file_opt path = Some "line one\nline two\n");
+    check_bool
+      "a missing file is an Error that names the path"
+      true
+      (match Sol_cli_fs.read_file (Filename.concat root "absent") with
+       | Error message -> Sol_cli_string.contains ~needle:"absent" message
+       | Ok _ -> false);
+    check_bool
+      "read_file_opt is None for a missing file"
+      true
+      (Option.is_none (Sol_cli_fs.read_file_opt (Filename.concat root "absent"))))
+;;
+
 let test_with_temp_file () =
   let seen = ref "" in
   let result =
@@ -195,6 +220,7 @@ let%test "REFAC-134: remove_if_present" = test_remove_if_present ()
 let%test "REFAC-134: an unremovable file is an error" = test_unremovable_is_an_error ()
 let%test "REFAC-134: remove_tree" = test_remove_tree ()
 let%test "REFAC-134: write_atomic" = test_write_atomic ()
+let%test "CODE_LAYER-026: read_file and read_file_opt" = test_read_file ()
 let%test "REFAC-134: with_temp_file" = test_with_temp_file ()
 let%test "REFAC-134: copy_tree" = test_copy_tree ()
 

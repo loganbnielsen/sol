@@ -70,6 +70,18 @@ let rec mkdir_p ?(perm = 0o755) dir =
            dir))
 ;;
 
+let read_file path =
+  match In_channel.with_open_bin path In_channel.input_all with
+  | content -> Ok content
+  | exception Sys_error message -> Error message
+;;
+
+let read_file_opt path =
+  match read_file path with
+  | Ok content -> Some content
+  | Error _ -> None
+;;
+
 let write_file ?(perm = 0o644) path content =
   match
     Out_channel.with_open_gen

@@ -29,17 +29,9 @@ let check
   }
 ;;
 
-let lines output =
-  output
-  |> String.split_on_char '\n'
-  |> List.map String.trim
-  |> List.filter (fun line -> line <> "")
-;;
-
-let not_found reason =
-  [ "notfound"; "not found"; "does not exist"; "no such" ]
-  |> List.exists (fun needle ->
-    Sol_cli_string.contains ~needle (String.lowercase_ascii reason))
+let not_found =
+  Sol_cli_absence.not_found
+    ~needles:[ "notfound"; "not found"; "does not exist"; "no such" ]
 ;;
 
 let run_argv argv =
@@ -344,14 +336,7 @@ let checks ~region ~cluster_name =
 ;;
 
 let durable_observations ~(target : Sol_cli_config.target) =
-  [ External
-      { resource_class = "Terraform state bucket"
-      ; identity = "(the durable backend for this target)"
-      ; reason =
-          "the state bucket is explicitly durable and outside the target's disposable \
-           surface: Sol documents that it survives destroy, so its presence is the \
-           contract, not residue"
-      }
+  [ Sol_cli_absence.durable_state_bucket ~identity:"(the durable backend for this target)"
   ; External
       { resource_class = "Route 53 hosted zone"
       ; identity = Option.value target.base_domain ~default:"(the target's base domain)"
@@ -420,11 +405,4 @@ let observations (target : Sol_cli_config.target) ~cluster_name =
   @ durable_observations ~target
 ;;
 
-let unresolved ~reason =
-  [ Unobservable
-      { resource_class = "the provider inventory"
-      ; reason
-      ; checked_with = "(not run: the target could not be identified)"
-      }
-  ]
-;;
+let unresolved = Sol_cli_absence.unresolved

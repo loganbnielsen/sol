@@ -101,15 +101,7 @@ let ensure ~workloads ~ctx ~namespaces : (unit, string) result =
         let* () = apply_doc ~ctx doc in
         apply_all rest
     in
-    let* () =
-      create_all (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces)
-    in
-    let* () =
-      create_all
-        (List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
-         @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
-        )
-    in
+    let* () = create_all (docs_for_namespaces namespaces) in
     let* () =
       match platform_network_fact ~ctx with
       | None -> Ok ()
@@ -176,9 +168,7 @@ let established ~ctx ~namespaces : (unit, string) result =
   check namespaces
 ;;
 
-let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
-  : Sol_cli_yaml.document list
-  =
+let namespaces_of_services ~workspace (services : Sol_cli_manifest.service list) =
   services
   |> List.filter_map (fun s ->
     match
@@ -189,22 +179,17 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
     | Ok ns -> Some (Sol_cli_deployment_plan.namespace_to_string ns)
     | Error _ -> None)
   |> List.sort_uniq String.compare
+;;
+
+let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
+  : Sol_cli_yaml.document list
+  =
+  namespaces_of_services ~workspace services
   |> List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns)
 ;;
 
 let reconcile_operator_bindings ~ctx ~workspace ~services : (unit, string) result =
-  let namespaces =
-    services
-    |> List.filter_map (fun s ->
-      match
-        Sol_cli_deployment_plan.namespace_result
-          ~workspace
-          ~domain:s.Sol_cli_manifest.domain
-      with
-      | Ok ns -> Some (Sol_cli_deployment_plan.namespace_to_string ns)
-      | Error _ -> None)
-    |> List.sort_uniq String.compare
-  in
+  let namespaces = namespaces_of_services ~workspace services in
   let failures =
     namespaces
     |> List.filter_map (fun ns ->

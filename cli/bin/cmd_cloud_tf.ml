@@ -587,32 +587,15 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
     ~verdicts
   |> List.iter print_endline;
   let* () =
-    match configuration.Sol_cli_installation.zone, await_delegation with
-    | Sol_cli_installation.Service_zone { domain; _ }, seconds when seconds > 0 ->
-      let attempts = max 1 (seconds / 5) in
-      Printf.printf
-        "\n\
-         Waiting up to %d seconds for the delegation of %s to appear in public DNS (%d \
-         attempt(s)):\n\
-         %!"
-        seconds
-        domain
-        attempts;
-      (match
-         Sol_cli_installation_stage.await_delegation
-           ~run
-           ~report:(fun line -> Printf.printf "  %s\n%!" line)
-           ~attempts
-           ~interval:5.
-           ~domain
-           ()
-       with
-       | Sol_cli_installation.Established ->
-         Printf.printf "\n  public delegation           Established\n%!";
-         Ok ()
-       | Sol_cli_installation.Unmet reason | Sol_cli_installation.Unknown reason ->
-         Error (Sol_cli_exit.error reason))
-    | Sol_cli_installation.No_zone, _ | Sol_cli_installation.Service_zone _, _ -> Ok ()
+    Sol_cli_installation_stage.await_public_delegation
+      ~configuration
+      ~run
+      ~seconds:await_delegation
+      ~report:(fun line -> Printf.printf "%s\n%!" line)
+      ~on_established:(fun () ->
+        Printf.printf "\n  public delegation           Established\n%!";
+        Ok ())
+    |> Result.map_error Sol_cli_exit.error
   in
   let* () = Sol_cli_installation.all_established verdicts |> Sol_cli_exit.of_msg in
   Printf.printf

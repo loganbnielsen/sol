@@ -1839,3 +1839,80 @@ let%test
   =
   test_the_durable_root_policy_refuses_recreation ()
 ;;
+
+let test_await_public_delegation_short_circuits_without_a_wait () =
+  let calls = ref 0 in
+  let established = ref 0 in
+  let result =
+    Sol_cli_installation_stage.await_public_delegation
+      ~configuration:aws_config
+      ~run:(fun _ ->
+        incr calls;
+        Sol_cli_installation.Observed "ns-1.example")
+      ~seconds:0
+      ~report:(fun _ -> ())
+      ~on_established:(fun () ->
+        incr established;
+        Ok ())
+  in
+  check_bool "a zero-second wait is Ok" true (result = Ok ());
+  check_bool "the resolver was not queried" true (!calls = 0);
+  check_bool "nothing was established" true (!established = 0)
+;;
+
+let test_await_public_delegation_establishes_and_reports () =
+  let reports = ref [] in
+  let established = ref 0 in
+  let result =
+    Sol_cli_installation_stage.await_public_delegation
+      ~configuration:aws_config
+      ~run:(fun _ -> Sol_cli_installation.Observed "ns-1.example")
+      ~seconds:5
+      ~report:(fun line -> reports := line :: !reports)
+      ~on_established:(fun () ->
+        incr established;
+        Ok ())
+  in
+  check_bool "an answering resolver is Ok" true (result = Ok ());
+  check_bool "the establishment hook ran once" true (!established = 1);
+  check_bool
+    "the banner is reported before the wait"
+    true
+    (List.exists
+       (fun line -> Sol_cli_string.contains ~needle:"Waiting up to 5 seconds" line)
+       !reports)
+;;
+
+let test_await_public_delegation_fails_closed () =
+  let established = ref 0 in
+  let result =
+    Sol_cli_installation_stage.await_public_delegation
+      ~configuration:aws_config
+      ~run:(fun _ -> Sol_cli_installation.Unobservable "dig: spawn failed")
+      ~seconds:5
+      ~report:(fun _ -> ())
+      ~on_established:(fun () ->
+        incr established;
+        Ok ())
+  in
+  (match result with
+   | Error reason ->
+     check_bool
+       "the resolver's own reason travels"
+       true
+       (Sol_cli_string.contains ~needle:"spawn failed" reason)
+   | Ok () -> Windtrap.fail "an unqueryable resolver must not be Ok");
+  check_bool "no establishment on an unknown resolver" true (!established = 0)
+;;
+
+let%test "public delegation: a zero-second wait is a no-op" =
+  test_await_public_delegation_short_circuits_without_a_wait ()
+;;
+
+let%test "public delegation: an answering resolver establishes and reports" =
+  test_await_public_delegation_establishes_and_reports ()
+;;
+
+let%test "public delegation: an unqueryable resolver fails closed" =
+  test_await_public_delegation_fails_closed ()
+;;

@@ -63,3 +63,11 @@ whitespace — in the environment-refusal guidance. Fix it in this pass.
   this is an internal-only refactor.
 - Record the per-language capability verdict for framework/application
   contracts, or explain why language parity is unaffected.
+
+## Completion (2026-10-02)
+
+- **Premise re-verified** at `origin/main` `8cb09659`: the wait was duplicated in `cmd_deploy.ml` and `cmd_cloud_tf.ml` and the two read the domain by different routes; the `sol depl       oy` typo was present at `cmd_deploy.ml:355`.
+- **Fix.** Added `Sol_cli_installation_stage.await_public_delegation ~configuration ~run ~seconds ~report ~on_established`: it reads the domain once through `Sol_cli_installation.zone_domain`, computes `attempts = max 1 (seconds / 5)`, emits the banner and indented attempt lines through `report`, runs the existing `await_delegation` with `~interval:5.`, maps `Established` to `on_established` and `Unmet`/`Unknown` to `Error`, and short-circuits when there is no zone or the wait is disabled. Both callers use it; bootstrap's extra "Established" line is its `on_established` callback. Fixed the typo.
+- **Tests.** Three new `cli/test/inline/test_installation.ml` cases: a zero-second wait is `Ok ()` without querying the resolver or establishing; an answering resolver reports the banner and runs the establishment hook once; an unqueryable resolver returns its own reason and never establishes. The existing `await_delegation` cases still pin the inner loop. Full inline suite passes.
+- Validation: full `dune build`; `dune fmt` clean; `rg -n 'sol depl +oy' cli/bin/cmd_deploy.ml` returns nothing.
+- **Demo/example: not applicable** — the CLI's own first-run guidance. **Language parity: no impact.**

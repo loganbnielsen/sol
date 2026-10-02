@@ -2,6 +2,8 @@ val remove_if_present : string -> (unit, string) result
 val remove_reporting : string -> unit
 val remove_tree : string -> (unit, string) result
 val mkdir_p : ?perm:int -> string -> (unit, string) result
+val read_file : string -> (string, string) result
+val read_file_opt : string -> string option
 val write_atomic : ?perm:int -> string -> string -> (unit, string) result
 
 val with_temp_file

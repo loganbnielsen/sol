@@ -11,9 +11,9 @@ already owns a home for it.
 
 | Severity | Ticket | Finding | Source |
 |---|---|---|---|
-| medium | CODE_LAYER-026 | `Sol_cli_fs` is the filesystem boundary but exposes no read; five modules re-implement `read_file` and two re-implement `write_atomic` | `cli/lib/base/sol_cli_fs.ml`; `cli/lib/{workspace/sol_cli_sol_yml,base/sol_cli_json,base/sol_cli_migration_disposition,base/sol_cli_scaffold_tree,cloud/sol_cli_supervised}.ml` |
+| medium | CODE_LAYER-026 | `Sol_cli_fs` is the filesystem boundary but exposes no read; five modules re-implement `read_file` (one of them dead) and `sol_cli_supervised` re-implements `write_atomic` | `cli/lib/base/sol_cli_fs.ml`; `cli/lib/{workspace/sol_cli_sol_yml,base/sol_cli_json,base/sol_cli_migration_disposition,base/sol_cli_scaffold_tree,cloud/sol_cli_supervised}.ml` |
 | medium | CODE_LAYER-027 | `Sol_cli_substrate` derives the same namespace/document set three times; the tested `docs_for_namespaces` is not the path `ensure` uses | `cli/lib/deploy/sol_cli_substrate.ml:12,107-111,179-200` |
-| medium | CODE_LAYER-028 | Provider-independent absence helpers are duplicated in the AWS and GCP adapters, with a silently drifted not-found phrase set | `cli/lib/cloud/sol_cli_aws_absence.ml:32-43,420-429`; `cli/lib/cloud/sol_cli_gcp_absence.ml:21-32,363-372` |
+| medium | CODE_LAYER-028 | Provider-independent absence helpers are duplicated in the AWS and GCP adapters, and their two copies of the not-found predicate classify `no such` differently | `cli/lib/cloud/sol_cli_aws_absence.ml:32-43,420-429`; `cli/lib/cloud/sol_cli_gcp_absence.ml:21-32,363-372` |
 | medium | CODE_LAYER-029 | The public-delegation wait is implemented twice, with two ways to read the same domain | `cli/bin/cmd_deploy.ml:140-167`; `cli/bin/cmd_cloud_tf.ml:589-616` |
 | low | CODE_LAYER-030 | `sol_process` keeps a legacy `open_process_in`/`Sys.command` shell family that discards exit status and stderr, and `soldev` reads git state through it | `internal/tooling/sol_process/lib/sol_process.ml:158-182`; `internal/tooling/soldev/lib/soldev_merge.ml:7-19,595,908,952-955` |
 | low | CODE_LAYER-031 | The DEC-031 target axis is re-declared eight times in `cli/bin`, and the grammar has already drifted | `cli/bin/{cmd_plan,cmd_cloud_tf,cmd_deploy,cmd_migrate,cmd_alert,cmd_target,cmd_logs,cmd_destination}.ml` |
@@ -63,12 +63,16 @@ raw message (`sol_cli_sol_yml`), a `what`-prefixed message plus JSON decode
 (`sol_cli_json`), a hand-rolled `open_in_bin`/`really_input_string` plus
 `could not read <path>: <msg>` (`sol_cli_migration_disposition`), the same
 message without the manual read (`sol_cli_scaffold_tree`), and
-`Some s`/`None` (`sol_cli_supervised`). Two of them use
-`In_channel.with_open_text` (newline translation) where the others use
-`with_open_bin`. Separately, `write_atomic` is defined three times
-(`sol_cli_fs.ml:85`, `sol_cli_sol_yml.ml:166`, `sol_cli_supervised.ml:125`),
-and a further 16 `In_channel.with_open_{bin,text} … input_all` reads in
-`cli/lib` bypass the boundary entirely and raise `Sys_error`:
+`Some s`/`None` (`sol_cli_supervised`). One of them
+(`sol_cli_scaffold_tree`) uses `In_channel.with_open_text` (newline
+translation) where the others use a binary read. `Sol_cli_json.read_file ~what`
+is exported but has **no caller anywhere in the tree** — dead public surface
+kept alive by duplication. Separately, `sol_cli_supervised.ml:125` is a second
+`write_atomic` implementation (0o600, raising) beside `Sol_cli_fs.write_atomic`;
+`sol_cli_sol_yml.ml:166` is a policy wrapper that already delegates (it
+preserves the target file's mode), so it is not duplication. A further 16
+`In_channel.with_open_{bin,text} … input_all` reads in `cli/lib` bypass the
+boundary entirely and raise `Sys_error`:
 
 ```sh
 rg -n 'In_channel.with_open_(bin|text)' cli/lib | rg -v 'sol_cli_fs.ml' | wc -l
@@ -99,7 +103,7 @@ production document set, and the two can diverge silently. Positive control
 that the seam is real: `Sol_cli_substrate.namespaces` is used on the
 production path (`cli/lib/deploy/sol_cli_deploy_run.ml:114,163`).
 
-### CODE_LAYER-028: duplicated absence helpers, already drifted
+### CODE_LAYER-028: duplicated absence helpers
 
 `lines` is byte-identical in the two adapters, and `unresolved` is
 byte-identical:
@@ -115,19 +119,24 @@ cli/lib/cloud/sol_cli_gcp_absence.ml:27:let lines output =
 cli/lib/cloud/sol_cli_gcp_absence.ml:366:let unresolved ~reason =
 ```
 
-The not-found phrase sets have drifted — GCP accepts one phrase AWS does not:
+The phrase sets are not identical, and the difference is live:
 
 | file | phrase list |
 |---|---|
 | `sol_cli_aws_absence.ml:39-43` | `notfound`, `not found`, `does not exist`, `no such` |
 | `sol_cli_gcp_absence.ml:21-25` | `not found`, `notfound`, `does not exist`, `was not found` |
 
-That matters because `not_found` decides whether a provider answer becomes
-`Absent` (a claim the resource is gone, which a destroy verification relies on)
-or `Unobservable` (fail-closed). Two adapters disagreeing about the wording is
-a correctness difference hidden in duplicated code. The `Terraform state
-bucket` `External` observation inside `durable_observations` is also
-word-for-word shared (only its `identity` string differs).
+AWS accepts `no such` and GCP does not, so a provider message like
+`no such file or directory` is `Absent` under AWS and `Unobservable` under GCP.
+GCP in turn lists `was not found`, which its own `not found` already subsumes, so
+that needle is dead. `not_found` decides whether a provider answer becomes
+`Absent` (a claim the resource is gone, which destroy verification relies on) or
+`Unobservable` (fail-closed), so this is a real classification difference between
+two copies of one predicate. GCP's side is the conservative one. The remediation
+is therefore not "make the lists identical" but "there is one predicate, and any
+per-provider difference is deliberate and visible in one place". The
+`Terraform state bucket` `External` observation inside `durable_observations` is
+also word-for-word shared (only its `identity` string differs).
 
 ### CODE_LAYER-029: one bounded wait, written twice
 
@@ -199,6 +208,12 @@ diverged in `docv` and verbosity.
 
 ## Retained candidates and existing work
 
+- **Not consolidated by CODE_LAYER-026: `sol_cli_supervised.write_atomic`.**
+  It is a genuine second implementation beside `Sol_cli_fs.write_atomic`, but it
+  raises on failure and the shared helper returns a `Result`; delegating needs
+  an explicit raise, which `check_no_exception_control_flow.sh` (REFAC-133)
+  refuses. Returning the `Error` would change how a lifecycle path reports a
+  failed state write, so it is a follow-up to REFAC-133, not a boundary fix.
 - **Not filed: splitting `cli/lib/workspace/sol_cli_config.ml` (1445 lines).**
   It holds the workspace model, the `environments.yml` decoder, target
   resolution/validation, and `local_infra` — four reasons to change. It is

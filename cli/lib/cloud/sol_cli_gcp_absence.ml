@@ -18,17 +18,9 @@ let identity_check
   { resource_class; identity; attribution; argv; attributable }
 ;;
 
-let not_found reason =
-  [ "not found"; "notfound"; "does not exist"; "was not found" ]
-  |> List.exists (fun needle ->
-    Sol_cli_string.contains ~needle (String.lowercase_ascii reason))
-;;
-
-let lines output =
-  output
-  |> String.split_on_char '\n'
-  |> List.map String.trim
-  |> List.filter (fun line -> line <> "")
+let not_found =
+  Sol_cli_absence.not_found
+    ~needles:[ "not found"; "notfound"; "does not exist"; "was not found" ]
 ;;
 
 let checked_with argv = "gcloud " ^ String.concat " " argv
@@ -275,14 +267,8 @@ let checks ~project ~region ~cluster_name =
 
 let durable_observations ~(target : Sol_cli_config.target) ~cluster_name =
   let base_domain = Option.value target.base_domain ~default:"" in
-  [ External
-      { resource_class = "Terraform state bucket"
-      ; identity = cluster_name ^ " (the durable backend)"
-      ; reason =
-          "the state bucket is explicitly durable and outside the target's disposable \
-           surface: Sol documents that it survives destroy, so its presence is the \
-           contract, not residue"
-      }
+  [ Sol_cli_absence.durable_state_bucket
+      ~identity:(cluster_name ^ " (the durable backend)")
   ; External
       { resource_class = "DNS managed zone"
       ; identity =
@@ -363,11 +349,4 @@ let observations (target : Sol_cli_config.target) ~cluster_name =
     derived_by_vpc ~cluster_name observations @ durable_observations ~target ~cluster_name
 ;;
 
-let unresolved ~reason =
-  [ Unobservable
-      { resource_class = "the provider inventory"
-      ; reason
-      ; checked_with = "(not run: the target could not be identified)"
-      }
-  ]
-;;
+let unresolved = Sol_cli_absence.unresolved

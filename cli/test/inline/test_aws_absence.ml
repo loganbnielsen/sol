@@ -204,3 +204,42 @@ let%test "load balancer inventory: an untagged inventory is Absent" =
 let%test "load balancer inventory: a failed tag read is Unobservable" =
   test_failed_tag_read_is_unobservable ()
 ;;
+
+let aws_not_found_needles = [ "notfound"; "not found"; "does not exist"; "no such" ]
+let gcp_not_found_needles = [ "not found"; "notfound"; "does not exist"; "was not found" ]
+
+let test_not_found_wording_is_provider_specific () =
+  let classified needles reason = Sol_cli_absence.not_found ~needles reason in
+  let agrees needles message =
+    classified aws_not_found_needles message = classified needles message
+  in
+  let same message =
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(Printf.sprintf "aws and gcp agree on %S" message)
+      true
+      (agrees gcp_not_found_needles message)
+  in
+  same
+    "An error occurred (ResourceNotFoundException) when calling the ListClusters \
+     operation";
+  same "ERROR: (gcloud.container.clusters.list) NOT_FOUND: the resource was not found";
+  same "the resource was not found";
+  same "does not exist";
+  same "AccessDenied: not authorized";
+  same "";
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"aws treats 'no such ...' as not-found"
+    true
+    (classified aws_not_found_needles "no such file or directory");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"gcp is fail-closed on 'no such ...' -- the two copies really do diverge"
+    false
+    (classified gcp_not_found_needles "no such file or directory")
+;;
+
+let%test "absence scan: both providers agree except on 'no such'" =
+  test_not_found_wording_is_provider_specific ()
+;;
