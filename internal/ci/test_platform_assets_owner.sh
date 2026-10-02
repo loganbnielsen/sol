@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_platform_assets_owner.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/base" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let r = Sys.getenv_opt "SOL_HOME"\nlet e = Unix.readlink "/proc/self/exe"\nlet c = "platform/shared/components.json"\n' \
     >"$tmp/repo/cli/lib/base/sol_cli_platform_assets.ml"
   printf 'let dir = Sol_cli_platform_assets.components_json (Sol_cli_platform_assets.resolve_or_exit ())\n' \

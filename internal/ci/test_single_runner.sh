@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_single_runner.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/base" "$tmp/repo/cli/lib/cloud" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'let run p = Unix.create_process_env p [||] [||] Unix.stdin Unix.stdout Unix.stderr\n' \
     >"$tmp/repo/cli/lib/base/sol_cli_process.ml"
   printf 'let rm p = Unix.unlink p\n' >"$tmp/repo/cli/lib/base/sol_cli_fs.ml"

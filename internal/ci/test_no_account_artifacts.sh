@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 root="$(git rev-parse --show-toplevel)"
 guard="$root/internal/ci/check_no_account_artifacts.sh"
@@ -8,7 +9,7 @@ guard="$root/internal/ci/check_no_account_artifacts.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-git -C "$tmp" init -q
+scratch_repo_init "$tmp"
 git -C "$tmp" -c user.email=test@example.invalid -c user.name=test config user.email test@example.invalid
 git -C "$tmp" -c user.email=test@example.invalid -c user.name=test config user.name test
 
@@ -70,7 +71,7 @@ git -C "$tmp" add -A
 "$guard" "$tmp" >/dev/null
 empty="$tmp/untracked"
 mkdir -p "$empty"
-git -C "$empty" init -q
+scratch_repo_init "$empty"
 printf 'The example account is 123456789012.\n' >"$empty/notes.md"
 if "$guard" "$empty" >/dev/null 2>&1; then
   echo "account-artifact guard accepted a tree with nothing tracked" >&2

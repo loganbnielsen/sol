@@ -3,6 +3,8 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
+source "$root/internal/ci/lib/scratch_repo.sh"
+scratch_repo_sanitize
 
 unit_test_dirs=(
   framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/
@@ -30,6 +32,7 @@ checks=(
   "bash internal/ci/test_examples_self_contained.sh"
   "bash internal/ci/test_framework_ci_coverage.sh"
   "bash internal/ci/test_hook_install.sh"
+  "bash internal/ci/test_scratch_repo.sh"
   "bash internal/ci/test_json_decode_boundary.sh"
   "bash internal/ci/test_library_output.sh"
   "bash internal/ci/test_manifests_are_values.sh"

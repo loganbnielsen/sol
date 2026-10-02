@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_ocamlformat.sh"
@@ -12,7 +13,7 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
-git init -q .
+scratch_repo_init .
 git -c user.email=t@example.invalid -c user.name=test commit -q --allow-empty -m init
 cp "$ROOT/.ocamlformat" .
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -uo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLASSIFY="$HERE/classify-changes.sh"
@@ -105,7 +106,7 @@ SCRATCH="$TMPDIR_TEST/scratch"
 mkdir -p "$SCRATCH"
 (
   cd "$SCRATCH"
-  git init -q .
+  scratch_repo_init .
   git config user.email test@example.com
   git config user.name test
   mkdir -p docs internal/pipeline/tickets

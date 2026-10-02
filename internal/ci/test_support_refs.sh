@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_support_refs.sh"
@@ -13,7 +14,7 @@ B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/.github/workflows" "$tmp/repo/cli"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf '# refs\nfoo-eio https://github.com/loganbnielsen/foo-eio.git %s\nbar-eio https://github.com/loganbnielsen/bar-eio.git %s\n' "$A" "$B" \
     >"$tmp/repo/support-refs.txt"
   printf 'pin-depends: [\n  [ "foo-eio.0.1.0" "git+https://github.com/loganbnielsen/foo-eio.git#%s" ]\n]\n' "$A" \
@@ -76,7 +77,7 @@ expect pass "a reference at an exact commit"
 
 mkrepo
 for n in foo-eio bar-eio; do
-  git init -q -b main "$tmp/src-$n"
+  scratch_repo_init "$tmp/src-$n" -b main
   git -C "$tmp/src-$n" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "$n"
 done
 new_foo="$(git -C "$tmp/src-foo-eio" rev-parse HEAD)"

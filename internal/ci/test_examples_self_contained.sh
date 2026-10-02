@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHECK="$ROOT/internal/ci/check_examples_self_contained.sh"
@@ -9,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/examples/app/sol/dev/aws"
-  git -C "$tmp/repo" init -q
+  scratch_repo_init "$tmp/repo"
   printf 'target:\n  cluster_name: app-dev\n' >"$tmp/repo/examples/app/sol/dev/aws/us-east-1.yml"
   printf 'Fixtures live in internal/fixtures/.\n' >"$tmp/repo/examples/README.md"
 }

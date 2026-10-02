@@ -594,6 +594,12 @@ jobs:
         # scratch repository and seeds the dangling-symlink failure.
         run: bash internal/ci/test_hook_install.sh
 
+      - name: Scratch-repository identity (VERIF-008)
+        if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
+        # A scratch-repository helper must not operate on whatever repository a
+        # Git-invoked caller exported; this pins the refusal and the sanitizer.
+        run: bash internal/ci/test_scratch_repo.sh
+
       - name: Signal-handler duplication guardrail (REFAC-081)
         if: needs.classify.outputs.kind != 'docs-only' || steps.docs_tooling.outputs.cache-hit != 'true'
         run: internal/ci/check_signal_handler_duplication.sh

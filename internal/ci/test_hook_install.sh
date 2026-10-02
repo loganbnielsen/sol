@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 root="$(git rev-parse --show-toplevel)"
 tmp="$(mktemp -d)"
@@ -22,7 +23,7 @@ cat >"$scratch/internal/tooling/hooks/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 touch "$(git rev-parse --show-toplevel)/hook-ran"
 HOOK
-git init -q -b main "$scratch"
+scratch_repo_init "$scratch" -b main
 printf 'hook-ran\n' >"$scratch/.gitignore"
 
 ln -sf "$tmp/devtools/hooks/pre-commit" "$scratch/.git/hooks/pre-commit"
@@ -74,7 +75,7 @@ RUNNER
 printf 'runner-report\n' >>"$linked/.gitignore"
 git_test -C "$linked" add -A
 git_test -C "$linked" commit -q -m "pre-push under test"
-git init -q --bare "$tmp/remote.git"
+scratch_repo_init "$tmp/remote.git" --bare
 git -C "$linked" push -q "$tmp/remote.git" linked \
   || fail "git push through the tracked pre-push hook failed"
 [ -e "$linked/runner-report" ] || fail "git push did not run the pre-push runner"

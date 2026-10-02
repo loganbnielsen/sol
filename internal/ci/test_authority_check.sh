@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 root="$(git rev-parse --show-toplevel)"
 check="$root/internal/ci/check_authority.sh"
@@ -15,7 +16,7 @@ fail() {
 
 mkrepo() {
   local dir="$1"
-  git init -q -b main "$dir"
+  scratch_repo_init "$dir" -b main
   git -C "$dir" config user.email test@example.test
   git -C "$dir" config user.name test
   echo one >"$dir/f"
