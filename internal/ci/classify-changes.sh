@@ -58,7 +58,6 @@ while IFS= read -r p; do
       continue
       ;;
     internal/pipeline/tickets/*)                continue ;;
-    internal/tooling/perf/perf_baseline.json)  continue ;;
     *.md)                              continue ;;
     *)                                 emit source ;;
   esac
