@@ -37,12 +37,18 @@ The distinction is worth stating plainly because it is easy to conflate: a sign-
 dune build && dune test && dune fmt --preview
 ```
 
-A pre-commit hook runs the build and unit suites, and a pre-push hook runs
-`internal/ci/run_fast_checks.sh`: a build, then the fast `internal/ci/` guards and
-their mutation tests in parallel, with a pass/fail line per check (about 12s warm).
-Install both once per clone with `bash internal/tooling/scripts/install-hooks.sh`,
-which sets `core.hooksPath`, so every worktree runs its own checkout's hooks. Run the
-same battery by hand with `bash internal/ci/run_fast_checks.sh`.
+Commit is frequent, so its hook is cheap: pre-commit checks formatting of staged
+OCaml and builds (seconds). Push is the broader local gate: pre-push runs
+`internal/ci/run_fast_checks.sh`, which builds, runs the unit tests (the same
+directories as CI's unit step), then the fast `internal/ci/` guards and their
+mutation tests in parallel, with a pass/fail line per check (about 12s warm). CI
+runs the full contract, including the slow offline cloud-lifecycle test
+(`dune build @cli/test/runtest-lifecycle`, about 2 minutes). Install the hooks once
+per clone with `bash internal/tooling/scripts/install-hooks.sh`, which sets
+`core.hooksPath`, so every worktree runs its own checkout's hooks; both hooks clear
+git's repository-local variables (`git rev-parse --local-env-vars`) before anything
+that runs nested git. Run the push battery by hand with
+`bash internal/ci/run_fast_checks.sh`.
 
 The repository guards under `internal/ci/` are the same checks CI runs, and some
 of them need their own tooling: the structural Terraform and YAML guards read
@@ -141,8 +147,8 @@ broken for a dozen commits.
 
 ### The pre-commit hook is not the gate
 
-The hook (`internal/tooling/scripts/install-hooks.sh`) still skips the test
-suite for staged bookkeeping-only changes, which is a useful local speed-up. It
+The pre-commit hook (`internal/tooling/scripts/install-hooks.sh`) still skips its
+format and build for staged bookkeeping-only changes, which is a useful local speed-up. It
 is **not** a substitute for CI: run CI on the pull request, and do not treat "the
 hook was quiet" as evidence a change is safe. CI is the gate.
 

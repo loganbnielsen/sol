@@ -4,6 +4,13 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
+unit_test_dirs=(
+  framework/ocaml/kafka-eio-service/ framework/ocaml/sol-env/ framework/ocaml/sol-fn/
+  framework/ocaml/sol-jobs/ framework/ocaml/sol-obs/ framework/ocaml/sol-outbox/
+  framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/
+  cli/test/ internal/tooling/style_audit/ internal/tooling/soldev/test/
+)
+
 checks=(
   "_build/default/internal/tooling/soldev/bin/main.exe pipeline validate"
   "git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/check_ticket_transitions.sh"
@@ -83,6 +90,13 @@ echo "fast checks: building (the checks read built artifacts)"
 if ! build_output="$(dune build 2>&1)"; then
   printf '%s\n' "$build_output"
   echo "fast checks: build failed; no checks run"
+  exit 1
+fi
+
+echo "fast checks: unit tests (serial: they hold dune's build lock)"
+if ! unit_output="$(dune test "${unit_test_dirs[@]}" 2>&1)"; then
+  printf '%s\n' "$unit_output"
+  echo "fast checks: unit tests failed; no further checks run"
   exit 1
 fi
 

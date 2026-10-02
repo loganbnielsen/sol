@@ -2,4 +2,6 @@
 
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
-exec bash "$(git rev-parse --show-toplevel)/internal/ci/run_fast_checks.sh"
+runner="$(git rev-parse --show-toplevel)/internal/ci/run_fast_checks.sh"
+unset $(git rev-parse --local-env-vars)
+exec bash "$runner"
