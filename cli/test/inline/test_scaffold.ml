@@ -339,11 +339,25 @@ let test_scaffold_compiles () =
     Sol_cli_process.run
       (Sol_cli_process.cmd
          ~cwd:"testapp"
-         ~env:[ "CI", "false" ]
+         ~env:[ "CI", "false"; "SCHEMA_REGISTRY_URL", "" ]
          [ "dune"; "runtest"; "test" ])
   in
   tested |> Result.iter_error (fun e -> prerr_endline (Sol_cli_process.error_to_string e));
-  check_bool "generated charge operation tests pass" true (Result.is_ok tested)
+  check_bool "generated charge operation tests pass" true (Result.is_ok tested);
+  let gated =
+    Sol_cli_process.run
+      (Sol_cli_process.cmd
+         ~cwd:"testapp"
+         ~env:[ "CI", "true"; "SCHEMA_REGISTRY_URL", "" ]
+         [ "dune"; "runtest"; "--force"; "test" ])
+  in
+  check_bool
+    "the generated schema gate refuses to pass under CI without a schema registry"
+    true
+    (match gated with
+     | Error e ->
+       contains (Sol_cli_process.error_to_string e) "schema compatibility NOT CHECKED"
+     | Ok _ -> false)
 ;;
 
 let test_bare_fn_library_compiles () =

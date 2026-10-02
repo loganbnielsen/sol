@@ -69,3 +69,55 @@ environment is authoritative and record it.
   visible; state in one line how each is verified after the change.
 - Language parity (DEC-022): check whether the TypeScript golden path has an equivalent
   silently-skipping case and record the outcome in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ 6a9d7cba`: `check_gcloud_interface.sh` exited 0
+before its eight gcloud-independent checks when `gcloud` was absent; `test_e2e.ml`'s three Loki
+cases were `None -> ()`; the two unit suites caught `EPERM` at `bind()` and printed `[skip]`; and
+the scaffold test ran the generated workspace's `dune runtest test` only under `CI=false` (the
+ticket's path is now `cli/test/inline/test_scaffold.ml`).
+
+**Implemented.**
+
+- **`check_gcloud_interface.sh` is split by dependency.** Its static half — the argv-source
+  inspection, the impersonation grant's scope, the forbidden broad roles, the provider-tier
+  assignment and the declared caller — runs first, unconditionally. The `gcloud --help` half then
+  fails when `gcloud` is absent, naming the tool and the single opt-out
+  `CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1`; with the opt-out the static checks still run and
+  the output says the interface was not validated. `internal/ci/test_gcloud_interface.sh` pins both
+  branches, so the guard's own verdict is exercised in the class rather than only on a happy host.
+- **`EPERM` at `bind()` is a reported host requirement.** `sol-obs`'s `with_mock_server` and
+  `sol-worker`'s `/metrics` case now fail via `Windtrap.fail` naming the host requirement instead of
+  printing `[skip]` and passing.
+- **The E2E class requires Loki.** The three Loki cases fail naming the dependency when the query
+  returns `None`, and the `Facts-to-jobs golden-path smoke` step starts Loki
+  (`platform/local/scripts/ensure-loki.sh`) before `dune build @ci-e2e`, so the class that claims
+  Loki is the class that has it. `run_tests.sh e2e` already provisions Loki.
+- **The scaffolded schema gate's authoritative branch is exercised.** `test_scaffold_compiles` keeps
+  the `CI=false` success run and adds a `CI=true`, `SCHEMA_REGISTRY_URL=""` run whose
+  `dune runtest test` must fail; the assertion also checks the failure names
+  `schema compatibility NOT CHECKED`. `--force` is used deliberately: Dune's cache is
+  environment-blind (VERIF-002) and the point is to observe the same target under a second
+  environment.
+
+**Evidence.**
+
+```
+$ bash internal/ci/test_gcloud_interface.sh
+  [OK]   a missing gcloud fails the guard
+  [OK]   the named opt-out runs the static checks and skips only the interface check
+$ env PATH=/usr/bin:/bin bash internal/ci/check_gcloud_interface.sh; echo $?
+1
+$ env PATH=/usr/bin:/bin CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1 bash internal/ci/check_gcloud_interface.sh; echo $?
+0
+$ dune build @framework/ocaml/sol-obs/test/runtest @framework/ocaml/sol-worker/test/runtest @cli/test/inline/runtest
+  all tests passed
+```
+
+**Demo/example:** the E2E fixture now fails when Loki is absent and the CI step provisions it; the
+scaffolded workspace's schema gate is exercised in its authoritative `CI=true` refuse branch as well
+as its local skip branch. **Language parity (DEC-022):** the TypeScript demo has no test layer (the
+`ts-tests` job typechecks and audits), and its only skip is an application log line when
+`POSTGRES_URL` is unset — which the golden path always provides — so no verification case silently
+passes there.

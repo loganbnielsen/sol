@@ -3,39 +3,13 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 source_file="$root/cli/lib/cloud/sol_cli_gcp_cluster.ml"
+subcommand="container clusters get-credentials"
 
 fail=0
 report() {
   echo "check_gcloud_interface: $1" >&2
   fail=1
 }
-
-if ! command -v gcloud >/dev/null 2>&1; then
-  echo "check_gcloud_interface: SKIPPED -- gcloud is not installed, so the real CLI interface could not be validated. Sol's gcloud argv is unverified here."
-  exit 0
-fi
-
-subcommand="container clusters get-credentials"
-flags=(--region --project --impersonate-service-account --quiet)
-
-help_text="$(gcloud $subcommand --help 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
-if [ -z "$help_text" ]; then
-  report "could not read \`gcloud $subcommand --help\`; cannot validate Sol's argv"
-fi
-
-flag_documented() {
-  printf '%s\n' "$help_text" | grep -qE "(^|[^-[:alnum:]])$1([^-[:alnum:]]|\$)"
-}
-
-for flag in "${flags[@]}"; do
-  if ! flag_documented "$flag"; then
-    report "gcloud's \`$subcommand\` does not document $flag, but Sol passes it"
-  fi
-done
-
-if flag_documented --kubeconfig; then
-  report "--kubeconfig now exists on \`$subcommand\`; revisit whether Sol should use it"
-fi
 
 if ! grep -q 'gcp_provisioner_kubeconfig' "$source_file"; then
   report "the GCP cluster-access function Sol uses is gone; this check is now vacuous"
@@ -81,5 +55,34 @@ if ! grep -q 'provider_field target "provisioner_impersonator"' \
   report "the GCP capabilities do not read the target's provisioner_impersonator"
 fi
 
+argv_checked=0
+if command -v gcloud >/dev/null 2>&1; then
+  argv_checked=1
+  flags=(--region --project --impersonate-service-account --quiet)
+  help_text="$(gcloud $subcommand --help 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if [ -z "$help_text" ]; then
+    report "could not read \`gcloud $subcommand --help\`; cannot validate Sol's argv"
+  fi
+  flag_documented() {
+    printf '%s\n' "$help_text" | grep -qE "(^|[^-[:alnum:]])$1([^-[:alnum:]]|\$)"
+  }
+  for flag in "${flags[@]}"; do
+    if ! flag_documented "$flag"; then
+      report "gcloud's \`$subcommand\` does not document $flag, but Sol passes it"
+    fi
+  done
+  if flag_documented --kubeconfig; then
+    report "--kubeconfig now exists on \`$subcommand\`; revisit whether Sol should use it"
+  fi
+elif [ "${CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD:-0}" = "1" ]; then
+  echo "check_gcloud_interface: gcloud is not installed, so Sol's argv was not validated against the real CLI (explicitly opted out by CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1); the static install-authority checks ran." >&2
+else
+  report "gcloud is not installed, so Sol's argv could not be validated against the real CLI; install gcloud, or set CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1 to opt out explicitly"
+fi
+
 [ "$fail" -eq 0 ] || exit 1
-echo "check_gcloud_interface: Sol's GCP cluster-access argv matches the real gcloud interface; the impersonation grant is scoped to the named identity and the declared caller."
+if [ "$argv_checked" = 1 ]; then
+  echo "check_gcloud_interface: Sol's GCP cluster-access argv matches the real gcloud interface; the impersonation grant is scoped to the named identity and the declared caller."
+else
+  echo "check_gcloud_interface: the install-authority checks passed; the gcloud interface was not validated (explicit opt-out)."
+fi

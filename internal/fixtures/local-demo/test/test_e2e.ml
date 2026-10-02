@@ -1121,13 +1121,13 @@ let () =
         "loki"
         [ Windtrap.test "logs received for service=order-svc" (fun () ->
             match r.loki_resp with
-            | None -> ()
+            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
               then Windtrap.fail "no log streams in Loki response")
         ; Windtrap.test "sol logs Loki query path reads pushed logs" (fun () ->
             match r.loki_cli_lines with
-            | None -> ()
+            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
             | Some n ->
               if n = 0
               then Windtrap.fail "Sol_cli_loki.query returned no pushed log lines")
@@ -1285,7 +1285,7 @@ let () =
                 (metric_nonzero o.ob_metrics "sol_worker_messages_total")))
         ; Windtrap.test "outbox logs reached Loki" (fun () ->
             match o.ob_loki with
-            | None -> ()
+            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
               then Windtrap.fail "no outbox log streams in Loki response")
