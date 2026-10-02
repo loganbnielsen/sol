@@ -4,7 +4,7 @@ import { Pushgateway } from "@prometheus-io/client";
 import { context, propagation, SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
-import { registerTopic, publish, type TopicContract } from "@sol-fab/kafka";
+import { kafkaConfigFromEnv, registerTopic, publish, type TopicContract } from "@sol-fab/kafka";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
 import { runService } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
@@ -34,7 +34,7 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
+const KAFKA_ENV = kafkaConfigFromEnv();
 const SCHEMA_REGISTRY_URL = requiredEnv("SCHEMA_REGISTRY_URL");
 const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
@@ -71,9 +71,9 @@ const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();
 
 async function main() {
-  console.log(`[order-svc-ts] brokers=${KAFKA_BROKERS} registry=${SCHEMA_REGISTRY_URL} topic=${TOPIC_NAME}`);
+  console.log(`[order-svc-ts] brokers=${KAFKA_ENV.brokers} registry=${SCHEMA_REGISTRY_URL} topic=${TOPIC_NAME}`);
 
-  const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
+  const kafka = new Kafka({ clientId: "order-svc-ts", ...KAFKA_ENV });
 
   const topic = await registerTopic({
     kafka,

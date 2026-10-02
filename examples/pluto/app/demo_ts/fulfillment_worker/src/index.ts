@@ -5,6 +5,7 @@ import type { SpanContext } from "@opentelemetry/api";
 
 import {
   ACK,
+  kafkaConfigFromEnv,
   kafkaRetryRelay,
   provisionRelayTopics,
   retry as retryOutcome,
@@ -36,15 +37,7 @@ function intEnv(name: string, fallback: number): number {
   return n;
 }
 
-function requiredEnv(name: string): string {
-  const value = setting(name);
-  if (!value) {
-    throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
-  }
-  return value;
-}
-
-const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
+const KAFKA_ENV = kafkaConfigFromEnv();
 const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
 const PARTITIONS = 3;
@@ -102,7 +95,7 @@ async function main() {
   db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
   if (!db) console.log("[fulfillment-worker-ts] POSTGRES_URL not set — skipping DB storage");
 
-  const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
+  const kafka = new Kafka({ clientId: "fulfillment-worker-ts", ...KAFKA_ENV });
 
   const producer = kafka.producer();
   await producer.connect();
