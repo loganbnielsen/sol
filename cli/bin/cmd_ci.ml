@@ -6,12 +6,17 @@ Next steps:
 
   1. Set the repository variables the workflow reads (Settings -> Secrets and
      variables -> Actions -> Variables):
-       SOL_TARGET                  <env>/<provider>/<region>, declared in sol/environments.yml
-       SOL_REGISTRY                image registry prefix
-       SOL_DEPLOY_ROLE_ARN         AWS: the target's deploy identity (OIDC-assumed)
-       SOL_DEPLOY_SERVICE_ACCOUNT  GCP: the deploy service account (Workload Identity)
-  2. Configure the provider-side OIDC trust for that identity (docs/deployment/ci.md).
+       SOL_TARGET                       <env>/<provider>/<region>, declared in sol/environments.yml
+       SOL_REGISTRY                     image registry prefix
+       SOL_DEPLOY_ROLE_ARN              AWS: the target's deploy identity (OIDC-assumed)
+       SOL_DEPLOY_SERVICE_ACCOUNT       GCP: the deploy service account (Workload Identity)
+       SOL_AUTHORIZATION_ROLE_ARN       AWS: the target's fenced authorization reconciler
+       SOL_AUTHORIZATION_SERVICE_ACCOUNT GCP: the target's reconciler service account
+  2. Configure the provider-side OIDC trust for those identities (docs/deployment/ci.md).
      No long-lived cloud credentials are stored in the repository.
+  3. Protect the `sol-authorization` environment with required reviewers
+     (Settings -> Environments). The `authorize` job runs under it, so adopting a
+     workload cloud grant is a reviewed action separate from the deploy.
 
   The workflow runs the same `sol deploy <target>` lifecycle as local execution
   and never infers a target. Workload secret values are seeded out of band with

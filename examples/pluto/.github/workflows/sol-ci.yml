@@ -1,21 +1,39 @@
 # Sol CI — build, test and deploy this workspace on every push to main.
 #
-# Authentication is GitHub OIDC: no long-lived cloud credentials are stored in
-# this repository. Before the deploy job can run, configure the provider-side
-# trust (docs/deployment/ci.md) and set these repository variables
-# (Settings -> Secrets and variables -> Actions -> Variables):
+# This is the canonical Sol CI workflow. `sol new workspace` scaffolds it, and
+# `sol ci init github` writes it into an existing workspace, so there is one
+# source of truth rather than a copy per path.
 #
-#   SOL_TARGET                  <env>/<provider>/<region>, e.g. prod/aws/us-east-1.
-#                               It must be declared in sol/environments.yml.
-#                               The workflow never infers a target from the
-#                               branch or the event (DEC-016).
-#   SOL_REGISTRY                image registry prefix, e.g.
-#                                 123456789.dkr.ecr.us-east-1.amazonaws.com
-#                                 us-central1-docker.pkg.dev/my-project/pluto
-#   SOL_DEPLOY_ROLE_ARN         AWS: the deploy identity (the target's
-#                               `deploy_role_arn`); assumed through OIDC.
-#   SOL_DEPLOY_SERVICE_ACCOUNT  GCP: the deploy service account; impersonated
-#                               through Workload Identity Federation.
+# Authentication is GitHub OIDC: no long-lived cloud credentials are stored in
+# this repository. Before the jobs can run, configure the provider-side trust
+# (docs/deployment/ci.md) and set these repository variables (Settings -> Secrets
+# and variables -> Actions -> Variables):
+#
+#   SOL_TARGET                       <env>/<provider>/<region>, e.g.
+#                                    prod/aws/us-east-1. It must be declared in
+#                                    sol/environments.yml. The workflow never
+#                                    infers a target from the branch or the
+#                                    event (DEC-016).
+#   SOL_REGISTRY                     image registry prefix, e.g.
+#                                      123456789.dkr.ecr.us-east-1.amazonaws.com
+#                                      us-central1-docker.pkg.dev/my-project/pluto
+#   SOL_DEPLOY_ROLE_ARN              AWS: the deploy identity (the target's
+#                                    `deploy_role_arn`); assumed through OIDC.
+#   SOL_DEPLOY_SERVICE_ACCOUNT       GCP: the deploy service account;
+#                                    impersonated through Workload Identity.
+#   SOL_AUTHORIZATION_ROLE_ARN       AWS: the target's fenced authorization
+#                                    reconciler (`reconciler_role_arn`), a
+#                                    different identity from the deploy one.
+#   SOL_AUTHORIZATION_SERVICE_ACCOUNT
+#                                    GCP: the target's reconciler service
+#                                    account (`reconciler_service_account`).
+#   SOL_WORKLOAD_IDENTITY_PROVIDER   GCP: the Workload Identity provider pool.
+#   SOL_AWS_REGION                   AWS: the region to assume roles in.
+#
+# The authorize job runs under the `sol-authorization` environment. Protect that
+# environment with required reviewers so adopting a workload cloud grant is a
+# reviewed action, separate from the deploy (DEC-062 rule 1); dropping or
+# widening a grant then needs an approval, not just a merge.
 #
 # Workload secret values are never held here (FEAT-053). Seed them out of band
 # with `sol secret set --target <env>/<provider>/<region> <KEY>`; the deploy
@@ -58,6 +76,8 @@ jobs:
         run: eval $(opam env) && dune build
 
       - name: Test
+        env:
+          SCHEMA_REGISTRY_URL: ${{ secrets.SCHEMA_REGISTRY_URL }}
         run: eval $(opam env) && dune runtest
 
   build-images:
@@ -93,8 +113,58 @@ jobs:
             docker push "$image"
           done
 
-  deploy:
+  authorize:
     needs: build-images
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: sol-authorization
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install opam deps
+        run: opam install . --deps-only -y
+
+      - name: Build sol
+        run: eval $(opam env) && dune build cli/bin/main.exe
+
+      - name: Authenticate (AWS OIDC)
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.SOL_AUTHORIZATION_ROLE_ARN }}
+          aws-region: ${{ vars.SOL_AWS_REGION }}
+
+      - name: Authenticate (GCP Workload Identity)
+        if: vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.SOL_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT }}
+
+      - name: Plan workload authorization
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != '' || vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
+        run: |
+          set -euo pipefail
+          eval $(opam env)
+          _build/default/cli/bin/main.exe grants plan "$SOL_TARGET"
+
+      - name: Apply workload authorization
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != '' || vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
+        run: |
+          set -euo pipefail
+          eval $(opam env)
+          _build/default/cli/bin/main.exe grants apply "$SOL_TARGET"
+
+  deploy:
+    needs: authorize
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production

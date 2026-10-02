@@ -155,8 +155,7 @@ pluto/
   .gitignore                      ← ignores _build/ and sol/environments.local.yml
 
   .github/workflows/
-    deploy.yml                    ← CI deploy workflow
-    sol-ci.yml                    ← Full Sol CI pipeline
+    sol-ci.yml                    ← the Sol CI pipeline (build, test, authorize, deploy)
 
   events/payments/
     charged.ml                    ← the Charged event contract
@@ -871,7 +870,7 @@ strategy = "blue-green"
 
 Blue-green emits active and preview `Service` resources and disables automatic promotion. This is not a raw Argo YAML escape hatch: Sol supports only the fields above, and arbitrary Argo Rollouts features such as analysis templates and traffic-manager integrations are deferred.
 
-See `platform/cloud/delivery/ci/` for complete GitHub Actions workflow examples for both modes.
+See [`deployment/ci.md`](../deployment/ci.md) for the generated workflow and the identity it expects; GitOps mode uses the same workflow with `sol deploy --emit-to`.
 
 ### Provisioning a production cluster
 

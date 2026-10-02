@@ -2,9 +2,9 @@ module Tree = Sol_cli_scaffold_tree
 module Assets = Sol_cli_platform_assets
 open Result.Syntax
 
-let workflow = "sol-ci.yml"
+let workflow = ".github/workflows/sol-ci.yml"
 let target_rel = ".github/workflows/sol-ci.yml"
-let template_kind = "ci/github"
+let template_kind = "workspace"
 
 type outcome =
   { written : bool

@@ -23,7 +23,7 @@ Within `docs/`, the sections are:
 |---|---|---|
 | `guides/` | New users | The end-to-end tutorial |
 | `reference/` | Application authors | The language-neutral application contract (runtime, substrate) |
-| `deployment/` | Operators | Production bootstrap, compatibility, escape hatches, recovery, observability backends |
+| `deployment/` | Operators | Production bootstrap, CI/CD, compatibility, escape hatches, recovery, observability backends |
 | `architecture/` | Evaluators and contributors | The factory model, pipeline, ADRs |
 | `hosted/` | Evaluators | The boundary statement for the (separate) hosted product |
 | `legal/` | Everyone | Third-party licences |
@@ -78,6 +78,8 @@ never needs a source checkout to complete the ordinary path.
   is a property of the target (`DEC-016`). *DOCS-028.*
 - **Provisioning the substrate** — `sol cloud plan|apply|destroy`. *DOCS-028.*
 - **Deploying the application** — direct and GitOps modes. *DOCS-028.*
+- **CI and continuous deployment** — [`deployment/ci.md`](deployment/ci.md): the generated
+  workflow, its OIDC identities and the gated authorization job.
 - **Escape hatches** — [`deployment/escape-hatches.md`](deployment/escape-hatches.md).
 - **Production bootstrap and identities** — [`deployment/production-bootstrap.md`](deployment/production-bootstrap.md).
 - **Compatibility and profile** — [`deployment/compatibility.md`](deployment/compatibility.md).

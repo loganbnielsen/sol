@@ -4,7 +4,7 @@
 #
 # This is a placeholder: rename the environment and target to your real ones,
 # and set the SOL_TARGET repository variable in GitHub (used by
-# .github/workflows/deploy.yml) to match.
+# .github/workflows/sol-ci.yml) to match.
 #
 # Account-specific values you would rather not commit (a registry, role ARNs) go
 # in sol/environments.local.yml, which .gitignore excludes. That file has the

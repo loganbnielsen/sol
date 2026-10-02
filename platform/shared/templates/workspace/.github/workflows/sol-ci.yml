@@ -1,45 +1,43 @@
-# Sol CI - build, test, and deploy on every push to main.
+# Sol CI — build, test and deploy this workspace on every push to main.
 #
-# Required GitHub secrets (Settings -> Secrets and variables -> Actions):
-#   REGISTRY           container registry prefix, e.g.:
-#                        AWS ECR:   123456789.dkr.ecr.us-east-1.amazonaws.com
-#                        GCP AR:    us-central1-docker.pkg.dev/my-project/{{name}}
-#                        Docker Hub: docker.io/myorg
-#   REGISTRY_USER      registry username (or "AWS" for ECR)
-#   REGISTRY_PASSWORD  registry password / access token
-#   SCHEMA_REGISTRY_URL registry with published schema history (CI fails without it)
+# This is the canonical Sol CI workflow. `sol new workspace` scaffolds it, and
+# `sol ci init github` writes it into an existing workspace, so there is one
+# source of truth rather than a copy per path.
 #
-# Required GitHub repo variable (Settings -> Secrets and variables -> Actions ->
-# Variables -- not a secret, this is just a path):
-#   SOL_TARGET         deployment target, <env>/<provider>/<region>, e.g.
-#                      prod/aws/us-east-1. Must be declared in
-#                      sol/environments.yml (<env>: targets: <provider>/<region>)
-#                      -- this workspace ships a placeholder prod/aws/us-east-1;
-#                      rename it to match your real target.
+# Authentication is GitHub OIDC: no long-lived cloud credentials are stored in
+# this repository. Before the jobs can run, configure the provider-side trust
+# (docs/deployment/ci.md) and set these repository variables (Settings -> Secrets
+# and variables -> Actions -> Variables):
 #
-# Optional (GitOps push step):
-#   GITOPS_TOKEN       GitHub token with repo-write access to commit manifests/.
-#                      ${{ secrets.GITHUB_TOKEN }} works when pushing to the same repo.
+#   SOL_TARGET                       <env>/<provider>/<region>, e.g.
+#                                    prod/aws/us-east-1. It must be declared in
+#                                    sol/environments.yml. The workflow never
+#                                    infers a target from the branch or the
+#                                    event (DEC-016).
+#   SOL_REGISTRY                     image registry prefix, e.g.
+#                                      123456789.dkr.ecr.us-east-1.amazonaws.com
+#                                      us-central1-docker.pkg.dev/my-project/{{name}}
+#   SOL_DEPLOY_ROLE_ARN              AWS: the deploy identity (the target's
+#                                    `deploy_role_arn`); assumed through OIDC.
+#   SOL_DEPLOY_SERVICE_ACCOUNT       GCP: the deploy service account;
+#                                    impersonated through Workload Identity.
+#   SOL_AUTHORIZATION_ROLE_ARN       AWS: the target's fenced authorization
+#                                    reconciler (`reconciler_role_arn`), a
+#                                    different identity from the deploy one.
+#   SOL_AUTHORIZATION_SERVICE_ACCOUNT
+#                                    GCP: the target's reconciler service
+#                                    account (`reconciler_service_account`).
+#   SOL_WORKLOAD_IDENTITY_PROVIDER   GCP: the Workload Identity provider pool.
+#   SOL_AWS_REGION                   AWS: the region to assume roles in.
 #
-# No KUBECONFIG or cluster credentials are needed for the build-and-test or
-# build-images jobs. The deploy job emits manifests for GitOps instead of
-# applying them directly to a cluster.
+# The authorize job runs under the `sol-authorization` environment. Protect that
+# environment with required reviewers so adopting a workload cloud grant is a
+# reviewed action, separate from the deploy (DEC-062 rule 1); dropping or
+# widening a grant then needs an approval, not just a merge.
 #
-# ── Sol CI contract ──────────────────────────────────────────────────────────
-#
-# PHASE 1 — Build (user-owned, Sol-stable):
-#   Compile and test OCaml code using: eval $(opam env) && dune build && dune runtest
-#   Build and push Docker images using your registry's docker login + docker build/push.
-#   Sol does not own this step today; a future `sol build` command will replace it.
-#
-# PHASE 2 — Deploy (Sol-owned, typed contract):
-#   sol deploy <target> --emit-plan-to plan.json --dry-run   # capture typed deployment intent
-#   sol deploy <target> --emit-to manifests/ --image-tag $SHA  # render K8s YAML (GitOps)
-#
-# Never duplicate the plan/render/execute logic from sol deploy in CI.
-# All deployment decisions (image tags, namespaces, service discovery, secrets)
-# belong in the CLI pipeline. CI only provides inputs (--registry, --image-tag).
-# ─────────────────────────────────────────────────────────────────────────────
+# Workload secret values are never held here (FEAT-053). Seed them out of band
+# with `sol secret set --target <env>/<provider>/<region> <KEY>`; the deploy
+# verifies them and fails closed, naming any key that is missing.
 
 name: Sol CI
 
@@ -48,20 +46,22 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  REGISTRY:   ${{ secrets.REGISTRY }}
-  IMAGE_TAG:  ${{ github.sha }}
-  SOL_TARGET: ${{ vars.SOL_TARGET }}
+permissions:
+  contents: read
+  id-token: write
 
-# ── Job 1: compile + unit tests ──────────────────────────────────────────── #
+env:
+  SOL_TARGET: ${{ vars.SOL_TARGET }}
+  SOL_REGISTRY: ${{ vars.SOL_REGISTRY }}
+  IMAGE_TAG: ${{ github.sha }}
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.4.1"
           opam-depext: false
@@ -80,7 +80,6 @@ jobs:
           SCHEMA_REGISTRY_URL: ${{ secrets.SCHEMA_REGISTRY_URL }}
         run: eval $(opam env) && dune runtest
 
-# ── Job 2: build and push service images ────────────────────────────────── #
   build-images:
     needs: build-and-test
     if: github.event_name != 'pull_request'
@@ -88,83 +87,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
+      - name: Authenticate (AWS OIDC)
+        if: vars.SOL_DEPLOY_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          ocaml-compiler: "5.4.1"
-          opam-depext: false
+          role-to-assume: ${{ vars.SOL_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.SOL_AWS_REGION }}
 
-      - name: Install system deps
-        run: sudo apt-get install -y librdkafka-dev libpq-dev
-
-      - name: Install opam deps
-        run: opam install . --deps-only -y
-
-      - name: Build service binaries
-        run: eval $(opam env) && dune build
-
-      # Registry login — uncomment the block that matches your registry:
-
-      # AWS ECR:
-      # - uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     aws-region:            ${{ secrets.AWS_REGION }}
-      # - run: |
-      #     aws ecr get-login-password | \
-      #       docker login --username AWS --password-stdin ${{ secrets.REGISTRY }}
-
-      # GCP Artifact Registry:
-      # - uses: google-github-actions/auth@v2
-      #   with: { credentials_json: '${{ secrets.GCP_SA_KEY }}' }
-      # - run: gcloud auth configure-docker ${{ secrets.REGISTRY }}
-
-      # Generic (Docker Hub, GHCR, etc.):
-      - name: Log in to registry
-        run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
-            docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+      - name: Authenticate (GCP Workload Identity)
+        if: vars.SOL_DEPLOY_SERVICE_ACCOUNT != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.SOL_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.SOL_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Build and push images
         run: |
-          SHORT_SHA=${IMAGE_TAG::7}
-          # TODO(sol-build): This step will be replaced by `sol build --registry $REGISTRY`
-          # once Sol publishes a stable build command. Until then, build images explicitly.
-          # sol up discovers services from app/<domain>/<name>/Dockerfile.
-          # Build and push each image explicitly here:
-          find app -name Dockerfile | while read dockerfile; do
+          set -euo pipefail
+          short_sha=${IMAGE_TAG::7}
+          find app -name Dockerfile | while read -r dockerfile; do
             dir=$(dirname "$dockerfile")
-            svc=$(basename "$dir" | tr '_' '-')
-            image="${REGISTRY}/{{name}}/${svc}:${SHORT_SHA}"
-            # --provenance=false --sbom=false: without these, BuildKit attaches
-            # a provenance/SBOM attestation sub-manifest to the image index,
-            # which EKS's containerd fails to pull with a bare "not found" on
-            # the tag even though the image is really in the registry --
-            # confirmed live (DOGFOOD-011). Local k3d tolerates it either way.
+            unit=$(basename "$dir" | tr '_' '-')
+            image="${SOL_REGISTRY}/{{name}}/${unit}:${short_sha}"
             docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
             docker push "$image"
           done
 
-# ── Job 3: emit deployment plan + GitOps manifests ──────────────────────── #
-# This job runs only on pushes to main (not on pull requests).
-# `sol deploy <target> --emit-plan-to plan.json` records the full deployment intent
-# (images, namespaces, config) without applying anything — useful for auditing.
-# `sol deploy <target> --emit-to manifests/` renders Kubernetes YAML to manifests/.
-# An Argo CD Application watching that directory reconciles the change
-# automatically; no KUBECONFIG or cluster credentials are required in CI.
-  deploy:
+  authorize:
     needs: build-images
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: sol-authorization
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITOPS_TOKEN || secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.4.1"
           opam-depext: false
@@ -175,43 +132,83 @@ jobs:
       - name: Install opam deps
         run: opam install . --deps-only -y
 
-      - name: Build sol binary
+      - name: Build sol
         run: eval $(opam env) && dune build cli/bin/main.exe
-        # TODO: replace with a pre-built binary download once Sol publishes releases.
 
-      - name: Export deployment plan
-        run: |
-          eval $(opam env)
-          # Equivalent Sol command: sol deploy <target> --emit-plan-to plan.json --dry-run
-          _build/default/cli/bin/main.exe deploy "$SOL_TARGET" \
-            --registry  "$REGISTRY" \
-            --image-tag "${IMAGE_TAG::7}" \
-            --emit-plan-to plan.json \
-            --dry-run
-        # plan.json captures the full intent for this deploy (images, namespaces, config).
-
-      - name: Upload deployment plan
-        uses: actions/upload-artifact@v4
+      - name: Authenticate (AWS OIDC)
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          name: deployment-plan-${{ github.sha }}
-          path: plan.json
+          role-to-assume: ${{ vars.SOL_AUTHORIZATION_ROLE_ARN }}
+          aws-region: ${{ vars.SOL_AWS_REGION }}
 
-      - name: Emit GitOps manifests
+      - name: Authenticate (GCP Workload Identity)
+        if: vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.SOL_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT }}
+
+      - name: Plan workload authorization
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != '' || vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
         run: |
+          set -euo pipefail
           eval $(opam env)
-          # Equivalent Sol command: sol deploy <target> --emit-to manifests/
-          _build/default/cli/bin/main.exe deploy "$SOL_TARGET" \
-            --registry  "$REGISTRY" \
-            --image-tag "${IMAGE_TAG::7}" \
-            --emit-to   manifests/
-        # Writes rendered Kubernetes YAML to manifests/.
-        # Argo CD (or Flux) watches this directory and reconciles automatically.
+          _build/default/cli/bin/main.exe grants plan "$SOL_TARGET"
 
-      - name: Commit and push manifests
+      - name: Apply workload authorization
+        if: vars.SOL_AUTHORIZATION_ROLE_ARN != '' || vars.SOL_AUTHORIZATION_SERVICE_ACCOUNT != ''
         run: |
-          git config user.email "ci@sol.dev"
-          git config user.name  "Sol CI"
-          git add manifests/
-          git diff --cached --quiet && echo "no manifest changes" && exit 0
-          git commit -m "deploy: ${IMAGE_TAG::7}"
-          git push
+          set -euo pipefail
+          eval $(opam env)
+          _build/default/cli/bin/main.exe grants apply "$SOL_TARGET"
+
+  deploy:
+    needs: authorize
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install opam deps
+        run: opam install . --deps-only -y
+
+      - name: Build sol
+        run: eval $(opam env) && dune build cli/bin/main.exe
+
+      - name: Authenticate (AWS OIDC)
+        if: vars.SOL_DEPLOY_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.SOL_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.SOL_AWS_REGION }}
+
+      - name: Authenticate (GCP Workload Identity)
+        if: vars.SOL_DEPLOY_SERVICE_ACCOUNT != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.SOL_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.SOL_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          eval $(opam env)
+          _build/default/cli/bin/main.exe deploy "$SOL_TARGET" \
+            --registry "$SOL_REGISTRY" \
+            --image-tag "${IMAGE_TAG::7}"
+
+      - name: Migrate
+        run: |
+          set -euo pipefail
+          eval $(opam env)
+          _build/default/cli/bin/main.exe migrate "$SOL_TARGET"

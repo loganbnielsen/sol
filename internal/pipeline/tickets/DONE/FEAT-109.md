@@ -111,3 +111,51 @@ open (DEC-062's stage/plan integration); it lands with that command and the
 own `templates/workspace/.github/workflows/` copy with this template so
 `sol new workspace` writes the same OIDC workflow and the legacy `deploy.yml`
 disappears everywhere.
+
+## Progress (2026-10-02, parts B and C)
+
+**Premise verified:** part A's "still open" was accurate. `sol grants` now exists
+(FEAT-127), so the authorization job can land; and the scaffold still carried its own
+workflow copy plus `deploy.yml`.
+
+**Part B — the gated authorization job.** The canonical workflow gains an `authorize`
+job between `build-images` and `deploy`:
+
+- it runs under the `sol-authorization` GitHub environment, so a required-reviewer
+  protection makes adopting, dropping or widening a workload cloud grant an approved
+  action separate from a merge (`DEC-062` rule 1);
+- it assumes the target's **reconciler** identity, not the deploy identity, through
+  `SOL_AUTHORIZATION_ROLE_ARN` (AWS OIDC) or `SOL_AUTHORIZATION_SERVICE_ACCOUNT` (GCP
+  Workload Identity);
+- it runs `sol grants plan "$SOL_TARGET"` then `sol grants apply "$SOL_TARGET"`;
+- `deploy` now `needs: authorize`, so a declared grant is established before the deploy
+  that consumes it. The authorization steps are skipped when neither variable is set, so
+  a workspace that has not adopted cloud grants still deploys — and `sol deploy` still
+  fails closed if a grant is not effective (FEAT-128).
+
+**Part C — one canonical template.** The workflow now lives only at
+`platform/shared/templates/workspace/.github/workflows/sol-ci.yml`;
+`platform/shared/templates/ci/github/sol-ci.yml` and the scaffold's legacy
+`deploy.yml` are deleted, and `Sol_cli_ci` reads the workspace template, so
+`sol new workspace` and `sol ci init github` render the same file. The two duplicate
+`platform/cloud/delivery/ci/*.yml` samples are also removed: the direct-deploy one was
+the legacy kubeconfig/access-key `deploy.yml` the OIDC workflow replaces, and the GitOps
+one was a second copy of the deploy lifecycle with long-lived credentials. GitOps mode
+stays supported through `sol deploy --emit-to` plus the Argo CD `Application` in
+`platform/cloud/delivery/argocd/`. `examples/pluto` carries the new workflow, and the
+scaffold test asserts the scaffolded file *is* the canonical template rendered.
+
+**Docs.** New [`docs/deployment/ci.md`](../../../docs/deployment/ci.md) is the single CI
+reference: jobs, the two identities, OIDC subjects, repository variables, the two
+protected environments and the one secret. `docs/guides/deployment.md`,
+`docs/guides/TUTORIAL.md`, `docs/architecture/devops-pipeline.md` and
+`docs/reference/substrate.md` are updated to it, and `sol ci init`'s printed next steps
+name the authorization variables and the environment gate.
+
+**Tests.** `test_ci_init.ml` asserts the gated authorization job and `needs: authorize` in
+the generated workflow; `test_scaffold.ml` asserts there is no `deploy.yml`, that the
+authorization job is gated and runs `grants`, that authentication is OIDC with no
+kubeconfig, and that the scaffold renders the canonical template. Build, format and the
+full fast-check set pass. No language-parity impact (`DEC-022`): the CI path is
+app-language neutral.
+
