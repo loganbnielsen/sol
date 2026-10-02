@@ -129,6 +129,22 @@ let test_parse_worktree_porcelain () =
 
 let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
 
+let contains ~needle haystack =
+  let n = String.length needle
+  and m = String.length haystack in
+  let rec go i = i + n <= m && (String.sub haystack i n = needle || go (i + 1)) in
+  go 0
+;;
+
+let repo_pr ?(state = "MERGED") ?commit number branch =
+  { Soldev_merge.repo_pr_number = number
+  ; repo_pr_url = Printf.sprintf "https://github.com/loganbnielsen/sol/pull/%d" number
+  ; repo_pr_branch = branch
+  ; repo_pr_state = state
+  ; repo_pr_commit = commit
+  }
+;;
+
 let test_mentions_id_exact () =
   check_bool
     "exact token match"
@@ -690,6 +706,71 @@ let test_unpushed_annotation_asks_git () =
     check_bool "an unresolvable ref stays unpushed" true (unpushed_of "work"))
 ;;
 
+let test_review_lookup_names_a_merged_pr () =
+  let message =
+    Soldev_merge.review_lookup_error
+      ~ticket_id:"BUG-115"
+      ~inventory:(Ok [ repo_pr ~commit:"4e426729" 860 "BUG-115/database-suites-run" ])
+  in
+  check_bool "names the PR" true (contains ~needle:"#860" message);
+  check_bool "says it is merged" true (contains ~needle:"already merged" message);
+  check_bool "names the merge commit" true (contains ~needle:"4e426729" message);
+  check_bool
+    "does not claim no PR exists"
+    false
+    (contains ~needle:"no open PR found" message)
+;;
+
+let test_review_lookup_names_a_closed_pr () =
+  let message =
+    Soldev_merge.review_lookup_error
+      ~ticket_id:"BUG-115"
+      ~inventory:(Ok [ repo_pr ~state:"CLOSED" 860 "BUG-115/database-suites-run" ])
+  in
+  check_bool "names the PR" true (contains ~needle:"#860" message);
+  check_bool "says it is closed" true (contains ~needle:"is closed, not open" message);
+  check_bool
+    "does not claim it was merged"
+    false
+    (contains ~needle:"already merged" message)
+;;
+
+let test_review_lookup_without_any_pr_keeps_the_plain_message () =
+  check_string
+    "the state it describes"
+    "error: no open PR found for BUG-115 (branch prefix BUG-115/)"
+    (Soldev_merge.review_lookup_error ~ticket_id:"BUG-115" ~inventory:(Ok []))
+;;
+
+let test_review_lookup_reports_a_failed_inventory () =
+  let message =
+    Soldev_merge.review_lookup_error
+      ~ticket_id:"BUG-115"
+      ~inventory:(Error "gh pr list --state all exited 1: no such host")
+  in
+  check_bool "names the failed lookup" true (contains ~needle:"no such host" message);
+  check_bool
+    "does not claim the PR is merged or absent"
+    false
+    (contains ~needle:"already merged" message);
+  check_bool
+    "does not claim no PR exists"
+    false
+    (contains ~needle:"no open PR found for BUG-115 (branch prefix BUG-115/)" message)
+;;
+
+let test_review_lookup_matches_the_ticket_prefix_only () =
+  let message =
+    Soldev_merge.review_lookup_error
+      ~ticket_id:"BUG-115"
+      ~inventory:(Ok [ repo_pr ~commit:"abc" 999 "BUG-911/another-ticket" ])
+  in
+  check_bool
+    "another ticket's PR is not this ticket's"
+    false
+    (contains ~needle:"#999" message)
+;;
+
 let () =
   Alcotest.run
     "soldev_merge"
@@ -783,6 +864,28 @@ let () =
             "merge and queue gates without review markers"
             `Quick
             test_merge_without_review_marker
+        ] )
+    ; ( "review lookup states (INFRA-098)"
+      , [ Alcotest.test_case
+            "names a merged PR and its commit"
+            `Quick
+            test_review_lookup_names_a_merged_pr
+        ; Alcotest.test_case
+            "names a closed PR"
+            `Quick
+            test_review_lookup_names_a_closed_pr
+        ; Alcotest.test_case
+            "keeps the plain message when no PR exists"
+            `Quick
+            test_review_lookup_without_any_pr_keeps_the_plain_message
+        ; Alcotest.test_case
+            "reports a failed inventory instead of guessing"
+            `Quick
+            test_review_lookup_reports_a_failed_inventory
+        ; Alcotest.test_case
+            "matches the ticket's own branch prefix"
+            `Quick
+            test_review_lookup_matches_the_ticket_prefix_only
         ] )
     ; ( "pull-request merge targets (FEAT-115)"
       , [ Alcotest.test_case

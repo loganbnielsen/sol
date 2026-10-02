@@ -119,6 +119,101 @@ let find_pr_in prs ticket_id =
   List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id) prs
 ;;
 
+type repo_pr =
+  { repo_pr_number : int
+  ; repo_pr_url : string
+  ; repo_pr_branch : string
+  ; repo_pr_state : string
+  ; repo_pr_commit : string option
+  }
+
+let repo_pr_of_json j =
+  let open Yojson.Basic.Util in
+  let commit =
+    match j |> member "mergeCommit" with
+    | `Null -> None
+    | merge_commit -> merge_commit |> member "oid" |> to_string_option
+  in
+  { repo_pr_number = j |> member "number" |> to_int
+  ; repo_pr_url = j |> member "url" |> to_string
+  ; repo_pr_branch = j |> member "headRefName" |> to_string
+  ; repo_pr_state = j |> member "state" |> to_string
+  ; repo_pr_commit = commit
+  }
+;;
+
+let decode_repo_prs stdout =
+  match Yojson.Basic.from_string stdout with
+  | exception Yojson.Json_error message ->
+    Error ("could not decode the PR inventory from gh: " ^ message)
+  | json ->
+    (try Ok (json |> Yojson.Basic.Util.to_list |> List.map repo_pr_of_json) with
+     | Yojson.Basic.Util.Type_error (message, _) ->
+       Error ("unexpected gh pr list shape: " ^ message))
+;;
+
+let all_prs () =
+  let result =
+    Sol_process.run_argv
+      [ "gh"
+      ; "pr"
+      ; "list"
+      ; "--state"
+      ; "all"
+      ; "--json"
+      ; "number,url,headRefName,state,mergeCommit"
+      ; "--limit"
+      ; "200"
+      ]
+  in
+  if not (Sol_process.succeeded result)
+  then
+    Error
+      (Printf.sprintf
+         "gh pr list --state all exited %d: %s"
+         (Sol_process.exit_code result)
+         (String.trim (result.stderr ^ " " ^ result.stdout)))
+  else decode_repo_prs result.stdout
+;;
+
+let review_lookup_error ~ticket_id ~inventory =
+  match inventory with
+  | Error reason ->
+    Printf.sprintf
+      "error: nothing open matched %s (branch prefix %s/), and listing its PRs in other \
+       states failed (%s), so whether one was merged or closed could not be established"
+      ticket_id
+      ticket_id
+      reason
+  | Ok prs ->
+    (match
+       List.find_opt (fun p -> ticket_id_of_branch p.repo_pr_branch = ticket_id) prs
+     with
+     | Some p when String.equal p.repo_pr_state "MERGED" ->
+       Printf.sprintf
+         "error: %s's pull request #%d (%s) is already merged%s, so there is no open PR \
+          to review; nothing was marked reviewed"
+         ticket_id
+         p.repo_pr_number
+         p.repo_pr_url
+         (match p.repo_pr_commit with
+          | Some commit -> " as " ^ commit
+          | None -> "")
+     | Some p ->
+       Printf.sprintf
+         "error: %s's pull request #%d (%s) is %s, not open, so there is no open PR to \
+          review; nothing was marked reviewed"
+         ticket_id
+         p.repo_pr_number
+         p.repo_pr_url
+         (String.lowercase_ascii p.repo_pr_state)
+     | None ->
+       Printf.sprintf
+         "error: no open PR found for %s (branch prefix %s/)"
+         ticket_id
+         ticket_id)
+;;
+
 let check_buckets_of_json = function
   | `List checks ->
     List.fold_left
@@ -570,12 +665,7 @@ let run_review ticket_id result_file =
   let open Result.Syntax in
   let* prs = open_prs () in
   match find_pr_in prs ticket_id with
-  | None ->
-    Soldev_exit.error
-      (Printf.sprintf
-         "error: no open PR found for %s (branch prefix %s/)"
-         ticket_id
-         ticket_id)
+  | None -> Soldev_exit.error (review_lookup_error ~ticket_id ~inventory:(all_prs ()))
   | Some p ->
     let json_str =
       match result_file with

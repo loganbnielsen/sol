@@ -72,3 +72,50 @@ Reserve `no open PR found` for the state it describes: no PR at all.
 - Not a change to the gate: `pipeline merge` must go on refusing a PR with no `SOLDEV-REVIEW: PASS` marker
   for its head, and `pipeline review` must go on refusing to mark a merged PR as reviewed.
 - Not a substitute for the marker discipline: the marker is still posted before the merge command runs.
+
+## Completion notes
+
+**Premise re-verified 2026-10-02** at `origin/main` `85215bcb`, and it holds: the review lookup still built
+its candidate set from `gh pr list --state open` and reported one sentence for every miss. Reproduced again
+from this branch's build before the change — `pipeline review BUG-115` (PR #860 merged) and
+`pipeline review INFRA-060` (no PR) printed the same `no open PR found for <id>` sentence, with the id the
+only difference.
+
+**The change.** `internal/tooling/soldev/lib/soldev_merge.ml` gains `all_prs ()`, which lists PRs in every
+state (`gh pr list --state all --json number,url,headRefName,state,mergeCommit`), and
+`review_lookup_error ~ticket_id ~inventory`, which turns that inventory into the sentence the reader needs:
+
+- a PR for the ticket that is **merged** — named, with its URL and merge commit, saying there is no open PR
+  to review and nothing was marked reviewed;
+- a PR that is **closed** and not merged — named, with its state, saying the same;
+- **nothing at all** — the original sentence, unchanged: `no open PR found for <id> (branch prefix <id>/)`;
+- the all-states lookup **failed** — it says so, names the failure, and says whether the PR is merged or
+  closed could not be established. A failed read is not an absence (DEC-038), so this path deliberately does
+  not reuse the sentence above it.
+
+`run_review`'s miss branch calls that function with the fresh inventory. `pipeline ls`, `pipeline check` and
+the merge gate itself are untouched: `merge` still requires a `SOLDEV-REVIEW: PASS` marker for the head, and
+`review` still refuses to mark a PR that is not open.
+
+**Checks.**
+
+- Five cases in `internal/tooling/soldev/test/test_merge.ml`: a merged PR is named with its commit and the
+  message does not claim no PR exists; a closed PR is named and is not called merged; an empty inventory
+  keeps the exact plain sentence; a failed inventory names the failure and claims neither merged nor absent;
+  another ticket's PR is not matched. `dune exec internal/tooling/soldev/test/test_merge.exe` — 27 cases
+  pass.
+- **Mutation check:** turning the merged-state guard into `when false` fails the first case with `says it is
+  merged` and nothing else; restored, rebuilt, green.
+- Live, on this branch's build: `pipeline review BUG-115` →
+  `error: BUG-115's pull request #860 (https://github.com/loganbnielsen/sol/pull/860) is already merged as 4e426729…, so there is no open PR to review; nothing was marked reviewed`;
+  `pipeline review INFRA-060` → `error: no open PR found for INFRA-060 (branch prefix INFRA-060/)`.
+- Guards and formatting: `dune fmt`, `check_ocamlformat.sh --all`, `check_no_comments.sh`,
+  `check_operator_diagnostics.py`, `check_json_decode_boundary.py`, `check_test_reachability.py` and
+  `run_fast_checks.sh`.
+
+**Why it was worth doing rather than shrugging at.** It misled a reader immediately: during BUG-115's landing
+this message was read as a lookup failure — "the tool cannot find the PR by branch prefix" — and reported as
+a phantom tooling defect. The wording now names which of the four states the reader is in.
+
+**Demo/example:** not applicable — `soldev` is maintainer tooling, not a surface an application author runs or
+reads. **Language parity (DEC-022):** no impact; this changes no framework contract or convention.
