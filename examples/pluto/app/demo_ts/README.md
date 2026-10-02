@@ -7,7 +7,7 @@ npm packages:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — schema
   registry ordering/fatality, explicit topic provisioning, the Confluent wire
-  format, and decode/retry/crash routing.
+  format, the `Ack | Fail` outcome and the group-scoped decode DLQ.
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric naming/label
   vocabulary, Loki push shape, and W3C traceparent propagation.
 - [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
@@ -22,7 +22,7 @@ The four exist so a TypeScript service and an OCaml `sol-svc`/
 without an author having to reconstruct Sol's policy by hand — see each
 package's own tests for the specific bugs a hand-rolled first attempt hit
 (FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
-repository with their own CI, including the broker-backed retry/DLQ tests;
+repository with their own CI, including the broker-backed DLQ/partitioning tests;
 `svc` and `worker` share
 [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
 

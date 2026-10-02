@@ -5,15 +5,12 @@ import type { SpanContext } from "@opentelemetry/api";
 
 import {
   ACK,
+  fail,
   kafkaConfigFromEnv,
-  kafkaRetryRelay,
-  provisionRelayTopics,
-  retry as retryOutcome,
-  runRetryRelayConsumer,
+  provisionDlqTopic,
   wireCrashListener,
-  wrapEachRetryableMessage,
+  wrapEachMessage,
   type Outcome,
-  type RetryStrategy,
 } from "@sol-fab/kafka";
 import { makeLokiPusher } from "@sol-fab/obs";
 import { runWorker } from "@sol-fab/worker";
@@ -47,11 +44,6 @@ const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
 const POSTGRES_URL = setting("POSTGRES_URL");
 
-const RETRY_STRATEGY: RetryStrategy = {
-  kind: "retry-topics",
-  policy: { baseDelayS: 1, maxDelayS: 60, maxAttempts: 5, jitterRatio: 0.1 },
-};
-
 const log = makeLokiPusher({
   lokiUrl: LOKI_URL,
   service: "fulfillment-worker-ts",
@@ -63,7 +55,6 @@ const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDura
 async function handleOrder(
   order: ReturnType<typeof decodeOrderPlaced>,
   traceContext: SpanContext | undefined,
-  attempt: number,
 ): Promise<Outcome> {
   const start = process.hrtime.bigint();
   const span = startChildSpan(tracer, "fulfill_order", traceContext);
@@ -72,15 +63,14 @@ async function handleOrder(
       order_id: order.order_id,
       item: order.item,
       quantity: String(order.quantity),
-      attempt: String(attempt),
     });
 
     if (db) {
       try {
         await db.insertFulfilled(order);
       } catch (err) {
-        messagesTotal.inc({ status: "retry" });
-        return retryOutcome(`db: ${String(err)}`);
+        messagesTotal.inc({ status: "fail" });
+        return fail(`db: ${String(err)}`);
       }
     }
 
@@ -103,17 +93,13 @@ async function main() {
 
   const producer = kafka.producer();
   await producer.connect();
-  const relay = kafkaRetryRelay(producer);
-  await provisionRelayTopics({
+  await provisionDlqTopic({
     kafka,
     groupId: GROUP_ID,
     source: { name: TOPIC_NAME, partitions: PARTITIONS },
   });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
-  wireCrashListener(consumer, {
-    onCrash: (error) => console.error(`[fulfillment-worker-ts] consumer crashed: ${String(error)}`),
-  });
   await consumer.connect();
   await consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: false });
 
@@ -138,28 +124,21 @@ async function main() {
   };
 
   await consumer.run({
-    eachMessage: wrapEachRetryableMessage({
+    eachMessage: wrapEachMessage({
       decode: decodeOrderPlaced,
       decodeErrorCounter: decodeErrorsTotal,
       onDecodeError,
-      decodeErrorPolicy: "route-to-dlq",
-      retryStrategy: RETRY_STRATEGY,
-      groupId: GROUP_ID,
-      sourceTopic: TOPIC_NAME,
-      relay,
-      handler: ({ message, traceContext, attempt }) => handleOrder(message, traceContext, attempt),
+      dlq: {
+        publisher: {
+          publish: async (record) => {
+            await producer.send({ topic: record.topic, messages: [record] });
+          },
+        },
+        groupId: GROUP_ID,
+        sourceTopic: TOPIC_NAME,
+      },
+      handler: ({ message, traceContext }) => handleOrder(message, traceContext),
     }),
-  });
-
-  const relayConsumer = await runRetryRelayConsumer({
-    kafka,
-    sourceTopic: TOPIC_NAME,
-    groupId: GROUP_ID,
-    retryStrategy: RETRY_STRATEGY,
-    decode: decodeOrderPlaced,
-    relay,
-    onDecodeError,
-    handler: ({ message, traceContext, attempt }) => handleOrder(message, traceContext, attempt),
   });
 
   const pushgatewayUrl = setting("PUSHGATEWAY_URL");
@@ -171,10 +150,9 @@ async function main() {
       }, 3000)
     : undefined;
 
-  runWorker({
+  const lifecycle = runWorker({
     drain: async () => {
       await consumer.disconnect();
-      await relayConsumer.disconnect();
     },
     onDrainStart: () => {
       console.log("[fulfillment-worker-ts] draining...");
@@ -191,6 +169,14 @@ async function main() {
       },
       () => shutdownTracing(),
     ],
+  });
+
+  wireCrashListener(consumer, {
+    onCrash: (error) => console.error(`[fulfillment-worker-ts] consumer crashed: ${String(error)}`),
+    onFailStop: (reason) => {
+      console.error(`[fulfillment-worker-ts] handler failed a fact (fail-stop): ${reason}`);
+      return lifecycle.shutdown();
+    },
   });
 }
 
