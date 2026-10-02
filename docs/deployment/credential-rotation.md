@@ -49,6 +49,27 @@ previous value is revoked by updating the same object in place (there is no
 second copy to leave behind), so no secret value appears in a plan, release
 record, or conformance bundle — DEC-026 §7's invariant.
 
+### When something else owns the Secret
+
+Step 1 is only a rotation if Sol is the authority for the object it patches. In a
+deployment that delivers secrets through the External Secrets Operator, an
+`ExternalSecret` owns each `<svc>-secrets` object and reconciles it from a
+provider-side store; a direct write would be reported as applied and then
+silently restored on the operator's next reconcile, and `sol secret delete`
+loses the same race.
+
+`sol secret set` and `sol secret delete` therefore inspect the live Secrets in
+every namespace the operation selects, before changing anything or restarting any
+workload. If any selected Secret is an `ExternalSecret`'s target, the whole
+operation is refused — it names the managed target and the namespace, and points
+at the provider store the `ExternalSecret` reads from. Nothing is written and no
+workload is restarted, so a mixed selection cannot half-apply.
+
+To rotate such a value, change it in the provider store and let the operator
+reconcile; if you deliberately want Sol to own the Secret instead, remove that
+`ExternalSecret`'s ownership of it first. Kubernetes-live Secrets that no
+operator owns remain directly rotatable through `sol secret set`.
+
 The 120-second bound is a maturity-A default; a target whose workloads legitimately
 take longer should be treated as outside the profile rather than silently given
 an unbounded wait. Delivered restarts are exercised by HARDEN-002 against a

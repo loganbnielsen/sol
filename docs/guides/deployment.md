@@ -198,6 +198,13 @@ sol deploy "$SOL_TARGET" --emit-plan-to plan.json --dry-run    # typed intent, a
 sol deploy "$SOL_TARGET" --emit-to manifests/ --image-tag "$SHA"
 ```
 
+Emitted manifests never contain secret values, so rotation stays a separate
+step either way: `sol secret set` for a Secret Sol owns, or the provider store
+when the target delivers secrets through the External Secrets Operator — Sol
+refuses to write over an `ExternalSecret`'s target rather than report a
+rotation the operator will undo. See
+[credential-rotation.md](../deployment/credential-rotation.md).
+
 **Direct**, `deploy.yml`: same build phase, then `sol deploy` with a registry and an image tag and
 a kubeconfig from a secret (`KUBECONFIG_B64`).
 
