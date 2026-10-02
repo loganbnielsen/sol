@@ -54,7 +54,14 @@ let sample_record : R.t =
     ; apply_mode = R.Direct
     }
   in
-  let release_id = Sol_cli_release_id.to_string (R.derived_release_id placeholder) in
+  let release_id =
+    Sol_cli_release_id.to_string
+      (Sol_cli_release_id.of_content
+         { workspace = placeholder.workspace
+         ; environment = placeholder.environment
+         ; workloads = [ sample_workload ]
+         })
+  in
   { placeholder with release_id; workloads = [ R.applied_by release_id sample_workload ] }
 ;;
 
@@ -475,23 +482,34 @@ let live_of release =
     Sol_cli_rollback.identity_of_spec spec, applied_by)
 ;;
 
+let plan_with_services plan ~services ~requested_scope =
+  let release_id =
+    Sol_cli_release_id.of_content
+      { workspace = plan.Sol_cli_deployment_plan.workspace
+      ; environment = plan.environment.env
+      ; workloads = List.map R.workload_of_spec services
+      }
+  in
+  { plan with services; requested_scope; release_id }
+;;
+
 let two_service_plan plan =
   match plan.Sol_cli_deployment_plan.services with
   | [ charge ] ->
-    { plan with
-      services = [ charge; second_service charge ]
-    ; requested_scope = "workspace"
-    }
+    plan_with_services
+      plan
+      ~services:[ charge; second_service charge ]
+      ~requested_scope:"workspace"
   | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
 ;;
 
 let scoped_update plan =
   match plan.Sol_cli_deployment_plan.services with
   | [ charge ] ->
-    { plan with
-      services = [ { charge with image = "reg/myworkspace/charge-svc:def5678" } ]
-    ; requested_scope = "payments/charge_svc"
-    }
+    plan_with_services
+      plan
+      ~services:[ { charge with image = "reg/myworkspace/charge-svc:def5678" } ]
+      ~requested_scope:"payments/charge_svc"
   | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
 ;;
 
@@ -539,8 +557,47 @@ let test_scoped_deploy_records_a_complete_boundary () =
       (contains "def5678" charge.Sol_cli_release_id.spec.image);
     check_string
       "the in-scope workload is applied by this deploy"
-      boundary_b.release_id
+      (Sol_cli_release_id.to_string (scoped_update plan).release_id)
       charge.Sol_cli_release_id.applied_by;
+    let scoped = scoped_update plan in
+    let rendered =
+      match scoped.services with
+      | [ spec ] ->
+        (match
+           Sol_cli_deployment_render.render_spec
+             ~workspace:scoped.workspace
+             ~release_id:scoped.release_id
+             spec
+         with
+         | Ok (_, yaml) -> yaml
+         | Error msg -> Alcotest.fail msg)
+      | _ -> Alcotest.fail "expected one scoped service"
+    in
+    check_bool
+      "the live manifest carries the recorded provenance"
+      true
+      (contains ("release: \"" ^ charge.applied_by ^ "\"") rendered);
+    let event =
+      Sol_cli_deployment.of_plan
+        ~release_id:(Result.get_ok (Sol_cli_release_id.of_string boundary_b.release_id))
+        ~deployment_id:(Sol_cli_deployment_id.create ~now:0. ~entropy:"scoped")
+        ~now:0.
+        ~git_commit:"abc1234"
+        ~git_dirty:false
+        ~actor:None
+        ~target:(Some "dev/aws/us-east-1")
+        ~outcome:Sol_cli_deployment.Applied
+        scoped
+    in
+    (match
+       Sol_cli_rollback.resolve_commit
+         ~commit:"abc1234"
+         ~target:"dev/aws/us-east-1"
+         [ event ]
+     with
+     | Sol_cli_rollback.Commit_resolved id ->
+       check_string "commit resolves the persisted boundary" boundary_b.release_id id
+     | _ -> Alcotest.fail "commit did not resolve the persisted boundary");
     check_string
       "the untouched workload keeps its spec"
       (recorded_of boundary_a "ledger_svc").Sol_cli_release_id.spec.image
@@ -549,6 +606,57 @@ let test_scoped_deploy_records_a_complete_boundary () =
       "the untouched workload keeps its provenance"
       boundary_a.release_id
       ledger.Sol_cli_release_id.applied_by)
+;;
+
+let test_selected_plan_builder_preserves_scoped_provenance () =
+  with_plan ~requested_scope:"workspace" (fun _ ->
+    let ledger : Sol_cli_manifest.service =
+      { domain = "payments"
+      ; name = "ledger_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/payments/ledger_svc"
+      }
+    in
+    write_file "app/payments/ledger_svc/sol.toml" "";
+    let build ~services ~requested_scope ~env =
+      match
+        Sol_cli_deployment_plan.of_services_result
+          ~facts:(facts ())
+          ~workspace:"myworkspace"
+          ~env
+          ~requested_scope
+          services
+      with
+      | Ok plan -> plan
+      | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+    in
+    let full =
+      build ~services:[ test_service; ledger ] ~requested_scope:"workspace" ~env:test_env
+    in
+    let scoped =
+      build
+        ~services:[ test_service ]
+        ~requested_scope:"payments/charge_svc"
+        ~env:{ test_env with image_tag = "updated" }
+    in
+    let previous = R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:[] full in
+    let current =
+      R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:previous.workloads scoped
+    in
+    let selected = recorded_of current "charge_svc" in
+    let inherited = recorded_of current "ledger_svc" in
+    check_string
+      "selected plan id is live provenance"
+      (Sol_cli_release_id.to_string scoped.release_id)
+      selected.applied_by;
+    check_string "inherited provenance remains" previous.release_id inherited.applied_by;
+    check_string
+      "complete boundary rederives"
+      current.release_id
+      (Sol_cli_release_id.to_string (R.derived_release_id current));
+    match R.validate ~name:(R.configmap_name current) current with
+    | Ok () -> ()
+    | Error msg -> Alcotest.fail msg)
 ;;
 
 let test_scoped_rollback_keeps_untouched_workloads () =
@@ -836,6 +944,10 @@ let () =
             "a scoped deploy records a complete boundary"
             `Quick
             test_scoped_deploy_records_a_complete_boundary
+        ; Alcotest.test_case
+            "selected plan builder preserves scoped provenance"
+            `Quick
+            test_selected_plan_builder_preserves_scoped_provenance
         ; Alcotest.test_case
             "rolling back to a scoped boundary keeps untouched workloads"
             `Quick

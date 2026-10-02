@@ -51,6 +51,7 @@ val deploy_events
   :  workspace:string
   -> target_cfg:Sol_cli_config.target
   -> deployment_id:Sol_cli_deployment_id.t
+  -> ?release_id:Sol_cli_release_id.t
   -> Sol_cli_deployment_plan.t
   -> Sol_cli_deploy_event.t list
 

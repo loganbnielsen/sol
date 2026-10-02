@@ -288,17 +288,8 @@ let test_gate_a_decode_correctness () =
 
 let test_gate_b_identity_correctness () =
   let specs = reconstruct_ok () in
-  let deployed, inherited = Sol_cli_release.partition_boundary gate_release in
   let reconstructed_id =
-    Sol_cli_release.boundary_id
-      ~workspace:gate_release.workspace
-      ~environment:gate_release.environment
-      ~deployed:(List.map Sol_cli_release.workload_identity deployed)
-      ~inherited:
-        (List.map
-           (fun (w : Sol_cli_release.recorded_workload) ->
-              w.Sol_cli_release_id.spec, w.applied_by)
-           inherited)
+    Sol_cli_release.derived_release_id gate_release |> Sol_cli_release_id.to_string
   in
   Alcotest.(check string)
     "reconstructed release id matches the record"
@@ -307,7 +298,7 @@ let test_gate_b_identity_correctness () =
   Alcotest.(check int)
     "every reconstructed workload carries observable provenance"
     (List.length specs)
-    (List.length deployed + List.length inherited)
+    (List.length gate_release.workloads)
 ;;
 
 let render_by_identity ~release_id apply_specs =

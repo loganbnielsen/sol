@@ -136,31 +136,39 @@ let of_content (content : content) =
   "r-" ^ String.sub hex 0 16
 ;;
 
+let of_recorded_boundary ~workspace ~environment (workloads : recorded_workload list) =
+  let specs = List.map (fun w -> w.spec) workloads in
+  let content_id = of_content { workspace; environment; workloads = specs } in
+  if List.for_all (fun w -> String.equal w.applied_by content_id) workloads
+  then content_id
+  else (
+    let b = Buffer.create 256 in
+    enc_string b boundary_encoding_version;
+    enc_string b workspace;
+    enc_option enc_string b environment;
+    let workloads =
+      List.sort (fun a c -> compare_workload_spec a.spec c.spec) workloads
+    in
+    enc_int b (List.length workloads);
+    workloads
+    |> List.iter (fun w ->
+      enc_workload b w.spec;
+      enc_string b w.applied_by);
+    "r-" ^ String.sub (Digest.to_hex (Digest.string (Buffer.contents b))) 0 16)
+;;
+
 let of_boundary
       ~workspace
       ~environment
       ~(deployed : workload list)
       ~(inherited : (workload * string) list)
   =
-  if inherited = []
-  then of_content { workspace; environment; workloads = deployed }
-  else (
-    let b = Buffer.create 256 in
-    enc_string b boundary_encoding_version;
-    enc_string b workspace;
-    enc_option enc_string b environment;
-    let deployed = List.sort compare_workload_spec deployed in
-    enc_int b (List.length deployed);
-    deployed |> List.iter (enc_workload b);
-    let inherited =
-      List.sort (fun (a, _) (c, _) -> compare_workload_spec a c) inherited
-    in
-    enc_int b (List.length inherited);
-    inherited
-    |> List.iter (fun (w, applied_by) ->
-      enc_workload b w;
-      enc_string b applied_by);
-    "r-" ^ String.sub (Digest.to_hex (Digest.string (Buffer.contents b))) 0 16)
+  let applied_by = of_content { workspace; environment; workloads = deployed } in
+  let workloads =
+    List.map (fun spec -> { spec; applied_by }) deployed
+    @ List.map (fun (spec, applied_by) -> { spec; applied_by }) inherited
+  in
+  of_recorded_boundary ~workspace ~environment workloads
 ;;
 
 let to_string (t : t) = t

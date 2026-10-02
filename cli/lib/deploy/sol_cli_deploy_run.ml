@@ -175,7 +175,16 @@ let substrate_prerequisite ctx ~plan ~live =
     |> Result.map_error (fun message -> Refused message)
 ;;
 
-let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_id plan =
+let deploy_events
+      ~workspace
+      ~(target_cfg : Sol_cli_config.target)
+      ~deployment_id
+      ?release_id
+      plan
+  =
+  let release_id =
+    Option.value release_id ~default:plan.Sol_cli_deployment_plan.release_id
+  in
   plan.Sol_cli_deployment_plan.services
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
     { Sol_cli_deploy_event.workspace
@@ -188,7 +197,7 @@ let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ~deployment_i
            | Sol_cli_deployment_plan.Svc -> Sol_cli_manifest.Svc
            | Worker -> Sol_cli_manifest.Worker
            | Fn -> Sol_cli_manifest.Fn)
-    ; release_id = plan.Sol_cli_deployment_plan.release_id
+    ; release_id
     ; deployment_id
     })
 ;;
@@ -267,16 +276,18 @@ let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
       Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst)
 ;;
 
-let execute_deployment_attempt ctx ~before_apply ~push_events plan =
+let execute_deployment_attempt ctx ~before_apply ~push_events ~release_id ~finish plan =
   let attempt = Sol_cli_deployment_attempt.start () in
   let applied =
     run_plan_result ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply ~before_apply plan
   in
-  let outcome = Sol_cli_deployment_attempt.outcome_of applied in
+  let completed = Result.bind applied finish in
+  let outcome = Sol_cli_deployment_attempt.outcome_of completed in
   let recorded =
     Sol_cli_deployment_attempt.record
       ~ctx:ctx.execution.cluster
       ~target:(Some ctx.target_name)
+      ~release_id
       plan
       attempt
       outcome
@@ -288,9 +299,10 @@ let execute_deployment_attempt ctx ~before_apply ~push_events plan =
           ~workspace:ctx.execution.workspace
           ~target_cfg:ctx.target_cfg
           ~deployment_id:(Sol_cli_deployment_attempt.deployment_id attempt)
+          ~release_id
           plan)
    | _ -> ());
-  applied
+  completed
 ;;
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
@@ -332,29 +344,36 @@ let apply ctx ~push_events ~report_success ~confirm_group_change plan =
            ~workspace:ctx.execution.workspace
            plan
        in
-       let* () = contract_reconciliation ctx plan in
-       let* results =
-         execute_deployment_attempt
-           ctx
-           ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
-           ~push_events
+       let boundary =
+         Sol_cli_release.of_plan_with_boundary
+           ~apply_mode:Sol_cli_release.Direct
+           ~retained
            plan
        in
-       Sol_cli_release.finish_deployment
-         ~record_release:(fun () ->
-           let* () = Sol_cli_boundary_lease.ensure_held lease in
-           let* () = record_release_and_prune ctx ~previous ~retained plan in
-           Sol_cli_deployment_state.record_outcome
-             ~ctx:ctx.execution.cluster
-             ctx.execution.workspace
-             (Sol_cli_deployment_state.Applied
-                { namespace = "default"
-                ; name = ctx.execution.workspace
-                ; image = ctx.sha
-                ; consumer_groups =
-                    List.map
-                      Sol_cli_plan_ids.Consumer_group.to_string
-                      plan.consumer_groups
-                }))
-         ~report_success:(fun () -> report_success results))
+       let* release_id = Sol_cli_release_id.of_string boundary.release_id in
+       let* () = contract_reconciliation ctx plan in
+       execute_deployment_attempt
+         ctx
+         ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
+         ~push_events
+         ~release_id
+         ~finish:(fun results ->
+           Sol_cli_release.finish_deployment
+             ~record_release:(fun () ->
+               let* () = Sol_cli_boundary_lease.ensure_held lease in
+               let* () = record_release_and_prune ctx ~previous ~retained plan in
+               Sol_cli_deployment_state.record_outcome
+                 ~ctx:ctx.execution.cluster
+                 ctx.execution.workspace
+                 (Sol_cli_deployment_state.Applied
+                    { namespace = "default"
+                    ; name = ctx.execution.workspace
+                    ; image = ctx.sha
+                    ; consumer_groups =
+                        List.map
+                          Sol_cli_plan_ids.Consumer_group.to_string
+                          plan.consumer_groups
+                    }))
+             ~report_success:(fun () -> report_success results))
+         plan)
 ;;
