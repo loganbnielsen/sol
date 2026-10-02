@@ -128,29 +128,253 @@ let required name value =
   Option.to_result ~none:("the cloud lifecycle requires target." ^ name) value
 ;;
 
-let aws =
-  { backend_config =
-      (fun target ~bucket ~object_key ->
-        match Sol_cli_config.provider_field target "state_lock_table" with
-        | Some table ->
-          Ok
-            [ "bucket=" ^ bucket
-            ; "key=" ^ object_key
-            ; "region=" ^ target.region
-            ; "dynamodb_table=" ^ table
-            ; "encrypt=true"
-            ]
-        | _ ->
-          Error
-            "an AWS target must declare aws.state_lock_table: S3 has no native state \
-             locking, so two applies could corrupt the same state")
-  ; cluster_access_role_arn =
-      (fun target ->
-        Result.map
-          Option.some
-          (required
-             "aws.cluster_access_role_arn"
-             (Sol_cli_config.provider_field target "cluster_access_role_arn")))
+let aws_backend_config
+  :  Sol_cli_config.target
+  -> bucket:string
+  -> object_key:string
+  -> (string list, string) result
+  =
+  fun target ~bucket ~object_key ->
+  match Sol_cli_config.provider_field target "state_lock_table" with
+  | Some table ->
+    Ok
+      [ "bucket=" ^ bucket
+      ; "key=" ^ object_key
+      ; "region=" ^ target.region
+      ; "dynamodb_table=" ^ table
+      ; "encrypt=true"
+      ]
+  | _ ->
+    Error
+      "an AWS target must declare aws.state_lock_table: S3 has no native state locking, \
+       so two applies could corrupt the same state"
+;;
+
+let aws_cluster_access_role_arn : Sol_cli_config.target -> (string option, string) result =
+  fun target ->
+  Result.map
+    Option.some
+    (required
+       "aws.cluster_access_role_arn"
+       (Sol_cli_config.provider_field target "cluster_access_role_arn"))
+;;
+
+let aws_zone_probes
+  : Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  =
+  fun configuration ->
+  let open Sol_cli_installation in
+  match configuration.zone with
+  | No_zone -> []
+  | Service_zone { domain; ownership = Externally_delegated } ->
+    [ unverifiable
+        Delegated_zone
+        (Printf.sprintf
+           "%s is externally delegated: the zone lives outside AWS, so the delegation to \
+            this installation cannot be observed where the installation looks — \
+            confirming it is the delegation wait, not a provider lookup"
+           domain)
+    ]
+  | Service_zone { domain; ownership } ->
+    [ present_if_output_names
+        ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
+        ~reason:
+          (Printf.sprintf
+             "no Route53 hosted zone named %s, although the target declares it %s"
+             domain
+             (match ownership with
+              | Sol_created -> "sol-created"
+              | User_supplied -> "user-supplied"
+              | Externally_delegated -> "(external)"))
+        Delegated_zone
+        [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
+    ]
+    @ [ public_delegation_probe domain ]
+;;
+
+let aws_installation_probes
+  : Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  =
+  fun configuration ->
+  let open Sol_cli_installation in
+  let role_name arn =
+    match Sol_cli_string.after_opt ~needle:":role/" arn with
+    | Some name -> name
+    | None ->
+      (match String.rindex_opt arn '/' with
+       | Some i when i + 1 < String.length arn ->
+         String.sub arn (i + 1) (String.length arn - i - 1)
+       | _ -> arn)
+  in
+  let role prerequisite name =
+    match name with
+    | Some arn ->
+      present_if_output
+        prerequisite
+        [ "aws"; "iam"; "get-role"; "--role-name"; role_name arn ]
+    | None ->
+      absent
+        prerequisite
+        (Printf.sprintf
+           "the resolved installation configuration names no %s"
+           (prerequisite_label prerequisite))
+  in
+  [ present_if_output
+      State_backend
+      [ "aws"
+      ; "s3api"
+      ; "head-bucket"
+      ; "--bucket"
+      ; configuration.state_bucket
+      ; "--region"
+      ; configuration.region
+      ]
+  ; (match configuration.lock_table with
+     | Some table ->
+       present_if_output
+         State_lock
+         [ "aws"
+         ; "dynamodb"
+         ; "describe-table"
+         ; "--table-name"
+         ; table
+         ; "--region"
+         ; configuration.region
+         ]
+     | None ->
+       absent
+         State_lock
+         "the resolved installation configuration names no lock table, and the AWS \
+          durable root declares one")
+  ; role Provisioning_identity configuration.provisioning_identity
+  ; role Cluster_access_identity configuration.cluster_access_identity
+  ; role Deploy_identity configuration.deploy_identity
+  ; role Operator_identity configuration.operator_identity
+  ]
+  @ aws_zone_probes configuration
+;;
+
+let aws_installation_backend
+  : Sol_cli_installation.installation_config -> (string list, string) result
+  =
+  fun configuration ->
+  match configuration.lock_table with
+  | None ->
+    Error
+      "an AWS installation must declare aws.state_lock_table before the durable root can \
+       be reconciled: S3 has no native state locking, so a root whose backend names no \
+       lock table could corrupt its own state"
+  | Some table ->
+    Ok
+      [ "bucket=" ^ configuration.state_bucket
+      ; "key=" ^ configuration.state_prefix ^ "/default.tfstate"
+      ; "region=" ^ configuration.region
+      ; "dynamodb_table=" ^ table
+      ; "encrypt=true"
+      ]
+;;
+
+let aws_installation_vars
+  :  manage_dns_zone:bool
+  -> ?parent_zone_id:string
+  -> Sol_cli_installation.installation_config
+  -> (string * string) list
+  =
+  fun ~manage_dns_zone ?parent_zone_id configuration ->
+  [ "region", configuration.region
+  ; "state_bucket", configuration.state_bucket
+  ; "state_lock_table", Option.value configuration.lock_table ~default:""
+  ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+  ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+  ; "parent_zone_id", Option.value parent_zone_id ~default:""
+  ]
+;;
+
+let aws_own_vars
+  :  Sol_cli_config.target
+  -> workspace:string
+  -> (string * string) list
+  -> (string * string) list
+  =
+  fun target ~workspace shared ->
+  shared
+  |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
+  |> add_opt
+       "provisioner_role_arn"
+       (Sol_cli_config.provider_field target "provisioner_role_arn")
+  |> add_opt
+       "cluster_access_role_arn"
+       (Sol_cli_config.provider_field target "cluster_access_role_arn")
+  |> add_opt "deploy_role_arn" (Sol_cli_config.provider_field target "deploy_role_arn")
+  |> add_opt
+       "operator_role_arn"
+       (Sol_cli_config.provider_field target "operator_role_arn")
+  |> add_opt "workspace_name" (Some workspace)
+;;
+
+let aws_root_declared_vars
+  :  has_postgres:bool
+  -> production_postgres:bool
+  -> ecr_repositories:(unit -> (string, string) result)
+  -> ((string * string) list, string) result
+  =
+  fun ~has_postgres ~production_postgres ~ecr_repositories ->
+  Result.map
+    (fun ecr_repositories ->
+       [ "create_rds", string_of_bool has_postgres
+       ; "rds_multi_az", string_of_bool production_postgres
+       ; "ecr_repositories", ecr_repositories
+       ])
+    (ecr_repositories ())
+;;
+
+let aws_destroy_guard_vars : final_snapshot:string option -> (string * string) list =
+  fun ~final_snapshot ->
+  ("rds_deletion_protection", "false")
+  ::
+  (match final_snapshot with
+   | Some identifier ->
+     [ "rds_skip_final_snapshot", "false"; "rds_final_snapshot_identifier", identifier ]
+   | None -> [ "rds_skip_final_snapshot", "true" ])
+;;
+
+let aws_installation_zone_lookup : string -> string list =
+  fun domain ->
+  [ "aws"
+  ; "route53"
+  ; "list-hosted-zones-by-name"
+  ; "--dns-name"
+  ; domain
+  ; "--query"
+  ; "HostedZones[0].Id"
+  ; "--output"
+  ; "text"
+  ]
+;;
+
+let aws_installation_identity_contracts : identity_contract list =
+  [ { identity = Sol_cli_installation.Provisioning_identity
+    ; policy_output = "provisioner_policy_json"
+    ; declared_as = "aws.provisioner_role_arn"
+    }
+  ; { identity = Sol_cli_installation.Cluster_access_identity
+    ; policy_output = "cluster_access_policy_json"
+    ; declared_as = "aws.cluster_access_role_arn"
+    }
+  ; { identity = Sol_cli_installation.Deploy_identity
+    ; policy_output = "deploy_policy_json"
+    ; declared_as = "aws.deploy_role_arn"
+    }
+  ; { identity = Sol_cli_installation.Operator_identity
+    ; policy_output = "operator_policy_json"
+    ; declared_as = "aws.operator_role_arn"
+    }
+  ]
+;;
+
+let aws : t =
+  { backend_config = aws_backend_config
+  ; cluster_access_role_arn = aws_cluster_access_role_arn
   ; platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
   ; cluster_substrate = None
   ; disk_quota = None
@@ -164,136 +388,10 @@ let aws =
       ; Sol_cli_installation.Delegated_zone
       ; Sol_cli_installation.Public_delegation
       ]
-  ; installation_probes =
-      (fun configuration ->
-        let open Sol_cli_installation in
-        let role_name arn =
-          match Sol_cli_string.after_opt ~needle:":role/" arn with
-          | Some name -> name
-          | None ->
-            (match String.rindex_opt arn '/' with
-             | Some i when i + 1 < String.length arn ->
-               String.sub arn (i + 1) (String.length arn - i - 1)
-             | _ -> arn)
-        in
-        let role prerequisite name =
-          match name with
-          | Some arn ->
-            present_if_output
-              prerequisite
-              [ "aws"; "iam"; "get-role"; "--role-name"; role_name arn ]
-          | None ->
-            absent
-              prerequisite
-              (Printf.sprintf
-                 "the resolved installation configuration names no %s"
-                 (prerequisite_label prerequisite))
-        in
-        [ present_if_output
-            State_backend
-            [ "aws"
-            ; "s3api"
-            ; "head-bucket"
-            ; "--bucket"
-            ; configuration.state_bucket
-            ; "--region"
-            ; configuration.region
-            ]
-        ; (match configuration.lock_table with
-           | Some table ->
-             present_if_output
-               State_lock
-               [ "aws"
-               ; "dynamodb"
-               ; "describe-table"
-               ; "--table-name"
-               ; table
-               ; "--region"
-               ; configuration.region
-               ]
-           | None ->
-             absent
-               State_lock
-               "the resolved installation configuration names no lock table, and the AWS \
-                durable root declares one")
-        ; role Provisioning_identity configuration.provisioning_identity
-        ; role Cluster_access_identity configuration.cluster_access_identity
-        ; role Deploy_identity configuration.deploy_identity
-        ; role Operator_identity configuration.operator_identity
-        ]
-        @
-        match configuration.zone with
-        | No_zone -> []
-        | Service_zone { domain; ownership = Externally_delegated } ->
-          [ unverifiable
-              Delegated_zone
-              (Printf.sprintf
-                 "%s is externally delegated: the zone lives outside AWS, so the \
-                  delegation to this installation cannot be observed where the \
-                  installation looks — confirming it is the delegation wait, not a \
-                  provider lookup"
-                 domain)
-          ]
-        | Service_zone { domain; ownership } ->
-          [ present_if_output_names
-              ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
-              ~reason:
-                (Printf.sprintf
-                   "no Route53 hosted zone named %s, although the target declares it %s"
-                   domain
-                   (match ownership with
-                    | Sol_created -> "sol-created"
-                    | User_supplied -> "user-supplied"
-                    | Externally_delegated -> "(external)"))
-              Delegated_zone
-              [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
-          ]
-          @
-            (match configuration.zone with
-            | No_zone -> []
-            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
-  ; installation_backend =
-      (fun configuration ->
-        match configuration.lock_table with
-        | None ->
-          Error
-            "an AWS installation must declare aws.state_lock_table before the durable \
-             root can be reconciled: S3 has no native state locking, so a root whose \
-             backend names no lock table could corrupt its own state"
-        | Some table ->
-          Ok
-            [ "bucket=" ^ configuration.state_bucket
-            ; "key=" ^ configuration.state_prefix ^ "/default.tfstate"
-            ; "region=" ^ configuration.region
-            ; "dynamodb_table=" ^ table
-            ; "encrypt=true"
-            ])
-  ; installation_vars =
-      (fun ~manage_dns_zone ?parent_zone_id configuration ->
-        [ "region", configuration.region
-        ; "state_bucket", configuration.state_bucket
-        ; "state_lock_table", Option.value configuration.lock_table ~default:""
-        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
-        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
-        ; "parent_zone_id", Option.value parent_zone_id ~default:""
-        ])
-  ; own_vars =
-      (fun target ~workspace shared ->
-        shared
-        |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
-        |> add_opt
-             "provisioner_role_arn"
-             (Sol_cli_config.provider_field target "provisioner_role_arn")
-        |> add_opt
-             "cluster_access_role_arn"
-             (Sol_cli_config.provider_field target "cluster_access_role_arn")
-        |> add_opt
-             "deploy_role_arn"
-             (Sol_cli_config.provider_field target "deploy_role_arn")
-        |> add_opt
-             "operator_role_arn"
-             (Sol_cli_config.provider_field target "operator_role_arn")
-        |> add_opt "workspace_name" (Some workspace))
+  ; installation_probes = aws_installation_probes
+  ; installation_backend = aws_installation_backend
+  ; installation_vars = aws_installation_vars
+  ; own_vars = aws_own_vars
   ; profile_vars =
       (fun ~production ~production_postgres ->
         (if production
@@ -301,25 +399,8 @@ let aws =
          else [])
         @ if production_postgres then [ "rds_deletion_protection", "true" ] else [])
   ; guarded_removals = [ "aws_ecr_repository" ]
-  ; root_declared_vars =
-      (fun ~has_postgres ~production_postgres ~ecr_repositories ->
-        Result.map
-          (fun ecr_repositories ->
-             [ "create_rds", string_of_bool has_postgres
-             ; "rds_multi_az", string_of_bool production_postgres
-             ; "ecr_repositories", ecr_repositories
-             ])
-          (ecr_repositories ()))
-  ; destroy_guard_vars =
-      (fun ~final_snapshot ->
-        ("rds_deletion_protection", "false")
-        ::
-        (match final_snapshot with
-         | Some identifier ->
-           [ "rds_skip_final_snapshot", "false"
-           ; "rds_final_snapshot_identifier", identifier
-           ]
-         | None -> [ "rds_skip_final_snapshot", "true" ]))
+  ; root_declared_vars = aws_root_declared_vars
+  ; destroy_guard_vars = aws_destroy_guard_vars
   ; bootstrap_matchers =
       [ Sol_cli_terraform_plan.Type "aws_eks_access_policy_association" ]
   ; bootstrap_scope = Sol_cli_terraform.targets "module.eks" []
@@ -337,38 +418,10 @@ let aws =
   ; state_locking = Some "state_lock_table"
   ; installation_zone_address = "aws_route53_zone.qualification"
   ; installation_zone_import_address = "aws_route53_zone.qualification[0]"
-  ; installation_zone_lookup =
-      (fun domain ->
-        [ "aws"
-        ; "route53"
-        ; "list-hosted-zones-by-name"
-        ; "--dns-name"
-        ; domain
-        ; "--query"
-        ; "HostedZones[0].Id"
-        ; "--output"
-        ; "text"
-        ])
+  ; installation_zone_lookup = aws_installation_zone_lookup
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = aws_failure_means_absent
-  ; installation_identity_contracts =
-      [ { identity = Sol_cli_installation.Provisioning_identity
-        ; policy_output = "provisioner_policy_json"
-        ; declared_as = "aws.provisioner_role_arn"
-        }
-      ; { identity = Sol_cli_installation.Cluster_access_identity
-        ; policy_output = "cluster_access_policy_json"
-        ; declared_as = "aws.cluster_access_role_arn"
-        }
-      ; { identity = Sol_cli_installation.Deploy_identity
-        ; policy_output = "deploy_policy_json"
-        ; declared_as = "aws.deploy_role_arn"
-        }
-      ; { identity = Sol_cli_installation.Operator_identity
-        ; policy_output = "operator_policy_json"
-        ; declared_as = "aws.operator_role_arn"
-        }
-      ]
+  ; installation_identity_contracts = aws_installation_identity_contracts
   ; installation_created_prerequisites =
       [ Sol_cli_installation.State_backend
       ; Sol_cli_installation.State_lock
@@ -387,7 +440,128 @@ let aws =
 
 let gcp_bootstrap_binding = "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
 
-let gcp =
+let gcp_zone_probes
+  : Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  =
+  fun configuration ->
+  let open Sol_cli_installation in
+  let zone_name =
+    match Sol_cli_installation.zone_domain configuration.zone with
+    | None -> None
+    | Some domain ->
+      Some
+        (String.map
+           (function
+             | '.' -> '-'
+             | character -> character)
+           domain)
+  in
+  match configuration.zone, zone_name with
+  | No_zone, _ -> []
+  | Service_zone { domain; ownership = Externally_delegated }, _ ->
+    [ unverifiable
+        Delegated_zone
+        (Printf.sprintf
+           "%s is externally delegated: the zone lives outside Google Cloud, so the \
+            delegation to this installation cannot be observed where the installation \
+            looks — confirming it is the delegation wait, not a provider lookup"
+           domain)
+    ]
+  | Service_zone { ownership; _ }, None ->
+    [ unverifiable
+        Delegated_zone
+        (Printf.sprintf
+           "the target declares %s zone ownership but names no domain, so the \
+            installation cannot tell which zone to observe"
+           (Sol_cli_installation.zone_ownership_declaration ownership))
+    ]
+  | Service_zone { domain; ownership }, Some name ->
+    [ present_if_output_names
+        ~reason:
+          (Printf.sprintf
+             "no Cloud DNS managed zone named %s for %s, although the target declares it \
+              %s"
+             name
+             domain
+             (match ownership with
+              | Sol_created -> "sol-created"
+              | User_supplied -> "user-supplied"
+              | Externally_delegated -> "(external)"))
+        Delegated_zone
+        [ "gcloud"; "dns"; "managed-zones"; "describe"; name; "--format=value(name)" ]
+    ]
+    @ [ public_delegation_probe domain ]
+;;
+
+let gcp_installation_probes
+  : Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
+  =
+  fun configuration ->
+  let open Sol_cli_installation in
+  [ present_if_output_names
+      ~reason:
+        (Printf.sprintf "no Cloud Storage bucket gs://%s" configuration.state_bucket)
+      State_backend
+      [ "gcloud"
+      ; "storage"
+      ; "buckets"
+      ; "describe"
+      ; Printf.sprintf "gs://%s" configuration.state_bucket
+      ; "--format=value(name)"
+      ]
+  ]
+  @ gcp_zone_probes configuration
+;;
+
+let gcp_installation_vars
+  :  manage_dns_zone:bool
+  -> ?parent_zone_id:string
+  -> Sol_cli_installation.installation_config
+  -> (string * string) list
+  =
+  fun ~manage_dns_zone ?parent_zone_id configuration ->
+  [ "project_id", Option.value configuration.project_id ~default:""
+  ; "region", configuration.region
+  ; "state_bucket", configuration.state_bucket
+  ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
+  ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
+  ; "parent_zone_id", Option.value parent_zone_id ~default:""
+  ]
+;;
+
+let gcp_own_vars
+  :  Sol_cli_config.target
+  -> workspace:string
+  -> (string * string) list
+  -> (string * string) list
+  =
+  fun target ~workspace:_ shared ->
+  shared
+  |> add_opt
+       "provisioner_impersonators"
+       (Sol_cli_config.provider_field target "provisioner_impersonator"
+        |> Option.map (fun member -> Printf.sprintf "[%S]" member))
+  |> add_opt
+       "gcs_soft_delete_retention_seconds"
+       (Some
+          (match Option.map String.trim target.destroy_retention with
+           | Some "none" -> "0"
+           | _ -> "604800"))
+;;
+
+let gcp_installation_zone_lookup : string -> string list =
+  fun domain ->
+  [ "gcloud"
+  ; "dns"
+  ; "managed-zones"
+  ; "list"
+  ; "--filter"
+  ; Printf.sprintf "dnsName=%s." domain
+  ; "--format=value(name)"
+  ]
+;;
+
+let gcp : t =
   { backend_config =
       (fun _target ~bucket ~object_key ->
         Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
@@ -407,108 +581,15 @@ let gcp =
       ; Sol_cli_installation.Delegated_zone
       ; Sol_cli_installation.Public_delegation
       ]
-  ; installation_probes =
-      (fun configuration ->
-        let open Sol_cli_installation in
-        let zone_name =
-          match Sol_cli_installation.zone_domain configuration.zone with
-          | None -> None
-          | Some domain ->
-            Some
-              (String.map
-                 (function
-                   | '.' -> '-'
-                   | character -> character)
-                 domain)
-        in
-        [ present_if_output_names
-            ~reason:
-              (Printf.sprintf
-                 "no Cloud Storage bucket gs://%s"
-                 configuration.state_bucket)
-            State_backend
-            [ "gcloud"
-            ; "storage"
-            ; "buckets"
-            ; "describe"
-            ; Printf.sprintf "gs://%s" configuration.state_bucket
-            ; "--format=value(name)"
-            ]
-        ]
-        @
-        match configuration.zone, zone_name with
-        | No_zone, _ -> []
-        | Service_zone { domain; ownership = Externally_delegated }, _ ->
-          [ unverifiable
-              Delegated_zone
-              (Printf.sprintf
-                 "%s is externally delegated: the zone lives outside Google Cloud, so \
-                  the delegation to this installation cannot be observed where the \
-                  installation looks — confirming it is the delegation wait, not a \
-                  provider lookup"
-                 domain)
-          ]
-        | Service_zone { ownership; _ }, None ->
-          [ unverifiable
-              Delegated_zone
-              (Printf.sprintf
-                 "the target declares %s zone ownership but names no domain, so the \
-                  installation cannot tell which zone to observe"
-                 (Sol_cli_installation.zone_ownership_declaration ownership))
-          ]
-        | Service_zone { domain; ownership }, Some name ->
-          [ present_if_output_names
-              ~reason:
-                (Printf.sprintf
-                   "no Cloud DNS managed zone named %s for %s, although the target \
-                    declares it %s"
-                   name
-                   domain
-                   (match ownership with
-                    | Sol_created -> "sol-created"
-                    | User_supplied -> "user-supplied"
-                    | Externally_delegated -> "(external)"))
-              Delegated_zone
-              [ "gcloud"
-              ; "dns"
-              ; "managed-zones"
-              ; "describe"
-              ; name
-              ; "--format=value(name)"
-              ]
-          ]
-          @
-            (match configuration.zone with
-            | No_zone -> []
-            | Service_zone { domain; _ } -> [ public_delegation_probe domain ]))
+  ; installation_probes = gcp_installation_probes
   ; installation_backend =
       (fun configuration ->
         Ok
           [ "bucket=" ^ configuration.state_bucket
           ; "prefix=" ^ configuration.state_prefix
           ])
-  ; installation_vars =
-      (fun ~manage_dns_zone ?parent_zone_id configuration ->
-        [ "project_id", Option.value configuration.project_id ~default:""
-        ; "region", configuration.region
-        ; "state_bucket", configuration.state_bucket
-        ; "manage_dns_zone", fst (dns_declaration ~manage_dns_zone configuration)
-        ; "base_domain", snd (dns_declaration ~manage_dns_zone configuration)
-        ; "parent_zone_id", Option.value parent_zone_id ~default:""
-        ])
-  ; own_vars =
-      (fun target ~workspace:_ shared ->
-        shared
-        |> add_opt
-             "provisioner_impersonators"
-             (Sol_cli_config.provider_field target "provisioner_impersonator"
-              |> Option.map (fun member -> Printf.sprintf "[%S]" member))
-        |> add_opt
-             "gcs_soft_delete_retention_seconds"
-             (Some
-                (match Option.map String.trim target.destroy_retention with
-                 | Some "none" -> "0"
-                 | _ -> "604800")))
+  ; installation_vars = gcp_installation_vars
+  ; own_vars = gcp_own_vars
   ; profile_vars = (fun ~production:_ ~production_postgres:_ -> [])
   ; guarded_removals = []
   ; root_declared_vars =
@@ -528,16 +609,7 @@ let gcp =
   ; state_locking = None
   ; installation_zone_address = "google_dns_managed_zone.qualification"
   ; installation_zone_import_address = "google_dns_managed_zone.qualification[0]"
-  ; installation_zone_lookup =
-      (fun domain ->
-        [ "gcloud"
-        ; "dns"
-        ; "managed-zones"
-        ; "list"
-        ; "--filter"
-        ; Printf.sprintf "dnsName=%s." domain
-        ; "--format=value(name)"
-        ])
+  ; installation_zone_lookup = gcp_installation_zone_lookup
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = gcp_failure_means_absent
   ; installation_identity_contracts = []

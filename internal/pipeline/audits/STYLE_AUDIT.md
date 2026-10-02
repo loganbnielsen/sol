@@ -241,6 +241,11 @@ length scan.
 -083 (port-forward retry policy out of a generated shell script),
 -084 (provider capability records from named values).
 
+**Closed (2026-10-02).** All five are implemented and merged: 080–082 in #910,
+083 in #917, 084 in this change. There is no open work item from this pass. The
+retained candidates below are decisions not to act, with their reasons; a later
+pass should read them before re-deriving them.
+
 **Retained candidates, with reasons.**
 
 - `Sol_cli_compat` is the language type (`Ocaml | Typescript`), not a
