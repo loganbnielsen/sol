@@ -54,3 +54,34 @@ that deletes a result file.
 - The reporting still prints per-check pass/fail with timings, so a failure remains diagnosable.
 - Demo/example: not applicable — repository tooling only. Language parity: no application-facing
   contract changes; state that in one line.
+
+## Completion notes (2026-10-02)
+
+**Premise re-verified** against `origin/main @ 408bc4c4`: the reporting loop the finding names
+(`internal/ci/run_fast_checks.sh:122-131`, where `read -r code seconds <"$results/$index.status"`
+left `code` holding the previous iteration's value) is gone. `run_fast_checks.sh` now delegates to
+`internal/tooling/scripts/verify.sh`, whose reporting requires a result per member.
+
+**Made structural by VERIF-005.** `verify.sh` writes each member's exit code and timing to its own
+result file, and `report` fails any member whose `.status` file is absent or unreadable, naming it
+(`FAIL    no-result  <member>`). `internal/ci/verify_test.sh` demonstrates the acceptance cases:
+an all-pass result set succeeds, a non-zero result fails, and a missing result fails naming its
+member; per-member `PASS`/`FAIL` lines with timings are still printed, so a failure stays
+diagnosable. A member that dies before it can be reported is therefore a failure, not a `PASS`.
+
+**Evidence.**
+
+```
+$ rg -n 'read -r code seconds|checks=\(' internal/ci/run_fast_checks.sh   # no matches
+$ rg -n 'verify.sh|verify_test.sh' internal/ci/run_fast_checks.sh
+54:if ! bash internal/tooling/scripts/verify.sh always; then
+57:if ! bash internal/tooling/scripts/verify.sh static; then
+60:if ! bash internal/ci/verify_test.sh; then
+$ bash internal/ci/verify_test.sh
+  [OK]   an all-pass result set reports success
+  [OK]   a non-zero result fails the run
+  [OK]   a missing result fails and names its member
+```
+
+**Demo/example:** not applicable — repository tooling only. **Language parity (DEC-022):** no
+application-facing contract changes.
