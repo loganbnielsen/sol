@@ -92,25 +92,28 @@ let test_non_applied_outcomes_touch_nothing () =
   with_fake_kubectl ~mode:"present" (fun ~calls ->
     List.iter
       (fun outcome ->
-         Alcotest.(check bool)
-           "Ok"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"Ok"
            true
            (Result.is_ok (Sol_cli_deployment_state.record_outcome ~ctx "ws" outcome)))
       [ Sol_cli_deployment_state.Dry_run
       ; Sol_cli_deployment_state.Failed { phase = "build"; message = "boom" }
       ; Sol_cli_deployment_state.Emitted { file = "/tmp/x.yaml" }
       ];
-    Alcotest.(check string) "no kubectl call" "" (calls ()))
+    Windtrap.equal Windtrap.string ~msg:"no kubectl call" "" (calls ()))
 ;;
 
 let test_applied_writes_the_record () =
   with_fake_kubectl ~mode:"present" (fun ~calls ->
-    Alcotest.(check bool)
-      "Ok"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"Ok"
       true
       (Result.is_ok (Sol_cli_deployment_state.record_outcome ~ctx "ws" applied));
-    Alcotest.(check bool)
-      "applied"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"applied"
       true
       (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
@@ -118,34 +121,38 @@ let test_applied_writes_the_record () =
 let test_failed_write_is_an_error () =
   with_fake_kubectl ~mode:"apply-fails" (fun ~calls:_ ->
     match Sol_cli_deployment_state.record_outcome ~ctx "ws" applied with
-    | Ok () -> Alcotest.fail "a record the next deploy cannot read must not be Ok"
+    | Ok () -> Windtrap.fail "a record the next deploy cannot read must not be Ok"
     | Error msg ->
-      Alcotest.(check bool)
-        "names the configmap"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the configmap"
         true
         (Sol_cli_string.contains ~needle:"sol-deploy-state" msg))
 ;;
 
 let test_load_present () =
   with_fake_kubectl ~mode:"present" (fun ~calls:_ ->
-    Alcotest.(check (result (list string) string))
-      "recorded groups"
+    Windtrap.equal
+      (Windtrap.result (Windtrap.list Windtrap.string) Windtrap.string)
+      ~msg:"recorded groups"
       (Ok [ "a"; "b" ])
       (Sol_cli_deployment_state.load_deployed_groups ~ctx "ws"))
 ;;
 
 let test_load_missing_is_a_first_deploy () =
   with_fake_kubectl ~mode:"missing" (fun ~calls:_ ->
-    Alcotest.(check (result (list string) string))
-      "no record yet"
+    Windtrap.equal
+      (Windtrap.result (Windtrap.list Windtrap.string) Windtrap.string)
+      ~msg:"no record yet"
       (Ok [])
       (Sol_cli_deployment_state.load_deployed_groups ~ctx "ws"))
 ;;
 
 let test_load_unreadable_is_an_error () =
   with_fake_kubectl ~mode:"forbidden" (fun ~calls:_ ->
-    Alcotest.(check bool)
-      "Error, not an empty list"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"Error, not an empty list"
       true
       (Result.is_error (Sol_cli_deployment_state.load_deployed_groups ~ctx "ws")))
 ;;
@@ -160,77 +167,96 @@ let check ~mode ~confirm next =
 ;;
 
 let test_guard_refuses_on_unreadable_record () =
-  Alcotest.(check bool)
-    "unreadable record refuses"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"unreadable record refuses"
     true
     (Result.is_error (check ~mode:"forbidden" ~confirm:false [ "a"; "b" ]))
 ;;
 
 let test_guard_confirm_proceeds_on_unreadable_record () =
-  Alcotest.(check bool)
-    "--confirm-group-change proceeds"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"--confirm-group-change proceeds"
     true
     (Result.is_ok (check ~mode:"forbidden" ~confirm:true [ "a" ]))
 ;;
 
 let test_guard_refuses_removal_and_names_the_real_hazard () =
   match check ~mode:"present" ~confirm:false [ "a" ] with
-  | Ok () -> Alcotest.fail "removing group b must be refused"
+  | Ok () -> Windtrap.fail "removing group b must be refused"
   | Error msg ->
-    Alcotest.(check bool)
-      "names the removed group"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the removed group"
       true
       (Sol_cli_string.contains ~needle:"  - b" msg);
-    Alcotest.(check bool)
-      "describes reprocessing from the earliest offset, not skipping"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"describes reprocessing from the earliest offset, not skipping"
       true
       (Sol_cli_string.contains ~needle:"EARLIEST" msg)
 ;;
 
 let test_guard_passes_when_stable_or_first () =
-  Alcotest.(check bool)
-    "stable"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"stable"
     true
     (Result.is_ok (check ~mode:"present" ~confirm:false [ "a"; "b"; "c" ]));
-  Alcotest.(check bool)
-    "first deploy"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"first deploy"
     true
     (Result.is_ok (check ~mode:"missing" ~confirm:false [ "a" ]))
 ;;
 
 let test_removed_consumer_groups () =
   let removed prev next = Sol_cli_deployment_state.removed_consumer_groups ~prev ~next in
-  Alcotest.(check (list string))
-    "removal"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"removal"
     [ "c" ]
     (removed [ "a"; "b"; "c" ] [ "a"; "b" ]);
-  Alcotest.(check (list string)) "stable" [] (removed [ "a" ] [ "a" ]);
-  Alcotest.(check (list string)) "additions ignored" [] (removed [ "a" ] [ "a"; "b" ])
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"stable"
+    []
+    (removed [ "a" ] [ "a" ]);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"additions ignored"
+    []
+    (removed [ "a" ] [ "a"; "b" ])
 ;;
 
 let test_configmap_name_sanitizes_workspace () =
-  Alcotest.(check string)
-    "underscore workspace"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"underscore workspace"
     "sol-deploy-state-ci-smoke"
     (Sol_cli_deployment_state.deploy_state_configmap_name "ci_smoke");
-  Alcotest.(check string)
-    "uppercase and underscore workspace"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"uppercase and underscore workspace"
     "sol-deploy-state-my-app"
     (Sol_cli_deployment_state.deploy_state_configmap_name "My_App")
 ;;
 
 let test_a_corrected_record_is_what_the_next_check_reads () =
   with_fake_kubectl ~mode:"recorded" (fun ~calls:_ ->
-    Alcotest.(check bool)
-      "the rollback records the restored release's groups (BUG-090)"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the rollback records the restored release's groups (BUG-090)"
       true
       (Result.is_ok
          (Sol_cli_deployment_state.record_consumer_groups
             ~ctx
             ~workspace:"ws"
             [ "myapp.comms.notify_worker" ]));
-    Alcotest.(check bool)
-      "a plan that still holds that worker's group is not a removal"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a plan that still holds that worker's group is not a removal"
       true
       (Result.is_ok
          (Sol_cli_deployment_state.check_removed_groups
@@ -245,10 +271,11 @@ let test_a_corrected_record_is_what_the_next_check_reads () =
         ~confirm_group_change:false
         ~next:[]
     with
-    | Ok () -> Alcotest.fail "a plan without the restored worker must be refused"
+    | Ok () -> Windtrap.fail "a plan without the restored worker must be refused"
     | Error msg ->
-      Alcotest.(check bool)
-        "and a real removal is reported against the corrected record"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"and a real removal is reported against the corrected record"
         true
         (Sol_cli_string.contains ~needle:"myapp.comms.notify_worker" msg))
 ;;

@@ -1,5 +1,5 @@
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
-let check_bool = Alcotest.(check bool)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let test_qualified_receiver_types () =
   check_bool
@@ -45,7 +45,7 @@ let test_validate_accepts_a_complete_declaration () =
     ~receiver_url:(Some "https://hooks.example.com/x")
     ~owner:(Some "payments-oncall")
     ~runbook_url:(Some "https://runbooks.example.com/sol")
-  |> Result.iter_error Alcotest.fail
+  |> Result.iter_error Windtrap.fail
 ;;
 
 let test_validate_requires_a_receiver () =
@@ -56,7 +56,7 @@ let test_validate_requires_a_receiver () =
       ~owner:(Some "o")
       ~runbook_url:(Some "https://r")
   with
-  | Ok () -> Alcotest.fail "expected a missing receiver to fail"
+  | Ok () -> Windtrap.fail "expected a missing receiver to fail"
   | Error msg -> assert (contains "alert_receiver_type" msg)
 ;;
 
@@ -68,7 +68,7 @@ let test_validate_rejects_unqualified_receiver () =
       ~owner:(Some "o")
       ~runbook_url:(Some "https://r")
   with
-  | Ok () -> Alcotest.fail "expected an unqualified receiver to fail"
+  | Ok () -> Windtrap.fail "expected an unqualified receiver to fail"
   | Error msg -> assert (contains "qualified" msg)
 ;;
 
@@ -80,7 +80,7 @@ let test_validate_rejects_unroutable_url () =
       ~owner:(Some "o")
       ~runbook_url:(Some "https://r")
   with
-  | Ok () -> Alcotest.fail "expected an unroutable URL to fail"
+  | Ok () -> Windtrap.fail "expected an unroutable URL to fail"
   | Error msg -> assert (contains "routable" msg)
 ;;
 
@@ -92,7 +92,7 @@ let test_validate_requires_owner () =
       ~owner:None
       ~runbook_url:(Some "https://r")
   with
-  | Ok () -> Alcotest.fail "expected a missing owner to fail"
+  | Ok () -> Windtrap.fail "expected a missing owner to fail"
   | Error msg -> assert (contains "alert_owner" msg)
 ;;
 
@@ -104,7 +104,7 @@ let test_validate_requires_runbook () =
       ~owner:(Some "o")
       ~runbook_url:None
   with
-  | Ok () -> Alcotest.fail "expected a missing runbook to fail"
+  | Ok () -> Windtrap.fail "expected a missing runbook to fail"
   | Error msg -> assert (contains "alert_runbook_url" msg)
 ;;
 

@@ -14,8 +14,9 @@ let test_levels () =
       Sol_cli_report.err "error: %S" "bad";
       Sol_cli_report.app_block "a block\n")
   in
-  Alcotest.(check (list (pair string string)))
-    "each report, at its level, in order, with no doubled newline"
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"each report, at its level, in order, with no doubled newline"
     [ "app", "progress 1"
     ; "warning", "warning: careful"
     ; "error", {|error: "bad"|}
@@ -42,12 +43,13 @@ let test_scan_warning_is_reported () =
        in
        match reported with
        | [ (Logs.Warning, text) ] ->
-         Alcotest.(check bool)
-           "names the unreadable directory"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"names the unreadable directory"
            true
            (Sol_cli_string.contains ~needle:"payments" text)
        | other ->
-         Alcotest.failf
+         Windtrap.failf
            "expected one warning, got: %s"
            (other |> List.map snd |> String.concat " | "))
 ;;

@@ -1,4 +1,4 @@
-let check_str = Alcotest.(check string)
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
@@ -6,13 +6,13 @@ let sol_home_markers =
 
 let ok = function
   | Ok x -> x
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let assets () =
   match Sol_cli_platform_assets.resolve () with
   | Ok a -> a
-  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_platform_assets.error_to_string e)
 ;;
 
 let write_file path content =

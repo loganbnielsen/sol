@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let test_key_validation_accepts_env_style_key () =
@@ -8,13 +8,13 @@ let test_key_validation_accepts_env_style_key () =
 
 let test_key_validation_rejects_lowercase () =
   match Sol_cli_secret.validate_key "database_url" with
-  | Ok () -> Alcotest.fail "lowercase key accepted"
+  | Ok () -> Windtrap.fail "lowercase key accepted"
   | Error msg -> check_string "error" "secret key must start with an uppercase letter" msg
 ;;
 
 let test_key_validation_rejects_hyphen () =
   match Sol_cli_secret.validate_key "API-TOKEN" with
-  | Ok () -> Alcotest.fail "hyphenated key accepted"
+  | Ok () -> Windtrap.fail "hyphenated key accepted"
   | Error msg ->
     check_string
       "error"
@@ -77,7 +77,7 @@ let test_list_rejects_empty_namespaces () =
       ~workspace:"myapp"
       ~namespaces:[]
   with
-  | Ok _ -> Alcotest.fail "empty namespace list unexpectedly succeeded"
+  | Ok _ -> Windtrap.fail "empty namespace list unexpectedly succeeded"
   | Error msg ->
     check_string "no target" "no target namespaces found for this workspace" msg
 ;;

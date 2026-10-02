@@ -1,11 +1,11 @@
-let check_string msg expected actual = Alcotest.(check string) msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let check_option_string msg expected actual =
-  Alcotest.(check (option string)) msg expected actual
+  Windtrap.equal (Windtrap.option Windtrap.string) ~msg expected actual
 ;;
 
 let check_option_int msg expected actual =
-  Alcotest.(check (option int)) msg expected actual
+  Windtrap.equal (Windtrap.option Windtrap.int) ~msg expected actual
 ;;
 
 let test_extract_reverted_branch_match () =
@@ -121,13 +121,14 @@ let test_parse_worktree_porcelain () =
   let expected =
     [ "/home/user/sol", Some "main"; "/home/user/sol-FEAT-040-x", Some "FEAT-040/x" ]
   in
-  Alcotest.(check (list (pair string (option string))))
-    "parses worktree paths and branches"
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string (Windtrap.option Windtrap.string)))
+    ~msg:"parses worktree paths and branches"
     expected
     (Soldev_merge.parse_worktree_porcelain lines)
 ;;
 
-let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let contains ~needle haystack =
   let n = String.length needle
@@ -604,24 +605,29 @@ let test_post_merge_action_of_rc () =
     | Soldev_merge.Report_success -> "pass"
     | Soldev_merge.Report_local_failure rc -> Printf.sprintf "report:%d" rc
   in
-  Alcotest.(check string)
-    "0 is a clean suite"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"0 is a clean suite"
     "pass"
     (show (Soldev_merge.post_merge_action_of_rc 0));
-  Alcotest.(check string)
-    "1 is a failure to report, never a revert"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"1 is a failure to report, never a revert"
     "report:1"
     (show (Soldev_merge.post_merge_action_of_rc 1));
-  Alcotest.(check string)
-    "2 is no longer a perf verdict — the runner has no such exit"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"2 is no longer a perf verdict — the runner has no such exit"
     "report:2"
     (show (Soldev_merge.post_merge_action_of_rc 2));
-  Alcotest.(check string)
-    "an unrunnable suite is not a merged success"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"an unrunnable suite is not a merged success"
     "report:127"
     (show (Soldev_merge.post_merge_action_of_rc 127));
-  Alcotest.(check string)
-    "and neither is any other non-zero"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"and neither is any other non-zero"
     "report:3"
     (show (Soldev_merge.post_merge_action_of_rc 3))
 ;;
@@ -660,7 +666,7 @@ let test_merge_finish_does_not_write_a_baseline_commit () =
     let initial = rev_parse "HEAD" in
     (match Soldev_merge.run_merge_finish ~ticket_id:"BUG-038" ~merge_sha:initial with
      | Ok () -> ()
-     | Error _ -> Alcotest.fail "unexpected merge-finish failure");
+     | Error _ -> Windtrap.fail "unexpected merge-finish failure");
     check_string "no local commit" initial (rev_parse "HEAD");
     check_string
       "baseline untouched"
@@ -671,7 +677,7 @@ let test_merge_finish_does_not_write_a_baseline_commit () =
 let unpushed_of branch =
   match Soldev_merge.worktree_snapshot_of_entry (Sys.getcwd (), Some branch) with
   | Some (snapshot : Soldev_merge.worktree_snapshot) -> snapshot.ws_unpushed
-  | None -> Alcotest.fail "expected a worktree snapshot"
+  | None -> Windtrap.fail "expected a worktree snapshot"
 ;;
 
 let test_unpushed_annotation_asks_git () =
@@ -771,130 +777,97 @@ let test_review_lookup_matches_the_ticket_prefix_only () =
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "soldev_merge"
-    [ ( "extract_reverted_branch"
-      , [ Alcotest.test_case
-            "matches revert-merge subject"
-            `Quick
-            test_extract_reverted_branch_match
-        ; Alcotest.test_case
-            "ignores unrelated subject"
-            `Quick
-            test_extract_reverted_branch_no_match
-        ] )
-    ; ( "ticket_id_from_branch"
-      , [ Alcotest.test_case
-            "strips slash suffix"
-            `Quick
-            test_ticket_id_from_branch_with_slash
-        ; Alcotest.test_case
-            "passes through when no slash"
-            `Quick
-            test_ticket_id_from_branch_no_slash
-        ] )
-    ; ( "merge outcome"
-      , [ Alcotest.test_case
+    [ Windtrap.group
+        "extract_reverted_branch"
+        [ Windtrap.test "matches revert-merge subject" test_extract_reverted_branch_match
+        ; Windtrap.test "ignores unrelated subject" test_extract_reverted_branch_no_match
+        ]
+    ; Windtrap.group
+        "ticket_id_from_branch"
+        [ Windtrap.test "strips slash suffix" test_ticket_id_from_branch_with_slash
+        ; Windtrap.test "passes through when no slash" test_ticket_id_from_branch_no_slash
+        ]
+    ; Windtrap.group
+        "merge outcome"
+        [ Windtrap.test
             "a skipped targeted merge is not a success"
-            `Quick
             test_a_skipped_targeted_merge_is_not_a_success
-        ] )
-    ; ( "worktree_porcelain"
-      , [ Alcotest.test_case
-            "parses paths and branches"
-            `Quick
-            test_parse_worktree_porcelain
-        ] )
-    ; ( "merge head pinning"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "worktree_porcelain"
+        [ Windtrap.test "parses paths and branches" test_parse_worktree_porcelain ]
+    ; Windtrap.group
+        "merge head pinning"
+        [ Windtrap.test
             "prefers the branch ref to the payload's head"
-            `Quick
             test_pinned_head_sha_prefers_the_branch_ref
-        ; Alcotest.test_case
+        ; Windtrap.test
             "keeps the listed head when it cannot be improved"
-            `Quick
             test_pinned_head_sha_keeps_the_listed_sha_when_it_cannot_be_improved
-        ] )
-    ; ( "worktree unpushed annotation (BUG-063)"
-      , [ Alcotest.test_case
-            "asks git for commits, not shas"
-            `Quick
-            test_unpushed_annotation_asks_git
-        ] )
-    ; ( "mentions_id"
-      , [ Alcotest.test_case "exact token match" `Quick test_mentions_id_exact
-        ; Alcotest.test_case "no match" `Quick test_mentions_id_no_match
-        ; Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "worktree unpushed annotation (BUG-063)"
+        [ Windtrap.test "asks git for commits, not shas" test_unpushed_annotation_asks_git
+        ]
+    ; Windtrap.group
+        "mentions_id"
+        [ Windtrap.test "exact token match" test_mentions_id_exact
+        ; Windtrap.test "no match" test_mentions_id_no_match
+        ; Windtrap.test
             "rejects prefix embedding"
-            `Quick
             test_mentions_id_rejects_prefix_embedding
-        ; Alcotest.test_case
-            "rejects numeric suffix"
-            `Quick
-            test_mentions_id_rejects_numeric_suffix
-        ] )
-    ; ( "stale-binary post-merge race"
-      , [ Alcotest.test_case
+        ; Windtrap.test "rejects numeric suffix" test_mentions_id_rejects_numeric_suffix
+        ]
+    ; Windtrap.group
+        "stale-binary post-merge race"
+        [ Windtrap.test
             "rebuild before invoking avoids the stale-path race"
-            `Quick
             test_stale_binary_fails_after_rename
-        ] )
-    ; ( "post_merge_action_of_rc"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "post_merge_action_of_rc"
+        [ Windtrap.test
             "a local post-merge failure is reported, never acted on"
-            `Quick
             test_post_merge_action_of_rc
-        ; Alcotest.test_case
+        ; Windtrap.test
             "merge-finish leaves HEAD and baseline untouched"
-            `Quick
             test_merge_finish_does_not_write_a_baseline_commit
-        ] )
-    ; ( "CI-gated merges"
-      , [ Alcotest.test_case
-            "required checks are successful and nonempty"
-            `Quick
-            test_required_checks
-        ; Alcotest.test_case "head-pinned native merge commands" `Quick test_merge_command
-        ; Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "CI-gated merges"
+        [ Windtrap.test "required checks are successful and nonempty" test_required_checks
+        ; Windtrap.test "head-pinned native merge commands" test_merge_command
+        ; Windtrap.test
             "the default queues auto-merge and --immediate is the opt-in"
-            `Quick
             test_default_mode_queues_auto_merge
-        ; Alcotest.test_case
+        ; Windtrap.test
             "merge and queue gates without review markers"
-            `Quick
             test_merge_without_review_marker
-        ] )
-    ; ( "review lookup states (INFRA-098)"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "review lookup states (INFRA-098)"
+        [ Windtrap.test
             "names a merged PR and its commit"
-            `Quick
             test_review_lookup_names_a_merged_pr
-        ; Alcotest.test_case
-            "names a closed PR"
-            `Quick
-            test_review_lookup_names_a_closed_pr
-        ; Alcotest.test_case
+        ; Windtrap.test "names a closed PR" test_review_lookup_names_a_closed_pr
+        ; Windtrap.test
             "keeps the plain message when no PR exists"
-            `Quick
             test_review_lookup_without_any_pr_keeps_the_plain_message
-        ; Alcotest.test_case
+        ; Windtrap.test
             "reports a failed inventory instead of guessing"
-            `Quick
             test_review_lookup_reports_a_failed_inventory
-        ; Alcotest.test_case
+        ; Windtrap.test
             "matches the ticket's own branch prefix"
-            `Quick
             test_review_lookup_matches_the_ticket_prefix_only
-        ] )
-    ; ( "pull-request merge targets (FEAT-115)"
-      , [ Alcotest.test_case
-            "parses numbers, #numbers and PR URLs"
-            `Quick
-            test_parse_pr_number
-        ; Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "pull-request merge targets (FEAT-115)"
+        [ Windtrap.test "parses numbers, #numbers and PR URLs" test_parse_pr_number
+        ; Windtrap.test
             "queues, refuses by name, and matches the ticket path"
-            `Quick
             test_pr_target_merge_path
-        ] )
+        ]
     ]
 ;;

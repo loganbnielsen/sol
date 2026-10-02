@@ -7,8 +7,9 @@ let with_env name value f =
 let header name headers = List.assoc_opt name headers
 
 let test_env_var () =
-  Alcotest.(check string)
-    "normalizes service source name"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"normalizes service source name"
     "CHECKOUT_SVC_URL"
     (Peer.env_var "checkout_svc")
 ;;
@@ -17,22 +18,24 @@ let test_url () =
   with_env "CHECKOUT_SVC_URL" "http://checkout.pluto.svc.cluster.local" (fun () ->
     match Peer.url "checkout_svc" with
     | Ok uri ->
-      Alcotest.(check string)
-        "url"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"url"
         "http://checkout.pluto.svc.cluster.local"
         (Uri.to_string uri)
-    | Error err -> Alcotest.fail (Peer.error_to_string err))
+    | Error err -> Windtrap.fail (Peer.error_to_string err))
 ;;
 
 let test_relative_url_fails () =
   with_env "CHECKOUT_SVC_URL" "localhost:8081" (fun () ->
     match Peer.url "checkout_svc" with
     | Error (`Config msg) ->
-      Alcotest.(check string)
-        "config error"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"config error"
         "CHECKOUT_SVC_URL must be an absolute http(s) URL"
         msg
-    | Ok uri -> Alcotest.fail ("expected config error, got " ^ Uri.to_string uri))
+    | Ok uri -> Windtrap.fail ("expected config error, got " ^ Uri.to_string uri))
 ;;
 
 let test_headers_from_span env () =
@@ -52,14 +55,16 @@ let test_headers_from_span env () =
       Sol_obs.with_span obs "caller" (fun span ->
         let trace_ctx = Sol_obs.current_trace_context span in
         match Peer.headers ~env ~trace_ctx () with
-        | Error err -> Alcotest.fail (Peer.error_to_string err)
+        | Error err -> Windtrap.fail (Peer.error_to_string err)
         | Ok headers ->
-          Alcotest.(check (option string))
-            "api key"
+          Windtrap.equal
+            (Windtrap.option Windtrap.string)
+            ~msg:"api key"
             (Some "secret")
             (header "x-api-key" headers);
-          Alcotest.(check (option string))
-            "traceparent"
+          Windtrap.equal
+            (Windtrap.option Windtrap.string)
+            ~msg:"traceparent"
             (Some (Obs_trace.to_traceparent trace_ctx))
             (header "traceparent" headers))))
 ;;
@@ -74,10 +79,11 @@ let test_file_precedes_env env () =
        with_env "SOL_API_KEY_FILE" path (fun () ->
          with_env "SOL_API_KEY" "from-env" (fun () ->
            match Peer.headers ~env () with
-           | Error err -> Alcotest.fail (Peer.error_to_string err)
+           | Error err -> Windtrap.fail (Peer.error_to_string err)
            | Ok headers ->
-             Alcotest.(check (option string))
-               "file api key"
+             Windtrap.equal
+               (Windtrap.option Windtrap.string)
+               ~msg:"file api key"
                (Some "from-file")
                (header "x-api-key" headers))))
     ~finally:(fun () -> Sys.remove path)
@@ -86,17 +92,15 @@ let test_file_precedes_env env () =
 let () =
   Eio_main.run
   @@ fun env ->
-  Alcotest.run
+  Windtrap.run
     "sol-svc peer"
-    [ ( "peer"
-      , [ Alcotest.test_case "env var" `Quick test_env_var
-        ; Alcotest.test_case "url" `Quick test_url
-        ; Alcotest.test_case "relative url fails" `Quick test_relative_url_fails
-        ; Alcotest.test_case
-            "headers from current span"
-            `Quick
-            (test_headers_from_span env)
-        ; Alcotest.test_case "api key file precedence" `Quick (test_file_precedes_env env)
-        ] )
+    [ Windtrap.group
+        "peer"
+        [ Windtrap.test "env var" test_env_var
+        ; Windtrap.test "url" test_url
+        ; Windtrap.test "relative url fails" test_relative_url_fails
+        ; Windtrap.test "headers from current span" (test_headers_from_span env)
+        ; Windtrap.test "api key file precedence" (test_file_precedes_env env)
+        ]
     ]
 ;;

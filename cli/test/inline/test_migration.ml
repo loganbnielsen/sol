@@ -24,12 +24,14 @@ let with_tmp_dir f =
 ;;
 
 let test_table_name () =
-  Alcotest.(check string)
-    "per-workspace, same naming as sol migrate"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"per-workspace, same naming as sol migrate"
     "sol_pluto_schema_migrations"
     (M.table_name ~workspace:"pluto");
-  Alcotest.(check string)
-    "punctuation becomes an underscore"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"punctuation becomes an underscore"
     "sol_my_ws_schema_migrations"
     (M.table_name ~workspace:"My-WS")
 ;;
@@ -37,22 +39,26 @@ let test_table_name () =
 let test_table_name_is_bounded () =
   let at_limit = String.make 41 'a' in
   let over_limit = String.make 42 'a' in
-  Alcotest.(check string)
-    "a name that lands exactly on the limit keeps the readable form"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a name that lands exactly on the limit keeps the readable form"
     (Printf.sprintf "sol_%s_schema_migrations" at_limit)
     (M.table_name ~workspace:at_limit);
   let shortened = M.table_name ~workspace:over_limit in
-  Alcotest.(check bool)
-    "one byte past the limit is shortened"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"one byte past the limit is shortened"
     true
     (String.length shortened <= M.postgres_identifier_max_bytes && shortened <> over_limit);
   List.iter
     (fun workspace ->
        let table = M.table_name ~workspace in
-       Alcotest.(check bool)
-         (Printf.sprintf
-            "a %d-byte workspace name stays within the identifier limit"
-            (String.length workspace))
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:
+           (Printf.sprintf
+              "a %d-byte workspace name stays within the identifier limit"
+              (String.length workspace))
          true
          (String.length table <= M.postgres_identifier_max_bytes))
     [ ""; "pluto"; String.make 300 'a'; "wörk"; "My-WS"; over_limit ]
@@ -62,31 +68,37 @@ let test_long_workspace_names_stay_distinct () =
   let table workspace = M.table_name ~workspace in
   let fifty_nine suffix = String.make 59 'a' ^ suffix in
   let fifty_eight suffix = String.make 58 'a' ^ suffix in
-  Alcotest.(check bool)
-    "two 60-byte workspace names no longer share a truncated table"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"two 60-byte workspace names no longer share a truncated table"
     true
     (String.compare (table (fifty_nine "x")) (table (fifty_nine "y")) <> 0);
-  Alcotest.(check bool)
-    "the 59-byte control stays distinct too"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the 59-byte control stays distinct too"
     true
     (String.compare (table (fifty_eight "x")) (table (fifty_eight "y")) <> 0);
-  Alcotest.(check string)
-    "the shortened name is stable across calls"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the shortened name is stable across calls"
     (table (fifty_nine "x"))
     (table (fifty_nine "x"))
 ;;
 
 let test_table_length_error () =
-  Alcotest.(check (option string))
-    "a normal override is accepted"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a normal override is accepted"
     None
     (M.table_length_error ~table:"sol_pluto_schema_migrations");
-  Alcotest.(check (option string))
-    "an override exactly on the limit is accepted"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"an override exactly on the limit is accepted"
     None
     (M.table_length_error ~table:(String.make M.postgres_identifier_max_bytes 'a'));
-  Alcotest.(check bool)
-    "an override PostgreSQL would truncate is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an override PostgreSQL would truncate is refused"
     true
     (Option.is_some
        (M.table_length_error
@@ -94,7 +106,13 @@ let test_table_length_error () =
 ;;
 
 let test_parse_version () =
-  let check = Alcotest.(check @@ option @@ pair int string) in
+  let check msg expected actual =
+    Windtrap.equal
+      (Windtrap.option (Windtrap.pair Windtrap.int Windtrap.string))
+      ~msg
+      expected
+      actual
+  in
   check "standard" (Some (1, "create_orders")) (M.parse_version "001_create_orders.sql");
   check "no underscore" None (M.parse_version "0001.sql");
   check "non-numeric" None (M.parse_version "init_db.sql")
@@ -106,10 +124,11 @@ let test_required () =
     write_file (Filename.concat dir "001_create_orders.sql") "";
     write_file (Filename.concat dir "notes.md") "";
     match M.required ~dir with
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
     | Ok required ->
-      Alcotest.(check (list string))
-        "every .sql, ordered by version"
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"every .sql, ordered by version"
         [ "001_create_orders"; "002_add_index" ]
         (List.map M.to_string required))
 ;;
@@ -118,9 +137,13 @@ let test_required_rejects_unnumbered () =
   with_tmp_dir (fun dir ->
     write_file (Filename.concat dir "init_db.sql") "";
     match M.required ~dir with
-    | Ok _ -> Alcotest.fail "expected an error for a migration without a version"
+    | Ok _ -> Windtrap.fail "expected an error for a migration without a version"
     | Error msg ->
-      Alcotest.(check bool) "names the offending file" true (contains msg "init_db.sql"))
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the offending file"
+        true
+        (contains msg "init_db.sql"))
 ;;
 
 let test_required_rejects_a_shared_version () =
@@ -129,10 +152,18 @@ let test_required_rejects_a_shared_version () =
     write_file (Filename.concat dir "004_add_refunds.sql") "";
     write_file (Filename.concat dir "004_add_invoices.sql") "";
     match M.required ~dir with
-    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Ok _ -> Windtrap.fail "expected an error for two migrations sharing version 4"
     | Error msg ->
-      Alcotest.(check bool) "names first file" true (contains msg "004_add_invoices.sql");
-      Alcotest.(check bool) "names second file" true (contains msg "004_add_refunds.sql"))
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names first file"
+        true
+        (contains msg "004_add_invoices.sql");
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names second file"
+        true
+        (contains msg "004_add_refunds.sql"))
 ;;
 
 let test_shared_version_names_four_digit_files () =
@@ -140,10 +171,18 @@ let test_shared_version_names_four_digit_files () =
     write_file (Filename.concat dir "0004_a.sql") "";
     write_file (Filename.concat dir "0004_b.sql") "";
     match M.required ~dir with
-    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Ok _ -> Windtrap.fail "expected an error for two migrations sharing version 4"
     | Error msg ->
-      Alcotest.(check bool) "names first file" true (contains msg "0004_a.sql");
-      Alcotest.(check bool) "names second file" true (contains msg "0004_b.sql"))
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names first file"
+        true
+        (contains msg "0004_a.sql");
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names second file"
+        true
+        (contains msg "0004_b.sql"))
 ;;
 
 let test_required_ignores_down_files () =
@@ -151,27 +190,30 @@ let test_required_ignores_down_files () =
     write_file (Filename.concat dir "001_create_orders.sql") "";
     write_file (Filename.concat dir "001_create_orders.down.sql") "";
     match M.required ~dir with
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
     | Ok required ->
-      Alcotest.(check (list string))
-        "the down file is not a required migration"
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"the down file is not a required migration"
         [ "001_create_orders" ]
         (List.map M.to_string required))
 ;;
 
 let test_required_missing_dir_is_an_error () =
   match M.required ~dir:"/nonexistent/migrations" with
-  | Ok _ -> Alcotest.fail "expected a missing migrations directory to be refused"
+  | Ok _ -> Windtrap.fail "expected a missing migrations directory to be refused"
   | Error message ->
-    Alcotest.(check bool)
-      "names the path"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the path"
       true
       (contains message "/nonexistent/migrations")
 ;;
 
 let test_required_if_present_missing_dir_is_empty () =
-  Alcotest.(check bool)
-    "a workspace with no migrations requires nothing"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a workspace with no migrations requires nothing"
     true
     (match M.required_if_present ~dir:"/nonexistent/migrations" with
      | Ok [] -> true
@@ -183,9 +225,13 @@ let test_required_file_instead_of_dir_is_an_error () =
     let path = Filename.concat dir "db-migrations" in
     write_file path "";
     match M.required ~dir:path with
-    | Ok _ -> Alcotest.fail "expected a regular file at the migrations path to be refused"
+    | Ok _ -> Windtrap.fail "expected a regular file at the migrations path to be refused"
     | Error message ->
-      Alcotest.(check bool) "names the distinct path" true (contains message path))
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the distinct path"
+        true
+        (contains message path))
 ;;
 
 let test_required_unreadable_dir_is_an_error () =
@@ -199,25 +245,32 @@ let test_required_unreadable_dir_is_an_error () =
          else (
            match M.required ~dir with
            | Ok _ ->
-             Alcotest.fail "expected an unreadable migrations directory to be refused"
+             Windtrap.fail "expected an unreadable migrations directory to be refused"
            | Error message ->
-             Alcotest.(check bool) "names the path" true (contains message dir))))
+             Windtrap.equal
+               Windtrap.bool
+               ~msg:"names the path"
+               true
+               (contains message dir))))
 ;;
 
 let test_unsatisfied () =
   let required : M.prerequisite list =
     [ { version = 1; name = "a" }; { version = 2; name = "b" } ]
   in
-  Alcotest.(check (list string))
-    "the unapplied one is missing"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the unapplied one is missing"
     [ "002_b" ]
     (List.map M.to_string (M.unsatisfied ~required ~applied:[ 1 ]));
-  Alcotest.(check (list string))
-    "a superset is satisfied"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"a superset is satisfied"
     []
     (List.map M.to_string (M.unsatisfied ~required ~applied:[ 1; 2; 3 ]));
-  Alcotest.(check (list string))
-    "nothing applied means everything is missing"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing applied means everything is missing"
     [ "001_a"; "002_b" ]
     (List.map M.to_string (M.unsatisfied ~required ~applied:[]))
 ;;
@@ -226,20 +279,23 @@ let test_parse_status_json () =
   let body =
     {|{"table":"sol_pluto_schema_migrations","migrations":[{"version":1,"name":"a","applied":true,"applied_at":"2026-01-01T00:00:00Z"},{"version":2,"name":"b","applied":false,"applied_at":null}]}|}
   in
-  Alcotest.(check (list int))
-    "only the applied versions"
+  Windtrap.equal
+    (Windtrap.list Windtrap.int)
+    ~msg:"only the applied versions"
     [ 1 ]
     (match M.parse_status_json body with
      | Ok v -> v
-     | Error e -> Alcotest.fail e);
-  Alcotest.(check bool)
-    "malformed input is an error"
+     | Error e -> Windtrap.fail e);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"malformed input is an error"
     true
     (match M.parse_status_json "not json" with
      | Error _ -> true
      | Ok _ -> false);
-  Alcotest.(check bool)
-    "a report without the migrations array is an error"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a report without the migrations array is an error"
     true
     (match M.parse_status_json {|{"table":"t"}|} with
      | Error _ -> true
@@ -250,13 +306,18 @@ let test_status_json_roundtrip () =
   let body =
     M.status_json ~table:"t" [ 1, "a", Some "2026-01-01T00:00:00Z"; 2, "b", None ]
   in
-  Alcotest.(check (list int))
-    "the writer and reader share one encoding"
+  Windtrap.equal
+    (Windtrap.list Windtrap.int)
+    ~msg:"the writer and reader share one encoding"
     [ 1 ]
     (match M.parse_status_json body with
      | Ok v -> v
-     | Error e -> Alcotest.fail e);
-  Alcotest.(check bool) "carries the table" true (contains body "\"table\":\"t\"")
+     | Error e -> Windtrap.fail e);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"carries the table"
+    true
+    (contains body "\"table\":\"t\"")
 ;;
 
 let connection_url =
@@ -266,13 +327,19 @@ let connection_url =
 let test_runner_error_redacts_password_and_keeps_shape () =
   let raw = "create migrations table: Failed to connect to <" ^ connection_url ^ ">" in
   let rendered = Sol_cli_redaction.connection_error ~url:connection_url raw in
-  Alcotest.(check bool) "password absent" false (contains rendered "known-password");
-  Alcotest.(check bool)
-    "placeholder present"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"password absent"
+    false
+    (contains rendered "known-password");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"placeholder present"
     true
     (contains rendered "postgres:<redacted>@");
-  Alcotest.(check bool)
-    "host and database remain"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"host and database remain"
     true
     (contains rendered "db.internal:5432/app")
 ;;
@@ -282,22 +349,29 @@ let test_job_log_boundary_redacts_repeated_secret_values () =
     "migration error: " ^ connection_url ^ "\nretry failed; password=known-password\n"
   in
   let rendered = Sol_cli_redaction.connection_error ~url:connection_url raw in
-  Alcotest.(check bool)
-    "password absent everywhere"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"password absent everywhere"
     false
     (contains rendered "known-password");
-  Alcotest.(check bool) "diagnosis retained" true (contains rendered "retry failed")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"diagnosis retained"
+    true
+    (contains rendered "retry failed")
 ;;
 
 let test_passwordless_and_non_uri_inputs_are_unchanged () =
-  Alcotest.(check string)
-    "passwordless"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"passwordless"
     "connection refused"
     (Sol_cli_redaction.connection_error
        ~url:"postgresql://db.internal/app"
        "connection refused");
-  Alcotest.(check string)
-    "not a URI"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"not a URI"
     "bad input"
     (Sol_cli_redaction.connection_error ~url:"opaque" "bad input")
 ;;
@@ -310,16 +384,19 @@ let test_evidence_report_unstartable_names_the_reason () =
       ~logs:None
     |> Option.get
   in
-  Alcotest.(check bool)
-    "waiting reason"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"waiting reason"
     true
     (contains report "CreateContainerConfigError");
-  Alcotest.(check bool)
-    "waiting message"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"waiting message"
     true
     (contains report "secret \"sol-secrets\" not found");
-  Alcotest.(check bool)
-    "no empty logs section is invented"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no empty logs section is invented"
     false
     (contains report "job logs:")
 ;;
@@ -329,10 +406,15 @@ let test_evidence_report_failed_job_carries_its_logs () =
     M.evidence_report ~waiting:None ~logs:(Some "error: migration 003 failed\nline two")
     |> Option.get
   in
-  Alcotest.(check bool) "first line" true (contains report "migration 003 failed");
-  Alcotest.(check bool) "second line" true (contains report "line two");
-  Alcotest.(check bool)
-    "no waiting section is invented"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"first line"
+    true
+    (contains report "migration 003 failed");
+  Windtrap.equal Windtrap.bool ~msg:"second line" true (contains report "line two");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no waiting section is invented"
     false
     (contains report "container waiting")
 ;;
@@ -342,13 +424,14 @@ let test_evidence_report_carries_both () =
     M.evidence_report ~waiting:(Some ("CrashLoopBackOff", None)) ~logs:(Some "boom")
     |> Option.get
   in
-  Alcotest.(check bool) "reason" true (contains report "CrashLoopBackOff");
-  Alcotest.(check bool) "logs" true (contains report "boom")
+  Windtrap.equal Windtrap.bool ~msg:"reason" true (contains report "CrashLoopBackOff");
+  Windtrap.equal Windtrap.bool ~msg:"logs" true (contains report "boom")
 ;;
 
 let test_evidence_report_is_empty_without_observations () =
-  Alcotest.(check bool)
-    "no observations, no report"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no observations, no report"
     true
     (M.evidence_report ~waiting:None ~logs:None = None)
 ;;

@@ -1,15 +1,15 @@
-let check = Alcotest.(check int)
-let check_str = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let ok_result = function
   | Ok r -> r
-  | Error e -> Alcotest.fail ("unexpected error: " ^ Sol_cli_process.error_to_string e)
+  | Error e -> Windtrap.fail ("unexpected error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let err_result = function
   | Error e -> e
-  | Ok _ -> Alcotest.fail "expected error but got Ok"
+  | Ok _ -> Windtrap.fail "expected error but got Ok"
 ;;
 
 let test_successful_run () =
@@ -21,7 +21,7 @@ let test_non_zero_exit () =
   match err_result (Sol_cli_process.run (Sol_cli_process.cmd [ "false" ])) with
   | Sol_cli_process.Non_zero { exit_code; _ } ->
     check_bool "exit_code non-zero" true (exit_code <> 0)
-  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
+  | e -> Windtrap.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_captured_stderr () =
@@ -34,7 +34,7 @@ let test_captured_stderr () =
     check "exit code" 3 exit_code;
     check_str "stdout kept" "out" stdout;
     check_str "stderr captured" "oops" stderr
-  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
+  | e -> Windtrap.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_stdout_and_stderr_separate () =
@@ -51,7 +51,7 @@ let test_spawn_failed () =
     err_result (Sol_cli_process.run (Sol_cli_process.cmd [ "/nonexistent-binary-xyz" ]))
   with
   | Sol_cli_process.Spawn_failed _ -> ()
-  | e -> Alcotest.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
+  | e -> Windtrap.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_chdir_failed () =
@@ -61,7 +61,7 @@ let test_chdir_failed () =
   with
   | Sol_cli_process.Spawn_failed msg ->
     check_bool "mentions chdir" true (Sol_cli_string.contains msg ~needle:"chdir")
-  | e -> Alcotest.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
+  | e -> Windtrap.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_redaction_in_echo () =
@@ -94,7 +94,7 @@ let test_run_shell_success () =
 let test_run_shell_nonzero () =
   match err_result (Sol_cli_process.run_shell "exit 42") with
   | Sol_cli_process.Non_zero { exit_code; _ } -> check "shell exit 42" 42 exit_code
-  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
+  | e -> Windtrap.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let with_alarm seconds f =
@@ -114,11 +114,11 @@ let fd_count () = Array.length (Sys.readdir "/proc/self/fd")
 
 let check_drained label runner =
   match with_alarm 5.0 runner with
-  | Error `Timed_out -> Alcotest.fail (label ^ " stalled on a full stderr pipe")
+  | Error `Timed_out -> Windtrap.fail (label ^ " stalled on a full stderr pipe")
   | Ok (Ok ({ stdout; stderr } : Sol_cli_process.output)) ->
     check_str (label ^ " stdout intact") "done" stdout;
     check (label ^ " stderr drained") 262144 (String.length stderr)
-  | Ok (Error e) -> Alcotest.fail (label ^ ": " ^ Sol_cli_process.error_to_string e)
+  | Ok (Error e) -> Windtrap.fail (label ^ ": " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_shell_drains_both_streams () =
@@ -142,8 +142,8 @@ let test_deadline_covers_child_exit () =
   (match result with
    | Error (Sol_cli_process.Timeout _) -> ()
    | Error e ->
-     Alcotest.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
-   | Ok _ -> Alcotest.fail "expected Timeout once the child outlives its pipes");
+     Windtrap.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
+   | Ok _ -> Windtrap.fail "expected Timeout once the child outlives its pipes");
   check_bool "prompt timeout" true (elapsed < 0.4)
 ;;
 
@@ -156,8 +156,8 @@ let test_deadline_while_capturing () =
   (match result with
    | Error (Sol_cli_process.Timeout _) -> ()
    | Error e ->
-     Alcotest.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
-   | Ok _ -> Alcotest.fail "expected Timeout while the pipes stay open");
+     Windtrap.fail ("expected Timeout, got " ^ Sol_cli_process.error_to_string e)
+   | Ok _ -> Windtrap.fail "expected Timeout while the pipes stay open");
   check_bool "prompt timeout" true (elapsed < 0.4)
 ;;
 
@@ -181,7 +181,7 @@ let test_handled_signal_completes_capture () =
   (match result with
    | Ok { stdout; _ } -> check_str "completed despite a handled signal" "done" stdout
    | Error e ->
-     Alcotest.fail
+     Windtrap.fail
        ("handled signal aborted the command: " ^ Sol_cli_process.error_to_string e));
   check "no descriptor leak" before (fd_count ())
 ;;
@@ -235,30 +235,35 @@ let test_error_to_string_keeps_stdout () =
 let test_run_is_success () =
   let open Sol_cli_process in
   (match run (cmd [ "sh"; "-c"; "echo hi" ]) with
-   | Ok { stdout; _ } -> Alcotest.(check string) "stdout (trimmed)" "hi" stdout
-   | Error e -> Alcotest.fail (error_to_string e));
+   | Ok { stdout; _ } ->
+     Windtrap.equal Windtrap.string ~msg:"stdout (trimmed)" "hi" stdout
+   | Error e -> Windtrap.fail (error_to_string e));
   match run (cmd [ "/nonexistent-zxqw" ]) with
   | Error (Spawn_failed _) -> ()
-  | _ -> Alcotest.fail "a missing binary is Spawn_failed"
+  | _ -> Windtrap.fail "a missing binary is Spawn_failed"
 ;;
 
 let test_completed () =
   let open Sol_cli_process in
   (match completed ~exit_code:0 ~stdout:"o" ~stderr:"e" with
    | Ok { stdout = "o"; stderr = "e" } -> ()
-   | _ -> Alcotest.fail "exit 0 is Ok with both streams");
+   | _ -> Windtrap.fail "exit 0 is Ok with both streams");
   match completed ~exit_code:2 ~stdout:"o" ~stderr:"e" with
   | Error (Non_zero { exit_code = 2; stdout = "o"; stderr = "e" }) -> ()
-  | _ -> Alcotest.fail "exit 2 is Non_zero with the code and both streams"
+  | _ -> Windtrap.fail "exit 2 is Non_zero with the code and both streams"
 ;;
 
 let test_failure_message () =
   let f stdout stderr =
     Sol_cli_process.failure_message { exit_code = 4; stdout; stderr }
   in
-  Alcotest.(check string) "stderr first" "boom" (f "out" " boom\n");
-  Alcotest.(check string) "stdout when stderr is blank" "out" (f "out\n" "  ");
-  Alcotest.(check string) "the code when both are blank" "exited with code 4" (f "" " ")
+  Windtrap.equal Windtrap.string ~msg:"stderr first" "boom" (f "out" " boom\n");
+  Windtrap.equal Windtrap.string ~msg:"stdout when stderr is blank" "out" (f "out\n" "  ");
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the code when both are blank"
+    "exited with code 4"
+    (f "" " ")
 ;;
 
 let%test "run: successful run" = test_successful_run ()

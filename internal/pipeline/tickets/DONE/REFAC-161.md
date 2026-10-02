@@ -55,3 +55,33 @@ every test dune, drop the `alcotest` pin from `sol.opam`, and replace
   framework and shows the executable-suite shape.
 - Demo/example: not applicable — test-only. Language parity: no application-facing
   contract change.
+
+## Completion notes
+
+Landed by PR #881's sibling implementation branch. 131 files changed across the
+94 CLI inline modules, 19 executable suites and the dependency pins.
+
+- Assertions: `Alcotest.(check T) "msg" e a` → `Windtrap.equal T ~msg e a`;
+  `Alcotest.fail`/`failf` → `Windtrap.fail`/`failf`; `Alcotest.check_raises` →
+  `Windtrap.raises ~msg`; the two custom `Alcotest.testable`s (`ticket_state`,
+  `result_error ()`) and `sol_process`'s `of_pp` testable → `Windtrap.testable
+  ~pp ()`. The `Alcotest.(check @@ option @@ pair int string)` helper in
+  `test_migration.ml` was rewritten as an explicit `Windtrap.equal` function.
+- Runners: 19 `Alcotest.run` blocks → `Windtrap.run` with
+  `Windtrap.group`/`Windtrap.test`; the 14 `` `Slow `` cases carry
+  `~tags:(Windtrap.Tag.speed Windtrap.Tag.Slow)`.
+- Dependencies: `alcotest` → `windtrap` in 13 dune files (dropped, not replaced,
+  in `cli/test/inline/dune`, which already linked Windtrap), removed from
+  `sol.opam`, and `(alcotest :with-test)` in `dune-project` → `windtrap`.
+- Docs: `internal/specs/cli-test-architecture.md` (now "Test architecture")
+  describes Windtrap as the only framework and names the executable-suite shape;
+  `cli-test-migration.md` records the assertion migration; `AGENTS.md` drops
+  `alcotest` from the package list.
+- Verified locally: `dune build`; 14 framework/tooling suite groups
+  (`dune test …`, 0 failures, including `sol-svc` 33 and `soldev` 27);
+  93 CLI inline groups (`dune build @cli/test/inline/runtest`); and
+  `test_supervised` (8). The broker/Postgres-backed suites compile here and run
+  in CI.
+
+Demo/example: not applicable — test-only. Language parity: no application-facing
+contract change.

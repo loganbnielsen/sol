@@ -1,12 +1,12 @@
 (test
  (name test_sol_jobs)
  (modules test_sol_jobs)
- (libraries sol_jobs pg-eio caqti caqti-eio eio_main alcotest unix))
+ (libraries sol_jobs pg-eio caqti caqti-eio eio_main windtrap unix))
 
 (executable
  (name test_sol_jobs_pg)
  (modules test_sol_jobs_pg)
- (libraries sol_jobs pg-eio caqti caqti-eio eio_main alcotest unix))
+ (libraries sol_jobs pg-eio caqti caqti-eio eio_main windtrap unix))
 
 (rule
  (alias runtest-integration)

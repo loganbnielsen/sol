@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let test_encode_braces () =
   check_string "braces encoded" "%7Bfoo%7D" (Sol_cli_logs.url_encode_logql "{foo}")
@@ -202,7 +202,7 @@ let test_release_query_malformed_never_consults_store () =
          true
        with
        | Not_found -> false)
-  | _ -> Alcotest.fail "expected Release_invalid"
+  | _ -> Windtrap.fail "expected Release_invalid"
 ;;
 
 let test_release_query_unknown_names_target () =
@@ -216,7 +216,7 @@ let test_release_query_unknown_names_target () =
   | Sol_cli_logs.Release_unknown { release_id; target } ->
     check_string "id preserved" "r-0123456789abcdef" release_id;
     check_string "target named" "staging" target
-  | _ -> Alcotest.fail "expected Release_unknown"
+  | _ -> Windtrap.fail "expected Release_unknown"
 ;;
 
 let test_release_query_known_builds_exact_selector () =
@@ -232,7 +232,7 @@ let test_release_query_known_builds_exact_selector () =
       "selector is the exact release label"
       {|{release="r-0123456789abcdef"}|}
       logql
-  | _ -> Alcotest.fail "expected Release_logs"
+  | _ -> Windtrap.fail "expected Release_logs"
 ;;
 
 let test_release_query_scoped_selector_narrows_to_the_unit () =
@@ -253,7 +253,7 @@ let test_release_query_scoped_selector_narrows_to_the_unit () =
       "selector adds release to the unit's identity selector"
       {|{workspace="myapp", domain="payments", service="charge-svc", release="r-0123456789abcdef"}|}
       logql
-  | _ -> Alcotest.fail "expected Release_logs"
+  | _ -> Windtrap.fail "expected Release_logs"
 ;;
 
 let%test "url_encode_logql: braces" = test_encode_braces ()

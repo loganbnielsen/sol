@@ -1,6 +1,7 @@
 let check_backend label expected actual =
-  Alcotest.(check string)
-    label
+  Windtrap.equal
+    Windtrap.string
+    ~msg:label
     (Sol_cli_manifest.secret_backend_to_string expected)
     (Sol_cli_manifest.secret_backend_to_string actual)
 ;;
@@ -21,7 +22,7 @@ let test_live_for_customer_direct () =
       ~emit_to:None
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     check_backend
       "Customer_direct default is Kubernetes_live"
@@ -37,7 +38,7 @@ let test_placeholder_for_gitops () =
       ~emit_to:(Some "/tmp/gitops-out")
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok t ->
     check_backend
       "Customer_gitops default is Kubernetes_placeholder"
@@ -54,8 +55,9 @@ let test_external_secrets_to_string () =
       ; refresh_interval = "1h"
       }
   in
-  Alcotest.(check string)
-    "External_secrets serialises correctly"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"External_secrets serialises correctly"
     "external-secrets"
     (Sol_cli_manifest.secret_backend_to_string backend)
 ;;
@@ -68,11 +70,12 @@ let test_gitops_live_combination_is_unsafe () =
       ~emit_to:(Some "/tmp/out")
       ()
   with
-  | Error msg -> Alcotest.fail ("unexpected error: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected error: " ^ msg)
   | Ok target ->
     let default_be = Sol_cli_env_target.default_secret_backend target in
-    Alcotest.(check bool)
-      "default is not live"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"default is not live"
       false
       (default_be = Sol_cli_manifest.Kubernetes_live);
     let is_unsafe =
@@ -80,7 +83,7 @@ let test_gitops_live_combination_is_unsafe () =
       | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live -> true
       | _ -> false
     in
-    Alcotest.(check bool) "guard detects gitops+live as unsafe" true is_unsafe
+    Windtrap.equal Windtrap.bool ~msg:"guard detects gitops+live as unsafe" true is_unsafe
 ;;
 
 let%test "Kubernetes_live: Local target" = test_live_for_local ()

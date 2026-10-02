@@ -1,6 +1,6 @@
 let ok = function
   | Ok r -> r
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let release_id_of_test =
@@ -10,25 +10,25 @@ let release_id_of_test =
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let svc_spec : Sol_cli_deployment_plan.service_spec =
@@ -93,7 +93,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   }
 ;;
 
-let check_string = Alcotest.(check string)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let test_local_result_fields () =
   let r =
@@ -202,9 +202,10 @@ let test_gitops_writes_file () =
    | _ -> ());
   (try Unix.rmdir dir with
    | _ -> ());
-  Alcotest.(check bool) "gitops file created" true exists;
-  Alcotest.(check bool)
-    "gitops yaml has namespace"
+  Windtrap.equal Windtrap.bool ~msg:"gitops file created" true exists;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"gitops yaml has namespace"
     true
     (let needle = "name: myapp-payments" in
      let hl = String.length content
@@ -237,7 +238,7 @@ let test_gitops_worker () =
    | _ -> ());
   check_string "gitops worker namespace" "myapp-comms" r.namespace;
   check_string "gitops worker name" "notify-worker" r.name;
-  Alcotest.(check bool) "gitops worker file created" true exists
+  Windtrap.equal Windtrap.bool ~msg:"gitops worker file created" true exists
 ;;
 
 let read_file path =
@@ -297,24 +298,35 @@ let test_gitops_preserves_external_secrets () =
        ~secret_backend:external_secrets_backend
        secretful_spec
    with
-   | Error e -> Alcotest.fail ("gitops emission failed: " ^ e)
+   | Error e -> Windtrap.fail ("gitops emission failed: " ^ e)
    | Ok _ -> ());
   let content = read_file (Filename.concat dir emitted_name) in
   remove_dir dir emitted_name;
-  Alcotest.(check bool)
-    "An ExternalSecret is emitted, not a plain Secret"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"An ExternalSecret is emitted, not a plain Secret"
     true
     (contains "kind: ExternalSecret" content);
-  Alcotest.(check bool) "store reference preserved" true (contains "probe-store" content);
-  Alcotest.(check bool)
-    "key prefix preserved"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"store reference preserved"
+    true
+    (contains "probe-store" content);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"key prefix preserved"
     true
     (contains "key: myapp/DATABASE_URL" content);
-  Alcotest.(check bool)
-    "refresh interval preserved"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"refresh interval preserved"
     true
     (contains "refreshInterval: 1h" content);
-  Alcotest.(check bool) "no plaintext Secret" false (contains "kind: Secret" content)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no plaintext Secret"
+    false
+    (contains "kind: Secret" content)
 ;;
 
 let test_gitops_rejects_kubernetes_live () =
@@ -332,9 +344,13 @@ let test_gitops_rejects_kubernetes_live () =
   remove_dir dir emitted_name;
   (match outcome with
    | Error message ->
-     Alcotest.(check bool) "names the refusal" true (contains "kubernetes-live" message)
-   | Ok _ -> Alcotest.fail "kubernetes-live must not emit a GitOps artifact");
-  Alcotest.(check bool) "nothing was written" false written
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"names the refusal"
+       true
+       (contains "kubernetes-live" message)
+   | Ok _ -> Windtrap.fail "kubernetes-live must not emit a GitOps artifact");
+  Windtrap.equal Windtrap.bool ~msg:"nothing was written" false written
 ;;
 
 let test_gitops_placeholder_still_emits_secret () =
@@ -348,16 +364,18 @@ let test_gitops_placeholder_still_emits_secret () =
        ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
        secretful_spec
    with
-   | Error e -> Alcotest.fail ("gitops emission failed: " ^ e)
+   | Error e -> Windtrap.fail ("gitops emission failed: " ^ e)
    | Ok _ -> ());
   let content = read_file (Filename.concat dir emitted_name) in
   remove_dir dir emitted_name;
-  Alcotest.(check bool)
-    "placeholder Secret emitted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"placeholder Secret emitted"
     true
     (contains "kind: Secret" content);
-  Alcotest.(check bool)
-    "no ExternalSecret"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no ExternalSecret"
     false
     (contains "kind: ExternalSecret" content)
 ;;
@@ -421,16 +439,22 @@ let test_apply_fails_closed_when_the_workload_secret_is_absent () =
     in
     (match outcome with
      | Error message ->
-       Alcotest.(check bool)
-         "names the missing required key"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"names the missing required key"
          true
          (contains "POSTGRES_URL" message);
-       Alcotest.(check bool)
-         "says deploy never writes values"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"says deploy never writes values"
          true
          (contains "never write values" message)
-     | Ok _ -> Alcotest.fail "apply must fail closed when the workload Secret is absent");
-    Alcotest.(check bool) "no manifest was applied" false (contains "apply" (calls ())))
+     | Ok _ -> Windtrap.fail "apply must fail closed when the workload Secret is absent");
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no manifest was applied"
+      false
+      (contains "apply" (calls ())))
 ;;
 
 let%test "local: result fields (svc)" = test_local_result_fields ()

@@ -46,7 +46,7 @@ let network = "google_compute_network.main"
 
 let allowlist policy json =
   match changes_of_plan_json json with
-  | Error _ -> Alcotest.fail "fixture is not valid plan JSON"
+  | Error _ -> Windtrap.fail "fixture is not valid plan JSON"
   | Ok changes -> List.length (violations policy changes) = 0
 ;;
 
@@ -55,11 +55,12 @@ let test_actions () =
     let json = plan_of [ change "x.y" "z" raw ] in
     match changes_of_plan_json json with
     | Ok [ c ] ->
-      Alcotest.(check string)
-        ("action of " ^ String.concat "," raw)
+      Windtrap.equal
+        Windtrap.string
+        ~msg:("action of " ^ String.concat "," raw)
         expected
         (action_to_string c.action)
-    | _ -> Alcotest.failf "could not classify %s" (String.concat "," raw)
+    | _ -> Windtrap.failf "could not classify %s" (String.concat "," raw)
   in
   check [ "no-op" ] "no-op";
   check [ "read" ] "read";
@@ -76,7 +77,7 @@ let test_malformed_is_error () =
     (fun json ->
        match changes_of_plan_json json with
        | Error _ -> ()
-       | Ok _ -> Alcotest.failf "expected an error for %s" json)
+       | Ok _ -> Windtrap.failf "expected an error for %s" json)
     [ "not json"
     ; {|{"values":{}}|}
     ; {|{"resource_changes":{}}|}
@@ -90,13 +91,15 @@ let test_empty_and_read_only_are_allowed () =
       ~bootstrap:[ binding ]
       ~guarded:[ cluster ]
   in
-  Alcotest.(check bool) "empty plan" true (allowlist policy (plan_of []));
-  Alcotest.(check bool)
-    "no-op anywhere"
+  Windtrap.equal Windtrap.bool ~msg:"empty plan" true (allowlist policy (plan_of []));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no-op anywhere"
     true
     (allowlist policy (plan_of [ no_op network network ]));
-  Alcotest.(check bool)
-    "data-source read"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"data-source read"
     true
     (allowlist policy (plan_of [ data_read "data.x" "google_compute_network" ]))
 ;;
@@ -107,16 +110,18 @@ let test_whole_root_missing_cluster_create_is_refused () =
       ~bootstrap:[ binding ]
       ~guarded:[ cluster ]
   in
-  Alcotest.(check bool)
-    "missing cluster create is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"missing cluster create is refused"
     false
     (allowlist policy (plan_of [ create cluster "google_container_cluster" ]))
 ;;
 
 let test_unrepresented_guarded_create_is_refused () =
   let policy = Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster ] in
-  Alcotest.(check bool)
-    "configured-but-unrepresented guarded create is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"configured-but-unrepresented guarded create is refused"
     false
     (allowlist policy (plan_of [ create cluster "google_container_cluster" ]))
 ;;
@@ -127,24 +132,27 @@ let test_unexpected_target_resource_create_is_refused () =
       ~bootstrap:[ binding ]
       ~guarded:[ cluster ]
   in
-  Alcotest.(check bool)
-    "unexpected create is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"unexpected create is refused"
     false
     (allowlist policy (plan_of [ create network "google_compute_network" ]))
 ;;
 
 let test_unexpected_replace_is_refused () =
   let policy = Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster ] in
-  Alcotest.(check bool)
-    "replacement is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"replacement is refused"
     false
     (allowlist policy (plan_of [ replace cluster "google_container_cluster" ]))
 ;;
 
 let test_bootstrap_create_is_allowed () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
-  Alcotest.(check bool)
-    "bootstrap create is allowed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"bootstrap create is allowed"
     true
     (allowlist
        policy
@@ -159,8 +167,9 @@ let test_declared_authority_matches_every_instance () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
   authority_instances
   |> List.iter (fun address ->
-    Alcotest.(check bool)
-      (Printf.sprintf "%s is the declared authority resource" address)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(Printf.sprintf "%s is the declared authority resource" address)
       true
       (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
 ;;
@@ -169,8 +178,9 @@ let test_declared_authority_matches_nothing_else () =
   let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
   not_the_authority
   |> List.iter (fun address ->
-    Alcotest.(check bool)
-      (Printf.sprintf "%s is not the declared authority resource" address)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(Printf.sprintf "%s is not the declared authority resource" address)
       false
       (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
 ;;
@@ -181,20 +191,23 @@ let test_attempt8_authority_create_is_accepted () =
       ~bootstrap:[ binding ]
       ~guarded:[ cluster ]
   in
-  Alcotest.(check bool)
-    "index-qualified authority create is accepted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"index-qualified authority create is accepted"
     true
     (allowlist
        policy
        (plan_of [ create (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
-  Alcotest.(check bool)
-    "index-qualified authority update is accepted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"index-qualified authority update is accepted"
     true
     (allowlist
        policy
        (plan_of [ update (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
-  Alcotest.(check bool)
-    "a for_each-keyed authority create is accepted"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a for_each-keyed authority create is accepted"
     true
     (allowlist
        policy
@@ -203,14 +216,16 @@ let test_attempt8_authority_create_is_accepted () =
 
 let test_attempt8_authority_create_is_refused_where_the_action_is_forbidden () =
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
-  Alcotest.(check bool)
-    "removal may not create the authority it just removed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"removal may not create the authority it just removed"
     false
     (allowlist
        policy
        (plan_of [ create (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
-  Alcotest.(check bool)
-    "removal may delete it"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"removal may delete it"
     true
     (allowlist
        policy
@@ -225,8 +240,9 @@ let test_indexed_sibling_create_is_still_refused () =
   in
   List.iter
     (fun address ->
-       Alcotest.(check bool)
-         (Printf.sprintf "an unrelated %s create is refused" address)
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:(Printf.sprintf "an unrelated %s create is refused" address)
          false
          (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
     [ "kubernetes_cluster_role_binding.other_binding[0]"
@@ -238,8 +254,9 @@ let test_guarded_update_is_allowed () =
   let policy =
     Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ cluster; sql ]
   in
-  Alcotest.(check bool)
-    "guarded update is allowed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"guarded update is allowed"
     true
     (allowlist
        policy
@@ -251,8 +268,9 @@ let test_guarded_update_is_allowed () =
 
 let test_removal_with_unexpected_create_is_refused () =
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
-  Alcotest.(check bool)
-    "removal may not create target resources"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"removal may not create target resources"
     false
     (allowlist
        policy
@@ -262,8 +280,9 @@ let test_removal_with_unexpected_create_is_refused () =
               "kubernetes_cluster_role_binding"
           ; create cluster "google_container_cluster"
           ]));
-  Alcotest.(check bool)
-    "removal of the elevation is allowed"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"removal of the elevation is allowed"
     true
     (allowlist
        policy
@@ -272,8 +291,9 @@ let test_removal_with_unexpected_create_is_refused () =
               "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
               "kubernetes_cluster_role_binding"
           ]));
-  Alcotest.(check bool)
-    "removal may not create the elevation it is closing"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"removal may not create the elevation it is closing"
     false
     (allowlist
        policy
@@ -286,8 +306,9 @@ let test_removal_with_unexpected_create_is_refused () =
 
 let test_out_of_scope_delete_is_refused () =
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
-  Alcotest.(check bool)
-    "out-of-scope delete is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"out-of-scope delete is refused"
     false
     (allowlist policy (plan_of [ delete network "google_compute_network" ]))
 ;;
@@ -306,21 +327,27 @@ let test_attempt6_inventory_prunes_the_scope () =
         ~desired:
           [ "google_container_cluster.main"; "google_sql_database_instance.postgres" ]
     in
-    Alcotest.(check (list string)) "nothing guarded is eligible" [] eligible;
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"nothing guarded is eligible"
+      []
+      eligible;
     let policy =
       Sol_cli_cloud_destroy.reconciliation_policy ~bootstrap:[ binding ] ~guarded:eligible
     in
-    Alcotest.(check bool)
-      "the missing cluster's create is refused"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the missing cluster's create is refused"
       false
       (allowlist policy (plan_of [ create cluster "google_container_cluster" ]))
-  | _ -> Alcotest.fail "expected a represented inventory"
+  | _ -> Windtrap.fail "expected a represented inventory"
 ;;
 
 let test_unknown_action_is_refused () =
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
-  Alcotest.(check bool)
-    "an unrecognised action is refused"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unrecognised action is refused"
     false
     (allowlist
        policy
@@ -359,30 +386,31 @@ let test_guarded_apply_refusal_never_applies () =
       ~plan_result:(Ok "/tmp/plan")
       ~plan_json:(plan_of [ create cluster "google_container_cluster" ])
   in
-  Alcotest.(check int) "the apply was never invoked" 0 applied;
+  Windtrap.equal Windtrap.int ~msg:"the apply was never invoked" 0 applied;
   match outcome with
-  | Error failure -> Alcotest.(check bool) "refused" true (was_refused failure)
-  | Ok () -> Alcotest.fail "expected a refusal"
+  | Error failure ->
+    Windtrap.equal Windtrap.bool ~msg:"refused" true (was_refused failure)
+  | Ok () -> Windtrap.fail "expected a refusal"
 ;;
 
 let test_guarded_apply_malformed_never_applies () =
   let outcome, applied =
     guarded_apply_case ~plan_result:(Ok "/tmp/plan") ~plan_json:"not json"
   in
-  Alcotest.(check int) "the apply was never invoked" 0 applied;
+  Windtrap.equal Windtrap.int ~msg:"the apply was never invoked" 0 applied;
   match outcome with
   | Error (Plan_unreadable _) -> ()
-  | _ -> Alcotest.fail "expected Plan_unreadable"
+  | _ -> Windtrap.fail "expected Plan_unreadable"
 ;;
 
 let test_guarded_apply_plan_failure_never_applies () =
   let outcome, applied =
     guarded_apply_case ~plan_result:(Error "terraform exited 1") ~plan_json:(plan_of [])
   in
-  Alcotest.(check int) "the apply was never invoked" 0 applied;
+  Windtrap.equal Windtrap.int ~msg:"the apply was never invoked" 0 applied;
   match outcome with
   | Error (Plan_failed _) -> ()
-  | _ -> Alcotest.fail "expected Plan_failed"
+  | _ -> Windtrap.fail "expected Plan_failed"
 ;;
 
 let test_guarded_apply_permitted_applies_once () =
@@ -391,11 +419,11 @@ let test_guarded_apply_permitted_applies_once () =
       ~plan_result:(Ok "/tmp/plan")
       ~plan_json:(plan_of [ update cluster "google_container_cluster" ])
   in
-  Alcotest.(check int) "the apply ran once" 1 applied;
+  Windtrap.equal Windtrap.int ~msg:"the apply ran once" 1 applied;
   match outcome with
   | Ok () -> ()
   | Error failure ->
-    Alcotest.failf "expected success: %s" (apply_failure_to_string failure)
+    Windtrap.failf "expected success: %s" (apply_failure_to_string failure)
 ;;
 
 let test_removed_of_type () =
@@ -415,10 +443,11 @@ let test_removed_of_type () =
            ])
     with
     | Ok c -> c
-    | Error e -> Alcotest.fail e
+    | Error e -> Windtrap.fail e
   in
-  Alcotest.(check (list string))
-    "deletes and replaces of the type, nothing else"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"deletes and replaces of the type, nothing else"
     [ {|aws_ecr_repository.services["old-svc"]|}
     ; {|aws_ecr_repository.services["renamed"]|}
     ; {|aws_ecr_repository.services["create-first"]|}
@@ -460,24 +489,31 @@ let test_show_and_record_never_logs_plan_json () =
        ~phase:"destroy-show"
        ~show:(fun () -> Ok plan_with_secret)
    with
-   | Error m -> Alcotest.failf "unexpected error: %s" m
+   | Error m -> Windtrap.failf "unexpected error: %s" m
    | Ok (json, changes) ->
-     Alcotest.(check string) "the JSON is returned to the caller" plan_with_secret json;
-     Alcotest.(check int) "one change" 1 (List.length changes));
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"the JSON is returned to the caller"
+       plan_with_secret
+       json;
+     Windtrap.equal Windtrap.int ~msg:"one change" 1 (List.length changes));
   let files = files_under base in
-  Alcotest.(check bool) "a phase log was written" true (files <> []);
+  Windtrap.equal Windtrap.bool ~msg:"a phase log was written" true (files <> []);
   files
   |> List.iter (fun f ->
-    Alcotest.(check bool)
-      (Printf.sprintf "%s holds no secret" f)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(Printf.sprintf "%s holds no secret" f)
       false
       (Sol_cli_string.contains ~needle:secret (read f));
-    Alcotest.(check int)
-      (Printf.sprintf "%s is 0600" f)
+    Windtrap.equal
+      Windtrap.int
+      ~msg:(Printf.sprintf "%s is 0600" f)
       0o600
       ((Unix.stat f).st_perm land 0o777));
-  Alcotest.(check bool)
-    "the classified change is recorded"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the classified change is recorded"
     true
     (Sol_cli_string.contains
        ~needle:"delete aws_db_instance.main"
@@ -486,16 +522,18 @@ let test_show_and_record_never_logs_plan_json () =
 
 let test_show_and_record_unreadable_plan_is_an_error () =
   let run_log = Sol_cli_run_log.create ~base:(temp_dir ()) ~prefix:"sec008" () in
-  Alcotest.(check bool)
-    "malformed JSON refuses"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"malformed JSON refuses"
     true
     (Result.is_error
        (Sol_cli_terraform_plan.show_and_record
           ~run_log
           ~phase:"destroy-show"
           ~show:(fun () -> Ok "not json")));
-  Alcotest.(check bool)
-    "a failed show refuses"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a failed show refuses"
     true
     (Result.is_error
        (Sol_cli_terraform_plan.show_and_record

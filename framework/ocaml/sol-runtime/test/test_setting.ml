@@ -6,27 +6,28 @@ let with_env name value f =
 
 let check name value expected =
   with_env name value (fun () ->
-    Alcotest.(check (option string))
-      (Printf.sprintf "%s=%S" name value)
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:(Printf.sprintf "%s=%S" name value)
       expected
       (Sol_runtime.setting name))
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "sol_runtime setting"
-    [ ( "setting"
-      , [ Alcotest.test_case "a value is trimmed" `Quick (fun () ->
+    [ Windtrap.group
+        "setting"
+        [ Windtrap.test "a value is trimmed" (fun () ->
             check "SOL_TEST_SETTING" "  8080 \n" (Some "8080"))
-        ; Alcotest.test_case "blank is unset" `Quick (fun () ->
-            check "SOL_TEST_SETTING" "   " None)
-        ; Alcotest.test_case "empty is unset" `Quick (fun () ->
-            check "SOL_TEST_SETTING" "" None)
-        ; Alcotest.test_case "never set is unset" `Quick (fun () ->
-            Alcotest.(check (option string))
-              "absent"
+        ; Windtrap.test "blank is unset" (fun () -> check "SOL_TEST_SETTING" "   " None)
+        ; Windtrap.test "empty is unset" (fun () -> check "SOL_TEST_SETTING" "" None)
+        ; Windtrap.test "never set is unset" (fun () ->
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"absent"
               None
               (Sol_runtime.setting "SOL_TEST_SETTING_NEVER_SET"))
-        ] )
+        ]
     ]
 ;;

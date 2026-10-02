@@ -1,15 +1,15 @@
 let ok = function
   | Ok x -> x
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let assets () =
   match Sol_cli_platform_assets.resolve () with
   | Ok a -> a
-  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_platform_assets.error_to_string e)
 ;;
 
-let check_bool = Alcotest.(check bool)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let assert_contains msg s needle = check_bool msg true (contains needle s)
 
@@ -241,7 +241,7 @@ let test_alloy_render_includes_basic_auth_when_set () =
 
 let test_alloy_values_yaml_against_real_file () =
   match Sol_cli_platform_assets.resolve () with
-  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_platform_assets.error_to_string e)
   | Ok _ ->
     let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:(assets ())) in
     assert_contains "helm values shape" yaml "configMap:";
@@ -274,9 +274,9 @@ let test_alloy_values_yaml_carries_the_config_exactly () =
   in
   match Yaml.of_string yaml with
   | Ok (`O [ ("alloy", `O [ ("configMap", `O [ ("content", `String content) ]) ]) ]) ->
-    Alcotest.(check string) "content is the rendered config" config content
-  | Ok _ -> Alcotest.failf "unexpected values shape:\n%s" yaml
-  | Error (`Msg m) -> Alcotest.failf "values file does not parse: %s\n%s" m yaml
+    Windtrap.equal Windtrap.string ~msg:"content is the rendered config" config content
+  | Ok _ -> Windtrap.failf "unexpected values shape:\n%s" yaml
+  | Error (`Msg m) -> Windtrap.failf "values file does not parse: %s\n%s" m yaml
 ;;
 
 let%test "grafana: dashboard configmap" = test_dashboard_configmap ()

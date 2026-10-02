@@ -1,7 +1,7 @@
 module S = Sol_cli_substrate
 
-let check_bool = Alcotest.(check bool)
-let check_int = Alcotest.(check int)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
 
 let docs_or_fail namespaces =
   S.docs_for_namespaces namespaces |> List.map (fun doc -> Sol_cli_yaml.render [ doc ])
@@ -72,7 +72,7 @@ let test_ensure_refuses_a_reserved_platform_namespace () =
       ~ctx:Sol_cli_kube_destination.local_context
       ~namespaces:[ "cert-manager" ]
   with
-  | Ok () -> Alcotest.fail "expected ensure to refuse a reserved platform namespace"
+  | Ok () -> Windtrap.fail "expected ensure to refuse a reserved platform namespace"
   | Error msg ->
     check_bool
       "names the reserved namespace"
@@ -170,7 +170,7 @@ let test_namespace_is_created_not_applied () =
       (ns_yaml, workload_yaml)
       ~dry_run:false
     |> Result.iter_error (fun msg ->
-      Alcotest.failf
+      Windtrap.failf
         "the namespace was applied instead of created; live error was: %s"
         msg);
     let calls = String.split_on_char '\n' (read_file log) in

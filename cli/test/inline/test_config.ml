@@ -1,8 +1,18 @@
-let check_str = Alcotest.(check string)
-let check_strs = Alcotest.(check (list string))
-let check_int_opt = Alcotest.(check (option int))
-let check_bool = Alcotest.(check bool)
-let check_str_opt = Alcotest.(check (option string))
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+
+let check_strs msg expected actual =
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
+;;
+
+let check_int_opt msg expected actual =
+  Windtrap.equal (Windtrap.option Windtrap.int) ~msg expected actual
+;;
+
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+
+let check_str_opt msg expected actual =
+  Windtrap.equal (Windtrap.option Windtrap.string) ~msg expected actual
+;;
 
 let check_provider label expected provider =
   check_str label expected (Sol_cli_provider.to_string provider)
@@ -11,7 +21,7 @@ let check_provider label expected provider =
 let only_index indexes =
   match indexes with
   | [ index ] -> index
-  | _ -> Alcotest.fail "expected one index"
+  | _ -> Windtrap.fail "expected one index"
 ;;
 
 let write path content =
@@ -56,20 +66,20 @@ let with_chdir dir f =
 
 let expect_load_error expected =
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-  | Ok _ -> Alcotest.fail "expected load_for_target to fail"
+  | Ok _ -> Windtrap.fail "expected load_for_target to fail"
   | Error e -> check_str "message" expected e.message
 ;;
 
 let expect_yaml_error () =
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-  | Ok _ -> Alcotest.fail "expected a YAML syntax error"
+  | Ok _ -> Windtrap.fail "expected a YAML syntax error"
   | Error e ->
     let prefix = "invalid YAML: " in
     check_str
       "prefix"
       prefix
       (String.sub e.message 0 (min (String.length e.message) (String.length prefix)));
-    Alcotest.(check bool) "names a line" true (e.line > 0)
+    Windtrap.equal Windtrap.bool ~msg:"names a line" true (e.line > 0)
 ;;
 
 let example_pluto_dir () = Filename.concat (Source_root.find ()) "examples/pluto"
@@ -121,7 +131,7 @@ services:
       max: 10
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       check_str "project" "pluto" (Option.get cfg.project);
       let target = cfg.target in
@@ -174,7 +184,7 @@ let test_service_language_parses () =
   with_temp_dir (fun () ->
     write "sol.yml" "services:\n  api:\n    language: ocaml\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
       check_bool "language parsed" true (service.language = Some Sol_cli_compat.Ocaml))
@@ -184,7 +194,7 @@ let test_unknown_service_language_fails () =
   with_temp_dir (fun () ->
     write "sol.yml" "services:\n  api:\n    language: rust\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Ok _ -> Alcotest.fail "expected an unknown language to fail"
+    | Ok _ -> Windtrap.fail "expected an unknown language to fail"
     | Error e ->
       check_bool
         "names the supported languages"
@@ -285,7 +295,7 @@ services:
     uses: [/us-east-1/analytics_db]
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
       check_strs "uses" [ "/us-east-1/analytics_db" ] service.uses;
@@ -392,7 +402,7 @@ resources:
     size: small
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let resource = List.hd (Sol_cli_config.resources cfg) in
       check_str_opt "size" (Some "small") resource.size)
@@ -410,7 +420,7 @@ services:
     path: app/core/api
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
       check_str_opt "path" (Some "app/core/api") service.path)
@@ -468,7 +478,7 @@ target:
   registry: registry.example.com
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       check_str
         "registry"
@@ -487,7 +497,7 @@ services:
     path: "app/core/api#1"
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
       check_str_opt "path" (Some "app/core/api#1") service.path)
@@ -504,7 +514,7 @@ services:
     path: 'app/core/api#1'
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let service = List.hd (Sol_cli_config.services cfg) in
       check_str_opt "path" (Some "app/core/api#1") service.path)
@@ -554,7 +564,7 @@ services:
     omit: true
 |};
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let resource_names =
         Sol_cli_config.resources cfg
@@ -580,7 +590,7 @@ target:
   observability_backend: self_hosted_durable
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str
@@ -604,7 +614,7 @@ target:
   alert_runbook_url: https://runbooks.example.com/sol
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str "receiver type" "webhook" (Option.get target.alert_receiver_type);
@@ -638,7 +648,7 @@ target:
   cluster_endpoint_cidr: 203.0.113.0/24
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str "state_bucket" "acme-tfstate" (Option.get target.state_bucket);
@@ -679,7 +689,7 @@ target:
   cluster_name: sol-dev
 |};
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_bool "observability_backend absent" true (target.observability_backend = None))
@@ -689,7 +699,7 @@ let test_bad_target_path_fails () =
   with_temp_dir (fun () ->
     write_base ();
     match Sol_cli_config.load_for_target ~target:"prod" with
-    | Ok _ -> Alcotest.fail "expected invalid target path"
+    | Ok _ -> Windtrap.fail "expected invalid target path"
     | Error e ->
       check_str "message" "target must look like <env>/<provider>/<region>" e.message)
 ;;
@@ -698,7 +708,7 @@ let test_unknown_target_provider_fails () =
   with_temp_dir (fun () ->
     write_base ();
     match Sol_cli_config.load_for_target ~target:"prod/azure/us-east-1" with
-    | Ok _ -> Alcotest.fail "expected unknown target provider"
+    | Ok _ -> Windtrap.fail "expected unknown target provider"
     | Error e -> check_str "message" "unsupported provider \"azure\"" e.message)
 ;;
 
@@ -706,14 +716,14 @@ let test_parent_target_path_fails () =
   with_temp_dir (fun () ->
     write_base ();
     match Sol_cli_config.load_for_target ~target:"../../etc" with
-    | Ok _ -> Alcotest.fail "expected invalid target path"
+    | Ok _ -> Windtrap.fail "expected invalid target path"
     | Error e -> check_str "message" "target path must not contain '..'" e.message)
 ;;
 
 let test_target_outside_a_workspace_fails_closed () =
   with_temp_dir (fun () ->
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-west-2" with
-    | Ok _ -> Alcotest.fail "expected load_for_target to fail outside a workspace"
+    | Ok _ -> Windtrap.fail "expected load_for_target to fail outside a workspace"
     | Error e ->
       check_bool
         "message names the fix"
@@ -725,7 +735,7 @@ let test_target_with_only_sol_yml_succeeds () =
   with_temp_dir (fun () ->
     write_base ();
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail e.message
+    | Error e -> Windtrap.fail e.message
     | Ok _ -> ())
 ;;
 
@@ -749,7 +759,7 @@ target:
   kube_context: shared
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Ok _ -> Alcotest.fail "expected same-cluster envs to fail"
+    | Ok _ -> Windtrap.fail "expected same-cluster envs to fail"
     | Error e ->
       assert (Sol_cli_string.contains ~needle:"dev" e.message);
       assert (Sol_cli_string.contains ~needle:"prod" e.message);
@@ -776,7 +786,7 @@ target:
   kube_context: shared-us
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok _ -> ())
 ;;
 
@@ -791,18 +801,20 @@ target:
   kube_context: sol-prod-us-east-1
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
-       | Error message -> Alcotest.fail message
+       | Error message -> Windtrap.fail message
        | Ok destination ->
-         Alcotest.(check string)
-           "the context comes from the target"
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"the context comes from the target"
            "sol-prod-us-east-1"
            destination.context;
-         Alcotest.(check (list string))
-           "and scopes the kubectl call"
+         Windtrap.equal
+           (Windtrap.list Windtrap.string)
+           ~msg:"and scopes the kubectl call"
            [ "--context"; "sol-prod-us-east-1" ]
            (Sol_cli_kube_destination.kubectl_args destination)))
 ;;
@@ -819,18 +831,19 @@ target:
   kubeconfig: .sol/kubeconfigs/prod-aws-us-east-1.kubeconfig
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
-       | Error message -> Alcotest.fail message
+       | Error message -> Windtrap.fail message
        | Ok destination ->
          check_str_opt
            "the scoped kubeconfig comes from the target"
            (Some ".sol/kubeconfigs/prod-aws-us-east-1.kubeconfig")
            destination.kubeconfig;
-         Alcotest.(check (list (pair string string)))
-           "the child env scopes kubectl to that kubeconfig"
+         Windtrap.equal
+           (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+           ~msg:"the child env scopes kubectl to that kubeconfig"
            [ "KUBECONFIG", ".sol/kubeconfigs/prod-aws-us-east-1.kubeconfig" ]
            (Sol_cli_kube_destination.environment destination)))
 ;;
@@ -846,18 +859,19 @@ target:
   cluster_name: sol-prod
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
        | Ok destination ->
-         Alcotest.fail
+         Windtrap.fail
            (Printf.sprintf
               "expected a target with no context to fail closed, got %S"
               (Sol_cli_kube_destination.to_string destination))
        | Error message ->
-         Alcotest.(check bool)
-           "the error names the field to set"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the error names the field to set"
            true
            (Sol_cli_string.contains ~needle:"kube_context" message)))
 ;;
@@ -882,7 +896,7 @@ target:
   cluster_name: pluto-prod
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str_opt "registry" (Some "registry.example.com") target.registry)
@@ -906,7 +920,7 @@ resources:
         sort_key: expires_at
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str "env" "prod" target.env;
@@ -929,7 +943,7 @@ target:
     project_id: pluto-dev
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_strs
@@ -980,10 +994,10 @@ target:
     project_id: pluto-dev
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_bool "aws var present" true (List.mem ("vpc_cidr", "10.42.0.0/16") vars);
          check_bool "gcp var absent" false (List.mem ("project_id", "pluto-dev") vars)))
@@ -1005,7 +1019,7 @@ target:
   destroy_retention: none
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str_opt
@@ -1025,10 +1039,10 @@ target:
     provisioner_impersonator: user:ops@example.test
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "the declared caller reaches the GCP root as the list the root declares"
@@ -1046,10 +1060,10 @@ target:
     project_id: sol-qualification
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_bool
            "no caller named means no impersonation, not the caller's own identity"
@@ -1066,7 +1080,7 @@ target:
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Ok _ -> Alcotest.fail "a flat provider-native key must be refused"
+    | Ok _ -> Windtrap.fail "a flat provider-native key must be refused"
     | Error e ->
       let message = Sol_cli_config.error_to_string e in
       check_bool
@@ -1089,7 +1103,7 @@ target:
 |};
     let target_of name =
       match Sol_cli_config.load_for_target ~target:name with
-      | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+      | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
       | Ok cfg -> cfg, cfg.target
     in
     let gcp_cfg, gcp = target_of "prod/gcp/us-central1" in
@@ -1103,7 +1117,7 @@ target:
       (Some "arn:aws:iam::111122223333:role/sol-provisioner")
       (Sol_cli_config.provider_field aws "provisioner_role_arn");
     match Sol_cli_terraform_vars.of_config ~workspace:"pluto" gcp_cfg with
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
     | Ok vars ->
       check_bool
         "no AWS key reaches the GCP root"
@@ -1124,17 +1138,18 @@ target:
     some_root_variable: passed
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_bool
            "the lock table is not a -var"
            false
            (List.mem_assoc "state_lock_table" vars);
-         Alcotest.(check int)
-           "the provisioner role is routed exactly once"
+         Windtrap.equal
+           Windtrap.int
+           ~msg:"the provisioner role is routed exactly once"
            1
            (List.length (List.filter (fun (k, _) -> k = "provisioner_role_arn") vars));
          check_str_opt
@@ -1160,7 +1175,7 @@ target:
     provisioner_impersonator: user:ops@example.test
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       check_str_opt
@@ -1172,10 +1187,10 @@ target:
 let ecr_repositories_of_workspace () =
   write "sol.yml" "target:\n  aws:\n    vpc_cidr: \"10.42.0.0/16\"\n";
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-  | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
   | Ok cfg ->
     (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-     | Error msg -> Alcotest.fail msg
+     | Error msg -> Windtrap.fail msg
      | Ok vars -> List.assoc_opt "ecr_repositories" vars)
 ;;
 
@@ -1206,10 +1221,10 @@ let test_gcs_soft_delete_follows_destroy_retention () =
       |> Option.iter (fun r ->
         Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
       match Sol_cli_config.load_for_target ~target with
-      | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+      | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
       | Ok cfg ->
         (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-         | Error msg -> Alcotest.fail msg
+         | Error msg -> Windtrap.fail msg
          | Ok vars -> List.assoc_opt "gcs_soft_delete_retention_seconds" vars))
   in
   check_str_opt
@@ -1240,10 +1255,10 @@ target:
     project_id: sol-qualification
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_bool
            "the GCP root's own variable reaches it"
@@ -1281,17 +1296,17 @@ target:
     write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
     mkdir_p "app/comms/spike_fn";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "workspace_name"
            (Some "pluto")
            (List.assoc_opt "workspace_name" vars);
          (match List.assoc_opt "ecr_repositories" vars with
-          | None -> Alcotest.fail "expected ecr_repositories var"
+          | None -> Windtrap.fail "expected ecr_repositories var"
           | Some ecr ->
             check_bool
               "charge-svc present"
@@ -1315,10 +1330,10 @@ let test_production_profile_enables_rds_multi_az () =
       ~target:"prod/aws/us-east-1"
       "target:\n  profile: production-single-region\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
 ;;
@@ -1331,10 +1346,10 @@ let test_production_profile_enables_rds_deletion_protection () =
       ~target:"prod/aws/us-east-1"
       "target:\n  profile: production-single-region\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "RDS deletion protection"
@@ -1350,10 +1365,10 @@ let test_non_production_target_leaves_rds_deletion_protection_unset () =
       ~target:"dev/aws/us-east-1"
       "target:\n  cluster_name: dev-cluster\n";
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "no forced value without a production profile"
@@ -1405,10 +1420,10 @@ target:
   cluster_endpoint_cidr: 203.0.113.0/24
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_bool
            "cluster_issuer is not routed to the provider root"
@@ -1434,10 +1449,10 @@ target:
   cluster_endpoint_cidr: 203.0.113.0/24
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "deploy_role_arn is routed to the provider root"
@@ -1467,10 +1482,10 @@ target:
     vpc_cidr: "10.42.0.0/16"
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
-       | Error msg -> Alcotest.fail msg
+       | Error msg -> Windtrap.fail msg
        | Ok vars ->
          check_str_opt
            "ecr_repositories"
@@ -1481,7 +1496,7 @@ target:
 let test_example_pluto_prod_target_parses () =
   with_chdir (example_pluto_dir ()) (fun () ->
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let resource =
         Sol_cli_config.resources cfg
@@ -1494,7 +1509,7 @@ let test_local_env_is_reserved () =
   with_temp_dir (fun () ->
     write_base ();
     match Sol_cli_config.load_for_target ~target:"local/aws/us-east-1" with
-    | Ok _ -> Alcotest.fail "expected `local` to be rejected as an env name"
+    | Ok _ -> Windtrap.fail "expected `local` to be rejected as an env name"
     | Error e ->
       assert (Sol_cli_string.contains ~needle:"reserved" e.message);
       assert (Sol_cli_string.contains ~needle:"sol local infra up" e.message))
@@ -1511,11 +1526,11 @@ target:
   kube_context: k3d-sol-local
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let target = cfg.target in
       (match Sol_cli_config.destination_of_target target with
-       | Ok _ -> Alcotest.fail "a configured target must not resolve to the local cluster"
+       | Ok _ -> Windtrap.fail "a configured target must not resolve to the local cluster"
        | Error message ->
          assert (String.length message > 0);
          assert (String.length message > 0 && message <> "")))
@@ -1531,7 +1546,7 @@ let test_yaml_flow_map_and_exact_text () =
   base_domain: "1.10", services: { api: { scale: { min: 1, max: 3 } } } } } }
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
       let t = cfg.target in
       check_str "registry" "r.example.com" (Option.value t.registry ~default:"");
@@ -1557,15 +1572,17 @@ let test_yaml_syntax_error_names_its_line () =
   with_temp_dir (fun () ->
     write "sol.yml" "project: p\nservices:\n  api:\n    uses: [app_db\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
-    | Ok _ -> Alcotest.fail "expected a YAML syntax error"
-    | Error e -> Alcotest.(check int) "line" 4 e.line)
+    | Ok _ -> Windtrap.fail "expected a YAML syntax error"
+    | Error e -> Windtrap.equal Windtrap.int ~msg:"line" 4 e.line)
 ;;
 
 let test_var_file_resolution () =
   let resolve =
     Sol_cli_terraform_vars.var_file ~cwd:"/ws/app/deep" ~workspace_root:"/ws"
   in
-  let check name want got = Alcotest.(check (option string)) name want got in
+  let check name want got =
+    Windtrap.equal (Windtrap.option Windtrap.string) ~msg:name want got
+  in
   check
     "a target's relative path is from the workspace root"
     (Some "/ws/vars/x.tfvars")
@@ -1594,12 +1611,12 @@ let write_envs ?local text =
 let resolve_ok target =
   match Sol_cli_config.load_for_target ~target with
   | Ok cfg -> cfg
-  | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
 ;;
 
 let resolve_error target =
   match Sol_cli_config.load_for_target ~target with
-  | Ok _ -> Alcotest.fail ("expected " ^ target ^ " to be refused")
+  | Ok _ -> Windtrap.fail ("expected " ^ target ^ " to be refused")
   | Error e -> e.message
 ;;
 
@@ -1616,7 +1633,7 @@ let check_contains name ~needle haystack =
   let rec go i =
     i + n <= String.length haystack && (String.sub haystack i n = needle || go (i + 1))
   in
-  Alcotest.(check bool) (name ^ ": " ^ haystack) true (go 0)
+  Windtrap.equal Windtrap.bool ~msg:(name ^ ": " ^ haystack) true (go 0)
 ;;
 
 let test_env_layer_precedence () =
@@ -1663,15 +1680,21 @@ let test_scale_and_provider_blocks_deep_merge () =
 |};
     let cfg = resolve_ok "prod/aws/us-east-1" in
     let api = service cfg "api" in
-    Alcotest.(check (option int)) "env min survives" (Some 2) api.scale_min;
-    Alcotest.(check (option int)) "target max" (Some 5) api.scale_max;
+    Windtrap.equal
+      (Windtrap.option Windtrap.int)
+      ~msg:"env min survives"
+      (Some 2)
+      api.scale_min;
+    Windtrap.equal (Windtrap.option Windtrap.int) ~msg:"target max" (Some 5) api.scale_max;
     let t = target_of cfg in
-    Alcotest.(check (option string))
-      "env provider field survives"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"env provider field survives"
       (Some "lock")
       (Sol_cli_config.provider_field t "state_lock_table");
-    Alcotest.(check (option string))
-      "target provider field"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"target provider field"
       (Some "arn:aws:iam::1:role/p")
       (Sol_cli_config.provider_field t "provisioner_role_arn"))
 ;;
@@ -1691,8 +1714,9 @@ let test_omit_is_sticky () =
           omit: false
 |};
     let cfg = resolve_ok "dev/aws/us-east-1" in
-    Alcotest.(check bool)
-      "a target cannot bring back what its environment omitted"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a target cannot bring back what its environment omitted"
       false
       (Sol_cli_config.services cfg
        |> List.exists (fun (s : Sol_cli_config.service) -> s.name = "api")))
@@ -1713,7 +1737,11 @@ let test_blank_values_are_missing () =
       (resolve_error "prod/aws/us-east-1");
     write_envs "prod:\n  targets:\n    aws/us-east-1:\n      registry: \" r.example \"\n";
     let cfg = resolve_ok "prod/aws/us-east-1" in
-    Alcotest.(check (option string)) "trimmed" (Some "r.example") cfg.target.registry)
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"trimmed"
+      (Some "r.example")
+      cfg.target.registry)
 ;;
 
 let test_target_only_key_rejected_at_env_level () =
@@ -1818,10 +1846,11 @@ let test_declared_targets_are_discovered () =
       ~local:"qual:\n  targets:\n    gcp/us-central1:\n"
       "prod:\n  targets:\n    aws/us-east-1:\n    aws/us-west-2:\n";
     match Sol_cli_config.discover_target_paths () with
-    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
     | Ok paths ->
-      Alcotest.(check (list string))
-        "targets"
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"targets"
         [ "prod/aws/us-east-1"; "prod/aws/us-west-2"; "qual/gcp/us-central1" ]
         paths)
 ;;

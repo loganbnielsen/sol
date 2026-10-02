@@ -1082,182 +1082,210 @@ let run_outbox_path () =
 let () =
   let r = run_golden_path () in
   let o = run_outbox_path () in
-  Alcotest.run
+  Windtrap.run
     "e2e golden workflow"
-    [ ( "http"
-      , [ Alcotest.test_case "all orders accepted (HTTP 202)" `Quick (fun () ->
+    [ Windtrap.group
+        "http"
+        [ Windtrap.test "all orders accepted (HTTP 202)" (fun () ->
             let bad = List.filter (( <> ) 202) r.http_statuses in
             if bad <> []
             then
-              Alcotest.failf
+              Windtrap.failf
                 "expected 202, got: %s"
                 (String.concat ", " (List.map string_of_int bad)))
-        ] )
-    ; ( "metrics"
-      , [ Alcotest.test_case "sol_svc_requests_total > 0" `Quick (fun () ->
+        ]
+    ; Windtrap.group
+        "metrics"
+        [ Windtrap.test "sol_svc_requests_total > 0" (fun () ->
             if not (metric_nonzero r.metrics_text "sol_svc_requests_total")
-            then Alcotest.fail "metric absent or zero")
-        ; Alcotest.test_case "sol_worker_messages_total > 0" `Quick (fun () ->
+            then Windtrap.fail "metric absent or zero")
+        ; Windtrap.test "sol_worker_messages_total > 0" (fun () ->
             if not (metric_nonzero r.metrics_text "sol_worker_messages_total")
-            then Alcotest.fail "metric absent or zero")
-        ; Alcotest.test_case "worker /metrics serves metrics" `Quick (fun () ->
+            then Windtrap.fail "metric absent or zero")
+        ; Windtrap.test "worker /metrics serves metrics" (fun () ->
             match r.worker_metrics_http with
-            | None -> Alcotest.fail "worker /metrics was not reachable"
+            | None -> Windtrap.fail "worker /metrics was not reachable"
             | Some resp ->
               if not (metric_nonzero resp "sol_worker_messages_total")
-              then Alcotest.fail "worker /metrics did not include worker metrics")
-        ; Alcotest.test_case "sol_jobs_processed_total > 0" `Quick (fun () ->
+              then Windtrap.fail "worker /metrics did not include worker metrics")
+        ; Windtrap.test "sol_jobs_processed_total > 0" (fun () ->
             if r.jobs_processed = 0
             then ()
             else if not (metric_nonzero r.metrics_text "sol_jobs_processed_total")
-            then Alcotest.fail "metric absent or zero")
-        ] )
-    ; ( "loki"
-      , [ Alcotest.test_case "logs received for service=order-svc" `Quick (fun () ->
+            then Windtrap.fail "metric absent or zero")
+        ]
+    ; Windtrap.group
+        "loki"
+        [ Windtrap.test "logs received for service=order-svc" (fun () ->
             match r.loki_resp with
             | None -> ()
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
-              then Alcotest.fail "no log streams in Loki response")
-        ; Alcotest.test_case
-            "sol logs Loki query path reads pushed logs"
-            `Quick
-            (fun () ->
-               match r.loki_cli_lines with
-               | None -> ()
-               | Some n ->
-                 if n = 0
-                 then Alcotest.fail "Sol_cli_loki.query returned no pushed log lines")
-        ] )
-    ; ( "postgres"
-      , [ Alcotest.test_case "fulfilled orders persisted" `Quick (fun () ->
-            if r.db_rows = 0 then () else Alcotest.(check int) "3 rows stored" 3 r.db_rows)
-        ] )
-    ; ( "jobs"
-      , [ Alcotest.test_case
+              then Windtrap.fail "no log streams in Loki response")
+        ; Windtrap.test "sol logs Loki query path reads pushed logs" (fun () ->
+            match r.loki_cli_lines with
+            | None -> ()
+            | Some n ->
+              if n = 0
+              then Windtrap.fail "Sol_cli_loki.query returned no pushed log lines")
+        ]
+    ; Windtrap.group
+        "postgres"
+        [ Windtrap.test "fulfilled orders persisted" (fun () ->
+            if r.db_rows = 0
+            then ()
+            else Windtrap.equal Windtrap.int ~msg:"3 rows stored" 3 r.db_rows)
+        ]
+    ; Windtrap.group
+        "jobs"
+        [ Windtrap.test
             "confirmation-email jobs claimed and completed (sol-jobs, FEAT-077)"
-            `Quick
             (fun () ->
                if r.db_rows = 0
                then ()
-               else Alcotest.(check int) "3 jobs processed" 3 r.jobs_processed)
-        ] )
-    ; ( "outbox-facts-to-jobs"
-      , [ Alcotest.test_case
+               else Windtrap.equal Windtrap.int ~msg:"3 jobs processed" 3 r.jobs_processed)
+        ]
+    ; Windtrap.group
+        "outbox-facts-to-jobs"
+        [ Windtrap.test
             "the declared topic was created at the declared partition count"
-            `Quick
             (fun () ->
                if not o.ob_db
                then ()
-               else Alcotest.(check int) "3 partitions" 3 o.ob_partitions)
-        ; Alcotest.test_case
+               else Windtrap.equal Windtrap.int ~msg:"3 partitions" 3 o.ob_partitions)
+        ; Windtrap.test
             "a rolled-back transaction leaves no domain row, intent, fact or effect"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
-               else Alcotest.(check bool) "clean rollback" true o.ob_rollback_clean)
-        ; Alcotest.test_case
+               then Windtrap.fail "POSTGRES_URL not set"
+               else
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"clean rollback"
+                   true
+                   o.ob_rollback_clean)
+        ; Windtrap.test
             "with the broker unavailable the intent is held, and recovery publishes it \
              once"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
+               then Windtrap.fail "POSTGRES_URL not set"
                else (
-                 Alcotest.(check bool) "held during the outage" true o.ob_outage_held;
-                 Alcotest.(check bool)
-                   "published after recovery"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"held during the outage"
+                   true
+                   o.ob_outage_held;
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"published after recovery"
                    true
                    o.ob_outage_recovered))
-        ; Alcotest.test_case
+        ; Windtrap.test
             "a duplicate fact delivery leaves one domain row and one independent effect"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
+               then Windtrap.fail "POSTGRES_URL not set"
                else (
-                 Alcotest.(check int) "one domain row" 1 o.ob_duplicate_domain_rows;
-                 Alcotest.(check int) "one effect" 1 o.ob_duplicate_effects))
-        ; Alcotest.test_case
+                 Windtrap.equal
+                   Windtrap.int
+                   ~msg:"one domain row"
+                   1
+                   o.ob_duplicate_domain_rows;
+                 Windtrap.equal Windtrap.int ~msg:"one effect" 1 o.ob_duplicate_effects))
+        ; Windtrap.test
             "a blocked earlier event does not let a later one for the same key publish \
              first"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
-               else Alcotest.(check (list int)) "per-key order" [ 1; 2 ] o.ob_order_seq)
-        ; Alcotest.test_case
+               then Windtrap.fail "POSTGRES_URL not set"
+               else
+                 Windtrap.equal
+                   (Windtrap.list Windtrap.int)
+                   ~msg:"per-key order"
+                   [ 1; 2 ]
+                   o.ob_order_seq)
+        ; Windtrap.test
             "a crash between broker ack and the row mark duplicates, never gaps or \
              inverts"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
+               then Windtrap.fail "POSTGRES_URL not set"
                else (
-                 Alcotest.(check bool)
-                   "published before the crash"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"published before the crash"
                    true
                    o.ob_crash_published;
-                 Alcotest.(check bool)
-                   "row survived the crash"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"row survived the crash"
                    true
                    o.ob_crash_row_survived;
-                 Alcotest.(check int)
-                   "re-delivered at least twice"
+                 Windtrap.equal
+                   Windtrap.int
+                   ~msg:"re-delivered at least twice"
                    2
                    o.ob_crash_duplicate_facts;
-                 Alcotest.(check int) "still one effect" 1 o.ob_crash_effects))
-        ; Alcotest.test_case
+                 Windtrap.equal Windtrap.int ~msg:"still one effect" 1 o.ob_crash_effects))
+        ; Windtrap.test
             "a transient job failure retries in sol-jobs and eventually succeeds once"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
+               then Windtrap.fail "POSTGRES_URL not set"
                else (
-                 Alcotest.(check bool)
-                   "attempted more than once"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"attempted more than once"
                    true
                    (o.ob_retry_invocations > 1);
-                 Alcotest.(check int) "one effect" 1 o.ob_retry_effects))
-        ; Alcotest.test_case
+                 Windtrap.equal Windtrap.int ~msg:"one effect" 1 o.ob_retry_effects))
+        ; Windtrap.test
             "Fail stops the consumer with no application retry or DLQ topic"
-            `Quick
             (fun () ->
                if not o.ob_db
-               then Alcotest.fail "POSTGRES_URL not set"
+               then Windtrap.fail "POSTGRES_URL not set"
                else (
-                 Alcotest.(check bool) "handler returned Fail" true o.ob_fail_observed;
-                 Alcotest.(check bool)
-                   "the offset was not committed (the fact was redelivered)"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"handler returned Fail"
+                   true
+                   o.ob_fail_observed;
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"the offset was not committed (the fact was redelivered)"
                    true
                    o.ob_fail_redelivered;
-                 Alcotest.(check (list string))
-                   "no application retry/DLQ topic"
+                 Windtrap.equal
+                   (Windtrap.list Windtrap.string)
+                   ~msg:"no application retry/DLQ topic"
                    []
                    o.ob_app_retry_topics;
-                 Alcotest.(check bool)
-                   "sol_worker_messages_total{status=\"fail\"} recorded"
+                 Windtrap.equal
+                   Windtrap.bool
+                   ~msg:"sol_worker_messages_total{status=\"fail\"} recorded"
                    true
                    (str_contains o.ob_metrics "status=\"fail\"")))
-        ; Alcotest.test_case "the outbox and worker metrics are exposed" `Quick (fun () ->
+        ; Windtrap.test "the outbox and worker metrics are exposed" (fun () ->
             if not o.ob_db
-            then Alcotest.fail "POSTGRES_URL not set"
+            then Windtrap.fail "POSTGRES_URL not set"
             else (
-              Alcotest.(check bool)
-                "sol_outbox_published_total > 0"
+              Windtrap.equal
+                Windtrap.bool
+                ~msg:"sol_outbox_published_total > 0"
                 true
                 (metric_nonzero o.ob_metrics "sol_outbox_published_total");
-              Alcotest.(check bool)
-                "sol_worker_messages_total > 0"
+              Windtrap.equal
+                Windtrap.bool
+                ~msg:"sol_worker_messages_total > 0"
                 true
                 (metric_nonzero o.ob_metrics "sol_worker_messages_total")))
-        ; Alcotest.test_case "outbox logs reached Loki" `Quick (fun () ->
+        ; Windtrap.test "outbox logs reached Loki" (fun () ->
             match o.ob_loki with
             | None -> ()
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
-              then Alcotest.fail "no outbox log streams in Loki response")
-        ] )
+              then Windtrap.fail "no outbox log streams in Loki response")
+        ]
     ]
 ;;

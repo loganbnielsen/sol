@@ -113,7 +113,7 @@ let with_calls ~node_pools_out ~nats_out ~list_exit f =
     let log =
       match Sys.getenv_opt "PATH" with
       | Some path -> Filename.concat (List.hd (String.split_on_char ':' path)) "calls.log"
-      | None -> Alcotest.fail "PATH is unset"
+      | None -> Windtrap.fail "PATH is unset"
     in
     f ~log ~observations)
 ;;
@@ -121,23 +121,26 @@ let with_calls ~node_pools_out ~nats_out ~list_exit f =
 let test_location_is_explicit_on_every_regional_check () =
   with_calls ~node_pools_out:"" ~nats_out:"" ~list_exit:0 (fun ~log ~observations:_ ->
     let node_pools = arguments_of ~log ~contains:"node-pools list" in
-    Alcotest.(check int) "one node-pool check" 1 (List.length node_pools);
-    Alcotest.(check bool)
-      "the node-pool check carries the target's location"
+    Windtrap.equal Windtrap.int ~msg:"one node-pool check" 1 (List.length node_pools);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the node-pool check carries the target's location"
       true
       (Sol_cli_string.contains ~needle:"--location us-central1" (List.hd node_pools));
     let nats = arguments_of ~log ~contains:"nats list" in
-    Alcotest.(check int) "one Cloud NAT check" 1 (List.length nats);
-    Alcotest.(check bool)
-      "the Cloud NAT check carries the target's router region"
+    Windtrap.equal Windtrap.int ~msg:"one Cloud NAT check" 1 (List.length nats);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the Cloud NAT check carries the target's router region"
       true
       (Sol_cli_string.contains ~needle:"--router-region us-central1" (List.hd nats));
     let regional =
       arguments_of ~log ~contains:"routers list"
       @ arguments_of ~log ~contains:"subnets list"
     in
-    Alcotest.(check bool)
-      "and so does every other regional list, with the flag gcloud accepts"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and so does every other regional list, with the flag gcloud accepts"
       true
       (List.for_all
          (fun call -> Sol_cli_string.contains ~needle:"--regions us-central1" call)
@@ -147,8 +150,9 @@ let test_location_is_explicit_on_every_regional_check () =
 let test_the_target_region_beats_the_configured_default () =
   with_calls ~node_pools_out:"" ~nats_out:"" ~list_exit:0 (fun ~log ~observations:_ ->
     let all = calls log in
-    Alcotest.(check bool)
-      "no check follows the operator's default region"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no check follows the operator's default region"
       false
       (Sol_cli_string.contains ~needle:"europe-west1" all))
 ;;
@@ -157,10 +161,10 @@ let test_an_empty_inventory_is_absent () =
   with_calls ~node_pools_out:"" ~nats_out:"" ~list_exit:0 (fun ~log:_ ~observations ->
     (match only observations "GKE node pool" with
      | Sol_cli_absence.Absent _ -> ()
-     | _ -> Alcotest.fail "an empty node-pool list must be Absent");
+     | _ -> Windtrap.fail "an empty node-pool list must be Absent");
     match only observations "Cloud NAT" with
     | Sol_cli_absence.Absent _ -> ()
-    | _ -> Alcotest.fail "an empty Cloud NAT list must be Absent")
+    | _ -> Windtrap.fail "an empty Cloud NAT list must be Absent")
 ;;
 
 let test_a_present_resource_is_reported () =
@@ -171,15 +175,20 @@ let test_a_present_resource_is_reported () =
     (fun ~log:_ ~observations ->
        (match only observations "GKE node pool" with
         | Sol_cli_absence.Present p ->
-          Alcotest.(check (list string))
-            "the node pool is reported"
+          Windtrap.equal
+            (Windtrap.list Windtrap.string)
+            ~msg:"the node pool is reported"
             [ "acme-prod-pool-1" ]
             p.found
-        | _ -> Alcotest.fail "a present node pool must be Present");
+        | _ -> Windtrap.fail "a present node pool must be Present");
        match only observations "Cloud NAT" with
        | Sol_cli_absence.Present p ->
-         Alcotest.(check (list string)) "the NAT is reported" [ "acme-prod-nat" ] p.found
-       | _ -> Alcotest.fail "a present NAT must be Present")
+         Windtrap.equal
+           (Windtrap.list Windtrap.string)
+           ~msg:"the NAT is reported"
+           [ "acme-prod-nat" ]
+           p.found
+       | _ -> Windtrap.fail "a present NAT must be Present")
 ;;
 
 let test_a_refused_list_is_unobservable () =
@@ -190,11 +199,12 @@ let test_a_refused_list_is_unobservable () =
     (fun ~log:_ ~observations ->
        match only observations "GKE node pool" with
        | Sol_cli_absence.Unobservable u ->
-         Alcotest.(check bool)
-           "the reason is the provider's"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the reason is the provider's"
            true
            (Sol_cli_string.contains ~needle:"must be supplied" u.reason)
-       | _ -> Alcotest.fail "a refused list must be Unobservable")
+       | _ -> Windtrap.fail "a refused list must be Unobservable")
 ;;
 
 let%test "location-scoped inventory: passes the target location explicitly" =

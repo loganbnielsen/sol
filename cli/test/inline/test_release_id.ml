@@ -1,5 +1,5 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let wl
       ?(domain = "payments")
@@ -191,7 +191,7 @@ let test_of_string_round_trips_and_validates () =
   let rendered = id (content [ wl "charge_svc" "acme/charge:1" ]) in
   (match Sol_cli_release_id.of_string rendered with
    | Ok parsed -> check_string "round trip" rendered (Sol_cli_release_id.to_string parsed)
-   | Error msg -> Alcotest.fail ("valid id rejected: " ^ msg));
+   | Error msg -> Windtrap.fail ("valid id rejected: " ^ msg));
   List.iter
     (fun bad ->
        check_bool

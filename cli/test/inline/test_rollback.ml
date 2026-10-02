@@ -1,37 +1,37 @@
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let hostname s =
   match Sol_cli_toml.hostname_of_string s with
   | Ok host -> host
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let ingress_path s =
   match Sol_cli_toml.ingress_path_of_string s with
   | Ok path -> path
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let contains re s =
@@ -194,7 +194,7 @@ let gate_release = Sol_cli_release.of_plan ~apply_mode:Sol_cli_release.Direct ga
 let reconstruct_ok () =
   match Sol_cli_rollback.service_specs_of_release gate_release with
   | Ok specs -> specs
-  | Error msg -> Alcotest.failf "expected reconstruction to succeed: %s" msg
+  | Error msg -> Windtrap.failf "expected reconstruction to succeed: %s" msg
 ;;
 
 let call_eq
@@ -216,62 +216,101 @@ let assert_spec_equal ~label (expected : Sol_cli_deployment_plan.service_spec) g
   let k8s = Sol_cli_deployment_plan.k8s_name_to_string in
   let ns = Sol_cli_deployment_plan.namespace_to_string in
   let field name = Printf.sprintf "%s: %s" label name in
-  Alcotest.(check string)
-    (field "domain")
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "domain")
     expected.domain
     got.Sol_cli_deployment_plan.domain;
-  Alcotest.(check string) (field "source_name") expected.source_name got.source_name;
-  Alcotest.(check string) (field "k8s_name") (k8s expected.k8s_name) (k8s got.k8s_name);
-  Alcotest.(check string) (field "namespace") (ns expected.namespace) (ns got.namespace);
-  Alcotest.(check bool) (field "primitive") true (expected.primitive = got.primitive);
-  Alcotest.(check string) (field "image") expected.image got.image;
-  Alcotest.(check bool) (field "config") true (expected.config = got.config);
-  Alcotest.(check bool) (field "secrets") true (expected.secrets = got.secrets);
-  Alcotest.(check bool) (field "volumes") true (expected.volumes = got.volumes);
-  Alcotest.(check bool) (field "schedule") true (expected.schedule = got.schedule);
-  Alcotest.(check bool)
-    (field "scheduled_concurrency")
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "source_name")
+    expected.source_name
+    got.source_name;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "k8s_name")
+    (k8s expected.k8s_name)
+    (k8s got.k8s_name);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "namespace")
+    (ns expected.namespace)
+    (ns got.namespace);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "primitive")
+    true
+    (expected.primitive = got.primitive);
+  Windtrap.equal Windtrap.string ~msg:(field "image") expected.image got.image;
+  Windtrap.equal Windtrap.bool ~msg:(field "config") true (expected.config = got.config);
+  Windtrap.equal Windtrap.bool ~msg:(field "secrets") true (expected.secrets = got.secrets);
+  Windtrap.equal Windtrap.bool ~msg:(field "volumes") true (expected.volumes = got.volumes);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "schedule")
+    true
+    (expected.schedule = got.schedule);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "scheduled_concurrency")
     true
     (expected.scheduled_concurrency = got.scheduled_concurrency);
-  Alcotest.(check int) (field "backoff_limit") expected.backoff_limit got.backoff_limit;
-  Alcotest.(check int) (field "replicas") expected.replicas got.replicas;
-  Alcotest.(check string)
-    (field "cpu")
+  Windtrap.equal
+    Windtrap.int
+    ~msg:(field "backoff_limit")
+    expected.backoff_limit
+    got.backoff_limit;
+  Windtrap.equal Windtrap.int ~msg:(field "replicas") expected.replicas got.replicas;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "cpu")
     (Sol_cli_toml.cpu_quantity_to_string expected.cpu)
     (Sol_cli_toml.cpu_quantity_to_string got.cpu);
-  Alcotest.(check string)
-    (field "memory")
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "memory")
     (Sol_cli_toml.memory_quantity_to_string expected.memory)
     (Sol_cli_toml.memory_quantity_to_string got.memory);
-  Alcotest.(check bool)
-    (field "rollout_strategy")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "rollout_strategy")
     true
     (expected.rollout_strategy = got.rollout_strategy);
-  Alcotest.(check bool)
-    (field "ingress_host")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "ingress_host")
     true
     (Option.map Sol_cli_toml.hostname_to_string expected.ingress_host
      = Option.map Sol_cli_toml.hostname_to_string got.ingress_host);
-  Alcotest.(check bool)
-    (field "ingress_path")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "ingress_path")
     true
     (Option.map Sol_cli_toml.ingress_path_to_string expected.ingress_path
      = Option.map Sol_cli_toml.ingress_path_to_string got.ingress_path);
-  Alcotest.(check string)
-    (field "cluster_issuer")
+  Windtrap.equal
+    Windtrap.string
+    ~msg:(field "cluster_issuer")
     expected.cluster_issuer
     got.cluster_issuer;
-  Alcotest.(check bool) (field "calls") true (calls_eq expected.calls got.calls);
-  Alcotest.(check bool)
-    (field "called_by")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "calls")
+    true
+    (calls_eq expected.calls got.calls);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "called_by")
     true
     (calls_eq expected.called_by got.called_by);
-  Alcotest.(check bool)
-    (field "extra_labels")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "extra_labels")
     true
     (expected.extra_labels = got.extra_labels);
-  Alcotest.(check bool)
-    (field "progressive_delivery")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(field "progressive_delivery")
     true
     (expected.progressive_delivery = got.progressive_delivery)
 ;;
@@ -281,9 +320,17 @@ let test_gate_a_decode_correctness () =
   | [ (got_billing, billing_by); (got_ledger, ledger_by) ] ->
     assert_spec_equal ~label:"billing_svc" billing_spec got_billing;
     assert_spec_equal ~label:"ledger_svc" ledger_spec got_ledger;
-    Alcotest.(check string) "billing provenance" gate_release.release_id billing_by;
-    Alcotest.(check string) "ledger provenance" gate_release.release_id ledger_by
-  | specs -> Alcotest.failf "expected 2 reconstructed specs, got %d" (List.length specs)
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"billing provenance"
+      gate_release.release_id
+      billing_by;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"ledger provenance"
+      gate_release.release_id
+      ledger_by
+  | specs -> Windtrap.failf "expected 2 reconstructed specs, got %d" (List.length specs)
 ;;
 
 let test_gate_b_identity_correctness () =
@@ -291,12 +338,14 @@ let test_gate_b_identity_correctness () =
   let reconstructed_id =
     Sol_cli_release.derived_release_id gate_release |> Sol_cli_release_id.to_string
   in
-  Alcotest.(check string)
-    "reconstructed release id matches the record"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"reconstructed release id matches the record"
     gate_release.release_id
     reconstructed_id;
-  Alcotest.(check int)
-    "every reconstructed workload carries observable provenance"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"every reconstructed workload carries observable provenance"
     (List.length specs)
     (List.length gate_release.workloads)
 ;;
@@ -318,7 +367,7 @@ let render_by_identity ~release_id apply_specs =
              s
          with
          | Ok (ns_yaml, body) -> ns_yaml ^ body
-         | Error msg -> Alcotest.fail msg
+         | Error msg -> Windtrap.fail msg
        in
        key, rendered)
     apply_specs
@@ -330,7 +379,7 @@ let test_gate_c_render_correctness () =
   let release_id =
     match Sol_cli_release_id.of_string gate_release.release_id with
     | Ok id -> id
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
   in
   let original =
     render_by_identity
@@ -338,14 +387,16 @@ let test_gate_c_render_correctness () =
       (List.map (fun s -> s, gate_release.release_id) gate_plan.services)
   in
   let reconstructed = render_by_identity ~release_id specs in
-  Alcotest.(check (list (pair string string)))
-    "same object identity set"
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"same object identity set"
     (List.map fst original)
     (List.map fst reconstructed);
   List.iter2
     (fun (key, original_bytes) (_, reconstructed_bytes) ->
-       Alcotest.(check string)
-         (Printf.sprintf "%s/%s canonical bytes" (fst key) (snd key))
+       Windtrap.equal
+         Windtrap.string
+         ~msg:(Printf.sprintf "%s/%s canonical bytes" (fst key) (snd key))
          original_bytes
          reconstructed_bytes)
     original
@@ -370,7 +421,7 @@ let bad_workload_release update : Sol_cli_release.t =
 let test_gate_failure_unknown_rollout_encoding () =
   let release = bad_workload_release (fun w -> { w with rollout = "canary:bogus" }) in
   match Sol_cli_rollback.service_specs_of_release release with
-  | Ok _ -> Alcotest.fail "expected reconstruction to fail on an unknown rollout encoding"
+  | Ok _ -> Windtrap.fail "expected reconstruction to fail on an unknown rollout encoding"
   | Error msg ->
     assert (contains (Str.regexp "r-0000000000000000") msg);
     assert (contains (Str.regexp "ledger_svc") msg);
@@ -380,7 +431,7 @@ let test_gate_failure_unknown_rollout_encoding () =
 let test_gate_failure_invalid_cpu () =
   let release = bad_workload_release (fun w -> { w with cpu = "not-a-cpu-quantity" }) in
   match Sol_cli_rollback.service_specs_of_release release with
-  | Ok _ -> Alcotest.fail "expected reconstruction to fail on an invalid cpu quantity"
+  | Ok _ -> Windtrap.fail "expected reconstruction to fail on an invalid cpu quantity"
   | Error msg ->
     assert (contains (Str.regexp "ledger_svc") msg);
     assert (contains (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
@@ -430,7 +481,7 @@ let test_migration_boundary_no_new_migrations_passes () =
            ~applied:(fun () -> Ok [ 1 ])
        with
        | Ok () -> ()
-       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+       | Error e -> Windtrap.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let test_migration_boundary_new_expand_passes () =
@@ -446,7 +497,7 @@ let test_migration_boundary_new_expand_passes () =
            ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () -> ()
-       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+       | Error e -> Windtrap.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let test_migration_boundary_new_contract_blocks () =
@@ -461,12 +512,12 @@ let test_migration_boundary_new_contract_blocks () =
            ~current_migrations:[ "0001_init.sql"; "0002_drop_col.sql" ]
            ~applied:(fun () -> Ok [ 1; 2 ])
        with
-       | Ok () -> Alcotest.fail "expected a contracting migration to block the rollback"
+       | Ok () -> Windtrap.fail "expected a contracting migration to block the rollback"
        | Error (Sol_cli_rollback.Contracting_migration { release_id; migration }) ->
-         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
-         Alcotest.(check string) "migration" "0002_drop_col.sql" migration
+         Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
+         Windtrap.equal Windtrap.string ~msg:"migration" "0002_drop_col.sql" migration
        | Error e ->
-         Alcotest.failf
+         Windtrap.failf
            "expected Contracting_migration, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
@@ -484,14 +535,14 @@ let test_migration_boundary_undeclared_new_migration_blocks () =
            ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () ->
-         Alcotest.fail "expected an undeclared disposition to block the rollback closed"
+         Windtrap.fail "expected an undeclared disposition to block the rollback closed"
        | Error (Sol_cli_rollback.Undeclared_disposition { release_id; migration; reason })
          ->
-         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
-         Alcotest.(check string) "migration" "0002_mystery.sql" migration;
+         Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
+         Windtrap.equal Windtrap.string ~msg:"migration" "0002_mystery.sql" migration;
          assert (contains (Str.regexp "sol:disposition") reason)
        | Error e ->
-         Alcotest.failf
+         Windtrap.failf
            "expected Undeclared_disposition, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
@@ -509,7 +560,7 @@ let test_migration_boundary_ignores_already_recorded_contract () =
            ~applied:(fun () -> Ok [ 1 ])
        with
        | Ok () -> ()
-       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+       | Error e -> Windtrap.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let test_migration_boundary_applied_beyond_release_absent_locally_blocks () =
@@ -525,14 +576,14 @@ let test_migration_boundary_applied_beyond_release_absent_locally_blocks () =
            ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () ->
-         Alcotest.fail
+         Windtrap.fail
            "expected a migration applied to the target but absent from this checkout to \
             block the rollback"
        | Error (Sol_cli_rollback.Applied_migration_absent { release_id; version }) ->
-         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
-         Alcotest.(check int) "version" 2 version
+         Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
+         Windtrap.equal Windtrap.int ~msg:"version" 2 version
        | Error e ->
-         Alcotest.failf
+         Windtrap.failf
            "expected Applied_migration_absent, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
@@ -550,7 +601,7 @@ let test_migration_boundary_applied_expansion_beyond_release_passes () =
            ~applied:(fun () -> Ok [ 1; 2 ])
        with
        | Ok () -> ()
-       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+       | Error e -> Windtrap.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let test_migration_boundary_applied_state_unavailable_blocks () =
@@ -566,12 +617,12 @@ let test_migration_boundary_applied_state_unavailable_blocks () =
            ~applied:(fun () -> Error "migration-status Job cannot start")
        with
        | Ok () ->
-         Alcotest.fail "expected an unreadable applied state to block the rollback"
+         Windtrap.fail "expected an unreadable applied state to block the rollback"
        | Error (Sol_cli_rollback.Applied_state_unavailable { release_id; reason }) ->
-         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
+         Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
          assert (contains (Str.regexp "migration-status Job cannot start") reason)
        | Error e ->
-         Alcotest.failf
+         Windtrap.failf
            "expected Applied_state_unavailable, got: %s"
            (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
@@ -616,7 +667,7 @@ let test_live_kind_of_service_table () =
   |> List.iter (fun (label, primitive, progressive_delivery, expected) ->
     let spec = { ledger_spec with primitive; progressive_delivery } in
     let got = Sol_cli_rollback.live_kind_of_service spec in
-    Alcotest.(check bool) label true (got = expected))
+    Windtrap.equal Windtrap.bool ~msg:label true (got = expected))
 ;;
 
 let live_kind_label = function
@@ -629,12 +680,14 @@ let test_live_resource_and_jsonpath_table () =
   List.iter
     (fun (kind, expected_resource, expected_jsonpath) ->
        let resource, jsonpath = Sol_cli_rollback.live_resource_and_jsonpath kind in
-       Alcotest.(check string)
-         (live_kind_label kind ^ " resource")
+       Windtrap.equal
+         Windtrap.string
+         ~msg:(live_kind_label kind ^ " resource")
          expected_resource
          resource;
-       Alcotest.(check string)
-         (live_kind_label kind ^ " jsonpath")
+       Windtrap.equal
+         Windtrap.string
+         ~msg:(live_kind_label kind ^ " jsonpath")
          expected_jsonpath
          jsonpath)
     [ ( Sol_cli_rollback.Live_deployment
@@ -660,13 +713,13 @@ let verify_release : Sol_cli_release.t =
 let test_check_apply_mode_allows_direct () =
   Sol_cli_rollback.check_apply_mode ~release:verify_release
   |> Result.iter_error (fun e ->
-    Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e))
+    Windtrap.fail (Sol_cli_rollback.apply_mode_check_error_to_string e))
 ;;
 
 let test_check_apply_mode_refuses_gitops () =
   let release = { verify_release with apply_mode = Sol_cli_release.Gitops } in
   match Sol_cli_rollback.check_apply_mode ~release with
-  | Ok () -> Alcotest.fail "expected a GitOps-owned release to be refused"
+  | Ok () -> Windtrap.fail "expected a GitOps-owned release to be refused"
   | Error e ->
     let msg = Sol_cli_rollback.apply_mode_check_error_to_string e in
     assert (contains (Str.regexp "GitOps") msg);
@@ -691,8 +744,9 @@ let test_verify_workloads_ok_when_set_matches () =
     [ ledger_id, verify_release.release_id; billing_id, verify_release.release_id ]
   in
   let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
-  Alcotest.(check bool)
-    "workload set matches"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"workload set matches"
     true
     (Sol_cli_rollback.workload_report_ok report)
 ;;
@@ -706,7 +760,11 @@ let test_verify_workloads_reports_unexpected () =
     ]
   in
   let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
-  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ok"
+    false
+    (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "unexpected workload") msg);
   assert (contains (Str.regexp "fraud-svc") msg)
@@ -715,7 +773,11 @@ let test_verify_workloads_reports_unexpected () =
 let test_verify_workloads_reports_missing () =
   let live = [ billing_id, verify_release.release_id ] in
   let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
-  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ok"
+    false
+    (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload missing") msg);
   assert (contains (Str.regexp "ledger-svc") msg)
@@ -724,7 +786,11 @@ let test_verify_workloads_reports_missing () =
 let test_verify_workloads_reports_label_mismatch () =
   let live = [ ledger_id, "r-9999999999999999"; billing_id, verify_release.release_id ] in
   let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
-  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ok"
+    false
+    (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload state mismatch") msg);
   assert (contains (Str.regexp "r-9999999999999999") msg)
@@ -740,7 +806,11 @@ let test_verify_workloads_distinguishes_kind () =
     ]
   in
   let report = Sol_cli_rollback.verify_workloads ~expected:expected_applied ~live in
-  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ok"
+    false
+    (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload missing") msg);
   assert (contains (Str.regexp "unexpected workload") msg)
@@ -779,19 +849,25 @@ let fn_release : Sol_cli_release.t =
 
 let test_fn_reconstructs_and_verifies_as_cronjob () =
   match Sol_cli_rollback.service_specs_of_release fn_release with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok [ (got, applied_by) ] ->
-    Alcotest.(check string) "provenance" fn_release.release_id applied_by;
-    Alcotest.(check bool)
-      "primitive is still Fn"
+    Windtrap.equal Windtrap.string ~msg:"provenance" fn_release.release_id applied_by;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"primitive is still Fn"
       true
       (got.primitive = Sol_cli_deployment_plan.Fn);
-    Alcotest.(check (option string)) "schedule preserved" fn_spec.schedule got.schedule;
-    Alcotest.(check bool)
-      "scheduled concurrency preserved"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"schedule preserved"
+      fn_spec.schedule
+      got.schedule;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"scheduled concurrency preserved"
       true
       (got.scheduled_concurrency = Sol_cli_toml.Forbid);
-    Alcotest.(check int) "backoff limit preserved" 0 got.backoff_limit;
+    Windtrap.equal Windtrap.int ~msg:"backoff limit preserved" 0 got.backoff_limit;
     let rendered =
       match
         Sol_cli_deployment_render.render_spec
@@ -799,23 +875,26 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
           ~release_id:
             (match Sol_cli_release_id.of_string fn_release.release_id with
              | Ok id -> id
-             | Error msg -> Alcotest.fail msg)
+             | Error msg -> Windtrap.fail msg)
           ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
           got
       with
       | Ok (_ns_yaml, body) -> body
-      | Error msg -> Alcotest.fail msg
+      | Error msg -> Windtrap.fail msg
     in
-    Alcotest.(check bool)
-      "rendered CronJob keeps concurrencyPolicy: Forbid"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"rendered CronJob keeps concurrencyPolicy: Forbid"
       true
       (contains (Str.regexp_string "concurrencyPolicy: Forbid") rendered);
-    Alcotest.(check bool)
-      "rendered CronJob keeps backoffLimit: 0"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"rendered CronJob keeps backoffLimit: 0"
       true
       (contains (Str.regexp_string "backoffLimit: 0") rendered);
-    Alcotest.(check bool)
-      "live kind is CronJob"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"live kind is CronJob"
       true
       (Sol_cli_rollback.live_kind_of_service got = Sol_cli_rollback.Live_cronjob);
     let live =
@@ -826,11 +905,12 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
     let report =
       Sol_cli_rollback.verify_workloads ~expected:[ got, fn_release.release_id ] ~live
     in
-    Alcotest.(check bool)
-      "a CronJob is part of the verified set, not skipped"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a CronJob is part of the verified set, not skipped"
       true
       (Sol_cli_rollback.workload_report_ok report)
-  | Ok specs -> Alcotest.failf "expected 1 reconstructed spec, got %d" (List.length specs)
+  | Ok specs -> Windtrap.failf "expected 1 reconstructed spec, got %d" (List.length specs)
 ;;
 
 let test_reconstruction_rejects_invalid_persistence () =
@@ -846,7 +926,7 @@ let test_reconstruction_rejects_invalid_persistence () =
   in
   let invalid = { gate_release with workloads = [ invalid_workload ] } in
   match Sol_cli_rollback.service_specs_of_release invalid with
-  | Ok _ -> Alcotest.fail "expected rollback reconstruction to reject persistence"
+  | Ok _ -> Windtrap.fail "expected rollback reconstruction to reject persistence"
   | Error msg -> assert (contains (Str.regexp "set replicas = 1") msg)
 ;;
 
@@ -859,8 +939,9 @@ let test_recreate_strategy_reconstructs () =
       specs
     |> fst
   in
-  Alcotest.(check bool)
-    "recreate preserved"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"recreate preserved"
     true
     (ledger.rollout_strategy = Some Sol_cli_toml.Recreate)
 ;;
@@ -927,12 +1008,16 @@ let test_workload_rows_of_payload_deployment () =
       deployment_payload
     |> Result.get_ok
   in
-  Alcotest.(check int) "only the workspace-matching item" 1 (List.length rows);
+  Windtrap.equal Windtrap.int ~msg:"only the workspace-matching item" 1 (List.length rows);
   let identity, release = List.hd rows in
-  Alcotest.(check bool) "kind" true (identity.kind = Sol_cli_rollback.Live_deployment);
-  Alcotest.(check string) "namespace" "myapp-payments" identity.namespace;
-  Alcotest.(check string) "name" "ledger-svc" identity.name;
-  Alcotest.(check string) "release label" "r-1" release
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"kind"
+    true
+    (identity.kind = Sol_cli_rollback.Live_deployment);
+  Windtrap.equal Windtrap.string ~msg:"namespace" "myapp-payments" identity.namespace;
+  Windtrap.equal Windtrap.string ~msg:"name" "ledger-svc" identity.name;
+  Windtrap.equal Windtrap.string ~msg:"release label" "r-1" release
 ;;
 
 let test_workload_rows_of_payload_cronjob_path () =
@@ -943,8 +1028,9 @@ let test_workload_rows_of_payload_cronjob_path () =
       deployment_payload
     |> Result.get_ok
   in
-  Alcotest.(check int)
-    "deployment payload has no cronjob pod template"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"deployment payload has no cronjob pod template"
     0
     (List.length as_deployment)
 ;;
@@ -956,10 +1042,11 @@ let test_workload_rows_of_payload_requires_items () =
        ~workspace:"myapp"
        (`Assoc [ "kind", `String "List" ])
    with
-   | Ok _ -> Alcotest.fail "a payload without items read as an answer"
+   | Ok _ -> Windtrap.fail "a payload without items read as an answer"
    | Error _ -> ());
-  Alcotest.(check int)
-    "an empty items list is the empty answer"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"an empty items list is the empty answer"
     0
     (Sol_cli_rollback.workload_rows_of_payload
        ~kind:Sol_cli_rollback.Live_deployment
@@ -1005,7 +1092,11 @@ let test_workload_rows_of_payload_sanitizes_workspace () =
       payload
     |> Result.get_ok
   in
-  Alcotest.(check int) "matches the sanitized workspace label" 1 (List.length rows)
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"matches the sanitized workspace label"
+    1
+    (List.length rows)
 ;;
 
 let test_workload_rows_of_payload_cronjob () =
@@ -1050,20 +1141,22 @@ let test_workload_rows_of_payload_cronjob () =
       payload
     |> Result.get_ok
   in
-  Alcotest.(check int) "one cronjob row" 1 (List.length rows);
+  Windtrap.equal Windtrap.int ~msg:"one cronjob row" 1 (List.length rows);
   let identity, release = List.hd rows in
-  Alcotest.(check string) "name" "invoice-fn" identity.name;
-  Alcotest.(check string) "release label" "r-2" release
+  Windtrap.equal Windtrap.string ~msg:"name" "invoice-fn" identity.name;
+  Windtrap.equal Windtrap.string ~msg:"release label" "r-2" release
 ;;
 
 let test_pointer_report_ok () =
-  Alcotest.(check bool)
-    "ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"ok"
     true
     (Sol_cli_rollback.pointer_report_ok
        { pointer_actual = verify_release.release_id; pointer_ok = true });
-  Alcotest.(check bool)
-    "not ok"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not ok"
     false
     (Sol_cli_rollback.pointer_report_ok { pointer_actual = "r-x"; pointer_ok = false })
 ;;
@@ -1165,10 +1258,11 @@ let test_execute_success_calls_every_dep_in_order () =
       ~current_migrations:[]
       ~deps
   with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok () ->
-    Alcotest.(check (list string))
-      "ownership is re-verified before each mutation"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"ownership is re-verified before each mutation"
       [ "applied_migrations"
       ; "ensure_held"
       ; "apply"
@@ -1181,7 +1275,11 @@ let test_execute_success_calls_every_dep_in_order () =
       ; "record_consumer_groups:"
       ]
       (List.rev !calls);
-    Alcotest.(check int) "prune ran with no surplus" 0 (List.length (Option.get !pruned))
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"prune ran with no surplus"
+      0
+      (List.length (Option.get !pruned))
 ;;
 
 let worker_spec ?(domain = "comms") ?(name = "notify_worker") ()
@@ -1227,25 +1325,30 @@ let test_execute_records_the_restored_consumer_groups () =
         ~current_migrations:[]
         ~deps
     with
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
     | Ok () ->
       (match !calls with
        | last :: _ -> last
-       | [] -> Alcotest.fail "no deps were called")
+       | [] -> Windtrap.fail "no deps were called")
   in
   let notify = worker_spec () in
   let fulfill = worker_spec ~domain:"logistics" ~name:"fulfillment_worker" () in
-  Alcotest.(check string)
-    "rolling back to A+B records both workers' groups, last, after the pointer verified"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:
+      "rolling back to A+B records both workers' groups, last, after the pointer verified"
     "record_consumer_groups:myapp.comms.notify_worker,myapp.logistics.fulfillment_worker"
     (groups_for [ notify; fulfill ]);
-  Alcotest.(check string)
-    "rolling back to A records only A, so the next deploy's removal check describes the \
-     restored set"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:
+      "rolling back to A records only A, so the next deploy's removal check describes \
+       the restored set"
     "record_consumer_groups:myapp.comms.notify_worker"
     (groups_for [ notify ]);
-  Alcotest.(check string)
-    "a non-worker release records no groups"
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"a non-worker release records no groups"
     "record_consumer_groups:"
     (groups_for [ ledger_spec ])
 ;;
@@ -1262,10 +1365,11 @@ let test_execute_leaves_the_guard_alone_when_verification_fails () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the missing workload to block the rollback"
+  | Ok () -> Windtrap.fail "expected the missing workload to block the rollback"
   | Error _ ->
-    Alcotest.(check bool)
-      "the guard record still describes the release that is still live"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the guard record still describes the release that is still live"
       true
       (List.for_all
          (fun call -> not (Sol_cli_string.contains ~needle:"record_consumer_groups" call))
@@ -1288,13 +1392,14 @@ let test_execute_reports_an_uncorrected_guard_record () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "an uncorrected guard record must be reported"
+  | Ok () -> Windtrap.fail "an uncorrected guard record must be reported"
   | Error msg ->
     assert (contains (Str.regexp_string "rollback incomplete") msg);
     assert (contains (Str.regexp_string "could not be corrected") msg);
     assert (contains (Str.regexp_string "the ConfigMap is forbidden") msg);
-    Alcotest.(check bool)
-      "the rollback itself did happen, so the pointer was moved"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the rollback itself did happen, so the pointer was moved"
       true
       (List.exists (fun call -> String.equal call "move_pointer") !calls)
 ;;
@@ -1309,10 +1414,10 @@ let test_execute_apply_mode_refusal_calls_no_deps () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected a GitOps-owned release to be refused"
+  | Ok () -> Windtrap.fail "expected a GitOps-owned release to be refused"
   | Error msg ->
     assert (contains (Str.regexp "GitOps") msg);
-    Alcotest.(check (list string)) "no dep was ever called" [] !calls
+    Windtrap.equal (Windtrap.list Windtrap.string) ~msg:"no dep was ever called" [] !calls
 ;;
 
 let test_execute_migration_boundary_refusal_calls_no_deps () =
@@ -1332,10 +1437,14 @@ let test_execute_migration_boundary_refusal_calls_no_deps () =
            ~current_migrations:[ "0001_init.sql"; "0002_drop_col.sql" ]
            ~deps
        with
-       | Ok () -> Alcotest.fail "expected a contracting migration to block the rollback"
+       | Ok () -> Windtrap.fail "expected a contracting migration to block the rollback"
        | Error msg ->
          assert (contains (Str.regexp "0002_drop_col.sql") msg);
-         Alcotest.(check (list string)) "no dep was ever called" [] !calls)
+         Windtrap.equal
+           (Windtrap.list Windtrap.string)
+           ~msg:"no dep was ever called"
+           []
+           !calls)
 ;;
 
 let test_execute_unexpected_workload_triggers_prune_then_completes () =
@@ -1355,10 +1464,11 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
       ~current_migrations:[]
       ~deps
   with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok () ->
-    Alcotest.(check (list string))
-      "apply, live_workloads, prune, move_pointer, verify_pointer all ran"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"apply, live_workloads, prune, move_pointer, verify_pointer all ran"
       [ "applied_migrations"
       ; "ensure_held"
       ; "apply"
@@ -1372,14 +1482,15 @@ let test_execute_unexpected_workload_triggers_prune_then_completes () =
       ]
       (List.rev !calls);
     (match !pruned with
-     | None -> Alcotest.fail "prune was never called"
+     | None -> Windtrap.fail "prune was never called"
      | Some surplus ->
-       Alcotest.(check int)
-         "exactly the bogus workload was pruned"
+       Windtrap.equal
+         Windtrap.int
+         ~msg:"exactly the bogus workload was pruned"
          1
          (List.length surplus);
        let id, _ = List.hd surplus in
-       Alcotest.(check string) "pruned name" "ghost-svc" id.name)
+       Windtrap.equal Windtrap.string ~msg:"pruned name" "ghost-svc" id.name)
 ;;
 
 let test_execute_prune_failure_skips_pointer_move () =
@@ -1401,12 +1512,13 @@ let test_execute_prune_failure_skips_pointer_move () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the prune failure to block the pointer move"
+  | Ok () -> Windtrap.fail "expected the prune failure to block the pointer move"
   | Error msg ->
     assert (contains (Str.regexp "boom") msg);
     assert (contains (Str.regexp "pointer was left unchanged") msg);
-    Alcotest.(check (list string))
-      "apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
       [ "applied_migrations"
       ; "ensure_held"
       ; "apply"
@@ -1429,14 +1541,15 @@ let test_execute_applied_state_unavailable_skips_every_mutation () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the unreadable applied state to block the rollback"
+  | Ok () -> Windtrap.fail "expected the unreadable applied state to block the rollback"
   | Error msg ->
     assert (contains (Str.regexp "applied migration state") msg);
-    Alcotest.(check (list string))
-      "only the applied-state read ran"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"only the applied-state read ran"
       [ "applied_migrations" ]
       (List.rev !calls);
-    Alcotest.(check bool) "prune never called" true (!pruned = None)
+    Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
 ;;
 
 let ghost_live : Sol_cli_rollback.workload_identity * string =
@@ -1468,14 +1581,15 @@ let test_execute_lost_ownership_after_apply_skips_prune_and_pointer () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the lost lease to stop the transaction"
+  | Ok () -> Windtrap.fail "expected the lost lease to stop the transaction"
   | Error msg ->
     assert (contains (Str.regexp "lost the boundary lease") msg);
-    Alcotest.(check (list string))
-      "the takeover stopped the transaction before prune"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"the takeover stopped the transaction before prune"
       [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads"; "ensure_held" ]
       (List.rev !calls);
-    Alcotest.(check bool) "prune never called" true (!pruned = None)
+    Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
 ;;
 
 let test_execute_lost_ownership_after_prune_skips_pointer_move () =
@@ -1490,11 +1604,12 @@ let test_execute_lost_ownership_after_prune_skips_pointer_move () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the lost lease to block the pointer move"
+  | Ok () -> Windtrap.fail "expected the lost lease to block the pointer move"
   | Error msg ->
     assert (contains (Str.regexp "lost the boundary lease") msg);
-    Alcotest.(check (list string))
-      "apply and prune ran; the pointer was never moved"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"apply and prune ran; the pointer was never moved"
       [ "applied_migrations"
       ; "ensure_held"
       ; "apply"
@@ -1527,15 +1642,16 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the missing workload to block the pointer move"
+  | Ok () -> Windtrap.fail "expected the missing workload to block the pointer move"
   | Error msg ->
     assert (contains (Str.regexp "ledger-svc") msg);
     assert (contains (Str.regexp "pointer was left unchanged") msg);
-    Alcotest.(check (list string))
-      "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
       [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
-    Alcotest.(check bool) "prune never called" true (!pruned = None)
+    Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
 ;;
 
 let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
@@ -1548,27 +1664,30 @@ let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
       ~current_migrations:[]
       ~deps
   with
-  | Ok () -> Alcotest.fail "expected the label mismatch to block the pointer move"
+  | Ok () -> Windtrap.fail "expected the label mismatch to block the pointer move"
   | Error msg ->
     assert (contains (Str.regexp "ledger-svc") msg);
     assert (contains (Str.regexp "pointer was left unchanged") msg);
-    Alcotest.(check (list string))
-      "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
       [ "applied_migrations"; "ensure_held"; "apply"; "live_workloads" ]
       (List.rev !calls);
-    Alcotest.(check bool) "prune never called" true (!pruned = None)
+    Windtrap.equal Windtrap.bool ~msg:"prune never called" true (!pruned = None)
 ;;
 
 let test_commit_matches_exact () =
-  Alcotest.(check bool)
-    "exact match"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"exact match"
     true
     (Sol_cli_rollback.commit_matches ~commit:"abc1234" "abc1234")
 ;;
 
 let test_commit_matches_full_resolves_stored_short () =
-  Alcotest.(check bool)
-    "full sha resolves a short stored sha"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"full sha resolves a short stored sha"
     true
     (Sol_cli_rollback.commit_matches
        ~commit:"abc1234def5678900000000000000000000000"
@@ -1576,8 +1695,9 @@ let test_commit_matches_full_resolves_stored_short () =
 ;;
 
 let test_commit_matches_short_resolves_stored_full () =
-  Alcotest.(check bool)
-    "short input resolves a full stored sha"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"short input resolves a full stored sha"
     true
     (Sol_cli_rollback.commit_matches
        ~commit:"abc1234"
@@ -1585,26 +1705,30 @@ let test_commit_matches_short_resolves_stored_full () =
 ;;
 
 let test_commit_matches_case_insensitive () =
-  Alcotest.(check bool)
-    "case insensitive"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"case insensitive"
     true
     (Sol_cli_rollback.commit_matches ~commit:"ABC1234" "abc1234")
 ;;
 
 let test_commit_matches_mismatch () =
-  Alcotest.(check bool)
-    "mismatch"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"mismatch"
     false
     (Sol_cli_rollback.commit_matches ~commit:"abc1234" "def5678")
 ;;
 
 let test_commit_matches_empty_never_matches () =
-  Alcotest.(check bool)
-    "empty commit"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"empty commit"
     false
     (Sol_cli_rollback.commit_matches ~commit:"" "abc1234");
-  Alcotest.(check bool)
-    "empty stored"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"empty stored"
     false
     (Sol_cli_rollback.commit_matches ~commit:"abc1234" "")
 ;;
@@ -1643,7 +1767,7 @@ let test_resolve_commit_no_match_is_no_match () =
       [ deployment_event ~git_commit:"def5678" () ]
   with
   | Sol_cli_rollback.Commit_no_match -> ()
-  | _ -> Alcotest.fail "expected Commit_no_match"
+  | _ -> Windtrap.fail "expected Commit_no_match"
 ;;
 
 let test_resolve_commit_unambiguous_resolves () =
@@ -1654,8 +1778,12 @@ let test_resolve_commit_unambiguous_resolves () =
       [ deployment_event ~release_id:"r-0123456789abcdef" () ]
   with
   | Sol_cli_rollback.Commit_resolved release_id ->
-    Alcotest.(check string) "resolved release id" "r-0123456789abcdef" release_id
-  | _ -> Alcotest.fail "expected Commit_resolved"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"resolved release id"
+      "r-0123456789abcdef"
+      release_id
+  | _ -> Windtrap.fail "expected Commit_resolved"
 ;;
 
 let test_resolve_commit_ambiguous_lists_candidates () =
@@ -1676,13 +1804,14 @@ let test_resolve_commit_ambiguous_lists_candidates () =
       ]
   with
   | Sol_cli_rollback.Commit_ambiguous candidates ->
-    Alcotest.(check int) "two candidates" 2 (List.length candidates);
-    Alcotest.(check bool)
-      "both release ids present"
+    Windtrap.equal Windtrap.int ~msg:"two candidates" 2 (List.length candidates);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"both release ids present"
       true
       (List.mem_assoc "r-0123456789abcdef" candidates
        && List.mem_assoc "r-fedcba9876543210" candidates)
-  | _ -> Alcotest.fail "expected Commit_ambiguous"
+  | _ -> Windtrap.fail "expected Commit_ambiguous"
 ;;
 
 let test_resolve_commit_repeated_deploys_dedup () =
@@ -1695,8 +1824,12 @@ let test_resolve_commit_repeated_deploys_dedup () =
       ]
   with
   | Sol_cli_rollback.Commit_resolved release_id ->
-    Alcotest.(check string) "resolved release id" "r-0123456789abcdef" release_id
-  | _ -> Alcotest.fail "expected Commit_resolved (deduped)"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"resolved release id"
+      "r-0123456789abcdef"
+      release_id
+  | _ -> Windtrap.fail "expected Commit_resolved (deduped)"
 ;;
 
 let test_resolve_commit_scope_narrows_candidates () =
@@ -1721,11 +1854,12 @@ let test_resolve_commit_scope_narrows_candidates () =
       events
   with
   | Sol_cli_rollback.Commit_resolved release_id ->
-    Alcotest.(check string)
-      "resolved to the scoped release"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"resolved to the scoped release"
       "r-fedcba9876543210"
       release_id
-  | _ -> Alcotest.fail "expected Commit_resolved narrowed by scope"
+  | _ -> Windtrap.fail "expected Commit_resolved narrowed by scope"
 ;;
 
 let test_resolve_commit_wrong_target_excluded () =
@@ -1736,7 +1870,7 @@ let test_resolve_commit_wrong_target_excluded () =
       [ deployment_event ~target:(Some "prod/aws/us-east-1") () ]
   with
   | Sol_cli_rollback.Commit_no_match -> ()
-  | _ -> Alcotest.fail "expected Commit_no_match: different target"
+  | _ -> Windtrap.fail "expected Commit_no_match: different target"
 ;;
 
 let test_resolve_commit_apply_failed_excluded () =
@@ -1747,7 +1881,7 @@ let test_resolve_commit_apply_failed_excluded () =
       [ deployment_event ~outcome:Sol_cli_deployment.Apply_failed () ]
   with
   | Sol_cli_rollback.Commit_no_match -> ()
-  | _ -> Alcotest.fail "expected Commit_no_match: only Apply_failed events exist"
+  | _ -> Windtrap.fail "expected Commit_no_match: only Apply_failed events exist"
 ;;
 
 let test_resolve_commit_invalid_scope () =
@@ -1759,7 +1893,7 @@ let test_resolve_commit_invalid_scope () =
       []
   with
   | Sol_cli_rollback.Commit_invalid _ -> ()
-  | _ -> Alcotest.fail "expected Commit_invalid: malformed --scope"
+  | _ -> Windtrap.fail "expected Commit_invalid: malformed --scope"
 ;;
 
 let test_sequential_application_stops_on_error () =
@@ -1769,9 +1903,14 @@ let test_sequential_application_stops_on_error () =
     if spec = 2 then Error "apply failed" else Ok ()
   in
   let result = [ 1; 2; 3 ] |> Sol_cli_result.map_list apply |> Result.map ignore in
-  Alcotest.(check (result unit string)) "first error" (Error "apply failed") result;
-  Alcotest.(check (list int))
-    "sequential, stops before third"
+  Windtrap.equal
+    (Windtrap.result Windtrap.unit Windtrap.string)
+    ~msg:"first error"
+    (Error "apply failed")
+    result;
+  Windtrap.equal
+    (Windtrap.list Windtrap.int)
+    ~msg:"sequential, stops before third"
     [ 1; 2 ]
     (List.rev !visited)
 ;;

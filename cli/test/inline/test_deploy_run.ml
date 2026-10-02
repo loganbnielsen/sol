@@ -1,19 +1,19 @@
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace:"myapp" ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let quantity parse s =
   match parse s with
   | Ok q -> q
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let spec ~domain ~name ~k8s primitive : Sol_cli_deployment_plan.service_spec =
@@ -112,12 +112,12 @@ let with_context ?(migrations = []) f =
        let config =
          match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
          | Ok config -> config
-         | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+         | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
        in
        let facts =
          match Sol_cli_workspace_model.load ~root with
          | Ok facts -> facts
-         | Error e -> Alcotest.fail e
+         | Error e -> Windtrap.fail e
        in
        let ctx : Sol_cli_deploy_run.context =
          { execution =
@@ -156,28 +156,29 @@ let test_no_profile_is_not_checked () =
     match gate ctx ~plan:(plan []) ~live:true with
     | Ok (), [] -> ()
     | Ok (), lines ->
-      Alcotest.failf "unexpected report: %s" (String.concat "; " (reported lines))
-    | Error _, _ -> Alcotest.fail "a deploy with no profile must not be gated")
+      Windtrap.failf "unexpected report: %s" (String.concat "; " (reported lines))
+    | Error _, _ -> Windtrap.fail "a deploy with no profile must not be gated")
 ;;
 
 let test_offline_run_reports_not_verified () =
   with_context ~migrations:[ "001_init.sql" ] (fun ctx ->
     match gate ctx ~plan:(plan ~profile:production []) ~live:false with
     | Ok (), [ (_, line) ] ->
-      Alcotest.(check bool)
-        "says NOT verified"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"says NOT verified"
         true
         (Sol_cli_string.contains ~needle:"NOT verified" line)
     | Ok (), lines ->
-      Alcotest.failf "expected one report, got: %s" (String.concat "; " (reported lines))
-    | Error _, _ -> Alcotest.fail "an offline run must not fail the gate")
+      Windtrap.failf "expected one report, got: %s" (String.concat "; " (reported lines))
+    | Error _, _ -> Windtrap.fail "an offline run must not fail the gate")
 ;;
 
 let test_offline_run_without_migrations_says_nothing () =
   with_context (fun ctx ->
     match gate ctx ~plan:(plan ~profile:production []) ~live:false with
     | Ok (), [] -> ()
-    | _ -> Alcotest.fail "no migrations: nothing to verify and nothing to say")
+    | _ -> Windtrap.fail "no migrations: nothing to verify and nothing to say")
 ;;
 
 let test_deploy_events_one_per_service () =
@@ -193,18 +194,21 @@ let test_deploy_events_one_per_service () =
            ; spec ~domain:"comms" ~name:"notify_worker" ~k8s:"notify-worker" Worker
            ])
     in
-    Alcotest.(check (list (pair string string)))
-      "service and primitive"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+      ~msg:"service and primitive"
       [ "charge-svc", "svc"; "notify-worker", "worker" ]
       (List.map (fun (e : Sol_cli_deploy_event.t) -> e.service, e.primitive) events);
-    Alcotest.(check bool)
-      "joined to the deployment"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"joined to the deployment"
       true
       (List.for_all
          (fun (e : Sol_cli_deploy_event.t) -> e.deployment_id = deployment_id)
          events);
-    Alcotest.(check (list string))
-      "the target's env"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"the target's env"
       [ "dev"; "dev" ]
       (List.map (fun (e : Sol_cli_deploy_event.t) -> e.env) events))
 ;;
@@ -281,7 +285,7 @@ let with_fake_kubectl f =
 let consumer_group_exn s =
   match Sol_cli_plan_ids.Consumer_group.of_string s with
   | Ok group -> group
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let first_line_matching log needle =
@@ -319,11 +323,12 @@ let test_the_group_check_reads_the_record_under_the_lease () =
       in
       (match outcome with
        | Ok () ->
-         Alcotest.fail
+         Windtrap.fail
            "a record the plan no longer carries must refuse the deploy before it applies"
        | Error message ->
-         Alcotest.(check bool)
-           "the refusal names the groups the plan no longer carries"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the refusal names the groups the plan no longer carries"
            true
            (Sol_cli_string.contains ~needle:"no longer present" message));
       let log = calls () in
@@ -331,15 +336,18 @@ let test_the_group_check_reads_the_record_under_the_lease () =
       let recorded_at = first_line_matching log "sol-deploy-state-myapp" in
       (match lease_at, recorded_at with
        | Some lease_at, Some recorded_at ->
-         Alcotest.(check bool)
-           "the record is read only after the lease boundary is written, so an update \
-            that landed in between cannot be missed"
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:
+             "the record is read only after the lease boundary is written, so an update \
+              that landed in between cannot be missed"
            true
            (lease_at < recorded_at)
-       | None, _ -> Alcotest.failf "the deploy never took its boundary lease:\n%s" log
-       | _, None -> Alcotest.failf "the recorded groups were never read:\n%s" log);
-      Alcotest.(check bool)
-        "and nothing was applied, because the check refused first"
+       | None, _ -> Windtrap.failf "the deploy never took its boundary lease:\n%s" log
+       | _, None -> Windtrap.failf "the recorded groups were never read:\n%s" log);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"and nothing was applied, because the check refused first"
         false
         (Sol_cli_string.contains ~needle:" apply " log)))
 ;;

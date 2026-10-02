@@ -16,15 +16,23 @@ let read_fixture () =
 
 let test_reads_the_payload_terraform_produced () =
   match Sol_cli_gcp_cluster.project_id_of_outputs_json (read_fixture ()) with
-  | Error message -> Alcotest.failf "the captured payload was refused: %s" message
+  | Error message -> Windtrap.failf "the captured payload was refused: %s" message
   | Ok project ->
-    Alcotest.(check string) "the project Terraform published" "sol-qualification" project
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the project Terraform published"
+      "sol-qualification"
+      project
 ;;
 
 let test_every_fixture_entry_carries_the_wrapper () =
   match Yojson.Safe.from_string (read_fixture ()) with
   | `Assoc outputs ->
-    Alcotest.(check bool) "the fixture is a non-empty object" true (outputs <> []);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the fixture is a non-empty object"
+      true
+      (outputs <> []);
     List.iter
       (fun (name, entry) ->
          let keys =
@@ -32,18 +40,19 @@ let test_every_fixture_entry_carries_the_wrapper () =
            | `Assoc fields -> List.map fst fields
            | _ -> []
          in
-         Alcotest.(check (list string))
-           (Printf.sprintf "%s carries terraform's own fields" name)
+         Windtrap.equal
+           (Windtrap.list Windtrap.string)
+           ~msg:(Printf.sprintf "%s carries terraform's own fields" name)
            [ "sensitive"; "type"; "value" ]
            (List.sort compare keys))
       outputs
-  | _ -> Alcotest.fail "the fixture is not an object"
+  | _ -> Windtrap.fail "the fixture is not an object"
 ;;
 
 let test_malformed_and_absent_payloads_refuse () =
   let refuse label payload =
     match Sol_cli_gcp_cluster.project_id_of_outputs_json payload with
-    | Ok project -> Alcotest.failf "%s was accepted as %s" label project
+    | Ok project -> Windtrap.failf "%s was accepted as %s" label project
     | Error _ -> ()
   in
   refuse "an empty object" "{}";

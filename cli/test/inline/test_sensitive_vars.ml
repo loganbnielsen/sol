@@ -1,8 +1,8 @@
 module S = Sol_cli_sensitive_vars
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
-let strings = Alcotest.(list string)
-let check = Alcotest.(check bool)
+let strings = Windtrap.(list string)
+let check msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let declared names = Result.get_ok (S.declared_in names)
 
 let fixture =
@@ -55,17 +55,17 @@ resource "null_resource" "x" {
 ;;
 
 let test_parser () =
-  Alcotest.check
+  Windtrap.equal
     strings
-    "every sensitive variable, and only those, sorted"
+    ~msg:"every sensitive variable, and only those, sorted"
     [ "api_token"; "commented_secret"; "db_password"; "inline_secret"; "spaced_secret" ]
     (declared [ "variables.tf", fixture ])
 ;;
 
 let test_parser_merges_files () =
-  Alcotest.check
+  Windtrap.equal
     strings
-    "names from several files, without duplicates"
+    ~msg:"names from several files, without duplicates"
     [ "a"; "b" ]
     (declared
        [ "one.tf", "variable \"a\" {\n  sensitive = true\n}\n"
@@ -96,7 +96,7 @@ let test_unclassifiable_names_the_location () =
     S.declared_in
       [ "vars.tf", "variable \"a\" {\n  type = string\n  sensitive = var.s\n}\n" ]
   with
-  | Ok _ -> Alcotest.fail "expected the reader to fail closed"
+  | Ok _ -> Windtrap.fail "expected the reader to fail closed"
   | Error message -> check "names file and line" true (contains message "vars.tf:3")
 ;;
 
@@ -105,7 +105,7 @@ let real_root provider =
     S.declared ~root:(Printf.sprintf "../../../platform/cloud/%s/cluster" provider)
   with
   | Ok names -> names
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let test_real_roots_declare_db_password () =
@@ -147,7 +147,7 @@ let test_message_names_the_fix_not_the_value () =
   match
     S.refuse_on_command_line ~sensitive:[ "db_password" ] ~vars:[ "db_password=hunter22" ]
   with
-  | Ok () -> Alcotest.fail "expected a refusal"
+  | Ok () -> Windtrap.fail "expected a refusal"
   | Error msg ->
     check "names TF_VAR_db_password" true (contains msg "TF_VAR_db_password");
     check "says why (the run log)" true (contains msg "run log");

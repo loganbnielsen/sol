@@ -56,16 +56,18 @@ let test_installs_overlap_within_the_bound () =
       List.init 6 (fun i -> install ~path ~delay:0.2 (Printf.sprintf "c%d" i))
     in
     match Sol_cli_local_infra.run_bounded ~max_in_flight:3 installs with
-    | Error e -> Alcotest.failf "installs should have succeeded: %s" e
+    | Error e -> Windtrap.failf "installs should have succeeded: %s" e
     | Ok () ->
       let peak = peak_concurrency (read_lines path) in
-      Alcotest.(check bool) "three installs do overlap" true (peak >= 2);
-      Alcotest.(check bool)
-        (Printf.sprintf "never more than three at once (saw %d)" peak)
+      Windtrap.equal Windtrap.bool ~msg:"three installs do overlap" true (peak >= 2);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:(Printf.sprintf "never more than three at once (saw %d)" peak)
         true
         (peak <= 3);
-      Alcotest.(check int)
-        "every install ran and finished"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"every install ran and finished"
         12
         (List.length (read_lines path)))
 ;;
@@ -76,11 +78,16 @@ let test_serial_mode_keeps_plan_order () =
       List.init 4 (fun i -> install ~path ~delay:0.05 (Printf.sprintf "c%d" i))
     in
     match Sol_cli_local_infra.run_bounded ~max_in_flight:1 installs with
-    | Error e -> Alcotest.failf "serial installs should have succeeded: %s" e
+    | Error e -> Windtrap.failf "serial installs should have succeeded: %s" e
     | Ok () ->
-      Alcotest.(check int) "one at a time" 1 (peak_concurrency (read_lines path));
-      Alcotest.(check (list string))
-        "started in the order given"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"one at a time"
+        1
+        (peak_concurrency (read_lines path));
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"started in the order given"
         [ "start c0"; "start c1"; "start c2"; "start c3" ]
         (List.filteri (fun i _ -> i mod 2 = 0) (read_lines path)))
 ;;
@@ -94,21 +101,28 @@ let test_a_failure_stops_new_installs () =
       ]
     in
     match Sol_cli_local_infra.run_bounded ~max_in_flight:1 installs with
-    | Ok () -> Alcotest.fail "a failing install must fail the run"
+    | Ok () -> Windtrap.fail "a failing install must fail the run"
     | Error message ->
       let contains needle = Sol_cli_string.contains ~needle message in
-      Alcotest.(check bool)
-        "the failure names the component that failed"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the failure names the component that failed"
         true
         (contains "b failed");
-      Alcotest.(check bool)
-        "and says which components never ran, by name"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"and says which components never ran, by name"
         true
         (contains "not attempted" && contains "c");
       let lines = read_lines path in
-      Alcotest.(check bool) "the failed component ran" true (List.mem "start b" lines);
-      Alcotest.(check bool)
-        "the component after it never started"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the failed component ran"
+        true
+        (List.mem "start b" lines);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the component after it never started"
         false
         (List.mem "start c" lines))
 ;;

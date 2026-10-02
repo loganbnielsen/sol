@@ -85,13 +85,14 @@ let deps calls : (unit, unit, unit) A.deps =
 ;;
 
 let failed_with = function
-  | A.Applied -> Alcotest.fail "expected a failure, the apply succeeded"
+  | A.Applied -> Windtrap.fail "expected a failure, the apply succeeded"
   | A.Apply_failed { failure; cleanup } -> A.failure_to_string failure, cleanup
 ;;
 
 let cleanup_is expected cleanup =
-  Alcotest.(check bool)
-    "cleanup"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"cleanup"
     true
     (match expected, (cleanup : Sol_cli_cloud_destroy.cleanup) with
      | `Not_needed, Cleanup_not_needed | `Succeeded, Cleanup_succeeded -> true
@@ -103,11 +104,16 @@ let test_happy_path () =
   let calls = fresh () in
   (match A.execute ~deps:(deps calls) with
    | A.Applied -> ()
-   | A.Apply_failed { failure; _ } -> Alcotest.fail (A.failure_to_string failure));
-  Alcotest.(check int) "the window is removed once, by the sequence" 1 calls.removals;
-  Alcotest.(check bool) "the saved plan is discarded" true calls.discarded;
-  Alcotest.(check bool)
-    "Ready is reported last"
+   | A.Apply_failed { failure; _ } -> Windtrap.fail (A.failure_to_string failure));
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the window is removed once, by the sequence"
+    1
+    calls.removals;
+  Windtrap.equal Windtrap.bool ~msg:"the saved plan is discarded" true calls.discarded;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"Ready is reported last"
     true
     (List.hd calls.reports = "  lifecycle phase: Ready")
 ;;
@@ -120,9 +126,9 @@ let test_failure_in_window_removes_it () =
     }
   in
   let message, cleanup = failed_with (A.execute ~deps) in
-  Alcotest.(check string) "Terraform's own text" "terraform exited 1." message;
+  Windtrap.equal Windtrap.string ~msg:"Terraform's own text" "terraform exited 1." message;
   cleanup_is `Succeeded cleanup;
-  Alcotest.(check int) "removed exactly once" 1 calls.removals
+  Windtrap.equal Windtrap.int ~msg:"removed exactly once" 1 calls.removals
 ;;
 
 let test_installed_platform_reenters_as_updating () =
@@ -130,9 +136,10 @@ let test_installed_platform_reenters_as_updating () =
   let deps = { (deps calls) with platform_installed = (fun () -> true) } in
   (match A.execute ~deps with
    | A.Applied -> ()
-   | A.Apply_failed { failure; _ } -> Alcotest.fail (A.failure_to_string failure));
-  Alcotest.(check bool)
-    "an installed platform is re-entered as PlatformUpdating"
+   | A.Apply_failed { failure; _ } -> Windtrap.fail (A.failure_to_string failure));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an installed platform is re-entered as PlatformUpdating"
     true
     (List.mem "  lifecycle phase: PlatformUpdating" calls.reports)
 ;;
@@ -149,19 +156,20 @@ let test_removal_failure_is_not_retried () =
   in
   let _, cleanup = failed_with (A.execute ~deps) in
   cleanup_is `Not_needed cleanup;
-  Alcotest.(check int) "the removal is attempted once" 1 calls.removals
+  Windtrap.equal Windtrap.int ~msg:"the removal is attempted once" 1 calls.removals
 ;;
 
 let test_failure_after_removal_needs_no_cleanup () =
   let calls = fresh () in
   let deps = { (deps calls) with provisioner_effective = (fun () -> false) } in
   let message, cleanup = failed_with (A.execute ~deps) in
-  Alcotest.(check bool)
-    "names the provisioner"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"names the provisioner"
     true
     (String.length message > 0 && String.sub message 0 11 = "platform pr");
   cleanup_is `Not_needed cleanup;
-  Alcotest.(check int) "no second removal" 1 calls.removals
+  Windtrap.equal Windtrap.int ~msg:"no second removal" 1 calls.removals
 ;;
 
 let test_cleanup_failure_is_reported () =
@@ -173,7 +181,7 @@ let test_cleanup_failure_is_reported () =
     }
   in
   let message, cleanup = failed_with (A.execute ~deps) in
-  Alcotest.(check string) "the primary failure is kept" "not ready" message;
+  Windtrap.equal Windtrap.string ~msg:"the primary failure is kept" "not ready" message;
   cleanup_is `Failed cleanup
 ;;
 
@@ -189,15 +197,16 @@ let test_guarded_removal_refused_before_apply () =
   let deps = { (deps calls) with plan = (fun () -> Ok [ change ]) } in
   let _, cleanup = failed_with (A.execute ~deps) in
   cleanup_is `Not_needed cleanup;
-  Alcotest.(check bool) "nothing was applied" false calls.applied_cloud;
-  Alcotest.(check int) "no window to remove" 0 calls.removals;
-  Alcotest.(check bool) "the plan is still discarded" true calls.discarded;
+  Windtrap.equal Windtrap.bool ~msg:"nothing was applied" false calls.applied_cloud;
+  Windtrap.equal Windtrap.int ~msg:"no window to remove" 0 calls.removals;
+  Windtrap.equal Windtrap.bool ~msg:"the plan is still discarded" true calls.discarded;
   let confirmed =
     A.execute
       ~deps:{ deps with confirm_guarded_removal = true; plan = (fun () -> Ok [ change ]) }
   in
-  Alcotest.(check bool)
-    "confirmed, the apply proceeds"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"confirmed, the apply proceeds"
     true
     (match confirmed with
      | A.Applied -> true
@@ -216,13 +225,14 @@ let test_unguarded_provider_is_unaffected () =
   let deps =
     { (deps calls) with guarded_removals = []; plan = (fun () -> Ok [ change ]) }
   in
-  Alcotest.(check bool)
-    "a plan removing an unguarded type applies"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a plan removing an unguarded type applies"
     true
     (match A.execute ~deps with
      | A.Applied -> true
      | A.Apply_failed _ -> false);
-  Alcotest.(check bool) "the plan was applied" true calls.applied_cloud
+  Windtrap.equal Windtrap.bool ~msg:"the plan was applied" true calls.applied_cloud
 ;;
 
 let test_cloud_apply_failure_opens_no_window () =
@@ -232,7 +242,7 @@ let test_cloud_apply_failure_opens_no_window () =
   in
   let _, cleanup = failed_with (A.execute ~deps) in
   cleanup_is `Not_needed cleanup;
-  Alcotest.(check int) "no removal" 0 calls.removals
+  Windtrap.equal Windtrap.int ~msg:"no removal" 0 calls.removals
 ;;
 
 let test_unknown_substrate_fails_closed () =
@@ -241,16 +251,17 @@ let test_unknown_substrate_fails_closed () =
     { (deps calls) with substrate_exists = (fun () -> Error "state unreadable") }
   in
   let message, _ = failed_with (A.execute ~deps) in
-  Alcotest.(check string) "the reason" "state unreadable" message;
-  Alcotest.(check bool) "nothing was applied" false calls.applied_cloud
+  Windtrap.equal Windtrap.string ~msg:"the reason" "state unreadable" message;
+  Windtrap.equal Windtrap.bool ~msg:"nothing was applied" false calls.applied_cloud
 ;;
 
 let test_fresh_target_reports_bootstrap () =
   let calls = fresh () in
   let deps = { (deps calls) with substrate_exists = (fun () -> Ok false) } in
   ignore (A.execute ~deps);
-  Alcotest.(check bool)
-    "CloudBootstrap reported"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"CloudBootstrap reported"
     true
     (List.mem "  lifecycle phase: CloudBootstrap" calls.reports)
 ;;
@@ -266,15 +277,16 @@ let test_unsupported_substrate_refuses_before_the_plan () =
     }
   in
   (match A.execute ~deps with
-   | A.Applied -> Alcotest.fail "an Autopilot substrate was accepted"
+   | A.Applied -> Windtrap.fail "an Autopilot substrate was accepted"
    | A.Apply_failed { failure; _ } ->
      let message = A.failure_to_string failure in
-     Alcotest.(check bool)
-       "the refusal carries the support contract"
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the refusal carries the support contract"
        true
        (Sol_cli_string.contains ~needle:"GKE Autopilot is not supported" message));
-  Alcotest.(check bool) "no plan was ever made" false calls.planned;
-  Alcotest.(check bool) "nothing was applied" false calls.applied_cloud
+  Windtrap.equal Windtrap.bool ~msg:"no plan was ever made" false calls.planned;
+  Windtrap.equal Windtrap.bool ~msg:"nothing was applied" false calls.applied_cloud
 ;;
 
 let test_disk_quota_insufficient_refuses_before_the_platform () =
@@ -293,15 +305,21 @@ let test_disk_quota_insufficient_refuses_before_the_platform () =
     }
   in
   (match A.execute ~deps with
-   | A.Applied -> Alcotest.fail "expected a refusal: the whole quota is already spent"
+   | A.Applied -> Windtrap.fail "expected a refusal: the whole quota is already spent"
    | A.Apply_failed _ -> ());
-  Alcotest.(check bool) "the platform was never applied" false calls.platform_applied;
-  Alcotest.(check bool)
-    "the prerequisites were never applied"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the platform was never applied"
+    false
+    calls.platform_applied;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the prerequisites were never applied"
     false
     calls.prerequisites_applied;
-  Alcotest.(check (list string))
-    "the observation is the last thing that ran"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the observation is the last thing that ran"
     [ "substrate_supported"; "cloud_ready"; "observe_disk_quota" ]
     (List.rev calls.events)
 ;;
@@ -310,9 +328,10 @@ let test_disk_quota_sufficient_proceeds_in_order () =
   let calls = fresh () in
   (match A.execute ~deps:(deps calls) with
    | A.Applied -> ()
-   | A.Apply_failed _ -> Alcotest.fail "expected the apply to succeed with room to spare");
-  Alcotest.(check (list string))
-    "substrate, cloud ready, observation, then the platform"
+   | A.Apply_failed _ -> Windtrap.fail "expected the apply to succeed with room to spare");
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"substrate, cloud ready, observation, then the platform"
     [ "substrate_supported"
     ; "cloud_ready"
     ; "observe_disk_quota"
@@ -327,9 +346,10 @@ let test_disk_quota_unobserved_is_reported_not_passed () =
   let deps = { (deps calls) with observe_disk_quota = (fun () -> Ok None) } in
   (match A.execute ~deps with
    | A.Applied -> ()
-   | A.Apply_failed _ -> Alcotest.fail "an unobserved quota is a report, not a refusal");
-  Alcotest.(check bool)
-    "the run says it could not say"
+   | A.Apply_failed _ -> Windtrap.fail "an unobserved quota is a report, not a refusal");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the run says it could not say"
     true
     (List.exists
        (fun line -> String.length line > 0)
@@ -346,9 +366,13 @@ let test_disk_quota_unreadable_refuses () =
     { (deps calls) with observe_disk_quota = (fun () -> Error "gcloud is not installed") }
   in
   (match A.execute ~deps with
-   | A.Applied -> Alcotest.fail "an unreadable quota must fail closed"
+   | A.Applied -> Windtrap.fail "an unreadable quota must fail closed"
    | A.Apply_failed _ -> ());
-  Alcotest.(check bool) "the platform was never applied" false calls.platform_applied
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the platform was never applied"
+    false
+    calls.platform_applied
 ;;
 
 let%test "execute: happy path" = test_happy_path ()

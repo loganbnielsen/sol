@@ -7,13 +7,4 @@
    (source_tree ../../../platform/cloud)))
  (preprocess
   (pps ppx_windtrap))
- (libraries
-  windtrap
-  sol_cli
-  sol_cli_test_support
-  alcotest
-  unix
-  yojson
-  str
-  yaml
-  logs))
+ (libraries windtrap sol_cli sol_cli_test_support unix yojson str yaml logs))

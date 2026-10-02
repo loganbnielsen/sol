@@ -21,8 +21,9 @@ let labels req =
 ;;
 
 let test_everything () =
-  Alcotest.(check (list string))
-    "each component, in install order"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"each component, in install order"
     [ "Redpanda"
     ; "PostgreSQL"
     ; "Loki"
@@ -36,16 +37,22 @@ let test_everything () =
 ;;
 
 let test_ingress_always () =
-  Alcotest.(check (list string)) "nothing declared" [ "ingress-nginx" ] (labels (req ()));
-  Alcotest.(check bool)
-    "no repositories needed"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing declared"
+    [ "ingress-nginx" ]
+    (labels (req ()));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no repositories needed"
     false
     (Sol_cli_local_platform.needs_any_chart (req ()))
 ;;
 
 let test_declared_postgres () =
-  Alcotest.(check (list string))
-    "postgres and the ingress"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"postgres and the ingress"
     [ "PostgreSQL"; "ingress-nginx" ]
     (labels (req ~postgres:true ()))
 ;;
@@ -57,16 +64,19 @@ let test_values_come_from_the_assets () =
       ~assets
     |> List.find (fun (r : Sol_cli_local_platform.release) -> r.label = label)
   in
-  Alcotest.(check (option string))
-    "a component's merged values"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a component's merged values"
     (Some "redpanda-values")
     (find "Redpanda").values_yaml;
-  Alcotest.(check (option string))
-    "Alloy's rendered values"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"Alloy's rendered values"
     (Some "alloy-values")
     (find "Alloy").values_yaml;
-  Alcotest.(check (option string))
-    "pinned, matching the platform module"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"pinned, matching the platform module"
     (Some "26.1.11")
     (find "Redpanda").version
 ;;
@@ -77,12 +87,17 @@ let forwards req =
 ;;
 
 let test_endpoints_nothing_declared () =
-  Alcotest.(check (list string)) "ingress only" [ "ingress" ] (forwards (req ()))
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"ingress only"
+    [ "ingress" ]
+    (forwards (req ()))
 ;;
 
 let test_endpoints_everything () =
-  Alcotest.(check (list string))
-    "every forward, in the summary's order"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"every forward, in the summary's order"
     [ "kafka"
     ; "schema-registry"
     ; "postgres"
@@ -103,24 +118,39 @@ let test_endpoint_ports_are_distinct () =
       ~req:(req ~kafka:true ~postgres:true ~observability:true ())
     |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.local_port)
   in
-  Alcotest.(check int)
-    "no two forwards share a host port"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"no two forwards share a host port"
     (List.length ports)
     (List.length (List.sort_uniq compare ports));
-  Alcotest.(check bool) "not sol up's 8080" false (List.mem 8080 ports)
+  Windtrap.equal Windtrap.bool ~msg:"not sol up's 8080" false (List.mem 8080 ports)
 ;;
 
 let test_k3d_api_version () =
   let env daemon_min = Sol_cli_local_cluster.api_version_env ~daemon_min in
-  Alcotest.(check (list (pair string string)))
-    "Docker 29's floor"
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"Docker 29's floor"
     [ "DOCKER_API_VERSION", "1.44" ]
     (env "1.44\n");
-  Alcotest.(check (list (pair string string))) "an older daemon" [] (env "1.24");
-  Alcotest.(check (list (pair string string))) "the floor itself" [] (env "1.43");
-  Alcotest.(check (list (pair string string))) "unreadable" [] (env "");
-  Alcotest.(check bool)
-    "numeric, not lexical"
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"an older daemon"
+    []
+    (env "1.24");
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"the floor itself"
+    []
+    (env "1.43");
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"unreadable"
+    []
+    (env "");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"numeric, not lexical"
     true
     (Sol_cli_local_cluster.version_gt "1.100" "1.43")
 ;;

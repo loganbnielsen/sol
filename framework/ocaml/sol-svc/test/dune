@@ -11,7 +11,7 @@
   sol_svc
   eio
   eio_main
-  alcotest
+  windtrap
   cohttp-eio
   http
   uri

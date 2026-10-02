@@ -1,12 +1,12 @@
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module D = Sol_cli_deployment
 
@@ -42,7 +42,7 @@ let sample : D.t =
 
 let test_json_round_trip () =
   match D.of_json (D.to_json sample) with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok r ->
     check_string
       "deployment_id preserved"
@@ -106,12 +106,12 @@ let test_json_is_deterministic () =
 
 let test_validate_accepts_canonical_event () =
   D.validate ~name:(D.configmap_name sample) sample
-  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical event rejected: " ^ msg))
+  |> Result.iter_error (fun msg -> Windtrap.fail ("canonical event rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =
   match D.validate ~name:"sol-deployment-d-20260101t000000z-ffffffffffffffff" sample with
-  | Ok () -> Alcotest.fail "expected a name-direction failure"
+  | Ok () -> Windtrap.fail "expected a name-direction failure"
   | Error msg -> check_bool "names the event" true (contains id_a_string msg)
 ;;
 
@@ -125,21 +125,21 @@ let with_field key value json =
 let test_of_json_rejects_a_bad_deployment_id () =
   let bad = with_field "deployment_id" (`String "not-an-id") (D.to_json sample) in
   match D.of_json bad with
-  | Ok _ -> Alcotest.fail "expected an invalid deployment id to be rejected"
+  | Ok _ -> Windtrap.fail "expected an invalid deployment id to be rejected"
   | Error msg -> check_bool "names the problem" true (contains "invalid id" msg)
 ;;
 
 let test_of_json_rejects_a_bad_release_id () =
   let bad = with_field "release_id" (`String "nope") (D.to_json sample) in
   match D.of_json bad with
-  | Ok _ -> Alcotest.fail "expected an invalid release id to be rejected"
+  | Ok _ -> Windtrap.fail "expected an invalid release id to be rejected"
   | Error msg -> check_bool "names the problem" true (contains "invalid release id" msg)
 ;;
 
 let test_of_json_rejects_unknown_outcome () =
   let bad = with_field "outcome" (`String "maybe") (D.to_json sample) in
   match D.of_json bad with
-  | Ok _ -> Alcotest.fail "expected an unknown outcome to be rejected"
+  | Ok _ -> Windtrap.fail "expected an unknown outcome to be rejected"
   | Error msg -> check_bool "names the outcome" true (contains "outcome" msg)
 ;;
 
@@ -164,7 +164,7 @@ let test_parse_kubectl_list_reads_valid_items () =
       ]
   in
   match D.parse_kubectl_list json with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok records -> check_int "both events" 2 (List.length records)
 ;;
 
@@ -183,7 +183,7 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
   in
   match D.parse_kubectl_list json with
   | Ok records ->
-    Alcotest.fail
+    Windtrap.fail
       (Printf.sprintf "expected an error, got %d records" (List.length records))
   | Error msg ->
     check_bool "names corruption" true (contains "invalid record" msg);
@@ -208,7 +208,7 @@ let test_format_table_newest_first_with_status () =
   and i_older = index_of id_a_string table in
   match i_newer, i_older with
   | Some a, Some b -> check_bool "newest first" true (a < b)
-  | _ -> Alcotest.fail "both ids must appear in the table"
+  | _ -> Windtrap.fail "both ids must appear in the table"
 ;;
 
 let mkdirs path =
@@ -270,7 +270,7 @@ let with_plan f =
         ~requested_scope:"payments"
         [ test_service ]
     with
-    | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
     | Ok plan -> f plan)
 ;;
 

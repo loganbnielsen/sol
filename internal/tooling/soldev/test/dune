@@ -1,6 +1,6 @@
 (tests
  (names test_ticket test_merge)
- (libraries soldev_lib alcotest unix)
+ (libraries soldev_lib windtrap unix)
  (deps
   (source_tree ../../../pipeline/tickets)))
 

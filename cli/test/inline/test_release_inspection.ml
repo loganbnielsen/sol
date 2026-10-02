@@ -2,26 +2,26 @@ let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
 
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let service
@@ -38,7 +38,7 @@ let service
          Sol_cli_deployment_plan.namespace_result ~workspace:"pluto" ~domain:"payments"
        with
        | Ok namespace -> namespace
-       | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+       | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
   ; primitive
   ; source_dir = "payments/" ^ name
   ; image = "registry.sol.dev/acct_123/pluto/" ^ name ^ ":abc123"
@@ -164,7 +164,7 @@ let test_rendered_manifest_diagnostics () =
   let manifests =
     match Sol_cli_release_inspection.rendered_manifests_of_plan plan with
     | Ok manifests -> manifests
-    | Error msg -> Alcotest.fail msg
+    | Error msg -> Windtrap.fail msg
   in
   check_int "manifest count" 14 (List.length manifests);
   let rollout =

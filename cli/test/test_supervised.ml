@@ -1,7 +1,7 @@
 module S = Sol_cli_supervised
 
 let contains haystack needle = Sol_cli_string.contains ~needle haystack
-let check = Alcotest.(check bool)
+let check msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let tmp_root = Filename.concat (Filename.get_temp_dir_name ()) "sol-supervised-test"
 
 let fresh name =
@@ -110,7 +110,7 @@ let rec wait_until ?(tries = 200) what f =
   if f ()
   then ()
   else if tries = 0
-  then Alcotest.failf "timed out waiting for %s" what
+  then Windtrap.failf "timed out waiting for %s" what
   else (
     Unix.sleepf 0.05;
     wait_until ~tries:(tries - 1) what f)
@@ -138,7 +138,7 @@ let signals c who = read (Filename.concat c.mark (who ^ ".signals"))
 let latest_dir key =
   match S.latest ~key with
   | S.Running { dir; _ } | S.Resolved { dir; _ } | S.Unresolved { dir; _ } -> dir
-  | S.No_previous -> Alcotest.fail "no operation recorded"
+  | S.No_previous -> Windtrap.fail "no operation recorded"
 ;;
 
 let is_resolved_exit n = function
@@ -186,7 +186,7 @@ let test_sol_death_does_not_kill_terraform () =
   (match S.latest ~key:c.key with
    | S.Running _ -> ()
    | other ->
-     Alcotest.failf "expected Running mid-apply, got %s" (S.status_to_string other));
+     Windtrap.failf "expected Running mid-apply, got %s" (S.status_to_string other));
   Unix.kill sol Sys.sigkill;
   wait_child sol;
   wait_until ~tries:400 "terraform to finish on its own" (not_running c.key);
@@ -363,23 +363,20 @@ let test_classify () =
 
 let () =
   S.dispatch_if_supervisor ();
-  Alcotest.run
+  Windtrap.run
     "supervised"
-    [ "classify", [ Alcotest.test_case "pure" `Quick test_classify ]
-    ; ( "process"
-      , [ Alcotest.test_case "clean run" `Quick test_clean_run
-        ; Alcotest.test_case "Sol's death" `Quick test_sol_death_does_not_kill_terraform
-        ; Alcotest.test_case "interrupt" `Quick test_interrupt_reaches_terraform_only
-        ; Alcotest.test_case
+    [ Windtrap.group "classify" [ Windtrap.test "pure" test_classify ]
+    ; Windtrap.group
+        "process"
+        [ Windtrap.test "clean run" test_clean_run
+        ; Windtrap.test "Sol's death" test_sol_death_does_not_kill_terraform
+        ; Windtrap.test "interrupt" test_interrupt_reaches_terraform_only
+        ; Windtrap.test
             "positive control"
-            `Quick
             test_positive_control_group_kill_reaches_provider
-        ; Alcotest.test_case "signal death" `Quick test_signal_death_is_unresolved
-        ; Alcotest.test_case "errored.tfstate" `Quick test_errored_state_is_unresolved
-        ; Alcotest.test_case
-            "supervisor killed"
-            `Quick
-            test_supervisor_killed_is_unresolved
-        ] )
+        ; Windtrap.test "signal death" test_signal_death_is_unresolved
+        ; Windtrap.test "errored.tfstate" test_errored_state_is_unresolved
+        ; Windtrap.test "supervisor killed" test_supervisor_killed_is_unresolved
+        ]
     ]
 ;;

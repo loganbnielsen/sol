@@ -1,12 +1,12 @@
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
-let check_string = Alcotest.(check string)
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 module R = Sol_cli_release
 
@@ -67,7 +67,7 @@ let sample_record : R.t =
 
 let test_json_round_trip () =
   match R.of_json (R.to_json sample_record) with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok r ->
     check_string "workspace preserved" "myworkspace" r.workspace;
     check_string "environment preserved" "dev" (Option.value r.environment ~default:"");
@@ -87,8 +87,9 @@ let test_json_round_trip () =
     check_int "replicas preserved" 2 w.replicas;
     check_string "scheduled concurrency preserved" "forbid" w.scheduled_concurrency;
     check_int "backoff limit preserved" 0 w.backoff_limit;
-    Alcotest.(check (list string))
-      "migrations preserved"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"migrations preserved"
       [ "0001_notifications.sql" ]
       r.migrations
 ;;
@@ -143,12 +144,12 @@ let test_current_pointer_is_minimal () =
 
 let test_validate_accepts_canonical_record () =
   R.validate ~name:(R.configmap_name sample_record) sample_record
-  |> Result.iter_error (fun msg -> Alcotest.fail ("canonical record rejected: " ^ msg))
+  |> Result.iter_error (fun msg -> Windtrap.fail ("canonical record rejected: " ^ msg))
 ;;
 
 let test_validate_rejects_wrong_name () =
   match R.validate ~name:"sol-release-r-deadbeefdeadbeef" sample_record with
-  | Ok () -> Alcotest.fail "expected a name-direction failure"
+  | Ok () -> Windtrap.fail "expected a name-direction failure"
   | Error msg ->
     check_bool "names the record" true (contains sample_record.release_id msg)
 ;;
@@ -156,7 +157,7 @@ let test_validate_rejects_wrong_name () =
 let test_validate_rejects_corrupt_content () =
   let corrupt = { sample_record with workloads = [] } in
   match R.validate ~name:(R.configmap_name corrupt) corrupt with
-  | Ok () -> Alcotest.fail "expected a content-direction failure"
+  | Ok () -> Windtrap.fail "expected a content-direction failure"
   | Error msg -> check_bool "reports corruption" true (contains "corrupt" msg)
 ;;
 
@@ -177,7 +178,7 @@ let test_parse_kubectl_list_reads_valid_items () =
     `Assoc [ "items", `List [ item (Yojson.Safe.to_string (R.to_json sample_record)) ] ]
   in
   match R.parse_kubectl_list json with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok records -> check_int "one record" 1 (List.length records)
 ;;
 
@@ -204,11 +205,11 @@ let test_parse_kubectl_list_with_creation () =
       ]
   in
   match R.parse_kubectl_list_with_creation json with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok [ (record, created_at) ] ->
     check_string "record id" sample_record.release_id record.release_id;
     check_string "creation timestamp" "2026-01-01T00:00:00Z" created_at
-  | Ok _ -> Alcotest.fail "expected exactly one record"
+  | Ok _ -> Windtrap.fail "expected exactly one record"
 ;;
 
 let test_parse_kubectl_list_fails_closed_on_corrupt () =
@@ -227,7 +228,7 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
   in
   match R.parse_kubectl_list json with
   | Ok records ->
-    Alcotest.fail
+    Windtrap.fail
       (Printf.sprintf "expected an error, got %d records" (List.length records))
   | Error msg ->
     check_bool "names corruption" true (contains "invalid record" msg);
@@ -236,7 +237,7 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
 
 let test_of_kubectl_item_accepts_canonical_record () =
   match R.of_kubectl_item (item (R.record_json_string sample_record)) with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok r -> check_string "round-trips the id" sample_record.release_id r.release_id
 ;;
 
@@ -248,7 +249,7 @@ let test_of_kubectl_item_rejects_missing_digest () =
       ]
   in
   match R.of_kubectl_item no_digest with
-  | Ok _ -> Alcotest.fail "expected a missing digest to fail closed"
+  | Ok _ -> Windtrap.fail "expected a missing digest to fail closed"
   | Error msg ->
     check_bool "names the format problem" true (contains "missing integrity digest" msg)
 ;;
@@ -259,7 +260,7 @@ let test_of_kubectl_item_rejects_tampered_body () =
   match
     R.of_kubectl_item (item ~digest:(R.record_digest sample_record) record_string)
   with
-  | Ok _ -> Alcotest.fail "expected a tampered body to fail closed"
+  | Ok _ -> Windtrap.fail "expected a tampered body to fail closed"
   | Error msg ->
     check_bool "reports integrity failure" true (contains "integrity validation" msg)
 ;;
@@ -268,12 +269,12 @@ let test_migrations_tampering_is_caught_by_digest_not_validate () =
   let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
   R.validate ~name:(R.configmap_name tampered) tampered
   |> Result.iter_error (fun msg ->
-    Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
+    Windtrap.fail ("a migrations-only change should still rederive the id: " ^ msg));
   match
     R.of_kubectl_item
       (item ~digest:(R.record_digest sample_record) (R.record_json_string tampered))
   with
-  | Ok _ -> Alcotest.fail "expected the digest to catch a migrations-only change"
+  | Ok _ -> Windtrap.fail "expected the digest to catch a migrations-only change"
   | Error msg ->
     check_bool "reports integrity failure" true (contains "integrity validation" msg)
 ;;
@@ -353,7 +354,7 @@ let test_record_digest_known_vector () =
 
 let test_apply_mode_round_trips () =
   match R.of_json (R.to_json { sample_record with apply_mode = R.Gitops }) with
-  | Error msg -> Alcotest.fail msg
+  | Error msg -> Windtrap.fail msg
   | Ok r -> check_bool "gitops preserved" true (r.apply_mode = R.Gitops)
 ;;
 
@@ -365,7 +366,7 @@ let without_field key json =
 
 let test_apply_mode_missing_fails_closed () =
   match R.of_json (without_field "apply_mode" (R.to_json sample_record)) with
-  | Ok _ -> Alcotest.fail "expected a missing apply_mode to fail closed"
+  | Ok _ -> Windtrap.fail "expected a missing apply_mode to fail closed"
   | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
 ;;
 
@@ -380,7 +381,7 @@ let test_apply_mode_unknown_fails_closed () =
     | other -> other
   in
   match R.of_json json with
-  | Ok _ -> Alcotest.fail "expected an unknown apply_mode to fail closed"
+  | Ok _ -> Windtrap.fail "expected an unknown apply_mode to fail closed"
   | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
 ;;
 
@@ -449,7 +450,7 @@ let with_plan ~requested_scope f =
         ~requested_scope
         [ test_service ]
     with
-    | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+    | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
     | Ok plan -> f plan)
 ;;
 
@@ -459,7 +460,7 @@ let second_service (spec : Sol_cli_deployment_plan.service_spec) =
   ; k8s_name =
       (match Sol_cli_deployment_plan.k8s_name_result "ledger-svc" with
        | Ok name -> name
-       | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e))
+       | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e))
   ; image = "reg/myworkspace/ledger-svc:abc1234"
   }
 ;;
@@ -473,7 +474,7 @@ let recorded_of (r : R.t) name =
 let reconstruct release =
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok specs -> specs
-  | Error msg -> Alcotest.failf "reconstruction failed: %s" msg
+  | Error msg -> Windtrap.failf "reconstruction failed: %s" msg
 ;;
 
 let live_of release =
@@ -500,7 +501,7 @@ let two_service_plan plan =
       plan
       ~services:[ charge; second_service charge ]
       ~requested_scope:"workspace"
-  | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+  | specs -> Windtrap.failf "expected one planned service, got %d" (List.length specs)
 ;;
 
 let scoped_update plan =
@@ -510,7 +511,7 @@ let scoped_update plan =
       plan
       ~services:[ { charge with image = "reg/myworkspace/charge-svc:def5678" } ]
       ~requested_scope:"payments/charge_svc"
-  | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+  | specs -> Windtrap.failf "expected one planned service, got %d" (List.length specs)
 ;;
 
 let test_scoped_deploy_records_a_complete_boundary () =
@@ -570,8 +571,8 @@ let test_scoped_deploy_records_a_complete_boundary () =
              spec
          with
          | Ok (_, yaml) -> yaml
-         | Error msg -> Alcotest.fail msg)
-      | _ -> Alcotest.fail "expected one scoped service"
+         | Error msg -> Windtrap.fail msg)
+      | _ -> Windtrap.fail "expected one scoped service"
     in
     check_bool
       "the live manifest carries the recorded provenance"
@@ -597,7 +598,7 @@ let test_scoped_deploy_records_a_complete_boundary () =
      with
      | Sol_cli_rollback.Commit_resolved id ->
        check_string "commit resolves the persisted boundary" boundary_b.release_id id
-     | _ -> Alcotest.fail "commit did not resolve the persisted boundary");
+     | _ -> Windtrap.fail "commit did not resolve the persisted boundary");
     check_string
       "the untouched workload keeps its spec"
       (recorded_of boundary_a "ledger_svc").Sol_cli_release_id.spec.image
@@ -628,7 +629,7 @@ let test_selected_plan_builder_preserves_scoped_provenance () =
           services
       with
       | Ok plan -> plan
-      | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+      | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
     in
     let full =
       build ~services:[ test_service; ledger ] ~requested_scope:"workspace" ~env:test_env
@@ -656,7 +657,7 @@ let test_selected_plan_builder_preserves_scoped_provenance () =
       (Sol_cli_release_id.to_string (R.derived_release_id current));
     match R.validate ~name:(R.configmap_name current) current with
     | Ok () -> ()
-    | Error msg -> Alcotest.fail msg)
+    | Error msg -> Windtrap.fail msg)
 ;;
 
 let test_scoped_rollback_keeps_untouched_workloads () =
@@ -723,7 +724,7 @@ let test_full_deploy_removes_a_dropped_workload () =
     let dropped =
       match plan.Sol_cli_deployment_plan.services with
       | [ charge ] -> { plan with services = [ charge ]; requested_scope = "workspace" }
-      | specs -> Alcotest.failf "expected one planned service, got %d" (List.length specs)
+      | specs -> Windtrap.failf "expected one planned service, got %d" (List.length specs)
     in
     let boundary_c =
       R.of_plan_with_boundary ~apply_mode:R.Direct ~retained:boundary_b.workloads dropped
@@ -773,7 +774,7 @@ let test_scoped_deploy_refuses_an_unreadable_boundary () =
   with_plan ~requested_scope:"payments/charge_svc" (fun plan ->
     with_failing_kubectl (fun () ->
       match read_boundary plan with
-      | Ok _ -> Alcotest.fail "expected a scoped deploy to refuse an unreadable boundary"
+      | Ok _ -> Windtrap.fail "expected a scoped deploy to refuse an unreadable boundary"
       | Error msg -> assert (contains "could not be read" msg)))
 ;;
 
@@ -783,10 +784,10 @@ let test_full_deploy_tolerates_an_unreadable_boundary () =
       match read_boundary plan with
       | Ok [] -> ()
       | Ok retained ->
-        Alcotest.failf
+        Windtrap.failf
           "expected an unreadable boundary to retain nothing, got %d"
           (List.length retained)
-      | Error msg -> Alcotest.failf "expected a full deploy to proceed: %s" msg))
+      | Error msg -> Windtrap.failf "expected a full deploy to proceed: %s" msg))
 ;;
 
 let test_of_plan_rederives_the_plan_identity () =
@@ -847,7 +848,7 @@ let test_record_failure_fails_the_deployment () =
   in
   check_bool "no successful completion was reported" false !reported;
   match result with
-  | Ok () -> Alcotest.fail "a deployment that could not record its release must fail"
+  | Ok () -> Windtrap.fail "a deployment that could not record its release must fail"
   | Error msg -> assert (contains "sol-release-current-pluto" msg)
 ;;
 
@@ -858,7 +859,7 @@ let test_recorded_release_reports_success () =
       ~record_release:(fun () -> Ok ())
       ~report_success:(fun () -> reported := true)
   with
-  | Error msg -> Alcotest.fail ("unexpected failure: " ^ msg)
+  | Error msg -> Windtrap.fail ("unexpected failure: " ^ msg)
   | Ok () -> check_bool "success was reported" true !reported
 ;;
 

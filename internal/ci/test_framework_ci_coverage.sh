@@ -22,12 +22,12 @@ fixture() {
   cat > "$WORK/framework/ocaml/alpha/test/dune" <<'DUNE'
 (test
  (name test_alpha)
- (libraries alcotest))
+ (libraries windtrap))
 DUNE
   cat > "$WORK/framework/ocaml/beta/test/dune" <<'DUNE'
 (tests
  (names test_beta)
- (libraries alcotest))
+ (libraries windtrap))
 DUNE
 }
 
@@ -70,7 +70,7 @@ ok "every unit suite in the step passes (the mutation above is not vacuous)"
 cat > "$WORK/framework/ocaml/beta/test/dune" <<'DUNE'
 (executable
  (name test_beta)
- (libraries alcotest))
+ (libraries windtrap))
 
 (rule
  (alias runtest-integration)

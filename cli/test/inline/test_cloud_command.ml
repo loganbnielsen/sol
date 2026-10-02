@@ -9,7 +9,9 @@ let write path content =
   Out_channel.with_open_text path (fun oc -> output_string oc content)
 ;;
 
-let check_opt = Alcotest.(check (option string))
+let check_opt msg expected actual =
+  Windtrap.equal (Windtrap.option Windtrap.string) ~msg expected actual
+;;
 
 let test_last_flag_wins () =
   check_opt
@@ -77,10 +79,11 @@ let test_strict_refuses_undeclared_target () =
     match
       Sol_cli_terraform_vars.of_target ~strict:true ~workspace:"pluto" "dev/aws/us-east-1"
     with
-    | Ok _ -> Alcotest.fail "expected an undeclared target to be refused"
+    | Ok _ -> Windtrap.fail "expected an undeclared target to be refused"
     | Error message ->
-      Alcotest.(check bool)
-        "names the reason"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the reason"
         true
         (Sol_cli_string.contains ~needle:"is not declared" message))
 ;;
@@ -93,8 +96,9 @@ let test_preview_accepts_undeclared_target () =
         ~workspace:"pluto"
         "dev/aws/us-east-1"
     with
-    | Ok (_, target) -> Alcotest.(check string) "region" "us-east-1" target.region
-    | Error message -> Alcotest.fail message)
+    | Ok (_, target) ->
+      Windtrap.equal Windtrap.string ~msg:"region" "us-east-1" target.region
+    | Error message -> Windtrap.fail message)
 ;;
 
 let test_strict_accepts_declared_target () =
@@ -103,11 +107,12 @@ let test_strict_accepts_declared_target () =
       Sol_cli_terraform_vars.of_target ~strict:true ~workspace:"pluto" "dev/aws/us-east-1"
     with
     | Ok (vars, _) ->
-      Alcotest.(check (option string))
-        "the target's field is a variable"
+      Windtrap.equal
+        (Windtrap.option Windtrap.string)
+        ~msg:"the target's field is a variable"
         (Some "sol-dev")
         (List.assoc_opt "cluster_name" vars)
-    | Error message -> Alcotest.fail message)
+    | Error message -> Windtrap.fail message)
 ;;
 
 let running =
@@ -128,8 +133,9 @@ let verdict_name = function
 ;;
 
 let check_verdict label expected ~constructive ~accept_unresolved status =
-  Alcotest.(check string)
-    label
+  Windtrap.equal
+    Windtrap.string
+    ~msg:label
     expected
     (verdict_name (Sol_cli_state_guard.verdict ~constructive ~accept_unresolved status))
 ;;
@@ -174,8 +180,9 @@ let test_guard_matrix () =
 ;;
 
 let test_kinds_are_the_last_column () =
-  Alcotest.(check (list string))
-    "kinds"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"kinds"
     [ "ClusterIssuer"; "ConfigMap"; "Pod" ]
     (Sol_cli_platform_teardown.kinds_of_api_resources
        "configmaps       cm    v1                   true   ConfigMap\n\
@@ -199,10 +206,11 @@ let test_only_unserved_manifests_are_forgotten () =
   match
     Sol_cli_platform_teardown.unserved_of_show_json ~served:[ "ConfigMap" ] show_json
   with
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
   | Ok unserved ->
-    Alcotest.(check (list (pair string string)))
-      "the unserved manifest, with its proof"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+      ~msg:"the unserved manifest, with its proof"
       [ "kubernetes_manifest.issuer", "ClusterIssuer" ]
       unserved
 ;;
@@ -213,16 +221,16 @@ let test_served_kinds_forget_nothing () =
       ~served:[ "ClusterIssuer"; "ConfigMap" ]
       show_json
   with
-  | Error message -> Alcotest.fail message
-  | Ok unserved -> Alcotest.(check int) "nothing" 0 (List.length unserved)
+  | Error message -> Windtrap.fail message
+  | Ok unserved -> Windtrap.equal Windtrap.int ~msg:"nothing" 0 (List.length unserved)
 ;;
 
 let test_unreadable_state_is_an_error () =
   (match Sol_cli_platform_teardown.unserved_of_show_json ~served:[] "not json" with
-   | Ok _ -> Alcotest.fail "expected invalid JSON to be an error"
+   | Ok _ -> Windtrap.fail "expected invalid JSON to be an error"
    | Error _ -> ());
   match Sol_cli_platform_teardown.unserved_of_show_json ~served:[] {|{"values":{}}|} with
-  | Ok _ -> Alcotest.fail "expected a state with no resources list to be an error"
+  | Ok _ -> Windtrap.fail "expected a state with no resources list to be an error"
   | Error _ -> ()
 ;;
 

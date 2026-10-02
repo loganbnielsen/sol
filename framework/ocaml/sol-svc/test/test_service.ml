@@ -126,38 +126,43 @@ let test_healthz env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, body = http_call env ~sw ~port ~meth:`GET ~path:"/healthz" () in
-      Alcotest.(check int) "status 200" 200 status;
-      Alcotest.(check bool) "body ok" true (String.trim body = {|{"status":"ok"}|})))
+      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status;
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"body ok"
+        true
+        (String.trim body = {|{"status":"ok"}|})))
 ;;
 
 let test_not_found env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/does-not-exist" () in
-      Alcotest.(check int) "status 404" 404 status))
+      Windtrap.equal Windtrap.int ~msg:"status 404" 404 status))
 ;;
 
 let test_method_not_allowed env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, _ = http_call env ~sw ~port ~meth:`DELETE ~path:"/hello" () in
-      Alcotest.(check int) "status 405" 405 status))
+      Windtrap.equal Windtrap.int ~msg:"status 405" 405 status))
 ;;
 
 let test_public_route env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/hello" () in
-      Alcotest.(check int) "status 200" 200 status))
+      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status))
 ;;
 
 let test_path_param env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, body = http_call env ~sw ~port ~meth:`GET ~path:"/users/42" () in
-      Alcotest.(check int) "status 200" 200 status;
-      Alcotest.(check bool)
-        "contains id"
+      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status;
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"contains id"
         true
         (try
            let _ = String.index body '4' in
@@ -172,15 +177,19 @@ let test_echo_body env () =
       let status, body =
         http_call env ~sw ~port ~meth:`POST ~path:"/echo" ~body:"hello world" ()
       in
-      Alcotest.(check int) "status 200" 200 status;
-      Alcotest.(check bool) "body echoed" true (String.trim body = "hello world")))
+      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status;
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"body echoed"
+        true
+        (String.trim body = "hello world")))
 ;;
 
 let test_jwt_no_token env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/protected" () in
-      Alcotest.(check int) "status 401" 401 status))
+      Windtrap.equal Windtrap.int ~msg:"status 401" 401 status))
 ;;
 
 let test_jwt_valid_token env () =
@@ -197,7 +206,7 @@ let test_jwt_valid_token env () =
           ~headers:[ "authorization", "Bearer " ^ tok ]
           ()
       in
-      Alcotest.(check int) "status 200" 200 status))
+      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status))
 ;;
 
 let test_jwt_missing_scope env () =
@@ -214,14 +223,14 @@ let test_jwt_missing_scope env () =
           ~headers:[ "authorization", "Bearer " ^ tok ]
           ()
       in
-      Alcotest.(check int) "status 403" 403 status))
+      Windtrap.equal Windtrap.int ~msg:"status 403" 403 status))
 ;;
 
 let test_metrics_no_renderer env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
       let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/metrics" () in
-      Alcotest.(check int) "status 404" 404 status))
+      Windtrap.equal Windtrap.int ~msg:"status 404" 404 status))
 ;;
 
 let test_handler_exception env () =
@@ -252,9 +261,9 @@ let test_handler_exception env () =
       | Error e -> failwith e);
     let port = Promise.await port_p in
     let s1, _ = http_call env ~sw ~port ~meth:`GET ~path:"/boom" () in
-    Alcotest.(check int) "500 on exception" 500 s1;
+    Windtrap.equal Windtrap.int ~msg:"500 on exception" 500 s1;
     let s2, _ = http_call env ~sw ~port ~meth:`GET ~path:"/ok" () in
-    Alcotest.(check int) "server still up" 200 s2;
+    Windtrap.equal Windtrap.int ~msg:"server still up" 200 s2;
     Promise.resolve stop_r ())
 ;;
 
@@ -273,7 +282,7 @@ let test_external_stop_on_listen env () =
         ()
     with
     | Ok () -> ()
-    | Error e -> Alcotest.fail (Service.run_error_to_string e))
+    | Error e -> Windtrap.fail (Service.run_error_to_string e))
 ;;
 
 let test_metrics_counter env () =
@@ -281,16 +290,19 @@ let test_metrics_counter env () =
     with_server_obs env ~sw (fun port render ->
       let _ = http_call env ~sw ~port ~meth:`GET ~path:"/hello" () in
       let output = render () in
-      Alcotest.(check bool)
-        "requests_total counter present"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"requests_total counter present"
         true
         (contains "sol_svc_requests_total" output);
-      Alcotest.(check bool)
-        "route label in output"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"route label in output"
         true
         (contains {|route="/hello"|} output);
-      Alcotest.(check bool)
-        "status_class label in output"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"status_class label in output"
         true
         (contains {|status_class="2xx"|} output)))
 ;;
@@ -300,8 +312,9 @@ let test_metrics_duration env () =
     with_server_obs env ~sw (fun port render ->
       let _ = http_call env ~sw ~port ~meth:`GET ~path:"/hello" () in
       let output = render () in
-      Alcotest.(check bool)
-        "duration histogram present"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"duration histogram present"
         true
         (contains "sol_svc_request_duration_seconds" output)))
 ;;
@@ -312,16 +325,19 @@ let test_metrics_route_pattern_label env () =
       let _ = http_call env ~sw ~port ~meth:`GET ~path:"/users/42" () in
       let _ = http_call env ~sw ~port ~meth:`GET ~path:"/users/999" () in
       let output = render () in
-      Alcotest.(check bool)
-        "pattern label present"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"pattern label present"
         true
         (contains {|route="/users/:id"|} output);
-      Alcotest.(check bool)
-        "concrete value 42 not a label"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"concrete value 42 not a label"
         false
         (contains {|route="/users/42"|} output);
-      Alcotest.(check bool)
-        "concrete value 999 not a label"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"concrete value 999 not a label"
         false
         (contains {|route="/users/999"|} output)))
 ;;
@@ -350,11 +366,12 @@ let test_api_key_file_error_is_startup_error env () =
       let module S = Service.Make (Hapi_key) in
       match S.run ~env ~port:0 () with
       | Error (`Config msg) ->
-        Alcotest.(check bool)
-          "mentions API key file"
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:"mentions API key file"
           true
           (contains "SOL_API_KEY_FILE" msg)
-      | Ok () -> Alcotest.fail "expected API key file config error"))
+      | Ok () -> Windtrap.fail "expected API key file config error"))
 ;;
 
 module Hunverified = struct
@@ -364,11 +381,12 @@ end
 let expect_unverified_refused result =
   match result with
   | Error (`Config msg) ->
-    Alcotest.(check bool)
-      "names the opt-in"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the opt-in"
       true
       (contains "SOL_ALLOW_UNVERIFIED_JWT" msg)
-  | Ok () -> Alcotest.fail "expected Unverified_dev_only to be refused without the opt-in"
+  | Ok () -> Windtrap.fail "expected Unverified_dev_only to be refused without the opt-in"
 ;;
 
 let stopped () =
@@ -434,8 +452,12 @@ let test_http_jwks_url_refused env () =
     (fun (url, on_route) ->
        match run_with_jwks_url env ~on_route url with
        | Error (`Config msg) ->
-         Alcotest.(check bool) ("names the URL: " ^ url) true (contains url msg)
-       | Ok () -> Alcotest.failf "a Jwks_url of %S must not start" url)
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:("names the URL: " ^ url)
+           true
+           (contains url msg)
+       | Ok () -> Windtrap.failf "a Jwks_url of %S must not start" url)
     [ "http://idp.example.com/jwks.json", true
     ; "idp.example.com/jwks.json", true
     ; "http://idp.example.com/jwks.json", false
@@ -445,7 +467,7 @@ let test_http_jwks_url_refused env () =
 let test_https_jwks_url_starts env () =
   match run_with_jwks_url env "https://idp.example.com/jwks.json" with
   | Ok () -> ()
-  | Error e -> Alcotest.fail (Service.run_error_to_string e)
+  | Error e -> Windtrap.fail (Service.run_error_to_string e)
 ;;
 
 let test_external_stop_is_prompt env () =
@@ -463,10 +485,11 @@ let test_external_stop_is_prompt env () =
        ()
    with
    | Ok () -> ()
-   | Error e -> Alcotest.fail (Service.run_error_to_string e));
+   | Error e -> Windtrap.fail (Service.run_error_to_string e));
   let elapsed = Unix.gettimeofday () -. t0 in
-  Alcotest.(check bool)
-    (Printf.sprintf "returned in %.2fs, well inside the 3s drain window" elapsed)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:(Printf.sprintf "returned in %.2fs, well inside the 3s drain window" elapsed)
     true
     (elapsed < 1.5)
 ;;
@@ -478,8 +501,12 @@ let test_malformed_port_is_config_error env () =
     Promise.resolve stop_r ();
     match S.run ~env ~port:0 ~stop ~shutdown_delay_s:0.0 ~drain_timeout_s:0.1 () with
     | Error (`Config msg) ->
-      Alcotest.(check bool) "names PORT and the value" true (contains "80800x" msg)
-    | Ok () -> Alcotest.fail "expected a malformed PORT to be a startup Config error")
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names PORT and the value"
+        true
+        (contains "80800x" msg)
+    | Ok () -> Windtrap.fail "expected a malformed PORT to be a startup Config error")
 ;;
 
 let test_readyz_flips_before_listener_closes env () =
@@ -501,17 +528,18 @@ let test_readyz_flips_before_listener_closes env () =
       Promise.resolve finished_r ());
     let port = Promise.await port_p in
     let ready_status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/readyz" () in
-    Alcotest.(check int) "ready before stop" 200 ready_status;
+    Windtrap.equal Windtrap.int ~msg:"ready before stop" 200 ready_status;
     Promise.resolve stop_r ();
     Eio.Time.sleep env#clock 0.2;
     let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/readyz" () in
-    Alcotest.(check int) "readyz is 503 once stopping" 503 status;
+    Windtrap.equal Windtrap.int ~msg:"readyz is 503 once stopping" 503 status;
     let hello, _ = http_call env ~sw ~port ~meth:`GET ~path:"/hello" () in
-    Alcotest.(check int) "requests still served during the delay" 200 hello;
+    Windtrap.equal Windtrap.int ~msg:"requests still served during the delay" 200 hello;
     let live, _ = http_call env ~sw ~port ~meth:`GET ~path:"/healthz" () in
-    Alcotest.(check int) "liveness is unaffected" 200 live;
-    Alcotest.(check bool)
-      "run has not returned during the delay"
+    Windtrap.equal Windtrap.int ~msg:"liveness is unaffected" 200 live;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"run has not returned during the delay"
       false
       (Promise.is_resolved finished);
     Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Promise.await finished))
@@ -550,7 +578,7 @@ let test_unauth_large_body_gets_401 env () =
       let status, _ =
         http_call env ~sw ~port ~meth:`POST ~path:"/protected-upload" ~body:big_body ()
       in
-      Alcotest.(check int) "401 not 413" 401 status))
+      Windtrap.equal Windtrap.int ~msg:"401 not 413" 401 status))
 ;;
 
 let test_auth_oversized_body_gets_413 env () =
@@ -569,7 +597,7 @@ let test_auth_oversized_body_gets_413 env () =
           ~body:big_body
           ()
       in
-      Alcotest.(check int) "413 when auth ok but body too large" 413 status))
+      Windtrap.equal Windtrap.int ~msg:"413 when auth ok but body too large" 413 status))
 ;;
 
 let test_public_oversized_body_gets_413 env () =
@@ -579,7 +607,7 @@ let test_public_oversized_body_gets_413 env () =
       let status, _ =
         http_call env ~sw ~port ~meth:`POST ~path:"/upload" ~body:big_body ()
       in
-      Alcotest.(check int) "413 on oversized public upload" 413 status))
+      Windtrap.equal Windtrap.int ~msg:"413 on oversized public upload" 413 status))
 ;;
 
 let test_body_exactly_at_limit env () =
@@ -587,21 +615,25 @@ let test_body_exactly_at_limit env () =
     with_small_body_server env ~sw (fun port ->
       let upload body = http_call env ~sw ~port ~meth:`POST ~path:"/upload" ~body () in
       let status_49, echoed_49 = upload (String.make 49 'x') in
-      Alcotest.(check int) "N-1 accepted" 200 status_49;
-      Alcotest.(check int) "N-1 echoed intact" 49 (String.length echoed_49);
+      Windtrap.equal Windtrap.int ~msg:"N-1 accepted" 200 status_49;
+      Windtrap.equal Windtrap.int ~msg:"N-1 echoed intact" 49 (String.length echoed_49);
       let status_50, echoed_50 = upload (String.make 50 'x') in
-      Alcotest.(check int) "exactly N accepted" 200 status_50;
-      Alcotest.(check int) "exactly N echoed intact" 50 (String.length echoed_50);
+      Windtrap.equal Windtrap.int ~msg:"exactly N accepted" 200 status_50;
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"exactly N echoed intact"
+        50
+        (String.length echoed_50);
       let status_51, _ = upload (String.make 51 'x') in
-      Alcotest.(check int) "N+1 rejected with 413" 413 status_51))
+      Windtrap.equal Windtrap.int ~msg:"N+1 rejected with 413" 413 status_51))
 ;;
 
 let test_empty_body_accepted env () =
   Switch.run (fun sw ->
     with_small_body_server env ~sw (fun port ->
       let status, body = http_call env ~sw ~port ~meth:`POST ~path:"/upload" () in
-      Alcotest.(check int) "empty body accepted" 200 status;
-      Alcotest.(check string) "empty body echoed" "" body))
+      Windtrap.equal Windtrap.int ~msg:"empty body accepted" 200 status;
+      Windtrap.equal Windtrap.string ~msg:"empty body echoed" "" body))
 ;;
 
 let raw_chunked_status env ~sw ~port payload =
@@ -630,9 +662,9 @@ let test_chunked_body_limit env () =
   Switch.run (fun sw ->
     with_small_body_server env ~sw (fun port ->
       let status_50 = raw_chunked_status env ~sw ~port (String.make 50 'x') in
-      Alcotest.(check int) "exactly N chunked accepted" 200 status_50;
+      Windtrap.equal Windtrap.int ~msg:"exactly N chunked accepted" 200 status_50;
       let status_51 = raw_chunked_status env ~sw ~port (String.make 51 'x') in
-      Alcotest.(check int) "N+1 chunked rejected with 413" 413 status_51))
+      Windtrap.equal Windtrap.int ~msg:"N+1 chunked rejected with 413" 413 status_51))
 ;;
 
 let test_non_object_jwt_payload_gets_401 env () =
@@ -650,7 +682,7 @@ let test_non_object_jwt_payload_gets_401 env () =
           ~headers:[ "authorization", "Bearer " ^ tok ]
           ()
       in
-      Alcotest.(check int) "status 401" 401 status))
+      Windtrap.equal Windtrap.int ~msg:"status 401" 401 status))
 ;;
 
 let test_boundary_turns_exceptions_into_500 _env () =
@@ -658,9 +690,10 @@ let test_boundary_turns_exceptions_into_500 _env () =
     Service.For_testing.respond_or_500 (fun () ->
       raise (Sys_error "Mutex.lock: Resource deadlock avoided"))
   in
-  Alcotest.(check int) "500" 500 r.Response.status;
-  Alcotest.(check int)
-    "a normal response passes through"
+  Windtrap.equal Windtrap.int ~msg:"500" 500 r.Response.status;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a normal response passes through"
     201
     (Service.For_testing.respond_or_500 (fun () -> Response.created "x")).Response.status
 ;;
@@ -694,7 +727,7 @@ let test_dispatch_turns_auth_exception_into_500 _env () =
       req
       (Cohttp_eio.Body.of_string "")
   in
-  Alcotest.(check int) "500, not a dropped connection" 500 r.Response.status
+  Windtrap.equal Windtrap.int ~msg:"500, not a dropped connection" 500 r.Response.status
 ;;
 
 let hs256_http_auth () =
@@ -742,19 +775,22 @@ let dispatch_signed_hs256 temporal =
 let test_http_verified_token_boundaries _env () =
   let now = Unix.gettimeofday () in
   let status temporal = (dispatch_signed_hs256 temporal).Response.status in
-  Alcotest.(check int)
-    "valid verified token → 200"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"valid verified token → 200"
     200
     (status [ "exp", `Int (int_of_float (now +. 3600.)) ]);
-  Alcotest.(check int)
-    "nbf in the future → 401, not 500 (BUG-079)"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"nbf in the future → 401, not 500 (BUG-079)"
     401
     (status
        [ "nbf", `Int (int_of_float (now +. 3600.))
        ; "exp", `Int (int_of_float (now +. 7200.))
        ]);
-  Alcotest.(check int)
-    "malformed exp → 401, not 500 (BUG-079)"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"malformed exp → 401, not 500 (BUG-079)"
     401
     (status [ "exp", `String "soon" ])
 ;;
@@ -762,130 +798,94 @@ let test_http_verified_token_boundaries _env () =
 let () =
   Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
-    Alcotest.run
+    Windtrap.run
       "service"
-      [ ( "built-ins"
-        , [ Alcotest.test_case "GET /healthz → 200" `Quick (test_healthz env)
-          ; Alcotest.test_case
-              "GET /metrics, no renderer → 404"
-              `Quick
-              (test_metrics_no_renderer env)
-          ] )
-      ; ( "routing"
-        , [ Alcotest.test_case "unknown path → 404" `Quick (test_not_found env)
-          ; Alcotest.test_case "wrong method → 405" `Quick (test_method_not_allowed env)
-          ; Alcotest.test_case "public route → 200" `Quick (test_public_route env)
-          ; Alcotest.test_case "path param extracted" `Quick (test_path_param env)
-          ; Alcotest.test_case "POST body echoed" `Quick (test_echo_body env)
-          ] )
-      ; ( "auth"
-        , [ Alcotest.test_case "JWT route, no token → 401" `Quick (test_jwt_no_token env)
-          ; Alcotest.test_case
-              "JWT route, valid token → 200"
-              `Quick
-              (test_jwt_valid_token env)
-          ; Alcotest.test_case
-              "JWT route, wrong scope → 403"
-              `Quick
-              (test_jwt_missing_scope env)
-          ; Alcotest.test_case
+      [ Windtrap.group
+          "built-ins"
+          [ Windtrap.test "GET /healthz → 200" (test_healthz env)
+          ; Windtrap.test "GET /metrics, no renderer → 404" (test_metrics_no_renderer env)
+          ]
+      ; Windtrap.group
+          "routing"
+          [ Windtrap.test "unknown path → 404" (test_not_found env)
+          ; Windtrap.test "wrong method → 405" (test_method_not_allowed env)
+          ; Windtrap.test "public route → 200" (test_public_route env)
+          ; Windtrap.test "path param extracted" (test_path_param env)
+          ; Windtrap.test "POST body echoed" (test_echo_body env)
+          ]
+      ; Windtrap.group
+          "auth"
+          [ Windtrap.test "JWT route, no token → 401" (test_jwt_no_token env)
+          ; Windtrap.test "JWT route, valid token → 200" (test_jwt_valid_token env)
+          ; Windtrap.test "JWT route, wrong scope → 403" (test_jwt_missing_scope env)
+          ; Windtrap.test
               "Unverified_dev_only without opt-in → startup Config error"
-              `Quick
               (test_unverified_jwt_refused_without_opt_in env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "Unverified_dev_only metrics_auth without opt-in → startup Config error"
-              `Quick
               (test_unverified_metrics_auth_refused_without_opt_in env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "Jwks_url not https → startup Config error"
-              `Quick
               (test_http_jwks_url_refused env)
-          ; Alcotest.test_case
-              "Jwks_url https → starts"
-              `Quick
-              (test_https_jwks_url_starts env)
-          ] )
-      ; ( "resilience"
-        , [ Alcotest.test_case
+          ; Windtrap.test "Jwks_url https → starts" (test_https_jwks_url_starts env)
+          ]
+      ; Windtrap.group
+          "resilience"
+          [ Windtrap.test
               "non-object JWT payload → 401, not a closed connection"
-              `Quick
               (test_non_object_jwt_payload_gets_401 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "exception outside the handler → 500"
-              `Quick
               (test_boundary_turns_exceptions_into_500 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "auth exception through dispatch → 500"
-              `Quick
               (test_dispatch_turns_auth_exception_into_500 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "verified JWT nbf/exp through the HTTP adapter (BUG-079)"
-              `Quick
               (test_http_verified_token_boundaries env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "handler exception → 500, server survives"
-              `Quick
               (test_handler_exception env)
-          ; Alcotest.test_case
-              "external stop on listen"
-              `Quick
-              (test_external_stop_on_listen env)
-          ; Alcotest.test_case
+          ; Windtrap.test "external stop on listen" (test_external_stop_on_listen env)
+          ; Windtrap.test
               "external stop does not wait out the drain window"
-              `Quick
               (test_external_stop_is_prompt env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "readyz flips to 503 before the listener closes"
-              `Quick
               (test_readyz_flips_before_listener_closes env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "malformed PORT is a startup Config error"
-              `Quick
               (test_malformed_port_is_config_error env)
-          ] )
-      ; ( "metrics"
-        , [ Alcotest.test_case
-              "requests counter with route label"
-              `Quick
-              (test_metrics_counter env)
-          ; Alcotest.test_case
-              "duration histogram present"
-              `Quick
-              (test_metrics_duration env)
-          ; Alcotest.test_case
+          ]
+      ; Windtrap.group
+          "metrics"
+          [ Windtrap.test "requests counter with route label" (test_metrics_counter env)
+          ; Windtrap.test "duration histogram present" (test_metrics_duration env)
+          ; Windtrap.test
               "route label uses pattern not path"
-              `Quick
               (test_metrics_route_pattern_label env)
-          ] )
-      ; ( "auth_before_body"
-        , [ Alcotest.test_case
+          ]
+      ; Windtrap.group
+          "auth_before_body"
+          [ Windtrap.test
               "unauth + large body → 401 not 413"
-              `Quick
               (test_unauth_large_body_gets_401 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "auth ok + oversized body → 413"
-              `Quick
               (test_auth_oversized_body_gets_413 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "public route + oversized body → 413"
-              `Quick
               (test_public_oversized_body_gets_413 env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "body at exactly N accepted, N+1 rejected (BUG-073)"
-              `Quick
               (test_body_exactly_at_limit env)
-          ; Alcotest.test_case
-              "empty body accepted (BUG-073)"
-              `Quick
-              (test_empty_body_accepted env)
-          ; Alcotest.test_case
+          ; Windtrap.test "empty body accepted (BUG-073)" (test_empty_body_accepted env)
+          ; Windtrap.test
               "chunked body at N accepted, N+1 rejected (BUG-073)"
-              `Quick
               (test_chunked_body_limit env)
-          ; Alcotest.test_case
+          ; Windtrap.test
               "api key file read failure is startup error"
-              `Quick
               (test_api_key_file_error_is_startup_error env)
-          ] )
+          ]
       ])
 ;;

@@ -1,15 +1,17 @@
-let check_int = Alcotest.(check int)
-let check_str = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
+let check_str msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
-let check_status =
-  Alcotest.(
-    check
-      (of_pp (fun fmt -> function
-         | Sol_process.Exited n -> Format.fprintf fmt "Exited %d" n
-         | Signaled n -> Format.fprintf fmt "Signaled %d" n
-         | Stopped n -> Format.fprintf fmt "Stopped %d" n)))
+let status_testable =
+  Windtrap.testable
+    ~pp:(fun fmt -> function
+       | Sol_process.Exited n -> Format.fprintf fmt "Exited %d" n
+       | Signaled n -> Format.fprintf fmt "Signaled %d" n
+       | Stopped n -> Format.fprintf fmt "Stopped %d" n)
+    ()
 ;;
+
+let check_status msg expected actual = Windtrap.equal status_testable ~msg expected actual
 
 let test_run_success () =
   let r = Sol_process.run_shell ~echo:false "echo hello" in
@@ -145,7 +147,7 @@ let fd_count () = Array.length (Sys.readdir "/proc/self/fd")
 
 let check_drained label runner =
   match with_alarm 5.0 runner with
-  | Error `Timed_out -> Alcotest.fail (label ^ " stalled on a full stderr pipe")
+  | Error `Timed_out -> Windtrap.fail (label ^ " stalled on a full stderr pipe")
   | Ok r ->
     check_str (label ^ " stdout intact") "done" r.Sol_process.stdout;
     check_int (label ^ " stderr drained") 262144 (String.length r.Sol_process.stderr)
@@ -197,62 +199,59 @@ let test_interrupted_capture_cleans_up () =
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "sol_process"
-    [ ( "run"
-      , [ Alcotest.test_case "success result" `Quick test_run_success
-        ; Alcotest.test_case "non-zero exit code" `Quick test_run_nonzero
-        ; Alcotest.test_case
-            "shell-compatible status codes"
-            `Quick
-            test_status_shell_codes
-        ; Alcotest.test_case "signaled status" `Quick test_run_signaled
-        ; Alcotest.test_case "stderr captured" `Quick test_run_stderr_captured
-        ; Alcotest.test_case "both streams" `Quick test_run_both_streams
-        ; Alcotest.test_case "command not found" `Quick test_run_command_not_found
-        ] )
-    ; ( "run_argv"
-      , [ Alcotest.test_case "basic argv" `Quick test_run_argv_basic
-        ; Alcotest.test_case "special chars quoted" `Quick test_run_argv_special_chars
-        ; Alcotest.test_case
-            "no shell interpretation"
-            `Quick
-            test_run_argv_no_shell_interpretation
-        ; Alcotest.test_case "command not found" `Quick test_run_argv_command_not_found
-        ] )
-    ; ( "lines"
-      , [ Alcotest.test_case "basic lines" `Quick test_lines_basic
-        ; Alcotest.test_case "blank lines filtered" `Quick test_lines_empty_filtered
-        ; Alcotest.test_case "stderr excluded" `Quick test_lines_stderr_not_captured
-        ] )
-    ; "output", [ Alcotest.test_case "trimmed string" `Quick test_output_trimmed ]
-    ; ( "run_rc"
-      , [ Alcotest.test_case "success → 0" `Quick test_run_rc_success
-        ; Alcotest.test_case "failure → non-zero" `Quick test_run_rc_failure
-        ] )
-    ; ( "run_ok"
-      , [ Alcotest.test_case "success → no raise" `Quick test_run_ok_success
-        ; Alcotest.test_case "failure → Failure" `Quick test_run_ok_failure
-        ] )
-    ; ( "streams"
-      , [ Alcotest.test_case
+    [ Windtrap.group
+        "run"
+        [ Windtrap.test "success result" test_run_success
+        ; Windtrap.test "non-zero exit code" test_run_nonzero
+        ; Windtrap.test "shell-compatible status codes" test_status_shell_codes
+        ; Windtrap.test "signaled status" test_run_signaled
+        ; Windtrap.test "stderr captured" test_run_stderr_captured
+        ; Windtrap.test "both streams" test_run_both_streams
+        ; Windtrap.test "command not found" test_run_command_not_found
+        ]
+    ; Windtrap.group
+        "run_argv"
+        [ Windtrap.test "basic argv" test_run_argv_basic
+        ; Windtrap.test "special chars quoted" test_run_argv_special_chars
+        ; Windtrap.test "no shell interpretation" test_run_argv_no_shell_interpretation
+        ; Windtrap.test "command not found" test_run_argv_command_not_found
+        ]
+    ; Windtrap.group
+        "lines"
+        [ Windtrap.test "basic lines" test_lines_basic
+        ; Windtrap.test "blank lines filtered" test_lines_empty_filtered
+        ; Windtrap.test "stderr excluded" test_lines_stderr_not_captured
+        ]
+    ; Windtrap.group "output" [ Windtrap.test "trimmed string" test_output_trimmed ]
+    ; Windtrap.group
+        "run_rc"
+        [ Windtrap.test "success → 0" test_run_rc_success
+        ; Windtrap.test "failure → non-zero" test_run_rc_failure
+        ]
+    ; Windtrap.group
+        "run_ok"
+        [ Windtrap.test "success → no raise" test_run_ok_success
+        ; Windtrap.test "failure → Failure" test_run_ok_failure
+        ]
+    ; Windtrap.group
+        "streams"
+        [ Windtrap.test
             "shell drains both streams (CODE_LAYER-023)"
-            `Quick
             test_shell_drains_both_streams
-        ; Alcotest.test_case
+        ; Windtrap.test
             "argv drains both streams (CODE_LAYER-023)"
-            `Quick
             test_argv_drains_both_streams
-        ] )
-    ; ( "ownership"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "ownership"
+        [ Windtrap.test
             "handled signal completes capture (CODE_LAYER-025)"
-            `Quick
             test_handled_signal_completes_capture
-        ; Alcotest.test_case
+        ; Windtrap.test
             "interrupted capture cleans up (CODE_LAYER-025)"
-            `Quick
             test_interrupted_capture_cleans_up
-        ] )
+        ]
     ]
 ;;

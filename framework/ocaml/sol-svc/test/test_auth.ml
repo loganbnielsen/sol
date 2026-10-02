@@ -6,51 +6,51 @@ let api_key k = headers_of [ "x-api-key", k ]
 let test_public () =
   match Test_auth_internal.validate `Public (headers_of []) with
   | Ok { principal = Auth.Public } -> ()
-  | _ -> Alcotest.fail "expected Public principal"
+  | _ -> Windtrap.fail "expected Public principal"
 ;;
 
 let test_api_key_valid () =
   let read_api_key () = Some "secretkey123" in
   match Test_auth_internal.validate ~read_api_key `Api_key (api_key "secretkey123") with
   | Ok { principal = Auth.Service { key_id } } ->
-    Alcotest.(check string) "key_id truncated" "secretke" key_id
-  | _ -> Alcotest.fail "expected Service principal"
+    Windtrap.equal Windtrap.string ~msg:"key_id truncated" "secretke" key_id
+  | _ -> Windtrap.fail "expected Service principal"
 ;;
 
 let test_api_key_wrong () =
   let read_api_key () = Some "secretkey123" in
   match Test_auth_internal.validate ~read_api_key `Api_key (api_key "wrongkey") with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_api_key_missing_header () =
   let read_api_key () = Some "secretkey123" in
   match Test_auth_internal.validate ~read_api_key `Api_key (headers_of []) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_api_key_without_reader_fails_closed () =
   match Test_auth_internal.validate `Api_key (api_key "secretkey123") with
   | Error (`Server_error _) -> ()
-  | _ -> Alcotest.fail "expected Server_error"
+  | _ -> Windtrap.fail "expected Server_error"
 ;;
 
 let test_api_key_uses_injected_reader () =
   let read_api_key () = Some "secretkey123" in
   match Test_auth_internal.validate ~read_api_key `Api_key (api_key "secretkey123") with
   | Ok { principal = Auth.Service { key_id } } ->
-    Alcotest.(check string) "key_id truncated" "secretke" key_id
-  | _ -> Alcotest.fail "expected Service principal"
+    Windtrap.equal Windtrap.string ~msg:"key_id truncated" "secretke" key_id
+  | _ -> Windtrap.fail "expected Service principal"
 ;;
 
 let test_api_key_empty_secret_fails_closed () =
   let read_api_key () = Some "" in
   match Test_auth_internal.validate ~read_api_key `Api_key (api_key "") with
   | Error (`Server_error _) -> ()
-  | Ok _ -> Alcotest.fail "empty API key must not authenticate"
-  | Error _ -> Alcotest.fail "expected Server_error for empty configured API key"
+  | Ok _ -> Windtrap.fail "empty API key must not authenticate"
+  | Error _ -> Windtrap.fail "expected Server_error for empty configured API key"
 ;;
 
 let make_jwt ?(sub = "user1") ?(scopes = [ "read" ]) ?(exp_offset = 3600.0) () =
@@ -89,42 +89,43 @@ let test_jwt_valid () =
   let tok = make_jwt ~scopes:[ "read"; "write" ] () in
   match Test_auth_internal.validate (jwt_cfg [ "read"; "write" ]) (bearer tok) with
   | Ok { principal = Auth.User { sub; scopes; _ } } ->
-    Alcotest.(check string) "sub" "user1" sub;
-    Alcotest.(check bool) "scopes" true (List.mem "write" scopes)
-  | _ -> Alcotest.fail "expected User principal"
+    Windtrap.equal Windtrap.string ~msg:"sub" "user1" sub;
+    Windtrap.equal Windtrap.bool ~msg:"scopes" true (List.mem "write" scopes)
+  | _ -> Windtrap.fail "expected User principal"
 ;;
 
 let test_jwt_superset_scopes () =
   let tok = make_jwt ~scopes:[ "read"; "write"; "admin" ] () in
   match Test_auth_internal.validate (jwt_cfg [ "read" ]) (bearer tok) with
   | Ok { principal = Auth.User _ } -> ()
-  | _ -> Alcotest.fail "expected User principal"
+  | _ -> Windtrap.fail "expected User principal"
 ;;
 
 let test_jwt_missing_scope () =
   let tok = make_jwt ~scopes:[ "read" ] () in
   match Test_auth_internal.validate (jwt_cfg [ "read"; "write" ]) (bearer tok) with
   | Error (`Forbidden msg) ->
-    Alcotest.(check bool) "mentions missing scope" true (String.length msg > 0)
-  | _ -> Alcotest.fail "expected Forbidden"
+    Windtrap.equal Windtrap.bool ~msg:"mentions missing scope" true (String.length msg > 0)
+  | _ -> Windtrap.fail "expected Forbidden"
 ;;
 
 let test_jwt_expired () =
   let tok = make_jwt ~exp_offset:(-1.0) () in
   match Test_auth_internal.validate (jwt_cfg []) (bearer tok) with
   | Error (`Unauthorized msg) ->
-    Alcotest.(check bool)
-      "expired message"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"expired message"
       true
       (let m = String.lowercase_ascii msg in
        String.length m > 0)
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_jwt_malformed () =
   match Test_auth_internal.validate (jwt_cfg []) (bearer "not.a.jwt.at.all.extra") with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_jwt_wrong_bearer_scheme () =
@@ -132,13 +133,13 @@ let test_jwt_wrong_bearer_scheme () =
     Test_auth_internal.validate (jwt_cfg []) (headers_of [ "authorization", "Token abc" ])
   with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_jwt_payload_not_base64 () =
   match Test_auth_internal.validate (jwt_cfg []) (bearer "header.%.signature") with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_jwt_payload_not_json () =
@@ -146,13 +147,13 @@ let test_jwt_payload_not_json () =
     Test_auth_internal.validate (jwt_cfg []) (bearer (make_jwt_with_payload "not json"))
   with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let test_jwt_missing_header () =
   match Test_auth_internal.validate (jwt_cfg []) (headers_of []) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized"
+  | _ -> Windtrap.fail "expected Unauthorized"
 ;;
 
 let issuer = "https://issuer.example.com"
@@ -261,9 +262,9 @@ let test_jwt_verified_hs256_valid () =
       (bearer tok)
   with
   | Ok { principal = Auth.User { sub; scopes; _ } } ->
-    Alcotest.(check string) "sub" "user1" sub;
-    Alcotest.(check bool) "scopes" true (List.mem "write" scopes)
-  | _ -> Alcotest.fail "expected User principal"
+    Windtrap.equal Windtrap.string ~msg:"sub" "user1" sub;
+    Windtrap.equal Windtrap.bool ~msg:"scopes" true (List.mem "write" scopes)
+  | _ -> Windtrap.fail "expected User principal"
 ;;
 
 let test_jwt_verified_rs256_valid () =
@@ -271,15 +272,16 @@ let test_jwt_verified_rs256_valid () =
   match
     Test_auth_internal.validate (rs256_verified_cfg ~scopes:[ "read" ] ()) (bearer tok)
   with
-  | Ok { principal = Auth.User { sub; _ } } -> Alcotest.(check string) "sub" "user1" sub
-  | _ -> Alcotest.fail "expected User principal"
+  | Ok { principal = Auth.User { sub; _ } } ->
+    Windtrap.equal Windtrap.string ~msg:"sub" "user1" sub
+  | _ -> Windtrap.fail "expected User principal"
 ;;
 
 let test_jwt_verified_tampered_signature () =
   let tok = tamper_signature (sign_hs256 ()) in
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer tok) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized (invalid signature)"
+  | _ -> Windtrap.fail "expected Unauthorized (invalid signature)"
 ;;
 
 let test_jwt_verified_wrong_alg_rejected () =
@@ -290,28 +292,28 @@ let test_jwt_verified_wrong_alg_rejected () =
       (bearer tok)
   with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized (alg not permitted)"
+  | _ -> Windtrap.fail "expected Unauthorized (alg not permitted)"
 ;;
 
 let test_jwt_verified_wrong_issuer () =
   let tok = sign_hs256 ~iss:"https://someone-else.example.com" () in
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer tok) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized (issuer mismatch)"
+  | _ -> Windtrap.fail "expected Unauthorized (issuer mismatch)"
 ;;
 
 let test_jwt_verified_wrong_audience () =
   let tok = sign_hs256 ~aud:"someone-else" () in
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer tok) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized (audience mismatch)"
+  | _ -> Windtrap.fail "expected Unauthorized (audience mismatch)"
 ;;
 
 let test_jwt_verified_expired () =
   let tok = sign_hs256 ~exp_offset:(-1.0) () in
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer tok) with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "expected Unauthorized (expired)"
+  | _ -> Windtrap.fail "expected Unauthorized (expired)"
 ;;
 
 let sign_claims payload =
@@ -333,15 +335,15 @@ let verified_claims ?(sub = "user1") ?(scopes = [ "read" ]) temporal =
 let check_unauthorized label token =
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer token) with
   | Error (`Unauthorized _) -> ()
-  | Error _ -> Alcotest.fail (label ^ ": expected Unauthorized")
-  | Ok _ -> Alcotest.fail (label ^ ": expected rejection")
+  | Error _ -> Windtrap.fail (label ^ ": expected Unauthorized")
+  | Ok _ -> Windtrap.fail (label ^ ": expected rejection")
 ;;
 
 let check_authenticated label token =
   match Test_auth_internal.validate (hs256_verified_cfg ()) (bearer token) with
   | Ok { principal = Auth.User _ } -> ()
-  | Error (`Unauthorized m) -> Alcotest.fail (label ^ ": rejected: " ^ m)
-  | _ -> Alcotest.fail (label ^ ": expected User principal")
+  | Error (`Unauthorized m) -> Windtrap.fail (label ^ ": rejected: " ^ m)
+  | _ -> Windtrap.fail (label ^ ": expected User principal")
 ;;
 
 let test_jwt_verified_future_nbf_rejected () =
@@ -403,7 +405,7 @@ let test_jwt_verified_missing_scope () =
       (bearer tok)
   with
   | Error (`Forbidden _) -> ()
-  | _ -> Alcotest.fail "expected Forbidden (missing scope)"
+  | _ -> Windtrap.fail "expected Forbidden (missing scope)"
 ;;
 
 let jwks_url_cfg () =
@@ -427,16 +429,16 @@ let test_jwt_verified_jwks_fetch_failure_fails_closed () =
     Test_auth_internal.validate ~fetch_jwks:failing_fetch (jwks_url_cfg ()) (bearer tok)
   with
   | Error (`Server_error _) -> ()
-  | Ok _ -> Alcotest.fail "must not fall back to unverified on JWKS fetch failure"
-  | Error _ -> Alcotest.fail "expected Server_error (fail closed)"
+  | Ok _ -> Windtrap.fail "must not fall back to unverified on JWKS fetch failure"
+  | Error _ -> Windtrap.fail "expected Server_error (fail closed)"
 ;;
 
 let test_jwt_verified_jwks_url_without_fetcher_fails_closed () =
   let tok = sign_rs256 () in
   match Test_auth_internal.validate (jwks_url_cfg ()) (bearer tok) with
   | Error (`Server_error _) -> ()
-  | Ok _ -> Alcotest.fail "must not fall back to unverified with no fetch_jwks configured"
-  | Error _ -> Alcotest.fail "expected Server_error (fail closed)"
+  | Ok _ -> Windtrap.fail "must not fall back to unverified with no fetch_jwks configured"
+  | Error _ -> Windtrap.fail "expected Server_error (fail closed)"
 ;;
 
 let test_jwt_verified_malformed_static_jwks_fails_closed () =
@@ -456,8 +458,8 @@ let test_jwt_verified_malformed_static_jwks_fails_closed () =
   in
   match Test_auth_internal.validate cfg (bearer tok) with
   | Error (`Server_error _) -> ()
-  | Ok _ -> Alcotest.fail "malformed static JWKS must not authenticate"
-  | Error _ -> Alcotest.fail "expected Server_error for malformed static JWKS"
+  | Ok _ -> Windtrap.fail "malformed static JWKS must not authenticate"
+  | Error _ -> Windtrap.fail "expected Server_error for malformed static JWKS"
 ;;
 
 let test_jwt_payload_not_an_object () =
@@ -465,10 +467,10 @@ let test_jwt_payload_not_an_object () =
     Test_auth_internal.validate (jwt_cfg []) (bearer (make_jwt_with_payload "[]"))
   with
   | Error (`Unauthorized _) -> ()
-  | Error _ -> Alcotest.fail "expected Unauthorized"
-  | Ok _ -> Alcotest.fail "a non-object payload must be rejected"
+  | Error _ -> Windtrap.fail "expected Unauthorized"
+  | Ok _ -> Windtrap.fail "a non-object payload must be rejected"
   | exception e ->
-    Alcotest.failf "a non-object payload must be a 401, not %s" (Printexc.to_string e)
+    Windtrap.failf "a non-object payload must be a 401, not %s" (Printexc.to_string e)
 ;;
 
 let jwks_cfg_for url =
@@ -501,8 +503,12 @@ let test_concurrent_cache_misses_share_one_fetch () =
     | exception e -> "raised: " ^ Printexc.to_string e
   in
   let a, b = Eio.Fiber.pair validate validate in
-  Alcotest.(check (pair string string)) "both requests verified" ("ok", "ok") (a, b);
-  Alcotest.(check int) "one fetch served both" 1 !fetches
+  Windtrap.equal
+    (Windtrap.pair Windtrap.string Windtrap.string)
+    ~msg:"both requests verified"
+    ("ok", "ok")
+    (a, b);
+  Windtrap.equal Windtrap.int ~msg:"one fetch served both" 1 !fetches
 ;;
 
 let seed_jwks_cache ~url ~age_s doc =
@@ -532,8 +538,8 @@ let test_unknown_kid_refetches () =
        (bearer (sign_rs256 ()))
    with
    | Ok _ -> ()
-   | Error _ -> Alcotest.fail "a key rotated in after the last fetch must be found");
-  Alcotest.(check int) "refetched once" 1 !fetches
+   | Error _ -> Windtrap.fail "a key rotated in after the last fetch must be found");
+  Windtrap.equal Windtrap.int ~msg:"refetched once" 1 !fetches
 ;;
 
 let test_unknown_kid_refetch_is_rate_limited () =
@@ -551,8 +557,8 @@ let test_unknown_kid_refetch_is_rate_limited () =
        (bearer (sign_rs256 ()))
    with
    | Error (`Unauthorized _) -> ()
-   | _ -> Alcotest.fail "expected Unauthorized without a refetch");
-  Alcotest.(check int) "no refetch inside the interval" 0 !fetches
+   | _ -> Windtrap.fail "expected Unauthorized without a refetch");
+  Windtrap.equal Windtrap.int ~msg:"no refetch inside the interval" 0 !fetches
 ;;
 
 let test_failed_fetch_is_shared_not_repeated () =
@@ -574,10 +580,10 @@ let test_failed_fetch_is_shared_not_repeated () =
         (bearer tok)
     with
     | Error (`Server_error _) -> ()
-    | _ -> Alcotest.fail "expected Server_error while the IdP is down"
+    | _ -> Windtrap.fail "expected Server_error while the IdP is down"
   in
   Eio.Fiber.all [ validate; validate; validate; validate; validate ];
-  Alcotest.(check int) "one fetch for five waiting requests" 1 !fetches
+  Windtrap.equal Windtrap.int ~msg:"one fetch for five waiting requests" 1 !fetches
 ;;
 
 let test_unknown_kid_with_failed_refetch_is_401 () =
@@ -590,110 +596,80 @@ let test_unknown_kid_with_failed_refetch_is_401 () =
       (bearer (sign_rs256 ()))
   with
   | Error (`Unauthorized _) -> ()
-  | _ -> Alcotest.fail "an unknown kid is a 401 even when the refetch fails"
+  | _ -> Windtrap.fail "an unknown kid is a 401 even when the refetch fails"
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "auth"
-    [ "public", [ Alcotest.test_case "returns Public principal" `Quick test_public ]
-    ; ( "api_key"
-      , [ Alcotest.test_case "valid key" `Quick test_api_key_valid
-        ; Alcotest.test_case "injected reader" `Quick test_api_key_uses_injected_reader
-        ; Alcotest.test_case "wrong key → 401" `Quick test_api_key_wrong
-        ; Alcotest.test_case "missing header → 401" `Quick test_api_key_missing_header
-        ; Alcotest.test_case
-            "no reader fails closed"
-            `Quick
-            test_api_key_without_reader_fails_closed
-        ; Alcotest.test_case
-            "empty secret fails closed"
-            `Quick
-            test_api_key_empty_secret_fails_closed
-        ] )
-    ; ( "jwt_unverified"
-      , [ Alcotest.test_case "valid token" `Quick test_jwt_valid
-        ; Alcotest.test_case "superset scopes → ok" `Quick test_jwt_superset_scopes
-        ; Alcotest.test_case "missing scope → 403" `Quick test_jwt_missing_scope
-        ; Alcotest.test_case "expired → 401" `Quick test_jwt_expired
-        ; Alcotest.test_case "malformed → 401" `Quick test_jwt_malformed
-        ; Alcotest.test_case "wrong bearer → 401" `Quick test_jwt_wrong_bearer_scheme
-        ; Alcotest.test_case "bad payload b64 → 401" `Quick test_jwt_payload_not_base64
-        ; Alcotest.test_case "bad payload JSON → 401" `Quick test_jwt_payload_not_json
-        ; Alcotest.test_case "missing header → 401" `Quick test_jwt_missing_header
-        ] )
-    ; ( "jwks (BUG-053)"
-      , [ Alcotest.test_case
-            "non-object payload → 401"
-            `Quick
-            test_jwt_payload_not_an_object
-        ; Alcotest.test_case
+    [ Windtrap.group "public" [ Windtrap.test "returns Public principal" test_public ]
+    ; Windtrap.group
+        "api_key"
+        [ Windtrap.test "valid key" test_api_key_valid
+        ; Windtrap.test "injected reader" test_api_key_uses_injected_reader
+        ; Windtrap.test "wrong key → 401" test_api_key_wrong
+        ; Windtrap.test "missing header → 401" test_api_key_missing_header
+        ; Windtrap.test "no reader fails closed" test_api_key_without_reader_fails_closed
+        ; Windtrap.test "empty secret fails closed" test_api_key_empty_secret_fails_closed
+        ]
+    ; Windtrap.group
+        "jwt_unverified"
+        [ Windtrap.test "valid token" test_jwt_valid
+        ; Windtrap.test "superset scopes → ok" test_jwt_superset_scopes
+        ; Windtrap.test "missing scope → 403" test_jwt_missing_scope
+        ; Windtrap.test "expired → 401" test_jwt_expired
+        ; Windtrap.test "malformed → 401" test_jwt_malformed
+        ; Windtrap.test "wrong bearer → 401" test_jwt_wrong_bearer_scheme
+        ; Windtrap.test "bad payload b64 → 401" test_jwt_payload_not_base64
+        ; Windtrap.test "bad payload JSON → 401" test_jwt_payload_not_json
+        ; Windtrap.test "missing header → 401" test_jwt_missing_header
+        ]
+    ; Windtrap.group
+        "jwks (BUG-053)"
+        [ Windtrap.test "non-object payload → 401" test_jwt_payload_not_an_object
+        ; Windtrap.test
             "concurrent cache misses share one fetch"
-            `Quick
             test_concurrent_cache_misses_share_one_fetch
-        ; Alcotest.test_case "unknown kid refetches" `Quick test_unknown_kid_refetches
-        ; Alcotest.test_case
+        ; Windtrap.test "unknown kid refetches" test_unknown_kid_refetches
+        ; Windtrap.test
             "unknown kid refetch is rate-limited"
-            `Quick
             test_unknown_kid_refetch_is_rate_limited
-        ; Alcotest.test_case
+        ; Windtrap.test
             "failed fetch is shared, not repeated"
-            `Quick
             test_failed_fetch_is_shared_not_repeated
-        ; Alcotest.test_case
+        ; Windtrap.test
             "unknown kid with failed refetch → 401"
-            `Quick
             test_unknown_kid_with_failed_refetch_is_401
-        ] )
-    ; ( "jwt_verified"
-      , [ Alcotest.test_case "HS256 valid → ok" `Quick test_jwt_verified_hs256_valid
-        ; Alcotest.test_case
-            "RS256 valid (JWKS) → ok"
-            `Quick
-            test_jwt_verified_rs256_valid
-        ; Alcotest.test_case
-            "tampered signature → 401"
-            `Quick
-            test_jwt_verified_tampered_signature
-        ; Alcotest.test_case
-            "alg not in allowlist → 401"
-            `Quick
-            test_jwt_verified_wrong_alg_rejected
-        ; Alcotest.test_case "wrong issuer → 401" `Quick test_jwt_verified_wrong_issuer
-        ; Alcotest.test_case
-            "wrong audience → 401"
-            `Quick
-            test_jwt_verified_wrong_audience
-        ; Alcotest.test_case "expired → 401" `Quick test_jwt_verified_expired
-        ; Alcotest.test_case
-            "future nbf → 401 (BUG-079)"
-            `Quick
-            test_jwt_verified_future_nbf_rejected
-        ; Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "jwt_verified"
+        [ Windtrap.test "HS256 valid → ok" test_jwt_verified_hs256_valid
+        ; Windtrap.test "RS256 valid (JWKS) → ok" test_jwt_verified_rs256_valid
+        ; Windtrap.test "tampered signature → 401" test_jwt_verified_tampered_signature
+        ; Windtrap.test "alg not in allowlist → 401" test_jwt_verified_wrong_alg_rejected
+        ; Windtrap.test "wrong issuer → 401" test_jwt_verified_wrong_issuer
+        ; Windtrap.test "wrong audience → 401" test_jwt_verified_wrong_audience
+        ; Windtrap.test "expired → 401" test_jwt_verified_expired
+        ; Windtrap.test "future nbf → 401 (BUG-079)" test_jwt_verified_future_nbf_rejected
+        ; Windtrap.test
             "current nbf → ok (BUG-079)"
-            `Quick
             test_jwt_verified_current_nbf_accepted
-        ; Alcotest.test_case
+        ; Windtrap.test
             "fractional NumericDate boundaries (BUG-079)"
-            `Quick
             test_jwt_verified_fractional_numeric_dates
-        ; Alcotest.test_case
+        ; Windtrap.test
             "malformed temporal claims → 401 (BUG-079)"
-            `Quick
             test_jwt_verified_malformed_temporal_claims
-        ; Alcotest.test_case "missing scope → 403" `Quick test_jwt_verified_missing_scope
-        ; Alcotest.test_case
+        ; Windtrap.test "missing scope → 403" test_jwt_verified_missing_scope
+        ; Windtrap.test
             "JWKS fetch failure fails closed → 500"
-            `Quick
             test_jwt_verified_jwks_fetch_failure_fails_closed
-        ; Alcotest.test_case
+        ; Windtrap.test
             "Jwks_url with no fetcher fails closed → 500"
-            `Quick
             test_jwt_verified_jwks_url_without_fetcher_fails_closed
-        ; Alcotest.test_case
+        ; Windtrap.test
             "malformed static JWKS fails closed → 500"
-            `Quick
             test_jwt_verified_malformed_static_jwks_fails_closed
-        ] )
+        ]
     ]
 ;;

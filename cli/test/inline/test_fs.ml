@@ -1,4 +1,4 @@
-let check_bool = Alcotest.(check bool)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let in_temp f =
   let root = Filename.temp_dir "sol-fs-" "" in
@@ -55,10 +55,11 @@ let test_write_atomic () =
     let path = Filename.concat root "f" in
     Sol_cli_fs.write_atomic ~perm:0o600 path "one" |> Result.get_ok;
     Sol_cli_fs.write_atomic ~perm:0o600 path "two" |> Result.get_ok;
-    Alcotest.(check string) "the last write" "two" (read path);
-    Alcotest.(check int) "the mode asked for" 0o600 (Unix.stat path).st_perm;
-    Alcotest.(check (list string))
-      "no temporary file left behind"
+    Windtrap.equal Windtrap.string ~msg:"the last write" "two" (read path);
+    Windtrap.equal Windtrap.int ~msg:"the mode asked for" 0o600 (Unix.stat path).st_perm;
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"no temporary file left behind"
       [ "f" ]
       (Array.to_list (Sys.readdir root)))
 ;;
@@ -70,7 +71,11 @@ let test_with_temp_file () =
       seen := path;
       read path)
   in
-  Alcotest.(check (result string string)) "f read the content" (Ok "content") result;
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"f read the content"
+    (Ok "content")
+    result;
   check_bool "removed afterwards" false (Sys.file_exists !seen)
 ;;
 
@@ -87,12 +92,14 @@ let test_copy_tree () =
     write (Filename.concat src "app/_build/junk") "x";
     let dst = Filename.concat root "dst" in
     Sol_cli_fs.copy_tree ~exclude:[ "_build"; ".git" ] ~src ~dst |> Result.get_ok;
-    Alcotest.(check string)
-      "a file"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"a file"
       "let () = ()"
       (read (Filename.concat dst "app/main.ml"));
-    Alcotest.(check int)
-      "its mode"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"its mode"
       0o755
       (Unix.stat (Filename.concat dst "app/run.sh")).st_perm;
     check_bool
@@ -121,22 +128,24 @@ let test_copy_tree_preserves_symlinks () =
     let dst = Filename.concat root "dst" in
     (match Sol_cli_fs.copy_tree ~exclude:[] ~src ~dst with
      | Ok () -> ()
-     | Error e -> Alcotest.failf "copy_tree failed: %s" e);
+     | Error e -> Windtrap.failf "copy_tree failed: %s" e);
     let link name = Filename.concat (Filename.concat dst "app") name in
     check_bool
       "external file link stays a link (contents not imported)"
       true
       (is_symlink (link "external-file"));
-    Alcotest.(check string)
-      "external file target preserved"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"external file target preserved"
       outside_file
       (Unix.readlink (link "external-file"));
     check_bool
       "external directory link stays a link (not recursed)"
       true
       (is_symlink (link "external-dir"));
-    Alcotest.(check string)
-      "external directory target preserved"
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"external directory target preserved"
       outside_dir
       (Unix.readlink (link "external-dir"));
     check_bool "dangling link preserved" true (is_symlink (link "dangling"));
@@ -145,7 +154,11 @@ let test_copy_tree_preserves_symlinks () =
       "ancestor cycle preserved without recursing"
       true
       (is_symlink (link "ancestor"));
-    Alcotest.(check string) "regular-file positive control" "main" (read (link "main.ml")))
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"regular-file positive control"
+      "main"
+      (read (link "main.ml")))
 ;;
 
 let test_spawn () =

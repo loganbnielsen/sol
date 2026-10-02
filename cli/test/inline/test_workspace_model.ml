@@ -30,7 +30,7 @@ let write dir rel content =
 let load rel =
   match Sol_cli_workspace_model.load ~root:(fixture rel) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail (rel ^ " failed to load: " ^ e)
+  | Error e -> Windtrap.fail (rel ^ " failed to load: " ^ e)
 ;;
 
 let service_names facts =
@@ -58,13 +58,15 @@ let subject_strings facts =
 
 let test_pluto_services_carry_their_primitive_and_language () =
   let facts = load "examples/pluto" in
-  Alcotest.(check (list string))
-    "services"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"services"
     [ "charge_svc"; "checkout_svc"; "fulfillment_worker"; "notify_worker"; "order_svc" ]
     (service_names facts);
-  Alcotest.(check string) "root" (fixture "examples/pluto") facts.root;
-  Alcotest.(check (list string))
-    "declared languages"
+  Windtrap.equal Windtrap.string ~msg:"root" (fixture "examples/pluto") facts.root;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"declared languages"
     [ "charge_svc=ocaml"
     ; "checkout_svc=ocaml"
     ; "fulfillment_worker=typescript"
@@ -78,8 +80,9 @@ let test_pluto_services_carry_their_primitive_and_language () =
       s.name ^ "=" ^ Sol_cli_manifest.primitive_label s.primitive)
     |> List.sort String.compare
   in
-  Alcotest.(check (list string))
-    "primitives"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"primitives"
     [ "charge_svc=svc"
     ; "checkout_svc=svc"
     ; "fulfillment_worker=worker"
@@ -87,24 +90,28 @@ let test_pluto_services_carry_their_primitive_and_language () =
     ; "order_svc=svc"
     ]
     primitives;
-  Alcotest.(check int)
-    "workload count"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"workload count"
     (List.length (Sol_cli_workspace_model.services facts))
     (List.length facts.Sol_cli_workspace_model.workloads)
 ;;
 
 let test_pluto_events_migrations_and_targets () =
   let facts = load "examples/pluto" in
-  Alcotest.(check (list string))
-    "schema subjects"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"schema subjects"
     [ "comms.Notification_sent"; "payments.Charged" ]
     (subject_strings facts);
-  Alcotest.(check (list string))
-    "topics (pluto's events declare none)"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"topics (pluto's events declare none)"
     []
     (List.map Sol_cli_plan_ids.Topic_name.to_string facts.Sol_cli_workspace_model.topics);
-  Alcotest.(check (list string))
-    "declared targets"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"declared targets"
     [ "customer_cloud/aws/us-east-1"
     ; "dev/aws/us-east-1"
     ; "pilot/aws/us-east-1"
@@ -113,90 +120,137 @@ let test_pluto_events_migrations_and_targets () =
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
    | [ notifications; sol_jobs; sol_outbox; charge_id_unique ] ->
-     Alcotest.(check string)
-       "file"
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"file"
        "0001_notifications.sql"
        (Sol_cli_plan_ids.Migration_file.to_string notifications.file);
-     Alcotest.(check (option int)) "version" (Some 1) notifications.version;
-     Alcotest.(check (option string)) "name" (Some "notifications") notifications.name;
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"version"
+       (Some 1)
+       notifications.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"name"
+       (Some "notifications")
+       notifications.name;
      (match notifications.disposition with
-      | Ok _ -> Alcotest.fail "expected pluto's migration to declare no disposition"
+      | Ok _ -> Windtrap.fail "expected pluto's migration to declare no disposition"
       | Error _ -> ());
-     Alcotest.(check string)
-       "sol-jobs migration file"
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"sol-jobs migration file"
        "0002_sol_jobs.sql"
        (Sol_cli_plan_ids.Migration_file.to_string sol_jobs.file);
-     Alcotest.(check (option int)) "sol-jobs version" (Some 2) sol_jobs.version;
-     Alcotest.(check (option string)) "sol-jobs name" (Some "sol_jobs") sol_jobs.name;
-     Alcotest.(check string)
-       "sol-outbox migration file"
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"sol-jobs version"
+       (Some 2)
+       sol_jobs.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"sol-jobs name"
+       (Some "sol_jobs")
+       sol_jobs.name;
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"sol-outbox migration file"
        "0003_sol_outbox.sql"
        (Sol_cli_plan_ids.Migration_file.to_string sol_outbox.file);
-     Alcotest.(check (option int)) "sol-outbox version" (Some 3) sol_outbox.version;
-     Alcotest.(check (option string))
-       "sol-outbox name"
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"sol-outbox version"
+       (Some 3)
+       sol_outbox.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"sol-outbox name"
        (Some "sol_outbox")
        sol_outbox.name;
-     Alcotest.(check string)
-       "charge-id-unique migration file"
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"charge-id-unique migration file"
        "0004_notifications_charge_id_unique.sql"
        (Sol_cli_plan_ids.Migration_file.to_string charge_id_unique.file);
-     Alcotest.(check (option int))
-       "charge-id-unique version"
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"charge-id-unique version"
        (Some 4)
        charge_id_unique.version;
-     Alcotest.(check (option string))
-       "charge-id-unique name"
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"charge-id-unique name"
        (Some "notifications_charge_id_unique")
        charge_id_unique.name
    | other ->
-     Alcotest.fail (Printf.sprintf "expected four migrations, got %d" (List.length other)));
-  Alcotest.(check int)
-    "unapplied migrations"
+     Windtrap.fail (Printf.sprintf "expected four migrations, got %d" (List.length other)));
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"unapplied migrations"
     4
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
 let test_venus_reads_both_domains () =
   let facts = load "internal/fixtures/venus" in
-  Alcotest.(check (list string))
-    "services"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"services"
     [ "fulfillment_worker"; "notify_worker" ]
     (service_names facts);
-  Alcotest.(check (list string))
-    "schema subjects"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"schema subjects"
     [ "billing.Payment_confirmed"; "payments.Charged" ]
     (subject_strings facts);
-  Alcotest.(check (list string))
-    "topics (no event sol.toml here)"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"topics (no event sol.toml here)"
     []
     (List.map Sol_cli_plan_ids.Topic_name.to_string facts.Sol_cli_workspace_model.topics);
-  Alcotest.(check (list string))
-    "declared targets (none)"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"declared targets (none)"
     []
     facts.Sol_cli_workspace_model.targets;
-  Alcotest.(check int)
-    "unapplied migrations"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"unapplied migrations"
     3
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
 let test_local_demo_is_an_empty_workspace () =
   let facts = load "internal/fixtures/local-demo" in
-  Alcotest.(check (option string)) "no app dir" None facts.Sol_cli_workspace_model.app_dir;
-  Alcotest.(check (list string)) "no services" [] (service_names facts);
-  Alcotest.(check (list string)) "no targets" [] facts.Sol_cli_workspace_model.targets;
-  Alcotest.(check int)
-    "no migrations"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no app dir"
+    None
+    facts.Sol_cli_workspace_model.app_dir;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"no services"
+    []
+    (service_names facts);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"no targets"
+    []
+    facts.Sol_cli_workspace_model.targets;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"no migrations"
     0
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
 let expect_error_mentioning ~needle = function
-  | Ok _ -> Alcotest.fail "expected the load to fail"
+  | Ok _ -> Windtrap.fail "expected the load to fail"
   | Error message ->
-    Alcotest.(check bool)
-      (Printf.sprintf "%S names %S" message needle)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(Printf.sprintf "%S names %S" message needle)
       true
       (Sol_cli_string.contains ~needle message)
 ;;
@@ -231,22 +285,23 @@ let test_malformed_workload_toml_is_carried_not_fatal () =
     write dir "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write dir "app/payments/charge_svc/sol.toml" "[infra.deploy]\nbad key = 1\n";
     match Sol_cli_workspace_model.load ~root:dir with
-    | Error e -> Alcotest.fail ("a workload sol.toml must not fail the load: " ^ e)
+    | Error e -> Windtrap.fail ("a workload sol.toml must not fail the load: " ^ e)
     | Ok facts ->
       (match facts.Sol_cli_workspace_model.workloads with
        | [ workload ] ->
          (match workload.config with
           | Ok _ ->
-            Alcotest.fail "expected the malformed sol.toml to be carried as an error"
+            Windtrap.fail "expected the malformed sol.toml to be carried as an error"
           | Error err ->
-            Alcotest.(check bool)
-              "the carried error names the file"
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"the carried error names the file"
               true
               (Sol_cli_string.contains
                  ~needle:"sol.toml"
                  (Sol_cli_toml.parse_error_to_string err)))
        | other ->
-         Alcotest.fail
+         Windtrap.fail
            (Printf.sprintf "expected one workload, got %d" (List.length other))))
 ;;
 
@@ -255,13 +310,18 @@ let test_empty_app_dir_is_not_a_missing_app_dir () =
     write dir "sol.yml" "";
     Unix.mkdir (Filename.concat dir "app") 0o755;
     match Sol_cli_workspace_model.load ~root:dir with
-    | Error e -> Alcotest.fail ("expected an empty workspace to load: " ^ e)
+    | Error e -> Windtrap.fail ("expected an empty workspace to load: " ^ e)
     | Ok facts ->
-      Alcotest.(check bool)
-        "app_dir present"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"app_dir present"
         true
         (Option.is_some facts.Sol_cli_workspace_model.app_dir);
-      Alcotest.(check (list string)) "no services" [] (service_names facts))
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"no services"
+        []
+        (service_names facts))
 ;;
 
 let%test "fixtures: pluto: services carry primitive and language" =

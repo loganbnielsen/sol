@@ -11,7 +11,7 @@ let load contents =
 let tpl ~kind rel =
   match Sol_cli_platform_assets.resolve () with
   | Error error ->
-    Alcotest.fail
+    Windtrap.fail
       ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
   | Ok assets ->
     (match
@@ -21,26 +21,27 @@ let tpl ~kind rel =
          ~rel
      with
      | Ok text -> text
-     | Error message -> Alcotest.fail message)
+     | Error message -> Windtrap.fail message)
 ;;
 
 let rejects contents ~names () =
   match load contents with
-  | Ok _ -> Alcotest.failf "expected %S to be rejected" contents
+  | Ok _ -> Windtrap.failf "expected %S to be rejected" contents
   | Error (Sol_cli_toml.Validation { message; _ }) ->
     names
     |> List.iter (fun needle ->
-      Alcotest.(check bool)
-        ("error names " ^ needle)
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:("error names " ^ needle)
         true
         (Sol_cli_string.contains ~needle message))
-  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
 ;;
 
 let accepts contents () =
   match load contents with
   | Ok _ -> ()
-  | Error e -> Alcotest.fail (Sol_cli_toml.parse_error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_toml.parse_error_to_string e)
 ;;
 
 let every_documented_key =

@@ -1,14 +1,14 @@
 let facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
 let release_id_of_test =
   Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
 ;;
 
-let check_string = Alcotest.(check string)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let contains re s =
   try
@@ -21,13 +21,13 @@ let contains re s =
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
   | Ok namespace -> namespace
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let namespace_string ~workspace ~domain =
@@ -37,55 +37,55 @@ let namespace_string ~workspace ~domain =
 let topic_name_exn s =
   match Sol_cli_plan_ids.Topic_name.of_string s with
   | Ok t -> t
-  | Error e -> Alcotest.fail (Printf.sprintf "invalid topic name %S: %s" s e)
+  | Error e -> Windtrap.fail (Printf.sprintf "invalid topic name %S: %s" s e)
 ;;
 
 let migration_file_exn s =
   match Sol_cli_plan_ids.Migration_file.of_string s with
   | Ok t -> t
-  | Error e -> Alcotest.fail (Printf.sprintf "invalid migration file %S: %s" s e)
+  | Error e -> Windtrap.fail (Printf.sprintf "invalid migration file %S: %s" s e)
 ;;
 
 let schema_subject_exn s =
   match Sol_cli_plan_ids.Schema_subject.of_string s with
   | Ok t -> t
-  | Error e -> Alcotest.fail (Printf.sprintf "invalid schema subject %S: %s" s e)
+  | Error e -> Windtrap.fail (Printf.sprintf "invalid schema subject %S: %s" s e)
 ;;
 
 let consumer_group_exn s =
   match Sol_cli_plan_ids.Consumer_group.of_string s with
   | Ok t -> t
-  | Error e -> Alcotest.fail (Printf.sprintf "invalid consumer group %S: %s" s e)
+  | Error e -> Windtrap.fail (Printf.sprintf "invalid consumer group %S: %s" s e)
 ;;
 
 let check_ids label stringify expected got =
   let expected_strs = List.map stringify expected in
   let got_strs = List.map stringify got in
-  Alcotest.(check (list string)) label expected_strs got_strs
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg:label expected_strs got_strs
 ;;
 
 let cpu s =
   match Sol_cli_toml.cpu_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let memory s =
   match Sol_cli_toml.memory_quantity_of_string s with
   | Ok quantity -> quantity
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let hostname s =
   match Sol_cli_toml.hostname_of_string s with
   | Ok host -> host
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let ingress_path s =
   match Sol_cli_toml.ingress_path_of_string s with
   | Ok path -> path
-  | Error message -> Alcotest.fail message
+  | Error message -> Windtrap.fail message
 ;;
 
 let test_k8s_name_underscores () =
@@ -143,28 +143,28 @@ let test_k8s_name_rejects_invalid_characters () =
     check_string "field" "k8s_name" field;
     check_string "value" "charge.svc" value;
     assert (contains (Str.regexp "lowercase alphanumeric") message)
-  | Ok _ -> Alcotest.fail "expected invalid k8s name"
-  | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Ok _ -> Windtrap.fail "expected invalid k8s name"
+  | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_empty () =
   match Sol_cli_deployment_plan.k8s_name_result "" with
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { message; _ }) ->
     assert (contains (Str.regexp "1 and 63") message)
-  | Ok _ -> Alcotest.fail "expected empty k8s name to fail"
-  | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Ok _ -> Windtrap.fail "expected empty k8s name to fail"
+  | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_overlong () =
@@ -173,14 +173,14 @@ let test_k8s_name_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { value; message; _ }) ->
     check_string "value" name value;
     assert (contains (Str.regexp "1 and 63") message)
-  | Ok _ -> Alcotest.fail "expected overlong k8s name to fail"
-  | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Ok _ -> Windtrap.fail "expected overlong k8s name to fail"
+  | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
 ;;
 
 let test_namespace_rejects_invalid_domain () =
@@ -191,14 +191,14 @@ let test_namespace_rejects_invalid_domain () =
     check_string "field" "namespace" field;
     check_string "value" "myapp-payments.api" value;
     assert (contains (Str.regexp "lowercase alphanumeric") message)
-  | Ok _ -> Alcotest.fail "expected invalid namespace"
-  | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Ok _ -> Windtrap.fail "expected invalid namespace"
+  | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
 ;;
 
 let test_namespace_rejects_overlong () =
@@ -210,14 +210,14 @@ let test_namespace_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { field; message; _ }) ->
     check_string "field" "namespace" field;
     assert (contains (Str.regexp "1 and 63") message)
-  | Ok _ -> Alcotest.fail "expected overlong namespace"
-  | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Ok _ -> Windtrap.fail "expected overlong namespace"
+  | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-    Alcotest.fail "expected name error"
+    Windtrap.fail "expected name error"
 ;;
 
 let test_image_ref_local () =
@@ -321,7 +321,7 @@ let test_to_json_deterministic () =
   let plan = sample_plan () in
   let s1 = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   let s2 = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
-  Alcotest.(check string) "byte-identical" s1 s2
+  Windtrap.equal Windtrap.string ~msg:"byte-identical" s1 s2
 ;;
 
 let test_to_json_no_secret_values () =
@@ -330,9 +330,9 @@ let test_to_json_no_secret_values () =
   if
     String.length (Str.global_replace (Str.regexp "super-secret-value") "" s)
     < String.length s
-  then Alcotest.fail "secret value 'super-secret-value' leaked into plan JSON";
+  then Windtrap.fail "secret value 'super-secret-value' leaked into plan JSON";
   if String.length (Str.global_replace (Str.regexp "also-secret") "" s) < String.length s
-  then Alcotest.fail "secret value 'also-secret' leaked into plan JSON"
+  then Windtrap.fail "secret value 'also-secret' leaked into plan JSON"
 ;;
 
 let test_to_json_env_present () =
@@ -428,7 +428,7 @@ let write_file path content =
 let loaded_facts () =
   match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
   | Ok facts -> facts
-  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+  | Error e -> Windtrap.fail ("workspace model failed to load: " ^ e)
 ;;
 
 let discover_topics_ok () = (loaded_facts ()).Sol_cli_workspace_model.topics
@@ -443,14 +443,16 @@ let test_discover_topics_rejects_misspelled_event_toml () =
 topic = ["payments.charged"]
 |};
     match Sol_cli_workspace_model.load ~root:(Sys.getcwd ()) with
-    | Ok _ -> Alcotest.fail "expected a misspelled event sol.toml to be an error"
+    | Ok _ -> Windtrap.fail "expected a misspelled event sol.toml to be an error"
     | Error e ->
-      Alcotest.(check bool)
-        "names the unknown key"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the unknown key"
         true
         (Sol_cli_string.contains ~needle:"\"topic\"" e);
-      Alcotest.(check bool)
-        "names the file"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the file"
         true
         (Sol_cli_string.contains ~needle:"events/payments/sol.toml" e))
 ;;
@@ -476,7 +478,7 @@ let test_discover_topics_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_topics_nodir" "" in
   with_cwd tmp (fun () ->
     let topics = discover_topics_ok () in
-    Alcotest.(check int) "empty without events dir" 0 (List.length topics))
+    Windtrap.equal Windtrap.int ~msg:"empty without events dir" 0 (List.length topics))
 ;;
 
 let test_discover_topics_multiple_topics_in_toml () =
@@ -594,8 +596,9 @@ let test_discover_topics_no_false_positives_from_ml_files () =
        let topic_name = Kafka_service.topic_name_exn \"payments.charged\"\n\
        let s = \"let topic_name = not-a-real-topic\"\n";
     let topics = discover_topics_ok () in
-    Alcotest.(check int)
-      "ml files are not scanned — no false positives from comments or strings"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"ml files are not scanned — no false positives from comments or strings"
       0
       (List.length topics))
 ;;
@@ -617,7 +620,11 @@ let test_discover_migrations_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_mig_nodir" "" in
   with_cwd tmp (fun () ->
     let migs = Sol_cli_workspace_model.migration_files (loaded_facts ()) in
-    Alcotest.(check int) "empty without db/migrations dir" 0 (List.length migs))
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"empty without db/migrations dir"
+      0
+      (List.length migs))
 ;;
 
 let test_discover_migrations_sorted () =
@@ -660,8 +667,9 @@ let test_schema_subjects_derived () =
     write_file "events/payments/charged.ml" "(* stub *)";
     let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     let strs = List.map Sol_cli_plan_ids.Schema_subject.to_string subjects in
-    Alcotest.(check bool)
-      "payments.Charged present"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"payments.Charged present"
       true
       (List.mem "payments.Charged" strs))
 ;;
@@ -688,14 +696,18 @@ let test_schema_subjects_top_level_ml () =
     write_file "events/order.ml" "(* stub *)";
     let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
     let strs = List.map Sol_cli_plan_ids.Schema_subject.to_string subjects in
-    Alcotest.(check bool) "top-level file as stem" true (List.mem "order" strs))
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"top-level file as stem"
+      true
+      (List.mem "order" strs))
 ;;
 
 let test_schema_subjects_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_subjects_nodir" "" in
   with_cwd tmp (fun () ->
     let subjects = (loaded_facts ()).Sol_cli_workspace_model.schema_subjects in
-    Alcotest.(check int) "empty without events dir" 0 (List.length subjects))
+    Windtrap.equal Windtrap.int ~msg:"empty without events dir" 0 (List.length subjects))
 ;;
 
 let make_worker_spec name domain =
@@ -787,7 +799,7 @@ let test_consumer_groups_excludes_svc () =
       "ws"
       [ worker; svc ]
   in
-  Alcotest.(check int) "only one group (worker only)" 1 (List.length groups)
+  Windtrap.equal Windtrap.int ~msg:"only one group (worker only)" 1 (List.length groups)
 ;;
 
 let test_consumer_groups_sorted () =
@@ -826,7 +838,7 @@ let test_to_json_secret_backend_values () =
       Yojson.Safe.Util.(
         json |> member "environment" |> member "secret_backend" |> to_string)
     in
-    Alcotest.(check string) expected expected actual
+    Windtrap.equal Windtrap.string ~msg:expected expected actual
   in
   check_backend Sol_cli_manifest.Kubernetes_live "kubernetes-live";
   check_backend Sol_cli_manifest.Kubernetes_placeholder "kubernetes-placeholder";
@@ -1041,22 +1053,23 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error
         (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Validation { path; message }))
       ->
-      Alcotest.(check bool)
-        "error path names the workload's sol.toml"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"error path names the workload's sol.toml"
         true
         (Sol_cli_string.contains ~needle:"app/payments/charge_svc/sol.toml" path);
       assert (contains (Str.regexp "unsupported rollout_strategy") message)
-    | Ok _ -> Alcotest.fail "expected deployment-plan construction to return TOML error"
+    | Ok _ -> Windtrap.fail "expected deployment-plan construction to return TOML error"
     | Error (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Toml_syntax _)) ->
-      Alcotest.fail "expected validation error, got syntax error"
+      Windtrap.fail "expected validation error, got syntax error"
     | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name _) ->
-      Alcotest.fail "expected TOML error, got Kubernetes name error"
+      Windtrap.fail "expected TOML error, got Kubernetes name error"
     | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-      Alcotest.fail "expected TOML error, got service call error"
+      Windtrap.fail "expected TOML error, got service call error"
     | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-      Alcotest.fail "expected TOML error, got persistence error"
+      Windtrap.fail "expected TOML error, got persistence error"
     | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-      Alcotest.fail "expected TOML error, got availability error")
+      Windtrap.fail "expected TOML error, got availability error")
 ;;
 
 let deploy_env : Sol_cli_deployment_plan.env_config =
@@ -1121,7 +1134,7 @@ let test_a_scoped_plan_carries_the_whole_workspace_group_set () =
         ; consumer_group_exn "myworkspace.payments.charge_worker"
         ]
         plan.Sol_cli_deployment_plan.consumer_groups
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_a_group_the_workspace_no_longer_declares_is_not_reported () =
@@ -1145,7 +1158,7 @@ let test_a_group_the_workspace_no_longer_declares_is_not_reported () =
         Sol_cli_plan_ids.Consumer_group.to_string
         [ consumer_group_exn "myworkspace.comms.notify_worker" ]
         plan.Sol_cli_deployment_plan.consumer_groups
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
@@ -1169,7 +1182,7 @@ let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
 let replicas_of_sole_service plan =
   match plan.Sol_cli_deployment_plan.services with
   | [ s ] -> s.replicas
-  | _ -> Alcotest.fail "expected exactly one service in plan"
+  | _ -> Windtrap.fail "expected exactly one service in plan"
 ;;
 
 let test_sol_yml_scale_overrides_toml_replicas_on_resolved_target () =
@@ -1189,8 +1202,12 @@ let test_sol_yml_scale_overrides_toml_replicas_on_resolved_target () =
         [ charge_svc_service ]
     with
     | Ok plan ->
-      Alcotest.(check int) "sol.yml scale_max wins" 5 (replicas_of_sole_service plan)
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"sol.yml scale_max wins"
+        5
+        (replicas_of_sole_service plan)
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_sol_yml_scale_falls_back_to_scale_min_when_no_max () =
@@ -1210,11 +1227,12 @@ let test_sol_yml_scale_falls_back_to_scale_min_when_no_max () =
         [ charge_svc_service ]
     with
     | Ok plan ->
-      Alcotest.(check int)
-        "sol.yml scale_min used when no scale_max"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"sol.yml scale_min used when no scale_max"
         3
         (replicas_of_sole_service plan)
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_no_resolved_config_uses_toml_replicas () =
@@ -1230,8 +1248,12 @@ let test_no_resolved_config_uses_toml_replicas () =
         [ charge_svc_service ]
     with
     | Ok plan ->
-      Alcotest.(check int) "sol.toml replicas unchanged" 2 (replicas_of_sole_service plan)
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"sol.toml replicas unchanged"
+        2
+        (replicas_of_sole_service plan)
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_no_matching_sol_yml_service_uses_toml_replicas () =
@@ -1251,11 +1273,12 @@ let test_no_matching_sol_yml_service_uses_toml_replicas () =
         [ charge_svc_service ]
     with
     | Ok plan ->
-      Alcotest.(check int)
-        "no matching sol.yml service falls back to sol.toml"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"no matching sol.yml service falls back to sol.toml"
         2
         (replicas_of_sole_service plan)
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_toml_volumes_carry_into_service_spec () =
@@ -1275,21 +1298,26 @@ let test_toml_volumes_carry_into_service_spec () =
         ~env:deploy_env
         [ charge_svc_service ]
     with
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     | Ok plan ->
       (match plan.services with
        | [ spec ] ->
          (match spec.volumes with
           | [ volume ] ->
-            Alcotest.(check string) "volume name" "data" volume.name;
-            Alcotest.(check string) "mount path" "/var/lib/data" volume.mount_path;
-            Alcotest.(check string) "size" "10Gi" volume.size;
-            Alcotest.(check bool)
-              "access mode"
+            Windtrap.equal Windtrap.string ~msg:"volume name" "data" volume.name;
+            Windtrap.equal
+              Windtrap.string
+              ~msg:"mount path"
+              "/var/lib/data"
+              volume.mount_path;
+            Windtrap.equal Windtrap.string ~msg:"size" "10Gi" volume.size;
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"access mode"
               true
               (volume.access_mode = Sol_cli_toml.ReadWriteOnce)
-          | _ -> Alcotest.fail "expected exactly one volume")
-       | _ -> Alcotest.fail "expected exactly one service"))
+          | _ -> Windtrap.fail "expected exactly one volume")
+       | _ -> Windtrap.fail "expected exactly one service"))
 ;;
 
 let test_multi_replica_volume_fails_after_scale_resolution () =
@@ -1310,10 +1338,11 @@ let test_multi_replica_volume_fails_after_scale_resolution () =
         ~declared:(Sol_cli_config.declared_of_config resolved_config)
         [ charge_svc_service ]
     with
-    | Ok _ -> Alcotest.fail "expected a multi-replica volume to fail"
+    | Ok _ -> Windtrap.fail "expected a multi-replica volume to fail"
     | Error err ->
-      Alcotest.(check string)
-        "names the valid alternatives"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"names the valid alternatives"
         "workload \"charge_svc\" has invalid persistence: volumes belong to one \
          interchangeable workload instance; set replicas = 1, or use managed storage \
          shared outside the workload"
@@ -1338,9 +1367,9 @@ let test_zero_replica_volume_fails () =
         ~env:deploy_env
         [ charge_svc_service ]
     with
-    | Ok _ -> Alcotest.fail "expected a zero-replica volume to fail"
+    | Ok _ -> Windtrap.fail "expected a zero-replica volume to fail"
     | Error (Sol_cli_deployment_plan.Invalid_persistence _) -> ()
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let plan_for_fn toml =
@@ -1364,10 +1393,11 @@ let plan_for_fn toml =
 
 let test_fn_schedule_comes_from_sol_toml () =
   match plan_for_fn (Some "[service]\nschedule = \"30 6 * * 1\"\n") with
-  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
   | Ok plan ->
-    Alcotest.(check (list (option string)))
-      "schedule from sol.toml"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.option Windtrap.string))
+      ~msg:"schedule from sol.toml"
       [ Some "30 6 * * 1" ]
       (plan.services
        |> List.map (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule))
@@ -1376,11 +1406,12 @@ let test_fn_schedule_comes_from_sol_toml () =
 let test_fn_without_schedule_is_a_plan_error toml () =
   match plan_for_fn toml with
   | Ok _ ->
-    Alcotest.fail "a -fn without [service] schedule must not plan (hourly default)"
+    Windtrap.fail "a -fn without [service] schedule must not plan (hourly default)"
   | Error e ->
     let msg = Sol_cli_deployment_plan.plan_error_to_string e in
-    Alcotest.(check bool)
-      "names the missing key"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the missing key"
       true
       (contains (Str.regexp_string "[service] schedule is required") msg)
 ;;
@@ -1410,10 +1441,11 @@ let test_function_volume_fails () =
         ~env:deploy_env
         [ fn ]
     with
-    | Ok _ -> Alcotest.fail "expected a function volume to fail"
+    | Ok _ -> Windtrap.fail "expected a function volume to fail"
     | Error err ->
-      Alcotest.(check string)
-        "names the supported alternative"
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"names the supported alternative"
         "workload \"charge_fn\" has invalid persistence: function volumes are \
          unsupported; use managed storage"
         (Sol_cli_deployment_plan.plan_error_to_string err))
@@ -1444,19 +1476,24 @@ calls = ["checkout/checkout_svc"]
         ~env:deploy_env
         [ charge_svc_service; checkout_service ]
     with
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     | Ok plan ->
       (match plan.services with
        | [ caller; callee ] ->
-         Alcotest.(check (list (pair string string)))
-           "caller config"
+         Windtrap.equal
+           (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+           ~msg:"caller config"
            [ ( "CHECKOUT_SVC_URL"
              , "http://checkout-svc.myworkspace-checkout.svc.cluster.local" )
            ]
            caller.config;
-         Alcotest.(check int) "caller calls" 1 (List.length caller.calls);
-         Alcotest.(check int) "callee called_by" 1 (List.length callee.called_by)
-       | _ -> Alcotest.fail "expected two service specs"))
+         Windtrap.equal Windtrap.int ~msg:"caller calls" 1 (List.length caller.calls);
+         Windtrap.equal
+           Windtrap.int
+           ~msg:"callee called_by"
+           1
+           (List.length callee.called_by)
+       | _ -> Windtrap.fail "expected two service specs"))
 ;;
 
 let test_unknown_service_call_fails () =
@@ -1477,8 +1514,8 @@ calls = ["checkout/missing_svc"]
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
       assert (contains (Str.regexp "target service not found") message)
-    | Ok _ -> Alcotest.fail "expected invalid service call"
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Ok _ -> Windtrap.fail "expected invalid service call"
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_scoped_call_resolves_from_the_inventory () =
@@ -1507,21 +1544,23 @@ calls = ["checkout/checkout_svc"]
         ~inventory:[ charge_svc_service; checkout_service ]
         [ charge_svc_service ]
     with
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     | Ok plan ->
-      Alcotest.(check int)
-        "the selection is deployed unchanged -- no transitive widening"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"the selection is deployed unchanged -- no transitive widening"
         1
         (List.length plan.services);
       (match plan.services with
        | [ caller ] ->
-         Alcotest.(check (list (pair string string)))
-           "the caller resolves the URL of the callee it did not select"
+         Windtrap.equal
+           (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+           ~msg:"the caller resolves the URL of the callee it did not select"
            [ ( "CHECKOUT_SVC_URL"
              , "http://checkout-svc.myworkspace-checkout.svc.cluster.local" )
            ]
            caller.config
-       | _ -> Alcotest.fail "expected exactly one service spec"))
+       | _ -> Windtrap.fail "expected exactly one service spec"))
 ;;
 
 let test_unknown_service_call_fails_and_names_the_units () =
@@ -1551,13 +1590,17 @@ calls = ["checkout/checkout_svcc"]
         [ charge_svc_service ]
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { ref; message; _ }) ->
-      Alcotest.(check string) "the reference as written" "checkout/checkout_svcc" ref;
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"the reference as written"
+        "checkout/checkout_svcc"
+        ref;
       assert (contains (Str.regexp_string "target service not found") message);
       assert (contains (Str.regexp_string "checkout_svcc") message);
       assert (contains (Str.regexp_string "workspace units:") message);
       assert (contains (Str.regexp_string "checkout/checkout_svc") message)
-    | Ok _ -> Alcotest.fail "expected a misspelled call target to fail"
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Ok _ -> Windtrap.fail "expected a misspelled call target to fail"
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let network_policy_doc workload =
@@ -1574,7 +1617,7 @@ let rendered_workload spec =
       spec
   with
   | Ok (_, workload) -> workload
-  | Error message -> Alcotest.fail ("render_spec failed: " ^ message)
+  | Error message -> Windtrap.fail ("render_spec failed: " ^ message)
 ;;
 
 let test_a_scoped_callee_keeps_its_cross_domain_caller_ingress () =
@@ -1606,7 +1649,7 @@ calls = ["payments/charge_svc"]
           selected
       with
       | Ok plan -> plan
-      | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+      | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err)
     in
     let callee plan =
       match
@@ -1616,37 +1659,45 @@ calls = ["payments/charge_svc"]
           plan.Sol_cli_deployment_plan.services
       with
       | Some callee -> callee
-      | None -> Alcotest.fail "the plan did not deploy the callee"
+      | None -> Windtrap.fail "the plan did not deploy the callee"
     in
     let ingress_of plan =
       let callee = callee plan in
       let policy = network_policy_doc (rendered_workload callee) in
-      Alcotest.(check bool)
-        "the rendered network policy allows the caller's namespace"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the rendered network policy allows the caller's namespace"
         true
         (contains
            (Str.regexp_string "kubernetes.io/metadata.name: myworkspace-orders")
            policy);
-      Alcotest.(check bool)
-        "and the caller's pod selector"
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"and the caller's pod selector"
         true
         (contains (Str.regexp_string "app: order-svc") policy);
-      Alcotest.(check int)
-        "the callee keeps the cross-domain caller that was not selected"
+      Windtrap.equal
+        Windtrap.int
+        ~msg:"the callee keeps the cross-domain caller that was not selected"
         1
         (List.length callee.Sol_cli_deployment_plan.called_by);
       policy
     in
     let scoped_plan = plan () in
-    Alcotest.(check (list string))
-      "a scoped deploy still deploys only the callee"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"a scoped deploy still deploys only the callee"
       [ "charge_svc" ]
       (List.map
          (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.source_name)
          scoped_plan.Sol_cli_deployment_plan.services);
     let scoped = ingress_of scoped_plan in
     let full = ingress_of (plan ~selected:[ charge_svc_service; order_service ] ()) in
-    Alcotest.(check string) "a full plan renders the same ingress edge" full scoped)
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"a full plan renders the same ingress edge"
+      full
+      scoped)
 ;;
 
 let test_service_call_env_conflict_fails () =
@@ -1679,8 +1730,8 @@ config = { CHECKOUT_SVC_URL = "http://example.invalid" }
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
       assert (contains (Str.regexp "conflicts") message)
-    | Ok _ -> Alcotest.fail "expected invalid service call"
-    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+    | Ok _ -> Windtrap.fail "expected invalid service call"
+    | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_topic_name_valid () =
@@ -1690,33 +1741,33 @@ let test_topic_name_valid () =
       "round-trips"
       "payments.charged"
       (Sol_cli_plan_ids.Topic_name.to_string t)
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_topic_name_empty_fails () =
   match Sol_cli_plan_ids.Topic_name.of_string "" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected empty topic name to fail"
+  | Ok _ -> Windtrap.fail "expected empty topic name to fail"
 ;;
 
 let test_topic_name_too_long_fails () =
   let s = String.make 250 'a' in
   match Sol_cli_plan_ids.Topic_name.of_string s with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected overlong topic name to fail"
+  | Ok _ -> Windtrap.fail "expected overlong topic name to fail"
 ;;
 
 let test_topic_name_invalid_char_fails () =
   match Sol_cli_plan_ids.Topic_name.of_string "bad name!" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected topic name with space/bang to fail"
+  | Ok _ -> Windtrap.fail "expected topic name with space/bang to fail"
 ;;
 
 let test_topic_name_max_length_ok () =
   let s = String.make 249 'a' in
   match Sol_cli_plan_ids.Topic_name.of_string s with
   | Ok _ -> ()
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_migration_file_valid () =
@@ -1726,19 +1777,19 @@ let test_migration_file_valid () =
       "round-trips"
       "001_init.sql"
       (Sol_cli_plan_ids.Migration_file.to_string t)
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_migration_file_empty_fails () =
   match Sol_cli_plan_ids.Migration_file.of_string "" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected empty migration file to fail"
+  | Ok _ -> Windtrap.fail "expected empty migration file to fail"
 ;;
 
 let test_migration_file_not_sql_fails () =
   match Sol_cli_plan_ids.Migration_file.of_string "001_init.sh" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected non-.sql migration file to fail"
+  | Ok _ -> Windtrap.fail "expected non-.sql migration file to fail"
 ;;
 
 let test_schema_subject_valid () =
@@ -1748,13 +1799,13 @@ let test_schema_subject_valid () =
       "round-trips"
       "payments.Charged"
       (Sol_cli_plan_ids.Schema_subject.to_string t)
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_schema_subject_empty_fails () =
   match Sol_cli_plan_ids.Schema_subject.of_string "" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected empty schema subject to fail"
+  | Ok _ -> Windtrap.fail "expected empty schema subject to fail"
 ;;
 
 let test_consumer_group_valid () =
@@ -1764,13 +1815,13 @@ let test_consumer_group_valid () =
       "round-trips"
       "ws.comms.notify_worker"
       (Sol_cli_plan_ids.Consumer_group.to_string t)
-  | Error e -> Alcotest.fail e
+  | Error e -> Windtrap.fail e
 ;;
 
 let test_consumer_group_empty_fails () =
   match Sol_cli_plan_ids.Consumer_group.of_string "" with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "expected empty consumer group to fail"
+  | Ok _ -> Windtrap.fail "expected empty consumer group to fail"
 ;;
 
 let%test "k8s_name: underscore to hyphen" = test_k8s_name_underscores ()

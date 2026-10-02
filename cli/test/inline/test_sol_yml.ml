@@ -1,5 +1,5 @@
-let check_bool = Alcotest.(check bool)
-let check_string = Alcotest.(check string)
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let read_file path = In_channel.with_open_bin path In_channel.input_all
 
 let write_file path text =
@@ -48,7 +48,7 @@ let declared ~root =
   match Sol_cli_config.sol_yml_services ~root with
   | Ok services -> services
   | Error e ->
-    Alcotest.fail
+    Windtrap.fail
       ("sol.yml did not parse after the edit: " ^ Sol_cli_config.error_to_string e)
 ;;
 
@@ -77,16 +77,17 @@ let test_adds_a_section_when_there_is_none () =
   let dir = "app/payments/charge_svc" in
   (match register ~root ~name:"charge_svc" ~dir with
    | Ok Sol_cli_sol_yml.Declared -> ()
-   | Ok _ -> Alcotest.fail "expected a new declaration"
-   | Error e -> Alcotest.fail e);
+   | Ok _ -> Windtrap.fail "expected a new declaration"
+   | Error e -> Windtrap.fail e);
   let edited = read_file path in
   check_original_preserved ~label:"added section" ~original:scaffold_sol_yml ~edited;
   check_bool
     "declares the service"
     true
     (String.length edited > String.length scaffold_sol_yml);
-  Alcotest.(check (option (option string)))
-    "parsed language"
+  Windtrap.equal
+    (Windtrap.option (Windtrap.option Windtrap.string))
+    ~msg:"parsed language"
     (Some (Some "ocaml"))
     (language_of ~root "charge_svc" |> Option.map (Option.map Sol_cli_compat.to_string))
 ;;
@@ -114,20 +115,22 @@ let test_adds_an_entry_to_an_existing_section () =
   @@ fun root path ->
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
    | Ok Sol_cli_sol_yml.Declared -> ()
-   | Ok _ -> Alcotest.fail "expected a new declaration"
-   | Error e -> Alcotest.fail e);
+   | Ok _ -> Windtrap.fail "expected a new declaration"
+   | Error e -> Windtrap.fail e);
   let edited = read_file path in
   check_original_preserved
     ~label:"added entry"
     ~original:sol_yml_with_an_entry_and_comments
     ~edited;
-  Alcotest.(check (list string))
-    "both services"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"both services"
     [ "charge_svc"; "ledger_worker" ]
     (List.map (fun (s : Sol_cli_config.service) -> s.name) (declared ~root)
      |> List.sort String.compare);
-  Alcotest.(check (option int))
-    "the hand-written scale survives"
+  Windtrap.equal
+    (Windtrap.option Windtrap.int)
+    ~msg:"the hand-written scale survives"
     (Some 2)
     (declared ~root
      |> List.find (fun (s : Sol_cli_config.service) ->
@@ -147,16 +150,18 @@ let test_completes_an_entry_that_declares_no_language () =
   @@ fun root path ->
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
    | Ok Sol_cli_sol_yml.Language_added -> ()
-   | Ok _ -> Alcotest.fail "expected the language to be added to an existing entry"
-   | Error e -> Alcotest.fail e);
+   | Ok _ -> Windtrap.fail "expected the language to be added to an existing entry"
+   | Error e -> Windtrap.fail e);
   let edited = read_file path in
   check_original_preserved ~label:"completed entry" ~original:sol_yml ~edited;
-  Alcotest.(check (option (option string)))
-    "parsed language"
+  Windtrap.equal
+    (Windtrap.option (Windtrap.option Windtrap.string))
+    ~msg:"parsed language"
     (Some (Some "ocaml"))
     (language_of ~root "charge_svc" |> Option.map (Option.map Sol_cli_compat.to_string));
-  Alcotest.(check (option string))
-    "the declared path survives"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the declared path survives"
     (Some "app/payments/charge_svc")
     (declared ~root
      |> List.find (fun (s : Sol_cli_config.service) -> String.equal s.name "charge_svc")
@@ -170,8 +175,8 @@ let test_registering_twice_writes_nothing () =
   let after_first = read_file path in
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
    | Ok Sol_cli_sol_yml.Already_declared -> ()
-   | Ok _ -> Alcotest.fail "expected the second registration to be a no-op"
-   | Error e -> Alcotest.fail e);
+   | Ok _ -> Windtrap.fail "expected the second registration to be a no-op"
+   | Error e -> Windtrap.fail e);
   check_string "the file is untouched" after_first (read_file path)
 ;;
 
@@ -181,7 +186,7 @@ let test_a_file_without_a_trailing_newline_keeps_its_ending () =
   @@ fun root path ->
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
    | Ok _ -> ()
-   | Error e -> Alcotest.fail e);
+   | Error e -> Windtrap.fail e);
   let edited = read_file path in
   check_original_preserved ~label:"no trailing newline" ~original:sol_yml ~edited;
   check_bool
@@ -195,11 +200,12 @@ let test_a_name_that_needs_quoting_is_quoted () =
   @@ fun root path ->
   (match register ~root ~name:"true" ~dir:"app/orders/true_svc" with
    | Ok _ -> ()
-   | Error e -> Alcotest.fail e);
+   | Error e -> Windtrap.fail e);
   let edited = read_file path in
   check_bool "the key is quoted" true (Sol_cli_string.contains ~needle:{|"true":|} edited);
-  Alcotest.(check (list string))
-    "the name round-trips"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the name round-trips"
     [ "true" ]
     (List.map (fun (s : Sol_cli_config.service) -> s.name) (declared ~root))
 ;;
@@ -212,7 +218,7 @@ let test_refuses_a_name_declared_at_another_path () =
   @@ fun root path ->
   let before = read_file path in
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
-   | Ok _ -> Alcotest.fail "expected a refusal"
+   | Ok _ -> Windtrap.fail "expected a refusal"
    | Error e ->
      check_bool
        "names the path it is already declared at"
@@ -228,7 +234,7 @@ let test_refuses_a_conflicting_language () =
   @@ fun root path ->
   let before = read_file path in
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
-   | Ok _ -> Alcotest.fail "expected a refusal"
+   | Ok _ -> Windtrap.fail "expected a refusal"
    | Error e ->
      check_bool
        "names the declared language"
@@ -243,7 +249,7 @@ let test_refuses_a_sol_yml_it_cannot_parse () =
   @@ fun root path ->
   let before = read_file path in
   (match register ~root ~name:"ledger_worker" ~dir:"app/comms/ledger_worker" with
-   | Ok _ -> Alcotest.fail "expected a refusal"
+   | Ok _ -> Windtrap.fail "expected a refusal"
    | Error e ->
      check_bool "names the file" true (Sol_cli_string.contains ~needle:"sol.yml" e));
   check_string "nothing was written" before (read_file path)
@@ -255,7 +261,7 @@ let test_refuses_a_shape_it_cannot_patch () =
   @@ fun root path ->
   let before = read_file path in
   (match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
-   | Ok _ -> Alcotest.fail "expected a refusal"
+   | Ok _ -> Windtrap.fail "expected a refusal"
    | Error e ->
      check_bool
        "says what to do instead"
@@ -275,7 +281,7 @@ let test_commit_reports_an_unwritable_manifest () =
       ignore (Unix.chmod path 0o644))
     (fun () ->
        match register ~root ~name:"charge_svc" ~dir:"app/payments/charge_svc" with
-       | Ok _ -> Alcotest.fail "expected the write to fail"
+       | Ok _ -> Windtrap.fail "expected the write to fail"
        | Error e ->
          check_bool
            "names the manifest"

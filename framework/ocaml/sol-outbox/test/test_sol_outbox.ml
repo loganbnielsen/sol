@@ -44,13 +44,13 @@ let jobs_ddl =
 let exec_sql pool sql =
   match Pg_db.exec pool ((unit ->. unit) sql) () with
   | Ok () -> ()
-  | Error e -> Alcotest.failf "%s: %s" sql (Pg_error.to_string e)
+  | Error e -> Windtrap.failf "%s: %s" sql (Pg_error.to_string e)
 ;;
 
 let with_pool f =
   match postgres_url () with
   | None ->
-    Alcotest.fail
+    Windtrap.fail
       "POSTGRES_URL is not set: this target exists to exercise Postgres, and a run \
        without a database is not a passing run"
   | Some url ->
@@ -59,7 +59,7 @@ let with_pool f =
     Eio.Switch.run
     @@ fun sw ->
     (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
-     | Error e -> Alcotest.failf "pool: %s" (Pg_error.to_string e)
+     | Error e -> Windtrap.failf "pool: %s" (Pg_error.to_string e)
      | Ok pool -> f env sw pool)
 ;;
 
@@ -98,13 +98,13 @@ module Strays = Sol_outbox.Make (Other)
 let publish_in_transaction pool ~key ~ord event =
   match Pg_db.transaction pool (fun tx -> Outbox.publish tx ~key ~ord event) with
   | Ok () -> ()
-  | Error e -> Alcotest.failf "publish: %s" (Pg_error.to_string e)
+  | Error e -> Windtrap.failf "publish: %s" (Pg_error.to_string e)
 ;;
 
 let pending pool =
   match Sol_outbox.For_testing.pending pool () with
   | Ok rows -> rows
-  | Error e -> Alcotest.failf "pending: %s" (Pg_error.to_string e)
+  | Error e -> Windtrap.failf "pending: %s" (Pg_error.to_string e)
 ;;
 
 let test_state_and_intent_commit_together () =
@@ -115,15 +115,17 @@ let test_state_and_intent_commit_together () =
          let* () = Outbox.publish tx ~key:"k1" ~ord:1L { Ev.id = "e1" } in
          Error (Pg_error.Query_error "the domain change failed"))
      with
-     | Ok () -> Alcotest.fail "a rolled-back transaction reported success"
+     | Ok () -> Windtrap.fail "a rolled-back transaction reported success"
      | Error _ -> ());
-    Alcotest.(check (list (pair string int64)))
-      "nothing survived the rollback"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"nothing survived the rollback"
       []
       (pending pool);
     publish_in_transaction pool ~key:"k1" ~ord:1L { Ev.id = "e1" };
-    Alcotest.(check (list (pair string int64)))
-      "the intent survived the commit"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"the intent survived the commit"
       [ "k1", 1L ]
       (pending pool))
 ;;
@@ -135,9 +137,13 @@ let test_undeclared_kind_is_refused () =
        Pg_db.transaction pool (fun tx ->
          Strays.publish tx ~key:"k1" ~ord:1L { Other.id = "e1" })
      with
-     | Ok () -> Alcotest.fail "a kind nothing publishes was enqueued"
+     | Ok () -> Windtrap.fail "a kind nothing publishes was enqueued"
      | Error _ -> ());
-    Alcotest.(check (list (pair string int64))) "nothing was written" [] (pending pool))
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"nothing was written"
+      []
+      (pending pool))
 ;;
 
 let relay_until_drained env sw pool ~publish =
@@ -154,7 +160,7 @@ let relay_until_drained env sw pool ~publish =
     if Sol_outbox.For_testing.pending_count pool = Ok 0
     then ()
     else if Unix.gettimeofday () > deadline
-    then Alcotest.fail "the relay did not drain within the timeout"
+    then Windtrap.fail "the relay did not drain within the timeout"
     else (
       Eio.Time.sleep env#clock 0.01;
       wait ())
@@ -177,8 +183,9 @@ let test_per_key_order_is_not_insertion_order () =
       |> List.filter (fun (p : Sol_outbox.publication) -> String.equal p.key "k1")
       |> List.map (fun (p : Sol_outbox.publication) -> p.ord)
     in
-    Alcotest.(check (list int64))
-      "a key's events are published in ordering-token order, not insertion order"
+    Windtrap.equal
+      (Windtrap.list Windtrap.int64)
+      ~msg:"a key's events are published in ordering-token order, not insertion order"
       [ 1L; 2L ]
       k1)
 ;;
@@ -201,7 +208,7 @@ let test_a_failed_publish_does_not_advance_the_key () =
       if List.length !attempts >= 3
       then ()
       else if Unix.gettimeofday () > deadline
-      then Alcotest.fail "the relay did not retry the blocked key"
+      then Windtrap.fail "the relay did not retry the blocked key"
       else (
         Eio.Time.sleep env#clock 0.01;
         wait_for_attempts ())
@@ -209,8 +216,9 @@ let test_a_failed_publish_does_not_advance_the_key () =
     wait_for_attempts ();
     Eio.Promise.resolve stop_r ();
     Eio.Fiber.yield ();
-    Alcotest.(check (list (pair string int64)))
-      "both rows are still unpublished, in their original order"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"both rows are still unpublished, in their original order"
       [ "k1", 1L; "k1", 2L ]
       (pending pool);
     let recorded = ref [] in
@@ -219,11 +227,16 @@ let test_a_failed_publish_does_not_advance_the_key () =
       Ok ()
     in
     ignore (relay_until_drained env sw pool ~publish:succeeding);
-    Alcotest.(check (list (pair string int64)))
-      "once publication succeeds the key drains in order"
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"once publication succeeds the key drains in order"
       [ "k1", 1L; "k1", 2L ]
       (List.rev !recorded);
-    Alcotest.(check (list (pair string int64))) "and the table is empty" [] (pending pool))
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"and the table is empty"
+      []
+      (pending pool))
 ;;
 
 let count_rows pool table =
@@ -232,7 +245,7 @@ let count_rows pool table =
   with
   | Ok (Some n) -> n
   | Ok None -> 0
-  | Error e -> Alcotest.failf "count %s: %s" table (Pg_error.to_string e)
+  | Error e -> Windtrap.failf "count %s: %s" table (Pg_error.to_string e)
 ;;
 
 let test_a_row_is_kept_until_the_receipt_resolves () =
@@ -251,8 +264,9 @@ let test_a_row_is_kept_until_the_receipt_resolves () =
     Eio.Fiber.fork ~sw (fun () ->
       ignore (Outbox.relay ~env ~pool ~publish ~poll_interval_s:0.01 ~stop ()));
     Eio.Promise.await in_flight;
-    Alcotest.(check int)
-      "the row is still there while the delivery receipt is in flight"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"the row is still there while the delivery receipt is in flight"
       1
       (count_rows pool "sol_outbox");
     Eio.Promise.resolve release_r ();
@@ -261,7 +275,7 @@ let test_a_row_is_kept_until_the_receipt_resolves () =
       if count_rows pool "sol_outbox" = 0
       then ()
       else if Unix.gettimeofday () > deadline
-      then Alcotest.fail "the row was not deleted after the receipt resolved"
+      then Windtrap.fail "the row was not deleted after the receipt resolved"
       else (
         Eio.Time.sleep env#clock 0.01;
         wait ())
@@ -288,7 +302,7 @@ let test_a_blocked_key_does_not_block_other_keys () =
       then ()
       else if Unix.gettimeofday () > deadline
       then
-        Alcotest.failf
+        Windtrap.failf
           "the healthy key did not drain past the blocked one: %s"
           (pending pool
            |> List.map (fun (k, o) -> Printf.sprintf "%s@%Ld" k o)
@@ -312,60 +326,67 @@ let test_the_outbox_and_jobs_share_one_transaction () =
          let* () = Jobs.enqueue tx ~dedupe_key:"e1" { Email.id = "e1" } in
          Error (Pg_error.Query_error "the domain change failed"))
      with
-     | Ok () -> Alcotest.fail "a rolled-back transaction reported success"
+     | Ok () -> Windtrap.fail "a rolled-back transaction reported success"
      | Error _ -> ());
-    Alcotest.(check int)
-      "no event intent survived the rollback"
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"no event intent survived the rollback"
       0
       (count_rows pool "sol_outbox");
-    Alcotest.(check int) "no job survived the rollback" 0 (count_rows pool "sol_jobs");
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"no job survived the rollback"
+      0
+      (count_rows pool "sol_jobs");
     (match
        Pg_db.transaction pool (fun tx ->
          let* () = Outbox.publish tx ~key:"k1" ~ord:1L { Ev.id = "e1" } in
          Jobs.enqueue tx ~dedupe_key:"e1" { Email.id = "e1" })
      with
      | Ok () -> ()
-     | Error e -> Alcotest.failf "commit: %s" (Pg_error.to_string e));
-    Alcotest.(check int) "the event intent committed" 1 (count_rows pool "sol_outbox");
-    Alcotest.(check int) "the job committed with it" 1 (count_rows pool "sol_jobs"))
+     | Error e -> Windtrap.failf "commit: %s" (Pg_error.to_string e));
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"the event intent committed"
+      1
+      (count_rows pool "sol_outbox");
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"the job committed with it"
+      1
+      (count_rows pool "sol_jobs"))
 ;;
 
 let () =
-  Alcotest.run
+  Windtrap.run
     "sol_outbox"
-    [ ( "atomicity"
-      , [ Alcotest.test_case
+    [ Windtrap.group
+        "atomicity"
+        [ Windtrap.test
             "state and intent commit together"
-            `Quick
             test_state_and_intent_commit_together
-        ; Alcotest.test_case
-            "an undeclared kind is refused"
-            `Quick
-            test_undeclared_kind_is_refused
-        ] )
-    ; ( "relay"
-      , [ Alcotest.test_case
+        ; Windtrap.test "an undeclared kind is refused" test_undeclared_kind_is_refused
+        ]
+    ; Windtrap.group
+        "relay"
+        [ Windtrap.test
             "per-key order is the ordering token, not insertion order"
-            `Quick
             test_per_key_order_is_not_insertion_order
-        ; Alcotest.test_case
+        ; Windtrap.test
             "a failed publish does not advance the key"
-            `Quick
             test_a_failed_publish_does_not_advance_the_key
-        ; Alcotest.test_case
+        ; Windtrap.test
             "a row is kept until the receipt resolves"
-            `Quick
             test_a_row_is_kept_until_the_receipt_resolves
-        ; Alcotest.test_case
+        ; Windtrap.test
             "a blocked key does not block other keys"
-            `Quick
             test_a_blocked_key_does_not_block_other_keys
-        ] )
-    ; ( "composition"
-      , [ Alcotest.test_case
+        ]
+    ; Windtrap.group
+        "composition"
+        [ Windtrap.test
             "the outbox and sol-jobs share one transaction"
-            `Quick
             test_the_outbox_and_jobs_share_one_transaction
-        ] )
+        ]
     ]
 ;;

@@ -3,7 +3,7 @@ open Sol_cli_target_report
 let provider () =
   match Sol_cli_provider.of_string "aws" with
   | Some provider -> provider
-  | None -> Alcotest.fail "aws should be a known provider"
+  | None -> Windtrap.fail "aws should be a known provider"
 ;;
 
 let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_config.target =
@@ -62,12 +62,14 @@ let test_verbose_shows_the_context () =
       (target ~kubeconfig:".sol/kubeconfigs/prod.kubeconfig" ())
       (Reachable "prod-us-east-1")
   in
-  Alcotest.(check (option string))
-    "raw context available when asked for"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"raw context available when asked for"
     (Some "prod-us-east-1")
     (value_of rows "kube context");
-  Alcotest.(check (option string))
-    "kubeconfig available when asked for"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"kubeconfig available when asked for"
     (Some ".sol/kubeconfigs/prod.kubeconfig")
     (value_of rows "kubeconfig")
 ;;
@@ -89,17 +91,31 @@ let test_default_summary_never_names_the_context () =
 
 let test_rows_describe_the_target_not_a_cluster () =
   let rows = Sol_cli_target_report.rows ~verbose:false (target ()) (Configured "c") in
-  Alcotest.(check (option string)) "region" (Some "us-east-1") (value_of rows "region");
-  Alcotest.(check (option string)) "cluster" (Some "acme-prod") (value_of rows "cluster");
-  Alcotest.(check bool)
-    "provider present"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"region"
+    (Some "us-east-1")
+    (value_of rows "region");
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"cluster"
+    (Some "acme-prod")
+    (value_of rows "cluster");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"provider present"
     true
     (Option.is_some (value_of rows "provider"));
-  Alcotest.(check (option string))
-    "no target path by default"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no target path by default"
     None
     (value_of rows "target");
-  Alcotest.(check (option string)) "no env by default" None (value_of rows "env")
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no env by default"
+    None
+    (value_of rows "env")
 ;;
 
 let test_unreachable_carries_the_reason () =
@@ -128,10 +144,14 @@ let test_json_matches_rows () =
       |> List.map (fun (key, value) ->
         match value with
         | `String value -> key, value
-        | _ -> Alcotest.fail "expected string values")
-    | _ -> Alcotest.fail "expected an object"
+        | _ -> Windtrap.fail "expected string values")
+    | _ -> Windtrap.fail "expected an object"
   in
-  Alcotest.(check (list (pair string string))) "same rows" rows from_json
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"same rows"
+    rows
+    from_json
 ;;
 
 let test_the_live_state_rows_follow_readiness () =
@@ -145,17 +165,24 @@ let test_the_live_state_rows_follow_readiness () =
       (target ())
       (Reachable "c")
   in
-  Alcotest.(check (option string)) "cloud" (Some "Healthy") (value_of rows "cloud");
-  Alcotest.(check (option string))
-    "drift"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"cloud"
+    (Some "Healthy")
+    (value_of rows "cloud");
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"drift"
     (Some "None — Terraform's recorded state matches the provider's observed reality")
     (value_of rows "drift");
-  Alcotest.(check (option string))
-    "last operation"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"last operation"
     (Some "unavailable — no record")
     (value_of rows "last operation");
-  Alcotest.(check (list string))
-    "the live state rows keep their order"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the live state rows keep their order"
     [ "platform"; "cloud"; "drift"; "last operation" ]
     (List.filter
        (fun label -> List.mem label [ "platform"; "cloud"; "drift"; "last operation" ])
@@ -164,10 +191,19 @@ let test_the_live_state_rows_follow_readiness () =
 
 let test_the_offline_summary_omits_the_checked_rows () =
   let rows = Sol_cli_target_report.rows ~verbose:false (target ()) (Configured "c") in
-  Alcotest.(check (option string)) "no cloud row" None (value_of rows "cloud");
-  Alcotest.(check (option string)) "no drift row" None (value_of rows "drift");
-  Alcotest.(check (option string))
-    "the last-operation row needs no check and is always reported"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no cloud row"
+    None
+    (value_of rows "cloud");
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"no drift row"
+    None
+    (value_of rows "drift");
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the last-operation row needs no check and is always reported"
     (Some Sol_cli_target_report.last_operation_unavailable)
     (value_of rows "last operation")
 ;;
@@ -198,18 +234,24 @@ let test_json_carries_the_live_state_fields () =
       | Some (`String value) -> Some value
       | _ -> None
     in
-    Alcotest.(check (option string)) "cloud" (Some "Healthy") (value "cloud");
-    Alcotest.(check (option string))
-      "drift"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"cloud"
+      (Some "Healthy")
+      (value "cloud");
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"drift"
       (Some
          "Detected — Terraform's recorded state differs from the provider's observed \
           reality")
       (value "drift");
-    Alcotest.(check (option string))
-      "last operation"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"last operation"
       (Some Sol_cli_target_report.last_operation_unavailable)
       (value "last operation")
-  | _ -> Alcotest.fail "expected an object"
+  | _ -> Windtrap.fail "expected an object"
 ;;
 
 let%test "target_report: not configured points at the field" =

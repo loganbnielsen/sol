@@ -1,23 +1,24 @@
-let check_string = Alcotest.(check string)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let ok_or_fail = function
   | Ok value -> value
-  | Error message -> Alcotest.fail ("unexpected error: " ^ message)
+  | Error message -> Windtrap.fail ("unexpected error: " ^ message)
 ;;
 
 let test_empty_context_fails_closed () =
   match Sol_cli_kube_destination.of_context "" with
-  | Ok _ -> Alcotest.fail "an empty context must not produce a destination"
+  | Ok _ -> Windtrap.fail "an empty context must not produce a destination"
   | Error message ->
-    Alcotest.(check bool)
-      "the error explains the refusal rather than just failing"
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the error explains the refusal rather than just failing"
       true
       (String.length message > 40)
 ;;
 
 let test_whitespace_context_fails_closed () =
   match Sol_cli_kube_destination.of_context "   " with
-  | Ok _ -> Alcotest.fail "a whitespace-only context must not produce a destination"
+  | Ok _ -> Windtrap.fail "a whitespace-only context must not produce a destination"
   | Error _ -> ()
 ;;
 
@@ -30,24 +31,28 @@ let test_blank_kubeconfig_is_dropped () =
   let destination =
     ok_or_fail (Sol_cli_kube_destination.of_context ~kubeconfig:"  " "prod")
   in
-  Alcotest.(check bool)
-    "a blank kubeconfig is not a kubeconfig"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a blank kubeconfig is not a kubeconfig"
     true
     (destination.kubeconfig = None)
 ;;
 
 let test_arguments_scope_the_operation () =
   let destination = ok_or_fail (Sol_cli_kube_destination.of_context "prod-ctx") in
-  Alcotest.(check (list string))
-    "kubectl is told which context"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"kubectl is told which context"
     [ "--context"; "prod-ctx" ]
     (Sol_cli_kube_destination.kubectl_args destination);
-  Alcotest.(check (list string))
-    "helm is told which context"
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"helm is told which context"
     [ "--kube-context"; "prod-ctx" ]
     (Sol_cli_kube_destination.helm_args destination);
-  Alcotest.(check int)
-    "nothing extra in the environment without a kubeconfig"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"nothing extra in the environment without a kubeconfig"
     0
     (List.length (Sol_cli_kube_destination.environment destination))
 ;;
@@ -57,17 +62,20 @@ let test_scoped_kubeconfig_is_exported () =
     ok_or_fail
       (Sol_cli_kube_destination.of_context ~kubeconfig:"/tmp/prod.kubeconfig" "ctx")
   in
-  Alcotest.(check (option string))
-    "the kubeconfig is scoped to the process, which also keeps other environments' \
-     credentials out of it"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:
+      "the kubeconfig is scoped to the process, which also keeps other environments' \
+       credentials out of it"
     (Some "/tmp/prod.kubeconfig")
     (List.assoc_opt "KUBECONFIG" (Sol_cli_kube_destination.environment destination))
 ;;
 
 let test_local_is_named_literally () =
   check_string "local cluster" "k3d-sol-local" Sol_cli_kube_destination.local.context;
-  Alcotest.(check bool)
-    "the local destination needs no kubeconfig"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the local destination needs no kubeconfig"
     true
     (Sol_cli_kube_destination.local.kubeconfig = None)
 ;;
@@ -76,8 +84,9 @@ let test_to_string_mentions_the_kubeconfig () =
   let destination =
     ok_or_fail (Sol_cli_kube_destination.of_context ~kubeconfig:"/tmp/c" "ctx")
   in
-  Alcotest.(check bool)
-    "the kubeconfig appears when one is scoped"
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the kubeconfig appears when one is scoped"
     true
     (String.length (Sol_cli_kube_destination.to_string destination) > 3)
 ;;
@@ -109,8 +118,9 @@ let test_ambient_context_cannot_leak () =
          ok_or_fail (Sol_cli_kube_destination.of_context ~kubeconfig:scoped "sol-staging")
        in
        let ctx = Sol_cli_kube_destination.context_of_destination destination in
-       Alcotest.(check (list string))
-         "argv names the target's context, not the ambient one"
+       Windtrap.equal
+         (Windtrap.list Windtrap.string)
+         ~msg:"argv names the target's context, not the ambient one"
          [ "--context"; "sol-staging" ]
          (Sol_cli_kube_destination.kubectl_context_args ctx);
        let env = Array.to_list (Sol_cli_kube_destination.child_environment ctx) in
@@ -126,12 +136,14 @@ let test_ambient_context_cannot_leak () =
            env
          |> List.assoc_opt "KUBECONFIG"
        in
-       Alcotest.(check (option string))
-         "the child env pins the target's kubeconfig, not the ambient one"
+       Windtrap.equal
+         (Windtrap.option Windtrap.string)
+         ~msg:"the child env pins the target's kubeconfig, not the ambient one"
          (Some scoped)
          kubeconfig_in_env;
-       Alcotest.(check bool)
-         "the ambient context name appears nowhere in the invocation"
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the ambient context name appears nowhere in the invocation"
          false
          (List.mem
             "definitely-wrong-cluster"

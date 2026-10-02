@@ -1,5 +1,5 @@
-let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
-let check_string msg expected actual = Alcotest.(check string) msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
 let aws_config : Sol_cli_installation.installation_config =
   { state_bucket = "sol-state-test"
@@ -88,7 +88,7 @@ let gcp_target : Sol_cli_config.target =
 let resolved_or_fail target =
   match Sol_cli_installation.of_target target with
   | Ok configuration -> configuration
-  | Error message -> Alcotest.fail ("of_target refused a declared target: " ^ message)
+  | Error message -> Windtrap.fail ("of_target refused a declared target: " ^ message)
 ;;
 
 let probe_argv provider configuration prerequisite =
@@ -107,14 +107,16 @@ let test_probe_coverage () =
     (fun (name, provider, config) ->
        let expected = Sol_cli_provider_capabilities.installation_prerequisites provider in
        let actual = probe_prerequisites provider config in
-       Alcotest.(check (list string))
-         (name ^ ": every prerequisite is probed exactly once")
+       Windtrap.equal
+         (Windtrap.list Windtrap.string)
+         ~msg:(name ^ ": every prerequisite is probed exactly once")
          (List.map Sol_cli_installation.prerequisite_label expected)
          (List.map Sol_cli_installation.prerequisite_label actual);
        let sorted = List.sort compare actual in
        let unique = List.sort_uniq compare actual in
-       Alcotest.(check int)
-         (name ^ ": no duplicate probes")
+       Windtrap.equal
+         Windtrap.int
+         ~msg:(name ^ ": no duplicate probes")
          (List.length sorted)
          (List.length unique))
     [ "aws", Sol_cli_provider.Aws, aws_config; "gcp", Sol_cli_provider.Gcp, gcp_config ]
@@ -177,10 +179,10 @@ let test_unobservable_is_never_established () =
      | Sol_cli_installation.Unknown reason ->
        check_bool "the refusal says why" true (String.length reason > 0)
      | Sol_cli_installation.Established ->
-       Alcotest.fail "a probe that could not run was reported Established"
+       Windtrap.fail "a probe that could not run was reported Established"
      | Sol_cli_installation.Unmet reason ->
-       Alcotest.fail ("expected Unknown, got Unmet: " ^ reason))
-  | _ -> Alcotest.fail "expected one verdict"
+       Windtrap.fail ("expected Unknown, got Unmet: " ^ reason))
+  | _ -> Windtrap.fail "expected one verdict"
 ;;
 
 let test_a_refused_probe_is_unmet () =
@@ -201,10 +203,10 @@ let test_a_refused_probe_is_unmet () =
       true
       (String.length reason > 0)
   | [ (_, Sol_cli_installation.Unknown reason) ] ->
-    Alcotest.fail ("a probe that ran and refused is Unmet, not UNKNOWN: " ^ reason)
+    Windtrap.fail ("a probe that ran and refused is Unmet, not UNKNOWN: " ^ reason)
   | [ (_, Sol_cli_installation.Established) ] ->
-    Alcotest.fail "a refused probe was reported Established"
-  | _ -> Alcotest.fail "expected one verdict"
+    Windtrap.fail "a refused probe was reported Established"
+  | _ -> Windtrap.fail "expected one verdict"
 ;;
 
 let test_observation_drives_the_verdict () =
@@ -218,7 +220,7 @@ let test_observation_drives_the_verdict () =
     Sol_cli_installation.observe ~run:(fun _ -> Sol_cli_installation.Observed "ok") probes
   with
   | [ (_, Sol_cli_installation.Established) ] -> ()
-  | _ -> Alcotest.fail "an observed resource should be Established"
+  | _ -> Windtrap.fail "an observed resource should be Established"
 ;;
 
 let test_missing_configuration_is_unmet () =
@@ -239,7 +241,11 @@ let test_missing_configuration_is_unmet () =
       inspected := argv :: !inspected;
       Sol_cli_installation.Observed "present")
   in
-  Alcotest.(check int) "only the state backend is inspected" 1 (List.length !inspected);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"only the state backend is inspected"
+    1
+    (List.length !inspected);
   List.iter
     (fun (prerequisite, verdict) ->
        match prerequisite, verdict with
@@ -251,9 +257,9 @@ let test_missing_configuration_is_unmet () =
            true
            (String.length reason > 0)
        | _, Sol_cli_installation.Unknown _ ->
-         Alcotest.fail "an absent configuration value is Unmet, not UNKNOWN"
+         Windtrap.fail "an absent configuration value is Unmet, not UNKNOWN"
        | _, Sol_cli_installation.Established ->
-         Alcotest.fail "nothing is established in an empty configuration")
+         Windtrap.fail "nothing is established in an empty configuration")
     verdicts
 ;;
 
@@ -269,14 +275,14 @@ let test_all_established_fails_closed () =
        "the refusal names the prerequisite and its reason"
        "terraform state lock is UNKNOWN: no answer"
        message
-   | Ok () -> Alcotest.fail "UNKNOWN must fail closed");
+   | Ok () -> Windtrap.fail "UNKNOWN must fail closed");
   match all_established [ State_backend, unmet "no bucket" ] with
   | Error message ->
     check_string
       "Unmet fails closed too"
       "terraform state backend is Unmet: no bucket"
       message
-  | Ok () -> Alcotest.fail "Unmet must fail closed"
+  | Ok () -> Windtrap.fail "Unmet must fail closed"
 ;;
 
 let test_the_health_summary_never_promotes_an_unknown () =
@@ -330,41 +336,48 @@ let test_resolves_the_declared_installation () =
     aws.state_prefix;
   check_string "the bucket is the target's declaration" "acme-tfstate" aws.state_bucket;
   check_string "the region is the target's declaration" "us-east-1" aws.region;
-  Alcotest.(check (option string))
-    "the lock table is the target's declaration"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the lock table is the target's declaration"
     (Some "acme-tflock")
     aws.lock_table;
-  Alcotest.(check (option string))
-    "the provisioning identity is the declared ARN"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the provisioning identity is the declared ARN"
     (Some "arn:aws:iam::111122223333:role/sol-provisioner")
     aws.provisioning_identity;
-  Alcotest.(check (option string))
-    "the delegated zone follows the served domain"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the delegated zone follows the served domain"
     (Some "api.acme.example")
     (Sol_cli_installation.zone_domain aws.zone);
-  Alcotest.(check (option string))
-    "an AWS installation names no project"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"an AWS installation names no project"
     None
     aws.project_id;
   let gcp = resolved_or_fail gcp_target in
   check_string "the GCP prefix is derived too" "bootstrap/gcp" gcp.state_prefix;
-  Alcotest.(check (option string))
-    "the GCP root declares no lock table, so none is resolved"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the GCP root declares no lock table, so none is resolved"
     None
     gcp.lock_table;
-  Alcotest.(check (option string))
-    "the GCP project is the target's declaration"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the GCP project is the target's declaration"
     (Some "sol-qualification")
     gcp.project_id;
-  Alcotest.(check (option string))
-    "the GCP durable root declares no identity, so none is resolved"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the GCP durable root declares no identity, so none is resolved"
     None
     gcp.deploy_identity
 ;;
 
 let test_the_state_backend_is_required () =
   match Sol_cli_installation.of_target { aws_target with state_bucket = None } with
-  | Ok _ -> Alcotest.fail "an installation with no state backend was resolved"
+  | Ok _ -> Windtrap.fail "an installation with no state backend was resolved"
   | Error message ->
     check_bool
       "the refusal names what is missing"
@@ -381,11 +394,12 @@ let test_the_role_probe_names_the_role_not_the_arn () =
       Sol_cli_installation.Provisioning_identity
   with
   | Some argv ->
-    Alcotest.(check (list string))
-      "get-role takes the role name, derived from the declared ARN"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"get-role takes the role name, derived from the declared ARN"
       [ "aws"; "iam"; "get-role"; "--role-name"; "sol-provisioner" ]
       argv
-  | None -> Alcotest.fail "the provisioning identity has no probe"
+  | None -> Windtrap.fail "the provisioning identity has no probe"
 ;;
 
 let test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates () =
@@ -394,8 +408,9 @@ let test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates () =
     probe_argv Sol_cli_provider.Gcp configuration Sol_cli_installation.Delegated_zone
   with
   | Some argv ->
-    Alcotest.(check (list string))
-      "the durable root names its zone by replacing the dots"
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"the durable root names its zone by replacing the dots"
       [ "gcloud"
       ; "dns"
       ; "managed-zones"
@@ -404,17 +419,18 @@ let test_the_gcp_zone_probe_uses_the_zone_name_terraform_creates () =
       ; "--format=value(name)"
       ]
       argv
-  | None -> Alcotest.fail "the delegated zone has no probe"
+  | None -> Windtrap.fail "the delegated zone has no probe"
 ;;
 
 let test_the_durable_root_is_configured_from_the_declaration () =
   let aws = resolved_or_fail aws_target in
   (match Sol_cli_provider_capabilities.installation_backend Sol_cli_provider.Aws aws with
    | Error message ->
-     Alcotest.fail ("the AWS durable root's backend was refused: " ^ message)
+     Windtrap.fail ("the AWS durable root's backend was refused: " ^ message)
    | Ok backend ->
-     Alcotest.(check (list string))
-       "the durable root's own state lives under the derived prefix"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"the durable root's own state lives under the derived prefix"
        [ "bucket=acme-tfstate"
        ; "key=bootstrap/aws/default.tfstate"
        ; "region=us-east-1"
@@ -436,16 +452,17 @@ let test_the_durable_root_is_configured_from_the_declaration () =
      ; ("parent_zone_id", "")
      ] -> ()
    | vars ->
-     Alcotest.fail
+     Windtrap.fail
        ("the AWS durable root's variables are not the declared ones: "
         ^ String.concat "," (List.map fst vars)));
   let gcp = resolved_or_fail gcp_target in
   (match Sol_cli_provider_capabilities.installation_backend Sol_cli_provider.Gcp gcp with
    | Error message ->
-     Alcotest.fail ("the GCP durable root's backend was refused: " ^ message)
+     Windtrap.fail ("the GCP durable root's backend was refused: " ^ message)
    | Ok backend ->
-     Alcotest.(check (list string))
-       "the GCP backend is a prefix, not a key"
+     Windtrap.equal
+       (Windtrap.list Windtrap.string)
+       ~msg:"the GCP backend is a prefix, not a key"
        [ "bucket=sol-qualification-tfstate"; "prefix=bootstrap/gcp" ]
        backend);
   let no_zone =
@@ -454,8 +471,9 @@ let test_the_durable_root_is_configured_from_the_declaration () =
       ~manage_dns_zone:false
       aws
   in
-  Alcotest.(check (option string))
-    "a root that does not own the zone is told so"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"a root that does not own the zone is told so"
     (Some "false")
     (List.assoc_opt "manage_dns_zone" no_zone)
 ;;
@@ -467,7 +485,7 @@ let test_the_durable_root_refuses_an_incomplete_declaration () =
        Sol_cli_provider.Aws
        { aws with lock_table = None }
    with
-   | Ok _ -> Alcotest.fail "an AWS root with no lock table was configured"
+   | Ok _ -> Windtrap.fail "an AWS root with no lock table was configured"
    | Error message ->
      check_bool
        "the refusal names the lock table"
@@ -481,8 +499,9 @@ let test_the_durable_root_refuses_an_incomplete_declaration () =
       { gcp with project_id = None }
   with
   | vars ->
-    Alcotest.(check (option string))
-      "a GCP root with no project still passes what the target declared"
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"a GCP root with no project still passes what the target declared"
       (Some "")
       (List.assoc_opt "project_id" vars)
 ;;
@@ -493,20 +512,24 @@ let test_the_durable_root_policy_refuses_recreation () =
     { address; resource_type = "aws_s3_bucket"; mode = "managed"; action }
   in
   let policy = Sol_cli_installation_stage.durable_root_policy in
-  Alcotest.(check int)
-    "a metadata-only change is permitted"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a metadata-only change is permitted"
     0
     (List.length (violations policy [ change "aws_s3_bucket.state" Update ]));
-  Alcotest.(check int)
-    "a creation is permitted, so the root can gain a durable resource"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a creation is permitted, so the root can gain a durable resource"
     0
     (List.length (violations policy [ change "aws_dynamodb_table.lock" Create ]));
-  Alcotest.(check int)
-    "a replacement is refused"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a replacement is refused"
     1
     (List.length (violations policy [ change "aws_s3_bucket.state" Replace ]));
-  Alcotest.(check int)
-    "a destruction is refused"
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a destruction is refused"
     1
     (List.length
        (violations policy [ change "aws_route53_zone.qualification[0]" Delete ]))
@@ -567,14 +590,14 @@ let test_zone_ownership_is_three_distinguishable_cases () =
         && Sol_cli_string.contains ~needle:"sol" message
         && Sol_cli_string.contains ~needle:"user" message
         && Sol_cli_string.contains ~needle:"external" message)
-   | Ok _ -> Alcotest.fail "an unknown ownership value was accepted");
+   | Ok _ -> Windtrap.fail "an unknown ownership value was accepted");
   match declared None with
   | Error message ->
     check_bool
       "an absent declaration is refused, naming the key"
       true
       (Sol_cli_string.contains ~needle:"dns_zone_ownership" message)
-  | Ok _ -> Alcotest.fail "an absent ownership declaration was accepted"
+  | Ok _ -> Windtrap.fail "an absent ownership declaration was accepted"
 ;;
 
 let test_ownership_reaches_the_resolved_configuration () =
@@ -643,7 +666,7 @@ let test_external_delegation_is_unverifiable_not_unmet () =
            List.exists
              (fun argument -> Sol_cli_string.contains ~needle:"api.acme.example" argument)
              argv
-         then Alcotest.fail (name ^ " looked the zone up at the provider")
+         then Windtrap.fail (name ^ " looked the zone up at the provider")
          else Sol_cli_installation.Observed "present"
        in
        let verdict =
@@ -661,10 +684,10 @@ let test_external_delegation_is_unverifiable_not_unmet () =
            (Sol_cli_string.contains ~needle:"api.acme.example" reason
             && Sol_cli_string.contains ~needle:"delegation" reason)
        | Sol_cli_installation.Unmet reason ->
-         Alcotest.fail
+         Windtrap.fail
            (name ^ ": an unobservable delegation was reported Unmet: " ^ reason)
        | Sol_cli_installation.Established ->
-         Alcotest.fail (name ^ ": an unobservable delegation was reported Established"))
+         Windtrap.fail (name ^ ": an unobservable delegation was reported Established"))
     [ "aws", Sol_cli_provider.Aws; "gcp", Sol_cli_provider.Gcp ]
 ;;
 
@@ -694,13 +717,13 @@ let test_a_target_that_serves_no_domain_has_no_zone_prerequisite () =
       "a target with no domain resolves to no zone"
       true
       (configuration.zone = Sol_cli_installation.No_zone)
-  | Error message -> Alcotest.fail ("of_target refused a domain-less target: " ^ message)
+  | Error message -> Windtrap.fail ("of_target refused a domain-less target: " ^ message)
 ;;
 
 let test_the_declaration_is_required_when_a_domain_is_declared () =
   match Sol_cli_installation.of_target { aws_target with dns_zone_ownership = None } with
   | Ok _ ->
-    Alcotest.fail "a target with a domain and no ownership declaration was accepted"
+    Windtrap.fail "a target with a domain and no ownership declaration was accepted"
   | Error message ->
     check_bool
       "the refusal names the missing declaration"
@@ -770,7 +793,7 @@ let test_the_wait_gives_up_and_says_what_it_saw () =
        true
        (Sol_cli_string.contains ~needle:"ns-other.example" reason)
    | Sol_cli_installation.Established | Sol_cli_installation.Unknown _ ->
-     Alcotest.fail "a delegation that never appeared was not Unmet");
+     Windtrap.fail "a delegation that never appeared was not Unmet");
   check_bool "the wait used its whole budget" true (runs = 3);
   check_bool
     "every attempt was visible"
@@ -792,7 +815,7 @@ let test_an_unqueryable_resolver_fails_closed_without_waiting () =
        true
        (Sol_cli_string.contains ~needle:"spawn failed" reason)
    | Sol_cli_installation.Established | Sol_cli_installation.Unmet _ ->
-     Alcotest.fail
+     Windtrap.fail
        "an unqueryable resolver was reported as a verdict about the delegation");
   check_bool "an unqueryable resolver is not retried" true (runs = 1);
   check_bool
@@ -818,7 +841,7 @@ let test_the_wait_without_an_expectation_accepts_any_answer () =
       true
       (Sol_cli_string.contains ~needle:"no delegation wait was requested" reason)
   | Sol_cli_installation.Established | Sol_cli_installation.Unknown _ ->
-    Alcotest.fail "a zero-attempt wait returned a verdict about the delegation"
+    Windtrap.fail "a zero-attempt wait returned a verdict about the delegation"
 ;;
 
 let aws_prerequisites =
@@ -935,7 +958,7 @@ type stage_fakes =
   }
 
 let no_calls name =
-  Alcotest.fail (name ^ " reached " ^ "a destructive step without a confirmation")
+  Windtrap.fail (name ^ " reached " ^ "a destructive step without a confirmation")
 ;;
 
 let stage_fakes
@@ -1053,7 +1076,7 @@ let test_a_user_supplied_zone_is_preserved_without_a_dns_confirmation () =
        "the zone is not among the removals"
        false
        (List.mem Sol_cli_installation.Delegated_zone removed)
-   | _ -> Alcotest.fail "a user-supplied zone blocked an otherwise confirmed uninstall");
+   | _ -> Windtrap.fail "a user-supplied zone blocked an otherwise confirmed uninstall");
   check_bool
     "the zone was never taken out of state, because the state did not own it"
     false
@@ -1073,10 +1096,10 @@ let test_preservation_happens_before_destruction () =
   in
   (match outcome with
    | Sol_cli_installation_uninstall_stage.Uninstall_succeeded _ -> ()
-   | _ -> Alcotest.fail "the confirmed uninstall did not reach verified absence");
+   | _ -> Windtrap.fail "the confirmed uninstall did not reach verified absence");
   let index name =
     let rec find position = function
-      | [] -> Alcotest.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
+      | [] -> Windtrap.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
       | step :: rest -> if step = name then position else find (position + 1) rest
     in
     find 0 calls
@@ -1107,10 +1130,10 @@ let test_absence_is_observed_after_the_destroy () =
        "the removed set is the plan's removals, established by observation"
        true
        (removed = plan.removes)
-   | _ -> Alcotest.fail "a fully observed uninstall was not reported successful");
+   | _ -> Windtrap.fail "a fully observed uninstall was not reported successful");
   let order name =
     let rec find position = function
-      | [] -> Alcotest.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
+      | [] -> Windtrap.fail ("expected " ^ name ^ ", saw " ^ String.concat ", " calls)
       | step :: rest -> if step = name then position else find (position + 1) rest
     in
     find 0 calls
@@ -1143,7 +1166,7 @@ let test_an_unobservable_result_fails_closed () =
   in
   match outcome with
   | Sol_cli_installation_uninstall_stage.Uninstall_succeeded _ ->
-    Alcotest.fail "an UNKNOWN observation was reported as successful removal"
+    Windtrap.fail "an UNKNOWN observation was reported as successful removal"
   | Sol_cli_installation_uninstall_stage.Uninstall_failed
       { failure = Sol_cli_installation_uninstall_stage.Verification_failed _
       ; verification
@@ -1154,11 +1177,11 @@ let test_an_unobservable_result_fails_closed () =
       (List.map fst verification.unknown = [ Sol_cli_installation.Delegated_zone ]
        && not (List.mem Sol_cli_installation.Delegated_zone verification.removed))
   | Sol_cli_installation_uninstall_stage.Uninstall_failed { failure; _ } ->
-    Alcotest.fail
+    Windtrap.fail
       ("expected a verification failure, got "
        ^ Sol_cli_installation_uninstall_stage.failure_message failure)
   | Sol_cli_installation_uninstall_stage.Uninstall_refused reason ->
-    Alcotest.fail ("a confirmed uninstall was refused: " ^ reason)
+    Windtrap.fail ("a confirmed uninstall was refused: " ^ reason)
 ;;
 
 let test_a_failed_state_backend_retirement_still_observes () =
@@ -1193,7 +1216,7 @@ let test_a_failed_state_backend_retirement_still_observes () =
       true
       (List.map fst verification.present = [ Sol_cli_installation.State_backend ])
   | _ ->
-    Alcotest.fail "a state backend that survived its retirement was reported as removed"
+    Windtrap.fail "a state backend that survived its retirement was reported as removed"
 ;;
 
 let test_a_sol_created_zone_is_removed_with_its_own_confirmation () =
@@ -1577,8 +1600,16 @@ let test_identity_contracts_are_declared_per_provider () =
   in
   let aws = contracts Sol_cli_provider.Aws in
   let gcp = contracts Sol_cli_provider.Gcp in
-  Alcotest.(check int) "AWS declares the four identities Sol resolves" 4 (List.length aws);
-  Alcotest.(check int) "GCP's durable root declares no identities" 0 (List.length gcp);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"AWS declares the four identities Sol resolves"
+    4
+    (List.length aws);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"GCP's durable root declares no identities"
+    0
+    (List.length gcp);
   let declared provider prerequisite =
     contracts provider
     |> List.find_opt (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
@@ -1586,24 +1617,29 @@ let test_identity_contracts_are_declared_per_provider () =
     |> Option.map (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
       contract.declared_as)
   in
-  Alcotest.(check (option string))
-    "the provisioning identity is declared as the provisioner role"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the provisioning identity is declared as the provisioner role"
     (Some "aws.provisioner_role_arn")
     (declared Sol_cli_provider.Aws Sol_cli_installation.Provisioning_identity);
-  Alcotest.(check (option string))
-    "the deploy identity is declared as the deploy role"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the deploy identity is declared as the deploy role"
     (Some "aws.deploy_role_arn")
     (declared Sol_cli_provider.Aws Sol_cli_installation.Deploy_identity);
-  Alcotest.(check (option string))
-    "the operator identity is declared as the operator role"
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"the operator identity is declared as the operator role"
     (Some "aws.operator_role_arn")
     (declared Sol_cli_provider.Aws Sol_cli_installation.Operator_identity);
   List.iter
     (fun (contract : Sol_cli_provider_capabilities.identity_contract) ->
-       Alcotest.(check bool)
-         (Printf.sprintf
-            "the contract for %s names a durable-root output"
-            (Sol_cli_installation.prerequisite_label contract.identity))
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:
+           (Printf.sprintf
+              "the contract for %s names a durable-root output"
+              (Sol_cli_installation.prerequisite_label contract.identity))
          true
          (String.length contract.policy_output > 0))
     aws

@@ -1,12 +1,12 @@
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
-let check_int = Alcotest.(check int)
+let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
+let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
+let check_int msg expected actual = Windtrap.equal Windtrap.int ~msg expected actual
 
 module D = Sol_cli_rollout_diagnosis
 
 let ok what = function
   | Ok v -> v
-  | Error e -> Alcotest.failf "%s: unexpected decode error: %s" what e
+  | Error e -> Windtrap.failf "%s: unexpected decode error: %s" what e
 ;;
 
 let pods_of json = D.parse_pods_json json |> ok "pods"
@@ -153,7 +153,7 @@ let test_parse_healthy_pod () =
     check_bool "ready" true p.ready;
     check_int "restarts" 0 p.restarts;
     check_bool "is_healthy" true (D.is_healthy p)
-  | _ -> Alcotest.fail "expected exactly one pod"
+  | _ -> Windtrap.fail "expected exactly one pod"
 ;;
 
 let test_parse_image_pull_backoff () =
@@ -162,8 +162,8 @@ let test_parse_image_pull_backoff () =
     check_bool "is_healthy" false (D.is_healthy p);
     (match p.state with
      | D.Waiting { reason; _ } -> check_string "reason" "ImagePullBackOff" reason
-     | _ -> Alcotest.fail "expected Waiting state")
-  | _ -> Alcotest.fail "expected exactly one pod"
+     | _ -> Windtrap.fail "expected Waiting state")
+  | _ -> Windtrap.fail "expected exactly one pod"
 ;;
 
 let test_parse_crash_loop_last_termination () =
@@ -174,7 +174,7 @@ let test_parse_crash_loop_last_termination () =
       "last_terminated_reason"
       "OOMKilled"
       (Option.value ~default:"none" p.last_terminated_reason)
-  | _ -> Alcotest.fail "expected exactly one pod"
+  | _ -> Windtrap.fail "expected exactly one pod"
 ;;
 
 let test_parse_pod_with_no_container_statuses () =
@@ -182,7 +182,7 @@ let test_parse_pod_with_no_container_statuses () =
   | [ p ] ->
     check_string "phase" "Pending" p.phase;
     check_bool "is_healthy" false (D.is_healthy p)
-  | _ -> Alcotest.fail "expected exactly one pod"
+  | _ -> Windtrap.fail "expected exactly one pod"
 ;;
 
 let test_parse_pod_with_missing_status_keeps_list () =
@@ -193,7 +193,7 @@ let test_parse_pod_with_missing_status_keeps_list () =
     check_bool "missing is unhealthy" false (D.is_healthy missing);
     check_string "healthy name" "charge-svc-abc" healthy.name;
     check_bool "healthy still parsed" true (D.is_healthy healthy)
-  | pods -> Alcotest.failf "expected two pods, got %d" (List.length pods)
+  | pods -> Windtrap.failf "expected two pods, got %d" (List.length pods)
 ;;
 
 let test_events_for_pod_filters_and_orders () =
@@ -222,9 +222,9 @@ let test_format_service_diagnosis_includes_events_and_reason () =
   let pods = pods_of image_pull_backoff_json in
   let events = events_of events_json in
   match D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events events) with
-  | D.Healthy -> Alcotest.fail "expected a diagnosis"
+  | D.Healthy -> Windtrap.fail "expected a diagnosis"
   | D.Undetermined why ->
-    Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+    Windtrap.fail ("the pod list was readable, so a verdict is expected: " ^ why)
   | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
@@ -242,9 +242,9 @@ let test_format_service_diagnosis_includes_events_and_reason () =
 
 let test_format_service_diagnosis_reports_empty_pod_list () =
   match D.format_service_diagnosis ~service_name:"charge-svc" [] (D.Events []) with
-  | D.Healthy -> Alcotest.fail "expected a diagnosis for zero pods, not a healthy verdict"
+  | D.Healthy -> Windtrap.fail "expected a diagnosis for zero pods, not a healthy verdict"
   | D.Undetermined why ->
-    Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+    Windtrap.fail ("the pod list was readable, so a verdict is expected: " ^ why)
   | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
@@ -337,8 +337,8 @@ let test_format_cronjob_diagnosis_last_run_failed_is_flagged () =
     D.format_cronjob_diagnosis ~service_name:"invoice-fn" (D.Found idle_last_run_failed)
   with
   | D.Healthy ->
-    Alcotest.fail "expected a diagnosis for a most-recent-run failure, not healthy"
-  | D.Undetermined why -> Alcotest.fail ("the CronJob was readable: " ^ why)
+    Windtrap.fail "expected a diagnosis for a most-recent-run failure, not healthy"
+  | D.Undetermined why -> Windtrap.fail ("the CronJob was readable: " ^ why)
   | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
@@ -372,8 +372,8 @@ let test_format_cronjob_diagnosis_active_run_is_ok () =
 
 let test_format_cronjob_diagnosis_missing_is_flagged () =
   match D.format_cronjob_diagnosis ~service_name:"invoice-fn" D.Missing with
-  | D.Healthy -> Alcotest.fail "expected a diagnosis for a missing CronJob, not healthy"
-  | D.Undetermined why -> Alcotest.fail ("the CronJob read succeeded: " ^ why)
+  | D.Healthy -> Windtrap.fail "expected a diagnosis for a missing CronJob, not healthy"
+  | D.Undetermined why -> Windtrap.fail ("the CronJob read succeeded: " ^ why)
   | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
@@ -393,8 +393,8 @@ let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
   with
   | D.Undetermined why ->
     check_bool "the verdict carries why" true (contains "kubectl call failed" why)
-  | D.Healthy -> Alcotest.fail "a failed read must not be reported as healthy"
-  | D.Unhealthy _ -> Alcotest.fail "a failed read is not a rollout failure either"
+  | D.Healthy -> Windtrap.fail "a failed read must not be reported as healthy"
+  | D.Unhealthy _ -> Windtrap.fail "a failed read is not a rollout failure either"
 ;;
 
 let test_format_active_run_diagnosis_running_pod_is_ok () =
@@ -466,7 +466,7 @@ let test_parse_cronjob_status () =
     {|{"status": {"lastScheduleTime": "2026-09-02T10:00:00Z", "lastSuccessfulTime": "2026-09-02T10:00:05Z", "active": [{"name": "invoice-fn-1"}]}}|}
   in
   match D.parse_cronjob_status json with
-  | Error e -> Alcotest.fail ("expected a cronjob_status: " ^ e)
+  | Error e -> Windtrap.fail ("expected a cronjob_status: " ^ e)
   | Ok (status : D.cronjob_status) ->
     check_string
       "lastScheduleTime"
@@ -486,7 +486,7 @@ let test_parse_cronjob_status () =
 
 let test_parse_cronjob_status_never_scheduled () =
   match D.parse_cronjob_status {|{"status": {}}|} with
-  | Error e -> Alcotest.fail ("expected a cronjob_status: " ^ e)
+  | Error e -> Windtrap.fail ("expected a cronjob_status: " ^ e)
   | Ok (status : D.cronjob_status) ->
     check_bool "no lastScheduleTime" true (status.last_schedule_time = None);
     check_int "no active jobs" 0 (List.length status.active_job_names)
@@ -494,7 +494,7 @@ let test_parse_cronjob_status_never_scheduled () =
 
 let test_parse_cronjob_status_status_key_absent () =
   match D.parse_cronjob_status {|{}|} with
-  | Error e -> Alcotest.fail ("expected a cronjob_status, got Unavailable: " ^ e)
+  | Error e -> Windtrap.fail ("expected a cronjob_status, got Unavailable: " ^ e)
   | Ok (status : D.cronjob_status) ->
     check_bool "no lastScheduleTime" true (status.last_schedule_time = None);
     check_int "no active jobs" 0 (List.length status.active_job_names)
@@ -538,7 +538,7 @@ let test_pod_without_metadata_parses () =
   | [ p ] ->
     check_string "name defaults" "unknown" p.name;
     check_string "phase" "Pending" p.phase
-  | _ -> Alcotest.fail "expected one pod"
+  | _ -> Windtrap.fail "expected one pod"
 ;;
 
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
@@ -552,9 +552,9 @@ let test_unavailable_events_are_named_not_empty () =
          "Error from server (Forbidden): events is forbidden: cannot list resource \
           \"events\"")
   with
-  | D.Healthy -> Alcotest.fail "an unhealthy pod must be diagnosed"
+  | D.Healthy -> Windtrap.fail "an unhealthy pod must be diagnosed"
   | D.Undetermined why ->
-    Alcotest.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
+    Windtrap.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
   | D.Unhealthy text ->
     check_bool
       "the block says the events read was unavailable"
@@ -574,9 +574,9 @@ let test_zero_events_are_reported_as_zero () =
       (pods_of crash_loop_json)
       (D.Events [])
   with
-  | D.Healthy -> Alcotest.fail "an unhealthy pod must be diagnosed"
+  | D.Healthy -> Windtrap.fail "an unhealthy pod must be diagnosed"
   | D.Undetermined why ->
-    Alcotest.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
+    Windtrap.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
   | D.Unhealthy text ->
     check_bool
       "the block says there were no events"
@@ -656,9 +656,9 @@ let test_the_fetch_distinguishes_a_denied_read () =
         ~k8s_name:"charge-svc"
         ()
     with
-    | D.Healthy -> Alcotest.fail "the pod is unhealthy, so a diagnosis is expected"
+    | D.Healthy -> Windtrap.fail "the pod is unhealthy, so a diagnosis is expected"
     | D.Undetermined why ->
-      Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+      Windtrap.fail ("the pod list was readable, so a verdict is expected: " ^ why)
     | D.Unhealthy text ->
       check_bool
         "the denied events read reaches the output as unavailable"
@@ -688,9 +688,9 @@ let test_an_unreadable_workload_is_undetermined_not_healthy () =
         (contains "could not be read" why);
       check_bool "and carries the server's reason" true (contains "Forbidden" why)
     | D.Healthy ->
-      Alcotest.fail "an unreadable workload must never be reported healthy (FND-0019)"
+      Windtrap.fail "an unreadable workload must never be reported healthy (FND-0019)"
     | D.Unhealthy _ ->
-      Alcotest.fail "a read that did not happen is not a rollout failure either")
+      Windtrap.fail "a read that did not happen is not a rollout failure either")
 ;;
 
 let%test "parse_pods_json: healthy pod" = test_parse_healthy_pod ()
