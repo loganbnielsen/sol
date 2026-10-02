@@ -154,6 +154,14 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
       w.ingress_path
   in
   let* calls = decode_calls ~release_id ~workload_name:w.name w.calls in
+  let* availability =
+    Sol_cli_availability.of_string w.availability
+    |> Result.map_error (fun msg ->
+      reconstruct_error
+        ~release_id
+        ~workload:w.name
+        ~fact:(Printf.sprintf "has an invalid availability %S: %s" w.availability msg))
+  in
   let spec =
     { Sol_cli_deployment_plan.domain = w.domain
     ; source_name = w.name
@@ -170,10 +178,7 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; backoff_limit = w.backoff_limit
     ; replicas = w.replicas
     ; language = None
-    ; availability =
-        (match Sol_cli_availability.of_string w.availability with
-         | Ok a -> a
-         | Error _ -> Sol_cli_availability.Single)
+    ; availability
     ; consumes_kafka = w.consumes_kafka
     ; cpu
     ; memory
