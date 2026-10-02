@@ -166,13 +166,14 @@ let fixture_ddl =
   [ "CREATE TABLE IF NOT EXISTS fulfilled_orders (order_id TEXT PRIMARY KEY, item TEXT \
      NOT NULL, quantity INT NOT NULL, correlation_id TEXT NOT NULL, fulfilled_at \
      TIMESTAMPTZ NOT NULL DEFAULT now())"
-  ; "CREATE TABLE IF NOT EXISTS sol_jobs (id SERIAL PRIMARY KEY, kind TEXT NOT NULL, \
-     payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INT NOT \
-     NULL DEFAULT 0, run_at TIMESTAMPTZ NOT NULL DEFAULT now(), locked_until \
-     TIMESTAMPTZ, last_error TEXT, inserted_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+  ; "CREATE TABLE IF NOT EXISTS sol_jobs (id SERIAL PRIMARY KEY, workspace TEXT NOT \
+     NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT \
+     'pending', attempts INT NOT NULL DEFAULT 0, run_at TIMESTAMPTZ NOT NULL DEFAULT \
+     now(), locked_until TIMESTAMPTZ, last_error TEXT, inserted_at TIMESTAMPTZ NOT NULL \
+     DEFAULT now())"
   ; "ALTER TABLE sol_jobs ADD COLUMN IF NOT EXISTS dedupe_key TEXT"
   ; "ALTER TABLE sol_jobs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ"
-  ; "CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx ON sol_jobs (kind, \
+  ; "CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx ON sol_jobs (workspace, kind, \
      dedupe_key) WHERE dedupe_key IS NOT NULL"
   ; "CREATE INDEX IF NOT EXISTS sol_jobs_terminal_idx ON sol_jobs (finished_at) WHERE \
      status <> 'pending'"
