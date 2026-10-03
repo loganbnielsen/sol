@@ -680,6 +680,10 @@ let unpushed_of branch =
   | None -> Windtrap.fail "expected a worktree snapshot"
 ;;
 
+let check_unpushed msg expected branch =
+  Windtrap.equal (Windtrap.option Windtrap.bool) ~msg expected (unpushed_of branch)
+;;
+
 let test_unpushed_annotation_asks_git () =
   in_temp_dir (fun () ->
     git_ok "init -q";
@@ -690,25 +694,58 @@ let test_unpushed_annotation_asks_git () =
     git_ok "commit -qm a";
     let a = rev_parse "HEAD" in
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/main %s" a);
-    check_bool "at origin/main is not unpushed" false (unpushed_of "work");
+    check_unpushed "at origin/main is not unpushed" (Some false) "work";
     write_file "f.txt" "b\n";
     git_ok "add f.txt";
     git_ok "commit -qm b";
     let b = rev_parse "HEAD" in
-    check_bool "ahead of origin/main is unpushed" true (unpushed_of "work");
+    check_unpushed "ahead of origin/main is unpushed" (Some true) "work";
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/main %s" b);
     git_ok (Printf.sprintf "checkout -q -B work %s" a);
-    check_bool "behind origin/main is not unpushed" false (unpushed_of "work");
+    check_unpushed "behind origin/main is not unpushed" (Some false) "work";
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/work %s" a);
-    check_bool "equal to its upstream is not unpushed" false (unpushed_of "work");
+    check_unpushed "equal to its upstream is not unpushed" (Some false) "work";
     git_ok (Printf.sprintf "checkout -q -B work %s" b);
-    check_bool "ahead of its upstream is unpushed" true (unpushed_of "work");
+    check_unpushed "ahead of its upstream is unpushed" (Some true) "work";
     git_ok (Printf.sprintf "update-ref refs/remotes/origin/work %s" b);
     git_ok (Printf.sprintf "checkout -q -B work %s" a);
-    check_bool "behind its upstream is not unpushed" false (unpushed_of "work");
+    check_unpushed "behind its upstream is not unpushed" (Some false) "work";
     git_ok "update-ref -d refs/remotes/origin/main";
     git_ok "update-ref -d refs/remotes/origin/work";
-    check_bool "an unresolvable ref stays unpushed" true (unpushed_of "work"))
+    check_unpushed "an unresolvable ref is unreadable, not silently clean" None "work")
+;;
+
+let test_unreadable_git_state_is_annotated () =
+  in_temp_dir (fun () ->
+    let old_path = Sys.getenv "PATH" in
+    let dir = Sys.getcwd () in
+    let fake_git = Filename.concat dir "git" in
+    write_file fake_git "#!/bin/sh\nexit 9\n";
+    Unix.chmod fake_git 0o755;
+    Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+    Fun.protect
+      ~finally:(fun () -> Unix.putenv "PATH" old_path)
+      (fun () ->
+         match Soldev_merge.worktree_annotation_for_ticket "CODE_LAYER-030" with
+         | Some annotation ->
+           check_bool
+             "names the unreadable worktree state"
+             true
+             (contains ~needle:"unreadable" annotation)
+         | None ->
+           Windtrap.fail
+             "a failed git worktree list must annotate, not read as no worktree"))
+;;
+
+let test_unreadable_status_is_not_reported_clean () =
+  in_temp_dir (fun () ->
+    match Soldev_merge.worktree_snapshot_of_entry (Sys.getcwd (), Some "work") with
+    | Some (snapshot : Soldev_merge.worktree_snapshot) ->
+      check_bool
+        "dirty state is unreadable, not clean"
+        true
+        (Option.is_none snapshot.ws_dirty)
+    | None -> Windtrap.fail "expected a worktree snapshot")
 ;;
 
 let test_review_lookup_names_a_merged_pr () =
@@ -810,6 +847,15 @@ let () =
     ; Windtrap.group
         "worktree unpushed annotation (BUG-063)"
         [ Windtrap.test "asks git for commits, not shas" test_unpushed_annotation_asks_git
+        ]
+    ; Windtrap.group
+        "worktree read failure (CODE_LAYER-030)"
+        [ Windtrap.test
+            "an unreadable git worktree list is annotated, not read as absent"
+            test_unreadable_git_state_is_annotated
+        ; Windtrap.test
+            "an unreadable git status is not reported clean"
+            test_unreadable_status_is_not_reported_clean
         ]
     ; Windtrap.group
         "mentions_id"

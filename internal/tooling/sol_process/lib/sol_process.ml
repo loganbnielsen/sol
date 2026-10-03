@@ -155,28 +155,27 @@ let run_shell ?(echo = false) cmd =
   run_argv ~echo:false [ "sh"; "-c"; cmd ]
 ;;
 
-let lines_shell ?(echo = false) cmd =
-  if echo then Printf.printf "  $ %s\n%!" cmd;
-  let ic = Unix.open_process_in (cmd ^ " 2>/dev/null") in
-  let content = In_channel.input_all ic in
-  ignore (Unix.close_process_in ic);
-  List.filter (fun s -> s <> "") (String.split_on_char '\n' (String.trim content))
+let nonempty_lines s =
+  List.filter (fun s -> s <> "") (String.split_on_char '\n' (String.trim s))
 ;;
 
-let output_shell ?(echo = false) cmd =
-  if echo then Printf.printf "  $ %s\n%!" cmd;
-  let ic = Unix.open_process_in (cmd ^ " 2>/dev/null") in
-  let s = In_channel.input_all ic in
-  ignore (Unix.close_process_in ic);
-  String.trim s
+let lines_shell ?(echo = false) cmd = nonempty_lines (run_shell ~echo cmd).stdout
+let output_shell ?(echo = false) cmd = String.trim (run_shell ~echo cmd).stdout
+
+let lines_shell_checked ?(echo = false) cmd =
+  let r = run_shell ~echo cmd in
+  if succeeded r then Ok (nonempty_lines r.stdout) else Error r
 ;;
 
-let run_shell_rc ?(echo = true) cmd =
-  if echo then Printf.printf "  $ %s\n%!" cmd;
-  Sys.command cmd
+let output_shell_checked ?(echo = false) cmd =
+  let r = run_shell ~echo cmd in
+  if succeeded r then Ok (String.trim r.stdout) else Error r
 ;;
+
+let run_shell_rc ?(echo = true) cmd = exit_code (run_shell ~echo cmd)
 
 let run_shell_ok ?(echo = true) cmd =
-  let rc = run_shell_rc ~echo cmd in
-  if rc <> 0 then failwith (Printf.sprintf "command failed (exit %d): %s" rc cmd)
+  let r = run_shell ~echo cmd in
+  if not (succeeded r)
+  then failwith (Printf.sprintf "command failed (exit %d): %s" (exit_code r) cmd)
 ;;
