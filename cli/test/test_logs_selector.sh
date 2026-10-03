@@ -59,7 +59,7 @@ rc=$?
 set -e
 check "the unit's Explore link exits 0" 0 "$rc"
 case "$output" in
-  *'%7Bworkspace%3D%22acme%22%2C%20domain%3D%22payments%22%2C%20service%3D%22charge-svc%22%7D'*) ;;
+  *'%7Bworkspace%3D%5C%22acme%5C%22%2C%20domain%3D%5C%22payments%5C%22%2C%20service%3D%5C%22charge-svc%5C%22%7D'*) ;;
   *)
     echo "test_logs_selector: the Explore link does not carry the identity selector: $output" >&2
     fail=1

@@ -6,6 +6,7 @@ type scope =
 
 type kind =
   | Logs
+  | Traces
   | Metrics
   | Dashboard
   | Infra
@@ -25,7 +26,7 @@ let target_required_error =
 
 let validate ~kind ~target_present scope =
   match kind with
-  | Logs | Metrics | Dashboard -> Ok ()
+  | Logs | Traces | Metrics | Dashboard -> Ok ()
   | Infra ->
     (match scope with
      | Workspace -> if target_present then Ok () else Error target_required_error
@@ -34,7 +35,7 @@ let validate ~kind ~target_present scope =
 
 let requires_target = function
   | Infra -> true
-  | Logs | Metrics | Dashboard -> false
+  | Logs | Traces | Metrics | Dashboard -> false
 ;;
 
 let parse_scope = function
@@ -136,9 +137,56 @@ let logs_url ~base_url ~workspace scope =
          resource_type)
 ;;
 
+let traces_url ~base_url ~workspace scope =
+  let label_value = Sol_cli_kubernetes_name.sanitize_label_value in
+  match scope with
+  | Workspace ->
+    Ok
+      (Sol_cli_logs.traces_explore_url
+         ~base_url
+         ~traceql:
+           (Printf.sprintf {|{ resource.workspace = "%s" }|} (label_value workspace)))
+  | Domain domain ->
+    (match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
+     | Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
+     | Ok _ ->
+       Ok
+         (Sol_cli_logs.traces_explore_url
+            ~base_url
+            ~traceql:
+              (Printf.sprintf
+                 {|{ resource.workspace = "%s" && resource.domain = "%s" }|}
+                 (label_value workspace)
+                 (label_value domain))))
+  | Service (domain, name) ->
+    (match
+       ( Sol_cli_deployment_plan.namespace_result ~workspace ~domain
+       , Sol_cli_deployment_plan.k8s_name_result name )
+     with
+     | Error e, _ | _, Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
+     | Ok _ns, Ok k8s_name ->
+       let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
+       Ok
+         (Sol_cli_logs.traces_explore_url
+            ~base_url
+            ~traceql:
+              (Printf.sprintf
+                 {|{ resource.workspace = "%s" && resource.domain = "%s" && resource.service = "%s" }|}
+                 (label_value workspace)
+                 (label_value domain)
+                 k8s_name)))
+  | Resource (resource_type, _) ->
+    Error
+      (Printf.sprintf
+         "no traces view for managed resource type %S -- managed resources don't emit \
+          Sol spans; use 'sol open dashboard' or check the provider's own console"
+         resource_type)
+;;
+
 let url ~base_url ~workspace ~kind scope =
   match kind with
   | Logs -> logs_url ~base_url ~workspace scope
+  | Traces -> traces_url ~base_url ~workspace scope
   | Metrics | Dashboard -> dashboard_url ~base_url ~workspace scope
   | Infra ->
     (match scope with

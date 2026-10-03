@@ -170,6 +170,7 @@ let print_open_block ~scope =
   in
   Printf.printf "\nOpen\n";
   Printf.printf "  logs       sol open logs%s\n" suffix;
+  Printf.printf "  traces     sol open traces%s\n" suffix;
   Printf.printf "  metrics    sol open metrics%s\n" suffix;
   Printf.printf "  dashboard  sol open dashboard%s\n" suffix;
   if scope = ""

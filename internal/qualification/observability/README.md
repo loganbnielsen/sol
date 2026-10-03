@@ -64,15 +64,16 @@ named as `NOT REACHED`, not filled in.
 
 ## Current standing
 
-Through run 4 (2026-10-02). Everything below is LOCAL at most; **nothing is
+Through run 5 (2026-10-02). Everything below is LOCAL at most; **nothing is
 `LIVE`.**
 
 | Area | Qualified | Deferred / unqualified |
 |---|---|---|
 | Framework telemetry (logs, metrics, traces) | green path end-to-end, trace/log correlation, and the `DEC-064` taxonomy on logs and traces | the deployed path where the manifest injects the identity into a real pod |
-| `sol logs` (Loki-first snapshot) | selection, exactness, outage degradation | `--release` (needs a cluster's release store) |
-| `sol status` observability block | local backend reachability + degradation | workload health, deployed backend resolution |
-| `sol check` | valid case, scope-miss `exit 2` | failing/could-not-run cases are `DEFECT` (`BUG-124`, fix in flight) |
+| `sol logs` (Loki-first snapshot) | selection, exactness, outage degradation, and a URL pane Grafana can parse | `--release` (needs a cluster's release store) |
+| `sol open traces` | workspace/domain/unit TraceQL over the emitted identity; the unit query returns that unit's traces, and a cross-unit trace appears under both | a trace spanning two *domains* (needs two units' ConfigMaps) |
+| `sol status` observability block | local backend reachability + degradation; its `Open` block now lists traces | workload health, deployed backend resolution |
+| `sol check` | valid case, scope-miss `exit 2` | (none — `BUG-124` fixed) |
 | Dashboards | definition/link mapping and proxy query execution | live panel render under a cluster scrape |
 | Alerts | rule set present; `SolKafkaConsumerLagHigh` re-verified after `BUG-122`; the delivery route | the `SolTelemetryTargetDown` firing, acknowledgement |
 | Failure visibility | Loki loss, unreachable-cluster misdiagnosis, decode-error/DLQ, broker lag | broker loss, telemetry loss |

@@ -6,6 +6,7 @@ type scope =
 
 type kind =
   | Logs
+  | Traces
   | Metrics
   | Dashboard
   | Infra

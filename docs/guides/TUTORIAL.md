@@ -514,6 +514,14 @@ Sol registers these metrics automatically when `?ot` is wired in the service ent
 
 Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local infra up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
+The CLI reaches the same traces without you needing the datasource uid or the query syntax: `sol open traces` builds a Tempo TraceQL query from the `workspace`/`domain`/`service` identity Sol stamps on every span, so it returns exactly that scope's traces even when several workspaces or domains share a service name.
+
+```bash
+sol open traces payments/charge-svc            # one unit's traces, in Grafana Explore
+sol open traces payments --links               # the whole domain's, printed as a URL
+sol open traces resource/rds/acme-postgres     # no traces view: managed resources don't emit Sol spans
+```
+
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
 ### Alerting
@@ -647,6 +655,7 @@ sol assets                                        where this sol's own assets co
 sol rollback RELEASE_ID                           restore a recorded release boundary (see `sol releases` for ids)
 sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
+sol open traces [SCOPE] [--links]                 open Grafana Explore traces for the scope
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
 sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
 sol open infra --target TARGET [--links]          open the target's infrastructure view (no SCOPE: infrastructure is target-addressed)
