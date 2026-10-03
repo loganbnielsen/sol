@@ -77,7 +77,7 @@ Record both in the completion notes.
 **Premise:** confirmed at `origin/main` `9d1a35f7` before starting — `sol plan`
 reported the contract by executing `contract/run --json` (application code was the
 source), and `events/<team>/sol.toml` carried only topic names. The stale
-`## Decision Required` text was removed in this branch; the decision is recorded in
+decision-required section was removed in this branch; the decision is recorded in
 `## Decision` above and in `DEC-065`.
 
 ### What landed
