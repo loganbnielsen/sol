@@ -95,7 +95,7 @@ provider absence. Implement INFRA-082 first; INFRA-094 reuses that mechanism
 rather than inventing a second one. They are one reconciliation unit across two
 tickets.
 
-## Completion (2026-10-02) — reconciled, on positively established absence
+## Completion (2026-10-03) — reconciled, on positively established absence
 
 **Premise verified on `main @ aecff578`.** The destroy's decision layer cannot address the
 platform root at all, so the stale state of Attempt 8 is unreachable from a supported path:

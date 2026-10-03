@@ -78,7 +78,7 @@ This ticket reuses the provable-absence reconciliation INFRA-082 introduces (the
 INFRA-042 extension); it is not an independent mechanism. INFRA-082 lands first.
 They form one reconciliation unit across two tickets.
 
-## Completion (2026-10-02) — a substrate the provider lost is reconciled, and the phases that need it say so
+## Completion (2026-10-03) — a substrate the provider lost is reconciled, and the phases that need it say so
 
 **Premise verified on `main @ 90e5bd1e`** (INFRA-082 merged, this ticket's case still open). The
 reconciliation exists but only fires when the cloud root represents *nothing*:

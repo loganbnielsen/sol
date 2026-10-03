@@ -83,7 +83,7 @@ widening scope. AWS and GCP behaviour is unchanged and `with_elevated_access`
 keeps its unconditional-removal property. Promoted to
 `READY_FOR_ENGINEERING`.
 
-## Completion (2026-10-02) — the declaration is total, and the bracket skips by construction
+## Completion (2026-10-03) — the declaration is total, and the bracket skips by construction
 
 **Premise verified on `main @ 8b5b0f0f`.** The provider that needs no mechanism cannot say so,
 and the destroy runs the acquisition whenever the platform is available:
