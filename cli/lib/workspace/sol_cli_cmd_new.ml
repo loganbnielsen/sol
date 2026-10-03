@@ -219,6 +219,12 @@ let event_rule module_ = function
   | _ -> Tree.Write
 ;;
 
+let events_section content =
+  match Sol_cli_string.after_opt ~needle:"[[events]]" content with
+  | Some rest -> "[[events]]" ^ rest
+  | None -> content
+;;
+
 let append_event_declaration ~team ~vars =
   let* root = template_root () in
   let rel = "events/{{team}}/sol.toml" in
@@ -229,7 +235,7 @@ let append_event_declaration ~team ~vars =
   | Ok existing ->
     Sol_cli_fs.write_atomic
       manifest
-      (existing ^ "\n" ^ Sol_cli_scaffold.subst vars content)
+      (existing ^ "\n" ^ events_section (Sol_cli_scaffold.subst vars content))
 ;;
 
 let new_event arg =

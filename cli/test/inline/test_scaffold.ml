@@ -684,6 +684,10 @@ let test_scaffold_event_topic_matches_module () =
     (read_file "testapp/events/payments/sol.toml")
     (Printf.sprintf "topic = %S" topic);
   assert_contains
+    "the manifest selects the OCaml binding language"
+    (read_file "testapp/events/payments/sol.toml")
+    "[contract]\nlanguage = \"ocaml\"";
+  assert_contains
     "the generated binding carries the same topic"
     (read_file "testapp/events/payments/payments_contract.ml")
     (Printf.sprintf "topic_name_exn %S" topic);
@@ -691,6 +695,34 @@ let test_scaffold_event_topic_matches_module () =
     "the event module consumes the generated binding"
     (read_file "testapp/events/payments/charged.ml")
     "include Payments_contract.Charged"
+;;
+
+let count_occurrences needle haystack =
+  let rec loop count haystack =
+    match Sol_cli_string.after_opt ~needle haystack with
+    | None -> count
+    | Some rest -> loop (count + 1) rest
+  in
+  loop 0 haystack
+;;
+
+let test_scaffold_new_event_appends_one_declaration () =
+  in_temp_dir
+  @@ fun () ->
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
+  Sys.chdir "testapp";
+  Sol_cli_cmd_new.new_event "payments/refunded" |> Result.get_ok;
+  let manifest = read_file "events/payments/sol.toml" in
+  assert_contains "the new event is declared" manifest "name = \"Refunded\"";
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the binding language is declared exactly once, not re-appended"
+    1
+    (count_occurrences "[contract]" manifest);
+  assert_contains
+    "the regenerated binding carries both events"
+    (read_file "events/payments/payments_contract.ml")
+    "module Refunded = struct"
 ;;
 
 let test_golden_ci_workflow () =
@@ -1066,6 +1098,10 @@ let%test "pending_migrations: scaffold workspace → 1 migration" =
 
 let%test "pending_migrations: scaffolded event topic matches its module" =
   test_scaffold_event_topic_matches_module ()
+;;
+
+let%test "scaffold: a second event appends one declaration, not a second [contract]" =
+  test_scaffold_new_event_appends_one_declaration ()
 ;;
 
 let test_new_svc_typescript () =

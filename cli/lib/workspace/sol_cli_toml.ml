@@ -105,6 +105,26 @@ type event_decl =
   ; schema : string
   }
 
+type binding_language =
+  | Ocaml
+  | Typescript
+
+let binding_language_of_string = function
+  | "ocaml" -> Ok Ocaml
+  | "typescript" -> Ok Typescript
+  | other ->
+    Error
+      (Printf.sprintf
+         "unknown contract language %S — supported values are \"ocaml\" and \
+          \"typescript\""
+         other)
+;;
+
+let binding_language_to_string = function
+  | Ocaml -> "ocaml"
+  | Typescript -> "typescript"
+;;
+
 type t =
   { replicas : int option
   ; availability : Sol_cli_availability.t option
@@ -125,6 +145,7 @@ type t =
   ; calls : string list
   ; topics : string list
   ; events : event_decl list
+  ; contract_language : binding_language option
   }
 
 let empty =
@@ -147,6 +168,7 @@ let empty =
   ; calls = []
   ; topics = []
   ; events = []
+  ; contract_language = None
   }
 ;;
 
@@ -598,7 +620,7 @@ let parse_steps path doc =
     loop [] items
 ;;
 
-let event_module_name name =
+let valid_event_name name =
   let len = String.length name in
   let valid_first c = c >= 'A' && c <= 'Z' in
   let valid_rest c =
@@ -675,13 +697,13 @@ let parse_event path index = function
              (Printf.sprintf "sol.toml: [[events]] entry %d key must be a string" index))
     in
     let* () =
-      if event_module_name name
+      if valid_event_name name
       then Ok ()
       else
         validation_error
           path
           (Printf.sprintf
-             "sol.toml: [[events]] entry %d name %S is not an OCaml module name — use an \
+             "sol.toml: [[events]] entry %d name %S is not a valid event name — use an \
               uppercase letter followed by letters, digits or underscores"
              index
              name)
@@ -796,6 +818,7 @@ let schema =
         ; "topics", Leaf
         ] )
   ; "events", Events
+  ; "contract", Table [ "language", Leaf ]
   ]
 ;;
 
@@ -1092,6 +1115,31 @@ let load_result path =
                 [\"my-topic\"]")
       in
       let* events = parse_events path doc in
+      let* contract_language =
+        match Otoml.find_opt doc Otoml.get_value [ "contract"; "language" ] with
+        | None -> Ok None
+        | Some v ->
+          (try
+             match binding_language_of_string (Otoml.get_string v) with
+             | Ok language -> Ok (Some language)
+             | Error message ->
+               validation_error path (Printf.sprintf "sol.toml: %s" message)
+           with
+           | Otoml.Type_error _ ->
+             validation_error
+               path
+               "sol.toml: [contract] language must be a string, e.g. language = \
+                \"typescript\"")
+      in
+      let* () =
+        if events = [] || contract_language <> None
+        then Ok ()
+        else
+          validation_error
+            path
+            "sol.toml: [[events]] declares a contract but [contract] language is missing \
+             — state the binding language, e.g. [contract] language = \"ocaml\""
+      in
       Ok
         { replicas
         ; availability
@@ -1112,6 +1160,7 @@ let load_result path =
         ; calls
         ; topics
         ; events
+        ; contract_language
         }
   with
   | Otoml.Type_error message -> Error (Validation { path; message })

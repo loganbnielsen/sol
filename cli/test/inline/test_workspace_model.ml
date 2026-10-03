@@ -106,13 +106,21 @@ let test_pluto_events_migrations_and_targets () =
     (subject_strings facts);
   Windtrap.equal
     (Windtrap.list Windtrap.string)
-    ~msg:"topics (from pluto's event declarations)"
-    [ "pluto-comms-notifications"; "pluto-payments-charges" ]
+    ~msg:"topics (from pluto's event declarations, both languages)"
+    [ "pluto-comms-notifications"
+    ; "pluto-payments-charges"
+    ; "sol-demo-ts-fulfilled"
+    ; "sol-demo-ts-orders"
+    ]
     (List.map Sol_cli_plan_ids.Topic_name.to_string facts.Sol_cli_workspace_model.topics);
   Windtrap.equal
     (Windtrap.list Windtrap.string)
-    ~msg:"declared events"
-    [ "events/comms/Notification_sent"; "events/payments/Charged" ]
+    ~msg:"declared events (OCaml and TypeScript contracts)"
+    [ "events/comms/Notification_sent"
+    ; "events/demo_ts/OrderPlaced"
+    ; "events/demo_ts/OrderFulfilled"
+    ; "events/payments/Charged"
+    ]
     (List.map
        (fun ((dir : string), (event : Sol_cli_toml.event_decl)) -> dir ^ "/" ^ event.name)
        facts.Sol_cli_workspace_model.events);

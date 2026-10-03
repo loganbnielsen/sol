@@ -58,6 +58,13 @@ type event_decl =
   ; schema : string
   }
 
+type binding_language =
+  | Ocaml
+  | Typescript
+
+val binding_language_of_string : string -> (binding_language, string) result
+val binding_language_to_string : binding_language -> string
+
 type t =
   { replicas : int option
   ; availability : Sol_cli_availability.t option
@@ -78,6 +85,7 @@ type t =
   ; calls : string list
   ; topics : string list
   ; events : event_decl list
+  ; contract_language : binding_language option
   }
 
 val empty : t

@@ -1,5 +1,8 @@
-# Sol event contract. This declaration is canonical: `sol contract generate`
-# writes payments_contract.ml from it, and CI fails when the two drift.
+# Sol event contract. This declaration is canonical; `sol contract generate`
+# writes the binding from it and CI fails when the two drift.
+
+[contract]
+language = "ocaml"
 
 [[events]]
 name = "Charged"

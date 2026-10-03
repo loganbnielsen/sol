@@ -204,6 +204,9 @@ An event's contract is declared once, in `events/<team>/sol.toml`, and that
 declaration is canonical:
 
 ```toml
+[contract]
+language = "ocaml"
+
 [[events]]
 name = "Charged"
 topic = "pluto-payments-charges"
@@ -212,9 +215,10 @@ key = "id"
 schema = '''{"type":"object",...}'''
 ```
 
-`sol contract generate` writes the language binding from the declaration —
-`events/payments/payments_contract.ml`, checked in beside it — and application code
-consumes it:
+The declaration carries no language-specific paths: `[contract] language` selects the
+binding, and its destination follows the language. An OCaml team's binding is
+`events/payments/payments_contract.ml`, checked in beside the declaration, and
+application code consumes it:
 
 ```ocaml
 type t = {
@@ -241,6 +245,29 @@ consumer resolves it read-only at startup, so a producer cannot publish a messag
 that breaks it and a runtime never rewrites the contract. `partitions` is the count
 Sol creates the topic with, and the declared `key` field is what keeps every record
 for one entity on a single partition — and therefore in order.
+
+A TypeScript team (`language = "typescript"`) generates into its scope's contract
+package instead — `app/<team>/contract/src/<team>_contract.ts` — and the app supplies
+only its value types:
+
+```ts
+import type { NamedContract, TopicContract } from "@sol-fab/kafka";
+import { OrderPlacedSpec, generatedContract } from "./demo_ts_contract.js";
+
+export interface OrderPlaced {
+  order_id: string;
+  item: string;
+  quantity: number;
+  correlation_id: string;
+}
+
+export const ORDER_PLACED: TopicContract<OrderPlaced> =
+  generatedContract<OrderPlaced>(OrderPlacedSpec);
+```
+
+In both languages the contract facts come from the declaration rather than from
+hand-written code — the declared `key` becomes a generated field extractor — so there
+is nothing to keep in sync.
 
 `sol new event <team>/<name>` appends a declaration to the team's `sol.toml` and
 regenerates its binding, so a new event follows the same path.
