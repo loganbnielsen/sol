@@ -1,0 +1,18 @@
+(executable
+ (name main)
+ (libraries
+  pluto_payments_orders_svc
+  pluto_storage
+  pluto_orders_events
+  sol-svc
+  sol-obs
+  sol-jobs
+  sol-outbox
+  kafka-eio-service
+  obs-eio
+  pg-eio
+  caqti-eio
+  caqti-eio.unix
+  caqti-driver-postgresql
+  yojson
+  eio_main))

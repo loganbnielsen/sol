@@ -116,9 +116,19 @@ sol contract generate --check  # what CI runs
 ### The scenario's current state
 
 `FEAT-131` lands the event contract and its bindings, the migrations, the unit
-declarations and this document. The handlers are `FEAT-132` (OCaml) and
-`FEAT-133` (TypeScript); a unit's behaviour — routes, transactions, job kinds
-and its `[service] calls` — is theirs to add when their directory lands.
+declarations and this document. `FEAT-132` lands the OCaml half: `orders_svc`
+(`app/payments/orders_svc`) and `fulfilment_worker`
+(`app/comms/fulfilment_worker`), with the job kinds `send_confirmation` and
+`release_inventory` and the two outbox relays. `FEAT-133` is the TypeScript half,
+under `app/demo_ts`.
+
+The status a read-back observes moves `accepted` → `fulfilled` → `confirmed`. The
+service commits the order, the confirmation job and the `OrderPlaced` intent in one
+transaction; the worker's transaction writes the fulfilled row, the
+`release_inventory` job and the `OrderFulfilled` intent. `release_inventory` marks
+the order fulfilled; `send_confirmation` completes only once the order is
+fulfilled, so it retries (bounded, with backoff) rather than confirming an order
+that has not been fulfilled yet, and is a no-op when it is already confirmed.
 
 ## Build
 
@@ -129,9 +139,29 @@ dune runtest test
 ```
 
 `test_charges` exercises the typed charge decoder and database operation boundary
-without HTTP or a database. The handler's routes only connect decoding, the operation,
-and response rendering; Pluto accepts through Postgres, while the workspace scaffold
-accepts by publishing a Kafka event.
+without HTTP or a database. `test_orders` exercises the order decoder, the
+duplicate-`POST` response and the read-back rendering through the same injected
+operation boundary, and round-trips both job kinds through their codec. The
+handlers only connect decoding, the operation and response rendering; Pluto accepts
+through Postgres, while the workspace scaffold accepts by publishing a Kafka event.
+
+## Run the scenario locally
+
+```bash
+# orders_svc — POST /orders, then GET /orders/{order_id}
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
+  dune exec app/payments/orders_svc/bin/main.exe
+
+# fulfilment_worker — consumes OrderPlaced, relays OrderFulfilled, runs both job kinds
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
+  dune exec app/comms/fulfilment_worker/bin/main.exe
+
+curl -X POST localhost:8080/orders -H 'content-type: application/json' \
+  -d '{"order_id":"o1","item":"widget","quantity":3}'
+# {"order_id":"o1","status":"accepted"}
+curl localhost:8080/orders/o1
+# {"order_id":"o1","item":"widget","quantity":3,"status":"confirmed"}
+```
 
 ## Run locally
 

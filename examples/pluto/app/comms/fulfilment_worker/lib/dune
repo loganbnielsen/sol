@@ -1,0 +1,14 @@
+(library
+ (name pluto_comms_fulfilment)
+ (wrapped false)
+ (modules Fulfilment_worker)
+ (libraries
+  pluto_storage
+  pluto_orders_events
+  sol-worker
+  sol-jobs
+  sol-outbox
+  kafka-eio-service
+  obs-eio
+  pg-eio
+  yojson))

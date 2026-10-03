@@ -1,5 +1,5 @@
 (library
  (name pluto_storage)
  (wrapped false)
- (modules Notification)
- (libraries pg-eio caqti))
+ (modules Notification Orders Orders_jobs)
+ (libraries pg-eio caqti sol-jobs yojson))

@@ -11,3 +11,8 @@
  (name test_charges)
  (modules test_charges)
  (libraries pluto_payments_charge_svc yojson))
+
+(test
+ (name test_orders)
+ (modules test_orders)
+ (libraries pluto_payments_orders_svc pluto_storage yojson pg-eio))
