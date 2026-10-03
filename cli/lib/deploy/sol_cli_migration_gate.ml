@@ -38,12 +38,6 @@ let reconcile_operator_bindings ~ctx ~workspace ~services =
       msg)
 ;;
 
-let registry_of ~configured ~override ~how_to_set =
-  match override, configured with
-  | Some r, _ | None, Some r -> Ok r
-  | None, None -> Error ("no registry configured for this target -- " ^ how_to_set)
-;;
-
 type verification =
   | No_migrations
   | Satisfied of int list
@@ -51,22 +45,10 @@ type verification =
   | Drifted of Sol_cli_migration.drift list
   | Unavailable of string
 
-let read_status ~ctx ~target ~workspace ~dir ~table ~services =
-  let* cfg =
-    Sol_cli_config.load_for_target ~target
-    |> Result.map_error Sol_cli_config.error_to_string
-  in
-  let registry =
-    registry_of
-      ~configured:cfg.target.registry
-      ~override:None
-      ~how_to_set:"set target.registry in sol.yml."
-  in
-  let* namespace, k8s_name =
-    Sol_cli_migration_job.namespace_and_repository ~workspace ~services
-  in
+let read_status ~ctx ~workspace ~dir ~table ~services =
+  let* namespace = Sol_cli_migration_job.job_namespace ~workspace ~services in
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] ~workloads:[] in
-  let* image = Sol_cli_migration_job.runner_image ~registry ~workspace ~k8s_name in
+  let* image = Sol_cli_migration_job.runner_image () in
   let* files = migration_files dir in
   let* job =
     Sol_cli_migration_job.submit
@@ -124,18 +106,18 @@ let read_status ~ctx ~target ~workspace ~dir ~table ~services =
   result
 ;;
 
-let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
-  read_status ~ctx ~target ~workspace ~dir ~table ~services
+let read_applied ~ctx ~workspace ~dir ~table ~services =
+  read_status ~ctx ~workspace ~dir ~table ~services
   |> Result.map (fun (status : Sol_cli_migration.applied_status) -> status.applied)
 ;;
 
-let verify ~ctx ~target ~workspace ~dir ~services =
+let verify ~ctx ~workspace ~dir ~services =
   match Sol_cli_migration.required_if_present ~dir with
   | Error e -> Unavailable e
   | Ok [] -> No_migrations
   | Ok required ->
     let table = Sol_cli_migration.table_name ~workspace in
-    (match read_status ~ctx ~target ~workspace ~dir ~table ~services with
+    (match read_status ~ctx ~workspace ~dir ~table ~services with
      | Error e -> Unavailable e
      | Ok status ->
        (match status.drifted with

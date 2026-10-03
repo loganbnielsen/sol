@@ -122,7 +122,6 @@ let migration_prerequisite ctx ~plan ~live =
       (match
          Sol_cli_migration_gate.verify
            ~ctx:ctx.execution.cluster
-           ~target:ctx.target_name
            ~workspace:ctx.execution.workspace
            ~dir
            ~services:ctx.inventory

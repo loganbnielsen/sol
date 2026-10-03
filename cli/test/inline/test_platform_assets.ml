@@ -24,6 +24,16 @@ let with_sol_home value f =
     f
 ;;
 
+let with_runner_ref value f =
+  let saved = Sys.getenv_opt A.runner_image_env in
+  Unix.putenv A.runner_image_env value;
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv A.runner_image_env (Option.value saved ~default:""))
+    f
+;;
+
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
+
 let fake_checkout dir =
   touch (Filename.concat dir "framework/ocaml/sol-svc/lib/dune");
   touch (Filename.concat dir "framework/ocaml/kafka-eio-service/lib/dune")
@@ -101,15 +111,17 @@ let test_asset_paths () =
         ~msg:"dashboard"
         (dir ^ "/platform/shared/observability/dashboards/x.json")
         (A.dashboard t "x.json");
-      match A.migration_runner t with
-      | Ok (A.Build_from_source { context }) ->
-        Windtrap.equal
-          Windtrap.string
-          ~msg:"a checkout builds its runner from itself"
-          dir
-          context
-      | Ok (A.Published r) -> Windtrap.fail ("a checkout used a published runner " ^ r)
-      | Error msg -> Windtrap.fail msg))
+      with_runner_ref "" (fun () ->
+        match A.migration_runner_image t with
+        | Ok image ->
+          Windtrap.fail
+            ("a checkout resolved a runner without an explicit reference: " ^ image)
+        | Error msg ->
+          Windtrap.equal
+            Windtrap.bool
+            ~msg:"a checkout without a reference names the variable"
+            true
+            (contains A.runner_image_env msg))))
 ;;
 
 let write path text =
@@ -245,24 +257,70 @@ let installed_runner ~file =
     Option.iter (write (Filename.concat bundle "migration-runner-image")) file;
     match A.resolve_from ~sol_home:None ~exe_dir:bin ~release_version:(Some "v1.2.3") with
     | Error e -> Error (A.error_to_string e)
-    | Ok t -> A.migration_runner t)
+    | Ok t -> A.migration_runner_image t)
 ;;
 
 let test_installed_runner_is_published_by_digest () =
-  (match installed_runner ~file:(Some (digest ^ "\n")) with
-   | Ok (A.Published r) ->
-     Windtrap.equal Windtrap.string ~msg:"the bundle's digest" digest r
-   | Ok (A.Build_from_source _) -> Windtrap.fail "an installed release built its runner"
-   | Error msg -> Windtrap.fail msg);
-  (match installed_runner ~file:(Some "ghcr.io/o/sol-migration-runner:latest\n") with
-   | Error _ -> ()
-   | Ok _ -> Windtrap.fail "a floating tag was accepted as the runner");
-  (match installed_runner ~file:None with
-   | Error _ -> ()
-   | Ok _ -> Windtrap.fail "a bundle without a runner reference was accepted");
-  match installed_runner ~file:(Some "") with
-  | Error _ -> ()
-  | Ok _ -> Windtrap.fail "an empty runner reference was accepted"
+  with_runner_ref "" (fun () ->
+    (match installed_runner ~file:(Some (digest ^ "\n")) with
+     | Ok r -> Windtrap.equal Windtrap.string ~msg:"the bundle's digest" digest r
+     | Error msg -> Windtrap.fail msg);
+    (match installed_runner ~file:(Some "ghcr.io/o/sol-migration-runner:latest\n") with
+     | Error _ -> ()
+     | Ok _ -> Windtrap.fail "a floating tag was accepted as the runner");
+    (match installed_runner ~file:None with
+     | Error msg ->
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"a bundle without a runner reference says how to fix it"
+         true
+         (contains "reinstall the release archive" msg)
+     | Ok _ -> Windtrap.fail "a bundle without a runner reference was accepted");
+    match installed_runner ~file:(Some "") with
+    | Error _ -> ()
+    | Ok _ -> Windtrap.fail "an empty runner reference was accepted")
+;;
+
+let test_checkout_runner_needs_an_explicit_digest () =
+  with_tmpdir (fun dir ->
+    fake_checkout dir;
+    with_sol_home dir (fun () ->
+      let t = A.resolve () |> Result.get_ok in
+      with_runner_ref digest (fun () ->
+        match A.migration_runner_image t with
+        | Ok image ->
+          Windtrap.equal Windtrap.string ~msg:"the explicit digest" digest image
+        | Error msg -> Windtrap.fail msg);
+      with_runner_ref "ghcr.io/o/sol-migration-runner:latest" (fun () ->
+        match A.migration_runner_image t with
+        | Ok image -> Windtrap.fail ("a floating tag was accepted: " ^ image)
+        | Error msg ->
+          Windtrap.equal
+            Windtrap.bool
+            ~msg:"a tag is refused"
+            true
+            (contains "digest reference" msg));
+      with_runner_ref "" (fun () ->
+        match A.migration_runner_image t with
+        | Ok image -> Windtrap.fail ("a checkout resolved a runner: " ^ image)
+        | Error msg ->
+          Windtrap.equal
+            Windtrap.bool
+            ~msg:"the refusal says Sol does not publish it"
+            true
+            (contains "does not build or publish the runner" msg))))
+;;
+
+let test_release_ignores_an_explicit_runner () =
+  with_runner_ref digest (fun () ->
+    match installed_runner ~file:(Some (digest ^ "\n")) with
+    | Ok image -> Windtrap.fail ("a release accepted an override: " ^ image)
+    | Error msg ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the release bundle stays authoritative"
+        true
+        (contains "a release uses only its own assets" msg))
 ;;
 
 let test_empty_version_is_not_a_bundle () =
@@ -308,6 +366,14 @@ let%test "precedence: empty SOL_HOME is unset" = test_empty_sol_home_is_unset ()
 
 let%test "precedence: installed runner is published by digest" =
   test_installed_runner_is_published_by_digest ()
+;;
+
+let%test "runner: a checkout needs an explicit, digest-pinned reference" =
+  test_checkout_runner_needs_an_explicit_digest ()
+;;
+
+let%test "runner: a release bundle ignores an explicit reference" =
+  test_release_ignores_an_explicit_runner ()
 ;;
 
 let%test "precedence: empty VERSION is not a bundle" =

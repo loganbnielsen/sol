@@ -49,7 +49,6 @@ let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let verify dir =
   Sol_cli_migration_gate.verify
     ~ctx:Sol_cli_kube_destination.local_context
-    ~target:"prod/aws/us-east-1"
     ~workspace:"pluto"
     ~dir
     ~services:[]
@@ -101,33 +100,9 @@ let test_verify_refuses_an_unreadable_migrations_dir () =
            Windtrap.fail "an unreadable migrations directory must not be verified"))
 ;;
 
-let test_registry_override_wins () =
-  Windtrap.equal
-    (Windtrap.result Windtrap.string Windtrap.string)
-    ~msg:"override"
-    (Ok "override.example")
-    (Sol_cli_migration_gate.registry_of
-       ~configured:(Some "target.example")
-       ~override:(Some "override.example")
-       ~how_to_set:"")
-;;
-
-let test_registry_absent_says_how_to_set () =
-  Windtrap.equal
-    (Windtrap.result Windtrap.string Windtrap.string)
-    ~msg:"absent"
-    (Error "no registry configured for this target -- set it.")
-    (Sol_cli_migration_gate.registry_of
-       ~configured:None
-       ~override:None
-       ~how_to_set:"set it.")
-;;
-
 let%test "migration files: sql only, sorted" = test_files_are_sql_only_and_sorted ()
 let%test "migration files: NUL refused" = test_nul_is_refused_by_name ()
 let%test "migration files: missing dir" = test_missing_dir_is_an_error ()
-let%test "registry: override wins" = test_registry_override_wins ()
-let%test "registry: absent" = test_registry_absent_says_how_to_set ()
 
 let%test "verification gate: absent and empty dirs mean no migrations" =
   test_verify_absent_and_empty_dirs_are_no_migrations ()

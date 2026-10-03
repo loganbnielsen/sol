@@ -275,13 +275,15 @@ for any real deployment whose database isn't reachable from outside its own
 network by design (e.g. RDS with `publicly_accessible = false`), currently
 `apply` only:
 
-1. Build and push a small image containing just the `sol` CLI binary
-   (`cli/bin/main.exe`, from the same `SOL_HOME` checkout), pushed under
-   the first discovered service's own image repository with a distinct
-   `sol-cli-migrate` tag rather than a version tag — ECR requires a
-   repository to already exist before a push succeeds, and FRIC-011
-   provisions exactly one repo per discovered app service, not a separate
-   one for this standalone tool image.
+1. Resolve a pre-built, **digest-pinned** migration-runner image (SEC-011): an
+   installed release reads the digest its bundle records, and a source checkout
+   requires `SOL_MIGRATION_RUNNER_IMAGE`. Sol never builds or publishes this
+   image — publishing belongs to the publisher identity outside Sol (ADR 0002),
+   which for a release is the release workflow that publishes the runner from
+   `internal/tooling/release/migration-runner.Dockerfile` and records its digest
+   in the bundle. With neither source available the command **fails closed** and
+   names both, rather than reaching for registry-write authority the deploy
+   identity does not have.
 2. Render a ConfigMap from every file in `db/migrations/` and a one-shot
    `batch/v1` Job that mounts it at `/migrations`, uses that image, and runs
    `sol migrate apply --dir /migrations --table <table>` inside the cluster

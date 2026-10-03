@@ -57,10 +57,8 @@ let component_checks assets =
 let runner_check () =
   check
     "migration runner"
-    (Sol_cli_migration_job.runner_source ()
-     |> Result.map (function
-       | A.Published image -> image ^ " (published)"
-       | A.Build_from_source { context } -> "built from " ^ context))
+    (let* assets = A.resolve () |> Result.map_error A.error_to_string in
+     A.migration_runner_image assets)
 ;;
 
 let template_checks assets =

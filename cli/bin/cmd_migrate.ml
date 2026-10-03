@@ -128,23 +128,11 @@ let run_migration_job ~ctx ~namespace (job : Sol_cli_migration_job.job) =
   finish_job outcome
 ;;
 
-let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
-  let* cfg =
-    Sol_cli_config.load_for_target ~target
-    |> Result.map_error Sol_cli_config.error_to_string
-  in
-  let registry =
-    Sol_cli_migration_gate.registry_of
-      ~configured:cfg.target.registry
-      ~override:registry_override
-      ~how_to_set:"pass --registry or set target.registry in sol.yml."
-  in
+let run_apply_in_cluster ~ctx ~dir ~table =
   let workspace = Sol_cli_workspace.current_name () in
   let* facts = Sol_cli_workspace_model.load_cwd () in
   let services = Sol_cli_workspace_model.services facts in
-  let* namespace, k8s_name =
-    Sol_cli_migration_job.namespace_and_repository ~workspace ~services
-  in
+  let* namespace = Sol_cli_migration_job.job_namespace ~workspace ~services in
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] ~workloads:[] in
   Sol_cli_migration_gate.reconcile_operator_bindings ~ctx ~workspace ~services;
   let* files = Sol_cli_migration_gate.migration_files dir in
@@ -153,7 +141,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
     Printf.printf "(no migration files found in %s -- nothing to do)\n" dir;
     Ok ())
   else
-    let* image = Sol_cli_migration_job.runner_image ~registry ~workspace ~k8s_name in
+    let* image = Sol_cli_migration_job.runner_image () in
     let* job =
       Sol_cli_migration_job.submit
         ~ctx
@@ -233,7 +221,7 @@ let run_rollback ~ctx dir table () =
     Ok ())
 ;;
 
-let run_apply ~ctx dir table dry_run target registry =
+let run_apply ~ctx dir table dry_run target =
   let* () = require_valid_migrations dir in
   if dry_run
   then
@@ -249,18 +237,17 @@ let run_apply ~ctx dir table dry_run target registry =
   else (
     match target with
     | None -> run_apply_local ~ctx dir table
-    | Some target ->
-      run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override:registry)
+    | Some _ -> run_apply_in_cluster ~ctx ~dir ~table)
 ;;
 
-let run_apply_term dir table dry_run target registry =
+let run_apply_term dir table dry_run target =
   Sol_cli_exit.exit_on
     (let* ctx =
        match target with
        | Some _ -> Cmd_destination.remote ~command:"migrate" target
        | None -> Ok Cmd_destination.local
      in
-     run_apply ~ctx dir table dry_run target registry |> Sol_cli_exit.of_msg)
+     run_apply ~ctx dir table dry_run target |> Sol_cli_exit.of_msg)
 ;;
 
 let run_status_term dir table json =
@@ -275,8 +262,8 @@ let run_rollback_term dir table =
   |> Sol_cli_exit.exit_on
 ;;
 
-let run_local_apply_term dir table dry_run registry =
-  run_apply ~ctx:Cmd_destination.local dir table dry_run None registry
+let run_local_apply_term dir table dry_run =
+  run_apply ~ctx:Cmd_destination.local dir table dry_run None
   |> Sol_cli_exit.of_msg
   |> Sol_cli_exit.exit_on
 ;;
@@ -351,28 +338,10 @@ let target_arg =
        port-forward."
 ;;
 
-let registry_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "registry" ]
-        ~docv:"URL"
-        ~doc:
-          "Container registry to push the migration runner image to. Omit to fall back \
-           to the resolved target's own registry. Only meaningful together with TARGET.")
-;;
-
 let apply_cmd =
   Cmd.v
     (Cmd.info "apply" ~doc:"Apply all pending migrations (default subcommand)")
-    Term.(
-      const run_apply_term
-      $ dir_arg
-      $ table_arg
-      $ dry_run_flag
-      $ target_arg
-      $ registry_arg)
+    Term.(const run_apply_term $ dir_arg $ table_arg $ dry_run_flag $ target_arg)
 ;;
 
 let json_flag =
@@ -405,19 +374,12 @@ let rollback_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "migrate" ~doc:"Run database migrations against POSTGRES_URL")
-    ~default:
-      Term.(
-        const run_apply_term
-        $ dir_arg
-        $ table_arg
-        $ dry_run_flag
-        $ target_arg
-        $ registry_arg)
+    ~default:Term.(const run_apply_term $ dir_arg $ table_arg $ dry_run_flag $ target_arg)
     [ apply_cmd; status_cmd; rollback_cmd ]
 ;;
 
 let local_cmd =
   Cmd.v
     (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")
-    Term.(const run_local_apply_term $ dir_arg $ table_arg $ dry_run_flag $ registry_arg)
+    Term.(const run_local_apply_term $ dir_arg $ table_arg $ dry_run_flag)
 ;;

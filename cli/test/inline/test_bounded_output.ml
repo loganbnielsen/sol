@@ -36,6 +36,7 @@ let test_bounded_command_bytes () =
        unwrap (Sol_cli_fs.write_atomic curl "#!/bin/sh\nexit 0\n");
        Unix.chmod curl 0o755;
        let path = root ^ ":" ^ Option.value (Sys.getenv_opt "PATH") ~default:"" in
+       let runner = "ghcr.io/o/sol-migration-runner@sha256:" ^ String.make 64 'a' in
        let run_result args =
          let stdout_path = Filename.concat root "stdout" in
          let stderr_path = Filename.concat root "stderr" in
@@ -49,7 +50,10 @@ let test_bounded_command_bytes () =
          let captured =
            Sol_cli_process.run
              ~echo:false
-             (Sol_cli_process.cmd ~cwd:root ~env:[ "PATH", path ] [ "sh"; "-c"; command ])
+             (Sol_cli_process.cmd
+                ~cwd:root
+                ~env:[ "PATH", path; Sol_cli_platform_assets.runner_image_env, runner ]
+                [ "sh"; "-c"; command ])
          in
          let read path = In_channel.with_open_bin path In_channel.input_all in
          match captured with

@@ -96,7 +96,7 @@ The target is the positional; `--scope` narrows to a domain or unit.
 | `sol grants apply` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile the target-wide workload authorization: |
 | `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |
 | `sol logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N`, `--target=ENV/PROVIDER/REGION` | documented | Stream logs from a deployed service. Wraps 'kubectl logs' |
-| `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--registry=URL`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |
+| `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |
 | `sol plan` | TARGET | — | documented | Print the merged Sol app/resource/service plan for a |
 | `sol releases` | — | `--target=ENV/PROVIDER/REGION` | documented | List the release records the target's cluster holds for |
 | `sol secret list` | — | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | List secret keys without values |
@@ -157,7 +157,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol local infra status` | — | — | documented | Show infra pod health and registered |
 | `sol local infra up` | — | — | documented | Provision local k3d cluster and deploy all |
 | `sol local logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N` | documented | Stream logs from a workload running on the local |
-| `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--registry=URL`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
+| `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
 | `sol local releases` | — | — | documented | List the release records Sol's local cluster |
 | `sol local rollback` | RELEASE_ID | `--commit=SHA`, `--scope=DOMAIN[/UNIT]` | documented | Restore a recorded release boundary on the local |
 | `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Start all workspace services locally using dune exec |
