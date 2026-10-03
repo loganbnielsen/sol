@@ -10,8 +10,6 @@ let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected 
 
 module D = Sol_cli_deployment
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let index_of needle haystack =
   try Some (Str.search_forward (Str.regexp_string needle) haystack 0) with
   | Not_found -> None
@@ -93,9 +91,15 @@ let test_configmap_object () =
     id_a_string
     (member "deployment_id" data |> to_string);
   let record = member "record" data |> to_string in
-  check_bool "release id in body" true (contains release_a_string record);
-  check_bool "git provenance in body" true (contains "abc1234" record);
-  check_bool "outcome in body" true (contains "applied" record)
+  check_bool
+    "release id in body"
+    true
+    (Sol_cli_string.contains ~needle:release_a_string record);
+  check_bool
+    "git provenance in body"
+    true
+    (Sol_cli_string.contains ~needle:"abc1234" record);
+  check_bool "outcome in body" true (Sol_cli_string.contains ~needle:"applied" record)
 ;;
 
 let test_json_is_deterministic () =
@@ -113,7 +117,8 @@ let test_validate_accepts_canonical_event () =
 let test_validate_rejects_wrong_name () =
   match D.validate ~name:"sol-deployment-d-20260101t000000z-ffffffffffffffff" sample with
   | Ok () -> Windtrap.fail "expected a name-direction failure"
-  | Error msg -> check_bool "names the event" true (contains id_a_string msg)
+  | Error msg ->
+    check_bool "names the event" true (Sol_cli_string.contains ~needle:id_a_string msg)
 ;;
 
 let with_field key value json =
@@ -127,21 +132,27 @@ let test_of_json_rejects_a_bad_deployment_id () =
   let bad = with_field "deployment_id" (`String "not-an-id") (D.to_json sample) in
   match D.of_json bad with
   | Ok _ -> Windtrap.fail "expected an invalid deployment id to be rejected"
-  | Error msg -> check_bool "names the problem" true (contains "invalid id" msg)
+  | Error msg ->
+    check_bool "names the problem" true (Sol_cli_string.contains ~needle:"invalid id" msg)
 ;;
 
 let test_of_json_rejects_a_bad_release_id () =
   let bad = with_field "release_id" (`String "nope") (D.to_json sample) in
   match D.of_json bad with
   | Ok _ -> Windtrap.fail "expected an invalid release id to be rejected"
-  | Error msg -> check_bool "names the problem" true (contains "invalid release id" msg)
+  | Error msg ->
+    check_bool
+      "names the problem"
+      true
+      (Sol_cli_string.contains ~needle:"invalid release id" msg)
 ;;
 
 let test_of_json_rejects_unknown_outcome () =
   let bad = with_field "outcome" (`String "maybe") (D.to_json sample) in
   match D.of_json bad with
   | Ok _ -> Windtrap.fail "expected an unknown outcome to be rejected"
-  | Error msg -> check_bool "names the outcome" true (contains "outcome" msg)
+  | Error msg ->
+    check_bool "names the outcome" true (Sol_cli_string.contains ~needle:"outcome" msg)
 ;;
 
 let item ?(name = D.configmap_name sample) json =
@@ -187,8 +198,14 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
     Windtrap.fail
       (Printf.sprintf "expected an error, got %d records" (List.length records))
   | Error msg ->
-    check_bool "names corruption" true (contains "invalid record" msg);
-    check_bool "names the record" true (contains "sol-deployment" msg)
+    check_bool
+      "names corruption"
+      true
+      (Sol_cli_string.contains ~needle:"invalid record" msg);
+    check_bool
+      "names the record"
+      true
+      (Sol_cli_string.contains ~needle:"sol-deployment" msg)
 ;;
 
 let test_format_table_newest_first_with_status () =
@@ -201,15 +218,15 @@ let test_format_table_newest_first_with_status () =
   in
   let older = sample in
   let table = D.format_table [ older; newer ] in
-  check_bool "header" true (contains "DEPLOYMENT" table);
-  check_bool "status column" true (contains "STATUS" table);
-  check_bool "actor column" true (contains "ACTOR" table);
+  check_bool "header" true (Sol_cli_string.contains ~needle:"DEPLOYMENT" table);
+  check_bool "status column" true (Sol_cli_string.contains ~needle:"STATUS" table);
+  check_bool "actor column" true (Sol_cli_string.contains ~needle:"ACTOR" table);
   check_bool
     "the actor's provenance source is shown beside it"
     true
-    (contains "ci (ci:github-actions)" table);
-  check_bool "applied shown" true (contains "applied" table);
-  check_bool "failed shown" true (contains "apply_failed" table);
+    (Sol_cli_string.contains ~needle:"ci (ci:github-actions)" table);
+  check_bool "applied shown" true (Sol_cli_string.contains ~needle:"applied" table);
+  check_bool "failed shown" true (Sol_cli_string.contains ~needle:"apply_failed" table);
   let i_newer = index_of (Sol_cli_deployment_id.to_string id_b) table
   and i_older = index_of id_a_string table in
   match i_newer, i_older with

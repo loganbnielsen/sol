@@ -1,7 +1,5 @@
 module M = Sol_cli_migration
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
-
 let write_file path content =
   let oc = open_out path in
   output_string oc content;
@@ -143,7 +141,7 @@ let test_required_rejects_unnumbered () =
         Windtrap.bool
         ~msg:"names the offending file"
         true
-        (contains msg "init_db.sql"))
+        (Sol_cli_string.contains ~needle:"init_db.sql" msg))
 ;;
 
 let test_required_rejects_a_shared_version () =
@@ -158,12 +156,12 @@ let test_required_rejects_a_shared_version () =
         Windtrap.bool
         ~msg:"names first file"
         true
-        (contains msg "004_add_invoices.sql");
+        (Sol_cli_string.contains ~needle:"004_add_invoices.sql" msg);
       Windtrap.equal
         Windtrap.bool
         ~msg:"names second file"
         true
-        (contains msg "004_add_refunds.sql"))
+        (Sol_cli_string.contains ~needle:"004_add_refunds.sql" msg))
 ;;
 
 let test_shared_version_names_four_digit_files () =
@@ -177,12 +175,12 @@ let test_shared_version_names_four_digit_files () =
         Windtrap.bool
         ~msg:"names first file"
         true
-        (contains msg "0004_a.sql");
+        (Sol_cli_string.contains ~needle:"0004_a.sql" msg);
       Windtrap.equal
         Windtrap.bool
         ~msg:"names second file"
         true
-        (contains msg "0004_b.sql"))
+        (Sol_cli_string.contains ~needle:"0004_b.sql" msg))
 ;;
 
 let test_required_ignores_down_files () =
@@ -207,7 +205,7 @@ let test_required_missing_dir_is_an_error () =
       Windtrap.bool
       ~msg:"names the path"
       true
-      (contains message "/nonexistent/migrations")
+      (Sol_cli_string.contains ~needle:"/nonexistent/migrations" message)
 ;;
 
 let test_required_if_present_missing_dir_is_empty () =
@@ -231,7 +229,7 @@ let test_required_file_instead_of_dir_is_an_error () =
         Windtrap.bool
         ~msg:"names the distinct path"
         true
-        (contains message path))
+        (Sol_cli_string.contains ~needle:path message))
 ;;
 
 let test_required_unreadable_dir_is_an_error () =
@@ -251,7 +249,7 @@ let test_required_unreadable_dir_is_an_error () =
                Windtrap.bool
                ~msg:"names the path"
                true
-               (contains message dir))))
+               (Sol_cli_string.contains ~needle:dir message))))
 ;;
 
 let test_unsatisfied () =
@@ -376,7 +374,7 @@ let test_status_json_roundtrip () =
     Windtrap.bool
     ~msg:"carries the table"
     true
-    (contains body "\"table\":\"t\"")
+    (Sol_cli_string.contains ~needle:"\"table\":\"t\"" body)
 ;;
 
 let connection_url =
@@ -390,17 +388,17 @@ let test_runner_error_redacts_password_and_keeps_shape () =
     Windtrap.bool
     ~msg:"password absent"
     false
-    (contains rendered "known-password");
+    (Sol_cli_string.contains ~needle:"known-password" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"placeholder present"
     true
-    (contains rendered "postgres:<redacted>@");
+    (Sol_cli_string.contains ~needle:"postgres:<redacted>@" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"host and database remain"
     true
-    (contains rendered "db.internal:5432/app")
+    (Sol_cli_string.contains ~needle:"db.internal:5432/app" rendered)
 ;;
 
 let test_job_log_boundary_redacts_repeated_secret_values () =
@@ -412,12 +410,12 @@ let test_job_log_boundary_redacts_repeated_secret_values () =
     Windtrap.bool
     ~msg:"password absent everywhere"
     false
-    (contains rendered "known-password");
+    (Sol_cli_string.contains ~needle:"known-password" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"diagnosis retained"
     true
-    (contains rendered "retry failed")
+    (Sol_cli_string.contains ~needle:"retry failed" rendered)
 ;;
 
 let test_passwordless_and_non_uri_inputs_are_unchanged () =
@@ -447,17 +445,17 @@ let test_evidence_report_unstartable_names_the_reason () =
     Windtrap.bool
     ~msg:"waiting reason"
     true
-    (contains report "CreateContainerConfigError");
+    (Sol_cli_string.contains ~needle:"CreateContainerConfigError" report);
   Windtrap.equal
     Windtrap.bool
     ~msg:"waiting message"
     true
-    (contains report "secret \"sol-secrets\" not found");
+    (Sol_cli_string.contains ~needle:"secret \"sol-secrets\" not found" report);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no empty logs section is invented"
     false
-    (contains report "job logs:")
+    (Sol_cli_string.contains ~needle:"job logs:" report)
 ;;
 
 let test_evidence_report_failed_job_carries_its_logs () =
@@ -469,13 +467,17 @@ let test_evidence_report_failed_job_carries_its_logs () =
     Windtrap.bool
     ~msg:"first line"
     true
-    (contains report "migration 003 failed");
-  Windtrap.equal Windtrap.bool ~msg:"second line" true (contains report "line two");
+    (Sol_cli_string.contains ~needle:"migration 003 failed" report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"second line"
+    true
+    (Sol_cli_string.contains ~needle:"line two" report);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no waiting section is invented"
     false
-    (contains report "container waiting")
+    (Sol_cli_string.contains ~needle:"container waiting" report)
 ;;
 
 let test_evidence_report_carries_both () =
@@ -483,8 +485,16 @@ let test_evidence_report_carries_both () =
     M.evidence_report ~waiting:(Some ("CrashLoopBackOff", None)) ~logs:(Some "boom")
     |> Option.get
   in
-  Windtrap.equal Windtrap.bool ~msg:"reason" true (contains report "CrashLoopBackOff");
-  Windtrap.equal Windtrap.bool ~msg:"logs" true (contains report "boom")
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"reason"
+    true
+    (Sol_cli_string.contains ~needle:"CrashLoopBackOff" report);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"logs"
+    true
+    (Sol_cli_string.contains ~needle:"boom" report)
 ;;
 
 let test_evidence_report_is_empty_without_observations () =

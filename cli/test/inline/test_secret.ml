@@ -1,6 +1,5 @@
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let test_key_validation_accepts_env_style_key () =
   check_bool "valid key" true (Sol_cli_secret.validate_key "DATABASE_URL" = Ok ())
@@ -30,16 +29,22 @@ let test_secret_manifest_contains_value_boundary () =
       ~key:"DATABASE_URL"
       ~value:"postgres://secret"
   in
-  check_bool "manifest names Secret" true (contains yaml "kind: Secret");
-  check_bool "manifest has runtime secret name" true (contains yaml "name: sol-secrets");
+  check_bool
+    "manifest names Secret"
+    true
+    (Sol_cli_string.contains ~needle:"kind: Secret" yaml);
+  check_bool
+    "manifest has runtime secret name"
+    true
+    (Sol_cli_string.contains ~needle:"name: sol-secrets" yaml);
   check_bool
     "manifest preserves existing encoded key"
     true
-    (contains yaml {|API_TOKEN: "ZXhpc3Rpbmc="|});
+    (Sol_cli_string.contains ~needle:{|API_TOKEN: "ZXhpc3Rpbmc="|} yaml);
   check_bool
     "manifest has value for k8s materialization"
     true
-    (contains yaml {|DATABASE_URL: "postgres://secret"|})
+    (Sol_cli_string.contains ~needle:{|DATABASE_URL: "postgres://secret"|} yaml)
 ;;
 
 let test_secret_manifest_yaml_escapes_special_values () =
@@ -53,13 +58,19 @@ let test_secret_manifest_yaml_escapes_special_values () =
   check_bool
     "quotes are escaped"
     true
-    (contains yaml {|SPECIAL_VALUE: "quote: \"value\"|});
-  check_bool "backslashes are escaped" true (contains yaml {|path: C:\\tmp\\db|});
-  check_bool "newlines are escaped" true (contains yaml {|db\nnext line"|});
+    (Sol_cli_string.contains ~needle:{|SPECIAL_VALUE: "quote: \"value\"|} yaml);
+  check_bool
+    "backslashes are escaped"
+    true
+    (Sol_cli_string.contains ~needle:{|path: C:\\tmp\\db|} yaml);
+  check_bool
+    "newlines are escaped"
+    true
+    (Sol_cli_string.contains ~needle:{|db\nnext line"|} yaml);
   check_bool
     "existing data is quoted safely"
     true
-    (contains yaml {|OLD_VALUE: "base64/with+symbols="|})
+    (Sol_cli_string.contains ~needle:{|OLD_VALUE: "base64/with+symbols="|} yaml)
 ;;
 
 let test_redacted_result_hides_value () =
@@ -67,7 +78,10 @@ let test_redacted_result_hides_value () =
     Sol_cli_secret.redacted_result (Sol_cli_secret.Applied [ "myapp-payments" ])
   in
   check_string "redacted output" "secret set in 1 namespace(s)" out;
-  check_bool "no secret value" false (contains out "postgres://secret")
+  check_bool
+    "no secret value"
+    false
+    (Sol_cli_string.contains ~needle:"postgres://secret" out)
 ;;
 
 let test_list_rejects_empty_namespaces () =

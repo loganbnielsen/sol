@@ -1,5 +1,4 @@
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 let test_decodes_expand () =
   match
@@ -34,13 +33,15 @@ let test_tolerates_leading_blank_lines () =
 let test_missing_header_fails_closed () =
   match Sol_cli_migration_disposition.of_file_content "CREATE TABLE t (id INT);" with
   | Ok _ -> Windtrap.fail "expected Error on a missing header"
-  | Error msg -> assert (contains "missing a sol:disposition header" msg)
+  | Error msg ->
+    assert (Sol_cli_string.contains ~needle:"missing a sol:disposition header" msg)
 ;;
 
 let test_empty_file_fails_closed () =
   match Sol_cli_migration_disposition.of_file_content "" with
   | Ok _ -> Windtrap.fail "expected Error on an empty file"
-  | Error msg -> assert (contains "missing a sol:disposition header" msg)
+  | Error msg ->
+    assert (Sol_cli_string.contains ~needle:"missing a sol:disposition header" msg)
 ;;
 
 let test_malformed_value_fails_closed () =
@@ -49,8 +50,8 @@ let test_malformed_value_fails_closed () =
   with
   | Ok _ -> Windtrap.fail "expected Error on an unrecognised disposition value"
   | Error msg ->
-    assert (contains "malformed sol:disposition header" msg);
-    assert (contains "sideways" msg)
+    assert (Sol_cli_string.contains ~needle:"malformed sol:disposition header" msg);
+    assert (Sol_cli_string.contains ~needle:"sideways" msg)
 ;;
 
 let test_late_mention_is_not_the_header () =
@@ -59,7 +60,8 @@ let test_late_mention_is_not_the_header () =
       "-- a plain comment\n-- sol:disposition expand\nSELECT 1;"
   with
   | Ok _ -> Windtrap.fail "expected Error: the tag was not the first non-blank line"
-  | Error msg -> assert (contains "missing a sol:disposition header" msg)
+  | Error msg ->
+    assert (Sol_cli_string.contains ~needle:"missing a sol:disposition header" msg)
 ;;
 
 let test_read_file_roundtrip () =
@@ -81,7 +83,7 @@ let test_read_file_missing_path () =
     Sol_cli_migration_disposition.read_file ~path:"/nonexistent/does-not-exist.sql"
   with
   | Ok _ -> Windtrap.fail "expected Error for a nonexistent file"
-  | Error msg -> assert (contains "could not read" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"could not read" msg)
 ;;
 
 let test_to_string () =

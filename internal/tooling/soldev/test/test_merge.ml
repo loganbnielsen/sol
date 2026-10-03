@@ -130,13 +130,6 @@ let test_parse_worktree_porcelain () =
 
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
-let contains ~needle haystack =
-  let n = String.length needle
-  and m = String.length haystack in
-  let rec go i = i + n <= m && (String.sub haystack i n = needle || go (i + 1)) in
-  go 0
-;;
-
 let repo_pr ?(state = "MERGED") ?commit number branch =
   { Soldev_merge.repo_pr_number = number
   ; repo_pr_url = Printf.sprintf "https://github.com/loganbnielsen/sol/pull/%d" number
@@ -973,7 +966,7 @@ let test_unreadable_git_state_is_annotated () =
            check_bool
              "names the unreadable worktree state"
              true
-             (contains ~needle:"unreadable" annotation)
+             (Soldev_string.contains_substring ~needle:"unreadable" annotation)
          | None ->
            Windtrap.fail
              "a failed git worktree list must annotate, not read as no worktree"))
@@ -1012,8 +1005,8 @@ let test_current_branch_names_a_failed_read () =
            check_bool
              "names the read failure"
              true
-             (contains ~needle:"could not be read" message
-              && contains ~needle:"not a git repository" message)
+             (Soldev_string.contains_substring ~needle:"could not be read" message
+              && Soldev_string.contains_substring ~needle:"not a git repository" message)
          | Error { Soldev_exit.message = None; _ } ->
            Windtrap.fail "the refusal must carry the reason"))
 ;;
@@ -1027,7 +1020,7 @@ let test_check_reverts_reports_an_unreadable_log () =
         check_bool
           "names the read failure"
           true
-          (contains ~needle:"could not be read" message)
+          (Soldev_string.contains_substring ~needle:"could not be read" message)
       | Error { Soldev_exit.message = None; _ } ->
         Windtrap.fail "the refusal must carry the reason"))
 ;;
@@ -1039,7 +1032,9 @@ let test_run_cmd_checked_carries_the_reason () =
     check_bool
       "names the exit code and stderr"
       true
-      (contains ~needle:"exited with code 3: err" (Sol_process.failure_message r))
+      (Soldev_string.contains_substring
+         ~needle:"exited with code 3: err"
+         (Sol_process.failure_message r))
 ;;
 
 let test_review_lookup_names_a_merged_pr () =
@@ -1048,13 +1043,19 @@ let test_review_lookup_names_a_merged_pr () =
       ~ticket_id:"BUG-115"
       ~inventory:(Ok [ repo_pr ~commit:"4e426729" 860 "BUG-115/database-suites-run" ])
   in
-  check_bool "names the PR" true (contains ~needle:"#860" message);
-  check_bool "says it is merged" true (contains ~needle:"already merged" message);
-  check_bool "names the merge commit" true (contains ~needle:"4e426729" message);
+  check_bool "names the PR" true (Soldev_string.contains_substring ~needle:"#860" message);
+  check_bool
+    "says it is merged"
+    true
+    (Soldev_string.contains_substring ~needle:"already merged" message);
+  check_bool
+    "names the merge commit"
+    true
+    (Soldev_string.contains_substring ~needle:"4e426729" message);
   check_bool
     "does not claim no PR exists"
     false
-    (contains ~needle:"no open PR found" message)
+    (Soldev_string.contains_substring ~needle:"no open PR found" message)
 ;;
 
 let test_review_lookup_names_a_closed_pr () =
@@ -1063,12 +1064,15 @@ let test_review_lookup_names_a_closed_pr () =
       ~ticket_id:"BUG-115"
       ~inventory:(Ok [ repo_pr ~state:"CLOSED" 860 "BUG-115/database-suites-run" ])
   in
-  check_bool "names the PR" true (contains ~needle:"#860" message);
-  check_bool "says it is closed" true (contains ~needle:"is closed, not open" message);
+  check_bool "names the PR" true (Soldev_string.contains_substring ~needle:"#860" message);
+  check_bool
+    "says it is closed"
+    true
+    (Soldev_string.contains_substring ~needle:"is closed, not open" message);
   check_bool
     "does not claim it was merged"
     false
-    (contains ~needle:"already merged" message)
+    (Soldev_string.contains_substring ~needle:"already merged" message)
 ;;
 
 let test_review_lookup_without_any_pr_keeps_the_plain_message () =
@@ -1084,15 +1088,20 @@ let test_review_lookup_reports_a_failed_inventory () =
       ~ticket_id:"BUG-115"
       ~inventory:(Error "gh pr list --state all exited 1: no such host")
   in
-  check_bool "names the failed lookup" true (contains ~needle:"no such host" message);
+  check_bool
+    "names the failed lookup"
+    true
+    (Soldev_string.contains_substring ~needle:"no such host" message);
   check_bool
     "does not claim the PR is merged or absent"
     false
-    (contains ~needle:"already merged" message);
+    (Soldev_string.contains_substring ~needle:"already merged" message);
   check_bool
     "does not claim no PR exists"
     false
-    (contains ~needle:"no open PR found for BUG-115 (branch prefix BUG-115/)" message)
+    (Soldev_string.contains_substring
+       ~needle:"no open PR found for BUG-115 (branch prefix BUG-115/)"
+       message)
 ;;
 
 let test_review_lookup_matches_the_ticket_prefix_only () =
@@ -1104,7 +1113,7 @@ let test_review_lookup_matches_the_ticket_prefix_only () =
   check_bool
     "another ticket's PR is not this ticket's"
     false
-    (contains ~needle:"#999" message)
+    (Soldev_string.contains_substring ~needle:"#999" message)
 ;;
 
 let () =

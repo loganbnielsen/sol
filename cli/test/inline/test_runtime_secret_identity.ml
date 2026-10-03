@@ -1,12 +1,10 @@
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
-
 let assert_contains label haystack needle =
-  if not (contains haystack needle)
+  if not (Sol_cli_string.contains ~needle haystack)
   then Windtrap.failf "%s: expected to find %S in:\n%s" label needle haystack
 ;;
 
 let assert_absent label haystack needle =
-  if contains haystack needle
+  if Sol_cli_string.contains ~needle haystack
   then Windtrap.failf "%s: did not expect to find %S in:\n%s" label needle haystack
 ;;
 

@@ -10,8 +10,6 @@ let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected 
 
 module R = Sol_cli_release
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let test_sanitize_label () =
   check_string "target path" "dev-aws-us-east-1" (R.sanitize_label "dev/aws/us-east-1");
   check_string "unit scope" "payments-charge_svc" (R.sanitize_label "payments/charge_svc");
@@ -124,10 +122,19 @@ let test_configmap_object () =
     "digest is the record's own digest"
     (R.record_digest sample_record)
     (member "record_digest" data |> to_string);
-  check_bool "workspace in body" true (contains "myworkspace" record);
-  check_bool "workload in body" true (contains "charge_svc" record);
-  check_bool "secret reference in body" true (contains "db-secret" record);
-  check_bool "no unrelated secret value" false (contains "hunter2" record)
+  check_bool
+    "workspace in body"
+    true
+    (Sol_cli_string.contains ~needle:"myworkspace" record);
+  check_bool "workload in body" true (Sol_cli_string.contains ~needle:"charge_svc" record);
+  check_bool
+    "secret reference in body"
+    true
+    (Sol_cli_string.contains ~needle:"db-secret" record);
+  check_bool
+    "no unrelated secret value"
+    false
+    (Sol_cli_string.contains ~needle:"hunter2" record)
 ;;
 
 let test_current_pointer_is_minimal () =
@@ -158,14 +165,18 @@ let test_validate_rejects_wrong_name () =
   match R.validate ~name:"sol-release-r-deadbeefdeadbeef" sample_record with
   | Ok () -> Windtrap.fail "expected a name-direction failure"
   | Error msg ->
-    check_bool "names the record" true (contains sample_record.release_id msg)
+    check_bool
+      "names the record"
+      true
+      (Sol_cli_string.contains ~needle:sample_record.release_id msg)
 ;;
 
 let test_validate_rejects_corrupt_content () =
   let corrupt = { sample_record with workloads = [] } in
   match R.validate ~name:(R.configmap_name corrupt) corrupt with
   | Ok () -> Windtrap.fail "expected a content-direction failure"
-  | Error msg -> check_bool "reports corruption" true (contains "corrupt" msg)
+  | Error msg ->
+    check_bool "reports corruption" true (Sol_cli_string.contains ~needle:"corrupt" msg)
 ;;
 
 let stale_record : R.t = { sample_record with encoding_version = Some "sol-release-v1" }
@@ -177,12 +188,15 @@ let test_validate_reports_stale_encoding_version () =
     check_bool
       "names the version the record was written with"
       true
-      (contains "sol-release-v1" msg);
+      (Sol_cli_string.contains ~needle:"sol-release-v1" msg);
     check_bool
       "names the version this CLI writes"
       true
-      (contains Sol_cli_release_id.encoding_version msg);
-    check_bool "does not report corruption" false (contains "corrupt" msg)
+      (Sol_cli_string.contains ~needle:Sol_cli_release_id.encoding_version msg);
+    check_bool
+      "does not report corruption"
+      false
+      (Sol_cli_string.contains ~needle:"corrupt" msg)
 ;;
 
 let test_validate_reports_undeclared_encoding_version () =
@@ -190,8 +204,14 @@ let test_validate_reports_undeclared_encoding_version () =
   match R.validate ~name:(R.configmap_name legacy) legacy with
   | Ok () -> Windtrap.fail "expected an unmarked non-rederiving record to be refused"
   | Error msg ->
-    check_bool "names the missing marker" true (contains "encoding_version" msg);
-    check_bool "does not report corruption" false (contains "corrupt" msg)
+    check_bool
+      "names the missing marker"
+      true
+      (Sol_cli_string.contains ~needle:"encoding_version" msg);
+    check_bool
+      "does not report corruption"
+      false
+      (Sol_cli_string.contains ~needle:"corrupt" msg)
 ;;
 
 let test_of_json_without_encoding_version_is_unmarked () =
@@ -278,8 +298,11 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
     Windtrap.fail
       (Printf.sprintf "expected an error, got %d records" (List.length records))
   | Error msg ->
-    check_bool "names corruption" true (contains "invalid record" msg);
-    check_bool "names the record" true (contains "sol-release" msg)
+    check_bool
+      "names corruption"
+      true
+      (Sol_cli_string.contains ~needle:"invalid record" msg);
+    check_bool "names the record" true (Sol_cli_string.contains ~needle:"sol-release" msg)
 ;;
 
 let test_of_kubectl_item_accepts_canonical_record () =
@@ -295,8 +318,11 @@ let test_of_kubectl_item_reports_stale_encoding_version () =
     check_bool
       "names the version the record was written with"
       true
-      (contains "sol-release-v1" msg);
-    check_bool "does not report corruption" false (contains "corrupt" msg)
+      (Sol_cli_string.contains ~needle:"sol-release-v1" msg);
+    check_bool
+      "does not report corruption"
+      false
+      (Sol_cli_string.contains ~needle:"corrupt" msg)
 ;;
 
 let test_of_kubectl_item_rejects_missing_digest () =
@@ -309,7 +335,10 @@ let test_of_kubectl_item_rejects_missing_digest () =
   match R.of_kubectl_item no_digest with
   | Ok _ -> Windtrap.fail "expected a missing digest to fail closed"
   | Error msg ->
-    check_bool "names the format problem" true (contains "missing integrity digest" msg)
+    check_bool
+      "names the format problem"
+      true
+      (Sol_cli_string.contains ~needle:"missing integrity digest" msg)
 ;;
 
 let test_of_kubectl_item_rejects_tampered_body () =
@@ -320,7 +349,10 @@ let test_of_kubectl_item_rejects_tampered_body () =
   with
   | Ok _ -> Windtrap.fail "expected a tampered body to fail closed"
   | Error msg ->
-    check_bool "reports integrity failure" true (contains "integrity validation" msg)
+    check_bool
+      "reports integrity failure"
+      true
+      (Sol_cli_string.contains ~needle:"integrity validation" msg)
 ;;
 
 let test_migrations_tampering_is_caught_by_digest_not_validate () =
@@ -334,7 +366,10 @@ let test_migrations_tampering_is_caught_by_digest_not_validate () =
   with
   | Ok _ -> Windtrap.fail "expected the digest to catch a migrations-only change"
   | Error msg ->
-    check_bool "reports integrity failure" true (contains "integrity validation" msg)
+    check_bool
+      "reports integrity failure"
+      true
+      (Sol_cli_string.contains ~needle:"integrity validation" msg)
 ;;
 
 let shuffled_workload : R.workload =
@@ -440,7 +475,8 @@ let without_field key json =
 let test_apply_mode_missing_fails_closed () =
   match R.of_json (without_field "apply_mode" (R.to_json sample_record)) with
   | Ok _ -> Windtrap.fail "expected a missing apply_mode to fail closed"
-  | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
+  | Error msg ->
+    check_bool "names the field" true (Sol_cli_string.contains ~needle:"apply_mode" msg)
 ;;
 
 let test_apply_mode_unknown_fails_closed () =
@@ -455,13 +491,17 @@ let test_apply_mode_unknown_fails_closed () =
   in
   match R.of_json json with
   | Ok _ -> Windtrap.fail "expected an unknown apply_mode to fail closed"
-  | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
+  | Error msg ->
+    check_bool "names the field" true (Sol_cli_string.contains ~needle:"apply_mode" msg)
 ;;
 
 let test_format_table_lists_the_id () =
   let table = R.format_table [ sample_record ] in
-  check_bool "id column present" true (contains sample_record.release_id table);
-  check_bool "header present" true (contains "ID" table)
+  check_bool
+    "id column present"
+    true
+    (Sol_cli_string.contains ~needle:sample_record.release_id table);
+  check_bool "header present" true (Sol_cli_string.contains ~needle:"ID" table)
 ;;
 
 let mkdirs path =
@@ -630,7 +670,7 @@ let test_scoped_deploy_records_a_complete_boundary () =
     check_bool
       "the in-scope workload carries the new spec"
       true
-      (contains "def5678" charge.Sol_cli_release_id.spec.image);
+      (Sol_cli_string.contains ~needle:"def5678" charge.Sol_cli_release_id.spec.image);
     check_string
       "the in-scope workload is applied by this deploy"
       (Sol_cli_release_id.to_string (scoped_update plan).release_id)
@@ -652,7 +692,9 @@ let test_scoped_deploy_records_a_complete_boundary () =
     check_bool
       "the live manifest carries the recorded provenance"
       true
-      (contains ("release: \"" ^ charge.applied_by ^ "\"") rendered);
+      (Sol_cli_string.contains
+         ~needle:("release: \"" ^ charge.applied_by ^ "\"")
+         rendered);
     let event =
       Sol_cli_deployment.of_plan
         ~release_id:(Result.get_ok (Sol_cli_release_id.of_string boundary_b.release_id))
@@ -851,7 +893,7 @@ let test_scoped_deploy_refuses_an_unreadable_boundary () =
     with_failing_kubectl (fun () ->
       match read_boundary plan with
       | Ok _ -> Windtrap.fail "expected a scoped deploy to refuse an unreadable boundary"
-      | Error msg -> assert (contains "could not be read" msg)))
+      | Error msg -> assert (Sol_cli_string.contains ~needle:"could not be read" msg)))
 ;;
 
 let test_full_deploy_tolerates_an_unreadable_boundary () =
@@ -881,7 +923,10 @@ let test_of_plan_rederives_the_plan_identity () =
     let recorded = List.hd r.workloads in
     let w = R.workload_identity recorded in
     check_string "workload name" "charge_svc" w.name;
-    check_bool "image recorded" true (contains "charge-svc" w.image);
+    check_bool
+      "image recorded"
+      true
+      (Sol_cli_string.contains ~needle:"charge-svc" w.image);
     check_string
       "the deploy records itself as the applier"
       (Sol_cli_release_id.to_string plan.release_id)
@@ -925,7 +970,7 @@ let test_record_failure_fails_the_deployment () =
   check_bool "no successful completion was reported" false !reported;
   match result with
   | Ok () -> Windtrap.fail "a deployment that could not record its release must fail"
-  | Error msg -> assert (contains "sol-release-current-pluto" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"sol-release-current-pluto" msg)
 ;;
 
 let test_recorded_release_reports_success () =

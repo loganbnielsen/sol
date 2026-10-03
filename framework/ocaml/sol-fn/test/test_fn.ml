@@ -23,28 +23,6 @@ module Should_not_run_fn = struct
   let run () = Windtrap.fail "stopped cron should not run"
 end
 
-let contains needle haystack =
-  let nl = String.length needle
-  and hl = String.length haystack in
-  if nl = 0
-  then true
-  else if nl > hl
-  then false
-  else (
-    let found = ref false in
-    for i = 0 to hl - nl do
-      if not !found
-      then (
-        let rec eq j =
-          j >= nl
-          || (String.unsafe_get haystack (i + j) = String.unsafe_get needle j && eq (j + 1)
-             )
-        in
-        if eq 0 then found := true)
-    done;
-    !found)
-;;
-
 let test_run_ok () =
   Eio_main.run
   @@ fun env ->
@@ -69,7 +47,11 @@ let test_run_exception () =
   let module M = Fn.Make (Exn_fn) in
   match M.run ~env () with
   | Error (`Run msg) ->
-    Windtrap.equal Windtrap.bool ~msg:"exception captured" true (contains "boom" msg)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"exception captured"
+      true
+      (Sol_runtime.contains_substring ~needle:"boom" msg)
   | _ -> Windtrap.fail "expected run error"
 ;;
 
@@ -108,12 +90,12 @@ let test_metrics_ok_counter () =
     Windtrap.bool
     ~msg:"counter family present"
     true
-    (contains "sol_fn_invocations_total" output);
+    (Sol_runtime.contains_substring ~needle:"sol_fn_invocations_total" output);
   Windtrap.equal
     Windtrap.bool
     ~msg:"status=ok label present"
     true
-    (contains {|status="ok"|} output)
+    (Sol_runtime.contains_substring ~needle:{|status="ok"|} output)
 ;;
 
 let test_metrics_error_counter () =
@@ -138,7 +120,7 @@ let test_metrics_error_counter () =
     Windtrap.bool
     ~msg:"status=error label present"
     true
-    (contains {|status="error"|} output)
+    (Sol_runtime.contains_substring ~needle:{|status="error"|} output)
 ;;
 
 let test_metrics_duration () =
@@ -163,7 +145,7 @@ let test_metrics_duration () =
     Windtrap.bool
     ~msg:"duration histogram present"
     true
-    (contains "sol_fn_duration_seconds" output)
+    (Sol_runtime.contains_substring ~needle:"sol_fn_duration_seconds" output)
 ;;
 
 let test_push_error_no_raise () =
@@ -221,7 +203,7 @@ let test_push_uses_env_url_and_workload_job () =
     Windtrap.bool
     ~msg:(Printf.sprintf "pushed to the workload's own group (%S)" line)
     true
-    (contains "/metrics/job/myapp-billing.invoice-fn" line)
+    (Sol_runtime.contains_substring ~needle:"/metrics/job/myapp-billing.invoice-fn" line)
 ;;
 
 let test_lambda_trigger_requires_runtime_api () =
@@ -240,7 +222,7 @@ let test_lambda_trigger_requires_runtime_api () =
          Windtrap.bool
          ~msg:"reports missing runtime api"
          true
-         (contains "AWS_LAMBDA_RUNTIME_API is not set" msg)
+         (Sol_runtime.contains_substring ~needle:"AWS_LAMBDA_RUNTIME_API is not set" msg)
      | _ -> Windtrap.fail "expected config error")
 ;;
 

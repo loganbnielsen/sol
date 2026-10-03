@@ -1,6 +1,5 @@
 module S = Sol_cli_supervised
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let check msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let tmp_root = Filename.concat (Filename.get_temp_dir_name ()) "sol-supervised-test"
 
@@ -174,7 +173,8 @@ let test_clean_run () =
     "output is durable in the operation record"
     true
     (match read (Filename.concat (latest_dir c.key) "stdout") with
-     | Some out -> String.length out > 0 && contains out "Apply complete!"
+     | Some out ->
+       String.length out > 0 && Sol_cli_string.contains ~needle:"Apply complete!" out
      | None -> false)
 ;;
 
@@ -199,7 +199,7 @@ let test_sol_death_does_not_kill_terraform () =
     "terraform kept writing after Sol died"
     true
     (match read (Filename.concat (latest_dir c.key) "stdout") with
-     | Some out -> contains out "Apply complete!"
+     | Some out -> Sol_cli_string.contains ~needle:"Apply complete!" out
      | None -> false)
 ;;
 
@@ -265,7 +265,8 @@ let test_errored_state_is_unresolved () =
     "errored.tfstate in the root is Unresolved"
     true
     (match S.latest ~key:c.key with
-     | S.Unresolved { reason; _ } -> contains reason "errored.tfstate"
+     | S.Unresolved { reason; _ } ->
+       Sol_cli_string.contains ~needle:"errored.tfstate" reason
      | _ -> false);
   check
     "the file is preserved"

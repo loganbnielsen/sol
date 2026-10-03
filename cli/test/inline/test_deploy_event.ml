@@ -42,10 +42,12 @@ let test_fields_matches_taxonomy_label_set () =
 
 let test_message_mentions_domain_service_and_release () =
   let msg = E.message sample in
-  let contains needle s = Sol_cli_string.contains ~needle s in
-  check_bool "mentions domain" true (contains "billing" msg);
-  check_bool "mentions service" true (contains "invoicer" msg);
-  check_bool "mentions release" true (contains "r-0123456789abcdef" msg)
+  check_bool "mentions domain" true (Sol_cli_string.contains ~needle:"billing" msg);
+  check_bool "mentions service" true (Sol_cli_string.contains ~needle:"invoicer" msg);
+  check_bool
+    "mentions release"
+    true
+    (Sol_cli_string.contains ~needle:"r-0123456789abcdef" msg)
 ;;
 
 let explicit_url_case backend () =

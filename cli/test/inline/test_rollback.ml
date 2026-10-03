@@ -34,7 +34,7 @@ let ingress_path s =
   | Error message -> Windtrap.fail message
 ;;
 
-let contains re s =
+let matches_regex re s =
   try
     ignore (Str.search_forward re s 0);
     true
@@ -430,9 +430,9 @@ let test_gate_failure_unknown_rollout_encoding () =
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Windtrap.fail "expected reconstruction to fail on an unknown rollout encoding"
   | Error msg ->
-    assert (contains (Str.regexp "r-0000000000000000") msg);
-    assert (contains (Str.regexp "ledger_svc") msg);
-    assert (contains (Str.regexp (Str.quote "canary:bogus")) msg)
+    assert (matches_regex (Str.regexp "r-0000000000000000") msg);
+    assert (matches_regex (Str.regexp "ledger_svc") msg);
+    assert (matches_regex (Str.regexp (Str.quote "canary:bogus")) msg)
 ;;
 
 let test_gate_failure_invalid_cpu () =
@@ -440,8 +440,8 @@ let test_gate_failure_invalid_cpu () =
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Windtrap.fail "expected reconstruction to fail on an invalid cpu quantity"
   | Error msg ->
-    assert (contains (Str.regexp "ledger_svc") msg);
-    assert (contains (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
+    assert (matches_regex (Str.regexp "ledger_svc") msg);
+    assert (matches_regex (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
 ;;
 
 let test_gate_failure_invalid_availability () =
@@ -449,8 +449,8 @@ let test_gate_failure_invalid_availability () =
   match Sol_cli_rollback.service_specs_of_release release with
   | Ok _ -> Windtrap.fail "expected reconstruction to fail on an invalid availability"
   | Error msg ->
-    assert (contains (Str.regexp "ledger_svc") msg);
-    assert (contains (Str.regexp (Str.quote "sometimes")) msg)
+    assert (matches_regex (Str.regexp "ledger_svc") msg);
+    assert (matches_regex (Str.regexp (Str.quote "sometimes")) msg)
 ;;
 
 let with_migrations_dir files f =
@@ -558,7 +558,7 @@ let test_migration_boundary_undeclared_new_migration_blocks () =
          ->
          Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
          Windtrap.equal Windtrap.string ~msg:"migration" "0002_mystery.sql" migration;
-         assert (contains (Str.regexp "sol:disposition") reason)
+         assert (matches_regex (Str.regexp "sol:disposition") reason)
        | Error e ->
          Windtrap.failf
            "expected Undeclared_disposition, got: %s"
@@ -638,7 +638,7 @@ let test_migration_boundary_applied_state_unavailable_blocks () =
          Windtrap.fail "expected an unreadable applied state to block the rollback"
        | Error (Sol_cli_rollback.Applied_state_unavailable { release_id; reason }) ->
          Windtrap.equal Windtrap.string ~msg:"release_id" "r-1111111111111111" release_id;
-         assert (contains (Str.regexp "migration-status Job cannot start") reason)
+         assert (matches_regex (Str.regexp "migration-status Job cannot start") reason)
        | Error e ->
          Windtrap.failf
            "expected Applied_state_unavailable, got: %s"
@@ -742,8 +742,8 @@ let test_check_apply_mode_refuses_gitops () =
   | Ok () -> Windtrap.fail "expected a GitOps-owned release to be refused"
   | Error e ->
     let msg = Sol_cli_rollback.apply_mode_check_error_to_string e in
-    assert (contains (Str.regexp "GitOps") msg);
-    assert (contains (Str.regexp release.release_id) msg)
+    assert (matches_regex (Str.regexp "GitOps") msg);
+    assert (matches_regex (Str.regexp release.release_id) msg)
 ;;
 
 let id kind namespace name : Sol_cli_rollback.workload_identity =
@@ -786,8 +786,8 @@ let test_verify_workloads_reports_unexpected () =
     false
     (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "unexpected workload") msg);
-  assert (contains (Str.regexp "fraud-svc") msg)
+  assert (matches_regex (Str.regexp "unexpected workload") msg);
+  assert (matches_regex (Str.regexp "fraud-svc") msg)
 ;;
 
 let test_verify_workloads_reports_missing () =
@@ -799,8 +799,8 @@ let test_verify_workloads_reports_missing () =
     false
     (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "workload missing") msg);
-  assert (contains (Str.regexp "ledger-svc") msg)
+  assert (matches_regex (Str.regexp "workload missing") msg);
+  assert (matches_regex (Str.regexp "ledger-svc") msg)
 ;;
 
 let test_verify_workloads_reports_label_mismatch () =
@@ -812,8 +812,8 @@ let test_verify_workloads_reports_label_mismatch () =
     false
     (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "workload state mismatch") msg);
-  assert (contains (Str.regexp "r-9999999999999999") msg)
+  assert (matches_regex (Str.regexp "workload state mismatch") msg);
+  assert (matches_regex (Str.regexp "r-9999999999999999") msg)
 ;;
 
 let test_verify_workloads_distinguishes_kind () =
@@ -832,8 +832,8 @@ let test_verify_workloads_distinguishes_kind () =
     false
     (Sol_cli_rollback.workload_report_ok report);
   let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "workload missing") msg);
-  assert (contains (Str.regexp "unexpected workload") msg)
+  assert (matches_regex (Str.regexp "workload missing") msg);
+  assert (matches_regex (Str.regexp "unexpected workload") msg)
 ;;
 
 let fn_spec : Sol_cli_deployment_plan.service_spec =
@@ -908,12 +908,12 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
       Windtrap.bool
       ~msg:"rendered CronJob keeps concurrencyPolicy: Forbid"
       true
-      (contains (Str.regexp_string "concurrencyPolicy: Forbid") rendered);
+      (matches_regex (Str.regexp_string "concurrencyPolicy: Forbid") rendered);
     Windtrap.equal
       Windtrap.bool
       ~msg:"rendered CronJob keeps backoffLimit: 0"
       true
-      (contains (Str.regexp_string "backoffLimit: 0") rendered);
+      (matches_regex (Str.regexp_string "backoffLimit: 0") rendered);
     Windtrap.equal
       Windtrap.bool
       ~msg:"live kind is CronJob"
@@ -949,7 +949,7 @@ let test_reconstruction_rejects_invalid_persistence () =
   let invalid = { gate_release with workloads = [ invalid_workload ] } in
   match Sol_cli_rollback.service_specs_of_release invalid with
   | Ok _ -> Windtrap.fail "expected rollback reconstruction to reject persistence"
-  | Error msg -> assert (contains (Str.regexp "set replicas = 1") msg)
+  | Error msg -> assert (matches_regex (Str.regexp "set replicas = 1") msg)
 ;;
 
 let test_recreate_strategy_reconstructs () =
@@ -1191,12 +1191,12 @@ let test_pointer_report_ok () =
 let test_pointer_report_to_string_uses_canonical_name () =
   let report = Sol_cli_rollback.Pointer_names "" in
   let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "sol-release-current-myapp") msg);
-  assert (contains (Str.regexp "<none>") msg);
+  assert (matches_regex (Str.regexp "sol-release-current-myapp") msg);
+  assert (matches_regex (Str.regexp "<none>") msg);
   let release = { verify_release with workspace = "CI_Smoke" } in
   let msg = Sol_cli_rollback.pointer_report_to_string ~release report in
-  assert (contains (Str.regexp "sol-release-current-ci-smoke") msg);
-  assert (not (contains (Str.regexp_string "CI_Smoke") msg))
+  assert (matches_regex (Str.regexp "sol-release-current-ci-smoke") msg);
+  assert (not (matches_regex (Str.regexp_string "CI_Smoke") msg))
 ;;
 
 let test_pointer_report_unreadable_names_the_reason () =
@@ -1205,11 +1205,11 @@ let test_pointer_report_unreadable_names_the_reason () =
       "exited with code 1: Error from server (Forbidden): configmaps is forbidden"
   in
   let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "sol-release-current-myapp") msg);
-  assert (contains (Str.regexp_string "could not be read") msg);
-  assert (contains (Str.regexp_string "Forbidden") msg);
-  assert (not (contains (Str.regexp_string "<none>") msg));
-  assert (not (contains (Str.regexp_string "pointer mismatch") msg))
+  assert (matches_regex (Str.regexp "sol-release-current-myapp") msg);
+  assert (matches_regex (Str.regexp_string "could not be read") msg);
+  assert (matches_regex (Str.regexp_string "Forbidden") msg);
+  assert (not (matches_regex (Str.regexp_string "<none>") msg));
+  assert (not (matches_regex (Str.regexp_string "pointer mismatch") msg))
 ;;
 
 let with_fake_kubectl script f =
@@ -1252,7 +1252,7 @@ exit 1
          (Sol_cli_rollback.pointer_report_ok report);
        match report with
        | Sol_cli_rollback.Pointer_unreadable reason ->
-         assert (contains (Str.regexp_string "Forbidden") reason)
+         assert (matches_regex (Str.regexp_string "Forbidden") reason)
        | _ -> Windtrap.fail "an unreadable read must not be reported as a named release")
 ;;
 
@@ -1285,7 +1285,7 @@ let test_verify_pointer_reports_a_read_mismatch () =
       false
       (Sol_cli_rollback.pointer_report_ok report);
     let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
-    assert (contains (Str.regexp_string "pointer mismatch") msg))
+    assert (matches_regex (Str.regexp_string "pointer mismatch") msg))
 ;;
 
 let transaction_release ~apply_mode : Sol_cli_release.t =
@@ -1516,9 +1516,9 @@ let test_execute_reports_an_uncorrected_guard_record () =
   with
   | Ok () -> Windtrap.fail "an uncorrected guard record must be reported"
   | Error msg ->
-    assert (contains (Str.regexp_string "rollback incomplete") msg);
-    assert (contains (Str.regexp_string "could not be corrected") msg);
-    assert (contains (Str.regexp_string "the ConfigMap is forbidden") msg);
+    assert (matches_regex (Str.regexp_string "rollback incomplete") msg);
+    assert (matches_regex (Str.regexp_string "could not be corrected") msg);
+    assert (matches_regex (Str.regexp_string "the ConfigMap is forbidden") msg);
     Windtrap.equal
       Windtrap.bool
       ~msg:"the rollback itself did happen, so the pointer was moved"
@@ -1538,7 +1538,7 @@ let test_execute_apply_mode_refusal_calls_no_deps () =
   with
   | Ok () -> Windtrap.fail "expected a GitOps-owned release to be refused"
   | Error msg ->
-    assert (contains (Str.regexp "GitOps") msg);
+    assert (matches_regex (Str.regexp "GitOps") msg);
     Windtrap.equal (Windtrap.list Windtrap.string) ~msg:"no dep was ever called" [] !calls
 ;;
 
@@ -1561,7 +1561,7 @@ let test_execute_migration_boundary_refusal_calls_no_deps () =
        with
        | Ok () -> Windtrap.fail "expected a contracting migration to block the rollback"
        | Error msg ->
-         assert (contains (Str.regexp "0002_drop_col.sql") msg);
+         assert (matches_regex (Str.regexp "0002_drop_col.sql") msg);
          Windtrap.equal
            (Windtrap.list Windtrap.string)
            ~msg:"no dep was ever called"
@@ -1636,8 +1636,8 @@ let test_execute_prune_failure_skips_pointer_move () =
   with
   | Ok () -> Windtrap.fail "expected the prune failure to block the pointer move"
   | Error msg ->
-    assert (contains (Str.regexp "boom") msg);
-    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    assert (matches_regex (Str.regexp "boom") msg);
+    assert (matches_regex (Str.regexp "pointer was left unchanged") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
@@ -1665,7 +1665,7 @@ let test_execute_applied_state_unavailable_skips_every_mutation () =
   with
   | Ok () -> Windtrap.fail "expected the unreadable applied state to block the rollback"
   | Error msg ->
-    assert (contains (Str.regexp "applied migration state") msg);
+    assert (matches_regex (Str.regexp "applied migration state") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"only the applied-state read ran"
@@ -1705,7 +1705,7 @@ let test_execute_lost_ownership_after_apply_skips_prune_and_pointer () =
   with
   | Ok () -> Windtrap.fail "expected the lost lease to stop the transaction"
   | Error msg ->
-    assert (contains (Str.regexp "lost the boundary lease") msg);
+    assert (matches_regex (Str.regexp "lost the boundary lease") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"the takeover stopped the transaction before prune"
@@ -1728,7 +1728,7 @@ let test_execute_lost_ownership_after_prune_skips_pointer_move () =
   with
   | Ok () -> Windtrap.fail "expected the lost lease to block the pointer move"
   | Error msg ->
-    assert (contains (Str.regexp "lost the boundary lease") msg);
+    assert (matches_regex (Str.regexp "lost the boundary lease") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"apply and prune ran; the pointer was never moved"
@@ -1766,8 +1766,8 @@ let test_execute_missing_workload_skips_prune_and_pointer_move () =
   with
   | Ok () -> Windtrap.fail "expected the missing workload to block the pointer move"
   | Error msg ->
-    assert (contains (Str.regexp "ledger-svc") msg);
-    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    assert (matches_regex (Str.regexp "ledger-svc") msg);
+    assert (matches_regex (Str.regexp "pointer was left unchanged") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
@@ -1790,9 +1790,9 @@ let test_execute_apply_failure_reports_the_incomplete_rollback () =
   with
   | Ok () -> Windtrap.fail "a failed apply must fail the rollback"
   | Error msg ->
-    assert (contains (Str.regexp "kubectl apply failed on notify-worker") msg);
-    assert (contains (Str.regexp "pointer") msg);
-    assert (contains (Str.regexp "still names the previous release") msg);
+    assert (matches_regex (Str.regexp "kubectl apply failed on notify-worker") msg);
+    assert (matches_regex (Str.regexp "pointer") msg);
+    assert (matches_regex (Str.regexp "still names the previous release") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"the failure stopped before verifying, pruning or moving the pointer"
@@ -1813,8 +1813,8 @@ let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
   with
   | Ok () -> Windtrap.fail "expected the label mismatch to block the pointer move"
   | Error msg ->
-    assert (contains (Str.regexp "ledger-svc") msg);
-    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    assert (matches_regex (Str.regexp "ledger-svc") msg);
+    assert (matches_regex (Str.regexp "pointer was left unchanged") msg);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
@@ -2324,18 +2324,21 @@ let test_qualification_restores_after_a_bad_deploy () =
     (List.length cluster.manifests);
   List.iter
     (fun manifest ->
-       let contains needle = Sol_cli_string.contains ~needle manifest in
        Windtrap.equal
          Windtrap.bool
          ~msg:"no Secret object"
          false
-         (contains "kind: Secret");
-       Windtrap.equal Windtrap.bool ~msg:"no stringData" false (contains "stringData");
+         (Sol_cli_string.contains ~needle:"kind: Secret" manifest);
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"no stringData"
+         false
+         (Sol_cli_string.contains ~needle:"stringData" manifest);
        Windtrap.equal
          Windtrap.bool
          ~msg:"secret referenced by key"
          true
-         (contains "secretKeyRef"))
+         (Sol_cli_string.contains ~needle:"secretKeyRef" manifest))
     cluster.manifests;
   Windtrap.equal
     (Windtrap.list Windtrap.string)
@@ -2409,27 +2412,26 @@ let test_qualification_render_never_carries_secret_material () =
          match render_for_release ~release spec applied_by with
          | Error msg -> Windtrap.fail msg
          | Ok manifest ->
-           let contains needle = Sol_cli_string.contains ~needle manifest in
            Windtrap.equal
              Windtrap.bool
              ~msg:"secret material is never rendered"
              false
-             (contains "super-secret-material");
+             (Sol_cli_string.contains ~needle:"super-secret-material" manifest);
            Windtrap.equal
              Windtrap.bool
              ~msg:"no Secret object is rendered"
              false
-             (contains "kind: Secret");
+             (Sol_cli_string.contains ~needle:"kind: Secret" manifest);
            Windtrap.equal
              Windtrap.bool
              ~msg:"no stringData is rendered"
              false
-             (contains "stringData");
+             (Sol_cli_string.contains ~needle:"stringData" manifest);
            Windtrap.equal
              Windtrap.bool
              ~msg:"the key is still referenced"
              true
-             (contains "DB_PASSWORD"))
+             (Sol_cli_string.contains ~needle:"DB_PASSWORD" manifest))
       reconstructed
 ;;
 

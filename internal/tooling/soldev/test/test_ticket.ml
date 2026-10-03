@@ -10,13 +10,6 @@ let check_option_string msg expected actual =
 
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
-let contains_substring ~needle haystack =
-  let nl = String.length needle
-  and hl = String.length haystack in
-  let rec go i = i + nl <= hl && (String.sub haystack i nl = needle || go (i + 1)) in
-  nl = 0 || go 0
-;;
-
 let ticket_state =
   Windtrap.testable
     ~pp:(fun fmt state -> Format.pp_print_string fmt (Soldev_ticket.state_to_dir state))
@@ -296,7 +289,10 @@ let test_invalid_frontmatter_is_an_error () =
   match Soldev_ticket.frontmatter "---\nsource: operator: said so\n---\n" with
   | Ok _ -> Windtrap.fail "an invalid frontmatter was accepted"
   | Error message ->
-    check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" message)
+    check_bool
+      "names YAML"
+      true
+      (Soldev_string.contains_substring ~needle:"not valid YAML" message)
 ;;
 
 let test_every_ticket_is_readable () =
@@ -358,11 +354,14 @@ let test_no_frontmatter_block_is_unreadable () =
   with
   | None -> Windtrap.fail "a ticket with no frontmatter block was accepted"
   | Some reason ->
-    check_bool "names the file" true (contains_substring ~needle:path reason);
+    check_bool
+      "names the file"
+      true
+      (Soldev_string.contains_substring ~needle:path reason);
     check_bool
       "says what is missing"
       true
-      (contains_substring ~needle:"no frontmatter block" reason)
+      (Soldev_string.contains_substring ~needle:"no frontmatter block" reason)
 ;;
 
 let test_invalid_yaml_is_unreadable () =
@@ -379,8 +378,14 @@ let test_invalid_yaml_is_unreadable () =
   match Soldev_ticket.unreadable ~path content with
   | None -> Windtrap.fail "an invalid frontmatter was accepted"
   | Some reason ->
-    check_bool "names the file" true (contains_substring ~needle:path reason);
-    check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" reason)
+    check_bool
+      "names the file"
+      true
+      (Soldev_string.contains_substring ~needle:path reason);
+    check_bool
+      "names YAML"
+      true
+      (Soldev_string.contains_substring ~needle:"not valid YAML" reason)
 ;;
 
 let test_wrapped_depends_is_unreadable () =
@@ -389,8 +394,14 @@ let test_wrapped_depends_is_unreadable () =
   match Soldev_ticket.unreadable ~path content with
   | None -> Windtrap.fail "a wrapped Depends on field was accepted"
   | Some reason ->
-    check_bool "names the file" true (contains_substring ~needle:path reason);
-    check_bool "names the field" true (contains_substring ~needle:"Depends on" reason)
+    check_bool
+      "names the file"
+      true
+      (Soldev_string.contains_substring ~needle:path reason);
+    check_bool
+      "names the field"
+      true
+      (Soldev_string.contains_substring ~needle:"Depends on" reason)
 ;;
 
 let test_one_line_depends_is_readable () =
@@ -410,8 +421,14 @@ let test_missing_field_is_unreadable () =
   match Soldev_ticket.unreadable ~path content with
   | None -> Windtrap.fail "a blank required field was accepted"
   | Some reason ->
-    check_bool "names the file" true (contains_substring ~needle:path reason);
-    check_bool "names the field" true (contains_substring ~needle:"`severity`" reason)
+    check_bool
+      "names the file"
+      true
+      (Soldev_string.contains_substring ~needle:path reason);
+    check_bool
+      "names the field"
+      true
+      (Soldev_string.contains_substring ~needle:"`severity`" reason)
 ;;
 
 let test_each_required_field () =
@@ -431,7 +448,7 @@ let test_each_required_field () =
          check_bool
            (Printf.sprintf "names `%s`" field)
            true
-           (contains_substring ~needle:("`" ^ field ^ "`") reason))
+           (Soldev_string.contains_substring ~needle:("`" ^ field ^ "`") reason))
     [ "id"; "type"; "severity"; "source" ]
 ;;
 
@@ -611,7 +628,7 @@ let () =
                 ~output:"sh: 1: syntax error: unexpected end of file"
             with
             | Soldev_ticket.Premise_unverified reason ->
-              if not (contains_substring ~needle:"2" reason)
+              if not (Soldev_string.contains_substring ~needle:"2" reason)
               then Windtrap.fail ("the exit code is not named: " ^ reason)
             | _ ->
               Windtrap.fail "a probe that did not reach a conclusion is not a verdict")
@@ -660,14 +677,18 @@ let () =
             in
             match verdict with
             | Soldev_ticket.Premise_unverified reason ->
-              if not (contains_substring ~needle:"definitely/not/here.ml" reason)
+              if
+                not
+                  (Soldev_string.contains_substring
+                     ~needle:"definitely/not/here.ml"
+                     reason)
               then Windtrap.fail ("the missing path is not named: " ^ reason)
             | _ -> Windtrap.fail "a probe whose input does not exist must not decide")
         ; Windtrap.test "a planted shell syntax error is unverified" (fun () ->
             let verdict, _ = Soldev_merge.evaluate_premise ~echo:false "if" in
             match verdict with
             | Soldev_ticket.Premise_unverified reason ->
-              if not (contains_substring ~needle:"2" reason)
+              if not (Soldev_string.contains_substring ~needle:"2" reason)
               then Windtrap.fail ("the exit code is not named: " ^ reason)
             | _ -> Windtrap.fail "a probe that never ran must not be a verdict")
         ]

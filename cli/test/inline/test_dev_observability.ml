@@ -10,8 +10,7 @@ let assets () =
 ;;
 
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-let assert_contains msg s needle = check_bool msg true (contains needle s)
+let assert_contains msg s needle = check_bool msg true (Sol_cli_string.contains ~needle s)
 
 let test_dashboard_configmap () =
   let yaml =
@@ -205,7 +204,7 @@ let test_alloy_render_expands_taxonomy_loop () =
     check_bool
       "primitive rule absent"
       false
-      (contains "__meta_kubernetes_pod_label_primitive" river))
+      (Sol_cli_string.contains ~needle:"__meta_kubernetes_pod_label_primitive" river))
 ;;
 
 let test_alloy_render_omits_basic_auth_when_empty () =
@@ -219,7 +218,10 @@ let test_alloy_render_omits_basic_auth_when_empty () =
            ~loki_push_basic_auth_username:""
            ~loki_push_basic_auth_password:""
     in
-    check_bool "no basic_auth block" false (contains "basic_auth" river);
+    check_bool
+      "no basic_auth block"
+      false
+      (Sol_cli_string.contains ~needle:"basic_auth" river);
     assert_contains "push url present" river "http://loki:3100/loki/api/v1/push")
 ;;
 
@@ -258,7 +260,7 @@ let test_alloy_values_yaml_against_real_file () =
     check_bool
       "no basic_auth block for sol local infra up"
       false
-      (contains "basic_auth" yaml)
+      (Sol_cli_string.contains ~needle:"basic_auth" yaml)
 ;;
 
 let test_alloy_values_yaml_carries_the_config_exactly () =

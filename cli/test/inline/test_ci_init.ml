@@ -1,11 +1,10 @@
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
   check_bool
     (Printf.sprintf "%s: contains %S" label needle)
     true
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let read_file path =
@@ -59,8 +58,11 @@ let test_writes_an_oidc_workflow () =
       check_bool
         "the deploy waits for authorization"
         true
-        (contains content "needs: authorize");
-      check_bool "no kubeconfig credential" false (contains content "KUBECONFIG"))
+        (Sol_cli_string.contains ~needle:"needs: authorize" content);
+      check_bool
+        "no kubeconfig credential"
+        false
+        (Sol_cli_string.contains ~needle:"KUBECONFIG" content))
 ;;
 
 let test_rerun_is_idempotent () =
@@ -128,7 +130,7 @@ let test_an_unreadable_workflow_refuses_without_force () =
     let leftovers =
       Sys.readdir (Filename.dirname Sol_cli_ci.target_rel)
       |> Array.to_list
-      |> List.filter (fun name -> contains name ".tmp-")
+      |> List.filter (fun name -> Sol_cli_string.contains ~needle:".tmp-" name)
     in
     check_bool "no temporary file was left behind" true (leftovers = []))
 ;;

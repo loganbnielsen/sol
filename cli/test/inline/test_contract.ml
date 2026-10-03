@@ -7,31 +7,33 @@ let sample_event : Sol_cli_toml.event_decl =
   }
 ;;
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let test_render_ocaml_binding () =
   let rendered = Sol_cli_contract_gen.render ~language:Ocaml [ sample_event ] in
   Windtrap.equal
     Windtrap.bool
     ~msg:"module name"
     true
-    (contains "module Charged = struct" rendered);
-  Windtrap.equal Windtrap.bool ~msg:"topic" true (contains "payments.charges" rendered);
+    (Sol_cli_string.contains ~needle:"module Charged = struct" rendered);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"topic"
+    true
+    (Sol_cli_string.contains ~needle:"payments.charges" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"partitions"
     true
-    (contains "let partitions = 6" rendered);
+    (Sol_cli_string.contains ~needle:"let partitions = 6" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"key field"
     true
-    (contains "let key_field = Some \"id\"" rendered);
+    (Sol_cli_string.contains ~needle:"let key_field = Some \"id\"" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"format disabled for generated output"
     true
-    (contains "[@@@ocamlformat \"disable\"]" rendered)
+    (Sol_cli_string.contains ~needle:"[@@@ocamlformat \"disable\"]" rendered)
 ;;
 
 let test_render_typescript_binding () =
@@ -40,23 +42,31 @@ let test_render_typescript_binding () =
     Windtrap.bool
     ~msg:"the declared event becomes a spec constant"
     true
-    (contains "export const ChargedSpec: EventContractSpec" rendered);
+    (Sol_cli_string.contains
+       ~needle:"export const ChargedSpec: EventContractSpec"
+       rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"topic"
     true
-    (contains "name: \"payments.charges\"" rendered);
-  Windtrap.equal Windtrap.bool ~msg:"partitions" true (contains "partitions: 6" rendered);
+    (Sol_cli_string.contains ~needle:"name: \"payments.charges\"" rendered);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"partitions"
+    true
+    (Sol_cli_string.contains ~needle:"partitions: 6" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"key field"
     true
-    (contains "keyField: \"id\"" rendered);
+    (Sol_cli_string.contains ~needle:"keyField: \"id\"" rendered);
   Windtrap.equal
     Windtrap.bool
     ~msg:"the key is a generated field extractor, not app code"
     true
-    (contains "(message as unknown as Record<string, unknown>)[spec.keyField]" rendered)
+    (Sol_cli_string.contains
+       ~needle:"(message as unknown as Record<string, unknown>)[spec.keyField]"
+       rendered)
 ;;
 
 let test_generated_path () =
@@ -152,7 +162,7 @@ let test_generate_and_check_drift () =
         Windtrap.bool
         ~msg:"the drift names the file"
         true
-        (contains "payments_contract.ml" reason))
+        (Sol_cli_string.contains ~needle:"payments_contract.ml" reason))
 ;;
 
 let test_typescript_generate_and_check_drift () =
@@ -176,7 +186,7 @@ let test_typescript_generate_and_check_drift () =
         Windtrap.bool
         ~msg:"the drift names the TypeScript file"
         true
-        (contains "demo_ts_contract.ts" reason))
+        (Sol_cli_string.contains ~needle:"demo_ts_contract.ts" reason))
 ;;
 
 let%test "contract: an OCaml binding renders its declared fields" =

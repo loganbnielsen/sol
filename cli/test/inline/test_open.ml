@@ -3,8 +3,6 @@ let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected 
 
 module O = Sol_cli_open
 
-let contains url sub = Sol_cli_string.contains ~needle:sub url
-
 let ok_url = function
   | Ok s -> s
   | Error msg -> Windtrap.fail ("expected Ok, got Error " ^ msg)
@@ -105,10 +103,19 @@ let test_dashboard_workspace_scope () =
 
 let test_dashboard_domain_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard (O.Domain "payments")) in
-  check_bool "uses service-template uid" true (contains url "/d/sol-service-template");
-  check_bool "presets var-workspace" true (contains url "var-workspace=myapp");
-  check_bool "presets var-domain" true (contains url "var-domain=payments");
-  check_bool "no var-service" false (contains url "var-service")
+  check_bool
+    "uses service-template uid"
+    true
+    (Sol_cli_string.contains ~needle:"/d/sol-service-template" url);
+  check_bool
+    "presets var-workspace"
+    true
+    (Sol_cli_string.contains ~needle:"var-workspace=myapp" url);
+  check_bool
+    "presets var-domain"
+    true
+    (Sol_cli_string.contains ~needle:"var-domain=payments" url);
+  check_bool "no var-service" false (Sol_cli_string.contains ~needle:"var-service" url)
 ;;
 
 let test_dashboard_service_scope () =
@@ -120,9 +127,18 @@ let test_dashboard_service_scope () =
          ~kind:O.Dashboard
          (O.Service ("payments", "charge-svc")))
   in
-  check_bool "presets var-workspace" true (contains url "var-workspace=myapp");
-  check_bool "presets var-domain" true (contains url "var-domain=payments");
-  check_bool "presets var-service" true (contains url "var-service=charge-svc")
+  check_bool
+    "presets var-workspace"
+    true
+    (Sol_cli_string.contains ~needle:"var-workspace=myapp" url);
+  check_bool
+    "presets var-domain"
+    true
+    (Sol_cli_string.contains ~needle:"var-domain=payments" url);
+  check_bool
+    "presets var-service"
+    true
+    (Sol_cli_string.contains ~needle:"var-service=charge-svc" url)
 ;;
 
 let test_dashboard_workspace_scope_normalizes_case_and_underscore () =
@@ -130,7 +146,7 @@ let test_dashboard_workspace_scope_normalizes_case_and_underscore () =
   check_bool
     "var-workspace uses the normalized (lowercase, hyphenated) name"
     true
-    (contains url "var-workspace=my-app")
+    (Sol_cli_string.contains ~needle:"var-workspace=my-app" url)
 ;;
 
 let test_metrics_matches_dashboard () =
@@ -155,7 +171,7 @@ let test_dashboard_service_scope_normalizes_underscore_name () =
   check_bool
     "var-service uses the normalized (hyphenated) name"
     true
-    (contains url "var-service=charge-svc")
+    (Sol_cli_string.contains ~needle:"var-service=charge-svc" url)
 ;;
 
 let test_dashboard_domain_scope_normalizes_case_and_underscore () =
@@ -165,7 +181,7 @@ let test_dashboard_domain_scope_normalizes_case_and_underscore () =
   check_bool
     "var-domain uses the normalized (lowercase, hyphenated) name"
     true
-    (contains url "var-domain=payments-team")
+    (Sol_cli_string.contains ~needle:"var-domain=payments-team" url)
 ;;
 
 let test_dashboard_domain_scope_normalizes_internal_space () =
@@ -175,7 +191,7 @@ let test_dashboard_domain_scope_normalizes_internal_space () =
   check_bool
     "var-domain replaces the internal space"
     true
-    (contains url "var-domain=payments-team")
+    (Sol_cli_string.contains ~needle:"var-domain=payments-team" url)
 ;;
 
 let test_dashboard_service_scope_invalid_name () =
@@ -212,7 +228,7 @@ let test_dashboard_resource_scope_no_workspace_var () =
   check_bool
     "no var-workspace (account/cluster-scoped, not per-workspace)"
     false
-    (contains url "var-workspace")
+    (Sol_cli_string.contains ~needle:"var-workspace" url)
 ;;
 
 let test_dashboard_resource_scope_normalizes_type_and_name () =
@@ -227,11 +243,11 @@ let test_dashboard_resource_scope_normalizes_type_and_name () =
   check_bool
     "resource_type normalized into the dashboard uid"
     true
-    (contains url "/d/sol-managed-resource-rds");
+    (Sol_cli_string.contains ~needle:"/d/sol-managed-resource-rds" url);
   check_bool
     "resource_name normalized into var-resource"
     true
-    (contains url "var-resource=acme-prod-postgres")
+    (Sol_cli_string.contains ~needle:"var-resource=acme-prod-postgres" url)
 ;;
 
 let test_metrics_matches_dashboard_for_resource_scope () =
@@ -266,17 +282,32 @@ let test_logs_resource_scope_has_no_view () =
 
 let test_logs_workspace_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs O.Workspace) in
-  check_bool "explore url" true (contains url "/explore");
-  check_bool "selects on the workspace identity label" true (contains url "myapp");
-  check_bool "no namespace selector" false (contains url "namespace")
+  check_bool "explore url" true (Sol_cli_string.contains ~needle:"/explore" url);
+  check_bool
+    "selects on the workspace identity label"
+    true
+    (Sol_cli_string.contains ~needle:"myapp" url);
+  check_bool
+    "no namespace selector"
+    false
+    (Sol_cli_string.contains ~needle:"namespace" url)
 ;;
 
 let test_logs_domain_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs (O.Domain "payments")) in
-  check_bool "explore url" true (contains url "/explore");
-  check_bool "carries the workspace label" true (contains url "myapp");
-  check_bool "carries the domain label" true (contains url "payments");
-  check_bool "no namespace selector" false (contains url "namespace")
+  check_bool "explore url" true (Sol_cli_string.contains ~needle:"/explore" url);
+  check_bool
+    "carries the workspace label"
+    true
+    (Sol_cli_string.contains ~needle:"myapp" url);
+  check_bool
+    "carries the domain label"
+    true
+    (Sol_cli_string.contains ~needle:"payments" url);
+  check_bool
+    "no namespace selector"
+    false
+    (Sol_cli_string.contains ~needle:"namespace" url)
 ;;
 
 let test_logs_service_scope () =
@@ -284,9 +315,12 @@ let test_logs_service_scope () =
     ok_url
       (O.url ~base_url ~workspace ~kind:O.Logs (O.Service ("payments", "charge_svc")))
   in
-  check_bool "explore url" true (contains url "/explore");
-  check_bool "k8s name normalized" true (contains url "charge-svc");
-  check_bool "no namespace selector" false (contains url "namespace")
+  check_bool "explore url" true (Sol_cli_string.contains ~needle:"/explore" url);
+  check_bool "k8s name normalized" true (Sol_cli_string.contains ~needle:"charge-svc" url);
+  check_bool
+    "no namespace selector"
+    false
+    (Sol_cli_string.contains ~needle:"namespace" url)
 ;;
 
 let test_logs_service_scope_invalid_name () =
@@ -296,31 +330,49 @@ let test_logs_service_scope_invalid_name () =
 
 let test_traces_workspace_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Traces O.Workspace) in
-  check_bool "explore url" true (contains url "/explore");
+  check_bool "explore url" true (Sol_cli_string.contains ~needle:"/explore" url);
   check_bool
     "names the tempo datasource"
     true
-    (contains url "%22datasource%22%3A%22tempo%22");
+    (Sol_cli_string.contains ~needle:"%22datasource%22%3A%22tempo%22" url);
   check_bool
     "asks for a traceql query"
     true
-    (contains url "%22queryType%22%3A%22traceql%22");
-  check_bool "selects on resource.workspace" true (contains url "resource.workspace");
-  check_bool "carries the workspace identity" true (contains url "myapp");
-  check_bool "no raw brace in the url" false (contains url "{");
-  check_bool "no raw double quote in the url" false (contains url {|"|});
-  check_bool "no raw space in the url" false (contains url " ")
+    (Sol_cli_string.contains ~needle:"%22queryType%22%3A%22traceql%22" url);
+  check_bool
+    "selects on resource.workspace"
+    true
+    (Sol_cli_string.contains ~needle:"resource.workspace" url);
+  check_bool
+    "carries the workspace identity"
+    true
+    (Sol_cli_string.contains ~needle:"myapp" url);
+  check_bool "no raw brace in the url" false (Sol_cli_string.contains ~needle:"{" url);
+  check_bool
+    "no raw double quote in the url"
+    false
+    (Sol_cli_string.contains ~needle:{|"|} url);
+  check_bool "no raw space in the url" false (Sol_cli_string.contains ~needle:" " url)
 ;;
 
 let test_traces_domain_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Traces (O.Domain "payments")) in
-  check_bool "selects on resource.domain" true (contains url "resource.domain");
-  check_bool "carries the workspace identity" true (contains url "myapp");
-  check_bool "carries the domain identity" true (contains url "payments");
+  check_bool
+    "selects on resource.domain"
+    true
+    (Sol_cli_string.contains ~needle:"resource.domain" url);
+  check_bool
+    "carries the workspace identity"
+    true
+    (Sol_cli_string.contains ~needle:"myapp" url);
+  check_bool
+    "carries the domain identity"
+    true
+    (Sol_cli_string.contains ~needle:"payments" url);
   check_bool
     "no service selector for a domain scope"
     false
-    (contains url "resource.service")
+    (Sol_cli_string.contains ~needle:"resource.service" url)
 ;;
 
 let test_traces_service_scope () =
@@ -328,9 +380,15 @@ let test_traces_service_scope () =
     ok_url
       (O.url ~base_url ~workspace ~kind:O.Traces (O.Service ("payments", "charge_svc")))
   in
-  check_bool "selects on resource.service" true (contains url "resource.service");
-  check_bool "k8s name normalized" true (contains url "charge-svc");
-  check_bool "no raw underscore in the query" false (contains url "charge_svc")
+  check_bool
+    "selects on resource.service"
+    true
+    (Sol_cli_string.contains ~needle:"resource.service" url);
+  check_bool "k8s name normalized" true (Sol_cli_string.contains ~needle:"charge-svc" url);
+  check_bool
+    "no raw underscore in the query"
+    false
+    (Sol_cli_string.contains ~needle:"charge_svc" url)
 ;;
 
 let test_traces_resource_scope_has_no_view () =
@@ -340,7 +398,7 @@ let test_traces_resource_scope_has_no_view () =
   check_bool
     "no traces view for managed resources -> Error"
     true
-    (contains (err_msg result) "no traces view")
+    (Sol_cli_string.contains ~needle:"no traces view" (err_msg result))
 ;;
 
 let test_traces_requires_no_target () =
@@ -407,8 +465,8 @@ let test_infra_takes_no_scope () =
   check_bool
     "a scope is refused"
     true
-    (contains (err_msg result) "target-scoped"
-     && contains (err_msg result) "no application scope")
+    (Sol_cli_string.contains ~needle:"target-scoped" (err_msg result)
+     && Sol_cli_string.contains ~needle:"no application scope" (err_msg result))
 ;;
 
 let test_infra_requires_a_target () =
@@ -420,7 +478,9 @@ let test_infra_requires_a_target () =
     "no target is refused, naming the view"
     true
     (match O.validate ~kind:O.Infra ~target_present:false O.Workspace with
-     | Error message -> contains message "--target" && contains message "infra"
+     | Error message ->
+       Sol_cli_string.contains ~needle:"--target" message
+       && Sol_cli_string.contains ~needle:"infra" message
      | Ok () -> false);
   check_bool
     "a target and no scope is accepted"
@@ -435,7 +495,7 @@ let test_infra_requires_a_target () =
          ~target_present:true
          (O.Service ("payments", "charge-svc"))
      with
-     | Error message -> contains message "no application scope"
+     | Error message -> Sol_cli_string.contains ~needle:"no application scope" message
      | Ok () -> false);
   check_bool
     "the scope-addressed views are untouched"
@@ -477,7 +537,10 @@ let test_provider_console_urls_are_provider_owned () =
        (target ~provider:Sol_cli_provider.Aws ~region:"us-east-1" ~fields:[])
    with
    | Some url ->
-     check_bool "the AWS console names the region" true (contains url "region=us-east-1")
+     check_bool
+       "the AWS console names the region"
+       true
+       (Sol_cli_string.contains ~needle:"region=us-east-1" url)
    | None -> Windtrap.fail "an AWS target must have a console");
   (match
      Sol_cli_provider_capabilities.provider_console_url
@@ -490,7 +553,7 @@ let test_provider_console_urls_are_provider_owned () =
      check_bool
        "the GCP console names the project"
        true
-       (contains url "project=sol-qualification")
+       (Sol_cli_string.contains ~needle:"project=sol-qualification" url)
    | None -> Windtrap.fail "a GCP target with a project must have a console");
   check_bool
     "a GCP target with no project has no console to offer"
