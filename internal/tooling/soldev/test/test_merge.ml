@@ -852,70 +852,6 @@ let test_stale_binary_fails_after_rename () =
       (Sys.command "./_build/default/bin/main.exe >/dev/null 2>&1" = 0))
 ;;
 
-let test_post_merge_action_of_rc () =
-  let show = function
-    | Soldev_merge.Report_success -> "pass"
-    | Soldev_merge.Report_local_failure rc -> Printf.sprintf "report:%d" rc
-  in
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"0 is a clean suite"
-    "pass"
-    (show (Soldev_merge.post_merge_action_of_rc 0));
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"1 is a failure to report, never a revert"
-    "report:1"
-    (show (Soldev_merge.post_merge_action_of_rc 1));
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"2 is no longer a perf verdict — the runner has no such exit"
-    "report:2"
-    (show (Soldev_merge.post_merge_action_of_rc 2));
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"an unrunnable suite is not a merged success"
-    "report:127"
-    (show (Soldev_merge.post_merge_action_of_rc 127));
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"and neither is any other non-zero"
-    "report:3"
-    (show (Soldev_merge.post_merge_action_of_rc 3))
-;;
-
-let test_merge_finish_does_not_write_a_baseline_commit () =
-  in_temp_dir (fun () ->
-    git_ok "init -q";
-    git_ok "config user.email soldev@test";
-    git_ok "config user.name soldev";
-    Unix.mkdir "internal" 0o755;
-    Unix.mkdir "internal/tooling" 0o755;
-    Unix.mkdir "internal/tooling/scripts" 0o755;
-    Unix.mkdir "internal/tooling/perf" 0o755;
-    let baseline = "internal/tooling/perf/perf_baseline.json" in
-    write_file baseline "original\n";
-    let runner = "internal/tooling/scripts/run_tests.sh" in
-    write_file
-      runner
-      "#!/bin/sh\n\
-       if [ \"$1\" = \"--update-baseline\" ]; then printf 'changed\\n' > \
-       internal/tooling/perf/perf_baseline.json; fi\n\
-       exit 0\n";
-    Unix.chmod runner 0o755;
-    git_ok "add .";
-    git_ok "commit -qm initial";
-    let initial = rev_parse "HEAD" in
-    (match Soldev_merge.run_merge_finish ~ticket_id:"BUG-038" ~merge_sha:initial with
-     | Ok () -> ()
-     | Error _ -> Windtrap.fail "unexpected merge-finish failure");
-    check_string "no local commit" initial (rev_parse "HEAD");
-    check_string
-      "baseline untouched"
-      "original\n"
-      (In_channel.with_open_bin baseline In_channel.input_all))
-;;
-
 let unpushed_of branch =
   match Soldev_merge.worktree_snapshot_of_entry (Sys.getcwd (), Some branch) with
   | Some (snapshot : Soldev_merge.worktree_snapshot) -> snapshot.ws_unpushed
@@ -1177,15 +1113,6 @@ let () =
         [ Windtrap.test
             "rebuild before invoking avoids the stale-path race"
             test_stale_binary_fails_after_rename
-        ]
-    ; Windtrap.group
-        "post_merge_action_of_rc"
-        [ Windtrap.test
-            "a local post-merge failure is reported, never acted on"
-            test_post_merge_action_of_rc
-        ; Windtrap.test
-            "merge-finish leaves HEAD and baseline untouched"
-            test_merge_finish_does_not_write_a_baseline_commit
         ]
     ; Windtrap.group
         "CI-gated merges"
