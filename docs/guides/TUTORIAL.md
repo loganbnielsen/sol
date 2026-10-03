@@ -276,11 +276,14 @@ end) = struct
   let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
     Pg_db.transaction Config.pool (fun tx ->
       let open Result.Syntax in
-      let* () = Notification.insert tx ~charge_id:msg.id ... in
-      let* () = Jobs.enqueue tx ~dedupe_key:msg.id
-                  Email_job.{ charge_id = msg.id; customer_id = msg.customer_id } in
-      Notification_sent_outbox.publish tx ~key:msg.id ~ord:1L
-        Notification_sent.{ charge_id = msg.id; customer_id = msg.customer_id; ... })
+      let* inserted = Notification.insert tx ~charge_id:msg.id ... in
+      match inserted with
+      | None -> Ok ()
+      | Some _ ->
+        let* () = Jobs.enqueue tx ~dedupe_key:msg.id
+                    Email_job.{ charge_id = msg.id; customer_id = msg.customer_id } in
+        Notification_sent_outbox.publish tx ~key:msg.id ~ord:1L
+          Notification_sent.{ charge_id = msg.id; customer_id = msg.customer_id; ... })
     |> function
     | Ok () -> Worker.Ack
     | Error _ -> Worker.Fail
@@ -291,7 +294,7 @@ end
 
 `handle` returns `Worker.outcome`, which is exactly `Ack` or `Fail`. `Ack` applies the fact and advances the offset. `Fail` declines it: the offset is not committed and the consumer stops, so a contract failure surfaces to an operator instead of being a fact the runtime silently skipped. There is no retry outcome and no application-level dead-letter outcome — a transient dependency failure is handled at the operation level (retry the dependency call, not the whole handler), never by re-running `handle`.
 
-Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The notification insert is idempotent for the same reason: the migration puts a unique index on `charge_id`, so `Notification.insert` runs `ON CONFLICT (charge_id) DO NOTHING` and a redelivered fact leaves exactly one notification row. The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../../framework/ocaml/sol-jobs/sol-jobs.md)).
+Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The notification insert is idempotent for the same reason: the migration puts a unique index on `charge_id`, so `Notification.insert` runs `ON CONFLICT (charge_id) DO NOTHING` and reports through `RETURNING charge_id` whether it applied, and a redelivered fact therefore leaves exactly one notification row. The `None`/`Some` gate around the job and the intent matters: without it a redelivery whose intent is still pending would try to insert the same `(aggregate_key, ord)` again, and `sol_outbox`'s unique index refuses that, turning a legal duplicate into a `Fail`. The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../../framework/ocaml/sol-jobs/sol-jobs.md)).
 
 Publishing the fact is the other half of that transaction. The same `Pg_db.transaction` writes a `Notification_sent` record through `Notification_sent_outbox.publish`, so the notification row, the retried email job and the publication intent commit together or roll back together. The handler does not publish to Kafka itself: the relay in `bin/main.ml` reads the unpublished record, publishes it keyed by the aggregate (`msg.id`), and removes it only after the broker acknowledges. That is the transactional outbox — `events/` declares the fact, the domain transaction records the intent atomically, the relay distributes it at-least-once, and the worker stays idempotent because **a duplicate is a legal outcome**: the relay may publish a record twice if it dies between the acknowledgement and the removal, but it never publishes a later record for a key before an earlier one, and never leaves a gap. Order is per key, not global; a record that cannot publish holds only its own key and surfaces as publication lag ([`sol-outbox.md`](../../framework/ocaml/sol-outbox/sol-outbox.md)).
 

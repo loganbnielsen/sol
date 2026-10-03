@@ -2,7 +2,7 @@
 
 `order_svc` and `fulfillment_worker` are a real TypeScript service and worker
 running on Sol's deploy machinery (CLI, Docker builds, Kubernetes manifests
-are all language-neutral) and consuming Sol's own conventions via five published
+are all language-neutral) and consuming Sol's own conventions via six published
 npm packages:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — declared
@@ -20,49 +20,61 @@ npm packages:
 - [`@sol-fab/jobs`](https://github.com/loganbnielsen/sol-typescript) — the durable
   Postgres job queue, matching `sol-jobs`: a transactional, dedupe-keyed enqueue
   and a leased runner.
+- [`@sol-fab/outbox`](https://github.com/loganbnielsen/sol-typescript) — the
+  transactional outbox, matching `sol-outbox`: `publish` records the intent in
+  the caller's transaction, and `runRelay` publishes each key's events in `ord`
+  order, removing a row only after the broker acknowledged it.
 
 Alongside them, the local `@demo-ts/contract` workspace package is the single
-source of truth for the `OrderPlaced` event: `order_svc` imports it to produce,
-and its `main.ts` is the workspace's projection program. `sol up --scope=demo_ts`
-runs it (`npm run contract`) before any workload, so the topic and subject are
-registered by the deployment lifecycle; `order_svc` itself only resolves the
-topic and schema id at startup and fails if the contract is not registered —
-the same BUG-105 split an OCaml `sol-svc`/`sol-worker` follows. Both images
-install `/usr/local/bin/contract` so `sol deploy` can reconcile the contract
-from inside the destination, where a private registry is reachable.
+source of truth for both events: `order_svc` imports `OrderPlaced` to produce it,
+`fulfillment_worker` imports `OrderFulfilled` for its outbox relay to publish
+under, and `main.ts` is the workspace's projection program. `sol up
+--scope=demo_ts` runs it (`npm run contract`) before any workload, so both topics
+and subjects are registered by the deployment lifecycle; both services only
+resolve the topic and schema id at startup and fail if a contract is not
+registered — the same BUG-105 split an OCaml `sol-svc`/`sol-worker` follows. Both
+images install `/usr/local/bin/contract` so `sol deploy` can reconcile the
+contract from inside the destination, where a private registry is reachable.
 
-`fulfillment_worker` also demonstrates the Kafka → job handoff: handling an order
-writes `fulfilled_orders_ts` **and** enqueues a `send_confirmation` job in one
-Postgres transaction, so the job cannot exist without the state change that
-caused it (and a redelivered fact enqueues nothing new, because the dedupe key is
-the order id). It hosts the queue's runner alongside its consumer. As with
-`fulfilled_orders_ts`, `db.ts` provisions the demo's tables itself
-(`CREATE TABLE IF NOT EXISTS`), so the TypeScript smoke — which deliberately runs
-no `sol migrate` — is self-contained; a real app owns the same DDL as a
-migration.
+`fulfillment_worker` also demonstrates the Kafka → job → outbox handoff: handling
+an order writes `fulfilled_orders_ts`, enqueues a `send_confirmation` job **and**
+records an `OrderFulfilled` outbox intent, all in one Postgres transaction, so
+none of the three can exist without the state change that caused it. It hosts the
+queue's runner and the outbox relay alongside its consumer; the relay publishes
+each key's events to `sol-demo-ts-fulfilled` in `ord` order through the same
+registered contract `order_svc` produces under, and removes a row only after the
+broker acknowledged it. As with `fulfilled_orders_ts`, `db.ts` provisions the
+demo's tables itself (`CREATE TABLE IF NOT EXISTS`, `sol_outbox` included, matching
+`sol-outbox`'s shared DDL), so the TypeScript smoke — which deliberately runs no
+`sol migrate` — is self-contained; a real app owns the same DDL as a migration.
 
-Duplicate delivery is absorbed at both effects. Kafka is at-least-once, and a
+Duplicate delivery is absorbed at every effect. Kafka is at-least-once, and a
 duplicate is a legal outcome (DEC-022), so a redelivered `OrderPlaced` is handled
 like this:
 
 - the row insert is `ON CONFLICT (order_id) DO NOTHING` against the primary key,
-  and
+  and the handler proceeds to the job and the intent only when that insert
+  actually applied (the redelivery is a no-op, not a second attempt at the same
+  `(key, ord)` intent, which `sol_outbox`'s unique index would refuse), and
 - the follow-up job's dedupe key is the order id, so a second enqueue is a no-op.
 
-One fact therefore leaves one row, one job and one effect. `npm test` (see
-`test/delivery.test.ts`) delivers the same fact twice against a real Postgres and
-asserts exactly that; the case self-skips without `POSTGRES_URL`, and CI provides
-one. This is the guard `BUG-112` had to add on the OCaml side (`notify_worker`
-enqueues with `~dedupe_key:msg.id`).
+One fact therefore leaves one row, one job, one intent and one effect. `npm test`
+(see `test/delivery.test.ts`) delivers the same fact twice against a real Postgres
+and asserts exactly that; the case self-skips without `POSTGRES_URL`, and CI
+provides one. This is the guard `BUG-112` had to add on the OCaml side
+(`notify_worker` enqueues with `~dedupe_key:msg.id`). `test/outbox.test.ts` adds
+the relay's Postgres boundaries against the same database: the three writes commit
+or roll back together, a key's events publish in `ord` order and are removed only
+after the publish resolved, and a blocked head holds its key's later events.
 
 
-The five exist so a TypeScript service and an OCaml `sol-svc`/
+These packages exist so a TypeScript service and an OCaml `sol-svc`/
 `sol-worker` land in the same Grafana panels and the same Tempo traces
 without an author having to reconstruct Sol's policy by hand — see each
 package's own tests for the specific bugs a hand-rolled first attempt hit
 (FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
 repository with their own CI, including the broker-backed DLQ/partitioning tests;
-`svc`, `worker` and `jobs` share
+`svc`, `worker`, `jobs` and `outbox` share
 [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
 
 This example is the *runnable* TypeScript path, not the scaffolded one: `sol new`

@@ -1,11 +1,6 @@
-export interface OrderPlaced {
-  order_id: string;
-  item: string;
-  quantity: number;
-  correlation_id: string;
-}
+import type { OrderFulfilled, OrderPlaced } from "@demo-ts/contract";
 
-export function decodeOrderPlaced(json: unknown): OrderPlaced {
+function decodeOrder(json: unknown): OrderPlaced {
   if (typeof json !== "object" || json === null) throw new Error("expected object");
   const j = json as Record<string, unknown>;
   const requiredString = (name: string): string => {
@@ -26,4 +21,12 @@ export function decodeOrderPlaced(json: unknown): OrderPlaced {
     quantity: requiredInt("quantity"),
     correlation_id: requiredString("correlation_id"),
   };
+}
+
+export function decodeOrderPlaced(json: unknown): OrderPlaced {
+  return decodeOrder(json);
+}
+
+export function decodeOrderFulfilled(json: unknown): OrderFulfilled {
+  return decodeOrder(json);
 }

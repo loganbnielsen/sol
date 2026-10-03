@@ -60,7 +60,7 @@ convention on each side.
 | Metric names and labels | `worker.ml`, `service.ml`, `fn.ml`, `sol_jobs.ml` | `@sol-fab/obs` constants/helpers |
 | Config and secrets | `Kafka_service.config_of_env`, `Sol_obs.of_env` | none (apps read env directly) |
 | Job semantics | `Sol_jobs` | none |
-| Transactional publication | `Sol_outbox` | none |
+| Transactional publication | `Sol_outbox` | `@sol-fab/outbox` (`publish`, `runRelay`) |
 | Auth | `Sol_svc.Auth`, `Route` DSL | none |
 | Synchronous peer calls | `Sol_svc.Peer`, `sol.toml` `calls` | none |
 | Env access | `Sol_env`, `Sol_runtime` | `process.env` (names are the contract) |
@@ -88,7 +88,7 @@ deferred, not applicable}. A row with no verdict is the failure DEC-022 names.
 | 13 | Config | `config_of_env` requires `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `REDPANDA_ADMIN_URL`, `KAFKA_SECURITY_PROTOCOL`, validates `SOL_KAFKA_DURABILITY` (`kafka_service_config.ml`) | `kafkaConfigFromEnv` requires `KAFKA_BROKERS` and `KAFKA_SECURITY_PROTOCOL`, maps the TLS/SASL variables (FEAT-097); the rest is recorded in § 4.4 | partial — FEAT-097 (2026-10-02) |
 | 14 | Secrets | `Sol_obs.of_env` reads `LOKI_URL`/`TEMPO_URL`; stdout always; `?context` keys promoted to Loki stream labels; async export + `flush` (`sol-obs.md:77-85`) | `makeLokiPusher({ lokiUrl?, service, labels? })` logs to the console always, carries context-derived stream labels, and exposes `flush()` (`loki.ts`) | implemented — FEAT-099 + FEAT-125 (2026-10-02) |
 | 15 | Job semantics | `Sol_jobs` (`FOR UPDATE SKIP LOCKED`, lease, fenced finalize, dedupe) | `@sol-fab/jobs`: transactional, dedupe-keyed `enqueue` plus a leased `runJobs` runner (`packages/jobs`) | implemented — FEAT-126 (2026-10-02) |
-| 16 | Transactional outbox | `Sol_outbox` (FEAT-111; proven by VERIF-001) | `@sol-fab/outbox` (`packages/outbox`: transactional `publish`, per-key `runRelay`) | gap — FEAT-124 (READY): the package is implemented, tested (11 cases against Postgres) and merged, but `0.1.0` needs one interactive 2FA publish before its OIDC trusted publisher can exist; the demo wiring and this verdict follow it (`loganbnielsen/sol-typescript#8`, merged `c1ea404`) |
+| 16 | Transactional outbox | `Sol_outbox` (FEAT-111; proven by VERIF-001) | `@sol-fab/outbox@0.1.0` (`packages/outbox`: transactional `publish`, per-key `runRelay`, `sol_outbox_*` metric names), wired into the golden path | implemented — FEAT-124 (2026-10-02): `0.1.0` is published (bootstrap; `loganbnielsen/sol-typescript#8`, `c1ea404`) with its OIDC trusted publisher configured, and `examples/pluto/app/demo_ts/fulfillment_worker` composes the domain write, the `send_confirmation` job and the intent in one transaction and hosts the relay; `test/outbox.test.ts` covers the composition, rollback, per-key order and the blocked-key boundary against Postgres, and a live run published keyed schema-encoded facts to Redpanda in `ord` order. Both languages gate the job and the intent on the domain insert actually applying (the OCaml `notify_worker` uses `INSERT … ON CONFLICT DO NOTHING RETURNING charge_id`), so a redelivered fact is a no-op in either rather than a second `(key, ord)` collision |
 | 17 | Auth | `Auth` levels (`Public`/`Api_key`/`Jwt` with scopes) declared per route via `Route`; principal in `Request.t.auth` | none — left to the app's Fastify/Express plugins | intentionally deferred — trigger: the first TypeScript app that needs Sol-declared auth (see § 5) |
 | 18 | Synchronous peer calls | `Peer.url`/`Peer.headers` (`x-api-key` + `traceparent`), `sol.toml` `calls` opens the NetworkPolicy pair | none | intentionally deferred — trigger: the first TypeScript app that declares a `calls` edge |
 | 19 | Env access | `Sol_env.timed`, `Sol_runtime.setting` | `process.env`; the variable **names** are the contract | already equivalent |
@@ -181,12 +181,11 @@ have a ticket and are not re-filed.
    replaced by `registerContract` (set `FULL` first, then register, both fatal),
    the runtime `connectTopic` is read-only, and both languages emit the same
    projection object from a `contract/run` entry point.
-5. **Duplicate delivery, outbox and jobs.** Resolved except the outbox:
-   FEAT-123 (idempotent redelivery), FEAT-118 (`Ack | Fail`) and FEAT-126
-   (`@sol-fab/jobs`) are implemented. The remaining row is the TypeScript
-   transactional outbox (FEAT-124): `@sol-fab/outbox` is implemented, tested and
-   merged, but `0.1.0` is blocked on one interactive 2FA publish before its OIDC
-   trusted publisher can exist, so the demo wiring and the verdict follow it.
+5. **Duplicate delivery, outbox and jobs.** Resolved. FEAT-123 (idempotent
+   redelivery), FEAT-118 (`Ack | Fail`), FEAT-126 (`@sol-fab/jobs`) and FEAT-124
+   (`@sol-fab/outbox@0.1.0`) are implemented, and the TypeScript golden path
+   composes the domain write, the job and the outbox intent and hosts the relay
+   (see row 16).
 
 ## 5. Recorded, not raced — the secrets/identity workstream
 

@@ -45,15 +45,30 @@ export async function makeDb(postgresUrl: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS sol_jobs_dedupe_idx
       ON sol_jobs (workspace, kind, dedupe_key) WHERE dedupe_key IS NOT NULL
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sol_outbox (
+      id            BIGSERIAL   PRIMARY KEY,
+      kind          TEXT        NOT NULL,
+      aggregate_key TEXT        NOT NULL,
+      ord           BIGINT      NOT NULL,
+      payload       TEXT        NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS sol_outbox_key_ord_idx
+      ON sol_outbox (aggregate_key, ord)
+  `);
   return {
     pool,
-    insertFulfilled: async (order: FulfilledOrder, client?: pg.PoolClient) => {
-      await (client ?? pool).query(
+    insertFulfilled: async (order: FulfilledOrder, client?: pg.PoolClient): Promise<boolean> => {
+      const result = await (client ?? pool).query(
         `INSERT INTO fulfilled_orders_ts (order_id, item, quantity, correlation_id)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (order_id) DO NOTHING`,
         [order.order_id, order.item, order.quantity, order.correlation_id]
       );
+      return (result.rowCount ?? 0) > 0;
     },
     withTransaction: async <T>(body: (client: pg.PoolClient) => Promise<T>): Promise<T> => {
       const client = await pool.connect();
