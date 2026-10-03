@@ -11,6 +11,7 @@ type t =
   ; git_commit : string
   ; git_dirty : bool
   ; actor : string option
+  ; actor_source : string option
   ; target : string option
   ; mode : string
   ; requested_scope : string
@@ -49,6 +50,7 @@ let of_plan
       ~(git_commit : string)
       ~(git_dirty : bool)
       ~(actor : string option)
+      ~(actor_source : string option)
       ~(target : string option)
       ~(outcome : outcome)
       (plan : Sol_cli_deployment_plan.t)
@@ -62,6 +64,7 @@ let of_plan
   ; git_commit
   ; git_dirty
   ; actor
+  ; actor_source
   ; target
   ; mode = deployment_mode_to_string plan.environment.Sol_cli_deployment_plan.mode
   ; requested_scope = plan.requested_scope
@@ -113,6 +116,10 @@ let to_json (t : t) : Yojson.Safe.t =
       , match t.actor with
         | None -> `Null
         | Some a -> `String a )
+    ; ( "actor_source"
+      , match t.actor_source with
+        | None -> `Null
+        | Some s -> `String s )
     ; ( "target"
       , match t.target with
         | None -> `Null
@@ -186,6 +193,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
                ; git_commit = str "git_commit" json
                ; git_dirty = bool "git_dirty" json
                ; actor = string_option "actor" json
+               ; actor_source = string_option "actor_source" json
                ; target = string_option "target" json
                ; mode = str "mode" json
                ; requested_scope = str "requested_scope" json
@@ -275,6 +283,12 @@ let format_table (records : t list) : string =
           (Sol_cli_deployment_id.to_string b.deployment_id)
           (Sol_cli_deployment_id.to_string a.deployment_id))
   in
+  let actor_of r =
+    match r.actor, r.actor_source with
+    | Some name, Some source -> Printf.sprintf "%s (%s)" name source
+    | Some name, None -> name
+    | None, _ -> "-"
+  in
   let rows =
     sorted
     |> List.map (fun r ->
@@ -283,9 +297,10 @@ let format_table (records : t list) : string =
       ; r.created_at
       ; (if String.equal r.git_commit "" then "-" else r.git_commit)
       ; outcome_to_string r.outcome
+      ; actor_of r
       ])
   in
-  let headers = [ "DEPLOYMENT"; "RELEASE"; "TIME"; "COMMIT"; "STATUS" ] in
+  let headers = [ "DEPLOYMENT"; "RELEASE"; "TIME"; "COMMIT"; "STATUS"; "ACTOR" ] in
   let widths =
     headers
     |> List.mapi (fun i h ->

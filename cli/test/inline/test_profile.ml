@@ -1077,6 +1077,7 @@ let event_of plan =
     ~git_commit:"abc1234"
     ~git_dirty:false
     ~actor:None
+    ~actor_source:None
     ~target:(Some "prod/aws/us-east-1")
     ~outcome:Sol_cli_deployment.Applied
     plan

@@ -1890,6 +1890,7 @@ let deployment_event
   ; git_commit
   ; git_dirty = false
   ; actor = Some "ci"
+  ; actor_source = Some "ci:github-actions"
   ; target
   ; mode = "customer_cloud"
   ; requested_scope
