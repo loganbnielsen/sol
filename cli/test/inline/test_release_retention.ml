@@ -118,3 +118,31 @@ let%test "select: default window" = test_default_window ()
 let%test "select: under limit" = test_under_limit_prunes_nothing ()
 let%test "select: duplicate deploys collapse" = test_duplicate_deploys_collapse ()
 let%test "select: tie-break is deterministic" = test_tie_break_is_deterministic ()
+
+let test_can_i_output_yes () =
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"yes means the identity may enumerate"
+    (Some true)
+    (Sol_cli_release_retention.enumerability_of_can_i_output "yes")
+;;
+
+let test_can_i_output_no () =
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"no means the identity may not enumerate"
+    (Some false)
+    (Sol_cli_release_retention.enumerability_of_can_i_output "no\n")
+;;
+
+let test_can_i_output_unrecognized () =
+  Windtrap.equal
+    (Windtrap.option Windtrap.bool)
+    ~msg:"an unrecognized answer is unverified, never a definite no"
+    None
+    (Sol_cli_release_retention.enumerability_of_can_i_output "error: unexpected")
+;;
+
+let%test "can-i: yes" = test_can_i_output_yes ()
+let%test "can-i: no" = test_can_i_output_no ()
+let%test "can-i: unrecognized" = test_can_i_output_unrecognized ()

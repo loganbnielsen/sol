@@ -62,3 +62,41 @@ let prune ~ctx ~workspace ~keep ~current ~previous =
   in
   delete [] ids
 ;;
+
+let enumerability_of_can_i_output output =
+  match String.trim output with
+  | "yes" -> Some true
+  | "no" -> Some false
+  | _ -> None
+;;
+
+let can_enumerate ~ctx =
+  match
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "auth"; "can-i"; "list"; "configmaps"; "-n"; "default" ]
+  with
+  | Ok out -> enumerability_of_can_i_output out.stdout
+  | Error _ -> None
+;;
+
+type outcome =
+  | Pruned of string list
+  | Deferred of string
+  | Failed of string
+
+let deferred_reason =
+  "the deploy identity cannot enumerate release records in namespace \"default\": it \
+   holds get/create/update/delete on configmaps and deliberately not list (INFRA-051). \
+   No records were pruned; retention waits for an identity that holds the listing \
+   capability."
+;;
+
+let with_retention ~ctx ~workspace ~keep ~current ~previous =
+  match can_enumerate ~ctx with
+  | Some false -> Deferred deferred_reason
+  | Some true | None ->
+    (match prune ~ctx ~workspace ~keep ~current ~previous with
+     | Ok pruned -> Pruned pruned
+     | Error msg -> Failed msg)
+;;

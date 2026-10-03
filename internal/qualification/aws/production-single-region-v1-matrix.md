@@ -92,6 +92,7 @@ nothing.
 | B5 | Rollback restores the prior compatible digest set and verifies live state (scenario 3) | `sol rollback` to the B1 release | operation refuses **before** moving the pointer unless the live workload set verifies; after: exactly the recorded digests run | rollback output, live image digests vs release record, `sol status` |
 | B6 | Rollback refuses an incompatible migration boundary (FEAT-066) | roll back across a `contract` migration | refuses, naming the migration boundary; pointer unchanged | rollback output, release pointer |
 | B7 | Drift detection/correction per DEC-027 (scenario 9) | mutate a live workload directly (surplus workload / changed replica) | `sol deploy`/`sol up` reports the drift (`unexpected_workloads`), and a re-deploy converges | drift output, post-reconcile `kubectl get` |
+| B8 | Retention's outcome is explicit, not a bare warning (INFRA-051) | deploy against a target whose deploy identity cannot enumerate release records (`kubectl auth can-i list configmaps -n default` = `no`) | no workload or release-identity change; the deploy prints `Retention: not run -- …` naming the missing `list` capability; no `warning: could not prune old releases`; the boundary-lease Role still grants exactly `get/create/update/delete` | deploy output; `kubectl auth can-i list configmaps -n default`; `terraform show` of the boundary-lease Role |
 
 ## C. Migration ordering (AUDIT-069, scenario 6 partial)
 
