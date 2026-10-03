@@ -75,3 +75,13 @@ documented best-effort provenance, not a security control.
 
 Left in `BACKLOG/` against that trigger; see
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+## Promotion (2026-10-03)
+
+Promoted so the state machine can close it: the remediation below is implemented
+by FEAT-110 — the actor is now an *observed* claim with the source that produced
+it (a CI claim, then `git config user.email`, then `SOL_ACTOR`, then nothing),
+`sol deployments` shows that source beside the actor, and the reading/provenance
+contract is documented in `docs/architecture/devops-pipeline.md`. FEAT-110's
+implementation PR moves this ticket to `DONE/` with its own, since there is no
+`BACKLOG/` → `DONE/` transition.
