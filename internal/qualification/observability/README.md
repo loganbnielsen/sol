@@ -64,13 +64,17 @@ named as `NOT REACHED`, not filled in.
 
 ## Current standing
 
-| Area | Qualified this run | Deferred / unqualified |
+Through run 4 (2026-10-02). Everything below is LOCAL at most; **nothing is
+`LIVE`.**
+
+| Area | Qualified | Deferred / unqualified |
 |---|---|---|
-| Framework telemetry (logs, metrics, traces) | green path end-to-end, trace/log correlation | — |
+| Framework telemetry (logs, metrics, traces) | green path end-to-end, trace/log correlation, and the `DEC-064` taxonomy on logs and traces | the deployed path where the manifest injects the identity into a real pod |
 | `sol logs` (Loki-first snapshot) | selection, exactness, outage degradation | `--release` (needs a cluster's release store) |
 | `sol status` observability block | local backend reachability + degradation | workload health, deployed backend resolution |
-| Dashboards | definition/link mapping (MECHANISM) | live render in Grafana |
-| Alerts | rule set present (MODELED) | delivery, acknowledgement, firing |
-| Failure visibility | Loki loss, unreachable-cluster misdiagnosis | decode-error/DLQ end-to-end, broker loss, telemetry loss |
+| `sol check` | valid case, scope-miss `exit 2` | failing/could-not-run cases are `DEFECT` (`BUG-124`, fix in flight) |
+| Dashboards | definition/link mapping and proxy query execution | live panel render under a cluster scrape |
+| Alerts | rule set present; `SolKafkaConsumerLagHigh` re-verified after `BUG-122`; the delivery route | the `SolTelemetryTargetDown` firing, acknowledgement |
+| Failure visibility | Loki loss, unreachable-cluster misdiagnosis, decode-error/DLQ, broker lag | broker loss, telemetry loss |
 | Retention / durability | local backend has no promise (by design) | `self_hosted_durable` (AWS-only, cloud-gated) |
 | Operator workflows (deploy→fail→rollback→recover) | — | needs a cluster and a target |

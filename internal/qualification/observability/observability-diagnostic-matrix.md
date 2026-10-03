@@ -3,8 +3,9 @@
 The executable contract for the observability workstream
 (`README.md`). Each row is one claim Sol makes about observability or
 diagnosis, the evidence class the claim needs, and where it stands on
-**2026-10-02** (`main @ 2a2c5a7c`). Verdicts are `QUALIFIED`, `UNQUALIFIED`,
-`DEFECT` (established wrong), or `BLOCKED` (an external input is required).
+**2026-10-02** (`main @ 2a2c5a7c`, updated after runs 2–4). Verdicts are
+`QUALIFIED`, `UNQUALIFIED`, `DEFECT` (established wrong), or `BLOCKED` (an
+external input is required).
 
 Evidence classes: `MODELED` / `MECHANISM` / `LOCAL` / `LIVE` — see `README.md`.
 **No `LIVE` row is claimed**: this host has no Kubernetes (Docker unavailable),
@@ -15,9 +16,11 @@ The runs that produced the LOCAL evidence are
 [`../records/2026-10-02-observability-local-qualification.md`](../records/2026-10-02-observability-local-qualification.md)
 (run 1),
 [`../records/2026-10-02-observability-run2-local.md`](../records/2026-10-02-observability-run2-local.md)
-(run 2), and
+(run 2),
 [`../records/2026-10-02-observability-run3-alert-route.md`](../records/2026-10-02-observability-run3-alert-route.md)
-(run 3).
+(run 3), and
+[`../records/2026-10-02-observability-run4-local.md`](../records/2026-10-02-observability-run4-local.md)
+(run 4, `OBS-050`/`BUG-122` re-qualification and the `sol check` exit cases).
 
 ---
 
@@ -41,7 +44,10 @@ The runs that produced the LOCAL evidence are
   - *Recovery:* not applicable.
 - **Observed:** `{workspace="obsdemo", domain="payments", service="charge-svc"}`
   returned the `obsdemo` line and **excluded** the identical-service line pushed
-  under `workspace="other-ws"`.
+  under `workspace="other-ws"`. Run 4 re-verified it on an app-pushed stream:
+  after `OBS-050` the demo's own `order-svc` stream carries
+  `{workspace,env,domain,service,primitive,release}` and is selected by the same
+  `{workspace,domain,service}` query (run-4 record §2.4).
 
 ### OB-L2 — A missing or unreachable logs backend degrades instead of failing
 
@@ -170,26 +176,31 @@ The runs that produced the LOCAL evidence are
 - **Claim:** "every … trace … must carry the same ownership identity:
   `workspace`, `env`, `domain`, `service`, `primitive`, `release`"
   (`observability-design.md` §Identity).
-- **Evidence:** LOCAL — the Tempo trace's resource attributes are `service.name`
-  only; the app-pushed Loki stream carries `service` plus whatever `~context`
-  the scaffold passes (`[("team","payments")]`), and `Obs_tempo` is created
-  without any taxonomy context.
-- **Verdict:** `DEFECT` — traces cannot be correlated to the taxonomy the way
-  logs and metrics can. Filed as **OBS-050**.
+- **Evidence:** run 1 found the Tempo trace's resource attributes were
+  `service.name` only and filed `OBS-050` (`DEC-064`). Run 4 re-observed it after
+  `OBS-050`: a real demo trace
+  (`465dc75872a39152fec689f8d91d88b6`) carries all six as resource attributes,
+  the trace is selectable by each, and the app-pushed Loki stream carries the
+  same values (run-4 record §2).
+- **Verdict:** `QUALIFIED (LOCAL)`. History: `DEFECT` → `OBS-050` → qualified.
 - **Failure walk:**
   - *Symptom:* a slow span cannot be attributed to a workload/domain/release
     except through `service.name`.
   - *Detection:* inspect the trace's resource attributes.
-  - *Investigation:* none available — there is no `sol open traces` (OBS-045).
-  - *Cause:* the framework never sets the taxonomy on span resources.
-  - *Recovery:* OBS-050.
+  - *Investigation:* query Tempo by `resource.<label>`; each returns the trace
+    (`{resource.workspace="obsdemo"}` → 6 traces, negative control → 0).
+  - *Cause:* the framework never sets the taxonomy on span resources (before
+    `OBS-050`).
+  - *Recovery:* `OBS-050` (PR #961); `sol open traces` is still OBS-045.
 
 ### OB-T4 — There is a CLI surface for traces
 
 - **Claim:** none — the design doc says traces have no CLI surface yet; OBS-045
   owns `sol open traces`.
 - **Evidence:** MODELED (the command is absent from `sol open`).
-- **Verdict:** `UNQUALIFIED` (documented gap, ticket OBS-045 in `BACKLOG`).
+- **Verdict:** `UNQUALIFIED` (documented gap). `OBS-045`'s `Decision Required`
+  was resolved by `DEC-064` (option A, which `OBS-050` implements), so the
+  ticket is promoted to `READY_FOR_ENGINEERING` with `Depends on: OBS-050`.
 
 ## D. Dashboards
 
@@ -207,7 +218,8 @@ The runs that produced the LOCAL evidence are
 - **Verdict:** `QUALIFIED (LOCAL)` for the definitions, the datasource wiring,
   and query execution; panel *data* under the taxonomy labels is `NOT REACHED`
   without a cluster whose scrape promotes the pod labels (the local static scrape
-  does not).
+  does not). Run 4 re-verified the proxy path and served a Loki label value
+  (`workspace=["obsdemo"]`) and a Tempo search from the taxonomy-labelled data.
 - **Observed:** `sol open dashboard --links` →
   `http://localhost:3000/d/sol-workspace-overview?var-workspace=obsdemo`;
   `sol open logs payments/charge_svc --links` → a Loki Explore URL whose
@@ -279,9 +291,14 @@ The runs that produced the LOCAL evidence are
 
 - **Claim:** `sol check` validates the workspace without Docker or Kubernetes
   and has the documented exit vocabulary (`operations.md` §5).
-- **Evidence:** LOCAL — `sol check: ok` in a freshly scaffolded workspace.
-- **Verdict:** `QUALIFIED (LOCAL)` for the valid case; the failing (`exit 2`)
-  and could-not-run (`exit 1`) cases are not exercised here.
+- **Evidence:** run 1 saw `sol check: ok` in a freshly scaffolded workspace. Run
+  4 induced the other two cases on a scaffolded workspace: a removed Dockerfile
+  (a check that ran) exited **1**, not the documented 2; an unreadable `sol.yml`
+  raised an uncaught `Sys_error` and exited 125, not the documented 1 with a
+  diagnostic. `--scope nope` correctly exited 2 (run-4 record §4).
+- **Verdict:** `QUALIFIED (LOCAL)` for the valid case and for the scope-miss
+  case; `DEFECT` for the failing and could-not-run cases. Filed as **BUG-124**;
+  the fix is on `BUG-124/sol-check-exit-vocabulary`.
 
 ### OB-S6 — The documented day-two path stays inside Sol
 
@@ -332,19 +349,19 @@ The runs that produced the LOCAL evidence are
 
 - **Claim:** `SolKafkaConsumerLagHigh`/`SolKafkaBrokerDown` fire on Redpanda's
   own metrics.
-- **Evidence:** LOCAL — `DEFECT` for the lag rule. Redpanda v26.2.2 exposes no
-  consumer-group lag metric on `/public_metrics` (146 families, no `*lag*`) or on
-  the internal `/metrics`, so `redpanda_kafka_consumer_group_lag > 10000` can
-  never fire even with a scrape; its annotations also name
-  `{{ $labels.group }}`/`{{ $labels.topic }}` where the metrics carry
-  `redpanda_group`/`redpanda_topic`. A correct derivation exists and was
-  validated against the broker's own `rpk group describe` LAG (0 when caught up,
-  5 after five unconsumed records). `SolKafkaBrokerDown`'s
+- **Evidence:** run 2 found the lag rule used `redpanda_kafka_consumer_group_lag`,
+  which Redpanda v26.2.2 does not expose (0 series on both `/public_metrics` and
+  the scraped series), and filed `BUG-122`. `BUG-122` (#944) replaced it with a
+  derivation over `redpanda_kafka_consumer_group_committed_offset` and
+  `redpanda_kafka_max_offset` and fixed the annotation labels. Run 4 evaluated
+  the corrected expression against the live broker: it returns a lag per
+  group/topic (`5` for `comms-notify-worker` on `venus-payments-charges`) equal
+  to the broker's own `rpk group describe` `LAG 5`, while the old metric still
+  returns 0 series (run-4 record §3). `SolKafkaBrokerDown`'s
   `up{job=~".*redpanda.*"}` is sound once a scrape exists; the platform
   deliberately configures none, which `observability-backends.md` documents.
-  Filed as **BUG-122**.
-- **Verdict:** `DEFECT` (filed); the broker-down half is `QUALIFIED (LOCAL)`
-  conditional on a Redpanda scrape.
+- **Verdict:** `QUALIFIED (LOCAL)` for the lag half after `BUG-122`; the
+  broker-down half is `QUALIFIED (LOCAL)` conditional on a Redpanda scrape.
 
 ### OB-F4 — A deploy failure is visible as "the current release is bad"
 
@@ -400,20 +417,73 @@ The runs that produced the LOCAL evidence are
 |---|---|---|---|---|---|
 | `env` is not a Loki stream label | OB-L3 | low | MECHANISM + LOCAL | `OBS-049` | fixed, `DONE` (#926) |
 | An unreachable cluster is reported as "not deployed" | OB-S3 | medium | LOCAL | `BUG-121` | fixed, `DONE` (#925) |
-| `SolKafkaConsumerLagHigh` uses a metric Redpanda does not expose, and annotation labels that do not exist | OB-F3 | medium | LOCAL | `BUG-122` | filed, `READY_FOR_ENGINEERING` |
-| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | decision `DEC-064` recorded; promoted to `READY_FOR_ENGINEERING` |
+| `SolKafkaConsumerLagHigh` uses a metric Redpanda does not expose, and annotation labels that do not exist | OB-F3 | medium | LOCAL | `BUG-122` | fixed, `DONE` (#944); re-verified run 4 |
+| Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | fixed (PR #961); re-verified `QUALIFIED (LOCAL)` in run 4 |
+| `sol check` returns 1 for a failed check and crashes on an unreadable `sol.yml` | OB-S5 | medium | LOCAL | `BUG-124` | filed `READY_FOR_ENGINEERING`; fix on `BUG-124/sol-check-exit-vocabulary` |
 | FND-0027 malformed-response silent drop | OB-L4 | — | LOCAL | — | `SUPERSEDED` (parser rewritten; fails closed) |
 
 ## What would move the most rows
 
 1. A Kubernetes cluster on this host (the repository's Docker-based
    `sol local infra up`) — it would make OB-S1/S2/S4, OB-D1/D2, OB-F4 and the
-   `kubectl` fallback of OB-L2 observable.
+   `kubectl` fallback of OB-L2 observable, and it is what makes the `SOL_*`
+   identity a manifest-injected pod fact rather than a manually-set process
+   environment (OB-T3's deployed half).
 2. A cluster whose `monitoring` scrape can go down — OB-F1's specific
    `SolTelemetryTargetDown` firing (the delivery route itself was qualified in
    run 3 with a local Alertmanager).
 3. A cloud target — OB-M3, OB-R2, OB-O1.
-4. Any remaining LOCAL row. Runs 2 and 3 closed OB-F2 (decode/DLQ),
-   OB-L4/FND-0027, OB-D1, OB-F3's defect, and the alert delivery route. The
-   executable-without-a-cluster surface is exhausted; what is left needs a
-   Kubernetes cluster, a cloud account, or the operator's acknowledgement.
+4. Any remaining LOCAL row. Runs 2–4 closed OB-F2 (decode/DLQ), OB-L4/FND-0027,
+   OB-D1, OB-F3 (defect fixed), OB-T3, and the alert delivery route, and filed
+   BUG-124 from the `sol check` exit cases. The executable-without-a-cluster
+   surface is exhausted; what is left needs a Kubernetes cluster, a cloud
+   account, or the operator's acknowledgement.
+
+## LIVE rows the reference-app campaign must establish
+
+The rows below are `LIVE` and are **not** established by any local run. The
+reference-app campaign (`examples/pluto` / the scaffolded workspace on a real
+target) must observe each of them; a row stays `UNQUALIFIED` until then.
+
+**A Kubernetes cluster with the observability stack (the repo's `sol local infra up`):**
+
+- OB-L2 — `sol logs`' `kubectl` fallback delivering real pod logs when Loki is
+  unreachable.
+- OB-M2 — the six taxonomy labels on a real *scraped* series (pod-label
+  promotion by the pinned Prometheus chart), including a `-fn` Pushgateway push
+  carrying the same labels.
+- OB-T3 (deployed half) — a pod whose `<name>-env` ConfigMap supplied `SOL_*`
+  (not a manually-set process environment); its trace resource carries the six
+  and its `service` equals the pod label.
+- OB-D1/OB-D2 — dashboard panel data under the cluster's scrape labels, and a
+  panel that reads its authoritative source.
+- OB-S1 — workload health derived from Kubernetes (`ready`, `unhealthy` with the
+  cause named), not only the `UNKNOWN` case.
+- OB-S2/OB-S4 — the deployed backend's reachability and `sol open`'s base-domain
+  path, including the explicit port-forward message.
+- OB-S6 — the documented day-two path stays inside Sol.
+- OB-F1 — the specific `SolTelemetryTargetDown` firing from a `monitoring`
+  scrape that can go down.
+- OB-F4 — `SolRolloutFailed` on a rollout that never becomes available, and the
+  `sol deployments`/`sol logs` detail view.
+- OB-O1 — the full deploy → failure → diagnose → rollback → recovery loop.
+
+**Operator-gated (not automatable here):**
+
+- OB-F1 (delivered-and-acknowledged) — the named owner confirms receipt of the
+  alert; HARDEN-002 evidence, not a command's exit status.
+
+**A cloud target (AWS `self_hosted_durable` / an external endpoint):**
+
+- OB-M3 — managed-resource facts surfaced from the provider's own system
+  (CloudWatch), never mirrored.
+- OB-R2 — `self_hosted_durable` keeps logs and metrics across teardown
+  (S3/Thanos, `prevent_destroy`).
+- OB-R3 — `external` ships logs/metrics and `sol logs --loki-base-url` reads
+  them back.
+
+The cross-signal check the campaign should make explicit: one request's Loki
+line, Prometheus series and Tempo trace all carry the same
+`workspace`/`env`/`domain`/`service`/`primitive`/`release` values.
+
+
