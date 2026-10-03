@@ -44,26 +44,51 @@ case "$MODE" in
 esac
 
 seen=0
+class=""
 generated_artifacts="docs/reference/cli.md"
+
+note() {
+  if [ -z "$class" ]; then
+    class="$1"
+  elif [ "$class" != "$1" ]; then
+    class=source
+  fi
+}
+
 while IFS= read -r p; do
   [ -n "$p" ] || continue
   seen=1
   case "$p" in
     .github/*)
-      emit source ;;
+      note source ;;
+    internal/ci/*)
+      note source ;;
     docs/*)
       for generated in $generated_artifacts; do
-        [ "$p" = "$generated" ] && emit source
+        [ "$p" = "$generated" ] && note source
       done
-      continue
       ;;
-    internal/pipeline/tickets/*)                continue ;;
-    *.md)                              continue ;;
-    *)                                 emit source ;;
+    internal/pipeline/tickets/*)       ;;
+    *.md)                              ;;
+    framework/ocaml/*)                 note ocaml ;;
+    examples/pluto/app/checkout/*)     note ocaml ;;
+    examples/pluto/app/comms/*)        note ocaml ;;
+    examples/pluto/app/payments/*)     note ocaml ;;
+    examples/pluto/contract/*)         note ocaml ;;
+    examples/pluto/lib/*)              note ocaml ;;
+    internal/fixtures/local-demo/*)    note ocaml ;;
+    internal/fixtures/venus/*)         note ocaml ;;
+    framework/typescript/*)            note typescript ;;
+    examples/pluto/app/demo_ts/*)      note typescript ;;
+    platform/shared/templates/svc-ts/*)     note typescript ;;
+    platform/shared/templates/worker-ts/*)  note typescript ;;
+    *)                                 note source ;;
   esac
 done <<EOF
 $paths
 EOF
 
 [ "$seen" -eq 1 ] || emit source
-emit docs-only
+[ "$class" = source ] && emit source
+[ -n "$class" ] || emit docs-only
+emit "$class"
