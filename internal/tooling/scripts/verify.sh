@@ -25,9 +25,23 @@ discover() {
   [ "${#members[@]}" -gt 0 ]
 }
 
+unset_canonical_inputs() {
+  local manifest="$ci_dir/guard_env.txt" name verdict
+  [ -f "$manifest" ] || return 0
+  while read -r name verdict _; do
+    [ -n "$name" ] || continue
+    case "$name" in \#*) continue ;; esac
+    if [ "$verdict" = clear ]; then
+      unset "$name"
+    fi
+  done <"$manifest"
+  return 0
+}
+
 run_member() {
   local index="$1" path="$2"
   local started=$SECONDS
+  unset_canonical_inputs
   case "$path" in
     *.py) python3 "$path" >"$results/$index.out" 2>&1 ;;
     *) bash "$path" >"$results/$index.out" 2>&1 ;;

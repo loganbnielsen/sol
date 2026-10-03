@@ -27,4 +27,12 @@ if ! env PATH="$bin" CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1 "$guard" >/de
 fi
 echo "  [OK]   the named opt-out runs the static checks and skips only the interface check"
 
+VERIFY_CI_DIR="$root/internal/ci" source "$root/internal/tooling/scripts/verify.sh"
+export CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1
+unset_canonical_inputs
+if env PATH="$bin" "$guard" >/dev/null 2>&1; then
+  fail "the canonical path let the opt-out reach the guard"
+fi
+echo "  [OK]   the canonical class runner removes the opt-out before the guard runs"
+
 echo "gcloud interface guard: all expectations hold."
