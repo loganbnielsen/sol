@@ -17,6 +17,11 @@ contracts (matrices), and the procedures. Where each provider currently stands i
 - **Defects a run finds** become findings (`internal/pipeline/audits/findings/`) and ordinary
   tickets, credited to the ticket that fixes them, not to the run.
 - **Updating `QUALIFICATION_STATUS.md` is part of every run ticket's acceptance criteria.**
+- **The alpha campaign is coordinated here.** `ALPHA_CAMPAIGN.md` defines the frozen
+  alpha surface, the one language-neutral reference scenario, the acceptance matrix
+  that maps every supported capability to its evidence and target, and the parallel
+  work allocation. It is the campaign's entry point; the per-provider matrices stay
+  authoritative for their own rows.
 
 ## Operating rules
 

@@ -5,6 +5,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 root="$(git rev-parse --show-toplevel)"
 check="$root/internal/ci/check_authority.sh"
 hook="$root/internal/tooling/hooks/pre-commit"
+unset SOL_AUTHORITY_WORKTREE SOL_AUTHORITY_BRANCH SOL_AUTHORITY_BASE
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
