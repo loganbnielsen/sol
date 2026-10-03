@@ -44,13 +44,27 @@ Extend the generator to TypeScript scopes, from the same `[[events]]` declaratio
   generated binding, keeping `order_svc`'s import of `@demo-ts/contract`, and update
   the capability matrix row (FEAT-080).
 
-## Trigger
+## Disposition (2026-10-03) — promoted; required before S5
 
-Fire when either: the TypeScript golden path next needs qualification against the
-declarative contract (the TS production-profile work in FEAT-102, or any change to
-the TS golden path), or `@sol-fab/kafka` publishes a contract shape the generator can
-target. Until then the deferral stands and `examples/pluto`'s TS contract is the one
-hand-declared contract in the reference app.
+Operator review of the FEAT-116 landing: the campaign is the OCaml **and**
+TypeScript reference-app qualification, so this deferral's trigger fires now rather
+than after alpha. A TypeScript reference app that is meant to demonstrate the
+canonical-contract architecture cannot keep hand-declaring its contract while the
+OCaml half is generated from `[[events]]`. Promoted from `BACKLOG/` to
+`READY_FOR_ENGINEERING/`; this is a pre-S5 enabler, not post-alpha cleanup.
+
+The stated trigger — the TypeScript golden path needing qualification against the
+declarative contract (FEAT-102 and the reference-app campaign) — is met. The
+second condition (an `@sol-fab/kafka` shape the generator can target) is a
+convenience, not a prerequisite: the workspace can adapt the generated contract.
+
+**Settle first: where a TypeScript scope declares its events.** `events/<team>/` is
+today an OCaml dune library and the generated destination is `<team>_contract.ml`.
+A TypeScript scope needs an equivalent declaration location, a canonical generated
+destination (the hand-written home is `examples/pluto/app/demo_ts/contract/src/`),
+and the workspace must resolve a scope's language so the generator picks the binding.
+Record that choice in this ticket's completion notes; it is the one
+generated-bindings decision DEC-065 left open.
 
 ## Acceptance criteria
 

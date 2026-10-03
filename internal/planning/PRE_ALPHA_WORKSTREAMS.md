@@ -22,7 +22,7 @@ be wrong, unsafe, or unqualified. Everything else can happen after alpha.
 | Stream | Outcome | Pre-alpha blockers | Can start now |
 |---|---|---|---|
 | **S1** Production security & transport | Authenticated, encrypted production Kafka and identity-scoped secret projection, qualified | FEAT-093 | yes (independent) |
-| **S2** Canonical contract & plan | Declarative contract is canonical; generated bindings drift-checked; `sol plan` sees contracts | FEAT-116 (+DEC-065) | yes (independent) |
+| **S2** Canonical contract & plan | Declarative contract is canonical; generated bindings drift-checked; `sol plan` reads the declaration | landed 2026-10-03 (FEAT-116, FEAT-053, DEC-065) | TS binding is a pre-S5 enabler (FEAT-129); the plan diff is FEAT-130 |
 | **S3** Migration integrity & artifact/release boundaries | Applied migrations are integrity-checked; the deployer never publishes; release metadata is portable | FEAT-094, SEC-011, FEAT-110 | yes (independent) |
 | **S4** Provider state & destroy semantics | Destroy converges Sol-owned targets to verified absence with bounded, evidence-based reconciliation | INFRA-082, INFRA-083, INFRA-094 | yes (independent) |
 | **S5** Live alpha qualification & release readiness | The production profile and reference app are qualified end-to-end, with evidence | HARDEN-007 (gate; enablers INFRA-060/INFRA-062 landed 2026-10-03) | no — runs gated on operator authorization |
@@ -71,21 +71,25 @@ language bindings are generated from it and checked in, CI fails on drift, and
 `sol plan` reads the declaration directly. Code is not the source Sol parses or
 executes to reconstruct intent.
 
-**Tickets.**
-- `DEC-065` (BACKLOG) — the decision record. *Closes with FEAT-116.*
-- `FEAT-116` (READY) — the declarative surface, generator, checked-in
-  destination, CI drift check, and the `sol plan` read. *Pre-alpha blocker.*
-- `FEAT-053` (READY) — build-time vs runtime secret declarations exported in the
-  machine-readable plan. *Shares the plan-emission surface; otherwise
-  independent; pre-alpha.*
+**Tickets — S2 landed 2026-10-03.**
+- `DEC-065` (DONE) — the decision record; closed with FEAT-116.
+- `FEAT-116` (DONE) — the declarative surface, generator, checked-in
+  destination, CI drift check, and the `sol plan` read (the declaration half).
+- `FEAT-053` (DONE) — build-time vs runtime secret declarations exported in the
+  machine-readable plan.
+- `FEAT-129` (READY) — TypeScript bindings generated from the same declaration.
+  *Promoted on operator review: the OCaml+TS reference-app campaign makes this a
+  pre-S5 enabler, not post-alpha.*
+- `FEAT-130` (BACKLOG) — record the deployed contract and report a contract change
+  against it. *The plan's observed half, which FEAT-116 did not deliver; listed
+  under S3 and carrying its own mechanism decision.*
 
-**Dependencies & sequencing.** FEAT-116 implements DEC-065. It must reconcile two
-DONE tickets it reverses or displaces:
-- `BUG-099` (DONE) — its "code is canonical" premise is reversed; the contract is
-  now canonical and the code generated from it.
-- `FEAT-119` (DONE) — decide whether the `contract/run` projection remains
-  necessary or folds into the generated-bindings mechanism. DEC-065 requires the
-  verdict on the record; this may become a small follow-up ticket.
+**Dependencies & sequencing.** Landed: FEAT-116 implemented DEC-065 and reconciled
+the two tickets it reversed or displaced — `BUG-099` (its "code is canonical"
+premise is superseded; behaviour stays in code) and `FEAT-119` (verdict: keep
+`contract/run` for registry reconciliation, its `--json` projection no longer used
+for planning). `FEAT-130` carries the plan's observed half; `FEAT-129` carries the
+TypeScript binding.
 
 **Cross-stream.** The plan S2 produces is what S3's release metadata and S5's
 runs consume, but S2 does not depend on them. ADR 0005 bounds it: the plan is the
@@ -110,6 +114,10 @@ rollback metadata is durable, portable, and honest about its provenance.
 - `FEAT-110` (READY) — name the durable owner of release/rollback metadata and
   make it readable without Sol. *Pre-alpha contract promise (DEC-057 §9); not on
   the live-demo critical path.*
+- `FEAT-130` (BACKLOG) — record the deployed event contract in the release record
+  and report a contract change as `observed → desired`. *The plan's observed half
+  (FEAT-116 delivered the declaration half); extends FEAT-110's record; carries an
+  unresolved decision about where the observed state is read.*
 - `AUDIT-077` (READY) — distinguish a stale `encoding_version` from corruption in
   release-record validation. *Small; pre-alpha diagnostic.*
 - `AUDIT-075` (BACKLOG) — deployment-event actor provenance. *Deferred beyond
@@ -190,6 +198,10 @@ bundle and independently verified teardown, and the alpha launch gate is met.
   blocked; depends on HARDEN-007 + DEC-026/027 + a named owning team.*
 - `FEAT-102` (BACKLOG) — TypeScript production-profile qualification. *Blocked on
   an external `@sol-fab/worker` readiness hook + live authorization.*
+- `FEAT-129` (READY) — TypeScript contract bindings generated from the declarative
+  contract. *Pre-S5 enabler: the campaign qualifies the OCaml **and** TypeScript
+  reference app, so the TS app must demonstrate the canonical-contract
+  architecture rather than hand-declare its contract.*
 - `INFRA-005` (BACKLOG) — GCP durable observability wiring. *Live-blocked on GCP
   cluster access.*
 - `INFRA-060` (DONE, 2026-10-03) — qualification-only transport capability. *Landed: the
@@ -214,7 +226,9 @@ bundle and independently verified teardown, and the alpha launch gate is met.
   depends on S4.
 - `PROD-001 ← HARDEN-007` and the two decisions it names.
 - `HARDEN-008` is the independent provider axis.
-- `FEAT-102` is the independent language axis.
+- `FEAT-102` is the independent language axis, and the TypeScript reference-app
+  demonstration needs `FEAT-129` (generated TS bindings) first; `FEAT-129` is
+  buildable now and belongs before the TS campaign, not after it.
 - `INFRA-014` is independent of the AWS gate.
 
 **Parallelism.** INFRA-060 and INFRA-062 landed 2026-10-03; everything left in this stream
@@ -257,9 +271,9 @@ up between S1–S5 items.
 
 ## The path to alpha
 
-1. **Land the parallel pre-alpha blockers** — S1 `FEAT-093`; S2 `FEAT-116`
-   (+`FEAT-053`); S3 `FEAT-094`, `SEC-011`; S4 `INFRA-082`+`INFRA-094`,
-   `INFRA-083`. These four streams are independent and can run concurrently.
+1. **Land the parallel pre-alpha blockers** — S1 `FEAT-093`; S2 landed 2026-10-03
+   (`FEAT-116`, `FEAT-053`, `DEC-065`); S3 `FEAT-094`, `SEC-011`; S4 `INFRA-082`+`INFRA-094`,
+   `INFRA-083` (landed 2026-10-03). These four streams are independent and can run concurrently.
 2. **Prepare the qualification enablers** — **done 2026-10-03**: S5 `INFRA-060` (the
    transport, its live criterion handed to run 9) and `INFRA-062` (the fixture reset) both
    landed. (S3 `FEAT-110`, `AUDIT-077` can land in this window.)
