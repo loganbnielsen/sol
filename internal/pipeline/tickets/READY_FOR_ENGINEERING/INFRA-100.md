@@ -18,35 +18,40 @@ when it runs from a source checkout — and fail closed when neither source name
 one. Sol's own execution never resolves the publisher identity (ADR 0002), so it
 must not publish the runner itself.
 
-`internal/qualification/aws/live-row.sh` runs the **checkout** binary and relies
-on Sol publishing the runner on the way:
+Both qualification harnesses run the **checkout** binary and rely on Sol
+publishing the runner on the way:
 
 ```
-run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET' --registry '$ECR_REGISTRY'"
-run app-deploy    bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'"
+$ rg -n 'migrate apply.*--registry' internal/qualification/
+internal/qualification/aws/live-row.sh:235:  run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET' --registry '$ECR_REGISTRY'"
+internal/qualification/gcp/live-qual.sh:1351:  if ! run migrate-apply "$SOL" migrate apply "$TARGET" --registry "$(app_registry)"; then
+internal/qualification/gcp/test-live-qual.sh:491:  "migrate apply qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" \
 ```
 
-Both steps break after SEC-011: `sol migrate`'s `--registry` flag is gone (it
-existed only to name the repository the built runner was pushed to), and in
-checkout mode Sol now refuses because no runner is named. The AWS qualification
-run cannot reach its deploy step until the harness supplies one.
+plus `sol deploy` in the same scripts (`live-row.sh:245`, and the GCP
+equivalent). Those steps break after SEC-011: `sol migrate`'s `--registry` flag is
+gone (it existed only to name the repository the built runner was pushed to), and
+in checkout mode Sol now refuses because no runner is named. Neither run can
+reach its deploy step until the harness supplies one.
 
 ## Remediation (harness-side, deliberately outside Sol's execution)
 
-The harness already acts as the publisher for the application images: it builds
-them and pushes them with its own registry credentials before calling `sol
+The harnesses already act as the publisher for the application images: they build
+them and push them with their own registry credentials before calling `sol
 deploy` (ADR 0002's publisher identity, entirely outside Sol). Give the migration
-runner the same treatment, in the harness:
+runner the same treatment, in each harness:
 
 1. Build the runner from the release recipe
    (`internal/tooling/release/migration-runner.Dockerfile`, with the same
    `SOL_RELEASE_VERSION` the release workflow uses) and push it to the target's
-   ECR repository with the harness's own credentials — the `app-push` step is the
-   model.
+   registry with the harness's own credentials — the `app-push` step is the
+   model, and the runner may be built once and reused for the run.
 2. Export the pushed digest reference (`<image>@sha256:<64 hex>`) as
    `SOL_MIGRATION_RUNNER_IMAGE` for every `sol migrate apply` and `sol deploy`
    step.
-3. Drop `--registry` from the harness's `sol migrate apply` invocation.
+3. Drop `--registry` from each harness's `sol migrate apply` invocation, and
+   update the GCP harness self-test (`internal/qualification/gcp/test-live-qual.sh`)
+   that asserts the old invocation shape.
 
 Nothing here changes Sol: the digest is artifact identity, and passing it grants
 no publisher authority. The harness is where the publisher identity already
@@ -54,13 +59,14 @@ lives.
 
 ## Acceptance criteria
 
-- The AWS run procedure builds and pushes the migration runner as the publisher
-  before any `sol migrate apply`/`sol deploy` step, and exports its digest
-  reference as `SOL_MIGRATION_RUNNER_IMAGE` for those steps.
+- Each qualification harness builds and pushes the migration runner as the
+  publisher before any `sol migrate apply`/`sol deploy` step, and exports its
+  digest reference as `SOL_MIGRATION_RUNNER_IMAGE` for those steps.
 - No harness step relies on Sol building or pushing any image.
-- The harness's `sol migrate apply` invocation carries no `--registry`.
-- The run procedure and the AWS matrix state the runner-publishing step, so a
-  later operator reproduces it rather than rediscovering the refusal.
+- Neither harness's `sol migrate apply` invocation carries `--registry`, and the
+  GCP harness self-test asserts the new shape.
+- The run procedures and the AWS/GCP matrices state the runner-publishing step,
+  so a later operator reproduces it rather than rediscovering the refusal.
 
 **Demo/example coverage:** Not applicable — this is qualification-run procedure,
 not an app-author surface. The runnable proof is the AWS run itself
@@ -82,6 +88,9 @@ of letting SEC-011 edit another stream's run procedure.
 - `internal/qualification/aws/live-row.sh`: the `migrate-apply` and `app-deploy`
   steps quoted above; `SOL="\$ROOT/_build/default/cli/bin/main.exe"` and no
   `SOL_HOME` override in the same script.
+- `internal/qualification/gcp/live-qual.sh` and its self-test
+  `internal/qualification/gcp/test-live-qual.sh`: the same `migrate apply
+  <target> --registry <registry>` invocation, found by the `rg` above.
 - `internal/ci/check_publisher_deployer_boundary.sh` (after SEC-011): the deploy
   and migrate paths may not call `Sol_cli_docker.build`/`push`.
 - `internal/tooling/scripts/build-release-bundle.sh` refuses a
