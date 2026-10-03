@@ -6,12 +6,16 @@ title: Qualify projected ServiceAccount tokens for Sol-to-Sol calls on aws, gcp 
 source: DEC-063 (2026-10-02 resolution) — the mechanism to qualify
 ---
 
-**Depends on:** None.
+**Depends on:** FEAT-134.
 
 ## Blocked On
 
-The operator's explicit authorization for a live-qualification run (AGENTS.md
-§ Live qualification), and a qualified target per driver.
+Two prerequisites, in order. **First the implementation**: DEC-063's mechanism — the projected
+`serviceAccountToken` volume, the `Service.call` caller and the `calls`-graph authorization — is
+not in the tree, so there is nothing to qualify yet; that is `FEAT-134`. **Then** the operator's
+explicit authorization for a live-qualification run (AGENTS.md § Live qualification), and a
+qualified target per driver. The callee-side JWKS verification that does exist is not the
+mechanism and does not substitute for it.
 
 ## Scope
 

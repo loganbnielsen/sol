@@ -11,12 +11,24 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="${CLUSTER:?Set CLUSTER to this the run EKS cluster name}"
 DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the deploy role the target declares}"
 CLUSTER_ACCESS_ROLE_ARN="${CLUSTER_ACCESS_ROLE_ARN:?Set CLUSTER_ACCESS_ROLE_ARN to the cluster-access role the target declares}"
+OPERATOR_ROLE_ARN="${OPERATOR_ROLE_ARN:-}"
+QUALIFIER_ROLE="${QUALIFIER_ROLE:-}"
+TRANSPORT="${TRANSPORT:-1}"
+APP_NS="${APP_NS:-pluto-payments}"
+WORKER_NS="${WORKER_NS:-pluto-comms}"
+APP_SERVICE="${APP_SERVICE:-charge-svc}"
+APP_PORT="${APP_PORT:-80}"
+SCENARIO="${SCENARIO:-charges}"
+SVC_UNIT="${SVC_UNIT:-charge_svc}"
+WORKER_UNIT="${WORKER_UNIT:-notify_worker}"
+SVC_DIR="${SVC_DIR:-payments}"
+WORKER_DIR="${WORKER_DIR:-comms}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
 SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
 APP_TAG="${APP_TAG:-row-$(date -u +%Y%m%d-%H%M%S)}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-row-$(date +%Y%m%d-%H%M%S)}"
-export AWS_PROFILE AWS_REGION APP_TAG
+export AWS_PROFILE AWS_REGION APP_TAG APP_NS WORKER_NS APP_SERVICE APP_PORT SCENARIO
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)"
 STATE_BUCKET="${STATE_BUCKET:-sol-qual5-$ACCOUNT-tfstate}"
@@ -36,11 +48,12 @@ usage() {
   cat <<'USAGE'
 live-row.sh — the AWS regression row: the application contract GCP Attempt 28 established
 
-usage: live-row.sh PHASE      PHASE in: cloud | app | destroy | verify
+usage: live-row.sh PHASE      PHASE in: cloud | transport | app | destroy | verify
 
 required
   CLUSTER           this run's EKS cluster name
   DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
+  QUALIFIER_ROLE    the qualification-only transport role; required unless TRANSPORT=0
 optional (defaults shown)
   TARGET=qualreg/aws/us-east-1   ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
   AWS_PROFILE=sol-qual           AWS_REGION=us-east-1
@@ -48,18 +61,31 @@ optional (defaults shown)
   SOL=_build/default/cli/bin/main.exe   WORKSPACE=examples/pluto
   PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<timestamp>
   RUNNER_VERSION=sol-<git sha>   RUNNER_REPOSITORY=pluto/sol-migration-runner
+  OPERATOR_ROLE_ARN=<unset>      TRANSPORT=1
+  APP_NS=pluto-payments          APP_SERVICE=charge-svc
+  APP_PORT=80                    SCENARIO=charges
+  WORKER_NS=pluto-comms          SVC_UNIT=charge_svc
+  WORKER_UNIT=notify_worker      SVC_DIR=payments
+  WORKER_DIR=comms
 
 phases
-  cloud    cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
-  app      the publisher's work, then Sol's: build, ECR login and push, publish the migration
-           runner, runtime secrets, migrate apply, deploy, the transaction
-  destroy  supported teardown, then the independent inventory
-  verify   the independent inventory only; invokes no teardown
+  cloud      cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
+  transport  establish and verify the qualification-only transport (INFRA-060 / DEC-039)
+  app        the publisher's work, then Sol's: build, ECR login and push, publish the migration
+             runner, runtime secrets, migrate apply, deploy, the transaction
+  destroy    supported teardown, then the independent inventory
+  verify     the independent inventory only; invokes no teardown
 
-The transaction is the causal path, not a health check: POST /charges returns an id, and the row
-only passes when that id appears in GET /notifications, which cannot happen unless the worker
-consumed the Kafka event and wrote PostgreSQL. AWS_PROFILE and TF_VAR_db_password must be in the
-environment; POSTGRES_URL comes from the cluster root's own postgres_url output.
+The transaction is the causal path, not a health check: the scenario's POST returns an id, and the
+row only passes when the application's own read-back shows the worker's effect (`charges`: the id in
+GET /notifications; `orders`: the status reaching fulfilled or confirmed), which cannot happen
+unless the worker consumed the Kafka event and wrote PostgreSQL. AWS_PROFILE and TF_VAR_db_password
+must be in the environment; POSTGRES_URL comes from the cluster root's own postgres_url output.
+
+With TRANSPORT=1 the transaction runs through the qualification transport: `transport` establishes
+the `sol:qualifiers` capability and verifies its effective surface, and the harness probes the
+production identities' surfaces before and after, none of which may hold `pods/portforward`
+(DEC-039). The transport identity is recorded separately from the identities under qualification.
 
 Images are the publisher's work, never Sol's: the application images are built and pushed here,
 and so is the migration runner
@@ -133,6 +159,10 @@ capture_kube_evidence() {
   kubectl get events --all-namespaces --sort-by=.lastTimestamp >"$LOG_DIR/k8s-events.txt" 2>&1 || true
   kubectl get certificates --all-namespaces >"$LOG_DIR/k8s-certificates.txt" 2>&1 || true
   kubectl get applications -n argocd >"$LOG_DIR/k8s-applications.txt" 2>&1 || true
+  kubectl -n "$APP_NS" logs -l app.kubernetes.io/component=svc --tail=200 --all-containers=true \
+    >"$LOG_DIR/app-svc.log" 2>&1 || true
+  kubectl -n "$WORKER_NS" logs -l app.kubernetes.io/component=worker --tail=200 --all-containers=true \
+    >"$LOG_DIR/app-worker.log" 2>&1 || true
 }
 
 aws_inventory() {
@@ -217,6 +247,8 @@ reconcile_durable_root() {
 
 DEPLOY_KUBECONFIG="$LOG_DIR/kubeconfig-deploy.yaml"
 ACCESS_KUBECONFIG="$LOG_DIR/kubeconfig-access.yaml"
+OPERATOR_KUBECONFIG="$LOG_DIR/kubeconfig-operator.yaml"
+QUALIFIER_KUBECONFIG="$LOG_DIR/kubeconfig-qualifier.yaml"
 
 ensure_contexts() {
   say "kubeconfig"
@@ -224,18 +256,22 @@ ensure_contexts() {
     --name "$CLUSTER" --alias "$CLUSTER-deploy" --role-arn "$DEPLOY_ROLE_ARN" >/dev/null || return 1
   KUBECONFIG="$ACCESS_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
     --name "$CLUSTER" --alias "$CLUSTER-access" --role-arn "$CLUSTER_ACCESS_ROLE_ARN" >/dev/null || return 1
+  if [ -n "$OPERATOR_ROLE_ARN" ]; then
+    KUBECONFIG="$OPERATOR_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
+      --name "$CLUSTER" --alias "$CLUSTER-operator" --role-arn "$OPERATOR_ROLE_ARN" >/dev/null || return 1
+  fi
   export KUBECONFIG="$DEPLOY_KUBECONFIG"
 }
 
 verify_identity_boundary() {
   say "identity-boundary"
   if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" auth can-i create rolebindings \
-      --namespace pluto-payments >/dev/null 2>&1; then
+      --namespace "$APP_NS" >/dev/null 2>&1; then
     say "the deploy identity cannot create rolebindings, so application operations cannot bootstrap"
     return 1
   fi
   if kubectl --kubeconfig "$ACCESS_KUBECONFIG" auth can-i create rolebindings \
-      --namespace pluto-payments >/dev/null 2>&1; then
+      --namespace "$APP_NS" >/dev/null 2>&1; then
     say "the cluster-access identity can create rolebindings: the two identities are not separated,"
     say "and the row would no longer be testing the separation the platform is built on"
     return 1
@@ -243,10 +279,91 @@ verify_identity_boundary() {
   say "identity boundary holds: deploy creates rolebindings, cluster-access does not"
 }
 
+probe_production_separation() {
+  local phase="$1" label kc verdict
+  : >"$LOG_DIR/transport-separation-$phase.txt"
+  for label in cluster-access deploy operator; do
+    case "$label" in
+      cluster-access) kc="$ACCESS_KUBECONFIG" ;;
+      deploy) kc="$DEPLOY_KUBECONFIG" ;;
+      operator) kc="$OPERATOR_KUBECONFIG" ;;
+    esac
+    if [ ! -f "$kc" ]; then
+      printf '%s: no kubeconfig for this run, so it was not probed\n' "$label" \
+        >>"$LOG_DIR/transport-separation-$phase.txt"
+      continue
+    fi
+    verdict="$(kubectl --kubeconfig "$kc" auth can-i create pods/portforward -n "$APP_NS" 2>/dev/null || true)"
+    printf '%s create pods/portforward -n %s: %s\n' "$label" "$APP_NS" "${verdict:-<no answer>}" \
+      >>"$LOG_DIR/transport-separation-$phase.txt"
+    if [ "$verdict" != no ]; then
+      say "the $label identity answered '${verdict:-no answer}' for pods/portforward in $APP_NS;"
+      say "the qualification transport is not separated from the identities under qualification"
+      return 1
+    fi
+  done
+  printf 'provisioner: holds no EKS access entry, so it cannot open a transport\n' \
+    >>"$LOG_DIR/transport-separation-$phase.txt"
+  return 0
+}
+
+probe_qualifier_identity() {
+  local whoami
+  if ! whoami="$(kubectl --kubeconfig "$QUALIFIER_KUBECONFIG" --context "$CLUSTER-qualifier" \
+      auth whoami -o json 2>"$LOG_DIR/transport-whoami.err")"; then
+    say "the qualifier context could not answer auth whoami: $(cat "$LOG_DIR/transport-whoami.err" 2>/dev/null)"
+    return 1
+  fi
+  printf '%s\n' "$whoami" >"$LOG_DIR/transport-whoami.json"
+  case "$whoami" in
+    *"assumed-role/$QUALIFIER_ROLE/"*) : ;;
+    *)
+      say "the transport context does not authenticate as the qualifier $QUALIFIER_ROLE;"
+      say "kubectl auth whoami said: $whoami"
+      return 1
+      ;;
+  esac
+  say "  qualifier: $(printf '%s' "$whoami" | tr -d '\n')"
+}
+
+phase_transport() {
+  if [ -z "$QUALIFIER_ROLE" ]; then
+    say "QUALIFIER_ROLE is not set, so the qualification transport principal cannot be named"
+    return 1
+  fi
+  ensure_contexts || return 1
+  say "transport-separation-pre"
+  probe_production_separation pre || return 1
+  say "transport-establish"
+  if ! KUBECONFIG="$QUALIFIER_KUBECONFIG" timeout "$PHASE_TIMEOUT" \
+      "$ROOT/internal/qualification/transport/establish.sh" \
+      "$CLUSTER" "$QUALIFIER_ROLE" "$AWS_REGION" "$APP_NS" \
+      >"$LOG_DIR/transport-establish.log" 2>&1; then
+    say "FAILED: transport-establish (last 40 lines; full log $LOG_DIR/transport-establish.log)"
+    tail -n 40 "$LOG_DIR/transport-establish.log"
+    return 1
+  fi
+  say "transport-verify"
+  probe_qualifier_identity || return 1
+  say "transport-separation-post"
+  probe_production_separation post || return 1
+  local pf
+  pf="$(kubectl --kubeconfig "$QUALIFIER_KUBECONFIG" --context "$CLUSTER-qualifier" \
+    auth can-i create pods/portforward -n "$APP_NS" 2>/dev/null || true)"
+  printf 'qualifier create pods/portforward -n %s: %s\n' "$APP_NS" "${pf:-<no answer>}" \
+    >>"$LOG_DIR/transport-separation-post.txt"
+  if [ "$pf" != yes ]; then
+    say "the qualifier cannot create pods/portforward in $APP_NS, so the transport is not established"
+    return 1
+  fi
+  say "  the qualification transport is established; the production identities' surfaces are"
+  say "  recorded before and after, and none of them holds pods/portforward"
+}
+
 phase_cloud() {
   reconcile_durable_root || return 1
-  run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET'" || return 1
-  run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET'" || return 1
+  run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET' --var-file '$TFVARS'" || return 1
+  run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'" || return 1
   ensure_contexts || return 1
   run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
   capture_kube_evidence
@@ -257,14 +374,14 @@ phase_cloud() {
 phase_app() {
   ensure_contexts || return 1
   verify_identity_boundary || return 1
-  run app-build docker build -f app/payments/charge_svc/Dockerfile \
-    -t "$(image_ref charge_svc)" "$WORKSPACE" || return 1
-  run app-build-worker docker build -f app/comms/notify_worker/Dockerfile \
-    -t "$(image_ref notify_worker)" "$WORKSPACE" || return 1
+  run app-build docker build -f "app/$SVC_DIR/$SVC_UNIT/Dockerfile" \
+    -t "$(image_ref "$SVC_UNIT")" "$WORKSPACE" || return 1
+  run app-build-worker docker build -f "app/$WORKER_DIR/$WORKER_UNIT/Dockerfile" \
+    -t "$(image_ref "$WORKER_UNIT")" "$WORKSPACE" || return 1
   run ecr-login bash -c \
     "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'" || return 1
-  run app-push docker push "$(image_ref charge_svc)" || return 1
-  run app-push-worker docker push "$(image_ref notify_worker)" || return 1
+  run app-push docker push "$(image_ref "$SVC_UNIT")" || return 1
+  run app-push-worker docker push "$(image_ref "$WORKER_UNIT")" || return 1
   publish_migration_runner || return 1
   capture_state
   local url
@@ -280,7 +397,7 @@ phase_app() {
     printf 'SOL_API_KEY: %s*** (generated for this run)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
   run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET'" || return 1
-  deploy_namespaces="pluto-payments pluto-comms"
+  deploy_namespaces="$APP_NS $WORKER_NS"
   say "deploy-substrate"
   for ns in $deploy_namespaces; do
     if kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
@@ -297,25 +414,35 @@ phase_app() {
     fi
   done
   say "  the deploy established the scoped deploy RBAC in every namespace it entered"
-  if ! run app-transaction bash "$ROOT/internal/qualification/aws/app-transaction.sh" "$LOG_DIR"; then
+  if [ "$TRANSPORT" = 1 ] && [ ! -f "$QUALIFIER_KUBECONFIG" ]; then
+    phase_transport || return 1
+  fi
+  if [ "$TRANSPORT" = 1 ]; then
+    export KUBECONFIG_TRANSPORT="$QUALIFIER_KUBECONFIG"
+    if ! run app-transaction bash "$ROOT/internal/qualification/aws/transport-transaction.sh" "$LOG_DIR"; then
+      capture_kube_evidence
+      return 1
+    fi
+  elif ! run app-transaction bash "$ROOT/internal/qualification/aws/app-transaction.sh" "$LOG_DIR"; then
     capture_kube_evidence
     return 1
   fi
   capture_kube_evidence
   capture_state
-  say "the application transaction completed: a charge was accepted, the worker consumed it, and"
-  say "the service read the worker's row back out of PostgreSQL"
+  say "the application transaction completed: the request was accepted, the worker consumed it, and"
+  say "the service read the worker's effect back out of PostgreSQL through the qualification transport"
 }
 
 phase_destroy() {
   capture_state
-  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply" || return 1
+  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply --var-file '$TFVARS'" || return 1
   say "destroy returned success; the independent inventory decides absence"
   aws_inventory
 }
 
 case "${1:-}" in
   cloud) phase_cloud ;;
+  transport) phase_transport ;;
   app) phase_app ;;
   destroy) phase_destroy ;;
   verify | inventory) aws_inventory ;;

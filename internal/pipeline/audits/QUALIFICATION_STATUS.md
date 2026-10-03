@@ -1202,6 +1202,29 @@ guard needs Kubernetes ≥ 1.28 (beta) / ≥ 1.30 (GA) or the alpha feature gate
 `byo` profile still selects Kubernetes Secrets; adopting the CSI store is a
 `DEC-026` §9 re-qualification.
 
+## AWS Run 9 preparation — authorization → execute, and one implementation blocker (2026-10-03)
+
+`main @ ed3f041f`. Preparation only: **no AWS resource was created, nothing was mutated, nothing
+was spent, and the HARDEN-007 live run was not started.** The run package is
+`internal/qualification/aws/aws-run-procedure.md` § *Run 9 — authorization → execute*, with the
+matrix-side reconciliation in `production-single-region-v1-matrix.md` § *Before the next run
+(Run 9)* and the per-alpha-row map in the procedure.
+
+| Item | State |
+|---|---|
+| `HARDEN-007` | Prepared; still `BACKLOG`/authorization-gated. Its code prerequisites are now `RELEASE-006`, `FEAT-132`, `VERIF-027`; `INFRA-060`/`INFRA-062` are `DONE` |
+| Transport (`INFRA-060` criterion 5, DEC-039 §4) | Wired into the harness: `live-row.sh transport` establishes the qualifier, records its own `auth whoami`, and probes the production identities' `pods/portforward` surfaces before and after. Offline self-test grew to 56 assertions (`internal/qualification/aws/test-live-row.sh`) |
+| Migration runner (`INFRA-100`, SEC-011) | The harness publishes it and hands Sol the digest; pinned by the same self-test |
+| Released bundle (J3) | Interface defined; the harness move is `RELEASE-006`'s |
+| Five production identities | Corrected: provisioner, cluster-access, deploy, operator, publisher — the Run 5 procedure's precondition 3 named four and omitted `cluster_access_policy_json` (DEC-034) |
+| `VERIF-021` | Collection defined inside the Run 9 target (CSI provider as the pod's identity, grant denial, rotation bound, `SimulatePrincipalPolicy` boundary check) |
+| `VERIF-022` | **Blocked on implementation, not authorization.** The Alpha campaign recorded E5 as live-blocked; preparation found DEC-063's projected-token volume and `Service.call` caller are absent from the tree (`rg -n 'serviceAccountToken\|expirationSeconds' cli/ framework/` and `rg -n 'Service\.call' framework/ cli/` find nothing; the callee-side JWKS verification exists). Filed `FEAT-134`; `VERIF-022` now `Depends on: FEAT-134` |
+
+No row's verdict moved: this section creates no live evidence and promotes nothing to
+`BEHAVIOURAL`. The single finding is `FEAT-134`, and the run stays gated on the operator's
+authorization.
+
+
 
 
 

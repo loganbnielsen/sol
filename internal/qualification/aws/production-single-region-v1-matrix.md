@@ -312,3 +312,59 @@ Run 8 lost time to one of them.
   `kubectl --context <ctx> auth can-i get clusterroles` before trusting a probe's
   identity.
 
+## Before the next run (Run 9)
+
+Run 9 is `HARDEN-007`; its operational package is
+`internal/qualification/aws/aws-run-procedure.md` § *Run 9 — authorization → execute*. This
+section is the matrix-side reconciliation; the procedure is authoritative for the commands.
+
+**The run's scope is the alpha campaign's `aws` rows**, not the pre-campaign
+`charge_svc`/`notify_worker` pair. The workload is the frozen reference scenario
+(`ALPHA_CAMPAIGN.md` §2), implemented by `FEAT-131`/`FEAT-132`; the TypeScript half is not in
+the production profile (DEC-026 §2). The row map — which alpha row each section qualifies,
+what is already `PASS (LIVE)`, and what stays blocked — is the procedure's § *Alpha row
+reconciliation*. Read this matrix's sections as the evidence contract for those alpha rows.
+
+**What changed since the Run 8 section above**
+
+- **B3's `-svc` half runs through the qualification transport.** The procedure's
+  § *Qualification transport into private application services* states how; the harness
+  establishes it (`live-row.sh transport`), verifies the qualifier's effective surface,
+  records the qualifier identity separately (DEC-039 §4), and shows that none of the
+  production identities holds `pods/portforward` before or after.
+- **The migration runner is published by the harness and handed to Sol by digest**
+  (`INFRA-100`, landed; `SOL_MIGRATION_RUNNER_IMAGE`, SEC-011). Sol never builds or publishes
+  it.
+- **The harness runs the released bundle** (`RELEASE-006`; procedure § *Released-bundle
+  interface*). The run does not start against a checkout build.
+- **Five production identities, not four**: provisioner, cluster-access, deploy, operator and
+  publisher (the Run 5 procedure's precondition 3 named four and omitted cluster-access; the
+  Run 9 section corrects it).
+- **`VERIF-021` / `VERIF-022` collect in this target.** `VERIF-021` (managed secret projection
+  and the fenced grant) is collectable; `VERIF-022` (projected ServiceAccount tokens) is
+  **blocked on `FEAT-134`**, because DEC-063's projected-token volume and caller API are not
+  implemented — the callee-side JWKS verification alone is not the mechanism. The procedure
+  records the evidence collection for both.
+
+**Assertions that ride along at no extra cost** (carried from Run 8, still unexercised live)
+
+1. **Make the absence checks fire.** Section H's absence check queries EKS/RDS/VPC/NAT/EIP/EBS,
+   load balancers, ECR and log groups. Leave one residual of a class in place at a point
+   `verify_aws_destroy` will observe — or record a real leftover — so the checks are shown able
+   to fail against real resources, not only against the offline harness (HARDEN-003).
+2. **Record the steady-state authority posture as the named identities.** As the bounded
+   cluster-access identity, an `aws eks associate-access-policy` attempt must be **denied**;
+   the steady-state `can-i` results must be recorded *with the identity that produced them* —
+   positive for steady-state operations, negative for `escalate` and `bind`.
+3. **Exercise the migration gate end to end.** A normal failing-then-fixed migration, with
+   `INFRA-044`'s redaction on the same path — not a unit test.
+
+**What the run must not do**
+
+- Do not record B or D as passing from a partially deployed workload.
+- Do not promote inspection or mechanism evidence to behavioural, or a phase line to
+  infrastructure truth (section I).
+- Record G as blocked, not passed, unless a real receiver with an owner is in place.
+- Do not start before `RELEASE-006`, `FEAT-132` and `VERIF-027` have landed, and do not start
+  on a checkout build.
+
