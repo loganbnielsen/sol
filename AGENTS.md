@@ -436,6 +436,13 @@ synchronously.
   green PR sit unmerged. On failure, report the failing check and its cause; after a
   fix, auto-merge is still armed and completes on its own. If the failure is not
   being addressed, say so explicitly rather than leaving it silently queued.
+- **A re-run does not pick up a repaired base.** GitHub re-runs the check against the
+  merge commit it already computed, so a `test` failure whose cause was on `main` — a
+  duplicate ticket id in the tree, a guard another PR had just fixed — repeats
+  identically after the fix has merged. `gh run rerun --failed` was observed to do
+  exactly that 22 minutes after the repairing PR landed. Compare the run's base with
+  `origin/main`; if `main` moved, update the branch (rebase onto `origin/main` and
+  push) and re-arm auto-merge for the new head SHA instead of re-running.
 - Queue dependent PRs in order: `soldev` reads prerequisites from its current ticket
   tree, so queue a dependent PR only after its dependency has actually merged.
 
