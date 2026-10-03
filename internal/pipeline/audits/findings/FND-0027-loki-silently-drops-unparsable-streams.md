@@ -1,11 +1,34 @@
 # FND-0027 — Loki stream parse failures are dropped without a trace
 
 - **Classification:** `OBSERVATION`
-- **State:** `OPEN`
+- **State:** `SUPERSEDED`
 - **First identified:** 2026-09-21, fail-open audit (`2026-09-21_fail-open-audit.md`)
-- **Last verified:** 2026-09-21 (`main` @ `4ae985f3`)
-- **Derived ticket:** none (see below)
-- **Evidence class:** `STATIC`
+- **Last verified:** 2026-10-02 (`main` @ `1eace495`) — the parser was rewritten
+  and no longer discards; see the correction below
+- **Derived ticket:** none
+- **Evidence class:** `STATIC` (original) → `BEHAVIORAL` (correction)
+
+## Correction (2026-10-02) — the discarded-stream path no longer exists
+
+The observation was written against an implementation that used
+`U.member`/`List.filter_map … | _ -> None` and returned `Ok`. The current parser
+(`cli/lib/local/sol_cli_loki.ml`) uses `Sol_cli_result.map_list`, which aborts on
+the first malformed value, and `Sol_cli_json.require`, which errors on a missing
+`values` field. Induced with a stub returning three malformed shapes — a non-pair
+value, a stream with no `values`, and a good stream beside a malformed one —
+`sol logs` rejected every case with the reason and degraded explicitly:
+
+```text
+$ sol local logs --scope payments/charge_svc --no-follow --loki-base-url http://127.0.0.1:3301
+(couldn't reach http://127.0.0.1:3301: Loki response: a value is not a [timestamp, line] pair. Falling back to Kubernetes logs for charge_svc...)
+```
+
+No partial result is returned and nothing is silently dropped. **State:
+`SUPERSEDED`.** The wording of that message is a separate, low defect
+(`BUG-123`): a reachable backend's malformed body is reported as "couldn't
+reach". Record:
+`internal/qualification/records/2026-10-02-observability-run2-local.md` §3.
+
 
 ## What is established
 
