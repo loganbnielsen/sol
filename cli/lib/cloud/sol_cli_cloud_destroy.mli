@@ -33,6 +33,13 @@ type cleanup =
   | Cleanup_succeeded
   | Cleanup_failed of string
 
+type reconciliation =
+  | Nothing_to_reconcile
+  | Reconciled of
+      { evidence : string
+      ; forgotten : string list
+      }
+
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
@@ -76,6 +83,7 @@ type deps =
   { require_credentials : unit -> (unit, string) result
   ; terraform_init : unit -> (unit, string) result
   ; observe_state : unit -> (string, string) result
+  ; reconcile_provable_absence : unit -> (reconciliation, string) result
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
   ; reconcile_and_enable : unit -> (unit, string) result

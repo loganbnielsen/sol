@@ -213,6 +213,16 @@ nothing and says so, and `sol cloud apply` reports the same read failure rather 
 as though the target were never provisioned. A state that lists nothing is a confirmed
 absence, and keeps the documented degraded destroy.
 
+A target whose cloud root represents nothing can still carry a **stale platform root**: the
+Terraform state of the platform inside the cluster survives a teardown that could not reach
+it (`INFRA-082`). Sol therefore reads the platform root in that state, and — only when the
+provider positively reports the substrate absent — forgets those entries with
+`terraform state rm`, naming every address and the query the judgement rested on. A substrate
+the provider still holds, and a query that could not be answered, both leave the state
+untouched and say so: an absence Sol could not positively establish is never read as one
+(`FND-0055`). The reconciliation only removes Sol's own bookkeeping — it never constructs
+anything, and it never reaches installation-level resources (`ADR 0005`).
+
 Destroy **verifies absence independently** (`DEC-044`, `DEC-040`): after Terraform
 converges, Sol re-observes the provider and reports what is absent, what is retained, and
 what it could not observe. An unqueryable answer is `UNKNOWN` and fails closed — a command

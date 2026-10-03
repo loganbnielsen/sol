@@ -1236,6 +1236,104 @@ grep -F 'Could not remove Service Networking Connection\|API did not recognize' 
   "$served_log.out" >/dev/null || true
 rm -f "$STATE_RM_FILE"
 
+stale_platform_log="$tmp/gcp-stale-platform-state.log"
+rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+if ! (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 DESTROYING=1 \
+        LIFECYCLE_LOG="$stale_platform_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$stale_platform_log.out" 2>&1
+then
+  cat "$stale_platform_log.out" >&2
+  echo "INFRA-082: a target whose platform state is stale under an absent substrate was not destroyable" >&2
+  exit 1
+fi
+grep -F "the substrate's absence is positively established at the provider" \
+  "$stale_platform_log.out" >/dev/null || {
+  echo "INFRA-082: the reconciliation did not name the evidence that permitted it:" >&2
+  cat "$stale_platform_log.out" >&2
+  exit 1
+}
+grep -F 'Forgotten in state' "$stale_platform_log.out" >/dev/null || {
+  echo "INFRA-082: the stale platform state was not accounted for:" >&2
+  cat "$stale_platform_log.out" >&2
+  exit 1
+}
+for forgotten in module.platform.kubernetes_manifest.letsencrypt_prod \
+                 module.platform.kubernetes_namespace.cert_manager; do
+  grep -F "state-rm $forgotten" "$stale_platform_log" >/dev/null || {
+    echo "INFRA-082: $forgotten was left in the stale platform state:" >&2
+    grep -F 'state-rm' "$stale_platform_log" >&2
+    exit 1
+  }
+done
+grep -E -- '-chdir=[^ ]*cloud/gcp/platform show -json' "$stale_platform_log" >/dev/null || {
+  echo "INFRA-082: the destroy never examined the platform root's state:" >&2
+  grep -E -- '-chdir=[^ ]*' "$stale_platform_log" >&2
+  exit 1
+}
+if grep -E -- '-chdir=[^ ]*cloud/gcp/platform destroy' "$stale_platform_log" >/dev/null; then
+  echo "INFRA-082: the destroy ran a platform teardown although the cluster that carried the platform is absent:" >&2
+  grep -E -- '-chdir=[^ ]*cloud/gcp/platform destroy' "$stale_platform_log" >&2
+  exit 1
+fi
+if ! grep -E -- '^terraform -chdir=[^ ]*cloud/gcp/cluster destroy ' "$stale_platform_log" >/dev/null; then
+  echo "INFRA-082: the destroy did not run the substrate destroy after reconciling:" >&2
+  grep -E -- ' destroy ' "$stale_platform_log" >&2
+  exit 1
+fi
+assert_contains "INFRA-082: the reconciled target reported verified absence" \
+  "$stale_platform_log.out" 'reached verified absence' || {
+  echo "INFRA-082: the reconciled destroy did not report verified absence:" >&2
+  cat "$stale_platform_log.out" >&2
+  exit 1
+}
+
+stale_present_log="$tmp/gcp-stale-platform-state-present.log"
+rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+(cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 SUBSTRATE_PRESENT_AT_PROVIDER=1 \
+   DESTROYING=1 LIFECYCLE_LOG="$stale_present_log" \
+   "$sol" cloud destroy prod/gcp/us-central1 --apply) >"$stale_present_log.out" 2>&1 || true
+if grep -F 'state-rm' "$stale_present_log" >/dev/null; then
+  echo "INFRA-082: state was forgotten although the provider did not establish the substrate's absence:" >&2
+  grep -F 'state-rm' "$stale_present_log" >&2
+  exit 1
+fi
+grep -F 'only a positively established absence permits forgetting' \
+  "$stale_present_log.out" >/dev/null || {
+  echo "INFRA-082: a substrate the provider still holds did not refuse the reconciliation:" >&2
+  cat "$stale_present_log.out" >&2
+  exit 1
+}
+rm -f "$STATE_RM_FILE"
+
+stale_unidentified_log="$tmp/gcp-stale-platform-state-unidentified.log"
+cp "$tmp/work/sol/environments.yml" "$tmp/work/target.before-infra082.yml"
+grep -v '      cluster_name: sol-qual$' "$tmp/work/target.before-infra082.yml" \
+  >"$tmp/work/sol/environments.yml"
+rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+if ! (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 DESTROYING=1 \
+        LIFECYCLE_LOG="$stale_unidentified_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$stale_unidentified_log.out" 2>&1
+then
+  mv "$tmp/work/target.before-infra082.yml" "$tmp/work/sol/environments.yml"
+  cat "$stale_unidentified_log.out" >&2
+  echo "INFRA-082: a destroy whose substrate could not be identified did not converge" >&2
+  exit 1
+fi
+mv "$tmp/work/target.before-infra082.yml" "$tmp/work/sol/environments.yml"
+if grep -F 'state-rm' "$stale_unidentified_log" >/dev/null; then
+  echo "INFRA-082: state was forgotten although the substrate's identity was never established:" >&2
+  grep -F 'state-rm' "$stale_unidentified_log" >&2
+  exit 1
+fi
+grep -F 'cluster name is neither declared nor resolved' "$stale_unidentified_log.out" >/dev/null || {
+  echo "INFRA-082: an unidentifiable substrate did not refuse the reconciliation:" >&2
+  cat "$stale_unidentified_log.out" >&2
+  exit 1
+}
+rm -f "$STATE_RM_FILE"
+
 gcp_nocred_log="$tmp/gcp-nocred.log"
 if (cd "$tmp/work" && DESTROYING=1 FAIL_CREDENTIALS=1 LIFECYCLE_LOG="$gcp_nocred_log" \
       "$sol" cloud destroy prod/gcp/us-central1 --apply) \

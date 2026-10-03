@@ -133,6 +133,24 @@ let to_sweep observations =
     Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
 ;;
 
+let summary = function
+  | Absent { resource_class; identity; checked_with; _ } ->
+    Printf.sprintf "%s %s is absent (%s)" resource_class identity checked_with
+  | Present { resource_class; identity; found; checked_with; _ } ->
+    Printf.sprintf
+      "%s %s is PRESENT: %s (%s)"
+      resource_class
+      identity
+      (String.concat ", " found)
+      checked_with
+  | External { resource_class; identity; reason } ->
+    Printf.sprintf "%s %s is external: %s" resource_class identity reason
+  | Not_attributable { resource_class; reason } ->
+    Printf.sprintf "%s could not be attributed: %s" resource_class reason
+  | Unobservable { resource_class; reason; checked_with } ->
+    Printf.sprintf "%s could not be observed: %s (%s)" resource_class reason checked_with
+;;
+
 let report observations =
   let buffer = Buffer.create 1024 in
   let line format = Printf.ksprintf (Buffer.add_string buffer) format in

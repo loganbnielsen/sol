@@ -177,6 +177,7 @@ type calls =
   { mutable credentials : int
   ; mutable init : int
   ; mutable observe : int
+  ; mutable reconcile_absence : int
   ; mutable prepare : state_read list
   ; mutable outputs : int
   ; mutable reconcile : int
@@ -199,6 +200,7 @@ let fake_deps
       ?(state = Ok {|{}|})
       ?(outputs = Outputs_available)
       ?(prepare = fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
+      ?(reconcile_provable_absence = fun () -> Ok Nothing_to_reconcile)
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
@@ -212,6 +214,7 @@ let fake_deps
     { credentials = 0
     ; init = 0
     ; observe = 0
+    ; reconcile_absence = 0
     ; prepare = []
     ; outputs = 0
     ; reconcile = 0
@@ -236,6 +239,14 @@ let fake_deps
         (fun () ->
           calls.observe <- calls.observe + 1;
           state)
+    ; reconcile_provable_absence =
+        (fun () ->
+          calls.reconcile_absence <- calls.reconcile_absence + 1;
+          match reconcile_provable_absence () with
+          | Ok (Reconciled _ as reconciled) ->
+            calls.order <- "reconcile-absence" :: calls.order;
+            Ok reconciled
+          | outcome -> outcome)
     ; cloud_outputs =
         (fun () ->
           calls.outputs <- calls.outputs + 1;
@@ -305,6 +316,116 @@ let test_empty_state_destroys_without_outputs () =
   Windtrap.equal Windtrap.int ~msg:"substrate destroy ran" 1 calls.substrate;
   Windtrap.equal Windtrap.int ~msg:"no reconciliation on an empty state" 0 calls.reconcile;
   Windtrap.equal Windtrap.int ~msg:"absence verified" 1 calls.verify
+;;
+
+let reconciliation =
+  Reconciled
+    { evidence = "GKE cluster sol-qual is absent (gcloud container clusters list)"
+    ; forgotten =
+        [ "module.platform.kubernetes_namespace.cert_manager"
+        ; "module.platform.helm_release.redpanda"
+        ]
+    }
+;;
+
+let test_a_provably_absent_substrate_accounts_for_stale_state () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok {|{}|})
+      ~outputs:(Outputs_unavailable "no install outputs are published")
+      ~reconcile_provable_absence:(fun () -> Ok reconciliation)
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a destroy that reconciled its stale state still exits 0"
+    0
+    (exit_code outcome);
+  (match outcome with
+   | Destroy_succeeded { degradations = []; _ } -> ()
+   | Destroy_succeeded { degradations; _ } ->
+     Windtrap.failf
+       "a reconciliation is an act Sol completed, not a degradation (got %d)"
+       (List.length degradations)
+   | Destroy_blocked { guarantee; _ } ->
+     Windtrap.failf "the reconciliation must not block the destroy: %s" guarantee
+   | Destroy_failed { failure; _ } ->
+     Windtrap.failf
+       "a destroy whose stale state was reconciled must converge: %s"
+       (failure_message failure));
+  Windtrap.equal Windtrap.int ~msg:"the reconciliation ran once" 1 calls.reconcile_absence;
+  let reported =
+    List.exists
+      (fun report ->
+         contains (Str.regexp_string "state entr") report
+         && contains (Str.regexp_string "sol-qual is absent") report
+         && contains (Str.regexp_string "module.platform.helm_release.redpanda") report
+         && contains
+              (Str.regexp_string "module.platform.kubernetes_namespace.cert_manager")
+              report)
+      calls.reports
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the act names what it forgot and the evidence it was permitted on"
+    true
+    reported;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the reconciliation runs before the substrate is destroyed"
+    [ "reconcile-absence"; "substrate" ]
+    (List.rev calls.order)
+;;
+
+let test_a_failed_reconciliation_degrades_and_still_destroys () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok {|{}|})
+      ~outputs:(Outputs_unavailable "no install outputs are published")
+      ~reconcile_provable_absence:(fun () -> Error "state rm refused")
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"Sol's own bookkeeping does not block the teardown it just performed"
+    0
+    (exit_code outcome);
+  (match outcome with
+   | Destroy_succeeded { degradations = [ degradation ]; _ } ->
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the unreconciled state is named"
+       true
+       (contains (Str.regexp_string "state rm refused") degradation)
+   | Destroy_succeeded { degradations; _ } ->
+     Windtrap.failf "expected exactly one degradation, got %d" (List.length degradations)
+   | Destroy_blocked { guarantee; _ } ->
+     Windtrap.failf "a failed reconciliation must not block the destroy: %s" guarantee
+   | Destroy_failed { failure; _ } ->
+     Windtrap.failf
+       "a failed reconciliation must not fail the teardown: %s"
+       (failure_message failure));
+  Windtrap.equal Windtrap.int ~msg:"the substrate was still destroyed" 1 calls.substrate
+;;
+
+let test_no_reconciliation_is_claimed_when_there_is_none () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok {|{}|})
+      ~outputs:(Outputs_unavailable "no install outputs are published")
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal Windtrap.int ~msg:"the destroy converged" 0 (exit_code outcome);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a destroy with nothing to reconcile says nothing about reconciling"
+    false
+    (List.exists
+       (fun report -> contains (Str.regexp_string "state entr") report)
+       calls.reports)
 ;;
 
 let test_half_built_state_is_destroyable () =
@@ -2378,6 +2499,18 @@ let%test "inventory: identifier is captured" = test_identifier_captured ()
 
 let%test "execute: empty state without outputs" =
   test_empty_state_destroys_without_outputs ()
+;;
+
+let%test "execute: a provably absent substrate accounts for stale state" =
+  test_a_provably_absent_substrate_accounts_for_stale_state ()
+;;
+
+let%test "execute: a failed reconciliation degrades and still destroys" =
+  test_a_failed_reconciliation_degrades_and_still_destroys ()
+;;
+
+let%test "execute: no reconciliation is claimed when there is none" =
+  test_no_reconciliation_is_claimed_when_there_is_none ()
 ;;
 
 let%test "execute: half-built state" = test_half_built_state_is_destroyable ()

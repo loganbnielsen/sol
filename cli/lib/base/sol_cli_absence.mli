@@ -41,6 +41,7 @@ val permits_absence_claim : verdict -> bool
 val residue : verdict -> string list
 val to_sweep : observation list -> Sol_cli_destroy_verification.sweep
 val report : observation list -> string
+val summary : observation -> string
 val attribution_rule : attribution -> string
 val lines : string -> string list
 val not_found : needles:string list -> string -> bool

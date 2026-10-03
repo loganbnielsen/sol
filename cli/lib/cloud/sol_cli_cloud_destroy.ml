@@ -134,6 +134,25 @@ type cleanup =
   | Cleanup_succeeded
   | Cleanup_failed of string
 
+type reconciliation =
+  | Nothing_to_reconcile
+  | Reconciled of
+      { evidence : string
+      ; forgotten : string list
+      }
+
+let reconciliation_report ~evidence ~forgotten =
+  Printf.sprintf
+    "  reconciled stale state: the substrate is provably absent at the provider (%s), so \
+     the %d state entr%s below cannot exist, and Terraform cannot address an object the \
+     provider does not have. Forgotten in state:\n\
+     %s"
+    evidence
+    (List.length forgotten)
+    (if List.length forgotten = 1 then "y" else "ies")
+    (String.concat "\n" (List.map (fun address -> "    " ^ address) forgotten))
+;;
+
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
@@ -248,6 +267,7 @@ type deps =
   { require_credentials : unit -> (unit, string) result
   ; terraform_init : unit -> (unit, string) result
   ; observe_state : unit -> (string, string) result
+  ; reconcile_provable_absence : unit -> (reconciliation, string) result
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
   ; reconcile_and_enable : unit -> (unit, string) result
@@ -419,6 +439,12 @@ let execute ~deps =
     (match deps.terraform_init () with
      | Error message -> fail (Init_failed message)
      | Ok () ->
+       (match deps.reconcile_provable_absence () with
+        | Ok Nothing_to_reconcile -> ()
+        | Ok (Reconciled { evidence; forgotten }) ->
+          deps.report (reconciliation_report ~evidence ~forgotten)
+        | Error message ->
+          degrade "the state a provably absent substrate leaves behind" message);
        let cloud_exists = substrate <> Substrate_absent in
        let phase =
          Sol_cli_cloud_lifecycle.enter_destruction

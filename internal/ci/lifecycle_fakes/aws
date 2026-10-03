@@ -35,6 +35,12 @@ printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
       exit 0
       ;;
   esac
+if [ "$1 $2" = "eks list-clusters" ]; then
+  if [ "${SUBSTRATE_PRESENT_AT_PROVIDER:-}" = 1 ]; then
+    printf 'lifecycle-test\n'
+  fi
+  exit 0
+fi
 if [ "${DESTROYING:-}" = 1 ]; then
   case "$1 $2" in
     "eks describe-cluster"|"eks describe-addon"|"rds describe-db-instances")

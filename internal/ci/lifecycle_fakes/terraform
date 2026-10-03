@@ -179,6 +179,14 @@ JSON
       exit 0
     fi
     case " $* " in
+      *cloud/gcp/cluster*|*cloud/aws/cluster*)
+        if [ "${CLOUD_STATE_EMPTY:-}" = 1 ]; then
+          printf '{"values":{"root_module":{"resources":[]}}}\n'
+          exit 0
+        fi
+        ;;
+    esac
+    case " $* " in
       *cloud/gcp/platform*|*cloud/aws/platform*)
         if [ "${PARTIAL_INSTALL:-}" = 1 ]; then
           if [ "${CRD_SERVED:-}" = 1 ]; then
