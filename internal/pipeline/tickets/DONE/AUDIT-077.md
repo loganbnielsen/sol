@@ -70,3 +70,51 @@ Evidence: `Sol_cli_release.validate` (`cli/lib/deploy/sol_cli_release.ml:138-155
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
 (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+
+## Completion notes (2026-10-03)
+
+**Premise verified, with one correction.** `Sol_cli_release.validate` did
+still emit the single `"corrupt"` message, but the record carried no
+`encoding_version` at all — the ticket's remediation ("check
+`encoding_version` first") was not implementable as written, because there
+was nothing on the record to check. The implementation therefore adds the
+marker to the record body and then diagnoses from it:
+
+- `to_json` writes `encoding_version` (the current
+  `Sol_cli_release_id.encoding_version`); `of_json` reads it into a new
+  `t.encoding_version : string option`, so a record round-trips the format
+  it was written with (`None` = written before the marker existed).
+- `validate` now distinguishes three outcomes, all fail-closed: a record
+  declaring an older version is refused as predating a release-identity
+  format change; a record declaring no marker whose content does not
+  rederive is refused as unverifiable (format change and damage cannot be
+  told apart); only a record declaring the current version that still fails
+  to rederive its own id is reported as corrupt.
+
+**Acceptance criteria met.** The stale-version and content-mismatch causes
+produce different messages (`test_validate_reports_stale_encoding_version`,
+`test_of_kubectl_item_reports_stale_encoding_version`), the undeclared-marker
+case gets its own message instead of "corrupt"
+(`test_validate_reports_undeclared_encoding_version`), a marker-less record
+stays marker-less (`test_of_json_without_encoding_version_is_unmarked`), and
+the corruption case still reports corruption
+(`test_validate_rejects_corrupt_content`, unchanged). No case became
+readable.
+
+**Consequence to note:** the record body gained a field, so the canonical
+record digest moved; the pinned known vector in
+`cli/test/inline/test_release.ml` is updated to the new value. Release
+identity itself is unchanged (it derives from the workload boundary, not
+the record JSON), and an already-stored record still verifies against its
+own stored `record_digest`.
+
+**Checks:** `dune build cli/`, `dune build @cli/test/inline/runtest`
+(only the two pre-existing `Test_scaffold` failures remain: this switch has
+`sol-obs`/`sol-fn` uninstalled, so a scaffolded workspace cannot resolve
+them here), `dune fmt`, `internal/ci/check_ocamlformat.sh --all`,
+`internal/ci/run_fast_checks.sh` (0/97 static members failed).
+
+**Demo/example coverage:** not applicable, as the ticket states — the
+record body is internal to the CLI, and no app-author surface changed.
+
+**TypeScript parity:** no impact, as the ticket states.

@@ -415,6 +415,7 @@ let bad_workload_release update : Sol_cli_release.t =
       ]
   ; migrations = []
   ; apply_mode = Sol_cli_release.Direct
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 
@@ -470,6 +471,7 @@ let migration_release ~migrations : Sol_cli_release.t =
   ; workloads = []
   ; migrations
   ; apply_mode = Sol_cli_release.Direct
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 
@@ -716,6 +718,7 @@ let verify_release : Sol_cli_release.t =
   ; workloads = []
   ; migrations = []
   ; apply_mode = Sol_cli_release.Direct
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 
@@ -853,6 +856,7 @@ let fn_release : Sol_cli_release.t =
       ]
   ; migrations = []
   ; apply_mode = Sol_cli_release.Direct
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 
@@ -1282,6 +1286,7 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
   ; workloads = []
   ; migrations = []
   ; apply_mode
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 

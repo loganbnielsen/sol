@@ -352,7 +352,16 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
    carries `data.record_digest`, a free digest of the complete record body:
    a missing or mismatched digest is an unsupported/integrity failure, so the
    non-identity safety fields (`migrations`, `apply_mode`) are as
-   tamper-evident as the id.
+   tamper-evident as the id. The body declares the `encoding_version`
+   (`Sol_cli_release_id.encoding_version`) it was written with, so the three
+   reasons the identity check can fail are told apart instead of collapsing
+   into one "corrupt" verdict (AUDIT-077): a record written by an older
+   encoding says so and is refused as predating a release-identity format
+   change; a record that declares no marker at all (written before this CLI
+   recorded one) is refused as unverifiable, because a format change and
+   damaged content cannot be distinguished; only a record that declares the
+   current version and still fails to rederive its id is reported as corrupt.
+   All three remain fail-closed — the diagnosis differs, not the refusal.
 2. **Refuse controller-owned releases** (`Sol_cli_rollback.check_apply_mode`) —
    the record's `apply_mode` is `direct` or `gitops`. A `gitops` release's
    resources belong to a controller, so a Sol direct apply plus immediate

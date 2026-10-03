@@ -53,3 +53,4 @@ val of_recorded_boundary
 val to_string : t -> string
 val of_string : string -> (t, string) result
 val canonical_string : content -> string
+val encoding_version : string
