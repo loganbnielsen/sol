@@ -1,7 +1,8 @@
 open Result.Syntax
 
 let projection_dir ~workspace = Filename.concat workspace "contract"
-let has_projection ~workspace = Sys.file_exists (projection_dir ~workspace)
+let entry_point ~workspace = Filename.concat (projection_dir ~workspace) "run"
+let has_projection ~workspace = Sys.file_exists (entry_point ~workspace)
 
 type mode =
   | Check
@@ -14,7 +15,7 @@ let mode_arg = function
   | Projection -> "--json"
 ;;
 
-let run ~echo ~workspace ~registry_url ~mode =
+let run ~echo ~workspace ~registry_url ~scope ~mode =
   if not (has_projection ~workspace)
   then Ok None
   else (
@@ -23,15 +24,15 @@ let run ~echo ~workspace ~registry_url ~mode =
         ~cwd:workspace
         ~env:[ "SCHEMA_REGISTRY_URL", registry_url ]
         ~timeout_s:300.
-        [ "dune"; "exec"; "./contract/contract.exe"; "--"; mode_arg mode ]
+        [ "sh"; "./contract/run"; mode_arg mode; "--scope"; scope ]
     in
     match Sol_cli_process.run ~echo cmd with
     | Ok out -> Ok (Some out.stdout)
     | Error e -> Error (Sol_cli_process.error_to_string e))
 ;;
 
-let report ~workspace ~registry_url ~mode =
-  match run ~echo:true ~workspace ~registry_url ~mode with
+let report ~workspace ~registry_url ~scope ~mode =
+  match run ~echo:true ~workspace ~registry_url ~scope ~mode with
   | Error msg -> Error msg
   | Ok None -> Ok ()
   | Ok (Some output) ->
@@ -89,12 +90,12 @@ let print_declared_contract events =
     events
 ;;
 
-let plan_report ~workspace ~registry_url =
+let plan_report ~workspace ~registry_url ~scope =
   if not (has_projection ~workspace)
   then Ok ()
   else (
     let registry_url = Option.value registry_url ~default:"" in
-    (match run ~echo:false ~workspace ~registry_url ~mode:Projection with
+    (match run ~echo:false ~workspace ~registry_url ~scope ~mode:Projection with
      | Error msg ->
        Sol_cli_report.warn "warning: could not project the declared contract: %s" msg
      | Ok None -> ()
@@ -111,7 +112,7 @@ let plan_report ~workspace ~registry_url =
          "  registry: not observed (no SCHEMA_REGISTRY_URL; a private registry is only \
           reachable from the destination, and `sol deploy` reconciles it there)\n"
      | registry_url ->
-       (match run ~echo:false ~workspace ~registry_url ~mode:Check with
+       (match run ~echo:false ~workspace ~registry_url ~scope ~mode:Check with
         | Ok (Some output) ->
           String.split_on_char '\n' output
           |> List.iter (fun line ->
@@ -122,31 +123,19 @@ let plan_report ~workspace ~registry_url =
     Ok ())
 ;;
 
-let scope_has_ocaml services =
-  List.exists
+let reconciliation_images services =
+  let seen = ref [] in
+  List.filter_map
     (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-       spec.Sol_cli_deployment_plan.language <> Some Sol_cli_compat.Typescript)
+       if List.mem spec.Sol_cli_deployment_plan.language !seen
+       then None
+       else (
+         seen := spec.Sol_cli_deployment_plan.language :: !seen;
+         Some
+           ( Sol_cli_deployment_plan.namespace_to_string
+               spec.Sol_cli_deployment_plan.namespace
+           , spec.Sol_cli_deployment_plan.image )))
     services
-;;
-
-let ocaml_reconciliation_image services =
-  let is_typescript (spec : Sol_cli_deployment_plan.service_spec) =
-    spec.Sol_cli_deployment_plan.language = Some Sol_cli_compat.Typescript
-  in
-  let candidate =
-    match
-      List.find_opt
-        (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-           spec.Sol_cli_deployment_plan.language = Some Sol_cli_compat.Ocaml)
-        services
-    with
-    | Some spec -> Some spec
-    | None -> List.find_opt (fun spec -> not (is_typescript spec)) services
-  in
-  Option.map
-    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-       Sol_cli_deployment_plan.namespace_to_string spec.namespace, spec.image)
-    candidate
 ;;
 
 let reconcile_in_destination ~ctx ~namespace ~image =

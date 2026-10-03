@@ -5,9 +5,10 @@ running on Sol's deploy machinery (CLI, Docker builds, Kubernetes manifests
 are all language-neutral) and consuming Sol's own conventions via five published
 npm packages:
 
-- [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — schema
-  registry ordering/fatality, explicit topic provisioning, the Confluent wire
-  format, the `Ack | Fail` outcome and the group-scoped decode DLQ.
+- [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — declared
+  partitioning and keys, explicit topic provisioning, the read-only runtime
+  contract, the Confluent wire format, the `Ack | Fail` outcome, the group-scoped
+  decode DLQ, and the contract projection program Sol's deploy lifecycle runs.
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric naming/label
   vocabulary, Loki push shape, and W3C traceparent propagation.
 - [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
@@ -19,6 +20,16 @@ npm packages:
 - [`@sol-fab/jobs`](https://github.com/loganbnielsen/sol-typescript) — the durable
   Postgres job queue, matching `sol-jobs`: a transactional, dedupe-keyed enqueue
   and a leased runner.
+
+Alongside them, the local `@demo-ts/contract` workspace package is the single
+source of truth for the `OrderPlaced` event: `order_svc` imports it to produce,
+and its `main.ts` is the workspace's projection program. `sol up --scope=demo_ts`
+runs it (`npm run contract`) before any workload, so the topic and subject are
+registered by the deployment lifecycle; `order_svc` itself only resolves the
+topic and schema id at startup and fails if the contract is not registered —
+the same BUG-105 split an OCaml `sol-svc`/`sol-worker` follows. Both images
+install `/usr/local/bin/contract` so `sol deploy` can reconcile the contract
+from inside the destination, where a private registry is reachable.
 
 `fulfillment_worker` also demonstrates the Kafka → job handoff: handling an order
 writes `fulfilled_orders_ts` **and** enqueues a `send_confirmation` job in one

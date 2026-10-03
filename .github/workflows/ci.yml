@@ -1087,6 +1087,20 @@ jobs:
         timeout-minutes: 5
         run: bash internal/tooling/scripts/ci-toolchain.sh
 
+      # FEAT-119: `sol up` reconciles the scope's contract projection from the
+      # workspace, so this path needs the language toolchain just as the OCaml
+      # golden path needs dune. The demo images still build with no host Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/pluto/app/demo_ts/package-lock.json
+
+      - name: Install demo_ts npm dependencies (the contract projection's toolchain)
+        timeout-minutes: 5
+        working-directory: examples/pluto/app/demo_ts
+        run: npm ci
+
       - name: TypeScript golden-path smoke test
         timeout-minutes: 18
         run: |

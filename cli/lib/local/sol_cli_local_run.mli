@@ -25,4 +25,5 @@ val plan
 val label : Sol_cli_manifest.service -> string
 val build_line : command -> string
 val launch_line : command -> string
+val dev_registry_url : string
 val dev_env : (string * string) list

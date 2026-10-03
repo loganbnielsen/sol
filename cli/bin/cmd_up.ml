@@ -263,13 +263,11 @@ let record_release_and_prune ~workspace ~keep ~previous ~retained plan =
 let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
     let* () =
-      if Sol_cli_contract.scope_has_ocaml plan.Sol_cli_deployment_plan.services
-      then
-        Sol_cli_contract.report
-          ~workspace:repo_root
-          ~registry_url:"http://localhost:8081"
-          ~mode:Sol_cli_contract.Apply
-      else Ok ()
+      Sol_cli_contract.report
+        ~workspace:repo_root
+        ~registry_url:"http://localhost:8081"
+        ~scope:plan.Sol_cli_deployment_plan.requested_scope
+        ~mode:Sol_cli_contract.Apply
     in
     plan.services
     |> List.fold_left

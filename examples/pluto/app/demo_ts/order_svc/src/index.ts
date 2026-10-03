@@ -4,7 +4,8 @@ import { Pushgateway } from "@prometheus-io/client";
 import { context, propagation, SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
-import { kafkaConfigFromEnv, registerTopic, publish, type TopicContract } from "@sol-fab/kafka";
+import { connectTopic, kafkaConfigFromEnv, publish } from "@sol-fab/kafka";
+import { ORDER_PLACED, type OrderPlaced } from "@demo-ts/contract";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
 import { runService, type ServiceLifecycle } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
@@ -38,33 +39,7 @@ const KAFKA_ENV = kafkaConfigFromEnv();
 const SCHEMA_REGISTRY_URL = requiredEnv("SCHEMA_REGISTRY_URL");
 const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
-const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
-const PARTITIONS = 3;
-
-const ORDER_PLACED_SCHEMA = JSON.stringify({
-  type: "object",
-  properties: {
-    order_id: { type: "string" },
-    item: { type: "string" },
-    quantity: { type: "integer" },
-    correlation_id: { type: "string" },
-  },
-  required: ["order_id", "item", "quantity", "correlation_id"],
-});
-
-interface OrderPlaced {
-  order_id: string;
-  item: string;
-  quantity: number;
-  correlation_id: string;
-}
-
-const ORDER_PLACED: TopicContract<OrderPlaced> = {
-  name: TOPIC_NAME,
-  schema: ORDER_PLACED_SCHEMA,
-  partitions: PARTITIONS,
-  key: (order) => order.order_id,
-};
+const TOPIC_NAME = ORDER_PLACED.name;
 
 const log = makeLokiPusher({
   lokiUrl: LOKI_URL,
@@ -79,12 +54,12 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "order-svc-ts", ...KAFKA_ENV });
 
-  const topic = await registerTopic({
+  const topic = await connectTopic({
     kafka,
     registryUrl: SCHEMA_REGISTRY_URL,
     contract: ORDER_PLACED,
   });
-  console.log(`[order-svc-ts] schema registered, id=${topic.schemaId}`);
+  console.log(`[order-svc-ts] contract resolved, schema id=${topic.schemaId}`);
 
   const producer = kafka.producer();
   await producer.connect();

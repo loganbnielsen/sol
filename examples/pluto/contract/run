@@ -1,0 +1,20 @@
+#!/bin/sh
+# The pluto workspace has two event languages: the OCaml events in
+# contract/contract.exe and the TypeScript demo's contract package. Dispatch on
+# the requested scope so a single-language scope needs only that language's
+# toolchain, the way a single-language workspace would.
+scope=""
+previous=""
+for argument in "$@"; do
+  if [ "$previous" = "--scope" ]; then scope="$argument"; fi
+  previous="$argument"
+done
+
+case "$scope" in
+  demo_ts|demo_ts/*)
+    exec npm --prefix app/demo_ts run --silent contract -- "$@"
+    ;;
+  *)
+    exec dune exec ./contract/contract.exe -- "$@"
+    ;;
+esac

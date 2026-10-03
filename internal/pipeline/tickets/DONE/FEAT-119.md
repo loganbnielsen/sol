@@ -64,3 +64,68 @@ The existing OCaml behavior is unchanged behind the entry point; the object form
 `--json`/`--check`/`--apply` protocol are byte-compatible, so Sol consumes both languages
 through one code path.
 
+## Done (2026-10-02)
+
+**`@sol-fab/kafka` 0.5.1** (`loganbnielsen/sol-kafka` PR #8, #10; tag `v0.5.1`, OIDC
+trusted publish with provenance):
+
+- `provisionTopic` / `resolveContract` / `connectTopic` are the read-only runtime: provision
+  the topic, check reader compatibility, resolve the registered schema id, and fail when the
+  declared contract is not registered. Replaces the runtime `registerTopic`, which
+  registered *before* setting compatibility and swallowed the compatibility failure.
+- `registerContract` is the only write path (set `FULL`, then register; both fatal);
+  `checkCompatibility` now treats only the registry's 40401/40402 as "not registered yet".
+- `contractProjection` emits BUG-105's object and `runContractCli` implements
+  `--json`/`--check`/`--apply` with the OCaml program's exact modes and output.
+- Tests: 60 cases, 60 pass (including the broker-backed multi-partition integration case,
+  which now registers through `registerContract` and connects read-only through
+  `connectTopic`). A snapshot test asserts the runtime issues no version `POST` and no
+  compatibility `PUT`.
+
+**Sol** (`cli`, examples, docs):
+
+- `Sol_cli_contract` runs `sh ./contract/run <mode> --scope <scope>`; `has_projection` is
+  `contract/run`; `reconciliation_images` returns one image per language in scope; the
+  `scope_has_ocaml`/`declares_ocaml` language gates are gone from `sol up`, `sol deploy` and
+  `sol plan`. `sol local run` now reconciles the scope's contract before it starts a unit,
+  which the read-only runtime requires.
+- Scaffold, `examples/pluto` and `internal/fixtures/venus` each gained `contract/run`;
+  pluto's dispatches on scope.
+- `examples/pluto/app/demo_ts` gained `@demo-ts/contract` (the single declared source of
+  truth for `OrderPlaced`; `order_svc` imports it). Its `main.ts` is the projection program;
+  both images install `/usr/local/bin/contract`.
+- Docs: `internal/specs/framework-conventions.md`, `kafka-eio-service.md`, `CHANGELOG.md`,
+  the demo README, and the capability matrix (`2026-10-02_cross_language_contract_audit.md`
+  row 6 → implemented, § 4.3 resolved).
+
+**Qualification.** Against the local broker + schema registry: `sh ./contract/run --apply
+--scope demo_ts` registered `OrderPlaced` (schema id 3) and `--check` reported it
+compatible; the demo built (`npm run build`) with the JSON object matching the OCaml shape;
+the `order_svc` image built and its `/usr/local/bin/contract --json` emitted the same
+object in-container. `golden-path-smoke-ts` (`sol up --scope=demo_ts` on a real k3d cluster)
+is the end-to-end gate.
+
+**Checks run.** `@sol-fab/kafka`: `tsc` clean, 60/60 tests. Sol: `dune build cli/bin/main.exe`
+clean; `dune build @ci-unit` — the two pre-existing scaffold-compile cases fail only because
+this switch lacks the extracted framework packages (`sol-obs`/`kafka-eio-service` not
+installed; CI installs them), everything else green; demo `npm run build` clean; the contract
+Job render test updated and passing. `check_no_comments` covers none of the new `contract/run`
+files (extensionless) or the workflow edit; `pipeline validate` runs in CI.
+
+**Demo/example coverage.** This ticket *is* the TypeScript example update, and the two
+golden paths are the regression guard.
+
+**Language parity.** Closes the schema-registry row of the capability matrix: both languages
+register only from the deployment lifecycle, both runtimes read only, and both emit the same
+projection object from a `contract/run` entry point. `@sol-fab/obs`/`@sol-fab/worker` are
+unaffected.
+
+**Limitations recorded, not blocking.**
+
+- A mixed workspace's `contract/run` must dispatch on scope itself (pluto's does); Sol
+  deliberately does not learn which language a scope needs.
+- `sol local run` now needs the workspace's own toolchain (Node for the TS demo) because the
+  projection runs from source; the TypeScript golden-path job gained `setup-node` + `npm ci`
+  for exactly that.
+- `-fn`, auth, peer calls and `@sol-fab/worker`'s `on_ready` remain the matrix's other rows
+  (deferred or owned elsewhere).

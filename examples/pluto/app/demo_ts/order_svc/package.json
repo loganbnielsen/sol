@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "npm run build --workspace @demo-ts/contract && tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@demo-ts/contract": "*",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
     "@opentelemetry/resources": "^2.11.0",
@@ -15,7 +16,7 @@
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@prometheus-io/client": "^0.16.1",
-    "@sol-fab/kafka": "^0.4.0",
+    "@sol-fab/kafka": "^0.5.1",
     "@sol-fab/obs": "^0.3.0",
     "@sol-fab/svc": "^0.2.0",
     "fastify": "^5.1.0",

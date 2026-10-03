@@ -7,6 +7,22 @@ not a full commit log — see `git log` and `internal/pipeline/tickets/DONE/` fo
 
 ## Unreleased
 
+- **Breaking (FEAT-119):** the contract projection entry point is now a
+  language-neutral executable, `contract/run`, invoked by Sol as
+  `sh ./contract/run <--json|--check|--apply> --scope <scope>`. A workspace whose
+  events are OCaml supplies a one-line `contract/run` that runs the generated
+  `contract/contract.exe`; a TypeScript workspace supplies its own projection
+  program. `sol up`, `sol deploy` and `sol plan` drive both the same way, and the
+  in-destination reconciliation runs one Job per language in the deploy's scope
+  (every app image installs the program at `/usr/local/bin/contract`). A
+  workspace with no `contract/run` has no projection and is skipped. Because a
+  runtime only reads the registry, `sol local run` reconciles the scope's
+  contract before it starts a unit, the way `sol up` does before it applies.
+- **Breaking (FEAT-119):** `@sol-fab/kafka` no longer registers at runtime.
+  `connectTopic` provisions the topic and resolves the registered schema
+  read-only (failing when the declared contract is not registered);
+  `registerContract` is the only write path, and `runContractCli` implements the
+  projection program's `--json`/`--check`/`--apply`. `registerTopic` is removed.
 - **Behavior change (BUG-105):** runtime schema registration is removed. `Worker.Make`
   and producer units no longer write to the schema registry: `Kafka_service.register`
   provisions the topic and resolves the declared schema (read-only), failing when the

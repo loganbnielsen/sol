@@ -2282,36 +2282,28 @@ let test_contract_scope_rule () =
   let ocaml_spec = { svc_spec with language = Some Sol_cli_compat.Ocaml } in
   let ts_spec = { worker_spec with language = Some Sol_cli_compat.Typescript } in
   let undeclared = { svc_spec with language = None } in
+  let images = Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string) in
   Windtrap.equal
-    Windtrap.bool
-    ~msg:"an all-TypeScript scope is skipped"
-    false
-    (Sol_cli_contract.scope_has_ocaml [ ts_spec ]);
+    images
+    ~msg:"a TypeScript-only scope reconciles its own image"
+    [ "myapp-comms", ts_spec.image ]
+    (Sol_cli_contract.reconciliation_images [ ts_spec ]);
   Windtrap.equal
-    Windtrap.bool
-    ~msg:"an OCaml scope is reconciled"
-    true
-    (Sol_cli_contract.scope_has_ocaml [ ocaml_spec ]);
+    images
+    ~msg:"a mixed scope reconciles one image per language"
+    [ "myapp-comms", ts_spec.image; "myapp-payments", ocaml_spec.image ]
+    (Sol_cli_contract.reconciliation_images [ ts_spec; ocaml_spec ]);
   Windtrap.equal
-    Windtrap.bool
-    ~msg:"a mixed scope is reconciled"
-    true
-    (Sol_cli_contract.scope_has_ocaml [ ts_spec; ocaml_spec ]);
+    images
+    ~msg:"units sharing a language share the workspace projection and one Job"
+    [ "myapp-payments", ocaml_spec.image ]
+    (Sol_cli_contract.reconciliation_images
+       [ ocaml_spec; { ocaml_spec with image = "sol-registry:5000/myapp/other:abc123" } ]);
   Windtrap.equal
-    Windtrap.bool
-    ~msg:"an undeclared language is reconciled (it errs toward OCaml)"
-    true
-    (Sol_cli_contract.scope_has_ocaml [ undeclared ]);
-  Windtrap.equal
-    (Windtrap.option (Windtrap.pair Windtrap.string Windtrap.string))
-    ~msg:"no OCaml image for an all-TypeScript scope"
-    None
-    (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec ]);
-  Windtrap.equal
-    (Windtrap.option (Windtrap.pair Windtrap.string Windtrap.string))
-    ~msg:"the OCaml image is chosen from a mixed scope"
-    (Some ("myapp-payments", svc_spec.image))
-    (Sol_cli_contract.ocaml_reconciliation_image [ ts_spec; ocaml_spec ])
+    images
+    ~msg:"an undeclared language still reconciles"
+    [ "myapp-payments", undeclared.image ]
+    (Sol_cli_contract.reconciliation_images [ undeclared ])
 ;;
 
 let%test
@@ -2785,6 +2777,6 @@ let%test
   test_contract_job_manifest ()
 ;;
 
-let%test "contract reconciliation: reconciliation is gated on an OCaml workload in scope" =
+let%test "contract reconciliation: one in-destination Job per language in scope" =
   test_contract_scope_rule ()
 ;;

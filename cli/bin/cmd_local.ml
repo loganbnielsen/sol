@@ -240,7 +240,7 @@ let resolve_run workspace_dir scope =
   if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
   then Unix.chdir facts.Sol_cli_workspace_model.root;
   let inventory = Sol_cli_workspace_model.services facts in
-  let* { services; _ } =
+  let* { requested_scope; services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:
         "no Sol services found. Expected app/<domain>/<name>_{svc,worker,fn}/ \
@@ -258,6 +258,14 @@ let resolve_run workspace_dir scope =
       |> List.iter (fun (label, message) ->
         Printf.eprintf "error: %s %s\n%!" label message);
       Error (Sol_cli_exit.reported ())
+  in
+  let* () =
+    Sol_cli_contract.report
+      ~workspace:facts.Sol_cli_workspace_model.root
+      ~registry_url:Sol_cli_local_run.dev_registry_url
+      ~scope:requested_scope
+      ~mode:Sol_cli_contract.Apply
+    |> Sol_cli_exit.of_msg
   in
   Ok (services, plan)
 ;;
