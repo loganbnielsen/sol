@@ -49,6 +49,12 @@ For teams that have outgrown Sol's model entirely. Write your own Deployments,
 Services, and Terraform modules. Sol does not generate or manage these
 resources. You retain full control and full responsibility.
 
+This is the same boundary stated as a principle: Sol plans and reconciles only
+the resources its contracts declare, and integration with infrastructure you
+manage outside Sol is yours to arrange through the stable identities, roles,
+service accounts, namespaces and endpoints Sol exposes. See
+[ADR 0005](../architecture/adr/0005-sol-owns-only-its-contract-boundary.md).
+
 ---
 
 ## Supported `sol.toml` overrides

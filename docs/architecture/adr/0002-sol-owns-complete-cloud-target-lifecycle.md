@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-17
 - **Scope:** AWS `production-single-region/v1`; provider boundary designed for later implementations
+- **Related:** ADR 0005 (Sol owns only its declared contract boundary) — "complete" here means every phase of the lifecycle for the resources the target declares, not that Sol owns arbitrary infrastructure in the account.
 
 ## Context
 

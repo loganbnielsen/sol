@@ -79,3 +79,9 @@ provider — must never be treated as ABSENT. The non-construction invariant is
 preserved: reconciliation may remove stale Sol state but must never create
 infrastructure to make destroy possible. Promoted to
 `READY_FOR_ENGINEERING`.
+
+## Reconciliation (2026-10-03, ADR 0005)
+
+ADR 0005 bounds this work: the reconciliation it authorises covers state Sol
+owns (its own platform root), and it never becomes a licence to discover,
+import or mutate resources the user manages outside Sol.
