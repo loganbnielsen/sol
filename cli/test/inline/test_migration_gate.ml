@@ -74,7 +74,9 @@ let test_verify_refuses_a_file_at_the_migrations_path () =
     Windtrap.equal Windtrap.bool ~msg:"names the path" true (contains message path)
   | Sol_cli_migration_gate.No_migrations ->
     Windtrap.fail "a file at the migrations path must not read as 'no migrations'"
-  | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
+  | Sol_cli_migration_gate.Satisfied _
+  | Sol_cli_migration_gate.Unsatisfied _
+  | Sol_cli_migration_gate.Drifted _ ->
     Windtrap.fail "a file at the migrations path must not be verified"
 ;;
 
@@ -93,7 +95,9 @@ let test_verify_refuses_an_unreadable_migrations_dir () =
          | Sol_cli_migration_gate.No_migrations ->
            Windtrap.fail
              "an unreadable migrations directory must not read as 'no migrations'"
-         | Sol_cli_migration_gate.Satisfied _ | Sol_cli_migration_gate.Unsatisfied _ ->
+         | Sol_cli_migration_gate.Satisfied _
+         | Sol_cli_migration_gate.Unsatisfied _
+         | Sol_cli_migration_gate.Drifted _ ->
            Windtrap.fail "an unreadable migrations directory must not be verified"))
 ;;
 

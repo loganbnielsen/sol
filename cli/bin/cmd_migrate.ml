@@ -169,32 +169,56 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
 
 let require_valid_migrations dir = Sol_cli_migration.required ~dir |> Result.map ignore
 
+let status_rows (rows : Migration.status list) : Sol_cli_migration.status_row list =
+  List.map
+    (fun (s : Migration.status) ->
+       { Sol_cli_migration.version = s.version
+       ; name = s.name
+       ; applied = s.applied_at <> None
+       ; applied_at = s.applied_at
+       ; recorded_checksum = s.checksum
+       ; content_checksum = Some s.content_checksum
+       })
+    rows
+;;
+
 let run_status ~ctx ?(json = false) dir table () =
   let* () = require_valid_migrations dir in
   let* url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
-    let* rows =
+    let* statuses =
       Migration.status ~table pool ~dir ~fs |> Result.map_error (pg_error_to_string ~url)
     in
-    Ok
-      (if json
-       then
-         print_endline
-           (Sol_cli_migration.status_json
-              ~table
-              (rows
-               |> List.map (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
-              ))
-       else (
-         Printf.printf "%-6s  %-30s  %s\n" "VER" "NAME" "APPLIED AT";
-         Printf.printf "%s\n" (String.make 60 '-');
-         rows
-         |> List.iter (fun (s : Migration.status) ->
-           Printf.printf
-             "%-6d  %-30s  %s\n"
-             s.version
-             s.name
-             (Option.value ~default:"(pending)" s.applied_at)))))
+    let rows = status_rows statuses in
+    let drifted = List.filter_map Sol_cli_migration.drift_of_row rows in
+    if json
+    then (
+      print_endline (Sol_cli_migration.status_json ~table rows);
+      Ok ())
+    else (
+      Printf.printf "%-6s  %-30s  %-8s  %s\n" "VER" "NAME" "DRIFT" "APPLIED AT";
+      Printf.printf "%s\n" (String.make 72 '-');
+      rows
+      |> List.iter (fun (row : Sol_cli_migration.status_row) ->
+        Printf.printf
+          "%-6d  %-30s  %-8s  %s\n"
+          row.version
+          row.name
+          (if Option.is_some (Sol_cli_migration.drift_of_row row) then "yes" else "-")
+          (Option.value ~default:"(pending)" row.applied_at));
+      if drifted = []
+      then Ok ()
+      else (
+        Sol_cli_report.err
+          "\nerror: %d applied migration(s) no longer match the file in this revision:"
+          (List.length drifted);
+        List.iter
+          (fun d -> Sol_cli_report.err "  - %s" (Sol_cli_migration.drift_message d))
+          drifted;
+        Sol_cli_report.err
+          "Restore each file to the content that was applied, or put the change in a new \
+           migration and apply it. A deploy of this revision fails until they agree.";
+        Error "an applied migration was edited after it was applied")))
 ;;
 
 let run_rollback ~ctx dir table () =
@@ -364,7 +388,11 @@ let json_flag =
 
 let status_cmd =
   Cmd.v
-    (Cmd.info "status" ~doc:"Show per-file applied/pending status")
+    (Cmd.info
+       "status"
+       ~doc:
+         "Show per-file applied/pending status, and drift in an applied migration whose \
+          file changed")
     Term.(const run_status_term $ dir_arg $ table_arg $ json_flag)
 ;;
 

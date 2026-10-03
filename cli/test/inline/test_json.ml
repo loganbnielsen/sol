@@ -85,10 +85,13 @@ let test_migration_status () =
     (Windtrap.list Windtrap.int)
     ~msg:"applied versions only"
     [ 2 ]
-    (ok
-       "status"
-       (Sol_cli_migration.parse_status_json
-          {|{"migrations":[{"applied":false,"version":1},{"applied":true,"version":2}]}|}))
+    (match
+       ok
+         "status"
+         (Sol_cli_migration.parse_status_json
+            {|{"migrations":[{"applied":false,"version":1,"name":"a"},{"applied":true,"version":2,"name":"b"}]}|})
+     with
+     | status -> status.Sol_cli_migration.applied)
 ;;
 
 let test_release_and_deployment_lists () =

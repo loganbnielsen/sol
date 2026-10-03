@@ -17,7 +17,7 @@ obs-eio https://github.com/loganbnielsen/obs-eio.git b425c55eba8b1bc65378d7fc7d6
 obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git 148a970651b299114b881bb382d3590caf8d38fa
 obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git 5f443342fd20a36551336f27f7dbb93ab90e73bb
 obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git e117aece43bd498ea4b2af62a4572f2f3c8fc93a
-pg-eio https://github.com/loganbnielsen/pg-eio.git 53ad39427cb93af916a7fa73fe414073ad6bbc2e
+pg-eio https://github.com/loganbnielsen/pg-eio.git 0c47f9115fefd90524cce33e6c92e8c87f51cfa1
 aws-eio https://github.com/loganbnielsen/aws-eio.git 2a22706eeb157a38cea38e63d6919c0ed181544f
 s3-eio https://github.com/loganbnielsen/s3-eio.git 81aa867f061b1b893696553e390f37f5bac954a8
 dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git 3d57fb8fc14bb0d0cb10cd6d44bd077ea1f4553e

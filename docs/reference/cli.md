@@ -132,7 +132,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol ci init` | PROVIDER | `--force` | documented | Write the supported CI workflow into the current |
 | `sol fn run` | DOMAIN/NAME | `--target=ENV/PROVIDER/REGION` | documented | Manually invoke a deployed -fn: creates one Kubernetes |
 | `sol migrate rollback` | — | `--dir=DIR`, `--table=TABLE` | documented | Roll back the last applied migration |
-| `sol migrate status` | — | `--dir=DIR`, `--json`, `--table=TABLE` | documented | Show per-file applied/pending status |
+| `sol migrate status` | — | `--dir=DIR`, `--json`, `--table=TABLE` | documented | Show per-file applied/pending status, and drift |
 | `sol new event` | TEAM/NAME | — | documented | Add a typed Kafka event contract to the current |
 | `sol new fn` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add a scheduled function to the current workspace |
 | `sol new svc` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add an HTTP service to the current workspace |

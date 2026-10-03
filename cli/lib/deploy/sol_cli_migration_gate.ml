@@ -48,9 +48,10 @@ type verification =
   | No_migrations
   | Satisfied of int list
   | Unsatisfied of Sol_cli_migration.prerequisite list
+  | Drifted of Sol_cli_migration.drift list
   | Unavailable of string
 
-let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
+let read_status ~ctx ~target ~workspace ~dir ~table ~services =
   let* cfg =
     Sol_cli_config.load_for_target ~target
     |> Result.map_error Sol_cli_config.error_to_string
@@ -123,16 +124,24 @@ let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
   result
 ;;
 
+let read_applied ~ctx ~target ~workspace ~dir ~table ~services =
+  read_status ~ctx ~target ~workspace ~dir ~table ~services
+  |> Result.map (fun (status : Sol_cli_migration.applied_status) -> status.applied)
+;;
+
 let verify ~ctx ~target ~workspace ~dir ~services =
   match Sol_cli_migration.required_if_present ~dir with
   | Error e -> Unavailable e
   | Ok [] -> No_migrations
   | Ok required ->
     let table = Sol_cli_migration.table_name ~workspace in
-    (match read_applied ~ctx ~target ~workspace ~dir ~table ~services with
+    (match read_status ~ctx ~target ~workspace ~dir ~table ~services with
      | Error e -> Unavailable e
-     | Ok applied ->
-       (match Sol_cli_migration.unsatisfied ~required ~applied with
-        | [] -> Satisfied applied
-        | missing -> Unsatisfied missing))
+     | Ok status ->
+       (match status.drifted with
+        | _ :: _ as drifted -> Drifted drifted
+        | [] ->
+          (match Sol_cli_migration.unsatisfied ~required ~applied:status.applied with
+           | [] -> Satisfied status.applied
+           | missing -> Unsatisfied missing)))
 ;;

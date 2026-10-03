@@ -16,6 +16,7 @@ type verification =
   | No_migrations
   | Satisfied of int list
   | Unsatisfied of Sol_cli_migration.prerequisite list
+  | Drifted of Sol_cli_migration.drift list
   | Unavailable of string
 
 val read_applied
