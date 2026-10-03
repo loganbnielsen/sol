@@ -620,7 +620,21 @@ let load_string ~path text =
 let load path =
   if not (Sys.file_exists path)
   then Ok empty
-  else load_string ~path (In_channel.with_open_bin path In_channel.input_all)
+  else (
+    match In_channel.with_open_bin path In_channel.input_all with
+    | text -> load_string ~path text
+    | exception Sys_error message ->
+      let prefix = path ^ ": " in
+      let message =
+        if String.starts_with ~prefix message
+        then
+          String.sub
+            message
+            (String.length prefix)
+            (String.length message - String.length prefix)
+        else message
+      in
+      Error { path; line = 0; message })
 ;;
 
 let sol_yml_services_of_string ~path text =
