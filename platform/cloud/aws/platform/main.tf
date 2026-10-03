@@ -35,6 +35,7 @@ module "platform" {
   loki_persistent_storage                 = var.loki_persistent_storage
   prometheus_persistent_storage           = var.prometheus_persistent_storage
   observability_backend                   = var.observability_backend
+  platform_profile                        = var.platform_profile
   external_loki_url                       = var.external_loki_url
   external_loki_username                  = var.external_loki_username
   external_loki_password                  = var.external_loki_password

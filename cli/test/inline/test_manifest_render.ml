@@ -72,6 +72,7 @@ let workload
   ; config_hash = "test-hash"
   ; availability = Sol_cli_availability.Single
   ; consumes_kafka = false
+  ; kafka_tls = false
   ; readiness_path = "/readyz"
   ; shape
   ; replicas = 1
@@ -544,6 +545,65 @@ let test_svc_declares_kafka_security_protocol () =
     "svc declares the Kafka transport posture"
     workload
     {|KAFKA_SECURITY_PROTOCOL: "plaintext"|}
+;;
+
+let production_spec =
+  { svc_spec with config = Sol_cli_manifest.production_kafka_config @ svc_spec.config }
+;;
+
+let test_production_svc_declares_sasl_ssl () =
+  let _ns, workload = render_spec_ok production_spec in
+  assert_contains
+    "production posture is SASL_SSL"
+    workload
+    {|KAFKA_SECURITY_PROTOCOL: "sasl_ssl"|};
+  assert_contains
+    "production registry URL is HTTPS"
+    workload
+    {|SCHEMA_REGISTRY_URL: "https://redpanda.redpanda.svc.cluster.local:8081"|};
+  assert_contains
+    "production admin URL is HTTPS"
+    workload
+    {|REDPANDA_ADMIN_URL: "https://redpanda.redpanda.svc.cluster.local:9644"|};
+  assert_contains
+    "production CA path is the mounted file"
+    workload
+    {|KAFKA_SSL_CA_LOCATION: "/etc/sol/kafka/ca.crt"|};
+  assert_contains
+    "production SASL mechanism"
+    workload
+    {|KAFKA_SASL_MECHANISM: "SCRAM-SHA-256"|};
+  assert_contains "production SASL user" workload {|KAFKA_SASL_USERNAME: "sol-workloads"|}
+;;
+
+let test_production_svc_mounts_the_ca () =
+  let _ns, workload = render_spec_ok production_spec in
+  assert_contains "CA volume name" workload "name: kafka-ca";
+  assert_contains
+    "CA comes from the workload secret"
+    workload
+    "secretName: charge-svc-secrets";
+  assert_contains "CA secret key" workload "key: KAFKA_SSL_CA_CERT";
+  assert_contains "CA mount path" workload "mountPath: /etc/sol/kafka";
+  assert_contains "SASL password secret ref" workload "key: KAFKA_SASL_PASSWORD"
+;;
+
+let test_local_svc_has_no_kafka_ca_mount () =
+  let _ns, workload = render_spec_ok svc_spec in
+  assert_absent "no CA mount locally" workload "kafka-ca";
+  assert_absent "no CA path locally" workload "KAFKA_SSL_CA_LOCATION"
+;;
+
+let test_production_placeholder_secret_requires_kafka_keys () =
+  let _ns, workload =
+    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder production_spec
+  in
+  let secret_block = extract_kind_block workload "kind: Secret" in
+  assert_contains
+    "SASL password key in placeholder Secret"
+    secret_block
+    "KAFKA_SASL_PASSWORD:";
+  assert_contains "CA key in placeholder Secret" secret_block "KAFKA_SSL_CA_CERT:"
 ;;
 
 let test_svc_secret_refs_without_values () =
@@ -2353,6 +2413,7 @@ let test_image_user_matches_pod_security () =
 let test_contract_job_manifest () =
   let doc =
     Sol_cli_manifest.contract_job_doc
+      ~cluster_env:Sol_cli_manifest.default_cluster_env
       ~name:"sol-contract-1"
       ~namespace:"myapp-payments"
       ~image:"sol-registry:5000/myapp/charge-svc:abc123"
@@ -2552,6 +2613,14 @@ let%test "svc: default redpanda admin" = test_svc_default_redpanda_admin_url ()
 
 let%test "svc: svc declares KAFKA_SECURITY_PROTOCOL" =
   test_svc_declares_kafka_security_protocol ()
+;;
+
+let%test "svc: production declares SASL_SSL" = test_production_svc_declares_sasl_ssl ()
+let%test "svc: production mounts the Kafka CA" = test_production_svc_mounts_the_ca ()
+let%test "svc: local has no Kafka CA mount" = test_local_svc_has_no_kafka_ca_mount ()
+
+let%test "svc: production placeholder Secret requires Kafka keys" =
+  test_production_placeholder_secret_requires_kafka_keys ()
 ;;
 
 let%test "svc: secret refs no values" = test_svc_secret_refs_without_values ()

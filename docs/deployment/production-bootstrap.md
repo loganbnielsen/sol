@@ -281,6 +281,49 @@ named cluster_issuer was assigned on the command line, but the root module does
 not declare a variable of that name" — so a documented target using it could not
 provision at all.
 
+## Production Kafka transport (SASL_SSL)
+
+The `production-single-region` profile runs Redpanda with TLS and SASL
+(FEAT-093). The shared platform module enables both in the `durable` layer of
+`platform/shared/components.json`: cert-manager issues an in-cluster CA and the
+broker certificate, and the Kafka, schema-registry and admin listeners each get
+TLS. Sol sets the module's `platform_profile` from the target's profile,
+independently of `observability_backend`, so a production target whose telemetry
+goes to an external backend still gets the production transport.
+
+Sol never generates or stores the workload credential. Two operator steps make
+the transport usable, and both fail closed:
+
+1. **Create the broker's SASL users Secret in `redpanda` before the platform
+   apply.** The chart's `auth.sasl.secretRef` is `redpanda-users`; when that
+   Secret is absent the Redpanda release cannot start. Its `users.txt` holds
+   `name:password:mechanism`, one user per line:
+
+   ```bash
+   kubectl create secret generic redpanda-users -n redpanda \
+     --from-literal=users.txt="sol-workloads:$(your-secret-tool get sol-kafka-sasl-password):SCRAM-SHA-256"
+   ```
+
+2. **Give every workload namespace the credential and the CA.** `sol secret set`
+   writes the key to the runtime Secret and to every `<service>-secrets` in the
+   target's namespaces, creating them if needed:
+
+   ```bash
+   sol secret set KAFKA_SASL_PASSWORD --value "$(your-secret-tool get sol-kafka-sasl-password)" \
+     --target prod/aws/us-east-1
+   kubectl get secret redpanda-default-cert -n redpanda \
+     -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+   sol secret set KAFKA_SSL_CA_CERT --value "$(cat ca.crt)" --target prod/aws/us-east-1
+   ```
+
+   The CA is mounted from the workload Secret at `/etc/sol/kafka/ca.crt` and the
+   workload reads it through `KAFKA_SSL_CA_LOCATION`; the SASL user Sol renders
+   is `sol-workloads`, so the broker user and the username must agree.
+
+An ordinary `sol deploy` verifies every required key is present and non-empty
+before it applies a workload, so a production target never rolls out a workload
+that would fall back to the plaintext default or fail to verify the broker.
+
 ## Platform storage (finding 7 of HARDEN-002 run 2)
 
 The qualified substrate must be able to host the platform's own durable

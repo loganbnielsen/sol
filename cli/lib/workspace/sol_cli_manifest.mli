@@ -52,12 +52,22 @@ val identity_env
 
 val discover_error_to_string : discover_error -> string
 val discover_services : ?root:string -> unit -> (service list, discover_error) result
+
+type kafka_transport =
+  | Plaintext
+  | Sasl_ssl
+
+val kafka_transport : production:bool -> kafka_transport
+val kafka_tls : kafka_transport -> bool
+val kafka_transport_of_config : (string * string) list -> kafka_transport
+val cluster_env : kafka_transport -> (string * string) list
+val production_kafka_config : (string * string) list
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
 val workload_secret_name : string -> string
-val required_secret_keys : string list -> string list
-val config_hash : (string * string) list -> string
+val required_secret_keys : ?transport:kafka_transport -> string list -> string list
+val config_hash : (string * string) list -> (string * string) list -> string
 val sanitize_label_value : string -> string
 val namespace_doc : ns:string -> Sol_cli_yaml.document
 val deploy_role_binding_doc : ns:string -> Sol_cli_yaml.document
@@ -66,7 +76,8 @@ val service_account_doc : ns:string -> name:string -> Sol_cli_yaml.document
 val pdb_doc : ns:string -> name:string -> replicas:int -> Sol_cli_yaml.document
 
 val configmap_doc
-  :  ?extra_env:(string * string) list
+  :  ?cluster_env:(string * string) list
+  -> ?extra_env:(string * string) list
   -> ns:string
   -> name:string
   -> unit
@@ -104,6 +115,7 @@ module Workload_spec : sig
     ; config_hash : string
     ; availability : Sol_cli_availability.t
     ; consumes_kafka : bool
+    ; kafka_tls : bool
     ; readiness_path : string
     ; shape : workload_shape
     ; replicas : int
@@ -177,6 +189,7 @@ module Scheduled_workload_spec : sig
     ; backoff_limit : int
     ; cpu : string
     ; memory : string
+    ; kafka_tls : bool
     ; workspace : string
     ; domain : string
     ; release_id : Sol_cli_release_id.t
@@ -200,7 +213,8 @@ val migration_job_doc
   -> Sol_cli_yaml.document
 
 val contract_job_doc
-  :  name:string
+  :  cluster_env:(string * string) list
+  -> name:string
   -> namespace:string
   -> image:string
   -> command:string list

@@ -166,7 +166,25 @@
         }
       }
     },
-    "durable": {}
+    "durable": {
+      "tls": {
+        "enabled": true
+      },
+      "auth": {
+        "sasl": {
+          "enabled": true,
+          "mechanism": "SCRAM-SHA-256",
+          "secretRef": "redpanda-users"
+        }
+      },
+      "listeners": {
+        "schemaRegistry": {
+          "tls": {
+            "cert": "default"
+          }
+        }
+      }
+    }
   },
   "tempo": {
     "common": {},

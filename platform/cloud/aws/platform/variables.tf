@@ -125,6 +125,27 @@ variable "observability_backend" {
   }
 }
 
+variable "platform_profile" {
+  description = <<-EOT
+    The profile layer of platform/shared/components.json used for Sol's own
+    platform components (Redpanda, PostgreSQL):
+
+      local   — the dev/default shape; Redpanda stays plaintext.
+      durable — the production shape; Redpanda serves TLS-encrypted Kafka and
+                schema registry with SASL authentication.
+
+    Sol sets this from the target's platform profile, independently of the
+    observability backend: a production profile must get the production Kafka
+    transport even when its telemetry goes to an external backend.
+  EOT
+  type        = string
+  default     = "local"
+  validation {
+    condition     = contains(["local", "durable"], var.platform_profile)
+    error_message = "platform_profile must be one of: local, durable."
+  }
+}
+
 variable "external_loki_url" {
   description = "Loki push URL for the \"external\" profile, e.g. https://logs-prod-000.grafana.net/loki/api/v1/push. Required when observability_backend = \"external\"."
   type        = string
