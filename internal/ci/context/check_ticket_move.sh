@@ -73,7 +73,8 @@ for lower in $CANDIDATES; do
       printf '  ✓ %s moves %s to DONE\n' "$BRANCH" "$upper"
       continue
     fi
-    if printf '%s\n' "$SUBJECTS" | grep -qiE "\(${upper}, *part |part of: *${upper}"; then
+    declares_part="\(${upper,,}, *part |part of: *${upper,,}"
+    if [[ "${SUBJECTS,,}" =~ $declares_part ]]; then
       printf '  ✓ %s declares itself part of %s\n' "$BRANCH" "$upper"
       continue
     fi

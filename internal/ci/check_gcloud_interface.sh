@@ -19,13 +19,14 @@ if [ -z "$gcp_access_fn" ]; then
   report "could not extract the GCP cluster-access function for inspection"
 fi
 for flag in --kubeconfig; do
-  if printf '%s\n' "$gcp_access_fn" | grep -qF "\"$flag\""; then
-    report "Sol passes $flag to \`$subcommand\`, which does not accept it (Attempt 2)"
-  fi
+  case "$gcp_access_fn" in
+    *"\"$flag\""*) report "Sol passes $flag to \`$subcommand\`, which does not accept it (Attempt 2)" ;;
+  esac
 done
-if ! printf '%s\n' "$gcp_access_fn" | grep -q 'provisioner_kube_env path'; then
-  report "the GCP access call no longer exports its own KUBECONFIG"
-fi
+case "$gcp_access_fn" in
+  *'provisioner_kube_env path'*) ;;
+  *) report "the GCP access call no longer exports its own KUBECONFIG" ;;
+esac
 
 gcp_root="$root/platform/cloud/gcp/cluster"
 if ! grep -qE 'service_account_id = google_service_account\.provisioner\.name' \
@@ -47,9 +48,10 @@ if ! grep -qE 'variable "provisioner_impersonators"' "$gcp_root"/*.tf; then
   report "the GCP root does not declare provisioner_impersonators; the caller cannot be declared"
 fi
 gcp_keys="$(sed -n '/^  | Gcp ->/,/^  | [A-Z]/p' "$root/cli/lib/base/sol_cli_provider.ml")"
-if ! printf '%s\n' "$gcp_keys" | grep -qF '"provisioner_impersonator"'; then
-  report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_keys)"
-fi
+case "$gcp_keys" in
+  *'"provisioner_impersonator"'*) ;;
+  *) report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_keys)" ;;
+esac
 if ! grep -q 'provider_field target "provisioner_impersonator"' \
   "$root/cli/lib/cloud/sol_cli_provider_capabilities.ml"; then
   report "the GCP capabilities do not read the target's provisioner_impersonator"
@@ -64,7 +66,8 @@ if command -v gcloud >/dev/null 2>&1; then
     report "could not read \`gcloud $subcommand --help\`; cannot validate Sol's argv"
   fi
   flag_documented() {
-    printf '%s\n' "$help_text" | grep -qE "(^|[^-[:alnum:]])$1([^-[:alnum:]]|\$)"
+    local pattern="(^|[^-[:alnum:]])$1([^-[:alnum:]]|$)"
+    [[ "$help_text" =~ $pattern ]]
   }
   for flag in "${flags[@]}"; do
     if ! flag_documented "$flag"; then
