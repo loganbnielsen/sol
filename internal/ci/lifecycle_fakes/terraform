@@ -72,12 +72,16 @@ JSON
               *) exit 95 ;;
             esac
             case " $* " in
-              *" -target=google_container_cluster.main "*) : ;;
-              *) exit 96 ;;
-            esac
-            case " $* " in
-              *" -var=gke_deletion_protection=false "*) : ;;
-              *) exit 97 ;;
+              *" -target=google_container_cluster.main "*)
+                if [ "${SUBSTRATE_ABSENT_AT_PROVIDER:-}" = 1 ]; then exit 96; fi
+                case " $* " in
+                  *" -var=gke_deletion_protection=false "*) : ;;
+                  *) exit 97 ;;
+                esac
+                ;;
+              *)
+                if [ "${SUBSTRATE_ABSENT_AT_PROVIDER:-}" != 1 ]; then exit 96; fi
+                ;;
             esac
             ;;
         esac
@@ -211,15 +215,32 @@ JSON
         gke_guard=true
         [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
         [ -e "${GKE_PREPARED_FILE:-/nonexistent}" ] && gke_guard=false
-        printf '{"values":{"root_module":{"resources":[
-          {"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}},
-          {"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}},
-          {"address":"google_compute_global_address.sql_peering","type":"google_compute_global_address","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/addresses/sol-qual-sql-peering","project":"sol-qualification","name":"sol-qual-sql-peering"}},
-          {"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s,"self_link":"https://sqladmin.googleapis.com/sql/v1beta4/projects/sol-qualification/instances/sol-qual-postgres","project":"sol-qualification","region":"us-central1"}},
-          {"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s,"self_link":"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/sol-qual","project":"sol-qualification","location":"us-central1"}},
-          {"address":"google_project_iam_member.provisioner_cluster_access","type":"google_project_iam_member","values":{"project":"sol-qualification","role":"projects/sol-qualification/roles/solProvisionerClusterAccess"}}
-        ]}}}\n' \
-          "$sql_guard" "$gke_guard"
+        resources=""
+        add_resource() {
+          [ -z "$resources" ] || resources="$resources,"
+          resources="$resources$1"
+        }
+        forgotten() {
+          [ -n "${STATE_RM_FILE:-}" ] && [ -e "$STATE_RM_FILE" ] \
+            && grep -qxF "$1" "$STATE_RM_FILE"
+        }
+        forgotten google_compute_network.main ||
+          add_resource '{"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}}'
+        forgotten google_artifact_registry_repository.images ||
+          add_resource '{"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}}'
+        forgotten google_compute_global_address.sql_peering ||
+          add_resource '{"address":"google_compute_global_address.sql_peering","type":"google_compute_global_address","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/addresses/sol-qual-sql-peering","project":"sol-qualification","name":"sol-qual-sql-peering"}}'
+        forgotten google_sql_database_instance.postgres ||
+          add_resource "{\"address\":\"google_sql_database_instance.postgres\",\"type\":\"google_sql_database_instance\",\"values\":{\"deletion_protection\":$sql_guard,\"self_link\":\"https://sqladmin.googleapis.com/sql/v1beta4/projects/sol-qualification/instances/sol-qual-postgres\",\"project\":\"sol-qualification\",\"region\":\"us-central1\"}}"
+        if [ "${BOOTSTRAP_BINDING_IN_STATE:-}" = 1 ] \
+          && ! forgotten kubernetes_cluster_role_binding.provisioner_bootstrap_admin; then
+          add_resource '{"address":"kubernetes_cluster_role_binding.provisioner_bootstrap_admin","type":"kubernetes_cluster_role_binding","values":{"metadata":[{"name":"sol-provisioner-bootstrap"}]}}'
+        fi
+        forgotten google_container_cluster.main ||
+          add_resource "{\"address\":\"google_container_cluster.main\",\"type\":\"google_container_cluster\",\"values\":{\"deletion_protection\":$gke_guard,\"self_link\":\"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/sol-qual\",\"project\":\"sol-qualification\",\"location\":\"us-central1\"}}"
+        forgotten google_project_iam_member.provisioner_cluster_access ||
+          add_resource '{"address":"google_project_iam_member.provisioner_cluster_access","type":"google_project_iam_member","values":{"project":"sol-qualification","role":"projects/sol-qualification/roles/solProvisionerClusterAccess"}}'
+        printf '{"values":{"root_module":{"resources":[%s]}}}\n' "$resources"
         exit 0
         ;;
     esac
@@ -302,7 +323,7 @@ JSON
     ;;
   *" state rm "*)
     printf 'state-rm %s\n' "${!#}" >>"$LIFECYCLE_LOG"
-    : >"$STATE_RM_FILE"
+    printf '%s\n' "${!#}" >>"$STATE_RM_FILE"
     ;;
   *cloud/gcp/platform*" destroy "*|*cloud/aws/platform*" destroy "*)
     if [ "${PARTIAL_INSTALL:-}" = 1 ] && [ ! -e "${STATE_RM_FILE:-/nonexistent}" ]; then
@@ -325,15 +346,19 @@ JSON
       *) exit 95 ;;
     esac
     case " $* " in
-      *" -target=google_container_cluster.main "*) : ;;
-      *) exit 96 ;;
-    esac
-    case " $* " in
-      *" -var=gke_deletion_protection=false "*) : ;;
-      *) exit 97 ;;
+      *" -target=google_container_cluster.main "*)
+        if [ "${SUBSTRATE_ABSENT_AT_PROVIDER:-}" = 1 ]; then exit 96; fi
+        case " $* " in
+          *" -var=gke_deletion_protection=false "*) : ;;
+          *) exit 97 ;;
+        esac
+        : >"$GKE_PREPARED_FILE"
+        ;;
+      *)
+        if [ "${SUBSTRATE_ABSENT_AT_PROVIDER:-}" != 1 ]; then exit 96; fi
+        ;;
     esac
     : >"$GCP_SQL_PREPARED_FILE"
-    : >"$GKE_PREPARED_FILE"
     ;;
   *cloud/aws/cluster*" apply "*"provisioner_bootstrap_admin=true"*)
     printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"

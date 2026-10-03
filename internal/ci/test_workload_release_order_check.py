@@ -113,7 +113,7 @@ def main():
     )
 
     tmp = scratch()
-    mutate(tmp, DESTROY, "if substrate = Substrate_absent", "if false")
+    mutate(tmp, DESTROY, "if !substrate = Substrate_absent", "if false")
     expect_rejected(
         "no-substrate-carve-out",
         tmp,

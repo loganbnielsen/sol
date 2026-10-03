@@ -12,7 +12,8 @@ case "$1 $2" in
 esac
 case " $* " in
   *" container clusters list "*)
-    if [ "${SUBSTRATE_PRESENT_AT_PROVIDER:-}" = 1 ]; then
+    if [ "${SUBSTRATE_ABSENT_AT_PROVIDER:-}" != 1 ] &&
+      [ ! -e "${LIFECYCLE_LOG}.destroyed" ]; then
       case " $* " in
         *" --project sol-qualification "*|*" --project=sol-qualification "*) printf 'sol-qual\n' ;;
       esac

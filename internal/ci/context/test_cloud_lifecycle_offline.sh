@@ -1239,7 +1239,7 @@ rm -f "$STATE_RM_FILE"
 stale_platform_log="$tmp/gcp-stale-platform-state.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 DESTROYING=1 \
-        LIFECYCLE_LOG="$stale_platform_log" \
+        SUBSTRATE_ABSENT_AT_PROVIDER=1 LIFECYCLE_LOG="$stale_platform_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$stale_platform_log.out" 2>&1
 then
@@ -1290,7 +1290,7 @@ assert_contains "INFRA-082: the reconciled target reported verified absence" \
 
 stale_present_log="$tmp/gcp-stale-platform-state-present.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
-(cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 SUBSTRATE_PRESENT_AT_PROVIDER=1 \
+(cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 \
    DESTROYING=1 LIFECYCLE_LOG="$stale_present_log" \
    "$sol" cloud destroy prod/gcp/us-central1 --apply) >"$stale_present_log.out" 2>&1 || true
 if grep -F 'state-rm' "$stale_present_log" >/dev/null; then
@@ -1330,6 +1330,84 @@ fi
 grep -F 'cluster name is neither declared nor resolved' "$stale_unidentified_log.out" >/dev/null || {
   echo "INFRA-082: an unidentifiable substrate did not refuse the reconciliation:" >&2
   cat "$stale_unidentified_log.out" >&2
+  exit 1
+}
+rm -f "$STATE_RM_FILE"
+
+lost_substrate_log="$tmp/gcp-lost-substrate.log"
+rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+if ! (cd "$tmp/work" && BOOTSTRAP_BINDING_IN_STATE=1 SUBSTRATE_ABSENT_AT_PROVIDER=1 \
+        PARTIAL_INSTALL=1 DESTROYING=1 LIFECYCLE_LOG="$lost_substrate_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$lost_substrate_log.out" 2>&1
+then
+  cat "$lost_substrate_log.out" >&2
+  echo "INFRA-094: a target whose substrate the provider lost was not destroyable" >&2
+  exit 1
+fi
+grep -F "the substrate's absence is positively established at the provider" \
+  "$lost_substrate_log.out" >/dev/null || {
+  echo "INFRA-094: the reconciliation did not name the evidence that permitted it:" >&2
+  cat "$lost_substrate_log.out" >&2
+  exit 1
+}
+grep -F 'cannot exist once the cluster does not' "$lost_substrate_log.out" >/dev/null || {
+  echo "INFRA-094: the cloud state the provider outlived was not accounted for:" >&2
+  cat "$lost_substrate_log.out" >&2
+  exit 1
+}
+for forgotten in google_container_cluster.main \
+                 kubernetes_cluster_role_binding.provisioner_bootstrap_admin \
+                 module.platform.kubernetes_manifest.letsencrypt_prod \
+                 module.platform.kubernetes_namespace.cert_manager; do
+  grep -F "state-rm $forgotten" "$lost_substrate_log" >/dev/null || {
+    echo "INFRA-094: $forgotten still represents an object the provider does not have:" >&2
+    grep -F 'state-rm' "$lost_substrate_log" >&2
+    exit 1
+  }
+done
+prepare_line="$(grep -F -- '-target=google_sql_database_instance.postgres' \
+  "$lost_substrate_log" | grep -F ' plan ' | head -1 || true)"
+if [ -z "$prepare_line" ]; then
+  echo "INFRA-094: the destroy did not prepare the guarded instance that is still standing:" >&2
+  grep -F -- '-target=' "$lost_substrate_log" >&2
+  exit 1
+fi
+case "$prepare_line" in
+  *'-target=google_container_cluster.main'*)
+    echo "INFRA-094: the preparation still targeted a cluster the provider does not have:" >&2
+    printf '%s\n' "$prepare_line" >&2
+    exit 1
+    ;;
+esac
+if grep -E -- '-chdir=[^ ]*cloud/gcp/platform destroy' "$lost_substrate_log" >/dev/null; then
+  echo "INFRA-094: the destroy ran a platform teardown although nothing can be inside the cluster:" >&2
+  grep -E -- '-chdir=[^ ]*cloud/gcp/platform destroy' "$lost_substrate_log" >&2
+  exit 1
+fi
+if grep -F 'provisioner_bootstrap_admin=true' "$lost_substrate_log" >/dev/null; then
+  echo "INFRA-094: the destroy acquired bootstrap authority for a cluster that does not exist:" >&2
+  grep -F 'provisioner_bootstrap_admin=true' "$lost_substrate_log" >&2
+  exit 1
+fi
+if grep -F 'Releasing the application workloads' "$lost_substrate_log.out" >/dev/null; then
+  echo "INFRA-094: the destroy tried to release workloads from a cluster that does not exist:" >&2
+  exit 1
+fi
+grep -F 'no workload this target deployed' "$lost_substrate_log.out" >/dev/null || {
+  echo "INFRA-094: the destroy did not account for the workloads it could not reach:" >&2
+  cat "$lost_substrate_log.out" >&2
+  exit 1
+}
+if ! grep -E -- '^terraform -chdir=[^ ]*cloud/gcp/cluster destroy ' "$lost_substrate_log" >/dev/null; then
+  echo "INFRA-094: the destroy did not run the substrate destroy after reconciling:" >&2
+  grep -E -- ' destroy ' "$lost_substrate_log" >&2
+  exit 1
+fi
+assert_contains "INFRA-094: the reconciled target reported verified absence" \
+  "$lost_substrate_log.out" 'reached verified absence' || {
+  echo "INFRA-094: the reconciled destroy did not report verified absence:" >&2
+  cat "$lost_substrate_log.out" >&2
   exit 1
 }
 rm -f "$STATE_RM_FILE"

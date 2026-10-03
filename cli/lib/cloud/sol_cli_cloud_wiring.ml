@@ -817,11 +817,19 @@ let platform_state_reconciliation
          (List.map (fun (resource : resource) -> resource.address) resources))
 ;;
 
+let enters_the_cluster ~provider (resource : Sol_cli_cloud_destroy.resource) =
+  List.exists
+    (fun prefix -> String.starts_with ~prefix resource.Sol_cli_cloud_destroy.address)
+    (Sol_cli_provider_registry.substrate_addresses provider)
+  || Sol_cli_cloud_destroy.in_cluster_kind resource.Sol_cli_cloud_destroy.kind
+;;
+
 let provable_absence_reconciliation
       ~assets
       ~run_log
       ~provider
       ~(target_cfg : Sol_cli_config.target)
+      ~infra_dir
       ~platform_dir
       ~platform_backend
       ~var_files
@@ -829,36 +837,51 @@ let provable_absence_reconciliation
       ~state
   =
   let open Sol_cli_cloud_destroy in
-  match substrate_presence state with
-  | Substrate_present | Substrate_unknown -> Ok Nothing_to_reconcile
-  | Substrate_absent ->
+  let stale = List.filter (enters_the_cluster ~provider) (resources state) in
+  match stale, substrate_presence state with
+  | [], Substrate_present | [], Substrate_unknown -> Ok Nothing_to_reconcile
+  | stale, _ ->
     (match Sol_cli_terraform_vars.resolved "cluster_name" ~var_files ~vars with
      | None ->
        Sol_cli_report.warn
-         "warning: a target whose cloud root represents no substrate may carry stale \
-          platform state, but this target's cluster name is neither declared nor \
-          resolved, so the provider could not be asked about the substrate it belongs to \
-          and nothing was forgotten (a state entry is only forgotten on a positively \
-          established absence).";
+         "warning: this target's cloud root still represents a substrate, or resources \
+          that live inside one, whose existence the provider was never asked about: its \
+          cluster name is neither declared nor resolved, so nothing was forgotten (a \
+          state entry is only forgotten on a positively established absence).";
        Ok Nothing_to_reconcile
      | Some cluster_name ->
        (match
           Sol_cli_provider_registry.substrate_absence provider target_cfg ~cluster_name
         with
         | Sol_cli_absence.Absent _ as observation ->
+          let evidence = Sol_cli_absence.summary observation in
           Sol_cli_report.app
             "  the substrate's absence is positively established at the provider: %s"
-            (Sol_cli_absence.summary observation);
-          platform_state_reconciliation
-            ~assets
-            ~run_log
-            ~provider
-            ~platform_dir
-            ~platform_backend
-          |> Result.map (function
-            | [] -> Nothing_to_reconcile
-            | forgotten ->
-              Reconciled { evidence = Sol_cli_absence.summary observation; forgotten })
+            evidence;
+          if stale <> []
+          then
+            Sol_cli_report.app
+              "  this target's cloud state still represents %d resource(s) that live \
+               inside the cluster, which cannot exist once the cluster does not"
+              (List.length stale);
+          let* forgotten_cloud =
+            forget_addresses
+              ~run_log
+              ~phase:"destroy-forget-absent-substrate"
+              ~chdir:infra_dir
+              (List.map (fun (resource : resource) -> resource.address) stale)
+          in
+          let* forgotten_platform =
+            platform_state_reconciliation
+              ~assets
+              ~run_log
+              ~provider
+              ~platform_dir
+              ~platform_backend
+          in
+          (match forgotten_cloud @ forgotten_platform with
+           | [] -> Ok Nothing_to_reconcile
+           | forgotten -> Ok (Reconciled { evidence; forgotten }))
         | observation ->
           Sol_cli_report.warn
             "warning: the state a provably absent substrate leaves behind was not \
@@ -1032,6 +1055,7 @@ let destroy_deps
             ~run_log
             ~provider
             ~target_cfg
+            ~infra_dir
             ~platform_dir
             ~platform_backend
             ~var_files

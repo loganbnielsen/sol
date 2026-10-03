@@ -38,6 +38,9 @@ about. A destroy that cannot establish the workloads are released now stops befo
 anything. The valid core of the old rule is preserved as a carve-out and an override:
 
     the substrate is absent                  -> no cluster, no workload: the release is not attempted
+    the substrate is provably absent         -> the same, when the state still represents other cloud
+                                                objects but the provider no longer has the cluster
+                                                (INFRA-094: nothing inside it can be running)
     the cluster cannot be reached at all     -> proceed, recorded as a degradation (never stranded)
     the cluster answered and the read failed -> stop: absence is not established (DEC-038)
     a declared namespace does not exist      -> absence of that scope, not a failed release
