@@ -8,6 +8,10 @@ source: DEC-029 (2026-10-02 resolution) — the gated live runs in the saved P1�
 
 **Depends on:** None.
 
+**Related:** `HARDEN-007` — the AWS cell is collected inside the Run 9 target, and its exact
+commands and evidence are defined in `internal/qualification/aws/aws-run-procedure.md`
+§ *VERIF-021 — managed secret projection and the fenced grant*.
+
 ## Blocked On
 
 The operator's explicit authorization for a live-qualification run (AGENTS.md

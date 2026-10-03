@@ -189,6 +189,13 @@ The scenario is defined by ticket `FEAT-131` (the shared contract) and implement
 Legend: `local` = this host / k3d; `aws` / `gcp` = a real cloud target; `clean` = a
 machine with only the released bundle and no checkout.
 
+**The `aws` rows have one live obligation: `HARDEN-007` (Run 9).** Its operational package and
+the per-alpha-row map are in
+`internal/qualification/aws/aws-run-procedure.md` § *Run 9 — authorization → execute*, and its
+matrix-side reconciliation is `internal/qualification/aws/production-single-region-v1-matrix.md`
+§ *Before the next run (Run 9)*. A row already carrying a `PASS (LIVE)` verdict is only
+re-confirmed there; a row whose `aws` target has never been observed is that run's to move.
+
 ### A. New-user entry, install and scaffold
 
 | Row | Capability | Observable behaviour | OCaml evidence | TS evidence | Shared / substrate evidence | Target(s) | Existing obligation | Status |
@@ -243,9 +250,9 @@ machine with only the released bundle and no checkout.
 | E1 | Transport posture declared | absent `KAFKA_SECURITY_PROTOCOL` is an error; local sets `plaintext` | `config_of_env` | `@sol-fab/kafka` config | env/manifest | local | SEC-007 | PASS (LOCAL) |
 | E2 | Production SASL_SSL | Redpanda TLS + SASL, projection, registry/admin HTTPS; a live workload connects over SASL_SSL | workload | workload | broker security config | aws | FEAT-093 (DONE) | PASS (OFFLINE); NOT RUN (LIVE) |
 | E3 | Runtime secret delivery | the declared secret reaches the pod; `<service>-secrets` identity agrees | `sol secret set` | same CLI path | Kubernetes Secret, pod spec | local, byo | matrix F2, VERIF-020 | PASS (LOCAL, Vault mechanism); NOT RUN (LIVE) |
-| E4 | Managed secret projection | rotation updates the mount within the stated bound; an ungranted identity is denied | — | — | provider + CSI driver | aws, gcp | VERIF-021 | BLOCKED (operator/live) |
-| E5 | Projected SA tokens | caller `403`, no-token `401`, wrong-`aud` refused; no API access | caller/callee | caller/callee | cluster OIDC | aws, gcp, byo | VERIF-022, DEC-063 | BLOCKED (live) |
-| E6 | Workload cloud authority | declared grant is effective before deploy; missing grant fails the deploy at plan time | `sol grants` | same CLI | provider IAM | aws, gcp | DEC-062, VERIF-021 | PASS (OFFLINE); NOT RUN (LIVE) |
+| E4 | Managed secret projection | rotation updates the mount within the stated bound; an ungranted identity is denied | — | — | provider + CSI driver | aws, gcp | VERIF-021; AWS collection in `HARDEN-007` | BLOCKED (operator/live) |
+| E5 | Projected SA tokens | caller `403`, no-token `401`, wrong-`aud` refused; no API access | caller/callee | caller/callee | cluster OIDC | aws, gcp, byo | VERIF-022, DEC-063; **implementation is `FEAT-134`** | BLOCKED (implementation, then live) |
+| E6 | Workload cloud authority | declared grant is effective before deploy; missing grant fails the deploy at plan time | `sol grants` | same CLI | provider IAM | aws, gcp | DEC-062, VERIF-021; AWS collection in `HARDEN-007` | PASS (OFFLINE); NOT RUN (LIVE) |
 | E7 | Scoped identities | provisioner/cluster-access/deploy/operator hold only their declared capabilities; revocation removes the effective surface | matrix I3/F5 | same | IAM + RBAC | aws, gcp | INV-AUTH-1..6, DEC-034 | PASS (LIVE, AWS partial); NOT RUN (GCP) |
 | E8 | No ambient token / no leaked secret | `automountServiceAccountToken: false`; zero secret values in plan/record/log/bundle | — | — | manifests, redaction scan | aws | matrix F1/F4 | PASS (OFFLINE); NOT RUN (LIVE) |
 
@@ -396,7 +403,7 @@ streams are preparation-only until §7.
 | **T2 OCaml reference app** | agent A | `examples/pluto/app/payments/**`, `examples/pluto/app/comms/**`, `examples/pluto/lib/**`, `examples/pluto/test/**` | T1 | `FEAT-132` |
 | **T3 TypeScript reference app** | agent B | `examples/pluto/app/demo_ts/**`, `events/demo_ts/**` | T1 | `FEAT-133` |
 | **T4 Local integrated qualification** | agent C (evidence coordinator) | run rows B–H on k3d with the released bundle; records + matrix status | T2, T3, `RELEASE-006` | `VERIF-027` |
-| **T5 AWS substrate & run** | agent D | `internal/qualification/aws/**`; HARDEN-007 §B3 onward | T4, `RELEASE-006` | operator authorization |
+| **T5 AWS substrate & run** | agent D | `internal/qualification/aws/**`; HARDEN-007 §B3 onward | T4, `RELEASE-006`; `FEAT-134` for E5 | operator authorization |
 | **T6 GCP substrate & run** | agent E | `internal/qualification/gcp/**`; HARDEN-008, `INFRA-005` | T4, `RELEASE-006` | operator authorization |
 | **T7 Bounded defect capacity** | agent F | the READY queue (`BUG-126`, `BUG-128`, `FEAT-114`, `INFRA-065`, …) | — | — |
 
@@ -418,13 +425,18 @@ harness preparation, evidence-matrix work — proceeds without asking.
    Expected resources: one EKS cluster, one RDS Postgres, one ECR namespace, one
    load balancer, NAT/EIP/EBS as the module declares, and a delegated
    `qual-aws.sol-fab.dev` zone. Rows: AWS matrix §B–§H, INV-AUTH-*, INV-IDENT-1.
+   The run package (prerequisites, five identities, resources, evidence, injections and
+   teardown) is prepared: `internal/qualification/aws/aws-run-procedure.md` § *Run 9*.
 2. **Live GCP qualification** — `HARDEN-008` (Attempt 10): a fresh GKE Standard
    target, Cloud SQL, Artifact Registry, and the `sol-qualification` project's billing
    and quota (SSD_TOTAL_GB 1000). Rows: GCP matrix `INV-*`, `Ready` and
    Ready-state destruction. Resolves `FND-0010` only if the check passes.
 3. **`VERIF-021` / `VERIF-022`** — managed secret projection and projected ServiceAccount
    tokens, run *inside* the same AWS/GCP campaign targets so the substrate is shared
-   rather than a disconnected secret-only experiment.
+   rather than a disconnected secret-only experiment. `VERIF-021` is collectable in the
+   Run 9 package; `VERIF-022` is blocked on `FEAT-134` (the DEC-063 projected-token
+   volume and caller API are not implemented), so the implementation is a prerequisite,
+   not a substitute for the live run.
 4. **Alert acknowledgement (AWS G2)** — a real receiver and an owner who acknowledges.
 5. **`PROD-001`** — the maturity-A pilot, which additionally needs a named owning team
    and a real non-critical workload; the campaign brings it to the point where those
