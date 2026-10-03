@@ -200,7 +200,21 @@ Two domain teams are wired together out of the box:
 
 ### The event contract
 
-`events/payments/charged.ml` defines the Kafka event schema as an OCaml module:
+An event's contract is declared once, in `events/<team>/sol.toml`, and that
+declaration is canonical:
+
+```toml
+[[events]]
+name = "Charged"
+topic = "pluto-payments-charges"
+partitions = 3
+key = "id"
+schema = '''{"type":"object",...}'''
+```
+
+`sol contract generate` writes the language binding from the declaration —
+`events/payments/payments_contract.ml`, checked in beside it — and application code
+consumes it:
 
 ```ocaml
 type t = {
@@ -210,23 +224,26 @@ type t = {
   currency    : string;
 }
 
-let topic_name = Kafka_service.topic_name_exn "pluto-payments-charges"
-let partitions = 3
-let key t      = Some t.id
-let schema     = {|{"type":"object",...}|}
+include Payments_contract.Charged   (* topic_name, schema, partitions, key_field *)
+
+let encode t = ...
+let decode = ...
+let key t = Kafka_service.Contract.key_of_field key_field (encode t)
 ```
 
-These satisfy the `Kafka_service.MESSAGE` module type, together with `encode` and
-`decode`. Sol registers the schema with the schema registry during deployment — a
-contract step `sol up` and `sol deploy` run before any workload moves — and a producer
-or consumer resolves it read-only at startup, so a producer cannot publish a message that
-breaks it and a runtime never rewrites the contract. `partitions` is the count Sol
-creates the topic with, and `key` is what keeps every record for one entity on a
-single partition — and therefore in order.
+The module still satisfies `Kafka_service.MESSAGE`, but the contract facts come
+from the declaration rather than from hand-written code, so there is nothing to keep
+in sync. `sol contract generate --check` fails in CI when a checked-in binding
+drifts from its declaration, and `sol plan` reads the declaration directly — it
+never parses or runs application code. Sol registers the schema with the schema
+registry during `sol up`/`sol deploy` before any workload moves, and a producer or
+consumer resolves it read-only at startup, so a producer cannot publish a message
+that breaks it and a runtime never rewrites the contract. `partitions` is the count
+Sol creates the topic with, and the declared `key` field is what keeps every record
+for one entity on a single partition — and therefore in order.
 
-`events/payments/sol.toml` declares the same topic name, which is what `sol plan` reads;
-a scaffold test holds the two equal so they cannot drift, and `sol new event` generates
-its `sol.toml` and its module from one template pair for the same reason.
+`sol new event <team>/<name>` appends a declaration to the team's `sol.toml` and
+regenerates its binding, so a new event follows the same path.
 
 ### The HTTP service
 

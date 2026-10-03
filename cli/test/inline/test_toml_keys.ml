@@ -150,5 +150,61 @@ let%test "documented and generated files still load: scaffold -fn sol.toml" =
 ;;
 
 let%test "documented and generated files still load: scaffold event sol.toml" =
-  accepts (tpl ~kind:"event" "events/{{team}}/sol.toml") ()
+  accepts
+    (Sol_cli_scaffold.subst
+       [ "team", "payments"; "name", "charged"; "Mod", "Charged"; "Team", "Payments" ]
+       (tpl ~kind:"event" "events/{{team}}/sol.toml"))
+    ()
+;;
+
+let event_toml body = Printf.sprintf "[[events]]\n%s" body
+
+let%test "declared events: a key outside the schema is rejected" =
+  rejects
+    (event_toml
+       "name = \"Charged\"\n\
+        topic = \"t\"\n\
+        partitions = 3\n\
+        key = \"missing\"\n\
+        schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n")
+    ~names:[ "\"missing\"" ]
+    ()
+;;
+
+let%test "declared events: a name that is not a module name is rejected" =
+  rejects
+    (event_toml
+       "name = \"charged\"\n\
+        topic = \"t\"\n\
+        partitions = 3\n\
+        schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n")
+    ~names:[ "\"charged\"" ]
+    ()
+;;
+
+let%test "declared events: a partition count below one is rejected" =
+  rejects
+    (event_toml
+       "name = \"Charged\"\n\
+        topic = \"t\"\n\
+        partitions = 0\n\
+        schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n")
+    ~names:[ "partitions" ]
+    ()
+;;
+
+let%test "declared events: the same name twice is rejected" =
+  rejects
+    (event_toml
+       "name = \"Charged\"\n\
+        topic = \"a\"\n\
+        partitions = 1\n\
+        schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n\n\
+        [[events]]\n\
+        name = \"Charged\"\n\
+        topic = \"b\"\n\
+        partitions = 1\n\
+        schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n")
+    ~names:[ "twice" ]
+    ()
 ;;

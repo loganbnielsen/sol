@@ -1,5 +1,5 @@
 (library
  (name pluto_comms_events)
  (wrapped false)
- (modules Notification_sent)
+ (modules Notification_sent Comms_contract)
  (libraries kafka-eio-service yojson))

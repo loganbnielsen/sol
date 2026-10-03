@@ -1,4 +1,16 @@
-# Sol event metadata.
+# Sol event contract. This declaration is canonical: `sol contract generate`
+# writes {{team}}_contract.ml from it, and CI fails when the two drift.
 
-[service]
-topics = ["{{team}}-{{name}}s"]
+[[events]]
+name = "{{Mod}}"
+topic = "{{team}}-{{name}}s"
+partitions = 3
+key = "id"
+schema = '''{
+  "type": "object",
+  "properties": {
+    "id":      { "type": "string" },
+    "payload": { "type": "string" }
+  },
+  "required": ["id", "payload"]
+}'''

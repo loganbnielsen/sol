@@ -97,6 +97,14 @@ let effective_rollout_of_string s =
             s))
 ;;
 
+type event_decl =
+  { name : string
+  ; topic : string
+  ; partitions : int
+  ; key_field : string option
+  ; schema : string
+  }
+
 type t =
   { replicas : int option
   ; availability : Sol_cli_availability.t option
@@ -116,6 +124,7 @@ type t =
   ; backoff_limit : int option
   ; calls : string list
   ; topics : string list
+  ; events : event_decl list
   }
 
 let empty =
@@ -137,6 +146,7 @@ let empty =
   ; backoff_limit = None
   ; calls = []
   ; topics = []
+  ; events = []
   }
 ;;
 
@@ -588,14 +598,180 @@ let parse_steps path doc =
     loop [] items
 ;;
 
+let event_module_name name =
+  let len = String.length name in
+  let valid_first c = c >= 'A' && c <= 'Z' in
+  let valid_rest c =
+    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_'
+  in
+  len > 0
+  && valid_first name.[0]
+  &&
+  let rec loop i = i = len || (valid_rest name.[i] && loop (i + 1)) in
+  loop 1
+;;
+
+let schema_properties schema =
+  try
+    match Yojson.Safe.from_string schema with
+    | `Assoc fields ->
+      (match List.assoc_opt "properties" fields with
+       | Some (`Assoc props) -> Some (List.map fst props)
+       | _ -> None)
+    | _ -> None
+  with
+  | Yojson.Json_error _ -> None
+;;
+
+let parse_event path index = function
+  | Otoml.TomlTable pairs | Otoml.TomlInlineTable pairs ->
+    let string_field field =
+      match List.assoc_opt field pairs with
+      | None ->
+        validation_error
+          path
+          (Printf.sprintf
+             "sol.toml: [[events]] entry %d is missing required %s"
+             index
+             field)
+      | Some v ->
+        (try Ok (Otoml.get_string v) with
+         | Otoml.Type_error _ ->
+           validation_error
+             path
+             (Printf.sprintf
+                "sol.toml: [[events]] entry %d %s must be a string"
+                index
+                field))
+    in
+    let* name = string_field "name" in
+    let* topic = string_field "topic" in
+    let* schema = string_field "schema" in
+    let* partitions =
+      match List.assoc_opt "partitions" pairs with
+      | None ->
+        validation_error
+          path
+          (Printf.sprintf
+             "sol.toml: [[events]] entry %d is missing required partitions"
+             index)
+      | Some v ->
+        (try Ok (Otoml.get_integer v) with
+         | Otoml.Type_error _ ->
+           validation_error
+             path
+             (Printf.sprintf
+                "sol.toml: [[events]] entry %d partitions must be an integer"
+                index))
+    in
+    let* key_field =
+      match List.assoc_opt "key" pairs with
+      | None -> Ok None
+      | Some v ->
+        (try Ok (Some (Otoml.get_string v)) with
+         | Otoml.Type_error _ ->
+           validation_error
+             path
+             (Printf.sprintf "sol.toml: [[events]] entry %d key must be a string" index))
+    in
+    let* () =
+      if event_module_name name
+      then Ok ()
+      else
+        validation_error
+          path
+          (Printf.sprintf
+             "sol.toml: [[events]] entry %d name %S is not an OCaml module name — use an \
+              uppercase letter followed by letters, digits or underscores"
+             index
+             name)
+    in
+    let* () =
+      if Sol_cli_string.is_blank topic
+      then
+        validation_error
+          path
+          (Printf.sprintf "sol.toml: [[events]] entry %d topic must not be empty" index)
+      else Ok ()
+    in
+    let* () =
+      if partitions < 1
+      then
+        validation_error
+          path
+          (Printf.sprintf
+             "sol.toml: [[events]] entry %d partitions must be at least 1"
+             index)
+      else Ok ()
+    in
+    let* properties =
+      match schema_properties schema with
+      | Some properties -> Ok properties
+      | None ->
+        validation_error
+          path
+          (Printf.sprintf
+             "sol.toml: [[events]] entry %d schema must be a JSON object with a \
+              properties table"
+             index)
+    in
+    let* () =
+      match key_field with
+      | None -> Ok ()
+      | Some key ->
+        if List.mem key properties
+        then Ok ()
+        else
+          validation_error
+            path
+            (Printf.sprintf
+               "sol.toml: [[events]] entry %d key %S is not a property of its schema — \
+                the declared key must name a field of the message"
+               index
+               key)
+    in
+    Ok { name; topic; partitions; key_field; schema }
+  | _ ->
+    validation_error
+      path
+      (Printf.sprintf "sol.toml: [[events]] entry %d must be a table" index)
+;;
+
+let parse_events path doc =
+  match Otoml.find_opt doc Otoml.get_value [ "events" ] with
+  | None -> Ok []
+  | Some value ->
+    let entries =
+      match value with
+      | Otoml.TomlArray entries | Otoml.TomlTableArray entries -> entries
+      | _ -> []
+    in
+    let rec loop acc index = function
+      | [] -> Ok (List.rev acc)
+      | entry :: rest ->
+        let* event = parse_event path index entry in
+        loop (event :: acc) (index + 1) rest
+    in
+    let* events = loop [] 0 entries in
+    let names = List.map (fun event -> event.name) events in
+    if List.length names = List.length (List.sort_uniq String.compare names)
+    then Ok events
+    else validation_error path "sol.toml: [[events]] declares the same name twice"
+;;
+
 type key_schema =
   | Leaf
   | Table of (string * key_schema) list
   | User_table
   | Volumes
   | Canary_steps
+  | Events
 
 let volume_schema = [ "mount_path", Leaf; "size", Leaf; "access_mode", Leaf ]
+
+let event_schema =
+  [ "name", Leaf; "topic", Leaf; "partitions", Leaf; "key", Leaf; "schema", Leaf ]
+;;
 
 let schema =
   [ ( "infra"
@@ -619,6 +795,7 @@ let schema =
         ; "calls", Leaf
         ; "topics", Leaf
         ] )
+  ; "events", Events
   ]
 ;;
 
@@ -682,6 +859,22 @@ and check_value path ~at sub value =
          (Ok ())
          steps
      | _ -> Ok ())
+  | Events ->
+    (match value with
+     | Otoml.TomlArray events | Otoml.TomlTableArray events ->
+       List.fold_left
+         (fun acc event ->
+            let* () = acc in
+            match event with
+            | Otoml.TomlTable pairs | Otoml.TomlInlineTable pairs ->
+              check_keys path ~at event_schema pairs
+            | _ -> Ok ())
+         (Ok ())
+         events
+     | _ ->
+       validation_error
+         path
+         "sol.toml: [[events]] must be an array of tables, e.g. [[events]] name = ...")
 ;;
 
 let check_known_keys path doc =
@@ -898,6 +1091,7 @@ let load_result path =
                "sol.toml: [service] topics must be an array of strings, e.g. topics = \
                 [\"my-topic\"]")
       in
+      let* events = parse_events path doc in
       Ok
         { replicas
         ; availability
@@ -917,6 +1111,7 @@ let load_result path =
         ; backoff_limit
         ; calls
         ; topics
+        ; events
         }
   with
   | Otoml.Type_error message -> Error (Validation { path; message })

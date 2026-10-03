@@ -1,5 +1,5 @@
 (library
  (name {{lib}})
  (wrapped false)
- (modules {{Mod}})
+ (modules {{Mod}} {{Team}}_contract)
  (libraries kafka-eio-service yojson))

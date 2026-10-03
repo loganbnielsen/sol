@@ -347,10 +347,12 @@ module Schema : sig
     -> (int, error) result
 end
 
-(** The language-neutral projection of the workspace's event contracts, emitted by the
-    generated contract executable and consumed by `sol plan` / `sol deploy` / `sol up`. *)
+(** The event contract's key semantics: the declared key field read from an encoded
+    message. A generated binding supplies the field; the module applies it. *)
 module Contract : sig
   val projection : (string * (module MESSAGE)) list -> Yojson.Safe.t
+
+  val key_of_field : string option -> Yojson.Safe.t -> string option
 end
 ```
 

@@ -680,13 +680,17 @@ let test_scaffold_event_topic_matches_module () =
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let topic = "testapp-payments-charges" in
   assert_contains
-    "scaffolded events/payments/sol.toml"
+    "scaffolded events/payments/sol.toml declares the topic once"
     (read_file "testapp/events/payments/sol.toml")
-    (Printf.sprintf "topics = [%S]" topic);
+    (Printf.sprintf "topic = %S" topic);
   assert_contains
-    "scaffolded events/payments/charged.ml"
+    "the generated binding carries the same topic"
+    (read_file "testapp/events/payments/payments_contract.ml")
+    (Printf.sprintf "topic_name_exn %S" topic);
+  assert_contains
+    "the event module consumes the generated binding"
     (read_file "testapp/events/payments/charged.ml")
-    (Printf.sprintf "topic_name_exn %S" topic)
+    "include Payments_contract.Charged"
 ;;
 
 let test_golden_ci_workflow () =

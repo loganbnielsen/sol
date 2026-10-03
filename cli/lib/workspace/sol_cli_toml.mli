@@ -50,6 +50,14 @@ val effective_rollout_of_string
   :  string
   -> (rollout_strategy option * progressive_delivery option, string) result
 
+type event_decl =
+  { name : string
+  ; topic : string
+  ; partitions : int
+  ; key_field : string option
+  ; schema : string
+  }
+
 type t =
   { replicas : int option
   ; availability : Sol_cli_availability.t option
@@ -69,6 +77,7 @@ type t =
   ; backoff_limit : int option
   ; calls : string list
   ; topics : string list
+  ; events : event_decl list
   }
 
 val empty : t

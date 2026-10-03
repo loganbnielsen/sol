@@ -20,6 +20,7 @@ type t =
   ; topics : Sol_cli_plan_ids.Topic_name.t list
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; migrations : migration list
+  ; events : (string * Sol_cli_toml.event_decl) list
   ; targets : string list
   }
 

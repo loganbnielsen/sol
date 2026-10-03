@@ -32,6 +32,8 @@ let filter_validated ~kind of_string strings =
       None)
 ;;
 
+let generated_binding_name ~entry = entry ^ "_contract.ml"
+
 let discover_schema_subjects ?root () =
   let root = Option.value root ~default:"" in
   let subjects =
@@ -39,13 +41,14 @@ let discover_schema_subjects ?root () =
       if entry.[0] = '.'
       then acc
       else if Sys.is_directory path
-      then
+      then (
+        let generated = generated_binding_name ~entry in
         fold_dir path ~init:acc ~f:(fun acc2 fname _p ->
-          if Filename.check_suffix fname ".ml"
+          if Filename.check_suffix fname ".ml" && not (String.equal fname generated)
           then
             (entry ^ "." ^ String.capitalize_ascii (Filename.chop_suffix fname ".ml"))
             :: acc2
-          else acc2)
+          else acc2))
       else if Filename.check_suffix entry ".ml"
       then Filename.chop_suffix entry ".ml" :: acc
       else acc)
@@ -69,7 +72,34 @@ let derive_consumer_groups workspace workers =
 ;;
 
 let topics_of_toml path =
-  Sol_cli_toml.load_result path |> Result.map (fun t -> t.Sol_cli_toml.topics)
+  Sol_cli_toml.load_result path
+  |> Result.map (fun t ->
+    t.Sol_cli_toml.topics
+    @ List.map
+        (fun (event : Sol_cli_toml.event_decl) -> event.topic)
+        t.Sol_cli_toml.events)
+;;
+
+let discover_events ?root () =
+  let root = Option.value root ~default:"" in
+  let open Result.Syntax in
+  let* top_level = Sol_cli_toml.load_result (in_root root "events/sol.toml") in
+  let* sub_events =
+    fold_dir (in_root root "events") ~init:(Ok []) ~f:(fun acc entry path ->
+      let* acc = acc in
+      if entry.[0] = '.'
+      then Ok acc
+      else if Sys.is_directory path
+      then
+        let* manifest = Sol_cli_toml.load_result (Filename.concat path "sol.toml") in
+        Ok
+          (acc
+           @ List.map
+               (fun decl -> Filename.concat "events" entry, decl)
+               manifest.Sol_cli_toml.events)
+      else Ok acc)
+  in
+  Ok (List.map (fun decl -> "events", decl) top_level.Sol_cli_toml.events @ sub_events)
 ;;
 
 let discover_topics ?root () =

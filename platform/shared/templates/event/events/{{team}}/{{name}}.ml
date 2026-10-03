@@ -3,20 +3,7 @@ type t = {
   payload : string;
 }
 
-let topic_name = Kafka_service.topic_name_exn "{{team}}-{{name}}s"
-
-let schema = {|{
-  "type": "object",
-  "properties": {
-    "id":      { "type": "string" },
-    "payload": { "type": "string" }
-  },
-  "required": ["id", "payload"]
-}|}
-
-let partitions = 3
-
-let key t = Some t.id
+include {{Team}}_contract.{{Mod}}
 
 let encode t = `Assoc [
   ("id",      `String t.id);
@@ -37,3 +24,5 @@ let decode = function
     let* payload = required_string fields "payload" in
     Ok { id; payload }
   | _ -> Error "expected object"
+
+let key t = Kafka_service.Contract.key_of_field key_field (encode t)

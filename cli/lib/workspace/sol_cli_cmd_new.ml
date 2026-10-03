@@ -205,7 +205,12 @@ let new_fn ?language arg =
 ;;
 
 let event_vars ~ws ~team ~name =
-  [ "team", team; "name", name; "Mod", cap name; "lib", ws ^ "_" ^ team ^ "_events" ]
+  [ "team", team
+  ; "name", name
+  ; "Mod", cap name
+  ; "Team", cap team
+  ; "lib", ws ^ "_" ^ team ^ "_events"
+  ]
 ;;
 
 let event_rule module_ = function
@@ -214,10 +219,24 @@ let event_rule module_ = function
   | _ -> Tree.Write
 ;;
 
+let append_event_declaration ~team ~vars =
+  let* root = template_root () in
+  let rel = "events/{{team}}/sol.toml" in
+  let* content = Tree.text ~root ~kind:"event" ~rel in
+  let manifest = Printf.sprintf "events/%s/sol.toml" team in
+  match Sol_cli_fs.read_file manifest with
+  | Error error -> Error error
+  | Ok existing ->
+    Sol_cli_fs.write_atomic
+      manifest
+      (existing ^ "\n" ^ Sol_cli_scaffold.subst vars content)
+;;
+
 let new_event arg =
   let ws = ws_of_cwd () in
   let* team, name = parse_domain_name arg in
   let file = Printf.sprintf "events/%s/%s.ml" team name in
+  let manifest = Printf.sprintf "events/%s/sol.toml" team in
   let lib = ws ^ "_" ^ team ^ "_events" in
   Sol_cli_report.app "\nScaffolding event %s/%s ...\n" team name;
   let* () =
@@ -226,9 +245,13 @@ let new_event arg =
     else Ok ()
   in
   let vars = event_vars ~ws ~team ~name in
+  let manifest_existed = Sys.file_exists manifest in
   let* _ =
     copy ~kind:"event" ~dest:"." ~vars:(fun _ -> vars) ~rule:(event_rule (cap name))
   in
+  let* () = if manifest_existed then append_event_declaration ~team ~vars else Ok () in
+  let* generated = Sol_cli_contract_gen.generate ~root:"." ~check:false in
+  List.iter (fun path -> Sol_cli_report.app "  generated  %s" path) generated;
   Sol_cli_report.app "\nDone.  Consumers add (libraries %s) to their dune files." lib;
   Ok ()
 ;;
