@@ -284,10 +284,11 @@ let shell_line ?(prefix = "") (command : command) =
 let opam_env_prefix = "eval $(opam env 2>/dev/null) 2>/dev/null; "
 let build_line command = shell_line ~prefix:opam_env_prefix command
 let launch_line command = shell_line command
+let dev_registry_url = "http://localhost:8081"
 
 let dev_env =
   [ "KAFKA_BROKERS", "localhost:9092"
-  ; "SCHEMA_REGISTRY_URL", "http://localhost:8081"
+  ; "SCHEMA_REGISTRY_URL", dev_registry_url
   ; "REDPANDA_ADMIN_URL", "http://localhost:9644"
   ; "POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev"
   ; "LOKI_URL", "http://localhost:3100"

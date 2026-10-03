@@ -78,7 +78,7 @@ deferred, not applicable}. A row with no verdict is the failure DEC-022 names.
 | 3 | `-worker` lifecycle | `run` owns create→register→consume; `?on_ready` fires at partition assignment; `?stop`; clean drain (`worker.mli:28-53`) | `runWorker` installs an unbounded drain and hooks; **no `on_ready`** (`packages/worker/src/index.ts:38-70`) | gap — FEAT-102 (trigger 1) |
 | 4 | `-fn` lifecycle | `Fn.Make` contract: exit codes 0/1/130, Pushgateway push, metrics (`fn.ml`) | none | intentionally deferred — FEAT-084/FEAT-082 |
 | 5 | Confluent wire format | magic `0x00` + BE u32 id + JSON | `encodeWire`/`decodeWire` byte-compatible (`wireFormat.ts`) | implemented |
-| 6 | Schema registry | `register_contract` sets `FULL` compatibility **then** registers, **both failures fatal** (`kafka_service_schema.ml:143-149`); registration is a deployment step, runtimes read only | `registerTopic` registers **then** sets compatibility, the second **non-fatal** (`register.ts:66-72`) | gap — FEAT-119 (projection); the current runtime ordering is recorded in § 4.3 |
+| 6 | Schema registry | `register_contract` sets `FULL` compatibility **then** registers, **both failures fatal** (`kafka_service_schema.ml:143-149`); registration is a deployment step, runtimes read only; the projection is the language-neutral object emitted by the workspace's `contract/run` | `registerContract` sets `FULL` **then** registers, both fatal; `connectTopic` provisions the topic and resolves the registered id read-only, failing an unregistered contract (`register.ts`); `contractProjection`/`runContractCli` emit the same object and implement `--json`/`--check`/`--apply` (`projection.ts`) | implemented — FEAT-119 (2026-10-02) |
 | 7 | Partitioning and key | `MESSAGE.partitions`/`key`; create at declared count, never reduce | `TopicContract`; `registerTopic` refuses a reduction, `publish` keys the record (FEAT-117 part B) | implemented |
 | 8 | Worker outcome vocabulary | exactly `Ack \| Fail`; `Fail` leaves the offset uncommitted and stops the consumer (`worker.mli:1-9`) | `Ack \| Fail`; `fail(reason)` throws `MessageFailError` and `wireCrashListener` stops the consumer and exits 0 (`outcome.ts`, `consume.ts`) | implemented — FEAT-118 (2026-10-02) |
 | 9 | DLQ naming | `<source>.<canonical-group>.dlq`, `canonical-group` = sanitized id **always** suffixed with `-` + 12 hex of MD5 (`kafka_service_dlq.ml:29-57`) | `<source>.<canonical-group>.dlq`, `canonical-group` = sanitized id **always** suffixed with `-` + 12 hex of MD5 (`dlq.ts`) | implemented — BUG-117 (2026-10-02) |
@@ -175,11 +175,12 @@ have a ticket and are not re-filed.
 4. **Schema registration ordering and fatality.** Current OCaml
    `register_contract` sets `FULL` compatibility **before** registering and
    treats either failure as fatal (`kafka_service_schema.ml:143-149`); the
-   TypeScript `registerTopic` does the reverse and swallows the compatibility
+   TypeScript `registerTopic` did the reverse and swallowed the compatibility
    failure (`register.ts:66-72`). Registration is now a deployment step
-   (BUG-105), so FEAT-119 is the owner: its acceptance ("`FULL` compatibility
-   set before registering") already states the rule, and the runtime
-   `registerTopic` composition is what must converge on it.
+   (BUG-105), and **FEAT-119 resolved this (2026-10-02)**: `registerTopic` is
+   replaced by `registerContract` (set `FULL` first, then register, both fatal),
+   the runtime `connectTopic` is read-only, and both languages emit the same
+   projection object from a `contract/run` entry point.
 5. **Duplicate delivery, outbox and jobs.** The at-least-once obligation on a
    redelivered fact (FEAT-123), a TypeScript transactional outbox (FEAT-124),
    and the durable job handoff (`sol-jobs`) have no TypeScript implementation.

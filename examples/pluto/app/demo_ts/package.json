@@ -4,11 +4,14 @@
   "license": "Apache-2.0",
   "description": "Sol's TypeScript showcase: an order service and a fulfillment worker consuming the published @sol-fab/obs and @sol-fab/kafka packages from npm. This directory is deliberately its own npm project root (own package.json and package-lock.json, no dependence on an enclosing JavaScript workspace) -- it is the conformance fixture proving a Sol workspace can consume the published packages with nothing but the workspace itself. See DEC-023/DEC-024 and FEAT-085.",
   "workspaces": [
+    "contract",
     "order_svc",
     "fulfillment_worker"
   ],
   "type": "module",
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "contract": "npm run contract --workspace @demo-ts/contract --",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {

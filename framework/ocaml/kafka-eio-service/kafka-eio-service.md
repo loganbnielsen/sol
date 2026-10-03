@@ -278,25 +278,29 @@ A runtime process never registers a schema version and never changes subject con
 `register` provisions the topic and resolves the declared schema from the registry
 (read-only); it fails when the contract has not been registered, so a producer whose schema
 is not registered fails at startup instead of becoming the first writer. Registration
-belongs to the deployment lifecycle: every workspace generates `contract/contract.exe`,
+belongs to the deployment lifecycle: every workspace exposes a `contract/run` entry point,
 which projects each event module's contract metadata as JSON (`--json`) and validates and
 registers it against the target registry (`--check` / `--apply`). `MESSAGE.schema` stays
-the single source of truth — nothing is duplicated into the manifest. The projection is a
-language-neutral wire format, so a TypeScript workspace can emit the same object.
+the single source of truth — nothing is duplicated into the manifest. The entry point is
+language-neutral: an OCaml workspace's `contract/run` runs the generated
+`contract/contract.exe`, a TypeScript workspace's runs its own projection program, and Sol
+invokes either the same way (`sh ./contract/run <mode> --scope <scope>`) without knowing
+the language underneath.
 
 The reconciliation runs where the registry is reachable, after the destination is
 established and before any workload moves, so a deploy that cannot satisfy the contract
 fails before rollout:
 
 - `sol up` runs `--apply` locally, because the local target's dependencies are reachable
-  from the workstation.
+  from the workstation (and so the workspace's own toolchain must be).
 - `sol deploy` runs it inside the destination, because a private registry may only be
   reachable from there. It submits a Job that runs the deployment's own application image
   with `command: ["/usr/local/bin/contract"]` and `args: ["--apply"]`, so the reconciled
-  contract cannot drift from the artifact being deployed; the OCaml app images build and
-  install that binary. This is the same Job lifecycle the migration gate uses: apply, wait,
-  fail closed, capture logs as evidence, clean up on success. A workspace that declares no
-  OCaml workload in the deploy's scope has no image to reconcile with, and is skipped.
+  contract cannot drift from the artifact being deployed; every app image builds and
+  installs that program. This is the same Job lifecycle the migration gate uses: apply, wait,
+  fail closed, capture logs as evidence, clean up on success. One Job per language in the
+  deploy's scope is submitted, because two units of the same language share the workspace's
+  projection but two languages do not.
 - `sol plan` is read-only. It projects the declared contract offline and reports the
   registry as *not observed* when the target registry is private to the destination,
   rather than mutating it or pretending the remote state was seen.

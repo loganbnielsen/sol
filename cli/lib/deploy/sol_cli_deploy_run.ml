@@ -309,16 +309,14 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
   let workspace = ctx.facts.Sol_cli_workspace_model.root in
   if not (Sol_cli_contract.has_projection ~workspace)
   then Ok ()
-  else (
-    match
-      Sol_cli_contract.ocaml_reconciliation_image plan.Sol_cli_deployment_plan.services
-    with
-    | None -> Ok ()
-    | Some (namespace, image) ->
+  else
+    Sol_cli_contract.reconciliation_images plan.Sol_cli_deployment_plan.services
+    |> Sol_cli_result.map_list (fun (namespace, image) ->
       Sol_cli_contract.reconcile_in_destination
         ~ctx:ctx.execution.cluster
         ~namespace
         ~image)
+    |> Result.map (fun _ -> ())
 ;;
 
 let apply ctx ~push_events ~report_success ~confirm_group_change plan =
