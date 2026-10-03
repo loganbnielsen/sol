@@ -1,0 +1,8 @@
+(test
+ (name test_sol_retry)
+ (libraries sol-retry eio eio.mock windtrap))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

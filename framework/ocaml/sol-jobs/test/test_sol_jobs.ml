@@ -5,7 +5,7 @@ let policy : Sol_jobs.retry_policy =
 let test_backoff_s_early_attempt_within_jittered_bounds () =
   let rng = Random.State.make [| 42 |] in
   let raw = policy.base_delay_s *. (2. ** Float.of_int (2 - 1)) in
-  let delay = Sol_jobs.For_testing.backoff_s ~rng policy 2 in
+  let delay = Sol_jobs.For_testing.backoff_s ~rng policy ~attempt:2 in
   Windtrap.equal
     Windtrap.bool
     ~msg:"within +-20% of the raw exponential delay"
@@ -16,7 +16,7 @@ let test_backoff_s_early_attempt_within_jittered_bounds () =
 let test_backoff_s_caps_at_max_delay () =
   let rng = Random.State.make [| 7 |] in
   for attempt = 1 to 30 do
-    let delay = Sol_jobs.For_testing.backoff_s ~rng policy attempt in
+    let delay = Sol_jobs.For_testing.backoff_s ~rng policy ~attempt in
     Windtrap.equal
       Windtrap.bool
       ~msg:(Printf.sprintf "attempt %d never exceeds max_delay_s" attempt)
@@ -28,7 +28,7 @@ let test_backoff_s_caps_at_max_delay () =
 let test_backoff_s_never_negative () =
   let rng = Random.State.make [| 99 |] in
   for attempt = 1 to 10 do
-    let delay = Sol_jobs.For_testing.backoff_s ~rng policy attempt in
+    let delay = Sol_jobs.For_testing.backoff_s ~rng policy ~attempt in
     Windtrap.equal
       Windtrap.bool
       ~msg:(Printf.sprintf "attempt %d never negative" attempt)
@@ -38,8 +38,12 @@ let test_backoff_s_never_negative () =
 ;;
 
 let test_backoff_s_deterministic_with_same_seed () =
-  let delay1 = Sol_jobs.For_testing.backoff_s ~rng:(Random.State.make [| 5 |]) policy 3 in
-  let delay2 = Sol_jobs.For_testing.backoff_s ~rng:(Random.State.make [| 5 |]) policy 3 in
+  let delay1 =
+    Sol_jobs.For_testing.backoff_s ~rng:(Random.State.make [| 5 |]) policy ~attempt:3
+  in
+  let delay2 =
+    Sol_jobs.For_testing.backoff_s ~rng:(Random.State.make [| 5 |]) policy ~attempt:3
+  in
   Windtrap.equal (Windtrap.float 0.0) ~msg:"same seed, same delay" delay1 delay2
 ;;
 
@@ -50,7 +54,7 @@ let test_backoff_s_no_jitter_when_ratio_zero () =
     (Windtrap.float 0.0001)
     ~msg:"exact exponential delay"
     2.0
-    (Sol_jobs.For_testing.backoff_s ~rng policy 2)
+    (Sol_jobs.For_testing.backoff_s ~rng policy ~attempt:2)
 ;;
 
 let test_validate_retry_policy_rejects_zero_max_attempts () =

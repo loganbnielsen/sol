@@ -37,6 +37,15 @@
   eio))
 
 (package
+ (name sol-retry)
+ (synopsis
+  "Sol's shared bounded operation-retry helper: one jittered policy vocabulary for retrying a dependency call in place")
+ (depends
+  (ocaml (>= 5.4.0))
+  (dune (>= 3.0))
+  eio))
+
+(package
  (name sol-obs)
  (synopsis
   "Sol's observability conventions: metric names, label vocabularies, Loki push shape, W3C traceparent propagation")

@@ -1,0 +1,5 @@
+(library
+ (name sol_retry)
+ (public_name sol-retry)
+ (wrapped false)
+ (libraries eio))

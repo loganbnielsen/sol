@@ -1,13 +1,11 @@
-type retry_policy =
+type retry_policy = Sol_retry.policy =
   { base_delay_s : float
   ; max_delay_s : float
   ; max_attempts : int
   ; jitter_ratio : float
   }
 
-let default_retry_policy =
-  { base_delay_s = 1.0; max_delay_s = 600.0; max_attempts = 5; jitter_ratio = 0.1 }
-;;
+let default_retry_policy = Sol_retry.default_policy
 
 module type JOB = sig
   type t
@@ -30,39 +28,10 @@ let run_error_to_string = function
   | `Database msg -> "sol-jobs: job table unusable: " ^ msg
 ;;
 
-let validate_retry_policy (policy : retry_policy) =
-  let non_negative_finite name value =
-    if Float.is_finite value && value >= 0.0
-    then Ok ()
-    else
-      Error
-        (`Config
-            (Printf.sprintf
-               "retry_policy.%s must be a finite number >= 0 (got %s)"
-               name
-               (Float.to_string value)))
-  in
-  if policy.max_attempts = 0
-  then Error (`Config "retry_policy.max_attempts must be nonzero (negative = unlimited)")
-  else (
-    match non_negative_finite "base_delay_s" policy.base_delay_s with
-    | Error _ as e -> e
-    | Ok () ->
-      (match non_negative_finite "max_delay_s" policy.max_delay_s with
-       | Error _ as e -> e
-       | Ok () ->
-         if
-           Float.is_finite policy.jitter_ratio
-           && policy.jitter_ratio >= 0.0
-           && policy.jitter_ratio <= 1.0
-         then Ok ()
-         else
-           Error
-             (`Config
-                 (Printf.sprintf
-                    "retry_policy.jitter_ratio must be a finite number within [0, 1] \
-                     (got %s)"
-                    (Float.to_string policy.jitter_ratio)))))
+let validate_retry_policy policy =
+  match Sol_retry.validate policy with
+  | Ok () -> Ok ()
+  | Error message -> Error (`Config ("retry_policy." ^ message))
 ;;
 
 let validate_timing ~poll_interval_s ~lease_s =
@@ -85,21 +54,11 @@ let validate_timing ~poll_interval_s ~lease_s =
 let default_rng = Random.State.make_self_init ()
 let default_rng_mutex = Mutex.create ()
 
-let backoff_s ~rng policy attempt =
-  let raw = policy.base_delay_s *. (2. ** Float.of_int (attempt - 1)) in
-  if policy.jitter_ratio <= 0.0
-  then Float.min policy.max_delay_s (Float.max 0.0 raw)
-  else (
-    let jitter_unit = Random.State.float rng (2.0 *. policy.jitter_ratio) in
-    let jittered = raw *. (1.0 +. (jitter_unit -. policy.jitter_ratio)) in
-    Float.min policy.max_delay_s (Float.max 0.0 jittered))
-;;
-
 let locked_backoff_s policy attempt =
   Mutex.lock default_rng_mutex;
   Fun.protect
     ~finally:(fun () -> Mutex.unlock default_rng_mutex)
-    (fun () -> backoff_s ~rng:default_rng policy attempt)
+    (fun () -> Sol_retry.backoff_s ~rng:default_rng policy ~attempt)
 ;;
 
 let is_kind_char = function
@@ -154,7 +113,7 @@ let validate_workspace workspace =
 ;;
 
 module For_testing = struct
-  let backoff_s = backoff_s
+  let backoff_s = Sol_retry.backoff_s
   let validate_retry_policy = validate_retry_policy
   let validate_timing = validate_timing
   let validate_kinds = validate_kinds

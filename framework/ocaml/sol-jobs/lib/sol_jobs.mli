@@ -1,4 +1,4 @@
-type retry_policy =
+type retry_policy = Sol_retry.policy =
   { base_delay_s : float
   ; max_delay_s : float
   ; max_attempts : int
@@ -52,7 +52,7 @@ module Make (J : JOB) : sig
 end
 
 module For_testing : sig
-  val backoff_s : rng:Random.State.t -> retry_policy -> int -> float
+  val backoff_s : rng:Random.State.t -> retry_policy -> attempt:int -> float
   val validate_retry_policy : retry_policy -> (unit, run_error) result
   val validate_timing : poll_interval_s:float -> lease_s:float -> (unit, run_error) result
   val validate_kinds : string list -> (unit, run_error) result

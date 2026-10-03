@@ -312,23 +312,25 @@ The caller endpoint uses `Peer.url "checkout_svc"` and `Peer.headers` so
 
 ```ocaml
 module Make (Config : sig
-  val pool : Pg_db.pool
-  val ot   : Obs_eio.t
+  val pool  : Pg_db.pool
+  val ot    : Obs_eio.t
+  val clock : float Eio.Time.clock_ty Eio.Resource.t
 end) = struct
   module Message = Charged
   let group_id = "pluto-comms-notify-worker"
 
   let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
-    Pg_db.transaction Config.pool (fun tx ->
-      let open Result.Syntax in
-      let* inserted = Notification.insert tx ~charge_id:msg.id ... in
-      match inserted with
-      | None -> Ok ()
-      | Some _ ->
-        let* () = Jobs.enqueue tx ~dedupe_key:msg.id
-                    Email_job.{ charge_id = msg.id; customer_id = msg.customer_id } in
-        Notification_sent_outbox.publish tx ~key:msg.id ~ord:1L
-          Notification_sent.{ charge_id = msg.id; customer_id = msg.customer_id; ... })
+    Sol_retry.run ~clock:Config.clock retry_policy (fun () ->
+      Pg_db.transaction Config.pool (fun tx ->
+        let open Result.Syntax in
+        let* inserted = Notification.insert tx ~charge_id:msg.id ... in
+        match inserted with
+        | None -> Ok ()
+        | Some _ ->
+          let* () = Jobs.enqueue tx ~dedupe_key:msg.id
+                      Email_job.{ charge_id = msg.id; customer_id = msg.customer_id } in
+          Notification_sent_outbox.publish tx ~key:msg.id ~ord:1L
+            Notification_sent.{ charge_id = msg.id; customer_id = msg.customer_id; ... }))
     |> function
     | Ok () -> Worker.Ack
     | Error _ -> Worker.Fail
@@ -338,6 +340,33 @@ end
 `module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Worker.Ack`.
 
 `handle` returns `Worker.outcome`, which is exactly `Ack` or `Fail`. `Ack` applies the fact and advances the offset. `Fail` declines it: the offset is not committed and the consumer stops, so a contract failure surfaces to an operator instead of being a fact the runtime silently skipped. There is no retry outcome and no application-level dead-letter outcome — a transient dependency failure is handled at the operation level (retry the dependency call, not the whole handler), never by re-running `handle`.
+
+`Sol_retry.run` is that retry. The operation is the dependency call — here the whole transaction — and the handler still returns exactly one outcome:
+
+```ocaml
+let retry_policy =
+  match
+    Sol_retry.of_policy
+      { base_delay_s = 0.25; max_delay_s = 5.0; max_attempts = 4; jitter_ratio = 0.25 }
+  with
+  | Ok policy -> policy
+  | Error message -> failwith ("retry policy: " ^ message)
+;;
+
+let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
+  match
+    Sol_retry.run ~clock:Config.clock retry_policy (fun () ->
+      Pg_db.transaction Config.pool (fun tx -> apply_fact tx msg))
+  with
+  | Ok () -> Worker.Ack
+  | Error e ->
+    Obs_eio.log_standalone Config.ot Obs_eio.Error
+      ~fields:[ "error", Pg_error.to_string e ] "db transaction failed after retries";
+    Worker.Fail
+;;
+```
+
+A transient Postgres failure repeats the transaction, which rolls back on every failed attempt, and only after the budget is spent does the handler return `Fail`; `Ack` and `Fail` remain the only outcomes, and `handle` is never re-run, because retrying the message would repeat whatever side effects already succeeded. The policy vocabulary — `base_delay_s`, `max_delay_s`, `max_attempts`, `jitter_ratio` — is the same one `sol-jobs` and the worker's retry machinery use, and the helper yields to Eio between attempts, so the retry never blocks the domain. `handle` runs in the consumer's fiber, so the worker's `Make(Config)` carries the clock (`env#clock` in `bin/main.ml`) rather than reaching for an ambient one. Contract: [`sol-retry.md`](../../framework/ocaml/sol-retry/sol-retry.md).
 
 Independent work that must be retried later goes to `sol-jobs` instead. `notify_worker` above hands its confirmation email to a job: `Jobs.enqueue` runs in the same Postgres transaction as the notification insert, so either both rows exist or neither does, and `~dedupe_key:msg.id` makes a redelivery after a failed offset commit a no-op (FEAT-112). The notification insert is idempotent for the same reason: the migration puts a unique index on `charge_id`, so `Notification.insert` runs `ON CONFLICT (charge_id) DO NOTHING` and reports through `RETURNING charge_id` whether it applied, and a redelivered fact therefore leaves exactly one notification row. The `None`/`Some` gate around the job and the intent matters: without it a redelivery whose intent is still pending would try to insert the same `(aggregate_key, ord)` again, and `sol_outbox`'s unique index refuses that, turning a legal duplicate into a `Fail`. The worker's `bin/main.ml` hosts the job runner alongside the consumer. That is the endorsed composition — the stream carries the fact, and the durable job queue performs the retry ([`sol-jobs.md`](../../framework/ocaml/sol-jobs/sol-jobs.md)).
 
