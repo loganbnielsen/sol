@@ -49,3 +49,29 @@ type error =
   | `Forbidden of string
   | `Server_error of string
   ]
+
+let constant_time_equal s1 s2 =
+  let len1 = String.length s1
+  and len2 = String.length s2 in
+  if len1 <> len2
+  then false
+  else (
+    let res = ref 0 in
+    for i = 0 to len1 - 1 do
+      res := !res lor (Char.code s1.[i] lxor Char.code s2.[i])
+    done;
+    !res = 0)
+;;
+
+module For_testing = struct
+  let constant_time_equal = constant_time_equal
+  let reset_jwks_cache () = Auth_cache.clear ()
+
+  let seed_stale_jwks_cache ~url ~age_s ~jwks =
+    Auth_cache.replace
+      { Auth_cache.url
+      ; fetched_at = Unix.gettimeofday () -. age_s
+      ; jwks = Jose.Jwks.of_string jwks
+      }
+  ;;
+end
