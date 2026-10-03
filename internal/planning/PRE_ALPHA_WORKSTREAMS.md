@@ -17,6 +17,13 @@ with the reference application (`examples/pluto`) — the live reference-app
 campaign. A **pre-alpha blocker** is work without which that demonstration would
 be wrong, unsafe, or unqualified. Everything else can happen after alpha.
 
+The campaign itself is coordinated in
+`internal/qualification/ALPHA_CAMPAIGN.md`: the frozen alpha surface, one
+language-neutral reference scenario implemented in both languages, the acceptance
+matrix that maps every supported capability to its evidence and target, the
+clean-user install path, and the parallel work allocation. It is authoritative for
+the campaign; this document remains authoritative for the pre-alpha workstreams.
+
 ## Stream map
 
 | Stream | Outcome | Pre-alpha blockers | Can start now |
