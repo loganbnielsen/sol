@@ -338,6 +338,23 @@ qualification (DEC-039 §4). The transport used against a real cluster, and the 
 identities' surfaces unchanged afterwards, is `INFRA-060` criterion 5; it needs a live
 target, so the ticket hands it to `HARDEN-007`'s run record by name.
 
+**Review of that mechanism, 2026-10-03 (`AUDIT-087`).** A targeted adversarial review of
+`#992` found the removal half weaker than the paragraph above implies: a `delete-access-entry`
+that failed was swallowed, and the path that reported "removing the access entry" never
+checked that the entry was gone — the `FND-0021` shape one step later. The probe's identity
+check was a substring match on the role name, and it sampled three of the contract's claims,
+so a residual `pods/exec` grant (exec reaches a container's mounted secrets, which the
+secrets control cannot see) passed verification with exit 0. Both are fixed: removal is
+reported only after `describe-access-entry` agrees the entry is gone, a removal that cannot
+be established is named loudly with the command to finish it by hand, and the probe now
+asserts the principal's own assumed-role session, its group, the absence of
+`system:masters`, and denials for `*/*`, `pods/exec`, `pods/log` and `delete pods`. The
+transport role's AWS authority is checked before the window opens (no attached policy, trust
+naming this account's root only) and its inline policy is one `eks:DescribeCluster` on the
+cluster rather than `ListClusters`/`DescribeCluster` on `*`. Unlike `FND-0021` and
+`INFRA-060` this was caught by review rather than by a live run, and nothing live was
+affected: the capability had never been establishable (`FND-0020`).
+
 **Fixture reset (FND-0022 / INFRA-062).** Redeploying the recorded revision through the
 documented mechanism succeeded and changed nothing: `generation` stayed 1, the same two
 pods with the same creation timestamps, still 0/2 ready, still `DEGRADED`. An unchanged

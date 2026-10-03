@@ -68,4 +68,19 @@ seed
 printf '\nlet qualifier_role_arn = None\n' >> "$work/root/cli/lib/workspace/sol_cli_config.ml"
 expect_fail "a qualifier principal in the target schema"
 
+seed
+sed -i 's/\\"Resource\\":\\"\${cluster_arn}\\"/\\"Resource\\":\\"*\\"/' \
+  "$work/root/internal/qualification/transport/establish.sh"
+expect_fail "an inline policy scoped to every cluster"
+
+seed
+sed -i 's/\\"Action\\":\\"eks:DescribeCluster\\"/\\"Action\\":\\"eks:ListClusters\\"/' \
+  "$work/root/internal/qualification/transport/establish.sh"
+expect_fail "an inline policy granting a verb the transport does not use"
+
+seed
+printf '\naws eks disassociate-access-policy --cluster-name x --principal-arn y --policy-arn z\n' \
+  >> "$work/root/internal/qualification/transport/establish.sh"
+expect_fail "a window closed by disassociation"
+
 echo "qualification transport check: every guard rejection reproduced"

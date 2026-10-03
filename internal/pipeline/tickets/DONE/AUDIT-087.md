@@ -157,6 +157,48 @@ Reproduced against the pre-change script:
 - No app-author surface changes, so no `examples/` or tutorial demo applies; no language-parity
   impact (DEC-022) — this is qualification-harness tooling.
 
+## Completion (2026-10-03) — the close and the probe now establish what they claim
+
+Filled by the implementation PR that moved this ticket to `DONE`.
+
+- `establish.sh`: `delete_entry` no longer swallows failures; `remove_entry` requires *both* a
+  successful delete and a `describe-access-entry` that agrees the entry is gone;
+  `recreate_narrow_entry` refuses to treat a surviving entry as narrowed; the cleanup reports a
+  removal only after it is established, and `lost_authority` names the principal, says the
+  authority could not be shown to be gone and prints the command to remove it — instead of
+  claiming a removal that did not happen. The failure paths keep the fail-closed shape: a probe
+  that cannot show the declared surface removes the entry.
+- The probe asserts the principal's own assumed-role session (`assumed-role/<role>/`), the group
+  `sol:qualifiers` and the absence of `system:masters`; the positives are `get pods` and
+  `can-i list services` plus `can-i create pods/portforward`; the absences sampled are `*/*`,
+  `create pods/exec`, `get pods/log` and `delete pods` beside the real `get secrets` denial.
+  Denied, readable and unobservable are distinguished, and an unobservable call is never read as
+  absence.
+- The AWS side is checked before the window opens: no attached policy beside the inline one, a
+  trust naming this account's root and no wildcard or service principal, and one
+  `eks:DescribeCluster` statement scoped to the cluster's ARN with `eks:ListClusters` gone.
+- The offline test grows from three scenarios to eight and fails **18 expectations** against the
+  pre-change script (`bash internal/ci/test_qualification_transport_establish.sh /tmp/oldtransport`
+  with `establish.sh` restored from `origin/main`), including
+  `a residual pods/exec grant fails establishment (observed exit 0)` and
+  `an attached policy fails establishment (observed exit 0)`; against the fixed script every
+  expectation holds.
+- The guard reads the inline policy as JSON and refuses a wildcard resource, a verb other than
+  `eks:DescribeCluster`, a missing cluster-ARN definition, or any `disassociate-access-policy`,
+  with three new mutations proving each rejection
+  (`internal/ci/test_qualification_transport_check.sh`).
+- `README.md`, `aws-run-procedure.md` and `internal/pipeline/audits/QUALIFICATION_STATUS.md`
+  describe the mechanism as it now is, including the AWS half and the removal guarantee.
+- `bash internal/ci/run_fast_checks.sh` is green, and its class list runs both the guard and the
+  offline test (`PASS internal/ci/check_qualification_transport.py`,
+  `PASS internal/ci/test_qualification_transport_establish.sh`,
+  `PASS internal/ci/test_qualification_transport_check.sh`).
+
+The review's own result was recorded on the reviewed PR (`#992`) as a `SOLDEV-REVIEW: FAIL`
+comment with the three violations, since `soldev pipeline review` refuses a merged PR ("no open PR
+to review"); the marker's informational role is served by the comment plus this ticket.
+
+
 ## What is still not established (recorded, not fixed)
 
 The probe is a **sample** of the declared surface, not a rule-set comparison: a grant that is

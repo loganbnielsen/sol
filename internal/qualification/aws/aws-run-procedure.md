@@ -137,10 +137,17 @@ write the cluster-scoped RBAC, then closes it by **deleting the access entry and
 it narrow** — never by disassociating the policy, which was measured live to be reported
 complete while the authorizer still granted cluster-admin (`FND-0021` / `INFRA-061`). It
 then verifies the **effective surface** with real calls as the principal `kubectl auth
-whoami` names — `get pods` succeeds, `get secrets` is `Forbidden`, `pods/portforward` is
-permitted — and removes the entry rather than leave a credential it could not show to be
-transport-only. A run does not proceed on an establishment that did not report that
-verification.
+whoami` names: the session is that principal's assumed role and the group is
+`sol:qualifiers`; `get pods` succeeds and `list services` is permitted; `create
+pods/portforward` is permitted; `get secrets` is denied by a real call; and `auth can-i`
+answers `no` for `*/*`, `create pods/exec`, `get pods/log` and `delete pods`. When a check
+fails it removes the entry rather than leave a credential it could not show to be
+transport-only, and it reports that removal only after the entry is confirmed gone — if it
+cannot remove the entry it names the principal and prints the command to remove it by hand.
+The AWS side is checked before the window opens at all: the role's trust must name this
+account's root and nothing else, and it must carry no attached policy beside the script's own
+`eks:DescribeCluster`-on-the-cluster inline policy. A run does not proceed on an establishment
+that did not report that verification.
 
 **The identity split is mandatory (DEC-039 §4).** The record names the identity that
 established and drove transport **separately** from the identities whose contracts are
