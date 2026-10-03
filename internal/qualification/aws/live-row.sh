@@ -12,7 +12,6 @@ CLUSTER="${CLUSTER:?Set CLUSTER to this the run EKS cluster name}"
 DEPLOY_ROLE_ARN="${DEPLOY_ROLE_ARN:?Set DEPLOY_ROLE_ARN to the deploy role the target declares}"
 CLUSTER_ACCESS_ROLE_ARN="${CLUSTER_ACCESS_ROLE_ARN:?Set CLUSTER_ACCESS_ROLE_ARN to the cluster-access role the target declares}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
-SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
 APP_TAG="${APP_TAG:-row-$(date -u +%Y%m%d-%H%M%S)}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-row-$(date +%Y%m%d-%H%M%S)}"
@@ -22,15 +21,24 @@ ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null
 STATE_BUCKET="${STATE_BUCKET:-sol-qual5-$ACCOUNT-tfstate}"
 LOCK_TABLE="${LOCK_TABLE:-sol-qual5-tflock}"
 BASE_DOMAIN="${BASE_DOMAIN:-qual-aws.sol-fab.dev}"
-DURABLE_ROOT="$ROOT/platform/cloud/aws/bootstrap"
 ECR_REGISTRY="${ECR_REGISTRY:-$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com}"
-RUNNER_VERSION="${RUNNER_VERSION:-sol-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || printf 'dev')}"
-RUNNER_REPOSITORY="${RUNNER_REPOSITORY:-pluto/sol-migration-runner}"
 STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
-export ECR_REGISTRY RUNNER_VERSION RUNNER_REPOSITORY
+export ECR_REGISTRY
 
 mkdir -p "$LOG_DIR/state"
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+
+source "$ROOT/internal/qualification/sol-under-test.sh"
+
+case "${1:-}" in
+  cloud | app | destroy)
+    sol_under_test_resolve
+    DURABLE_ROOT="$SOL_PLATFORM_ROOT/cloud/aws/bootstrap"
+    sol_under_test_record_identity "$LOG_DIR"
+    say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
+    say "  migration runner: $SOL_RUNNER_IMAGE"
+    ;;
+esac
 
 usage() {
   cat <<'USAGE'
@@ -41,18 +49,18 @@ usage: live-row.sh PHASE      PHASE in: cloud | app | destroy | verify
 required
   CLUSTER           this run's EKS cluster name
   DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
+  SOL_INSTALL       the extracted release prefix holding bin/sol and share/sol/<version>
 optional (defaults shown)
   TARGET=qualreg/aws/us-east-1   ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
   AWS_PROFILE=sol-qual           AWS_REGION=us-east-1
   TFVARS=internal/qualification/aws/qual-aws-row.tfvars
-  SOL=_build/default/cli/bin/main.exe   WORKSPACE=examples/pluto
+  WORKSPACE=examples/pluto
   PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<timestamp>
-  RUNNER_VERSION=sol-<git sha>   RUNNER_REPOSITORY=pluto/sol-migration-runner
 
 phases
   cloud    cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
-  app      the publisher's work, then Sol's: build, ECR login and push, publish the migration
-           runner, runtime secrets, migrate apply, deploy, the transaction
+  app      the publisher's work, then Sol's: build, ECR login and push, runtime secrets,
+           migrate apply, deploy, the transaction
   destroy  supported teardown, then the independent inventory
   verify   the independent inventory only; invokes no teardown
 
@@ -61,11 +69,11 @@ only passes when that id appears in GET /notifications, which cannot happen unle
 consumed the Kafka event and wrote PostgreSQL. AWS_PROFILE and TF_VAR_db_password must be in the
 environment; POSTGRES_URL comes from the cluster root's own postgres_url output.
 
-Images are the publisher's work, never Sol's: the application images are built and pushed here,
-and so is the migration runner
-(internal/qualification/publish-migration-runner.sh), whose digest reference is handed to Sol as
-SOL_MIGRATION_RUNNER_IMAGE. Sol's deploy identity has no registry-write authority (ADR 0002,
-SEC-011), and it refuses to run a migrate or deploy step without a digest-pinned runner.
+Sol runs the installed release bundle: box SOL_INSTALL at the extracted
+sol-<version>-linux-x86_64.tar.gz prefix, and Sol resolves its own assets, its Terraform roots and
+its digest-pinned migration runner from that bundle. The harness publishes the application images
+and nothing else. Sol's deploy identity has no registry-write authority (ADR 0002, SEC-011), and it
+refuses to run a migrate or deploy step without a digest-pinned runner.
 USAGE
 }
 
@@ -81,42 +89,6 @@ run() {
 
 k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 image_ref() { printf '%s/pluto/%s:%s' "$ECR_REGISTRY" "$(k8s_name "$1")" "$APP_TAG"; }
-runner_image_ref() { printf '%s/%s:%s' "$ECR_REGISTRY" "$RUNNER_REPOSITORY" "$RUNNER_VERSION"; }
-
-ensure_runner_repository() {
-  if aws ecr describe-repositories --repository-names "$RUNNER_REPOSITORY" >"$LOG_DIR/runner-repository.log" 2>&1; then
-    return 0
-  fi
-  say "  $RUNNER_REPOSITORY does not exist yet (the platform provisions one repository per service, and the runner is not one); creating it as the publisher"
-  aws ecr create-repository --repository-name "$RUNNER_REPOSITORY" >>"$LOG_DIR/runner-repository.log" 2>&1 || {
-    say "could not create $RUNNER_REPOSITORY -- see $LOG_DIR/runner-repository.log"
-    return 1
-  }
-}
-
-publish_migration_runner() {
-  ensure_runner_repository || return 1
-  say "runner-publish: building and publishing the migration runner Sol will run"
-  if ! timeout "$PHASE_TIMEOUT" "$ROOT/internal/qualification/publish-migration-runner.sh" \
-      --root "$ROOT" --image "$(runner_image_ref)" --version "$RUNNER_VERSION" \
-      >"$LOG_DIR/runner-publish.out" 2>"$LOG_DIR/runner-publish.log"; then
-    say "FAILED: runner-publish (last 40 lines; full log $LOG_DIR/runner-publish.log)"
-    tail -n 40 "$LOG_DIR/runner-publish.log"
-    return 1
-  fi
-  local ref
-  ref="$(cat "$LOG_DIR/runner-publish.out")"
-  case "$ref" in
-    *@sha256:*) ;;
-    *)
-      say "the publisher did not report a digest reference ($ref), and Sol is only ever handed one"
-      return 1
-      ;;
-  esac
-  export SOL_MIGRATION_RUNNER_IMAGE="$ref"
-  say "  Sol will run $ref"
-  say "  the deploy identity publishes nothing: this is the same boundary the app images cross, before Sol is invoked"
-}
 
 target_state_bucket() {
   sed -n 's/^ *state_bucket: *//p' "$TARGET_FILE" | head -1
@@ -265,7 +237,7 @@ phase_app() {
     "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'" || return 1
   run app-push docker push "$(image_ref charge_svc)" || return 1
   run app-push-worker docker push "$(image_ref notify_worker)" || return 1
-  publish_migration_runner || return 1
+  say "runner: release $SOL_BUNDLE_VERSION names $SOL_RUNNER_IMAGE; the publisher publishes nothing"
   capture_state
   local url
   url="$(jq -r '.outputs.postgres_url.value // empty' "$LOG_DIR/state/cloud.tfstate" 2>/dev/null)"

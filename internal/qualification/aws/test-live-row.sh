@@ -20,12 +20,41 @@ refused() { if [ "$(cat "$TMP/$1.rc" 2>/dev/null)" != "0" ]; then ok "$2"; else 
 
 ROOT="$TMP/root"
 WORKSPACE="$TMP/workspace"
-mkdir -p "$ROOT/internal/qualification/aws" "$ROOT/internal/tooling/release" \
-  "$WORKSPACE/sol" "$TMP/bin"
+INSTALL="$TMP/install"
+VERSION="v0.1.0-alpha.7"
+DIGEST64="$(printf 'a%.0s' $(seq 1 64))"
+RUNNER="ghcr.io/example/sol-migration-runner:$VERSION@sha256:$DIGEST64"
+NO_RUNNER_INSTALL="$TMP/install-no-runner"
+TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
+
+mkdir -p "$ROOT/internal/qualification/aws" "$WORKSPACE/sol" "$TMP/bin"
 cp "$REPO/internal/qualification/aws/live-row.sh" "$ROOT/internal/qualification/aws/"
-cp "$REPO/internal/qualification/publish-migration-runner.sh" "$ROOT/internal/qualification/"
-printf 'FROM scratch\nCOPY sol /usr/local/bin/sol\n' \
-  >"$ROOT/internal/tooling/release/migration-runner.Dockerfile"
+cp "$REPO/internal/qualification/sol-under-test.sh" "$ROOT/internal/qualification/"
+
+bundle() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/share/sol/$VERSION/platform/shared"
+  printf '{\n  "components": {}\n}\n' >"$dir/share/sol/$VERSION/platform/shared/components.json"
+  cat >"$dir/bin/sol" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  printf '%s\n' "${STUB_SOL_VERSION:-v0.1.0-alpha.7}"
+  exit 0
+fi
+printf 'sol %s [runner=%s] [home=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" "${SOL_HOME:-unset}" >>"$SOL_LOG"
+exit 0
+STUB
+  chmod +x "$dir/bin/sol"
+}
+
+bundle "$INSTALL"
+printf '%s\n' "$RUNNER" >"$INSTALL/share/sol/$VERSION/migration-runner-image"
+
+bundle "$NO_RUNNER_INSTALL"
+
+bundle "$TAG_RUNNER_INSTALL"
+printf 'ghcr.io/example/sol-migration-runner:%s\n' "$VERSION" >"$TAG_RUNNER_INSTALL/share/sol/$VERSION/migration-runner-image"
+
 cat >"$ROOT/internal/qualification/aws/app-transaction.sh" <<'STUB'
 #!/usr/bin/env bash
 printf 'health: ok\ncharge: ch_qual01\nnotification: ch_qual01\nthe worker consumed the charge\n' \
@@ -44,8 +73,6 @@ qualreg:
 YAML
 
 ECR="123456789012.dkr.ecr.us-east-1.amazonaws.com"
-RUNNER_REF="$ECR/pluto/sol-migration-runner:sol-test"
-DIGEST64="$(printf 'a%.0s' $(seq 1 64))"
 
 cat >"$TMP/bin/aws" <<'STUB'
 #!/usr/bin/env bash
@@ -56,13 +83,6 @@ case "$1 $2" in
     dest="${@: -1}"
     mkdir -p "$(dirname "$dest")"
     printf '{"outputs":{"postgres_url":{"value":"postgres://user:qual-secret@db.example.test:5432/pluto"}}}\n' >"$dest"
-    ;;
-  "ecr describe-repositories")
-    [ -n "${STUB_RUNNER_REPO_EXISTS:-}" ] && exit 0
-    exit 1
-    ;;
-  "ecr create-repository")
-    if [ -n "${STUB_REPO_CREATE_FAILS:-}" ]; then printf 'AccessDeniedException\n' >&2; exit 1; fi
     ;;
 esac
 exit 0
@@ -87,47 +107,9 @@ chmod +x "$TMP/bin/kubectl"
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"$DOCKER_LOG"
-case "$1" in
-  push)
-    if [ "${STUB_FAIL_PUSH_FOR:-}" = "$2" ]; then exit 1; fi
-    ;;
-  inspect)
-    ref="${@: -1}"
-    if [ -n "${STUB_RUNNER_TAG_ONLY:-}" ]; then
-      printf '%s\n' "$ref"
-    else
-      printf '%s@sha256:%s\n' "$ref" "$(printf 'a%.0s' $(seq 1 64))"
-    fi
-    ;;
-esac
 exit 0
 STUB
 chmod +x "$TMP/bin/docker"
-
-cat >"$TMP/bin/sol" <<'STUB'
-#!/usr/bin/env bash
-printf 'sol %s [runner=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" >>"$SOL_LOG"
-exit 0
-STUB
-chmod +x "$TMP/bin/sol"
-
-cat >"$TMP/bin/opam" <<'STUB'
-#!/usr/bin/env bash
-printf 'opam %s (SOL_RELEASE_VERSION=%s)\n' "$*" "${SOL_RELEASE_VERSION:-unset}" >>"$BUILD_LOG"
-out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --build-dir) out="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-[ -n "$out" ] || exit 1
-mkdir -p "$out/default/cli/bin"
-printf 'built by the test stub\n' >"$out/default/cli/bin/main.exe"
-chmod +x "$out/default/cli/bin/main.exe"
-exit 0
-STUB
-chmod +x "$TMP/bin/opam"
 
 run_row() {
   local name="$1"
@@ -136,72 +118,62 @@ run_row() {
   export KUBECTL_LOG="$TMP/$name.kubectl"
   export DOCKER_LOG="$TMP/$name.docker"
   export SOL_LOG="$TMP/$name.sol"
-  export BUILD_LOG="$TMP/$name.build"
   export LOG_DIR="$TMP/$name.logs"
   : >"$AWS_LOG"
   : >"$KUBECTL_LOG"
   : >"$DOCKER_LOG"
   : >"$SOL_LOG"
-  : >"$BUILD_LOG"
   rm -rf "$LOG_DIR"
   env PATH="$TMP/bin:$PATH" \
     WORKSPACE="$WORKSPACE" TARGET=qualreg/aws/us-east-1 ECR_REGISTRY="$ECR" \
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
     CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
-    SOL="$TMP/bin/sol" RUNNER_VERSION=sol-test PHASE_TIMEOUT=60 "$@" \
+    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
     "$ROOT/internal/qualification/aws/live-row.sh" app >"$TMP/$name.out" 2>&1
   echo "$?" >"$TMP/$name.rc"
 }
 
-printf '\nscenario: the app phase — the publisher publishes, then Sol consumes\n'
+printf '\nscenario: the app phase runs the installed release bundle and hands Sol no runner\n'
 run_row ok
 is "exit 0" "$(cat "$TMP/ok.rc")" "0"
+has "the installed bundle is named in the transcript" \
+  "sol-under-test: release $VERSION at $INSTALL" "$TMP/ok.out"
 has "the application images are still built and pushed by the harness" \
   "docker push $ECR/pluto/charge-svc:row-" "$TMP/ok.docker"
-has "and so is the migration runner, from Sol's own release recipe" \
-  "docker build -f $ROOT/internal/tooling/release/migration-runner.Dockerfile -t $RUNNER_REF" "$TMP/ok.docker"
-has "pushed to a repository the publisher owns" "docker push $RUNNER_REF" "$TMP/ok.docker"
-has "the runner's build stamps the Sol revision" "SOL_RELEASE_VERSION=sol-test" "$TMP/ok.build"
-has "the repository the runner needs, which no service owns, is created first" \
-  "aws ecr create-repository --repository-name pluto/sol-migration-runner" "$TMP/ok.aws"
-has "Sol applies the workspace's migrations" "sol migrate apply qualreg/aws/us-east-1" "$TMP/ok.sol"
-lacks "without being asked to publish a runner" \
+lacks "but the harness publishes no migration runner" \
+  "sol-migration-runner" "$TMP/ok.docker"
+has "Sol applies the workspace's migrations" \
+  "sol migrate apply qualreg/aws/us-east-1 [runner=unset] [home=unset]" "$TMP/ok.sol"
+lacks "without being asked to publish or name a runner" \
   "migrate apply qualreg/aws/us-east-1 --registry" "$TMP/ok.sol"
-has "because it is handed the pushed digest" \
-  "migrate apply qualreg/aws/us-east-1 [runner=$RUNNER_REF@sha256:$DIGEST64]" "$TMP/ok.sol"
 has "the deploy still resolves the workspace's own images from the target's registry" \
   "deploy qualreg/aws/us-east-1 --registry $ECR --image-tag row-" "$TMP/ok.sol"
-has "and carries the same digest-pinned runner for its migration prerequisite" \
-  "runner=$RUNNER_REF@sha256:$DIGEST64" \
-  <(grep -F 'sol deploy qualreg/aws/us-east-1' "$TMP/ok.sol" | head -1)
-publish_at="$(grep -n 'runner-publish' "$TMP/ok.out" | head -1 | cut -d: -f1)"
-migrate_at="$(grep -n 'migrate-apply' "$TMP/ok.out" | head -1 | cut -d: -f1)"
-if [ -n "$publish_at" ] && [ -n "$migrate_at" ] && [ "$publish_at" -lt "$migrate_at" ]; then
-  ok "and every one of Sol's steps happens after the publisher's"
-else
-  no "and every one of Sol's steps happens after the publisher's" "runner-publish before migrate-apply" \
-    "publish at ${publish_at:-none}, migrate at ${migrate_at:-none}"
-fi
+has "the run identity records the bundle version" \
+  "sol_version: $VERSION" "$TMP/ok.logs/sol-identity.txt"
+has "and the bundle's digest-pinned migration runner" \
+  "migration_runner_image: $RUNNER" "$TMP/ok.logs/sol-identity.txt"
 
-printf '\nscenario: an existing runner repository is left alone\n'
-run_row existing STUB_RUNNER_REPO_EXISTS=1
-is "exit 0" "$(cat "$TMP/existing.rc")" "0"
-lacks "no repository is created when it is already there" \
-  "create-repository" "$TMP/existing.aws"
-has "and the runner is published into it" "docker push $RUNNER_REF" "$TMP/existing.docker"
+printf '\nscenario: a dev build, a missing bundle and an unpinned runner are refused before Sol moves anything\n'
+run_row dev STUB_SOL_VERSION=Sol-ed3f041f
+refused dev "a development build is refused"
+lacks "Sol is never asked to migrate" "migrate apply" "$TMP/dev.sol"
+has "and the refusal names the installed-bundle rule" \
+  "which is a development build" "$TMP/dev.out"
 
-printf '\nscenario: adversarial — an unpublishable runner stops the run before Sol is asked to move anything\n'
-run_row tag STUB_RUNNER_TAG_ONLY=1
-refused tag "a runner that resolved to no digest fails the phase"
-lacks "Sol is never asked to migrate" "migrate apply" "$TMP/tag.sol"
-lacks "nor to deploy" "deploy qualreg/aws/us-east-1" "$TMP/tag.sol"
-has "and the refusal names the boundary rather than a tag" \
-  "Sol is handed a digest, never a tag" "$TMP/tag.out"
+run_row missing SOL_INSTALL=
+refused missing "a missing SOL_INSTALL is refused"
+lacks "Sol is never invoked at all" "sol " "$TMP/missing.sol"
+has "and the refusal says what to set" "set SOL_INSTALL" "$TMP/missing.out"
 
-run_row norepo STUB_REPO_CREATE_FAILS=1
-refused norepo "a runner repository the publisher cannot create fails the phase"
-lacks "Sol is never invoked at all" "sol " "$TMP/norepo.sol"
-has "and the repository log is named for the operator" "runner-repository.log" "$TMP/norepo.out"
+run_row norunner SOL_INSTALL="$NO_RUNNER_INSTALL"
+refused norunner "a bundle with no runner reference is refused"
+lacks "Sol is never asked to migrate" "migrate apply" "$TMP/norunner.sol"
+has "and the refusal names the missing file" "records no migration runner" "$TMP/norunner.out"
+
+run_row tagrunner SOL_INSTALL="$TAG_RUNNER_INSTALL"
+refused tagrunner "a bundle whose runner is a tag is refused"
+lacks "Sol is never invoked with it" "migrate apply" "$TMP/tagrunner.sol"
+has "and the refusal names the digest boundary" "not a digest reference" "$TMP/tagrunner.out"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then

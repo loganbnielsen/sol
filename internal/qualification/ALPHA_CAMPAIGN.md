@@ -309,7 +309,7 @@ machine with only the released bundle and no checkout.
 |---|---|---|---|---|---|---|---|---|
 | J1 | Release publishes one aligned unit | tag `v*` publishes `bin/sol` + `share/sol/<version>/platform` + `sol-migration-runner:<version>`; republishing a tag is refused | — | — | release archive, GHCR | clean | FEAT-101, DEC-049, `RELEASE-006` | NOT RUN (mechanism PASS OFFLINE) |
 | J2 | Installed-layout smoke | the bundle runs in a container with no checkout and no `SOL_HOME`; a planted reach-back fails it | — | — | CI job | clean | FEAT-101 | PASS (OFFLINE) |
-| J3 | Live runs use the released artifact | the AWS/GCP harness drives the installed bundle, not a checkout | — | — | harness config | aws, gcp | `RELEASE-006` (divergence recorded) | NOT RUN |
+| J3 | Live runs use the released artifact | the AWS/GCP harness drives the installed bundle, not a checkout | — | — | harness config | aws, gcp | `RELEASE-006` (divergence recorded) | NOT RUN (harness prepared: requires `SOL_INSTALL`, refuses a checkout build, records bundle version + runner digest; pinned by `test-live-row.sh`/`test-live-qual.sh`) |
 | J4 | Provenance | `SUPPORT_REFS`/`--version` identify the build's revision and support pins | — | — | release archive | clean | BUG-059 | PASS (OFFLINE) |
 
 ## 4. Clean-user starting condition and canonical install
@@ -348,6 +348,21 @@ predates the whole S1–S4 surface. A clean-user campaign cannot start from it. 
 and verifying an alpha release from the frozen revision is `RELEASE-006`. The AWS/GCP
 harnesses currently run `sol` from a checkout; `RELEASE-006` also moves them onto the
 released bundle, so the live runs qualify the artifact a user actually installs (J3).
+
+**Staging state (RELEASE-006, part A).** The harness change has landed: `SOL_INSTALL`
+names the extracted `sol-<version>-linux-x86_64.tar.gz` prefix, the harness refuses a
+development build and a non-digest runner reference, and it records the bundle version
+and the migration-runner digest in `sol-identity.txt`, which the run-record template now
+carries. The installed-layout smoke also drives `sol plan` on `examples/pluto` with no
+checkout and no `SOL_HOME`. The release itself is **staged, not tagged**: the archive and
+its runner digest are produced by `release.yml` from the tag, and a version is published
+once, so the tag waits on the operator's §7.6 version confirmation. The bundle's contents
+(`bin/sol` + `platform/`) are independent of FEAT-131/132/133, which change only
+`examples/pluto`, so no *content* is missing today; the revision is deferred so the
+release and the reference-app inputs are one campaign revision, and so a Sol-side gap the
+reference-app stream exposes (its own rule: a missing primitive is a finding) does not
+require superseding an already-published version. The tag command is recorded in
+`RELEASE-006`.
 
 ## 5. Shared infrastructure and ownership boundaries
 

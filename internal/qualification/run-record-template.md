@@ -36,6 +36,9 @@
 | Started (UTC) | | `date -u +%FT%TZ` |
 | Finished (UTC) | | |
 | Evidence bundle directory | | path, and whether it is outside the repository |
+| Sol bundle version | | `sol --version` under the installed prefix; also `$LOG_DIR/sol-identity.txt` |
+| Sol install prefix | | the extracted `sol-<version>-linux-x86_64.tar.gz` prefix passed as `SOL_INSTALL` |
+| Migration runner image | | the digest the bundle names (`share/sol/<version>/migration-runner-image`); also `$LOG_DIR/sol-identity.txt` |
 
 **The qualification target is untracked, on purpose.** It is a `qual` environment in
 `<workspace>/sol/environments.local.yml` (start from

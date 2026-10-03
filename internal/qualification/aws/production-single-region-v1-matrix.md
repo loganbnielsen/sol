@@ -295,12 +295,11 @@ These are not product defects; they are things the operator's session must have,
 Run 8 lost time to one of them.
 
 - **Docker group access, in the shell that runs the app phase.** The *publisher*
-  builds and pushes both the workload images and the migration runner
-  (`internal/qualification/publish-migration-runner.sh`), and the runner it
-  publishes is what Sol is handed by digest (`SOL_MIGRATION_RUNNER_IMAGE`,
-  SEC-011). Sol's own deploy path no longer shells out to `docker build` for
-  anything: it resolves digests read-only, because the deploy identity has no
-  registry-write authority (ADR 0002). A session that predates the operator's
+  builds and pushes the workload images, and the app phase runs Sol from the
+  installed release bundle, whose `migration-runner-image` names its own runner by
+  digest (SEC-011, RELEASE-006). Sol's own deploy path never shells out to `docker
+  build` for anything: it resolves digests read-only, because the deploy identity
+  has no registry-write authority (ADR 0002). A session that predates the operator's
   `docker` group membership fails with `permission denied ...
   unix:///var/run/docker.sock` — which reads like a target or credential problem
   and is neither. Check with `docker version` before starting, or run the app

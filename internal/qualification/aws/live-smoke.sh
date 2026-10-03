@@ -10,11 +10,13 @@ PROFILE="${AWS_PROFILE:?Set AWS_PROFILE to a profile that can reach the target A
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="${CLUSTER:?Set CLUSTER to the EKS cluster name for this run}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-live-smoke-$(date +%Y%m%d-%H%M%S)}"
-SOL="$ROOT/_build/default/cli/bin/main.exe"
 
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-900}"
 
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+
+source "$ROOT/internal/qualification/sol-under-test.sh"
+sol_under_test_resolve
 
 run() {
   local name="$1"; shift
@@ -74,6 +76,8 @@ YAML
 }
 
 mkdir -p "$LOG_DIR"
+sol_under_test_record_identity "$LOG_DIR"
+say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
 trap cleanup EXIT
 write_target
 
