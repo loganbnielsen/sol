@@ -217,8 +217,9 @@ let dispatch
 module For_testing = struct
   let respond_or_500 = respond_or_500
 
-  let dispatch ?fetch_jwks ~routes req body =
+  let dispatch ?read_api_key ?fetch_jwks ~routes req body =
     dispatch
+      ?read_api_key
       ?fetch_jwks
       ~routes
       ~metrics_renderer:None

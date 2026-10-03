@@ -49,3 +49,11 @@ type error =
   | `Forbidden of string
   | `Server_error of string
   ]
+
+val constant_time_equal : string -> string -> bool
+
+module For_testing : sig
+  val constant_time_equal : string -> string -> bool
+  val reset_jwks_cache : unit -> unit
+  val seed_stale_jwks_cache : url:string -> age_s:float -> jwks:string -> unit
+end

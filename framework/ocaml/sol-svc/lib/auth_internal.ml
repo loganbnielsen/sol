@@ -1,18 +1,5 @@
 open Auth
 
-let constant_time_equal s1 s2 =
-  let len1 = String.length s1
-  and len2 = String.length s2 in
-  if len1 <> len2
-  then false
-  else (
-    let res = ref 0 in
-    for i = 0 to len1 - 1 do
-      res := !res lor (Char.code s1.[i] lxor Char.code s2.[i])
-    done;
-    !res = 0)
-;;
-
 let validate_api_key ~read_api_key headers =
   match Http.Header.get headers "x-api-key" with
   | None -> Error (`Unauthorized "Missing X-Api-Key header")
@@ -166,18 +153,7 @@ let validate_unverified_jwt config headers =
   Ok { principal = User { sub = token_sub json; scopes; claims = json } }
 ;;
 
-type jwks_cache_entry =
-  { url : string
-  ; fetched_at : float
-  ; jwks : Jose.Jwks.t
-  }
-
-let jwks_cache : jwks_cache_entry option Atomic.t = Atomic.make None
 let jwks_refresh_mutex = Eio.Mutex.create ()
-let jwks_ttl_s = 300.0
-let jwks_unknown_kid_refetch_interval_s = 30.0
-let jwks_failure_backoff_s = 5.0
-let jwks_last_failure : (string * float * string) option Atomic.t = Atomic.make None
 
 let fetch_jwks_over_https ~env url =
   match
@@ -200,26 +176,28 @@ let fetch_jwks_over_https ~env url =
      | exn -> Error ("JWKS parse failed: " ^ Printexc.to_string exn))
 ;;
 
-let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
+let get_jwks ?(max_age_s = Auth_cache.ttl_s) ~fetch_jwks url =
   let usable entry =
-    entry.url = url && Unix.gettimeofday () -. entry.fetched_at < max_age_s
+    entry.Auth_cache.url = url
+    && Unix.gettimeofday () -. entry.Auth_cache.fetched_at < max_age_s
   in
-  match Atomic.get jwks_cache with
-  | Some entry when usable entry -> Ok entry.jwks
+  match Auth_cache.peek () with
+  | Some entry when usable entry -> Ok entry.Auth_cache.jwks
   | _ ->
     Eio.Mutex.use_ro jwks_refresh_mutex (fun () ->
-      match Atomic.get jwks_cache, Atomic.get jwks_last_failure with
-      | Some entry, _ when usable entry -> Ok entry.jwks
+      match Auth_cache.peek (), Auth_cache.last_failure () with
+      | Some entry, _ when usable entry -> Ok entry.Auth_cache.jwks
       | _, Some (u, at, msg)
-        when u = url && Unix.gettimeofday () -. at < jwks_failure_backoff_s -> Error msg
+        when u = url && Unix.gettimeofday () -. at < Auth_cache.failure_backoff_s ->
+        Error msg
       | _ ->
         (match fetch_jwks url with
          | Ok jwks ->
-           Atomic.set jwks_cache (Some { url; fetched_at = Unix.gettimeofday (); jwks });
-           Atomic.set jwks_last_failure None;
+           Auth_cache.replace { Auth_cache.url; fetched_at = Unix.gettimeofday (); jwks };
+           Auth_cache.set_last_failure None;
            Ok jwks
          | Error msg as e ->
-           Atomic.set jwks_last_failure (Some (url, Unix.gettimeofday (), msg));
+           Auth_cache.set_last_failure (Some (url, Unix.gettimeofday (), msg));
            e))
 ;;
 
@@ -268,7 +246,10 @@ let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
         | Ok jwks ->
           jwks_lookup
             ~refetch:(fun () ->
-              get_jwks ~max_age_s:jwks_unknown_kid_refetch_interval_s ~fetch_jwks url)
+              get_jwks
+                ~max_age_s:Auth_cache.unknown_kid_refetch_interval_s
+                ~fetch_jwks
+                url)
             jwks))
 ;;
 

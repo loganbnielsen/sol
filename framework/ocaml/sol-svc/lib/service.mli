@@ -47,7 +47,8 @@ module For_testing : sig
   val respond_or_500 : (unit -> Response.t) -> Response.t
 
   val dispatch
-    :  ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
+    :  ?read_api_key:(unit -> string option)
+    -> ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
     -> routes:Route.t list
     -> Http.Request.t
     -> Cohttp_eio.Body.t
