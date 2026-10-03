@@ -129,12 +129,18 @@ let test_pluto_events_migrations_and_targets () =
   Windtrap.equal
     (Windtrap.list Windtrap.string)
     ~msg:"schema subjects"
-    [ "comms.Notification_sent"; "payments.Charged" ]
+    [ "comms.Notification_sent"
+    ; "orders.Order_fulfilled"
+    ; "orders.Order_placed"
+    ; "payments.Charged"
+    ]
     (subject_strings facts);
   Windtrap.equal
     (Windtrap.list Windtrap.string)
     ~msg:"topics (from pluto's event declarations, both languages)"
-    [ "pluto-comms-notifications"
+    [ "orders-fulfilled.v1"
+    ; "orders.v1"
+    ; "pluto-comms-notifications"
     ; "pluto-payments-charges"
     ; "sol-demo-ts-fulfilled"
     ; "sol-demo-ts-orders"
@@ -146,6 +152,8 @@ let test_pluto_events_migrations_and_targets () =
     [ "events/comms/Notification_sent"
     ; "events/demo_ts/OrderPlaced"
     ; "events/demo_ts/OrderFulfilled"
+    ; "events/orders/OrderPlaced"
+    ; "events/orders/OrderFulfilled"
     ; "events/payments/Charged"
     ]
     (List.map
@@ -162,7 +170,7 @@ let test_pluto_events_migrations_and_targets () =
     ]
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
-   | [ notifications; sol_jobs; sol_outbox; charge_id_unique ] ->
+   | [ notifications; sol_jobs; sol_outbox; charge_id_unique; orders; orders_ts ] ->
      Windtrap.equal
        Windtrap.string
        ~msg:"file"
@@ -225,13 +233,56 @@ let test_pluto_events_migrations_and_targets () =
        (Windtrap.option Windtrap.string)
        ~msg:"charge-id-unique name"
        (Some "notifications_charge_id_unique")
-       charge_id_unique.name
+       charge_id_unique.name;
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"orders migration file"
+       "0005_orders.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string orders.file);
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"orders version"
+       (Some 5)
+       orders.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"orders name"
+       (Some "orders")
+       orders.name;
+     (match orders.disposition with
+      | Ok Sol_cli_migration_disposition.Expand -> ()
+      | Ok Sol_cli_migration_disposition.Contract ->
+        Windtrap.fail "expected the orders migration to be an expand migration"
+      | Error reason ->
+        Windtrap.fail ("expected the orders migration to declare a disposition: " ^ reason));
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"orders-ts migration file"
+       "0006_orders_ts.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string orders_ts.file);
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"orders-ts version"
+       (Some 6)
+       orders_ts.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"orders-ts name"
+       (Some "orders_ts")
+       orders_ts.name;
+     (match orders_ts.disposition with
+      | Ok Sol_cli_migration_disposition.Expand -> ()
+      | Ok Sol_cli_migration_disposition.Contract ->
+        Windtrap.fail "expected the orders-ts migration to be an expand migration"
+      | Error reason ->
+        Windtrap.fail
+          ("expected the orders-ts migration to declare a disposition: " ^ reason))
    | other ->
-     Windtrap.fail (Printf.sprintf "expected four migrations, got %d" (List.length other)));
+     Windtrap.fail (Printf.sprintf "expected six migrations, got %d" (List.length other)));
   Windtrap.equal
     Windtrap.int
     ~msg:"unapplied migrations"
-    4
+    6
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 

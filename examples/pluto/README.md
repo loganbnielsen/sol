@@ -1,7 +1,124 @@
 # Pluto
 
 A Sol workspace with OCaml service examples (`charge_svc`, `checkout_svc`,
-`notify_worker`) and the existing TypeScript demo pair under `app/demo_ts`.
+`notify_worker`) and the existing TypeScript demo pair under `app/demo_ts`. It
+also carries the alpha campaign's reference application, the "Pluto orders"
+scenario, in both languages.
+
+## The reference scenario: Pluto orders
+
+`examples/pluto` is the alpha campaign's reference application: one realistic
+backend workflow implemented independently in OCaml and TypeScript with the same
+externally observable behaviour (`internal/qualification/ALPHA_CAMPAIGN.md` §2).
+`FEAT-131` lands the shared scenario contract and skeleton; `FEAT-132` implements
+the OCaml half and `FEAT-133` the TypeScript half.
+
+### Two namespaces, one scenario
+
+The two implementations are independent deployments inside this one workspace —
+separate domains, topics, tables and job kinds — so both can run side by side
+against one Postgres and one broker. They share the scenario's event semantics
+and its HTTP contract, and nothing else.
+
+| | OCaml namespace | TypeScript namespace |
+|---|---|---|
+| units | `orders_svc` (`-svc`), `fulfilment_worker` (`-worker`) | `order_svc` (`-svc`), `fulfillment_worker` (`-worker`) |
+| domains | `payments`, `comms` | `demo_ts` |
+| event declaration | `events/orders/sol.toml` (canonical) | `events/demo_ts/sol.toml` (projection) |
+| `OrderPlaced` topic | `orders.v1` | `sol-demo-ts-orders` |
+| `OrderFulfilled` topic | `orders-fulfilled.v1` | `sol-demo-ts-fulfilled` |
+| tables | `orders`, `fulfilled_orders`, `order_confirmations` | `orders_ts`, `fulfilled_orders_ts`, `order_confirmations_ts` |
+| job kinds | `send_confirmation`, `release_inventory` | `send_confirmation`, `release_inventory` |
+| job workspace | `pluto.orders` | `pluto.demo_ts` |
+
+The two namespaces use the same job kind names; `sol_jobs.workspace` separates
+their rows, and each unit's job contract pins its own workspace string. The
+scenario's shared tables ship as migrations (`0005_orders.sql`,
+`0006_orders_ts.sql`); `sol_jobs` and `sol_outbox` are the workspace-shared DDL
+in `0002`/`0003`.
+
+`orders_svc` and `fulfilment_worker` are declared in `sol.yml` with their
+language and in `sol/environments.yml` with their environment settings.
+`FEAT-132` adds their directories, under `app/payments/orders_svc` and
+`app/comms/fulfilment_worker`; until then `sol plan` reads the declaration and
+renders both units, while `sol check` cannot see a workload for them because
+discovery is directory-based (the gap is `BUG-131`). The TypeScript half already
+lives under `app/demo_ts`.
+
+### The workflow
+
+```
+client
+  │  POST /orders {order_id, item, quantity}
+  ▼
+orders_svc  (-svc)
+  │  BEGIN
+  │    INSERT orders        (order_id PK, item, quantity, status)   ON CONFLICT DO NOTHING
+  │    INSERT sol_jobs      (kind = send_confirmation, dedupe_key = order_id)
+  │    INSERT sol_outbox    (kind = OrderPlaced, key = order_id, ord = 1)
+  │  COMMIT
+  │  outbox relay  ──►  Kafka topic  orders.v1            (3 partitions, key = order_id)
+  ▼
+fulfilment_worker  (-worker)
+  │  consume OrderPlaced
+  │  BEGIN
+  │    INSERT fulfilled_orders (order_id PK, item, quantity, correlation_id)   ON CONFLICT DO NOTHING
+  │    INSERT sol_jobs       (kind = release_inventory, dedupe_key = order_id)
+  │    INSERT sol_outbox     (kind = OrderFulfilled, key = order_id, ord = 1)
+  │  COMMIT
+  │  ack
+  │  outbox relay  ──►  Kafka topic  orders-fulfilled.v1   (3 partitions, key = order_id)
+  ▼
+downstream behaviour
+  • the job runner executes send_confirmation (writes the confirmation effect)
+  • GET /orders/{order_id} reads fulfilment back:  accepted → fulfilled → confirmed
+```
+
+### Observable contract
+
+Identical in both languages.
+
+| Aspect | Contract |
+|---|---|
+| HTTP | `POST /orders` → `202 {order_id, status}`; `GET /orders/{order_id}` → `200`/`404`; a duplicate `POST` is idempotent |
+| Events | `OrderPlaced`, `OrderFulfilled`; declared in `events/<scope>/sol.toml`; 3 partitions; key `order_id` |
+| Atomicity | the domain row, the job and the outbox intent commit or roll back together; the relay removes a row only after the broker acknowledged it |
+| Duplicate delivery | absorbed at every effect (row `ON CONFLICT`, job dedupe key, outbox unique `(key, ord)`), so one fact yields one row, one job, one intent, one effect |
+| Decode failure | an undecodable record yields the structured decode log, `sol_worker_decode_errors_total`, and a DLQ record on `<topic>.<group>.dlq` carrying the raw bytes; the source offset advances |
+| Undeliverable record | a handler that returns the fail-closed `Dead_letter` outcome produces no DLQ record (`FEAT-118`) |
+| Identity | every log, metric and trace carries the six Sol dimensions, and one request's three signals agree |
+
+### The event contract has one source of truth
+
+`events/orders/sol.toml` is the scenario's canonical event declaration: the
+event names, schemas, partition counts and message keys are authored there and
+nowhere else. `events/demo_ts/sol.toml` is a **projection** of it. The
+projection exists because a Sol scope binds one language and the TypeScript
+deployment needs namespace topics of its own; it may differ in its `topic`
+only.
+
+`internal/ci/check_scenario_contract.py` enforces that direction: every
+projection event must reproduce the canonical name, schema, partitions and key,
+a projection may add no event of its own, and the two scopes' topics are
+disjoint. `internal/ci/test_scenario_contract.py` mutates each of those and
+requires the guard to fail naming the file. The pair is therefore one contract
+with two language bindings — not two declarations that happen to agree today.
+
+Change the scenario's event semantics in `events/orders/sol.toml`, mirror the
+change into `events/demo_ts/sol.toml`, then regenerate both bindings, which the
+application code imports and never redeclares:
+
+```bash
+sol contract generate          # writes both bindings
+sol contract generate --check  # what CI runs
+```
+
+### The scenario's current state
+
+`FEAT-131` lands the event contract and its bindings, the migrations, the unit
+declarations and this document. The handlers are `FEAT-132` (OCaml) and
+`FEAT-133` (TypeScript); a unit's behaviour — routes, transactions, job kinds
+and its `[service] calls` — is theirs to add when their directory lands.
 
 ## Build
 
@@ -148,8 +265,12 @@ prod targets declare the fixed `node_failure_headroom_nodes` the claim needs.
 See `docs/deployment/workload-availability.md`.
 
 A production deploy refuses to roll code out against an unapplied migration
-(AUDIT-069). This workspace has one migration, `db/migrations/0001_notifications.sql`,
-with a matching `0001_notifications.down.sql` for `sol migrate rollback`.
+(AUDIT-069). `0005_orders` and `0006_orders_ts` carry the reference scenario's
+two namespaces, each with a matching `.down.sql` for `sol migrate rollback`, as
+`0001_notifications` does for the charge demo. `0002_sol_jobs` and
+`0003_sol_outbox` are the shared job and outbox DDL the scenario's transactions
+use. New scenario tables are added as migrations here, never as an
+application-time `CREATE TABLE`.
 `sol migrate apply --dry-run` connects to the target database and prints only
 unapplied migration SQL; set `POSTGRES_URL` when previewing a remote target.
 The two deploy cases are:
@@ -157,7 +278,7 @@ The two deploy cases are:
 - **Compatible** — after `sol migrate apply prod/aws/us-east-1`, `sol deploy
   prod/aws/us-east-1` verifies `0001_notifications` against the authoritative
   `schema_migrations` table and proceeds.
-- **Deliberately blocked** — drop a new file in (say `0002_add_index.sql`)
+- **Deliberately blocked** — drop a new file in (say `0007_add_index.sql`)
   without running `sol migrate apply`: the deploy fails before any workload
   moves, naming the missing migration and the command to fix it. `--dry-run`
   stays side-effect free and reports the prerequisite as not verified.
@@ -446,11 +567,18 @@ ships only the unit it serves: see `app/demo_ts/README.md`.
 ## Project layout
 
 ```
+events/orders/                   ← the scenario's canonical event contract + generated OCaml binding
+events/demo_ts/                  ← the scenario's TypeScript projection (same events, TS topics)
 events/payments/            ← Charged event contract (payments team owns)
+events/comms/               ← Notification_sent event contract (comms team owns)
 app/payments/charge_svc/         ← OCaml HTTP service (POST /charges, calls checkout)
 app/checkout/checkout_svc/       ← OCaml HTTP service (GET /quote, ingress exposure)
 app/comms/notify_worker/         ← OCaml Kafka consumer (subscribes to Charged)
 app/demo_ts/order_svc/           ← TypeScript HTTP service demo
 app/demo_ts/fulfillment_worker/  ← TypeScript worker demo
-db/migrations/                   ← SQL migration files
+contract/                        ← the OCaml contract projection program (`contract/run`)
+db/migrations/                   ← SQL migration files (0005/0006 are the scenario's namespaces)
 ```
+
+`orders_svc` and `fulfilment_worker` are declared in `sol.yml` but have no
+directory yet; `FEAT-132` adds them under `app/payments/` and `app/comms/`.

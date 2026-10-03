@@ -1,0 +1,5 @@
+(library
+ (name pluto_orders_events)
+ (wrapped false)
+ (modules Order_placed Order_fulfilled Orders_contract)
+ (libraries kafka-eio-service yojson))
