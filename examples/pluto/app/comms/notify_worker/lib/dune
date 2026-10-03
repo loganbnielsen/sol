@@ -9,6 +9,7 @@
   sol-worker
   sol-jobs
   sol-outbox
+  sol-retry
   kafka-eio-service
   obs-eio
   pg-eio

@@ -47,11 +47,21 @@ module Notification_sent_outbox = Sol_outbox.Make (struct
 module Make (Config : sig
     val pool : Pg_db.pool
     val ot : Obs_eio.t
+    val clock : float Eio.Time.clock_ty Eio.Resource.t
   end) =
 struct
   module Message = Charged
 
   let group_id = "pluto-comms-notify-worker"
+
+  let retry_policy =
+    match
+      Sol_retry.of_policy
+        { base_delay_s = 0.25; max_delay_s = 5.0; max_attempts = 4; jitter_ratio = 0.25 }
+    with
+    | Ok policy -> policy
+    | Error message -> failwith ("notify_worker: retry policy: " ^ message)
+  ;;
 
   let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
     Obs_eio.log_standalone
@@ -64,35 +74,36 @@ struct
         ]
       "charge event received";
     match
-      Pg_db.transaction Config.pool (fun tx ->
-        let open Result.Syntax in
-        let* inserted =
-          Notification.insert
-            tx
-            ~charge_id:msg.id
-            ~customer_id:msg.customer_id
-            ~amount_cents:msg.amount_cents
-            ~currency:msg.currency
-        in
-        match inserted with
-        | None -> Ok ()
-        | Some _ ->
-          let* () =
-            Jobs.enqueue
+      Sol_retry.run ~clock:Config.clock retry_policy (fun () ->
+        Pg_db.transaction Config.pool (fun tx ->
+          let open Result.Syntax in
+          let* inserted =
+            Notification.insert
               tx
-              ~dedupe_key:msg.id
-              Email_job.{ charge_id = msg.id; customer_id = msg.customer_id }
+              ~charge_id:msg.id
+              ~customer_id:msg.customer_id
+              ~amount_cents:msg.amount_cents
+              ~currency:msg.currency
           in
-          Notification_sent_outbox.publish
-            tx
-            ~key:msg.id
-            ~ord:1L
-            Notification_sent.
-              { charge_id = msg.id
-              ; customer_id = msg.customer_id
-              ; amount_cents = msg.amount_cents
-              ; currency = msg.currency
-              })
+          match inserted with
+          | None -> Ok ()
+          | Some _ ->
+            let* () =
+              Jobs.enqueue
+                tx
+                ~dedupe_key:msg.id
+                Email_job.{ charge_id = msg.id; customer_id = msg.customer_id }
+            in
+            Notification_sent_outbox.publish
+              tx
+              ~key:msg.id
+              ~ord:1L
+              Notification_sent.
+                { charge_id = msg.id
+                ; customer_id = msg.customer_id
+                ; amount_cents = msg.amount_cents
+                ; currency = msg.currency
+                }))
     with
     | Ok () -> Worker.Ack
     | Error e ->
@@ -100,7 +111,7 @@ struct
         Config.ot
         Obs_eio.Error
         ~fields:[ "error", Pg_error.to_string e ]
-        "db insert failed";
+        "db transaction failed after retries";
       Worker.Fail
   ;;
 end

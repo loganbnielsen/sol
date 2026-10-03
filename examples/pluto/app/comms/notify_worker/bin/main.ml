@@ -69,6 +69,7 @@ let () =
   let module W = Notify_worker.Make (struct
       let pool = pool
       let ot = Sol_obs.obs_eio obs
+      let clock = env#clock
     end)
   in
   Eio.Fiber.fork_daemon ~sw (fun () ->

@@ -333,7 +333,14 @@ let test_framework_dependency_declared_not_vendored () =
   let opam = read_file "testapp/testapp.opam" in
   List.iter
     (fun pkg -> assert_contains "workspace .opam declares framework dep" opam pkg)
-    [ "sol-svc"; "sol-worker"; "sol-fn"; "sol-jobs"; "sol-obs"; "kafka-eio-service" ]
+    [ "sol-svc"
+    ; "sol-worker"
+    ; "sol-fn"
+    ; "sol-jobs"
+    ; "sol-retry"
+    ; "sol-obs"
+    ; "kafka-eio-service"
+    ]
 ;;
 
 let test_scaffold_compiles () =

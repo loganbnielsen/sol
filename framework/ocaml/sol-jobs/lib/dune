@@ -11,4 +11,5 @@
   caqti
   sol_env
   sol_obs
+  sol_retry
   sol_runtime))

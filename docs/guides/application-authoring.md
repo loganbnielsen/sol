@@ -112,10 +112,14 @@ The same binary can host background jobs beside the consumer — pluto's worker 
 share one process without sharing a failure domain. The job library's contract is
 [`sol-jobs`](../../framework/ocaml/sol-jobs/sol-jobs.md).
 
-A worker is where retry behaviour belongs, because a worker *can* retry: the consumer's
-error handling decides whether an event is retried or given up on. There is no
-fire-and-forget producer entry point in the framework, so a unit that produces events always
-has the delivery outcome in hand.
+A worker is where retry behaviour belongs, but it retries the *operation*, never the message: the
+outcome vocabulary is exactly `Ack | Fail` and a `Fail` stops the consumer, so a transient
+dependency failure is retried in place with
+[`sol-retry`](../../framework/ocaml/sol-retry/sol-retry.md) — the dependency call, not the
+handler. Work that must outlive the process or run independently is handed to a durable job
+([`sol-jobs`](../../framework/ocaml/sol-jobs/sol-jobs.md)) in the transaction that caused it.
+There is no fire-and-forget producer entry point in the framework, so a unit that produces
+events always has the delivery outcome in hand.
 
 ### `-fn` — a scheduled function
 

@@ -17,6 +17,7 @@ depends: [
   "ocaml" {>= "5.4.0"}
   "dune" {>= "3.0"}
   "cstruct" "eio" "http" "https-eio" "kafka-eio" "obs-eio" "uri" "yojson"
+  "sol-runtime" {with-test}
 ]
 build: [
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]

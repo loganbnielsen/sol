@@ -18,6 +18,7 @@ depends: [
   "sol-fn"
   "sol-jobs"
   "sol-outbox"
+  "sol-retry"
   "sol-obs"
   "kafka-eio-service"
 ]
@@ -37,6 +38,7 @@ pin-depends: [
   [ "sol-fn.dev"            "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-jobs.dev"          "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-outbox.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-retry.dev"         "git+https://github.com/loganbnielsen/sol.git#main" ]
 
   # The framework's own dependencies that are not yet in the public
   # opam-repository. opam does NOT apply a dependency's pin-depends transitively,
