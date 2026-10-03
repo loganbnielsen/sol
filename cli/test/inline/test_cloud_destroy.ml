@@ -202,8 +202,9 @@ let fake_deps
       ?(prepare = fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
       ?(reconcile_provable_absence = fun () -> Ok Nothing_to_reconcile)
       ?(reconcile = fun () -> Ok ())
-      ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
+      ?(authority = None)
+      ?(platform = fun () -> Ok ())
       ?(release_workloads = fun () -> Sol_cli_workload_scope.Workloads_released)
       ?(accept_unreleased = false)
       ?(destroy_substrate = fun () -> Ok ())
@@ -225,6 +226,21 @@ let fake_deps
     ; reports = []
     ; order = []
     }
+  in
+  let authority =
+    match authority with
+    | Some declared -> declared
+    | None ->
+      Mechanism
+        { reconcile_and_enable =
+            (fun () ->
+              calls.reconcile <- calls.reconcile + 1;
+              reconcile ())
+        ; remove_elevated_access =
+            (fun () ->
+              calls.remove <- calls.remove + 1;
+              remove ())
+        }
   in
   let deps =
     { require_credentials =
@@ -255,18 +271,11 @@ let fake_deps
         (fun ~state ->
           calls.prepare <- state :: calls.prepare;
           prepare ~state)
-    ; reconcile_and_enable =
-        (fun () ->
-          calls.reconcile <- calls.reconcile + 1;
-          reconcile ())
+    ; authority
     ; destroy_platform =
         (fun () ->
           calls.platform <- calls.platform + 1;
           platform ())
-    ; remove_elevated_access =
-        (fun () ->
-          calls.remove <- calls.remove + 1;
-          remove ())
     ; observe_window_before = (fun () -> Ok ())
     ; verify_window_after = (fun () -> Ok ())
     ; release_workloads =
@@ -517,6 +526,73 @@ let test_elevated_access_opened_and_removed () =
   | Destroy_blocked { guarantee; _ } -> Windtrap.failf "unexpected block: %s" guarantee
   | Destroy_failed { failure; _ } ->
     Windtrap.failf "expected success: %s" (failure_message failure)
+;;
+
+let test_no_authority_mechanism_acquires_nothing () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~outputs:Outputs_available
+      ~authority:(Some No_authority_required)
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"no acquisition apply runs when the provider declares no mechanism"
+    0
+    calls.reconcile;
+  Windtrap.equal Windtrap.int ~msg:"nothing is released afterwards" 0 calls.remove;
+  Windtrap.equal Windtrap.int ~msg:"the platform teardown still runs" 1 calls.platform;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no elevated access was ever opened, so none was cleaned up"
+    true
+    (List.exists
+       (fun report ->
+          contains (Str.regexp_string "no temporary authority mechanism") report)
+       calls.reports);
+  match outcome with
+  | Destroy_succeeded { cleanup; _ } ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a mechanism-less teardown has nothing to clean up"
+      true
+      (cleanup = Cleanup_not_needed)
+  | Destroy_blocked { guarantee; _ } -> Windtrap.failf "unexpected block: %s" guarantee
+  | Destroy_failed { failure; _ } ->
+    Windtrap.failf "expected success: %s" (failure_message failure)
+;;
+
+let test_no_authority_mechanism_still_reports_a_failed_teardown () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~outputs:Outputs_available
+      ~authority:(Some No_authority_required)
+      ~platform:(fun () -> Error "platform destroy refused")
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal Windtrap.int ~msg:"no acquisition apply runs" 0 calls.reconcile;
+  Windtrap.equal Windtrap.int ~msg:"no removal apply runs" 0 calls.remove;
+  match outcome with
+  | Destroy_failed { failure = Platform_destroy_failed message; cleanup; _ } ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the provider's refusal is the failure that is reported"
+      true
+      (contains (Str.regexp_string "platform destroy refused") message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no cleanup is claimed for access that was never opened"
+      true
+      (cleanup = Cleanup_not_needed)
+  | Destroy_failed { failure; _ } ->
+    Windtrap.failf "expected the teardown failure, got: %s" (failure_message failure)
+  | Destroy_succeeded _ ->
+    Windtrap.failf "a refused platform teardown must not report success"
+  | Destroy_blocked { guarantee; _ } -> Windtrap.failf "unexpected block: %s" guarantee
 ;;
 
 let test_protected_operation_failure_still_removes () =
@@ -2522,6 +2598,14 @@ let%test "execute: state read failure is not absence" =
 
 let%test "execute: elevated access opened/removed" =
   test_elevated_access_opened_and_removed ()
+;;
+
+let%test "execute: no authority mechanism acquires nothing" =
+  test_no_authority_mechanism_acquires_nothing ()
+;;
+
+let%test "execute: no authority mechanism still reports a failed teardown" =
+  test_no_authority_mechanism_still_reports_a_failed_teardown ()
 ;;
 
 let%test "execute: protected-operation failure still removes" =

@@ -153,6 +153,13 @@ let reconciliation_report ~evidence ~forgotten =
     (String.concat "\n" (List.map (fun address -> "    " ^ address) forgotten))
 ;;
 
+type authority =
+  | No_authority_required
+  | Mechanism of
+      { reconcile_and_enable : unit -> (unit, string) result
+      ; remove_elevated_access : unit -> (unit, string) result
+      }
+
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
@@ -270,9 +277,8 @@ type deps =
   ; reconcile_provable_absence : unit -> (reconciliation, string) result
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
-  ; reconcile_and_enable : unit -> (unit, string) result
+  ; authority : authority
   ; destroy_platform : unit -> (unit, string) result
-  ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
   ; release_workloads : unit -> Sol_cli_workload_scope.release
@@ -292,29 +298,38 @@ type protected_operation =
   | Protected_failed of string
 
 let with_elevated_access ~deps =
-  let operation =
-    match deps.reconcile_and_enable () with
-    | Error message -> Protected_skipped message
-    | Ok () ->
-      deps.observe_window_before ()
-      |> Result.iter_error (fun message ->
-        deps.warn
-          (Printf.sprintf
-             "warning: the bootstrap window could not be observed before teardown (%s); \
-              its effective removal will not be verified. Teardown removes the access \
-              with the substrate anyway."
-             message));
-      (match deps.destroy_platform () with
-       | Error message -> Protected_failed message
-       | Ok () -> Protected_ran)
-  in
-  let removal = deps.remove_elevated_access () in
-  let cleanup =
-    match removal with
-    | Ok () -> Cleanup_succeeded
-    | Error message -> Cleanup_failed message
-  in
-  operation, cleanup
+  match deps.authority with
+  | No_authority_required ->
+    deps.report
+      "  this provider declares no temporary authority mechanism, so the platform \
+       teardown runs without acquiring or releasing one.";
+    (match deps.destroy_platform () with
+     | Error message -> Protected_failed message, Cleanup_not_needed
+     | Ok () -> Protected_ran, Cleanup_not_needed)
+  | Mechanism { reconcile_and_enable; remove_elevated_access } ->
+    let operation =
+      match reconcile_and_enable () with
+      | Error message -> Protected_skipped message
+      | Ok () ->
+        deps.observe_window_before ()
+        |> Result.iter_error (fun message ->
+          deps.warn
+            (Printf.sprintf
+               "warning: the bootstrap window could not be observed before teardown \
+                (%s); its effective removal will not be verified. Teardown removes the \
+                access with the substrate anyway."
+               message));
+        (match deps.destroy_platform () with
+         | Error message -> Protected_failed message
+         | Ok () -> Protected_ran)
+    in
+    let removal = remove_elevated_access () in
+    let cleanup =
+      match removal with
+      | Ok () -> Cleanup_succeeded
+      | Error message -> Cleanup_failed message
+    in
+    operation, cleanup
 ;;
 
 let platform_outputs_of_read = function

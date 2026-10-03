@@ -8,13 +8,6 @@ type terraform_inputs =
 let terraform_outcome = Sol_cli_terraform_steps.terraform_outcome
 let apply_asserted = Sol_cli_terraform_steps.apply_asserted
 let capabilities = Sol_cli_provider_capabilities.capabilities_of
-let bootstrap_matchers provider = (capabilities provider).bootstrap_matchers
-let bootstrap_scope provider = (capabilities provider).bootstrap_scope
-
-let reconciliation_scope provider guarded =
-  (capabilities provider).reconciliation_scope guarded
-;;
-
 let workspace_name = Sol_cli_workspace.current_name
 
 let post_destroy_state ~infra_dir =
@@ -1060,42 +1053,53 @@ let destroy_deps
            | Sol_cli_cloud_lifecycle.Nothing_to_prepare
            | Sol_cli_cloud_lifecycle.Preparation_failed _ -> ());
           outcome)
-    ; reconcile_and_enable =
-        (fun () ->
-          let guarded = guarded_addresses_of provider !state_ref in
-          apply_asserted
-            ~run_log
-            ~phase_name:"destroy-reconciliation-apply"
-            ~policy:
-              (Sol_cli_cloud_destroy.reconciliation_policy
-                 ~bootstrap:(bootstrap_matchers provider)
-                 ~guarded)
-            ~scope:(reconciliation_scope provider guarded)
-            ~chdir:infra_dir
-            ~var_files
-            ~vars:
-              (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
-               @ destroy_apply_vars ())
-            ())
+    ; authority =
+        (match (capabilities provider).authority with
+         | Sol_cli_provider_capabilities.No_authority_required ->
+           Sol_cli_cloud_destroy.No_authority_required
+         | Sol_cli_provider_capabilities.Mechanism
+             { matchers; scope = bootstrap_scope; reconciliation_scope } ->
+           Sol_cli_cloud_destroy.Mechanism
+             { reconcile_and_enable =
+                 (fun () ->
+                   let guarded = guarded_addresses_of provider !state_ref in
+                   apply_asserted
+                     ~run_log
+                     ~phase_name:"destroy-reconciliation-apply"
+                     ~policy:
+                       (Sol_cli_cloud_destroy.reconciliation_policy
+                          ~bootstrap:matchers
+                          ~guarded)
+                     ~scope:(reconciliation_scope guarded)
+                     ~chdir:infra_dir
+                     ~var_files
+                     ~vars:
+                       (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
+                        @ destroy_apply_vars ())
+                     ())
+             ; remove_elevated_access =
+                 (fun () ->
+                   apply_asserted
+                     ~run_log
+                     ~phase_name:"provisioner-bootstrap-access-remove"
+                     ~policy:
+                       (Sol_cli_cloud_destroy.bootstrap_removal_policy
+                          ~bootstrap:matchers)
+                     ~scope:bootstrap_scope
+                     ~chdir:infra_dir
+                     ~var_files
+                     ~vars:
+                       (vars
+                        @ Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
+                       )
+                     ())
+             })
     ; destroy_platform =
         (fun () ->
           match !cluster_ref with
           | Some cluster -> destroy_platform_result ~cluster ()
           | None ->
             Error "the platform teardown requires install outputs, which are unavailable")
-    ; remove_elevated_access =
-        (fun () ->
-          apply_asserted
-            ~run_log
-            ~phase_name:"provisioner-bootstrap-access-remove"
-            ~policy:
-              (Sol_cli_cloud_destroy.bootstrap_removal_policy
-                 ~bootstrap:(bootstrap_matchers provider))
-            ~scope:(bootstrap_scope provider)
-            ~chdir:infra_dir
-            ~var_files
-            ~vars:(vars @ Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false))
-            ())
     ; observe_window_before =
         (fun () ->
           match !cluster_ref with
