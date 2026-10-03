@@ -42,7 +42,11 @@ Library name: `sol_obs`. Depends on `obs-eio`, `obs-loki-eio`,
 
 ```ocaml
 type t
-type level = Obs_eio.level = Debug | Info | Warn | Error
+type level = Obs_eio.level =
+  | Debug
+  | Info
+  | Warn
+  | Error
 type span = Obs_eio.span
 
 val of_env
