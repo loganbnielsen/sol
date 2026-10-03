@@ -38,3 +38,16 @@ Smallest decision: is a Redis-compatible cache primitive in scope for the alpha,
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — out of the alpha
+
+Operator decision: **None — declare all out of the alpha.** No cache primitive is
+added for the current alpha. Deferred with a trigger rather than closed:
+reconsider when a concrete workload or benchmark shows Postgres latency or load
+is the bottleneck and a cache is the demonstrated fix.
+
+Reconsideration trigger: measured demand evidence (a workload/benchmark) that a
+cache is required, at which point the component is scoped like the other
+platform components (config, TLS/auth, metrics, Loki/Tempo labels, `sol dev up`
+provisioning, durable-storage toggle) plus a small framework client.

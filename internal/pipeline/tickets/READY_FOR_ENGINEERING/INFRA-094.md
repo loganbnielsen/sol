@@ -51,3 +51,16 @@ Smallest decision: how the supported destroy converges a target whose provider-c
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — reconcile provable absence
+
+Operator decision (the same rule as INFRA-082): **extend the INFRA-042 "forget
+what provably cannot exist" rule to the provider-failed-create case.**
+Reconciliation is permitted only when provider absence is positively established
+through the authoritative provider boundary; UNKNOWN — authorization, transport,
+malformed response, or inability to inspect — is never ABSENT. Distinguish
+"state describes a resource the provider never finished creating" from "state
+describes a resource that exists but diverged", and keep no-construction as the
+invariant: reconciliation may remove stale state but never create infrastructure.
+Promoted to `READY_FOR_ENGINEERING`.

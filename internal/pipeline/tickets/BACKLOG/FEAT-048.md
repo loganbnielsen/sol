@@ -42,3 +42,16 @@ Smallest decision: build the Cloudflare Tunnel slice (plus the Route53 DNS prere
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — out of the alpha
+
+Operator decision: **None — declare all out of the alpha.** No edge/Cloudflare
+integration for the current alpha. Deferred with a trigger rather than closed:
+reconsider when the Route53 DNS-automation prerequisite exists and a deployment
+genuinely needs to remove the public load balancer, or a customer requires
+provider-neutral edge/WAF/DDoS posture.
+
+Reconsideration trigger: Route53 app-ingress DNS automation lands and a target
+must drop the ALB/public-IPv4 line item; the third-party-TLS-in-the-data-path
+procurement question is resolved first.

@@ -34,3 +34,13 @@ Smallest decision: remove the last process-wide `chdir` (resolve every workspace
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — keep the single-entry-point convention
+
+Decided by this pass: **No.** Behaviour is already correct and the `chdir`
+happens in exactly one place (`Sol_cli_workspace.enter_or_exit`), so the
+process-wide cwd dependency stays; removing it across ~119 sites is regression
+surface without a functional driver. REFAC-108's single-entry-point convention
+stands. Promoted to `READY_FOR_ENGINEERING` only so the transition guard can
+close it as "no change".

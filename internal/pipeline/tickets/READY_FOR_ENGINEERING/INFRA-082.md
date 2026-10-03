@@ -65,3 +65,17 @@ Smallest decision: accept stale platform state as inert bookkeeping with the unm
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — reconcile provable absence
+
+Operator decision: **Extend the existing INFRA-042 "forget what provably cannot
+exist" rule to the absent-substrate and failed-create cases.**
+
+Reconciliation is permitted only when provider absence is positively established
+through the authoritative provider boundary. UNKNOWN — including authorization
+failures, transport failures, malformed responses, or inability to inspect the
+provider — must never be treated as ABSENT. The non-construction invariant is
+preserved: reconciliation may remove stale Sol state but must never create
+infrastructure to make destroy possible. Promoted to
+`READY_FOR_ENGINEERING`.

@@ -69,3 +69,16 @@ Smallest decision: make the authority declaration total (`No_authority_required 
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — make the declaration total
+
+Decided by this pass (internal capability shape; the ticket recommends it and
+both DEC-051's `byo` driver and DEC-057's provider symmetry need it): **option 1
+— make the authority declaration explicit and total.** A provider declares
+`No_authority_required | Mechanism of { matchers; scope }`, so the acquisition and
+removal are skipped by construction rather than by an empty list that means the
+whole root, with a test that `No_authority_required` skips acquisition instead of
+widening scope. AWS and GCP behaviour is unchanged and `with_elevated_access`
+keeps its unconditional-removal property. Promoted to
+`READY_FOR_ENGINEERING`.
