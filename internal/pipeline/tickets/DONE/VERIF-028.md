@@ -49,3 +49,21 @@ building.
 - Demo/example: not applicable — qualification tooling, with no app-author-facing
   surface.
 - Language parity: not applicable — no application-facing contract change.
+
+## Completion notes (2026-10-03)
+
+- **Premise verified.** On `origin/main @ f2196f00` there is no `internal/qualification/local/`:
+  `git ls-tree origin/main internal/qualification/local/` printed nothing, and
+  `internal/qualification/README.md` had no local-run row. The harness, procedure and suite
+  were absent, so the ticket held.
+- **Landed.** `local-qual.sh` (phases `preflight`, `infra`, `status`, `rows`, `capture`,
+  `teardown`, with `k3d kubeconfig get` isolation and a tri-state teardown verdict),
+  `local-run-procedure.md`, and `test-local-qual.sh` (offline stubs). `VERIF-027` now depends on
+  `VERIF-028` and points its `Related:` at the procedure; `ALPHA_CAMPAIGN.md` §5/§6 and
+  `internal/qualification/README.md` record the harness as landed.
+- **Checks.** `bash internal/qualification/local/test-local-qual.sh` → `all expectations hold
+  (8 checks)`. Mutation: replacing the failed-`k3d cluster list` verdict `UNKNOWN` with
+  `ABSENT` in a copy makes the suite fail at `teardown refuses when the cluster list cannot be
+  read (expected non-zero, got 0)`.
+- **Not the run.** `rows` refuses without `ROWS_SH`, naming `FEAT-132`/`FEAT-133`; the run
+  itself is `VERIF-027`, still `NOT RUN`.
