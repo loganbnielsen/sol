@@ -39,7 +39,7 @@ out="$(in_container "$install" /opt/sol/bin/sol assets)" || { echo "$out"; die "
 echo "$out" | sed 's/^/         /'
 grep -qx "assets: installed release $version" <<<"$out" || die "not resolved as installed release $version"
 grep -qx "  root: /opt/sol/share/sol/$version" <<<"$out" || die "root is not the installed bundle"
-grep -qF "migration runner  $runner (published)" <<<"$out" || die "runner is not the release's published digest"
+grep -qx "  ok  migration runner  $runner" <<<"$out" || die "runner is not the release's published digest"
 grep -qx "all assets present" <<<"$out" || die "assets incomplete"
 pass "sol assets: installed bundle, every consumer ran, runner is $runner"
 
