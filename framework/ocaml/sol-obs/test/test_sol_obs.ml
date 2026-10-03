@@ -15,7 +15,10 @@ let with_mock_server env f =
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 0) in
   match Eio.Net.listen ~backlog:5 ~sw env#net addr with
   | exception Unix.Unix_error (Unix.EPERM, "bind", _) ->
-    Printf.printf "[skip] sandboxed environment forbids binding a local socket\n%!"
+    Windtrap.fail
+      "this host forbids binding a loopback socket (EPERM at bind); the mock-server \
+       contract cannot be established here, so run the suite on a host that permits \
+       bind()"
   | socket ->
     let port =
       match Eio.Net.listening_addr socket with

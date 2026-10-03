@@ -271,12 +271,14 @@ jobs:
       # earlier event for one key, and a crash between the broker ack and the
       # row mark. Runs after the step above so it reuses the same broker and
       # Postgres. The target pins its own addresses (VERIF-002), including the
-      # Loki URL; this job starts no Loki, so the Loki assertions find nothing
-      # and self-skip, which VERIF-006 owns turning into a failure.
-      - name: Facts-to-jobs golden-path smoke (broker and database backed)
+      # Loki URL; this step starts Loki too, because the E2E class requires it
+      # and its Loki cases now fail rather than self-skip (VERIF-006).
+      - name: Facts-to-jobs golden-path smoke (broker, database and Loki backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 15
-        run: opam exec -- dune build @ci-e2e
+        run: |
+          bash platform/local/scripts/ensure-loki.sh
+          opam exec -- dune build @ci-e2e
 
       - name: Install formatter
         if: needs.classify.outputs.kind != 'docs-only'

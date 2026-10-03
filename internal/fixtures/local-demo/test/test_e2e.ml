@@ -148,7 +148,7 @@ type result =
   ; metrics_text : string
   ; worker_metrics_http : string option
   ; loki_resp : string option
-  ; loki_cli_lines : int option
+  ; loki_cli_lines : (int, string) Stdlib.result option
   ; db_rows : int
   ; jobs_processed : int
   }
@@ -491,50 +491,49 @@ let run_golden_path () =
     match loki_url with
     | None -> None
     | Some url ->
-      let p = loki_port url in
-      let ts_ns =
-        Int64.to_string (Int64.of_float (Unix.gettimeofday () *. 1_000_000_000.))
+      let emitted =
+        Sol_obs.of_env
+          ~sw
+          ~net:env#net
+          ~clock:env#clock
+          ~mono_clock:env#mono_clock
+          ~service:"auth-read"
+          ~context:[ "workspace", "sol-e2e"; "domain", "e2e" ]
+          ()
       in
-      let body =
-        Printf.sprintf
-          {|{"streams":[{"stream":{"workspace":"sol-e2e","domain":"e2e","service":"auth-read"},"values":[[%S,%S]]}]}|}
-          ts_ns
-          "sol logs authenticated read e2e"
-      in
-      let pushed =
-        try http_post env ~sw ~port:p ~path:"/loki/api/v1/push" ~body () = 204 with
-        | _ -> false
-      in
-      if not pushed
-      then None
-      else (
-        let credentials =
-          match
-            Sol_cli_loki.resolve_credentials
-              ~flag_username:None
-              ~flag_password:None
-              ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-              ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
-          with
-          | Ok (Some c) -> Some c
-          | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
-          | Error msg -> failwith msg
-        in
+      Sol_obs.log_info emitted "sol logs authenticated read e2e";
+      Sol_obs.flush emitted;
+      let credentials =
         match
-          Sol_cli_loki.query
-            ~base_url:url
-            ~unit:
-              { Sol_cli_log_selector.workspace = "sol-e2e"
-              ; domain = "e2e"
-              ; service = "auth-read"
-              }
-            ?credentials
-            ~limit:5
-            ~timeout_s:5.0
-            ()
+          Sol_cli_loki.resolve_credentials
+            ~flag_username:None
+            ~flag_password:None
+            ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+            ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
         with
-        | Ok lines -> Some (List.length lines)
-        | Error _ -> Some 0)
+        | Ok (Some c) -> Some c
+        | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
+        | Error msg -> failwith msg
+      in
+      let unit =
+        { Sol_cli_log_selector.workspace = "sol-e2e"
+        ; domain = "e2e"
+        ; service = "auth-read"
+        }
+      in
+      let deadline = Eio.Time.now env#clock +. 10.0 in
+      let rec count_until_visible () =
+        match
+          Sol_cli_loki.query ~base_url:url ~unit ?credentials ~limit:5 ~timeout_s:5.0 ()
+        with
+        | Ok (_ :: _ as lines) -> Ok (List.length lines)
+        | Ok [] when Eio.Time.now env#clock < deadline ->
+          Eio.Time.sleep env#clock 0.2;
+          count_until_visible ()
+        | Ok [] -> Ok 0
+        | Error err -> Error (Sol_cli_loki.fetch_error_to_string err)
+      in
+      Some (count_until_visible ())
   in
   let db_rows =
     match db_pool with
@@ -1121,16 +1120,23 @@ let () =
         "loki"
         [ Windtrap.test "logs received for service=order-svc" (fun () ->
             match r.loki_resp with
-            | None -> ()
+            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
               then Windtrap.fail "no log streams in Loki response")
         ; Windtrap.test "sol logs Loki query path reads pushed logs" (fun () ->
             match r.loki_cli_lines with
-            | None -> ()
-            | Some n ->
-              if n = 0
-              then Windtrap.fail "Sol_cli_loki.query returned no pushed log lines")
+            | None ->
+              Windtrap.fail
+                "LOKI_URL is not set, so the class cannot exercise the \
+                 Sol_cli_loki.query path"
+            | Some (Error msg) ->
+              Windtrap.failf "Sol_cli_loki.query could not read Loki: %s" msg
+            | Some (Ok 0) ->
+              Windtrap.fail
+                "Sol_cli_loki.query succeeded but never saw the line emitted through \
+                 Sol_obs"
+            | Some (Ok _) -> ())
         ]
     ; Windtrap.group
         "postgres"
@@ -1285,7 +1291,7 @@ let () =
                 (metric_nonzero o.ob_metrics "sol_worker_messages_total")))
         ; Windtrap.test "outbox logs reached Loki" (fun () ->
             match o.ob_loki with
-            | None -> ()
+            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
             | Some resp ->
               if not (str_contains resp {|"values":[[|})
               then Windtrap.fail "no outbox log streams in Loki response")
