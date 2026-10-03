@@ -57,3 +57,21 @@ Standing qualification goals live in the qualification ledger
 
 Promotion back to `READY_FOR_ENGINEERING/` is a triage decision for when the remaining triggers
 become work that can finish here — with the command and its output that establish them.
+
+## Trigger re-check (2026-10-02)
+
+Verified while triaging the parity queue; the ticket still stands and is still blocked:
+
+1. **Met.** `golden-path-smoke-ts` is still present in `.github/workflows/ci.yml`.
+2. **Not met.** `@sol-fab/worker` on `loganbnielsen/sol-typescript` `origin/main` is still
+   `0.1.0` (`npm view @sol-fab/worker version` → `0.1.0`), and `packages/worker/src/index.ts`
+   matches neither `ready` nor `onReady`: there is still no readiness hook.
+3. **Partly met, unchanged.** `examples/pluto/app/demo_ts` depends on `@sol-fab/kafka@^0.5.1`,
+   `@sol-fab/obs@^0.3.0`, `@sol-fab/svc@^0.2.0`, `@sol-fab/worker@^0.1.0`, `@sol-fab/jobs@^0.1.0`
+   and — as of FEAT-124 — `@sol-fab/outbox@^0.1.0` by caret range. The committed
+   `package-lock.json` pins and integrity-hashes each one, so `npm ci` is reproducible, but
+   DEC-025's "immutable ref" wording as applied to npm is still unrecorded.
+
+Trigger 2 is a change in `sol-typescript`, and the live profile run needs explicit
+authorization, so this stays a standing goal in `BACKLOG/`.
+

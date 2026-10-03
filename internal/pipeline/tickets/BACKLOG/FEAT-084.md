@@ -108,3 +108,34 @@ last.
   `sol check` / `sol up` / `sol deploy` treat them uniformly.
 - The generated unit's contents match what the end-to-end `demo_ts` run proves
   is required.
+
+## Premise refresh (2026-10-02)
+
+Verified against current `origin/main`; the gap stands, but several statements above are stale
+and the blocking gate has cleared:
+
+- **The CLI has a language concept now.** `Sol_cli_compat.language = Ocaml | Typescript`
+  (`cli/lib/workspace/sol_cli_compat.ml`), and `sol new svc|worker|fn` records the unit's
+  language in `sol.yml` through `Sol_cli_sol_yml.plan ~language:Sol_cli_compat.Ocaml`
+  (`cli/lib/workspace/sol_cli_cmd_new.ml:142`). "The CLI has no language concept at all" is no
+  longer true. `sol.toml` is still language-free, so the ownership boundary the ticket argues
+  for is intact.
+- **The gap is real and narrow.** `new_component` hardcodes `Ocaml`, no `sol new` subcommand
+  accepts `--language`, and `platform/shared/templates/{svc,worker,fn}` are OCaml-only — there
+  is no TypeScript template tree. A TypeScript author still cannot reach a running unit from
+  `sol new`.
+- **The gate has cleared.** FEAT-082 and FEAT-036 are `DONE`. FEAT-036's empirical answer is
+  that the lifecycle glue belongs in the framework packages (true today: `@sol-fab/svc` and
+  `@sol-fab/worker` own the bounded drain and shutdown ordering), so a TypeScript scaffold can
+  call `runService`/`runWorker` the way `examples/pluto/app/demo_ts` does.
+- **What remains is a scaffold feature with a layout constraint.** Per-unit `--language` is the
+  natural boundary (the ticket's own argument, and the current CLI is unit-based). It needs a
+  language dimension in `Sol_cli_scaffold_tree.copy`: the template root is
+  `platform/shared/templates/<kind>/` and `plan` walks it recursively, so a
+  `templates/<kind>/typescript/` subtree would also be copied by an OCaml `sol new` unless the
+  walk is made language-aware. Then TypeScript template trees for `svc`/`worker`/`fn`, modelled
+  on `demo_ts`, and a `--language` option on the three subcommands.
+- **Triage:** stays in `BACKLOG/` pending prioritisation. The premise is verified and the work
+  is scoped; it is a multi-file scaffold feature (template layout + CLI + tests + a scaffolded
+  workspace demo), not a one-file change.
+
