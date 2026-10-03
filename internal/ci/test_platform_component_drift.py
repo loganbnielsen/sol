@@ -11,6 +11,9 @@ FILES = [
     "cli/bin/cmd_local.ml",
     "cli/lib/local/sol_cli_local_platform.ml",
     "cli/lib/local/sol_cli_dev_observability.ml",
+    "cli/lib/workspace/sol_cli_manifest_yaml.ml",
+    "cli/lib/deploy/sol_cli_deployment_render.ml",
+    "framework/ocaml/sol-obs/lib/sol_obs.ml",
     "platform/cloud/modules/platform/main.tf",
     "platform/shared/components.json",
 ]
@@ -49,6 +52,30 @@ def drift_the_ocaml_mirror(root):
     path.write_text(text.replace('"primitive"; "release" ]', '"primitive"; "release"; "region" ]', 1))
 
 
+def drop_identity_label_from_manifest(root):
+    path = root / "cli/lib/workspace/sol_cli_manifest_yaml.ml"
+    text = path.read_text()
+    path.write_text(text.replace('  ; "env", "SOL_ENV"\n', "", 1))
+
+
+def drop_framework_identity_label(root):
+    path = root / "framework/ocaml/sol-obs/lib/sol_obs.ml"
+    text = path.read_text()
+    path.write_text(text.replace('  ; "SOL_ENV", "env"\n', "", 1))
+
+
+def rename_identity_env_var(root):
+    path = root / "cli/lib/workspace/sol_cli_manifest_yaml.ml"
+    text = path.read_text()
+    path.write_text(text.replace('"service", "SOL_SERVICE"', '"service", "SOL_WORKLOAD"', 1))
+
+
+def bypass_shared_identity_injection(root):
+    path = root / "cli/lib/deploy/sol_cli_deployment_render.ml"
+    text = path.read_text()
+    path.write_text(text.replace("Sol_cli_manifest.identity_env", "inline_identity_env", 1))
+
+
 CASES = [
     ("a migrated key back in the local platform", "fail",
      append("cli/lib/local/sol_cli_local_platform.ml", '\nlet _ = "deploymentMode"\n')),
@@ -63,6 +90,10 @@ CASES = [
     ("env dropped from the cloud log taxonomy", "fail", drop_env_from_tf),
     ("env dropped from the local log taxonomy mirror", "fail", drop_env_from_ocaml),
     ("the local log taxonomy mirror drifts from the cloud", "fail", drift_the_ocaml_mirror),
+    ("env dropped from the rendered identity", "fail", drop_identity_label_from_manifest),
+    ("env dropped from the framework's emitted identity", "fail", drop_framework_identity_label),
+    ("a rendered identity variable is renamed", "fail", rename_identity_env_var),
+    ("the workload env bypasses the shared identity", "fail", bypass_shared_identity_injection),
     ("the real tree", "pass", lambda root: None),
 ]
 

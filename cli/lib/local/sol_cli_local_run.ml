@@ -11,6 +11,7 @@ type recipe =
   ; build : command option
   ; launch : command
   ; artifact : string
+  ; env : (string * string) list
   }
 
 type plan =
@@ -145,7 +146,30 @@ let entry_in_unit ~root ~unit_dir ~package_json =
     Filename.concat out_dir "index.js"
 ;;
 
-let recipe_of_ocaml (svc : Sol_cli_manifest.service) =
+let dev_registry_url = "http://localhost:8081"
+
+let dev_env =
+  [ "KAFKA_BROKERS", "localhost:9092"
+  ; "SCHEMA_REGISTRY_URL", dev_registry_url
+  ; "REDPANDA_ADMIN_URL", "http://localhost:9644"
+  ; "POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev"
+  ; "LOKI_URL", "http://localhost:3100"
+  ; "PUSHGATEWAY_URL", "http://localhost:9091"
+  ; "TEMPO_URL", "http://localhost:4318"
+  ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  ]
+;;
+
+let dev_identity ~root (svc : Sol_cli_manifest.service) =
+  Sol_cli_manifest.identity_env
+    ~workspace:(Filename.basename root)
+    ~domain:svc.Sol_cli_manifest.domain
+    ~service:(Sol_cli_kubernetes_name.normalize svc.Sol_cli_manifest.name)
+    ~primitive:(Sol_cli_manifest.primitive_label svc.Sol_cli_manifest.primitive)
+    ()
+;;
+
+let recipe_of_ocaml ~root (svc : Sol_cli_manifest.service) =
   let dir = svc.Sol_cli_manifest.dir in
   Ok
     { label = label svc
@@ -153,6 +177,7 @@ let recipe_of_ocaml (svc : Sol_cli_manifest.service) =
     ; build = None
     ; launch = { argv = [ "_build/default/" ^ dir ^ "/bin/main.exe" ]; cwd = "" }
     ; artifact = dir ^ "/bin/main.exe"
+    ; env = dev_env @ dev_identity ~root svc
     }
 ;;
 
@@ -203,12 +228,13 @@ let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
         ; cwd = npm_root
         }
     ; artifact = Filename.concat unit_dir entry
+    ; env = dev_env @ dev_identity ~root svc
     }
 ;;
 
 let recipe ~root (svc : Sol_cli_manifest.service) language =
   match language with
-  | Sol_cli_compat.Ocaml -> recipe_of_ocaml svc
+  | Sol_cli_compat.Ocaml -> recipe_of_ocaml ~root svc
   | Sol_cli_compat.Typescript -> recipe_of_typescript ~root svc
 ;;
 
@@ -284,16 +310,3 @@ let shell_line ?(prefix = "") (command : command) =
 let opam_env_prefix = "eval $(opam env 2>/dev/null) 2>/dev/null; "
 let build_line command = shell_line ~prefix:opam_env_prefix command
 let launch_line command = shell_line command
-let dev_registry_url = "http://localhost:8081"
-
-let dev_env =
-  [ "KAFKA_BROKERS", "localhost:9092"
-  ; "SCHEMA_REGISTRY_URL", dev_registry_url
-  ; "REDPANDA_ADMIN_URL", "http://localhost:9644"
-  ; "POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev"
-  ; "LOKI_URL", "http://localhost:3100"
-  ; "PUSHGATEWAY_URL", "http://localhost:9091"
-  ; "TEMPO_URL", "http://localhost:4318"
-  ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
-  ]
-;;

@@ -27,8 +27,7 @@ let () =
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
-      ~service:"pluto-charge-svc"
-      ~context:[ "team", "payments" ]
+      ~service:"charge-svc"
       ()
   in
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) postgres_url in

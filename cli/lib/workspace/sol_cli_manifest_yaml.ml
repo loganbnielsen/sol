@@ -225,21 +225,53 @@ let secret_key_refs ~name secret_keys =
 
 let sanitize_label_value = Sol_cli_kubernetes_name.sanitize_label_value
 
+let observability_identity =
+  [ "workspace", "SOL_WORKSPACE"
+  ; "env", "SOL_ENV"
+  ; "domain", "SOL_DOMAIN"
+  ; "service", "SOL_SERVICE"
+  ; "primitive", "SOL_PRIMITIVE"
+  ; "release", "SOL_RELEASE"
+  ]
+;;
+
+let identity_value ?env ?release ~workspace ~domain ~service ~primitive = function
+  | "workspace" -> Some (sanitize_label_value workspace)
+  | "env" -> Option.map sanitize_label_value env
+  | "domain" -> Some (sanitize_label_value domain)
+  | "service" -> Some (sanitize_label_value service)
+  | "primitive" -> Some (sanitize_label_value primitive)
+  | "release" -> Option.map Sol_cli_release_id.to_string release
+  | _ -> None
+;;
+
+let taxonomy_fields ?env ?release ~workspace ~domain ~service ~primitive () =
+  observability_identity
+  |> List.filter_map (fun (label, var) ->
+    Option.map
+      (fun value -> label, var, value)
+      (identity_value ?env ?release ~workspace ~domain ~service ~primitive label))
+;;
+
+let observability_taxonomy ?env ?release ~workspace ~domain ~service ~primitive () =
+  taxonomy_fields ?env ?release ~workspace ~domain ~service ~primitive ()
+  |> List.map (fun (label, _, value) -> label, value)
+;;
+
 let taxonomy_labels ?env ~workspace ~domain ~service ~primitive ~release_id () =
-  let sanitized =
-    [ "workspace", workspace
-    ; "domain", domain
-    ; "service", service
-    ; "primitive", primitive
-    ]
-    |> List.map (fun (k, v) -> k, sanitize_label_value v)
-  in
-  sanitized
-  @ [ "release", Sol_cli_release_id.to_string release_id ]
-  @
-  match env with
-  | None -> []
-  | Some e -> [ "env", sanitize_label_value e ]
+  observability_taxonomy
+    ?env
+    ~release:release_id
+    ~workspace
+    ~domain
+    ~service
+    ~primitive
+    ()
+;;
+
+let identity_env ?env ?release ~workspace ~domain ~service ~primitive () =
+  taxonomy_fields ?env ?release ~workspace ~domain ~service ~primitive ()
+  |> List.map (fun (_, var, value) -> var, value)
 ;;
 
 let volume_claim_name ~name ~volume_name = Printf.sprintf "%s-%s" name volume_name

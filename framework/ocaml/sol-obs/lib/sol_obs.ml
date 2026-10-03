@@ -26,12 +26,50 @@ let stdout_logs =
   { Obs_eio.stdout with emit_metric = (fun _ -> ()); declare_metric = (fun _ -> ()) }
 ;;
 
+let taxonomy =
+  [ "SOL_WORKSPACE", "workspace"
+  ; "SOL_ENV", "env"
+  ; "SOL_DOMAIN", "domain"
+  ; "SOL_SERVICE", "service"
+  ; "SOL_PRIMITIVE", "primitive"
+  ; "SOL_RELEASE", "release"
+  ]
+;;
+
+let taxonomy_labels = List.map snd taxonomy
+
+let identity () =
+  List.filter_map
+    (fun (var, label) -> Option.map (fun value -> label, value) (setting var))
+    taxonomy
+;;
+
+let dedupe keys =
+  List.fold_left (fun acc key -> if List.mem key acc then acc else acc @ [ key ]) [] keys
+;;
+
 let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
+  let identity = identity () in
+  let service =
+    match List.assoc_opt "service" identity with
+    | Some value -> value
+    | None -> service
+  in
+  let fields =
+    ("service", service)
+    :: List.filter (fun (key, _) -> not (String.equal key "service")) (context @ identity)
+  in
+  let label_names =
+    fields
+    |> List.map fst
+    |> List.filter (fun name -> not (String.equal name "service"))
+    |> dedupe
+    |> List.map Obs_loki.stream_label_exn
+  in
   let log_backend, loki_flush =
     match setting "LOKI_URL" with
     | None -> Obs_eio.stdout, []
     | Some url ->
-      let label_names = List.map (fun (k, _) -> Obs_loki.stream_label_exn k) context in
       let loki = Obs_loki.create ~sw ~net ~clock ~url ~label_names () in
       ( Obs_eio.compose stdout_logs (Obs_loki.backend loki)
       , [ (fun timeout -> Obs_loki.flush ~timeout loki) ] )
@@ -47,11 +85,7 @@ let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
       , [ (fun timeout -> Obs_tempo.flush ~timeout tempo) ] )
   in
   let ot = Obs_eio.create ~service ~mono_clock ~backend () in
-  let ot =
-    match context with
-    | [] -> ot
-    | fields -> Obs_eio.with_context ot fields
-  in
+  let ot = Obs_eio.with_context ot fields in
   { ot; backend; renderer; flushers = loki_flush @ tempo_flush }
 ;;
 

@@ -37,8 +37,76 @@ LAYERS = {"common", "local", "durable"}
 
 PLATFORM_MAIN = "platform/cloud/modules/platform/main.tf"
 DEV_OBSERVABILITY = "cli/lib/local/sol_cli_dev_observability.ml"
+MANIFEST = "cli/lib/workspace/sol_cli_manifest_yaml.ml"
+FRAMEWORK_OBS = "framework/ocaml/sol-obs/lib/sol_obs.ml"
+DEPLOYMENT_RENDER = "cli/lib/deploy/sol_cli_deployment_render.ml"
 DOCUMENTED_TAXONOMY = ["workspace", "env", "domain", "service", "primitive", "release"]
 DEV_TAXONOMY = re.compile(r"~taxonomy_labels:\[(.*?)\]", re.S)
+
+
+def ocaml_pair_list(text, name):
+    match = re.search(rf"let {name} =\s*\[(.*?)\]\s*;;", text, re.S)
+    if match is None:
+        return None
+    return re.findall(r'"([^"]+)"\s*,\s*"([^"]+)"', match.group(1))
+
+
+def identity_problems(root):
+    problems = []
+    documented = sorted(DOCUMENTED_TAXONOMY)
+    framework = root / FRAMEWORK_OBS
+    manifest = root / MANIFEST
+    render = root / DEPLOYMENT_RENDER
+    framework_pairs = None
+    if not framework.is_file():
+        problems.append(f"{FRAMEWORK_OBS} is missing, so the emitted identity vocabulary cannot be checked")
+    else:
+        framework_pairs = ocaml_pair_list(framework.read_text(encoding="utf-8"), "taxonomy")
+        if framework_pairs is None:
+            problems.append(
+                f'{FRAMEWORK_OBS} no longer declares `let taxonomy = [ "SOL_VAR", "label"; ... ]`'
+            )
+        else:
+            labels = sorted(label for _, label in framework_pairs)
+            if labels != documented:
+                problems.append(
+                    f"the framework's emitted identity labels must be exactly {DOCUMENTED_TAXONOMY}; "
+                    f"got {labels} (DEC-064)"
+                )
+    manifest_pairs = None
+    if not manifest.is_file():
+        problems.append(f"{MANIFEST} is missing, so the rendered identity vocabulary cannot be checked")
+    else:
+        manifest_pairs = ocaml_pair_list(
+            manifest.read_text(encoding="utf-8"), "observability_identity"
+        )
+        if manifest_pairs is None:
+            problems.append(
+                f'{MANIFEST} no longer declares `let observability_identity = [ "label", "SOL_VAR"; ... ]`'
+            )
+        else:
+            labels = sorted(label for label, _ in manifest_pairs)
+            if labels != documented:
+                problems.append(
+                    f"the rendered identity labels must be exactly {DOCUMENTED_TAXONOMY}; "
+                    f"got {labels} (DEC-064)"
+                )
+    if framework_pairs is not None and manifest_pairs is not None:
+        framework_env = {label: var for var, label in framework_pairs}
+        manifest_env = {label: var for label, var in manifest_pairs}
+        if framework_env != manifest_env:
+            problems.append(
+                "the framework and the manifest must map each identity label to the same environment "
+                f"variable; framework={framework_env}, manifest={manifest_env}"
+            )
+    if not render.is_file():
+        problems.append(f"{DEPLOYMENT_RENDER} is missing, so the workload env injection cannot be checked")
+    elif "Sol_cli_manifest.identity_env" not in render.read_text(encoding="utf-8"):
+        problems.append(
+            f"{DEPLOYMENT_RENDER} must render the workload identity through "
+            "Sol_cli_manifest.identity_env (DEC-064)"
+        )
+    return problems
 
 
 def ocaml_taxonomy(text):
@@ -123,12 +191,14 @@ def main():
             "(keyed by profile, never by env, provider or region):\n  " + "\n  ".join(bad)
         )
     problems.extend(taxonomy_problems(root))
+    problems.extend(identity_problems(root))
     for problem in problems:
         print(f"guardrail: {problem}", file=sys.stderr)
     if problems:
         sys.exit(1)
     print("guardrail: no migrated platform-component keys found duplicated inline in the local platform or main.tf.")
     print("guardrail: the cloud and local Alloy log-promotion taxonomies match and carry all six labels.")
+    print("guardrail: the framework, manifest and workload identity injection carry the same six labels under the same SOL_* names.")
 
 
 main()

@@ -9,8 +9,7 @@ let () =
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
-      ~service:"pluto-checkout-svc"
-      ~context:[ "team", "checkout" ]
+      ~service:"checkout-svc"
       ()
   in
   Service.run Checkout.routes ~env ~ot:obs ()

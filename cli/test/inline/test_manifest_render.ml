@@ -409,6 +409,65 @@ let test_svc_sol_env_configmap_target_overrides_config () =
   assert_absent "svc SOL_ENV user value" cm_block "user-value"
 ;;
 
+let test_svc_identity_configmap_carries_the_taxonomy () =
+  let _ns, workload = render_spec_ok ~env:"prod" svc_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  [ "SOL_WORKSPACE: \"myapp\""
+  ; "SOL_ENV: \"prod\""
+  ; "SOL_DOMAIN: \"payments\""
+  ; "SOL_SERVICE: \"charge-svc\""
+  ; "SOL_PRIMITIVE: \"svc\""
+  ; Printf.sprintf "SOL_RELEASE: \"%s\"" (Sol_cli_release_id.to_string release_id_of_test)
+  ]
+  |> List.iter (fun entry -> assert_contains "svc identity config" cm_block entry)
+;;
+
+let test_svc_identity_cannot_be_shadowed_by_declared_config () =
+  let spec =
+    { svc_spec with config = [ "SOL_SERVICE", "spoofed"; "APP_ENV", "staging" ] }
+  in
+  let _ns, workload = render_spec_ok ~env:"prod" spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "svc identity service" cm_block {|SOL_SERVICE: "charge-svc"|};
+  assert_absent "svc identity spoof" cm_block "spoofed";
+  assert_contains "ordinary config survives" cm_block {|APP_ENV: "staging"|}
+;;
+
+let test_worker_identity_configmap_carries_the_taxonomy () =
+  let _ns, workload = render_spec_ok ~env:"staging" worker_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  [ "SOL_WORKSPACE: \"myapp\""
+  ; "SOL_ENV: \"staging\""
+  ; "SOL_DOMAIN: \"comms\""
+  ; "SOL_SERVICE: \"notify-worker\""
+  ; "SOL_PRIMITIVE: \"worker\""
+  ; Printf.sprintf "SOL_RELEASE: \"%s\"" (Sol_cli_release_id.to_string release_id_of_test)
+  ]
+  |> List.iter (fun entry -> assert_contains "worker identity config" cm_block entry)
+;;
+
+let test_fn_identity_configmap_carries_the_taxonomy () =
+  let _ns, workload = render_spec_ok ~env:"dev" fn_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  [ "SOL_WORKSPACE: \"myapp\""
+  ; "SOL_ENV: \"dev\""
+  ; "SOL_DOMAIN: \"billing\""
+  ; Printf.sprintf
+      "SOL_SERVICE: \"%s\""
+      (Sol_cli_kubernetes_name.k8s_name_to_string fn_spec.k8s_name)
+  ; "SOL_PRIMITIVE: \"fn\""
+  ; Printf.sprintf "SOL_RELEASE: \"%s\"" (Sol_cli_release_id.to_string release_id_of_test)
+  ]
+  |> List.iter (fun entry -> assert_contains "fn identity config" cm_block entry)
+;;
+
+let test_identity_env_absent_from_local_render () =
+  let _ns, workload = render_spec_ok svc_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "svc identity workspace without env" cm_block {|SOL_WORKSPACE: "myapp"|};
+  assert_absent "svc SOL_ENV absent locally" cm_block {|SOL_ENV: |}
+;;
+
 let test_worker_env_label_present_when_resolved () =
   let _ns, workload = render_spec_ok ~env:"staging" worker_spec in
   assert_contains "worker env label" workload {|env: "staging"|}
@@ -2414,6 +2473,26 @@ let%test "svc: SOL_ENV config absent by default" =
 
 let%test "svc: SOL_ENV config uses target" =
   test_svc_sol_env_configmap_target_overrides_config ()
+;;
+
+let%test "svc: identity ConfigMap carries the taxonomy" =
+  test_svc_identity_configmap_carries_the_taxonomy ()
+;;
+
+let%test "svc: declared config cannot shadow the identity" =
+  test_svc_identity_cannot_be_shadowed_by_declared_config ()
+;;
+
+let%test "worker: identity ConfigMap carries the taxonomy" =
+  test_worker_identity_configmap_carries_the_taxonomy ()
+;;
+
+let%test "fn: identity ConfigMap carries the taxonomy" =
+  test_fn_identity_configmap_carries_the_taxonomy ()
+;;
+
+let%test "svc: identity env present without env (sol up)" =
+  test_identity_env_absent_from_local_render ()
 ;;
 
 let%test "svc: POSTGRES_URL not in ConfigMap" = test_postgres_url_not_in_configmap ()

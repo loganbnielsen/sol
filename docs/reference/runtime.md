@@ -145,6 +145,35 @@ resolved target's environment. Two properties are deliberate:
 The resolved target is authoritative: a `SOL_ENV` declared in a service's own
 `config` is replaced by the target's environment rather than shadowing it.
 
+### Sol workload identity
+
+`DEC-064` (2026-10-02) settles who owns a workload's semantic identity: **Sol's
+framework/runtime instrumentation emits it, and a collector may only add
+infrastructure identity beside it** (`namespace`, `pod`, `node`, cloud region) —
+a collector never defines or replaces Sol's vocabulary. So the generated
+`<name>-env` ConfigMap carries the same identity the manifest renders as pod
+labels, and `Sol_obs.of_env` reads it back:
+
+| Environment variable | Label it carries | Value |
+|---|---|---|
+| `SOL_WORKSPACE` | `workspace` | the workspace name |
+| `SOL_ENV` | `env` | the resolved target environment; absent when no target is resolved |
+| `SOL_DOMAIN` | `domain` | the unit's domain |
+| `SOL_SERVICE` | `service` | the workload's Kubernetes name (`charge_svc` → `charge-svc`) |
+| `SOL_PRIMITIVE` | `primitive` | `svc`, `worker`, or `fn` |
+| `SOL_RELEASE` | `release` | the content-addressed release id (`r-<16 hex>`) |
+
+The values are byte-for-byte the rendered label values, so an app-emitted trace
+carries the same `service` a Prometheus scrape and a Loki stream do. The
+platform owns these names: a service `config` that declares one of them is
+ignored rather than allowed to shadow it. `Sol_obs.of_env` therefore needs the
+`~service` argument only for a process run outside a Sol manifest (a local demo
+or a `dune exec`); when `SOL_SERVICE` is present it wins.
+
+`env` has no `SOL_ENV` when no target is resolved — `sol up` against the local
+cluster omits it by design (`docs/architecture/observability-design.md`
+§ Identity), and application code treats "no environment" as a real state.
+
 ## Migration file convention
 
 Migration filenames use `<decimal version>_<name>.sql`, with an optional

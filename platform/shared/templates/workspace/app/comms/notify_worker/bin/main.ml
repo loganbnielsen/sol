@@ -19,9 +19,7 @@ let () =
   Eio.Switch.run @@ fun sw ->
   let obs =
     Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-      ~service:"{{name}}-notify-worker"
-      ~context:[ ("team", "comms") ]
-      ()
+      ~service:"notify-worker" ()
   in
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) in
   let module W = Notify_worker.Make (struct

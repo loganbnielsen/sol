@@ -38,6 +38,18 @@ val workload_fact_to_service : workload_fact -> service
 val scan_workspace : ?root:string -> unit -> (workspace_scan, discover_error) result
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
+val observability_identity : (string * string) list
+
+val identity_env
+  :  ?env:string
+  -> ?release:Sol_cli_release_id.t
+  -> workspace:string
+  -> domain:string
+  -> service:string
+  -> primitive:string
+  -> unit
+  -> (string * string) list
+
 val discover_error_to_string : discover_error -> string
 val discover_services : ?root:string -> unit -> (service list, discover_error) result
 val default_cluster_env : (string * string) list

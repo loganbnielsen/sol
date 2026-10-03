@@ -11,7 +11,7 @@ let () = Eio_main.run @@ fun env ->
   let config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   let obs =
     Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-      ~service:"{{name}}-worker" ()
+      ~service:"{{binary}}" ()
   in
   let module W = Worker.Make({{Mod}}) in
   W.run ~env ~config ~ot:obs ()

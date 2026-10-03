@@ -6,7 +6,7 @@ let () = Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let obs =
     Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-      ~service:"{{name}}-fn" ()
+      ~service:"{{binary}}" ()
   in
   let module F = Fn.Make({{Mod}}) in
   match F.run ~env ~ot:obs () with
