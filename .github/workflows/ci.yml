@@ -253,6 +253,15 @@ jobs:
       # own separate schemas (VERIF-007: each derives and creates its own, and
       # drops only its own), so one invocation is safe and they may build in
       # parallel — there is no serialization rule here to maintain.
+      #
+      # BUG-129: `ensure-postgres.sh` reports ready only after a query comes back
+      # through the published port, because a connection to :5432 can be accepted
+      # while the image's initialization server is still the one listening — the
+      # shape of VERIF-023's intermittent "server closed the connection
+      # unexpectedly". `POSTGRES_READY_TIMEOUT_S`/`POSTGRES_READY_INTERVAL_S` tune
+      # its retry budget, and it dumps the container's last 20 log lines when it
+      # gives up. The broker steps keep their own gate: `rpk cluster health`, and
+      # `rpk topic list` in `create-topics.sh`, which fail loudly.
       - name: Framework integration tests (broker and database backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
