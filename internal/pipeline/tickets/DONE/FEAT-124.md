@@ -102,26 +102,65 @@ The package is implemented, tested and merged: `loganbnielsen/sol-typescript#8` 
 `(key, ord)` unique index, per-key ordering, a blocked key holding later events, and the
 ack/mark crash boundary. `release.yml` gained the `outbox-v*` tag.
 
-## Blocked On
+**Premise (2026-10-02, before pickup):** held — `npm view @sol-fab/outbox version` was `404`,
+and `examples/pluto/app/demo_ts` had no outbox composition.
 
-The bootstrap publish of `@sol-fab/outbox@0.1.0`. npm refuses `npm trust` for a package that
-does not exist yet (`404 Package not found`), so `0.1.0` needs one interactive,
-2FA-authenticated publish before its OIDC trusted publisher can be configured. Attempted from
-this environment and stopped at the credential boundary:
+### Completed (2026-10-02)
 
-```text
-$ npm publish --access public --workspace=packages/outbox
-npm error code EOTP
-npm error This operation requires a one-time password.
-npm error   https://www.npmjs.com/auth/cli/***
-```
+**Publication.** The operator completed the interactive 2FA bootstrap, so `@sol-fab/outbox`
+now resolves (`npm view @sol-fab/outbox version` → `0.1.0`) and its OIDC trusted publisher is
+configured: `npm trust github @sol-fab/outbox --file release.yml --repo
+loganbnielsen/sol-typescript --allow-publish`, confirmed by `npm trust list @sol-fab/outbox`
+(`file: release.yml`, `repository: loganbnielsen/sol-typescript`, `permissions: publish,
+stage publish`). The recorded operator command omitted `--repo` and failed with
+`GitHub repository must be specified with repository option`; the corrected form carries it.
+No new package version was needed for this integration — the next release goes through the
+tag-triggered `outbox-v*` OIDC workflow.
 
-**Operator action:** run
-`npm publish --access public --workspace=packages/outbox` in `~/Code/sol-typescript` at
-`origin/main` and complete the browser 2FA, then
-`npm trust github @sol-fab/outbox --file release.yml --allow-publish`. From `0.1.1` on the
-tag-triggered OIDC workflow publishes with provenance.
+**Sol-side integration** (`examples/pluto/app/demo_ts`):
+- `contract/` declares `OrderFulfilled` (`sol-demo-ts-fulfilled`, 3 partitions, key =
+  `order_id`) alongside `OrderPlaced`; the projection registers both.
+- `fulfillment_worker` composes the domain write (`fulfilled_orders_ts`), the
+  `send_confirmation` job and the outbox intent in one `db.withTransaction` (`fulfill.ts`),
+  and hosts the relay (`runRelay`) alongside its consumer and job runner, publishing through
+  `@sol-fab/kafka`'s `publish` with the event key. It exposes `sol_outbox_published_total`,
+  `sol_outbox_pending` and `sol_outbox_oldest_pending_seconds`.
+- `db.ts` provisions `sol_outbox` from `sol-outbox`'s shared DDL; `package.json` adds
+  `@sol-fab/outbox@^0.1.0` and the lockfile is regenerated.
 
-Blocked on that: the remaining Sol-side work — `examples/pluto/app/demo_ts` composing the
-domain write, the job and the outbox intent in one transaction and hosting the relay, plus the
-capability-matrix verdict — needs `@sol-fab/outbox` resolvable from npm.
+**Ordering and failure behaviour.** `test/outbox.test.ts` (real Postgres) covers: the three
+writes commit or roll the whole transaction back together; a key's events publish in `ord`
+order and a row is removed only after the publish resolved; a blocked head holds its key's
+later events. `test/delivery.test.ts` drives the full composition and asserts a redelivered
+fact leaves one row, one job, one intent and one effect.
+
+**Real Kafka + Postgres run** (Redpanda `:9092`, registry `:8081`, Postgres `:5432`): one
+`OrderPlaced` produced → the worker fulfilled it, the job ran once, and the relay published
+one `OrderFulfilled`, consumed as `partition=1 key=live-outbox-1 schemaId=3
+json={"order_id":"live-outbox-1","item":"widget","quantity":3,"correlation_id":"corr-live-1"}`
+(Confluent wire format); two staged `ord`s for one key published `first -> second` on one
+partition, and `sol_outbox` drained to 0.
+
+**Language parity.** TypeScript gates the job and the intent on the domain insert applying
+(`insertFulfilled` reports whether `ON CONFLICT DO NOTHING` inserted), so a redelivery whose
+intent is still pending is a no-op. The OCaml reference had the same latent defect — an
+ungated `Notification_sent_outbox.publish ~ord:1L` re-inserted the pending intent and
+collided on the `(aggregate_key, ord)` unique index, turning a legal duplicate into a `Fail`
+(`sol_outbox`'s insert is a plain `INSERT`). Fixed in the same pass: `notification.ml` inserts
+with `RETURNING charge_id` read through `Pg_db.find`, `notify_worker.ml` gates the job and the
+intent on it, `handler.ml`/`test_charges.ml` follow, and the TUTORIAL sample is corrected.
+
+**Capability matrix.** `internal/pipeline/audits/2026-10-02_cross_language_contract_audit.md`
+row 16 (and § 1, § 4.5) move from `gap` to `implemented`.
+
+**Demo/example coverage:** `examples/pluto/app/demo_ts` and its tests are the runnable
+demonstration.
+
+## Remaining limitation
+
+The OCaml gating change has no dedicated OCaml test — `Notify_worker.handle` closes over a
+concrete `Pg_db.pool`, and the pluto/venus fixtures stop short of the composition. The
+TypeScript tests assert the same behaviour and the live run exercised it; an OCaml fixture
+that drives a redelivery with a pending intent is follow-up if the pluto demo gains an e2e
+suite.
+

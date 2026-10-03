@@ -5,8 +5,10 @@ import type { SpanContext } from "@opentelemetry/api";
 
 import {
   ACK,
+  connectTopic,
   fail,
   kafkaConfigFromEnv,
+  publish,
   provisionDlqTopic,
   wireCrashListener,
   wrapEachMessage,
@@ -14,12 +16,15 @@ import {
 } from "@sol-fab/kafka";
 import { runJobs } from "@sol-fab/jobs";
 import { makeLokiPusher } from "@sol-fab/obs";
+import { runRelay } from "@sol-fab/outbox";
 import { runWorker } from "@sol-fab/worker";
-import { decodeOrderPlaced } from "./wire.js";
+import { ORDER_FULFILLED } from "@demo-ts/contract";
+import { decodeOrderFulfilled, decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
-import { enqueueConfirmation, makeConfirmationJobs } from "./jobs.js";
+import { makeConfirmationJobs } from "./jobs.js";
+import { fulfillOrder } from "./fulfill.js";
 
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -34,6 +39,14 @@ function intEnv(name: string, fallback: number): number {
     throw new Error(`${name}=${JSON.stringify(raw)} is not a number`);
   }
   return n;
+}
+
+function requiredRegistry(): string {
+  const value = setting("SCHEMA_REGISTRY_URL");
+  if (!value) {
+    throw new Error("SCHEMA_REGISTRY_URL is not set: the outbox relay publishes through the registered contract");
+  }
+  return value;
 }
 
 const KAFKA_ENV = kafkaConfigFromEnv();
@@ -52,7 +65,15 @@ const log = makeLokiPusher({
   labels: { team: "demo_ts" },
 });
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
-const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
+const {
+  register: metricsRegister,
+  messagesTotal,
+  decodeErrorsTotal,
+  messageDuration,
+  outboxPublishedTotal,
+  outboxPending,
+  outboxOldestPendingSeconds,
+} = makeWorkerMetrics();
 const confirmationJobs = makeConfirmationJobs(log);
 
 async function handleOrder(
@@ -71,8 +92,7 @@ async function handleOrder(
     if (db) {
       try {
         await db.withTransaction(async (client) => {
-          await db!.insertFulfilled(order, client);
-          await enqueueConfirmation(client, confirmationJobs, order.order_id);
+          await fulfillOrder(db!, client, order, confirmationJobs);
         });
       } catch (err) {
         messagesTotal.inc({ status: "fail" });
@@ -104,6 +124,10 @@ async function main() {
     groupId: GROUP_ID,
     source: { name: TOPIC_NAME, partitions: PARTITIONS },
   });
+
+  const fulfilledTopic = db
+    ? await connectTopic({ kafka, registryUrl: requiredRegistry(), contract: ORDER_FULFILLED })
+    : undefined;
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
   await consumer.connect();
@@ -156,6 +180,45 @@ async function main() {
       }, 3000)
     : undefined;
 
+  const outboxAbort = new AbortController();
+  const outboxRunning =
+    db && fulfilledTopic
+      ? runRelay({
+          pool: db.pool,
+          publish: async (publication) => {
+            const event = decodeOrderFulfilled(JSON.parse(publication.payload));
+            const key = fulfilledTopic.key(event);
+            if (key !== publication.key) {
+              throw new Error(
+                `outbox key ${publication.key} does not match the contract key ${key}`,
+              );
+            }
+            await publish(producer, fulfilledTopic, event);
+          },
+          signal: outboxAbort.signal,
+          pollIntervalS: 0.5,
+          onPublication: (publication, status) => {
+            outboxPublishedTotal.inc({ kind: publication.kind, status });
+          },
+          onMetrics: (metrics) => {
+            outboxPending.reset();
+            for (const gauge of metrics.pendingByKind) {
+              outboxPending.set({ kind: gauge.kind }, gauge.value);
+            }
+            outboxOldestPendingSeconds.reset();
+            for (const gauge of metrics.oldestPendingSecondsByKind) {
+              outboxOldestPendingSeconds.set({ kind: gauge.kind }, gauge.value);
+            }
+          },
+          onWarning: (fields, message) => {
+            console.error(`[fulfillment-worker-ts] ${message}`, fields);
+            log("error", message, fields);
+          },
+        }).then((error) => {
+          if (error) console.error(`[fulfillment-worker-ts] outbox relay stopped: ${error.message}`);
+        })
+      : Promise.resolve();
+
   const jobsAbort = new AbortController();
   const jobsRunning = db
     ? runJobs({
@@ -181,8 +244,9 @@ async function main() {
 
   const lifecycle = runWorker({
     drain: async () => {
+      outboxAbort.abort();
       jobsAbort.abort();
-      await jobsRunning;
+      await Promise.all([outboxRunning, jobsRunning]);
       await consumer.disconnect();
     },
     onDrainStart: () => {

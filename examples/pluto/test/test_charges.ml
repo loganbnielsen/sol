@@ -21,7 +21,7 @@ let () =
   let inserted = ref None in
   let insert ~charge_id ~customer_id ~amount_cents ~currency =
     inserted := Some (charge_id, customer_id, amount_cents, currency);
-    Ok ()
+    Ok (Some charge_id)
   in
   let accepted = Handler.create_charge ~insert input |> Result.get_ok in
   assert (

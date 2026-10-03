@@ -12,7 +12,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "contract": "npm run contract --workspace @demo-ts/contract --",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

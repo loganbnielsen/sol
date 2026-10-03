@@ -66,7 +66,7 @@ struct
     match
       Pg_db.transaction Config.pool (fun tx ->
         let open Result.Syntax in
-        let* () =
+        let* inserted =
           Notification.insert
             tx
             ~charge_id:msg.id
@@ -74,22 +74,25 @@ struct
             ~amount_cents:msg.amount_cents
             ~currency:msg.currency
         in
-        let* () =
-          Jobs.enqueue
+        match inserted with
+        | None -> Ok ()
+        | Some _ ->
+          let* () =
+            Jobs.enqueue
+              tx
+              ~dedupe_key:msg.id
+              Email_job.{ charge_id = msg.id; customer_id = msg.customer_id }
+          in
+          Notification_sent_outbox.publish
             tx
-            ~dedupe_key:msg.id
-            Email_job.{ charge_id = msg.id; customer_id = msg.customer_id }
-        in
-        Notification_sent_outbox.publish
-          tx
-          ~key:msg.id
-          ~ord:1L
-          Notification_sent.
-            { charge_id = msg.id
-            ; customer_id = msg.customer_id
-            ; amount_cents = msg.amount_cents
-            ; currency = msg.currency
-            })
+            ~key:msg.id
+            ~ord:1L
+            Notification_sent.
+              { charge_id = msg.id
+              ; customer_id = msg.customer_id
+              ; amount_cents = msg.amount_cents
+              ; currency = msg.currency
+              })
     with
     | Ok () -> Worker.Ack
     | Error e ->

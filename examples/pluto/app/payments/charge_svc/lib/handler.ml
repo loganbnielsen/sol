@@ -44,7 +44,7 @@ let decode_charge_body body =
 let create_charge ~insert { customer_id; amount_cents; currency } =
   let charge_id = Printf.sprintf "ch_%06d" (Random.int 999999) in
   insert ~charge_id ~customer_id ~amount_cents ~currency
-  |> Result.map (fun () -> { charge_id })
+  |> Result.map (fun _ -> { charge_id })
 ;;
 
 let charge_response = function
