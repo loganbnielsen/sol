@@ -128,7 +128,7 @@ module Schema = struct
   ;;
 
   let resolve ~net ~clock ~registry_url (module M : MESSAGE) =
-    Kafka_service_schema.lookup_schema
+    Confluent_registry.lookup_schema
       net
       ~clock
       ~registry_url
@@ -137,17 +137,17 @@ module Schema = struct
     |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
   ;;
 
-  type compatibility_response = Kafka_service_schema.compatibility_response =
+  type compatibility_response = Confluent_registry.compatibility_response =
     { is_compatible : bool }
 
-  type registration_response = Kafka_service_schema.registration_response = { id : int }
+  type registration_response = Confluent_registry.registration_response = { id : int }
 
-  let is_subject_not_found = Kafka_service_schema.Schema.is_subject_not_found
-  let decode_compatibility_response = Kafka_service_schema.decode_compatibility_response
-  let decode_registration_response = Kafka_service_schema.decode_registration_response
+  let is_subject_not_found = Confluent_registry.is_subject_not_found
+  let decode_compatibility_response = Confluent_registry.decode_compatibility_response
+  let decode_registration_response = Confluent_registry.decode_registration_response
 end
 
-module Confluent_wire = Kafka_service_schema.Confluent_wire
+module Confluent_wire = Confluent_registry.Wire
 
 module Contract = struct
   let event_json module_name (module M : MESSAGE) =
@@ -210,7 +210,7 @@ module Admin = struct
   let query_topic_partitions = Kafka_service_intf.query_topic_partitions
 end
 
-let encode_wire = Kafka_service_schema.encode_wire
+let encode_wire = Confluent_registry.Wire.encode
 
 let config_of_env () =
   Kafka_service_config.of_env () |> Result.map_error (fun msg -> Config msg)
