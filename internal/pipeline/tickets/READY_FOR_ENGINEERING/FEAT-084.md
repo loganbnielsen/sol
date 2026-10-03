@@ -135,7 +135,30 @@ and the blocking gate has cleared:
   `templates/<kind>/typescript/` subtree would also be copied by an OCaml `sol new` unless the
   walk is made language-aware. Then TypeScript template trees for `svc`/`worker`/`fn`, modelled
   on `demo_ts`, and a `--language` option on the three subcommands.
-- **Triage:** stays in `BACKLOG/` pending prioritisation. The premise is verified and the work
-  is scoped; it is a multi-file scaffold feature (template layout + CLI + tests + a scaffolded
-  workspace demo), not a one-file change.
+- **Triage:** promoted to `READY_FOR_ENGINEERING/` and implemented in Part A (below); Part B
+  remains.
+
+## Part A (2026-10-02) — svc and worker scaffolds
+
+**Implemented.** `sol new svc|worker <domain>/<name> --language typescript` (default `ocaml`)
+scaffolds a TypeScript unit from new template trees
+`platform/shared/templates/{svc,worker}-ts/`, records `language: typescript` through the
+existing `Sol_cli_sol_yml.plan`, and prints the `npm install && npm run build` next step. The
+language selects a template variant (`Sol_cli_scaffold_tree`'s `kind` becomes `svc-ts` /
+`worker-ts`), so an OCaml `sol new` is unaffected. The generated units call the published
+`@sol-fab/svc`/`@sol-fab/worker` lifecycle contracts — healthz/readyz/metrics and the bounded
+drain come from the packages, not hand-rolled glue (FEAT-036's answer) — and mirror
+`examples/pluto/app/demo_ts`.
+
+**Verified.** `dune runtest cli/test/inline` passes, including three new cases: the svc and
+worker scaffolds' files and `sol.yml` `language: typescript`, and the `fn` refusal.
+Scaffolding into a scratch workspace and running `npm install && npm run build` succeeds for
+both the svc and the worker; `sol new svc ...` with no flag is unchanged.
+
+**Not in Part A (Part B).** `sol new fn --language typescript` is refused with a named error:
+the TypeScript `-fn` runtime contract is deferred (the framework-conventions `-fn` row), so
+the scaffold cannot target it yet. Acceptance criterion 1's "function" and a generated-unit
+end-to-end walk remain. The template `Dockerfile`s use `npm install` (a fresh scaffold has no
+lockfile); whether a scaffold should produce or require one is part of Part B.
+
 

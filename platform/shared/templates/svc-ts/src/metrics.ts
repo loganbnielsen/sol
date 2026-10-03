@@ -1,0 +1,19 @@
+import { Counter, Histogram, Registry } from "@prometheus-io/client";
+import { SOL_SVC_REQUESTS_TOTAL, SOL_SVC_REQUEST_DURATION_SECONDS } from "@sol-fab/obs";
+
+export function makeSvcMetrics() {
+  const register = new Registry();
+  const requestsTotal = new Counter({
+    name: SOL_SVC_REQUESTS_TOTAL,
+    help: "Total HTTP requests by method, route, and HTTP status class",
+    labelNames: ["method", "route", "status_class"],
+    registers: [register],
+  });
+  const requestDuration = new Histogram({
+    name: SOL_SVC_REQUEST_DURATION_SECONDS,
+    help: "HTTP request latency in seconds by method and route",
+    labelNames: ["method", "route"],
+    registers: [register],
+  });
+  return { register, requestsTotal, requestDuration };
+}

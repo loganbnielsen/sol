@@ -1064,6 +1064,66 @@ let%test "pending_migrations: scaffolded event topic matches its module" =
   test_scaffold_event_topic_matches_module ()
 ;;
 
+let test_new_svc_typescript () =
+  in_workspace
+  @@ fun () ->
+  Sol_cli_cmd_new.new_svc ~language:Sol_cli_compat.Typescript "payments/charge"
+  |> Result.get_ok;
+  let dir = "app/payments/charge_svc" in
+  List.iter
+    (fun rel ->
+       check_bool
+         (Printf.sprintf "typescript svc has %s" rel)
+         true
+         (Sys.file_exists (Filename.concat dir rel)))
+    [ "package.json"
+    ; "tsconfig.json"
+    ; "Dockerfile"
+    ; "sol.toml"
+    ; "src/index.ts"
+    ; "src/metrics.ts"
+    ];
+  let pkg = read_file (Filename.concat dir "package.json") in
+  check_bool "typescript svc package.json is substituted" false (contains pkg "{{");
+  assert_contains "typescript svc package name" pkg "payments-charge-svc";
+  let yml = read_file "sol.yml" in
+  assert_contains "sol.yml declares typescript" yml "language: typescript"
+;;
+
+let test_new_worker_typescript () =
+  in_workspace
+  @@ fun () ->
+  Sol_cli_cmd_new.new_worker ~language:Sol_cli_compat.Typescript "comms/notify"
+  |> Result.get_ok;
+  let dir = "app/comms/notify_worker" in
+  List.iter
+    (fun rel ->
+       check_bool
+         (Printf.sprintf "typescript worker has %s" rel)
+         true
+         (Sys.file_exists (Filename.concat dir rel)))
+    [ "package.json"
+    ; "tsconfig.json"
+    ; "Dockerfile"
+    ; "sol.toml"
+    ; "src/index.ts"
+    ; "src/metrics.ts"
+    ; "src/wire.ts"
+    ];
+  let yml = read_file "sol.yml" in
+  assert_contains "sol.yml declares typescript" yml "language: typescript"
+;;
+
+let test_new_fn_typescript_rejected () =
+  in_workspace
+  @@ fun () ->
+  (match Sol_cli_cmd_new.new_fn ~language:Sol_cli_compat.Typescript "billing/report" with
+   | Error message -> assert_contains "fn rejection names the gap" message "not supported"
+   | Ok () ->
+     Windtrap.fail "TypeScript -fn must be refused while its runtime contract is deferred");
+  check_bool "no fn directory was created" false (Sys.file_exists "app/billing/report_fn")
+;;
+
 let%test "golden: sol-ci.yml" = test_golden_ci_workflow ()
 let%test "golden: charge_svc Dockerfile" = test_golden_dockerfile ()
 let%test "golden: charge_svc bin/main.ml" = test_golden_svc_bin_ml ()
@@ -1072,6 +1132,9 @@ let%test "golden: test/dune" = test_golden_test_dune ()
 let%test "golden: new svc files" = test_golden_new_svc_files ()
 let%test "golden: new worker files" = test_golden_new_worker_files ()
 let%test "golden: new fn files" = test_golden_new_fn_files ()
+let%test "new svc --language typescript" = test_new_svc_typescript ()
+let%test "new worker --language typescript" = test_new_worker_typescript ()
+let%test "new fn --language typescript is refused" = test_new_fn_typescript_rejected ()
 let%test "mkdir_p: creates nested directories" = test_mkdir_p_creates_nested_dirs ()
 
 let%test "mkdir_p: tolerates an existing directory" =
