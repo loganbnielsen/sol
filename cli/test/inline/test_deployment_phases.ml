@@ -1,5 +1,6 @@
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let ok = function
@@ -182,6 +183,8 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   ; profile = None
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 

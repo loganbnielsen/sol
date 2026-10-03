@@ -390,7 +390,7 @@ let test_annotation_round_trips () =
 let render_deployment ~secret_keys =
   let release_id =
     Sol_cli_release_id.of_content
-      { workspace = "myapp"; environment = None; workloads = [] }
+      { workspace = "myapp"; environment = None; workloads = []; contract = [] }
   in
   let workload : Sol_cli_manifest.Workload_spec.t =
     { Sol_cli_manifest.Workload_spec.extra_labels = []

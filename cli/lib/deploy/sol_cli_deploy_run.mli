@@ -23,6 +23,11 @@ val http_services
 
 val verify_image_refs_exist : image_refs:(string * string) list -> (unit, string) result
 
+val observe_contract
+  :  context
+  -> Sol_cli_deployment_plan.t
+  -> (Sol_cli_deployment_plan.t, string) result
+
 val run_plan_result
   :  context
   -> phase:string

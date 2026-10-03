@@ -51,6 +51,7 @@ let sample_record : R.t =
     ; environment = Some "dev"
     ; workloads = [ R.applied_by "" sample_workload ]
     ; migrations = [ "0001_notifications.sql" ]
+    ; contract = []
     ; apply_mode = R.Direct
     ; encoding_version = Some Sol_cli_release_id.encoding_version
     }
@@ -61,6 +62,7 @@ let sample_record : R.t =
          { workspace = placeholder.workspace
          ; environment = placeholder.environment
          ; workloads = [ sample_workload ]
+         ; contract = []
          })
   in
   { placeholder with release_id; workloads = [ R.applied_by release_id sample_workload ] }
@@ -404,8 +406,23 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "a9ca081d3618cc76727ea10aea207006"
+    "e86912e2fd3146fe5db934cc51f684a5"
     (R.record_digest sample_record)
+;;
+
+let test_contract_round_trips () =
+  let fact : R.contract_fact =
+    { subject = "payments.Charged"
+    ; topic = "acme-charges"
+    ; partitions = 3
+    ; key = Some "id"
+    ; schema_digest = "abc123"
+    }
+  in
+  let record = { sample_record with contract = [ fact ] } in
+  match R.of_json (R.to_json record) with
+  | Error msg -> Windtrap.fail msg
+  | Ok parsed -> check_bool "contract round trips" true (parsed.contract = [ fact ])
 ;;
 
 let test_apply_mode_round_trips () =
@@ -545,6 +562,7 @@ let plan_with_services plan ~services ~requested_scope =
       { workspace = plan.Sol_cli_deployment_plan.workspace
       ; environment = plan.environment.env
       ; workloads = List.map R.workload_of_spec services
+      ; contract = []
       }
   in
   { plan with services; requested_scope; release_id }
@@ -585,6 +603,7 @@ let test_scoped_deploy_records_a_complete_boundary () =
             { Sol_cli_release_id.workspace = full.Sol_cli_deployment_plan.workspace
             ; environment = full.environment.env
             ; workloads = List.map R.workload_of_spec full.services
+            ; contract = []
             }))
       boundary_a.release_id;
     check_string
@@ -992,6 +1011,10 @@ let%test "canonicalization: duplicate keys are totally ordered" =
 ;;
 
 let%test "canonicalization: known canonical digest" = test_record_digest_known_vector ()
+
+let%test "release record: the deployed contract round trips" =
+  test_contract_round_trips ()
+;;
 
 let%test "scoped boundary (BUG-077): a scoped deploy records a complete boundary" =
   test_scoped_deploy_records_a_complete_boundary ()

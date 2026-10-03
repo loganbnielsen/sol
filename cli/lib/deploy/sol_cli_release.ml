@@ -1,5 +1,6 @@
 type workload = Sol_cli_release_id.workload
 type recorded_workload = Sol_cli_release_id.recorded_workload
+type contract_fact = Sol_cli_release_id.contract_fact
 
 type apply_mode =
   | Direct
@@ -26,6 +27,7 @@ type t =
   ; environment : string option
   ; workloads : recorded_workload list
   ; migrations : string list
+  ; contract : contract_fact list
   ; apply_mode : apply_mode
   ; encoding_version : string option
   }
@@ -85,9 +87,14 @@ let same_workload_identity (a : recorded_workload) (b : recorded_workload) =
   && String.equal a.primitive b.primitive
 ;;
 
-let boundary_id ~workspace ~environment ~deployed ~inherited =
+let boundary_id ~workspace ~environment ~contract ~deployed ~inherited =
   Sol_cli_release_id.to_string
-    (Sol_cli_release_id.of_boundary ~workspace ~environment ~deployed ~inherited)
+    (Sol_cli_release_id.of_boundary
+       ~workspace
+       ~environment
+       ~contract
+       ~deployed
+       ~inherited)
 ;;
 
 let of_plan_with_boundary
@@ -111,6 +118,7 @@ let of_plan_with_boundary
     boundary_id
       ~workspace:plan.workspace
       ~environment:plan.environment.env
+      ~contract:plan.contract
       ~deployed
       ~inherited:(List.map (fun w -> w.Sol_cli_release_id.spec, w.applied_by) inherited)
   in
@@ -121,6 +129,7 @@ let of_plan_with_boundary
       List.map (applied_by (Sol_cli_release_id.to_string plan.release_id)) deployed
       @ inherited
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
+  ; contract = plan.contract
   ; apply_mode
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
@@ -134,6 +143,7 @@ let derived_release_id (t : t) : Sol_cli_release_id.t =
   Sol_cli_release_id.of_recorded_boundary
     ~workspace:t.workspace
     ~environment:t.environment
+    ~contract:t.contract
     t.workloads
 ;;
 
@@ -272,6 +282,23 @@ let recorded_workload_to_json (w : recorded_workload) : Yojson.Safe.t =
   | other -> other
 ;;
 
+let compare_contract (a : contract_fact) (b : contract_fact) =
+  String.compare a.subject b.subject
+;;
+
+let contract_fact_to_json (f : contract_fact) : Yojson.Safe.t =
+  `Assoc
+    [ "subject", `String f.subject
+    ; "topic", `String f.topic
+    ; "partitions", `Int f.partitions
+    ; ( "key"
+      , match f.key with
+        | None -> `Null
+        | Some k -> `String k )
+    ; "schema_digest", `String f.schema_digest
+    ]
+;;
+
 let to_json (t : t) : Yojson.Safe.t =
   `Assoc
     [ "release_id", `String t.release_id
@@ -285,6 +312,8 @@ let to_json (t : t) : Yojson.Safe.t =
           (List.map recorded_workload_to_json (List.sort compare_workload t.workloads)) )
     ; ( "migrations"
       , `List (List.map (fun m -> `String m) (List.sort String.compare t.migrations)) )
+    ; ( "contract"
+      , `List (List.map contract_fact_to_json (List.sort compare_contract t.contract)) )
     ; "apply_mode", `String (apply_mode_to_string t.apply_mode)
     ; ( "encoding_version"
       , match t.encoding_version with
@@ -393,6 +422,15 @@ let recorded_workload_of_json (json : Yojson.Safe.t) : recorded_workload =
   { Sol_cli_release_id.spec = workload_of_json json; applied_by = str "applied_by" json }
 ;;
 
+let contract_fact_of_json (json : Yojson.Safe.t) : contract_fact =
+  { subject = str "subject" json
+  ; topic = str "topic" json
+  ; partitions = int "partitions" json
+  ; key = string_option "key" json
+  ; schema_digest = str "schema_digest" json
+  }
+;;
+
 let string_list key json =
   List.filter_map
     (function
@@ -420,6 +458,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
       ; environment = string_option "environment" json
       ; workloads = List.map recorded_workload_of_json (list "workloads" json)
       ; migrations = string_list "migrations" json
+      ; contract = List.map contract_fact_of_json (list "contract" json)
       ; apply_mode
       ; encoding_version = string_option "encoding_version" json
       }

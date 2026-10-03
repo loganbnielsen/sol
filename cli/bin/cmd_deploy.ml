@@ -103,6 +103,21 @@ let print_planned_services plan =
       spec.source_name)
 ;;
 
+let print_contract_changes plan =
+  match plan.Sol_cli_deployment_plan.contract_changes with
+  | [] -> ()
+  | changes ->
+    Printf.printf "\nContract changes:\n%!";
+    changes
+    |> List.iter (fun change ->
+      Printf.printf "  %s\n%!" (Sol_cli_deployment_plan.contract_change_to_string change))
+;;
+
+let observe_contract (ctx : Sol_cli_deploy_run.context) plan =
+  Sol_cli_deploy_run.observe_contract ctx plan
+  |> Result.map_error (fun message -> Sol_cli_exit.failure ("\nerror: " ^ message))
+;;
+
 let record_plan run_log plan =
   Sol_cli_run_log.append_phase_log
     run_log
@@ -464,8 +479,10 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
+  let* plan = observe_contract ctx plan in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
+  print_contract_changes plan;
   let* () =
     check_substrate_prerequisite
       ~ctx
@@ -488,8 +505,10 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
+  let* plan = observe_contract ctx plan in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
+  print_contract_changes plan;
   let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
   let* results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
@@ -593,8 +612,10 @@ let run_apply
       ()
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
+  let* plan = observe_contract ctx plan in
   let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
   print_planned_services plan;
+  print_contract_changes plan;
   let* () =
     check_substrate_prerequisite
       ~ctx

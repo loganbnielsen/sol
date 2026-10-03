@@ -22,15 +22,24 @@ type workload =
   ; calls : (string * string * string * string) list
   }
 
+type contract_fact =
+  { subject : string
+  ; topic : string
+  ; partitions : int
+  ; key : string option
+  ; schema_digest : string
+  }
+
 type content =
   { workspace : string
   ; environment : string option
   ; workloads : workload list
+  ; contract : contract_fact list
   }
 
 type t = string
 
-let encoding_version = "sol-release-v4"
+let encoding_version = "sol-release-v5"
 
 let enc_string b s =
   Buffer.add_string b (Printf.sprintf "%d:" (String.length s));
@@ -113,6 +122,16 @@ let compare_workload_spec a b =
     if by_name <> 0 then by_name else String.compare a.primitive b.primitive)
 ;;
 
+let compare_contract_fact a b = String.compare a.subject b.subject
+
+let enc_contract_fact b (f : contract_fact) =
+  enc_string b f.subject;
+  enc_string b f.topic;
+  enc_int b f.partitions;
+  enc_option enc_string b f.key;
+  enc_string b f.schema_digest
+;;
+
 let canonical_string (content : content) =
   let b = Buffer.create 256 in
   enc_string b encoding_version;
@@ -121,6 +140,9 @@ let canonical_string (content : content) =
   let workloads = List.sort compare_workload_spec content.workloads in
   enc_int b (List.length workloads);
   workloads |> List.iter (enc_workload b);
+  let contract = List.sort compare_contract_fact content.contract in
+  enc_int b (List.length contract);
+  contract |> List.iter (enc_contract_fact b);
   Buffer.contents b
 ;;
 
@@ -136,9 +158,14 @@ let of_content (content : content) =
   "r-" ^ String.sub hex 0 16
 ;;
 
-let of_recorded_boundary ~workspace ~environment (workloads : recorded_workload list) =
+let of_recorded_boundary
+      ~workspace
+      ~environment
+      ~contract
+      (workloads : recorded_workload list)
+  =
   let specs = List.map (fun w -> w.spec) workloads in
-  let content_id = of_content { workspace; environment; workloads = specs } in
+  let content_id = of_content { workspace; environment; workloads = specs; contract } in
   if List.for_all (fun w -> String.equal w.applied_by content_id) workloads
   then content_id
   else (
@@ -160,15 +187,18 @@ let of_recorded_boundary ~workspace ~environment (workloads : recorded_workload 
 let of_boundary
       ~workspace
       ~environment
+      ~contract
       ~(deployed : workload list)
       ~(inherited : (workload * string) list)
   =
-  let applied_by = of_content { workspace; environment; workloads = deployed } in
+  let applied_by =
+    of_content { workspace; environment; workloads = deployed; contract }
+  in
   let workloads =
     List.map (fun spec -> { spec; applied_by }) deployed
     @ List.map (fun (spec, applied_by) -> { spec; applied_by }) inherited
   in
-  of_recorded_boundary ~workspace ~environment workloads
+  of_recorded_boundary ~workspace ~environment ~contract workloads
 ;;
 
 let to_string (t : t) = t

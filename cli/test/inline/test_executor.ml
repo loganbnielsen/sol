@@ -4,7 +4,8 @@ let ok = function
 ;;
 
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let k8s_name value =

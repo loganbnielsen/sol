@@ -242,6 +242,22 @@ let read_previous_release ctx =
   | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
+let previous_contract ctx =
+  let cluster = ctx.execution.cluster in
+  let workspace = ctx.execution.workspace in
+  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
+  | Ok (Some release_id) ->
+    (match Sol_cli_release_store.get ~ctx:cluster ~workspace ~release_id with
+     | Ok record -> record.Sol_cli_release.contract
+     | Error _ -> [])
+  | Ok None | Error _ -> []
+;;
+
+let observe_contract ctx plan =
+  Sol_cli_deployment_plan.with_observed_contract ~observed:(previous_contract ctx) plan
+  |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
+;;
+
 let record_release_and_prune ctx ~previous ~retained plan =
   let cluster = ctx.execution.cluster in
   let workspace = ctx.execution.workspace in

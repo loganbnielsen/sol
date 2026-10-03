@@ -74,6 +74,37 @@ type profile_claim =
   ; application_findings : (Sol_cli_profile.capability * string) list
   }
 
+type contract_change =
+  | Added of
+      { subject : string
+      ; topic : string
+      ; partitions : int
+      }
+  | Removed of
+      { subject : string
+      ; topic : string
+      }
+  | Partitions of
+      { subject : string
+      ; observed : int
+      ; desired : int
+      }
+  | Key of
+      { subject : string
+      ; observed : string option
+      ; desired : string option
+      }
+  | Topic of
+      { subject : string
+      ; observed : string
+      ; desired : string
+      }
+  | Schema of
+      { subject : string
+      ; observed : string
+      ; desired : string
+      }
+
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
@@ -85,6 +116,8 @@ type t =
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
   ; profile : profile_claim option
+  ; contract : Sol_cli_release_id.contract_fact list
+  ; contract_changes : contract_change list
   }
 
 type plan_error =
@@ -106,6 +139,10 @@ type plan_error =
       { field : string
       ; value : string
       ; message : string
+      }
+  | Incompatible_contract_change of
+      { subject : string
+      ; reason : string
       }
 
 open Result.Syntax
@@ -248,6 +285,52 @@ let progressive_delivery_to_json = function
   | Some Sol_cli_toml.Blue_green -> `Assoc [ "strategy", `String "blue_green" ]
 ;;
 
+let contract_change_subject = function
+  | Added { subject; _ }
+  | Removed { subject; _ }
+  | Partitions { subject; _ }
+  | Key { subject; _ }
+  | Topic { subject; _ }
+  | Schema { subject; _ } -> subject
+;;
+
+let key_to_string = function
+  | None -> "unkeyed"
+  | Some field -> field
+;;
+
+let contract_change_to_string = function
+  | Added { subject; topic; partitions } ->
+    Printf.sprintf "%s  new topic %s (partitions %d)" subject topic partitions
+  | Removed { subject; topic } ->
+    Printf.sprintf "%s  topic %s is no longer declared" subject topic
+  | Partitions { subject; observed; desired } ->
+    Printf.sprintf "%s  partitions %d → %d" subject observed desired
+  | Key { subject; observed; desired } ->
+    Printf.sprintf
+      "%s  key %s → %s"
+      subject
+      (key_to_string observed)
+      (key_to_string desired)
+  | Topic { subject; observed; desired } ->
+    Printf.sprintf "%s  topic %s → %s" subject observed desired
+  | Schema { subject; observed; desired } ->
+    Printf.sprintf "%s  schema %s → %s" subject observed desired
+;;
+
+let contract_fact_to_json (f : Sol_cli_release_id.contract_fact) =
+  `Assoc
+    [ "subject", `String f.subject
+    ; "topic", `String f.topic
+    ; "partitions", `Int f.partitions
+    ; ( "key"
+      , match f.key with
+        | None -> `Null
+        | Some k -> `String k )
+    ; "schema_digest", `String f.schema_digest
+    ]
+;;
+
 let to_json t =
   let opt_string = function
     | None -> `Null
@@ -368,6 +451,10 @@ let to_json t =
       , `List
           (t.consumer_groups
            |> List.map (fun s -> `String (Sol_cli_plan_ids.Consumer_group.to_string s))) )
+    ; "contract", `List (List.map contract_fact_to_json t.contract)
+    ; ( "contract_changes"
+      , `List
+          (List.map (fun c -> `String (contract_change_to_string c)) t.contract_changes) )
     ; ( "profile"
       , match t.profile with
         | None -> `Null
@@ -432,14 +519,21 @@ let pp_summary fmt t =
        fmt
        "schema subjects:  %s@\n"
        (String.concat ", " (List.map Sol_cli_plan_ids.Schema_subject.to_string ss)));
-  match t.consumer_groups with
+  (match t.consumer_groups with
+   | [] -> ()
+   | cgs ->
+     Format.fprintf fmt "@\n";
+     Format.fprintf
+       fmt
+       "consumer groups:  %s@\n"
+       (String.concat ", " (List.map Sol_cli_plan_ids.Consumer_group.to_string cgs)));
+  match t.contract_changes with
   | [] -> ()
-  | cgs ->
-    Format.fprintf fmt "@\n";
-    Format.fprintf
-      fmt
-      "consumer groups:  %s@\n"
-      (String.concat ", " (List.map Sol_cli_plan_ids.Consumer_group.to_string cgs))
+  | changes ->
+    Format.fprintf fmt "@\ncontract changes:@\n";
+    changes
+    |> List.iter (fun change ->
+      Format.fprintf fmt "  %s@\n" (contract_change_to_string change))
 ;;
 
 let resource_name_of_ref ref =
@@ -514,6 +608,117 @@ let plan_error_to_string = function
     Printf.sprintf "service %S calls %S: %s" service ref message
   | Invalid_kubernetes_name { field; value; message } ->
     Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
+  | Incompatible_contract_change { subject; reason } ->
+    Printf.sprintf
+      "the deployed event contract for %s cannot be reconciled: %s"
+      subject
+      reason
+;;
+
+let contract_fact_of_decl ~dir (event : Sol_cli_toml.event_decl)
+  : Sol_cli_release_id.contract_fact
+  =
+  { subject = Printf.sprintf "%s.%s" (Filename.basename dir) event.name
+  ; topic = event.topic
+  ; partitions = event.partitions
+  ; key = event.key_field
+  ; schema_digest = Digest.to_hex (Digest.string event.schema)
+  }
+;;
+
+let contract_of_facts facts =
+  List.map (fun (dir, event) -> contract_fact_of_decl ~dir event) facts
+  |> List.sort (fun a b ->
+    String.compare a.Sol_cli_release_id.subject b.Sol_cli_release_id.subject)
+;;
+
+let incompatible_contract_change = function
+  | Partitions { observed; desired; _ } when desired < observed ->
+    Some
+      (Printf.sprintf
+         "a topic's partition count can only grow (%d → %d)"
+         observed
+         desired)
+  | Key { observed; desired; _ } when observed <> desired ->
+    Some
+      (Printf.sprintf
+         "the record key changed (%s → %s); a topic cannot be rekeyed without \
+          repartitioning its records"
+         (key_to_string observed)
+         (key_to_string desired))
+  | Topic { observed; desired; _ } when not (String.equal observed desired) ->
+    Some
+      (Printf.sprintf
+         "the topic was renamed (%s → %s); a rename is a new topic, not a change to the \
+          existing one"
+         observed
+         desired)
+  | Added _ | Removed _ | Partitions _ | Key _ | Topic _ | Schema _ -> None
+;;
+
+let contract_changes_between ~observed ~desired =
+  let by_subject = List.map (fun f -> f.Sol_cli_release_id.subject, f) in
+  let observed = by_subject observed
+  and desired = by_subject desired in
+  let added =
+    List.filter_map
+      (fun (subject, (d : Sol_cli_release_id.contract_fact)) ->
+         if List.mem_assoc subject observed
+         then None
+         else Some (Added { subject; topic = d.topic; partitions = d.partitions }))
+      desired
+  in
+  let removed =
+    List.filter_map
+      (fun (subject, (o : Sol_cli_release_id.contract_fact)) ->
+         if List.mem_assoc subject desired
+         then None
+         else Some (Removed { subject; topic = o.topic }))
+      observed
+  in
+  let changed =
+    List.filter_map
+      (fun (subject, (d : Sol_cli_release_id.contract_fact)) ->
+         match List.assoc_opt subject observed with
+         | None -> None
+         | Some o ->
+           let changes = ref [] in
+           if not (String.equal o.topic d.topic)
+           then
+             changes
+             := Topic { subject; observed = o.topic; desired = d.topic } :: !changes;
+           if o.partitions <> d.partitions
+           then
+             changes
+             := Partitions { subject; observed = o.partitions; desired = d.partitions }
+                :: !changes;
+           if o.key <> d.key
+           then changes := Key { subject; observed = o.key; desired = d.key } :: !changes;
+           if not (String.equal o.schema_digest d.schema_digest)
+           then
+             changes
+             := Schema { subject; observed = o.schema_digest; desired = d.schema_digest }
+                :: !changes;
+           Some (List.rev !changes))
+      desired
+  in
+  List.sort
+    (fun a b -> String.compare (contract_change_subject a) (contract_change_subject b))
+    ((added @ List.concat changed) @ removed)
+;;
+
+let with_observed_contract ~observed (t : t) : (t, plan_error) result =
+  let changes = contract_changes_between ~observed ~desired:t.contract in
+  match
+    List.find_map
+      (fun change ->
+         Option.map
+           (fun reason -> contract_change_subject change, reason)
+           (incompatible_contract_change change))
+      changes
+  with
+  | Some (subject, reason) -> Error (Incompatible_contract_change { subject; reason })
+  | None -> Ok { t with contract_changes = changes }
 ;;
 
 let namespace_name ~workspace ~domain =
@@ -941,11 +1146,13 @@ let of_services_result
       in
       { svc with called_by })
   in
+  let contract = contract_of_facts facts.Sol_cli_workspace_model.events in
   let release_id =
     Sol_cli_release_id.of_content
       { workspace
       ; environment = env.env
       ; workloads = List.map release_workload_of_spec resolved_services
+      ; contract
       }
   in
   let topics = facts.Sol_cli_workspace_model.topics in
@@ -968,5 +1175,7 @@ let of_services_result
           ~topics
           ~migrations
           ~whole_workspace:(String.equal requested_scope "workspace")
+    ; contract
+    ; contract_changes = []
     }
 ;;

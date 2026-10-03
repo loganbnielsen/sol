@@ -1,5 +1,6 @@
 type workload = Sol_cli_release_id.workload
 type recorded_workload = Sol_cli_release_id.recorded_workload
+type contract_fact = Sol_cli_release_id.contract_fact
 
 type apply_mode =
   | Direct
@@ -14,6 +15,7 @@ type t =
   ; environment : string option
   ; workloads : recorded_workload list
   ; migrations : string list
+  ; contract : contract_fact list
   ; apply_mode : apply_mode
   ; encoding_version : string option
   }

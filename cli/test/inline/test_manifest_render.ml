@@ -1,5 +1,6 @@
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let expected_release_label =
@@ -1888,7 +1889,7 @@ let test_release_label_does_not_leak_image_tag () =
 let test_release_label_is_the_supplied_identity () =
   let other =
     Sol_cli_release_id.of_content
-      { workspace = "other"; environment = Some "prod"; workloads = [] }
+      { workspace = "other"; environment = Some "prod"; workloads = []; contract = [] }
   in
   let _, workload = render_spec_ok ~release_id:other svc_spec in
   assert_contains

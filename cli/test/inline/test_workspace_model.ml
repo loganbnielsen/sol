@@ -56,6 +56,33 @@ let subject_strings facts =
   |> List.map Sol_cli_plan_ids.Schema_subject.to_string
 ;;
 
+let test_pluto_contract_change_is_reported_against_a_record () =
+  let facts = load "examples/pluto" in
+  let observed =
+    Sol_cli_deployment_plan.contract_of_facts facts.Sol_cli_workspace_model.events
+  in
+  let is_charged (f : Sol_cli_release_id.contract_fact) =
+    String.equal f.subject "payments.Charged"
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"pluto declares payments.Charged at 3 partitions"
+    3
+    (List.find is_charged observed).Sol_cli_release_id.partitions;
+  let desired =
+    List.map
+      (fun (f : Sol_cli_release_id.contract_fact) ->
+         if is_charged f then { f with partitions = 6 } else f)
+      observed
+  in
+  let changes = Sol_cli_deployment_plan.contract_changes_between ~observed ~desired in
+  Windtrap.equal Windtrap.int ~msg:"one declared change" 1 (List.length changes);
+  assert (
+    Sol_cli_string.contains
+      ~needle:"payments.Charged  partitions 3 → 6"
+      (Sol_cli_deployment_plan.contract_change_to_string (List.hd changes)))
+;;
+
 let test_pluto_services_carry_their_primitive_and_language () =
   let facts = load "examples/pluto" in
   Windtrap.equal
@@ -346,6 +373,10 @@ let%test "fixtures: pluto: services carry primitive and language" =
 
 let%test "fixtures: pluto: events, migrations and targets" =
   test_pluto_events_migrations_and_targets ()
+;;
+
+let%test "fixtures: pluto: a declared change is reported against the record" =
+  test_pluto_contract_change_is_reported_against_a_record ()
 ;;
 
 let%test "fixtures: venus: both domains" = test_venus_reads_both_domains ()
