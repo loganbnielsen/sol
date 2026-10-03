@@ -1,5 +1,6 @@
 type kubernetes_status =
   | Not_configured
+  | Misconfigured of string * string
   | Configured of string
   | Reachable of string
   | Unreachable of string * string

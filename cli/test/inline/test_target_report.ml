@@ -46,6 +46,27 @@ let test_not_configured_points_at_the_field () =
   assert (Sol_cli_string.contains ~needle:"deploy_kubeconfig_command" message)
 ;;
 
+let test_misconfigured_is_not_absence () =
+  let reason =
+    "this target resolves to k3d-sol-local, Sol's own cluster, which is a reserved \
+     execution mode rather than a target: use `sol local <command>` for it, and point \
+     this target at a cluster you own"
+  in
+  let quiet =
+    Sol_cli_target_report.describe
+      ~verbose:false
+      (Misconfigured ("k3d-sol-local", reason))
+  in
+  assert (Sol_cli_string.contains ~needle:"reserved execution mode" quiet);
+  assert (Sol_cli_string.contains ~needle:"<context>" quiet);
+  assert (not (Sol_cli_string.contains ~needle:"k3d-sol-local" quiet));
+  assert (not (Sol_cli_string.contains ~needle:"names no kube_context" quiet));
+  let loud =
+    Sol_cli_target_report.describe ~verbose:true (Misconfigured ("k3d-sol-local", reason))
+  in
+  assert (Sol_cli_string.contains ~needle:"k3d-sol-local" loud)
+;;
+
 let test_configured_is_not_checked_and_hides_the_context () =
   let message =
     Sol_cli_target_report.describe ~verbose:false (Configured "prod-us-east-1")
@@ -77,6 +98,7 @@ let test_verbose_shows_the_context () =
 let test_default_summary_never_names_the_context () =
   let statuses =
     [ Not_configured
+    ; Misconfigured ("prod-us-east-1", "this target resolves to prod-us-east-1 somehow")
     ; Configured "prod-us-east-1"
     ; Reachable "prod-us-east-1"
     ; Unreachable ("prod-us-east-1", "connection refused")
@@ -256,6 +278,10 @@ let test_json_carries_the_live_state_fields () =
 
 let%test "target_report: not configured points at the field" =
   test_not_configured_points_at_the_field ()
+;;
+
+let%test "target_report: a misconfigured destination is not absence" =
+  test_misconfigured_is_not_absence ()
 ;;
 
 let%test "target_report: configured is not checked and hides the context" =

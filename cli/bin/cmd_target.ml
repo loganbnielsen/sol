@@ -1,14 +1,13 @@
-let available_target_paths =
-  lazy
-    (match Sol_cli_workspace_model.load_cwd () with
-     | Ok facts -> facts.Sol_cli_workspace_model.targets
-     | Error _ -> [])
-;;
+let available_target_paths = lazy (Sol_cli_workspace_model.load_cwd ())
 
 let available_targets () =
   match Lazy.force available_target_paths with
-  | [] -> "no targets found: declare them in sol/environments.yml"
-  | paths -> "available targets:\n  " ^ String.concat "\n  " paths
+  | Error reason ->
+    "the workspace could not be read, so its targets are unknown: " ^ reason
+  | Ok facts ->
+    (match facts.Sol_cli_workspace_model.targets with
+     | [] -> "no targets found: declare them in sol/environments.yml"
+     | paths -> "available targets:\n  " ^ String.concat "\n  " paths)
 ;;
 
 let not_shown message = Sol_cli_exit.failure (message ^ "\n\n" ^ available_targets ())
@@ -21,7 +20,11 @@ let first_line text =
 
 let kubernetes_status ~check (target : Sol_cli_config.target) =
   match Sol_cli_config.destination_of_target target with
-  | Error _ -> Sol_cli_target_report.Not_configured
+  | Error reason ->
+    let context = String.trim (Option.value target.kube_context ~default:"") in
+    if Sol_cli_string.is_blank context
+    then Sol_cli_target_report.Not_configured
+    else Sol_cli_target_report.Misconfigured (context, reason)
   | Ok destination ->
     let context = destination.context in
     if not check
@@ -53,7 +56,7 @@ let platform_status ~check (target : Sol_cli_config.target) =
   then None
   else (
     match Sol_cli_config.destination_of_target target with
-    | Error _ -> Some "Unmet — no explicit Kubernetes destination"
+    | Error reason -> Some (Printf.sprintf "Unmet — %s" reason)
     | Ok destination ->
       let prefix = Sol_cli_kube_destination.kubectl_args destination in
       let env = Sol_cli_kube_destination.environment destination in
@@ -108,6 +111,7 @@ let substrate_status
       | Sol_cli_target_report.Reachable _ -> `Reachable
       | Unreachable (context, why) -> `Unmet (reason context why)
       | Unreadable (context, why) -> `Unknown (reason context why)
+      | Misconfigured (context, why) -> `Unmet (reason context why)
       | Not_configured -> `Unmet "the target declares no explicit Kubernetes destination"
       | Configured _ -> `Unknown "the cluster was not probed"
     in

@@ -1,5 +1,6 @@
 type kubernetes_status =
   | Not_configured
+  | Misconfigured of string * string
   | Configured of string
   | Reachable of string
   | Unreachable of string * string
@@ -37,6 +38,13 @@ let describe ~verbose = function
      to reach. After `sol cloud apply`, run the printed `deploy_kubeconfig_command` \
      output and add the resulting context name; for a cluster you own, name its context \
      in the target."
+  | Misconfigured (context, reason) ->
+    if verbose
+    then Printf.sprintf "misconfigured (%s): %s" context reason
+    else
+      Printf.sprintf
+        "misconfigured: %s"
+        (redact ~needle:context ~replacement:"<context>" reason)
   | Configured context ->
     if verbose
     then Printf.sprintf "configured (%s) — not checked; pass --check to probe it" context
