@@ -3,6 +3,7 @@
  (libraries
   pluto_payments_events
   pluto_comms_events
+  pluto_orders_events
   kafka-eio-service
   eio_main
   yojson))

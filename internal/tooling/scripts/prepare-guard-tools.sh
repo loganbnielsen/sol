@@ -7,7 +7,7 @@ bindir="${HOME}/.local/bin"
 shfmt_version="v3.12.0"
 
 python_deps_present() {
-  python3 -c 'import hcl2, yaml, lark, regex' 2>/dev/null
+  python3 -c 'import hcl2, yaml, lark, regex, tomli' 2>/dev/null
 }
 
 install_python_deps() {

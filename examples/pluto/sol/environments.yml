@@ -29,6 +29,17 @@ prod:
       scale:
         min: 1
         max: 2
+    # The "Pluto orders" scenario's OCaml namespace (FEAT-131). The scenario
+    # runs in every environment that carries its resources; `dev` omits it the
+    # way it omits the other app_db/events workloads.
+    orders_svc:
+      scale:
+        min: 1
+        max: 2
+    fulfilment_worker:
+      scale:
+        min: 1
+        max: 2
   targets:
     aws/us-east-1:
       cluster_name: pluto-prod
@@ -79,6 +90,10 @@ dev:
     charge_svc:
       omit: true
     notify_worker:
+      omit: true
+    orders_svc:
+      omit: true
+    fulfilment_worker:
       omit: true
   targets:
     aws/us-east-1:
