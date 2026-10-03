@@ -26,7 +26,9 @@ STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
 CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
 APP_TAG="${APP_TAG:-qual-$(date -u +%Y%m%d-%H%M%S)}"
-export APP_TAG
+RUNNER_VERSION="${RUNNER_VERSION:-sol-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || printf 'dev')}"
+RUNNER_REPOSITORY="${RUNNER_REPOSITORY:-pluto/sol-migration-runner}"
+export APP_TAG RUNNER_VERSION RUNNER_REPOSITORY
 BOOTSTRAP_ROOT="$ROOT/platform/cloud/gcp/bootstrap"
 
 case "${1:-}" in
@@ -1178,6 +1180,31 @@ app_context_path() {
 
 app_image_ref() { printf '%s/pluto/%s:%s' "$(app_registry)" "$(app_k8s_name "$1")" "$APP_TAG"; }
 
+app_runner_image_ref() { printf '%s/%s:%s' "$(app_registry)" "$RUNNER_REPOSITORY" "$RUNNER_VERSION"; }
+
+publish_migration_runner() {
+  say "runner-publish: building and publishing the migration runner Sol will run"
+  if ! timeout "$PHASE_TIMEOUT" "$ROOT/internal/qualification/publish-migration-runner.sh" \
+      --root "$ROOT" --image "$(app_runner_image_ref)" --version "$RUNNER_VERSION" \
+      >"$LOG_DIR/runner-publish.out" 2>"$LOG_DIR/runner-publish.log"; then
+    say "FAILED: runner-publish (last 40 lines; full log $LOG_DIR/runner-publish.log)"
+    tail -n 40 "$LOG_DIR/runner-publish.log" || true
+    return 1
+  fi
+  local ref
+  ref="$(cat "$LOG_DIR/runner-publish.out")"
+  case "$ref" in
+    *@sha256:*) ;;
+    *)
+      say "the publisher did not report a digest reference ($ref), and Sol is only ever handed one"
+      return 1
+      ;;
+  esac
+  export SOL_MIGRATION_RUNNER_IMAGE="$ref"
+  say "  Sol will run $ref"
+  say "  the deploy identity publishes nothing: this is the same boundary the app images cross, before Sol is invoked"
+}
+
 write_app_target() {
   mkdir -p "$(dirname "$TARGET_FILE")"
   if [ -f "$TARGET_FILE" ] && ! owns_target_file; then
@@ -1342,13 +1369,19 @@ phase_app() {
     finalise_bundle
     return 1
   fi
+  if ! publish_migration_runner; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
   if ! app_load_runtime_secrets; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle
     return 1
   fi
-  if ! run migrate-apply "$SOL" migrate apply "$TARGET" --registry "$(app_registry)"; then
+  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle
@@ -1384,13 +1417,18 @@ phases
             Kubernetes evidence, the cert-manager discriminator and the provider
             inventory before any teardown. On success it continues to the delegation
             hand-off and keeps the substrate for the TLS rows.
-  app       build and push this row's two images into the target's Artifact Registry, apply the
-            workspace's migrations, run `sol deploy`, and verify the application transaction
+  app       build and push this row's two images into the target's Artifact Registry, publish the
+            migration runner as the publisher does, apply the workspace's migrations, run `sol
+            deploy`, and verify the application transaction
             (a charge accepted, the worker consuming it, and the service reading the worker's
             row back out of PostgreSQL) with the pods, events and logs captured either way.
-            Migrations, like the deploy, run against the target's registry: `sol migrate
-            apply` submits an in-cluster Job built from an image there, so it is given the
-            same --registry the deploy is. The workspace's declared runtime secrets
+            The migration runner is published here, not by Sol:
+            `internal/qualification/publish-migration-runner.sh` builds it from Sol's release
+            recipe and prints the pushed digest, which is handed to `sol migrate apply` and `sol
+            deploy` as SOL_MIGRATION_RUNNER_IMAGE. The deploy identity has no registry-write
+            authority (ADR 0002, SEC-011), and Sol refuses to run either step without a
+            digest-pinned runner. The deploy is still given the target's registry for the
+            workspace's own images. The workspace's declared runtime secrets
             (POSTGRES_URL, SOL_API_KEY) come from the operator's side of the contract -- the
             cluster root's postgres_url output plus a value for the API key -- and the
             bundle records them redacted, never in the clear.
@@ -1413,6 +1451,8 @@ optional (defaults shown)
   SOL=_build/default/cli/bin/main.exe
   WORKSPACE=examples/pluto    TFVARS=internal/qualification/gcp/qual-gcp.tfvars
   LOG_DIR=/tmp/sol-gcp-qual-<timestamp>   XDG_DATA_HOME
+  RUNNER_VERSION=sol-<git sha>   RUNNER_REPOSITORY=pluto/sol-migration-runner
+                                 what the app phase publishes for Sol's migrate and deploy
 
 The bundle is LOG_DIR: the harness's own narrative (harness.log), phase transcripts,
 the run kubeconfig and the waiter journal, the API-readiness samples, the failure

@@ -69,6 +69,30 @@ mechanisms. Its scenarios use GCP impersonation, GKE authorization, Cloud SQL,
 Artifact Registry, and provider-side GCP absence queries. This preserves the
 semantic contract while making provider differences observable.
 
+## The app phase publishes the migration runner (SEC-011, INFRA-100)
+
+Both rows' app phases run Sol from a **checkout**, and Sol no longer builds or
+publishes the migration-runner image: the deploy identity has no registry-write
+authority (ADR 0002), so `sol deploy` and `sol migrate apply` consume a
+digest-pinned runner and fail closed without one. The publisher side of that
+boundary therefore lives in the harness, alongside the workload images it already
+pushes:
+
+```
+internal/qualification/publish-migration-runner.sh \
+  --image <registry>/pluto/sol-migration-runner:sol-<git sha> --version sol-<git sha>
+```
+
+It builds Sol's own `internal/tooling/release/migration-runner.Dockerfile` in a
+build directory of its own (so the checkout's `_build` and its dev-stamped binary
+are untouched), pushes it with the harness's credentials, and prints
+`<image>@sha256:<64 hex>` — the only form Sol accepts. The harness exports it as
+`SOL_MIGRATION_RUNNER_IMAGE` for `sol migrate apply` and `sol deploy`; on AWS it
+first creates `pluto/sol-migration-runner`, because the platform provisions one
+ECR repository per service and this artifact is Sol's own. Record the published
+digest in the run's evidence: it identifies which runner applied the workspace's
+migrations.
+
 ## Before the next attempt (Attempt 5)
 
 Attempt 5 is the first run that can reach `Ready` on GCP, and the first that must

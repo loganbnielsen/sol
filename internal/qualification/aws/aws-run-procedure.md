@@ -303,9 +303,20 @@ the infrastructure around the test.
    authenticate `docker`/`aws ecr get-login-password` as it, and push the
    qualification workload's images. This is the step that actually closes
    run 2's recorded deviation ("images were published with the operator's
-   own credential").
+   own credential"). Publish the **migration runner** in the same step:
+   `internal/qualification/publish-migration-runner.sh --image
+   <registry>/pluto/sol-migration-runner:<sol revision> --version <sol
+   revision>` builds it (in a build directory of its own, so the checkout's
+   `_build` and its dev-stamped binary are untouched) and prints the pushed
+   `<image>@sha256:<64 hex>`. Hand that to Sol as `SOL_MIGRATION_RUNNER_IMAGE`
+   for every `sol migrate apply` and `sol deploy`; Sol refuses to run one
+   without it, and it must not be handed a tag (SEC-011). `live-row.sh`'s `app`
+   phase does exactly this, creating `<registry>/pluto/sol-migration-runner`
+   first, since the platform provisions one repository per service and this
+   artifact is Sol's own.
 6. `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` per
-   service, using step 5's digests — exercises `B1`/`B2` and `C1`-`C5`
+   service, using step 5's digests, with `SOL_MIGRATION_RUNNER_IMAGE` exported
+   from step 5 — exercises `B1`/`B2` and `C1`-`C5`
    (migration gate before workload mutation; the new namespace + RoleBinding
    bootstrap actually running as the deploy identity for the first time
    ever, not a hand-configured broad credential).
