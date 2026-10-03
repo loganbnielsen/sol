@@ -87,6 +87,9 @@ ticket's path is now `cli/test/inline/test_scaffold.ml`).
   `CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1`; with the opt-out the static checks still run and
   the output says the interface was not validated. `internal/ci/test_gcloud_interface.sh` pins both
   branches, so the guard's own verdict is exercised in the class rather than only on a happy host.
+  It simulates a missing `gcloud` with a fixture `PATH` containing only `bash`, `git`, `grep` and
+  `sed`: a `/usr/bin:/bin` restriction still finds the runner image's `gcloud`, which made the first
+  version of the test fail on a host that has it.
 - **`EPERM` at `bind()` is a reported host requirement.** `sol-obs`'s `with_mock_server` and
   `sol-worker`'s `/metrics` case now fail via `Windtrap.fail` naming the host requirement instead of
   printing `[skip]` and passing.
@@ -101,7 +104,10 @@ ticket's path is now `cli/test/inline/test_scaffold.ml`).
   local mock, and `http_post` works for the `/orders` POST in the same suite. The fixture now emits
   the line through `Sol_obs` — the boundary a real service uses — with the
   `workspace`/`domain`/`service` labels the CLI selector reads, flushes the backend, and polls
-  `Sol_cli_loki.query` only for the bounded time Loki needs to make a flushed line visible.
+  `Sol_cli_loki.query` only for the bounded time Loki needs to make a flushed line visible. The case
+  keeps the three outcomes distinct — `LOKI_URL` unset, the query itself failing (the final
+  `fetch_error` is reported), and a successful query that never saw the line — so a red run names
+  the cause instead of collapsing them into one count.
   `run_tests.sh e2e` already provisions Loki.
 - **The scaffolded schema gate's authoritative branch is exercised.** `test_scaffold_compiles` keeps
   the `CI=false` success run and adds a `CI=true`, `SCHEMA_REGISTRY_URL=""` run whose

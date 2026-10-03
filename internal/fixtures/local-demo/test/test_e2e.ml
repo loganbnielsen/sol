@@ -148,7 +148,7 @@ type result =
   ; metrics_text : string
   ; worker_metrics_http : string option
   ; loki_resp : string option
-  ; loki_cli_lines : int option
+  ; loki_cli_lines : (int, string) Stdlib.result option
   ; db_rows : int
   ; jobs_processed : int
   }
@@ -526,12 +526,12 @@ let run_golden_path () =
         match
           Sol_cli_loki.query ~base_url:url ~unit ?credentials ~limit:5 ~timeout_s:5.0 ()
         with
-        | Ok lines when lines <> [] -> List.length lines
-        | (Ok _ | Error _) when Eio.Time.now env#clock < deadline ->
+        | Ok (_ :: _ as lines) -> Ok (List.length lines)
+        | Ok [] when Eio.Time.now env#clock < deadline ->
           Eio.Time.sleep env#clock 0.2;
           count_until_visible ()
-        | Ok lines -> List.length lines
-        | Error _ -> 0
+        | Ok [] -> Ok 0
+        | Error err -> Error (Sol_cli_loki.fetch_error_to_string err)
       in
       Some (count_until_visible ())
   in
@@ -1126,10 +1126,17 @@ let () =
               then Windtrap.fail "no log streams in Loki response")
         ; Windtrap.test "sol logs Loki query path reads pushed logs" (fun () ->
             match r.loki_cli_lines with
-            | None -> Windtrap.fail "Loki could not be queried; the e2e class requires it"
-            | Some n ->
-              if n = 0
-              then Windtrap.fail "Sol_cli_loki.query returned no pushed log lines")
+            | None ->
+              Windtrap.fail
+                "LOKI_URL is not set, so the class cannot exercise the \
+                 Sol_cli_loki.query path"
+            | Some (Error msg) ->
+              Windtrap.failf "Sol_cli_loki.query could not read Loki: %s" msg
+            | Some (Ok 0) ->
+              Windtrap.fail
+                "Sol_cli_loki.query succeeded but never saw the line emitted through \
+                 Sol_obs"
+            | Some (Ok _) -> ())
         ]
     ; Windtrap.group
         "postgres"
