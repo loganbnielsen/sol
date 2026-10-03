@@ -93,3 +93,35 @@ commit in one transaction, and the worker hosts the relay, publishing through
 bootstrapped with one authenticated publish (no provenance) and its trusted publisher is
 configured immediately afterwards; every release from `0.1.1` goes through the tag-triggered
 OIDC workflow with provenance, like `svc`/`worker`/`jobs`.
+
+## Progress (2026-10-02)
+
+The package is implemented, tested and merged: `loganbnielsen/sol-typescript#8` (merged
+`c1ea404`) adds `@sol-fab/outbox@0.1.0` with `publish`/`runRelay`/`pending`/`pendingCount`, the
+`sol_outbox_*` metric names, and 11 tests against a real Postgres covering rollback, the
+`(key, ord)` unique index, per-key ordering, a blocked key holding later events, and the
+ack/mark crash boundary. `release.yml` gained the `outbox-v*` tag.
+
+## Blocked On
+
+The bootstrap publish of `@sol-fab/outbox@0.1.0`. npm refuses `npm trust` for a package that
+does not exist yet (`404 Package not found`), so `0.1.0` needs one interactive,
+2FA-authenticated publish before its OIDC trusted publisher can be configured. Attempted from
+this environment and stopped at the credential boundary:
+
+```text
+$ npm publish --access public --workspace=packages/outbox
+npm error code EOTP
+npm error This operation requires a one-time password.
+npm error   https://www.npmjs.com/auth/cli/***
+```
+
+**Operator action:** run
+`npm publish --access public --workspace=packages/outbox` in `~/Code/sol-typescript` at
+`origin/main` and complete the browser 2FA, then
+`npm trust github @sol-fab/outbox --file release.yml --allow-publish`. From `0.1.1` on the
+tag-triggered OIDC workflow publishes with provenance.
+
+Blocked on that: the remaining Sol-side work — `examples/pluto/app/demo_ts` composing the
+domain write, the job and the outbox intent in one transaction and hosting the relay, plus the
+capability-matrix verdict — needs `@sol-fab/outbox` resolvable from npm.
