@@ -46,7 +46,7 @@ let network = "google_compute_network.main"
 
 let allowlist policy json =
   match changes_of_plan_json json with
-  | Error _ -> Windtrap.fail "fixture is not valid plan JSON"
+  | Error msg -> Windtrap.failf "the fixture plan could not be read: %s" msg
   | Ok changes -> List.length (violations policy changes) = 0
 ;;
 
