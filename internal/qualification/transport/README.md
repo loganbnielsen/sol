@@ -24,13 +24,40 @@ Nothing else. No mutating verb, no `pods/exec`, no `pods/log`, no `events`, no
 ## Establishing it
 
 ```
-./establish.sh <cluster-name> <iam-role-name> [region] [kubectl-context]
+./establish.sh <cluster-name> <iam-role-name> [region] [namespace]
 ```
 
-The context must already have cluster-admin **in the platform** (the qualification
-`cluster-access` identity has it cluster-scoped). It is passed explicitly because
-`aws eks update-kubeconfig` rewrites a shared user entry — a context named for one
-identity can silently authenticate as another.
+No standing identity can write cluster-scoped RBAC — the installation authority is
+de-escalated (ADR 0003) — so the script opens a **temporary cluster-admin window on its
+own principal**, applies `transport.yaml`, and closes it. `[namespace]` is the namespace
+the post-establishment check reads (default `default`); pass the application namespace
+under qualification where one exists.
+
+The window is closed by **deleting the access entry and recreating it**, never by
+disassociating the policy: measured live, a disassociation was reported complete while the
+authorizer still granted cluster-admin for minutes, so the API's own report is not evidence
+that a privileged grant is gone (`FND-0021` / `INFRA-061`). Deleting the entry propagated
+in under 45 seconds.
+
+Establishment then **verifies the effective surface** as the qualifier, with real
+authorized calls rather than the API's description, and refuses to leave a credential
+behind when it cannot show the declared one:
+
+- `kubectl auth whoami` names the qualifier principal (the identity of the observation);
+- `get pods -n <namespace>` succeeds — the addressing grant is effective;
+- `get secrets -n <namespace>` reports `Forbidden` — the grant is not broader than declared;
+- `auth can-i create pods/portforward -n <namespace>` answers `yes`.
+
+A failure at any of those leaves **no** access entry rather than a broad one. The retry
+bound is `SOL_QUALIFIER_VERIFY_ATTEMPTS` (default 12) and
+`SOL_QUALIFIER_VERIFY_INTERVAL_S` (default 15); the defaults are the live values, and the
+offline test below lowers them.
+
+`internal/ci/test_qualification_transport_establish.sh` runs the whole sequence against
+stub `aws`/`kubectl` binaries and asserts the three outcomes: a narrow surface is accepted,
+a surface broader than declared fails with the entry removed, and a manifest that did not
+take effect fails with the window closed. It also asserts that no run ever reaches
+`disassociate-access-policy`.
 
 ## What must never happen
 
@@ -40,12 +67,17 @@ identity can silently authenticate as another.
 - A target field naming the qualifier principal.
 - Any verb added to provisioner, publisher, deploy or operator to make a test
   easier.
+- Closing the establishment window by disassociating the admin policy, or trusting
+  `describe-access-entry` for it (`FND-0021`).
 
-`internal/ci/check_qualification_transport.py` asserts all of that, and
-`internal/ci/test_qualification_transport_check.sh` proves the guard can fail.
+`internal/ci/check_qualification_transport.py` asserts the grant and reachability
+directions, and `internal/ci/test_qualification_transport_check.sh` proves the guard can
+fail.
 
 ## Evidence rule
 
 The qualification record must name the identity that established transport
 **separately** from the identities whose contracts are under test. Transport is
-harness mechanics; it is never evidence about a production identity.
+harness mechanics; it is never evidence about a production identity. Before a run
+uses it, the run reports the effective-surface verification above, from the principal
+that performed it.

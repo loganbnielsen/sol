@@ -324,6 +324,20 @@ contract, so it was **revoked rather than used** (`FND-0021` / `INFRA-061`, high
 severity), with the general lesson that de-escalation must verify the effective
 surface rather than the API's report -- including Sol's own `De-escalate` phase.
 
+**Resolved 2026-10-03 (`INFRA-060`, part A; the live establishment is `HARDEN-007`).**
+Establishment no longer closes the window by disassociating the policy: it **deletes the
+access entry and recreates it narrow** (the path measured to propagate), then verifies the
+**effective surface** with real calls as the principal `kubectl auth whoami` names --
+`get pods` succeeds, `get secrets` is `Forbidden`, `pods/portforward` is permitted -- and
+removes the entry rather than leave a credential it could not show to be transport-only.
+The sequence and its outcomes are pinned offline by
+`internal/ci/test_qualification_transport_establish.sh` against stub `aws`/`kubectl`
+(three mutations caught), and the run procedure now states how B3 obtains connectivity and
+that the record names the transport identity separately from the identities under
+qualification (DEC-039 §4). The transport used against a real cluster, and the production
+identities' surfaces unchanged afterwards, is `INFRA-060` criterion 5; it needs a live
+target, so the ticket hands it to `HARDEN-007`'s run record by name.
+
 **Fixture reset (FND-0022 / INFRA-062).** Redeploying the recorded revision through the
 documented mechanism succeeded and changed nothing: `generation` stayed 1, the same two
 pods with the same creation timestamps, still 0/2 ready, still `DEGRADED`. An unchanged

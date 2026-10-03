@@ -31,14 +31,22 @@ shares INFRA-051's root cause).
 - `terraform state pull` captured into the evidence bundle before any teardown.
 - A run record `internal/qualification/<date>-aws-run9.md` from `run-record-template.md`, with each
   targeted matrix row qualified, blocked or not reached.
+- **`INFRA-060`'s live criterion**, which is this run's to establish and record (the ticket closed
+  on the capability and hands it here): the qualification transport established through
+  `sol:qualifiers` and its effective surface verified; B3's `-svc` half driven through it; and the
+  production identities' surfaces shown unchanged afterwards, including that none of them holds
+  `pods/portforward`. The record names the transport identity separately from the identities under
+  qualification (DEC-039 §4).
 - Teardown to `Absent`, verified independently of Sol's report.
 - `internal/pipeline/audits/QUALIFICATION_STATUS.md` updated.
 
 
 ## Disposition (2026-10-03) — live/operator blocked
 
-Requires explicit operator authorization for a live, billable AWS run. Two of its
-three dependencies (INFRA-060, INFRA-062) are themselves still open.
+Requires explicit operator authorization for a live, billable AWS run. Both of its
+implementation dependencies have now landed: `INFRA-062` (the fixture reset) and
+`INFRA-060` (the transport, whose remaining live criterion this run carries — see the
+acceptance criteria above).
 
 Gated on explicit authorization and/or the live reference-app campaign; see
 AGENTS.md § Live qualification.
