@@ -111,12 +111,16 @@ let destruction_blocked = function
   | Preparation_failed { reason; policy = Block_destroy } -> Some reason
 ;;
 
-let preparations_eligible ~state ~desired =
-  List.filter (fun address -> List.mem address state) desired
+let represented_in ~state address =
+  List.exists
+    (fun observed -> Sol_cli_terraform_plan.same_resource address observed)
+    state
 ;;
 
+let preparations_eligible ~state ~desired = List.filter (represented_in ~state) desired
+
 let preparations_unrepresented ~state ~desired =
-  List.filter (fun address -> not (List.mem address state)) desired
+  List.filter (fun address -> not (represented_in ~state address)) desired
 ;;
 
 type platform_vars_context = Sol_cli_cluster.platform_vars_context =

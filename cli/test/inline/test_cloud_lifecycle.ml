@@ -495,6 +495,27 @@ let test_preparations_eligible () =
     (eligible (List.rev desired));
   Windtrap.equal
     (Windtrap.list Windtrap.string)
+    ~msg:"a counted resource in state satisfies the declared address (INFRA-081)"
+    [ "aws_db_instance.postgres" ]
+    (L.preparations_eligible
+       ~state:[ "aws_db_instance.postgres[0]" ]
+       ~desired:[ "aws_db_instance.postgres" ]);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"a string-keyed instance in state satisfies the declared address"
+    [ "aws_db_instance.postgres" ]
+    (L.preparations_eligible
+       ~state:[ "aws_db_instance.postgres[\"primary\"]" ]
+       ~desired:[ "aws_db_instance.postgres" ]);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"a declared resource with no state instance is still unrepresented (INFRA-081)"
+    [ "aws_db_instance.postgres" ]
+    (L.preparations_unrepresented
+       ~state:[ "aws_db_instance.other[0]" ]
+       ~desired:[ "aws_db_instance.postgres" ]);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
     ~msg:"the unrepresented set is the complement of the eligible one"
     [ "google_container_cluster.main" ]
     (L.preparations_unrepresented

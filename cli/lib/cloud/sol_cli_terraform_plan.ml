@@ -84,6 +84,8 @@ let without_instance_key address =
   | Some _ | None -> address
 ;;
 
+let same_resource a b = String.equal (without_instance_key a) (without_instance_key b)
+
 let matches matcher change =
   match matcher with
   | Exact address -> change.address = address
