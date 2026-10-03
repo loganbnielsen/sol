@@ -15,7 +15,7 @@ The indicators are deliberately threshold rules, not burn-rate SLOs
 | Failed rollout | `SolRolloutFailed` | `kube_deployment_status_replicas_available / clamp_min(kube_deployment_spec_replicas, 1) < 1` for 10m | [§ Failed rollout](#failed-rollout) |
 | Node loss | `SolNodeNotReady` | `kube_node_status_condition{condition="Ready",status="true"} == 0` for 5m | [§ Node loss](#node-loss) |
 | Postgres dependency loss/restore | `SolPostgresUnavailable` | `pg_up == 0` for 5m | [§ Postgres](#postgres-dependency-lossrestore) |
-| Kafka lag / broker loss | `SolKafkaConsumerLagHigh`, `SolKafkaBrokerDown` | `redpanda_kafka_consumer_group_lag > 10000` for 10m; `up{job=~".*redpanda.*"} == 0` for 5m | [§ Kafka](#kafka-lag--broker-loss) |
+| Kafka lag / broker loss | `SolKafkaConsumerLagHigh`, `SolKafkaBrokerDown` | `redpanda_kafka_max_offset` minus `redpanda_kafka_consumer_group_committed_offset` > 10000 for 10m (Redpanda exposes no lag gauge); `up{job=~".*redpanda.*"} == 0` for 5m | [§ Kafka](#kafka-lag--broker-loss) |
 | Message drop / diversion (OBS-047) | `SolWorkerDecodeDrops` | `increase(sol_worker_decode_errors_total[5m]) > 0` | [§ Message drop](#message-drop--diversion) |
 | Telemetry loss | `SolTelemetryTargetDown` | `up{namespace="monitoring"} == 0` for 10m | [§ Telemetry](#telemetry-loss) |
 

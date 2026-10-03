@@ -180,7 +180,7 @@ one-page runbooks in [`alert-runbooks.md`](alert-runbooks.md).
 | `SolRolloutFailed` | failed rollout | `kube_deployment_status_replicas_available / clamp_min(kube_deployment_spec_replicas, 1) < 1` | sustained 10 minutes |
 | `SolNodeNotReady` | node loss | `kube_node_status_condition{condition="Ready",status="true"} == 0` | sustained 5 minutes |
 | `SolPostgresUnavailable` | Postgres dependency | `pg_up == 0` | sustained 5 minutes, `critical` |
-| `SolKafkaConsumerLagHigh` | Kafka lag | `redpanda_kafka_consumer_group_lag` | > 10000, sustained 10 minutes |
+| `SolKafkaConsumerLagHigh` | Kafka lag | `redpanda_kafka_max_offset` minus `redpanda_kafka_consumer_group_committed_offset`, per group/topic/partition (Redpanda exposes no lag gauge) | > 10000, sustained 10 minutes |
 | `SolKafkaBrokerDown` | Kafka broker loss | `up{job=~".*redpanda.*"} == 0` | sustained 5 minutes, `critical` |
 | `SolWorkerDecodeDrops` | undecodable source messages (dead-lettered by default, else acked and dropped) | `sol_worker_decode_errors_total` | any increase in 5 minutes, `critical` |
 | `SolTelemetryTargetDown` | telemetry loss | `up{namespace="monitoring"} == 0` | sustained 10 minutes |

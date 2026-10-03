@@ -804,14 +804,14 @@ locals {
           },
           {
             alert = "SolKafkaConsumerLagHigh"
-            expr  = "redpanda_kafka_consumer_group_lag > 10000"
+            expr  = "-sum by (redpanda_group, redpanda_topic) (max by (redpanda_group, redpanda_topic, redpanda_partition) (redpanda_kafka_consumer_group_committed_offset) - on (redpanda_topic, redpanda_partition) group_left() max by (redpanda_topic, redpanda_partition) (redpanda_kafka_max_offset)) > 10000"
             for   = "10m"
             labels = {
               severity = "warning"
             }
             annotations = merge({
-              summary     = "Kafka consumer lag high for group {{ $labels.group }}"
-              description = "Consumer group {{ $labels.group }} on topic {{ $labels.topic }} has been more than 10000 messages behind for 10 minutes."
+              summary     = "Kafka consumer lag high for group {{ $labels.redpanda_group }}"
+              description = "Consumer group {{ $labels.redpanda_group }} on topic {{ $labels.redpanda_topic }} has been more than 10000 messages behind for 10 minutes."
             }, local.alert_annotations)
           },
           {
