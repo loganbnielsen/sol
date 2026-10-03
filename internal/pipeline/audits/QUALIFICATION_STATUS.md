@@ -1178,6 +1178,31 @@ Still substrate- or operator-gated: the deployed two-`SOL_DOMAIN` crossing trace
 ConfigMaps), plus everything run 4 listed. **Nothing is `LIVE`.** `OBS-051` keeps the TypeScript
 verdict: TS units do not yet carry the `resource.*` attributes the traces query selects.
 
+## Secret-projection throwaway-cluster run (2026-10-03, `VERIF-020`) — the DEC-029 Vault row is now observed
+
+Authorized by the operator; run on a disposable local k3d cluster, never `sol-local`
+and never the default kubeconfig. Record:
+[`2026-10-03-byo-run1-secret-projection.md`](../qualification/records/2026-10-03-byo-run1-secret-projection.md).
+The components were the Secrets Store CSI driver (chart `1.4.8`) with a Vault
+dev-mode provider; the evidence is **local behavioural**, not a cloud cell.
+
+| DEC-029 cell | Before | After |
+|---|---|---|
+| Vault row P1/P2/P3/P4/P6 | `to qualify` (documentation-derived) | `PASS (LOCAL BEHAVIOURAL)` — the value reached the pod as a tmpfs file; a different SA got `403 service account name not authorized`; `SecretProviderClassPodStatus` carries a `version` that changed across rotations; the mounted file changed within one 30 s poll interval with no manifest edit |
+| Vault row P8 | `to qualify` | `PASS` with bounds — staleness ≤ the poll interval; a new pod fails closed while the authority is down; a running pod keeps its last-known value; a container restart reuses the pod-level mount |
+| Vault row P5 | `meets` (architectural) | `NOT ESTABLISHED` — the run's store was an in-cluster dev server |
+| Vault row P7 | `fails today` | confirmed: driver + provider + authority are new always-on components, named in `docs/deployment/compatibility.md` as candidates, not accepted |
+| `byo` × Kubernetes Secrets P2/P3 | `does not meet` | confirmed by observation — a different ServiceAccount read a plain Secret, and a plain Secret has no per-value version |
+
+**No Sol defect was exposed.** Sol does not implement the CSI projection; this run
+qualifies the mechanism DEC-029 selected. Two environment prerequisites are recorded
+in the run: the k3d node needs `/var/lib/kubelet/pods` made a shared mount before the
+CSI driver's Bidirectional propagation is accepted, and the ValidatingAdmissionPolicy
+guard needs Kubernetes ≥ 1.28 (beta) / ≥ 1.30 (GA) or the alpha feature gate. The
+`byo` profile still selects Kubernetes Secrets; adopting the CSI store is a
+`DEC-026` §9 re-qualification.
+
+
 
 
 

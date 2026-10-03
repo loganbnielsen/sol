@@ -58,6 +58,23 @@ not qualify:
 `dev` runs the same charts at single-replica scale, so the component versions
 above are the ones local development exercises too.
 
+## Components a CSI-backed `byo` secret projection would add (not in the supported set)
+
+`DEC-029` selects an external CSI-compatible store (e.g. Vault) as an option for
+the `byo` × Kubernetes cell. That projection needs three always-on components the
+supported set above does not contain, so adopting it is a `DEC-026` §9
+re-qualification event, not an implementation detail. They are named here so the
+matrix can account for them; none is qualified, and no Sol profile installs one
+today.
+
+| Component | Version observed (local mechanism run) | Role | Verdict |
+|---|---|---|---|
+| Secrets Store CSI driver | chart `1.4.8` (`1.6.1` declares `kubeVersion >=1.30.0-0`) | projects the provider's objects as a mounted file | **not qualified** |
+| Provider for the store (Vault CSI provider) | shipped by the `hashicorp/vault` chart | fetches the objects, reports their versions | **not qualified** |
+| The authority (e.g. Vault) | Vault `2.0.4` (dev mode, for the mechanism run only) | holds the value | **not qualified** |
+
+Evidence: `internal/qualification/records/2026-10-03-byo-run1-secret-projection.md`.
+
 ## Scope
 
 One exact supported set is sufficient for maturity A. N/N-1 upgrades, skew
