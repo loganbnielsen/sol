@@ -25,7 +25,7 @@ be wrong, unsafe, or unqualified. Everything else can happen after alpha.
 | **S2** Canonical contract & plan | Declarative contract is canonical; generated bindings drift-checked; `sol plan` sees contracts | FEAT-116 (+DEC-065) | yes (independent) |
 | **S3** Migration integrity & artifact/release boundaries | Applied migrations are integrity-checked; the deployer never publishes; release metadata is portable | FEAT-094, SEC-011, FEAT-110 | yes (independent) |
 | **S4** Provider state & destroy semantics | Destroy converges Sol-owned targets to verified absence with bounded, evidence-based reconciliation | INFRA-082, INFRA-083, INFRA-094 | yes (independent) |
-| **S5** Live alpha qualification & release readiness | The production profile and reference app are qualified end-to-end, with evidence | HARDEN-007 (gate), INFRA-060, INFRA-062(-decision) | partly (enablers yes; runs gated on operator) |
+| **S5** Live alpha qualification & release readiness | The production profile and reference app are qualified end-to-end, with evidence | HARDEN-007 (gate; enablers INFRA-060/INFRA-062 landed 2026-10-03) | no — runs gated on operator authorization |
 | **S6** Post-alpha parity, DX & hygiene | Framework/CI/DX quality that need not block the campaign | none | yes, but deferrable |
 
 S1–S4 have no hard dependency on each other and can proceed in parallel. S5
@@ -183,18 +183,24 @@ bundle and independently verified teardown, and the alpha launch gate is met.
   an external `@sol-fab/worker` readiness hook + live authorization.*
 - `INFRA-005` (BACKLOG) — GCP durable observability wiring. *Live-blocked on GCP
   cluster access.*
-- `INFRA-060` (READY) — qualification-only transport capability. *Actionable
-  enabler; no cloud access needed to build it.*
-- `INFRA-062` (READY) — how a qualification run re-establishes a workload
-  fixture. *Has an unresolved decision; see "Reconciliation candidates".*
+- `INFRA-060` (DONE, 2026-10-03) — qualification-only transport capability. *Landed: the
+  procedure says how B3 obtains connectivity, and establishment deletes and recreates the
+  access entry rather than trusting a disassociation, then verifies the effective surface.
+  Its live criterion (a transaction through it, the production identities' surfaces
+  unchanged) is `HARDEN-007`'s to record.*
+- `INFRA-062` (DONE, 2026-10-03) — how a qualification run re-establishes a workload
+  fixture. *Decision applied: teardown and recreate, written into the run procedure with
+  the evidence-epoch boundary and the same `--image-ref` digests.*
 - `INFRA-014` (READY) — prove the self-hosted substrate contract on a cheap
-  provider. *Actionable; supports the self-hosted lane, not the AWS gate.*
+  provider. *Actionable; supports the self-hosted lane, not the AWS gate; needs a real
+  cheap-provider cluster, so it is a live run.*
 - `RELEASE-005` (BACKLOG) — publish the OCaml framework to public opam.
   *Deferred against its trigger (DEC-026 support promise / first external
   consumer); not required for the campaign.*
 
 **Dependencies & sequencing.**
-- `HARDEN-007 ← INFRA-060, INFRA-062` (+ `INFRA-076`, DONE), and its claim of a
+- `HARDEN-007 ← INFRA-060, INFRA-062` (+ `INFRA-076`) — all three now DONE, so the run is
+  blocked only on authorization; and its claim of a
   production transport depends on S1's `FEAT-093`; its destroy postcondition
   depends on S4.
 - `PROD-001 ← HARDEN-007` and the two decisions it names.
@@ -202,9 +208,8 @@ bundle and independently verified teardown, and the alpha launch gate is met.
 - `FEAT-102` is the independent language axis.
 - `INFRA-014` is independent of the AWS gate.
 
-**Parallelism.** INFRA-060 and INFRA-062's decision can proceed now and are the
-only parts that do not need an operator. The runs themselves are serialized
-against each other by cost and authorization, not by code.
+**Parallelism.** INFRA-060 and INFRA-062 landed 2026-10-03; everything left in this stream
+is a live run, serialized against the others by cost and authorization, not by code.
 
 ---
 
@@ -246,8 +251,9 @@ up between S1–S5 items.
 1. **Land the parallel pre-alpha blockers** — S1 `FEAT-093`; S2 `FEAT-116`
    (+`FEAT-053`); S3 `FEAT-094`, `SEC-011`; S4 `INFRA-082`+`INFRA-094`,
    `INFRA-083`. These four streams are independent and can run concurrently.
-2. **Prepare the qualification enablers** — S5 `INFRA-060`, and resolve
-   `INFRA-062`'s decision. (S3 `FEAT-110`, `AUDIT-077` can land in this window.)
+2. **Prepare the qualification enablers** — **done 2026-10-03**: S5 `INFRA-060` (the
+   transport, its live criterion handed to run 9) and `INFRA-062` (the fixture reset) both
+   landed. (S3 `FEAT-110`, `AUDIT-077` can land in this window.)
 3. **Run the live qualification** once the operator authorizes it — S5
    `HARDEN-007` (AWS), `HARDEN-008` (GCP), with S1 and S4 already landed.
 4. **Hold the launch review** — S5 `PROD-001`, the maturity-A gate.
@@ -266,7 +272,10 @@ These ticket changes were applied on 2026-10-03, after operator sign-off.
    the qualification epoch must keep the same artefact, and B2 must not be
    weakened. Option 1 changes the artefact; option 2 (an explicit Sol restart
    capability) is a separate, undecided product question and is not created. The
-   ticket stays READY and its implementation is the run-procedure update.
+   ticket's implementation was the run-procedure update, and it landed on
+   2026-10-03 (`INFRA-062`, DONE); "fixture teardown" resolves to the target-level
+   `sol cloud destroy` because a namespace-scoped teardown is not expressible on
+   Sol's surfaces or under DEC-039's identity model.
 3. **Applied — `INFRA-082` → `INFRA-094` sequenced as one reconciliation unit**
    (INFRA-082 first), recorded in both tickets.
 4. **Applied — `FEAT-116` carries the `FEAT-119`/`BUG-099` reconciliation** in its
