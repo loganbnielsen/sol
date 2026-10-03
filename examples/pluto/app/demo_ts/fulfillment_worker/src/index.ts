@@ -18,7 +18,7 @@ import { runJobs } from "@sol-fab/jobs";
 import { makeLokiPusher } from "@sol-fab/obs";
 import { runRelay } from "@sol-fab/outbox";
 import { runWorker } from "@sol-fab/worker";
-import { ORDER_FULFILLED } from "@demo-ts/contract";
+import { ORDER_FULFILLED, ORDER_PLACED } from "@demo-ts/contract";
 import { decodeOrderFulfilled, decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
@@ -50,9 +50,9 @@ function requiredRegistry(): string {
 }
 
 const KAFKA_ENV = kafkaConfigFromEnv();
-const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
+const TOPIC_NAME = ORDER_PLACED.name;
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
-const PARTITIONS = 3;
+const PARTITIONS = ORDER_PLACED.partitions;
 
 const METRICS_PORT = intEnv("METRICS_PORT", 9090);
 const LOKI_URL = setting("LOKI_URL");

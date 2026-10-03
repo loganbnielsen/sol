@@ -1,0 +1,38 @@
+# Sol event contract for the TypeScript reference app. The declaration is
+# canonical and language-neutral; `sol contract generate` writes the TypeScript
+# binding into the scope's contract package and CI fails when the two drift.
+
+[contract]
+language = "typescript"
+
+[[events]]
+name = "OrderPlaced"
+topic = "sol-demo-ts-orders"
+partitions = 3
+key = "order_id"
+schema = '''{
+  "type": "object",
+  "properties": {
+    "order_id":       { "type": "string"  },
+    "item":           { "type": "string"  },
+    "quantity":       { "type": "integer" },
+    "correlation_id": { "type": "string"  }
+  },
+  "required": ["order_id", "item", "quantity", "correlation_id"]
+}'''
+
+[[events]]
+name = "OrderFulfilled"
+topic = "sol-demo-ts-fulfilled"
+partitions = 3
+key = "order_id"
+schema = '''{
+  "type": "object",
+  "properties": {
+    "order_id":       { "type": "string"  },
+    "item":           { "type": "string"  },
+    "quantity":       { "type": "integer" },
+    "correlation_id": { "type": "string"  }
+  },
+  "required": ["order_id", "item", "quantity", "correlation_id"]
+}'''

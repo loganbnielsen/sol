@@ -157,7 +157,29 @@ let%test "documented and generated files still load: scaffold event sol.toml" =
     ()
 ;;
 
-let event_toml body = Printf.sprintf "[[events]]\n%s" body
+let event_toml ?(language = "ocaml") body =
+  Printf.sprintf "[contract]\nlanguage = %S\n\n[[events]]\n%s" language body
+;;
+
+let event_body =
+  "name = \"Charged\"\n\
+   topic = \"t\"\n\
+   partitions = 3\n\
+   key = \"id\"\n\
+   schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n"
+;;
+
+let%test "declared events: a missing binding language is rejected" =
+  rejects (Printf.sprintf "[[events]]\n%s" event_body) ~names:[ "language" ] ()
+;;
+
+let%test "declared events: an unknown binding language is rejected" =
+  rejects (event_toml ~language:"rust" event_body) ~names:[ "\"rust\"" ] ()
+;;
+
+let%test "declared events: a TypeScript binding language is accepted" =
+  accepts (event_toml ~language:"typescript" event_body) ()
+;;
 
 let%test "declared events: a key outside the schema is rejected" =
   rejects
@@ -171,7 +193,7 @@ let%test "declared events: a key outside the schema is rejected" =
     ()
 ;;
 
-let%test "declared events: a name that is not a module name is rejected" =
+let%test "declared events: a name that is not a valid event name is rejected" =
   rejects
     (event_toml
        "name = \"charged\"\n\

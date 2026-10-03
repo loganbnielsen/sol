@@ -80,11 +80,23 @@ let topics_of_toml path =
         t.Sol_cli_toml.events)
 ;;
 
-let discover_events ?root () =
+type contract =
+  { dir : string
+  ; language : Sol_cli_toml.binding_language
+  ; events : Sol_cli_toml.event_decl list
+  }
+
+let contracts_of_manifest ~dir (manifest : Sol_cli_toml.t) =
+  match manifest.Sol_cli_toml.contract_language, manifest.Sol_cli_toml.events with
+  | Some language, _ :: _ -> [ { dir; language; events = manifest.Sol_cli_toml.events } ]
+  | _ -> []
+;;
+
+let discover_contracts ?root () =
   let root = Option.value root ~default:"" in
   let open Result.Syntax in
   let* top_level = Sol_cli_toml.load_result (in_root root "events/sol.toml") in
-  let* sub_events =
+  let* sub_contracts =
     fold_dir (in_root root "events") ~init:(Ok []) ~f:(fun acc entry path ->
       let* acc = acc in
       if entry.[0] = '.'
@@ -92,14 +104,21 @@ let discover_events ?root () =
       else if Sys.is_directory path
       then
         let* manifest = Sol_cli_toml.load_result (Filename.concat path "sol.toml") in
-        Ok
-          (acc
-           @ List.map
-               (fun decl -> Filename.concat "events" entry, decl)
-               manifest.Sol_cli_toml.events)
+        Ok (acc @ contracts_of_manifest ~dir:(Filename.concat "events" entry) manifest)
       else Ok acc)
   in
-  Ok (List.map (fun decl -> "events", decl) top_level.Sol_cli_toml.events @ sub_events)
+  Ok (contracts_of_manifest ~dir:"events" top_level @ sub_contracts)
+;;
+
+let discover_events ?root () =
+  match discover_contracts ?root () with
+  | Error error -> Error error
+  | Ok contracts ->
+    Ok
+      (List.concat_map
+         (fun (contract : contract) ->
+            List.map (fun decl -> contract.dir, decl) contract.events)
+         contracts)
 ;;
 
 let discover_topics ?root () =

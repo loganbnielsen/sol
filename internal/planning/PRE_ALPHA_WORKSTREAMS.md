@@ -22,7 +22,7 @@ be wrong, unsafe, or unqualified. Everything else can happen after alpha.
 | Stream | Outcome | Pre-alpha blockers | Can start now |
 |---|---|---|---|
 | **S1** Production security & transport | Authenticated, encrypted production Kafka and identity-scoped secret projection, qualified | FEAT-093 | yes (independent) |
-| **S2** Canonical contract & plan | Declarative contract is canonical; generated bindings drift-checked; `sol plan` reads the declaration | landed 2026-10-03 (FEAT-116, FEAT-053, DEC-065) | TS binding is a pre-S5 enabler (FEAT-129); the plan diff is FEAT-130 |
+| **S2** Canonical contract & plan | Declarative contract is canonical; generated bindings drift-checked for both languages; `sol plan` reads the declaration | landed 2026-10-03 (FEAT-116, FEAT-053, FEAT-129, DEC-065) | the plan's observed half is FEAT-130 |
 | **S3** Migration integrity & artifact/release boundaries | Applied migrations are integrity-checked; the deployer never publishes; release metadata is portable | FEAT-094, SEC-011, FEAT-110 | yes (independent) |
 | **S4** Provider state & destroy semantics | Destroy converges Sol-owned targets to verified absence with bounded, evidence-based reconciliation | INFRA-082, INFRA-083, INFRA-094 | yes (independent) |
 | **S5** Live alpha qualification & release readiness | The production profile and reference app are qualified end-to-end, with evidence | HARDEN-007 (gate; enablers INFRA-060/INFRA-062 landed 2026-10-03) | no — runs gated on operator authorization |
@@ -77,9 +77,9 @@ executes to reconstruct intent.
   destination, CI drift check, and the `sol plan` read (the declaration half).
 - `FEAT-053` (DONE) — build-time vs runtime secret declarations exported in the
   machine-readable plan.
-- `FEAT-129` (READY) — TypeScript bindings generated from the same declaration.
-  *Promoted on operator review: the OCaml+TS reference-app campaign makes this a
-  pre-S5 enabler, not post-alpha.*
+- `FEAT-129` (DONE, 2026-10-03) — TypeScript bindings generated from the same
+  declaration. *The declaration is language-neutral; `[contract] language` selects the
+  binding and its destination is derived. Landed before the OCaml+TS campaign.*
 - `FEAT-130` (BACKLOG) — record the deployed contract and report a contract change
   against it. *The plan's observed half, which FEAT-116 did not deliver; listed
   under S3 and carrying its own mechanism decision.*
@@ -198,10 +198,10 @@ bundle and independently verified teardown, and the alpha launch gate is met.
   blocked; depends on HARDEN-007 + DEC-026/027 + a named owning team.*
 - `FEAT-102` (BACKLOG) — TypeScript production-profile qualification. *Blocked on
   an external `@sol-fab/worker` readiness hook + live authorization.*
-- `FEAT-129` (READY) — TypeScript contract bindings generated from the declarative
-  contract. *Pre-S5 enabler: the campaign qualifies the OCaml **and** TypeScript
-  reference app, so the TS app must demonstrate the canonical-contract
-  architecture rather than hand-declare its contract.*
+- `FEAT-129` (DONE, 2026-10-03) — TypeScript contract bindings generated from the
+  declarative contract. *Landed: the TypeScript reference app declares its contract in
+  `sol.toml` and consumes the generated binding, so the campaign demonstrates the same
+  canonical-contract architecture in both languages.*
 - `INFRA-005` (BACKLOG) — GCP durable observability wiring. *Live-blocked on GCP
   cluster access.*
 - `INFRA-060` (DONE, 2026-10-03) — qualification-only transport capability. *Landed: the
@@ -227,8 +227,7 @@ bundle and independently verified teardown, and the alpha launch gate is met.
 - `PROD-001 ← HARDEN-007` and the two decisions it names.
 - `HARDEN-008` is the independent provider axis.
 - `FEAT-102` is the independent language axis, and the TypeScript reference-app
-  demonstration needs `FEAT-129` (generated TS bindings) first; `FEAT-129` is
-  buildable now and belongs before the TS campaign, not after it.
+  demonstration's contract prerequisite `FEAT-129` landed on 2026-10-03.
 - `INFRA-014` is independent of the AWS gate.
 
 **Parallelism.** INFRA-060 and INFRA-062 landed 2026-10-03; everything left in this stream
