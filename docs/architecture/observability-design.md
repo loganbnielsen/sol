@@ -41,11 +41,15 @@ scope vocabulary. Concretely: a dashboard's template variables resolve the same
 labels `sol status` accepts, and `--links` prints the URL for the same view
 `sol open` would open.
 
-Two capabilities are not in all three yet, and they carry their owner rather than
-leaving the gap implied: **alerts are not exposed per scope** (FEAT-092). Traces
-now do: `sol open traces [SCOPE]` (OBS-045) builds a TraceQL query over the
-`workspace`/`domain`/`service` resource attributes the instrumentation emits, so
-the trace view resolves the same identity the logs and dashboard views do.
+Every capability in the model now appears in all three representations, with one
+decided exception: **a scope-aware alert *inventory* is a non-goal** (2026-10-03;
+FEAT-092). Sol links to the alerting surface rather than modelling which alerts
+apply to a scope — Grafana/Alertmanager own alert definitions and firing state,
+and the alert-delivery contract (`sol alert test`, the receiver/owner/runbook
+declaration) is the part Sol owns. Traces are exposed: `sol open traces [SCOPE]`
+(OBS-045) builds a TraceQL query over the `workspace`/`domain`/`service` resource
+attributes the instrumentation emits, so the trace view resolves the same
+identity the logs and dashboard views do.
 
 ## Goals
 
@@ -352,6 +356,9 @@ path exists to remove operations work.
 ## Non-Goals
 
 - No separate observability stack per service.
+- No scope-aware alert inventory. Sol does not model which alerts apply to a
+  scope; Grafana/Alertmanager own alert definitions and firing state, and Sol
+  links to them (decided 2026-10-03, FEAT-092).
 - No CLI wrapper around every Loki or Prometheus query feature.
 - No product promise that `local` preserves history.
 - No provider-specific UX as the core model.

@@ -44,3 +44,11 @@ process-wide cwd dependency stays; removing it across ~119 sites is regression
 surface without a functional driver. REFAC-108's single-entry-point convention
 stands. Promoted to `READY_FOR_ENGINEERING` only so the transition guard can
 close it as "no change".
+
+
+## Closed (2026-10-03) — decided no change
+
+Keep the single-entry-point convention from REFAC-108: the one `chdir` in
+`Sol_cli_workspace.enter_or_exit` stays. Removing it across ~119 sites is
+regression surface without a functional driver. Decision recorded in the
+adjudication ledger.

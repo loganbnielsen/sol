@@ -105,3 +105,12 @@ surface rather than modelling which alerts apply to a scope; Grafana/Alertmanage
 own alert definitions and firing state. No code is added. `DOCS-019`'s document
 must state the non-goal so the next reader does not re-file it. Promoted to
 `READY_FOR_ENGINEERING` in this pass so the documentation change can close it.
+
+
+## Closed (2026-10-03) — decided non-goal
+
+The operator decided this is a non-goal: Sol links to the alerting surface rather
+than modelling which alerts apply to a scope. Grafana/Alertmanager own alert
+definitions and firing state. `docs/architecture/observability-design.md` now
+states the non-goal and no longer names FEAT-092 as an open gap. No code. Decision
+recorded in `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

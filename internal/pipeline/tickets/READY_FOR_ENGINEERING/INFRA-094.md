@@ -70,3 +70,10 @@ Promoted to `READY_FOR_ENGINEERING`.
 ADR 0005 bounds this work the same way as INFRA-082: reconciliation covers state
 Sol owns, and it never becomes a licence to discover, import or mutate resources
 the user manages outside Sol.
+
+
+## Sequencing (2026-10-03)
+
+This ticket reuses the provable-absence reconciliation INFRA-082 introduces (the
+INFRA-042 extension); it is not an independent mechanism. INFRA-082 lands first.
+They form one reconciliation unit across two tickets.

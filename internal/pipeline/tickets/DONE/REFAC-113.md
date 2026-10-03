@@ -60,3 +60,13 @@ redaction layer", trimming about half the module at the cost of a direct
 dependency and a behavioural re-verification of every lifecycle path — not worth
 it while the module is correct. Promoted to `READY_FOR_ENGINEERING` only so the
 transition guard can close it as "no change".
+
+
+## Closed (2026-10-03) — decided no change
+
+Keep the hand-rolled `Sol_cli_process`: `bos`/`spawn` cover spawning and capture
+but not the module's two reasons to exist — timeouts (a hung
+`terraform`/`kubectl` must not hang `sol`) and SEC-010 redaction. Adoption would
+be "bos plus our timeout and redaction layer" at the cost of a direct dependency
+and a behavioural re-verification of every lifecycle path. Decision recorded in
+the adjudication ledger.
