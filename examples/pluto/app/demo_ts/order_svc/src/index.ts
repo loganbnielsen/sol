@@ -44,7 +44,6 @@ const TOPIC_NAME = ORDER_PLACED.name;
 const log = makeLokiPusher({
   lokiUrl: LOKI_URL,
   service: "order-svc-ts",
-  labels: { team: "demo_ts" },
 });
 const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_URL);
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();

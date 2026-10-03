@@ -62,7 +62,6 @@ const POSTGRES_URL = setting("POSTGRES_URL");
 const log = makeLokiPusher({
   lokiUrl: LOKI_URL,
   service: "fulfillment-worker-ts",
-  labels: { team: "demo_ts" },
 });
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
 const {

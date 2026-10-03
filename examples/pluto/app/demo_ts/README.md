@@ -110,6 +110,17 @@ itself, so Ctrl-C stops both. It also injects the local substrate's addresses
 (`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `POSTGRES_URL`, `LOKI_URL`, `TEMPO_URL`,
 `KAFKA_SECURITY_PROTOCOL=plaintext`), which is what the units read.
 
+Under a Sol manifest — `sol local run` or `sol deploy` — Sol also injects the six
+semantic workload identity values (`SOL_WORKSPACE`, `SOL_ENV`, `SOL_DOMAIN`,
+`SOL_SERVICE`, `SOL_PRIMITIVE`, `SOL_RELEASE`), the same values it renders as pod
+labels (DEC-064). `@sol-fab/obs` reads them: the Loki stream and the OTLP trace
+resource carry `SOL_SERVICE` — the workload's bare Kubernetes name, not the
+`order-svc-ts`/`fulfillment-worker-ts` fallback — plus the other five, so an
+app-pushed log or trace is scoped exactly as the collector-promoted logs and
+metrics for the same pod, and `sol logs`' `{workspace,domain,service}` query
+selects it. Run outside a manifest the variables are absent and the fallback
+service name is used.
+
 In another terminal, send one order through the whole path:
 
 ```bash
