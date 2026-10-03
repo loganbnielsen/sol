@@ -1,7 +1,7 @@
-sol_providers() {
+sol_provider_rows() {
   local root="$1"
   if [ -n "${SOL_PROVIDERS:-}" ]; then
-    printf '%s\n' $SOL_PROVIDERS
+    printf '%s\n' "$SOL_PROVIDERS"
     return 0
   fi
   local printer="$root/_build/default/cli/test/print_providers.exe"
@@ -16,4 +16,12 @@ sol_providers() {
     return 1
   fi
   printf '%s\n' "$out"
+}
+
+sol_providers() {
+  sol_provider_rows "$1" | cut -f1
+}
+
+sol_provider_status() {
+  printf '%s\n' "$1" | awk -F'\t' -v n="$2" '$1 == n { print $2 }'
 }

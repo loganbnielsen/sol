@@ -26,7 +26,7 @@ mk() {
   printf '%s\n' "$3" >"$tmp/$1/platform/cloud/$2/cluster/$4"
 }
 
-export SOL_PROVIDERS="aws gcp"
+export SOL_PROVIDERS=$'aws\tpresent\ngcp\tpresent'
 
 fail=0
 expect_reject() {
@@ -45,7 +45,7 @@ expect_accept() {
 mk newprovider azure 'resource "aws_ecr_repository" "services" {
   name = "x"
 }' main.tf
-SOL_PROVIDERS="aws gcp azure" expect_reject newprovider "a new provider's root that the hard-coded list never named"
+SOL_PROVIDERS=$'aws\tpresent\ngcp\tpresent\nazure\tnot_implemented' expect_reject newprovider "a new provider's root that the hard-coded list never named"
 
 mk noprinter aws '' empty.tf
 if env -u SOL_PROVIDERS python3 "$guard" "$tmp/noprinter" >/dev/null 2>&1; then

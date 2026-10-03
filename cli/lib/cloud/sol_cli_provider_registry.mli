@@ -1,6 +1,7 @@
 type resolution_failure =
   | Outputs_unreadable of string
   | State_unreadable of string
+  | No_root of string
 
 val resolution_failure_to_string : resolution_failure -> string
 

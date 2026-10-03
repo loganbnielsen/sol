@@ -9,10 +9,11 @@ shared="modules delivery"
 
 # shellcheck source=providers.sh
 . "$(dirname "$0")/providers.sh"
-providers="$(sol_providers "$root")" || {
+rows="$(sol_provider_rows "$root")" || {
   echo "check_provider_roots: could not read the provider list" >&2
   exit 1
 }
+providers="$(printf '%s\n' "$rows" | cut -f1)"
 
 if [ ! -d "$cloud" ]; then
   echo "check_provider_roots: $cloud does not exist" >&2
@@ -23,8 +24,21 @@ fail=0
 real=0
 paper=""
 for provider in $providers; do
+  status="$(sol_provider_status "$rows" "$provider")"
+  if [ "$status" = "not_applicable" ]; then
+    if [ -d "$cloud/$provider" ]; then
+      echo "check_provider_roots: $provider owns no root by definition (root_status not_applicable), but platform/cloud/$provider/ exists" >&2
+      fail=1
+    fi
+    continue
+  fi
   if [ ! -d "$cloud/$provider" ]; then
-    paper="$paper $provider"
+    if [ "$status" = "present" ]; then
+      echo "check_provider_roots: $provider declares a root (root_status present) but has no platform/cloud/$provider/ directory" >&2
+      fail=1
+    else
+      paper="$paper $provider"
+    fi
     continue
   fi
   real=$((real + 1))

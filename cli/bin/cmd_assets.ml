@@ -79,6 +79,7 @@ let template_checks assets =
 let checks assets =
   let terraform_checks =
     Sol_cli_provider.all
+    |> List.filter Sol_cli_provider_capabilities.owns_root
     |> List.concat_map (fun provider ->
       [ A.Cluster; A.Platform ] |> List.map (terraform_root assets provider))
   in

@@ -51,6 +51,24 @@ let asset_root ~assets provider role =
   if Sys.file_exists dir then Ok dir else refuse ("Terraform module not found: " ^ dir)
 ;;
 
+let require_cloud_root ~driver =
+  match (Sol_cli_provider_capabilities.capabilities_of driver).root_status with
+  | Sol_cli_provider_capabilities.Root_present -> Ok ()
+  | Sol_cli_provider_capabilities.Root_not_applicable ->
+    refuse
+      (Printf.sprintf
+         "the %s driver owns no cloud Terraform root: it is bring-your-own \
+          infrastructure, so Sol has no provider lifecycle to plan, apply or destroy. \
+          `sol deploy` consumes the cluster; it does not manage the substrate (DEC-051)."
+         (Sol_cli_provider.to_string driver))
+  | Sol_cli_provider_capabilities.Root_not_implemented ->
+    refuse
+      (Printf.sprintf
+         "the %s driver is registered but has no cloud Terraform root yet, so there is \
+          nothing for Sol to plan, apply or destroy."
+         (Sol_cli_provider.to_string driver))
+;;
+
 type action =
   | Plan
   | Apply
@@ -135,8 +153,9 @@ let cloud_init
       ~action
       ()
   =
+  let* provider = provider_of_target_path target in
+  let* () = require_cloud_root ~driver:provider in
   let* () = check_terraform () in
-  let* _provider = provider_of_target_path target in
   let* assets = resolve_assets () in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
   match action with
@@ -201,8 +220,9 @@ let declared_workload_namespaces () =
 ;;
 
 let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
-  let* () = check_terraform () in
   let* provider = provider_of_target_path target in
+  let* () = require_cloud_root ~driver:provider in
+  let* () = check_terraform () in
   let pname = Sol_cli_provider.to_string provider in
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
@@ -375,8 +395,9 @@ let explain_flag =
 ;;
 
 let cloud_reconcile ~target ~var_file ~vars ~dry_run ~explain () =
-  let* () = check_terraform () in
   let* provider = provider_of_target_path target in
+  let* () = require_cloud_root ~driver:provider in
+  let* () = check_terraform () in
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-reconcile" () in
@@ -554,6 +575,7 @@ let declared_target target =
 
 let cloud_bootstrap ~target ~reconcile ~await_delegation () =
   let* target_cfg = declared_target target in
+  let* () = require_cloud_root ~driver:target_cfg.provider in
   let run = installation_observation ~provider:target_cfg.provider in
   let* configuration = Sol_cli_installation.of_target target_cfg |> Sol_cli_exit.of_msg in
   let* () =

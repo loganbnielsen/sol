@@ -1,23 +1,27 @@
 type t =
   | Aws
   | Gcp
+  | Byo
 
 let of_string = function
   | "aws" -> Some Aws
   | "gcp" -> Some Gcp
+  | "byo" -> Some Byo
   | _ -> None
 ;;
 
 let to_string = function
   | Aws -> "aws"
   | Gcp -> "gcp"
+  | Byo -> "byo"
 ;;
 
 let is_known s = Option.is_some (of_string s)
 
 let next = function
   | Aws -> Some Gcp
-  | Gcp -> None
+  | Gcp -> Some Byo
+  | Byo -> None
 ;;
 
 let all =
