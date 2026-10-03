@@ -149,7 +149,7 @@ type result =
   ; worker_metrics_http : string option
   ; loki_resp : string option
   ; loki_cli_lines : (int, string) Stdlib.result option
-  ; db_rows : int
+  ; db_rows : (int, string) Stdlib.result option
   ; jobs_processed : int
   }
 
@@ -158,8 +158,8 @@ let truncate_tables pool tables =
   match
     Pg_db.exec pool (Caqti_request.Infix.(Caqti_type.unit ->. Caqti_type.unit) sql) ()
   with
-  | Ok () -> ()
-  | Error _ -> ()
+  | Ok () -> Ok ()
+  | Error e -> Error (Pg_error.to_string e)
 ;;
 
 let ensure_schema ~fs pool =
@@ -232,10 +232,16 @@ let run_golden_path () =
     | None -> None
     | Some url ->
       (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
-       | Error _ -> None
+       | Error e ->
+         failwith
+           (Printf.sprintf
+              "POSTGRES_URL is set but the fixture's pool could not be created: %s"
+              (Pg_error.to_string e))
        | Ok pool ->
          ensure_schema ~fs:env#fs pool;
-         truncate_tables pool [ "fulfilled_orders"; "sol_jobs" ];
+         (match truncate_tables pool [ "fulfilled_orders"; "sol_jobs" ] with
+          | Ok () -> ()
+          | Error why -> failwith ("truncating the fixture tables: " ^ why));
          Some pool)
   in
   let jobs_done_p, jobs_done_r = Eio.Promise.create () in
@@ -537,11 +543,12 @@ let run_golden_path () =
   in
   let db_rows =
     match db_pool with
-    | None -> 0
+    | None -> None
     | Some pool ->
-      (match FulfilledOrders.list pool () with
-       | Error _ -> 0
-       | Ok rows -> List.length rows)
+      Some
+        (match FulfilledOrders.list pool () with
+         | Error e -> Error (Pg_error.to_string e)
+         | Ok rows -> Ok (List.length rows))
   in
   { http_statuses
   ; metrics_text
@@ -663,7 +670,11 @@ let run_outbox_path () =
     | None -> None
     | Some url ->
       (match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
-       | Error _ -> None
+       | Error e ->
+         failwith
+           (Printf.sprintf
+              "outbox fixture: POSTGRES_URL is set but the pool could not be created: %s"
+              (Pg_error.to_string e))
        | Ok pool -> Some pool)
   in
   match pool with
@@ -728,9 +739,13 @@ let run_outbox_path () =
       | Error e -> if force_rollback then ignore e else failwith (Pg_error.to_string e)
     in
     ensure_schema ~fs:env#fs pool;
-    truncate_tables
-      pool
-      [ "sol_outbox"; "outbox_e2e_domain"; "outbox_e2e_effects"; "sol_jobs" ];
+    (match
+       truncate_tables
+         pool
+         [ "sol_outbox"; "outbox_e2e_domain"; "outbox_e2e_effects"; "sol_jobs" ]
+     with
+     | Ok () -> ()
+     | Error why -> failwith ("truncating the outbox fixture tables: " ^ why));
     let svc =
       match Kafka_service.create kafka_config ~sw with
       | Ok s -> s
@@ -1141,18 +1156,25 @@ let () =
     ; Windtrap.group
         "postgres"
         [ Windtrap.test "fulfilled orders persisted" (fun () ->
-            if r.db_rows = 0
-            then ()
-            else Windtrap.equal Windtrap.int ~msg:"3 rows stored" 3 r.db_rows)
+            match r.db_rows with
+            | None -> ()
+            | Some (Error why) ->
+              Windtrap.failf "fulfilled_orders could not be read: %s" why
+            | Some (Ok 0) -> ()
+            | Some (Ok rows) -> Windtrap.equal Windtrap.int ~msg:"3 rows stored" 3 rows)
         ]
     ; Windtrap.group
         "jobs"
         [ Windtrap.test
             "confirmation-email jobs claimed and completed (sol-jobs, FEAT-077)"
             (fun () ->
-               if r.db_rows = 0
-               then ()
-               else Windtrap.equal Windtrap.int ~msg:"3 jobs processed" 3 r.jobs_processed)
+               match r.db_rows with
+               | None -> ()
+               | Some (Error why) ->
+                 Windtrap.failf "fulfilled_orders could not be read: %s" why
+               | Some (Ok 0) -> ()
+               | Some (Ok _) ->
+                 Windtrap.equal Windtrap.int ~msg:"3 jobs processed" 3 r.jobs_processed)
         ]
     ; Windtrap.group
         "outbox-facts-to-jobs"
