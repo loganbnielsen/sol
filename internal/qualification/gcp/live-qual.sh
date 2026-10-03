@@ -644,6 +644,7 @@ verify_bundle() {
     succeeded) required+=( "app-transaction.txt" "app-deploy.log" "app-pods.txt" ) ;;
     none) : ;;
   esac
+  [ "${IDENTITY_STATE:-none}" = "ran" ] && required+=( "identity/identity.tsv" )
   for member in "${required[@]}"; do
     if [ ! -s "$LOG_DIR/$member" ]; then
       say "  ✗ bundle member missing or empty: $member"
@@ -1377,6 +1378,138 @@ phase_app() {
   finalise_bundle
 }
 
+identity_row() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$IDENTITY_TSV"
+  say "    $1: $2${4:+ ($4)}"
+}
+
+identity_secret_manager_addon() {
+  local json="$LOG_DIR/identity/cluster.json" state interval
+  if ! gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format=json \
+      >"$json" 2>"$LOG_DIR/identity/cluster.stderr"; then
+    identity_row "gke-secret-manager-addon" "UNKNOWN" "VERIF-021 mechanism" \
+      "the cluster describe failed: identity/cluster.stderr"
+    return 0
+  fi
+  jq -r '.secretManagerConfig // empty' "$json" >"$LOG_DIR/identity/secret-manager-config.json" \
+    2>/dev/null || true
+  jq -r '.workloadIdentityConfig.workloadPool // empty' "$json" \
+    >"$LOG_DIR/identity/workload-pool.txt" 2>/dev/null || true
+  state="$(jq -r 'if (.secretManagerConfig.enabled // false) then "enabled" else "disabled" end' "$json" \
+    2>/dev/null || true)"
+  case "$state" in
+    enabled)
+      interval="$(jq -r '.secretManagerConfig.rotationConfig.rotationInterval // "unset"' "$json" \
+        2>/dev/null || true)"
+      identity_row "gke-secret-manager-addon" "PRESENT" "VERIF-021 mechanism" \
+        "rotation interval ${interval:-unset}"
+      ;;
+    disabled)
+      identity_row "gke-secret-manager-addon" "ABSENT" "VERIF-021 mechanism" \
+        "the cluster reports secretManagerConfig not enabled"
+      ;;
+    *)
+      identity_row "gke-secret-manager-addon" "UNKNOWN" "VERIF-021 mechanism" \
+        "the cluster document did not parse"
+      ;;
+  esac
+}
+
+identity_secret_grants() {
+  local list="$LOG_DIR/identity/secrets.txt" policy="$LOG_DIR/identity/secret-grants.json" count=0 name short
+  if ! gcloud secrets list --project "$PROJECT" --format='value(name)' \
+      >"$list" 2>"$LOG_DIR/identity/secrets.stderr"; then
+    identity_row "secret-manager-grants" "UNKNOWN" "VERIF-021 authorization" \
+      "the secret list could not be read: identity/secrets.stderr"
+    return 0
+  fi
+  : >"$policy"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    short="${name##*/}"
+    case "$short" in sol-*) ;; *) continue ;; esac
+    if gcloud secrets get-iam-policy "$short" --project "$PROJECT" --format=json \
+        >>"$policy" 2>>"$LOG_DIR/identity/secrets.stderr"; then
+      count=$((count + 1))
+    else
+      identity_row "secret-manager-grants" "UNKNOWN" "VERIF-021 authorization" \
+        "the policy of $short could not be read: identity/secrets.stderr"
+      return 0
+    fi
+  done <"$list"
+  if [ "$count" -gt 0 ]; then
+    identity_row "secret-manager-grants" "PRESENT" "VERIF-021 authorization" \
+      "$count sol- secret policy(ies) captured; see identity/secret-grants.json"
+  else
+    identity_row "secret-manager-grants" "ABSENT" "VERIF-021 authorization" \
+      "no sol- Secret Manager secret exists in this project yet"
+  fi
+}
+
+identity_oidc() {
+  local issuer="https://container.googleapis.com/v1/projects/$PROJECT/locations/$REGION/clusters/$CLUSTER" code
+  printf '%s\n' "$issuer" >"$LOG_DIR/identity/oidc-issuer.txt"
+  code="$(curl -sS -m 20 -o "$LOG_DIR/identity/oidc-discovery.json" -w '%{http_code}' \
+    "$issuer/.well-known/openid-configuration" 2>"$LOG_DIR/identity/oidc.stderr" || printf '000')"
+  printf '%s\n' "$code" >"$LOG_DIR/identity/oidc-discovery.code"
+  if [ "$code" = "200" ]; then
+    identity_row "cluster-oidc-discovery" "PRESENT" "VERIF-022 issuer discovery" "$issuer (HTTP 200)"
+  else
+    identity_row "cluster-oidc-discovery" "UNKNOWN" "VERIF-022 issuer discovery" \
+      "HTTP $code from $issuer — a non-200 read is never absence"
+  fi
+}
+
+identity_projected_tokens() {
+  local pods="$LOG_DIR/identity/pods.json" volumes="$LOG_DIR/identity/projected-tokens.txt" count
+  local selector='.items[] | select(any(.spec.volumes[]?; (.projected.sources // [])[]?.serviceAccountToken != null))'
+  if ! kubectl get pods --all-namespaces -o json >"$pods" 2>"$LOG_DIR/identity/pods.stderr"; then
+    identity_row "projected-token-volumes" "UNKNOWN" "VERIF-022 mechanism" \
+      "the pod list could not be read: identity/pods.stderr"
+    return 0
+  fi
+  if ! count="$(jq -r "[$selector] | length" "$pods" 2>"$LOG_DIR/identity/pods.stderr")"; then
+    identity_row "projected-token-volumes" "UNKNOWN" "VERIF-022 mechanism" \
+      "the pod document could not be parsed: identity/pods.stderr"
+    return 0
+  fi
+  jq -r "$selector | .metadata.namespace + \"/\" + .metadata.name + \" \" + ([.spec.volumes[]? | (.projected.sources // [])[]?.serviceAccountToken | \"aud=\" + (.audience // \"\") + \" exp=\" + ((.expirationSeconds // 0) | tostring)] | join(\",\"))" \
+    "$pods" >"$volumes" 2>>"$LOG_DIR/identity/pods.stderr" || true
+  if [ "$count" = "0" ]; then
+    identity_row "projected-token-volumes" "ABSENT" "VERIF-022 mechanism" \
+      "no deployed pod projects a serviceAccountToken volume; Sol does not render the mechanism yet"
+  else
+    identity_row "projected-token-volumes" "PRESENT" "VERIF-022 mechanism" \
+      "$count pod(s); see identity/projected-tokens.txt"
+  fi
+}
+
+phase_identity() {
+  KEEP=1
+  KEEP_REASON="the identity capture is read-only; the specimen is kept for the app and destroy phases"
+  if [ ! -s "$RUN_KUBECONFIG" ]; then
+    say "identity: no run kubeconfig in $LOG_DIR — run the cloud phase first, which establishes it"
+    exit 2
+  fi
+  mkdir -p "$LOG_DIR/identity"
+  IDENTITY_TSV="$LOG_DIR/identity/identity.tsv"
+  IDENTITY_STATE=ran
+  : >"$IDENTITY_TSV"
+  printf 'check\tverdict\tscope\tdetail\n' >"$IDENTITY_TSV"
+  say "identity: capturing the managed-secret and projected-token mechanism facts (read-only)"
+  identity_secret_manager_addon
+  identity_secret_grants
+  identity_oidc
+  identity_projected_tokens
+  {
+    printf 'VERIF-021 / VERIF-022 mechanism capture (read-only; the behavioural probes are the procedure step)\n\n'
+    awk -F'\t' 'NR>1{printf "%-26s %-8s %-28s %s\n", $1, $2, $3, $4}' "$IDENTITY_TSV"
+  } >"$LOG_DIR/identity/summary.txt"
+  say "identity: $IDENTITY_TSV"
+  freeze_evidence
+  finalise_bundle
+}
+
 usage() {
   cat <<'USAGE'
 live-qual.sh — one GCP qualification specimen, and the evidence it produces
@@ -1405,6 +1538,12 @@ phases
             bundle records them redacted, never in the clear.
             The target it writes selects no profile: this row qualifies the application path,
             and claims nothing the production profile's guarantees would promise.
+  identity  capture the managed-secret and projected-token mechanism facts the VERIF-021 and
+            VERIF-022 runs need -- the GKE Secret Manager add-on and its rotation interval, the
+            Secret Manager grants on the project's sol- secrets, the cluster OIDC issuer discovery
+            document, and any rendered projected serviceAccountToken volumes -- as a read-only
+            addition to the bundle (identity/identity.tsv). An unreadable read is UNKNOWN, never
+            absence or a pass. The behavioural probes are run by the procedure, not here.
   destroy   freeze and destroy an existing target, then verify absence
   stop      stop the run recorded in LOG_DIR (by its own process group), then destroy
   verify    read-only absence check; invokes no teardown
@@ -1433,6 +1572,7 @@ USAGE
 case "${1:-}" in
   cloud)    phase_cloud ;;
   app)      phase_app ;;
+  identity) phase_identity ;;
   platform)
     say "no platform phase: 'sol cloud apply' installs the platform, and this harness captures"
     say "its discriminator in the cloud phase. Run: live-qual.sh cloud"

@@ -41,3 +41,19 @@ the live run is evidence collection rather than instrument building.
 - An unreadable cluster/secret/pod/OIDC read is recorded `UNKNOWN`, never `ABSENT`.
 - Demo/example: not applicable — qualification tooling, with no app-author-facing surface.
 - Language parity: not applicable — no application-facing contract change.
+
+## Completion notes (2026-10-03)
+
+- **Premise verified.** `rg -n 'identity_row|phase_identity' internal/qualification/gcp/live-qual.sh`
+  found nothing on `origin/main @ 0011acb1`: the harness had no `identity` phase, so the
+  ticket held.
+- **Landed.** `live-qual.sh` gains `phase_identity` (and `identity_secret_manager_addon`,
+  `identity_secret_grants`, `identity_oidc`, `identity_projected_tokens`), wired as the
+  `identity` subcommand and into the bundle verifier via `IDENTITY_STATE`. Every read that
+  fails — cluster describe, secret list, secret policy, pod list, or a non-200 issuer
+  discovery — is `UNKNOWN`, never `ABSENT`. `test-live-qual.sh` gains the stub responses
+  and the present/absent/unknown/adversarial scenarios.
+- **Checks.** `bash internal/qualification/gcp/test-live-qual.sh` → `266 passed, 0 failed`,
+  `checkout clean`.
+- **Not the run.** The phase captures mechanism facts only; the behavioural probes and the
+  rows themselves stay `VERIF-021`/`VERIF-022` (`BLOCKED`, operator/live).

@@ -184,6 +184,20 @@ case "$*" in
     esac
     exit 0 ;;
   *"compute networks list"*)    printf "default\n"; exit 0 ;;
+  *"secrets list"*)
+    if [ "${STUB_SECRETS_LIST_FAIL:-0}" = "1" ]; then
+      printf 'ERROR: (gcloud.secrets.list) PERMISSION_DENIED: Permission denied\n' >&2
+      exit 1
+    fi
+    [ "${STUB_SECRETS_PRESENT:-0}" = "1" ] && printf 'projects/123/secrets/sol-alpha-stripe\n'
+    exit 0 ;;
+  *"secrets get-iam-policy"*)
+    if [ "${STUB_SECRET_POLICY_FAIL:-0}" = "1" ]; then
+      printf 'ERROR: (gcloud.secrets.get-iam-policy) PERMISSION_DENIED\n' >&2
+      exit 1
+    fi
+    printf '{"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:sol-qualification.svc.id.goog[pluto-payments/charge-svc]"]}]}\n'
+    exit 0 ;;
 esac
 case "$*" in
   *"iam service-accounts describe"*)
@@ -235,6 +249,15 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
     printf "%s\n" "${STUB_CLUSTER_STATUS:-RUNNING}"
     exit 0 ;;
   *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
+    *"container clusters describe"*"--format=json"*)
+      if [ "${STUB_CLUSTER_JSON_FAIL:-0}" = "1" ]; then
+        printf 'ERROR: (gcloud.container.clusters.describe) PERMISSION_DENIED\n' >&2
+        exit 1
+      fi
+      printf '{"secretManagerConfig":{"enabled":%s,"rotationConfig":{"rotationInterval":"%s"}},"workloadIdentityConfig":{"workloadPool":"%s"}}\n' \
+        "${STUB_SM_ENABLED:-true}" "${STUB_SM_INTERVAL:-2m}" \
+        "${STUB_WORKLOAD_POOL:-sol-qualification.svc.id.goog}"
+      exit 0 ;;
     *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
     *"container clusters get-credentials"*)
       if [ -n "${STUB_GET_CREDENTIALS_RC:-}" ]; then
@@ -289,6 +312,13 @@ kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
 case "$*" in
+  "get pods --all-namespaces -o json")
+    if [ "${STUB_PROJECTED_TOKENS:-0}" = "1" ]; then
+      printf '{"items":[{"metadata":{"namespace":"pluto-payments","name":"charge-svc-abc123"},"spec":{"volumes":[{"name":"api-token","projected":{"sources":[{"serviceAccountToken":{"audience":"order-svc","expirationSeconds":3600}}]}}]}}]}\n'
+    else
+      printf '{"items":[]}\n'
+    fi
+    exit 0 ;;
   "get pods -A -o wide"*)
     printf 'NAMESPACE   NAME          READY   STATUS    RESTARTS   AGE   IP   NODE\n'
     printf 'platform    redpanda-0    0/1     Pending   0          9m    <none>  <none>\n'
@@ -383,6 +413,26 @@ STUB
 
 cat >"$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
+case "$*" in
+  *"/.well-known/openid-configuration"*)
+    out=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o) out="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [ "${STUB_OIDC_FAIL:-0}" = "1" ]; then
+      [ -n "$out" ] && : >"$out"
+      printf '404'
+      exit 0
+    fi
+    if [ -n "$out" ]; then
+      printf '{"issuer":"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/test-cluster","jwks_uri":"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/test-cluster/openid/v1/jwks"}\n' >"$out"
+    fi
+    printf '200'
+    exit 0 ;;
+esac
 printf '{"Answer":[{"data":"ns-cloud-c1.googledomains.com."},{"data":"ns-cloud-c2.googledomains.com."},{"data":"ns-cloud-c3.googledomains.com."},{"data":"ns-cloud-c4.googledomains.com."}]}'
 STUB
 
@@ -429,6 +479,10 @@ run_case() {
   if [ "${PRESEED_CREDENTIALS:-0}" = "1" ]; then
     mkdir -p "$LOG_DIR"
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
+  fi
+  if [ "${PRESEED_INVENTORY:-0}" = "1" ]; then
+    mkdir -p "$LOG_DIR"
+    : >"$LOG_DIR/inventory-pre.tsv"
   fi
   env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
@@ -1158,6 +1212,58 @@ run_case cloud-vars cloud
 lacks "no command-not-found diagnostic" "command not found" "$TMP/cloud-vars.out"
 has "the generated target carries the impersonator" "provisioner_impersonator: user:test@example.com" "$TARGET_FILE"
 lacks "and the cloud path passes no second copy of it" "-var=provisioner_impersonators" "$TMP/cloud-vars.argv"
+
+identity_verdict() { awk -F'\t' -v c="$1" '$1==c{print $2}' "$2"; }
+
+printf '\nscenario: the identity capture records the VERIF-021 / VERIF-022 mechanism facts\n'
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-capture identity STUB_CLUSTER_EXISTS=1
+is "the identity phase exits 0" "$(cat "$TMP/identity-capture.rc")" "0"
+present "$TMP/identity-capture.logs/identity/identity.tsv" "the identity read is in the bundle"
+is "the GKE Secret Manager add-on is recorded present" \
+  "$(identity_verdict gke-secret-manager-addon "$TMP/identity-capture.logs/identity/identity.tsv")" "PRESENT"
+has "with its rotation interval" "rotation interval 2m" \
+  "$TMP/identity-capture.logs/identity/identity.tsv"
+is "the OIDC discovery document is recorded present" \
+  "$(identity_verdict cluster-oidc-discovery "$TMP/identity-capture.logs/identity/identity.tsv")" "PRESENT"
+is "no rendered projected-token volume is recorded positively absent" \
+  "$(identity_verdict projected-token-volumes "$TMP/identity-capture.logs/identity/identity.tsv")" "ABSENT"
+is "and no sol- secret exists yet, recorded as absent" \
+  "$(identity_verdict secret-manager-grants "$TMP/identity-capture.logs/identity/identity.tsv")" "ABSENT"
+has "the identity summary is in the bundle" "VERIF-021 / VERIF-022 mechanism capture" \
+  "$TMP/identity-capture.logs/identity/summary.txt"
+
+printf '\nscenario: the identity capture surfaces present facts\n'
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-present identity \
+  STUB_CLUSTER_EXISTS=1 STUB_SECRETS_PRESENT=1 STUB_PROJECTED_TOKENS=1
+is "the granted secret's policy is recorded present" \
+  "$(identity_verdict secret-manager-grants "$TMP/identity-present.logs/identity/identity.tsv")" "PRESENT"
+is "and the rendered projected token is recorded present" \
+  "$(identity_verdict projected-token-volumes "$TMP/identity-present.logs/identity/identity.tsv")" "PRESENT"
+has "with its audience and expiry" "aud=order-svc exp=3600" \
+  "$TMP/identity-present.logs/identity/projected-tokens.txt"
+
+printf '\nscenario: adversarial — an unreadable identity read is UNKNOWN, never absent\n'
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-cluster-unknown identity \
+  STUB_CLUSTER_EXISTS=1 STUB_CLUSTER_JSON_FAIL=1
+is "an unreadable cluster read is UNKNOWN" \
+  "$(identity_verdict gke-secret-manager-addon "$TMP/identity-cluster-unknown.logs/identity/identity.tsv")" "UNKNOWN"
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-oidc-unknown identity \
+  STUB_CLUSTER_EXISTS=1 STUB_OIDC_FAIL=1
+is "a non-200 issuer read is UNKNOWN, not absent" \
+  "$(identity_verdict cluster-oidc-discovery "$TMP/identity-oidc-unknown.logs/identity/identity.tsv")" "UNKNOWN"
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-secrets-unknown identity \
+  STUB_CLUSTER_EXISTS=1 STUB_SECRETS_LIST_FAIL=1
+is "an unreadable secret list is UNKNOWN" \
+  "$(identity_verdict secret-manager-grants "$TMP/identity-secrets-unknown.logs/identity/identity.tsv")" "UNKNOWN"
+PRESEED_CREDENTIALS=1 PRESEED_INVENTORY=1 run_case identity-pods-unknown identity \
+  STUB_CLUSTER_EXISTS=1 STUB_KUBE_READ_RC=1
+is "an unreadable pod list is UNKNOWN" \
+  "$(identity_verdict projected-token-volumes "$TMP/identity-pods-unknown.logs/identity/identity.tsv")" "UNKNOWN"
+
+printf '\nscenario: the identity phase needs a target credential like every other phase\n'
+run_case identity-nocred identity
+is "it exits 2 with no run kubeconfig" "$(cat "$TMP/identity-nocred.rc")" "2"
+has "and says why" "no run kubeconfig" "$TMP/identity-nocred.out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
