@@ -45,3 +45,56 @@ Evidence: the comment-removal invariants the ticket lists are still prose-only; 
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
 (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+
+## Premise verification (2026-10-03, part A)
+
+Re-checked each item against `origin/main` at `38fe8a2d`. The Disposition's
+"items 1-14 are unimplemented" is not accurate: items 1 and 8 are already
+resolved, and item 11 cannot be implemented as written.
+
+- **1 — stale.** `cluster_pg_exists`/`auto_forward_pg` now exist only in
+  `cli/bin/cmd_migrate.ml`; `cli/bin/cmd_deploy_event.ml` has neither
+  (`rg -n 'cluster_pg_exists|auto_forward_pg' cli/bin/*.ml`).
+- **2 — real.** `cmd_up.ml` and `cmd_deploy.ml` independently define
+  `check_contract`, `ensure_postgres_url`, `print_header` and `to_manifest_primitive`.
+- **3 — real.** `cli/lib/deploy/sol_cli_status.ml` still hardcodes
+  `-n monitoring svc/loki` and `svc/prometheus-server`, which
+  `Sol_cli_local_platform.endpoints` also names.
+- **4 — real.** `cli/lib/local/sol_cli_local_platform.ml` hardcodes every chart
+  version (e.g. `26.1.11`, `18.8.17`) with nothing tying them to `variables.tf`.
+- **5 — real, not yet implemented.** `cli/lib/local/sol_cli_dev_observability.ml`
+  emits `derivedFields`; no test feeds it a line formatted by `Obs_loki`.
+- **6 — real, renamed target.** `Sol_cli_manifest_yaml.render_taxonomy_labels` no
+  longer exists (it is now `taxonomy_labels`); `sol_cli_deploy_event.ml` still
+  carries its own label list.
+- **7 — real.** `cli/lib/base/sol_cli_profile.ml`'s `capacity_envelope` has no tie
+  to the declared requests in `variables.tf`.
+- **8 — already satisfied.** `cli/test/inline/test_release_id.ml`'s
+  `test_known_vector` pins `r-4b2ed7373a80de25` for a fixed content, so any change
+  to the canonical encoding without a version bump fails that test.
+- **9 — real.** `Sol_cli_terraform_plan.show_and_record` still takes a bare
+  `~show:(unit -> ...)`, so `run_phase` can be handed the secret-bearing plan JSON.
+- **10 — real.** `format_service_diagnosis` still takes `pod_status list`, where
+  `[]` is overloaded to mean "confirmed zero pods".
+- **11 — needs a design call.** `merge` deliberately does not invoke `merge-finish`
+  automatically (BUG-038 removed that), so "unreachable except from `merge`" and
+  "available as an optional operator step" are mutually exclusive today.
+- **12 — real.** `Sol_cli_manifest_yaml.migration_configmap_doc` renders the
+  ConfigMap unconditionally; nothing refuses a set past the 1 MiB cap.
+- **13 — implemented in this change** (see below).
+- **14 — real.** `framework/ocaml/sol-svc/lib/auth_internal.ml`'s `get_jwks` fixes
+  `max_age_s` to `Auth_cache.ttl_s`.
+
+## Part A (2026-10-03) — item 13
+
+Deleted `refuse_pre_rename_cluster` and its call from
+`cli/lib/local/sol_cli_local_cluster.ml` (and the now-unused `open Result.Syntax`).
+Sol is pre-alpha with no users, so no `sun-local` cluster can plausibly still
+exist. The function was not exported by the `.mli` and no test referenced it.
+
+- Demo/example coverage: not applicable — an internal CLI guard; no author-facing
+  surface changes.
+- Language parity: no impact — CLI-internal, no framework contract or primitive.
+
+The remaining real items (2-7, 9, 10, 12, 14) stay open; the ticket remains in
+`READY_FOR_ENGINEERING/`.

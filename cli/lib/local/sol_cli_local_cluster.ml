@@ -1,5 +1,3 @@
-open Result.Syntax
-
 let name = "sol-local"
 let registry_port = 5000
 let k3d_client_api_floor = "1.43"
@@ -36,33 +34,12 @@ let k3d_env () =
 let k3d args = Sol_cli_process.cmd ~env:(k3d_env ()) ("k3d" :: args)
 let exists () = Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; name ]))
 
-let refuse_pre_rename_cluster () =
-  let pre_rename = "sun-local" in
-  if Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename ]))
-  then
-    Error
-      (Printf.sprintf
-         "found a pre-rename '%s' k3d cluster.\n\
-         \  Sol's local cluster is now named '%s', and its registry would try\n\
-         \  to bind the same host port (%d) that '%s'/'sun-registry' would also use.\n\
-         \  Remove the old cluster first:\n\
-         \    k3d cluster delete %s\n\
-         \  (rename or keep it yourself first if you still need it for something else)"
-         pre_rename
-         name
-         registry_port
-         pre_rename
-         pre_rename)
-  else Ok ()
-;;
-
 let provision () =
   if exists ()
   then (
     Sol_cli_report.app "  cluster %s already exists, skipping" name;
     Ok ())
   else
-    let* () = refuse_pre_rename_cluster () in
     Sol_cli_process.run
       ~echo:true
       (k3d
