@@ -121,6 +121,10 @@ let substrate_presence = function
   | State_unreadable _ -> Substrate_unknown
 ;;
 
+let in_cluster_kind kind =
+  List.exists (fun prefix -> String.starts_with ~prefix kind) [ "kubernetes_"; "helm_" ]
+;;
+
 let find_address state address =
   List.find_opt (fun resource -> resource.address = address) (resources state)
 ;;
@@ -355,13 +359,14 @@ let teardown ~deps ~platform : (cleanup * string list, failure * cleanup) result
 ;;
 
 let execute ~deps =
-  let state =
+  let read_state () =
     match deps.observe_state () with
     | Ok stdout -> inventory_of_show_json stdout
     | Error detail -> State_unreadable detail
   in
-  let substrate = substrate_presence state in
-  (match state with
+  let state = ref (read_state ()) in
+  let substrate = ref (substrate_presence !state) in
+  (match !state with
    | State_unreadable reason ->
      deps.warn
        (Printf.sprintf
@@ -380,7 +385,7 @@ let execute ~deps =
     Destroy_succeeded
       { preparation
       ; degradations = List.rev !degradations
-      ; substrate
+      ; substrate = !substrate
       ; cleanup
       ; verification
       }
@@ -423,7 +428,7 @@ let execute ~deps =
     | Error message -> fail ~cleanup (Substrate_destroy_failed message)
     | Ok () ->
       deps.report "\nVerifying teardown...";
-      let observation = deps.verify_destruction ~pre_destroy:state ~preparation in
+      let observation = deps.verify_destruction ~pre_destroy:!state ~preparation in
       let verdict = Sol_cli_destroy_verification.classify observation in
       if Sol_cli_destroy_verification.is_verified verdict
       then succeed ~cleanup ~verification:observation preparation
@@ -439,13 +444,30 @@ let execute ~deps =
     (match deps.terraform_init () with
      | Error message -> fail (Init_failed message)
      | Ok () ->
-       (match deps.reconcile_provable_absence () with
+       let reconciliation = deps.reconcile_provable_absence () in
+       (match reconciliation with
         | Ok Nothing_to_reconcile -> ()
         | Ok (Reconciled { evidence; forgotten }) ->
-          deps.report (reconciliation_report ~evidence ~forgotten)
+          deps.report (reconciliation_report ~evidence ~forgotten);
+          (match deps.observe_state () with
+           | Ok stdout ->
+             state := inventory_of_show_json stdout;
+             substrate := substrate_presence !state
+           | Error detail ->
+             degrade
+               "the state after the reconciliation"
+               (Printf.sprintf
+                  "the cloud root's state could not be re-read after the reconciliation \
+                   (%s), so what it still represents is unknown"
+                  detail))
         | Error message ->
           degrade "the state a provably absent substrate leaves behind" message);
-       let cloud_exists = substrate <> Substrate_absent in
+       let provably_absent_substrate =
+         match reconciliation with
+         | Ok (Reconciled _) -> true
+         | Ok Nothing_to_reconcile | Error _ -> false
+       in
+       let cloud_exists = !substrate <> Substrate_absent in
        let phase =
          Sol_cli_cloud_lifecycle.enter_destruction
            ~from:
@@ -464,11 +486,11 @@ let execute ~deps =
               "Ready policy must not apply once destruction has been prepared")
        else (
          let preparation_outcome =
-           match substrate with
+           match !substrate with
            | Substrate_absent ->
              deps.report "  prepare: cloud substrate is absent, nothing to prepare.";
              Sol_cli_cloud_lifecycle.Nothing_to_prepare
-           | Substrate_present | Substrate_unknown -> deps.prepare ~state
+           | Substrate_present | Substrate_unknown -> deps.prepare ~state:!state
          in
          match Sol_cli_cloud_lifecycle.destruction_blocked preparation_outcome with
          | Some guarantee -> block guarantee
@@ -482,7 +504,13 @@ let execute ~deps =
              | Sol_cli_cloud_lifecycle.Preparation_failed _ -> Nothing_prepared
            in
            let platform =
-             if substrate = Substrate_present
+             if provably_absent_substrate
+             then (
+               deps.report
+                 "  the platform teardown is skipped: the substrate is provably absent \
+                  at the provider, so nothing inside it can still exist.";
+               Ok None)
+             else if !substrate = Substrate_present
              then platform_outputs_of_read (deps.cloud_outputs ())
              else Ok None
            in
@@ -490,8 +518,15 @@ let execute ~deps =
             | Error reason -> fail (Outputs_unreadable reason)
             | Ok platform ->
               let release =
-                if substrate = Substrate_absent
+                if !substrate = Substrate_absent
                 then Ok ()
+                else if provably_absent_substrate
+                then (
+                  deps.report
+                    "\n\
+                     No workloads to release: the substrate is provably absent at the \
+                     provider, so no workload this target deployed can be running.";
+                  Ok ())
                 else (
                   deps.report "\nReleasing the application workloads...";
                   release_decision (deps.release_workloads ()))

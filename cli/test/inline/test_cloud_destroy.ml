@@ -16,6 +16,32 @@ let gcp_cluster =
   {|{"address":"google_container_cluster.main","type":"google_container_cluster","values":{"name":"c","deletion_protection":true,"self_link":"https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c","project":"sol-qualification","location":"us-central1"}}|}
 ;;
 
+let gcp_binding_inside_the_cluster =
+  {|{"address":"kubernetes_cluster_role_binding.provisioner_bootstrap_admin","type":"kubernetes_cluster_role_binding","values":{"metadata":[{"name":"sol-provisioner-bootstrap"}]}}|}
+;;
+
+let gcp_postgres_outside_the_cluster =
+  {|{"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"name":"sol-postgres","deletion_protection":true}}|}
+;;
+
+let test_the_cluster_contents_are_classified () =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a kubernetes_ kind lives inside the cluster"
+    true
+    (in_cluster_kind "kubernetes_cluster_role_binding");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a helm_ kind lives inside the cluster"
+    true
+    (in_cluster_kind "helm_release");
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a cloud object outside the cluster does not"
+    false
+    (in_cluster_kind "google_sql_database_instance")
+;;
+
 let test_empty_state () =
   let state = inventory_of_show_json {|{"values":{"root_module":{"resources":[]}}}|} in
   Windtrap.equal Windtrap.bool ~msg:"empty is a valid absence" true (state = State_empty);
@@ -198,6 +224,7 @@ let verified_observation =
 
 let fake_deps
       ?(state = Ok {|{}|})
+      ?state_after_reconciliation
       ?(outputs = Outputs_available)
       ?(prepare = fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
       ?(reconcile_provable_absence = fun () -> Ok Nothing_to_reconcile)
@@ -238,7 +265,9 @@ let fake_deps
     ; observe_state =
         (fun () ->
           calls.observe <- calls.observe + 1;
-          state)
+          match state_after_reconciliation with
+          | Some next when calls.observe > 1 -> next
+          | _ -> state)
     ; reconcile_provable_absence =
         (fun () ->
           calls.reconcile_absence <- calls.reconcile_absence + 1;
@@ -408,6 +437,116 @@ let test_a_failed_reconciliation_degrades_and_still_destroys () =
        "a failed reconciliation must not fail the teardown: %s"
        (failure_message failure));
   Windtrap.equal Windtrap.int ~msg:"the substrate was still destroyed" 1 calls.substrate
+;;
+
+let test_a_substrate_the_provider_lost_skips_what_must_reach_it () =
+  let state_before =
+    show_json_resources
+      (String.concat
+         ","
+         [ gcp_cluster; gcp_binding_inside_the_cluster; gcp_postgres_outside_the_cluster ])
+  in
+  let state_after =
+    show_json_resources (String.concat "," [ gcp_postgres_outside_the_cluster ])
+  in
+  let verified_pre_destroy = ref None in
+  let deps, calls =
+    fake_deps
+      ~state:(Ok state_before)
+      ~state_after_reconciliation:(Ok state_after)
+      ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
+      ~reconcile_provable_absence:(fun () -> Ok reconciliation)
+      ~verify_destruction:(fun ~pre_destroy ~preparation:_ ->
+        verified_pre_destroy := Some pre_destroy;
+        verified_observation)
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a destroy that reconciled a lost substrate still exits 0"
+    0
+    (exit_code outcome);
+  (match outcome with
+   | Destroy_succeeded { substrate; _ } ->
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the postgres instance still standing keeps the substrate represented"
+       true
+       (substrate = Substrate_present)
+   | Destroy_blocked { guarantee; _ } ->
+     Windtrap.failf "a lost substrate must not block the destroy: %s" guarantee
+   | Destroy_failed { failure; _ } ->
+     Windtrap.failf
+       "a target whose substrate the provider lost must converge: %s"
+       (failure_message failure));
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the state is read again, because Terraform changed it"
+    2
+    calls.observe;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"no workload release is attempted against a cluster that does not exist"
+    false
+    (List.mem "release" calls.order);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the report says why the release does not apply"
+    true
+    (List.exists
+       (fun report ->
+          contains (Str.regexp_string "no workload this target deployed") report)
+       calls.reports);
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"the platform teardown has nothing to reach, so no outputs are read"
+    0
+    calls.outputs;
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the report says why the platform teardown is skipped"
+    true
+    (List.exists
+       (fun report ->
+          contains (Str.regexp_string "nothing inside it can still exist") report)
+       calls.reports);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"verification compares against what the state represents afterwards"
+    true
+    (match !verified_pre_destroy with
+     | Some state -> state = inventory_of_show_json state_after
+     | None -> false)
+;;
+
+let test_a_reconciled_state_that_cannot_be_reread_degrades () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~state_after_reconciliation:(Error "terraform show exited 1")
+      ~outputs:(Outputs_unavailable "no install outputs are published")
+      ~reconcile_provable_absence:(fun () -> Ok reconciliation)
+      ()
+  in
+  let outcome = execute ~deps in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"an unreadable state after the reconciliation is a degradation, not a refusal"
+    0
+    (exit_code outcome);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the degradation names what could not be re-read"
+    true
+    (match outcome with
+     | Destroy_succeeded { degradations; _ } ->
+       List.exists
+         (fun degradation ->
+            contains (Str.regexp_string "could not be re-read") degradation)
+         degradations
+     | _ -> false);
+  Windtrap.equal Windtrap.int ~msg:"the substrate teardown still ran" 1 calls.substrate
 ;;
 
 let test_no_reconciliation_is_claimed_when_there_is_none () =
@@ -2511,6 +2650,18 @@ let%test "execute: a failed reconciliation degrades and still destroys" =
 
 let%test "execute: no reconciliation is claimed when there is none" =
   test_no_reconciliation_is_claimed_when_there_is_none ()
+;;
+
+let%test "execute: a substrate the provider lost skips what must reach it" =
+  test_a_substrate_the_provider_lost_skips_what_must_reach_it ()
+;;
+
+let%test "execute: a reconciled state that cannot be re-read degrades" =
+  test_a_reconciled_state_that_cannot_be_reread_degrades ()
+;;
+
+let%test "execute: the cluster contents are classified" =
+  test_the_cluster_contents_are_classified ()
 ;;
 
 let%test "execute: half-built state" = test_half_built_state_is_destroyable ()

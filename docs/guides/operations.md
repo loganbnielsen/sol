@@ -223,6 +223,16 @@ untouched and say so: an absence Sol could not positively establish is never rea
 (`FND-0055`). The reconciliation only removes Sol's own bookkeeping — it never constructs
 anything, and it never reaches installation-level resources (`ADR 0005`).
 
+The same reconciliation covers the **create that never finished** (`INFRA-094`): a state that
+still represents the cluster, everything that lives inside it, and the platform root, while the
+provider reports the cluster absent. Those entries — and only those — are forgotten, and the
+phases that would have to reach the cluster account for it: nothing is released from a cluster
+that is not there, the platform teardown is skipped rather than wired to install outputs the
+reconciliation just removed, and the deletion-guard preparation targets what is left (the
+managed database), not a cluster the provider does not have. A cluster the provider *does*
+still hold — including one left in a failed state — keeps the ordinary path, where a plan that
+would construct or replace it is refused; Sol never rebuilds a target to make a destroy work.
+
 Destroy **verifies absence independently** (`DEC-044`, `DEC-040`): after Terraform
 converges, Sol re-observes the provider and reports what is absent, what is retained, and
 what it could not observe. An unqueryable answer is `UNKNOWN` and fails closed — a command

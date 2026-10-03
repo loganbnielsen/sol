@@ -28,6 +28,8 @@ val substrate_absence
   -> cluster_name:string
   -> Sol_cli_absence.observation
 
+val substrate_addresses : Sol_cli_provider.t -> string list
+
 val resource_identity
   :  Sol_cli_provider.t
   -> cluster_name:string

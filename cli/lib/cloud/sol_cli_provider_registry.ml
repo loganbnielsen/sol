@@ -4,6 +4,12 @@ type builder =
   ; build : string -> (Sol_cli_cluster.t, string) result
   }
 
+let substrate_addresses = function
+  | Sol_cli_provider.Aws -> [ "module.eks.aws_eks_cluster" ]
+  | Sol_cli_provider.Gcp -> [ "google_container_cluster.main" ]
+  | Sol_cli_provider.Byo -> []
+;;
+
 let byo_no_root =
   "the byo driver owns no cloud Terraform root: it is bring-your-own infrastructure, so \
    Sol has no provider lifecycle to run for it (DEC-051)"
@@ -15,7 +21,7 @@ let builder provider ~(target : Sol_cli_config.target) =
   match provider with
   | Sol_cli_provider.Aws ->
     { label = Sol_cli_aws_cluster.label
-    ; identifying_resources = [ "module.eks.aws_eks_cluster" ]
+    ; identifying_resources = substrate_addresses provider
     ; build =
         of_json
           Sol_cli_aws_cluster.of_outputs_json
@@ -27,7 +33,7 @@ let builder provider ~(target : Sol_cli_config.target) =
     }
   | Sol_cli_provider.Gcp ->
     { label = Sol_cli_gcp_cluster.label
-    ; identifying_resources = [ "google_container_cluster.main" ]
+    ; identifying_resources = substrate_addresses provider
     ; build =
         of_json Sol_cli_gcp_cluster.of_outputs_json (Sol_cli_gcp_cluster.cluster ~region)
     }

@@ -22,6 +22,7 @@ val inventory_of_show_json : string -> state_read
 val resources : state_read -> resource list
 val addresses : state_read -> string list
 val substrate_presence : state_read -> substrate_presence
+val in_cluster_kind : string -> bool
 val find_address : state_read -> string -> resource option
 
 type preparation =
