@@ -166,8 +166,18 @@ bindings are generated and checked in, its modules consume them, and `sol plan` 
 them — the declare → regenerate → plan path end to end. The scaffold emits the same
 shape.
 
-**Limitation recorded, not blocking.** The plan shows the declared partition count and
-key; it does not yet diff them against a *deployed* contract, because the release
-record does not carry the contract. The deploy-time partition guard still rejects a
-reduction against the live topic. A plan-vs-deployed diff needs the contract in the
-release record and is not introduced here.
+**Follow-up (2026-10-03, operator review).** The plan shows the declared partition
+count and key; it does not yet diff them against a *deployed* contract, because the
+release record does not carry the contract. The ticket's own criterion — "names a
+change to either against what is deployed" — is therefore **not met**; DEC-065's
+acceptance ("`sol plan` reading the declaration") is. The remainder is not a rename
+of this ticket's gap but a release-metadata unit and is filed as **FEAT-130**
+(record the deployed contract and render `observed → desired`), which also carries the
+unresolved decision about where the observed half comes from. The deploy-time
+partition guard still rejects a reduction against the live topic. This ticket is DONE
+for the source-of-truth half only; the plan story is finished when FEAT-130 lands.
+
+**TypeScript follow-up (2026-10-03, operator review).** The deferral recorded below
+was revisited: the campaign is the OCaml *and* TypeScript reference-app qualification,
+so FEAT-129's trigger is met. It was promoted to `READY_FOR_ENGINEERING/` as a pre-S5
+enabler.
