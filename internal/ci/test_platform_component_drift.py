@@ -16,6 +16,12 @@ FILES = [
     "framework/ocaml/sol-obs/lib/sol_obs.ml",
     "platform/cloud/modules/platform/main.tf",
     "platform/shared/components.json",
+    "examples/pluto/app/demo_ts/order_svc/src/tracing.ts",
+    "examples/pluto/app/demo_ts/order_svc/src/index.ts",
+    "examples/pluto/app/demo_ts/order_svc/package.json",
+    "examples/pluto/app/demo_ts/fulfillment_worker/src/tracing.ts",
+    "examples/pluto/app/demo_ts/fulfillment_worker/src/index.ts",
+    "examples/pluto/app/demo_ts/fulfillment_worker/package.json",
 ]
 
 
@@ -76,6 +82,30 @@ def bypass_shared_identity_injection(root):
     path.write_text(text.replace("Sol_cli_manifest.identity_env", "inline_identity_env", 1))
 
 
+def hardcode_ts_trace_service(root):
+    path = root / "examples/pluto/app/demo_ts/order_svc/src/tracing.ts"
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            "resourceFromAttributes(resourceAttributes(serviceName))",
+            'resourceFromAttributes({ "service.name": serviceName })',
+            1,
+        )
+    )
+
+
+def downgrade_ts_obs_pin(root):
+    path = root / "examples/pluto/app/demo_ts/order_svc/package.json"
+    text = path.read_text()
+    path.write_text(text.replace('"@sol-fab/obs": "^0.4.0"', '"@sol-fab/obs": "^0.3.0"', 1))
+
+
+def drop_ts_loki_pusher(root):
+    path = root / "examples/pluto/app/demo_ts/order_svc/src/index.ts"
+    text = path.read_text()
+    path.write_text(text.replace("makeLokiPusher(", "consoleJson(", 1))
+
+
 CASES = [
     ("a migrated key back in the local platform", "fail",
      append("cli/lib/local/sol_cli_local_platform.ml", '\nlet _ = "deploymentMode"\n')),
@@ -94,6 +124,9 @@ CASES = [
     ("env dropped from the framework's emitted identity", "fail", drop_framework_identity_label),
     ("a rendered identity variable is renamed", "fail", rename_identity_env_var),
     ("the workload env bypasses the shared identity", "fail", bypass_shared_identity_injection),
+    ("the TypeScript trace hardcodes its service name", "fail", hardcode_ts_trace_service),
+    ("the TypeScript obs pin predates identity support", "fail", downgrade_ts_obs_pin),
+    ("the TypeScript service stops pushing through makeLokiPusher", "fail", drop_ts_loki_pusher),
     ("the real tree", "pass", lambda root: None),
 ]
 

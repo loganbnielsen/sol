@@ -40,6 +40,21 @@ DEV_OBSERVABILITY = "cli/lib/local/sol_cli_dev_observability.ml"
 MANIFEST = "cli/lib/workspace/sol_cli_manifest_yaml.ml"
 FRAMEWORK_OBS = "framework/ocaml/sol-obs/lib/sol_obs.ml"
 DEPLOYMENT_RENDER = "cli/lib/deploy/sol_cli_deployment_render.ml"
+DEMO_TS = "examples/pluto/app/demo_ts"
+DEMO_TS_TRACING = [
+    f"{DEMO_TS}/order_svc/src/tracing.ts",
+    f"{DEMO_TS}/fulfillment_worker/src/tracing.ts",
+]
+DEMO_TS_LOGS = [
+    f"{DEMO_TS}/order_svc/src/index.ts",
+    f"{DEMO_TS}/fulfillment_worker/src/index.ts",
+]
+DEMO_TS_PACKAGES = [
+    f"{DEMO_TS}/order_svc/package.json",
+    f"{DEMO_TS}/fulfillment_worker/package.json",
+]
+OBS_TS_IDENTITY_FLOOR = (0, 4, 0)
+OBS_TS_DEP = re.compile(r'"@sol-fab/obs":\s*"\^(\d+)\.(\d+)\.(\d+)"')
 DOCUMENTED_TAXONOMY = ["workspace", "env", "domain", "service", "primitive", "release"]
 DEV_TAXONOMY = re.compile(r"~taxonomy_labels:\[(.*?)\]", re.S)
 
@@ -106,6 +121,50 @@ def identity_problems(root):
             f"{DEPLOYMENT_RENDER} must render the workload identity through "
             "Sol_cli_manifest.identity_env (DEC-064)"
         )
+    return problems
+
+
+def typescript_identity_problems(root):
+    problems = []
+    for rel in DEMO_TS_TRACING:
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"{rel} is missing, so the TypeScript trace identity cannot be checked")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "resourceAttributes(" not in text:
+            problems.append(
+                f"{rel} must build its OTel resource from resourceAttributes() so a TypeScript trace "
+                "carries Sol's injected workload identity (DEC-064/OBS-051)"
+            )
+        if "ATTR_SERVICE_NAME" in text:
+            problems.append(
+                f"{rel} hardcodes service.name instead of reading the injected identity (DEC-064/OBS-051)"
+            )
+    for rel in DEMO_TS_LOGS:
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"{rel} is missing, so the TypeScript log identity cannot be checked")
+            continue
+        if "makeLokiPusher(" not in path.read_text(encoding="utf-8"):
+            problems.append(
+                f"{rel} must push its logs through makeLokiPusher() so the Loki stream carries Sol's "
+                "injected workload identity (DEC-064/OBS-051)"
+            )
+    for rel in DEMO_TS_PACKAGES:
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"{rel} is missing, so the TypeScript identity floor cannot be checked")
+            continue
+        match = OBS_TS_DEP.search(path.read_text(encoding="utf-8"))
+        if match is None:
+            problems.append(f'{rel} must depend on "@sol-fab/obs" to read the injected identity (OBS-051)')
+        elif tuple(int(part) for part in match.groups()) < OBS_TS_IDENTITY_FLOOR:
+            floor = ".".join(str(part) for part in OBS_TS_IDENTITY_FLOOR)
+            problems.append(
+                f"{rel} pins @sol-fab/obs {match.group(0)}, which predates Sol workload-identity support "
+                f"({floor}); the app's own service name would win (OBS-051)"
+            )
     return problems
 
 
@@ -192,6 +251,7 @@ def main():
         )
     problems.extend(taxonomy_problems(root))
     problems.extend(identity_problems(root))
+    problems.extend(typescript_identity_problems(root))
     for problem in problems:
         print(f"guardrail: {problem}", file=sys.stderr)
     if problems:
@@ -199,6 +259,7 @@ def main():
     print("guardrail: no migrated platform-component keys found duplicated inline in the local platform or main.tf.")
     print("guardrail: the cloud and local Alloy log-promotion taxonomies match and carry all six labels.")
     print("guardrail: the framework, manifest and workload identity injection carry the same six labels under the same SOL_* names.")
+    print("guardrail: the TypeScript demo builds its Loki stream and OTLP resource from the injected identity, not the app's own service name.")
 
 
 main()
