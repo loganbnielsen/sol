@@ -8,6 +8,7 @@ verify_ns="${4:-default}"
 
 account="$(aws sts get-caller-identity --query Account --output text)"
 arn="arn:aws:iam::${account}:role/${role}"
+cluster_arn="arn:aws:eks:${region}:${account}:cluster/${cluster}"
 alias="${cluster}-qualifier"
 here="$(cd "$(dirname "$0")" && pwd)"
 
@@ -24,30 +25,83 @@ else
   echo "  IAM role ${role} already exists"
 fi
 
+aws_authority_is_declared() {
+  local attached
+  attached="$(aws iam list-attached-role-policies \
+    --role-name "$role" \
+    --query 'length(AttachedPolicies)' \
+    --output text)"
+  if [ "$attached" != 0 ]; then
+    echo "  the transport role carries ${attached} attached policy/policies beside its own inline policy, so its AWS authority is broader than this script declares; detach them and run again" >&2
+    return 1
+  fi
+  local trust
+  trust="$(aws iam get-role --role-name "$role" --query 'Role.AssumeRolePolicyDocument' --output json)"
+  case "$trust" in
+    *"arn:aws:iam::${account}:root"*) : ;;
+    *)
+      echo "  the transport role is not assumable by this account's root, so it is not the principal this script declares: ${trust}" >&2
+      return 1
+      ;;
+  esac
+  case "$trust" in
+    *'"*"'* | *'"Service"'*)
+      echo "  the transport role's trust policy names a principal beyond this account's root: ${trust}" >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+aws_authority_is_declared
+
 aws iam put-role-policy \
   --role-name "$role" \
   --policy-name sol-qualifier-transport \
-  --policy-document '{"Version":"2012-10-17","Statement":[{"Sid":"ReachTheCluster","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster"],"Resource":"*"}]}' >/dev/null
-echo "  policy sol-qualifier-transport attached (eks:ListClusters, eks:DescribeCluster)"
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ReachTheCluster\",\"Effect\":\"Allow\",\"Action\":\"eks:DescribeCluster\",\"Resource\":\"${cluster_arn}\"}]}" >/dev/null
+echo "  policy sol-qualifier-transport attached (eks:DescribeCluster on ${cluster_arn})"
 
 entry_exists() {
   aws eks describe-access-entry --cluster-name "$cluster" --principal-arn "$arn" >/dev/null 2>&1
 }
 
-create_narrow_entry() {
+ensure_narrow_entry() {
   if entry_exists; then
-    echo "  access entry with group sol:qualifiers already exists"
+    echo "  access entry already exists"
     return 0
   fi
-  aws eks create-access-entry \
+  if ! aws eks create-access-entry \
     --cluster-name "$cluster" \
     --principal-arn "$arn" \
-    --kubernetes-groups sol:qualifiers >/dev/null
+    --kubernetes-groups sol:qualifiers >/dev/null; then
+    echo "  aws eks create-access-entry failed for ${arn}" >&2
+    return 1
+  fi
   echo "  created access entry with group sol:qualifiers"
 }
 
-delete_entry() {
-  aws eks delete-access-entry --cluster-name "$cluster" --principal-arn "$arn" >/dev/null 2>&1 || true
+remove_entry() {
+  if ! aws eks delete-access-entry --cluster-name "$cluster" --principal-arn "$arn" >/dev/null 2>&1; then
+    echo "  aws eks delete-access-entry failed for ${arn}" >&2
+    return 1
+  fi
+  if entry_exists; then
+    echo "  the access entry for ${arn} is still present after a delete that reported success" >&2
+    return 1
+  fi
+  return 0
+}
+
+recreate_narrow_entry() {
+  remove_entry || return 1
+  if ! aws eks create-access-entry \
+    --cluster-name "$cluster" \
+    --principal-arn "$arn" \
+    --kubernetes-groups sol:qualifiers >/dev/null; then
+    echo "  aws eks create-access-entry failed for ${arn}" >&2
+    return 1
+  fi
+  return 0
 }
 
 kubeconfig() {
@@ -55,20 +109,34 @@ kubeconfig() {
 }
 
 end_state=narrow
+
+lost_authority() {
+  echo "  COULD NOT establish that ${arn} holds only the declared transport on ${cluster}." >&2
+  echo "  It may still carry the temporary cluster-admin association. Remove the access entry by hand" >&2
+  echo "  before using this cluster, and treat the transport as unestablished:" >&2
+  echo "    aws eks delete-access-entry --cluster-name ${cluster} --principal-arn ${arn}" >&2
+  exit 1
+}
+
 cleanup() {
   case "$end_state" in
     narrow)
-      delete_entry
-      create_narrow_entry || true
+      if ! recreate_narrow_entry; then
+        echo "  the window could not be closed by recreating the entry; removing it instead" >&2
+        remove_entry || lost_authority
+        echo "  the access entry is gone (describe-access-entry reports it absent): ${arn} holds no entry on ${cluster}" >&2
+      fi
       ;;
     none)
-      delete_entry
+      echo "  removing the access entry for ${arn}" >&2
+      remove_entry || lost_authority
+      echo "  the access entry is gone (describe-access-entry reports it absent): ${arn} holds no entry on ${cluster}" >&2
       ;;
   esac
 }
 trap cleanup EXIT
 
-create_narrow_entry
+ensure_narrow_entry
 
 admin_policy="arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 
@@ -91,33 +159,82 @@ kubectl --context "$alias" get clusterrole sol-qualifier-transport >/dev/null 2>
   { echo "  could not apply the transport manifest" >&2; exit 1; }
 
 echo "  closing the window by deleting the access entry and recreating it with only sol:qualifiers"
-delete_entry
-create_narrow_entry
+recreate_narrow_entry
 
 end_state=none
+
+can_i() {
+  kubectl --context "$alias" auth can-i "$1" -n "$verify_ns" 2>/dev/null
+}
+
+secrets_verdict() {
+  kubeconfig
+  local out status=0
+  out="$(kubectl --context "$alias" get secrets -n "$verify_ns" 2>&1)" || status=$?
+  if [ "$status" = 0 ]; then
+    echo "get secrets -n ${verify_ns} was answered as ${role}: ${out:-<no output>}"
+    return 1
+  fi
+  case "$out" in
+    *[Ff]orbidden* | *[Uu]nauthorized*)
+      echo "get secrets -n ${verify_ns} was denied"
+      return 0
+      ;;
+    *)
+      echo "get secrets -n ${verify_ns} failed for another reason, so the grant is unobservable: ${out:-<no output>}"
+      return 2
+      ;;
+  esac
+}
 
 probe_effective_surface() {
   kubeconfig
   local whoami
   whoami="$(kubectl --context "$alias" auth whoami -o json 2>/dev/null || true)"
-  if ! printf '%s' "$whoami" | grep -q "$role"; then
-    echo "  the context does not authenticate as ${role}; kubectl auth whoami said: ${whoami:-<no answer>}" >&2
-    return 1
-  fi
+  case "$whoami" in
+    *"assumed-role/${role}/"*) : ;;
+    *)
+      echo "  the context does not authenticate as ${role}; kubectl auth whoami said: ${whoami:-<no answer>}" >&2
+      return 1
+      ;;
+  esac
+  case "$whoami" in
+    *sol:qualifiers*) : ;;
+    *)
+      echo "  the context is not in the declared group sol:qualifiers; kubectl auth whoami said: ${whoami:-<no answer>}" >&2
+      return 1
+      ;;
+  esac
+  case "$whoami" in
+    *system:masters*)
+      echo "  the context carries system:masters, which is not the declared mapping; kubectl auth whoami said: ${whoami}" >&2
+      return 1
+      ;;
+  esac
   if ! kubectl --context "$alias" get pods -n "$verify_ns" >/dev/null 2>&1; then
     echo "  the addressing grant is not effective: get pods -n ${verify_ns} was refused" >&2
     return 1
   fi
-  local secrets
-  secrets="$(kubectl --context "$alias" get secrets -n "$verify_ns" 2>&1 || true)"
-  if ! printf '%s' "$secrets" | grep -qi forbidden; then
-    echo "  the grant is broader than declared: get secrets -n ${verify_ns} did not report Forbidden. Observed: ${secrets:-<no output>}" >&2
+  local verdict rc=0
+  verdict="$(secrets_verdict)" || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "  the grant is not shown to be transport-only: ${verdict}" >&2
     return 1
   fi
-  if [ "$(kubectl --context "$alias" auth can-i create pods/portforward -n "$verify_ns" 2>/dev/null)" != "yes" ]; then
-    echo "  pods/portforward is not permitted in ${verify_ns}" >&2
-    return 1
-  fi
+  local denial
+  for denial in "* *" "create pods/exec" "get pods/log" "delete pods"; do
+    if [ "$(can_i "$denial")" != no ]; then
+      echo "  the grant is broader than declared: auth can-i ${denial} -n ${verify_ns} did not answer no" >&2
+      return 1
+    fi
+  done
+  local grant
+  for grant in "list services" "create pods/portforward"; do
+    if [ "$(can_i "$grant")" != yes ]; then
+      echo "  the declared grant is not effective: auth can-i ${grant} -n ${verify_ns} did not answer yes" >&2
+      return 1
+    fi
+  done
   return 0
 }
 
@@ -159,10 +276,11 @@ fi
 
 end_state=narrow
 trap - EXIT
-echo "  verified the effective surface as ${role} in ${verify_ns}: pods readable, secrets Forbidden, pods/portforward permitted"
+echo "  verified the effective surface as ${role} in ${verify_ns}: pods and services readable, secrets denied, pods/portforward permitted, pods/exec, pods/log, delete pods and */* denied"
 
 echo "qualification transport established. Verify with:"
 echo "  aws eks update-kubeconfig --name ${cluster} --alias ${alias} --role-arn ${arn}"
-echo "  kubectl --context ${alias} get pods -n ${verify_ns}                           # succeeds"
-echo "  kubectl --context ${alias} get secrets -n ${verify_ns}                        # Forbidden"
-echo "  kubectl --context ${alias} auth can-i create pods/portforward -n ${verify_ns}  # yes"
+echo "  kubectl --context ${alias} get pods -n ${verify_ns}                                         # succeeds"
+echo "  kubectl --context ${alias} get secrets -n ${verify_ns}                                      # denied"
+echo "  kubectl --context ${alias} auth can-i create pods/portforward -n ${verify_ns}               # yes"
+echo "  kubectl --context ${alias} auth can-i create pods/exec -n ${verify_ns}                      # no"
