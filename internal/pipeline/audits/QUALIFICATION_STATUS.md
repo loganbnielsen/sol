@@ -1074,5 +1074,25 @@ Also filed: `BUG-123` (low) — `sol logs` reports a malformed-but-reachable bac
 Alertmanager firing/delivery, `self_hosted_durable`/`external`, managed-resource dashboards, and the
 deploy → rollback → recovery loop. **Nothing here is `LIVE`.**
 
+## Observability run 3 — the alert delivery route (2026-10-02, `main @ 40862feb`)
+
+Addendum to run 2; the last row executable without Kubernetes. Record:
+[`2026-10-02-observability-run3-alert-route.md`](../qualification/records/2026-10-02-observability-run3-alert-route.md).
+
+A native Alertmanager 0.27.0 with a webhook receiver, driven by `sol alert test` from a target that
+declares the receiver contract. Observed: `--dry-run` prints the exact body and URL; the live POST is
+accepted by Alertmanager's v2 API; the alert becomes `active`; Alertmanager delivers a firing
+notification to the receiver, with the `owner` label intact. **OB-F1's delivery half moves from
+`BLOCKED` to `QUALIFIED (LOCAL)`.** Still `BLOCKED`: the specific `SolTelemetryTargetDown` firing
+(needs a cluster whose `monitoring` scrape can go down) and the delivered-and-acknowledged result
+(HARDEN-002, operator-gated).
+
+With runs 1–3, every row executable on this host without a Kubernetes cluster or a cloud account has
+been run. What remains is substrate- or operator-gated: a cluster (workload health, the `kubectl`
+fallback, deployed-backend resolution, panel data under the taxonomy labels, the
+deploy → rollback → recovery loop), a cloud account (`self_hosted_durable`, `external`,
+managed-resource dashboards, retention/durability), or the operator (delivered-and-acknowledged).
+**Nothing is `LIVE`.**
+
 
 
