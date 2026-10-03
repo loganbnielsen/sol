@@ -163,12 +163,17 @@ An expired lease from a worker crash counts as an unfinished attempt. The next c
 
 ```ocaml
 module Make (J : JOB) : sig
-  val enqueue : Pg_db.tx -> ?run_at:float -> J.t -> (unit, Pg_error.t) result
+  val enqueue
+    :  Pg_db.tx
+    -> ?run_at:float
+    -> ?dedupe_key:string
+    -> J.t
+    -> (unit, Pg_error.t) result
 
   val run
     :  env:(_, _, _, _) Sol_env.timed
     -> pool:Pg_db.pool
-    -> ?retry_policy:Sol_jobs.retry_policy
+    -> ?retry_policy:retry_policy
     -> ?poll_interval_s:float
     -> ?lease_s:float
     -> ?ot:Sol_obs.t
@@ -177,8 +182,10 @@ module Make (J : JOB) : sig
     -> ?stop:unit Eio.Promise.t
     -> ?max_jobs:int
     -> ?max_claim_failures:int
+    -> ?terminal_retention_s:float
+    -> ?sweep_interval_s:float
     -> unit
-    -> (unit, Sol_jobs.run_error) result
+    -> (unit, run_error) result
 end
 ```
 

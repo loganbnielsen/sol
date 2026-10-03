@@ -8,6 +8,14 @@ REPO = Path(__file__).resolve().parents[3]
 GUARD = REPO / "internal/ci/always/check_framework_doc_signatures.py"
 SVC = "framework/ocaml/sol-svc/sol-svc.md"
 KAFKA = "framework/ocaml/kafka-eio-service/kafka-eio-service.md"
+WORKER = "framework/ocaml/sol-worker/sol-worker.md"
+FN = "framework/ocaml/sol-fn/sol-fn.md"
+OBS = "framework/ocaml/sol-obs/sol-obs.md"
+JOBS = "framework/ocaml/sol-jobs/sol-jobs.md"
+OUTBOX = "framework/ocaml/sol-outbox/sol-outbox.md"
+
+PACKAGES = ("sol-svc", "kafka-eio-service", "sol-worker", "sol-fn", "sol-obs", "sol-jobs", "sol-outbox")
+SPECS = (SVC, KAFKA, WORKER, FN, OBS, JOBS, OUTBOX)
 
 CASES = [
     ("a dropped Request.t field", "fail", SVC, "  ; trace_ctx : Obs_trace.t option\n", ""),
@@ -21,6 +29,18 @@ CASES = [
     ("a changed argument shape", "fail", KAFKA, "-> ?ot:Obs_eio.t", "-> ?ot:Obs_eio.t option"),
     ("a spec that shows fewer declarations than the .mli", "pass", SVC,
      "val query_params : t -> string -> string list", ""),
+    ("an fn `Make.run` that predates the timed environment", "fail", FN,
+     "    :  env:(_, _, _, _) Sol_env.timed\n", "    :  env:< net : _ Eio.Net.t; .. >\n"),
+    ("a variant whose first constructor lost its leading bar", "fail", FN,
+     "type trigger =\n  | Cron\n  | Lambda\n", "type trigger = Cron | Lambda\n"),
+    ("a re-export that lost a constructor", "fail", OBS, "  | Warn\n", ""),
+    ("an enqueue that predates the dedupe key", "fail", JOBS, "    -> ?dedupe_key:string\n", ""),
+    ("a run that predates the retention arguments", "fail", JOBS, "    -> ?terminal_retention_s:float\n", ""),
+    ("a relay that predates the batch argument", "fail", OUTBOX, "    -> ?batch:int\n", ""),
+    ("a section the manifest neither maps nor excludes", "fail", WORKER,
+     "## Entrypoints\n", "## Extra API\n\n```ocaml\nval extra : unit\n```\n\n## Entrypoints\n"),
+    ("an exclusion that names a section the spec no longer carries", "fail", WORKER,
+     "```ocaml\nmodule NotifyWorker", "```text\nmodule NotifyWorker"),
 ]
 
 
@@ -31,9 +51,9 @@ def verdict(root):
 def main():
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        for package in ("sol-svc", "kafka-eio-service"):
+        for package in PACKAGES:
             shutil.copytree(REPO / "framework/ocaml" / package, root / "framework/ocaml" / package)
-        originals = {rel: (root / rel).read_text() for rel in (SVC, KAFKA)}
+        originals = {rel: (root / rel).read_text() for rel in SPECS}
         if verdict(root).returncode != 0:
             sys.exit(f"  [FAIL] the committed specs should pass\n{verdict(root).stdout}")
         print("  [OK]   the committed specs pass")

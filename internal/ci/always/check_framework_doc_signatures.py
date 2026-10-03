@@ -16,6 +16,36 @@ MANIFEST = [
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Service`", ["framework/ocaml/sol-svc/lib/service.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Configuration", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Public API", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
+    ("framework/ocaml/sol-worker/sol-worker.md", "## Module types", ["framework/ocaml/sol-worker/lib/worker.mli"]),
+    ("framework/ocaml/sol-worker/sol-worker.md", "## Entrypoints", ["framework/ocaml/sol-worker/lib/worker.mli"]),
+    ("framework/ocaml/sol-fn/sol-fn.md", "## Module type", ["framework/ocaml/sol-fn/lib/fn.mli"]),
+    ("framework/ocaml/sol-fn/sol-fn.md", "## Functor", ["framework/ocaml/sol-fn/lib/fn.mli"]),
+    ("framework/ocaml/sol-obs/sol-obs.md", "## Public API", ["framework/ocaml/sol-obs/lib/sol_obs.mli"]),
+    ("framework/ocaml/sol-jobs/sol-jobs.md", "## Entrypoint", ["framework/ocaml/sol-jobs/lib/sol_jobs.mli"]),
+    ("framework/ocaml/sol-outbox/sol-outbox.md", "## Public API", ["framework/ocaml/sol-outbox/lib/sol_outbox.mli"]),
+]
+
+EXCLUSIONS = [
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Runtime Loop", "the server's implementation sketch, not a declaration the package owns"),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Test Plan", "a sketch of a test, not a declaration"),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Example Usage", "an application example"),
+    ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Message Contract", "an application's own MESSAGE module, not the package's declaration surface"),
+    ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Wire Format", "a wire-format illustration rather than a declaration"),
+    ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Example: Payments Producer", "an application example"),
+    ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Example: Audit Consumer", "an application example"),
+    ("framework/ocaml/sol-worker/sol-worker.md", "## Fail stops the consumer", "an application's handler, not the package's declaration surface"),
+    ("framework/ocaml/sol-worker/sol-worker.md", "## Usage examples", "an application example"),
+    ("framework/ocaml/sol-worker/sol-worker.md", "## Test injection", "an example of calling For_testing, not a declaration"),
+    ("framework/ocaml/sol-fn/sol-fn.md", "## Signature", "documents Obs_prometheus.push, which lives in the external obs-prometheus-eio package"),
+    ("framework/ocaml/sol-fn/sol-fn.md", "## Generated main", "a scaffolded entrypoint example"),
+    ("framework/ocaml/sol-obs/sol-obs.md", "## Example Usage", "an application example"),
+    (
+        "framework/ocaml/sol-jobs/sol-jobs.md",
+        "## Module type",
+        "the framework's JOB module type is a `module` declaration this check skips, and the section also carries an application's own `t` example",
+    ),
+    ("framework/ocaml/sol-jobs/sol-jobs.md", "## Deduplication: the Kafka → jobs handoff", "a call-site example"),
+    ("framework/ocaml/sol-jobs/sol-jobs.md", "## Example: transactional enqueue", "an application example"),
 ]
 
 KEYWORDS = ("val", "type", "exception", "external", "module")
@@ -93,6 +123,15 @@ def mli_declarations(paths):
     return have
 
 
+def ocaml_sections(md_text):
+    lines = md_text.split("\n")
+    starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+    starts.append(len(lines))
+    for start, end in zip(starts, starts[1:]):
+        if re.search(r"^```ocaml", "\n".join(lines[start:end]), flags=re.M):
+            yield lines[start].strip()
+
+
 problems = 0
 for doc, heading, mlis in MANIFEST:
     have = mli_declarations(mlis)
@@ -108,8 +147,24 @@ for doc, heading, mlis in MANIFEST:
             print(f"    mli: {have[key][0][:160]}")
             problems += 1
 
+mapped = {(doc, heading) for doc, heading, _ in MANIFEST}
+excluded = {(doc, heading) for doc, heading, _ in EXCLUSIONS}
+sections = {
+    doc: list(ocaml_sections(pathlib.Path(doc).read_text()))
+    for doc in sorted({doc for doc, _, _ in MANIFEST + EXCLUSIONS})
+}
+for doc, doc_sections in sections.items():
+    for heading in doc_sections:
+        if (doc, heading) not in mapped and (doc, heading) not in excluded:
+            print(f"✗ {doc}: {heading} carries an ocaml block but is neither a MANIFEST section nor a named EXCLUSION")
+            problems += 1
+for doc, heading, reason in EXCLUSIONS:
+    if heading not in sections[doc]:
+        print(f"✗ {doc}: EXCLUSIONS names {heading} as {reason!r}, which is not a section of the spec")
+        problems += 1
+
 if problems:
     print("")
-    print(f"✗ {problems} stale framework spec signature(s). Update the doc to match the .mli.")
+    print(f"✗ {problems} framework spec problem(s): a stale signature, a section that is neither mapped nor excluded, or an exclusion that names no section.")
     sys.exit(1)
-print("framework doc signatures: all spec declarations match their .mli.")
+print(f"framework doc signatures: {len(MANIFEST)} mapped section(s) match their .mli, and every ocaml-bearing section is mapped or excluded.")

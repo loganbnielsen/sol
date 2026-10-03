@@ -38,7 +38,9 @@ and exits: on a schedule as a Kubernetes CronJob (`Cron`), or hosted on AWS Lamb
 ## Module type
 
 ```ocaml
-type trigger = Cron | Lambda
+type trigger =
+  | Cron
+  | Lambda
 
 module type FN = sig
   val trigger : trigger
@@ -55,8 +57,7 @@ used to default to hourly. The code carries no cron string, so the two cannot di
 ```ocaml
 module Make (F : FN) : sig
   val run
-    :  env:< net : _ Eio.Net.t; clock : _ Eio.Time.clock;
-             mono_clock : _ Eio.Time.Mono.t; .. >
+    :  env:(_, _, _, _) Sol_env.timed
     -> ?pushgateway_url:string   (* default: PUSHGATEWAY_URL from the environment *)
     -> ?job:string               (* default: SOL_PUSHGATEWAY_JOB, else "sol-fn"/"lambda" *)
     -> ?ot:Sol_obs.t
