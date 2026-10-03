@@ -1264,23 +1264,49 @@ jobs:
           # the trace holds a span from each unit rather than two rooted traces.
           # Asserted against Tempo's query API (the same store the demo's README
           # tells a user to read), so an app that starts a fresh root trace --
-          # the pre-fix behaviour -- fails here.
+          # the pre-fix behaviour -- fails here. The service names are Sol's --
+          # the workload's bare Kubernetes name, not the app's own label --
+          # because `@sol-fab/obs` composes the injected identity (OBS-051).
           trace_ok=0
           for i in $(seq 1 30); do
             trace=$(curl -sf "http://localhost:3200/api/traces/${trace_id}" 2>/dev/null || true)
             services=$(jq -r '[.batches[].resource.attributes[]? | select(.key == "service.name") | .value.stringValue] | unique | .[]' <<< "$trace" 2>/dev/null || true)
-            if grep -Fxq 'order-svc-ts' <<< "$services" && grep -Fxq 'fulfillment-worker-ts' <<< "$services"; then
+            if grep -Fxq 'order-svc' <<< "$services" && grep -Fxq 'fulfillment-worker' <<< "$services"; then
               trace_ok=1
               break
             fi
             sleep 2
           done
           if [ "$trace_ok" -ne 1 ]; then
-            echo "::error::TS golden-path smoke test: trace ${trace_id} did not span both order-svc-ts and fulfillment-worker-ts -- inbound trace context was not preserved"
+            echo "::error::TS golden-path smoke test: trace ${trace_id} did not span both order-svc and fulfillment-worker -- inbound trace context was not preserved"
             curl -s "http://localhost:3200/api/traces/${trace_id}" | head -c 500 || true
             exit 1
           fi
-          echo "trace ${trace_id} spans order-svc-ts and fulfillment-worker-ts -- inbound trace context preserved"
+          echo "trace ${trace_id} spans order-svc and fulfillment-worker -- inbound trace context preserved"
+
+          # OBS-051: the framework, not the app, owns the semantic workload
+          # identity, so the trace resource carries every identity label the pod
+          # was injected with. Read the expected labels off the running pod
+          # rather than restating them, so a manifest that injects five (no
+          # release for a local target) is asserted as five.
+          order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
+          expected_identity=$(kubectl exec -n "$demo_ns" "$order_pod" -- env 2>/dev/null \
+            | grep -oE '^SOL_(WORKSPACE|ENV|DOMAIN|SERVICE|PRIMITIVE|RELEASE)=' \
+            | sed -E 's/^SOL_//; s/=$//' | tr 'A-Z' 'a-z' | sort -u || true)
+          if [ -z "$expected_identity" ]; then
+            echo "::error::TS golden-path smoke test: ${order_pod} carries none of the SOL_* identity variables, so OBS-051 cannot be verified"
+            exit 1
+          fi
+          keys=$(jq -r '[.batches[].resource.attributes[]?.key] | unique | .[]' <<< "$trace" 2>/dev/null || true)
+          while IFS= read -r key; do
+            [ -z "$key" ] && continue
+            if ! grep -Fxq "$key" <<< "$keys"; then
+              echo "::error::TS golden-path smoke test: the pod injects SOL_${key} but trace ${trace_id} has no '${key}' identity attribute (OBS-051)"
+              curl -s "http://localhost:3200/api/traces/${trace_id}" | head -c 500 || true
+              exit 1
+            fi
+          done <<< "$expected_identity"
+          echo "trace ${trace_id} carries every Sol workload-identity label the pod injects"
 
           # Coarse liveness check, not a reproduction of FEAT-082's
           # forced-shutdown/redelivery experiments: a graceful pod delete
