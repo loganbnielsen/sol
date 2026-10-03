@@ -77,13 +77,20 @@ type fetch_error =
   | Timeout
   | Connection_failed
   | Http_error of int
+  | Malformed of string
   | Other of string
 
 let fetch_error_to_string = function
   | Timeout -> "query timed out"
   | Connection_failed -> "connection failed"
   | Http_error code -> Printf.sprintf "HTTP %d" code
+  | Malformed msg -> msg
   | Other msg -> msg
+;;
+
+let classify_parse_result = function
+  | Ok lines -> Ok lines
+  | Error msg -> Error (Malformed msg)
 ;;
 
 let classify_process_error (e : Sol_cli_process.error) : fetch_error =
@@ -173,10 +180,7 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
     let body, code = split_body_and_status r.stdout in
     (match code with
      | Some c when c < 200 || c >= 300 -> Error (Http_error c)
-     | _ ->
-       (match parse_query_range_body body with
-        | Ok lines -> Ok lines
-        | Error msg -> Error (Other msg)))
+     | _ -> classify_parse_result (parse_query_range_body body))
 ;;
 
 let query ~base_url ~unit ?credentials ?limit ?timeout_s () =

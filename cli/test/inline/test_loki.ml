@@ -365,3 +365,33 @@ let%test "resolve_credentials: username without password -> Error" =
 let%test "resolve_credentials: password without username -> Error" =
   test_resolve_credentials_password_without_username_is_error ()
 ;;
+
+let malformed_values_body =
+  {|{"status":"success","data":{"result":[{"stream":{"app":"x"},"values":[["only-one-element"]]}]}}|}
+;;
+
+let test_classify_parse_result_malformed () =
+  match L.classify_parse_result (L.parse_query_range_body malformed_values_body) with
+  | Error (L.Malformed _) -> ()
+  | Error (L.Other msg) -> Windtrap.fail ("expected Malformed, got Other " ^ msg)
+  | Error _ -> Windtrap.fail "expected Malformed"
+  | Ok _ -> Windtrap.fail "expected an Error for a malformed body"
+;;
+
+let test_classify_process_error_refused_is_not_malformed () =
+  match
+    L.classify_process_error
+      (Sol_cli_process.Non_zero
+         { exit_code = 7; stdout = ""; stderr = "connection refused" })
+  with
+  | L.Connection_failed -> ()
+  | _ -> Windtrap.fail "expected Connection_failed for curl exit 7"
+;;
+
+let%test "classify_parse_result: a malformed body is Malformed, not Other" =
+  test_classify_parse_result_malformed ()
+;;
+
+let%test "classify_process_error: a refused connection is not Malformed" =
+  test_classify_process_error_refused_is_not_malformed ()
+;;

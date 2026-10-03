@@ -1,6 +1,13 @@
 open Cmdliner
 open Result.Syntax
 
+let loki_failure_message ~url e =
+  match e with
+  | Sol_cli_loki.Malformed msg -> msg
+  | e ->
+    Sol_cli_status.unreachable_message ~url ~error:(Sol_cli_loki.fetch_error_to_string e)
+;;
+
 let resolve_unit ~facts ~scope =
   let* selected =
     Sol_cli_workload_selection.resolve
@@ -202,9 +209,7 @@ let run_unit ~ctx ~target (options : log_options) scope =
        | Error e ->
          Printf.printf
            "(%s. Falling back to Kubernetes logs for %s...)\n%!"
-           (Sol_cli_status.unreachable_message
-              ~url:loki_base_url
-              ~error:(Sol_cli_loki.fetch_error_to_string e))
+           (loki_failure_message ~url:loki_base_url e)
            name;
          fallback_to_kubectl ()))
 ;;
@@ -290,11 +295,7 @@ let run_release ~ctx ~target (options : log_options) release =
           lines |> List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text);
           Ok ()
         | Error e ->
-          Error
-            (Sol_cli_exit.error
-               (Sol_cli_status.unreachable_message
-                  ~url:loki_base_url
-                  ~error:(Sol_cli_loki.fetch_error_to_string e)))))
+          Error (Sol_cli_exit.error (loki_failure_message ~url:loki_base_url e))))
 ;;
 
 let run ~ctx ~target (options : log_options) =
