@@ -15,6 +15,7 @@ type t =
   ; workloads : recorded_workload list
   ; migrations : string list
   ; apply_mode : apply_mode
+  ; encoding_version : string option
   }
 
 val sanitize_label : string -> string

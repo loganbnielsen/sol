@@ -52,6 +52,7 @@ let sample_record : R.t =
     ; workloads = [ R.applied_by "" sample_workload ]
     ; migrations = [ "0001_notifications.sql" ]
     ; apply_mode = R.Direct
+    ; encoding_version = Some Sol_cli_release_id.encoding_version
     }
   in
   let release_id =
@@ -91,7 +92,11 @@ let test_json_round_trip () =
       (Windtrap.list Windtrap.string)
       ~msg:"migrations preserved"
       [ "0001_notifications.sql" ]
-      r.migrations
+      r.migrations;
+    check_string
+      "encoding version preserved"
+      Sol_cli_release_id.encoding_version
+      (Option.value r.encoding_version ~default:"")
 ;;
 
 let test_configmap_object () =
@@ -159,6 +164,46 @@ let test_validate_rejects_corrupt_content () =
   match R.validate ~name:(R.configmap_name corrupt) corrupt with
   | Ok () -> Windtrap.fail "expected a content-direction failure"
   | Error msg -> check_bool "reports corruption" true (contains "corrupt" msg)
+;;
+
+let stale_record : R.t = { sample_record with encoding_version = Some "sol-release-v1" }
+
+let test_validate_reports_stale_encoding_version () =
+  match R.validate ~name:(R.configmap_name stale_record) stale_record with
+  | Ok () -> Windtrap.fail "expected a stale-encoding record to be refused"
+  | Error msg ->
+    check_bool
+      "names the version the record was written with"
+      true
+      (contains "sol-release-v1" msg);
+    check_bool
+      "names the version this CLI writes"
+      true
+      (contains Sol_cli_release_id.encoding_version msg);
+    check_bool "does not report corruption" false (contains "corrupt" msg)
+;;
+
+let test_validate_reports_undeclared_encoding_version () =
+  let legacy = { sample_record with encoding_version = None; workloads = [] } in
+  match R.validate ~name:(R.configmap_name legacy) legacy with
+  | Ok () -> Windtrap.fail "expected an unmarked non-rederiving record to be refused"
+  | Error msg ->
+    check_bool "names the missing marker" true (contains "encoding_version" msg);
+    check_bool "does not report corruption" false (contains "corrupt" msg)
+;;
+
+let test_of_json_without_encoding_version_is_unmarked () =
+  let without =
+    match R.to_json sample_record with
+    | `Assoc fields ->
+      `Assoc
+        (List.filter (fun (key, _) -> not (String.equal key "encoding_version")) fields)
+    | other -> other
+  in
+  match R.of_json without with
+  | Error msg -> Windtrap.fail msg
+  | Ok r ->
+    check_bool "an absent marker stays absent" true (Option.is_none r.encoding_version)
 ;;
 
 let item ?(name = R.configmap_name sample_record) ?digest json =
@@ -239,6 +284,17 @@ let test_of_kubectl_item_accepts_canonical_record () =
   match R.of_kubectl_item (item (R.record_json_string sample_record)) with
   | Error msg -> Windtrap.fail msg
   | Ok r -> check_string "round-trips the id" sample_record.release_id r.release_id
+;;
+
+let test_of_kubectl_item_reports_stale_encoding_version () =
+  match R.of_kubectl_item (item (R.record_json_string stale_record)) with
+  | Ok _ -> Windtrap.fail "expected a stale record read from a ConfigMap to be refused"
+  | Error msg ->
+    check_bool
+      "names the version the record was written with"
+      true
+      (contains "sol-release-v1" msg);
+    check_bool "does not report corruption" false (contains "corrupt" msg)
 ;;
 
 let test_of_kubectl_item_rejects_missing_digest () =
@@ -348,7 +404,7 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "d14c45499af5cc91ec0a6c3250801cfa"
+    "a9ca081d3618cc76727ea10aea207006"
     (R.record_digest sample_record)
 ;;
 
@@ -883,6 +939,23 @@ let%test "validate: accepts a canonical record" =
 
 let%test "validate: rejects a wrong name" = test_validate_rejects_wrong_name ()
 let%test "validate: rejects corrupt content" = test_validate_rejects_corrupt_content ()
+
+let%test "validate: reports a stale encoding_version, not corruption" =
+  test_validate_reports_stale_encoding_version ()
+;;
+
+let%test "validate: reports an undeclared encoding_version, not corruption" =
+  test_validate_reports_undeclared_encoding_version ()
+;;
+
+let%test "record: an absent encoding_version stays unmarked" =
+  test_of_json_without_encoding_version_is_unmarked ()
+;;
+
+let%test "read: reports a stale encoding_version, not corruption" =
+  test_of_kubectl_item_reports_stale_encoding_version ()
+;;
+
 let%test "read: reads valid items" = test_parse_kubectl_list_reads_valid_items ()
 
 let%test "read: reads creation timestamps (FEAT-072 retention)" =

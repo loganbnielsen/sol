@@ -27,6 +27,7 @@ type t =
   ; workloads : recorded_workload list
   ; migrations : string list
   ; apply_mode : apply_mode
+  ; encoding_version : string option
   }
 
 let sanitize_label (s : string) : string =
@@ -121,6 +122,7 @@ let of_plan_with_boundary
       @ inherited
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   ; apply_mode
+  ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
 ;;
 
@@ -135,6 +137,27 @@ let derived_release_id (t : t) : Sol_cli_release_id.t =
     t.workloads
 ;;
 
+let stale_encoding_version_message (t : t) written_with =
+  Printf.sprintf
+    "release record %s was written with encoding_version %s, but this CLI writes %s: the \
+     record predates a release-identity format change and cannot be verified against it \
+     (a release-identity format change, not damage)"
+    t.release_id
+    written_with
+    Sol_cli_release_id.encoding_version
+;;
+
+let undeclared_encoding_version_message (t : t) derived =
+  Printf.sprintf
+    "release record %s declares no encoding_version, and its content rederives %s: the \
+     record predates the encoding_version marker this CLI writes (now %s), so a \
+     release-identity format change and damaged content cannot be told apart here -- \
+     re-record the release with this CLI rather than assuming the record is damaged"
+    t.release_id
+    (Sol_cli_release_id.to_string derived)
+    Sol_cli_release_id.encoding_version
+;;
+
 let validate ~(name : string) (t : t) : (unit, string) result =
   let open Result.Syntax in
   let* id = Sol_cli_release_id.of_string t.release_id in
@@ -147,15 +170,23 @@ let validate ~(name : string) (t : t) : (unit, string) result =
          t.release_id
          (configmap_name t))
   else (
-    let derived = derived_release_id t in
-    if derived <> id
-    then
-      Error
-        (Printf.sprintf
-           "release record %s is corrupt: its content rederives %s"
-           t.release_id
-           (Sol_cli_release_id.to_string derived))
-    else Ok ())
+    match t.encoding_version with
+    | Some written_with
+      when not (String.equal written_with Sol_cli_release_id.encoding_version) ->
+      Error (stale_encoding_version_message t written_with)
+    | _ ->
+      let derived = derived_release_id t in
+      if derived <> id
+      then
+        Error
+          (match t.encoding_version with
+           | None -> undeclared_encoding_version_message t derived
+           | Some _ ->
+             Printf.sprintf
+               "release record %s is corrupt: its content rederives %s"
+               t.release_id
+               (Sol_cli_release_id.to_string derived))
+      else Ok ())
 ;;
 
 let sorted_pairs pairs =
@@ -255,6 +286,10 @@ let to_json (t : t) : Yojson.Safe.t =
     ; ( "migrations"
       , `List (List.map (fun m -> `String m) (List.sort String.compare t.migrations)) )
     ; "apply_mode", `String (apply_mode_to_string t.apply_mode)
+    ; ( "encoding_version"
+      , match t.encoding_version with
+        | None -> `Null
+        | Some v -> `String v )
     ]
 ;;
 
@@ -386,6 +421,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
       ; workloads = List.map recorded_workload_of_json (list "workloads" json)
       ; migrations = string_list "migrations" json
       ; apply_mode
+      ; encoding_version = string_option "encoding_version" json
       }
 ;;
 
