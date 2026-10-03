@@ -171,3 +171,42 @@ plan of the Sol-owned boundary, not a universal plan), confirms that Sol does
 not import or adopt resources it did not record (DEC-044/DEC-045), and keeps
 declared-ownership adoption (`dns_zone_ownership: sol`) as the bounded exception.
 It created no implementation work.
+
+## Final inventory (2026-10-03, after #977/#982/#983/#984)
+
+**Closed by this campaign (8).** Seven stale/superseded/withdrawn —
+BUG-035, BUG-065, DEC-043, DEC-044, EXP-025, FEAT-095, INFRA-087 — and one
+implemented: INFRA-081.
+
+**Actively owned elsewhere (2).** OBS-051 (PR #980) and BUG-125
+(`sol-typescript` PR #9). Not actionable here.
+
+**Decided, actionable, promoted to READY_FOR_ENGINEERING (unowned):**
+
+| Ticket | Decision | Work |
+|---|---|---|
+| FEAT-093 | Require SASL_SSL now | Redpanda TLS/SASL, projection, registry/admin HTTPS, qualification |
+| FEAT-116 | Declarative contract canonical (DEC-065) | Contract, generator, checked-in bindings, CI drift, `sol plan` read |
+| FEAT-094 | Fail the deploy gate | Per-migration checksum; `sol migrate status` + gate |
+| INFRA-082 / INFRA-094 | Reconcile only provable absence | Extend the INFRA-042 rule to absent-substrate / failed-create |
+| INFRA-083 | Explicit total authority declaration | `No_authority_required \| Mechanism …` |
+| SEC-011 | Preserve ADR 0002 | Consume a pre-built runner; fail closed; publish via the Sol release |
+
+**Actionable, already READY (pre-existing adjudication):** AUDIT-077, DOCS-020,
+FEAT-037, FEAT-053, FEAT-110, FEAT-114, INFRA-021, INFRA-065, REFAC-140,
+REFAC-141; plus pre-existing READY tickets DEC-023, FEAT-084, INFRA-014,
+INFRA-017, INFRA-060, INFRA-062, VERIF-026.
+
+**Decided no-change, close as bookkeeping:** FEAT-092 (non-goal via DOCS-019),
+REFAC-110, REFAC-113.
+
+**Deferred in BACKLOG against an objective trigger (9):** AUDIT-075, AUDIT-076,
+FEAT-043, FEAT-044, FEAT-048, FEAT-058, SEC-005, INFRA-015, RELEASE-005.
+`DEC-065` stays in BACKLOG as the decision record and closes with FEAT-116.
+
+**Live/operator blocked (8):** FEAT-102, HARDEN-007, HARDEN-008, PROD-001,
+VERIF-020, VERIF-021, VERIF-022, INFRA-005.
+
+No BACKLOG ticket is unprioritized: every one is deferred against a named
+trigger or blocked on a live/operator input. The promoted actionable tickets are
+owned by the READY queue, not by this pass.
