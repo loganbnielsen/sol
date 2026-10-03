@@ -35,14 +35,40 @@ let all =
   from Aws
 ;;
 
-let owned_legacy_keys : (string * t) list =
-  [ "state_lock_table", Aws
-  ; "provisioner_role_arn", Aws
-  ; "cluster_access_role_arn", Aws
-  ; "deploy_role_arn", Aws
-  ; "operator_role_arn", Aws
-  ; "provisioner_impersonator", Gcp
-  ]
+type key_disposition =
+  | Sol_consumes
+  | Passed_to_terraform
+
+type owned_key =
+  { key : string
+  ; disposition : key_disposition
+  }
+
+let owned_keys : t -> owned_key list = function
+  | Aws ->
+    [ { key = "state_lock_table"; disposition = Sol_consumes }
+    ; { key = "provisioner_role_arn"; disposition = Sol_consumes }
+    ; { key = "cluster_access_role_arn"; disposition = Sol_consumes }
+    ; { key = "deploy_role_arn"; disposition = Sol_consumes }
+    ; { key = "operator_role_arn"; disposition = Sol_consumes }
+    ]
+  | Gcp -> [ { key = "provisioner_impersonator"; disposition = Sol_consumes } ]
+  | Byo -> []
 ;;
 
-let owned_legacy_key name = List.assoc_opt name owned_legacy_keys
+let owned_legacy_key name =
+  List.find_map
+    (fun driver ->
+       if List.exists (fun owned -> String.equal owned.key name) (owned_keys driver)
+       then Some driver
+       else None)
+    all
+;;
+
+let sol_keys driver =
+  owned_keys driver
+  |> List.filter_map (fun owned ->
+    match owned.disposition with
+    | Sol_consumes -> Some owned.key
+    | Passed_to_terraform -> None)
+;;

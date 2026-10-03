@@ -46,9 +46,9 @@ fi
 if ! grep -qE 'variable "provisioner_impersonators"' "$gcp_root"/*.tf; then
   report "the GCP root does not declare provisioner_impersonators; the caller cannot be declared"
 fi
-if ! grep -q '"provisioner_impersonator", Gcp' \
-  "$root/cli/lib/base/sol_cli_provider.ml"; then
-  report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_legacy_keys)"
+gcp_keys="$(sed -n '/^  | Gcp ->/,/^  | [A-Z]/p' "$root/cli/lib/base/sol_cli_provider.ml")"
+if ! printf '%s\n' "$gcp_keys" | grep -qF '"provisioner_impersonator"'; then
+  report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_keys)"
 fi
 if ! grep -q 'provider_field target "provisioner_impersonator"' \
   "$root/cli/lib/cloud/sol_cli_provider_capabilities.ml"; then

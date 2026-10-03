@@ -85,7 +85,6 @@ type t =
   ; guarded_addresses : string list
   ; cloud_ready_expectation : string
   ; production_qualified : bool
-  ; sol_keys : string list
   ; state_locking : string option
   ; scoped_identities : string list
   ; authorization_reconciler_field : string

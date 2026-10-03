@@ -2131,3 +2131,90 @@ let%test "sol.yml: yaml: syntax error names its line" =
 let%test "sol.yml: terraform vars: var file resolution (BUG-057)" =
   test_var_file_resolution ()
 ;;
+
+let owned_key_names driver =
+  Sol_cli_provider.owned_keys driver
+  |> List.map (fun (owned : Sol_cli_provider.owned_key) -> owned.key)
+;;
+
+let test_owned_keys_are_declared_once () =
+  let all_keys = Sol_cli_provider.all |> List.concat_map owned_key_names in
+  check_bool
+    "no key is owned by two drivers"
+    true
+    (List.length (List.sort_uniq String.compare all_keys) = List.length all_keys);
+  check_strs
+    "aws owns its declared keys"
+    [ "state_lock_table"
+    ; "provisioner_role_arn"
+    ; "cluster_access_role_arn"
+    ; "deploy_role_arn"
+    ; "operator_role_arn"
+    ]
+    (owned_key_names Sol_cli_provider.Aws);
+  check_strs
+    "gcp owns its declared key"
+    [ "provisioner_impersonator" ]
+    (owned_key_names Sol_cli_provider.Gcp);
+  check_strs "byo owns no key" [] (owned_key_names Sol_cli_provider.Byo)
+;;
+
+let test_sol_keys_derive_from_the_declaration () =
+  Sol_cli_provider.all
+  |> List.iter (fun driver ->
+    let consumed =
+      Sol_cli_provider.owned_keys driver
+      |> List.filter_map (fun (owned : Sol_cli_provider.owned_key) ->
+        match owned.disposition with
+        | Sol_cli_provider.Sol_consumes -> Some owned.key
+        | Sol_cli_provider.Passed_to_terraform -> None)
+    in
+    check_strs
+      (Printf.sprintf
+         "%s: sol_keys is the consumed subset"
+         (Sol_cli_provider.to_string driver))
+      consumed
+      (Sol_cli_provider.sol_keys driver));
+  check_strs
+    "aws consumed keys"
+    [ "state_lock_table"
+    ; "provisioner_role_arn"
+    ; "cluster_access_role_arn"
+    ; "deploy_role_arn"
+    ; "operator_role_arn"
+    ]
+    (Sol_cli_provider.sol_keys Sol_cli_provider.Aws);
+  check_strs
+    "gcp consumed key"
+    [ "provisioner_impersonator" ]
+    (Sol_cli_provider.sol_keys Sol_cli_provider.Gcp);
+  check_strs "byo consumes nothing" [] (Sol_cli_provider.sol_keys Sol_cli_provider.Byo)
+;;
+
+let test_owned_legacy_key_finds_the_driver () =
+  check_bool
+    "an aws key resolves to aws"
+    true
+    (Sol_cli_provider.owned_legacy_key "deploy_role_arn" = Some Sol_cli_provider.Aws);
+  check_bool
+    "a gcp key resolves to gcp"
+    true
+    (Sol_cli_provider.owned_legacy_key "provisioner_impersonator"
+     = Some Sol_cli_provider.Gcp);
+  check_bool
+    "an ordinary key belongs to no driver"
+    true
+    (Sol_cli_provider.owned_legacy_key "registry" = None)
+;;
+
+let%test "driver keys: one declaration per driver (DEC-053)" =
+  test_owned_keys_are_declared_once ()
+;;
+
+let%test "driver keys: sol_keys is the consumed subset (DEC-053)" =
+  test_sol_keys_derive_from_the_declaration ()
+;;
+
+let%test "driver keys: a flat key resolves to its owning driver (DEC-053)" =
+  test_owned_legacy_key_finds_the_driver ()
+;;
