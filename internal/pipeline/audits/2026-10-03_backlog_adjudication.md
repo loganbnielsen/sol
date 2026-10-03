@@ -135,3 +135,24 @@ continue independently.
   section naming its category and, for the deferred ones, the objective trigger.
 - Actionable tickets are promoted to `READY_FOR_ENGINEERING/` by a follow-up
   triage commit once this pass has finished implementing the ones it can.
+
+## Operator decisions (2026-10-03)
+
+The category-5 decisions were surfaced together and answered by the operator.
+Each is recorded in its ticket, and the implementation units are promoted.
+
+| Decision | Answer | Effect |
+|---|---|---|
+| FEAT-093 (Kafka production transport) | **Require SASL_SSL now** | Pre-alpha work: Redpanda TLS/SASL, secret/config projection, registry/admin HTTPS, SASL_SSL qualification. Local stays plaintext. Promoted. |
+| FEAT-116 (inspect code-declared contracts) | **Declarative contract is canonical; generated bindings checked in and drift-checked** | Recorded as `DEC-065`; reverses BUG-099's premise and requires reconciling FEAT-119. Promoted. |
+| FEAT-094 (migration checksum) | **Fail the deploy gate** | Checksum per applied migration; `sol migrate status` reports and the production gate fails. Promoted. |
+| INFRA-082 / INFRA-094 (destroy vs divergent state) | **Extend INFRA-042's provable-absence reconciliation** | Reconciliation only on positively established provider absence; UNKNOWN is never ABSENT; non-construction preserved. Promoted. |
+| FEAT-043 / FEAT-044 / FEAT-048 (product surfaces) | **None — out of the alpha** | Deferred with concrete reconsideration triggers; no state collapse. |
+| FEAT-092 (scope-aware alert view) | **Non-goal — close via DOCS-019** | No code; the doc states the non-goal. Promoted so the doc change closes it. |
+| SEC-011 (migration-runner image) | **Preserve ADR 0002; the deployer never publishes** | `sol deploy` consumes a pre-built runner and fails closed; a Sol-owned runner is published by the Sol release process, not the deploy identity. Promoted. |
+
+Two further decisions were made by this pass as ordinary, reversible engineering
+choices (recorded in their tickets): `INFRA-083` takes the explicit total
+`No_authority_required | Mechanism …` shape; `REFAC-110` keeps the single
+entry-point convention and `REFAC-113` keeps the hand-rolled process module
+(both "no change" and closing).

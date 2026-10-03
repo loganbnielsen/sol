@@ -37,3 +37,17 @@ Smallest decision: is in-cluster plaintext Kafka behind NetworkPolicy an accepte
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — require SASL_SSL now
+
+Operator decision: **Require SASL_SSL now.** Because this is the production
+profile and is about to be used for the live reference-app campaign, the
+production contract establishes authenticated and encrypted Kafka transport
+rather than knowingly qualifying plaintext and replacing it later.
+
+Pre-alpha work, promoted to `READY_FOR_ENGINEERING`: Redpanda TLS (cert-manager)
+and SASL; secret/config projection of `KAFKA_SECURITY_PROTOCOL=sasl_ssl`, the CA,
+and SASL credentials into workloads; HTTPS for the schema-registry and admin
+URLs; and the qualification that proves a production-profile workload connects
+over SASL_SSL. Local/dev ergonomics stay plaintext and separate.

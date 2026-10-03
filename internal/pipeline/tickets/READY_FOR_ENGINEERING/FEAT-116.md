@@ -61,3 +61,26 @@ Smallest decision: choose the mechanism by which `sol plan` inspects code-declar
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — DEC-065: the declarative contract is canonical
+
+Operator decision, recorded in full in `DEC-065`:
+
+- The declarative Sol contract is the canonical source of truth, not application
+  code — for the contract properties Sol must reason about (event/schema
+  identity, partitions, key semantics).
+- Language-specific bindings are generated from the contract into a canonical,
+  predictable generated destination that application code imports; developers do
+  not independently redeclare generated contract properties.
+- Generated bindings are checked in and enforced in CI by regeneration plus a
+  drift failure.
+- `sol plan` reads the declarative contract directly; it never parses or executes
+  application source.
+- No separate contract digest unless a concrete provenance gap requires one.
+- Reconcile `BUG-099` (whose "code is canonical" premise this reverses) and
+  `FEAT-119` (determine whether `contract/run` remains necessary).
+
+This ticket is the implementation unit and is promoted to
+`READY_FOR_ENGINEERING`; the declarative surface, generator, checked-in
+destination, CI drift check, and `sol plan` read are its scope.

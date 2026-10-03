@@ -96,3 +96,12 @@ Smallest decision: build a scope-aware alert view, or declare it a non-goal and 
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — non-goal
+
+Operator decision: **Non-goal — close via DOCS-019.** Sol links to the alerting
+surface rather than modelling which alerts apply to a scope; Grafana/Alertmanager
+own alert definitions and firing state. No code is added. `DOCS-019`'s document
+must state the non-goal so the next reader does not re-file it. Promoted to
+`READY_FOR_ENGINEERING` in this pass so the documentation change can close it.

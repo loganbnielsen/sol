@@ -37,3 +37,16 @@ Smallest decision: is analytics/warehouse export a Sol product surface, a docume
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — out of the alpha
+
+Operator decision: **None — declare all out of the alpha.** Analytics/warehouse
+export is not pursued for the current alpha. Deferred with a trigger rather than
+closed, so the record survives: reconsider when a real workload demonstrates a
+business-analytics need over app data that Postgres plus the event stream cannot
+serve, or when a customer requires a governed export surface.
+
+Reconsideration trigger: a concrete workload or customer requirement for
+warehouse export with CDC, schema-evolution, PII/governance and cost ownership
+scoped as its own product surface.

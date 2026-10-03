@@ -48,3 +48,15 @@ Smallest decision: adopt `bos`/`spawn` for `Sol_cli_process` or keep the hand-ro
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — keep the hand-rolled process module
+
+Decided by this pass: **Keep `Sol_cli_process`.** `bos` covers spawning and
+capture but not the two things the module exists for — timeouts (a hung
+`terraform`/`kubectl` must not hang `sol`) and SEC-010 redaction of secrets from
+echoed commands and error text. Adopting `bos` would be "bos plus our timeout and
+redaction layer", trimming about half the module at the cost of a direct
+dependency and a behavioural re-verification of every lifecycle path — not worth
+it while the module is correct. Promoted to `READY_FOR_ENGINEERING` only so the
+transition guard can close it as "no change".

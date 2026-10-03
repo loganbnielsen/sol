@@ -36,3 +36,11 @@ Smallest decision: should an edited already-applied migration fail the deploy ga
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+
+## Decision (2026-10-03) — fail the deploy gate
+
+Operator decision: **Fail the deploy gate.** Store a checksum per applied
+migration; `sol migrate status` reports a mismatch and the production gate fails
+on an edited already-applied migration. Promoted to
+`READY_FOR_ENGINEERING`.
