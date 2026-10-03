@@ -51,10 +51,22 @@ infrastructure.
 Any change to provisioner, publisher, deploy or operator; any ingress exposure of
 application services to production.
 
-## Completion — part A (2026-10-03)
+## Completion (2026-10-03)
 
-Criterion 5 is live and stays open, so this ticket remains `READY_FOR_ENGINEERING`; the
-branch declares itself part A of it.
+**Criterion 5 is a live step, and it is `HARDEN-007`'s.** It cannot be established by a
+worktree — it needs a real EKS cluster, which only exists during a billable, operator-gated
+run — so it is executed and recorded there, exactly as `INFRA-061` handed its live capture to
+the next run. `HARDEN-007` carries the matching acceptance bullet, and
+`internal/qualification/aws/aws-run-procedure.md` states what that evidence is: the transport
+established through the qualifier, B3 reaching the private service through it, and the
+production identities' unchanged surfaces, including that none of them holds
+`pods/portforward`. This ticket closes on the capability and its procedure, the buildable
+part the workstream calls the enabler; the live verification's home is the run record.
+
+This is deliberate state triage, not a dropped criterion: leaving this ticket in
+`READY_FOR_ENGINEERING` would deadlock `HARDEN-007`, whose dependencies must be `DONE` before
+it can be worked, while this ticket's own last criterion can only be satisfied inside that
+run.
 
 **The establishment mechanism now verifies the surface it declares.** `establish.sh` closes
 its temporary cluster-admin window by **deleting the access entry and recreating it
@@ -95,8 +107,8 @@ state update extends `INFRA-061`'s (DONE) record rather than reopening it, and i
 here so the qualification lead can adjust it.
 
 **Acceptance criteria:** 1–3 already satisfied and unchanged (criterion 3 by the structural
-guard plus its mutation test); 4 satisfied; 5 not attempted — it is live, and the harness
-being ready for it is what this part delivers.
+guard plus its mutation test); 4 satisfied; 5 handed to `HARDEN-007` by name, which is the
+only place a real cluster exists to exercise it.
 
 **Demo / example coverage:** none applies — internal qualification harness mechanics, not a
 change to what an app author does.
@@ -106,4 +118,4 @@ framework convention or an application-facing capability.
 
 **Remaining limitation:** neither the establishment nor the verification has run against a
 real EKS cluster. The offline test fixes the logic, not the provider behaviour; criterion 5
-and FND-0021's bound are live steps, and their exercise belongs to `HARDEN-007`.
+and FND-0021's bound are live steps, recorded in `HARDEN-007`'s run record.

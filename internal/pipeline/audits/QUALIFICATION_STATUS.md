@@ -334,8 +334,9 @@ The sequence and its outcomes are pinned offline by
 `internal/ci/test_qualification_transport_establish.sh` against stub `aws`/`kubectl`
 (three mutations caught), and the run procedure now states how B3 obtains connectivity and
 that the record names the transport identity separately from the identities under
-qualification (DEC-039 §4). What remains open on `INFRA-060` is criterion 5: the transport
-used against a real cluster, and the production identities' surfaces unchanged afterwards.
+qualification (DEC-039 §4). The transport used against a real cluster, and the production
+identities' surfaces unchanged afterwards, is `INFRA-060` criterion 5; it needs a live
+target, so the ticket hands it to `HARDEN-007`'s run record by name.
 
 **Fixture reset (FND-0022 / INFRA-062).** Redeploying the recorded revision through the
 documented mechanism succeeded and changed nothing: `generation` stayed 1, the same two
