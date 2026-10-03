@@ -62,3 +62,33 @@ so `--force` is no longer the only thing that makes the suite run (`VERIF-002`).
   class and recorded as such (`VERIF-006`).
 - Demo/example: the E2E fixture is the demo's own test; no separate example change.
 - Language parity: no application-facing contract change; state that in one line.
+
+## Completion (2026-10-02)
+
+Both runners now `require_env` their inputs: `LOKI_URL` and `POSTGRES_URL` are
+hard requirements that raise `"<VAR> is not set; the e2e class requires it"`, so
+a missing dependency fails the run instead of degrading it. The heavy path is
+still computed once, but each runner is wrapped in `try ... with` and the result
+is a `(_, string) result`; `golden_result ()` / `outbox_result ()` are called
+inside every case body, so a setup failure fails each case naming it rather than
+aborting the process before the runner. Every remaining `then ()` / `None -> ()`
+success short-circuit is gone: absence now fails.
+
+- `truncate_tables` fails with the `Pg_error` text instead of `Error _ -> ()`.
+- Worker- and jobs-fibre `Failure`s are recorded (`worker_error` / `jobs_error`)
+  and fail the fixture naming the error; a failed `Kafka_service.publish` is
+  recorded too, so a swallowed publish no longer surfaces only as a downstream
+  timeout.
+- Loki is a hard requirement of the class: `LOKI_URL` is `require_env`'d, the
+  `runtest`/`ci-e2e` target pins it, and CI starts Loki (the stale
+  `ci.yml:278` quote in the premise predates VERIF-006's change).
+- Evidence: `dune build @ci-e2e --force` → 16 tests pass; with `POSTGRES_URL`
+  unset every case fails `e2e golden fixture setup failed: POSTGRES_URL is not
+  set; the e2e class requires it` and the binary exits 1; likewise for
+  `LOKI_URL`.
+
+Fold the target provisioning into the class so `--force` is not the only thing
+that runs it remains VERIF-002's scope and is not changed here.
+
+- Demo/example: the E2E fixture is the demo's own test; no separate example
+  change. Language parity (DEC-022): no application-facing contract change.

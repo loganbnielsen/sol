@@ -50,3 +50,30 @@ fixture rather than re-deriving it.
   effect → metric/log).
 - Demo/example: the E2E fixture is the demo's own test; no separate example change.
 - Language parity: no application-facing contract change; state that in one line.
+
+## Completion (2026-10-02)
+
+Deleted the three E2E cases that re-asserted library semantics at the most
+expensive boundary, and removed the fixture work that fed only them:
+
+- retry counts (`a transient job failure retries in sol-jobs...`) — owned by
+  `framework/ocaml/sol-jobs/test/test_sol_jobs_pg.ml`;
+- per-key ordering (`a blocked earlier event...`) — owned by
+  `framework/ocaml/sol-outbox/test/test_sol_outbox.ml`
+  (`test_per_key_order_is_not_insertion_order`);
+- dedupe cardinality (`a duplicate fact delivery...`) — owned by
+  `test_sol_outbox.ml` (`test_duplicate_enqueue_with_a_dedupe_key_is_a_no_op`,
+  `test_a_failed_publish_does_not_advance_the_key`).
+
+The retry-injection in the outbox `Effect` handler and the `dupe`/`order`
+fixture segments are gone with them. The suite still asserts the composition:
+HTTP → Kafka → worker → durable row + `sol-jobs` effect; outbox publish → Kafka
+→ worker → idempotent effect; rollback leaves nothing; a broker outage holds the
+intent and recovery publishes it once; a crash between the broker ack and the row
+mark duplicates rather than losing; `Fail` stops the consumer with no retry/DLQ
+topic; the metrics and Loki lines are emitted. The class is 16 cases (was 19).
+
+Evidence: `dune build @ci-e2e --force` → 16 tests pass.
+
+- Demo/example: the E2E fixture is the demo's own test; no separate example
+  change. Language parity (DEC-022): no application-facing contract change.
