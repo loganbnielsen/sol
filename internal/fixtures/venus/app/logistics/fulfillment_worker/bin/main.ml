@@ -14,7 +14,7 @@ let () =
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
-      ~service:"venus-logistics-fulfillment-worker"
+      ~service:"fulfillment-worker"
       ()
   in
   let module W = Worker.Make (Fulfillment_worker) in

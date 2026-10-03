@@ -588,18 +588,21 @@ Eio_main.run @@ fun env ->
 Eio.Switch.run @@ fun sw ->
 let obs =
   Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-    ~service:"pluto-charge-svc" ~context:[("team", "payments")] ()
+    ~service:"charge-svc" ()
 in
 ```
 
 `Sol_obs.of_env` reads `LOKI_URL`/`TEMPO_URL` from the environment, composes
-whichever backends are configured (Prometheus is always included), and
-applies `~context` as ambient labels (`team = payments`) that appear on
-every log line, metric, and trace from this handle — without passing them
-explicitly to every call. Handlers use `Sol_obs.log_info`/`log_warn`/
-`with_span` instead of calling `Obs_eio` directly; `Sol_obs.obs_eio obs`
-and `Sol_obs.metrics_renderer obs` hand the lower-level pieces to
-`Service.run`'s `?ot`/`?metrics_renderer`.
+whichever backends are configured (Prometheus is always included), and applies
+Sol's workload identity as ambient labels — so every signal the handle emits
+carries the same `workspace`/`env`/`domain`/`service`/`primitive`/`release`
+values that `sol deploy` renders as pod labels
+([`runtime.md` § Sol workload identity](../reference/runtime.md#sol-workload-identity)).
+The injected values win over a `~context` field of the same name; `~context`
+still adds app-owned fields (for example `team`). Handlers use
+`Sol_obs.log_info`/`log_warn`/`with_span` instead of calling `Obs_eio` directly;
+`Sol_obs.obs_eio obs` and `Sol_obs.metrics_renderer obs` hand the lower-level
+pieces to `Service.run`'s `?ot`/`?metrics_renderer`.
 
 When `LOKI_URL`/`TEMPO_URL` are absent (local `dune exec` dev), logs go to
 stdout in logfmt format and no traces are emitted. In the cluster,

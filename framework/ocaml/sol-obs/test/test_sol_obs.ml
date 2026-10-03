@@ -47,12 +47,33 @@ let contains haystack needle =
     go 0)
 ;;
 
+let taxonomy_env_names =
+  [ "SOL_WORKSPACE"
+  ; "SOL_ENV"
+  ; "SOL_DOMAIN"
+  ; "SOL_SERVICE"
+  ; "SOL_PRIMITIVE"
+  ; "SOL_RELEASE"
+  ]
+;;
+
 let with_env pairs f =
+  let pairs = List.map (fun name -> name, "") taxonomy_env_names @ pairs in
   let saved =
     List.map (fun (k, _) -> k, Option.value (Sys.getenv_opt k) ~default:"") pairs
   in
   List.iter (fun (k, v) -> Unix.putenv k v) pairs;
   Fun.protect ~finally:(fun () -> List.iter (fun (k, v) -> Unix.putenv k v) saved) f
+;;
+
+let sol_identity_env =
+  [ "SOL_WORKSPACE", "obsdemo"
+  ; "SOL_ENV", "prod"
+  ; "SOL_DOMAIN", "payments"
+  ; "SOL_SERVICE", "charge-svc"
+  ; "SOL_PRIMITIVE", "svc"
+  ; "SOL_RELEASE", "r-0123456789abcdef"
+  ]
 ;;
 
 let test_default_env_logs_and_counts_without_network () =
@@ -407,6 +428,128 @@ let test_trace_id_string_is_32_hex_chars () =
             s))
 ;;
 
+let test_taxonomy_env_reaches_tempo_resource_attributes () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      ([ "LOKI_URL", ""; "TEMPO_URL", local_url port ] @ sol_identity_env)
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~sw
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"ignored-standalone"
+             ()
+         in
+         Sol_obs.with_span obs "op" (fun _ -> ());
+         let body = Eio.Promise.await body_promise in
+         [ "workspace"; "env"; "domain"; "service"; "primitive"; "release" ]
+         |> List.iter (fun label ->
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:("OTLP resource carries the " ^ label ^ " attribute name")
+             true
+             (contains body label));
+         [ "obsdemo"; "prod"; "payments"; "charge-svc"; "svc"; "r-0123456789abcdef" ]
+         |> List.iter (fun value ->
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:("OTLP resource carries the value " ^ value)
+             true
+             (contains body value));
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"SOL_SERVICE replaces the standalone ~service argument"
+           false
+           (contains body "ignored-standalone")))
+;;
+
+let test_taxonomy_env_becomes_loki_stream_labels () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      ([ "LOKI_URL", local_url port; "TEMPO_URL", "" ] @ sol_identity_env)
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~sw
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"ignored-standalone"
+             ()
+         in
+         Sol_obs.log_info obs "taxonomy line";
+         let body = Eio.Promise.await body_promise in
+         [ "\"service\":\"charge-svc\""
+         ; "\"workspace\":\"obsdemo\""
+         ; "\"env\":\"prod\""
+         ; "\"domain\":\"payments\""
+         ; "\"primitive\":\"svc\""
+         ; "\"release\":\"r-0123456789abcdef\""
+         ]
+         |> List.iter (fun pair ->
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:("Loki stream carries " ^ pair)
+             true
+             (contains body pair))))
+;;
+
+let test_platform_identity_overrides_application_context () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      ([ "LOKI_URL", local_url port; "TEMPO_URL", "" ] @ sol_identity_env)
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~sw
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"standalone"
+             ~context:[ "domain", "spoofed"; "team", "payments" ]
+             ()
+         in
+         Sol_obs.log_info obs "context line";
+         let body = Eio.Promise.await body_promise in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the injected domain wins over the application context"
+           true
+           (contains body "\"domain\":\"payments\"");
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the spoofed domain is absent"
+           false
+           (contains body "spoofed");
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"an app-owned field still reaches the stream"
+           true
+           (contains body "\"team\":\"payments\"")))
+;;
+
+let test_taxonomy_labels_are_the_documented_six () =
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"Sol_obs.taxonomy_labels is the canonical order"
+    [ "workspace"; "env"; "domain"; "service"; "primitive"; "release" ]
+    Sol_obs.taxonomy_labels
+;;
+
 let () =
   let open Windtrap in
   run
@@ -429,6 +572,21 @@ let () =
             "?context is promoted to Loki stream labels"
             test_context_promoted_to_loki_stream_labels
         ; test "TEMPO_URL wires the Tempo backend" test_tempo_url_wires_tempo_backend
+        ]
+    ; Windtrap.group
+        "workload identity (DEC-064)"
+        [ test
+            "the injected taxonomy reaches the OTLP resource attributes"
+            test_taxonomy_env_reaches_tempo_resource_attributes
+        ; test
+            "the injected taxonomy becomes Loki stream labels"
+            test_taxonomy_env_becomes_loki_stream_labels
+        ; test
+            "the platform identity overrides application context"
+            test_platform_identity_overrides_application_context
+        ; test
+            "Sol_obs.taxonomy_labels is the documented six"
+            test_taxonomy_labels_are_the_documented_six
         ]
     ; Windtrap.group
         "accessors"

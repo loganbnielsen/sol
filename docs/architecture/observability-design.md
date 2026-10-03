@@ -100,6 +100,18 @@ must carry the same ownership identity:
 > (FEAT-070's deployment events / `sol deployments`) and the bounded workload
 > labels already in this table.
 
+**Who emits it (`DEC-064`, 2026-10-02).** Sol's framework/runtime
+instrumentation emits this semantic identity on every signal it produces — logs,
+metrics and traces — from the values the manifest injects into the workload's
+`<name>-env` ConfigMap (the same values it renders as pod labels;
+`docs/reference/runtime.md` § Sol workload identity). A collector may enrich
+identity *additively* with infrastructure facts (`namespace`, `pod`, `node`,
+cloud region) but never defines or replaces Sol's vocabulary. Before this, an
+application-emitted trace carried only `service.name` and could not be scoped by
+domain, workspace, environment or release the way the same request's logs and
+metrics could. The value of `service` is the workload's Kubernetes name, so the
+app-emitted stream, the Alloy-promoted stream and the scraped series agree.
+
 These labels are the API. Kubernetes namespaces, pod names, Helm release
 names, bucket names, and cloud resource names are implementation details.
 

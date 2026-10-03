@@ -9,6 +9,7 @@ type recipe =
   ; build : command option
   ; launch : command
   ; artifact : string
+  ; env : (string * string) list
   }
 
 type plan =

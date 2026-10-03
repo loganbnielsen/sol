@@ -86,7 +86,7 @@ let () =
   @@ fun env ->
   Eio.Switch.run
   @@ fun sw ->
-  let obs = Sol_obs.of_env ~sw ~net:env#net ~service:"pluto-checkout-svc" ~context:[ "team", "checkout" ] () in
+  let obs = Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock ~service:"checkout-svc" () in
   Service.run Checkout.routes ~env ~ot:obs () |> ...
 ```
 

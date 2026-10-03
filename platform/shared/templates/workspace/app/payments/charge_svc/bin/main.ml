@@ -17,7 +17,7 @@ let () =
   Eio.Switch.run @@ fun sw ->
   let obs =
     Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-      ~service:"{{name}}-charge-svc" ~context:[("team", "payments")] ()
+      ~service:"charge-svc" ()
   in
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) in
   let kafka = Kafka_service.create kafka_config ~sw |> require_kafka "kafka create" in

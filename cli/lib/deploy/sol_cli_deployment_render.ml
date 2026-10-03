@@ -74,11 +74,19 @@ let render
   let ns = Sol_cli_kubernetes_name.namespace_to_string namespace in
   let name = Sol_cli_kubernetes_name.k8s_name_to_string k8s_name in
   let img = if image = "" then spec_image else image in
+  let identity =
+    Sol_cli_manifest.identity_env
+      ?env
+      ~release:release_id
+      ~workspace
+      ~domain
+      ~service:name
+      ~primitive
+      ()
+  in
+  let reserved = List.map fst identity in
   let config =
-    match env with
-    | None -> config
-    | Some env ->
-      ("SOL_ENV", env) :: List.filter (fun (key, _) -> key <> "SOL_ENV") config
+    identity @ List.filter (fun (key, _) -> not (List.mem key reserved)) config
   in
   let config =
     match primitive with

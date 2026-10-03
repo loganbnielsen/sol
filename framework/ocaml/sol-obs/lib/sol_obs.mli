@@ -8,6 +8,9 @@ type level = Obs_eio.level =
 
 type span = Obs_eio.span
 
+val taxonomy : (string * string) list
+val taxonomy_labels : string list
+
 val of_env
   :  sw:Eio.Switch.t
   -> net:_ Eio.Net.t

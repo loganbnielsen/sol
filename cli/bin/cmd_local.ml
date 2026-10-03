@@ -320,7 +320,7 @@ let launch_services (plan : Sol_cli_local_run.plan) =
       let spawned =
         Sol_cli_process.spawn
           ~output:pipe_write
-          (Sol_cli_process.cmd ~env:Sol_cli_local_run.dev_env [ "sh"; "-c"; cmd_str ])
+          (Sol_cli_process.cmd ~env:recipe.env [ "sh"; "-c"; cmd_str ])
       in
       Unix.close pipe_write;
       match spawned with

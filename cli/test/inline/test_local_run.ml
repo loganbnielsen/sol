@@ -68,7 +68,28 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
          [ "_build/default/app/payments/charge_svc/bin/main.exe" ]
          launch.launch.argv;
        check_string "artifact" "app/payments/charge_svc/bin/main.exe" launch.artifact;
-       check_bool "declared OCaml" true (launch.language = Sol_cli_compat.Ocaml)
+       check_bool "declared OCaml" true (launch.language = Sol_cli_compat.Ocaml);
+       check_string
+         "carries the injected workspace identity"
+         (Filename.basename root)
+         (Option.value ~default:"" (List.assoc_opt "SOL_WORKSPACE" launch.env));
+       check_string
+         "carries the injected domain identity"
+         "payments"
+         (Option.value ~default:"" (List.assoc_opt "SOL_DOMAIN" launch.env));
+       check_string
+         "carries the bare Kubernetes service name"
+         "charge-svc"
+         (Option.value ~default:"" (List.assoc_opt "SOL_SERVICE" launch.env));
+       check_string
+         "carries the primitive"
+         "svc"
+         (Option.value ~default:"" (List.assoc_opt "SOL_PRIMITIVE" launch.env));
+       check_bool "keeps the dev addresses" true (List.mem_assoc "LOKI_URL" launch.env);
+       check_bool
+         "omits env locally by design"
+         false
+         (List.mem_assoc "SOL_ENV" launch.env)
      | launches ->
        Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
