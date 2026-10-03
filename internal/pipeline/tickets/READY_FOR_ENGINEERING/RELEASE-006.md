@@ -135,10 +135,11 @@ The guide's `curl .../download/vX.Y.Z/...` URL is the one step that needs the pu
 release; the steps after it are verified.
 
 **Harness tests.** `internal/qualification/aws/test-live-row.sh` (21 assertions) and
-`internal/qualification/gcp/test-live-qual.sh` (249 assertions) pin that a release bundle
+`internal/qualification/gcp/test-live-qual.sh` (251 assertions) pin that a release bundle
 is required, that a development build and a non-digest runner reference are refused before
-any Sol command runs, that the harness publishes no runner, and that the run identity
-records the bundle version and digest.
+any Sol command runs, that the harness publishes no runner, and that the run identity —
+`$LOG_DIR/sol-identity.txt` and the GCP `evidence-manifest.txt` — records the bundle
+version and digest.
 
 **Docs.** `aws-run-procedure.md`, the AWS and GCP single-region matrices, and the campaign
 artifact record the installed-bundle runner and the staging state.

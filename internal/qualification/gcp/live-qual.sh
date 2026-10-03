@@ -605,7 +605,10 @@ bundle_manifest() {
     printf 'evidence bundle: %s\n' "$LOG_DIR"
     printf 'target: %s  project: %s  region: %s  revision: %s\n' \
       "$TARGET" "$PROJECT" "$REGION" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    printf 'cluster: %s\n\n' "$CLUSTER"
+    printf 'cluster: %s\n' "$CLUSTER"
+    printf 'sol under test ............ release %s at %s\n' \
+      "${SOL_BUNDLE_VERSION:-not resolved}" "${SOL_INSTALL:-not resolved}"
+    printf 'migration runner .......... %s\n\n' "${SOL_RUNNER_IMAGE:-not resolved}"
     printf 'sol run evidence .......... %s run director(ies)\n' "$(find "$LOG_DIR/sol-runs" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
     printf 'terraform state (cloud) ... %s\n' "$(artifact_status "$LOG_DIR/state/cloud.tfstate")"
     printf 'terraform state (platform)  %s\n' "$(artifact_status "$LOG_DIR/state/platform.tfstate")"

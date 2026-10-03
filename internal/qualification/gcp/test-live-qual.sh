@@ -615,6 +615,10 @@ else
   no "the inventory records the provider's disk quota" "a row" "none"
 fi
 has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$TMP/cloud-ok.logs/evidence-manifest.txt"
+has "the manifest names the release bundle under test" \
+  "sol under test ............ release $VERSION at $INSTALL" "$TMP/cloud-ok.logs/evidence-manifest.txt"
+has "and its digest-pinned migration runner" \
+  "migration runner .......... $RUNNER" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 
 printf '\nscenario: destroy\n'
 run_case destroy-ok destroy
