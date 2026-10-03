@@ -1,8 +1,14 @@
 # FND-0022 — "reset the fixture" has no Sol mechanism, because an unchanged deploy is idempotent by design
 
-**Classification:** `QUALIFICATION_GAP` · **State:** `OPEN`
+**Classification:** `QUALIFICATION_GAP` · **State:** `FIXED_UNQUALIFIED` (2026-10-03)
 **Severity:** medium · **Ticket:** `INFRA-062` · **Evidence:** `BEHAVIORAL`
 **Found while:** resetting the `notify_worker` fixture (DEC-039 / run record boundary)
+
+State history: `OPEN` (2026-09-21) → `FIXED_UNQUALIFIED` (2026-10-03). The decision
+("teardown and recreate") and its implementation — the reset written into
+`internal/qualification/aws/aws-run-procedure.md` § *Re-establishing a workload fixture* —
+landed in `INFRA-062`. The behavioural postcondition is the reset actually used in a run;
+it is not established, and its exercise belongs to `HARDEN-007` (operator-gated).
 
 ## The attempt
 

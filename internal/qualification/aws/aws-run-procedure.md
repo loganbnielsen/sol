@@ -114,6 +114,65 @@ HARDEN runs exist to find those, not to have none.
    deliberately non-conformant lifecycle state is required, and it is followed by
    a public `sol cloud destroy` — never by out-of-band resource deletion.
 
+### Re-establishing a workload fixture (INFRA-062 / FND-0022, decided 2026-10-03)
+
+A run that has recorded a fixture failure needs a way to start again from the same
+artefact. Redeploying the revision Sol already recorded does **not** do it, and that is
+product behaviour, not a defect: an unchanged Deployment spec means no rollout, so the
+deploy reports success and advances the release record while the same pods, with the same
+creation timestamps, stay failing in place. B2 qualifies exactly that idempotence — an
+identical repeat deploy restarts nothing — so the reset must not be obtained by weakening
+it.
+
+**The reset is a teardown and recreate of the target, driven through Sol's own surface,
+not a hand-repair.**
+
+1. **Freeze the failing epoch's evidence first**, because the teardown destroys it.
+   Before any teardown command runs, the record must carry the verbatim `sol status`
+   verdict and pod table (names, restart counts, creation timestamps), the readiness
+   probe failure it reported, the consumer group's independent view from the broker, and
+   the release record in force.
+   `internal/qualification/records/2026-09-20-run8-aws.md` is the model: it declares an
+   explicit evidence boundary, and nothing on one side of it supports a claim about the
+   other.
+2. **Tear down** with `sol cloud destroy <target> --apply`, the same documented path as
+   step 11, and wait for verified `Absent`. A namespace-scoped teardown is deliberately
+   not used: no qualification identity holds a mutating verb in an application namespace
+   (DEC-039's transport grant is `pods`/`services` `get`/`list` and `pods/portforward`
+   `create`, nothing else), and the provisioner — the identity that owns infrastructure
+   mutation — mutates only through Sol's lifecycle. A `kubectl delete pod` or
+   `kubectl delete namespace` would be an out-of-band mutation that leaves Sol's recorded
+   state describing objects that no longer exist, and it hides the missing capability
+   rather than recording it.
+3. **Recreate through this procedure**, from step 1, with the **same workload artefact**:
+   the same `--image-ref <svc>=<repo>@sha256:<digest>` values recorded for the failing
+   epoch, at the same profile, region and scale. A new digest is a new revision — it
+   resets the pods but changes what is under test, so the recreated epoch would not be
+   comparable to the one that recorded the failure. That comparison is the whole point of
+   the reset, and it is why the new revision was rejected as the mechanism.
+4. **Declare the new epoch.** It begins when the recreated target has reached `Ready` and
+   the workload has been redeployed from the same digests; the record names the boundary,
+   the digests, and the recreated target's own release record. The reset's effect on
+   release identity is: the destroyed target's release record does not survive, so the
+   two epochs are compared by **artefact** (the digests), not by release identity. Nothing
+   observed before the boundary may support a claim about the recreated fixture, and
+   nothing observed after it may be used to support the failure finding.
+5. **Re-establish what the new epoch relies on, and say what it does not.** Evidence
+   scoped to the destroyed target instance — the cloud and platform rows, section I — is
+   that instance's and is cited as such; the recreated epoch re-establishes the rows its
+   own claims depend on. A row the recreated instance did not exercise is `NOT REACHED`
+   for the new epoch, not inherited from the old one.
+
+**The reset is not a repair of a finding.** If the fixture failed because of a defect
+under qualification, record the finding before the teardown, because the teardown destroys
+the failing state. A fixture that fails again in the recreated epoch is a finding about the
+target, not a reason for a second reset inside the same epoch.
+
+**What this does not create.** Sol gains no restart or rollout operation: that remains a
+separate, undecided product question (FND-0022), and no row here needs it. The harness also
+never invokes `terraform` or `helm` itself; the teardown and the recreate are Sol's own
+commands.
+
 ### Exact command sequence, mapped to `internal/qualification/aws/production-single-region-v1-matrix.md`
 ### Read-only networking inspection (INFRA-036 — record the mechanism, change nothing)
 
@@ -204,7 +263,9 @@ the infrastructure around the test.
    ever, not a hand-configured broad credential).
 7. `B3`-`B7`: one representative transaction; a deliberately failed deploy;
    rollback to the prior release (and across a `contract` migration
-   boundary, expecting a refusal); drift detection/correction.
+   boundary, expecting a refusal); drift detection/correction. A degraded
+   fixture is not repaired here: § *Re-establishing a workload fixture* is the
+   reset, and it is a teardown and recreate, not a redeploy.
 8. `D1`-`D8`: tolerant-workload placement inspection; graceful drain;
    unplanned node loss with **measured** restoration time; drain grace;
    slow-start not liveness-killed; Kafka-worker readiness tied to
