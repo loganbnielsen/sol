@@ -99,3 +99,14 @@ declares any other dependency, with no pins and no `$SOL_HOME`.
   uses, run with no pins configured.
 - INFRA-007's opam dependency/licence inventory is recorded in
   `docs/legal/third-party-licenses.md` alongside the npm inventory.
+
+
+## Disposition (2026-10-03) — deferred (objective trigger)
+
+Trigger: DEC-026's first production-support promise is extended to include
+public-opam availability, or the first external consumer needs packages
+installable by name. DEC-025 accepted the immutable-pin interim, and the
+workspace template carries the documented development channel until then.
+
+Left in `BACKLOG/` against that trigger; see
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

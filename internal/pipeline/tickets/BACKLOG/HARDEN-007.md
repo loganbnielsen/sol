@@ -33,3 +33,12 @@ shares INFRA-051's root cause).
   targeted matrix row qualified, blocked or not reached.
 - Teardown to `Absent`, verified independently of Sol's report.
 - `internal/pipeline/audits/QUALIFICATION_STATUS.md` updated.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires explicit operator authorization for a live, billable AWS run. Two of its
+three dependencies (INFRA-060, INFRA-062) are themselves still open.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

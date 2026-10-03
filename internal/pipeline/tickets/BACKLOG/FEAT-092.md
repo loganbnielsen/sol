@@ -88,3 +88,11 @@ completion notes.
 
 **TypeScript parity:** No language-parity impact — alert routing is declared at
 the target level and is shared by all languages.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: build a scope-aware alert view, or declare it a non-goal and close via DOCS-019. Consequence: build adds a `sol status`/axis surface plus a `pluto` demo obligation; non-goal is a documentation change only.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

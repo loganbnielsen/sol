@@ -61,3 +61,11 @@ Which shape, when a provider that needs none actually arrives (or now, if the re
 - AWS and GCP behaviour is unchanged.
 - `with_elevated_access`'s bracket keeps its unconditional-removal property, and any new branch has
   a test in both directions.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: make the authority declaration total (`No_authority_required | Mechanism …`, skipping acquisition by construction), or reject ambiguous declarations (`bootstrap_matchers = []` / `Whole_root`) at capability construction. Consequence: DEC-051's `byo` driver and DEC-057's provider symmetry both need one; the bracket (`with_elevated_access`) gains a tested branch.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

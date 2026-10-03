@@ -35,3 +35,11 @@ a declared resource genuinely absent from state must still be reported.
 - A declared guarded resource absent from state is still reported unrepresented (test).
 - Offline fixtures model the instanced address form for guarded resources, as they already do for
   `module.eks.aws_eks_cluster.this[0]`.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `Sol_cli_cloud_lifecycle.preparations_eligible` still uses `List.mem address state` (string equality) on instanced addresses.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

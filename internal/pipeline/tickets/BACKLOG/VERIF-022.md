@@ -47,3 +47,12 @@ in-run remediation):
   cross-language contract; the OCaml and TS implementations must match them.
 - Demo/example: not applicable to this run; the implementing unit owns the pluto
   `calls` example per DEC-063.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires explicit authorization for a live qualification run and a qualified
+target per driver.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

@@ -28,3 +28,11 @@ Store a checksum per applied migration and have `status`/the deploy gate report 
 ## Acceptance criteria
 
 - A modified applied migration is reported by `sol migrate status` and fails the production gate.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: should an edited already-applied migration fail the deploy gate (Flyway-style) or only warn? Consequence: fail-closed can block a legitimate repeatable edit; warn keeps a silent divergence.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

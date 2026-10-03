@@ -53,3 +53,11 @@ single source for `partitions` and `key`.
 - The TypeScript golden path is covered: the same mechanism reports a TS
   application's event contract, or the decision records the deferral and its
   trigger (DEC-022).
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: choose the mechanism by which `sol plan` inspects code-declared contracts — build-time metadata artifact, `sol inspect`-style command, generated manifest metadata, or manifest + drift guard. Consequence: each changes where the canonical `partitions`/`key` live and how the TS golden path exposes them (DEC-022); writing them into TOML is already rejected by BUG-099.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

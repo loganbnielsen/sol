@@ -78,3 +78,11 @@ FEAT-033 is direct evidence this distinction is real and not academic: building 
 
 - Not a rewrite of the registration/schema behavior — same ordering (compatibility first), same fatality semantics (both fatal), and the same `Ack | Fail`/DLQ policy. This is a module-boundary change, not a policy change.
 - Not blocking or gating FEAT-034 — it has since shipped (`@sol/kafka` ported from `kafka_service_schema.ml` as a reference) without this split having happened, exactly as intended.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: the protocol/policy boundary is unchanged; the ticket's 2026-10-02 correction refreshes the policy half (`register_contract` order/fatality, `Ack | Fail`, `Kafka_service_dlq`).
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

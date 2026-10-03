@@ -37,3 +37,11 @@ Removing every comment surfaced rules that were stated in prose and not held by 
 
 - Each item is enforced by a type, a single definition, a test or a guard, or its completion note says in one line why not.
 - Demo/example: per item, only where an author-facing surface changes. Language parity: check items 5 and 6 against the TypeScript framework.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: the comment-removal invariants the ticket lists are still prose-only; items 1-14 are unimplemented.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

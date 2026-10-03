@@ -75,3 +75,14 @@ Verified while triaging the parity queue; the ticket still stands and is still b
 Trigger 2 is a change in `sol-typescript`, and the live profile run needs explicit
 authorization, so this stays a standing goal in `BACKLOG/`.
 
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Blocked on `@sol-fab/worker` publishing a DEC-026 §3 readiness hook (maintained
+in `sol-typescript`, outside this repository), and on explicit authorization to
+run the TypeScript production-profile qualification as a live run. Trigger
+re-checked 2026-10-02: trigger 1 met, trigger 2 not met, trigger 3 partly met.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.
