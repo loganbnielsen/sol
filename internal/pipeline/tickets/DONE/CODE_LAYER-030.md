@@ -69,3 +69,50 @@ call sites.
   this is an internal-only refactor (maintainer tooling).
 - Record the per-language capability verdict for framework/application
   contracts, or explain why language parity is unaffected.
+
+## Completion notes
+
+Fixed 2026-10-02, `CODE_LAYER-030/sol-process-shell-family`. Premise verified
+before pickup (`! rg -q 'open_process_in|Sys.command' …` — held; the family was
+still there).
+
+- `sol_process` lost the `open_process_in`/`Sys.command` family. The replacements
+  are built on `run_argv [ "sh"; "-c"; cmd ]`:
+  - `lines_shell_checked` / `output_shell_checked : (…, result) result` — the
+    checked variants, which return the failing `result` (status, stdout, stderr)
+    instead of `[]`/`""`;
+  - `failure_message : result -> string` names the exit code and stderr;
+  - `run_shell_rc` / `run_shell_ok` keep their signatures and their live,
+    inherited output via the new `run_argv ?stream` (the child gets the parent's
+    stdout/stderr, nothing is captured), so `git push` and `run_tests.sh` still
+    print as they run.
+- `soldev_shell.run_cmd_lines` is the checked variant now.
+- `soldev_merge`'s git reads are typed: `current_branch` returns a result (a git
+  failure is no longer "not on a ticket branch (currently on )"),
+  `worktree_snapshot` carries `Worktree_clean | Worktree_dirty |
+  Worktree_unreadable of reason` and `ws_unpushed : bool option` (`None` when git
+  cannot say), and `worktree_snapshots` returns a result, so
+  `worktree_annotation_for_ticket` says `(worktree state unreadable: …)` rather
+  than reporting no worktree / clean. `check-reverts` fails with the read error
+  instead of flagging from a `git log` that never ran. The dead
+  `git_branch_exists` is gone.
+- Tests: `internal/tooling/sol_process/test/test_sol_process.ml` (checked
+  variants report a failing command as an error carrying its exit code and
+  stderr; streaming returns the status and captures nothing) and
+  `internal/tooling/soldev/test/test_merge.ml` (a fake `git` that exits 128
+  produces an explicit "worktree state unreadable" annotation; a failing `git
+  status` is `Worktree_unreadable`, not clean; an unresolvable base ref is
+  `None`, not "unpushed").
+- Negative (mutation) runs, all reverted: an always-`Ok` `lines_shell_checked` /
+  `output_shell_checked` fails the two sol_process tests; `Error → Worktree_clean`
+  and `Error → Ok []` fail the two soldev_merge tests.
+
+`rg -n 'open_process_in|Sys.command' internal/tooling/sol_process/lib/sol_process.ml`
+returns nothing. `dune runtest internal/tooling/sol_process/test
+internal/tooling/soldev/test` passes (26 + 60 + 29 tests), and `pipeline ls` /
+`pipeline check-reverts` behave (annotations still reported for the real
+worktrees).
+
+No demo/example change: internal maintainer tooling, no application-facing
+behavior. No language-parity impact (DEC-022).
+

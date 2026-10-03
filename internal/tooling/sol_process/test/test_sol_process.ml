@@ -86,27 +86,66 @@ let test_run_argv_command_not_found () =
   check_str "stdout empty" "" r.stdout
 ;;
 
+let lines_or_fail cmd =
+  match Sol_process.lines_shell_checked ~echo:false cmd with
+  | Ok lines -> lines
+  | Error r -> Windtrap.fail (Sol_process.failure_message r)
+;;
+
 let test_lines_basic () =
-  let ls = Sol_process.lines_shell ~echo:false "printf 'a\\nb\\nc'" in
+  let ls = lines_or_fail "printf 'a\\nb\\nc'" in
   check_bool "three lines" true (List.length ls = 3);
   check_str "first line" "a" (List.nth ls 0);
   check_str "last line" "c" (List.nth ls 2)
 ;;
 
 let test_lines_empty_filtered () =
-  let ls = Sol_process.lines_shell ~echo:false "printf 'a\\n\\nb'" in
+  let ls = lines_or_fail "printf 'a\\n\\nb'" in
   check_bool "blank line filtered" true (List.length ls = 2)
 ;;
 
 let test_lines_stderr_not_captured () =
-  let ls = Sol_process.lines_shell ~echo:false "echo out; echo err >&2" in
+  let ls = lines_or_fail "echo out; echo err >&2" in
   check_bool "only one line" true (List.length ls = 1);
   check_str "line is from stdout" "out" (List.nth ls 0)
 ;;
 
 let test_output_trimmed () =
-  let s = Sol_process.output_shell ~echo:false "printf '  hello  '" in
+  let s =
+    match Sol_process.output_shell_checked ~echo:false "printf '  hello  '" with
+    | Ok s -> s
+    | Error r -> Windtrap.fail (Sol_process.failure_message r)
+  in
   check_str "trimmed" "hello" s
+;;
+
+let test_lines_checked_reports_failure () =
+  match Sol_process.lines_shell_checked ~echo:false "echo out; echo err >&2; exit 3" with
+  | Ok _ -> Windtrap.fail "a failing command must not read as an empty line list"
+  | Error r ->
+    check_int "exit code" 3 (Sol_process.exit_code r);
+    check_str "stdout is still reported" "out" r.stdout;
+    check_str
+      "the failure names the cause"
+      "exited with code 3: err"
+      (Sol_process.failure_message r)
+;;
+
+let test_output_checked_reports_failure () =
+  match Sol_process.output_shell_checked ~echo:false "printf partial; exit 4" with
+  | Ok _ -> Windtrap.fail "a failing command must not read as an empty string"
+  | Error r ->
+    check_int "exit code" 4 (Sol_process.exit_code r);
+    check_str
+      "the failure names the cause"
+      "exited with code 4"
+      (Sol_process.failure_message r)
+;;
+
+let test_stream_returns_status_without_capture () =
+  let r = Sol_process.run_argv ~echo:false ~stream:true [ "sh"; "-c"; "exit 7" ] in
+  check_int "exit code" 7 (Sol_process.exit_code r);
+  check_str "nothing is captured when streaming" "" r.stdout
 ;;
 
 let test_run_rc_success () =
@@ -223,8 +262,23 @@ let () =
         [ Windtrap.test "basic lines" test_lines_basic
         ; Windtrap.test "blank lines filtered" test_lines_empty_filtered
         ; Windtrap.test "stderr excluded" test_lines_stderr_not_captured
+        ; Windtrap.test
+            "a failed read is an error, not []"
+            test_lines_checked_reports_failure
         ]
-    ; Windtrap.group "output" [ Windtrap.test "trimmed string" test_output_trimmed ]
+    ; Windtrap.group
+        "output"
+        [ Windtrap.test "trimmed string" test_output_trimmed
+        ; Windtrap.test
+            "a failed read is an error, not \"\""
+            test_output_checked_reports_failure
+        ]
+    ; Windtrap.group
+        "stream"
+        [ Windtrap.test
+            "status without capture"
+            test_stream_returns_status_without_capture
+        ]
     ; Windtrap.group
         "run_rc"
         [ Windtrap.test "success → 0" test_run_rc_success

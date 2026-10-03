@@ -9,14 +9,15 @@ let write_file path content =
 ;;
 
 let current_branch () =
-  Sol_process.output_shell ~echo:false "git rev-parse --abbrev-ref HEAD 2>/dev/null"
-;;
-
-let git_branch_exists branch =
-  Sol_process.run_shell_rc
-    ~echo:false
-    (Printf.sprintf "git rev-parse --verify %s >/dev/null 2>&1" (Filename.quote branch))
-  = 0
+  match
+    Sol_process.output_shell_checked ~echo:false "git rev-parse --abbrev-ref HEAD"
+  with
+  | Ok branch -> Ok branch
+  | Error r ->
+    Soldev_exit.error
+      (Printf.sprintf
+         "error: the current branch could not be read: %s"
+         (Sol_process.failure_message r))
 ;;
 
 type pr_info =
@@ -480,51 +481,71 @@ let mentions_id ~id line =
 let refixed_after ~id ~revert_hash =
   Soldev_shell.run_cmd_lines
     (Printf.sprintf "git log --oneline %s" (Filename.quote (revert_hash ^ "..HEAD")))
-  |> List.exists (mentions_id ~id)
+  |> Result.map (List.exists (mentions_id ~id))
+;;
+
+let reverted_entry line =
+  match String.index_opt line ' ' with
+  | None -> None
+  | Some i ->
+    let hash = String.sub line 0 i in
+    let subject = String.sub line (i + 1) (String.length line - i - 1) in
+    (match extract_reverted_branch subject with
+     | None -> None
+     | Some branch ->
+       let id = ticket_id_from_branch branch in
+       let done_path = Filename.concat (ticket_dir Soldev_ticket.Done) (id ^ ".md") in
+       if Sys.file_exists done_path then Some (id, hash, done_path) else None)
+;;
+
+let rec flagged_reverts acc = function
+  | [] -> Ok (List.rev acc)
+  | line :: rest ->
+    (match reverted_entry line with
+     | None -> flagged_reverts acc rest
+     | Some ((id, hash, _) as entry) ->
+       (match refixed_after ~id ~revert_hash:hash with
+        | Error _ as e -> e
+        | Ok refixed -> flagged_reverts (if refixed then acc else entry :: acc) rest))
+;;
+
+let git_log_unreadable r =
+  Printf.sprintf
+    "check-reverts: git log could not be read: %s"
+    (Sol_process.failure_message r)
 ;;
 
 let run_check_reverts () =
-  let lines =
+  match
     Soldev_shell.run_cmd_lines
       (Printf.sprintf
          "git log --oneline -E --grep=%s"
          (Filename.quote "^Revert \"Merge branch"))
-  in
-  let flagged =
-    lines
-    |> List.filter_map (fun line ->
-      match String.index_opt line ' ' with
-      | None -> None
-      | Some i ->
-        let hash = String.sub line 0 i in
-        let subject = String.sub line (i + 1) (String.length line - i - 1) in
-        (match extract_reverted_branch subject with
-         | None -> None
-         | Some branch ->
-           let id = ticket_id_from_branch branch in
-           let done_path = Filename.concat (ticket_dir Soldev_ticket.Done) (id ^ ".md") in
-           if Sys.file_exists done_path && not (refixed_after ~id ~revert_hash:hash)
-           then Some (id, hash, done_path)
-           else None))
-  in
-  if flagged = []
-  then (
-    Printf.printf "check-reverts: clean — no DONE ticket has a matching revert commit.\n";
-    Ok ())
-  else (
-    Printf.printf
-      "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
-      (List.length flagged);
-    List.iter
-      (fun (id, hash, path) ->
+  with
+  | Error r -> Soldev_exit.error (git_log_unreadable r)
+  | Ok lines ->
+    (match flagged_reverts [] lines with
+     | Error r -> Soldev_exit.error (git_log_unreadable r)
+     | Ok flagged ->
+       if flagged = []
+       then (
          Printf.printf
-           "  %-12s  revert %s  still in %s — verify the fix is actually live in main, \
-            or move it back to READY_FOR_ENGINEERING\n"
-           id
-           hash
-           path)
-      flagged;
-    Soldev_exit.reported ())
+           "check-reverts: clean — no DONE ticket has a matching revert commit.\n";
+         Ok ())
+       else (
+         Printf.printf
+           "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
+           (List.length flagged);
+         List.iter
+           (fun (id, hash, path) ->
+              Printf.printf
+                "  %-12s  revert %s  still in %s — verify the fix is actually live in \
+                 main, or move it back to READY_FOR_ENGINEERING\n"
+                id
+                hash
+                path)
+           flagged;
+         Soldev_exit.reported ()))
 ;;
 
 let run_submit ticket_id =
@@ -540,7 +561,7 @@ let run_submit ticket_id =
             commit has already moved the ticket file to DONE/ on this branch."
            done_path)
   in
-  let branch = current_branch () in
+  let* branch = current_branch () in
   let* () =
     if branch = "main" || branch = ""
     then
@@ -889,23 +910,34 @@ let parse_worktree_porcelain lines =
   go None [] lines
 ;;
 
-let shell_output_trim cmd = Sol_process.output_shell ~echo:false cmd |> String.trim
+let shell_output_trim cmd =
+  match Sol_process.output_shell_checked ~echo:false cmd with
+  | Ok out -> Ok (String.trim out)
+  | Error r -> Error (Sol_process.failure_message r)
+;;
+
+type worktree_state =
+  | Worktree_clean
+  | Worktree_dirty
+  | Worktree_unreadable of string
 
 type worktree_snapshot =
   { ws_path : string
   ; ws_branch : string
-  ; ws_dirty : bool
-  ; ws_unpushed : bool
+  ; ws_state : worktree_state
+  ; ws_unpushed : bool option
   }
 
 let worktree_snapshot_of_entry = function
   | _, None -> None
   | path, Some branch ->
     let qpath = Filename.quote path in
-    let status =
-      shell_output_trim (Printf.sprintf "git -C %s status --porcelain" qpath)
+    let state =
+      match shell_output_trim (Printf.sprintf "git -C %s status --porcelain" qpath) with
+      | Ok "" -> Worktree_clean
+      | Ok _ -> Worktree_dirty
+      | Error reason -> Worktree_unreadable reason
     in
-    let dirty = status <> "" in
     let upstream = "origin/" ^ branch in
     let upstream_rc =
       Sol_process.run_shell_rc
@@ -916,46 +948,67 @@ let worktree_snapshot_of_entry = function
            (Filename.quote upstream))
     in
     let commits_ahead_of ref =
-      let count =
+      match
         shell_output_trim
           (Printf.sprintf
              "git -C %s rev-list --count %s..HEAD"
              qpath
              (Filename.quote ref))
-      in
-      match int_of_string_opt count with
-      | Some count -> count > 0
-      | None -> true
+      with
+      | Error _ -> None
+      | Ok count ->
+        (match int_of_string_opt count with
+         | Some count -> Some (count > 0)
+         | None -> None)
     in
     let unpushed =
       commits_ahead_of (if upstream_rc = 0 then upstream else "origin/main")
     in
-    Some { ws_path = path; ws_branch = branch; ws_dirty = dirty; ws_unpushed = unpushed }
+    Some { ws_path = path; ws_branch = branch; ws_state = state; ws_unpushed = unpushed }
 ;;
 
 let worktree_snapshots () =
-  Soldev_shell.run_cmd_lines "git worktree list --porcelain"
-  |> parse_worktree_porcelain
-  |> List.filter_map worktree_snapshot_of_entry
+  match Soldev_shell.run_cmd_lines "git worktree list --porcelain" with
+  | Error r -> Error (Sol_process.failure_message r)
+  | Ok lines ->
+    Ok (parse_worktree_porcelain lines |> List.filter_map worktree_snapshot_of_entry)
 ;;
 
 let find_ticket_worktree ticket_id =
-  worktree_snapshots ()
-  |> List.find_opt (fun wt ->
-    wt.ws_branch <> "main" && ticket_id_of_branch wt.ws_branch = ticket_id)
+  match worktree_snapshots () with
+  | Error _ as e -> e
+  | Ok snapshots ->
+    Ok
+      (List.find_opt
+         (fun wt ->
+            wt.ws_branch <> "main" && ticket_id_of_branch wt.ws_branch = ticket_id)
+         snapshots)
+;;
+
+let worktree_notes (wt : worktree_snapshot) =
+  let dirtiness =
+    match wt.ws_state with
+    | Worktree_clean -> []
+    | Worktree_dirty -> [ "dirty worktree" ]
+    | Worktree_unreadable reason -> [ "worktree state could not be read: " ^ reason ]
+  in
+  let unpushed =
+    match wt.ws_unpushed with
+    | Some true -> [ "unpushed commits" ]
+    | Some false -> []
+    | None -> [ "unpushed commits unknown" ]
+  in
+  dirtiness @ unpushed
 ;;
 
 let worktree_annotation_for_ticket ticket_id =
   match find_ticket_worktree ticket_id with
-  | None -> None
-  | Some wt ->
-    let notes =
-      (if wt.ws_dirty then [ "dirty worktree" ] else [])
-      @ if wt.ws_unpushed then [ "unpushed commits" ] else []
-    in
-    if notes = []
-    then None
-    else Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path)
+  | Error reason -> Some (Printf.sprintf "(worktree state unreadable: %s)" reason)
+  | Ok None -> None
+  | Ok (Some wt) ->
+    (match worktree_notes wt with
+     | [] -> None
+     | notes -> Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path))
 ;;
 
 let evaluate_premise ~echo probe =
