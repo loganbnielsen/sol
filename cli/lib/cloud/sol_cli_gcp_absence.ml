@@ -90,6 +90,15 @@ let names_the_cluster cluster_name =
     cluster_name
 ;;
 
+let cluster_check ~project ~cluster_name =
+  identity_check
+    ~resource_class:"GKE cluster"
+    ~identity:cluster_name
+    ~attribution:(Named_for_target (names_the_cluster cluster_name))
+    ~attributable:(fun line -> line = cluster_name)
+    [ "--project"; project; "container"; "clusters"; "list"; "--format"; "value(name)" ]
+;;
+
 let checks ~project ~region ~cluster_name =
   let p args = [ "--project"; project ] @ args in
   let named ~resource_class ~identity ?(prefix = cluster_name ^ "-") argv =
@@ -102,11 +111,7 @@ let checks ~project ~region ~cluster_name =
         || (prefix <> "" && Sol_cli_string.contains ~needle:prefix line))
       argv
   in
-  [ named
-      ~resource_class:"GKE cluster"
-      ~identity:cluster_name
-      ~prefix:""
-      (p [ "container"; "clusters"; "list"; "--format"; "value(name)" ])
+  [ cluster_check ~project ~cluster_name
   ; identity_check
       ~resource_class:"GKE node pool"
       ~identity:(cluster_name ^ "-*")
@@ -329,14 +334,17 @@ let class_names =
   ]
 ;;
 
+let unlistable =
+  "the target declares no gcp.project_id, so the provider could not be listed -- an \
+   inventory that did not run cannot establish absence"
+;;
+
 let observations (target : Sol_cli_config.target) ~cluster_name =
   match project_of target with
   | None ->
     Unobservable
       { resource_class = "the provider inventory"
-      ; reason =
-          "the target declares no gcp.project_id, so the provider could not be listed -- \
-           an inventory that did not run cannot establish absence"
+      ; reason = unlistable
       ; checked_with = "gcloud (not run)"
       }
     :: durable_observations ~target ~cluster_name
@@ -347,6 +355,17 @@ let observations (target : Sol_cli_config.target) ~cluster_name =
         (checks ~project ~region:target.region ~cluster_name)
     in
     derived_by_vpc ~cluster_name observations @ durable_observations ~target ~cluster_name
+;;
+
+let substrate_absence (target : Sol_cli_config.target) ~cluster_name =
+  match project_of target with
+  | None ->
+    Unobservable
+      { resource_class = "GKE cluster"
+      ; reason = unlistable
+      ; checked_with = "gcloud (not run)"
+      }
+  | Some project -> run ~check:(cluster_check ~project ~cluster_name)
 ;;
 
 let unresolved = Sol_cli_absence.unresolved

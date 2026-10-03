@@ -123,6 +123,18 @@ let observations provider target ~cluster_name =
   | Sol_cli_provider.Byo -> []
 ;;
 
+let substrate_absence provider target ~cluster_name =
+  match provider with
+  | Sol_cli_provider.Aws -> Sol_cli_aws_absence.substrate_absence target ~cluster_name
+  | Sol_cli_provider.Gcp -> Sol_cli_gcp_absence.substrate_absence target ~cluster_name
+  | Sol_cli_provider.Byo ->
+    Sol_cli_absence.Unobservable
+      { resource_class = "the substrate"
+      ; reason = byo_no_root
+      ; checked_with = "(not run: the byo driver owns no provider root)"
+      }
+;;
+
 let resource_identity provider ~cluster_name =
   match provider with
   | Sol_cli_provider.Aws -> Sol_cli_resource_identity.aws ~cluster_name

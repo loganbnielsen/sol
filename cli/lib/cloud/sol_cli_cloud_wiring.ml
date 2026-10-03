@@ -751,6 +751,124 @@ let destruction
     }
 ;;
 
+let forget_addresses ~run_log ~phase ~chdir addresses =
+  List.fold_left
+    (fun acc address ->
+       let* forgotten = acc in
+       Sol_cli_report.app "    forgetting %s" address;
+       let* () =
+         Sol_cli_run_log.run_phase run_log ~name:phase (fun () ->
+           Sol_cli_terraform.state_rm ~chdir ~address ())
+         |> terraform_outcome
+         |> Result.map_error (fun message ->
+           Printf.sprintf
+             "%s could not be forgotten in state, so it still represents an object the \
+              provider does not have: %s"
+             address
+             message)
+       in
+       Ok (address :: forgotten))
+    (Ok [])
+    addresses
+  |> Result.map List.rev
+;;
+
+let platform_state_reconciliation
+      ~assets
+      ~run_log
+      ~provider
+      ~platform_dir
+      ~platform_backend
+  =
+  let open Sol_cli_cloud_destroy in
+  let* () =
+    init_result
+      ~assets
+      run_log
+      ~provider
+      ~role:Sol_cli_platform_assets.Platform
+      platform_backend
+  in
+  match Sol_cli_terraform.show_json ~chdir:platform_dir () with
+  | Error (Sol_cli_process.Non_zero result) ->
+    Error
+      (Printf.sprintf
+         "the platform root's state could not be read, so what it still represents is \
+          unknown (terraform show exited %d)"
+         result.exit_code)
+  | Error error ->
+    Error
+      ("the platform root's state could not be read, so what it still represents is \
+        unknown: "
+       ^ Sol_cli_process.error_to_string error)
+  | Ok result ->
+    (match inventory_of_show_json result.stdout with
+     | State_unreadable reason -> Error reason
+     | State_empty -> Ok []
+     | State_represented resources ->
+       Sol_cli_report.app
+         "  the platform root's state represents %d resource(s), and the cluster that \
+          carried every one of them is provably absent, so none of them can exist"
+         (List.length resources);
+       forget_addresses
+         ~run_log
+         ~phase:"platform-destroy-forget-absent-substrate"
+         ~chdir:platform_dir
+         (List.map (fun (resource : resource) -> resource.address) resources))
+;;
+
+let provable_absence_reconciliation
+      ~assets
+      ~run_log
+      ~provider
+      ~(target_cfg : Sol_cli_config.target)
+      ~platform_dir
+      ~platform_backend
+      ~var_files
+      ~vars
+      ~state
+  =
+  let open Sol_cli_cloud_destroy in
+  match substrate_presence state with
+  | Substrate_present | Substrate_unknown -> Ok Nothing_to_reconcile
+  | Substrate_absent ->
+    (match Sol_cli_terraform_vars.resolved "cluster_name" ~var_files ~vars with
+     | None ->
+       Sol_cli_report.warn
+         "warning: a target whose cloud root represents no substrate may carry stale \
+          platform state, but this target's cluster name is neither declared nor \
+          resolved, so the provider could not be asked about the substrate it belongs to \
+          and nothing was forgotten (a state entry is only forgotten on a positively \
+          established absence).";
+       Ok Nothing_to_reconcile
+     | Some cluster_name ->
+       (match
+          Sol_cli_provider_registry.substrate_absence provider target_cfg ~cluster_name
+        with
+        | Sol_cli_absence.Absent _ as observation ->
+          Sol_cli_report.app
+            "  the substrate's absence is positively established at the provider: %s"
+            (Sol_cli_absence.summary observation);
+          platform_state_reconciliation
+            ~assets
+            ~run_log
+            ~provider
+            ~platform_dir
+            ~platform_backend
+          |> Result.map (function
+            | [] -> Nothing_to_reconcile
+            | forgotten ->
+              Reconciled { evidence = Sol_cli_absence.summary observation; forgotten })
+        | observation ->
+          Sol_cli_report.warn
+            "warning: the state a provably absent substrate leaves behind was not \
+             reconciled: the substrate's absence could not be established at the \
+             provider, and only a positively established absence permits forgetting what \
+             state represents (%s)."
+            (Sol_cli_absence.summary observation);
+          Ok Nothing_to_reconcile))
+;;
+
 let destroy_deps
       ~assets
       ~run_log
@@ -907,6 +1025,18 @@ let destroy_deps
           | Error error ->
             Error
               ("could not read terraform state: " ^ Sol_cli_process.error_to_string error))
+    ; reconcile_provable_absence =
+        (fun () ->
+          provable_absence_reconciliation
+            ~assets
+            ~run_log
+            ~provider
+            ~target_cfg
+            ~platform_dir
+            ~platform_backend
+            ~var_files
+            ~vars
+            ~state:!state_ref)
     ; cloud_outputs =
         (fun () ->
           match cluster_of ~target_cfg provider infra_dir with

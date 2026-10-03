@@ -11,6 +11,16 @@ case "$1 $2" in
     ;;
 esac
 case " $* " in
+  *" container clusters list "*)
+    if [ "${SUBSTRATE_PRESENT_AT_PROVIDER:-}" = 1 ]; then
+      case " $* " in
+        *" --project sol-qualification "*|*" --project=sol-qualification "*) printf 'sol-qual\n' ;;
+      esac
+    fi
+    exit 0
+    ;;
+esac
+case " $* " in
   *" container clusters list "*|*" container node-pools list "*|*" compute networks list "*|\
     *" compute networks subnets list "*|*" compute routers list "*|*" compute addresses list "*|\
     *" artifacts repositories list "*|*" iam service-accounts list "*|*" iam roles list "*|\

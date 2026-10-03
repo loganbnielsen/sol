@@ -156,6 +156,23 @@ let cluster_tagged ?tagged_with ?checked_as ~cluster_name class_name argv =
     argv
 ;;
 
+let cluster_check ~region ~cluster_name =
+  check
+    ~resource_class:"EKS cluster"
+    ~identity:cluster_name
+    ~attribution:(Named_for_target (named_for_cluster cluster_name))
+    ~attributable:(fun line -> Sol_cli_string.contains ~needle:cluster_name line)
+    [ "eks"
+    ; "list-clusters"
+    ; "--region"
+    ; region
+    ; "--query"
+    ; "clusters[]"
+    ; "--output"
+    ; "text"
+    ]
+;;
+
 let checks ~region ~cluster_name =
   let prefixed_class ~resource_class ~prefix argv =
     check
@@ -165,20 +182,7 @@ let checks ~region ~cluster_name =
       ~attributable:(fun line -> Sol_cli_string.contains ~needle:prefix line)
       argv
   in
-  [ check
-      ~resource_class:"EKS cluster"
-      ~identity:cluster_name
-      ~attribution:(Named_for_target (named_for_cluster cluster_name))
-      ~attributable:(fun line -> Sol_cli_string.contains ~needle:cluster_name line)
-      [ "eks"
-      ; "list-clusters"
-      ; "--region"
-      ; region
-      ; "--query"
-      ; "clusters[]"
-      ; "--output"
-      ; "text"
-      ]
+  [ cluster_check ~region ~cluster_name
   ; check
       ~resource_class:"EKS node group"
       ~identity:cluster_name
@@ -403,6 +407,10 @@ let observations (target : Sol_cli_config.target) ~cluster_name =
   List.map (fun c -> run ~check:c) (checks ~region:target.region ~cluster_name)
   @ [ ecr_observation ~region:target.region ~registry:(registry_prefix target) ]
   @ durable_observations ~target
+;;
+
+let substrate_absence (target : Sol_cli_config.target) ~cluster_name =
+  run ~check:(cluster_check ~region:target.region ~cluster_name)
 ;;
 
 let unresolved = Sol_cli_absence.unresolved

@@ -22,6 +22,12 @@ val observations
   -> cluster_name:string
   -> Sol_cli_absence.observation list
 
+val substrate_absence
+  :  Sol_cli_provider.t
+  -> Sol_cli_config.target
+  -> cluster_name:string
+  -> Sol_cli_absence.observation
+
 val resource_identity
   :  Sol_cli_provider.t
   -> cluster_name:string
