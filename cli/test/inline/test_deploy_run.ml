@@ -26,6 +26,7 @@ let spec ~domain ~name ~k8s primitive : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/" ^ k8s ^ ":abc123"
   ; config = []
   ; secrets = []
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
   ; scheduled_concurrency = Sol_cli_toml.Allow

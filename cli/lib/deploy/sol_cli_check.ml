@@ -56,16 +56,19 @@ let check_workload ~manifest (workload : Sol_cli_workspace_model.workload) =
   (match workload.config with
    | Error err -> add Severity.Error toml_path (Sol_cli_toml.parse_error_to_string err)
    | Ok toml ->
-     toml.secret_keys
-     |> List.iter (fun key ->
+     let check_key kind key =
        if not (valid_env_key key)
        then
          add
            Severity.Error
            toml_path
            (Printf.sprintf
-              "invalid secret key %S; use uppercase letters, digits, and underscores"
-              key));
+              "invalid %s secret key %S; use uppercase letters, digits, and underscores"
+              kind
+              key)
+     in
+     List.iter (check_key "runtime") toml.secret_keys;
+     List.iter (check_key "build-time") toml.build_secret_keys;
      (match svc.Sol_cli_manifest.primitive, toml.schedule with
       | Sol_cli_manifest.Fn, _ -> ()
       | (Svc | Worker), Some _ ->

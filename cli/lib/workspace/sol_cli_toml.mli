@@ -57,6 +57,7 @@ type t =
   ; memory : memory_quantity option
   ; env_config : (string * string) list
   ; secret_keys : string list
+  ; build_secret_keys : string list
   ; volumes : volume list
   ; rollout_strategy : rollout_strategy option
   ; ingress_host : hostname option

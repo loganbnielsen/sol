@@ -79,6 +79,15 @@ The following substrate inputs must exist before running `sol deploy`.
   `postgres_secret_name`, `kafka_secret_name`, or `tls_secret_name` fields in
   `sol.toml`; per-workload Secret names are derived as `<service>-secrets`, and
   `sol.toml` declares only secret *keys* under `[infra.env] secrets`.
+- **Runtime and build-time keys are separate declarations.**
+  `[infra.env] secrets` lists the keys a workload needs while it runs; they are
+  delivered through `<service>-secrets`. `[infra.env] build_secrets` lists the
+  keys whatever builds the image needs instead (a private registry token, a
+  private-package credential). Sol never delivers a build-time key to the
+  workload, and exports only its *name* — in the deployment plan
+  (`--emit-plan-to`, as each service's `build_secret_keys`) and never its value.
+  A key listed in both is a validation error, because a build that can read a
+  runtime secret is a build that can leak it.
 
 ### Observability Endpoints
 

@@ -276,6 +276,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; image = "123.dkr.ecr.us-east-1.amazonaws.com/myworkspace/charge-svc:abc1234"
     ; config = [ "LOG_LEVEL", "info"; "REGION", "us-east-1" ]
     ; secrets = [ "DB_PASSWORD", "super-secret-value"; "API_KEY", "also-secret" ]
+    ; build_secret_keys = [ "BUILD_REGISTRY_TOKEN" ]
     ; volumes = []
     ; schedule = None
     ; scheduled_concurrency = Sol_cli_toml.Allow
@@ -351,6 +352,14 @@ let test_to_json_secret_keys_present () =
     contains re s);
   assert (
     let re = Str.regexp "API_KEY" in
+    contains re s)
+;;
+
+let test_to_json_build_secret_keys_present () =
+  let plan = sample_plan () in
+  let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
+  assert (
+    let re = Str.regexp "BUILD_REGISTRY_TOKEN" in
     contains re s)
 ;;
 
@@ -720,6 +729,7 @@ let make_worker_spec name domain =
   ; image = "reg/ws/" ^ name ^ ":t"
   ; config = []
   ; secrets = []
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
   ; scheduled_concurrency = Sol_cli_toml.Allow
@@ -1847,6 +1857,7 @@ let%test "to_json: valid JSON" = test_to_json_valid_json ()
 let%test "to_json: deterministic" = test_to_json_deterministic ()
 let%test "to_json: no secret values" = test_to_json_no_secret_values ()
 let%test "to_json: secret keys present" = test_to_json_secret_keys_present ()
+let%test "to_json: build secret keys present" = test_to_json_build_secret_keys_present ()
 let%test "to_json: env present" = test_to_json_env_present ()
 let%test "to_json: config values present" = test_to_json_config_values_present ()
 let%test "to_json: mode strings" = test_to_json_mode_strings ()

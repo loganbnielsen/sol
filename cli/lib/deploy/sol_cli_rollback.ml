@@ -172,6 +172,7 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; image = w.image
     ; config = w.config
     ; secrets = w.secrets
+    ; build_secret_keys = []
     ; volumes
     ; schedule = w.schedule
     ; scheduled_concurrency

@@ -366,6 +366,20 @@ Kubernetes Secret instead of the ConfigMap. Sol creates the per-workload
 just verifies and mounts it. Rotating a value is the same command followed by a
 verified restart — see [`docs/deployment/credential-rotation.md`](../deployment/credential-rotation.md).
 
+A secret that only the **build** needs is declared separately, in
+`[infra.env] build_secrets`, so it is never delivered to the running workload:
+
+```toml
+[infra.env]
+# runtime keys — delivered to the pod through <service>-secrets
+secrets       = ["POSTGRES_URL"]
+# build-time keys — named for the builder, exported in the plan, never shipped
+build_secrets = ["BUILD_REGISTRY_TOKEN"]
+```
+
+`sol deploy --emit-plan-to` lists each service's `build_secret_keys` by name; Sol
+never emits a value, and a key declared in both lists fails validation.
+
 When a service needs a synchronous call to another service, declare it in the
 caller:
 
