@@ -87,11 +87,12 @@ let hosted_plan ?progressive_delivery () =
   ; topics =
       (match Sol_cli_plan_ids.Topic_name.of_string "charged" with
        | Ok t -> [ t ]
-       | Error _ -> [])
+       | Error _ -> failwith "fixture: \"charged\" must be a valid topic name")
   ; migrations =
       (match Sol_cli_plan_ids.Migration_file.of_string "0001_notifications.sql" with
        | Ok m -> [ m ]
-       | Error _ -> [])
+       | Error _ ->
+         failwith "fixture: \"0001_notifications.sql\" must be a valid migration")
   ; schema_subjects = []
   ; consumer_groups = []
   ; release_id = release_id_of_test
