@@ -309,32 +309,73 @@ let test_helm_repo_update_argv () =
   check_str "argv[2]" "update" (List.nth c.argv 2)
 ;;
 
-let test_helm_upgrade_install_argv () =
-  let c =
-    Sol_cli_process.cmd
-      ([ "helm"; "upgrade"; "--install"; "redpanda"; "redpanda/redpanda" ]
-       @ [ "--namespace"; "redpanda"; "--create-namespace" ]
-       @ [ "--set"; "tls.enabled=false" ]
-       @ [ "--wait"; "--timeout"; "3m" ])
+let argv_value flag argv =
+  let rec find = function
+    | name :: value :: _ when String.equal name flag -> Some value
+    | _ :: rest -> find rest
+    | [] -> None
   in
-  check_str "argv[1]" "upgrade" (List.nth c.argv 1);
-  check_str "argv[2]" "--install" (List.nth c.argv 2);
-  check_str "release" "redpanda" (List.nth c.argv 3);
-  check_str "chart" "redpanda/redpanda" (List.nth c.argv 4);
-  check_bool "has --create-namespace" true (List.mem "--create-namespace" c.argv);
-  check_bool "has --wait" true (List.mem "--wait" c.argv)
+  find argv
 ;;
 
-let test_helm_upgrade_install_version_argv () =
-  let c =
-    Sol_cli_process.cmd
-      ([ "helm"; "upgrade"; "--install"; "loki"; "grafana-community/loki" ]
-       @ [ "--namespace"; "monitoring"; "--create-namespace" ]
-       @ [ "--version"; "18.12.1" ]
-       @ [ "--wait"; "--timeout"; "3m" ])
+let test_helm_upgrade_install_argv () =
+  let argv =
+    Sol_cli_helm.upgrade_install_argv
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~release:"redpanda"
+      ~chart:"redpanda/redpanda"
+      ~namespace:"redpanda"
+      ~values:[ "tls.enabled", Sol_cli_helm.Bool false ]
+      ()
   in
-  check_str "argv[8]" "--version" (List.nth c.argv 8);
-  check_str "argv[9]" "18.12.1" (List.nth c.argv 9)
+  check_str "argv[0]" "helm" (List.nth argv 0);
+  check_str "argv[1]" "upgrade" (List.nth argv 1);
+  check_str "argv[2]" "--install" (List.nth argv 2);
+  check_str "release" "redpanda" (List.nth argv 3);
+  check_str "chart" "redpanda/redpanda" (List.nth argv 4);
+  check_bool "has --create-namespace" true (List.mem "--create-namespace" argv);
+  check_bool "has --set" true (List.mem "--set" argv);
+  check_bool "has --wait" true (List.mem "--wait" argv)
+;;
+
+let test_helm_upgrade_install_local_context () =
+  let argv =
+    Sol_cli_helm.upgrade_install_argv
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~release:"loki"
+      ~chart:"grafana-community/loki"
+      ~namespace:"monitoring"
+      ~version:"18.12.1"
+      ()
+  in
+  check_str
+    "the local install targets k3d-sol-local"
+    "k3d-sol-local"
+    (Option.value ~default:"<missing>" (argv_value "--kube-context" argv));
+  check_str
+    "version is carried"
+    "18.12.1"
+    (Option.value ~default:"<missing>" (argv_value "--version" argv))
+;;
+
+let test_helm_upgrade_install_targets_its_context () =
+  let other =
+    Sol_cli_kube_destination.of_context "sol-prod-us-west-2"
+    |> Result.get_ok
+    |> Sol_cli_kube_destination.context_of_destination
+  in
+  let argv =
+    Sol_cli_helm.upgrade_install_argv
+      ~ctx:other
+      ~release:"loki"
+      ~chart:"grafana-community/loki"
+      ~namespace:"monitoring"
+      ()
+  in
+  check_str
+    "the install follows the caller's context, not a hard-coded one"
+    "sol-prod-us-west-2"
+    (Option.value ~default:"<missing>" (argv_value "--kube-context" argv))
 ;;
 
 let test_helm_set_flags_bool () =
@@ -452,8 +493,12 @@ let%test "helm_argv: repo add argv" = test_helm_repo_add_argv ()
 let%test "helm_argv: repo update argv" = test_helm_repo_update_argv ()
 let%test "helm_argv: upgrade install argv" = test_helm_upgrade_install_argv ()
 
-let%test "helm_argv: upgrade install --version argv" =
-  test_helm_upgrade_install_version_argv ()
+let%test "helm_argv: the local install targets k3d-sol-local" =
+  test_helm_upgrade_install_local_context ()
+;;
+
+let%test "helm_argv: upgrade install follows its context" =
+  test_helm_upgrade_install_targets_its_context ()
 ;;
 
 let%test "helm_argv: set flags bool" = test_helm_set_flags_bool ()

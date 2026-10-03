@@ -25,6 +25,7 @@ let helm_install_job (release : Sol_cli_local_platform.release)
   ; run =
       (fun () ->
         upgrade_install
+          ~ctx:Sol_cli_kube_destination.local_context
           ~release:release.name
           ~chart:release.chart
           ~namespace:release.namespace
@@ -190,12 +191,15 @@ let dev_status () =
   then (
     Printf.printf "\nPods:\n%!";
     (match
-       Sol_cli_process.run (Sol_cli_process.cmd [ "kubectl"; "get"; "pods"; "-A" ])
+       Sol_cli_kubectl.get_raw
+         ~ctx:Sol_cli_kube_destination.local_context
+         ~args:[ "get"; "pods"; "-A" ]
      with
      | Ok r ->
        print_string r.stdout;
        print_char '\n'
-     | Error _ -> ());
+     | Error e ->
+       Printf.printf "  could not read pods: %s\n" (Sol_cli_process.error_to_string e));
     Printf.printf "\nPort-forwards:\n%!";
     let recorded, unreadable = Sol_cli_port_forward.records () in
     (match recorded with
