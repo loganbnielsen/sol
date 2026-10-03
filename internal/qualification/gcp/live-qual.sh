@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 OBSERVER="${OBSERVER:-$ROOT/internal/qualification/gcp/observer.py}"
@@ -26,10 +25,7 @@ STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
 CLUSTER_ISSUER="${CLUSTER_ISSUER:-letsencrypt-staging}"
 APP_TAG="${APP_TAG:-qual-$(date -u +%Y%m%d-%H%M%S)}"
-RUNNER_VERSION="${RUNNER_VERSION:-sol-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || printf 'dev')}"
-RUNNER_REPOSITORY="${RUNNER_REPOSITORY:-pluto/sol-migration-runner}"
-export APP_TAG RUNNER_VERSION RUNNER_REPOSITORY
-BOOTSTRAP_ROOT="$ROOT/platform/cloud/gcp/bootstrap"
+export APP_TAG
 
 case "${1:-}" in
   cloud | platform | app)
@@ -86,18 +82,24 @@ assert_environment() {
 }
 assert_environment
 
-if [ "${1:-}" != "verify" ]; then
-  [ -x "$SOL" ] || {
-    echo "✗ CLI not built at $SOL" >&2
-    echo "  Build it in this checkout so the attempt is identifiable by commit:" >&2
-    echo "    eval \$(opam env) && dune build cli/bin/main.exe" >&2
-    exit 2
-  }
-fi
+source "$ROOT/internal/qualification/sol-under-test.sh"
+case "${1:-}" in
+  cloud | app | destroy | stop)
+    sol_under_test_resolve
+    BOOTSTRAP_ROOT="$SOL_PLATFORM_ROOT/cloud/gcp/bootstrap"
+    ;;
+esac
 
 mkdir -p "$LOG_DIR"
 SAY_LOG="$LOG_DIR/harness.log"
 say "environment: work tree $ROOT, revision $(git -C "$ROOT" rev-parse --short HEAD)"
+case "${1:-}" in
+  cloud | app | destroy | stop)
+    sol_under_test_record_identity "$LOG_DIR"
+    say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
+    say "  migration runner: $SOL_RUNNER_IMAGE"
+    ;;
+esac
 echo "$$" >"$LOG_DIR/run.pid"
 ps -o pgid= -p "$$" 2>/dev/null | tr -d " " >"$LOG_DIR/run.pgid" || true
 DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
@@ -1180,31 +1182,6 @@ app_context_path() {
 
 app_image_ref() { printf '%s/pluto/%s:%s' "$(app_registry)" "$(app_k8s_name "$1")" "$APP_TAG"; }
 
-app_runner_image_ref() { printf '%s/%s:%s' "$(app_registry)" "$RUNNER_REPOSITORY" "$RUNNER_VERSION"; }
-
-publish_migration_runner() {
-  say "runner-publish: building and publishing the migration runner Sol will run"
-  if ! timeout "$PHASE_TIMEOUT" "$ROOT/internal/qualification/publish-migration-runner.sh" \
-      --root "$ROOT" --image "$(app_runner_image_ref)" --version "$RUNNER_VERSION" \
-      >"$LOG_DIR/runner-publish.out" 2>"$LOG_DIR/runner-publish.log"; then
-    say "FAILED: runner-publish (last 40 lines; full log $LOG_DIR/runner-publish.log)"
-    tail -n 40 "$LOG_DIR/runner-publish.log" || true
-    return 1
-  fi
-  local ref
-  ref="$(cat "$LOG_DIR/runner-publish.out")"
-  case "$ref" in
-    *@sha256:*) ;;
-    *)
-      say "the publisher did not report a digest reference ($ref), and Sol is only ever handed one"
-      return 1
-      ;;
-  esac
-  export SOL_MIGRATION_RUNNER_IMAGE="$ref"
-  say "  Sol will run $ref"
-  say "  the deploy identity publishes nothing: this is the same boundary the app images cross, before Sol is invoked"
-}
-
 write_app_target() {
   mkdir -p "$(dirname "$TARGET_FILE")"
   if [ -f "$TARGET_FILE" ] && ! owns_target_file; then
@@ -1369,12 +1346,7 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! publish_migration_runner; then
-    capture_app_evidence
-    freeze_evidence
-    finalise_bundle
-    return 1
-  fi
+  say "runner: release $SOL_BUNDLE_VERSION names $SOL_RUNNER_IMAGE; the publisher publishes nothing"
   if ! app_load_runtime_secrets; then
     capture_app_evidence
     freeze_evidence
@@ -1417,17 +1389,16 @@ phases
             Kubernetes evidence, the cert-manager discriminator and the provider
             inventory before any teardown. On success it continues to the delegation
             hand-off and keeps the substrate for the TLS rows.
-  app       build and push this row's two images into the target's Artifact Registry, publish the
-            migration runner as the publisher does, apply the workspace's migrations, run `sol
+  app       build and push this row's two images into the target's Artifact Registry, apply the
+            workspace's migrations, run `sol
             deploy`, and verify the application transaction
             (a charge accepted, the worker consuming it, and the service reading the worker's
             row back out of PostgreSQL) with the pods, events and logs captured either way.
-            The migration runner is published here, not by Sol:
-            `internal/qualification/publish-migration-runner.sh` builds it from Sol's release
-            recipe and prints the pushed digest, which is handed to `sol migrate apply` and `sol
-            deploy` as SOL_MIGRATION_RUNNER_IMAGE. The deploy identity has no registry-write
-            authority (ADR 0002, SEC-011), and Sol refuses to run either step without a
-            digest-pinned runner. The deploy is still given the target's registry for the
+            Sol runs the installed release bundle, which pins its own migration runner by
+            digest: the harness publishes nothing for Sol and hands it no runner reference.
+            The deploy identity has no registry-write authority (ADR 0002, SEC-011), and Sol
+            refuses to run either step without a digest-pinned runner. The deploy is still
+            given the target's registry for the
             workspace's own images. The workspace's declared runtime secrets
             (POSTGRES_URL, SOL_API_KEY) come from the operator's side of the contract -- the
             cluster root's postgres_url output plus a value for the API key -- and the
@@ -1442,17 +1413,15 @@ required
   CLUSTER        this run's cluster name (also the name every provider probe filters on)
   IMPERSONATOR   user:<email> the provisioner is impersonated as
   LE_EMAIL       ACME contact address, for the platform's certificates
+  SOL_INSTALL    the extracted release prefix holding bin/sol and share/sol/<version>
 
 optional (defaults shown)
   TARGET=qual/gcp/us-central1
   PROJECT=sol-qualification   REGION=us-central1
   BASE_DOMAIN=qual-gcp.sol-fab.dev
   PHASE_TIMEOUT=2700          how long one phase may take before the harness ends it
-  SOL=_build/default/cli/bin/main.exe
   WORKSPACE=examples/pluto    TFVARS=internal/qualification/gcp/qual-gcp.tfvars
   LOG_DIR=/tmp/sol-gcp-qual-<timestamp>   XDG_DATA_HOME
-  RUNNER_VERSION=sol-<git sha>   RUNNER_REPOSITORY=pluto/sol-migration-runner
-                                 what the app phase publishes for Sol's migrate and deploy
 
 The bundle is LOG_DIR: the harness's own narrative (harness.log), phase transcripts,
 the run kubeconfig and the waiter journal, the API-readiness samples, the failure

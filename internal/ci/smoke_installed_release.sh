@@ -94,6 +94,21 @@ grep -q -- "-backend-config=key=sol/prod/aws/us-east-1/cloud.tfstate" <<<"$out" 
   die "the target's remote-state identity changed"
 grep -q "/.terraform/fake-init$" <<<"$out" || die "Terraform's own directory is not in the working directory"
 pass "sol cloud plan runs from the read-only install; Terraform works in its own directory"
+
+refws="$work/refws"
+mkdir -p "$refws"
+git -C "$root" archive HEAD examples/pluto | tar -x -C "$refws"
+if ! out="$(docker run --rm --network none --read-only --tmpfs /tmp -e HOME=/tmp \
+      -v "$install:/opt/sol:ro" -v "$refws:/work" -w /work/examples/pluto \
+      -e XDG_DATA_HOME=/tmp/xdg \
+      "$image" /opt/sol/bin/sol plan prod/aws/us-east-1 2>&1)"; then
+  echo "$out"
+  die "sol plan failed on the reference workspace from the read-only install"
+fi
+grep -qx "Project: pluto" <<<"$out" || { echo "$out"; die "sol plan did not read the reference workspace's declaration"; }
+grep -qx "Target: prod/aws/us-east-1" <<<"$out" || { echo "$out"; die "sol plan did not resolve the target"; }
+pass "sol plan reads the reference workspace with no checkout and SOL_HOME unset"
+
 if in_container "$install" sh -c "touch /opt/sol/share/sol/$version/platform/probe" >/dev/null 2>&1; then
   die "control: the install is writable in the container, so the check above proves nothing"
 fi
