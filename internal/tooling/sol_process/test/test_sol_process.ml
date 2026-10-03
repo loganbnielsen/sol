@@ -109,6 +109,57 @@ let test_output_trimmed () =
   check_str "trimmed" "hello" s
 ;;
 
+let test_stream_returns_the_status_without_capturing () =
+  let r = Sol_process.run_argv ~echo:false ~stream:true [ "sh"; "-c"; "exit 7" ] in
+  check_int "the exit status is still reported" 7 (Sol_process.exit_code r);
+  check_str "stdout is not captured when it is streamed" "" r.stdout;
+  check_str "stderr is not captured when it is streamed" "" r.stderr
+;;
+
+let with_stdout_to_a_file f =
+  let path = Filename.temp_file "sol-process-stream" ".out" in
+  let saved = Unix.dup Unix.stdout in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  Unix.dup2 fd Unix.stdout;
+  Unix.close fd;
+  let outcome =
+    match f () with
+    | value -> Ok value
+    | exception e -> Error e
+  in
+  Unix.dup2 saved Unix.stdout;
+  Unix.close saved;
+  let captured = In_channel.with_open_bin path In_channel.input_all in
+  match outcome with
+  | Ok value -> value, captured
+  | Error e -> raise e
+;;
+
+let test_stream_inherits_the_output () =
+  let marker = "sol-process-stream-marker" in
+  let r, captured =
+    with_stdout_to_a_file (fun () ->
+      Sol_process.run_shell ~echo:false ~stream:true (Printf.sprintf "echo %s" marker))
+  in
+  check_int "the status is reported" 0 (Sol_process.exit_code r);
+  check_bool
+    "the child wrote to the parent's stdout, not a pipe Sol read"
+    true
+    (Sol_process.nonempty_lines captured = [ marker ])
+;;
+
+let test_failure_message_names_the_cause () =
+  let r = Sol_process.run_shell ~echo:false "echo out; echo err >&2; exit 3" in
+  check_str
+    "the exit code and stderr"
+    "exited with code 3: err"
+    (Sol_process.failure_message r);
+  check_str
+    "a silent failure still names the code"
+    "exited with code 4"
+    (Sol_process.failure_message (Sol_process.run_shell ~echo:false "exit 4"))
+;;
+
 let test_run_rc_success () =
   check_int "rc 0" 0 (Sol_process.run_shell_rc ~echo:false "true")
 ;;
@@ -234,6 +285,21 @@ let () =
         "run_ok"
         [ Windtrap.test "success → no raise" test_run_ok_success
         ; Windtrap.test "failure → Failure" test_run_ok_failure
+        ]
+    ; Windtrap.group
+        "stream"
+        [ Windtrap.test
+            "a streamed run returns the status and captures nothing"
+            test_stream_returns_the_status_without_capturing
+        ; Windtrap.test
+            "a streamed run's output reaches the parent's stdout"
+            test_stream_inherits_the_output
+        ]
+    ; Windtrap.group
+        "failure_message"
+        [ Windtrap.test
+            "names the exit code and stderr"
+            test_failure_message_names_the_cause
         ]
     ; Windtrap.group
         "streams"

@@ -9,7 +9,15 @@ let write_file path content =
 ;;
 
 let current_branch () =
-  Sol_process.output_shell ~echo:false "git rev-parse --abbrev-ref HEAD 2>/dev/null"
+  match
+    Sol_process.output_shell_checked ~echo:false "git rev-parse --abbrev-ref HEAD"
+  with
+  | Ok branch -> Ok branch
+  | Error r ->
+    Soldev_exit.error
+      (Printf.sprintf
+         "error: the current branch could not be read: %s"
+         (Sol_process.failure_message r))
 ;;
 
 let git_branch_exists branch =
@@ -478,53 +486,73 @@ let mentions_id ~id line =
 ;;
 
 let refixed_after ~id ~revert_hash =
-  Soldev_shell.run_cmd_lines
+  Soldev_shell.run_cmd_lines_checked
     (Printf.sprintf "git log --oneline %s" (Filename.quote (revert_hash ^ "..HEAD")))
-  |> List.exists (mentions_id ~id)
+  |> Result.map (List.exists (mentions_id ~id))
+;;
+
+let reverted_entry line =
+  match String.index_opt line ' ' with
+  | None -> None
+  | Some i ->
+    let hash = String.sub line 0 i in
+    let subject = String.sub line (i + 1) (String.length line - i - 1) in
+    (match extract_reverted_branch subject with
+     | None -> None
+     | Some branch ->
+       let id = ticket_id_from_branch branch in
+       let done_path = Filename.concat (ticket_dir Soldev_ticket.Done) (id ^ ".md") in
+       if Sys.file_exists done_path then Some (id, hash, done_path) else None)
+;;
+
+let rec flagged_reverts acc = function
+  | [] -> Ok (List.rev acc)
+  | line :: rest ->
+    (match reverted_entry line with
+     | None -> flagged_reverts acc rest
+     | Some ((id, hash, _) as entry) ->
+       (match refixed_after ~id ~revert_hash:hash with
+        | Error _ as e -> e
+        | Ok refixed -> flagged_reverts (if refixed then acc else entry :: acc) rest))
+;;
+
+let git_log_unreadable r =
+  Printf.sprintf
+    "check-reverts: git log could not be read: %s"
+    (Sol_process.failure_message r)
 ;;
 
 let run_check_reverts () =
-  let lines =
-    Soldev_shell.run_cmd_lines
+  match
+    Soldev_shell.run_cmd_lines_checked
       (Printf.sprintf
          "git log --oneline -E --grep=%s"
          (Filename.quote "^Revert \"Merge branch"))
-  in
-  let flagged =
-    lines
-    |> List.filter_map (fun line ->
-      match String.index_opt line ' ' with
-      | None -> None
-      | Some i ->
-        let hash = String.sub line 0 i in
-        let subject = String.sub line (i + 1) (String.length line - i - 1) in
-        (match extract_reverted_branch subject with
-         | None -> None
-         | Some branch ->
-           let id = ticket_id_from_branch branch in
-           let done_path = Filename.concat (ticket_dir Soldev_ticket.Done) (id ^ ".md") in
-           if Sys.file_exists done_path && not (refixed_after ~id ~revert_hash:hash)
-           then Some (id, hash, done_path)
-           else None))
-  in
-  if flagged = []
-  then (
-    Printf.printf "check-reverts: clean — no DONE ticket has a matching revert commit.\n";
-    Ok ())
-  else (
-    Printf.printf
-      "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
-      (List.length flagged);
-    List.iter
-      (fun (id, hash, path) ->
+  with
+  | Error r -> Soldev_exit.error (git_log_unreadable r)
+  | Ok lines ->
+    (match flagged_reverts [] lines with
+     | Error r -> Soldev_exit.error (git_log_unreadable r)
+     | Ok flagged ->
+       if flagged = []
+       then (
          Printf.printf
-           "  %-12s  revert %s  still in %s — verify the fix is actually live in main, \
-            or move it back to READY_FOR_ENGINEERING\n"
-           id
-           hash
-           path)
-      flagged;
-    Soldev_exit.reported ())
+           "check-reverts: clean — no DONE ticket has a matching revert commit.\n";
+         Ok ())
+       else (
+         Printf.printf
+           "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
+           (List.length flagged);
+         List.iter
+           (fun (id, hash, path) ->
+              Printf.printf
+                "  %-12s  revert %s  still in %s — verify the fix is actually live in \
+                 main, or move it back to READY_FOR_ENGINEERING\n"
+                id
+                hash
+                path)
+           flagged;
+         Soldev_exit.reported ()))
 ;;
 
 let run_submit ticket_id =
@@ -540,7 +568,7 @@ let run_submit ticket_id =
             commit has already moved the ticket file to DONE/ on this branch."
            done_path)
   in
-  let branch = current_branch () in
+  let* branch = current_branch () in
   let* () =
     if branch = "main" || branch = ""
     then
@@ -550,12 +578,15 @@ let run_submit ticket_id =
   in
   Printf.printf "[%s] pushing %s...\n%!" ticket_id branch;
   let* () =
-    if
+    let rc =
       Soldev_shell.run_cmd
         (Printf.sprintf "git push -u origin %s" (Filename.quote branch))
-      = 0
+    in
+    if rc = 0
     then Ok ()
-    else Soldev_exit.error (Printf.sprintf "error: git push failed for %s" branch)
+    else
+      Soldev_exit.error
+        (Printf.sprintf "error: git push failed for %s (exit %d)" branch rc)
   in
   let content = read_file done_path in
   let* prs = open_prs () in
@@ -669,21 +700,22 @@ let run_review ticket_id result_file =
      | Pass ->
        let summary = if summary = "" then "Automated review: pass." else summary in
        let body = Printf.sprintf "%s %s\n\n%s" review_pass_marker p.pr_head_sha summary in
-       let rc =
-         Soldev_shell.run_cmd
-           ~echo:false
-           (Printf.sprintf
-              "gh pr comment %s --body %s"
-              (Filename.quote p.pr_url)
-              (Filename.quote body))
-       in
-       if rc <> 0
-       then
-         Soldev_exit.error
-           (Printf.sprintf "error: failed to post review-pass comment on %s" p.pr_url)
-       else (
-         Printf.printf "[%s] %s → review passed (informational)\n" ticket_id p.pr_url;
-         Ok ())
+       (match
+          Soldev_shell.run_cmd_checked
+            (Printf.sprintf
+               "gh pr comment %s --body %s"
+               (Filename.quote p.pr_url)
+               (Filename.quote body))
+        with
+        | Error r ->
+          Soldev_exit.error
+            (Printf.sprintf
+               "error: failed to post review-pass comment on %s: %s"
+               p.pr_url
+               (Sol_process.failure_message r))
+        | Ok _ ->
+          Printf.printf "[%s] %s → review passed (informational)\n" ticket_id p.pr_url;
+          Ok ())
      | Fail ->
        let body =
          Printf.sprintf
@@ -691,25 +723,26 @@ let run_review ticket_id result_file =
            review_fail_marker
            (format_violations violations)
        in
-       let rc =
-         Soldev_shell.run_cmd
-           ~echo:false
-           (Printf.sprintf
-              "gh pr comment %s --body %s"
-              (Filename.quote p.pr_url)
-              (Filename.quote body))
-       in
-       if rc <> 0
-       then
-         Soldev_exit.error
-           (Printf.sprintf "error: failed to post review-fail comment on %s" p.pr_url)
-       else (
-         Printf.printf
-           "[%s] %s → changes requested (%d violation(s))\n"
-           ticket_id
-           p.pr_url
-           (List.length violations);
-         Ok ()))
+       (match
+          Soldev_shell.run_cmd_checked
+            (Printf.sprintf
+               "gh pr comment %s --body %s"
+               (Filename.quote p.pr_url)
+               (Filename.quote body))
+        with
+        | Error r ->
+          Soldev_exit.error
+            (Printf.sprintf
+               "error: failed to post review-fail comment on %s: %s"
+               p.pr_url
+               (Sol_process.failure_message r))
+        | Ok _ ->
+          Printf.printf
+            "[%s] %s → changes requested (%d violation(s))\n"
+            ticket_id
+            p.pr_url
+            (List.length violations);
+          Ok ()))
 ;;
 
 type post_merge_action =
@@ -792,14 +825,19 @@ let merge_candidates ~dry_run ~mode ~targeted targets =
          let command = merge_command ~mode p in
          if dry_run
          then Printf.printf "  (dry-run) %s\n" command
-         else if Soldev_shell.run_cmd command <> 0
-         then incr errors
-         else
-           Printf.printf
-             "  GitHub accepted %s\n%!"
-             (match mode with
-              | Auto_merge -> "auto-merge"
-              | Immediate -> "merge"))
+         else (
+           match Soldev_shell.run_cmd_checked ~echo:true command with
+           | Error r ->
+             incr errors;
+             Printf.printf
+               "  merge request failed: %s\n%!"
+               (Sol_process.failure_message r)
+           | Ok _ ->
+             Printf.printf
+               "  GitHub accepted %s\n%!"
+               (match mode with
+                | Auto_merge -> "auto-merge"
+                | Immediate -> "merge")))
     targets;
   match merge_outcome ~errors:!errors ~refusals:!refusals ~targeted with
   | All_requested -> Ok ()
@@ -889,13 +927,6 @@ let parse_worktree_porcelain lines =
   go None [] lines
 ;;
 
-let read_failure_reason (r : Sol_process.result) =
-  let stderr = String.trim r.stderr in
-  if stderr <> ""
-  then stderr
-  else Printf.sprintf "git exited %d" (Sol_process.exit_code r)
-;;
-
 type worktree_snapshot =
   { ws_path : string
   ; ws_branch : string
@@ -957,7 +988,8 @@ let find_ticket_worktree ticket_id snapshots =
 let worktree_annotation_for_ticket ticket_id =
   match worktree_snapshots () with
   | Error r ->
-    Some (Printf.sprintf "(worktree state unreadable: %s)" (read_failure_reason r))
+    Some
+      (Printf.sprintf "(worktree state unreadable: %s)" (Sol_process.failure_message r))
   | Ok snapshots ->
     (match find_ticket_worktree ticket_id snapshots with
      | None -> None

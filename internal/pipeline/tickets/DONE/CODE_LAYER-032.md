@@ -101,3 +101,45 @@ app-author surface.
 
 **TypeScript-parity note (DEC-022):** No language-parity impact — `soldev` and
 `sol_process` are the repository's own tooling.
+
+## Completion notes
+
+Fixed 2026-10-02, `CODE_LAYER-032/shell-output` (the ticket was filed as
+`#968`, then implemented).
+
+- `Sol_process.run_argv` gained `?stream`: when set, the child is spawned with the
+  parent's `stdout`/`stderr` instead of pipes and the returned `result` carries
+  the status with empty `stdout`/`stderr`. `run_shell` passes it through and
+  `run_shell_rc` uses it, so `git push`, `run_tests.sh` and the other `run_cmd`
+  call sites print as they run again. The capturing entry points are unchanged.
+- `Sol_process.failure_message` renders "exited with code N" plus stderr
+  (mirroring `Sol_cli_process.error_to_string`); `soldev`'s private
+  `read_failure_reason` is gone in favour of it.
+- `Soldev_shell.run_cmd_checked` returns the captured `result`; `merge_candidates`
+  prints `merge request failed: <reason>` and `run_review`'s two `gh pr comment`
+  sites name the reason instead of only the PR. `run_submit`'s push failure now
+  names the exit code (its output is on the terminal, streamed).
+- `current_branch` returns `result` and refuses with "the current branch could
+  not be read: <reason>"; `refixed_after` propagates and `run_check_reverts`
+  fails with "check-reverts: git log could not be read: <reason>" rather than
+  reporting the tree clean.
+
+Tests: `sol_process/test/test_sol_process.ml` pins that a streamed run reports its
+status and captures nothing, that its output reaches the parent's stdout (the
+test redirects the process's own fd 1 and looks for a unique marker), and that
+`failure_message` names the code and stderr. `soldev/test/test_merge.ml` pins the
+three reason-carrying paths with a failing fake `git` on `PATH`.
+
+Negative (mutation) runs, all reverted: ignoring `?stream` fails the
+output-reaches-stdout test; restoring `Error _ -> Ok ""` in `current_branch` fails
+"the current branch names a failed read"; restoring the unchecked
+`run_cmd_lines_checked` fails "check-reverts refuses to report a log it could not
+read"; an always-`Ok` `run_cmd_checked` fails "a checked run carries the exit code
+and stderr".
+
+`dune runtest internal/tooling/sol_process/test internal/tooling/soldev/test`
+passes (26 + 60 + 32 tests).
+
+No demo/example change: internal maintainer tooling. No language-parity impact
+(DEC-022).
+

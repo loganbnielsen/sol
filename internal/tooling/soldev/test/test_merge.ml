@@ -748,6 +748,58 @@ let test_unreadable_status_is_not_reported_clean () =
     | None -> Windtrap.fail "expected a worktree snapshot")
 ;;
 
+let with_failing_git script f =
+  let old_path = Sys.getenv "PATH" in
+  let dir = Sys.getcwd () in
+  let fake_git = Filename.concat dir "git" in
+  write_file fake_git script;
+  Unix.chmod fake_git 0o755;
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect ~finally:(fun () -> Unix.putenv "PATH" old_path) f
+;;
+
+let test_current_branch_names_a_failed_read () =
+  in_temp_dir (fun () ->
+    with_failing_git
+      "#!/bin/sh\nprintf 'fatal: not a git repository\\n' >&2\nexit 128\n"
+      (fun () ->
+         match Soldev_merge.current_branch () with
+         | Ok branch ->
+           Windtrap.fail ("a failed read must not become a branch name: " ^ branch)
+         | Error { Soldev_exit.message = Some message; _ } ->
+           check_bool
+             "names the read failure"
+             true
+             (contains ~needle:"could not be read" message
+              && contains ~needle:"not a git repository" message)
+         | Error { Soldev_exit.message = None; _ } ->
+           Windtrap.fail "the refusal must carry the reason"))
+;;
+
+let test_check_reverts_reports_an_unreadable_log () =
+  in_temp_dir (fun () ->
+    with_failing_git "#!/bin/sh\nexit 9\n" (fun () ->
+      match Soldev_merge.run_check_reverts () with
+      | Ok () -> Windtrap.fail "a git log that could not be read must not read as clean"
+      | Error { Soldev_exit.message = Some message; _ } ->
+        check_bool
+          "names the read failure"
+          true
+          (contains ~needle:"could not be read" message)
+      | Error { Soldev_exit.message = None; _ } ->
+        Windtrap.fail "the refusal must carry the reason"))
+;;
+
+let test_run_cmd_checked_carries_the_reason () =
+  match Soldev_shell.run_cmd_checked "echo out; echo err >&2; exit 3" with
+  | Ok _ -> Windtrap.fail "a failing command must not read as Ok"
+  | Error r ->
+    check_bool
+      "names the exit code and stderr"
+      true
+      (contains ~needle:"exited with code 3: err" (Sol_process.failure_message r))
+;;
+
 let test_review_lookup_names_a_merged_pr () =
   let message =
     Soldev_merge.review_lookup_error
@@ -856,6 +908,18 @@ let () =
         ; Windtrap.test
             "an unreadable git status is not reported clean"
             test_unreadable_status_is_not_reported_clean
+        ]
+    ; Windtrap.group
+        "git read failures carry the reason (CODE_LAYER-032)"
+        [ Windtrap.test
+            "the current branch names a failed read"
+            test_current_branch_names_a_failed_read
+        ; Windtrap.test
+            "check-reverts refuses to report a log it could not read"
+            test_check_reverts_reports_an_unreadable_log
+        ; Windtrap.test
+            "a checked run carries the exit code and stderr"
+            test_run_cmd_checked_carries_the_reason
         ]
     ; Windtrap.group
         "mentions_id"

@@ -103,56 +103,74 @@ let rec wait_reap pid =
   | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait_reap pid
 ;;
 
-let run_argv ?(echo = false) argv =
+let spawn_error fn arg err =
+  Printf.sprintf "%s: %s %s" fn arg (Unix.error_message err) |> String.trim
+;;
+
+let run_argv ?(echo = false) ?(stream = false) argv =
   match argv with
   | [] -> invalid_arg "Sol_process.run_argv: empty argv"
   | prog :: _ ->
     if echo then Printf.printf "  $ %s\n%!" (command_of_argv argv);
     let stdin_fd = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
-    let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
-    let stderr_r, stderr_w = Unix.pipe ~cloexec:true () in
-    (match Unix.create_process prog (Array.of_list argv) stdin_fd stdout_w stderr_w with
-     | pid ->
-       close_noerr stdin_fd;
-       close_noerr stdout_w;
-       close_noerr stderr_w;
-       let finished = ref false in
-       let kill_and_reap () =
-         (try Unix.kill pid Sys.sigkill with
-          | Unix.Unix_error _ -> ());
-         try ignore (wait_reap pid) with
-         | Unix.Unix_error _ -> ()
-       in
-       Fun.protect
-         ~finally:(fun () ->
-           if not !finished
-           then (
+    if stream
+    then (
+      match
+        Unix.create_process prog (Array.of_list argv) stdin_fd Unix.stdout Unix.stderr
+      with
+      | pid ->
+        close_noerr stdin_fd;
+        { status = status_of_unix (wait_reap pid); stdout = ""; stderr = "" }
+      | exception Unix.Unix_error (err, fn, arg) ->
+        close_noerr stdin_fd;
+        { status = Exited 127; stdout = ""; stderr = spawn_error fn arg err })
+    else (
+      let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
+      let stderr_r, stderr_w = Unix.pipe ~cloexec:true () in
+      match Unix.create_process prog (Array.of_list argv) stdin_fd stdout_w stderr_w with
+      | pid ->
+        close_noerr stdin_fd;
+        close_noerr stdout_w;
+        close_noerr stderr_w;
+        let finished = ref false in
+        let kill_and_reap () =
+          (try Unix.kill pid Sys.sigkill with
+           | Unix.Unix_error _ -> ());
+          try ignore (wait_reap pid) with
+          | Unix.Unix_error _ -> ()
+        in
+        Fun.protect
+          ~finally:(fun () ->
+            if not !finished
+            then (
+              close_noerr stdout_r;
+              close_noerr stderr_r;
+              kill_and_reap ()))
+          (fun () ->
+             let captured = capture_fds stdout_r stderr_r in
              close_noerr stdout_r;
              close_noerr stderr_r;
-             kill_and_reap ()))
-         (fun () ->
-            let captured = capture_fds stdout_r stderr_r in
-            close_noerr stdout_r;
-            close_noerr stderr_r;
-            let status = status_of_unix (wait_reap pid) in
-            finished := true;
-            trim_result { captured with status })
-     | exception Unix.Unix_error (err, fn, arg) ->
-       close_noerr stdin_fd;
-       close_noerr stdout_r;
-       close_noerr stdout_w;
-       close_noerr stderr_r;
-       close_noerr stderr_w;
-       { status = Exited 127
-       ; stdout = ""
-       ; stderr =
-           Printf.sprintf "%s: %s %s" fn arg (Unix.error_message err) |> String.trim
-       })
+             let status = status_of_unix (wait_reap pid) in
+             finished := true;
+             trim_result { captured with status })
+      | exception Unix.Unix_error (err, fn, arg) ->
+        close_noerr stdin_fd;
+        close_noerr stdout_r;
+        close_noerr stdout_w;
+        close_noerr stderr_r;
+        close_noerr stderr_w;
+        { status = Exited 127; stdout = ""; stderr = spawn_error fn arg err })
 ;;
 
-let run_shell ?(echo = false) cmd =
+let run_shell ?(echo = false) ?(stream = false) cmd =
   if echo then Printf.printf "  $ %s\n%!" cmd;
-  run_argv ~echo:false [ "sh"; "-c"; cmd ]
+  run_argv ~echo:false ~stream [ "sh"; "-c"; cmd ]
+;;
+
+let failure_message r =
+  match String.trim r.stderr with
+  | "" -> Printf.sprintf "exited with code %d" (exit_code r)
+  | said -> Printf.sprintf "exited with code %d: %s" (exit_code r) said
 ;;
 
 let nonempty_lines s =
@@ -172,7 +190,7 @@ let output_shell_checked ?(echo = false) cmd =
   if succeeded r then Ok (String.trim r.stdout) else Error r
 ;;
 
-let run_shell_rc ?(echo = true) cmd = exit_code (run_shell ~echo cmd)
+let run_shell_rc ?(echo = true) cmd = exit_code (run_shell ~stream:true ~echo cmd)
 
 let run_shell_ok ?(echo = true) cmd =
   let r = run_shell ~echo cmd in
