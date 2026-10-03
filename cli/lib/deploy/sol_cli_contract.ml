@@ -99,7 +99,8 @@ let reconciliation_images services =
     services
 ;;
 
-let reconcile_in_destination ~ctx ~namespace ~image =
+let reconcile_in_destination ~ctx ~production ~namespace ~image =
+  let transport = Sol_cli_manifest.kafka_transport ~production in
   match
     Sol_cli_migration_job.submit_doc
       ~ctx
@@ -108,6 +109,7 @@ let reconcile_in_destination ~ctx ~namespace ~image =
       ~label:"contract"
       (fun ~name ->
          Sol_cli_manifest.contract_job_doc
+           ~cluster_env:(Sol_cli_manifest.cluster_env transport)
            ~name
            ~namespace
            ~image

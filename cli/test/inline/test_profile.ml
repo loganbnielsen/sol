@@ -474,16 +474,32 @@ let test_plan_without_profile_is_unchanged () =
          (Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan))))
 ;;
 
-let test_profile_does_not_change_release_identity () =
+let test_profile_declares_the_kafka_posture () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
     write_target "prod/aws/us-west-2" "target:\n  cluster_name: pluto-west\n";
     let claimed = plan_for "prod/aws/us-east-1" in
     let unclaimed = plan_for "prod/aws/us-west-2" in
-    check_str
-      "same content, same release, with or without a profile"
-      (Sol_cli_release_id.to_string unclaimed.release_id)
-      (Sol_cli_release_id.to_string claimed.release_id))
+    let protocol (plan : Sol_cli_deployment_plan.t) =
+      plan.services
+      |> List.find_map (fun (s : Sol_cli_deployment_plan.service_spec) ->
+        List.assoc_opt "KAFKA_SECURITY_PROTOCOL" s.config)
+    in
+    check_bool
+      "the production profile declares the SASL_SSL posture"
+      true
+      (protocol claimed = Some "sasl_ssl");
+    check_bool
+      "an unclaimed plan leaves the default posture to the renderer"
+      true
+      (protocol unclaimed = None);
+    check_bool
+      "the declared transport is part of the release identity"
+      true
+      (not
+         (String.equal
+            (Sol_cli_release_id.to_string claimed.release_id)
+            (Sol_cli_release_id.to_string unclaimed.release_id))))
 ;;
 
 let preflight ?establish ?plan ~apply_mode target =
@@ -1252,8 +1268,8 @@ let%test "plan: jobs worker requires Postgres, not Kafka" =
 let%test "plan: declared topics require Kafka" = test_declared_topics_require_kafka ()
 let%test "plan: no profile, unchanged plan" = test_plan_without_profile_is_unchanged ()
 
-let%test "plan: profile does not change release identity" =
-  test_profile_does_not_change_release_identity ()
+let%test "plan: the profile declares the Kafka posture" =
+  test_profile_declares_the_kafka_posture ()
 ;;
 
 let%test "preflight: no profile skips" = test_no_profile_skips_preflight ()

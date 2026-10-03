@@ -848,6 +848,13 @@ let of_services_result
         [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
       | _ -> []
     in
+    let kafka_security_config =
+      match declared with
+      | Some cfg
+        when cfg.Sol_cli_config.profile = Some Sol_cli_profile.Production_single_region ->
+        Sol_cli_manifest.production_kafka_config
+      | _ -> []
+    in
     let service_config = List.remove_assoc "SOL_KAFKA_DURABILITY" toml.env_config in
     let language = sol_yml_language ~declared ~service_name:svc.name in
     let consumes_kafka =
@@ -862,7 +869,8 @@ let of_services_result
       ; source_dir = svc.dir
       ; image
       ; config =
-          kafka_durability_config
+          kafka_security_config
+          @ kafka_durability_config
           @ service_config
           @ List.map (fun c -> c.env_var, c.url) calls
       ; secrets = List.map (fun key -> key, "") toml.secret_keys

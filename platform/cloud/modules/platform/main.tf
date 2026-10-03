@@ -288,7 +288,7 @@ locals {
   platform_components   = jsondecode(file("${path.module}/../../../shared/components.json"))
   observability_dir     = "${path.module}/../../../shared/observability"
   observability_profile = var.observability_backend == "self_hosted_durable" ? "durable" : "local"
-  platform_profile      = local.observability_profile
+  platform_profile      = var.platform_profile
 
   loki_component_values = [
     jsonencode(local.platform_components.loki.common),

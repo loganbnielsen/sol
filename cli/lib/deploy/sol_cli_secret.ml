@@ -404,13 +404,15 @@ let verify_required_keys ~ctx ~namespace ~secret_name ~required_keys =
 ;;
 
 let verify_workload_secret ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
+  let transport = Sol_cli_manifest.kafka_transport_of_config spec.config in
   verify_required_keys
     ~ctx
     ~namespace:(Sol_cli_deployment_plan.namespace_to_string spec.namespace)
     ~secret_name:
       (Sol_cli_manifest.workload_secret_name
          (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
-    ~required_keys:(Sol_cli_manifest.required_secret_keys (List.map fst spec.secrets))
+    ~required_keys:
+      (Sol_cli_manifest.required_secret_keys ~transport (List.map fst spec.secrets))
 ;;
 
 let verify_runtime_secret ~ctx ~namespace =

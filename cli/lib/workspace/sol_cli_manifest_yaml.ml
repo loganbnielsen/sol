@@ -29,6 +29,7 @@ module Workload_spec = struct
     ; config_hash : string
     ; availability : Sol_cli_availability.t
     ; consumes_kafka : bool
+    ; kafka_tls : bool
     ; readiness_path : string
     ; shape : workload_shape
     ; replicas : int
@@ -44,33 +45,104 @@ module Workload_spec = struct
     }
 end
 
-let default_cluster_env =
-  [ "KAFKA_SECURITY_PROTOCOL", "plaintext"
-  ; "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
-  ; "SCHEMA_REGISTRY_URL", "http://redpanda.redpanda.svc.cluster.local:8081"
-  ; "REDPANDA_ADMIN_URL", "http://redpanda.redpanda.svc.cluster.local:9644"
-  ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"
-  ; ( "PUSHGATEWAY_URL"
-    , "http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091" )
-  ; "TEMPO_URL", "http://tempo.monitoring.svc.cluster.local:4318"
+type kafka_transport =
+  | Plaintext
+  | Sasl_ssl
+
+let kafka_transport ~production = if production then Sasl_ssl else Plaintext
+
+let kafka_tls = function
+  | Plaintext -> false
+  | Sasl_ssl -> true
+;;
+
+let kafka_protocol_key = "KAFKA_SECURITY_PROTOCOL"
+
+let kafka_transport_of_config config =
+  match List.assoc_opt kafka_protocol_key config with
+  | Some "sasl_ssl" -> Sasl_ssl
+  | _ -> Plaintext
+;;
+
+let kafka_ca_mount_path = "/etc/sol/kafka"
+let kafka_ca_file = kafka_ca_mount_path ^ "/ca.crt"
+let kafka_ca_volume = "kafka-ca"
+let kafka_ca_secret_key = "KAFKA_SSL_CA_CERT"
+let kafka_sasl_password_key = "KAFKA_SASL_PASSWORD"
+let kafka_sasl_username = "sol-workloads"
+let kafka_sasl_mechanism = "SCRAM-SHA-256"
+let kafka_brokers = "redpanda.redpanda.svc.cluster.local:9093"
+let schema_registry_host = "redpanda.redpanda.svc.cluster.local:8081"
+let redpanda_admin_host = "redpanda.redpanda.svc.cluster.local:9644"
+
+let kafka_posture_env = function
+  | Plaintext -> [ "KAFKA_SECURITY_PROTOCOL", "plaintext" ]
+  | Sasl_ssl ->
+    [ "KAFKA_SECURITY_PROTOCOL", "sasl_ssl"
+    ; "KAFKA_SASL_MECHANISM", kafka_sasl_mechanism
+    ; "KAFKA_SASL_USERNAME", kafka_sasl_username
+    ; "KAFKA_SSL_CA_LOCATION", kafka_ca_file
+    ]
+;;
+
+let cluster_env transport =
+  let scheme =
+    match transport with
+    | Plaintext -> "http"
+    | Sasl_ssl -> "https"
+  in
+  kafka_posture_env transport
+  @ [ "KAFKA_BROKERS", kafka_brokers
+    ; "SCHEMA_REGISTRY_URL", Printf.sprintf "%s://%s" scheme schema_registry_host
+    ; "REDPANDA_ADMIN_URL", Printf.sprintf "%s://%s" scheme redpanda_admin_host
+    ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"
+    ; ( "PUSHGATEWAY_URL"
+      , "http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091" )
+    ; "TEMPO_URL", "http://tempo.monitoring.svc.cluster.local:4318"
+    ]
+;;
+
+let default_cluster_env = cluster_env Plaintext
+
+let production_kafka_config =
+  [ kafka_protocol_key, "sasl_ssl"
+  ; "KAFKA_SASL_MECHANISM", kafka_sasl_mechanism
+  ; "KAFKA_SASL_USERNAME", kafka_sasl_username
+  ; "KAFKA_SSL_CA_LOCATION", kafka_ca_file
+  ; "SCHEMA_REGISTRY_URL", Printf.sprintf "https://%s" schema_registry_host
+  ; "REDPANDA_ADMIN_URL", Printf.sprintf "https://%s" redpanda_admin_host
   ]
+;;
+
+let kafka_required_secret_keys = function
+  | Plaintext -> []
+  | Sasl_ssl -> [ kafka_sasl_password_key; kafka_ca_secret_key ]
 ;;
 
 let default_secrets = [ "POSTGRES_URL", ""; "SOL_API_KEY", "" ]
 let runtime_secret_name = "sol-secrets"
 
-let required_secret_keys declared =
-  List.sort_uniq String.compare (List.map fst default_secrets @ declared)
+let required_secret_keys ?(transport = Plaintext) declared =
+  List.sort_uniq
+    String.compare
+    (List.map fst default_secrets @ declared @ kafka_required_secret_keys transport)
 ;;
 
 module Y = Sol_cli_yaml
 
-let config_hash extra_env =
-  default_cluster_env @ extra_env
+let config_hash cluster_env extra_env =
+  cluster_env @ extra_env
   |> List.map (fun (k, v) -> k ^ "=" ^ v)
   |> String.concat "\n"
   |> Digest.string
   |> Digest.to_hex
+;;
+
+let overlay_env base over =
+  let replaced =
+    List.map (fun (k, v) -> k, Option.value (List.assoc_opt k over) ~default:v) base
+  in
+  replaced @ List.filter (fun (k, _) -> not (List.mem_assoc k base)) over
 ;;
 
 let quoted_map pairs = pairs |> List.map (fun (k, v) -> k, Y.quoted v) |> Y.map
@@ -135,12 +207,12 @@ let service_account_doc ~ns ~name =
     [ "automountServiceAccountToken", Y.bool false; "metadata", metadata ~ns ~name ]
 ;;
 
-let configmap_doc ?(extra_env = []) ~ns ~name () =
+let configmap_doc ?(cluster_env = default_cluster_env) ?(extra_env = []) ~ns ~name () =
   resource
     ~api_version:"v1"
     ~kind:"ConfigMap"
     [ "metadata", metadata ~ns ~name:(name ^ "-env")
-    ; "data", quoted_map (default_cluster_env @ extra_env)
+    ; "data", quoted_map (overlay_env cluster_env extra_env)
     ]
 ;;
 
@@ -371,6 +443,7 @@ let pod_template
       ; config_hash
       ; availability
       ; consumes_kafka
+      ; kafka_tls
       ; readiness_path
       ; shape
       ; cpu
@@ -437,6 +510,37 @@ let pod_template
     |> List.map (fun (v : Sol_cli_toml.volume) ->
       Y.map [ "name", Y.string v.name; "mountPath", Y.string v.mount_path ])
   in
+  let kafka_ca_volumes =
+    if kafka_tls
+    then
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; ( "secret"
+            , Y.map
+                [ "secretName", Y.string (workload_secret_name name)
+                ; ( "items"
+                  , Y.list
+                      [ Y.map
+                          [ "key", Y.string kafka_ca_secret_key
+                          ; "path", Y.string "ca.crt"
+                          ]
+                      ] )
+                ] )
+          ]
+      ]
+    else []
+  in
+  let kafka_ca_mount =
+    if kafka_tls
+    then
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; "mountPath", Y.string kafka_ca_mount_path
+          ; "readOnly", Y.bool true
+          ]
+      ]
+    else []
+  in
   let container =
     Y.map
       ([ "name", Y.string name
@@ -445,7 +549,7 @@ let pod_template
        ; "securityContext", container_security
        ; "ports", Y.list [ Y.map [ "containerPort", Y.int port ] ]
        ]
-       @ non_empty_list "volumeMounts" volume_mounts
+       @ non_empty_list "volumeMounts" (volume_mounts @ kafka_ca_mount)
        @ non_empty_list "env" (secret_key_refs ~name secret_keys)
        @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ]
        @ probes ~shape ~consumes_kafka ~readiness_path)
@@ -459,7 +563,7 @@ let pod_template
            ; "terminationGracePeriodSeconds", Y.int default_termination_grace_seconds
            ]
            @ spread
-           @ non_empty_list "volumes" pod_volumes
+           @ non_empty_list "volumes" (pod_volumes @ kafka_ca_volumes)
            @ [ "containers", Y.list [ container ] ]) )
     ]
 ;;
@@ -737,6 +841,7 @@ module Scheduled_workload_spec = struct
     ; backoff_limit : int
     ; cpu : string
     ; memory : string
+    ; kafka_tls : bool
     ; workspace : string
     ; domain : string
     ; release_id : Sol_cli_release_id.t
@@ -755,6 +860,7 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
       ; backoff_limit
       ; cpu
       ; memory
+      ; kafka_tls
       ; workspace
       ; domain
       ; release_id
@@ -774,6 +880,43 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
           ()
         |> List.map (fun (k, v) -> k, Y.quoted v))
   in
+  let kafka_ca =
+    if kafka_tls
+    then
+      [ ( "volumeMounts"
+        , Y.list
+            [ Y.map
+                [ "name", Y.string kafka_ca_volume
+                ; "mountPath", Y.string kafka_ca_mount_path
+                ; "readOnly", Y.bool true
+                ]
+            ] )
+      ]
+    else []
+  in
+  let kafka_ca_volumes =
+    if kafka_tls
+    then
+      [ ( "volumes"
+        , Y.list
+            [ Y.map
+                [ "name", Y.string kafka_ca_volume
+                ; ( "secret"
+                  , Y.map
+                      [ "secretName", Y.string (workload_secret_name name)
+                      ; ( "items"
+                        , Y.list
+                            [ Y.map
+                                [ "key", Y.string kafka_ca_secret_key
+                                ; "path", Y.string "ca.crt"
+                                ]
+                            ] )
+                      ] )
+                ]
+            ] )
+      ]
+    else []
+  in
   let container =
     Y.map
       ([ "name", Y.string name
@@ -782,7 +925,8 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
        ; "securityContext", container_security
        ]
        @ non_empty_list "env" (secret_key_refs ~name secret_keys)
-       @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ])
+       @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ]
+       @ kafka_ca)
   in
   let pod_metadata =
     match secret_keys with
@@ -816,11 +960,12 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
                             [ "metadata", pod_metadata
                             ; ( "spec"
                               , Y.map
-                                  [ "serviceAccountName", Y.string name
-                                  ; "restartPolicy", Y.string "OnFailure"
-                                  ; "securityContext", non_root_pod_security
-                                  ; "containers", Y.list [ container ]
-                                  ] )
+                                  ([ "serviceAccountName", Y.string name
+                                   ; "restartPolicy", Y.string "OnFailure"
+                                   ; "securityContext", non_root_pod_security
+                                   ]
+                                   @ kafka_ca_volumes
+                                   @ [ "containers", Y.list [ container ] ]) )
                             ] )
                       ] )
                 ] )
@@ -876,20 +1021,63 @@ let migration_job_doc ~name ~namespace ~image ~args ~configmap_name =
     ]
 ;;
 
-let contract_job_doc ~name ~namespace ~image ~command ~args =
+let contract_job_doc ~cluster_env ~name ~namespace ~image ~command ~args =
+  let kafka_tls = kafka_tls (kafka_transport_of_config cluster_env) in
+  let env =
+    List.map
+      (fun (key, value) -> Y.map [ "name", Y.string key; "value", Y.string value ])
+      cluster_env
+  in
+  let kafka_ca_mounts =
+    if kafka_tls
+    then
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; "mountPath", Y.string kafka_ca_mount_path
+          ; "readOnly", Y.bool true
+          ]
+      ]
+    else []
+  in
+  let kafka_ca_volumes =
+    if kafka_tls
+    then
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; ( "secret"
+            , Y.map
+                [ "secretName", Y.string runtime_secret_name
+                ; ( "items"
+                  , Y.list
+                      [ Y.map
+                          [ "key", Y.string kafka_ca_secret_key
+                          ; "path", Y.string "ca.crt"
+                          ]
+                      ] )
+                ] )
+          ]
+      ]
+    else []
+  in
+  let env_from =
+    if kafka_tls
+    then
+      [ ( "envFrom"
+        , Y.list [ Y.map [ "secretRef", Y.map [ "name", Y.string runtime_secret_name ] ] ]
+        )
+      ]
+    else []
+  in
   let container =
     Y.map
-      [ "name", Y.string "contract"
-      ; "image", Y.string image
-      ; "command", Y.list (List.map Y.quoted command)
-      ; "args", Y.list (List.map Y.quoted args)
-      ; ( "env"
-        , Y.list
-            (List.map
-               (fun (key, value) ->
-                  Y.map [ "name", Y.string key; "value", Y.string value ])
-               default_cluster_env) )
-      ]
+      ([ "name", Y.string "contract"
+       ; "image", Y.string image
+       ; "command", Y.list (List.map Y.quoted command)
+       ; "args", Y.list (List.map Y.quoted args)
+       ; "env", Y.list env
+       ]
+       @ env_from
+       @ non_empty_list "volumeMounts" kafka_ca_mounts)
   in
   resource
     ~api_version:"batch/v1"
@@ -902,9 +1090,9 @@ let contract_job_doc ~name ~namespace ~image ~command ~args =
             , Y.map
                 [ ( "spec"
                   , Y.map
-                      [ "restartPolicy", Y.string "Never"
-                      ; "containers", Y.list [ container ]
-                      ] )
+                      ([ "restartPolicy", Y.string "Never" ]
+                       @ non_empty_list "volumes" kafka_ca_volumes
+                       @ [ "containers", Y.list [ container ] ]) )
                 ] )
           ] )
     ]

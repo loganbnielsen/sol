@@ -32,6 +32,7 @@ val reconciliation_images
 
 val reconcile_in_destination
   :  ctx:Sol_cli_kube_destination.context
+  -> production:bool
   -> namespace:string
   -> image:string
   -> (unit, string) result

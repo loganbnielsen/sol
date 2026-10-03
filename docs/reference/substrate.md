@@ -55,7 +55,14 @@ The following substrate inputs must exist before running `sol deploy`.
 - Sol workers and services read `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL` and the
   required `KAFKA_SECURITY_PROTOCOL` (plus `KAFKA_SSL_*`/`KAFKA_SASL_*` when used) from
   their environment. The generated ConfigMap points at Sol's in-cluster
-  Redpanda defaults, including `KAFKA_SECURITY_PROTOCOL=plaintext`. For an external Kafka substrate, override those values via
+  Redpanda defaults. On the `local` shape that is
+  `KAFKA_SECURITY_PROTOCOL=plaintext`; on the **production profile** Sol declares
+  `KAFKA_SECURITY_PROTOCOL=sasl_ssl` with the HTTPS schema-registry and admin
+  URLs, `KAFKA_SASL_MECHANISM=SCRAM-SHA-256` and `KAFKA_SSL_CA_LOCATION`, and
+  mounts the CA from the workload Secret as `KAFKA_SSL_CA_CERT`. A production
+  workload Secret must therefore also carry `KAFKA_SASL_PASSWORD` and
+  `KAFKA_SSL_CA_CERT`; an ordinary deploy fails closed when either is missing.
+  For an external Kafka substrate, override those values via
   `[infra.env] config = { ... }` in each service's `sol.toml` or through a
   GitOps overlay.
 - Sol's workspace scan discovers topic intent from `events/**/sol.toml`, but

@@ -95,14 +95,25 @@ let render
       (key, ns ^ "." ^ name) :: List.filter (fun (k, _) -> k <> key) config
     | _ -> config
   in
-  let cfg_hash = Sol_cli_manifest.config_hash config in
+  let transport = Sol_cli_manifest.kafka_transport_of_config config in
+  let base_cluster_env = Sol_cli_manifest.cluster_env Sol_cli_manifest.Plaintext in
+  let cfg_hash = Sol_cli_manifest.config_hash base_cluster_env config in
+  let kafka_tls_enabled = Sol_cli_manifest.kafka_tls transport in
+  let kafka_secret_keys =
+    Sol_cli_manifest.required_secret_keys ~transport []
+    |> List.filter (fun key -> not (List.mem_assoc key Sol_cli_manifest.default_secrets))
+  in
+  let secret_keys = List.map fst secrets @ kafka_secret_keys in
   Sol_cli_manifest.(
     let ns_yaml = namespace_doc ~ns in
     let secret_resource_result =
       match secret_backend with
       | Kubernetes_live -> Ok None
       | Kubernetes_placeholder ->
-        let extra_secrets = List.map (fun (k, _) -> k, "") secrets in
+        let extra_secrets =
+          List.map (fun (k, _) -> k, "") secrets
+          @ List.map (fun k -> k, "") kafka_secret_keys
+        in
         Ok
           (Some
              (secret_doc
@@ -112,7 +123,9 @@ let render
                 ~name:(workload_secret_name name)
                 ()))
       | External_secrets { store_ref; store_kind; key_prefix; refresh_interval } ->
-        let all_keys = List.map fst default_secrets @ List.map fst secrets in
+        let all_keys =
+          List.map fst default_secrets @ List.map fst secrets @ kafka_secret_keys
+        in
         Ok
           (Some
              (external_secret_doc
@@ -127,7 +140,9 @@ let render
     Result.map
       (fun secret_resource ->
          let common_resources =
-           [ service_account_doc ~ns ~name; configmap_doc ~extra_env:config ~ns ~name () ]
+           [ service_account_doc ~ns ~name
+           ; configmap_doc ~cluster_env:base_cluster_env ~extra_env:config ~ns ~name ()
+           ]
            @ Option.to_list secret_resource
            @ [ network_policy_doc
                  ~egress_to:
@@ -170,12 +185,13 @@ let render
            let memory = Sol_cli_toml.memory_quantity_to_string memory in
            let workload : Sol_cli_manifest.Workload_spec.t =
              { Sol_cli_manifest.Workload_spec.extra_labels
-             ; secret_keys = List.map fst secrets
+             ; secret_keys
              ; volumes
              ; env
              ; config_hash = cfg_hash
              ; availability
              ; consumes_kafka
+             ; kafka_tls = kafka_tls_enabled
              ; readiness_path
              ; shape
              ; replicas
@@ -282,7 +298,7 @@ let render
                | Sol_cli_toml.Replace -> "Replace"
              in
              let workload : Scheduled_workload_spec.t =
-               { secret_keys = List.map fst secrets
+               { secret_keys
                ; env
                ; ns
                ; name
@@ -292,6 +308,7 @@ let render
                ; backoff_limit
                ; cpu = Sol_cli_toml.cpu_quantity_to_string cpu
                ; memory = Sol_cli_toml.memory_quantity_to_string memory
+               ; kafka_tls = kafka_tls_enabled
                ; workspace
                ; domain
                ; release_id

@@ -400,6 +400,7 @@ let render_deployment ~secret_keys =
     ; config_hash = "hash"
     ; availability = Sol_cli_availability.Single
     ; consumes_kafka = false
+    ; kafka_tls = false
     ; readiness_path = "/readyz"
     ; shape = Sol_cli_manifest.Http_service
     ; replicas = 1

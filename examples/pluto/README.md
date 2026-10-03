@@ -65,6 +65,21 @@ In `sol/environments.yml`, the `pilot` environment selects the
 `production-single-region` profile; `prod` deliberately does not, because an
 environment's name never makes a production claim.
 
+The profile runs Kafka as SASL_SSL. Before the first deploy, create the broker's
+SASL users Secret and give the workload namespaces the credential and the CA;
+`sol deploy` fails closed without them:
+
+```bash
+kubectl create secret generic redpanda-users -n redpanda \
+  --from-literal=users.txt="sol-workloads:$KAFKA_SASL_PASSWORD:SCRAM-SHA-256"
+sol secret set KAFKA_SASL_PASSWORD --value "$KAFKA_SASL_PASSWORD" --target pilot/aws/us-east-1
+kubectl get secret redpanda-default-cert -n redpanda -o jsonpath='{.data.ca\.crt}' \
+  | base64 -d | sol secret set KAFKA_SSL_CA_CERT --target pilot/aws/us-east-1
+```
+
+See [production bootstrap](../../docs/deployment/production-bootstrap.md) for the
+full procedure.
+
 A production target deploys immutable artifacts, not mutable tags. Pin each
 workload to the digest the build pushed:
 

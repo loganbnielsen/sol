@@ -61,12 +61,19 @@ type platform_inputs =
   ; region : string
   ; cluster_issuer : string option
   ; observability_backend : string option
+  ; platform_profile : string
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
   ; cluster : Sol_cli_cluster.t
   }
+
+let platform_profile (target : Sol_cli_config.target) =
+  match target.profile with
+  | Some Sol_cli_profile.Production_single_region -> "durable"
+  | None -> "local"
+;;
 
 let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
   match
@@ -80,6 +87,7 @@ let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
       ; region = target.target.region
       ; cluster_issuer = target.target.cluster_issuer
       ; observability_backend = target.target.observability_backend
+      ; platform_profile = platform_profile target.target
       ; alert_receiver_type = target.target.alert_receiver_type
       ; alert_receiver_url = target.target.alert_receiver_url
       ; alert_owner = target.target.alert_owner
@@ -137,6 +145,7 @@ let platform_terraform_vars ?(context = Install) inputs =
     vars
     |> add_opt "cluster_issuer" inputs.cluster_issuer
     |> add_opt "observability_backend" inputs.observability_backend
+    |> add_opt "platform_profile" (Some inputs.platform_profile)
     |> add_opt "alert_receiver_type" inputs.alert_receiver_type
     |> add_opt "alert_receiver_url" inputs.alert_receiver_url
     |> add_opt "alert_owner" inputs.alert_owner
