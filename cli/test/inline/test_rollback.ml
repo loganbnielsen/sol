@@ -1161,17 +1161,22 @@ let test_pointer_report_ok () =
     Windtrap.bool
     ~msg:"ok"
     true
-    (Sol_cli_rollback.pointer_report_ok
-       { pointer_actual = verify_release.release_id; pointer_ok = true });
+    (Sol_cli_rollback.pointer_report_ok Sol_cli_rollback.Pointer_confirmed);
   Windtrap.equal
     Windtrap.bool
     ~msg:"not ok"
     false
-    (Sol_cli_rollback.pointer_report_ok { pointer_actual = "r-x"; pointer_ok = false })
+    (Sol_cli_rollback.pointer_report_ok (Sol_cli_rollback.Pointer_names "r-x"));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unreadable pointer fails closed too"
+    false
+    (Sol_cli_rollback.pointer_report_ok
+       (Sol_cli_rollback.Pointer_unreadable "exited with code 1: forbidden"))
 ;;
 
 let test_pointer_report_to_string_uses_canonical_name () =
-  let report = { Sol_cli_rollback.pointer_actual = ""; pointer_ok = false } in
+  let report = Sol_cli_rollback.Pointer_names "" in
   let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "sol-release-current-myapp") msg);
   assert (contains (Str.regexp "<none>") msg);
@@ -1179,6 +1184,95 @@ let test_pointer_report_to_string_uses_canonical_name () =
   let msg = Sol_cli_rollback.pointer_report_to_string ~release report in
   assert (contains (Str.regexp "sol-release-current-ci-smoke") msg);
   assert (not (contains (Str.regexp_string "CI_Smoke") msg))
+;;
+
+let test_pointer_report_unreadable_names_the_reason () =
+  let report =
+    Sol_cli_rollback.Pointer_unreadable
+      "exited with code 1: Error from server (Forbidden): configmaps is forbidden"
+  in
+  let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "sol-release-current-myapp") msg);
+  assert (contains (Str.regexp_string "could not be read") msg);
+  assert (contains (Str.regexp_string "Forbidden") msg);
+  assert (not (contains (Str.regexp_string "<none>") msg));
+  assert (not (contains (Str.regexp_string "pointer mismatch") msg))
+;;
+
+let with_fake_kubectl script f =
+  let dir = Filename.temp_file "sol-rollback-kubectl" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let bin = Filename.concat dir "kubectl" in
+  let oc = open_out bin in
+  output_string oc script;
+  close_out oc;
+  Unix.chmod bin 0o755;
+  let old_path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" old_path;
+      (try Sys.remove bin with
+       | _ -> ());
+      try Unix.rmdir dir with
+      | _ -> ())
+    f
+;;
+
+let test_verify_pointer_reports_an_unreadable_read () =
+  with_fake_kubectl
+    {|#!/bin/sh
+printf 'Error from server (Forbidden): configmaps "sol-release-current-myapp" is forbidden\n' >&2
+exit 1
+|}
+    (fun () ->
+       let report =
+         Sol_cli_rollback.verify_pointer
+           ~ctx:Sol_cli_kube_destination.local_context
+           ~release:verify_release
+       in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"an unreadable pointer is not a success"
+         false
+         (Sol_cli_rollback.pointer_report_ok report);
+       match report with
+       | Sol_cli_rollback.Pointer_unreadable reason ->
+         assert (contains (Str.regexp_string "Forbidden") reason)
+       | _ -> Windtrap.fail "an unreadable read must not be reported as a named release")
+;;
+
+let test_verify_pointer_confirms_the_read_release () =
+  with_fake_kubectl
+    (Printf.sprintf "#!/bin/sh\nprintf '%%s' '%s'\n" verify_release.release_id)
+    (fun () ->
+       let report =
+         Sol_cli_rollback.verify_pointer
+           ~ctx:Sol_cli_kube_destination.local_context
+           ~release:verify_release
+       in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"a read-back pointer is ok"
+         true
+         (Sol_cli_rollback.pointer_report_ok report))
+;;
+
+let test_verify_pointer_reports_a_read_mismatch () =
+  with_fake_kubectl "#!/bin/sh\nprintf 'r-9999999999999999'\n" (fun () ->
+    let report =
+      Sol_cli_rollback.verify_pointer
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~release:verify_release
+    in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a mismatched pointer fails"
+      false
+      (Sol_cli_rollback.pointer_report_ok report);
+    let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
+    assert (contains (Str.regexp_string "pointer mismatch") msg))
 ;;
 
 let transaction_release ~apply_mode : Sol_cli_release.t =
@@ -1251,7 +1345,7 @@ let recording_deps
     ; verify_pointer =
         (fun () ->
           record "verify_pointer";
-          { Sol_cli_rollback.pointer_actual = "r-3333333333333333"; pointer_ok = true })
+          Sol_cli_rollback.Pointer_confirmed)
     ; record_consumer_groups =
         (fun groups ->
           record (Printf.sprintf "record_consumer_groups:%s" (String.concat "," groups));
@@ -2124,9 +2218,9 @@ let modelled_deps ~release ~cluster ?(fail_at = None) ()
         Ok ())
   ; verify_pointer =
       (fun () ->
-        { Sol_cli_rollback.pointer_actual = cluster.pointer
-        ; pointer_ok = String.equal cluster.pointer release_id
-        })
+        if String.equal cluster.pointer release_id
+        then Sol_cli_rollback.Pointer_confirmed
+        else Sol_cli_rollback.Pointer_names cluster.pointer)
   ; record_consumer_groups = (fun _ -> Ok ())
   }
 ;;
@@ -2473,6 +2567,22 @@ let%test "pointer_report: ok flag" = test_pointer_report_ok ()
 
 let%test "pointer_report: names the canonical pointer ConfigMap" =
   test_pointer_report_to_string_uses_canonical_name ()
+;;
+
+let%test "pointer_report: an unreadable pointer names the reason, not <none>" =
+  test_pointer_report_unreadable_names_the_reason ()
+;;
+
+let%test "pointer_report: an unreadable read is not reported as a named release" =
+  test_verify_pointer_reports_an_unreadable_read ()
+;;
+
+let%test "pointer_report: a read-back release is confirmed" =
+  test_verify_pointer_confirms_the_read_release ()
+;;
+
+let%test "pointer_report: a read release that differs is a mismatch" =
+  test_verify_pointer_reports_a_read_mismatch ()
 ;;
 
 let%test "rollback_transaction: unreadable applied state skips every mutation (BUG-078)" =

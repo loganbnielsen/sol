@@ -400,7 +400,10 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
    ConfigMap already exists and is not re-applied.
 9. **Verify the pointer** (`Sol_cli_rollback.verify_pointer`) — reads back
    `data.release_id`, reported independently of the workload report. Never
-   re-applies or "fixes" a mismatch.
+   re-applies or "fixes" a mismatch. A pointer whose read fails is reported as
+   unreadable with the read's cause — an outcome distinct from a pointer that
+   was read and names another release — and fails verification just as a
+   mismatch does; an unread pointer is never rendered as `<none>`.
 
 Steps 2–9's ordering — refusal before mutation, pruning only once the
 mismatched/missing modes are clean, pointer move only once pruning succeeds —
