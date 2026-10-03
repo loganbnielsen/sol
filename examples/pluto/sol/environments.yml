@@ -95,3 +95,9 @@ customer_cloud:
   targets:
     aws/us-east-1:
       cluster_name: pluto-customer
+    # A cluster you already own. `byo` is a driver whose defining property is
+    # that it owns no cloud Terraform root, so `sol deploy` consumes this
+    # cluster and `sol cloud plan|apply|destroy` refuses it (DEC-051).
+    byo/onprem:
+      kube_context: pluto-customer
+      registry: registry.example.com/pluto

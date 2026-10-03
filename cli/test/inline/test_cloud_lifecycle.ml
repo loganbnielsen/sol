@@ -970,6 +970,7 @@ let converged_cluster provider =
 
 let test_readiness_fails_each_predicate () =
   Sol_cli_provider.all
+  |> List.filter Sol_cli_provider_capabilities.owns_root
   |> List.iter (fun p ->
     let succeeds = converged_cluster p in
     let all = L.readiness ~provider:p ~run:succeeds in
@@ -1007,6 +1008,7 @@ let readiness_with_unready_certificates ~provider =
 
 let test_ready_requires_the_declared_certificates () =
   Sol_cli_provider.all
+  |> List.filter Sol_cli_provider_capabilities.owns_root
   |> List.iter (fun provider ->
     let label = Sol_cli_provider.to_string provider in
     let summary = L.readiness_summary (readiness_with_unready_certificates ~provider) in
@@ -1902,4 +1904,72 @@ let%test "contracts: terraform scope" = test_terraform_scope ()
 
 let%test "contracts: terraform layout follows the cloud target" =
   test_terraform_layout_derives_from_cloud_target ()
+;;
+
+let%test "driver: byo is registered and owns no cloud root (DEC-051)" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"byo is registered and rootless by definition"
+    true
+    (Sol_cli_provider.of_string "byo" = Some Sol_cli_provider.Byo
+     && Sol_cli_provider.to_string Sol_cli_provider.Byo = "byo"
+     && Sol_cli_provider.is_known "byo"
+     && List.mem Sol_cli_provider.Byo Sol_cli_provider.all
+     && (Sol_cli_provider_capabilities.capabilities_of Sol_cli_provider.Byo).root_status
+        = Sol_cli_provider_capabilities.Root_not_applicable)
+;;
+
+let%test "driver: aws and gcp declare a cloud root (DEC-051)" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"aws and gcp own roots"
+    true
+    ((Sol_cli_provider_capabilities.capabilities_of Sol_cli_provider.Aws).root_status
+     = Sol_cli_provider_capabilities.Root_present
+     && (Sol_cli_provider_capabilities.capabilities_of Sol_cli_provider.Gcp).root_status
+        = Sol_cli_provider_capabilities.Root_present)
+;;
+
+let%test "driver: a rootless driver is never production-qualified" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"byo is not production-qualified"
+    false
+    (Sol_cli_provider_capabilities.capabilities_of Sol_cli_provider.Byo)
+      .production_qualified
+;;
+
+let%test "driver: byo has no cloud root to resolve (DEC-051)" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"of_root refuses a rootless driver"
+    true
+    (match
+       Sol_cli_provider_registry.of_root
+         Sol_cli_provider.Byo
+         ~target
+         ~chdir:"/nonexistent"
+     with
+     | Error (Sol_cli_provider_registry.No_root _) -> true
+     | _ -> false)
+;;
+
+let%test "driver: byo has nothing to observe, identify or credential (DEC-051)" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a rootless driver observes and identifies nothing"
+    true
+    (Sol_cli_provider_registry.observations Sol_cli_provider.Byo target ~cluster_name:"x"
+     = []
+     && Sol_cli_provider_registry.resource_identity Sol_cli_provider.Byo ~cluster_name:"x"
+        = []
+     &&
+     match
+       Sol_cli_provider_registry.credentials
+         Sol_cli_provider.Byo
+         ~operation:"plan"
+         ~leaves_target_standing:false
+     with
+     | Error _ -> true
+     | Ok () -> false)
 ;;

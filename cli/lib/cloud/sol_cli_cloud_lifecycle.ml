@@ -380,89 +380,92 @@ let platform_certificate_checks =
 ;;
 
 let readiness_checks ~provider =
-  let before_storage =
-    [ check
-        "cert-manager CRDs"
-        "required cert-manager CRDs are not Established"
-        [ "wait"
-        ; "--for=condition=Established"
-        ; "crd/certificates.cert-manager.io"
-        ; "crd/clusterissuers.cert-manager.io"
-        ; "--timeout=5s"
-        ]
-    ; check
-        "cert-manager controllers"
-        "cert-manager controller, webhook, or cainjector is unavailable"
-        (available_deployments "cert-manager")
-    ; check ~accept:all_nodes_ready "nodes" "a cluster node is not Ready" ready_nodes
-    ]
-  in
-  before_storage
-  @ storage_checks provider
-  @ [ check
-        "monitoring deployments"
-        "a monitoring deployment is not available"
-        (available_deployments "monitoring")
-    ; check
-        ~accept:statefulsets_converged
-        "monitoring statefulsets"
-        "a monitoring statefulset does not have every declared replica ready"
-        (converged_statefulsets "monitoring")
-    ; check
-        ~accept:daemonsets_converged
-        "monitoring daemonsets"
-        "a monitoring daemonset does not have every scheduled pod ready"
-        (converged_daemonsets "monitoring")
-    ; check
-        ~accept:all_pvcs_bound
-        "monitoring PVCs"
-        "a monitoring PersistentVolumeClaim is not Bound"
-        (bound_pvcs "monitoring")
-    ; check
-        "Redpanda"
-        "Redpanda broker-native cluster health is not healthy"
-        [ "exec"
-        ; "-n"
-        ; "redpanda"
-        ; "statefulset/redpanda"
-        ; "--"
-        ; "rpk"
-        ; "cluster"
-        ; "health"
-        ; "--exit-when-healthy"
-        ; "--watch=false"
-        ]
-    ; check
-        ~accept:statefulsets_converged
-        "Redpanda statefulset"
-        "the Redpanda statefulset does not have every declared replica ready"
-        (converged_statefulsets "redpanda")
-    ; check
-        ~accept:all_pvcs_bound
-        "Redpanda PVCs"
-        "a Redpanda PersistentVolumeClaim is not Bound"
-        (bound_pvcs "redpanda")
-    ; check
-        "ingress-nginx"
-        "ingress-nginx controller is unavailable"
-        (available_deployments "ingress-nginx")
-    ; check
-        ~accept:(fun output -> output <> "")
-        "ingress endpoint"
-        "ingress-nginx LoadBalancer has no assigned endpoint"
-        [ "get"
-        ; "service/ingress-nginx-controller"
-        ; "-n"
-        ; "ingress-nginx"
-        ; "-o"
-        ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
-        ]
-    ; check
-        "Argo CD"
-        "an Argo CD controller is unavailable"
-        (available_deployments "argocd")
-    ]
-  @ platform_certificate_checks
+  if not (Sol_cli_provider_capabilities.owns_root provider)
+  then []
+  else (
+    let before_storage =
+      [ check
+          "cert-manager CRDs"
+          "required cert-manager CRDs are not Established"
+          [ "wait"
+          ; "--for=condition=Established"
+          ; "crd/certificates.cert-manager.io"
+          ; "crd/clusterissuers.cert-manager.io"
+          ; "--timeout=5s"
+          ]
+      ; check
+          "cert-manager controllers"
+          "cert-manager controller, webhook, or cainjector is unavailable"
+          (available_deployments "cert-manager")
+      ; check ~accept:all_nodes_ready "nodes" "a cluster node is not Ready" ready_nodes
+      ]
+    in
+    before_storage
+    @ storage_checks provider
+    @ [ check
+          "monitoring deployments"
+          "a monitoring deployment is not available"
+          (available_deployments "monitoring")
+      ; check
+          ~accept:statefulsets_converged
+          "monitoring statefulsets"
+          "a monitoring statefulset does not have every declared replica ready"
+          (converged_statefulsets "monitoring")
+      ; check
+          ~accept:daemonsets_converged
+          "monitoring daemonsets"
+          "a monitoring daemonset does not have every scheduled pod ready"
+          (converged_daemonsets "monitoring")
+      ; check
+          ~accept:all_pvcs_bound
+          "monitoring PVCs"
+          "a monitoring PersistentVolumeClaim is not Bound"
+          (bound_pvcs "monitoring")
+      ; check
+          "Redpanda"
+          "Redpanda broker-native cluster health is not healthy"
+          [ "exec"
+          ; "-n"
+          ; "redpanda"
+          ; "statefulset/redpanda"
+          ; "--"
+          ; "rpk"
+          ; "cluster"
+          ; "health"
+          ; "--exit-when-healthy"
+          ; "--watch=false"
+          ]
+      ; check
+          ~accept:statefulsets_converged
+          "Redpanda statefulset"
+          "the Redpanda statefulset does not have every declared replica ready"
+          (converged_statefulsets "redpanda")
+      ; check
+          ~accept:all_pvcs_bound
+          "Redpanda PVCs"
+          "a Redpanda PersistentVolumeClaim is not Bound"
+          (bound_pvcs "redpanda")
+      ; check
+          "ingress-nginx"
+          "ingress-nginx controller is unavailable"
+          (available_deployments "ingress-nginx")
+      ; check
+          ~accept:(fun output -> output <> "")
+          "ingress endpoint"
+          "ingress-nginx LoadBalancer has no assigned endpoint"
+          [ "get"
+          ; "service/ingress-nginx-controller"
+          ; "-n"
+          ; "ingress-nginx"
+          ; "-o"
+          ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
+          ]
+      ; check
+          "Argo CD"
+          "an Argo CD controller is unavailable"
+          (available_deployments "argocd")
+      ]
+    @ platform_certificate_checks)
 ;;
 
 let readiness ~provider ~run =

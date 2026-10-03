@@ -1074,8 +1074,8 @@ let byo : t =
       (fun ~has_postgres:_ ~production_postgres:_ ~ecr_repositories:_ -> Ok [])
   ; destroy_guard_vars = (fun ~final_snapshot:_ -> [])
   ; bootstrap_matchers = []
-  ; bootstrap_scope = Sol_cli_terraform.targets "" []
-  ; reconciliation_scope = (fun _ -> Sol_cli_terraform.targets "" [])
+  ; bootstrap_scope = Sol_cli_terraform.whole_root
+  ; reconciliation_scope = (fun _ -> Sol_cli_terraform.whole_root)
   ; guarded_addresses = []
   ; cloud_ready_expectation = "the bring-your-own cluster is reachable"
   ; production_qualified = false
@@ -1098,6 +1098,8 @@ let capabilities_of = function
   | Sol_cli_provider.Gcp -> gcp
   | Sol_cli_provider.Byo -> byo
 ;;
+
+let owns_root provider = (capabilities_of provider).root_status = Root_present
 
 let provider_console_url (target : Sol_cli_config.target) =
   match target.provider with

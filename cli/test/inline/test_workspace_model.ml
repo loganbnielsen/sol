@@ -113,6 +113,7 @@ let test_pluto_events_migrations_and_targets () =
     (Windtrap.list Windtrap.string)
     ~msg:"declared targets"
     [ "customer_cloud/aws/us-east-1"
+    ; "customer_cloud/byo/onprem"
     ; "dev/aws/us-east-1"
     ; "pilot/aws/us-east-1"
     ; "prod/aws/us-east-1"
