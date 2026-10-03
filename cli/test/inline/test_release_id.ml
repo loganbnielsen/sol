@@ -51,7 +51,7 @@ let wl
 let content ?(workspace = "acme") ?(environment = Some "prod") workloads
   : Sol_cli_release_id.content
   =
-  { Sol_cli_release_id.workspace; environment; workloads }
+  { Sol_cli_release_id.workspace; environment; workloads; contract = [] }
 ;;
 
 let id c = Sol_cli_release_id.to_string (Sol_cli_release_id.of_content c)
@@ -213,7 +213,7 @@ let test_of_string_round_trips_and_validates () =
 let test_known_vector () =
   check_string
     "known id for a fixed content"
-    "r-9255cab6aa649011"
+    "r-4b2ed7373a80de25"
     (id
        (content
           [ wl
@@ -222,6 +222,34 @@ let test_known_vector () =
               "charge_svc"
               "acme/charge:1"
           ]))
+;;
+
+let fact ?(key = None) ?(schema_digest = "deadbeef") ~topic ~partitions subject =
+  { Sol_cli_release_id.subject; topic; partitions; key; schema_digest }
+;;
+
+let test_contract_is_part_of_identity () =
+  let base = content [ wl "charge_svc" "acme/charge:1" ] in
+  let with_contract contract = { base with Sol_cli_release_id.contract } in
+  check_bool
+    "a declared contract is part of the release identity"
+    true
+    (id base
+     <> id (with_contract [ fact ~topic:"acme-charges" ~partitions:3 "payments.Charged" ])
+    );
+  check_string
+    "contract fact order does not change identity"
+    (id
+       (with_contract
+          [ fact ~topic:"a" ~partitions:1 "t.A"; fact ~topic:"b" ~partitions:2 "t.B" ]))
+    (id
+       (with_contract
+          [ fact ~topic:"b" ~partitions:2 "t.B"; fact ~topic:"a" ~partitions:1 "t.A" ]));
+  check_bool
+    "a partition change is a different release"
+    true
+    (id (with_contract [ fact ~topic:"a" ~partitions:1 "t.A" ])
+     <> id (with_contract [ fact ~topic:"a" ~partitions:6 "t.A" ]))
 ;;
 
 let test_environment_identity_counts_not_just_resolved_state () =
@@ -334,6 +362,7 @@ let%test "identity: secret references count, values do not" =
 
 let%test "identity: encoding is unambiguous" = test_encoding_is_unambiguous ()
 let%test "identity: known vector" = test_known_vector ()
+let%test "identity: contract is part of identity" = test_contract_is_part_of_identity ()
 
 let%test "identity: environment identity counts, not just resolved state" =
   test_environment_identity_counts_not_just_resolved_state ()

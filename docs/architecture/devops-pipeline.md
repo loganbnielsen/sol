@@ -512,8 +512,23 @@ infrastructure-state database (ADR 0003), and it means the record survives
 stopping the use of Sol entirely. A GitOps `--emit-to DIR` deploy writes the same
 release record as `sol-release-<id>.yaml` into the customer's own git
 repository, which is a second copy under the same owner. The record's identity is
-content-addressed from the workload boundary (`Sol_cli_release_id`), so a
-record can be re-derived and checked, not merely believed.
+content-addressed from the workload boundary **and the deployed event contract**
+(`Sol_cli_release_id`, encoding `sol-release-v5`), so a record can be re-derived
+and checked, not merely believed, and a contract-only change is still a distinct
+release a rollback can name.
+
+**The record carries the deployed contract.** Each Sol-owned event's declaration
+facts — registry subject identity, topic, partition count, key field and schema
+digest — are stored with the record, language-neutrally, so the contract a deploy
+actually established is inspectable from the target and restored by a rollback to
+a release whose record carries it. A later deploy compares the declaration against
+that recorded value and renders the change as `observed → desired` (for example
+`payments.Charged  partitions 3 → 6`) instead of only printing the new
+declaration. The comparison needs the target, so it belongs to deployment planning
+— `sol deploy`, including `--dry-run` and `--emit-to`; `sol plan` stays offline
+and keeps reading the declaration. A change that cannot be reconciled in place — a
+partition reduction, a record-key change, or a topic rename — fails closed and
+names the reason before anything is applied.
 
 **Reading it with no Sol binary.** Everything the CLI reads is in those
 ConfigMaps, under the `record` key:

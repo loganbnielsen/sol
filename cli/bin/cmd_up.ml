@@ -175,6 +175,17 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
+let cluster = Sol_cli_kube_destination.local_context
+
+let observed_contract ~workspace =
+  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
+  | Ok (Some release_id) ->
+    (match Sol_cli_release_store.get ~ctx:cluster ~workspace ~release_id with
+     | Ok record -> record.Sol_cli_release.contract
+     | Error _ -> [])
+  | Ok None | Error _ -> []
+;;
+
 let prepare_plan
       ~run_log
       ~dry_run
@@ -187,6 +198,19 @@ let prepare_plan
   =
   print_header ~workspace ~sha ~dry_run;
   let* plan = build_plan ~requested_scope ~workspace ~sha ~facts ~declared ~services in
+  let* plan =
+    Sol_cli_deployment_plan.with_observed_contract
+      ~observed:(observed_contract ~workspace)
+      plan
+    |> Sol_cli_exit.of_error Sol_cli_deployment_plan.plan_error_to_string
+  in
+  (match plan.Sol_cli_deployment_plan.contract_changes with
+   | [] -> ()
+   | changes ->
+     Printf.printf "\nContract changes:\n%!";
+     changes
+     |> List.iter (fun change ->
+       Printf.printf "  %s\n%!" (Sol_cli_deployment_plan.contract_change_to_string change)));
   record_plan run_log plan;
   Ok plan
 ;;
@@ -214,8 +238,6 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~serv
             dry_run_service ~workspace ~sha ~release_id:plan.release_id spec)
          (Ok ()))
 ;;
-
-let cluster = Sol_cli_kube_destination.local_context
 
 let read_previous_release ~workspace =
   match Sol_cli_release_store.current ~ctx:cluster ~workspace with

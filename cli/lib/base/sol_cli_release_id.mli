@@ -22,10 +22,19 @@ type workload =
   ; calls : (string * string * string * string) list
   }
 
+type contract_fact =
+  { subject : string
+  ; topic : string
+  ; partitions : int
+  ; key : string option
+  ; schema_digest : string
+  }
+
 type content =
   { workspace : string
   ; environment : string option
   ; workloads : workload list
+  ; contract : contract_fact list
   }
 
 type recorded_workload =
@@ -40,6 +49,7 @@ val of_content : content -> t
 val of_boundary
   :  workspace:string
   -> environment:string option
+  -> contract:contract_fact list
   -> deployed:workload list
   -> inherited:(workload * string) list
   -> t
@@ -47,6 +57,7 @@ val of_boundary
 val of_recorded_boundary
   :  workspace:string
   -> environment:string option
+  -> contract:contract_fact list
   -> recorded_workload list
   -> t
 

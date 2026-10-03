@@ -1,5 +1,6 @@
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
@@ -99,6 +100,8 @@ let hosted_plan ?progressive_delivery () =
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   ; profile = None
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 

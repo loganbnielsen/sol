@@ -1,5 +1,6 @@
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let k8s_name value =
@@ -114,6 +115,8 @@ let make_plan services =
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   ; profile = None
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 

@@ -74,6 +74,37 @@ type profile_claim =
   ; application_findings : (Sol_cli_profile.capability * string) list
   }
 
+type contract_change =
+  | Added of
+      { subject : string
+      ; topic : string
+      ; partitions : int
+      }
+  | Removed of
+      { subject : string
+      ; topic : string
+      }
+  | Partitions of
+      { subject : string
+      ; observed : int
+      ; desired : int
+      }
+  | Key of
+      { subject : string
+      ; observed : string option
+      ; desired : string option
+      }
+  | Topic of
+      { subject : string
+      ; observed : string
+      ; desired : string
+      }
+  | Schema of
+      { subject : string
+      ; observed : string
+      ; desired : string
+      }
+
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
@@ -85,6 +116,8 @@ type t =
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
   ; profile : profile_claim option
+  ; contract : Sol_cli_release_id.contract_fact list
+  ; contract_changes : contract_change list
   }
 
 type plan_error =
@@ -107,6 +140,28 @@ type plan_error =
       ; value : string
       ; message : string
       }
+  | Incompatible_contract_change of
+      { subject : string
+      ; reason : string
+      }
+
+val contract_change_to_string : contract_change -> string
+
+val contract_of_facts
+  :  (string * Sol_cli_toml.event_decl) list
+  -> Sol_cli_release_id.contract_fact list
+
+val contract_changes_between
+  :  observed:Sol_cli_release_id.contract_fact list
+  -> desired:Sol_cli_release_id.contract_fact list
+  -> contract_change list
+
+val incompatible_contract_change : contract_change -> string option
+
+val with_observed_contract
+  :  observed:Sol_cli_release_id.contract_fact list
+  -> t
+  -> (t, plan_error) result
 
 val derive_consumer_groups
   :  ?declared:Sol_cli_config.declared

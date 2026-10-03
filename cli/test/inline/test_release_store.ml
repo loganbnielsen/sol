@@ -92,6 +92,7 @@ let release ~release_id =
   ; environment = None
   ; workloads = []
   ; migrations = []
+  ; contract = []
   ; apply_mode = Sol_cli_release.Direct
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }

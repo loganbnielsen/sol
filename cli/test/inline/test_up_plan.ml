@@ -221,7 +221,7 @@ let test_local_plan_renders_readyz () =
           ~workspace:"ws"
           ~release_id:
             (Sol_cli_release_id.of_content
-               { workspace = "ws"; environment = None; workloads = [] })
+               { workspace = "ws"; environment = None; workloads = []; contract = [] })
           charge_svc
       with
       | Ok (_, workload) -> workload

@@ -5,7 +5,8 @@ let facts () =
 ;;
 
 let release_id_of_test =
-  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+  Sol_cli_release_id.of_content
+    { workspace = "test"; environment = None; workloads = []; contract = [] }
 ;;
 
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
@@ -151,6 +152,8 @@ let test_k8s_name_rejects_invalid_characters () =
     Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
     Windtrap.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
+    Windtrap.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_empty () =
@@ -164,6 +167,8 @@ let test_k8s_name_rejects_empty () =
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+    Windtrap.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
     Windtrap.fail "expected name error"
 ;;
 
@@ -180,6 +185,8 @@ let test_k8s_name_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+    Windtrap.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
     Windtrap.fail "expected name error"
 ;;
 
@@ -199,6 +206,8 @@ let test_namespace_rejects_invalid_domain () =
     Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
     Windtrap.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
+    Windtrap.fail "expected name error"
 ;;
 
 let test_namespace_rejects_overlong () =
@@ -217,6 +226,8 @@ let test_namespace_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+    Windtrap.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
     Windtrap.fail "expected name error"
 ;;
 
@@ -307,6 +318,8 @@ let sample_plan () : Sol_cli_deployment_plan.t =
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   ; profile = None
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 
@@ -396,6 +409,8 @@ let test_to_json_mode_strings () =
       ; release_id = release_id_of_test
       ; requested_scope = "workspace"
       ; profile = None
+      ; contract = []
+      ; contract_changes = []
       }
     in
     let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
@@ -955,6 +970,123 @@ let test_summary_uses_effective_rollout_strategy () =
     contains re summary)
 ;;
 
+let fact ?(key = None) ?(schema_digest = "d1") ~topic ~partitions subject =
+  { Sol_cli_release_id.subject; topic; partitions; key; schema_digest }
+;;
+
+let check_no_change label plan observed =
+  match Sol_cli_deployment_plan.with_observed_contract ~observed plan with
+  | Error e ->
+    Windtrap.fail
+      (Printf.sprintf
+         "%s: unexpected refusal: %s"
+         label
+         (Sol_cli_deployment_plan.plan_error_to_string e))
+  | Ok enriched ->
+    Windtrap.equal Windtrap.int ~msg:label 0 (List.length enriched.contract_changes)
+;;
+
+let test_contract_change_is_rendered_observed_to_desired () =
+  let desired =
+    [ fact ~topic:"orders-charges" ~partitions:6 ~key:(Some "id") "orders.Charged" ]
+  in
+  let observed =
+    [ fact ~topic:"orders-charges" ~partitions:3 ~key:(Some "id") "orders.Charged" ]
+  in
+  let plan = { (sample_plan ()) with contract = desired } in
+  match Sol_cli_deployment_plan.with_observed_contract ~observed plan with
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Ok enriched ->
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"one change"
+      1
+      (List.length enriched.contract_changes);
+    let rendered =
+      Sol_cli_deployment_plan.contract_change_to_string
+        (List.hd enriched.contract_changes)
+    in
+    assert (Sol_cli_string.contains ~needle:"partitions 3 → 6" rendered);
+    let summary = Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary enriched in
+    assert (Sol_cli_string.contains ~needle:"contract changes:" summary);
+    assert (Sol_cli_string.contains ~needle:"partitions 3 → 6" summary);
+    let json = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json enriched) in
+    assert (Sol_cli_string.contains ~needle:"partitions 3 → 6" json)
+;;
+
+let test_contract_noop_reports_nothing () =
+  let plan =
+    { (sample_plan ()) with contract = [ fact ~topic:"t" ~partitions:3 "t.A" ] }
+  in
+  check_no_change
+    "an unchanged contract reports no change"
+    plan
+    [ fact ~topic:"t" ~partitions:3 "t.A" ]
+;;
+
+let test_contract_fails_closed_on_incompatible_change () =
+  let base ?(contract = [ fact ~topic:"t" ~partitions:3 "t.A" ]) () =
+    { (sample_plan ()) with contract }
+  in
+  let refused label plan observed needle =
+    match Sol_cli_deployment_plan.with_observed_contract ~observed plan with
+    | Ok _ -> Windtrap.fail (label ^ ": expected a refusal")
+    | Error e ->
+      let message = Sol_cli_deployment_plan.plan_error_to_string e in
+      assert (Sol_cli_string.contains ~needle message)
+  in
+  refused
+    "partition reduction"
+    (base ())
+    [ fact ~topic:"t" ~partitions:6 "t.A" ]
+    "can only grow";
+  refused
+    "key change"
+    (base ~contract:[ fact ~topic:"t" ~partitions:3 ~key:(Some "order_id") "t.A" ] ())
+    [ fact ~topic:"t" ~partitions:3 ~key:(Some "id") "t.A" ]
+    "record key changed";
+  refused
+    "topic rename"
+    (base ~contract:[ fact ~topic:"t-new" ~partitions:3 "t.A" ] ())
+    [ fact ~topic:"t-old" ~partitions:3 "t.A" ]
+    "topic was renamed"
+;;
+
+let test_contract_added_removed_and_schema_are_reported () =
+  let plan =
+    { (sample_plan ()) with
+      contract =
+        [ fact ~topic:"b" ~partitions:3 ~schema_digest:"new" "t.B"
+        ; fact ~topic:"c" ~partitions:1 "t.C"
+        ]
+    }
+  in
+  let observed =
+    [ fact ~topic:"a" ~partitions:3 "t.A"
+    ; fact ~topic:"b" ~partitions:3 ~schema_digest:"old" "t.B"
+    ]
+  in
+  match Sol_cli_deployment_plan.with_observed_contract ~observed plan with
+  | Error e -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Ok enriched ->
+    let rendered =
+      List.map Sol_cli_deployment_plan.contract_change_to_string enriched.contract_changes
+    in
+    assert (
+      List.exists
+        (fun line -> Sol_cli_string.contains ~needle:"t.C  new topic c" line)
+        rendered);
+    assert (
+      List.exists
+        (fun line ->
+           Sol_cli_string.contains ~needle:"t.A  topic a is no longer declared" line)
+        rendered);
+    assert (
+      List.exists
+        (fun line -> Sol_cli_string.contains ~needle:"schema old → new" line)
+        rendered)
+;;
+
 let test_to_json_ingress_null_when_absent () =
   let plan = sample_plan () in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
@@ -1079,7 +1211,9 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
       Windtrap.fail "expected TOML error, got persistence error"
     | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
-      Windtrap.fail "expected TOML error, got availability error")
+      Windtrap.fail "expected TOML error, got availability error"
+    | Error (Sol_cli_deployment_plan.Incompatible_contract_change _) ->
+      Windtrap.fail "expected TOML error, got contract-change error")
 ;;
 
 let deploy_env : Sol_cli_deployment_plan.env_config =
@@ -2048,3 +2182,19 @@ let%test "plan_ids: Schema_subject valid" = test_schema_subject_valid ()
 let%test "plan_ids: Schema_subject empty fails" = test_schema_subject_empty_fails ()
 let%test "plan_ids: Consumer_group valid" = test_consumer_group_valid ()
 let%test "plan_ids: Consumer_group empty fails" = test_consumer_group_empty_fails ()
+
+let%test "contract: a change renders observed to desired" =
+  test_contract_change_is_rendered_observed_to_desired ()
+;;
+
+let%test "contract: an unchanged contract reports nothing" =
+  test_contract_noop_reports_nothing ()
+;;
+
+let%test "contract: an incompatible change fails closed" =
+  test_contract_fails_closed_on_incompatible_change ()
+;;
+
+let%test "contract: added, removed and schema changes are reported" =
+  test_contract_added_removed_and_schema_are_reported ()
+;;

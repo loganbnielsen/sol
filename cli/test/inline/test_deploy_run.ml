@@ -50,7 +50,7 @@ let spec ~domain ~name ~k8s primitive : Sol_cli_deployment_plan.service_spec =
 
 let release_id =
   Sol_cli_release_id.of_content
-    { workspace = "myapp"; environment = None; workloads = [] }
+    { workspace = "myapp"; environment = None; workloads = []; contract = [] }
 ;;
 
 let plan ?profile services : Sol_cli_deployment_plan.t =
@@ -74,6 +74,8 @@ let plan ?profile services : Sol_cli_deployment_plan.t =
   ; release_id
   ; requested_scope = "workspace"
   ; profile
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 

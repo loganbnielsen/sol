@@ -174,6 +174,7 @@ let gate_release_id =
     { workspace = "myapp"
     ; environment = gate_env.env
     ; workloads = List.map Sol_cli_deployment_plan.release_workload_of_spec gate_services
+    ; contract = []
     }
 ;;
 
@@ -188,6 +189,8 @@ let gate_plan : Sol_cli_deployment_plan.t =
   ; consumer_groups = []
   ; requested_scope = "workspace"
   ; profile = None
+  ; contract = []
+  ; contract_changes = []
   }
 ;;
 
@@ -416,6 +419,7 @@ let bad_workload_release update : Sol_cli_release.t =
           (update (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec))
       ]
   ; migrations = []
+  ; contract = []
   ; apply_mode = Sol_cli_release.Direct
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
@@ -472,6 +476,7 @@ let migration_release ~migrations : Sol_cli_release.t =
   ; environment = None
   ; workloads = []
   ; migrations
+  ; contract = []
   ; apply_mode = Sol_cli_release.Direct
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
@@ -719,6 +724,7 @@ let verify_release : Sol_cli_release.t =
   ; environment = None
   ; workloads = []
   ; migrations = []
+  ; contract = []
   ; apply_mode = Sol_cli_release.Direct
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
@@ -857,6 +863,7 @@ let fn_release : Sol_cli_release.t =
           (Sol_cli_deployment_plan.release_workload_of_spec fn_spec)
       ]
   ; migrations = []
+  ; contract = []
   ; apply_mode = Sol_cli_release.Direct
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
@@ -1287,6 +1294,7 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
   ; environment = None
   ; workloads = []
   ; migrations = []
+  ; contract = []
   ; apply_mode
   ; encoding_version = Some Sol_cli_release_id.encoding_version
   }
