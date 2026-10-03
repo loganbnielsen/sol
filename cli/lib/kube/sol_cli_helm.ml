@@ -8,7 +8,16 @@ let cmd = Sol_cli_process.cmd
 let repo_add ~name ~url = run (cmd [ "helm"; "repo"; "add"; name; url ])
 let repo_update () = run (cmd [ "helm"; "repo"; "update" ])
 
-let upgrade_install ~release ~chart ~namespace ?version ?(values = []) ?values_yaml () =
+let upgrade_install_argv
+      ~ctx
+      ~release
+      ~chart
+      ~namespace
+      ?version
+      ?(values = [])
+      ?values_file
+      ()
+  =
   let set_flags =
     values
     |> List.concat_map (fun (k, v) ->
@@ -22,25 +31,52 @@ let upgrade_install ~release ~chart ~namespace ?version ?(values = []) ?values_y
     | Some v -> [ "--version"; v ]
     | None -> []
   in
-  let install file_flags =
+  let file_flags =
+    match values_file with
+    | Some path -> [ "-f"; path ]
+    | None -> []
+  in
+  [ "helm"; "upgrade"; "--install"; release; chart ]
+  @ [ "--namespace"; namespace; "--create-namespace" ]
+  @ version_flags
+  @ set_flags
+  @ file_flags
+  @ Sol_cli_kube_destination.helm_context_args ctx
+  @ [ "--wait"; "--timeout"; "3m" ]
+;;
+
+let upgrade_install
+      ~ctx
+      ~release
+      ~chart
+      ~namespace
+      ?version
+      ?(values = [])
+      ?values_yaml
+      ()
+  =
+  let invoke ?values_file () =
     run
       ~echo:true
       (cmd
-         ([ "helm"; "upgrade"; "--install"; release; chart ]
-          @ [ "--namespace"; namespace; "--create-namespace" ]
-          @ version_flags
-          @ set_flags
-          @ file_flags
-          @ [ "--wait"; "--timeout"; "3m" ]))
+         (upgrade_install_argv
+            ~ctx
+            ~release
+            ~chart
+            ~namespace
+            ?version
+            ~values
+            ?values_file
+            ()))
   in
   match values_yaml with
-  | None -> install []
+  | None -> invoke ()
   | Some content ->
     Sol_cli_fs.with_temp_file
       ~prefix:"sol-helm-values-"
       ~suffix:".yaml"
       content
-      (fun tmp -> install [ "-f"; tmp ])
+      (fun tmp -> invoke ~values_file:tmp ())
     |> Result.map_error (fun message -> Sol_cli_process.Spawn_failed message)
     |> Result.join
 ;;
