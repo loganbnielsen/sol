@@ -133,9 +133,9 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol migrate rollback` | — | `--dir=DIR`, `--table=TABLE` | documented | Roll back the last applied migration |
 | `sol migrate status` | — | `--dir=DIR`, `--json`, `--table=TABLE` | documented | Show per-file applied/pending status |
 | `sol new event` | TEAM/NAME | — | documented | Add a typed Kafka event contract to the current |
-| `sol new fn` | DOMAIN/NAME | — | documented | Add a scheduled function to the current workspace |
-| `sol new svc` | DOMAIN/NAME | — | documented | Add an HTTP service to the current workspace |
-| `sol new worker` | DOMAIN/NAME | — | documented | Add a Kafka consumer worker to the current workspace |
+| `sol new fn` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add a scheduled function to the current workspace |
+| `sol new svc` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add an HTTP service to the current workspace |
+| `sol new worker` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add a Kafka consumer worker to the current workspace |
 | `sol new workspace` | NAME | — | documented | Scaffold a new Sol workspace with a working |
 | `sol rollback` | RELEASE_ID | `--commit=SHA`, `--scope=DOMAIN[/UNIT]`, `--target=ENV/PROVIDER/REGION` | documented | Restore a recorded release boundary. Refuses on a |
 | `sol secret delete` | KEY | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | Delete a secret key |

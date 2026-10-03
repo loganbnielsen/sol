@@ -128,7 +128,12 @@ let component_vars kind ~ws ~domain ~name =
   ]
 ;;
 
-let new_component kind ~label arg =
+let template_kind suffix = function
+  | Sol_cli_compat.Ocaml -> suffix
+  | Sol_cli_compat.Typescript -> suffix ^ "-ts"
+;;
+
+let new_component kind ?(language = Sol_cli_compat.Ocaml) ~label arg =
   let ws = ws_of_cwd () in
   let* domain, name = parse_domain_name arg in
   let suffix = component_suffix kind in
@@ -138,41 +143,65 @@ let new_component kind ~label arg =
     |> Result.map_error Sol_cli_workspace.workspace_error_to_string
   in
   let unit_name = Filename.basename dir in
-  let* declaration =
-    Sol_cli_sol_yml.plan ~root ~name:unit_name ~dir ~language:Sol_cli_compat.Ocaml
-  in
-  Sol_cli_report.app "\nScaffolding %s %s/%s_%s ...\n" label domain name suffix;
+  let lang = Sol_cli_compat.to_string language in
+  let* declaration = Sol_cli_sol_yml.plan ~root ~name:unit_name ~dir ~language in
+  Sol_cli_report.app "\nScaffolding %s %s/%s_%s (%s) ...\n" label domain name suffix lang;
   let vars = component_vars kind ~ws ~domain ~name in
-  let* _ = copy ~kind:suffix ~dest:dir ~vars:(fun _ -> vars) ~rule:always_write in
+  let* _ =
+    copy
+      ~kind:(template_kind suffix language)
+      ~dest:dir
+      ~vars:(fun _ -> vars)
+      ~rule:always_write
+  in
   let* outcome = Sol_cli_sol_yml.commit declaration in
   (match outcome with
    | Sol_cli_sol_yml.Declared ->
-     Sol_cli_report.app "  sol.yml: added %s, declared language: ocaml" unit_name
+     Sol_cli_report.app "  sol.yml: added %s, declared language: %s" unit_name lang
    | Sol_cli_sol_yml.Language_added ->
-     Sol_cli_report.app "  sol.yml: declared language: ocaml for %s" unit_name
+     Sol_cli_report.app "  sol.yml: declared language: %s for %s" lang unit_name
    | Sol_cli_sol_yml.Already_declared ->
-     Sol_cli_report.app "  sol.yml: %s already declares language: ocaml" unit_name);
+     Sol_cli_report.app "  sol.yml: %s already declares language: %s" unit_name lang);
   Ok dir
 ;;
 
-let new_svc arg =
-  let* dir = new_component Service ~label:"svc" arg in
-  Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir;
+let new_svc ?language arg =
+  let* dir = new_component Service ?language ~label:"svc" arg in
+  (match Option.value ~default:Sol_cli_compat.Ocaml language with
+   | Sol_cli_compat.Ocaml ->
+     Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir
+   | Sol_cli_compat.Typescript ->
+     Sol_cli_report.app
+       "\nDone.  Install and build:\n  cd %s && npm install && npm run build"
+       dir);
   Ok ()
 ;;
 
-let new_worker arg =
-  let* dir = new_component Worker ~label:"worker" arg in
-  Sol_cli_report.app
-    "\nDone.  Replace the stub Message module with your event module, then:";
-  Sol_cli_report.app "  dune build %s/bin/main.exe" dir;
+let new_worker ?language arg =
+  let* dir = new_component Worker ?language ~label:"worker" arg in
+  (match Option.value ~default:Sol_cli_compat.Ocaml language with
+   | Sol_cli_compat.Ocaml ->
+     Sol_cli_report.app
+       "\nDone.  Replace the stub Message module with your event module, then:";
+     Sol_cli_report.app "  dune build %s/bin/main.exe" dir
+   | Sol_cli_compat.Typescript ->
+     Sol_cli_report.app
+       "\nDone.  Install and build:\n  cd %s && npm install && npm run build"
+       dir);
   Ok ()
 ;;
 
-let new_fn arg =
-  let* dir = new_component Function ~label:"fn" arg in
-  Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir;
-  Ok ()
+let new_fn ?language arg =
+  match Option.value ~default:Sol_cli_compat.Ocaml language with
+  | Sol_cli_compat.Typescript ->
+    Error
+      "TypeScript -fn is not supported yet: Sol has no TypeScript function runtime \
+       contract. Use --language ocaml, or track the -fn capability in \
+       internal/specs/framework-conventions.md."
+  | Sol_cli_compat.Ocaml ->
+    let* dir = new_component Function ~label:"fn" arg in
+    Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir;
+    Ok ()
 ;;
 
 let event_vars ~ws ~team ~name =
@@ -206,6 +235,32 @@ let new_event arg =
 
 let run scaffold arg = Sol_cli_exit.exit_on (scaffold arg |> Sol_cli_exit.of_msg)
 
+let run_with_language scaffold language arg =
+  Sol_cli_exit.exit_on (scaffold language arg |> Sol_cli_exit.of_msg)
+;;
+
+let language_conv =
+  let parse s =
+    match Sol_cli_compat.of_string s with
+    | Ok language -> Ok language
+    | Error message -> Error (`Msg message)
+  in
+  let print fmt language =
+    Format.pp_print_string fmt (Sol_cli_compat.to_string language)
+  in
+  Arg.conv (parse, print)
+;;
+
+let language_arg =
+  Arg.(
+    value
+    & opt language_conv Sol_cli_compat.Ocaml
+    & info
+        [ "language" ]
+        ~docv:"LANGUAGE"
+        ~doc:"Implementation language for the unit: ocaml (default) or typescript")
+;;
+
 let name_arg docv doc =
   Arg.(required & pos 0 (some Sol_cli_args.text) None & info [] ~docv ~doc)
 ;;
@@ -221,19 +276,28 @@ let workspace_cmd =
 let svc_cmd =
   Cmd.v
     (Cmd.info "svc" ~doc:"Add an HTTP service to the current workspace")
-    Term.(const (run new_svc) $ name_arg "DOMAIN/NAME" "e.g. payments/charge")
+    Term.(
+      const (run_with_language (fun language arg -> new_svc ~language arg))
+      $ language_arg
+      $ name_arg "DOMAIN/NAME" "e.g. payments/charge")
 ;;
 
 let worker_cmd =
   Cmd.v
     (Cmd.info "worker" ~doc:"Add a Kafka consumer worker to the current workspace")
-    Term.(const (run new_worker) $ name_arg "DOMAIN/NAME" "e.g. comms/notify")
+    Term.(
+      const (run_with_language (fun language arg -> new_worker ~language arg))
+      $ language_arg
+      $ name_arg "DOMAIN/NAME" "e.g. comms/notify")
 ;;
 
 let fn_cmd =
   Cmd.v
     (Cmd.info "fn" ~doc:"Add a scheduled function to the current workspace")
-    Term.(const (run new_fn) $ name_arg "DOMAIN/NAME" "e.g. billing/monthly_report")
+    Term.(
+      const (run_with_language (fun language arg -> new_fn ~language arg))
+      $ language_arg
+      $ name_arg "DOMAIN/NAME" "e.g. billing/monthly_report")
 ;;
 
 let event_cmd =

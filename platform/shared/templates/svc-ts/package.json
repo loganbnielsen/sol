@@ -1,0 +1,19 @@
+{
+  "name": "{{domain}}-{{name}}-svc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@prometheus-io/client": "^0.16.1",
+    "@sol-fab/obs": "^0.3.0",
+    "@sol-fab/svc": "^0.2.0",
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  }
+}

@@ -18,12 +18,13 @@ These primitives share a common observability layer (Loki for logs, Prometheus f
 
 The `sol` CLI scaffolds new services, manages the local development cluster, builds and deploys container images, and runs database migrations.
 
-This walkthrough uses OCaml, which is the deepest-supported path. `sol new`
-scaffolds OCaml units only today — a TypeScript unit is authored by hand and
-consumes the published `@sol-fab/*` packages — so the TypeScript path has its own
-runnable example in
-[`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts/README.md) rather
-than a `sol new` walkthrough. The scaffolding gap is FEAT-084.
+This walkthrough uses OCaml, the deeper-supported path. `sol new svc` and
+`sol new worker` also scaffold TypeScript units with `--language typescript`, and
+the generated unit consumes the published `@sol-fab/*` packages. `sol new fn` is
+OCaml-only for now: the TypeScript `-fn` runtime contract is not implemented (the
+`-fn` row in [`framework-conventions.md`](../../internal/specs/framework-conventions.md)).
+The hand-built reference for the TypeScript path is
+[`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts/README.md).
 
 ---
 
@@ -619,9 +620,9 @@ application spans.
 
 ```
 sol new workspace <name>                          scaffold a new workspace
-sol new svc <domain>/<name>                       add an HTTP service
-sol new worker <domain>/<name>                    add a Kafka consumer
-sol new fn <domain>/<name>                        add a scheduled function
+sol new svc <domain>/<name> [--language typescript]    add an HTTP service
+sol new worker <domain>/<name> [--language typescript] add a Kafka consumer
+sol new fn <domain>/<name>                         add a scheduled function
 sol new event <team>/<name>                       add a typed Kafka event
 
 sol local infra up                                        provision local k3d cluster
