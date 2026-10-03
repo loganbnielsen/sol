@@ -41,6 +41,13 @@ type reconciliation =
       ; forgotten : string list
       }
 
+type authority =
+  | No_authority_required
+  | Mechanism of
+      { reconcile_and_enable : unit -> (unit, string) result
+      ; remove_elevated_access : unit -> (unit, string) result
+      }
+
 type outputs_read =
   | Outputs_available
   | Outputs_unavailable of string
@@ -87,9 +94,8 @@ type deps =
   ; reconcile_provable_absence : unit -> (reconciliation, string) result
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
-  ; reconcile_and_enable : unit -> (unit, string) result
+  ; authority : authority
   ; destroy_platform : unit -> (unit, string) result
-  ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
   ; release_workloads : unit -> Sol_cli_workload_scope.release

@@ -14,6 +14,14 @@ type identity_contract =
   ; declared_as : string
   }
 
+type authority =
+  | No_authority_required
+  | Mechanism of
+      { matchers : Sol_cli_terraform_plan.matcher list
+      ; scope : Sol_cli_terraform.scope
+      ; reconciliation_scope : string list -> Sol_cli_terraform.scope
+      }
+
 type authorization_reconciler =
   | Reconciler_role of string
   | Reconciler_service_account of string
@@ -79,9 +87,7 @@ type t =
       -> ecr_repositories:(unit -> (string, string) result)
       -> ((string * string) list, string) result
   ; destroy_guard_vars : final_snapshot:string option -> (string * string) list
-  ; bootstrap_matchers : Sol_cli_terraform_plan.matcher list
-  ; bootstrap_scope : Sol_cli_terraform.scope
-  ; reconciliation_scope : string list -> Sol_cli_terraform.scope
+  ; authority : authority
   ; guarded_addresses : string list
   ; cloud_ready_expectation : string
   ; production_qualified : bool
