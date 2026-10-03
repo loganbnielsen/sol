@@ -52,3 +52,31 @@ app-author surface.
 
 **TypeScript-parity note (DEC-022):** No language-parity impact — workspace CI
 scaffolding in the OCaml CLI.
+
+## Completion notes
+
+Fixed 2026-10-02, `AUDIT-086/ci-unreadable-workflow`.
+
+- `Sol_cli_ci.read_existing` reads through `Sol_cli_fs.read_file` and returns a
+  three-way `Absent | Unreadable of string | Present of string`: `Absent` only
+  when the read failed *and* `Sys.file_exists` is false. `init_github` refuses on
+  `Unreadable` with the read's cause and a remedy, writes on `Absent`, keeps the
+  no-op for an identical file, and keeps the `--force` requirement for a file
+  that was read and differs.
+- The unreadable case refuses with or without `--force`: an unread file is
+  exactly where the guard must be most conservative, and the operator can remove
+  or repair it. `cmd_ci.ml`'s `--force` help text says so.
+- Tests (`cli/test/inline/test_ci_init.ml`): the target path as a directory
+  (readable as a path, unreadable as a file — the same shape EC-01's fix used)
+  refuses with the read failure without `--force` and with it, leaves the path
+  untouched and no `.tmp-` sibling behind; a `chmod 000` file is left byte-for-byte
+  unchanged after the run.
+- Negative (mutation) run: making the `Unreadable` arm write instead of refuse
+  fails all three new tests, including "the file the process could not read is
+  left exactly as it was" — the pre-fix silent clobber. Reverted.
+- `--force` remains the override for a file that *was* read and differs; the
+  rendered workflow is unchanged, so no scaffold output changes.
+
+No demo/example change: a refusal-path safety fix in an existing CLI command; the
+workflow it writes is byte-identical. No language-parity impact (DEC-022).
+

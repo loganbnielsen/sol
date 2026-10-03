@@ -47,21 +47,40 @@ let render ~root ~workspace_root =
   Ok (substitute vars text)
 ;;
 
+type existing =
+  | Absent
+  | Unreadable of string
+  | Present of string
+
+let read_existing path =
+  match Sol_cli_fs.read_file path with
+  | Ok content -> Present content
+  | Error reason -> if Sys.file_exists path then Unreadable reason else Absent
+;;
+
 let init_github ~force ~cwd =
   let* assets = Assets.resolve () |> Result.map_error Assets.error_to_string in
   let root = Assets.templates_root assets in
   let workspace_root = Option.value (Sol_cli_workspace.find_root ~dir:cwd) ~default:cwd in
   let* rendered = render ~root ~workspace_root in
   let path = Filename.concat workspace_root target_rel in
-  match Sol_cli_fs.read_file_opt path with
-  | Some existing when String.equal existing rendered -> Ok { written = false; path }
-  | Some _ when not force ->
+  match read_existing path with
+  | Unreadable reason ->
+    Error
+      (Printf.sprintf
+         "could not read the existing %s, so Sol cannot tell whether it already matches \
+          the supported workflow and will not overwrite it: %s. Fix its permissions or \
+          remove it, then re-run."
+         target_rel
+         reason)
+  | Present existing when String.equal existing rendered -> Ok { written = false; path }
+  | Present _ when not force ->
     Error
       (Printf.sprintf
          "%s already exists and differs from the supported workflow; re-run with --force \
           to overwrite it, or reconcile the differences by hand"
          target_rel)
-  | _ ->
+  | Absent | Present _ ->
     let* () = Sol_cli_fs.mkdir_p (Filename.dirname path) in
     let* () = Sol_cli_fs.write_atomic path rendered in
     Ok { written = true; path }
