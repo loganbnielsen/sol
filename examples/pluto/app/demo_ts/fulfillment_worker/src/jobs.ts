@@ -1,28 +1,49 @@
 import { enqueue, type JobContract } from "@sol-fab/jobs";
 import type pg from "pg";
 
-export interface ConfirmationJob {
-  order_id: string;
+export const WORKSPACE = "pluto.demo_ts";
+export const CONFIRMATION_KIND = "send_confirmation";
+export const INVENTORY_KIND = "release_inventory";
+export const JOB_KINDS = [CONFIRMATION_KIND, INVENTORY_KIND] as const;
+
+export type OrderJob =
+  | { kind: typeof CONFIRMATION_KIND; order_id: string }
+  | { kind: typeof INVENTORY_KIND; order_id: string };
+
+export type LogLine = (level: string, msg: string, fields: Record<string, string>) => void;
+
+export interface OrderJobEffects {
+  markConfirmed(orderId: string): Promise<void>;
 }
 
-export function makeConfirmationJobs(log: (level: string, msg: string, fields: Record<string, string>) => void) {
-  const contract: JobContract<ConfirmationJob> = {
-    workspace: "pluto.demo_ts",
-    kinds: ["send_confirmation"],
-    kind: () => "send_confirmation",
+export function makeOrderJobs(log: LogLine, effects: OrderJobEffects): JobContract<OrderJob> {
+  return {
+    workspace: WORKSPACE,
+    kinds: JOB_KINDS,
+    kind: (job) => job.kind,
     encode: (job) => JSON.stringify(job),
-    decode: (payload) => JSON.parse(payload) as ConfirmationJob,
+    decode: (payload) => {
+      const job = JSON.parse(payload) as OrderJob;
+      if (!JOB_KINDS.includes(job.kind)) {
+        throw new Error(`unknown job kind ${JSON.stringify(job.kind)}`);
+      }
+      return job;
+    },
     handle: async (job) => {
-      log("info", "confirmation sent", { order_id: job.order_id });
+      if (job.kind === CONFIRMATION_KIND) {
+        await effects.markConfirmed(job.order_id);
+        log("info", "confirmation sent", { order_id: job.order_id });
+        return;
+      }
+      log("info", "inventory released", { order_id: job.order_id });
     },
   };
-  return contract;
 }
 
-export async function enqueueConfirmation(
+export async function enqueueOrderJob(
   client: pg.PoolClient,
-  contract: JobContract<ConfirmationJob>,
-  orderId: string,
+  contract: JobContract<OrderJob>,
+  job: OrderJob,
 ): Promise<void> {
-  await enqueue(client, contract, { order_id: orderId }, { dedupeKey: orderId });
+  await enqueue(client, contract, job, { dedupeKey: job.order_id });
 }

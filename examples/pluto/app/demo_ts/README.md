@@ -36,17 +36,50 @@ registered — the same BUG-105 split an OCaml `sol-svc`/`sol-worker` follows. B
 images install `/usr/local/bin/contract` so `sol deploy` can reconcile the
 contract from inside the destination, where a private registry is reachable.
 
-`fulfillment_worker` also demonstrates the Kafka → job → outbox handoff: handling
-an order writes `fulfilled_orders_ts`, enqueues a `send_confirmation` job **and**
-records an `OrderFulfilled` outbox intent, all in one Postgres transaction, so
-none of the three can exist without the state change that caused it. It hosts the
-queue's runner and the outbox relay alongside its consumer; the relay publishes
-each key's events to `sol-demo-ts-fulfilled` in `ord` order through the same
-registered contract `order_svc` produces under, and removes a row only after the
-broker acknowledged it. As with `fulfilled_orders_ts`, `db.ts` provisions the
-demo's tables itself (`CREATE TABLE IF NOT EXISTS`, `sol_outbox` included, matching
-`sol-outbox`'s shared DDL), so the TypeScript smoke — which deliberately runs no
-`sol migrate` — is self-contained; a real app owns the same DDL as a migration.
+`order_svc` accepts an order in one Postgres transaction (FEAT-132's OCaml
+`orders_svc` is its twin): `INSERT INTO orders_ts … ON CONFLICT (order_id) DO
+NOTHING`, the `send_confirmation` job (`dedupe_key = order_id`) and the
+`OrderPlaced` outbox intent (`kind = order_placed`, `key = order_id`, `ord = 1`)
+commit together, and only then does the service answer `202 {order_id, status}`.
+A duplicate `POST` is absorbed at all three effects and still answers `202`.
+`GET /orders/{order_id}` reads the order back — `accepted`, `fulfilled` or
+`confirmed`, derived from the acceptance row's `fulfilled_at`/`confirmed_at` — or
+`404`. The service hosts its own outbox relay, which publishes `OrderPlaced` to
+`sol-demo-ts-orders` and removes the row only after the broker acknowledged it.
+
+`fulfillment_worker` demonstrates the Kafka → job → outbox handoff: handling
+an order writes `fulfilled_orders_ts`, enqueues a `release_inventory` job **and**
+records an `OrderFulfilled` outbox intent, marks the acceptance row `fulfilled`,
+all in one Postgres transaction, so none of the effects can exist without the
+state change that caused it. It hosts the queue's runner and the outbox relay
+alongside its consumer; the relay publishes each key's events to
+`sol-demo-ts-fulfilled` in `ord` order through the same registered contract
+`order_svc` produces under, and removes a row only after the broker acknowledged
+it. The runner executes both kinds: `send_confirmation` writes the confirmation
+effect (`order_confirmations_ts` plus the acceptance row's `confirmed_at`) and
+`release_inventory` records its release, so the read-back reaches `confirmed`.
+
+The two relays share one `sol_outbox` table, so each owns a disjoint slice of it
+and refuses the other's: `OrderPlaced` is `order_placed`/`ord = 1` and
+`OrderFulfilled` is `order_fulfilled`/`ord = 2` for the same per-order key (a
+per-key ordering token is the caller's to assign, and two producers must not
+reuse one), and a relay whose `publish` callback sees a kind it does not own
+fails loudly instead of publishing another contract's event to its own topic.
+
+Every table the demo touches is the workspace's migration, not the app's DDL:
+`db/migrations/0002_sol_jobs.sql`, `0003_sol_outbox.sql`,
+`0006_orders_ts.sql` (`orders_ts`, `fulfilled_orders_ts`,
+`order_confirmations_ts`) and `0007_orders_ts_traceparent.sql`. Nothing creates a
+table at runtime, so `sol migrate apply` must run before the units do — the local
+walkthrough below does that, and so does the TypeScript golden-path smoke.
+
+The acceptance row also carries the request's W3C `traceparent`
+(`orders_ts.traceparent`, migration 0007), because the relay — not the HTTP
+handler — publishes the record: the relay reads that row back and replays the
+caller's context as the record's `traceparent` header, so one trace still spans
+`order_svc`'s `receive_order`, the Kafka boundary and `fulfillment_worker`'s
+`fulfill_order` (G3). A row with no stored context is published without the
+header and the consumer starts a new trace, which is the deliberate degradation.
 
 Duplicate delivery is absorbed at every effect. Kafka is at-least-once, and a
 duplicate is a legal outcome (DEC-022), so a redelivered `OrderPlaced` is handled
@@ -100,6 +133,7 @@ their npm dependencies are installed:
 cd examples/pluto
 (cd app/demo_ts && npm ci)      # the units' dependencies; the loop needs them
 sol local infra up              # k3d cluster + broker, schema registry, Postgres, Loki, Tempo, Prometheus
+sol local migrate         # the demo's tables are migrations; nothing creates them at runtime
 sol local run --scope=demo_ts
 ```
 
@@ -126,7 +160,16 @@ In another terminal, send one order through the whole path:
 ```bash
 curl -X POST localhost:8080/orders -H 'content-type: application/json' \
   -d '{"order_id":"demo-1","item":"widget","quantity":3}'
+# {"order_id":"demo-1","status":"accepted"}
+
+curl localhost:8080/orders/demo-1
+# {"order_id":"demo-1","item":"widget","quantity":3,"status":"fulfilled"} then "confirmed"
 ```
+
+The `POST` answers `202` once the transaction committed; the two `GET`s that
+follow are the read-back moving through `accepted` → `fulfilled` → `confirmed` as
+the worker and the job runner do their work. A second `POST` of the same order id
+is absorbed and still answers `202`.
 
 Then check Grafana (Loki logs + Prometheus metrics) and Tempo — the
 `receive_order` span from `order_svc` and `fulfill_order` span from
