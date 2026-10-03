@@ -55,7 +55,6 @@ let ingress_path s =
   | Error message -> Windtrap.fail message
 ;;
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let render_doc doc = Sol_cli_yaml.render [ doc ]
 
 let workload
@@ -99,14 +98,14 @@ let assert_contains label haystack needle =
   check_bool
     (Printf.sprintf "%s: contains %S" label needle)
     true
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let assert_absent label haystack needle =
   check_bool
     (Printf.sprintf "%s: absent %S" label needle)
     false
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let k8s_name value =
@@ -136,7 +135,8 @@ let extract_kind_block yaml kind_marker =
   blocks := String.sub yaml !start (yl - !start) :: !blocks;
   let result = ref "" in
   List.rev !blocks
-  |> List.iter (fun b -> if !result = "" && contains b kind_marker then result := b);
+  |> List.iter (fun b ->
+    if !result = "" && Sol_cli_string.contains ~needle:kind_marker b then result := b);
   !result
 ;;
 
@@ -2081,7 +2081,7 @@ let values_of_key key yaml =
 
 let internal_addresses yaml =
   String.split_on_char '\n' yaml
-  |> List.filter (fun line -> contains line ".svc.cluster.local")
+  |> List.filter (fun line -> Sol_cli_string.contains ~needle:".svc.cluster.local" line)
   |> List.map String.trim
 ;;
 
@@ -2187,17 +2187,21 @@ let test_fn_render_carries_pushgateway_job () =
   check_bool
     "SOL_PUSHGATEWAY_JOB is <namespace>.<name>"
     true
-    (contains
-       workload
-       (Printf.sprintf
-          "SOL_PUSHGATEWAY_JOB: \"%s.%s\""
-          (Sol_cli_kubernetes_name.namespace_to_string fn_spec.namespace)
-          (Sol_cli_kubernetes_name.k8s_name_to_string fn_spec.k8s_name)))
+    (Sol_cli_string.contains
+       ~needle:
+         (Printf.sprintf
+            "SOL_PUSHGATEWAY_JOB: \"%s.%s\""
+            (Sol_cli_kubernetes_name.namespace_to_string fn_spec.namespace)
+            (Sol_cli_kubernetes_name.k8s_name_to_string fn_spec.k8s_name))
+       workload)
 ;;
 
 let test_svc_render_has_no_pushgateway_job () =
   let _, workload = render_spec_ok svc_spec in
-  check_bool "svc has no Pushgateway job" false (contains workload "SOL_PUSHGATEWAY_JOB")
+  check_bool
+    "svc has no Pushgateway job"
+    false
+    (Sol_cli_string.contains ~needle:"SOL_PUSHGATEWAY_JOB" workload)
 ;;
 
 let test_fn_without_schedule_is_refused_at_render () =
@@ -2208,7 +2212,8 @@ let test_fn_without_schedule_is_refused_at_render () =
       { fn_spec with schedule = None }
   with
   | Ok _ -> Windtrap.fail "a -fn spec without a schedule must not render hourly"
-  | Error msg -> check_bool "names the schedule" true (contains msg "schedule")
+  | Error msg ->
+    check_bool "names the schedule" true (Sol_cli_string.contains ~needle:"schedule" msg)
 ;;
 
 let test_local_executor_renders_unverified_jwt_opt_in () =
@@ -2216,7 +2221,7 @@ let test_local_executor_renders_unverified_jwt_opt_in () =
   check_bool
     "local render carries SOL_ALLOW_UNVERIFIED_JWT=1"
     true
-    (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
+    (Sol_cli_string.contains ~needle:"SOL_ALLOW_UNVERIFIED_JWT: \"1\"" workload)
 ;;
 
 let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
@@ -2228,7 +2233,10 @@ let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
   Sys.remove path;
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
-    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+    check_bool
+      "names the reserved key"
+      true
+      (Sol_cli_string.contains ~needle:"SOL_ALLOW_UNVERIFIED_JWT" message)
   | Ok _ -> Windtrap.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
   | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
 ;;
@@ -2242,7 +2250,10 @@ let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
   Sys.remove path;
   match result with
   | Error (Sol_cli_toml.Validation { message; _ }) ->
-    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+    check_bool
+      "names the reserved key"
+      true
+      (Sol_cli_string.contains ~needle:"SOL_ALLOW_UNVERIFIED_JWT" message)
   | Ok _ -> Windtrap.fail "a sol.toml secret must not be able to carry the opt-in"
   | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
 ;;
@@ -2266,7 +2277,7 @@ let test_deploy_render_has_no_unverified_jwt_opt_in () =
   check_bool
     "a deploy/GitOps render never carries the opt-in"
     false
-    (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
+    (Sol_cli_string.contains ~needle:"SOL_ALLOW_UNVERIFIED_JWT" workload)
 ;;
 
 let test_svc_readiness_probe_uses_readyz () =
@@ -2276,11 +2287,15 @@ let test_svc_readiness_probe_uses_readyz () =
   check_bool
     "readinessProbe path is /readyz"
     true
-    (contains workload "readinessProbe:\n          httpGet:\n            path: /readyz");
+    (Sol_cli_string.contains
+       ~needle:"readinessProbe:\n          httpGet:\n            path: /readyz"
+       workload);
   check_bool
     "livenessProbe path is /healthz"
     true
-    (contains workload "livenessProbe:\n          httpGet:\n            path: /healthz")
+    (Sol_cli_string.contains
+       ~needle:"livenessProbe:\n          httpGet:\n            path: /healthz"
+       workload)
 ;;
 
 let test_undeclared_language_readiness_stays_on_healthz () =
@@ -2288,7 +2303,9 @@ let test_undeclared_language_readiness_stays_on_healthz () =
   check_bool
     "undeclared-language readinessProbe path is /healthz"
     true
-    (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
+    (Sol_cli_string.contains
+       ~needle:"readinessProbe:\n          httpGet:\n            path: /healthz"
+       workload)
 ;;
 
 let test_ts_svc_readiness_uses_readyz () =
@@ -2298,11 +2315,15 @@ let test_ts_svc_readiness_uses_readyz () =
   check_bool
     "TypeScript readinessProbe path is /readyz"
     true
-    (contains workload "readinessProbe:\n          httpGet:\n            path: /readyz");
+    (Sol_cli_string.contains
+       ~needle:"readinessProbe:\n          httpGet:\n            path: /readyz"
+       workload);
   check_bool
     "TypeScript livenessProbe path is /healthz"
     true
-    (contains workload "livenessProbe:\n          httpGet:\n            path: /healthz")
+    (Sol_cli_string.contains
+       ~needle:"livenessProbe:\n          httpGet:\n            path: /healthz"
+       workload)
 ;;
 
 let parse_documents text =

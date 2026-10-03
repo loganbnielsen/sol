@@ -11,7 +11,7 @@ let release_id_of_test =
 
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 
-let contains re s =
+let matches_regex re s =
   try
     ignore (Str.search_forward re s 0);
     true
@@ -143,7 +143,7 @@ let test_k8s_name_rejects_invalid_characters () =
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { field; value; message }) ->
     check_string "field" "k8s_name" field;
     check_string "value" "charge.svc" value;
-    assert (contains (Str.regexp "lowercase alphanumeric") message)
+    assert (matches_regex (Str.regexp "lowercase alphanumeric") message)
   | Ok _ -> Windtrap.fail "expected invalid k8s name"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
@@ -159,7 +159,7 @@ let test_k8s_name_rejects_invalid_characters () =
 let test_k8s_name_rejects_empty () =
   match Sol_cli_deployment_plan.k8s_name_result "" with
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { message; _ }) ->
-    assert (contains (Str.regexp "1 and 63") message)
+    assert (matches_regex (Str.regexp "1 and 63") message)
   | Ok _ -> Windtrap.fail "expected empty k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
@@ -177,7 +177,7 @@ let test_k8s_name_rejects_overlong () =
   match Sol_cli_deployment_plan.k8s_name_result name with
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { value; message; _ }) ->
     check_string "value" name value;
-    assert (contains (Str.regexp "1 and 63") message)
+    assert (matches_regex (Str.regexp "1 and 63") message)
   | Ok _ -> Windtrap.fail "expected overlong k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
@@ -197,7 +197,7 @@ let test_namespace_rejects_invalid_domain () =
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { field; value; message }) ->
     check_string "field" "namespace" field;
     check_string "value" "myapp-payments.api" value;
-    assert (contains (Str.regexp "lowercase alphanumeric") message)
+    assert (matches_regex (Str.regexp "lowercase alphanumeric") message)
   | Ok _ -> Windtrap.fail "expected invalid namespace"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
@@ -218,7 +218,7 @@ let test_namespace_rejects_overlong () =
   with
   | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name { field; message; _ }) ->
     check_string "field" "namespace" field;
-    assert (contains (Str.regexp "1 and 63") message)
+    assert (matches_regex (Str.regexp "1 and 63") message)
   | Ok _ -> Windtrap.fail "expected overlong namespace"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Windtrap.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
@@ -354,7 +354,7 @@ let test_to_json_env_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"env":"prod"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_secret_keys_present () =
@@ -362,10 +362,10 @@ let test_to_json_secret_keys_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp "DB_PASSWORD" in
-    contains re s);
+    matches_regex re s);
   assert (
     let re = Str.regexp "API_KEY" in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_build_secret_keys_present () =
@@ -373,7 +373,7 @@ let test_to_json_build_secret_keys_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp "BUILD_REGISTRY_TOKEN" in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_config_values_present () =
@@ -381,7 +381,7 @@ let test_to_json_config_values_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp "us-east-1" in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_mode_strings () =
@@ -416,7 +416,7 @@ let test_to_json_mode_strings () =
     let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
     assert (
       let re = Str.regexp (Printf.sprintf {|"mode":"%s"|} expected) in
-      contains re s)
+      matches_regex re s)
   in
   check_mode Sol_cli_deployment_plan.Local "local";
   check_mode Sol_cli_deployment_plan.Customer_cloud "customer_cloud";
@@ -849,7 +849,7 @@ let test_to_json_secret_backend () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"secret_backend"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_secret_backend_values () =
@@ -882,7 +882,7 @@ let test_to_json_rollout_strategy () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"rollout_strategy":"rolling_update"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_rollout_strategy_recreate () =
@@ -894,7 +894,7 @@ let test_to_json_rollout_strategy_recreate () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan2) in
   assert (
     let re = Str.regexp {|"rollout_strategy":"recreate"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_rollout_strategy_canary () =
@@ -908,7 +908,7 @@ let test_to_json_rollout_strategy_canary () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan2) in
   assert (
     let re = Str.regexp {|"rollout_strategy":"canary"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_rollout_strategy_blue_green () =
@@ -920,7 +920,7 @@ let test_to_json_rollout_strategy_blue_green () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan2) in
   assert (
     let re = Str.regexp {|"rollout_strategy":"blue_green"|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let check_effective_rollout_strategy label expected svc =
@@ -967,7 +967,7 @@ let test_summary_uses_effective_rollout_strategy () =
   let summary = Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan in
   assert (
     let re = Str.regexp {|rollout=canary|} in
-    contains re summary)
+    matches_regex re summary)
 ;;
 
 let fact ?(key = None) ?(schema_digest = "d1") ~topic ~partitions subject =
@@ -1092,7 +1092,7 @@ let test_to_json_ingress_null_when_absent () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"ingress":null|} in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_ingress_present () =
@@ -1106,7 +1106,7 @@ let test_to_json_ingress_present () =
   let plan2 = { plan with services = [ svc_with_ingress ] } in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan2) in
   List.iter
-    (fun fragment -> assert (contains (Str.regexp_string fragment) s))
+    (fun fragment -> assert (matches_regex (Str.regexp_string fragment) s))
     [ {|"ingress":{"host":"example.com","path":"/api"|}
     ; {|"tls":{"hosts":["example.com"],"secretName":"charge-svc-tls"}|}
     ; {|"cluster_issuer":"letsencrypt-prod"|}
@@ -1125,10 +1125,10 @@ let test_to_json_schema_subjects_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"schema_subjects"|} in
-    contains re s);
+    matches_regex re s);
   assert (
     let re = Str.regexp "payments.Charged" in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_requested_scope_and_resolved_workloads () =
@@ -1136,12 +1136,12 @@ let test_to_json_requested_scope_and_resolved_workloads () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp_string {|"requested_scope":"payments"|} in
-    contains re s);
+    matches_regex re s);
   assert (
     let re =
       Str.regexp_string {|"resolved_workloads":[{"domain":"orders","name":"charge_svc"}]|}
     in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_to_json_consumer_groups_present () =
@@ -1153,10 +1153,10 @@ let test_to_json_consumer_groups_present () =
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
   assert (
     let re = Str.regexp {|"consumer_groups"|} in
-    contains re s);
+    matches_regex re s);
   assert (
     let re = Str.regexp "myworkspace.comms.notify_worker" in
-    contains re s)
+    matches_regex re s)
 ;;
 
 let test_of_services_result_surfaces_toml_parse_error () =
@@ -1200,7 +1200,7 @@ let test_of_services_result_surfaces_toml_parse_error () =
         ~msg:"error path names the workload's sol.toml"
         true
         (Sol_cli_string.contains ~needle:"app/payments/charge_svc/sol.toml" path);
-      assert (contains (Str.regexp "unsupported rollout_strategy") message)
+      assert (matches_regex (Str.regexp "unsupported rollout_strategy") message)
     | Ok _ -> Windtrap.fail "expected deployment-plan construction to return TOML error"
     | Error (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Toml_syntax _)) ->
       Windtrap.fail "expected validation error, got syntax error"
@@ -1557,7 +1557,7 @@ let test_fn_without_schedule_is_a_plan_error toml () =
       Windtrap.bool
       ~msg:"names the missing key"
       true
-      (contains (Str.regexp_string "[service] schedule is required") msg)
+      (matches_regex (Str.regexp_string "[service] schedule is required") msg)
 ;;
 
 let test_function_volume_fails () =
@@ -1657,7 +1657,7 @@ calls = ["checkout/missing_svc"]
         [ charge_svc_service ]
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
-      assert (contains (Str.regexp "target service not found") message)
+      assert (matches_regex (Str.regexp "target service not found") message)
     | Ok _ -> Windtrap.fail "expected invalid service call"
     | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
@@ -1739,17 +1739,18 @@ calls = ["checkout/checkout_svcc"]
         ~msg:"the reference as written"
         "checkout/checkout_svcc"
         ref;
-      assert (contains (Str.regexp_string "target service not found") message);
-      assert (contains (Str.regexp_string "checkout_svcc") message);
-      assert (contains (Str.regexp_string "workspace units:") message);
-      assert (contains (Str.regexp_string "checkout/checkout_svc") message)
+      assert (matches_regex (Str.regexp_string "target service not found") message);
+      assert (matches_regex (Str.regexp_string "checkout_svcc") message);
+      assert (matches_regex (Str.regexp_string "workspace units:") message);
+      assert (matches_regex (Str.regexp_string "checkout/checkout_svc") message)
     | Ok _ -> Windtrap.fail "expected a misspelled call target to fail"
     | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let network_policy_doc workload =
   Str.split (Str.regexp_string "\n---") workload
-  |> List.find_opt (fun block -> contains (Str.regexp_string "kind: NetworkPolicy") block)
+  |> List.find_opt (fun block ->
+    matches_regex (Str.regexp_string "kind: NetworkPolicy") block)
   |> Option.value ~default:""
 ;;
 
@@ -1812,14 +1813,14 @@ calls = ["payments/charge_svc"]
         Windtrap.bool
         ~msg:"the rendered network policy allows the caller's namespace"
         true
-        (contains
+        (matches_regex
            (Str.regexp_string "kubernetes.io/metadata.name: myworkspace-orders")
            policy);
       Windtrap.equal
         Windtrap.bool
         ~msg:"and the caller's pod selector"
         true
-        (contains (Str.regexp_string "app: order-svc") policy);
+        (matches_regex (Str.regexp_string "app: order-svc") policy);
       Windtrap.equal
         Windtrap.int
         ~msg:"the callee keeps the cross-domain caller that was not selected"
@@ -1873,7 +1874,7 @@ config = { CHECKOUT_SVC_URL = "http://example.invalid" }
         [ charge_svc_service; checkout_service ]
     with
     | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
-      assert (contains (Str.regexp "conflicts") message)
+      assert (matches_regex (Str.regexp "conflicts") message)
     | Ok _ -> Windtrap.fail "expected invalid service call"
     | Error err -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;

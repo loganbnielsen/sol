@@ -1,10 +1,3 @@
-let contains haystack needle =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec at i = i + n <= h && (String.sub haystack i n = needle || at (i + 1)) in
-  n = 0 || at 0
-;;
-
 let attempt_12_payload =
   {|{"name":"us-central1","quotas":[
       {"metric":"CPUS","limit":200.0,"usage":22.0},
@@ -38,7 +31,7 @@ let test_a_quota_the_region_does_not_report_is_not_zero () =
       Windtrap.bool
       ~msg:"the refusal says the quota was not reported"
       true
-      (contains message "reports no")
+      (Sol_cli_string.contains ~needle:"reports no" message)
 ;;
 
 let test_unparseable_payload_is_an_error () =
@@ -66,17 +59,17 @@ let test_sufficiency_is_the_declared_minimum () =
       Windtrap.bool
       ~msg:"names the quota"
       true
-      (contains message "SSD_TOTAL_GB");
+      (Sol_cli_string.contains ~needle:"SSD_TOTAL_GB" message);
     Windtrap.equal
       Windtrap.bool
       ~msg:"names the observation"
       true
-      (contains message "500/519");
+      (Sol_cli_string.contains ~needle:"500/519" message);
     Windtrap.equal
       Windtrap.bool
       ~msg:"names the requirement"
       true
-      (contains message "20 GiB")
+      (Sol_cli_string.contains ~needle:"20 GiB" message)
 ;;
 
 let test_empty_quota_refuses_with_the_observed_numbers () =
@@ -94,7 +87,7 @@ let test_empty_quota_refuses_with_the_observed_numbers () =
          Windtrap.bool
          ~msg:"names the observation"
          true
-         (contains message "500/500");
+         (Sol_cli_string.contains ~needle:"500/500" message);
        Windtrap.equal
          Windtrap.string
          ~msg:"agrees with Sol's own declaration"
@@ -130,7 +123,7 @@ let test_the_declaration_is_described () =
     Windtrap.bool
     ~msg:"the description names the components"
     true
-    (contains (Sol_cli_platform_storage.describe ()) "GiB")
+    (Sol_cli_string.contains ~needle:"GiB" (Sol_cli_platform_storage.describe ()))
 ;;
 
 let%test "observation: reads the governing quota" = test_reads_the_governing_quota ()

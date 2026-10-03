@@ -5,7 +5,7 @@
 (test
  (name test_kafka_service)
  (modules test_kafka_service)
- (libraries kafka_eio_service kafka-eio windtrap yojson uri unix))
+ (libraries kafka_eio_service sol_runtime kafka-eio windtrap yojson uri unix))
 
 (executable
  (name test_kafka_service_integration)

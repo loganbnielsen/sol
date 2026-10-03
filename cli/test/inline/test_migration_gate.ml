@@ -44,8 +44,6 @@ let test_missing_dir_is_an_error () =
   | Error _ -> ()
 ;;
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
-
 let verify dir =
   Sol_cli_migration_gate.verify
     ~ctx:Sol_cli_kube_destination.local_context
@@ -70,7 +68,11 @@ let test_verify_refuses_a_file_at_the_migrations_path () =
   write dir "db-migrations" "";
   match verify path with
   | Sol_cli_migration_gate.Unavailable message ->
-    Windtrap.equal Windtrap.bool ~msg:"names the path" true (contains message path)
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the path"
+      true
+      (Sol_cli_string.contains ~needle:path message)
   | Sol_cli_migration_gate.No_migrations ->
     Windtrap.fail "a file at the migrations path must not read as 'no migrations'"
   | Sol_cli_migration_gate.Satisfied _
@@ -90,7 +92,11 @@ let test_verify_refuses_an_unreadable_migrations_dir () =
        else (
          match verify dir with
          | Sol_cli_migration_gate.Unavailable message ->
-           Windtrap.equal Windtrap.bool ~msg:"names the path" true (contains message dir)
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"names the path"
+             true
+             (Sol_cli_string.contains ~needle:dir message)
          | Sol_cli_migration_gate.No_migrations ->
            Windtrap.fail
              "an unreadable migrations directory must not read as 'no migrations'"

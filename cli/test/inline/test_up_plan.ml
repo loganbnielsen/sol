@@ -6,13 +6,6 @@ let check_strings msg expected actual =
   Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
 ;;
 
-let contains ~needle haystack =
-  let n = String.length needle in
-  let h = String.length haystack in
-  let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
-  n = 0 || go 0
-;;
-
 let mkdirs path =
   let rec go path =
     if path <> "" && path <> "." && path <> "/" && not (Sys.file_exists path)
@@ -230,13 +223,13 @@ let test_local_plan_renders_readyz () =
     check_bool
       "readinessProbe points at /readyz"
       true
-      (contains
+      (Sol_cli_string.contains
          ~needle:"readinessProbe:\n          httpGet:\n            path: /readyz"
          rendered);
     check_bool
       "livenessProbe stays on /healthz"
       true
-      (contains
+      (Sol_cli_string.contains
          ~needle:"livenessProbe:\n          httpGet:\n            path: /healthz"
          rendered))
 ;;

@@ -32,14 +32,12 @@ let memory s =
   | Error message -> Windtrap.fail message
 ;;
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
-
 let assert_contains label haystack needle =
   Windtrap.equal
     Windtrap.bool
     ~msg:(Printf.sprintf "%s: contains %S" label needle)
     true
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let assert_absent label haystack needle =
@@ -47,7 +45,7 @@ let assert_absent label haystack needle =
     Windtrap.bool
     ~msg:(Printf.sprintf "%s: absent %S" label needle)
     false
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let svc_spec : Sol_cli_deployment_plan.service_spec =

@@ -3,7 +3,6 @@ open Sol_cli_destroy_verification
 let gcp_absence_message = Sol_cli_gcloud.says_not_found
 let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
 let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let answered ?(stdout = "") status stderr = Answered { status; stdout; stderr }
 
 let observation
@@ -38,7 +37,9 @@ let test_state_residue () =
     Windtrap.bool
     ~msg:"and it names the address that remains"
     true
-    (contains "google_container_cluster.main" (List.hd verdict.violations))
+    (Sol_cli_string.contains
+       ~needle:"google_container_cluster.main"
+       (List.hd verdict.violations))
 ;;
 
 let test_state_unreadable () =
@@ -155,7 +156,8 @@ let test_retention_final_snapshot_observed () =
       Windtrap.bool
       ~msg:"the observation names the identifier and the state"
       true
-      (contains "snap-1" evidence && contains "available" evidence)
+      (Sol_cli_string.contains ~needle:"snap-1" evidence
+       && Sol_cli_string.contains ~needle:"available" evidence)
   | Sol_cli_aws_destruction.Settled _ ->
     Windtrap.fail "an available snapshot is a met retention guarantee"
   | Sol_cli_aws_destruction.Pending message ->
@@ -175,7 +177,8 @@ let test_retention_final_snapshot_missing () =
        Windtrap.bool
        ~msg:"the failure names the identifier and the declaration"
        true
-       (contains "snap-1" reason && contains "final-snapshot" reason)
+       (Sol_cli_string.contains ~needle:"snap-1" reason
+        && Sol_cli_string.contains ~needle:"final-snapshot" reason)
    | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Windtrap.fail "a missing promised snapshot must fail");
   (match
@@ -231,7 +234,7 @@ let test_retention_final_snapshot_unknown () =
        Windtrap.bool
        ~msg:"the pending report says what it is waiting for"
        true
-       (contains "creating" message)
+       (Sol_cli_string.contains ~needle:"creating" message)
    | Sol_cli_aws_destruction.Settled _ ->
      Windtrap.fail "a snapshot still being created is not a met guarantee");
   let verdict =
@@ -251,7 +254,7 @@ let test_retention_none_observed () =
        Windtrap.bool
        ~msg:"the observation says what was checked"
        true
-       (contains "none observed" evidence)
+       (Sol_cli_string.contains ~needle:"none observed" evidence)
    | retention ->
      Windtrap.failf "no residue must be observed, got %s" (retention_to_string retention));
   match
@@ -276,9 +279,9 @@ let test_retention_none_residual () =
       Windtrap.bool
       ~msg:"the failure names the residue and how many"
       true
-      (contains "leaked-snap" reason
-       && contains "leaked-auto" reason
-       && contains "2 snapshot" reason)
+      (Sol_cli_string.contains ~needle:"leaked-snap" reason
+       && Sol_cli_string.contains ~needle:"leaked-auto" reason
+       && Sol_cli_string.contains ~needle:"2 snapshot" reason)
   | retention ->
     Windtrap.failf "residual snapshots must fail, got %s" (retention_to_string retention)
 ;;
@@ -290,7 +293,7 @@ let test_retention_none_unknown () =
        Windtrap.bool
        ~msg:"the unknown says what could not be observed"
        true
-       (contains "no-residue" msg)
+       (Sol_cli_string.contains ~needle:"no-residue" msg)
    | retention ->
      Windtrap.failf
        "an unavailable provider is UNKNOWN, got %s"
@@ -317,7 +320,11 @@ let test_report_is_diagnostic () =
   let report = report obs in
   List.iter
     (fun (label, needle) ->
-       Windtrap.equal Windtrap.bool ~msg:label true (contains needle report))
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:label
+         true
+         (Sol_cli_string.contains ~needle report))
     [ "the state postcondition", "STILL REPRESENTS google_container_cluster.main"
     ; "the residue", "the service-networking peering survived the destroy"
     ; "the inconclusive check", "the EBS volumes could not be checked"
@@ -327,14 +334,16 @@ let test_report_is_diagnostic () =
     Windtrap.bool
     ~msg:"an empty state names Terraform's authority (DEC-045)"
     true
-    (contains "DEC-045" (Sol_cli_destroy_verification.report (observation ())));
+    (Sol_cli_string.contains
+       ~needle:"DEC-045"
+       (Sol_cli_destroy_verification.report (observation ())));
   let verdict = classify obs in
   Windtrap.equal Windtrap.bool ~msg:"not verified" false (is_verified verdict);
   Windtrap.equal
     Windtrap.bool
     ~msg:"the verdict message states the violation"
     true
-    (contains "violated" (verdict_message verdict))
+    (Sol_cli_string.contains ~needle:"violated" (verdict_message verdict))
 ;;
 
 let%test "state: empty read is absence" = test_state_empty ()

@@ -78,3 +78,16 @@ let setting name =
      | "" -> None
      | trimmed -> Some trimmed)
 ;;
+
+let contains_substring ~needle haystack =
+  let needle_length = String.length needle
+  and haystack_length = String.length haystack in
+  let rec go i =
+    if i + needle_length > haystack_length
+    then false
+    else if String.equal (String.sub haystack i needle_length) needle
+    then true
+    else go (i + 1)
+  in
+  go 0
+;;

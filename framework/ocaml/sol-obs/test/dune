@@ -1,6 +1,15 @@
 (test
  (name test_sol_obs)
- (libraries sol_obs obs-eio eio eio_main windtrap cohttp-eio http unix))
+ (libraries
+  sol_obs
+  sol_runtime
+  obs-eio
+  eio
+  eio_main
+  windtrap
+  cohttp-eio
+  http
+  unix))
 
 (alias
  (name ci-unit)

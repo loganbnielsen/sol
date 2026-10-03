@@ -35,18 +35,6 @@ let with_mock_server env f =
 
 let local_url port = Printf.sprintf "http://127.0.0.1:%d" port
 
-let contains haystack needle =
-  let hl = String.length haystack
-  and nl = String.length needle in
-  if nl = 0
-  then true
-  else if nl > hl
-  then false
-  else (
-    let rec go i = i <= hl - nl && (String.sub haystack i nl = needle || go (i + 1)) in
-    go 0)
-;;
-
 let taxonomy_env_names =
   [ "SOL_WORKSPACE"
   ; "SOL_ENV"
@@ -104,7 +92,7 @@ let test_default_env_logs_and_counts_without_network () =
          Windtrap.bool
          ~msg:"rendered output mentions the registered counter"
          true
-         (contains rendered "requests_total"))
+         (Sol_runtime.contains_substring ~needle:"requests_total" rendered))
 ;;
 
 let test_gauge_and_histogram_round_trip () =
@@ -137,12 +125,12 @@ let test_gauge_and_histogram_round_trip () =
          Windtrap.bool
          ~msg:"gauge present"
          true
-         (contains rendered "queue_depth");
+         (Sol_runtime.contains_substring ~needle:"queue_depth" rendered);
        Windtrap.equal
          Windtrap.bool
          ~msg:"histogram present"
          true
-         (contains rendered "op_seconds"))
+         (Sol_runtime.contains_substring ~needle:"op_seconds" rendered))
 ;;
 
 let test_loki_url_wires_loki_backend () =
@@ -169,7 +157,7 @@ let test_loki_url_wires_loki_backend () =
            Windtrap.bool
            ~msg:"push body mentions the log message"
            true
-           (contains body "pushed to loki")))
+           (Sol_runtime.contains_substring ~needle:"pushed to loki" body)))
 ;;
 
 let capture_stdout f =
@@ -220,13 +208,19 @@ let test_loki_url_keeps_a_stdout_copy () =
            Windtrap.bool
            ~msg:"the line is on stdout"
            true
-           (contains out "also on stdout");
-         Windtrap.equal Windtrap.bool ~msg:"metrics are not" false (contains out "METRIC");
+           (Sol_runtime.contains_substring ~needle:"also on stdout" out);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"metrics are not"
+           false
+           (Sol_runtime.contains_substring ~needle:"METRIC" out);
          Windtrap.equal
            Windtrap.bool
            ~msg:"and still pushed to Loki"
            true
-           (contains (Eio.Promise.await body_promise) "also on stdout")))
+           (Sol_runtime.contains_substring
+              ~needle:"also on stdout"
+              (Eio.Promise.await body_promise))))
 ;;
 
 let test_flush_delivers_queued_lines () =
@@ -260,7 +254,9 @@ let test_flush_delivers_queued_lines () =
            Windtrap.bool
            ~msg:"the line"
            true
-           (contains (Eio.Promise.await body_promise) "queued then flushed")))
+           (Sol_runtime.contains_substring
+              ~needle:"queued then flushed"
+              (Eio.Promise.await body_promise))))
 ;;
 
 let test_context_promoted_to_loki_stream_labels () =
@@ -288,7 +284,7 @@ let test_context_promoted_to_loki_stream_labels () =
            Windtrap.bool
            ~msg:"push body carries the team stream label"
            true
-           (contains body "\"team\":\"payments\"")))
+           (Sol_runtime.contains_substring ~needle:"\"team\":\"payments\"" body)))
 ;;
 
 let test_tempo_url_wires_tempo_backend () =
@@ -454,19 +450,19 @@ let test_taxonomy_env_reaches_tempo_resource_attributes () =
              Windtrap.bool
              ~msg:("OTLP resource carries the " ^ label ^ " attribute name")
              true
-             (contains body label));
+             (Sol_runtime.contains_substring ~needle:label body));
          [ "obsdemo"; "prod"; "payments"; "charge-svc"; "svc"; "r-0123456789abcdef" ]
          |> List.iter (fun value ->
            Windtrap.equal
              Windtrap.bool
              ~msg:("OTLP resource carries the value " ^ value)
              true
-             (contains body value));
+             (Sol_runtime.contains_substring ~needle:value body));
          Windtrap.equal
            Windtrap.bool
            ~msg:"SOL_SERVICE replaces the standalone ~service argument"
            false
-           (contains body "ignored-standalone")))
+           (Sol_runtime.contains_substring ~needle:"ignored-standalone" body)))
 ;;
 
 let test_taxonomy_env_becomes_loki_stream_labels () =
@@ -501,7 +497,7 @@ let test_taxonomy_env_becomes_loki_stream_labels () =
              Windtrap.bool
              ~msg:("Loki stream carries " ^ pair)
              true
-             (contains body pair))))
+             (Sol_runtime.contains_substring ~needle:pair body))))
 ;;
 
 let test_platform_identity_overrides_application_context () =
@@ -529,17 +525,17 @@ let test_platform_identity_overrides_application_context () =
            Windtrap.bool
            ~msg:"the injected domain wins over the application context"
            true
-           (contains body "\"domain\":\"payments\"");
+           (Sol_runtime.contains_substring ~needle:"\"domain\":\"payments\"" body);
          Windtrap.equal
            Windtrap.bool
            ~msg:"the spoofed domain is absent"
            false
-           (contains body "spoofed");
+           (Sol_runtime.contains_substring ~needle:"spoofed" body);
          Windtrap.equal
            Windtrap.bool
            ~msg:"an app-owned field still reaches the stream"
            true
-           (contains body "\"team\":\"payments\"")))
+           (Sol_runtime.contains_substring ~needle:"\"team\":\"payments\"" body)))
 ;;
 
 let test_taxonomy_labels_are_the_documented_six () =

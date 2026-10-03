@@ -1,6 +1,5 @@
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
-let contains = Sol_cli_string.contains
 
 let unit ?(workspace = "acme") ?(domain = "payments") ?(service = "charge-svc") () =
   { Sol_cli_log_selector.workspace; domain; service }
@@ -14,7 +13,7 @@ let test_a_unit_is_selected_by_identity_not_by_a_name_substring () =
   check_bool
     "nothing in the selector is a regex match"
     false
-    (contains ~needle:"=~" (Sol_cli_log_selector.unit (unit ())))
+    (Sol_cli_string.contains ~needle:"=~" (Sol_cli_log_selector.unit (unit ())))
 ;;
 
 let test_a_differently_named_unit_cannot_match_the_same_selector () =

@@ -1,4 +1,4 @@
-let contains re s =
+let matches_regex re s =
   try
     ignore (Str.search_forward re s 0);
     true
@@ -74,8 +74,8 @@ let test_deploy_decision () =
       (Some (lease ~holder:Sol_cli_boundary_lease.Deploy ~heartbeat_at:990. ()))
   with
   | Sol_cli_boundary_lease.Refuse msg ->
-    assert (contains (Str.regexp "myapp") msg);
-    assert (contains (Str.regexp "deploy") msg)
+    assert (matches_regex (Str.regexp "myapp") msg);
+    assert (matches_regex (Str.regexp "deploy") msg)
   | Proceed | Request_abort _ -> Windtrap.fail "expected deploy to refuse a live holder"
 ;;
 
@@ -102,7 +102,7 @@ let test_rollback_decision () =
        (Some (lease ~holder:Sol_cli_boundary_lease.Deploy ~heartbeat_at:990. ()))
    with
    | Sol_cli_boundary_lease.Request_abort msg ->
-     assert (contains (Str.regexp "deploy") msg)
+     assert (matches_regex (Str.regexp "deploy") msg)
    | Proceed | Refuse _ -> Windtrap.fail "expected rollback to request an abort");
   match
     Sol_cli_boundary_lease.rollback_decision
@@ -110,7 +110,8 @@ let test_rollback_decision () =
       ~ttl:100.
       (Some (lease ~holder:Sol_cli_boundary_lease.Rollback ~heartbeat_at:990. ()))
   with
-  | Sol_cli_boundary_lease.Refuse msg -> assert (contains (Str.regexp "rollback") msg)
+  | Sol_cli_boundary_lease.Refuse msg ->
+    assert (matches_regex (Str.regexp "rollback") msg)
   | Proceed | Request_abort _ ->
     Windtrap.fail "expected rollback to refuse a live rollback"
 ;;
@@ -208,8 +209,8 @@ let test_make_run_id_is_prefixed () =
       ~now:0.
       ~pid:42
   in
-  assert (contains (Str.regexp "^deploy-") id);
-  assert (contains (Str.regexp "42$") id)
+  assert (matches_regex (Str.regexp "^deploy-") id);
+  assert (matches_regex (Str.regexp "42$") id)
 ;;
 
 let%test "model: holder round trip" = test_holder_round_trip ()

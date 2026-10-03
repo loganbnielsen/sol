@@ -251,16 +251,6 @@ let read_file path =
   content
 ;;
 
-let contains needle haystack =
-  let nlen = String.length needle
-  and hlen = String.length haystack in
-  let found = ref false in
-  for i = 0 to hlen - nlen do
-    if (not !found) && String.sub haystack i nlen = needle then found := true
-  done;
-  !found
-;;
-
 let temp_dir prefix =
   let dir = Filename.temp_file prefix "" in
   Sys.remove dir;
@@ -309,27 +299,27 @@ let test_gitops_preserves_external_secrets () =
     Windtrap.bool
     ~msg:"An ExternalSecret is emitted, not a plain Secret"
     true
-    (contains "kind: ExternalSecret" content);
+    (Sol_cli_string.contains ~needle:"kind: ExternalSecret" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"store reference preserved"
     true
-    (contains "probe-store" content);
+    (Sol_cli_string.contains ~needle:"probe-store" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"key prefix preserved"
     true
-    (contains "key: myapp/DATABASE_URL" content);
+    (Sol_cli_string.contains ~needle:"key: myapp/DATABASE_URL" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"refresh interval preserved"
     true
-    (contains "refreshInterval: 1h" content);
+    (Sol_cli_string.contains ~needle:"refreshInterval: 1h" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no plaintext Secret"
     false
-    (contains "kind: Secret" content)
+    (Sol_cli_string.contains ~needle:"kind: Secret" content)
 ;;
 
 let test_gitops_rejects_kubernetes_live () =
@@ -351,7 +341,7 @@ let test_gitops_rejects_kubernetes_live () =
        Windtrap.bool
        ~msg:"names the refusal"
        true
-       (contains "kubernetes-live" message)
+       (Sol_cli_string.contains ~needle:"kubernetes-live" message)
    | Ok _ -> Windtrap.fail "kubernetes-live must not emit a GitOps artifact");
   Windtrap.equal Windtrap.bool ~msg:"nothing was written" false written
 ;;
@@ -375,12 +365,12 @@ let test_gitops_placeholder_still_emits_secret () =
     Windtrap.bool
     ~msg:"placeholder Secret emitted"
     true
-    (contains "kind: Secret" content);
+    (Sol_cli_string.contains ~needle:"kind: Secret" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no ExternalSecret"
     false
-    (contains "kind: ExternalSecret" content)
+    (Sol_cli_string.contains ~needle:"kind: ExternalSecret" content)
 ;;
 
 let with_secretless_kubectl f =
@@ -446,18 +436,18 @@ let test_apply_fails_closed_when_the_workload_secret_is_absent () =
          Windtrap.bool
          ~msg:"names the missing required key"
          true
-         (contains "POSTGRES_URL" message);
+         (Sol_cli_string.contains ~needle:"POSTGRES_URL" message);
        Windtrap.equal
          Windtrap.bool
          ~msg:"says deploy never writes values"
          true
-         (contains "never write values" message)
+         (Sol_cli_string.contains ~needle:"never write values" message)
      | Ok _ -> Windtrap.fail "apply must fail closed when the workload Secret is absent");
     Windtrap.equal
       Windtrap.bool
       ~msg:"no manifest was applied"
       false
-      (contains "apply" (calls ())))
+      (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
 
 let%test "local: result fields (svc)" = test_local_result_fields ()

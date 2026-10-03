@@ -1,6 +1,5 @@
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let target ?(fields = []) provider =
   { Sol_cli_config.name = "dev/aws/us-east-1"
@@ -72,12 +71,18 @@ let test_aws_ineffective_grant_refuses_at_plan_time () =
   with
   | Ok () -> Windtrap.fail "an ineffective grant passed verification"
   | Error message ->
-    check_bool "names the unit" true (contains message "payments-api");
-    check_bool "names the grant" true (contains message "secret/stripe");
+    check_bool
+      "names the unit"
+      true
+      (Sol_cli_string.contains ~needle:"payments-api" message);
+    check_bool
+      "names the grant"
+      true
+      (Sol_cli_string.contains ~needle:"secret/stripe" message);
     check_bool
       "names the reconciliation to run"
       true
-      (contains message "sol grants apply dev/aws/us-east-1")
+      (Sol_cli_string.contains ~needle:"sol grants apply dev/aws/us-east-1" message)
 ;;
 
 let test_aws_no_declaration_observes_nothing () =
@@ -106,7 +111,10 @@ let test_aws_unobservable_call_fails_closed () =
   with
   | Ok () -> Windtrap.fail "an unobservable check was treated as effective"
   | Error message ->
-    check_bool "the reason is reported" true (contains message "AccessDenied")
+    check_bool
+      "the reason is reported"
+      true
+      (Sol_cli_string.contains ~needle:"AccessDenied" message)
 ;;
 
 let test_gcp_effective_grant_passes () =
@@ -132,8 +140,14 @@ let test_gcp_ineffective_grant_refuses () =
   with
   | Ok () -> Windtrap.fail "an ineffective GCP grant passed verification"
   | Error message ->
-    check_bool "names the grant" true (contains message "secret/stripe");
-    check_bool "names the reconciliation" true (contains message "sol grants apply")
+    check_bool
+      "names the grant"
+      true
+      (Sol_cli_string.contains ~needle:"secret/stripe" message);
+    check_bool
+      "names the reconciliation"
+      true
+      (Sol_cli_string.contains ~needle:"sol grants apply" message)
 ;;
 
 let test_unit_name_is_the_kubernetes_identity () =

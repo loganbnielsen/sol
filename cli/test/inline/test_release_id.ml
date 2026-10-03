@@ -157,8 +157,8 @@ let test_secret_references_count_and_values_do_not () =
     "the projection carries the reference, not the material"
     true
     (let s = Sol_cli_release_id.canonical_string (content [ with_reference ]) in
-     let contains needle = Sol_cli_string.contains ~needle s in
-     contains "DATABASE_URL" && contains "db-prod")
+     Sol_cli_string.contains ~needle:"DATABASE_URL" s
+     && Sol_cli_string.contains ~needle:"db-prod" s)
 ;;
 
 let test_encoding_is_unambiguous () =

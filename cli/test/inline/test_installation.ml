@@ -1454,23 +1454,34 @@ let test_the_report_separates_work_from_the_external_action () =
     ]
   in
   let report = report_of verdicts "prod/aws/us-east-1" aws_config in
-  let contains needle = Sol_cli_string.contains ~needle report in
-  check_bool "the report names the target" true (contains "prod/aws/us-east-1");
+  check_bool
+    "the report names the target"
+    true
+    (Sol_cli_string.contains ~needle:"prod/aws/us-east-1" report);
   check_bool
     "the report lists the missing prerequisites"
     true
-    (contains "terraform state backend");
-  check_bool "the report shows the declared installation" true (contains "sol-state-test");
-  check_bool "the automated work is named" true (contains "Sol does this for you:");
+    (Sol_cli_string.contains ~needle:"terraform state backend" report);
+  check_bool
+    "the report shows the declared installation"
+    true
+    (Sol_cli_string.contains ~needle:"sol-state-test" report);
+  check_bool
+    "the automated work is named"
+    true
+    (Sol_cli_string.contains ~needle:"Sol does this for you:" report);
   check_bool
     "the external action is separated"
     true
-    (contains "One action may be required from you:");
-  check_bool "the DNS hand-off names the zone" true (contains "qual-aws.example.test");
+    (Sol_cli_string.contains ~needle:"One action may be required from you:" report);
+  check_bool
+    "the DNS hand-off names the zone"
+    true
+    (Sol_cli_string.contains ~needle:"qual-aws.example.test" report);
   check_bool
     "an unobservable prerequisite is labelled UNKNOWN rather than missing"
     true
-    (contains "UNKNOWN")
+    (Sol_cli_string.contains ~needle:"UNKNOWN" report)
 ;;
 
 let test_the_refusal_names_how_to_establish_it () =

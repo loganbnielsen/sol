@@ -1,4 +1,3 @@
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let test_qualified_receiver_types () =
@@ -57,7 +56,7 @@ let test_validate_requires_a_receiver () =
       ~runbook_url:(Some "https://r")
   with
   | Ok () -> Windtrap.fail "expected a missing receiver to fail"
-  | Error msg -> assert (contains "alert_receiver_type" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"alert_receiver_type" msg)
 ;;
 
 let test_validate_rejects_unqualified_receiver () =
@@ -69,7 +68,7 @@ let test_validate_rejects_unqualified_receiver () =
       ~runbook_url:(Some "https://r")
   with
   | Ok () -> Windtrap.fail "expected an unqualified receiver to fail"
-  | Error msg -> assert (contains "qualified" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"qualified" msg)
 ;;
 
 let test_validate_rejects_unroutable_url () =
@@ -81,7 +80,7 @@ let test_validate_rejects_unroutable_url () =
       ~runbook_url:(Some "https://r")
   with
   | Ok () -> Windtrap.fail "expected an unroutable URL to fail"
-  | Error msg -> assert (contains "routable" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"routable" msg)
 ;;
 
 let test_validate_requires_owner () =
@@ -93,7 +92,7 @@ let test_validate_requires_owner () =
       ~runbook_url:(Some "https://r")
   with
   | Ok () -> Windtrap.fail "expected a missing owner to fail"
-  | Error msg -> assert (contains "alert_owner" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"alert_owner" msg)
 ;;
 
 let test_validate_requires_runbook () =
@@ -105,7 +104,7 @@ let test_validate_requires_runbook () =
       ~runbook_url:None
   with
   | Ok () -> Windtrap.fail "expected a missing runbook to fail"
-  | Error msg -> assert (contains "alert_runbook_url" msg)
+  | Error msg -> assert (Sol_cli_string.contains ~needle:"alert_runbook_url" msg)
 ;;
 
 let%test "vocabulary: qualified receiver types" = test_qualified_receiver_types ()

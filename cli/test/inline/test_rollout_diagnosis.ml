@@ -11,7 +11,6 @@ let ok what = function
 
 let pods_of json = D.parse_pods_json json |> ok "pods"
 let events_of json = D.parse_events_json json |> ok "events"
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 let reports_healthy = function
   | D.Healthy -> true
@@ -392,7 +391,10 @@ let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
       (D.Unavailable "the kubectl call failed")
   with
   | D.Undetermined why ->
-    check_bool "the verdict carries why" true (contains "kubectl call failed" why)
+    check_bool
+      "the verdict carries why"
+      true
+      (Sol_cli_string.contains ~needle:"kubectl call failed" why)
   | D.Healthy -> Windtrap.fail "a failed read must not be reported as healthy"
   | D.Unhealthy _ -> Windtrap.fail "a failed read is not a rollout failure either"
 ;;
@@ -541,8 +543,6 @@ let test_pod_without_metadata_parses () =
   | _ -> Windtrap.fail "expected one pod"
 ;;
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let test_unavailable_events_are_named_not_empty () =
   match
     D.format_service_diagnosis
@@ -559,12 +559,15 @@ let test_unavailable_events_are_named_not_empty () =
     check_bool
       "the block says the events read was unavailable"
       true
-      (contains "Events unavailable:" text);
-    check_bool "and carries the reason" true (contains "Forbidden" text);
+      (Sol_cli_string.contains ~needle:"Events unavailable:" text);
+    check_bool
+      "and carries the reason"
+      true
+      (Sol_cli_string.contains ~needle:"Forbidden" text);
     check_bool
       "and does not claim there were no events"
       false
-      (contains "No events recorded" text)
+      (Sol_cli_string.contains ~needle:"No events recorded" text)
 ;;
 
 let test_zero_events_are_reported_as_zero () =
@@ -581,11 +584,11 @@ let test_zero_events_are_reported_as_zero () =
     check_bool
       "the block says there were no events"
       true
-      (contains "No events recorded" text);
+      (Sol_cli_string.contains ~needle:"No events recorded" text);
     check_bool
       "and does not claim the read was unavailable"
       false
-      (contains "Events unavailable:" text)
+      (Sol_cli_string.contains ~needle:"Events unavailable:" text)
 ;;
 
 let with_fake_kubectl ?(deny = "events") f =
@@ -663,11 +666,11 @@ let test_the_fetch_distinguishes_a_denied_read () =
       check_bool
         "the denied events read reaches the output as unavailable"
         true
-        (contains "Events unavailable:" text);
+        (Sol_cli_string.contains ~needle:"Events unavailable:" text);
       check_bool
         "and is not reported as an empty event set"
         false
-        (contains "No events recorded" text))
+        (Sol_cli_string.contains ~needle:"No events recorded" text))
 ;;
 
 let test_an_unreadable_workload_is_undetermined_not_healthy () =
@@ -685,8 +688,11 @@ let test_an_unreadable_workload_is_undetermined_not_healthy () =
       check_bool
         "the verdict says the workload could not be read"
         true
-        (contains "could not be read" why);
-      check_bool "and carries the server's reason" true (contains "Forbidden" why)
+        (Sol_cli_string.contains ~needle:"could not be read" why);
+      check_bool
+        "and carries the server's reason"
+        true
+        (Sol_cli_string.contains ~needle:"Forbidden" why)
     | D.Healthy ->
       Windtrap.fail "an unreadable workload must never be reported healthy (FND-0019)"
     | D.Unhealthy _ ->

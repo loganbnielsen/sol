@@ -1,6 +1,6 @@
 open Sol_cli_cloud_destroy
 
-let contains re s =
+let matches_regex re s =
   try
     ignore (Str.search_forward re s 0);
     true
@@ -396,10 +396,12 @@ let test_a_provably_absent_substrate_accounts_for_stale_state () =
   let reported =
     List.exists
       (fun report ->
-         contains (Str.regexp_string "state entr") report
-         && contains (Str.regexp_string "sol-qual is absent") report
-         && contains (Str.regexp_string "module.platform.helm_release.redpanda") report
-         && contains
+         matches_regex (Str.regexp_string "state entr") report
+         && matches_regex (Str.regexp_string "sol-qual is absent") report
+         && matches_regex
+              (Str.regexp_string "module.platform.helm_release.redpanda")
+              report
+         && matches_regex
               (Str.regexp_string "module.platform.kubernetes_namespace.cert_manager")
               report)
       calls.reports
@@ -436,7 +438,7 @@ let test_a_failed_reconciliation_degrades_and_still_destroys () =
        Windtrap.bool
        ~msg:"the unreconciled state is named"
        true
-       (contains (Str.regexp_string "state rm refused") degradation)
+       (matches_regex (Str.regexp_string "state rm refused") degradation)
    | Destroy_succeeded { degradations; _ } ->
      Windtrap.failf "expected exactly one degradation, got %d" (List.length degradations)
    | Destroy_blocked { guarantee; _ } ->
@@ -505,7 +507,7 @@ let test_a_substrate_the_provider_lost_skips_what_must_reach_it () =
     true
     (List.exists
        (fun report ->
-          contains (Str.regexp_string "no workload this target deployed") report)
+          matches_regex (Str.regexp_string "no workload this target deployed") report)
        calls.reports);
   Windtrap.equal
     Windtrap.int
@@ -518,7 +520,7 @@ let test_a_substrate_the_provider_lost_skips_what_must_reach_it () =
     true
     (List.exists
        (fun report ->
-          contains (Str.regexp_string "nothing inside it can still exist") report)
+          matches_regex (Str.regexp_string "nothing inside it can still exist") report)
        calls.reports);
   Windtrap.equal
     Windtrap.bool
@@ -552,7 +554,7 @@ let test_a_reconciled_state_that_cannot_be_reread_degrades () =
      | Destroy_succeeded { degradations; _ } ->
        List.exists
          (fun degradation ->
-            contains (Str.regexp_string "could not be re-read") degradation)
+            matches_regex (Str.regexp_string "could not be re-read") degradation)
          degradations
      | _ -> false);
   Windtrap.equal Windtrap.int ~msg:"the substrate teardown still ran" 1 calls.substrate
@@ -572,7 +574,7 @@ let test_no_reconciliation_is_claimed_when_there_is_none () =
     ~msg:"a destroy with nothing to reconcile says nothing about reconciling"
     false
     (List.exists
-       (fun report -> contains (Str.regexp_string "state entr") report)
+       (fun report -> matches_regex (Str.regexp_string "state entr") report)
        calls.reports)
 ;;
 
@@ -689,7 +691,7 @@ let test_no_authority_mechanism_acquires_nothing () =
     true
     (List.exists
        (fun report ->
-          contains (Str.regexp_string "no temporary authority mechanism") report)
+          matches_regex (Str.regexp_string "no temporary authority mechanism") report)
        calls.reports);
   match outcome with
   | Destroy_succeeded { cleanup; _ } ->
@@ -721,7 +723,7 @@ let test_no_authority_mechanism_still_reports_a_failed_teardown () =
       Windtrap.bool
       ~msg:"the provider's refusal is the failure that is reported"
       true
-      (contains (Str.regexp_string "platform destroy refused") message);
+      (matches_regex (Str.regexp_string "platform destroy refused") message);
     Windtrap.equal
       Windtrap.bool
       ~msg:"no cleanup is claimed for access that was never opened"
@@ -778,7 +780,7 @@ let test_skipped_teardown_is_a_degradation () =
        Windtrap.bool
        ~msg:"the skipped teardown says what it was waiting on"
        true
-       (contains (Str.regexp_string "bootstrap authority") message)
+       (matches_regex (Str.regexp_string "bootstrap authority") message)
    | _ -> Windtrap.fail "a failed reconciliation must degrade, not refuse the destroy");
   Windtrap.equal Windtrap.int ~msg:"the platform operation did not run" 0 calls.platform;
   Windtrap.equal Windtrap.int ~msg:"removal was still attempted" 1 calls.remove;
@@ -830,15 +832,15 @@ let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
        true
        (List.exists
           (fun m ->
-             contains (Str.regexp_string "elevated access") m
-             && contains (Str.regexp_string "cleanup refused") m)
+             matches_regex (Str.regexp_string "elevated access") m
+             && matches_regex (Str.regexp_string "cleanup refused") m)
           degradations);
      Windtrap.equal
        Windtrap.bool
        ~msg:"and the skipped teardown is still there"
        true
        (List.exists
-          (fun m -> contains (Str.regexp_string "bootstrap authority") m)
+          (fun m -> matches_regex (Str.regexp_string "bootstrap authority") m)
           degradations)
    | _ ->
      Windtrap.fail
@@ -877,7 +879,7 @@ let test_cleanup_failure_does_not_decide_absence () =
        Windtrap.bool
        ~msg:"the absence check is what failed, not the cleanup"
        true
-       (contains (Str.regexp_string "still listed by the provider") message);
+       (matches_regex (Str.regexp_string "still listed by the provider") message);
      Windtrap.equal
        Windtrap.bool
        ~msg:"the cleanup failure is preserved as evidence"
@@ -890,7 +892,7 @@ let test_cleanup_failure_does_not_decide_absence () =
        ~msg:"and as a degradation"
        true
        (List.exists
-          (fun m -> contains (Str.regexp_string "access removal failed") m)
+          (fun m -> matches_regex (Str.regexp_string "access removal failed") m)
           degradations)
    | _ -> Windtrap.fail "residue must fail the destroy however the cleanup went");
   Windtrap.equal
@@ -902,7 +904,9 @@ let test_cleanup_failure_does_not_decide_absence () =
     Windtrap.bool
     ~msg:"and claims no absence"
     false
-    (contains (Str.regexp_string "reached verified absence") (completion_message outcome))
+    (matches_regex
+       (Str.regexp_string "reached verified absence")
+       (completion_message outcome))
 ;;
 
 let test_cleanup_failure_preserved_when_operation_fails () =
@@ -1717,12 +1721,12 @@ let test_destroy_that_cannot_converge_claims_no_absence () =
     Windtrap.bool
     ~msg:"and it never claims absence"
     false
-    (contains (Str.regexp_string "reached verified absence") message);
+    (matches_regex (Str.regexp_string "reached verified absence") message);
   Windtrap.equal
     Windtrap.bool
     ~msg:"it says the destruction did not converge"
     true
-    (contains (Str.regexp_string "did not converge") message)
+    (matches_regex (Str.regexp_string "did not converge") message)
 ;;
 
 let test_residue_the_state_does_not_own_is_not_absence () =
@@ -1753,7 +1757,7 @@ let test_residue_the_state_does_not_own_is_not_absence () =
     Windtrap.bool
     ~msg:"and the run claims no absence"
     false
-    (contains (Str.regexp_string "reached verified absence") message)
+    (matches_regex (Str.regexp_string "reached verified absence") message)
 ;;
 
 let test_inconclusive_residue_probe_is_unknown () =
@@ -1782,13 +1786,13 @@ let test_inconclusive_residue_probe_is_unknown () =
        Windtrap.bool
        ~msg:"the summary never claims verified absence while a probe did not run"
        false
-       (contains (Str.regexp_string "reached verified absence") message);
+       (matches_regex (Str.regexp_string "reached verified absence") message);
      Windtrap.equal
        Windtrap.bool
        ~msg:"it says so plainly instead"
        true
-       (contains (Str.regexp_string "residue absence is NOT established") message
-        && contains (Str.regexp_string "peering check was not run") message)
+       (matches_regex (Str.regexp_string "residue absence is NOT established") message
+        && matches_regex (Str.regexp_string "peering check was not run") message)
    | _ ->
      Windtrap.fail
        "a destroy whose owned resources are gone is not a failure; the observation is");
@@ -1853,7 +1857,7 @@ let test_a_present_resource_refuses_the_absence_claim () =
     ~msg:"and it is named"
     true
     (List.exists
-       (fun line -> contains (Str.regexp_string "qual-1-postgres") line)
+       (fun line -> matches_regex (Str.regexp_string "qual-1-postgres") line)
        (Sol_cli_absence.residue verdict));
   let verification =
     Sol_cli_destroy_verification.classify
@@ -1896,7 +1900,7 @@ let test_a_present_resource_outranks_an_unobservable_class () =
     ~msg:"and the resource that was actually found is reported first"
     true
     (match Sol_cli_absence.residue verdict with
-     | first :: _ -> contains (Str.regexp_string "qual-1-postgres") first
+     | first :: _ -> matches_regex (Str.regexp_string "qual-1-postgres") first
      | [] -> false)
 ;;
 
@@ -1923,17 +1927,17 @@ let test_the_report_explains_attribution () =
     Windtrap.bool
     ~msg:"it says what was found"
     true
-    (contains (Str.regexp_string "PRESENT: Cloud SQL instance") report);
+    (matches_regex (Str.regexp_string "PRESENT: Cloud SQL instance") report);
   Windtrap.equal
     Windtrap.bool
     ~msg:"and why it is this target's"
     true
-    (contains (Str.regexp_string "the target's own cluster name") report);
+    (matches_regex (Str.regexp_string "the target's own cluster name") report);
   Windtrap.equal
     Windtrap.bool
     ~msg:"and which command established it"
     true
-    (contains (Str.regexp_string "gcloud list") report)
+    (matches_regex (Str.regexp_string "gcloud list") report)
 ;;
 
 let recovery_entry address ~resource_class ~observed_as ~ownership ~import_identity =
@@ -2157,7 +2161,7 @@ let test_recovery_refuses_a_class_the_registry_calls_unrecoverable () =
       Windtrap.bool
       ~msg:"the reason is the registry's, not a guess"
       true
-      (contains (Str.regexp_string "composite import identity") reason)
+      (matches_regex (Str.regexp_string "composite import identity") reason)
   | _ -> Windtrap.fail "a class marked unrecoverable must be refused with its reason"
 ;;
 
@@ -2186,7 +2190,7 @@ let test_recovery_refuses_an_ambiguous_match () =
       Windtrap.bool
       ~msg:"two candidate addresses are reported as ambiguous"
       true
-      (contains (Str.regexp_string "ambiguous") reason)
+      (matches_regex (Str.regexp_string "ambiguous") reason)
   | _ -> Windtrap.fail "an ambiguous mapping must be refused, never resolved"
 ;;
 
@@ -2206,7 +2210,7 @@ let test_reconciliation_outcome_reports_what_it_restored () =
          Windtrap.bool
          ~msg:expected
          true
-         (contains (Str.regexp_string expected) text))
+         (matches_regex (Str.regexp_string expected) text))
     [ "Found Cloud SQL instance qual-1-postgres."
     ; "Restored Terraform ownership:"
     ; "  google_sql_database_instance.postgres"
@@ -2220,7 +2224,7 @@ let test_reconciliation_outcome_says_no_changes () =
     Windtrap.bool
     ~msg:"a reconciled target reports no changes"
     true
-    (contains (Str.regexp_string "No changes.") text)
+    (matches_regex (Str.regexp_string "No changes.") text)
 ;;
 
 let test_reconciliation_outcome_refuses_rather_than_claiming () =
@@ -2236,12 +2240,12 @@ let test_reconciliation_outcome_refuses_rather_than_claiming () =
     Windtrap.bool
     ~msg:"an unreconcilable resource is named, with its reason"
     true
-    (contains (Str.regexp_string "is not reconciled") text);
+    (matches_regex (Str.regexp_string "is not reconciled") text);
   Windtrap.equal
     Windtrap.bool
     ~msg:"and the reason is the registry's"
     true
-    (contains (Str.regexp_string "composite import identity") text)
+    (matches_regex (Str.regexp_string "composite import identity") text)
 ;;
 
 let test_reconciliation_outcome_does_not_claim_a_dry_run_changed_anything () =
@@ -2258,12 +2262,12 @@ let test_reconciliation_outcome_does_not_claim_a_dry_run_changed_anything () =
     Windtrap.bool
     ~msg:"a dry run says what it would do, not what it did"
     true
-    (contains (Str.regexp_string "Would restore Terraform ownership:") text);
+    (matches_regex (Str.regexp_string "Would restore Terraform ownership:") text);
   Windtrap.equal
     Windtrap.bool
     ~msg:"and never claims the work happened"
     false
-    (contains (Str.regexp_string "Infrastructure ownership is reconciled.") text)
+    (matches_regex (Str.regexp_string "Infrastructure ownership is reconciled.") text)
 ;;
 
 let test_block_preparation_failure_blocks_destruction () =
@@ -2283,7 +2287,7 @@ let test_block_preparation_failure_blocks_destruction () =
        Windtrap.bool
        ~msg:"the retention guarantee is identified as the blocker"
        true
-       (contains (Str.regexp_string "destroy_retention is final-snapshot") guarantee)
+       (matches_regex (Str.regexp_string "destroy_retention is final-snapshot") guarantee)
    | _ -> Windtrap.fail "a Block_destroy preparation failure must block destruction");
   Windtrap.equal Windtrap.int ~msg:"the substrate was not destroyed" 0 calls.substrate;
   Windtrap.equal
@@ -2508,7 +2512,7 @@ let test_refused_removal_does_not_stop_the_substrate_destroy () =
        ~msg:"the refused removal is still not reported as a successful cleanup"
        true
        (List.exists
-          (fun m -> contains (Str.regexp_string "elevated access") m)
+          (fun m -> matches_regex (Str.regexp_string "elevated access") m)
           degradations)
    | _ -> Windtrap.fail "the refused removal must stay visible as a degradation");
   Windtrap.equal
@@ -2575,7 +2579,7 @@ let test_verification_unknown_is_a_failure () =
        Windtrap.bool
        ~msg:"the failure says the postcondition was not established"
        true
-       (contains (Str.regexp_string "could not be established") message)
+       (matches_regex (Str.regexp_string "could not be established") message)
    | _ -> Windtrap.fail "an UNKNOWN observation must fail the destroy");
   Windtrap.equal
     Windtrap.int
@@ -2620,7 +2624,7 @@ let test_degradation_preserved_when_verification_fails () =
        Windtrap.bool
        ~msg:"and the violation is what failed the run"
        true
-       (contains (Str.regexp_string "violated") message)
+       (matches_regex (Str.regexp_string "violated") message)
    | _ -> Windtrap.fail "a violation must fail the destroy and keep the degradation");
   Windtrap.equal Windtrap.int ~msg:"a violation exits 1" exit_failure (exit_code outcome)
 ;;
@@ -2646,7 +2650,7 @@ let test_missing_retention_fails () =
        Windtrap.bool
        ~msg:"the promised snapshot is named"
        true
-       (contains (Str.regexp_string "snap-1") message)
+       (matches_regex (Str.regexp_string "snap-1") message)
    | _ -> Windtrap.fail "a missing promised snapshot must fail the destroy");
   Windtrap.equal Windtrap.int ~msg:"it exits 1" exit_failure (exit_code outcome)
 ;;

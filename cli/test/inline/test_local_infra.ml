@@ -103,17 +103,17 @@ let test_a_failure_stops_new_installs () =
     match Sol_cli_local_infra.run_bounded ~max_in_flight:1 installs with
     | Ok () -> Windtrap.fail "a failing install must fail the run"
     | Error message ->
-      let contains needle = Sol_cli_string.contains ~needle message in
       Windtrap.equal
         Windtrap.bool
         ~msg:"the failure names the component that failed"
         true
-        (contains "b failed");
+        (Sol_cli_string.contains ~needle:"b failed" message);
       Windtrap.equal
         Windtrap.bool
         ~msg:"and says which components never ran, by name"
         true
-        (contains "not attempted" && contains "c");
+        (Sol_cli_string.contains ~needle:"not attempted" message
+         && Sol_cli_string.contains ~needle:"c" message);
       let lines = read_lines path in
       Windtrap.equal
         Windtrap.bool

@@ -264,17 +264,11 @@ let test_missing_table_is_a_startup_error () =
         Windtrap.fail "no startup error: run started polling a missing table"
     with
     | Error (`Database msg) ->
-      let contains ~needle s =
-        let n = String.length needle
-        and m = String.length s in
-        let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
-        go 0
-      in
       Windtrap.equal
         Windtrap.bool
         ~msg:"names the sol_jobs table"
         true
-        (contains ~needle:"sol_jobs" msg)
+        (Sol_runtime.contains_substring ~needle:"sol_jobs" msg)
     | Error (`Config m) -> Windtrap.failf "expected `Database, got `Config %s" m
     | Ok () -> Windtrap.fail "a missing sol_jobs table must not look like an idle queue")
 ;;
@@ -375,13 +369,6 @@ let capture_stderr f =
   result, out
 ;;
 
-let contains ~needle s =
-  let n = String.length needle
-  and m = String.length s in
-  let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
-  go 0
-;;
-
 let run_slow
       ?retry_policy
       ?stop
@@ -436,7 +423,7 @@ let test_stale_complete_is_a_no_op () =
       Windtrap.bool
       ~msg:"the lost lease is logged"
       true
-      (contains ~needle:"lease lost" err))
+      (Sol_runtime.contains_substring ~needle:"lease lost" err))
 ;;
 
 let test_stale_fail_is_a_no_op () =
@@ -536,7 +523,7 @@ let test_lost_renewal_is_logged () =
       Windtrap.bool
       ~msg:"lost renewal logged"
       true
-      (contains ~needle:"action=renew" err);
+      (Sol_runtime.contains_substring ~needle:"action=renew" err);
     Windtrap.equal
       (Windtrap.list
          (Windtrap.pair
@@ -643,7 +630,7 @@ let test_expired_holder_cannot_complete_terminal_row () =
       Windtrap.bool
       ~msg:"the lost lease is logged"
       true
-      (contains ~needle:"lease lost" err))
+      (Sol_runtime.contains_substring ~needle:"lease lost" err))
 ;;
 
 let test_duplicate_enqueue_with_a_dedupe_key_is_a_no_op () =

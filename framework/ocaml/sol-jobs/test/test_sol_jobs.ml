@@ -215,13 +215,6 @@ let test_validate_timing () =
     (accepted ~poll:1.0 ~lease:Float.nan)
 ;;
 
-let contains ~needle haystack =
-  let n = String.length needle
-  and m = String.length haystack in
-  let rec go i = i + n <= m && (String.sub haystack i n = needle || go (i + 1)) in
-  go 0
-;;
-
 module Email = struct
   type t = string
 
@@ -255,7 +248,7 @@ let test_invalid_timing_fails_before_database_or_signals () =
          Windtrap.bool
          ~msg:"names lease_s"
          true
-         (contains ~needle:"lease_s" msg)
+         (Sol_runtime.contains_substring ~needle:"lease_s" msg)
      | Error (`Database m) -> Windtrap.failf "expected a Config error, got Database: %s" m
      | Ok () -> Windtrap.fail "an invalid lease must not start the poller")
 ;;

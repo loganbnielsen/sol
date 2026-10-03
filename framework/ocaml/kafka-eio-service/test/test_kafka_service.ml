@@ -110,24 +110,6 @@ let test_parse_url_https () =
     "https://registry.confluent.io"
 ;;
 
-let contains s sub =
-  let slen = String.length s
-  and sublen = String.length sub in
-  if sublen = 0
-  then true
-  else if sublen > slen
-  then false
-  else (
-    let rec go i =
-      if i > slen - sublen
-      then false
-      else if String.sub s i sublen = sub
-      then true
-      else go (i + 1)
-    in
-    go 0)
-;;
-
 let with_env name value f =
   let old = Sys.getenv_opt name in
   Unix.putenv name value;
@@ -152,7 +134,9 @@ let test_config_of_env_rejects_unknown_security_protocol () =
         Windtrap.bool
         ~msg:"clear env protocol error"
         true
-        (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"))
+        (Sol_runtime.contains_substring
+           ~needle:"KAFKA_SECURITY_PROTOCOL"
+           (Kafka_service.error_to_string e)))
 ;;
 
 let test_config_of_env_requires_security_protocol () =
@@ -166,7 +150,9 @@ let test_config_of_env_requires_security_protocol () =
         Windtrap.bool
         ~msg:"names the variable"
         true
-        (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"));
+        (Sol_runtime.contains_substring
+           ~needle:"KAFKA_SECURITY_PROTOCOL"
+           (Kafka_service.error_to_string e)));
   with_kafka_env (fun () ->
     Windtrap.equal
       Windtrap.bool
@@ -193,7 +179,9 @@ let test_config_of_env_requires_addresses () =
              Windtrap.bool
              ~msg:("names " ^ missing)
              true
-             (contains (Kafka_service.error_to_string e) missing)))
+             (Sol_runtime.contains_substring
+                ~needle:missing
+                (Kafka_service.error_to_string e))))
     [ "KAFKA_BROKERS"; "SCHEMA_REGISTRY_URL"; "REDPANDA_ADMIN_URL" ];
   with_env "KAFKA_BROKERS" "" (fun () ->
     with_env "REDPANDA_ADMIN_URL" "" (fun () ->
@@ -205,7 +193,8 @@ let test_config_of_env_requires_addresses () =
           Windtrap.bool
           ~msg:"names both"
           true
-          (contains msg "KAFKA_BROKERS" && contains msg "REDPANDA_ADMIN_URL")))
+          (Sol_runtime.contains_substring ~needle:"KAFKA_BROKERS" msg
+           && Sol_runtime.contains_substring ~needle:"REDPANDA_ADMIN_URL" msg)))
 ;;
 
 let test_config_of_env_topic_durability () =
@@ -228,7 +217,9 @@ let test_config_of_env_topic_durability () =
         Windtrap.bool
         ~msg:"clear durability error"
         true
-        (contains (Kafka_service.error_to_string e) "SOL_KAFKA_DURABILITY"))
+        (Sol_runtime.contains_substring
+           ~needle:"SOL_KAFKA_DURABILITY"
+           (Kafka_service.error_to_string e)))
 ;;
 
 let raw_source_msg ?(headers = []) ?key () : Kafka.Consumer.message =

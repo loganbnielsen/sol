@@ -1,24 +1,5 @@
 open Eio.Std
 
-let contains needle s =
-  let nl = String.length needle
-  and sl = String.length s in
-  if nl > sl
-  then false
-  else (
-    let found = ref false in
-    for i = 0 to sl - nl do
-      if not !found
-      then (
-        let rec eq j =
-          j >= nl
-          || (String.unsafe_get s (i + j) = String.unsafe_get needle j && eq (j + 1))
-        in
-        if eq 0 then found := true)
-    done;
-    !found)
-;;
-
 let get_json _req = Response.json {|{"ok":true}|}
 let echo_body req = Response.ok req.Request.body
 let jwt_cfg scopes = `Jwt Auth.{ scopes; verification = Unverified_dev_only }
@@ -294,17 +275,17 @@ let test_metrics_counter env () =
         Windtrap.bool
         ~msg:"requests_total counter present"
         true
-        (contains "sol_svc_requests_total" output);
+        (Sol_runtime.contains_substring ~needle:"sol_svc_requests_total" output);
       Windtrap.equal
         Windtrap.bool
         ~msg:"route label in output"
         true
-        (contains {|route="/hello"|} output);
+        (Sol_runtime.contains_substring ~needle:{|route="/hello"|} output);
       Windtrap.equal
         Windtrap.bool
         ~msg:"status_class label in output"
         true
-        (contains {|status_class="2xx"|} output)))
+        (Sol_runtime.contains_substring ~needle:{|status_class="2xx"|} output)))
 ;;
 
 let test_metrics_duration env () =
@@ -316,7 +297,7 @@ let test_metrics_duration env () =
         Windtrap.bool
         ~msg:"duration histogram present"
         true
-        (contains "sol_svc_request_duration_seconds" output)))
+        (Sol_runtime.contains_substring ~needle:"sol_svc_request_duration_seconds" output)))
 ;;
 
 let test_metrics_route_pattern_label env () =
@@ -329,17 +310,17 @@ let test_metrics_route_pattern_label env () =
         Windtrap.bool
         ~msg:"pattern label present"
         true
-        (contains {|route="/users/:id"|} output);
+        (Sol_runtime.contains_substring ~needle:{|route="/users/:id"|} output);
       Windtrap.equal
         Windtrap.bool
         ~msg:"concrete value 42 not a label"
         false
-        (contains {|route="/users/42"|} output);
+        (Sol_runtime.contains_substring ~needle:{|route="/users/42"|} output);
       Windtrap.equal
         Windtrap.bool
         ~msg:"concrete value 999 not a label"
         false
-        (contains {|route="/users/999"|} output)))
+        (Sol_runtime.contains_substring ~needle:{|route="/users/999"|} output)))
 ;;
 
 module Hauth = struct
@@ -370,7 +351,7 @@ let test_api_key_file_error_is_startup_error env () =
           Windtrap.bool
           ~msg:"mentions API key file"
           true
-          (contains "SOL_API_KEY_FILE" msg)
+          (Sol_runtime.contains_substring ~needle:"SOL_API_KEY_FILE" msg)
       | Ok () -> Windtrap.fail "expected API key file config error"))
 ;;
 
@@ -385,7 +366,7 @@ let expect_unverified_refused result =
       Windtrap.bool
       ~msg:"names the opt-in"
       true
-      (contains "SOL_ALLOW_UNVERIFIED_JWT" msg)
+      (Sol_runtime.contains_substring ~needle:"SOL_ALLOW_UNVERIFIED_JWT" msg)
   | Ok () -> Windtrap.fail "expected Unverified_dev_only to be refused without the opt-in"
 ;;
 
@@ -456,7 +437,7 @@ let test_http_jwks_url_refused env () =
            Windtrap.bool
            ~msg:("names the URL: " ^ url)
            true
-           (contains url msg)
+           (Sol_runtime.contains_substring ~needle:url msg)
        | Ok () -> Windtrap.failf "a Jwks_url of %S must not start" url)
     [ "http://idp.example.com/jwks.json", true
     ; "idp.example.com/jwks.json", true
@@ -505,7 +486,7 @@ let test_malformed_port_is_config_error env () =
         Windtrap.bool
         ~msg:"names PORT and the value"
         true
-        (contains "80800x" msg)
+        (Sol_runtime.contains_substring ~needle:"80800x" msg)
     | Ok () -> Windtrap.fail "expected a malformed PORT to be a startup Config error")
 ;;
 

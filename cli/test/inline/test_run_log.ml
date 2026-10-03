@@ -79,8 +79,6 @@ let test_format_phase_line_failed () =
     (R.format_phase_line ~name:"terraform-apply" ~elapsed_s:0.3 ~ok:false)
 ;;
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let test_format_failure_report_names_run_and_log () =
   let report =
     R.format_failure_report
@@ -88,9 +86,15 @@ let test_format_failure_report_names_run_and_log () =
       ~log_path:"/tmp/runs/apply.log"
       ~tail:"boom"
   in
-  check_bool "names the run id" true (contains "deploy-20260101T000000Z-1" report);
-  check_bool "names the log path" true (contains "/tmp/runs/apply.log" report);
-  check_bool "includes the tail" true (contains "boom" report)
+  check_bool
+    "names the run id"
+    true
+    (Sol_cli_string.contains ~needle:"deploy-20260101T000000Z-1" report);
+  check_bool
+    "names the log path"
+    true
+    (Sol_cli_string.contains ~needle:"/tmp/runs/apply.log" report);
+  check_bool "includes the tail" true (Sol_cli_string.contains ~needle:"boom" report)
 ;;
 
 let test_runs_to_prune_under_limit () =

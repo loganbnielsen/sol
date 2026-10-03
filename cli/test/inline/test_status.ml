@@ -3,8 +3,6 @@ let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected 
 module S = Sol_cli_status
 module D = Sol_cli_rollout_diagnosis
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let test_all_healthy () =
   check_bool
     "a read namespace with no services -> Healthy"
@@ -34,7 +32,11 @@ let test_unreadable_is_unknown_not_healthy () =
   in
   check_bool "an unreadable workload is not Healthy" false (status = S.Healthy);
   (match status with
-   | S.Unknown why -> check_bool "the verdict carries why" true (contains "Forbidden" why)
+   | S.Unknown why ->
+     check_bool
+       "the verdict carries why"
+       true
+       (Sol_cli_string.contains ~needle:"Forbidden" why)
    | other -> Windtrap.fail ("expected Unknown, got " ^ S.domain_status_to_string other));
   check_bool
     "a successful read with nothing wrong is still Healthy"

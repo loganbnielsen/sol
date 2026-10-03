@@ -1,6 +1,5 @@
 module S = Sol_cli_sensitive_vars
 
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let strings = Windtrap.(list string)
 let check msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 let declared names = Result.get_ok (S.declared_in names)
@@ -87,7 +86,7 @@ let test_unclassifiable_sensitive_is_an_error () =
       (what ^ " fails closed")
       true
       (match S.declared_in [ "vars.tf", contents ] with
-       | Error message -> contains message "vars.tf"
+       | Error message -> Sol_cli_string.contains ~needle:"vars.tf" message
        | Ok _ -> false))
 ;;
 
@@ -97,7 +96,8 @@ let test_unclassifiable_names_the_location () =
       [ "vars.tf", "variable \"a\" {\n  type = string\n  sensitive = var.s\n}\n" ]
   with
   | Ok _ -> Windtrap.fail "expected the reader to fail closed"
-  | Error message -> check "names file and line" true (contains message "vars.tf:3")
+  | Error message ->
+    check "names file and line" true (Sol_cli_string.contains ~needle:"vars.tf:3" message)
 ;;
 
 let real_root provider =
@@ -149,9 +149,12 @@ let test_message_names_the_fix_not_the_value () =
   with
   | Ok () -> Windtrap.fail "expected a refusal"
   | Error msg ->
-    check "names TF_VAR_db_password" true (contains msg "TF_VAR_db_password");
-    check "says why (the run log)" true (contains msg "run log");
-    check "never echoes the value" false (contains msg "hunter22")
+    check
+      "names TF_VAR_db_password"
+      true
+      (Sol_cli_string.contains ~needle:"TF_VAR_db_password" msg);
+    check "says why (the run log)" true (Sol_cli_string.contains ~needle:"run log" msg);
+    check "never echoes the value" false (Sol_cli_string.contains ~needle:"hunter22" msg)
 ;;
 
 let test_unaffected_without_the_declaration () =

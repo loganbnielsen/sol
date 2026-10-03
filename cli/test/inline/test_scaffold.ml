@@ -1,11 +1,10 @@
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
-let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
   check_bool
     (Printf.sprintf "%s: contains %S" label needle)
     true
-    (contains haystack needle)
+    (Sol_cli_string.contains ~needle haystack)
 ;;
 
 let read_file path =
@@ -146,7 +145,7 @@ let test_ci_has_gated_authorization_job () =
   check_bool
     "the deploy waits for the authorization job"
     true
-    (contains content "needs: authorize")
+    (Sol_cli_string.contains ~needle:"needs: authorize" content)
 ;;
 
 let test_ci_uses_oidc_not_a_kubeconfig () =
@@ -157,7 +156,10 @@ let test_ci_uses_oidc_not_a_kubeconfig () =
   assert_contains "sol-ci.yml" content "id-token: write";
   assert_contains "sol-ci.yml" content "role-to-assume";
   assert_contains "sol-ci.yml" content "workload_identity_provider";
-  check_bool "no kubeconfig credential" false (contains content "KUBECONFIG")
+  check_bool
+    "no kubeconfig credential"
+    false
+    (Sol_cli_string.contains ~needle:"KUBECONFIG" content)
 ;;
 
 let test_ci_contains_dune_commands () =
@@ -187,7 +189,10 @@ let test_ci_no_kubeconfig_in_build_job () =
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  check_bool "no KUBECONFIG in sol-ci.yml" false (contains content "KUBECONFIG_B64")
+  check_bool
+    "no KUBECONFIG in sol-ci.yml"
+    false
+    (Sol_cli_string.contains ~needle:"KUBECONFIG_B64" content)
 ;;
 
 let test_ci_registry_is_a_variable () =
@@ -217,7 +222,10 @@ let test_ci_no_raw_kubectl_apply () =
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
-  check_bool "no raw kubectl apply in sol-ci.yml" false (contains content "kubectl apply")
+  check_bool
+    "no raw kubectl apply in sol-ci.yml"
+    false
+    (Sol_cli_string.contains ~needle:"kubectl apply" content)
 ;;
 
 let test_existing_files_still_generated () =
@@ -300,7 +308,9 @@ let test_dockerfile_paths_are_workspace_relative () =
   check_bool
     "Dockerfile does not include nested workspace path"
     false
-    (contains content "_build/default/testapp/app/payments/charge_svc")
+    (Sol_cli_string.contains
+       ~needle:"_build/default/testapp/app/payments/charge_svc"
+       content)
 ;;
 
 let test_readme_migrate_hint_substituted () =
@@ -309,7 +319,10 @@ let test_readme_migrate_hint_substituted () =
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/README.md" in
   assert_contains "README" content "sol migrate";
-  check_bool "README has no template placeholder" false (contains content "{{name}}")
+  check_bool
+    "README has no template placeholder"
+    false
+    (Sol_cli_string.contains ~needle:"{{name}}" content)
 ;;
 
 let test_framework_dependency_declared_not_vendored () =
@@ -356,7 +369,9 @@ let test_scaffold_compiles () =
     true
     (match gated with
      | Error e ->
-       contains (Sol_cli_process.error_to_string e) "schema compatibility NOT CHECKED"
+       Sol_cli_string.contains
+         ~needle:"schema compatibility NOT CHECKED"
+         (Sol_cli_process.error_to_string e)
      | Ok _ -> false)
 ;;
 
@@ -388,7 +403,7 @@ let test_charge_svc_publishes_kafka_event () =
   check_bool
     "handler does not insert notification directly"
     false
-    (contains handler "Notification.insert");
+    (Sol_cli_string.contains ~needle:"Notification.insert" handler);
   assert_contains "main" main_ml "Kafka_service.register";
   assert_contains "main" main_ml "Kafka_service.publish"
 ;;
@@ -410,15 +425,15 @@ let test_workspace_generated_json_decoders_are_result_based () =
   check_bool
     "handler has no default string fallback"
     false
-    (contains handler "Option.value ~default:\"\"");
+    (Sol_cli_string.contains ~needle:"Option.value ~default:\"\"" handler);
   check_bool
     "handler has no default int fallback"
     false
-    (contains handler "Option.value ~default:0");
+    (Sol_cli_string.contains ~needle:"Option.value ~default:0" handler);
   check_bool
     "event has no missing-fields catch-all"
     false
-    (contains event "missing required fields")
+    (Sol_cli_string.contains ~needle:"missing required fields" event)
 ;;
 
 let test_workspace_startup_helpers_are_flattened () =
@@ -432,15 +447,18 @@ let test_workspace_startup_helpers_are_flattened () =
        assert_contains label content "let fatal msg";
        assert_contains label content "let require_db_pool";
        assert_contains label content "Sol_obs.of_env";
-       check_bool (label ^ " avoids failwith") false (contains content "failwith");
+       check_bool
+         (label ^ " avoids failwith")
+         false
+         (Sol_cli_string.contains ~needle:"failwith" content);
        check_bool
          (label ^ " avoids nested postgres_url match")
          false
-         (contains content "let pool = match postgres_url");
+         (Sol_cli_string.contains ~needle:"let pool = match postgres_url" content);
        check_bool
          (label ^ " no longer hand-composes a Loki backend")
          false
-         (contains content "Obs_loki.create"))
+         (Sol_cli_string.contains ~needle:"Obs_loki.create" content))
     [ "svc main", svc_main; "worker main", worker_main ]
 ;;
 
@@ -595,7 +613,10 @@ let test_worker_has_no_ack_param () =
   @@ fun () ->
   Sol_cli_cmd_new.new_worker "comms/notify" |> Result.get_ok;
   let lib = read_file "app/comms/notify_worker/lib/notify_worker.ml" in
-  check_bool "generated worker does not reference ~ack" false (contains lib "~ack");
+  check_bool
+    "generated worker does not reference ~ack"
+    false
+    (Sol_cli_string.contains ~needle:"~ack" lib);
   assert_contains "worker lib" lib "~trace_ctx";
   assert_contains "worker lib" lib "Printf.printf";
   assert_contains "worker lib" lib "Worker.Ack"
@@ -1124,7 +1145,10 @@ let test_new_svc_typescript () =
     ; "src/metrics.ts"
     ];
   let pkg = read_file (Filename.concat dir "package.json") in
-  check_bool "typescript svc package.json is substituted" false (contains pkg "{{");
+  check_bool
+    "typescript svc package.json is substituted"
+    false
+    (Sol_cli_string.contains ~needle:"{{" pkg);
   assert_contains "typescript svc package name" pkg "payments-charge-svc";
   let yml = read_file "sol.yml" in
   assert_contains "sol.yml declares typescript" yml "language: typescript"

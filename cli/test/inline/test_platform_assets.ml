@@ -32,8 +32,6 @@ let with_runner_ref value f =
     f
 ;;
 
-let contains needle haystack = Sol_cli_string.contains ~needle haystack
-
 let fake_checkout dir =
   touch (Filename.concat dir "framework/ocaml/sol-svc/lib/dune");
   touch (Filename.concat dir "framework/ocaml/kafka-eio-service/lib/dune")
@@ -121,7 +119,7 @@ let test_asset_paths () =
             Windtrap.bool
             ~msg:"a checkout without a reference names the variable"
             true
-            (contains A.runner_image_env msg))))
+            (Sol_cli_string.contains ~needle:A.runner_image_env msg))))
 ;;
 
 let write path text =
@@ -274,7 +272,7 @@ let test_installed_runner_is_published_by_digest () =
          Windtrap.bool
          ~msg:"a bundle without a runner reference says how to fix it"
          true
-         (contains "reinstall the release archive" msg)
+         (Sol_cli_string.contains ~needle:"reinstall the release archive" msg)
      | Ok _ -> Windtrap.fail "a bundle without a runner reference was accepted");
     match installed_runner ~file:(Some "") with
     | Error _ -> ()
@@ -299,7 +297,7 @@ let test_checkout_runner_needs_an_explicit_digest () =
             Windtrap.bool
             ~msg:"a tag is refused"
             true
-            (contains "digest reference" msg));
+            (Sol_cli_string.contains ~needle:"digest reference" msg));
       with_runner_ref "" (fun () ->
         match A.migration_runner_image t with
         | Ok image -> Windtrap.fail ("a checkout resolved a runner: " ^ image)
@@ -308,7 +306,7 @@ let test_checkout_runner_needs_an_explicit_digest () =
             Windtrap.bool
             ~msg:"the refusal says Sol does not publish it"
             true
-            (contains "does not build or publish the runner" msg))))
+            (Sol_cli_string.contains ~needle:"does not build or publish the runner" msg))))
 ;;
 
 let test_release_ignores_an_explicit_runner () =
@@ -320,7 +318,7 @@ let test_release_ignores_an_explicit_runner () =
         Windtrap.bool
         ~msg:"the release bundle stays authoritative"
         true
-        (contains "a release uses only its own assets" msg))
+        (Sol_cli_string.contains ~needle:"a release uses only its own assets" msg))
 ;;
 
 let test_empty_version_is_not_a_bundle () =
