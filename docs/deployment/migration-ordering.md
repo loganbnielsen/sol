@@ -77,7 +77,17 @@ A short-lived Kubernetes Job runs `sol migrate status --json`, which only reads
 `schema_migrations` — it never applies a migration. The Job and its ConfigMap
 are removed whether the check succeeds or fails. This reuses the same in-cluster
 execution model as `sol migrate apply` (`FRIC-012`), so an operator never needs
-direct database reachability:
+direct database reachability.
+
+The Job runs a **pre-built, digest-pinned migration-runner image** and Sol never
+builds or publishes one (SEC-011): an installed release takes the digest its
+bundle records, and a source checkout requires `SOL_MIGRATION_RUNNER_IMAGE`,
+which the publisher — the release workflow, or an operator building
+`internal/tooling/release/migration-runner.Dockerfile` themselves — pushes and
+hands over. With neither source the deploy **fails closed**, because the deploy
+identity has no registry-write authority (ADR 0002); it does not fall back to
+publishing. Both `sol deploy` and `sol migrate apply <target>` resolve the runner
+the same way:
 
 - **Satisfied** — every required version is present; the deploy continues.
 - **Unsatisfied** — the deploy fails and names the missing migrations plus the

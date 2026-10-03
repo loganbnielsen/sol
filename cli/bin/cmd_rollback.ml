@@ -39,9 +39,7 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
   specs |> Sol_cli_result.map_list apply_spec |> Result.map ignore
 ;;
 
-let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
-  : (unit, string) result
-  =
+let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
   let current_migrations =
@@ -54,7 +52,6 @@ let run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id
         (fun () ->
           Sol_cli_migration_gate.read_applied
             ~ctx
-            ~target:target_string
             ~workspace
             ~dir:migrations_dir
             ~table:(Sol_cli_migration.table_name ~workspace)
@@ -126,8 +123,7 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
        ~holder:Sol_cli_boundary_lease.Rollback
        ~ttl:ttl_s
        ~wait_s
-       (fun lease ->
-          run_locked ~lease ~ctx ~local ~target_string ~workspace ~facts release_id))
+       (fun lease -> run_locked ~lease ~ctx ~local ~workspace ~facts release_id))
 ;;
 
 let release_id_arg =

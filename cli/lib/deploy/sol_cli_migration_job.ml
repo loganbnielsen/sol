@@ -17,28 +17,7 @@ type outcome =
 
 let kubectl ~ctx ?(timeout_s = 30.) args = Sol_cli_kubectl.run ~timeout_s ~ctx args
 
-let runner_dockerfile =
-  {docker|FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
-RUN sudo apt-get update && sudo apt-get install -y librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config
-RUN opam repository set-url default https://opam.ocaml.org && opam update
-# BUG-059: the support libraries at exactly the revisions this checkout declares,
-# pinned by the same script CI and release builds use -- never a branch.
-COPY --chown=opam:opam support-refs.txt internal/ci/pin-support-packages.sh /home/opam/pins/
-RUN bash /home/opam/pins/pin-support-packages.sh /home/opam/pins/support-refs.txt
-COPY --chown=opam:opam sol.opam /home/opam/pins/
-RUN cd /home/opam/pins && opam install -y --no-self-upgrade --deps-only ./sol.opam
-COPY --chown=opam:opam . /workspace
-WORKDIR /workspace
-RUN opam exec -- dune build cli/bin/main.exe
-
-FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y libpq5 libgmp10 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build /workspace/_build/default/cli/bin/main.exe /usr/local/bin/sol
-ENTRYPOINT ["/usr/local/bin/sol"]
-|docker}
-;;
-
-let namespace_and_repository ~workspace ~(services : Sol_cli_manifest.service list) =
+let job_namespace ~workspace ~(services : Sol_cli_manifest.service list) =
   let by_domain_and_name (a : Sol_cli_manifest.service) (b : Sol_cli_manifest.service) =
     compare (a.domain, a.name) (b.domain, b.name)
   in
@@ -46,61 +25,18 @@ let namespace_and_repository ~workspace ~(services : Sol_cli_manifest.service li
   | [] ->
     Error
       "no deployed service found in this workspace -- nothing to run the migration Job \
-       in, and no ECR repository to push the migration runner image to. Deploy at least \
-       one service first."
-  | chosen :: _ ->
-    let* namespace =
-      Sol_cli_deployment_plan.namespace_name ~workspace ~domain:chosen.domain
-    in
-    let* k8s_name =
-      Sol_cli_deployment_plan.k8s_name_result chosen.name
-      |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
-    in
-    Ok (namespace, k8s_name)
+       in. Deploy at least one service first."
+  | chosen :: _ -> Sol_cli_deployment_plan.namespace_name ~workspace ~domain:chosen.domain
 ;;
 
-let runner_source () =
+let runner_image () =
   let* assets =
     Sol_cli_platform_assets.resolve ()
     |> Result.map_error Sol_cli_platform_assets.error_to_string
   in
-  Sol_cli_platform_assets.migration_runner assets
-;;
-
-let runner_image ~registry ~workspace ~k8s_name =
-  let* runner = runner_source () in
-  match (runner : Sol_cli_platform_assets.migration_runner) with
-  | Published image ->
-    Sol_cli_report.app "Using migration runner %s" image;
-    Ok image
-  | Build_from_source { context } ->
-    let* registry = registry in
-    let image =
-      Sol_cli_deployment_plan.image_ref
-        ~registry
-        ~workspace
-        ~k8s_name
-        ~tag:"sol-cli-migrate"
-    in
-    Sol_cli_report.app "Building migration runner image %s..." image;
-    let built =
-      Sol_cli_fs.with_temp_file
-        ~prefix:"sol-migrate-"
-        ~suffix:".Dockerfile"
-        runner_dockerfile
-        (fun dockerfile ->
-           Sol_cli_docker.build ~tag:image ~dockerfile ~context
-           |> Result.map_error (fun e ->
-             "docker build: " ^ Sol_cli_process.error_to_string e))
-      |> Result.join
-    in
-    let* () = built in
-    Sol_cli_report.app "Pushing %s..." image;
-    let* () =
-      Sol_cli_docker.push ~image_ref:image
-      |> Result.map_error (fun e -> "docker push: " ^ Sol_cli_process.error_to_string e)
-    in
-    Ok image
+  let* image = Sol_cli_platform_assets.migration_runner_image assets in
+  Sol_cli_report.app "Using migration runner %s" image;
+  Ok image
 ;;
 
 let apply_doc ~ctx ~what doc =

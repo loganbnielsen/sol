@@ -42,11 +42,7 @@ val components_json : t -> string
 val templates_root : t -> string
 val dashboard : t -> string -> string
 val alloy_template : t -> string
-
-type migration_runner =
-  | Build_from_source of { context : string }
-  | Published of string
-
-val migration_runner : t -> (migration_runner, string) result
+val runner_image_env : string
+val migration_runner_image : t -> (string, string) result
 val is_checkout : string -> bool
 val find_ancestor : (string -> bool) -> string -> string option

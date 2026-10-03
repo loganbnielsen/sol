@@ -185,12 +185,8 @@ let dashboard t name =
 ;;
 
 let alloy_template t = under t "platform/shared/observability/alloy/logs.alloy.tftpl"
-
-type migration_runner =
-  | Build_from_source of { context : string }
-  | Published of string
-
 let runner_image_file t = Filename.concat t.dir "migration-runner-image"
+let runner_image_env = "SOL_MIGRATION_RUNNER_IMAGE"
 
 let is_digest_ref s =
   match String.index_opt s '@' with
@@ -206,21 +202,52 @@ let is_digest_ref s =
   | None -> false
 ;;
 
-let migration_runner t =
-  match t.form with
-  | Checkout -> Ok (Build_from_source { context = t.dir })
-  | Installed { version } ->
-    let path = runner_image_file t in
-    (match first_line path with
-     | None ->
-       Error
-         (Printf.sprintf "release %s's bundle has no runner reference in %s" version path)
-     | Some ref_ when is_digest_ref ref_ -> Ok (Published ref_)
-     | Some ref_ ->
-       Error
-         (Printf.sprintf
-            "release %s's migration runner %S is not a digest reference \
-             (<image>@sha256:<64 hex>)"
-            version
-            ref_))
+let not_a_digest_ref ~what ref_ =
+  Printf.sprintf
+    "%s %S is not a digest reference (<image>@sha256:<64 hex>); the migration runner is \
+     pinned by digest, and a tag can move"
+    what
+    ref_
+;;
+
+let published_runner_of_bundle ~version t =
+  let path = runner_image_file t in
+  match first_line path with
+  | None ->
+    Error
+      (Printf.sprintf
+         "release %s's bundle has no runner reference in %s; reinstall the release \
+          archive so the published migration runner is recorded beside its platform \
+          assets"
+         version
+         path)
+  | Some ref_ when is_digest_ref ref_ -> Ok ref_
+  | Some ref_ ->
+    Error (not_a_digest_ref ~what:(Printf.sprintf "release %s's runner" version) ref_)
+;;
+
+let migration_runner_image t =
+  let explicit = Sol_cli_string.env runner_image_env in
+  match t.form, explicit with
+  | Checkout, Some ref_ when is_digest_ref ref_ -> Ok ref_
+  | Checkout, Some ref_ -> Error (not_a_digest_ref ~what:runner_image_env ref_)
+  | Checkout, None ->
+    Error
+      (Printf.sprintf
+         "no pre-built migration runner is available: this is a Sol source checkout, and \
+          Sol does not build or publish the runner (the deploy identity has no \
+          registry-write authority, ADR 0002). Publish it from Sol's own recipe \
+          (internal/tooling/release/migration-runner.Dockerfile) and set %s to the \
+          pushed digest reference, or run from an installed Sol release, whose bundle \
+          already pins its runner"
+         runner_image_env)
+  | Installed { version }, Some _ ->
+    Error
+      (Printf.sprintf
+         "%s is set, but this is Sol release %s, whose bundle pins its own migration \
+          runner; a release uses only its own assets. Unset it (the release's runner is \
+          already resolved) to continue"
+         runner_image_env
+         version)
+  | Installed { version }, None -> published_runner_of_bundle ~version t
 ;;

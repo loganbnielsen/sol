@@ -80,22 +80,20 @@ let service domain name : Sol_cli_manifest.service =
   { domain; name; primitive = Sol_cli_manifest.Svc; dir = "app/" ^ domain ^ "/" ^ name }
 ;;
 
-let test_namespace_and_repository () =
+let test_job_namespace () =
   Windtrap.equal
-    (Windtrap.result (Windtrap.pair Windtrap.string Windtrap.string) Windtrap.string)
+    (Windtrap.result Windtrap.string Windtrap.string)
     ~msg:"the first service by domain, then name"
-    (Ok ("pluto-checkout", "checkout-svc"))
-    (Sol_cli_migration_job.namespace_and_repository
+    (Ok "pluto-checkout")
+    (Sol_cli_migration_job.job_namespace
        ~workspace:"pluto"
-       ~services:[ service "payments" "charge_svc"; service "checkout" "checkout_svc" ]
-     |> Result.map (fun (ns, name) -> ns, Sol_cli_kubernetes_name.k8s_name_to_string name)
-    );
+       ~services:[ service "payments" "charge_svc"; service "checkout" "checkout_svc" ]);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no services is an error"
     true
     (Result.is_error
-       (Sol_cli_migration_job.namespace_and_repository ~workspace:"pluto" ~services:[]))
+       (Sol_cli_migration_job.job_namespace ~workspace:"pluto" ~services:[]))
 ;;
 
 let%test "REFAC-139 part A: unstartable fails fast" = test_unstartable_fails_fast ()
@@ -105,4 +103,4 @@ let%test "REFAC-139 part A: a transient wait runs to its bound" =
   test_times_out_on_a_transient_wait ()
 ;;
 
-let%test "REFAC-139 part A: namespace and repository" = test_namespace_and_repository ()
+let%test "REFAC-139 part A: job namespace" = test_job_namespace ()
