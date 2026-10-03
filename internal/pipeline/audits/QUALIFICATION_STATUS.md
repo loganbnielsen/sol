@@ -1094,5 +1094,27 @@ deploy → rollback → recovery loop), a cloud account (`self_hosted_durable`, 
 managed-resource dashboards, retention/durability), or the operator (delivered-and-acknowledged).
 **Nothing is `LIVE`.**
 
+## Observability run 4 — the taxonomy on traces, the fixed lag rule, and the `sol check` exits (2026-10-02, `OBS-050 @ 6ca2dcce`)
+
+Re-qualification of the rows whose code changed since run 2, plus the `sol check` cases run 1 left
+unexercised. Record:
+[`2026-10-02-observability-run4-local.md`](../qualification/records/2026-10-02-observability-run4-local.md).
+
+| Row | Before | After |
+|---|---|---|
+| OB-T3 trace carries the Sol taxonomy | `DEFECT` (`OBS-050`) | `QUALIFIED (LOCAL)` — a real demo trace (`465dc75872a39152fec689f8d91d88b6`) carries all six resource attributes and is selectable by each (`{resource.workspace="obsdemo"}` → 6 traces, negative control → 0); the app-pushed Loki stream carries the same six labels |
+| OB-L1/OB-L3 log identity | `QUALIFIED` | re-verified on the app-pushed stream (selected by `{workspace,domain,service}`, `env=["prod"]`) |
+| OB-F3 Kafka lag alert | `DEFECT` (`BUG-122`) | `QUALIFIED (LOCAL)` — the derived expression returns `5` for `comms-notify-worker`, equal to the broker's `rpk group describe` `LAG 5`; the old metric still returns 0 series |
+| OB-S5 `sol check` failing / could-not-run | `UNQUALIFIED` | **`DEFECT`** — a failed check exits 1 (documented 2) and an unreadable `sol.yml` raises an uncaught `Sys_error` and exits 125 (documented 1 with a diagnostic). Filed `BUG-124`; fix on `BUG-124/sol-check-exit-vocabulary` |
+| OB-D1 dashboards | `QUALIFIED (LOCAL)` | re-verified; Grafana's proxy serves the taxonomy-labelled Loki/Tempo data |
+| OB-T4 traces CLI surface | blocked on a decision | `OBS-045`'s `Decision Required` resolved by `DEC-064`; promoted to `READY_FOR_ENGINEERING` with `Depends on: OBS-050` |
+
+`OBS-050`'s TypeScript verdict is intentionally deferred and filed as `OBS-051`. Still
+substrate- or operator-gated: a cluster (workload health, the `kubectl` fallback, deployed-backend
+resolution, panel data under a cluster scrape, the deploy → rollback → recovery loop), a cloud
+account (`self_hosted_durable`, `external`, managed-resource dashboards, retention/durability), and
+the delivered-and-acknowledged alert. **Nothing is `LIVE`.**
+
+
 
 
