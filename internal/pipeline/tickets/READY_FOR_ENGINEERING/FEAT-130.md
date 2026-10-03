@@ -40,21 +40,21 @@ Evidence at `origin/main`:
 - `sol plan <target>` loads workspace and target config only; it does not read the
   target.
 
-## Decision Required
+## Decision (2026-10-03) — recorded contract, compared in deployment planning
 
-Where the **observed** half comes from — which decides which command renders the
-diff. The two are materially different products, so pick one before implementing:
+Operator decision: **option 1**. `sol plan` stays offline and deterministic — it
+keeps reading the declaration and renders no target-aware diff. The observed →
+desired comparison belongs to **deployment planning**: the deployed contract is
+persisted with the durable release metadata FEAT-110 established (the immutable
+`sol-release-<id>` ConfigMap in the customer's own namespace, and the same record
+in a GitOps `--emit-to` repository), and `sol deploy` — including `--dry-run` and
+`--emit-to` — loads it and renders the change. A change that cannot be reconciled
+in place (partition reduction, key change, topic rename) fails closed and names the
+reason before anything is applied. ADR 0005 still bounds this to topics the
+declaration owns.
 
-1. **Keep `sol plan` offline; render the contract change in the deploy plan.** The
-   release record carries the deployed contract, and `sol deploy --dry-run`
-   (`--emit-plan-to`) loads it and renders `observed → desired`. `sol plan` keeps
-   printing the declaration only.
-2. **Give `sol plan` a target-read mode.** `sol plan` reads the target's recorded
-   release and renders the diff itself. This changes what `sol plan` means: today it
-   answers offline and needs no cluster.
-
-Either choice needs the same release-record change below. ADR 0005 bounds both to
-topics the declaration owns.
+Implements DEC-065's planning semantics: the declaration is canonical and
+language-neutral; the record is the observed target-side state.
 
 ## Remediation
 
