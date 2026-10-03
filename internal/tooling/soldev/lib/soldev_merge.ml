@@ -9,7 +9,9 @@ let write_file path content =
 ;;
 
 let current_branch () =
-  match Sol_process.output_shell_checked ~echo:false "git rev-parse --abbrev-ref HEAD" with
+  match
+    Sol_process.output_shell_checked ~echo:false "git rev-parse --abbrev-ref HEAD"
+  with
   | Ok branch -> Ok branch
   | Error r ->
     Soldev_exit.error
@@ -515,7 +517,9 @@ let rec flagged_reverts acc = function
 ;;
 
 let git_log_unreadable r =
-  Printf.sprintf "check-reverts: git log could not be read: %s" (Sol_process.failure_message r)
+  Printf.sprintf
+    "check-reverts: git log could not be read: %s"
+    (Sol_process.failure_message r)
 ;;
 
 let run_check_reverts () =
@@ -575,7 +579,8 @@ let run_submit ticket_id =
   Printf.printf "[%s] pushing %s...\n%!" ticket_id branch;
   let* () =
     let rc =
-      Soldev_shell.run_cmd (Printf.sprintf "git push -u origin %s" (Filename.quote branch))
+      Soldev_shell.run_cmd
+        (Printf.sprintf "git push -u origin %s" (Filename.quote branch))
     in
     if rc = 0
     then Ok ()
@@ -983,7 +988,8 @@ let find_ticket_worktree ticket_id snapshots =
 let worktree_annotation_for_ticket ticket_id =
   match worktree_snapshots () with
   | Error r ->
-    Some (Printf.sprintf "(worktree state unreadable: %s)" (Sol_process.failure_message r))
+    Some
+      (Printf.sprintf "(worktree state unreadable: %s)" (Sol_process.failure_message r))
   | Ok snapshots ->
     (match find_ticket_worktree ticket_id snapshots with
      | None -> None

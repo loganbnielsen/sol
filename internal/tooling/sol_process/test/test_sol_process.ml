@@ -130,9 +130,9 @@ let with_stdout_to_a_file f =
   Unix.dup2 saved Unix.stdout;
   Unix.close saved;
   let captured = In_channel.with_open_bin path In_channel.input_all in
-  (match outcome with
-   | Ok value -> value, captured
-   | Error e -> raise e)
+  match outcome with
+  | Ok value -> value, captured
+  | Error e -> raise e
 ;;
 
 let test_stream_inherits_the_output () =
@@ -297,7 +297,10 @@ let () =
         ]
     ; Windtrap.group
         "failure_message"
-        [ Windtrap.test "names the exit code and stderr" test_failure_message_names_the_cause ]
+        [ Windtrap.test
+            "names the exit code and stderr"
+            test_failure_message_names_the_cause
+        ]
     ; Windtrap.group
         "streams"
         [ Windtrap.test

@@ -127,39 +127,39 @@ let run_argv ?(echo = false) ?(stream = false) argv =
     else (
       let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
       let stderr_r, stderr_w = Unix.pipe ~cloexec:true () in
-      (match Unix.create_process prog (Array.of_list argv) stdin_fd stdout_w stderr_w with
-       | pid ->
-         close_noerr stdin_fd;
-         close_noerr stdout_w;
-         close_noerr stderr_w;
-         let finished = ref false in
-         let kill_and_reap () =
-           (try Unix.kill pid Sys.sigkill with
-            | Unix.Unix_error _ -> ());
-           try ignore (wait_reap pid) with
-           | Unix.Unix_error _ -> ()
-         in
-         Fun.protect
-           ~finally:(fun () ->
-             if not !finished
-             then (
-               close_noerr stdout_r;
-               close_noerr stderr_r;
-               kill_and_reap ()))
-           (fun () ->
-              let captured = capture_fds stdout_r stderr_r in
+      match Unix.create_process prog (Array.of_list argv) stdin_fd stdout_w stderr_w with
+      | pid ->
+        close_noerr stdin_fd;
+        close_noerr stdout_w;
+        close_noerr stderr_w;
+        let finished = ref false in
+        let kill_and_reap () =
+          (try Unix.kill pid Sys.sigkill with
+           | Unix.Unix_error _ -> ());
+          try ignore (wait_reap pid) with
+          | Unix.Unix_error _ -> ()
+        in
+        Fun.protect
+          ~finally:(fun () ->
+            if not !finished
+            then (
               close_noerr stdout_r;
               close_noerr stderr_r;
-              let status = status_of_unix (wait_reap pid) in
-              finished := true;
-              trim_result { captured with status })
-       | exception Unix.Unix_error (err, fn, arg) ->
-         close_noerr stdin_fd;
-         close_noerr stdout_r;
-         close_noerr stdout_w;
-         close_noerr stderr_r;
-         close_noerr stderr_w;
-         { status = Exited 127; stdout = ""; stderr = spawn_error fn arg err }))
+              kill_and_reap ()))
+          (fun () ->
+             let captured = capture_fds stdout_r stderr_r in
+             close_noerr stdout_r;
+             close_noerr stderr_r;
+             let status = status_of_unix (wait_reap pid) in
+             finished := true;
+             trim_result { captured with status })
+      | exception Unix.Unix_error (err, fn, arg) ->
+        close_noerr stdin_fd;
+        close_noerr stdout_r;
+        close_noerr stdout_w;
+        close_noerr stderr_r;
+        close_noerr stderr_w;
+        { status = Exited 127; stdout = ""; stderr = spawn_error fn arg err })
 ;;
 
 let run_shell ?(echo = false) ?(stream = false) cmd =
