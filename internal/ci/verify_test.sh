@@ -92,6 +92,18 @@ else
 fi
 
 echo
+echo "verify runner: a clear-classified input cannot reach a member"
+optout="$tmp/optout"
+mkdir -p "$optout"
+printf 'FIXTURE_OPTOUT clear\n' >"$optout/guard_env.txt"
+printf '#!/usr/bin/env bash\n[ -z "${FIXTURE_OPTOUT:-}" ]\n' >"$optout/check_env_is_cleared.sh"
+if env FIXTURE_OPTOUT=1 VERIFY_CI_DIR="$optout" bash "$VERIFY" static >"$tmp/out" 2>&1; then
+  ok "the class runner removed the canonical opt-out before the member ran"
+else
+  bad "the class runner let the canonical opt-out reach a member"
+fi
+
+echo
 echo "verify runner: the real classes are not empty"
 discover "$root/internal/ci/always" && ok "the always class has members" || bad "the always class is empty"
 discover "$root/internal/ci" && ok "the static class has members" || bad "the static class is empty"
