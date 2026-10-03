@@ -6,9 +6,9 @@ title: "Local integrated qualification: the alpha acceptance matrix on a fresh k
 source: internal/qualification/ALPHA_CAMPAIGN.md — the local rows of the acceptance matrix, observed end to end
 ---
 
-**Depends on:** RELEASE-006, FEAT-132, FEAT-133.
+**Depends on:** RELEASE-006, FEAT-132, FEAT-133, VERIF-028.
 
-**Related:** FEAT-131, `internal/qualification/observability/`, `internal/qualification/aws/`, `internal/qualification/gcp/`.
+**Related:** FEAT-131, `internal/qualification/local/local-run-procedure.md`, `internal/qualification/observability/`, `internal/qualification/aws/`, `internal/qualification/gcp/`.
 
 Observe the alpha acceptance matrix's local/cluster rows against the reference
 application on a fresh cluster, with the released bundle rather than a development

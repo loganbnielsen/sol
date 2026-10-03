@@ -381,6 +381,7 @@ require superseding an already-published version. The tag command is recorded in
 | `examples/pluto/app/**` (OCaml units) | the OCaml stream | disjoint from the TS stream's directories |
 | `examples/pluto/app/demo_ts/**` + `events/demo_ts/**` | the TS stream | disjoint from the OCaml stream's directories |
 | `internal/qualification/records/` | the run's owner | one record per run, from `run-record-template.md`; update `QUALIFICATION_STATUS.md` in the same ticket |
+| `internal/qualification/local/**` | the local run | the harness and procedure (`VERIF-028`); one literal `sol-local` cluster, so local runs serialize like the cloud runs |
 | `internal/qualification/aws/**` / `gcp/**` | one owner per provider | provider harnesses are edited by one actor at a time; live runs are serialized one target at a time |
 | `internal/pipeline/tickets/**` | the filing actor | every change through a PR; no direct-to-main bookkeeping |
 | Cloud accounts, credentials, live targets | the operator | no creation, mutation or spend without the §7 authorization |
@@ -402,7 +403,7 @@ streams are preparation-only until §7.
 | **T1 Scenario contract** | next available agent | the shared, language-neutral skeleton: `examples/pluto/sol.yml`, `sol/environments.yml`, `db/migrations/`, `events/orders*/`, HTTP/event contract | — | `FEAT-131` |
 | **T2 OCaml reference app** | agent A | `examples/pluto/app/payments/**`, `examples/pluto/app/comms/**`, `examples/pluto/lib/**`, `examples/pluto/test/**` | T1 | `FEAT-132` |
 | **T3 TypeScript reference app** | agent B | `examples/pluto/app/demo_ts/**`, `events/demo_ts/**` | T1 | `FEAT-133` |
-| **T4 Local integrated qualification** | agent C (evidence coordinator) | run rows B–H on k3d with the released bundle; records + matrix status | T2, T3, `RELEASE-006` | `VERIF-027` |
+| **T4 Local integrated qualification** | agent C (evidence coordinator) | run rows B–H on k3d with the released bundle; records + matrix status. The harness and procedure (`VERIF-028`) are landed; the row drivers arrive with T2/T3 | T2, T3, `RELEASE-006`, `VERIF-028` | `VERIF-027` |
 | **T5 AWS substrate & run** | agent D | `internal/qualification/aws/**`; HARDEN-007 §B3 onward | T4, `RELEASE-006`; `FEAT-134` for E5 | operator authorization |
 | **T6 GCP substrate & run** | agent E | `internal/qualification/gcp/**`; HARDEN-008, `INFRA-005` | T4, `RELEASE-006` | operator authorization |
 | **T7 Bounded defect capacity** | agent F | the READY queue (`BUG-126`, `BUG-128`, `FEAT-114`, `INFRA-065`, …) | — | — |
@@ -412,6 +413,12 @@ time), but their *preparation* is parallel. T7 keeps the campaign from blocking 
 defects it discovers: a concrete Sol defect is filed, fixed if bounded and unowned,
 mutation-tested and merged, then the affected acceptance rows rerun — it is not
 carried as an exception in the matrix.
+
+**Defects the campaign has exposed.** `BUG-130` — `sol local infra` answered Kubernetes
+operations (the Helm installs and the status pod read) from the ambient kubeconfig instead
+of `k3d-sol-local` — was found while preparing the local harness, then filed, fixed,
+mutation-tested and merged. No acceptance row changed verdict: the local rows were already
+`NOT RUN`, and a prerequisite fix is not an observation.
 
 ## 7. Operator-gated actions
 

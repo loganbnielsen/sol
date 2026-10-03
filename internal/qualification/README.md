@@ -116,6 +116,7 @@ workstream; they apply to every provider's live runs.
 | AWS profile matrix | `production-single-region-v1-matrix.md` |
 | GCP profile matrix (+ machine-readable rows) | `gcp-production-single-region-v1-matrix.md`, `gcp-production-single-region-v1-matrix.tsv` |
 | AWS run procedure | `aws-run-procedure.md` |
+| Local run procedure | `local/local-run-procedure.md` (harness `local/local-qual.sh`, suite `local/test-local-qual.sh`) |
 | Run record template | `run-record-template.md` |
 | Next runs | HARDEN-007 (AWS, `BACKLOG`, authorization-gated); HARDEN-006 (GCP) **ran** on 2026-09-25 — see `2026-09-25-gcp-attempt8.md` |
 
