@@ -143,26 +143,35 @@ needs no authority mechanism can say so explicitly. ADR 0005 bounds all of it to
 state Sol owns.
 
 **Tickets.**
-- `INFRA-082` (READY) — absent-substrate stale platform state. *Pre-alpha
-  blocker.*
-- `INFRA-094` (READY) — convergence when the provider failed the create.
-  *Pre-alpha blocker.*
-- `INFRA-083` (READY) — the explicit total authority declaration
-  (`No_authority_required | Mechanism …`) needed by DEC-051's `byo` driver.
-  *Pre-alpha.*
+- `INFRA-082` (DONE, 2026-10-03) — absent-substrate stale platform state. *Landed: the
+  platform root is read under an absent substrate and its entries forgotten — only on a
+  positively established provider absence — with the evidence named in the report
+  (`#997`).*
+- `INFRA-094` (DONE, 2026-10-03) — convergence when the provider failed the create.
+  *Landed: the same reconciliation now fires when the state still represents the cluster,
+  its contents or the platform root while the provider does not have the cluster, and the
+  phases that would have to reach it account for it (no release, no platform teardown, a
+  preparation scoped to what is left). A cluster the provider still holds keeps the
+  ordinary no-construction path (`#1002`).*
+- `INFRA-083` (DONE, 2026-10-03) — the explicit total authority declaration
+  (`No_authority_required | Mechanism …`) needed by DEC-051's `byo` driver. *Landed: the
+  declaration is total, `with_elevated_access` skips acquisition and removal by
+  construction when a provider needs no mechanism, and AWS/GCP declare the same mechanism
+  they always ran (`#999`).*
 
-**Dependencies & sequencing.** INFRA-082 and INFRA-094 share the same mechanism
-(extend INFRA-042's "forget what provably cannot exist" to a broader provable
-absence) and should be implemented as one unit or back-to-back, INFRA-082 first.
-INFRA-083 is the capability-declaration half and is independent, though it also
-touches the destroy bracket (`with_elevated_access`) and should land with its
-tests on both sides.
+**Dependencies & sequencing.** Landed in the order the stream asked for: INFRA-082, then
+INFRA-094 (one mechanism across two tickets), with INFRA-083 independent. All three edit the
+destroy decision layer — the two new types and the widened `deps` record — so INFRA-083, whose
+PR was opened before either reconciliation landed, had to be rebased onto `main` after
+INFRA-082 merged.
 
 **Cross-stream.** S5's `INV-DESTROY-*` rows are the live qualification of this
 stream; no build dependency in the other direction.
 
 **Parallelism.** Fully parallel with S1–S3. INFRA-082/094 are one work item;
-INFRA-083 is a second.
+INFRA-083 is a second. **Landed 2026-10-03** — all three tickets are `DONE` and the destroy
+path carries the behaviour they decided: a reconciliation that never constructs and never
+fires on an absence Sol could not establish, and a total authority declaration.
 
 ---
 
