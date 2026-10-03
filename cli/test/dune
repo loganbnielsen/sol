@@ -64,6 +64,7 @@
  (deps
   ../bin/main.exe
   ../../internal/ci/context/test_cloud_lifecycle_offline.sh
+  ../../internal/ci/lib/stray_terraform_state.sh
   ../../internal/ci/qualification_assertions.sh
   (source_tree ../../internal/ci/lifecycle_fakes))
  (action

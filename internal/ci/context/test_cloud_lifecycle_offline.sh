@@ -3,6 +3,8 @@ set -euo pipefail
 
 # shellcheck source=../qualification_assertions.sh
 . "$(cd "$(dirname "$0")/.." && pwd)/qualification_assertions.sh"
+# shellcheck source=../lib/stray_terraform_state.sh
+. "$(cd "$(dirname "$0")/.." && pwd)/lib/stray_terraform_state.sh"
 
 root="$(git rev-parse --show-toplevel)"
 export REPO_ROOT="$root"
@@ -2020,9 +2022,13 @@ while IFS= read -r d; do
 done <<<"$chdirs"
 echo "DEC-050: every terraform -chdir was a working directory ($(wc -l <<<"$chdirs") distinct)"
 
-if find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' -o -name errored.tfstate \) | grep -q .; then
+if ! strays="$(stray_terraform_state "$root/platform" "$tmp/bin/terraform")"; then
+  echo "DEC-050: could not scan Sol's assets for stray Terraform state" >&2
+  exit 1
+fi
+if [ -n "$strays" ]; then
   echo "DEC-050: a Terraform run wrote into Sol's assets:" >&2
-  find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' \) >&2
+  printf '%s\n' "$strays" >&2
   exit 1
 fi
 
@@ -2109,9 +2115,13 @@ awk '/^    aws\/us-east-1:[[:space:]]*$/ { in_aws = 1; print; next }
      /^    [^ ]/ { in_aws = 0 }
      !(in_aws && /^      destroy_retention:[[:space:]]*none[[:space:]]*$/) { print }' \
   "$tmp/work/envs.before-refac115.yml" >"$tmp/work/sol/environments.yml"
-if grep -A3 '^    aws/us-east-1:' "$tmp/work/sol/environments.yml" | grep -q 'destroy_retention: none'; then
-  echo "REFAC-115: could not put the AWS target back on final-snapshot retention" >&2; exit 1
-fi
+retention_region="$(grep -A3 '^    aws/us-east-1:' "$tmp/work/sol/environments.yml" || true)"
+case "$retention_region" in
+  *'destroy_retention: none'*)
+    echo "REFAC-115: could not put the AWS target back on final-snapshot retention" >&2
+    exit 1
+    ;;
+esac
 if (cd "$tmp/work" && FAIL_ON="" DESTROYING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc \
       LIFECYCLE_LOG="$interval_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
     >"$interval_log.out" 2>&1; then

@@ -108,6 +108,20 @@ if ! run_check --branch fix/infra-901a-part-one; then
 fi
 echo "  [OK]   '(INFRA-901, part A)' is accepted"
 
+git checkout -q -b fix/infra-901c-part-large main
+echo "code" > app/payments/charge_svc/part3.ml
+git add -A >/dev/null
+filler="$(printf 'z%.0s' $(seq 1 400))"
+for i in $(seq 1 200); do
+  git commit -q --allow-empty -m "filler $i $filler"
+done
+git commit -q --allow-empty -m "fix: third half (INFRA-901, part A)"
+if ! run_check --branch fix/infra-901c-part-large; then
+  echo "  [FAIL] a declaration was lost in a subject list larger than a pipe buffer" >&2
+  exit 1
+fi
+echo "  [OK]   a declaration survives a subject list larger than a pipe buffer"
+
 git checkout -q -b fix/infra-901b-unmarked main
 echo "code" > app/payments/charge_svc/part2.ml
 git add -A >/dev/null
