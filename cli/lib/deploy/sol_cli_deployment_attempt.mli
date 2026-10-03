@@ -1,5 +1,16 @@
 type t
 
+type actor =
+  { name : string
+  ; source : string
+  }
+
+val pick
+  :  ci:(string * string) option
+  -> git:string option
+  -> override:string option
+  -> actor option
+
 val start : unit -> t
 val deployment_id : t -> Sol_cli_deployment_id.t
 val outcome_of : ('a, string) result -> Sol_cli_deployment.outcome

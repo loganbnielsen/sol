@@ -225,7 +225,8 @@ success, never reported as an unknown release.
 **Module:** `cli/bin/cmd_deployments.ml`
 
 Lists the deployment events the target's cluster holds for the workspace, newest
-first: `DEPLOYMENT / RELEASE / TIME / COMMIT / STATUS`. A deployment event
+first: `DEPLOYMENT / RELEASE / TIME / COMMIT / STATUS / ACTOR`, where the
+actor is shown with the source that identity came from (FEAT-110, AUDIT-075). A deployment event
 (FEAT-070) is one deploy *attempt* — a minted `d-<YYYYMMDDtHHMMSSz>-<16 hex>` id,
 the content-addressed release it tried to put in place, provenance (`created_at`,
 git commit, dirty, actor, target), and its outcome (`applied` / `apply_failed`).
@@ -488,6 +489,75 @@ failure warns and does not turn a successful deploy into a failure.
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
 consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster
 state.
+
+---
+
+## Where release history lives, and reading it without Sol (FEAT-110)
+
+**The durable owner is the target cluster.** Release and rollback metadata is
+held as ordinary Kubernetes ConfigMaps in the customer's own namespace, on the
+customer's own provider:
+
+| Record | Object | Namespace |
+|---|---|---|
+| A released state | `sol-release-<release_id>` (immutable) | the first discovered service's domain namespace |
+| The rollback target | `sol-release-current-<workspace>` (mutable pointer) | same |
+| One deploy attempt | `sol-deployment-<deployment_id>` (immutable) | same |
+
+That is a deliberate choice, not an accident of implementation: it is
+provider-native, it keeps Sol from operating a service or a second
+infrastructure-state database (ADR 0003), and it means the record survives
+stopping the use of Sol entirely. A GitOps `--emit-to DIR` deploy writes the same
+release record as `sol-release-<id>.yaml` into the customer's own git
+repository, which is a second copy under the same owner. The record's identity is
+content-addressed from the workload boundary (`Sol_cli_release_id`), so a
+record can be re-derived and checked, not merely believed.
+
+**Reading it with no Sol binary.** Everything the CLI reads is in those
+ConfigMaps, under the `record` key:
+
+```bash
+# where they are: the records carry sol.dev/workspace, so no namespace needed
+kubectl get configmap -A -l sol.dev/workspace=<workspace> \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,AT:.metadata.creationTimestamp
+# the rollback target, then the release it names (records are data.record)
+NS=<namespace from above>
+kubectl -n "$NS" get configmap sol-release-current-<workspace> -o jsonpath='{.data.release_id}'
+kubectl -n "$NS" get configmap "sol-release-<that release_id>" -o jsonpath='{.data.record}' | jq .
+# the attempts, and who made each one
+kubectl -n "$NS" get configmap -l sol.dev/type=deployment \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.data.record}{"\n"}{end}' | jq -r '.actor_source + " " + .actor'
+```
+
+Reading the current pointer and the release it names is enough to identify the
+deployed release and the rollback target: the record names each workload's image
+digest and the migrations that were applied, so what is running can be described
+and operated (rolled forward or back) with `kubectl`/`argo` and the provider's
+own tooling alone.
+
+**Provenance is observed, not asserted (AUDIT-075).** A deploy attempt records
+the actor *and where that identity came from*: a CI claim from the environment
+(`ci:github-actions`, `ci:gitlab`) first, then the workspace repository's
+`git config user.email` (`git:local`), then `SOL_ACTOR` (`override:env`), then
+nothing at all (`sol deployments` shows `-`). A record never invents an actor,
+and showing the source beside the name is what keeps an unverified string from
+reading like a signed identity: `SOL_ACTOR` is a convenience, and both it and a
+dirty working tree are visible as such.
+
+**Retention is stated, not implied.** Committed release records are pruned to the
+last `--keep-releases N` distinct releases (default 20, DEC-018) with the current
+pointer and its predecessor always kept. **Deployment events are not pruned**:
+`sol-deployment-<id>` ConfigMaps accumulate for the life of the namespace, which
+is deliberate — an attempt history that silently loses its oldest entries is
+worse than a large one — and the volume question is tracked as AUDIT-076 rather
+than answered by quietly deleting history here.
+
+**A record written by an older Sol is diagnosable, not "corrupt" (AUDIT-077).**
+The release record carries the `encoding_version` of the format that wrote it. A
+reader that finds a different version says the record predates a format change
+and cannot be verified against the current rules, and a record with no version
+at all says a format change and damaged content cannot be told apart — neither is
+reported as corruption, and both fail closed.
 
 ---
 

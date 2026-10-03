@@ -925,7 +925,21 @@ To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` s
 
 Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped deploy's complete release record also retains the untouched workloads and their earlier provenance. Use that workload label to select logs with `sol logs --release <id>`.
 
-`sol deployments` lists the other half: one row per deploy *attempt* (minted `d-…` id, the release it tried to put in place, time, commit, and whether the apply succeeded), newest first. A failed apply is still a deployment attempt, so it appears with `status` `apply_failed` while the release record — which claims the release exists — is only written on success. Attempts are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two attempts pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an attempt to the authoritative record without telemetry ever being the system of record.
+`sol deployments` lists the other half: one row per deploy *attempt* (minted `d-…` id, the release it tried to put in place, time, commit, actor with the source that identity came from, and whether the apply succeeded), newest first. A failed apply is still a deployment attempt, so it appears with `status` `apply_failed` while the release record — which claims the release exists — is only written on success. Attempts are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two attempts pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an attempt to the authoritative record without telemetry ever being the system of record.
+
+Both records live in your own cluster, so neither of these commands is required to
+read them — you can leave Sol behind without leaving your history behind:
+
+```bash
+kubectl get configmap -A -l sol.dev/workspace=pluto   # every release/attempt Sol recorded here
+NS=pluto-payments
+kubectl -n "$NS" get configmap sol-release-current-pluto -o jsonpath='{.data.release_id}'
+kubectl -n "$NS" get configmap sol-release-<id> -o jsonpath='{.data.record}' | jq .
+```
+
+That last command prints the release's own identity, each workload with the image
+digest it was applied at, and the migrations that were applied with it — enough to
+describe what is running and to pick a rollback target with `kubectl` alone.
 
 ### Progressive delivery with Argo Rollouts
 

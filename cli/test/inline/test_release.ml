@@ -642,6 +642,7 @@ let test_scoped_deploy_records_a_complete_boundary () =
         ~git_commit:"abc1234"
         ~git_dirty:false
         ~actor:None
+        ~actor_source:None
         ~target:(Some "dev/aws/us-east-1")
         ~outcome:Sol_cli_deployment.Applied
         scoped

@@ -32,6 +32,7 @@ let sample : D.t =
   ; git_commit = "abc1234"
   ; git_dirty = false
   ; actor = Some "ci"
+  ; actor_source = Some "ci:github-actions"
   ; target = Some "prod/aws/us-east-1"
   ; mode = "customer_cloud"
   ; requested_scope = "payments"
@@ -202,6 +203,11 @@ let test_format_table_newest_first_with_status () =
   let table = D.format_table [ older; newer ] in
   check_bool "header" true (contains "DEPLOYMENT" table);
   check_bool "status column" true (contains "STATUS" table);
+  check_bool "actor column" true (contains "ACTOR" table);
+  check_bool
+    "the actor's provenance source is shown beside it"
+    true
+    (contains "ci (ci:github-actions)" table);
   check_bool "applied shown" true (contains "applied" table);
   check_bool "failed shown" true (contains "apply_failed" table);
   let i_newer = index_of (Sol_cli_deployment_id.to_string id_b) table
@@ -281,6 +287,7 @@ let of_plan plan ?(id = id_a) ?(now = 1767225600.0) ~outcome () =
     ~git_commit:"abc1234"
     ~git_dirty:false
     ~actor:(Some "ci")
+    ~actor_source:(Some "ci:github-actions")
     ~target:(Some "prod/aws/us-east-1")
     ~outcome
     plan

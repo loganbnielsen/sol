@@ -11,6 +11,7 @@ type t =
   ; git_commit : string
   ; git_dirty : bool
   ; actor : string option
+  ; actor_source : string option
   ; target : string option
   ; mode : string
   ; requested_scope : string
@@ -27,6 +28,7 @@ val of_plan
   -> git_commit:string
   -> git_dirty:bool
   -> actor:string option
+  -> actor_source:string option
   -> target:string option
   -> outcome:outcome
   -> Sol_cli_deployment_plan.t

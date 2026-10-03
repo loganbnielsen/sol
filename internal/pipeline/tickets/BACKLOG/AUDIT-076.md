@@ -73,3 +73,16 @@ then the in-cluster history is acceptable for one team and one cluster.
 
 Left in `BACKLOG/` against that trigger; see
 `internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+
+## Settlement (2026-10-03) — kept, and the policy is now stated
+
+FEAT-110 named the durable owner of release/rollback metadata and stated its
+retention: committed release records are pruned to the last `--keep-releases N`
+distinct releases (default 20, DEC-018), while **deployment events are
+deliberately not pruned**, so an attempt history cannot silently lose its oldest
+entries. That is the documented policy, not a fix for this ticket's subject: the
+mechanism (a bound, or a move to an external history store) is still this
+ticket's, and its existing trigger stands — deployment volume that creates
+measurable ConfigMap growth, or a cross-cluster history need. Kept in
+`BACKLOG/`; the documentation lives in
+`docs/architecture/devops-pipeline.md` § *Where release history lives*.
