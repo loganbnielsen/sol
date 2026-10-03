@@ -245,20 +245,21 @@ let record_release_and_prune ctx ~previous ~retained plan =
          msg)
   | Ok boundary_id ->
     (match
-       Sol_cli_release_retention.prune
+       Sol_cli_release_retention.with_retention
          ~ctx:cluster
          ~workspace
          ~keep:ctx.keep_releases
          ~current:boundary_id
          ~previous
      with
-     | Ok [] -> ()
-     | Ok pruned ->
+     | Pruned [] -> ()
+     | Pruned pruned ->
        Sol_cli_report.app
          "Pruned %d release record(s) beyond the last %d."
          (List.length pruned)
          ctx.keep_releases
-     | Error msg -> Sol_cli_report.warn "warning: could not prune old releases: %s" msg);
+     | Deferred reason -> Sol_cli_report.app "Retention: not run -- %s" reason
+     | Failed msg -> Sol_cli_report.warn "warning: could not prune old releases: %s" msg);
     Ok ()
 ;;
 

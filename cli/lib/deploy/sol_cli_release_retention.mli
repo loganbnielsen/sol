@@ -19,3 +19,19 @@ val prune
   -> current:string
   -> previous:previous_release
   -> (string list, string) result
+
+val enumerability_of_can_i_output : string -> bool option
+val can_enumerate : ctx:Sol_cli_kube_destination.context -> bool option
+
+type outcome =
+  | Pruned of string list
+  | Deferred of string
+  | Failed of string
+
+val with_retention
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> keep:int
+  -> current:string
+  -> previous:previous_release
+  -> outcome
