@@ -224,9 +224,17 @@ let latest_dir ~key =
 
 let latest ~key =
   match latest_dir ~key with
-  | None -> No_previous
   | Some dir when not (Sys.file_exists dir) -> No_previous
   | Some dir -> classify (facts_of_dir dir)
+  | None when Sys.file_exists (latest_file ~key) ->
+    Unresolved
+      { reason =
+          "the previous-operation pointer exists but could not be read, so whether an \
+           operation is still running, or left provider changes it never recorded, \
+           cannot be established"
+      ; dir = operations_dir ~key
+      }
+  | None -> No_previous
 ;;
 
 let acknowledge ~key =

@@ -300,6 +300,20 @@ let test_supervisor_killed_is_unresolved () =
     (is_unresolved (S.latest ~key:c.key))
 ;;
 
+let test_unreadable_pointer_is_unresolved () =
+  let key =
+    Printf.sprintf "test-unreadable-%d-%f" (Unix.getpid ()) (Unix.gettimeofday ())
+  in
+  let dir = S.operations_dir ~key in
+  Sol_cli_fs.mkdir_p dir |> Result.get_ok;
+  Sol_cli_fs.mkdir_p (Filename.concat dir "latest") |> Result.get_ok;
+  check
+    "a pointer that exists but cannot be read is Unresolved, not No_previous"
+    true
+    (is_unresolved (S.latest ~key));
+  Sol_cli_fs.remove_tree dir |> Result.get_ok
+;;
+
 let facts
       ?(outcome = None)
       ?(same_host = true)
@@ -377,6 +391,7 @@ let () =
         ; Windtrap.test "signal death" test_signal_death_is_unresolved
         ; Windtrap.test "errored.tfstate" test_errored_state_is_unresolved
         ; Windtrap.test "supervisor killed" test_supervisor_killed_is_unresolved
+        ; Windtrap.test "unreadable pointer" test_unreadable_pointer_is_unresolved
         ]
     ]
 ;;

@@ -164,14 +164,9 @@ let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
 ;;
 
 let successor_probe ~region ~outputs () =
-  match
-    provisioner_kubeconfig ~region outputs (fun env ->
-      successor_capabilities
-      |> List.map (fun capability ->
-        capability, capability_answer_of_can_i ~env capability))
-  with
-  | Ok probes -> probes
-  | Error _ -> []
+  provisioner_kubeconfig ~region outputs (fun env ->
+    successor_capabilities
+    |> List.map (fun capability -> capability, capability_answer_of_can_i ~env capability))
 ;;
 
 let whoami_retry_interval_s () =
@@ -755,18 +750,24 @@ let cluster ~region ~provisioner_role_arn ~deploy_role_arn outputs : Sol_cli_clu
                      ~before:!before
                  with
                  | Sol_cli_cloud_lifecycle.Deescalated ->
-                   (match
-                      Sol_cli_cloud_lifecycle.successor_authority
-                        (successor_probe ~region ~outputs ())
-                    with
-                    | Ok () -> Ok ()
+                   (match successor_probe ~region ~outputs () with
                     | Error why ->
                       Error
                         (Printf.sprintf
                            "the bootstrap elevation was relinquished, but the durable \
-                            cluster-access identity was not demonstrated to hold the \
+                            cluster-access identity could not be probed for the \
                             authority the lifecycle needs next: %s"
-                           why))
+                           why)
+                    | Ok probes ->
+                      (match Sol_cli_cloud_lifecycle.successor_authority probes with
+                       | Ok () -> Ok ()
+                       | Error why ->
+                         Error
+                           (Printf.sprintf
+                              "the bootstrap elevation was relinquished, but the durable \
+                               cluster-access identity was not demonstrated to hold the \
+                               authority the lifecycle needs next: %s"
+                              why)))
                  | verdict ->
                    Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
            }))

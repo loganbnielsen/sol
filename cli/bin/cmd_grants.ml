@@ -135,7 +135,15 @@ let run ~action ~target ~var_file ~vars () =
     | Ok output ->
       Sol_cli_authorization_reconcile.current_of_output_json output.Sol_cli_process.stdout
       |> Sol_cli_exit.of_msg
-    | Error _ -> Ok []
+    | Error error ->
+      refuse
+        (Printf.sprintf
+           "could not read the authorization root's outputs, so the grants it has \
+            already established are unknown: %s\n\
+           \  An authorization plan is never computed from an unreadable state: a grant \
+            that is established but not observed would not be revoked, and the run would \
+            report a reconciliation it did not perform."
+           (Sol_cli_process.error_to_string error))
   in
   let namespaces =
     Sol_cli_workspace_model.workloads model
