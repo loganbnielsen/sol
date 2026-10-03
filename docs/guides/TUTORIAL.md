@@ -450,10 +450,12 @@ sol local migrate status
 ```
 
 ```
-VER     NAME                            APPLIED AT
-------------------------------------------------------------
-1       0001_notifications              2026-06-05T12:34:56Z
+VER     NAME                            DRIFT     APPLIED AT
+------------------------------------------------------------------------
+1       0001_notifications              -         2026-06-05T12:34:56Z
 ```
+
+Each applied version also records the checksum of the file that was applied. If you edit a migration after applying it, `sol migrate status` marks its row `yes` in the DRIFT column and exits non-zero, `sol migrate apply` refuses to run, and a production deploy fails before any workload moves — the applied record and the files you are deploying must agree. Restore the file, or put the change in a new migration and apply that. A migration applied before Sol recorded checksums has no baseline, so it shows as `-` rather than as drift.
 
 ---
 

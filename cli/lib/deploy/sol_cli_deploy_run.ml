@@ -144,6 +144,25 @@ let migration_prerequisite ctx ~plan ~live =
                   again."
                  (String.concat ", " (List.map Sol_cli_migration.to_string missing))
                  ctx.target_name))
+       | Sol_cli_migration_gate.Drifted drifted ->
+         Error
+           (Failed
+              (Printf.sprintf
+                 "\n\
+                  error: an already-applied migration no longer matches the file this \
+                  revision carries, so the applied schema record and the deployable \
+                  revision disagree:\n\
+                  %s\n\
+                 \  Restore each file to the content that was applied, or put the change \
+                  in a new migration and apply it with `sol migrate apply %s`. Deploying \
+                  while they disagree would record a boundary whose schema is one of the \
+                  two, not both."
+                 (String.concat
+                    "\n"
+                    (List.map
+                       (fun d -> "  - " ^ Sol_cli_migration.drift_message d)
+                       drifted))
+                 ctx.target_name))
        | Sol_cli_migration_gate.Unavailable reason ->
          Error
            (Failed

@@ -23,6 +23,18 @@ required (db/migrations in this revision)  ⊆  applied (schema_migrations)
   (`sol_<workspace>_schema_migrations`, the table `sol migrate` writes, shortened to a
   readable prefix plus a stable hash of the full workspace name when the readable form
   would exceed PostgreSQL's 63-byte identifier limit) reports.
+- **An applied version records the checksum of the file that was applied (FEAT-094).**
+  Editing a migration that is already applied changes the file's checksum while the
+  recorded one stays as applied, so the two disagree. `sol migrate status` reports the
+  drift with both checksums and exits non-zero, `sol migrate apply` refuses to run, and
+  the production deploy gate fails before any workload moves — the applied schema record
+  and the deployable revision must describe the same migration. The remedy is to restore
+  the file, or to put the change in a new migration and apply it. A version applied
+  before checksums were recorded has no baseline, so it is reported as uncomparable
+  rather than as drift; nothing is inferred from an absent record.
+  `--json` is the exception to the exit code: it carries both checksums per migration
+  and exits zero so the deploy gate — not the reporting Job's status — owns the
+  refusal, which is what lets the deploy say *which* migration drifted.
 - Sol keeps **no second record** of "which migrations matter". A declaration in
   the target or `sol.yml` would let `db/migrations`, the deployment record and
   `schema_migrations` disagree about the schema.
@@ -70,6 +82,10 @@ direct database reachability:
 - **Satisfied** — every required version is present; the deploy continues.
 - **Unsatisfied** — the deploy fails and names the missing migrations plus the
   action: `sol migrate apply <target>`, then deploy again.
+- **Drifted** (FEAT-094) — an applied version's file no longer matches the
+  checksum it was applied with, so the deploy fails and names each migration with
+  both checksums. It is checked before the satisfied comparison and is reported
+  instead of it: the applied record itself is what the comparison would trust.
 - **Unavailable** (the Job cannot run, the DB cannot be queried, the table
   cannot be read, or the workspace's own `db/migrations` cannot be inspected —
   permission denied, or a regular file where the directory should be) — the

@@ -275,6 +275,12 @@ let test_unsatisfied () =
     (List.map M.to_string (M.unsatisfied ~required ~applied:[]))
 ;;
 
+let parse_ok msg body =
+  match M.parse_status_json body with
+  | Ok status -> status
+  | Error e -> Windtrap.fail (msg ^ ": " ^ e)
+;;
+
 let test_parse_status_json () =
   let body =
     {|{"table":"sol_pluto_schema_migrations","migrations":[{"version":1,"name":"a","applied":true,"applied_at":"2026-01-01T00:00:00Z"},{"version":2,"name":"b","applied":false,"applied_at":null}]}|}
@@ -283,9 +289,12 @@ let test_parse_status_json () =
     (Windtrap.list Windtrap.int)
     ~msg:"only the applied versions"
     [ 1 ]
-    (match M.parse_status_json body with
-     | Ok v -> v
-     | Error e -> Windtrap.fail e);
+    (parse_ok "status" body).applied;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a matching record is not drift"
+    0
+    (List.length (parse_ok "status" body).drifted);
   Windtrap.equal
     Windtrap.bool
     ~msg:"malformed input is an error"
@@ -302,17 +311,67 @@ let test_parse_status_json () =
      | Ok _ -> false)
 ;;
 
-let test_status_json_roundtrip () =
+let test_parse_status_json_reports_drift () =
   let body =
-    M.status_json ~table:"t" [ 1, "a", Some "2026-01-01T00:00:00Z"; 2, "b", None ]
+    {|{"table":"t","migrations":[{"version":1,"name":"a","applied":true,"applied_at":"2026-01-01T00:00:00Z","recorded_checksum":"aaaa","content_checksum":"bbbb"},{"version":2,"name":"b","applied":false,"recorded_checksum":null,"content_checksum":"cccc"},{"version":3,"name":"c","applied":true,"recorded_checksum":null,"content_checksum":"dddd"}]}|}
   in
+  let status = parse_ok "drift" body in
+  Windtrap.equal
+    (Windtrap.list Windtrap.int)
+    ~msg:"only the applied versions"
+    [ 1; 3 ]
+    status.applied;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"only the changed applied migration is drift"
+    [ "001_a" ]
+    (List.map
+       (fun (d : M.drift) -> Printf.sprintf "%03d_%s" d.version d.name)
+       status.drifted);
+  match status.drifted with
+  | [ d ] ->
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"names the checksum applied"
+      "aaaa"
+      d.recorded_checksum;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"names the checksum read"
+      "bbbb"
+      d.content_checksum
+  | _ -> Windtrap.fail "expected exactly one drifted migration"
+;;
+
+let test_status_json_roundtrip () =
+  let rows =
+    [ { M.version = 1
+      ; name = "a"
+      ; applied = true
+      ; applied_at = Some "2026-01-01T00:00:00Z"
+      ; recorded_checksum = Some "aaaa"
+      ; content_checksum = Some "aaaa"
+      }
+    ; { M.version = 2
+      ; name = "b"
+      ; applied = false
+      ; applied_at = None
+      ; recorded_checksum = None
+      ; content_checksum = Some "bbbb"
+      }
+    ]
+  in
+  let body = M.status_json ~table:"t" rows in
   Windtrap.equal
     (Windtrap.list Windtrap.int)
     ~msg:"the writer and reader share one encoding"
     [ 1 ]
-    (match M.parse_status_json body with
-     | Ok v -> v
-     | Error e -> Windtrap.fail e);
+    (parse_ok "round-trip" body).applied;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a consistent table has no drift"
+    0
+    (List.length (parse_ok "round-trip" body).drifted);
   Windtrap.equal
     Windtrap.bool
     ~msg:"carries the table"
@@ -481,6 +540,11 @@ let%test "prerequisite: an unreadable migrations directory is an error (BUG-082)
 
 let%test "prerequisite: unsatisfied subset" = test_unsatisfied ()
 let%test "encoding: parse status json" = test_parse_status_json ()
+
+let%test "encoding: a changed applied migration reads as drift" =
+  test_parse_status_json_reports_drift ()
+;;
+
 let%test "encoding: status json round-trip" = test_status_json_roundtrip ()
 
 let%test "connection redaction: runner error hides password" =
