@@ -44,10 +44,12 @@ aws_authority_is_declared() {
       return 1
       ;;
   esac
-  if printf '%s' "$trust" | grep -Eq '"\*"|"Service" *:'; then
-    echo "  the transport role's trust policy names a principal beyond this account's root: ${trust}" >&2
-    return 1
-  fi
+  case "$trust" in
+    *'"*"'* | *'"Service"'*)
+      echo "  the transport role's trust policy names a principal beyond this account's root: ${trust}" >&2
+      return 1
+      ;;
+  esac
   return 0
 }
 

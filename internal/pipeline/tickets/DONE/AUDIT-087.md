@@ -198,6 +198,15 @@ The review's own result was recorded on the reviewed PR (`#992`) as a `SOLDEV-RE
 comment with the three violations, since `soldev pipeline review` refuses a merged PR ("no open PR
 to review"); the marker's informational role is served by the comment plus this ticket.
 
+**One defect introduced while fixing this, caught before the PR merged.** The first version of the
+trust check tested the document with `printf '%s' "$trust" | grep -Eq …` — under `pipefail` that
+reports failure *when grep matched*, if the writer is still writing when grep exits on its first
+match (`INFRA-101`, filed the same hour from `INFRA-099`'s root cause, with four other sites
+listed). Here it would have failed **open**: a trust naming `*` could pass. The check is a `case`
+pattern instead, so there is no pipeline at all; no `| grep` remains anywhere in the files this
+change touches, and the offline test's `system:masters`, wildcard-trust and extra-principal
+scenarios fail if the pattern returns.
+
 
 ## What is still not established (recorded, not fixed)
 
