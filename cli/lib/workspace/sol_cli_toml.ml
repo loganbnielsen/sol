@@ -104,6 +104,7 @@ type t =
   ; memory : memory_quantity option
   ; env_config : (string * string) list
   ; secret_keys : string list
+  ; build_secret_keys : string list
   ; volumes : volume list
   ; rollout_strategy : rollout_strategy option
   ; ingress_host : hostname option
@@ -124,6 +125,7 @@ let empty =
   ; memory = None
   ; env_config = []
   ; secret_keys = []
+  ; build_secret_keys = []
   ; volumes = []
   ; rollout_strategy = None
   ; ingress_host = None
@@ -601,7 +603,7 @@ let schema =
         [ ( "scale"
           , Table [ "replicas", Leaf; "availability", Leaf; "cpu", Leaf; "memory", Leaf ]
           )
-        ; "env", Table [ "config", User_table; "secrets", Leaf ]
+        ; "env", Table [ "config", User_table; "secrets", Leaf; "build_secrets", Leaf ]
         ; "volumes", Volumes
         ; ( "deploy"
           , Table [ "rollout_strategy", Leaf; "ingress_host", Leaf; "ingress_path", Leaf ]
@@ -761,14 +763,38 @@ let load_result path =
                "sol.toml: [infra.env] secrets must be an array of strings, e.g. secrets \
                 = [\"KEY1\", \"KEY2\"]")
       in
+      let* build_secret_keys =
+        match Otoml.find_opt doc Otoml.get_value [ "infra"; "env"; "build_secrets" ] with
+        | None -> Ok []
+        | Some v ->
+          (try Otoml.get_array Otoml.get_string v |> Result.ok with
+           | Otoml.Type_error _ ->
+             validation_error
+               path
+               "sol.toml: [infra.env] build_secrets must be an array of strings, e.g. \
+                build_secrets = [\"BUILD_TOKEN\"]")
+      in
+      let* () =
+        match List.find_opt (fun key -> List.mem key secret_keys) build_secret_keys with
+        | None -> Ok ()
+        | Some key ->
+          validation_error
+            path
+            (Printf.sprintf
+               "sol.toml: [infra.env] %S is declared in both secrets (runtime) and \
+                build_secrets (build time); a build that can read a runtime secret is a \
+                build that can leak it, so a key must be one or the other"
+               key)
+      in
       let* () =
         if
           List.mem_assoc "SOL_ALLOW_UNVERIFIED_JWT" env_config
           || List.mem "SOL_ALLOW_UNVERIFIED_JWT" secret_keys
+          || List.mem "SOL_ALLOW_UNVERIFIED_JWT" build_secret_keys
         then
           validation_error
             path
-            "sol.toml: [infra.env] config and secrets may not set \
+            "sol.toml: [infra.env] config, secrets and build_secrets may not set \
              SOL_ALLOW_UNVERIFIED_JWT -- it allows JWT auth without signature checks, \
              and `sol up` sets it on the local cluster only"
         else Ok ()
@@ -879,6 +905,7 @@ let load_result path =
         ; memory
         ; env_config
         ; secret_keys
+        ; build_secret_keys
         ; volumes
         ; rollout_strategy
         ; ingress_host

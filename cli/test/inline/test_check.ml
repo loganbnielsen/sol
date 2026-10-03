@@ -112,7 +112,27 @@ let test_check_bad_secret_key () =
       Windtrap.bool
       ~msg:"mentions invalid secret"
       true
-      (has_msg "invalid secret key" findings))
+      (has_msg "invalid runtime secret key" findings))
+;;
+
+let test_check_bad_build_secret_key () =
+  with_tmp (fun _ ->
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    write
+      "app/payments/charge_svc/sol.toml"
+      "[infra.env]\nbuild_secrets = [\"bad-key\"]\n";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"has errors"
+      true
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the build-time scope"
+      true
+      (has_msg "invalid build-time secret key" findings))
 ;;
 
 let test_check_missing_dockerfile () =
@@ -287,6 +307,7 @@ let%test "discover: typed scan facts" =
 
 let%test "check: valid service" = test_check_valid_service ()
 let%test "check: bad secret key" = test_check_bad_secret_key ()
+let%test "check: bad build secret key" = test_check_bad_build_secret_key ()
 let%test "check: missing Dockerfile" = test_check_missing_dockerfile ()
 
 let%test "check: run_services checks only the selected set" =

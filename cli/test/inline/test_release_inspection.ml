@@ -44,6 +44,7 @@ let service
   ; image = "registry.sol.dev/acct_123/pluto/" ^ name ^ ":abc123"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DATABASE_URL", "postgres://secret" ]
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
   ; scheduled_concurrency = Sol_cli_toml.Allow

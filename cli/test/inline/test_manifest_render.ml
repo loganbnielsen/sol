@@ -148,6 +148,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/charge-svc:abc123"
   ; config = [ "APP_ENV", "staging" ]
   ; secrets = []
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
   ; scheduled_concurrency = Sol_cli_toml.Allow
@@ -181,6 +182,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/notify-worker:abc123"
   ; config = []
   ; secrets = []
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
   ; replicas = 1
@@ -210,6 +212,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/invoice-fn:abc123"
   ; config = []
   ; secrets = []
+  ; build_secret_keys = []
   ; volumes = []
   ; schedule = Some "0 9 * * 1"
   ; scheduled_concurrency = Sol_cli_toml.Allow
@@ -1217,6 +1220,46 @@ secrets = ["DATABASE_URL", "API_TOKEN"]
   let toml = load_toml path in
   Sys.remove path;
   check_bool "secret keys parsed" true (toml.secret_keys = [ "DATABASE_URL"; "API_TOKEN" ])
+;;
+
+let test_toml_build_secret_keys () =
+  let path = Filename.temp_file "sol-toml-test-" ".toml" in
+  let oc = open_out path in
+  output_string
+    oc
+    {|[infra.env]
+secrets = ["DATABASE_URL"]
+build_secrets = ["BUILD_REGISTRY_TOKEN", "OPAM_MIRROR_TOKEN"]
+|};
+  close_out oc;
+  let toml = load_toml path in
+  Sys.remove path;
+  check_bool
+    "build secret keys parsed"
+    true
+    (toml.build_secret_keys = [ "BUILD_REGISTRY_TOKEN"; "OPAM_MIRROR_TOKEN" ]);
+  check_bool "runtime keys stay separate" true (toml.secret_keys = [ "DATABASE_URL" ])
+;;
+
+let test_toml_secret_key_scope_conflict () =
+  let path = Filename.temp_file "sol-toml-test-" ".toml" in
+  let oc = open_out path in
+  output_string
+    oc
+    {|[infra.env]
+secrets = ["SHARED_KEY"]
+build_secrets = ["SHARED_KEY"]
+|};
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    assert_contains "names the key" message "SHARED_KEY";
+    assert_contains "explains the scoping" message "build_secrets"
+  | Ok _ -> Windtrap.fail "expected a key declared in both secret sets to be rejected"
+  | Error (Sol_cli_toml.Toml_syntax _) ->
+    Windtrap.fail "expected validation error, got syntax error"
 ;;
 
 let test_toml_valid_canary_rollout () =
@@ -2676,6 +2719,12 @@ let%test "escape_hatches: invalid memory quantity" = test_toml_invalid_memory_qu
 let%test "escape_hatches: invalid ingress host" = test_toml_invalid_ingress_host ()
 let%test "escape_hatches: invalid ingress path" = test_toml_invalid_ingress_path ()
 let%test "escape_hatches: secret keys from toml" = test_toml_secret_keys ()
+let%test "escape_hatches: build secret keys from toml" = test_toml_build_secret_keys ()
+
+let%test "escape_hatches: a key scoped to both secret sets is rejected" =
+  test_toml_secret_key_scope_conflict ()
+;;
+
 let%test "escape_hatches: valid canary rollout toml" = test_toml_valid_canary_rollout ()
 
 let%test "escape_hatches: valid blue-green rollout toml" =

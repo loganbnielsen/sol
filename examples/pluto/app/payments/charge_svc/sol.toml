@@ -6,6 +6,11 @@
 # memory   = "256Mi"
 
 [infra.env]
+# Runtime secrets are delivered to the running pod through <service>-secrets.
+# Build-time secrets are only *named* for whatever builds this image (a hosted
+# builder, or CI); Sol exports the names in the plan and never delivers the
+# values to the workload, so a build cannot read a runtime secret.
+build_secrets = ["BUILD_REGISTRY_TOKEN"]
 # secrets = []
 # config  = {}
 

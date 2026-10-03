@@ -6,8 +6,13 @@
 # memory   = "256Mi"
 
 [infra.env]
-# secrets = []
-# config  = {}
+# Runtime secrets are delivered to the running pod through <service>-secrets.
+# Build-time secrets are only *named* for whatever builds this image (a hosted
+# builder, or CI); Sol exports the names in the deployment plan and never
+# delivers the values to the workload.
+# secrets       = []
+# build_secrets = ["BUILD_REGISTRY_TOKEN"]
+# config        = {}
 
 [infra.rollout]
 # strategy = "canary"       # or "blue-green"

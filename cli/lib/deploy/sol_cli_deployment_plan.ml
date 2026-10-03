@@ -47,6 +47,7 @@ type service_spec =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; build_secret_keys : string list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
@@ -293,6 +294,7 @@ let to_json t =
       ; "image", `String s.image
       ; "config", `Assoc (List.map (fun (k, v) -> k, `String v) s.config)
       ; "secret_keys", `List (List.map (fun (k, _) -> `String k) s.secrets)
+      ; "build_secret_keys", `List (List.map (fun k -> `String k) s.build_secret_keys)
       ; ( "volumes"
         , `List
             (s.volumes
@@ -864,6 +866,7 @@ let of_services_result
           @ service_config
           @ List.map (fun c -> c.env_var, c.url) calls
       ; secrets = List.map (fun key -> key, "") toml.secret_keys
+      ; build_secret_keys = toml.build_secret_keys
       ; volumes = toml.volumes
       ; schedule
       ; scheduled_concurrency =

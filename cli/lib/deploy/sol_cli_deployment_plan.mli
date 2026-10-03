@@ -47,6 +47,7 @@ type service_spec =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; build_secret_keys : string list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
