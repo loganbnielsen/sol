@@ -11,6 +11,11 @@ Module-level mutable fixtures are shared by every test in a module
 
 **Depends on:** None.
 
+**Premise re-verified (2026-10-02)** against `origin/main @ f7d45074`: both values were
+still present (`cli/test/support/targets_fixture.ml:1`, and
+`framework/ocaml/sol-jobs/test/test_sol_jobs_pg.ml` still had `current_pool` read by
+`reclaim_now`).
+
 **Premise verified (2026-10-02)** against `origin/main @ 310917dd`:
 `cli/test/support/targets_fixture.ml:1` is
 `let written : (string, (string * string) list) Hashtbl.t = Hashtbl.create 8`, and
@@ -48,3 +53,29 @@ lifetime is declared rather than ambient.
 - The Postgres suite's reclaim helper receives its pool rather than reading a module-level `ref`.
 - Demo/example: not applicable — test-only change. Language parity: no application-facing contract
   change; state that in one line.
+
+## Completion (2026-10-02)
+
+Implemented on `VERIF-017/per-test-fixtures`.
+
+- `cli/test/support/targets_fixture.ml` no longer carries the module-level
+  `written` Hashtbl. `write ~target` stages each target body under
+  `sol/.targets/<target>` and renders `sol/environments.yml` from the staging
+  directory, so the accumulated state is scoped to the test's working directory
+  and disappears with it. No test call site changed.
+- `framework/ocaml/sol-jobs/test/test_sol_jobs_pg.ml` drops the module-level
+  `current_pool` ref; `reclaim_now` now takes the pool, and each stale-lease
+  handler closes over the pool its test already owns.
+- Checks: `dune build @ci-unit` — 1599 inline tests ran, 2 failures, both the
+  pre-existing `Test_scaffold` environment failure (`sol-obs` is not installed in
+  this local switch; the scaffolded workspace resolves the framework through
+  installed opam packages, which CI prepares). No fixture-related test failed.
+  `dune build @ci-integration-pg` passes (sol_jobs_pg 20, sol_outbox 7).
+  `check_ocamlformat.sh --staged` clean. The premise probe now exits 0, and
+  `rg '^let .*Hashtbl.create|= ref '` over the test trees finds no top-level
+  mutable value.
+- Remaining: functor-internal observation refs (`Job.handled`,
+  `Slow.on_handle`) are reset by the tests that read them and were outside this
+  ticket's top-level premise; they are a test seam, not per-test fixture state.
+- Demo/example: not applicable — test-only change. Language parity: no
+  application-facing contract change.
