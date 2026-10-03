@@ -86,3 +86,37 @@ Evidence: the protocol/policy boundary is unchanged; the ticket's 2026-10-02 cor
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
 (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+
+## Completion notes (2026-10-03)
+
+- **Premise verified.** On `origin/main @ 1f2e5f05`, `kafka_service_schema.ml` still held
+  the Confluent Schema Registry HTTP calls interleaved with `register_contract` and
+  `decode_message`; the protocol/policy boundary did not exist as a module.
+- **Decision — in-repo module boundary, not a standalone opam package.** The ticket's test
+  (in-tree consumer ⇒ module, external consumer ⇒ package) resolves to the module: the only
+  consumer is `kafka_service.ml` in this package, and the "second consumer" evidence
+  (`@sol/kafka`) is an independent re-derivation that does not call this module. Step 3's
+  ecosystem check found no generic OCaml Confluent Schema Registry client: `opam search
+  confluent` returns only `kafka-eio-service` itself, and `opam search schema` returns
+  Avro/JSON-schema libraries, none Confluent. No external consumer justifies a package
+  today; the boundary is reversible if one appears, which is why the in-tree split was the
+  conservative choice.
+- **Landed.** New private `confluent_registry.ml`/`.mli` holds the protocol-generic half:
+  `subject_name`, `is_subject_not_found`, the compatibility/registration response decoders,
+  `check_compatibility` (returning a typed `Compatible | Incompatible | No_schema_registered`
+  verdict), `set_subject_compatibility`, `register_schema`, `lookup_schema`, and
+  `module Wire` (the 5-byte Confluent framing). `kafka_service_schema.ml`/`.mli` is now Sol's
+  policy half built on it: `Schema.check` maps the protocol verdict to the compatibility
+  message, `Schema.check_all`, `register_contract` (FULL-compatibility first, both fatal),
+  and `decode_message`. `kafka_service.ml` re-exports the protocol pieces from
+  `Confluent_registry`; the public `Kafka_service` API is unchanged. The package spec's
+  *Package Structure* section is corrected to match.
+- **Behaviour preserved.** No ordering, fatality, error-string or wire-format change:
+  `dune build` (full project) green; `dune test framework/ocaml/kafka-eio-service/test/`
+  → 28 tests pass; `dune fmt` clean.
+- **Demo/example.** Not applicable — a private module boundary; the public
+  `kafka-eio-service` API and every example call site are unchanged.
+- **Language parity (DEC-022).** No application-facing contract change. The TS side
+  consumes the same registry protocol and wire format but does not call this OCaml module,
+  so the split neither helps nor blocks it; step 3's npm-side question belongs to the TS
+  package and is not resolved here.

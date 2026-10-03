@@ -5,12 +5,14 @@
  (modules
   kafka_service
   kafka_service_intf
+  confluent_registry
   kafka_service_http
   kafka_service_schema
   kafka_service_config
   kafka_service_dlq)
  (private_modules
   kafka_service_intf
+  confluent_registry
   kafka_service_http
   kafka_service_schema
   kafka_service_config

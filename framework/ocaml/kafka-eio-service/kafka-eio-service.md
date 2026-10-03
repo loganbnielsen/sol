@@ -20,14 +20,29 @@ and `kafka-eio-consumer` and adds:
 ```
 kafka-eio-service/
   lib/
-    kafka_service.ml   # full implementation + internal HTTP client
-    kafka_service.mli  # public API
+    kafka_service.ml            # public API: topics, producer/consumer wiring, DLQ
+    kafka_service.mli
+    kafka_service_intf.ml       # topic/message contracts, admin queries
+    kafka_service_http.ml       # generic HTTP request helper
+    confluent_registry.ml       # Confluent Schema Registry protocol: compatibility,
+                                # registration, lookup, and the 5-byte wire format
+    kafka_service_schema.ml     # Sol's policy on top: registration order/fatality,
+                                # the compatibility verdict, decode-error routing
+    kafka_service_config.ml     # environment configuration
+    kafka_service_dlq.ml        # DLQ naming and routing
   test/
     test_kafka_service.ml
 ```
 
-All HTTP client, schema registry, and admin API logic lives inside `kafka_service.ml`
-as private helpers. No extra packages beyond `yojson` and the existing Eio ecosystem.
+The modules below `kafka_service` are private; `kafka_service.ml` re-exports the
+pieces the public API needs. The split between them is the one that matters:
+`confluent_registry.ml` holds the Confluent Schema Registry protocol and the wire
+format — public, documented calls any Confluent-compatible registry implements —
+while `kafka_service_schema.ml` holds Sol's opinion on top of it (the FULL-
+compatibility-first registration order and its fatality, the compatibility
+verdict, and the decode-error policy). A second consumer of the protocol can
+build on `confluent_registry` without inheriting Sol's policy. No extra packages
+beyond `yojson`, `cstruct` and the existing Eio ecosystem.
 
 ## Message Contract
 
