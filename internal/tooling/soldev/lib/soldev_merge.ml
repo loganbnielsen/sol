@@ -387,50 +387,103 @@ let ticket_prerequisites_ready id =
          (Soldev_ticket.parse_depends content)
 ;;
 
-let target_ticket_ready = function
-  | Ticket_target (id, _) -> ticket_prerequisites_ready id
-  | Pull_request_target p ->
-    let id = ticket_id_of_branch p.pr_branch in
-    (match Soldev_ticket.find_ticket id with
-     | None -> true
-     | Some _ -> ticket_prerequisites_ready id)
+let base_ref = "origin/main"
+
+type ticket_at_base =
+  | Ticket_ready_at_base
+  | Ticket_not_ready_at_base
+  | Ticket_base_unreadable
+
+let ticket_at_base ~ref ticket_id =
+  let ref_readable =
+    Sol_process.run_shell_rc
+      ~echo:false
+      (Printf.sprintf
+         "git rev-parse --verify --quiet %s >/dev/null 2>&1"
+         (Filename.quote ref))
+    = 0
+  in
+  if not ref_readable
+  then Ticket_base_unreadable
+  else (
+    let path =
+      Printf.sprintf
+        "%s:internal/pipeline/tickets/READY_FOR_ENGINEERING/%s.md"
+        ref
+        ticket_id
+    in
+    let present =
+      Sol_process.run_shell_rc
+        ~echo:false
+        (Printf.sprintf "git cat-file -e %s >/dev/null 2>&1" (Filename.quote path))
+      = 0
+    in
+    if present then Ticket_ready_at_base else Ticket_not_ready_at_base)
+;;
+
+type ticket_gate =
+  | Ticket_gate_open
+  | Ticket_gate_prerequisites_unresolved
+  | Ticket_gate_unreadable
+
+let ticket_gate_for ticket_id =
+  match ticket_at_base ~ref:base_ref ticket_id with
+  | Ticket_not_ready_at_base -> Ticket_gate_open
+  | Ticket_ready_at_base ->
+    if ticket_prerequisites_ready ticket_id
+    then Ticket_gate_open
+    else Ticket_gate_prerequisites_unresolved
+  | Ticket_base_unreadable -> Ticket_gate_unreadable
+;;
+
+let target_ticket_gate = function
+  | Ticket_target (id, _) -> ticket_gate_for id
+  | Pull_request_target p -> ticket_gate_for (ticket_id_of_branch p.pr_branch)
 ;;
 
 type merge_refusal =
   | Ticket_prerequisites_unresolved
+  | Refused_ticket_state_unreadable
   | Refused_draft
   | Refused_no_required_checks
   | Refused_checks_unreadable
   | Refused_checks_not_green
 
-let merge_refusal ~mode ~ticket_ready ~pr_draft ~checks ~checks_configured =
-  if not ticket_ready
-  then Some Ticket_prerequisites_unresolved
-  else if pr_draft
-  then Some Refused_draft
-  else if
-    match checks_configured with
-    | Configuration_absent -> true
-    | _ -> false
-  then Some Refused_no_required_checks
-  else if
-    match checks_configured with
-    | Configuration_unreadable -> true
-    | _ -> false
-  then Some Refused_checks_unreadable
-  else if
-    (match mode with
-     | Immediate -> true
-     | Auto_merge -> false)
-    && not (checks_pass checks)
-  then Some Refused_checks_not_green
-  else None
+let merge_refusal ~mode ~ticket_gate ~pr_draft ~checks ~checks_configured =
+  match ticket_gate with
+  | Ticket_gate_prerequisites_unresolved -> Some Ticket_prerequisites_unresolved
+  | Ticket_gate_unreadable -> Some Refused_ticket_state_unreadable
+  | Ticket_gate_open ->
+    if pr_draft
+    then Some Refused_draft
+    else if
+      match checks_configured with
+      | Configuration_absent -> true
+      | _ -> false
+    then Some Refused_no_required_checks
+    else if
+      match checks_configured with
+      | Configuration_unreadable -> true
+      | _ -> false
+    then Some Refused_checks_unreadable
+    else if
+      (match mode with
+       | Immediate -> true
+       | Auto_merge -> false)
+      && not (checks_pass checks)
+    then Some Refused_checks_not_green
+    else None
 ;;
 
 let merge_refusal_message refusal pr_url =
   match refusal with
   | Ticket_prerequisites_unresolved ->
     Printf.sprintf "  ticket prerequisites unresolved — skipping (%s)" pr_url
+  | Refused_ticket_state_unreadable ->
+    Printf.sprintf
+      "  could not read %s to tell a filing PR from an implementation — skipping (%s)"
+      base_ref
+      pr_url
   | Refused_draft -> Printf.sprintf "  draft PR — skipping (%s)" pr_url
   | Refused_no_required_checks ->
     Printf.sprintf
@@ -557,16 +610,35 @@ let run_check_reverts () =
 
 let run_submit ticket_id =
   let open Result.Syntax in
-  let done_path = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Done) ticket_id in
-  let* () =
-    if Sys.file_exists done_path
-    then Ok ()
-    else
+  let* ticket_path =
+    match Soldev_ticket.find_ticket ticket_id with
+    | None ->
       Soldev_exit.error
         (Printf.sprintf
-           "error: %s not found. Run this from the ticket's worktree, after your final \
-            commit has already moved the ticket file to DONE/ on this branch."
-           done_path)
+           "error: no %s.md in \
+            internal/pipeline/tickets/{BACKLOG,READY_FOR_ENGINEERING,DONE}. Add the \
+            ticket (a filing) or finish it by moving it to DONE/ on this branch first."
+           ticket_id)
+    | Some (Soldev_ticket.Done, path) -> Ok path
+    | Some (_, path) ->
+      (match ticket_at_base ~ref:base_ref ticket_id with
+       | Ticket_not_ready_at_base -> Ok path
+       | Ticket_ready_at_base ->
+         Soldev_exit.error
+           (Printf.sprintf
+              "error: %s is READY_FOR_ENGINEERING at %s, but this branch does not move \
+               it to DONE/. Run this from the ticket's worktree after your final commit \
+               has moved the ticket file to DONE/ on this branch."
+              ticket_id
+              base_ref)
+       | Ticket_base_unreadable ->
+         Soldev_exit.error
+           (Printf.sprintf
+              "error: %s could not be read, so whether %s is a filing PR or an \
+               implementation could not be established. Fetch it (git fetch origin main) \
+               and retry."
+              base_ref
+              ticket_id))
   in
   let* branch = current_branch () in
   let* () =
@@ -588,7 +660,7 @@ let run_submit ticket_id =
       Soldev_exit.error
         (Printf.sprintf "error: git push failed for %s (exit %d)" branch rc)
   in
-  let content = read_file done_path in
+  let content = read_file ticket_path in
   let* prs = open_prs () in
   match find_pr_in prs ticket_id with
   | Some p ->
@@ -600,11 +672,10 @@ let run_submit ticket_id =
     let body =
       Printf.sprintf
         "Ticket: `%s`\n\n\
-         See `internal/pipeline/tickets/DONE/%s.md` on this branch for the full spec — \
-         it lands in `internal/pipeline/tickets/DONE/` on `main` as part of this PR's \
-         squash-merge.\n"
+         See `%s` on this branch for the full spec — it lands in \
+         `internal/pipeline/tickets/` on `main` as part of this PR's squash-merge.\n"
         ticket_id
-        ticket_id
+        ticket_path
     in
     let r =
       Sol_process.run_shell
@@ -813,7 +884,7 @@ let merge_candidates ~dry_run ~mode ~targeted targets =
          merge_refusal
            ~checks_configured:(target_checks_configuration target)
            ~mode
-           ~ticket_ready:(target_ticket_ready target)
+           ~ticket_gate:(target_ticket_gate target)
            ~pr_draft:p.pr_draft
            ~checks
        in

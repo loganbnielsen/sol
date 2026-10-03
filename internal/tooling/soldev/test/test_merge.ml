@@ -287,6 +287,16 @@ let toy_main path_const =
     path_const
 ;;
 
+let git args = Sys.command (Printf.sprintf "git %s >/dev/null 2>&1" args) = 0
+let git_ok args = check_bool (Printf.sprintf "git %s succeeds" args) true (git args)
+
+let rev_parse ref =
+  let ic = Unix.open_process_in (Printf.sprintf "git rev-parse %s 2>/dev/null" ref) in
+  let line = In_channel.input_line ic |> Option.value ~default:"" in
+  ignore (Unix.close_process_in ic);
+  String.trim line
+;;
+
 let test_merge_without_review_marker () =
   in_temp_dir (fun () ->
     let old_path = Sys.getenv "PATH" in
@@ -307,6 +317,13 @@ let test_merge_without_review_marker () =
        ---\n\n\
        A completed ticket\n\n\
        **Depends on:** None.\n";
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    write_file ".gitkeep" "";
+    git_ok "add .gitkeep";
+    git_ok "commit -qm base";
+    git_ok "update-ref refs/remotes/origin/main HEAD";
     write_file
       "gh"
       "#!/bin/sh\n\
@@ -444,6 +461,13 @@ let test_pr_target_merge_path () =
        ---\n\n\
        Not started\n\n\
        **Depends on:** None.\n";
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    git_ok "add internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-002.md";
+    git_ok "add internal/pipeline/tickets/BACKLOG/BUG-003.md";
+    git_ok "commit -qm base";
+    git_ok "update-ref refs/remotes/origin/main HEAD";
     write_file
       "gh"
       {|#!/bin/sh
@@ -574,6 +598,234 @@ esac
            (Sys.file_exists "merges" && not (containing (merges ()) " --auto"))))
 ;;
 
+let test_merge_refusal_ticket_gate () =
+  let decide ticket_gate =
+    Soldev_merge.merge_refusal
+      ~mode:Soldev_merge.Auto_merge
+      ~ticket_gate
+      ~pr_draft:false
+      ~checks:Soldev_merge.Checks_not_consulted
+      ~checks_configured:Soldev_merge.Configuration_not_consulted
+    |> Option.map (function
+      | Soldev_merge.Ticket_prerequisites_unresolved -> "unresolved"
+      | Soldev_merge.Refused_ticket_state_unreadable -> "unreadable"
+      | Soldev_merge.Refused_draft -> "draft"
+      | Soldev_merge.Refused_no_required_checks -> "no-checks"
+      | Soldev_merge.Refused_checks_unreadable -> "checks-unreadable"
+      | Soldev_merge.Refused_checks_not_green -> "not-green")
+  in
+  check_option_string
+    "an unreadable base refuses instead of guessing"
+    (Some "unreadable")
+    (decide Soldev_merge.Ticket_gate_unreadable);
+  check_option_string
+    "an unresolved prerequisite refuses"
+    (Some "unresolved")
+    (decide Soldev_merge.Ticket_gate_prerequisites_unresolved);
+  check_option_string
+    "a filing, or a resolved implementation, is not gated"
+    None
+    (decide Soldev_merge.Ticket_gate_open)
+;;
+
+let test_filing_pr_skips_the_prerequisite_gate () =
+  in_temp_dir (fun () ->
+    let old_path = Sys.getenv "PATH" in
+    let dir = Sys.getcwd () in
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/pipeline" 0o755;
+    Unix.mkdir "internal/pipeline/tickets" 0o755;
+    List.iter
+      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+    write_file
+      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-101.md"
+      "---\n\
+       id: BUG-101\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       An implementation whose dependency is not done\n\n\
+       **Depends on:** BUG-102.\n";
+    write_file
+      "internal/pipeline/tickets/BACKLOG/BUG-102.md"
+      "---\n\
+       id: BUG-102\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       Not started\n\n\
+       **Depends on:** None.\n";
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    git_ok "add internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-101.md";
+    git_ok "add internal/pipeline/tickets/BACKLOG/BUG-102.md";
+    git_ok "commit -qm base";
+    git_ok "update-ref refs/remotes/origin/main HEAD";
+    write_file
+      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-103.md"
+      "---\n\
+       id: BUG-103\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       A filing whose dependency is not done\n\n\
+       **Depends on:** BUG-102.\n";
+    write_file
+      "gh"
+      {|#!/bin/sh
+case "$1 $2" in
+"pr list") cat prs.json ;;
+"pr checks") cat checks.json ;;
+"pr merge") printf '%s\n' "$*" >> merges ;;
+"api repos/"*) printf '1' ;;
+*) exit 1 ;;
+esac
+|};
+    Unix.chmod "gh" 0o755;
+    Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+    Fun.protect
+      ~finally:(fun () -> Unix.putenv "PATH" old_path)
+      (fun () ->
+         let run branch =
+           write_file "prs.json" (pr_json ~draft:false ~branch);
+           Soldev_merge.run_merge
+             ~dry_run:false
+             ~mode:Soldev_merge.Auto_merge
+             ~ticket_filter:None
+             ~pr_target:(Some "42")
+         in
+         let merges () =
+           if Sys.file_exists "merges"
+           then In_channel.with_open_text "merges" In_channel.input_all
+           else ""
+         in
+         write_file "checks.json" {|[{"bucket":"pass"}]|};
+         let _, filing = capture_stdout (fun () -> run "BUG-103/filing") in
+         check_bool
+           "a filing PR whose new ticket declares an unresolved dependency still queues"
+           true
+           (filing = Ok () && containing (merges ()) "--auto");
+         if Sys.file_exists "merges" then Sys.remove "merges";
+         let text, implementation = capture_stdout (fun () -> run "BUG-101/impl") in
+         check_bool
+           "an implementation whose dependency is unresolved is still refused"
+           true
+           (containing text "ticket prerequisites unresolved"
+            && (match implementation with
+                | Error _ -> true
+                | Ok () -> false)
+            && not (Sys.file_exists "merges"))))
+;;
+
+let test_submit_accepts_a_filing_and_a_done_move () =
+  in_temp_dir (fun () ->
+    let old_path = Sys.getenv "PATH" in
+    let dir = Sys.getcwd () in
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/pipeline" 0o755;
+    Unix.mkdir "internal/pipeline/tickets" 0o755;
+    List.iter
+      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+    write_file
+      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-201.md"
+      "---\n\
+       id: BUG-201\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       A filing that depends on unstarted work\n\n\
+       **Depends on:** BUG-202.\n";
+    write_file
+      "internal/pipeline/tickets/BACKLOG/BUG-202.md"
+      "---\n\
+       id: BUG-202\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       Not started\n\n\
+       **Depends on:** None.\n";
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    git_ok "add internal/pipeline/tickets/BACKLOG/BUG-202.md";
+    git_ok "commit -qm base";
+    git_ok "update-ref refs/remotes/origin/main HEAD";
+    git_ok "checkout -q -b BUG-201/filing";
+    git_ok "add internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-201.md";
+    git_ok "commit -qm file";
+    git_ok "init -q --bare origin.git";
+    git_ok "remote add origin origin.git";
+    write_file
+      "gh"
+      "#!/bin/sh\n\
+       case \"$1 $2\" in\n\
+       \"pr list\") printf '[]' ;;\n\
+       \"pr create\") printf 'https://example.test/pull/9\\n' ;;\n\
+       *) exit 1 ;;\n\
+       esac\n";
+    Unix.chmod "gh" 0o755;
+    Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+    Fun.protect
+      ~finally:(fun () -> Unix.putenv "PATH" old_path)
+      (fun () ->
+         check_bool
+           "a ticket newly added by this branch submits without a DONE move"
+           true
+           (Soldev_merge.run_submit "BUG-201" = Ok ());
+         git_ok
+           "mv internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-201.md \
+            internal/pipeline/tickets/DONE/BUG-201.md";
+         git_ok "add -A internal/pipeline/tickets";
+         git_ok "commit -qm done";
+         check_bool
+           "an implementation that moves the ticket to DONE still submits"
+           true
+           (Soldev_merge.run_submit "BUG-201" = Ok ())))
+;;
+
+let test_submit_refuses_a_base_ready_ticket_left_in_ready () =
+  in_temp_dir (fun () ->
+    Unix.mkdir "internal" 0o755;
+    Unix.mkdir "internal/pipeline" 0o755;
+    Unix.mkdir "internal/pipeline/tickets" 0o755;
+    List.iter
+      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+    write_file
+      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-301.md"
+      "---\n\
+       id: BUG-301\n\
+       type: bug\n\
+       severity: low\n\
+       source: test\n\
+       ---\n\n\
+       An implementation left in READY\n\n\
+       **Depends on:** None.\n";
+    git_ok "init -q";
+    git_ok "config user.email soldev@test";
+    git_ok "config user.name soldev";
+    git_ok "add internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-301.md";
+    git_ok "commit -qm base";
+    git_ok "update-ref refs/remotes/origin/main HEAD";
+    git_ok "checkout -q -b BUG-301/impl";
+    check_bool
+      "a ticket READY at the base must be carried to DONE before submitting"
+      true
+      (match Soldev_merge.run_submit "BUG-301" with
+       | Error { Soldev_exit.message = Some message; _ } ->
+         containing message "move it to DONE"
+       | Error { Soldev_exit.message = None; _ } -> false
+       | Ok () -> false))
+;;
+
 let test_stale_binary_fails_after_rename () =
   in_temp_dir (fun () ->
     write_file "dune-project" "(lang dune 3.0)\n";
@@ -630,16 +882,6 @@ let test_post_merge_action_of_rc () =
     ~msg:"and neither is any other non-zero"
     "report:3"
     (show (Soldev_merge.post_merge_action_of_rc 3))
-;;
-
-let git args = Sys.command (Printf.sprintf "git %s >/dev/null 2>&1" args) = 0
-let git_ok args = check_bool (Printf.sprintf "git %s succeeds" args) true (git args)
-
-let rev_parse ref =
-  let ic = Unix.open_process_in (Printf.sprintf "git rev-parse %s 2>/dev/null" ref) in
-  let line = In_channel.input_line ic |> Option.value ~default:"" in
-  ignore (Unix.close_process_in ic);
-  String.trim line
 ;;
 
 let test_merge_finish_does_not_write_a_baseline_commit () =
@@ -978,6 +1220,22 @@ let () =
         ; Windtrap.test
             "queues, refuses by name, and matches the ticket path"
             test_pr_target_merge_path
+        ]
+    ; Windtrap.group
+        "filing PRs vs implementations (BUG-128)"
+        [ Windtrap.test
+            "the ticket gate is open to filings and closed to unresolved implementations"
+            test_merge_refusal_ticket_gate
+        ; Windtrap.test
+            "a filing with a dependency queues while an implementation with one is \
+             refused"
+            test_filing_pr_skips_the_prerequisite_gate
+        ; Windtrap.test
+            "submit accepts a filing and a DONE move"
+            test_submit_accepts_a_filing_and_a_done_move
+        ; Windtrap.test
+            "submit refuses a base-READY ticket left in READY"
+            test_submit_refuses_a_base_ready_ticket_left_in_ready
         ]
     ]
 ;;
