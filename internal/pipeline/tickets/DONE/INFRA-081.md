@@ -43,3 +43,31 @@ Evidence: `Sol_cli_cloud_lifecycle.preparations_eligible` still uses `List.mem a
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
 (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+
+## Completion notes (2026-10-03)
+
+**Premise re-verified.** `Sol_cli_cloud_lifecycle.preparations_eligible`
+(and `preparations_unrepresented`) compared declared addresses to state with
+`List.mem`, i.e. string equality, so a declared `aws_db_instance.postgres` never
+matched state's counted `aws_db_instance.postgres[0]`.
+
+**Fix.** Added `Sol_cli_terraform_plan.same_resource`, which strips the Terraform
+instance key from both addresses via the existing `without_instance_key` helper
+(the one FND-0058 / INFRA-079 introduced for the `Resource` matcher), and used it
+in `represented_in`, which both `preparations_eligible` and
+`preparations_unrepresented` now share. The declared form identifies the
+resource; the observed form may carry `[0]`, `[37]` or `["key"]`. The negative
+direction stays strict: a declared resource with no state instance is still
+unrepresented.
+
+**Tests.** `cli/test/inline/test_cloud_lifecycle.ml` adds three cases: a counted
+state address satisfies the declared address, a string-keyed instance does too,
+and a declared resource with no matching instance is still unrepresented. The
+inline suite runs 54 tests; the three new ones pass. Two unrelated
+scaffold-compile tests (`Test_scaffold › existing_files: scaffold actually
+compiles`, `bare fn library compiles`) fail in this fresh worktree because the
+scaffold's dev-channel opam pin is not installed locally; they are not touched by
+this change and are green under CI's `ci-unit`.
+
+**Demo/example coverage:** not applicable — cloud-lifecycle internals.
+**Language parity (DEC-022):** no application-facing change.
