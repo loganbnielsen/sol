@@ -185,3 +185,7 @@ runtime parity rows stay `FEAT-132`/`FEAT-133`.
   That predates this ticket; editing an applied migration would break `FEAT-094`'s
   checksum, so it is left alone. The new migrations carry the header and their
   downs.
+- The projection guard reads TOML through the pinned `tomli` backport, not the
+  stdlib `tomllib`: the `test` job runs on `ubuntu-22.04` (Python 3.10), which has
+  no `tomllib`. `tomli==2.2.1` is pinned in `internal/ci/requirements.txt` and
+  probed by `internal/tooling/scripts/prepare-guard-tools.sh`.

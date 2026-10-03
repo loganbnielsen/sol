@@ -1,7 +1,8 @@
 import os
 import pathlib
 import sys
-import tomllib
+
+import tomli
 
 CANONICAL = "examples/pluto/events/orders/sol.toml"
 PROJECTIONS = ("examples/pluto/events/demo_ts/sol.toml",)
@@ -19,8 +20,8 @@ def load_scope(root, relative, problems):
         problems.append(f"{relative} is missing")
         return None
     try:
-        data = tomllib.loads(path.read_text())
-    except tomllib.TOMLDecodeError as error:
+        data = tomli.loads(path.read_text())
+    except tomli.TOMLDecodeError as error:
         problems.append(f"{relative} is not valid TOML: {error}")
         return None
     language = data.get("contract", {})
