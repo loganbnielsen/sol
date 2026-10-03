@@ -5,23 +5,7 @@ type t =
   ; currency : string
   }
 
-let topic_name = Kafka_service.topic_name_exn "pluto-comms-notifications"
-
-let schema =
-  {|{
-  "type": "object",
-  "properties": {
-    "charge_id":    { "type": "string"  },
-    "customer_id":  { "type": "string"  },
-    "amount_cents": { "type": "integer" },
-    "currency":     { "type": "string"  }
-  },
-  "required": ["charge_id", "customer_id", "amount_cents", "currency"]
-}|}
-;;
-
-let partitions = 3
-let key t = Some t.charge_id
+include Comms_contract.Notification_sent
 
 let encode t =
   `Assoc
@@ -57,3 +41,5 @@ let decode = function
     Ok { charge_id; customer_id; amount_cents; currency }
   | _ -> Error "expected object"
 ;;
+
+let key t = Kafka_service.Contract.key_of_field key_field (encode t)

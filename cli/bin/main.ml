@@ -11,6 +11,7 @@ let () =
       [ Sol_cli_cmd_new.cmd
       ; Cmd_ci.cmd
       ; Cmd_check.cmd
+      ; Cmd_contract.cmd
       ; Cmd_local.cmd
       ; Cmd_plan.cmd
       ; Cmd_up.cmd

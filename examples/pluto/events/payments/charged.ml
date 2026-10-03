@@ -6,24 +6,7 @@ type t =
   ; correlation_id : string
   }
 
-let topic_name = Kafka_service.topic_name_exn "pluto-payments-charges"
-
-let schema =
-  {|{
-  "type": "object",
-  "properties": {
-    "id":             { "type": "string"  },
-    "amount_cents":   { "type": "integer" },
-    "customer_id":    { "type": "string"  },
-    "currency":       { "type": "string"  },
-    "correlation_id": { "type": "string"  }
-  },
-  "required": ["id", "amount_cents", "customer_id", "currency", "correlation_id"]
-}|}
-;;
-
-let partitions = 3
-let key t = Some t.id
+include Payments_contract.Charged
 
 let encode t =
   `Assoc
@@ -61,3 +44,5 @@ let decode = function
     Ok { id; amount_cents; customer_id; currency; correlation_id }
   | _ -> Error "expected object"
 ;;
+
+let key t = Kafka_service.Contract.key_of_field key_field (encode t)

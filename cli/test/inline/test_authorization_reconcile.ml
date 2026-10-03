@@ -56,6 +56,7 @@ let model workloads =
   ; topics = []
   ; schema_subjects = []
   ; migrations = []
+  ; events = []
   ; targets = []
   }
 ;;

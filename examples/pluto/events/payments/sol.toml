@@ -3,7 +3,7 @@
 
 [[events]]
 name = "Charged"
-topic = "{{name}}-payments-charges"
+topic = "pluto-payments-charges"
 partitions = 3
 key = "id"
 schema = '''{

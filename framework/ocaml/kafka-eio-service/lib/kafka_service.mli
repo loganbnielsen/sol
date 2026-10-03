@@ -77,6 +77,7 @@ end
 
 module Contract : sig
   val projection : (string * (module MESSAGE)) list -> Yojson.Safe.t
+  val key_of_field : string option -> Yojson.Safe.t -> string option
 end
 
 module Dlq : sig

@@ -165,6 +165,21 @@ module Contract = struct
       ; "events", `List (List.map (fun (name, m) -> event_json name m) events)
       ]
   ;;
+
+  let field_string field json =
+    match json with
+    | `Assoc fields ->
+      (match List.assoc_opt field fields with
+       | Some (`String value) -> Some value
+       | _ -> None)
+    | _ -> None
+  ;;
+
+  let key_of_field field json =
+    match field with
+    | None -> None
+    | Some field -> field_string field json
+  ;;
 end
 
 module Dlq = struct

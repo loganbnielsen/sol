@@ -3,14 +3,6 @@ type mode =
   | Apply
   | Projection
 
-type declared_event =
-  { module_name : string
-  ; topic : string
-  ; partitions : int
-  }
-
-val decode_declared_contract : string -> (declared_event list, string) result
-
 val run
   :  echo:bool
   -> workspace:string

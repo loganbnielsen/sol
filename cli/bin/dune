@@ -26,6 +26,7 @@
   cmd_ci
   cmd_destination
   cmd_check
+  cmd_contract
   cmd_local
   cmd_plan
   cmd_up

@@ -1,5 +1,3 @@
-open Result.Syntax
-
 let projection_dir ~workspace = Filename.concat workspace "contract"
 let entry_point ~workspace = Filename.concat (projection_dir ~workspace) "run"
 let has_projection ~workspace = Sys.file_exists (entry_point ~workspace)
@@ -41,86 +39,49 @@ let report ~workspace ~registry_url ~scope ~mode =
     Ok ()
 ;;
 
-type declared_event =
-  { module_name : string
-  ; topic : string
-  ; partitions : int
-  }
-
-let decode_declared_contract json : (declared_event list, string) result =
-  let* payload = Sol_cli_json.decode ~what:"the declared contract" json in
-  let* events =
-    Sol_cli_json.require
-      ~what:"the declared contract"
-      [ "events" ]
-      Sol_cli_json.list
-      payload
-  in
-  Sol_cli_result.map_list
-    (fun event ->
-       let* module_name =
-         Sol_cli_json.require
-           ~what:"a declared event"
-           [ "module" ]
-           Sol_cli_json.string
-           event
-       in
-       let* topic =
-         Sol_cli_json.require
-           ~what:"a declared event"
-           [ "topic" ]
-           Sol_cli_json.string
-           event
-       in
-       let* partitions =
-         Sol_cli_json.require
-           ~what:"a declared event"
-           [ "partitions" ]
-           Sol_cli_json.int
-           event
-       in
-       Ok { module_name; topic; partitions })
-    events
-;;
-
-let print_declared_contract events =
+let print_declared_events events =
   List.iter
-    (fun { module_name; topic; partitions } ->
-       Sol_cli_report.app "  - %s  topic %s  partitions %d\n" module_name topic partitions)
+    (fun ((dir : string), (event : Sol_cli_toml.event_decl)) ->
+       let key =
+         match event.key_field with
+         | None -> "(unkeyed)"
+         | Some field -> field
+       in
+       Sol_cli_report.app
+         "  - %s  %s  topic %s  partitions %d  key %s\n"
+         dir
+         event.name
+         event.topic
+         event.partitions
+         key)
     events
 ;;
 
 let plan_report ~workspace ~registry_url ~scope =
-  if not (has_projection ~workspace)
-  then Ok ()
-  else (
-    let registry_url = Option.value registry_url ~default:"" in
-    (match run ~echo:false ~workspace ~registry_url ~scope ~mode:Projection with
-     | Error msg ->
-       Sol_cli_report.warn "warning: could not project the declared contract: %s" msg
-     | Ok None -> ()
-     | Ok (Some json) ->
-       (match decode_declared_contract json with
-        | Ok events ->
-          Sol_cli_report.app "\nContract (declared):";
-          print_declared_contract events
-        | Error reason ->
-          Sol_cli_report.warn "warning: could not read the declared contract: %s" reason));
-    (match registry_url with
-     | "" ->
-       Sol_cli_report.app
-         "  registry: not observed (no SCHEMA_REGISTRY_URL; a private registry is only \
-          reachable from the destination, and `sol deploy` reconciles it there)\n"
-     | registry_url ->
-       (match run ~echo:false ~workspace ~registry_url ~scope ~mode:Check with
-        | Ok (Some output) ->
-          String.split_on_char '\n' output
-          |> List.iter (fun line ->
-            let line = String.trim line in
-            if line <> "" then Sol_cli_report.app "  %s" line)
-        | Ok None -> ()
-        | Error msg -> Sol_cli_report.app "  registry: not observed -- %s" msg));
-    Ok ())
+  (match Sol_cli_workspace_scan.discover_events ~root:workspace () with
+   | Error error ->
+     Sol_cli_report.warn
+       "warning: could not read the declared contract: %s"
+       (Sol_cli_toml.parse_error_to_string error)
+   | Ok [] -> ()
+   | Ok events ->
+     Sol_cli_report.app "\nContract (declared):";
+     print_declared_events events);
+  (match Option.value registry_url ~default:"" with
+   | "" ->
+     Sol_cli_report.app
+       "  registry: not observed (no SCHEMA_REGISTRY_URL; a private registry is only \
+        reachable from the destination, and `sol deploy` reconciles it there)\n"
+   | registry_url ->
+     (match run ~echo:false ~workspace ~registry_url ~scope ~mode:Check with
+      | Ok (Some output) ->
+        String.split_on_char '\n' output
+        |> List.iter (fun line ->
+          let line = String.trim line in
+          if line <> "" then Sol_cli_report.app "  %s" line)
+      | Ok None -> ()
+      | Error msg -> Sol_cli_report.app "  registry: not observed -- %s" msg));
+  Ok ()
 ;;
 
 let reconciliation_images services =

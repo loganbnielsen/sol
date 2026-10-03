@@ -129,3 +129,21 @@ unaffected.
   for exactly that.
 - `-fn`, auth, peer calls and `@sol-fab/worker`'s `on_ready` remain the matrix's other rows
   (deferred or owned elsewhere).
+
+## Reconciliation (2026-10-03) — DEC-065 keeps `contract/run`, drops its `--json` use
+
+DEC-065 made the declarative contract canonical and FEAT-116 implemented `sol plan`
+reading it directly. The disposition of the `contract/run` entry point this ticket
+introduced:
+
+- **Kept for reconciliation.** `contract/run --check` / `--apply` still runs the
+  schema-registry step, locally and as the in-destination Job, because the registry
+  client and Schema compatibility handling live with the language toolchain. The
+  OCaml and TypeScript projections continue to exist.
+- **The `--json` projection is no longer consumed by planning.** `sol plan` reads
+  `[[events]]` from the declaration, so Sol no longer executes the projection to
+  reconstruct intent (DEC-065 §5). The program's schema now comes from the generated
+  binding, so the projection and the OCaml binding derive from one source and cannot
+  drift.
+- **`has_projection` (file-presence on `contract/run`) still gates reconciliation**,
+  unchanged.

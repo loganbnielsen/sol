@@ -20,6 +20,7 @@ type t =
   ; topics : Sol_cli_plan_ids.Topic_name.t list
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; migrations : migration list
+  ; events : (string * Sol_cli_toml.event_decl) list
   ; targets : string list
   }
 
@@ -104,6 +105,10 @@ let load ~root =
     Sol_cli_workspace_scan.discover_migrations ~root ()
     |> Result.map (List.map (migration_of_file ~root))
   in
+  let* events =
+    Sol_cli_workspace_scan.discover_events ~root ()
+    |> Result.map_error Sol_cli_toml.parse_error_to_string
+  in
   Ok
     { root
     ; app_dir = Option.map (fun _ -> Filename.concat root "app") scanned
@@ -115,6 +120,7 @@ let load ~root =
     ; topics
     ; schema_subjects = Sol_cli_workspace_scan.discover_schema_subjects ~root ()
     ; migrations
+    ; events
     ; targets
     }
 ;;

@@ -106,9 +106,16 @@ let test_pluto_events_migrations_and_targets () =
     (subject_strings facts);
   Windtrap.equal
     (Windtrap.list Windtrap.string)
-    ~msg:"topics (pluto's events declare none)"
-    []
+    ~msg:"topics (from pluto's event declarations)"
+    [ "pluto-comms-notifications"; "pluto-payments-charges" ]
     (List.map Sol_cli_plan_ids.Topic_name.to_string facts.Sol_cli_workspace_model.topics);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"declared events"
+    [ "events/comms/Notification_sent"; "events/payments/Charged" ]
+    (List.map
+       (fun ((dir : string), (event : Sol_cli_toml.event_decl)) -> dir ^ "/" ^ event.name)
+       facts.Sol_cli_workspace_model.events);
   Windtrap.equal
     (Windtrap.list Windtrap.string)
     ~msg:"declared targets"

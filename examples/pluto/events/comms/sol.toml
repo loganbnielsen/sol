@@ -1,0 +1,18 @@
+# Sol event contract. This declaration is canonical: `sol contract generate`
+# writes comms_contract.ml from it, and CI fails when the two drift.
+
+[[events]]
+name = "Notification_sent"
+topic = "pluto-comms-notifications"
+partitions = 3
+key = "charge_id"
+schema = '''{
+  "type": "object",
+  "properties": {
+    "charge_id":    { "type": "string"  },
+    "customer_id":  { "type": "string"  },
+    "amount_cents": { "type": "integer" },
+    "currency":     { "type": "string"  }
+  },
+  "required": ["charge_id", "customer_id", "amount_cents", "currency"]
+}'''
