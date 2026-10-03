@@ -105,6 +105,67 @@ let test_force_overwrites () =
         "id-token: write")
 ;;
 
+let test_an_unreadable_workflow_refuses_without_force () =
+  in_temp_dir (fun () ->
+    seed_workspace ();
+    write_file (Sol_cli_ci.target_rel ^ "/filler") "not the workflow\n";
+    check_bool
+      "the target path is a directory, so reading it as a file fails"
+      true
+      (Sys.is_directory Sol_cli_ci.target_rel);
+    (match init ~force:false () with
+     | Ok _ -> Windtrap.fail "an unreadable workflow was treated as absent and written"
+     | Error message ->
+       assert_contains
+         "the refusal says the file could not be read"
+         message
+         "could not read";
+       assert_contains "the refusal names the file" message Sol_cli_ci.target_rel);
+    check_bool
+      "the unreadable path is untouched"
+      true
+      (Sys.is_directory Sol_cli_ci.target_rel);
+    let leftovers =
+      Sys.readdir (Filename.dirname Sol_cli_ci.target_rel)
+      |> Array.to_list
+      |> List.filter (fun name -> contains name ".tmp-")
+    in
+    check_bool "no temporary file was left behind" true (leftovers = []))
+;;
+
+let test_an_unreadable_workflow_refuses_even_with_force () =
+  in_temp_dir (fun () ->
+    seed_workspace ();
+    write_file (Sol_cli_ci.target_rel ^ "/filler") "not the workflow\n";
+    match init ~force:true () with
+    | Ok _ -> Windtrap.fail "an unreadable workflow was overwritten under --force"
+    | Error message ->
+      assert_contains
+        "the refusal says the file could not be read"
+        message
+        "could not read";
+      check_bool
+        "the unreadable path is untouched"
+        true
+        (Sys.is_directory Sol_cli_ci.target_rel))
+;;
+
+let test_an_unreadable_workflow_is_not_overwritten () =
+  in_temp_dir (fun () ->
+    seed_workspace ();
+    write_file Sol_cli_ci.target_rel "# hand-edited\n";
+    Unix.chmod Sol_cli_ci.target_rel 0o000;
+    let outcome = init ~force:false () in
+    Unix.chmod Sol_cli_ci.target_rel 0o644;
+    check_bool
+      "the file the process could not read is left exactly as it was"
+      true
+      (String.equal "# hand-edited\n" (read_file Sol_cli_ci.target_rel));
+    match outcome with
+    | Ok _ -> Windtrap.fail "a file that could not be read was written"
+    | Error _ -> ())
+;;
+
 let%test "ci init: writes an OIDC workflow into an existing workspace" =
   test_writes_an_oidc_workflow ()
 ;;
@@ -116,3 +177,15 @@ let%test "ci init: refuses to clobber an edited workflow" =
 ;;
 
 let%test "ci init: --force overwrites" = test_force_overwrites ()
+
+let%test "ci init: an unreadable workflow refuses even without --force" =
+  test_an_unreadable_workflow_refuses_without_force ()
+;;
+
+let%test "ci init: an unreadable workflow refuses under --force too" =
+  test_an_unreadable_workflow_refuses_even_with_force ()
+;;
+
+let%test "ci init: a workflow that cannot be read is never overwritten" =
+  test_an_unreadable_workflow_is_not_overwritten ()
+;;

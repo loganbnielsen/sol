@@ -62,7 +62,9 @@ let force_arg =
         [ "force" ]
         ~doc:
           "Overwrite an existing workflow that differs from the supported one. Without \
-           it, a differing file is left untouched and the command refuses.")
+           it, a differing file is left untouched and the command refuses. A file that \
+           exists but cannot be read refuses either way — fix its permissions or remove \
+           it, then re-run.")
 ;;
 
 let init_cmd =
