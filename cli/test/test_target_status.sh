@@ -108,24 +108,32 @@ qual:
         cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
         deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+    aws/reserved:
+      kube_context: k3d-sol-local
 EOF
 
 export SOL_HOME="$root"
 export LIFECYCLE_LOG="$tmp/lifecycle.log"
 
-run() {
-  local drift_exit="$1" cloud_health="$2"
-  shift 2
+run_case() {
+  local target="$1" drift_exit="$2" cloud_health="$3"
+  shift 3
   rm -f "$tmp/lifecycle.log"
   set +e
   output="$(
     cd "$tmp/work" &&
       XDG_DATA_HOME="$tmp/xdg" PATH="$tmp/bin:/usr/bin:/bin" \
         DRIFT_EXIT="$drift_exit" CLOUD_HEALTH="$cloud_health" \
-        "$sol" target show --target qual/aws/us-east-1 "$@" 2>&1
+        "$sol" target show --target "$target" "$@" 2>&1
   )"
   rc=$?
   set -e
+}
+
+run() {
+  local drift_exit="$1" cloud_health="$2"
+  shift 2
+  run_case qual/aws/us-east-1 "$drift_exit" "$cloud_health" "$@"
 }
 
 run 0 ok --check
@@ -167,5 +175,18 @@ else
   fail=1
 fi
 check_absent "the json run does not echo terraform either" '$ terraform' "$output"
+
+run_case qual/aws/reserved 0 ok
+check_contains "a reserved local destination is reported as a refusal" "reserved execution mode" "$(row kubernetes "$output")"
+check_absent "a reserved local destination is never reported as an unset kube_context" "names no kube_context" "$(row kubernetes "$output")"
+check_absent "the reserved context is hidden by default" "k3d-sol-local" "$output"
+
+mv "$tmp/work/sol/environments.yml" "$tmp/work/sol/environments.yml.readable"
+printf 'qual:\n  targets: [\n' >"$tmp/work/sol/environments.yml"
+run_case qual/aws/us-east-1 0 ok
+mv "$tmp/work/sol/environments.yml.readable" "$tmp/work/sol/environments.yml"
+check "an unreadable workspace fails" 1 "$rc"
+check_contains "an unreadable workspace names the read failure" "could not be read" "$output"
+check_absent "an unreadable workspace does not claim no targets are declared" "no targets found" "$output"
 
 exit "$fail"
