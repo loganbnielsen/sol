@@ -1,5 +1,8 @@
 module P = Sol_cli_port_forward
 
+let run_id = string_of_int (Unix.getpid ())
+let unique base = base ^ "-" ^ run_id
+
 let spec ?(name = "t") ?(target = "svc/a") ?(local_port = 18080) () : P.spec =
   { name; namespace = "ns"; target; local_port; remote_port = 80 }
 ;;
@@ -29,23 +32,46 @@ let write path text = Out_channel.with_open_text path (fun oc -> output_string o
 
 let hold_lock name =
   Sol_cli_state.ensure () |> Result.get_ok;
+  let ready_r, ready_w = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
+    let report message code =
+      (try
+         ignore (Unix.write_substring ready_w message 0 (String.length message));
+         Unix.close ready_w
+       with
+       | _ -> ());
+      Unix._exit code
+    in
     (try
+       Unix.close ready_r;
        ignore (Unix.setsid ());
        let fd =
          Unix.openfile (Sol_cli_state.lock_file name) [ Unix.O_RDWR; Unix.O_CREAT ] 0o600
        in
-       (match Unix.lockf fd Unix.F_TLOCK 0 with
-        | () -> ()
-        | exception Unix.Unix_error _ -> Unix._exit 2);
-       Unix.sleepf 30.;
-       Unix._exit 0
+       match Unix.lockf fd Unix.F_TLOCK 0 with
+       | () ->
+         ignore (Unix.write_substring ready_w "acquired" 0 8);
+         Unix.close ready_w;
+         Unix.sleepf 30.;
+         Unix._exit 0
+       | exception Unix.Unix_error (e, _, _) -> report (Unix.error_message e) 2
      with
-     | _ -> Unix._exit 2)
+     | e -> report (Printexc.to_string e) 2)
   | pid ->
+    Unix.close ready_w;
+    let buffer = Bytes.create 64 in
+    let got =
+      try Unix.read ready_r buffer 0 64 with
+      | Unix.Unix_error _ -> 0
+    in
+    Unix.close ready_r;
     write (Sol_cli_state.pid_file name) (string_of_int pid);
-    if not (wait_until (fun () -> P.is_running name)) then Windtrap.fail "lock not taken";
+    let message = Bytes.sub_string buffer 0 got in
+    if message <> "acquired"
+    then Windtrap.failf "the forked holder did not take the lock (%s)" message;
+    if not (P.is_running name)
+    then Windtrap.fail "the forked holder holds the lock but is_running reports it dead";
     pid
 ;;
 
@@ -57,12 +83,13 @@ let reap pid =
 
 let test_record_round_trip () =
   P.stop_all ();
-  let s = spec ~name:"round" () in
+  let name = unique "round" in
+  let s = spec ~name () in
   ok (P.write_record s);
   let recorded, unreadable = P.records () in
   Windtrap.equal Windtrap.bool ~msg:"recorded as written" true (List.mem s recorded);
   Windtrap.equal (Windtrap.list Windtrap.string) ~msg:"nothing unreadable" [] unreadable;
-  P.stop "round";
+  P.stop name;
   Windtrap.equal
     Windtrap.bool
     ~msg:"stop removes the record"
@@ -72,14 +99,15 @@ let test_record_round_trip () =
 
 let test_corrupt_record_is_reported () =
   Sol_cli_state.ensure () |> Result.get_ok;
-  write (Sol_cli_state.record_file "corrupt") "{not json";
+  let name = unique "corrupt" in
+  write (Sol_cli_state.record_file name) "{not json";
   let _, unreadable = P.records () in
   Windtrap.equal Windtrap.bool ~msg:"reported, not skipped" true (unreadable <> []);
-  Sys.remove (Sol_cli_state.record_file "corrupt")
+  Sys.remove (Sol_cli_state.record_file name)
 ;;
 
 let test_liveness_is_the_lock () =
-  let name = "live" in
+  let name = unique "live" in
   ok (P.write_record (spec ~name ()));
   Windtrap.equal Windtrap.bool ~msg:"no holder, not running" false (P.is_running name);
   let pid = hold_lock name in
@@ -94,7 +122,7 @@ let test_liveness_is_the_lock () =
 ;;
 
 let test_reused_pid_is_never_signalled () =
-  let name = "reused" in
+  let name = unique "reused" in
   ok (P.write_record (spec ~name ()));
   let bystander =
     Sol_cli_process.spawn (Sol_cli_process.cmd [ "sleep"; "30" ])
@@ -111,30 +139,32 @@ let test_reused_pid_is_never_signalled () =
 
 let test_replace_conflicting () =
   P.stop_all ();
-  let other = spec ~name:"other" ~target:"svc/old" () in
-  let same = spec ~name:"same" ~target:"svc/new" ~local_port:18081 () in
+  let other_name = unique "other" in
+  let same_name = unique "same" in
+  let other = spec ~name:other_name ~target:"svc/old" () in
+  let same = spec ~name:same_name ~target:"svc/new" ~local_port:18081 () in
   ok (P.write_record other);
   ok (P.write_record same);
-  let pid = hold_lock "other" in
+  let pid = hold_lock other_name in
   let replaced =
     P.replace_conflicting ~local_port:18080 ~namespace:"ns" ~target:"svc/new"
   in
   Windtrap.equal
     (Windtrap.list Windtrap.string)
     ~msg:"only the running forward for another target on the port"
-    [ "other" ]
+    [ other_name ]
     (List.map (fun (pf : P.spec) -> pf.name) replaced);
   Windtrap.equal
     Windtrap.bool
     ~msg:"and it was stopped"
     true
-    (wait_until (fun () -> not (P.is_running "other")));
+    (wait_until (fun () -> not (P.is_running other_name)));
   reap pid;
   P.stop_all ()
 ;;
 
 let test_dead_forward_reports_its_log () =
-  let name = "dead" in
+  let name = unique "dead" in
   write (Sol_cli_state.log_file name) "one\n\ntwo\nthree\nfour\nfive\nsix\n";
   (match P.check_alive ~name with
    | P.Alive -> Windtrap.fail "nothing holds the lock"
@@ -199,50 +229,58 @@ let test_start_and_stop_end_to_end () =
   let bin = Filename.concat (Sys.getcwd ()) "fake-kubectl-bin" in
   (try Unix.mkdir bin 0o755 with
    | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-  let marker = Filename.concat (Sys.getcwd ()) "fake-kubectl.pid" in
+  let marker =
+    Filename.concat (Sys.getcwd ()) (Printf.sprintf "fake-kubectl-%s.pid" run_id)
+  in
   write
     (Filename.concat bin "kubectl")
     (Printf.sprintf "#!/bin/sh\necho $$ > %s\nexec sleep 30\n" (Filename.quote marker));
   Unix.chmod (Filename.concat bin "kubectl") 0o755;
+  let name = unique "e2e" in
   let path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
-  Unix.putenv "PATH" (bin ^ ":" ^ path);
-  let name = "e2e" in
-  ok
-    (P.start
-       ~supervisor:(sol_binary ())
-       ~ctx:Sol_cli_kube_destination.local_context
-       (spec ~name ~local_port:18090 ()));
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"running once started"
-    true
-    (wait_until (fun () -> P.is_running name));
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"kubectl ran"
-    true
-    (wait_until (fun () -> Sys.file_exists marker));
-  let kubectl_pid =
-    int_of_string (String.trim (In_channel.with_open_text marker In_channel.input_all))
-  in
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"recorded"
-    true
-    (List.exists (fun (pf : P.spec) -> pf.name = name) (fst (P.records ())));
-  P.stop name;
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"stopped"
-    true
-    (wait_until (fun () -> not (P.is_running name)));
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"its kubectl is gone too"
-    true
-    (wait_until (fun () -> not (alive kubectl_pid)));
-  Unix.putenv "PATH" path;
-  Sys.remove marker
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" path;
+      (try Sys.remove marker with
+       | Sys_error _ -> ());
+      P.stop name)
+    (fun () ->
+       Unix.putenv "PATH" (bin ^ ":" ^ path);
+       ok
+         (P.start
+            ~supervisor:(sol_binary ())
+            ~ctx:Sol_cli_kube_destination.local_context
+            (spec ~name ~local_port:18090 ()));
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"running once started"
+         true
+         (wait_until (fun () -> P.is_running name));
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"kubectl ran"
+         true
+         (wait_until (fun () -> Sys.file_exists marker));
+       let kubectl_pid =
+         int_of_string
+           (String.trim (In_channel.with_open_text marker In_channel.input_all))
+       in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"recorded"
+         true
+         (List.exists (fun (pf : P.spec) -> pf.name = name) (fst (P.records ())));
+       P.stop name;
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"stopped"
+         true
+         (wait_until (fun () -> not (P.is_running name)));
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"its kubectl is gone too"
+         true
+         (wait_until (fun () -> not (alive kubectl_pid))))
 ;;
 
 let%test "records and liveness (REFAC-126): record round trip" = test_record_round_trip ()

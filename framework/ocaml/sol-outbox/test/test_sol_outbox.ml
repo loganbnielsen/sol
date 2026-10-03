@@ -54,6 +54,29 @@ let exec_sql pool sql =
   | Error e -> Windtrap.failf "%s: %s" sql (Pg_error.to_string e)
 ;;
 
+let connection_url url =
+  Printf.sprintf
+    "%s%soptions=-csearch_path%%3D%s"
+    url
+    (if String.contains url '?' then "&" else "?")
+    test_schema
+;;
+
+let assert_isolated pool =
+  match
+    Pg_db.find
+      pool
+      (Caqti_request.Infix.(Caqti_type.unit ->? Caqti_type.string)
+         "SELECT current_schema()")
+      ()
+  with
+  | Ok (Some schema) when schema = test_schema -> ()
+  | Ok (Some other) ->
+    Windtrap.failf "schema isolation lost: current_schema=%s, want %s" other test_schema
+  | Ok None -> Windtrap.fail "schema isolation lost: current_schema() is null"
+  | Error e -> Windtrap.failf "schema isolation check failed: %s" (Pg_error.to_string e)
+;;
+
 let with_pool f =
   match postgres_url () with
   | None ->
@@ -67,11 +90,17 @@ let with_pool f =
     Eio.Switch.run
     @@ fun sw ->
     (match
-       Pg_db.create_pool ~url ~pool_size:1 ~sw ~stdenv:(env :> Caqti_eio.stdenv) ()
+       Pg_db.create_pool
+         ~url:(connection_url url)
+         ~pool_size:1
+         ~sw
+         ~stdenv:(env :> Caqti_eio.stdenv)
+         ()
      with
      | Error e -> Windtrap.failf "pool: %s" (Pg_error.to_string e)
      | Ok pool ->
        List.iter (exec_sql pool) schema_setup;
+       assert_isolated pool;
        f env sw pool)
 ;;
 

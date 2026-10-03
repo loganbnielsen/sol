@@ -87,3 +87,49 @@ the failure mode self-describing so a re-run is not needed to distinguish "the
 code is wrong" from "the runner was unlucky". Instance A matters most: it fails a
 *required* check on a PR whose content is unrelated to the suite, which costs every
 later worker a full CI cycle to re-run.
+
+## Completion (2026-10-02)
+
+**Instance B — reproduced and eliminated.** On `origin/main @ f7d45074`,
+`dune build @ci-unit` failed `Test_port_forward › records and liveness
+(REFAC-126): replace conflicting` with `lock not taken` in 1 of 3 runs (the 10s
+`wait_until` bound, matching the CI shape). Root cause: `hold_lock`'s forked
+child makes a *single* `F_TLOCK` attempt while the parent polls `P.is_running`,
+which itself briefly takes the lock; a collision makes the child `_exit 2` and
+the parent then never sees a holder. Separately, every port-forward test used a
+fixed forward name, so the lock/pid/record files in the shared XDG state and the
+fixed `/tmp/sol-pf-<name>.log` path are shared across concurrent runs and
+worktrees. Fix: `hold_lock` synchronizes on a pipe (the child reports whether it
+took the lock, failing with the reason otherwise), every test uses a run-unique
+name, the fake-kubectl marker is unique and `PATH` is restored under
+`Fun.protect`, and the start/stop test stops the forward in a `finally`.
+Evidence: 0 port-forward failures in 5 consecutive `@ci-unit` runs (was 1/3),
+and the isolated suite passes 5/5.
+
+**A third flake found while reproducing A.** 1 of 20 `@ci-integration-pg` runs
+failed `sol_jobs_pg › long handler renews its lease` with five
+`outbox_e2e_effect` rows (the E2E fixture's kind) in its `sol_jobs` result
+alongside its own row; `public.sol_jobs` held exactly those E2E rows. The two DB
+suites isolated by a session `SET search_path` while the E2E fixture owns
+`sol_jobs` in `public`, so any loss of the session setting routes a suite at the
+shared table. Hardened: both suites now put `search_path` in the connection URL
+(`?options=-csearch_path=<schema>`, verified to reach libpq at connection time
+with the `pg-eio`/caqti stack), so every pooled connection is scoped, and each
+asserts `current_schema()` after setup so a future loss is a named failure
+rather than silent contamination. Evidence: 20/20 clean runs.
+
+**Instance A — not reproducible locally; made self-describing.** Across 40+
+`@ci-integration-pg` runs the local `sol-postgres` never restarted, was never
+OOM-killed, and never closed a connection; the failed attempt's runner logs are
+no longer retrievable because the run later succeeded. The handoff's second
+option therefore applies: a `Integration failure diagnostics` CI step now dumps
+`docker ps -a`, each container's status/exit code/`OOMKilled`/restart count and
+last 40 log lines, and runner memory whenever the integration step fails, so the
+next occurrence states whether the server died instead of costing a re-run to
+learn.
+
+- Demo/example: not applicable — test harness, CI diagnostics and test-suite
+  isolation only. Language parity (DEC-022): no application-facing contract
+  change.
+
+Moves VERIF-023 to DONE.
