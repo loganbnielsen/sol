@@ -18,10 +18,49 @@ sol_provider_rows() {
   printf '%s\n' "$out"
 }
 
-sol_providers() {
-  sol_provider_rows "$1" | cut -f1
+provider_rows_parse() {
+  local rows="$1" line name status count=0
+  PROVIDER_NAMES=()
+  PROVIDER_STATUSES=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      *$'\t'*) ;;
+      *) return 1 ;;
+    esac
+    name="${line%%$'\t'*}"
+    status="${line#*$'\t'}"
+    case "$name" in
+      '' | *' '*) return 1 ;;
+    esac
+    case "$status" in
+      present | not_applicable | not_implemented) ;;
+      *) return 1 ;;
+    esac
+    case " ${PROVIDER_NAMES[*]} " in
+      *" $name "*) return 1 ;;
+    esac
+    PROVIDER_NAMES+=("$name")
+    PROVIDER_STATUSES+=("$status")
+    count=$((count + 1))
+  done <<<"$rows"
+  [ "$count" -gt 0 ]
 }
 
-sol_provider_status() {
-  printf '%s\n' "$1" | awk -F'\t' -v n="$2" '$1 == n { print $2 }'
+provider_registered() {
+  case " ${PROVIDER_NAMES[*]} " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+provider_root_status() {
+  local i
+  for i in "${!PROVIDER_NAMES[@]}"; do
+    if [ "${PROVIDER_NAMES[$i]}" = "$1" ]; then
+      PROVIDER_ROOT_STATUS="${PROVIDER_STATUSES[$i]}"
+      return 0
+    fi
+  done
+  return 1
 }

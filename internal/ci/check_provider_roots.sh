@@ -9,11 +9,17 @@ shared="modules delivery"
 
 # shellcheck source=providers.sh
 . "$(dirname "$0")/providers.sh"
-rows="$(sol_provider_rows "$root")" || {
+
+if ! rows="$(sol_provider_rows "$root")"; then
   echo "check_provider_roots: could not read the provider list" >&2
   exit 1
-}
-providers="$(printf '%s\n' "$rows" | cut -f1)"
+fi
+
+if ! provider_rows_parse "$rows"; then
+  echo "check_provider_roots: the provider list is not a well-formed set of <name><TAB><root_status> rows; refusing to judge the root contract from it:" >&2
+  printf '%s\n' "$rows" >&2
+  exit 1
+fi
 
 if [ ! -d "$cloud" ]; then
   echo "check_provider_roots: $cloud does not exist" >&2
@@ -23,8 +29,12 @@ fi
 fail=0
 real=0
 paper=""
-for provider in $providers; do
-  status="$(sol_provider_status "$rows" "$provider")"
+for provider in "${PROVIDER_NAMES[@]}"; do
+  if ! provider_root_status "$provider"; then
+    echo "check_provider_roots: no root_status was read for $provider" >&2
+    exit 1
+  fi
+  status="$PROVIDER_ROOT_STATUS"
   if [ "$status" = "not_applicable" ]; then
     if [ -d "$cloud/$provider" ]; then
       echo "check_provider_roots: $provider owns no root by definition (root_status not_applicable), but platform/cloud/$provider/ exists" >&2
@@ -51,9 +61,10 @@ for provider in $providers; do
 done
 
 for dir in "$cloud"/*/; do
-  name="$(basename "$dir")"
+  name="${dir%/}"
+  name="${name##*/}"
   case " $shared " in *" $name "*) continue ;; esac
-  if ! printf '%s\n' $providers | grep -qx "$name"; then
+  if ! provider_registered "$name"; then
     echo "check_provider_roots: platform/cloud/$name/ is not a registered provider (Sol_cli_provider.all) and not one of: $shared" >&2
     fail=1
   fi
