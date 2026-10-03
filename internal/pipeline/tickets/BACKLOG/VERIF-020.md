@@ -53,3 +53,12 @@ exercise and record:
 - Language parity: no application-facing contract change; state that in one line.
 - Demo/example: not applicable — a qualification experiment, not an
   app-author-visible change.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires a machine with a working container runtime (this WSL2 host has no
+reachable `docker`/`k3d` daemon) and explicit authorization.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

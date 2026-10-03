@@ -25,3 +25,11 @@ Injection, log redaction, and image-layer hygiene at build time — platform wor
 - `sol.toml` distinguishes build-time from runtime secrets, and the distinction survives into the deployment plan.
 - An undeclared or mis-scoped secret fails validation, naming the service and the key.
 - `--emit-plan-to` exports declared build-time secret *names*, and no secret value appears in any emitted output.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: no `build_time`/`runtime` secret split exists in `cli/lib/workspace/sol_cli_toml.ml`; `--emit-plan-to` still exists in `cmd_deploy.ml`.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

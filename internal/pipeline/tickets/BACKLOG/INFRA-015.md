@@ -143,3 +143,16 @@ functions are serverless."
   pool.
 - Cost/scaling characteristics of the execution pool (including
   scale-to-near-zero behavior when idle) are documented.
+
+
+## Disposition (2026-10-03) — deferred (objective trigger)
+
+Trigger: larger-scale, memory-pressure, CPU-throttling, missing-request,
+dependency-contention, or high-baseline-utilization evidence that `-fn` bursts
+measurably degrade a co-deployed `-svc`. INFRA-016 found no material
+interference under its preregistered conditions, and
+`container_cpu_cfs_throttled_periods_total` produced no signal in that run, so
+the gate is explicitly not closed.
+
+Left in `BACKLOG/` against that trigger; see
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

@@ -34,3 +34,11 @@ Ingress cost and exposure were being reviewed, and Cloudflare is the obvious can
 - A written recommendation: build it, don't, or defer with a named trigger.
 - If it proceeds, the scope is the Tunnel slice plus docs, and the `edge` axis is recorded in the substrate contract.
 - The DNS-automation prerequisite and the compliance/TLS-termination question are each explicitly resolved or deferred.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: build the Cloudflare Tunnel slice (plus the Route53 DNS prerequisite), or declare edge integration out of scope for the alpha. Consequence: third-party TLS termination puts Cloudflare in the payments data path; integration is not CI-testable without account credentials.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

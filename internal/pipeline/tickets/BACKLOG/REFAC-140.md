@@ -98,3 +98,11 @@ Work through the list largest-first, skipping test files whose banners only grou
 
 - Each non-test file above is split along its seams, or its completion note says in one line why it is one thing.
 - Output and tests unchanged. Demo/example: not applicable. Language parity: no impact.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: the banner seams the ticket enumerates remain; the splitting work is unchanged in scope.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

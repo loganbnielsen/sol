@@ -78,3 +78,13 @@ become the runnable/reference example for the profile.
 
 **TypeScript parity:** The pilot uses only languages included by DEC-026; broader
 qualification remains a separately visible follow-up, never an implied claim.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires the AWS `production-single-region` matrix qualified end to end on a
+clean target, DEC-026/DEC-027 reflected in the shipped profile, and a named
+owning team with a real non-critical workload.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

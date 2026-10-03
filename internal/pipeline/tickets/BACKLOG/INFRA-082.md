@@ -57,3 +57,11 @@ rule, and FND-0055's "UNKNOWN is not ABSENT" must hold.
   with the consequence named, or reconciled by the supported path with evidence.
 - No `terraform state rm`/`import`/provider deletion outside the chosen mechanism; the preserved
   bundle stays as it is until then.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: accept stale platform state as inert bookkeeping with the unmet destroy postcondition documented, or extend the INFRA-042 "forget what provably cannot exist" rule to the absent-substrate case with an explicit evidence rule. Consequence: accepting leaves `INV-DESTROY-4` unmet; reconciling adds an explicit, reported state-truth mechanism.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

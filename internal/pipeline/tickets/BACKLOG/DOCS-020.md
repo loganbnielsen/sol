@@ -55,3 +55,11 @@ It is the same mechanical fix DOCS-017 just did, for documents nobody has report
 problem with; the guard makes it a bounded, verifiable job whenever someone wants to
 spend the cycle. It is filed rather than folded into DOCS-017 so that ticket's claim
 stays exactly as wide as the evidence behind it.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `internal/ci/always/check_framework_doc_signatures.py` MANIFEST covers only `sol-svc` and `kafka-eio-service`; the four remaining specs are uncovered.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

@@ -40,3 +40,11 @@ dependency and a behavioural re-verification of every lifecycle path.
 - [ ] Either the decision "keep hand-rolled" is recorded here with the reason and
       the ticket closed, or the core is replaced with the public
       `Sol_cli_process` API unchanged, and timeout and redaction tests still pass.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: adopt `bos`/`spawn` for `Sol_cli_process` or keep the hand-rolled Unix module. Consequence: `bos` does not cover timeouts or SEC-010 redaction, so adoption trims about half the module at the cost of a direct dependency and a behavioural re-verification of every lifecycle path.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
