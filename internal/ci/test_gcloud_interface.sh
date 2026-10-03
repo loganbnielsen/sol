@@ -39,7 +39,7 @@ fixture="$(mktemp -d)"
 trap 'rm -rf "$bin" "$fixture"' EXIT
 tools="$fixture/tools"
 mkdir -p "$tools" "$fixture/cli/lib/cloud" "$fixture/cli/lib/base" "$fixture/platform/cloud/gcp/cluster"
-for tool in bash cat git grep sed; do
+for tool in bash cat git grep sed tr; do
   ln -s "$(command -v "$tool")" "$tools/$tool"
 done
 git init -q "$fixture"
@@ -107,6 +107,66 @@ esac
 case "$(cat "$fixture/out")" in
   *"no longer exports its own KUBECONFIG"*) fail "the refusal also reports a missing KUBECONFIG export that this fixture carries" ;;
   *) echo "  [OK]   a passed --kubeconfig is refused, by name, with no invented report" ;;
+esac
+
+write_access_fn
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'printf "DEBUG root Failed to check metadata server: %%s\\n" "Name or service not known" >&2\n'
+  printf 'exit 0\n'
+} >"$tools/gcloud"
+chmod +x "$tools/gcloud"
+run_fixture && fail "a gcloud that printed non-help text was accepted as validated"
+out="$(cat "$fixture/out")"
+case "$out" in
+  *"produced no usable help (exit 0)"*) ;;
+  *) fail "non-help output was not reported as unusable help with its exit status: $(show_fixture_out)" ;;
+esac
+case "$out" in
+  *"metadata server"*) ;;
+  *) fail "the unusable-help report omitted what gcloud did print: $(show_fixture_out)" ;;
+esac
+case "$out" in
+  *"does not document"*) fail "non-help output was reported as a missing flag" ;;
+  *) echo "  [OK]   non-help output is unusable help — exit status and output named, never a missing flag" ;;
+esac
+
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'cat "%s"\n' "$help"
+  printf 'exit 1\n'
+} >"$tools/gcloud"
+chmod +x "$tools/gcloud"
+run_fixture && fail "a gcloud whose --help exited non-zero was accepted"
+out="$(cat "$fixture/out")"
+case "$out" in
+  *"produced no usable help (exit 1)"*) ;;
+  *) fail "a non-zero help exit was not reported with its exit status: $(show_fixture_out)" ;;
+esac
+case "$out" in
+  *"does not document"*) fail "a non-zero help exit was reported as a missing flag" ;;
+  *) echo "  [OK]   a non-zero help exit is reported as unusable help, never as a missing flag" ;;
+esac
+
+{
+  printf 'SYNOPSIS\n'
+  printf '    gcloud container clusters get-credentials [NAME]\n'
+  printf '      --project --impersonate-service-account --quiet\n'
+} >"$help"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'cat "%s"\n' "$help"
+} >"$tools/gcloud"
+chmod +x "$tools/gcloud"
+run_fixture && fail "usable help that lacks a required flag was accepted"
+out="$(cat "$fixture/out")"
+case "$out" in
+  *"does not document --region"*) ;;
+  *) fail "real help lacking --region did not produce the flag-absent report: $(show_fixture_out)" ;;
+esac
+case "$out" in
+  *"produced no usable help"*) fail "usable help was misreported as unreadable" ;;
+  *) echo "  [OK]   usable help that lacks a flag still fails with the flag-absent message" ;;
 esac
 
 echo "gcloud interface guard: all expectations hold."
