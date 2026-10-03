@@ -13,9 +13,11 @@ require that are `UNQUALIFIED (live)` or `BLOCKED`, never weakened.
 
 The runs that produced the LOCAL evidence are
 [`../records/2026-10-02-observability-local-qualification.md`](../records/2026-10-02-observability-local-qualification.md)
-(run 1) and
+(run 1),
 [`../records/2026-10-02-observability-run2-local.md`](../records/2026-10-02-observability-run2-local.md)
-(run 2).
+(run 2), and
+[`../records/2026-10-02-observability-run3-alert-route.md`](../records/2026-10-02-observability-run3-alert-route.md)
+(run 3).
 
 ---
 
@@ -296,9 +298,16 @@ The runs that produced the LOCAL evidence are
   (`SolTelemetryTargetDown`) and is not confused with a data-durability event
   (`alert-runbooks.md` §Telemetry).
 - **Evidence:** LOCAL for the *visibility* (the `sol status` degradation line);
-  MECHANISM for the rule (the expr exists in the platform module).
-- **Verdict:** `QUALIFIED (LOCAL)` for the surface; the alert firing/delivery is
-  `BLOCKED` (no Alertmanager, no receiver).
+  MECHANISM for the rule (the expr exists in the platform module); LOCAL for the
+  *delivery mechanism* — run 3 started a native Alertmanager 0.27.0 with a webhook
+  receiver, ran `sol alert test` (contract preflight, `--dry-run` body, live POST),
+  and observed the alert become `active` and Alertmanager deliver a firing
+  notification to the receiver. See the run-3 record.
+- **Verdict:** `QUALIFIED (LOCAL)` for the surface and for the alert delivery
+  mechanism (contract → acceptance → routing → receiver). The specific
+  `SolTelemetryTargetDown` *firing* still needs a cluster whose `monitoring`
+  scrape can go down, and the delivered-and-acknowledged-by-the-owner result is
+  HARDEN-002's operator-gated evidence.
 
 ### OB-F2 — A message a worker cannot decode is visible, diverted, and recoverable
 
@@ -400,11 +409,11 @@ The runs that produced the LOCAL evidence are
 1. A Kubernetes cluster on this host (the repository's Docker-based
    `sol local infra up`) — it would make OB-S1/S2/S4, OB-D1/D2, OB-F4 and the
    `kubectl` fallback of OB-L2 observable.
-2. An Alertmanager with a real receiver — OB-F1's firing/delivery and the
-   alert-routing contract.
+2. A cluster whose `monitoring` scrape can go down — OB-F1's specific
+   `SolTelemetryTargetDown` firing (the delivery route itself was qualified in
+   run 3 with a local Alertmanager).
 3. A cloud target — OB-M3, OB-R2, OB-O1.
-4. Any remaining LOCAL row. Run 2 closed OB-F2 (decode/DLQ), OB-L4/FND-0027,
-   OB-D1, and OB-F3's defect; the executable-without-a-cluster surface is now
-   down to the alert *route* (`sol alert test` against a local Alertmanager) and
-   re-running `Ack_and_drop` end to end. Everything else needs a substrate this
-   host does not have.
+4. Any remaining LOCAL row. Runs 2 and 3 closed OB-F2 (decode/DLQ),
+   OB-L4/FND-0027, OB-D1, OB-F3's defect, and the alert delivery route. The
+   executable-without-a-cluster surface is exhausted; what is left needs a
+   Kubernetes cluster, a cloud account, or the operator's acknowledgement.
