@@ -287,16 +287,11 @@ let test_persistent_claim_failure_ends_run () =
     | None -> Windtrap.fail "run did not report")
 ;;
 
-let current_pool = ref None
-
-let reclaim_now () =
-  match !current_pool with
-  | None -> Windtrap.fail "no pool"
-  | Some pool ->
-    exec_sql
-      pool
-      "UPDATE sol_jobs SET attempts = attempts + 1, locked_until = now() + interval '1 \
-       hour'"
+let reclaim_now pool =
+  exec_sql
+    pool
+    "UPDATE sol_jobs SET attempts = attempts + 1, locked_until = now() + interval '1 \
+     hour'"
 ;;
 
 module Slow = struct
@@ -394,11 +389,10 @@ let enqueue_slow ?dedupe_key pool =
 let test_stale_complete_is_a_no_op () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
-    current_pool := Some pool;
     enqueue_slow pool;
     (Slow.on_handle
      := fun () ->
-          reclaim_now ();
+          reclaim_now pool;
           Ok ());
     let (), err = capture_stderr (fun () -> run_slow ~max_jobs:1 env pool) in
     Windtrap.equal
@@ -419,11 +413,10 @@ let test_stale_complete_is_a_no_op () =
 let test_stale_fail_is_a_no_op () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
-    current_pool := Some pool;
     enqueue_slow pool;
     (Slow.on_handle
      := fun () ->
-          reclaim_now ();
+          reclaim_now pool;
           Error "boom");
     let retry_policy =
       { Sol_jobs.base_delay_s = 0.0
@@ -446,12 +439,11 @@ let test_stale_fail_is_a_no_op () =
 let test_stale_retry_is_a_no_op () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
-    current_pool := Some pool;
     enqueue_slow pool;
     let stop, stop_r = Eio.Promise.create () in
     (Slow.on_handle
      := fun () ->
-          reclaim_now ();
+          reclaim_now pool;
           ignore (Eio.Promise.try_resolve stop_r ());
           Error "transient");
     let (), _ = capture_stderr (fun () -> run_slow ~stop env pool) in
@@ -504,11 +496,10 @@ let test_long_handler_renews_lease () =
 let test_lost_renewal_is_logged () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
-    current_pool := Some pool;
     enqueue_slow pool;
     (Slow.on_handle
      := fun () ->
-          reclaim_now ();
+          reclaim_now pool;
           Eio.Time.sleep env#clock 0.15;
           Ok ());
     let (), err = capture_stderr (fun () -> run_slow ~lease_s:0.1 ~max_jobs:1 env pool) in

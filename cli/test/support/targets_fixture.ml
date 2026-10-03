@@ -1,5 +1,3 @@
-let written : (string, (string * string) list) Hashtbl.t = Hashtbl.create 8
-
 let indent_of line =
   let n = String.length line in
   let rec go i = if i < n && line.[i] = ' ' then go (i + 1) else i in
@@ -65,15 +63,37 @@ let render entries =
   Buffer.contents buf
 ;;
 
+let staging = "sol/.targets"
+
+let rec staged_files dir =
+  if not (Sys.file_exists dir)
+  then []
+  else if not (Sys.is_directory dir)
+  then [ dir ]
+  else
+    Sys.readdir dir
+    |> Array.to_list
+    |> List.sort String.compare
+    |> List.concat_map (fun name -> staged_files (Filename.concat dir name))
+;;
+
+let target_of_staged path =
+  let prefix = staging ^ "/" in
+  let length = String.length prefix in
+  String.sub path length (String.length path - length)
+;;
+
 let write ~target text =
-  let dir = Sys.getcwd () in
-  let entries = Option.value (Hashtbl.find_opt written dir) ~default:[] in
+  let path = Filename.concat staging target in
+  mkdir_p (Filename.dirname path);
+  let oc = open_out path in
+  output_string oc text;
+  close_out oc;
   let entries =
-    if List.mem_assoc target entries
-    then List.map (fun (t, x) -> if t = target then t, text else t, x) entries
-    else entries @ [ target, text ]
+    staged_files staging
+    |> List.map (fun path ->
+      target_of_staged path, In_channel.with_open_text path In_channel.input_all)
   in
-  Hashtbl.replace written dir entries;
   mkdir_p "sol";
   let oc = open_out "sol/environments.yml" in
   output_string oc (render entries);
