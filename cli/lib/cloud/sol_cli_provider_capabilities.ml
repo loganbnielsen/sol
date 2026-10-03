@@ -107,7 +107,6 @@ type t =
   ; guarded_addresses : string list
   ; cloud_ready_expectation : string
   ; production_qualified : bool
-  ; sol_keys : string list
   ; state_locking : string option
   ; scoped_identities : string list
   ; authorization_reconciler_field : string
@@ -801,13 +800,6 @@ let aws : t =
   ; guarded_addresses = [ "aws_db_instance.postgres" ]
   ; cloud_ready_expectation = "the EKS cluster and its EBS CSI addon are ACTIVE"
   ; production_qualified = true
-  ; sol_keys =
-      [ "state_lock_table"
-      ; "provisioner_role_arn"
-      ; "cluster_access_role_arn"
-      ; "deploy_role_arn"
-      ; "operator_role_arn"
-      ]
   ; state_locking = Some "state_lock_table"
   ; installation_zone_address = "aws_route53_zone.qualification"
   ; installation_zone_import_address = "aws_route53_zone.qualification[0]"
@@ -1012,7 +1004,6 @@ let gcp : t =
   ; cloud_ready_expectation =
       "the GKE cluster is RUNNING and the Cloud SQL instance is RUNNABLE"
   ; production_qualified = false
-  ; sol_keys = [ "provisioner_impersonator" ]
   ; state_locking = None
   ; installation_zone_address = "google_dns_managed_zone.qualification"
   ; installation_zone_import_address = "google_dns_managed_zone.qualification[0]"
@@ -1079,7 +1070,6 @@ let byo : t =
   ; guarded_addresses = []
   ; cloud_ready_expectation = "the bring-your-own cluster is reachable"
   ; production_qualified = false
-  ; sol_keys = []
   ; state_locking = None
   ; scoped_identities = []
   ; authorization_reconciler_field = ""
