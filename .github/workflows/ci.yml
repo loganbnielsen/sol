@@ -326,6 +326,19 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/gcp/test-live-qual.sh
 
+      # The publisher boundary (SEC-011, INFRA-100): Sol never builds or publishes the
+      # migration runner, so the harness that runs a checkout binary has to publish it and
+      # hand Sol a digest. These two stub docker/aws/opam and spend nothing, and they fail
+      # if a runner that is not digest-pinned can reach Sol, if the migrate step is asked to
+      # publish again, or if Sol is invoked at all when the publisher could not deliver.
+      - name: Migration-runner publisher test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/qualification/test-publish-migration-runner.sh
+
+      - name: AWS row harness test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/qualification/aws/test-live-row.sh
+
       # The observer owns the harness's structured parts: kubeconfig inspection by structure
       # and the bounded, independently-attempted failure-time capture. Its regression covers
       # the real gcloud kubeconfig shape and the failure modes that lost evidence in 15c-15g

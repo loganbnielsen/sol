@@ -98,3 +98,81 @@ of letting SEC-011 edit another stream's run procedure.
   `.github/workflows/release.yml` publishes the runner and records that digest —
   the release half of "publish and version it as part of the Sol release
   process" already exists.
+
+## Completion notes (2026-10-03)
+
+**Premise verified.** Both harnesses still ran Sol from a checkout, still passed
+`sol migrate apply <target> --registry <registry>` (a flag SEC-011 removed), and
+relied on Sol publishing the runner on the way — so neither run could reach its
+deploy step. `rg -n 'migrate apply.*--registry' internal/qualification/` named
+all three sites before this change and names none now.
+
+**One implementation of the publisher boundary, in
+`internal/qualification/publish-migration-runner.sh`.** Both harnesses call it,
+so the publisher's discipline exists once rather than twice:
+
+- it builds Sol's own `internal/tooling/release/migration-runner.Dockerfile`
+  with `SOL_RELEASE_VERSION` (or takes `--binary`), **in a build directory of its
+  own** — building into the caller's `_build` would have re-stamped the checkout's
+  dev-stamped `sol` binary, which then no longer resolves a checkout's assets and
+  would have broken the very steps the harness runs afterwards;
+- it pushes with the harness's credentials and prints **only** the pushed
+  `<image>@sha256:<64 hex>`, refusing anything else, so a moving tag cannot reach
+  Sol;
+- it refuses an empty `--version`, because the runner image must identify the Sol
+  revision it was built from.
+
+**Both harnesses publish, then hand Sol the digest.** `live-row.sh` (AWS) and
+`live-qual.sh` (GCP) publish after the workload images, export
+`SOL_MIGRATION_RUNNER_IMAGE`, and no longer pass `--registry` to `sol migrate
+apply`; `sol deploy` still gets the target's registry for the workspace's own
+images. AWS additionally creates `pluto/sol-migration-runner`, because the
+platform provisions one ECR repository per service and this artifact is Sol's
+own; GCP pushes into the Artifact Registry repository the row already uses. Each
+harness re-checks the returned reference for the digest shape before exporting
+it, so a publisher bug cannot be papered over.
+
+**Offline and adversarial verification — three suites, all stubbed, no cloud and
+no spend:**
+
+- `internal/qualification/test-publish-migration-runner.sh` — 31 assertions: the
+  push and the printed digest; a self-built binary; and the refusals for a
+  tag-only digest, a truncated digest, a failed push, a failed build, a named
+  binary that is absent, an empty version, a missing image, and a checkout
+  without the release recipe. Each refusal must print nothing on stdout.
+- `internal/qualification/aws/test-live-row.sh` — 22 assertions: the runner is
+  built from the release recipe and pushed before Sol's first step, the
+  repository is created only when absent, `sol migrate apply` carries no
+  `--registry` and does carry the digest, `sol deploy` still carries the
+  registry and the same digest, and — adversarially — a runner that resolved to
+  no digest, or a repository the publisher cannot create, fails the phase with
+  **no `sol` invocation at all**.
+- `internal/qualification/gcp/test-live-qual.sh` (extended) — 247 assertions:
+  the same shape for the GCP row, plus the adversarial case where Sol is never
+  invoked when the publisher could not deliver a digest.
+
+All three are wired into CI's `test` job beside the existing harness self-test,
+and the repo-wide comment guard passes over the new scripts.
+
+**Idempotence:** an existing runner repository is left alone; a re-run publishes
+the same tag with a new digest and hands Sol that digest, which is what the
+record should show (`RUNNER_VERSION` defaults to `sol-<git sha>` and is
+overridable, so the artifact and the revision it came from stay aligned).
+
+**Docs updated where the operator will read them:** the AWS run procedure's
+publisher step, the AWS matrix's docker prerequisite (its claim that "Sol's
+migration check shells out to `docker build`" was stale after SEC-011 — the
+publisher does, Sol does not), a new section in the GCP matrix, and both
+harnesses' own help text.
+
+**Deliberately not done:** no cloud qualification run was started, and this
+ticket claims no live evidence. It restores the harnesses' ability to reach their
+deploy steps; the runs themselves stay gated on explicit authorization
+(`HARDEN-007`).
+
+**Demo/example coverage:** not applicable — this is qualification-run procedure
+and harness code, not an app-author surface. The runnable proof is the two
+harness suites, which a reader can execute without credentials.
+
+**TypeScript parity (DEC-022):** no impact — Sol's own tooling and the harnesses;
+no framework primitive, wire format or runtime contract changed.

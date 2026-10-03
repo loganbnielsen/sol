@@ -64,7 +64,7 @@ mkdir -p "$TMP/bin"
 
 cat >"$TMP/bin/sol" <<'STUB'
 #!/usr/bin/env bash
-printf 'sol %s\n' "$*" >>"$ARGV_LOG"
+printf 'sol %s [runner=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" >>"$ARGV_LOG"
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 case "$1 $2" in
   "cloud apply")
@@ -462,9 +462,37 @@ has "and it opens with the revision the attempt ran from" "environment: work tre
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"${DOCKER_LOG:-/dev/null}"
+case "$1" in
+  inspect)
+    ref="${@: -1}"
+    if [ -n "${STUB_RUNNER_TAG_ONLY:-}" ]; then
+      printf '%s\n' "$ref"
+    else
+      printf '%s@sha256:%s\n' "$ref" "$(printf 'a%.0s' $(seq 1 64))"
+    fi
+    ;;
+esac
 exit 0
 STUB
 chmod +x "$TMP/bin/docker"
+
+cat >"$TMP/bin/opam" <<'STUB'
+#!/usr/bin/env bash
+printf 'opam %s (SOL_RELEASE_VERSION=%s)\n' "$*" "${SOL_RELEASE_VERSION:-unset}" >>"${BUILD_LOG:-/dev/null}"
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build-dir) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$out" ] || exit 1
+mkdir -p "$out/default/cli/bin"
+printf 'built by the test stub\n' >"$out/default/cli/bin/main.exe"
+chmod +x "$out/default/cli/bin/main.exe"
+exit 0
+STUB
+chmod +x "$TMP/bin/opam"
 
 printf '\nscenario: the application rows build, push, deploy and verify the transaction\n'
 mv "$TMP/bin/curl" "$TMP/bin/curl.delegation"
@@ -478,20 +506,34 @@ esac
 STUB
 chmod +x "$TMP/bin/curl"
 export DOCKER_LOG="$TMP/app-docker.argv"
+export BUILD_LOG="$TMP/app-build.argv"
 : >"$DOCKER_LOG"
-STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-ok app
+: >"$BUILD_LOG"
+STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 RUNNER_VERSION=sol-test run_case app-ok app
 mv "$TMP/bin/curl.delegation" "$TMP/bin/curl"
 is "the app phase exits 0 when every step succeeds" "$(cat "$TMP/app-ok.rc")" "0"
 has "it builds each image from that service's own Dockerfile" \
   "docker build -f app/payments/charge_svc/Dockerfile" "$DOCKER_LOG"
 has "and pushes it into the target's Artifact Registry under the workspace's name" \
   "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/charge-svc:qual-" "$DOCKER_LOG"
+has "the publisher builds the migration runner from Sol's own release recipe" \
+  "build -f $REPO/internal/tooling/release/migration-runner.Dockerfile" "$DOCKER_LOG"
+has "and pushes it to the same Artifact Registry, under Sol's own name" \
+  "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/sol-migration-runner:sol-test" \
+  "$DOCKER_LOG"
+has "the runner's build stamps the Sol revision it came from" \
+  "SOL_RELEASE_VERSION=sol-test" "$BUILD_LOG"
 has "the workspace's migrations are applied before the deploy" "migrate apply" "$TMP/app-ok.argv"
-has "and the migration Job is built from the target's registry, as the deploy is" \
-  "migrate apply qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" \
+lacks "the migrate step is no longer asked to publish a runner" \
+  "migrate apply qual/gcp/us-central1 --registry" "$TMP/app-ok.argv"
+has "Sol is handed the pushed digest instead, not a tag" \
+  "migrate apply qual/gcp/us-central1 [runner=us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/sol-migration-runner:sol-test@sha256:" \
   "$TMP/app-ok.argv"
 has "the deploy is given the target's own registry" \
   "--registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" "$TMP/app-ok.argv"
+has "and the same digest-pinned runner, which its migration check needs" \
+  "deploy qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster --image-tag qual-" \
+  "$TMP/app-ok.argv"
 has "and a tag unique to the run" "--image-tag qual-" "$TMP/app-ok.argv"
 lacks "the app target selects no profile, so the row claims none of its guarantees" "profile:" "$TARGET_FILE"
 has "the target declares the project the residue probe needs" "project_id: sol-qualification" "$TARGET_FILE"
@@ -510,6 +552,22 @@ has "the database URL is redacted, because the bundle must never carry the passw
 lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-runtime-secrets.txt"
 has "the API key the app's contract requires is accounted for" "SOL_API_KEY:" \
   "$TMP/app-ok.logs/app-runtime-secrets.txt"
+
+printf '\nscenario: adversarial — an unpublishable runner stops the run before Sol is asked to move anything\n'
+export DOCKER_LOG="$TMP/app-runner-tag.docker"
+export BUILD_LOG="$TMP/app-runner-tag.build"
+: >"$DOCKER_LOG"
+: >"$BUILD_LOG"
+STUB_RUNNER_TAG_ONLY=1 STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 RUNNER_VERSION=sol-test \
+  run_case app-runner-tag app
+[ "$(cat "$TMP/app-runner-tag.rc")" != "0" ] \
+  && ok "the app phase refuses when the pushed runner resolved to no digest" \
+  || no "the app phase refuses when the pushed runner resolved to no digest" "non-zero" "0"
+lacks "and Sol is never invoked with it" "migrate apply" "$TMP/app-runner-tag.argv"
+lacks "nor for the deploy" "deploy qual/gcp/us-central1" "$TMP/app-runner-tag.argv"
+has "the refusal names the boundary" "Sol is handed a digest, never a tag" "$TMP/app-runner-tag.out"
+has "and reports the publisher step that failed" "FAILED: runner-publish" "$TMP/app-runner-tag.out"
+present "$TMP/app-runner-tag.logs/runner-publish.log" "the publisher's own log is in the bundle"
 
 printf '\nscenario: the app phase refuses when the run has no credentials\n'
 run_case app-nocred app
