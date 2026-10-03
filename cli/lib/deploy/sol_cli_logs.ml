@@ -1,31 +1,48 @@
-let url_encode_logql s =
+let url_encode s =
   let buf = Buffer.create (String.length s * 2) in
   s
   |> String.iter (fun c ->
-    Buffer.add_string
-      buf
-      (match c with
-       | '{' -> "%7B"
-       | '}' -> "%7D"
-       | '"' -> "%22"
-       | ',' -> "%2C"
-       | '=' -> "%3D"
-       | ' ' -> "%20"
-       | '%' -> "%25"
-       | '+' -> "%2B"
-       | '&' -> "%26"
-       | '?' -> "%3F"
-       | '#' -> "%23"
-       | c -> String.make 1 c));
+    match c with
+    | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '_' | '.' | '~' ->
+      Buffer.add_char buf c
+    | c -> Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c)));
   Buffer.contents buf
 ;;
 
+let loki_datasource_uid = "loki"
+let tempo_datasource_uid = "tempo"
+
 let explore_url ~base_url ~logql =
-  let encoded = url_encode_logql logql in
+  let pane =
+    `Assoc
+      [ "datasource", `String loki_datasource_uid
+      ; "queries", `List [ `Assoc [ "refId", `String "A"; "expr", `String logql ] ]
+      ]
+  in
   Printf.sprintf
-    "%s/explore?orgId=1&left=%%7B%%22datasource%%22:%%22loki%%22,%%22queries%%22:%%5B%%7B%%22expr%%22:%%22%s%%22%%7D%%5D%%7D"
+    "%s/explore?orgId=1&left=%s"
     base_url
-    encoded
+    (url_encode (Yojson.Safe.to_string pane))
+;;
+
+let traces_explore_url ~base_url ~traceql =
+  let pane =
+    `Assoc
+      [ "datasource", `String tempo_datasource_uid
+      ; ( "queries"
+        , `List
+            [ `Assoc
+                [ "refId", `String "A"
+                ; "queryType", `String "traceql"
+                ; "query", `String traceql
+                ]
+            ] )
+      ]
+  in
+  Printf.sprintf
+    "%s/explore?orgId=1&left=%s"
+    base_url
+    (url_encode (Yojson.Safe.to_string pane))
 ;;
 
 let grafana_explore_url ~base_url ~unit =

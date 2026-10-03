@@ -116,6 +116,7 @@ The scope is the positional (omitted means the workspace); `--target` selects th
 | `sol open infra` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the target-scoped infrastructure view |
 | `sol open logs` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana Explore logs view. |
 | `sol open metrics` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana metrics dashboard. |
+| `sol open traces` | SCOPE | `--base-domain=DOMAIN`, `--grafana-base-url=URL`, `--links`, `--observability-backend=BACKEND`, `--target=ENV/PROVIDER/REGION` | documented | Open (or print) the Grafana Explore traces view, |
 | `sol status` | SCOPE | `--base-domain=DOMAIN`, `--loki-base-url=URL`, `--observability-backend=BACKEND`, `--prometheus-base-url=URL`, `--target=ENV/PROVIDER/REGION` | documented | Show workspace/domain/service health and observability |
 | `sol up` | — | `--confirm-group-change`, `--dry-run`, `--keep-releases=N`, `--scope=DOMAIN[/UNIT]`, `--tag=TAG` | documented | Build images, synthesize k8s manifests, and deploy to the |
 <!-- END GENERATED: scope -->

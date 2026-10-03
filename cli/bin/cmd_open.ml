@@ -6,6 +6,7 @@ let try_open_browser url =
 
 let kind_label = function
   | Sol_cli_open.Logs -> "Grafana logs"
+  | Sol_cli_open.Traces -> "Grafana traces"
   | Sol_cli_open.Metrics -> "Grafana metrics"
   | Sol_cli_open.Dashboard -> "Grafana dashboard"
   | Sol_cli_open.Infra -> "Grafana infrastructure"
@@ -101,11 +102,17 @@ let cmd =
   Cmd.group
     (Cmd.info
        "open"
-       ~doc:"Open Grafana logs, metrics, dashboard, or target-infrastructure views.")
+       ~doc:
+         "Open Grafana logs, traces, metrics, dashboard, or target-infrastructure views.")
     [ make_subcmd
         "logs"
         Sol_cli_open.Logs
         "Open (or print) the Grafana Explore logs view."
+    ; make_subcmd
+        "traces"
+        Sol_cli_open.Traces
+        "Open (or print) the Grafana Explore traces view, scoped by the workload \
+         identity the spans carry (workspace, domain and the unit's service name)."
     ; make_subcmd
         "metrics"
         Sol_cli_open.Metrics

@@ -1115,6 +1115,28 @@ resolution, panel data under a cluster scrape, the deploy → rollback → recov
 account (`self_hosted_durable`, `external`, managed-resource dashboards, retention/durability), and
 the delivered-and-acknowledged alert. **Nothing is `LIVE`.**
 
+## Observability run 5 — the `sol open traces` view (2026-10-02, `OBS-045`)
+
+Qualifies OB-T4 and fixes a defect the other runs' method missed. Record:
+[`2026-10-02-observability-run5-traces.md`](../qualification/records/2026-10-02-observability-run5-traces.md).
+
+| Row | Before | After |
+|---|---|---|
+| OB-T4 traces CLI surface | `UNQUALIFIED` (documented gap) | `QUALIFIED (LOCAL)` — `sol open traces [SCOPE]` builds a TraceQL query over `resource.workspace`/`resource.domain`/`resource.service`; workspace/domain/unit resolve, a cross-unit trace appears under both units, a foreign unit returns 0. `self_hosted_durable`/`external` resolve or explain; `resource/<type>` says there is no view |
+| OB-L1 `sol logs` URL | `QUALIFIED` (URL string + proxy) | still `QUALIFIED`, now with a pane Grafana can actually parse |
+
+**Defect found and fixed:** the shared Grafana Explore URL builder percent-encoded the query's inner
+quotes once, so the decoded `left=` pane was **invalid JSON** — `sol open logs` and the new traces
+view both opened a pane Grafana cannot parse. Fixed by JSON-encoding the pane (`\"` inside values)
+and percent-encoding the whole thing; `cli/test/inline/test_open.ml` now decodes the pane and asserts
+it round-trips for both logs and traces. Runs 1–4 verified the URL *string* and the datasource
+proxy but never parsed the pane — the method gap that let this ship.
+
+Still substrate- or operator-gated: the deployed two-`SOL_DOMAIN` crossing trace (two units'
+ConfigMaps), plus everything run 4 listed. **Nothing is `LIVE`.** `OBS-051` keeps the TypeScript
+verdict: TS units do not yet carry the `resource.*` attributes the traces query selects.
+
+
 
 
 

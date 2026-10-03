@@ -3,7 +3,7 @@
 The executable contract for the observability workstream
 (`README.md`). Each row is one claim Sol makes about observability or
 diagnosis, the evidence class the claim needs, and where it stands on
-**2026-10-02** (`main @ 2a2c5a7c`, updated after runs 2–4). Verdicts are
+**2026-10-02** (`main @ 2a2c5a7c`, updated after runs 2–5). Verdicts are
 `QUALIFIED`, `UNQUALIFIED`, `DEFECT` (established wrong), or `BLOCKED` (an
 external input is required).
 
@@ -18,9 +18,11 @@ The runs that produced the LOCAL evidence are
 [`../records/2026-10-02-observability-run2-local.md`](../records/2026-10-02-observability-run2-local.md)
 (run 2),
 [`../records/2026-10-02-observability-run3-alert-route.md`](../records/2026-10-02-observability-run3-alert-route.md)
-(run 3), and
+(run 3),
 [`../records/2026-10-02-observability-run4-local.md`](../records/2026-10-02-observability-run4-local.md)
-(run 4, `OBS-050`/`BUG-122` re-qualification and the `sol check` exit cases).
+(run 4, `OBS-050`/`BUG-122` re-qualification and the `sol check` exit cases), and
+[`../records/2026-10-02-observability-run5-traces.md`](../records/2026-10-02-observability-run5-traces.md)
+(run 5, `OBS-045`'s traces view).
 
 ---
 
@@ -195,12 +197,28 @@ The runs that produced the LOCAL evidence are
 
 ### OB-T4 — There is a CLI surface for traces
 
-- **Claim:** none — the design doc says traces have no CLI surface yet; OBS-045
-  owns `sol open traces`.
-- **Evidence:** MODELED (the command is absent from `sol open`).
-- **Verdict:** `UNQUALIFIED` (documented gap). `OBS-045`'s `Decision Required`
-  was resolved by `DEC-064` (option A, which `OBS-050` implements), so the
-  ticket is promoted to `READY_FOR_ENGINEERING` with `Depends on: OBS-050`.
+- **Claim:** `sol open traces [SCOPE]` opens (or, with `--links`, prints) a Grafana
+  Explore view whose Tempo query selects the scope over the identity Sol emits.
+- **Evidence:** LOCAL — run 5. `sol open traces` builds a TraceQL query over
+  `resource.workspace`/`resource.domain`/`resource.service` (the attributes
+  `OBS-050` puts on every span). Each pane decodes to valid JSON naming the
+  `tempo` datasource with `queryType: traceql`, and executing each query through
+  Grafana's Tempo datasource proxy returned the right traces: workspace 6,
+  domain 3, unit `order-svc` 3, unit `fulfillment-worker` **the same 3** (a
+  cross-unit trace appears under both), a foreign unit 0. `self_hosted_durable`
+  and `external` resolve or explain, never a broken link; `resource/<type>` has
+  no traces view and says so. Run 5 also found and fixed an invalid-JSON pane in
+  the shared Grafana URL builder, which affected the shipped `sol open logs`.
+- **Verdict:** `QUALIFIED (LOCAL)`. History: `UNQUALIFIED` (documented gap) →
+  `OBS-045` → qualified.
+- **Failure walk:**
+  - *Symptom:* a trace cannot be reached from the CLI, or the URL opens an empty
+    Explore pane.
+  - *Detection:* `sol open traces <scope> --links`; the pane's query.
+  - *Investigation:* decode the `left=` pane and run its query against Tempo.
+  - *Cause:* the view was absent; the pane builder also single-encoded the query's
+    quotes, so the JSON was invalid.
+  - *Recovery:* `OBS-045`; the deployed two-`SOL_DOMAIN` trace remains `LIVE`.
 
 ## D. Dashboards
 
@@ -419,7 +437,8 @@ The runs that produced the LOCAL evidence are
 | An unreachable cluster is reported as "not deployed" | OB-S3 | medium | LOCAL | `BUG-121` | fixed, `DONE` (#925) |
 | `SolKafkaConsumerLagHigh` uses a metric Redpanda does not expose, and annotation labels that do not exist | OB-F3 | medium | LOCAL | `BUG-122` | fixed, `DONE` (#944); re-verified run 4 |
 | Traces carry no Sol taxonomy identity | OB-T3 | medium | LOCAL | `OBS-050` | fixed (PR #961); re-verified `QUALIFIED (LOCAL)` in run 4 |
-| `sol check` returns 1 for a failed check and crashes on an unreadable `sol.yml` | OB-S5 | medium | LOCAL | `BUG-124` | filed `READY_FOR_ENGINEERING`; fix on `BUG-124/sol-check-exit-vocabulary` |
+| `sol check` returns 1 for a failed check and crashes on an unreadable `sol.yml` | OB-S5 | medium | LOCAL | `BUG-124` | fixed, `DONE` (#971) |
+| The Grafana Explore `left` pane is invalid JSON after one URL-decode (quotes single-encoded), so `sol open logs` and the new traces view open a broken pane | OB-L1/OB-T4 | medium | LOCAL | — (found by `OBS-045`) | fixed in `OBS-045`; URL-pane round-trip test added |
 | FND-0027 malformed-response silent drop | OB-L4 | — | LOCAL | — | `SUPERSEDED` (parser rewritten; fails closed) |
 
 ## What would move the most rows
@@ -428,14 +447,15 @@ The runs that produced the LOCAL evidence are
    `sol local infra up`) — it would make OB-S1/S2/S4, OB-D1/D2, OB-F4 and the
    `kubectl` fallback of OB-L2 observable, and it is what makes the `SOL_*`
    identity a manifest-injected pod fact rather than a manually-set process
-   environment (OB-T3's deployed half).
+   environment (OB-T3's deployed half, and the two-domain crossing trace for
+   OB-T4).
 2. A cluster whose `monitoring` scrape can go down — OB-F1's specific
    `SolTelemetryTargetDown` firing (the delivery route itself was qualified in
    run 3 with a local Alertmanager).
 3. A cloud target — OB-M3, OB-R2, OB-O1.
-4. Any remaining LOCAL row. Runs 2–4 closed OB-F2 (decode/DLQ), OB-L4/FND-0027,
-   OB-D1, OB-F3 (defect fixed), OB-T3, and the alert delivery route, and filed
-   BUG-124 from the `sol check` exit cases. The executable-without-a-cluster
+4. Any remaining LOCAL row. Runs 2–5 closed OB-F2 (decode/DLQ), OB-L4/FND-0027,
+   OB-D1, OB-F3 (defect fixed), OB-T3, OB-T4, and the alert delivery route, and
+   filed BUG-124 from the `sol check` exit cases. The executable-without-a-cluster
    surface is exhausted; what is left needs a Kubernetes cluster, a cloud
    account, or the operator's acknowledgement.
 
@@ -455,6 +475,9 @@ target) must observe each of them; a row stays `UNQUALIFIED` until then.
 - OB-T3 (deployed half) — a pod whose `<name>-env` ConfigMap supplied `SOL_*`
   (not a manually-set process environment); its trace resource carries the six
   and its `service` equals the pod label.
+- OB-T4 (deployed half) — a single trace whose spans carry two different
+  `resource.domain` values (two units, each with its own ConfigMap) resolving
+  under both units' `sol open traces` queries.
 - OB-D1/OB-D2 — dashboard panel data under the cluster's scrape labels, and a
   panel that reads its authoritative source.
 - OB-S1 — workload health derived from Kubernetes (`ready`, `unhealthy` with the

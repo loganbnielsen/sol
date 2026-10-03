@@ -42,9 +42,10 @@ labels `sol status` accepts, and `--links` prints the URL for the same view
 `sol open` would open.
 
 Two capabilities are not in all three yet, and they carry their owner rather than
-leaving the gap implied: **traces have no CLI surface** — `sol open` covers `logs`,
-`metrics` and `dashboard` today, and OBS-045 owns the traces entry point — and
-**alerts are not exposed per scope** (FEAT-092).
+leaving the gap implied: **alerts are not exposed per scope** (FEAT-092). Traces
+now do: `sol open traces [SCOPE]` (OBS-045) builds a TraceQL query over the
+`workspace`/`domain`/`service` resource attributes the instrumentation emits, so
+the trace view resolves the same identity the logs and dashboard views do.
 
 ## Goals
 
@@ -203,6 +204,7 @@ Observability
 
 Open
   logs       sol open logs
+  traces     sol open traces
   metrics    sol open metrics
   dashboard  sol open dashboard
 ```
@@ -223,6 +225,7 @@ Observability
 
 Open
   logs       sol open logs payments
+  traces     sol open traces payments
   metrics    sol open metrics payments
   dashboard  sol open dashboard payments
 ```
@@ -239,6 +242,7 @@ Observability
 
 Open
   logs       sol open logs payments/charge-svc
+  traces     sol open traces payments/charge-svc
   metrics    sol open metrics payments/charge-svc
   dashboard  sol open dashboard payments/charge-svc
 ```

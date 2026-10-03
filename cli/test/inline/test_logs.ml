@@ -2,65 +2,59 @@ let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expec
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
 let test_encode_braces () =
-  check_string "braces encoded" "%7Bfoo%7D" (Sol_cli_logs.url_encode_logql "{foo}")
+  check_string "braces encoded" "%7Bfoo%7D" (Sol_cli_logs.url_encode "{foo}")
 ;;
 
 let test_encode_equals () =
-  check_string "equals encoded" "a%3Db" (Sol_cli_logs.url_encode_logql "a=b")
+  check_string "equals encoded" "a%3Db" (Sol_cli_logs.url_encode "a=b")
 ;;
 
 let test_encode_double_quote () =
-  check_string
-    "double-quote encoded"
-    "%22hello%22"
-    (Sol_cli_logs.url_encode_logql {|"hello"|})
+  check_string "double-quote encoded" "%22hello%22" (Sol_cli_logs.url_encode {|"hello"|})
 ;;
 
 let test_encode_comma () =
-  check_string "comma encoded" "a%2Cb" (Sol_cli_logs.url_encode_logql "a,b")
+  check_string "comma encoded" "a%2Cb" (Sol_cli_logs.url_encode "a,b")
 ;;
 
 let test_encode_space () =
-  check_string
-    "space encoded"
-    "hello%20world"
-    (Sol_cli_logs.url_encode_logql "hello world")
+  check_string "space encoded" "hello%20world" (Sol_cli_logs.url_encode "hello world")
 ;;
 
 let test_encode_plain_chars () =
   check_string
     "plain alphanum unchanged"
     "abcXYZ0123"
-    (Sol_cli_logs.url_encode_logql "abcXYZ0123")
+    (Sol_cli_logs.url_encode "abcXYZ0123")
 ;;
 
 let test_encode_percent () =
   check_string
     "percent encoded (a raw % would look like a malformed escape to a URL parser)"
     "50%25"
-    (Sol_cli_logs.url_encode_logql "50%")
+    (Sol_cli_logs.url_encode "50%")
 ;;
 
 let test_encode_plus () =
-  check_string "plus encoded" "a%2Bb" (Sol_cli_logs.url_encode_logql "a+b")
+  check_string "plus encoded" "a%2Bb" (Sol_cli_logs.url_encode "a+b")
 ;;
 
 let test_encode_ampersand () =
   check_string
     "ampersand encoded (unescaped would start a new query param)"
     "a%26b"
-    (Sol_cli_logs.url_encode_logql "a&b")
+    (Sol_cli_logs.url_encode "a&b")
 ;;
 
 let test_encode_question_mark () =
-  check_string "question mark encoded" "a%3Fb" (Sol_cli_logs.url_encode_logql "a?b")
+  check_string "question mark encoded" "a%3Fb" (Sol_cli_logs.url_encode "a?b")
 ;;
 
 let test_encode_hash () =
   check_string
     "hash encoded (unescaped would start a URL fragment)"
     "a%23b"
-    (Sol_cli_logs.url_encode_logql "a#b")
+    (Sol_cli_logs.url_encode "a#b")
 ;;
 
 let make_unit ?(workspace = "acme") ?(domain = "payments") ?(service = "charge-svc") () =
@@ -256,17 +250,17 @@ let test_release_query_scoped_selector_narrows_to_the_unit () =
   | _ -> Windtrap.fail "expected Release_logs"
 ;;
 
-let%test "url_encode_logql: braces" = test_encode_braces ()
-let%test "url_encode_logql: equals" = test_encode_equals ()
-let%test "url_encode_logql: double-quote" = test_encode_double_quote ()
-let%test "url_encode_logql: comma" = test_encode_comma ()
-let%test "url_encode_logql: space" = test_encode_space ()
-let%test "url_encode_logql: plain chars" = test_encode_plain_chars ()
-let%test "url_encode_logql: percent" = test_encode_percent ()
-let%test "url_encode_logql: plus" = test_encode_plus ()
-let%test "url_encode_logql: ampersand" = test_encode_ampersand ()
-let%test "url_encode_logql: question mark" = test_encode_question_mark ()
-let%test "url_encode_logql: hash" = test_encode_hash ()
+let%test "url_encode: braces" = test_encode_braces ()
+let%test "url_encode: equals" = test_encode_equals ()
+let%test "url_encode: double-quote" = test_encode_double_quote ()
+let%test "url_encode: comma" = test_encode_comma ()
+let%test "url_encode: space" = test_encode_space ()
+let%test "url_encode: plain chars" = test_encode_plain_chars ()
+let%test "url_encode: percent" = test_encode_percent ()
+let%test "url_encode: plus" = test_encode_plus ()
+let%test "url_encode: ampersand" = test_encode_ampersand ()
+let%test "url_encode: question mark" = test_encode_question_mark ()
+let%test "url_encode: hash" = test_encode_hash ()
 let%test "grafana_explore_url: contains base_url" = test_url_contains_base_url ()
 
 let%test "grafana_explore_url: contains service selector" =

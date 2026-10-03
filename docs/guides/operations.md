@@ -145,6 +145,7 @@ cluster and the provider about a deployed environment — are **Target** (`DEVEL
 sol open dashboard                      # the workspace/services dashboard
 sol open metrics payments               # one domain's metrics
 sol open logs payments/checkout-svc     # Explore logs for one unit
+sol open traces payments/checkout-svc   # Explore traces for one unit
 ```
 
 `sol open` resolves the Grafana URL for the selected backend and the scope, and either
@@ -171,8 +172,12 @@ navigates to the right source rather than pretending they are one store, and it 
 to plain Grafana and Explore. It needs `--target` and takes no scope: `sol open infra
 payments` is an error naming the view as target-scoped, not a wider query.
 
-**Target behaviour.** `sol open traces` is **Target** (`OBS-045`) — traces are the one
-operational signal with no CLI surface yet.
+**Traces.** `sol open traces [SCOPE]` (`OBS-045`) opens a Grafana Explore URL whose
+Tempo TraceQL query selects `resource.workspace`, `resource.domain` and
+`resource.service` — exactly the identity Sol's instrumentation stamps on every
+span (`DEC-064`). A unit scope returns that unit's traces, and a trace crossing a
+domain boundary appears under both units. Managed-resource scope has no traces
+view, and the command says so rather than opening an empty one.
 
 ## 7. Destroy an environment
 

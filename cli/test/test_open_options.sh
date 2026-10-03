@@ -25,18 +25,18 @@ check_contains() {
   esac
 }
 
-mkdir -p "$tmp/sol"
-cat >"$tmp/sol/environments.yml" <<'EOF'
+mkdir -p "$tmp/ws/sol"
+cat >"$tmp/ws/sol/environments.yml" <<'EOF'
 prod:
   targets:
     aws/us-east-1:
       kube_context: prod-us-east-1
 EOF
-touch "$tmp/sol.yml"
+touch "$tmp/ws/sol.yml"
 
 run() {
   set +e
-  output="$(cd "$tmp" && "$sol" "$@" 2>&1)"
+  output="$(cd "$tmp/ws" && "$sol" "$@" 2>&1)"
   rc=$?
   set -e
 }
@@ -57,6 +57,22 @@ check_contains "and overrides the resolved URL" "http://grafana.example.test:300
 
 run open logs --links --observability-backend local
 check "the logs view takes the same destination flags" 0 "$rc"
+
+run open logs payments/charge_svc --links
+check "the logs view takes a unit scope" 0 "$rc"
+check_contains "and selects the unit's labels" "%7Bworkspace%3D%5C%22ws%5C%22" "$output"
+
+run open traces --links --observability-backend local
+check "the traces view takes the same destination flags" 0 "$rc"
+check_contains "and builds a Tempo TraceQL query" "%22queryType%22%3A%22traceql%22" "$output"
+
+run open traces payments/charge_svc --links
+check "the traces view takes a unit scope" 0 "$rc"
+check_contains "and scopes the query to the unit's service name" "resource.service" "$output"
+
+run open traces resource/rds/postgres --links
+check "the traces view has no managed-resource view" 1 "$rc"
+check_contains "and says so" "no traces view" "$output"
 
 run open dashboard --links --loki-base-url http://loki.example.test:3100
 check "an unused Loki flag is refused" 124 "$rc"

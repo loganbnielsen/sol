@@ -15,6 +15,47 @@ let err_msg = function
   | Error msg -> msg
 ;;
 
+let percent_decode s =
+  let hex c =
+    match c with
+    | '0' .. '9' -> Char.code c - Char.code '0'
+    | 'a' .. 'f' -> Char.code c - Char.code 'a' + 10
+    | 'A' .. 'F' -> Char.code c - Char.code 'A' + 10
+    | _ -> -1
+  in
+  let buf = Buffer.create (String.length s) in
+  let n = String.length s in
+  let rec go i =
+    if i < n
+    then
+      if s.[i] = '%' && i + 2 < n && hex s.[i + 1] >= 0 && hex s.[i + 2] >= 0
+      then (
+        Buffer.add_char buf (Char.chr ((hex s.[i + 1] * 16) + hex s.[i + 2]));
+        go (i + 3))
+      else (
+        Buffer.add_char buf s.[i];
+        go (i + 1))
+  in
+  go 0;
+  Buffer.contents buf
+;;
+
+let grafana_pane url =
+  let marker = "left=" in
+  let n = String.length url
+  and m = String.length marker in
+  let rec find i =
+    if i + m > n
+    then Windtrap.fail "the url has no left= pane"
+    else if String.sub url i m = marker
+    then i + m
+    else find (i + 1)
+  in
+  let start = find 0 in
+  try Yojson.Safe.from_string (percent_decode (String.sub url start (n - start))) with
+  | _ -> Windtrap.fail ("the left= pane is not valid JSON: " ^ url)
+;;
+
 let test_parse_scope_none () =
   check_bool "None -> Workspace" true (O.parse_scope None = Ok O.Workspace)
 ;;
@@ -253,6 +294,106 @@ let test_logs_service_scope_invalid_name () =
   check_bool "empty service name -> Error" true (String.length (err_msg result) > 0)
 ;;
 
+let test_traces_workspace_scope () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Traces O.Workspace) in
+  check_bool "explore url" true (contains url "/explore");
+  check_bool
+    "names the tempo datasource"
+    true
+    (contains url "%22datasource%22%3A%22tempo%22");
+  check_bool
+    "asks for a traceql query"
+    true
+    (contains url "%22queryType%22%3A%22traceql%22");
+  check_bool "selects on resource.workspace" true (contains url "resource.workspace");
+  check_bool "carries the workspace identity" true (contains url "myapp");
+  check_bool "no raw brace in the url" false (contains url "{");
+  check_bool "no raw double quote in the url" false (contains url {|"|});
+  check_bool "no raw space in the url" false (contains url " ")
+;;
+
+let test_traces_domain_scope () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Traces (O.Domain "payments")) in
+  check_bool "selects on resource.domain" true (contains url "resource.domain");
+  check_bool "carries the workspace identity" true (contains url "myapp");
+  check_bool "carries the domain identity" true (contains url "payments");
+  check_bool
+    "no service selector for a domain scope"
+    false
+    (contains url "resource.service")
+;;
+
+let test_traces_service_scope () =
+  let url =
+    ok_url
+      (O.url ~base_url ~workspace ~kind:O.Traces (O.Service ("payments", "charge_svc")))
+  in
+  check_bool "selects on resource.service" true (contains url "resource.service");
+  check_bool "k8s name normalized" true (contains url "charge-svc");
+  check_bool "no raw underscore in the query" false (contains url "charge_svc")
+;;
+
+let test_traces_resource_scope_has_no_view () =
+  let result =
+    O.url ~base_url ~workspace ~kind:O.Traces (O.Resource ("rds", "postgres"))
+  in
+  check_bool
+    "no traces view for managed resources -> Error"
+    true
+    (contains (err_msg result) "no traces view")
+;;
+
+let test_traces_requires_no_target () =
+  check_bool
+    "traces is scope-addressed, not target-addressed"
+    false
+    (O.requires_target O.Traces);
+  check_bool
+    "traces accepts every application scope without a target"
+    true
+    (O.validate ~kind:O.Traces ~target_present:false O.Workspace = Ok ()
+     && O.validate ~kind:O.Traces ~target_present:false (O.Domain "payments") = Ok ()
+     && O.validate
+          ~kind:O.Traces
+          ~target_present:false
+          (O.Service ("payments", "charge-svc"))
+        = Ok ())
+;;
+
+let test_traces_url_pane_round_trips () =
+  let url =
+    ok_url
+      (O.url ~base_url ~workspace ~kind:O.Traces (O.Service ("payments", "charge_svc")))
+  in
+  let pane = grafana_pane url in
+  let open Yojson.Safe.Util in
+  check_string
+    "pane names the tempo datasource"
+    "tempo"
+    (pane |> member "datasource" |> to_string);
+  let query = pane |> member "queries" |> index 0 in
+  check_string "pane asks for traceql" "traceql" (query |> member "queryType" |> to_string);
+  check_string
+    "the query survives the url round trip, quotes intact"
+    {|{ resource.workspace = "myapp" && resource.domain = "payments" && resource.service = "charge-svc" }|}
+    (query |> member "query" |> to_string)
+;;
+
+let test_logs_url_pane_round_trips () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs (O.Domain "payments")) in
+  let pane = grafana_pane url in
+  let open Yojson.Safe.Util in
+  check_string
+    "pane names the loki datasource"
+    "loki"
+    (pane |> member "datasource" |> to_string);
+  let query = pane |> member "queries" |> index 0 in
+  check_string
+    "the logql survives the url round trip, quotes intact"
+    {|{workspace="myapp", domain="payments"}|}
+    (query |> member "expr" |> to_string)
+;;
+
 let test_infra_url_is_the_target_infrastructure_dashboard () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Infra O.Workspace) in
   check_string
@@ -420,6 +561,26 @@ let%test "url logs: invalid service name" = test_logs_service_scope_invalid_name
 
 let%test "url logs: resource scope has no logs view" =
   test_logs_resource_scope_has_no_view ()
+;;
+
+let%test "url traces (OBS-045): workspace scope" = test_traces_workspace_scope ()
+let%test "url traces (OBS-045): domain scope" = test_traces_domain_scope ()
+let%test "url traces (OBS-045): service scope" = test_traces_service_scope ()
+
+let%test "url traces (OBS-045): resource scope has no view" =
+  test_traces_resource_scope_has_no_view ()
+;;
+
+let%test "url traces (OBS-045): scope-addressed, needs no target" =
+  test_traces_requires_no_target ()
+;;
+
+let%test "url traces (OBS-045): the pane is valid JSON and round-trips" =
+  test_traces_url_pane_round_trips ()
+;;
+
+let%test "url logs: the pane is valid JSON and round-trips" =
+  test_logs_url_pane_round_trips ()
 ;;
 
 let%test "url infra (INFRA-027): the target-infrastructure dashboard" =
