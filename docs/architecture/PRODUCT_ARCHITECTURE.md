@@ -44,6 +44,8 @@ detailed control-plane API before the factory contract is stable.
 
 **Cloud-agnostic Kubernetes.** Sol services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
 
+**Sol owns only its declared contract boundary.** Sol guarantees stable interfaces at its boundary; users are free to provision and integrate arbitrary infrastructure outside Sol, and Sol neither plans nor manages it. `sol plan` describes changes within the Sol-owned contract, not every resource in the account, and integration with externally managed infrastructure is the user's responsibility — through the stable identities, roles, service accounts, namespaces and endpoints Sol owns. See [ADR 0005](adr/0005-sol-owns-only-its-contract-boundary.md).
+
 ---
 
 ## Source of Truth

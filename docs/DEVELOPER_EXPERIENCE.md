@@ -54,6 +54,13 @@ implementation details of the factory, not its user interface.
 
 The line is deliberate, and it is the reason a Sol deployment is portable.
 
+The boundary is also where Sol stops: Sol plans and reconciles only the
+resources its contracts declare, not every resource in your account. You may
+provision additional infrastructure with your own tooling — Terraform, Pulumi,
+provider CLIs — and integrate it yourself, for example by granting a Sol
+workload's stable identity access to a bucket you manage. See
+[ADR 0005](architecture/adr/0005-sol-owns-only-its-contract-boundary.md).
+
 | Sol owns | You own |
 |---|---|
 | The lifecycle engine: plan, provision, reconcile, build wiring, deploy, verify | The cloud account, its billing, and its quotas |

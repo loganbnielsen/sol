@@ -156,3 +156,18 @@ choices (recorded in their tickets): `INFRA-083` takes the explicit total
 `No_authority_required | Mechanism …` shape; `REFAC-110` keeps the single
 entry-point convention and `REFAC-113` keeps the hand-rolled process module
 (both "no change" and closing).
+
+## Recorded principle — ADR 0005 (2026-10-03)
+
+The operator recorded a boundary principle after this adjudication: **Sol
+guarantees stable interfaces at its boundary; users are free to provision and
+integrate arbitrary infrastructure outside Sol, and Sol neither plans nor
+manages infrastructure outside the Sol-owned contract.** It is canonical in
+`docs/architecture/adr/0005-sol-owns-only-its-contract-boundary.md`, referenced
+from `PRODUCT_ARCHITECTURE.md`, `docs/deployment/escape-hatches.md` and
+`docs/DEVELOPER_EXPERIENCE.md`, and reconciled into DEC-044, INFRA-082,
+INFRA-094 and DEC-065. It resolves the plan-scope ambiguity (the plan is the
+plan of the Sol-owned boundary, not a universal plan), confirms that Sol does
+not import or adopt resources it did not record (DEC-044/DEC-045), and keeps
+declared-ownership adoption (`dns_zone_ownership: sol`) as the bounded exception.
+It created no implementation work.

@@ -64,3 +64,9 @@ malformed response, or inability to inspect — is never ABSENT. Distinguish
 describes a resource that exists but diverged", and keep no-construction as the
 invariant: reconciliation may remove stale state but never create infrastructure.
 Promoted to `READY_FOR_ENGINEERING`.
+
+## Reconciliation (2026-10-03, ADR 0005)
+
+ADR 0005 bounds this work the same way as INFRA-082: reconciliation covers state
+Sol owns, and it never becomes a licence to discover, import or mutate resources
+the user manages outside Sol.
