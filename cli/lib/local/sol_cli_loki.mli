@@ -33,10 +33,12 @@ type fetch_error =
   | Timeout
   | Connection_failed
   | Http_error of int
+  | Malformed of string
   | Other of string
 
 val fetch_error_to_string : fetch_error -> string
 val classify_process_error : Sol_cli_process.error -> fetch_error
+val classify_parse_result : (line list, string) result -> (line list, fetch_error) result
 
 val resolve_credentials
   :  flag_username:string option
