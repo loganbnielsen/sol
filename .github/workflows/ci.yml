@@ -12,10 +12,20 @@ jobs:
   # internal/ci/classify-changes.sh, shared with the local pre-commit hook, and
   # its semantics are pinned by internal/ci/always/test_classify_changes.sh.
   #
+  # `kind` is one of `docs-only`, `ocaml`, `typescript` or `source`:
+  #   docs-only   every changed path is prose; the product suite is skipped;
+  #   ocaml       OCaml framework and OCaml example code only, so the TypeScript
+  #               golden path, ts-tests and demo_ts's Dockerfiles are skipped;
+  #   typescript  the TypeScript scaffold templates and the demo_ts demo only, so
+  #               the OCaml golden path and the OCaml example Dockerfiles are
+  #               skipped;
+  #   source      anything else -- shared, mixed or unrecognised -- runs
+  #               everything.
+  #
   # continue-on-error: classification must never be able to fail the workflow.
   # If this job dies, `kind` is empty, and every consumer's condition
-  # (`!= "docs-only"`) is TRUE, so the full suite runs. Uncertainty costs
-  # compute, never coverage.
+  # (`!= "docs-only"`, `!= "ocaml"`, `!= "typescript"`) is TRUE, so the full
+  # suite runs. Uncertainty costs compute, never coverage.
   #
   # NOTE: `test` below is a REQUIRED check, so it must always run. That is why it
   # uses `needs: classify` together with `if: always()` and branches inside the
@@ -46,7 +56,7 @@ jobs:
             kind="$(internal/ci/classify-changes.sh --range "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" || echo source)"
           fi
           case "$kind" in
-            docs-only|source) ;;
+            docs-only|ocaml|typescript|source) ;;
             *) kind="source" ;;
           esac
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
@@ -416,10 +426,13 @@ jobs:
     # output as `test` rather than carrying its own path list. If `kind` is empty
     # (classify failed) this is TRUE and the job runs -- fail-closed.
     #
+    # This is the OCaml golden path: a `typescript`-only diff cannot change what
+    # `sol new` scaffolds here or how it builds, so that class skips it.
+    #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.classify.outputs.kind != 'typescript'
     runs-on: ubuntu-22.04
     # Outer safety net only — per-step timeouts below do the real fail-fast
     # work. Generous on purpose: a job-level timeout cancels the whole job,
@@ -913,10 +926,13 @@ jobs:
     # output as `test` rather than carrying its own path list. If `kind` is empty
     # (classify failed) this is TRUE and the job runs -- fail-closed.
     #
+    # These are the OCaml example workspaces (examples/pluto's OCaml units and
+    # internal/fixtures/venus); a `typescript`-only diff cannot change them.
+    #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: [classify, dockerfile-matrix]
-    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.dockerfile-matrix.result == 'success'
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.classify.outputs.kind != 'typescript' && needs.dockerfile-matrix.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
@@ -951,10 +967,13 @@ jobs:
     # output as `test` rather than carrying its own path list. If `kind` is empty
     # (classify failed) this is TRUE and the job runs -- fail-closed.
     #
+    # These are the demo_ts TypeScript Dockerfiles; an `ocaml`-only diff cannot
+    # change them.
+    #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: [classify, dockerfile-matrix]
-    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.dockerfile-matrix.result == 'success'
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.classify.outputs.kind != 'ocaml' && needs.dockerfile-matrix.result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -986,10 +1005,13 @@ jobs:
     # output as `test` rather than carrying its own path list. If `kind` is empty
     # (classify failed) this is TRUE and the job runs -- fail-closed.
     #
+    # This exercises the demo_ts TypeScript project; an `ocaml`-only diff cannot
+    # change it.
+    #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.classify.outputs.kind != 'ocaml'
     name: TypeScript demo (install + build/typecheck + tests)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -1070,8 +1092,12 @@ jobs:
   # precedent) -- get it stable first, then decide separately whether it
   # should gate merges.
   golden-path-smoke-ts:
+    # This is the TypeScript golden path: an `ocaml`-only diff cannot change what
+    # `sol new --language typescript` scaffolds here or how it builds, so that
+    # class skips it. Everything else still runs it -- fail-closed on an empty
+    # `kind`.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.kind != 'docs-only' && needs.classify.outputs.kind != 'ocaml'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:

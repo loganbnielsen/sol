@@ -86,6 +86,42 @@ check source unknown/path
 check source scripts/thing.sh
 
 echo
+echo "classify-changes: a listed language tree classifies by language"
+check ocaml framework/ocaml/foo.ml
+check ocaml examples/pluto/app/checkout/checkout_svc/main.ml
+check ocaml examples/pluto/app/comms/notify_worker/main.ml
+check ocaml examples/pluto/app/payments/charge_svc/main.ml
+check ocaml examples/pluto/contract/contract.ml
+check ocaml examples/pluto/lib/notification.ml
+check ocaml internal/fixtures/venus/app/comms/notify_worker/Dockerfile
+check ocaml internal/fixtures/local-demo/bin/demo.ml
+check typescript framework/typescript/foo.ts
+check typescript examples/pluto/app/demo_ts/order_svc/src/index.ts
+check typescript examples/pluto/app/demo_ts/fulfillment_worker/sol.toml
+check typescript platform/shared/templates/svc-ts/src/index.ts
+check typescript platform/shared/templates/worker-ts/Dockerfile
+
+echo
+echo "classify-changes: a shared or unlisted path beside a language tree is source"
+check source examples/pluto/sol.yml
+check source examples/pluto/sol/environments.yml
+check source examples/pluto/db/migrations/0005_orders.sql
+check source examples/pluto/events/comms/sol.toml
+check source platform/shared/templates/svc/Dockerfile
+check source platform/shared/templates/workspace/app/comms/notify_worker/Dockerfile
+check source internal/ci/classify-changes.sh
+check source internal/ci/README.md
+check source cli/lib/sol_cli.ml
+
+echo
+echo "classify-changes: a mixed-language diff is source"
+check source framework/ocaml/foo.ml examples/pluto/app/demo_ts/order_svc/src/index.ts
+check source examples/pluto/app/checkout/checkout_svc/main.ml examples/pluto/app/demo_ts/order_svc/src/index.ts
+check source framework/ocaml/foo.ml cli/lib/sol_cli.ml
+check ocaml framework/ocaml/foo.ml README.md internal/pipeline/tickets/DONE/X.md
+check typescript examples/pluto/app/demo_ts/order_svc/src/index.ts docs/foo.md
+
+echo
 echo "classify-changes: mixed diffs are source"
 check source README.md framework/foo.ml
 check source internal/pipeline/tickets/X.md package.json
