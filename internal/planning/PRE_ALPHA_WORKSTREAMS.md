@@ -255,23 +255,24 @@ up between S1–S5 items.
 
 ## Reconciliation candidates (proposed, not yet applied)
 
-These are ticket changes that follow from the 2026-10-03 decisions and this
-organization. None has been made; each needs sign-off.
+These ticket changes were applied on 2026-10-03, after operator sign-off.
 
-1. **Close `FEAT-092`, `REFAC-110`, `REFAC-113`.** All three are decided —
-   non-goal / no-change — and only need the READY → DONE transition with a closing
-   note (FEAT-092 also wants `DOCS-019`'s document to state the non-goal).
-2. **`INFRA-062` is in `READY_FOR_ENGINEERING` with an unresolved `## Decision
-   needed` section**, which violates the rule that READY tickets are actionable.
-   Either resolve the decision now (option 1 "new revision" is the smallest
-   change and preserves B2's idempotence contract), or demote it to `BACKLOG`.
-3. **`INFRA-082` and `INFRA-094` share one mechanism.** Keep both tickets but
-   sequence them as one implementation unit (INFRA-082 first), and say so in
-   each.
-4. **`FEAT-116` must reconcile `FEAT-119` and `BUG-099`.** Add the reconciliation
-   to FEAT-116's scope, and file the small follow-up only if the `contract/run`
-   verdict needs its own unit.
-5. **`FEAT-110` decides the fate of `AUDIT-075`/`AUDIT-076`** (its own text invites
-   absorbing them); record absorb-or-keep in FEAT-110's completion notes.
-6. **`FEAT-043`/`FEAT-044`/`FEAT-048`** already carry their out-of-alpha triggers;
-   no further change.
+1. **Applied — closed `FEAT-092`, `REFAC-110`, `REFAC-113`** (non-goal /
+   no-change), each with a closing note. `docs/architecture/observability-design.md`
+   now states the alert-inventory non-goal and no longer names FEAT-092 as an open
+   gap.
+2. **Applied — `INFRA-062` resolved to option 3 (fixture teardown and recreate)**,
+   on architectural grounds: DEC-039 places fixture mechanics with the harness,
+   the qualification epoch must keep the same artefact, and B2 must not be
+   weakened. Option 1 changes the artefact; option 2 (an explicit Sol restart
+   capability) is a separate, undecided product question and is not created. The
+   ticket stays READY and its implementation is the run-procedure update.
+3. **Applied — `INFRA-082` → `INFRA-094` sequenced as one reconciliation unit**
+   (INFRA-082 first), recorded in both tickets.
+4. **Applied — `FEAT-116` carries the `FEAT-119`/`BUG-099` reconciliation** in its
+   scope; a follow-up is filed only if the `contract/run` verdict needs one.
+5. **Applied — `FEAT-110` must settle the fate of `AUDIT-075`/`AUDIT-076`** and
+   record absorb-or-keep in its completion notes.
+6. **No change — `FEAT-043`/`FEAT-044`/`FEAT-048`** already carry their
+   out-of-alpha triggers.
+

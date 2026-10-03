@@ -84,3 +84,16 @@ Operator decision, recorded in full in `DEC-065`:
 This ticket is the implementation unit and is promoted to
 `READY_FOR_ENGINEERING`; the declarative surface, generator, checked-in
 destination, CI drift check, and `sol plan` read are its scope.
+
+
+## Reconciliation scope (2026-10-03)
+
+This ticket implements DEC-065 and, as part of it, reconciles two DONE tickets:
+
+- **BUG-099** — its "code is canonical" premise is reversed; the declarative
+  contract is canonical and application code consumes generated bindings.
+- **FEAT-119** — decide whether the `contract/run` projection remains necessary
+  or folds into the generated-bindings mechanism, and record the verdict. File a
+  separate ticket only if that verdict needs its own unit.
+
+Record both in the completion notes.

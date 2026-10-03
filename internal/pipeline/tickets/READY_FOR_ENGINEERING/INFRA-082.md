@@ -85,3 +85,12 @@ infrastructure to make destroy possible. Promoted to
 ADR 0005 bounds this work: the reconciliation it authorises covers state Sol
 owns (its own platform root), and it never becomes a licence to discover,
 import or mutate resources the user manages outside Sol.
+
+
+## Sequencing (2026-10-03)
+
+INFRA-082 and INFRA-094 share one mechanism — extending INFRA-042's "forget what
+provably cannot exist" reconciliation to a broader positively established
+provider absence. Implement INFRA-082 first; INFRA-094 reuses that mechanism
+rather than inventing a second one. They are one reconciliation unit across two
+tickets.

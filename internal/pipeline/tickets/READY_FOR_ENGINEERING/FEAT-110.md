@@ -91,3 +91,13 @@ Evidence: DEC-057 §9 portability promise is open; `sol_cli_release` metadata is
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
 (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+
+
+## Required settlement (2026-10-03)
+
+This ticket must settle the fate of `AUDIT-075` (deployment-event actor
+provenance) and `AUDIT-076` (deployment-event retention/pruning): decide whether
+their subject is absorbed into this ticket's durable, portable release/rollback
+record, or remains independently necessary. Record absorb-or-keep in the
+completion notes and close or keep the audits accordingly; do not leave the
+question open.

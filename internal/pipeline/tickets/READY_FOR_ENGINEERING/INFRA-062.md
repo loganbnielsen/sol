@@ -47,3 +47,32 @@ missing capability.
 ## Out of scope
 
 Repairing the current `notify-worker`; that decision belongs with this one.
+
+
+## Decision (2026-10-03) — teardown and recreate the fixture
+
+Resolved on the existing contracts, not by smallest-change:
+
+- **DEC-039** places fixture-lifecycle *mechanics* with the qualification
+  harness, never with a production identity. A reset is harness mechanics.
+- The qualification requirement is a clean evidence epoch against the **same
+  artefact**, so the epoch after a reset is comparable to the one that recorded
+  the failure.
+- **B2** (an identical redeploy restarts nothing) must not be weakened.
+
+**Option 3 — fixture teardown and recreate** follows: it preserves the artefact
+under test, adds no product surface, and does not touch B2.
+
+**Option 1 (new revision)** is rejected: it changes the artefact, so the new
+epoch would not be comparable to the failure epoch (FND-0022's own objection).
+
+**Option 2 (an explicit Sol restart/reset capability)** is a real product
+capability but is not required by the qualification contract and is not asked for
+by B2; it remains a **separate, undecided product question** and is deliberately
+not created here.
+
+Implement by writing the reset into
+`internal/qualification/aws/aws-run-procedure.md`: what declares a new evidence
+epoch, how the previous epoch's failure evidence is preserved before teardown,
+and that the recreated fixture uses the same revision. This ticket stays
+`READY_FOR_ENGINEERING`.
