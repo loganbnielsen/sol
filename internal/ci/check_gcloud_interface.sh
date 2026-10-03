@@ -61,21 +61,34 @@ argv_checked=0
 if command -v gcloud >/dev/null 2>&1; then
   argv_checked=1
   flags=(--region --project --impersonate-service-account --quiet)
-  help_text="$(gcloud $subcommand --help 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
-  if [ -z "$help_text" ]; then
-    report "could not read \`gcloud $subcommand --help\`; cannot validate Sol's argv"
-  fi
-  flag_documented() {
-    local pattern="(^|[^-[:alnum:]])$1([^-[:alnum:]]|$)"
-    [[ "$help_text" =~ $pattern ]]
+  set +e
+  raw_help="$(gcloud $subcommand --help 2>&1)"
+  help_status=$?
+  set -e
+  help_text="$(printf '%s' "$raw_help" | sed 's/\x1b\[[0-9;]*m//g')"
+  help_preview="$(
+    printf '%s\n' "$help_text" | grep -v '^[[:space:]]*$' | sed -n '1,3p' | tr '\n' '|'
+  )" || true
+  help_is_usable() {
+    [[ "$help_text" == *"$subcommand"* ]] || return 1
+    local upper="${help_text^^}"
+    [[ "$upper" == *SYNOPSIS* || "$upper" == *USAGE* ]]
   }
-  for flag in "${flags[@]}"; do
-    if ! flag_documented "$flag"; then
-      report "gcloud's \`$subcommand\` does not document $flag, but Sol passes it"
+  if [ "$help_status" -ne 0 ] || [ -z "$help_text" ] || ! help_is_usable; then
+    report "gcloud's \`$subcommand --help\` produced no usable help (exit $help_status), so Sol's argv could not be validated against the real CLI; first lines: ${help_preview:-<none>}"
+  else
+    flag_documented() {
+      local pattern="(^|[^-[:alnum:]])$1([^-[:alnum:]]|$)"
+      [[ "$help_text" =~ $pattern ]]
+    }
+    for flag in "${flags[@]}"; do
+      if ! flag_documented "$flag"; then
+        report "gcloud's \`$subcommand\` does not document $flag, but Sol passes it"
+      fi
+    done
+    if flag_documented --kubeconfig; then
+      report "--kubeconfig now exists on \`$subcommand\`; revisit whether Sol should use it"
     fi
-  done
-  if flag_documented --kubeconfig; then
-    report "--kubeconfig now exists on \`$subcommand\`; revisit whether Sol should use it"
   fi
 elif [ "${CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD:-0}" = "1" ]; then
   echo "check_gcloud_interface: gcloud is not installed, so Sol's argv was not validated against the real CLI (explicitly opted out by CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD=1); the static install-authority checks ran." >&2

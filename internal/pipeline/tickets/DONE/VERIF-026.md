@@ -8,6 +8,11 @@ source: observability qualification run 4 — a pre-push hook failure while subm
 
 **Depends on:** None.
 
+**Premise verified (2026-10-03, `main @ 4c354204`):** reproduced against the guard
+with a stub `gcloud` on `PATH`: non-help text produced four `does not document
+--flag` reports, and plausible help that exited 1 was **accepted** (`rc=0`). The
+guard still collapses "could not run the CLI" with "the flag is absent".
+
 **Related:** VERIF-006, VERIF-024.
 
 This is CI-tooling, not observability; it is filed here and handed to the
@@ -138,3 +143,38 @@ merely suspicious:
 
 **TypeScript parity:** no language-parity impact; this is a shell guard over
 Sol's GCP argv, not an application-facing contract.
+
+## Completion (2026-10-03)
+
+`internal/ci/check_gcloud_interface.sh` now:
+
+- captures `gcloud $subcommand --help`'s exit status and raw output (ANSI
+  stripped) instead of discarding the status with `|| true`;
+- treats the capture as usable only when the exit was 0, the text is non-empty, it
+  names `container clusters get-credentials`, and it carries a
+  `SYNOPSIS`/`USAGE` marker. Anything else fails with one message naming the exit
+  status and the first three lines gcloud printed, and never reaches the
+  flag-by-flag loop;
+- keeps the existing `does not document <flag>` report for the case where usable
+  help was read and genuinely lacks a flag. The missing-gcloud branch and the
+  `CHECK_GCLOUD_INTERFACE_ALLOW_MISSING_GCLOUD` opt-out are unchanged.
+
+### Checks
+
+- Reproduced the defect on `main @ 4c354204` before the fix (stub gcloud: non-help
+  text ⇒ four `does not document` reports; plausible help with exit 1 ⇒ accepted).
+- `bash internal/ci/test_gcloud_interface.sh` — three new cases (non-help text,
+  non-zero help exit, usable-but-flag-absent help), each asserting the other
+  failure mode's message is not produced. The restricted fixture `PATH` gained
+  `tr`, which the preview pipeline needs.
+- Mutation-verified: restoring the old `if [ -z "$help_text" ]` condition makes the
+  non-help case fail as `does not document --region` — the new test fails for the
+  reason under test.
+- `bash internal/ci/check_gcloud_interface.sh` with the real SDK `gcloud` (present
+  locally) still passes (`rc=0`).
+- `bash internal/ci/check_no_comments.sh` — 855 files, no comments.
+- `bash internal/ci/run_fast_checks.sh` — all fast checks pass.
+
+### Demo/example and language parity
+
+Not applicable — CI tooling only; no language-parity impact.
