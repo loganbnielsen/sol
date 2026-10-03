@@ -88,7 +88,14 @@ let test_pluto_services_carry_their_primitive_and_language () =
   Windtrap.equal
     (Windtrap.list Windtrap.string)
     ~msg:"services"
-    [ "charge_svc"; "checkout_svc"; "fulfillment_worker"; "notify_worker"; "order_svc" ]
+    [ "charge_svc"
+    ; "checkout_svc"
+    ; "fulfillment_worker"
+    ; "fulfilment_worker"
+    ; "notify_worker"
+    ; "order_svc"
+    ; "orders_svc"
+    ]
     (service_names facts);
   Windtrap.equal Windtrap.string ~msg:"root" (fixture "examples/pluto") facts.root;
   Windtrap.equal
@@ -97,8 +104,10 @@ let test_pluto_services_carry_their_primitive_and_language () =
     [ "charge_svc=ocaml"
     ; "checkout_svc=ocaml"
     ; "fulfillment_worker=typescript"
+    ; "fulfilment_worker=ocaml"
     ; "notify_worker=ocaml"
     ; "order_svc=typescript"
+    ; "orders_svc=ocaml"
     ]
     (languages facts);
   let primitives =
@@ -113,8 +122,10 @@ let test_pluto_services_carry_their_primitive_and_language () =
     [ "charge_svc=svc"
     ; "checkout_svc=svc"
     ; "fulfillment_worker=worker"
+    ; "fulfilment_worker=worker"
     ; "notify_worker=worker"
     ; "order_svc=svc"
+    ; "orders_svc=svc"
     ]
     primitives;
   Windtrap.equal

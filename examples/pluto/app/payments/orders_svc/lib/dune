@@ -1,0 +1,13 @@
+(library
+ (name pluto_payments_orders_svc)
+ (wrapped false)
+ (modules Orders_handler)
+ (libraries
+  pluto_storage
+  pluto_orders_events
+  sol-svc
+  sol-obs
+  sol-jobs
+  sol-outbox
+  yojson
+  pg-eio))
