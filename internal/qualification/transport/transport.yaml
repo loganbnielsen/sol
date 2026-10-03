@@ -14,8 +14,10 @@
 #
 # Deliberately absent: every mutating verb, pods/exec, pods/log, events, secrets.
 # Diagnosis belongs to the operator identity; a qualifier carries traffic and
-# nothing else. Applied by internal/qualification/transport/establish.sh
-# using a cluster-admin-capable context, never by Sol's lifecycle.
+# nothing else. Applied by internal/qualification/transport/establish.sh during a
+# temporary cluster-admin window that it opens and closes on the qualifier's own
+# principal (by deleting and recreating the access entry, never by a
+# disassociation), then verifies the effective surface. Never by Sol's lifecycle.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

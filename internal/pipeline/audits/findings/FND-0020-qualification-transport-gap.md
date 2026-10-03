@@ -1,7 +1,12 @@
 # FND-0020 — the qualification procedure assumes a transport capability no identity provides
 
-**Classification:** `QUALIFICATION_GAP` · **State:** `OPEN` · **Severity:** medium
+**Classification:** `QUALIFICATION_GAP` · **State:** `FIXED_UNQUALIFIED` (2026-10-03) · **Severity:** medium
 **Ticket:** `INFRA-060` · **Contract:** DEC-039 · **Evidence:** `BEHAVIORAL`
+
+State history: `OPEN` (2026-09-21, capability built but not usable) → `FIXED_UNQUALIFIED`
+(2026-10-03). The capability, its guard, the establishment sequence that survives
+`FND-0021`, and the procedure text saying how B3 obtains connectivity all landed in
+`INFRA-060`; its live exercise against a real target is `HARDEN-007`, operator-gated.
 
 ## The gap
 

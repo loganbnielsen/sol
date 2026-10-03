@@ -114,6 +114,47 @@ HARDEN runs exist to find those, not to have none.
    deliberately non-conformant lifecycle state is required, and it is followed by
    a public `sol cloud destroy` — never by out-of-band resource deletion.
 
+### Qualification transport into private application services (INFRA-060 / DEC-039 / FND-0020)
+
+B3 drives a transaction at an application's **private** `ClusterIP` service, and no
+identity Sol provisions can reach one — deliberately (DEC-038 §4, DEC-039 §1). What was
+missing was the procedure's own assumption: B3 did not say how the harness obtains
+connectivity. This is where.
+
+**The transport is a qualification-only capability, established out of band before B3.**
+It lives in `internal/qualification/transport/`: the group `sol:qualifiers`, granting
+`pods`/`services` `get`/`list` and `pods/portforward` `create`, and nothing else. It is
+never applied by `sol cloud apply`, no production Terraform root references it, and no
+target field names the principal; `internal/ci/check_qualification_transport.py` and its
+mutation test hold both directions.
+
+```
+internal/qualification/transport/establish.sh <cluster> <qualifier-role> <region> <application-namespace>
+```
+
+Establishment opens a temporary cluster-admin window on the qualifier's own principal to
+write the cluster-scoped RBAC, then closes it by **deleting the access entry and recreating
+it narrow** — never by disassociating the policy, which was measured live to be reported
+complete while the authorizer still granted cluster-admin (`FND-0021` / `INFRA-061`). It
+then verifies the **effective surface** with real calls as the principal `kubectl auth
+whoami` names — `get pods` succeeds, `get secrets` is `Forbidden`, `pods/portforward` is
+permitted — and removes the entry rather than leave a credential it could not show to be
+transport-only. A run does not proceed on an establishment that did not report that
+verification.
+
+**The identity split is mandatory (DEC-039 §4).** The record names the identity that
+established and drove transport **separately** from the identities whose contracts are
+under qualification. Transport is harness mechanics: what it carries is evidence about the
+application, and the fact that a qualifier could reach the service is never evidence about
+provisioner, publisher, deploy or operator. This run's own claim about those identities is
+the unchanged one — none of them holds `pods/portforward` — and the record shows it, before
+and after the transport existed.
+
+Re-establish the connection across anything that can replace the process behind a name: a
+port-forward opened before a `PlatformUpdating` rollout kept serving the replaced pod once
+already (Attempt 5), so the record names the resolved endpoint each read actually came from
+(HARDEN-003, *Evidence must establish the identity of its own observations*).
+
 ### Re-establishing a workload fixture (INFRA-062 / FND-0022, decided 2026-10-03)
 
 A run that has recorded a fixture failure needs a way to start again from the same
@@ -263,7 +304,10 @@ the infrastructure around the test.
    ever, not a hand-configured broad credential).
 7. `B3`-`B7`: one representative transaction; a deliberately failed deploy;
    rollback to the prior release (and across a `contract` migration
-   boundary, expecting a refusal); drift detection/correction. A degraded
+   boundary, expecting a refusal); drift detection/correction. B3's `-svc`
+   half runs through the qualification transport (§ *Qualification transport
+   into private application services*), and its `-worker` half must show the
+   application effect, not broker progress (DEC-039 §5). A degraded
    fixture is not repaired here: § *Re-establishing a workload fixture* is the
    reset, and it is a teardown and recreate, not a redeploy.
 8. `D1`-`D8`: tolerant-workload placement inspection; graceful drain;

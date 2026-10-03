@@ -1,8 +1,19 @@
 # FND-0021 — a disassociated EKS access policy remained effective, leaving a credential broader than its declared contract
 
-**Classification:** `VERIFIED_DEFECT` (provider behaviour) · **State:** `OPEN**
-**Severity:** high · **Ticket:** `INFRA-061` · **Evidence:** `BEHAVIORAL`
+**Classification:** `VERIFIED_DEFECT` (provider behaviour) · **State:** `FIXED_UNQUALIFIED` (2026-10-03)
+**Severity:** high · **Ticket:** `INFRA-061` (Sol's own de-escalation), `INFRA-060` (the qualification transport) · **Evidence:** `BEHAVIORAL`
 **Found while:** establishing the qualification transport (DEC-039 / FND-0020)
+
+State history: `OPEN` (2026-09-21) → `FIXED_UNQUALIFIED` (2026-10-03). *Fixed* in the sense
+this finding's own "What would make it qualified" required: every path that revokes
+privileged access now verifies the **effective** surface, and the one path that could not —
+the qualification transport — no longer uses the disassociation at all. It deletes the
+access entry and recreates it narrow, verifies the effective surface as the qualifier, and
+leaves no entry behind when it cannot (`INFRA-061`, `INFRA-060`). *Unqualified* because the
+provider behaviour itself remains unmeasured: whether the disassociation is a propagation
+delay with a bound, or a persistent divergence, is `INFRA-061`'s criteria 1–2 and needs a
+live cluster. Until then the API's report for this operation is treated as untrusted, which
+is the fail-closed direction.
 
 ## The observation
 
