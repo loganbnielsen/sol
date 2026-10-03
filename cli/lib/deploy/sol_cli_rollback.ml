@@ -438,8 +438,8 @@ let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
   match
     Sol_cli_kubectl.get ~ctx ~resource ~name ~namespace ~output:("jsonpath=" ^ jsonpath)
   with
-  | Ok r -> String.trim r.stdout
-  | _ -> ""
+  | Ok r -> Ok (String.trim r.stdout)
+  | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
 type workload_identity =
@@ -766,34 +766,54 @@ let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_repor
 ;;
 
 type pointer_report =
-  { pointer_actual : string
-  ; pointer_ok : bool
-  }
+  | Pointer_confirmed
+  | Pointer_names of string
+  | Pointer_unreadable of string
 
 let verify_pointer
       ~(ctx : Sol_cli_kube_destination.context)
       ~(release : Sol_cli_release.t)
   : pointer_report
   =
-  let pointer_actual =
+  match
     read_jsonpath
       ~ctx
       ~resource:"configmap"
       ~name:(Sol_cli_release.current_configmap_name ~workspace:release.workspace)
       ~namespace:"default"
       ~jsonpath:"{.data.release_id}"
-  in
-  { pointer_actual; pointer_ok = String.equal pointer_actual release.release_id }
+  with
+  | Error reason -> Pointer_unreadable reason
+  | Ok actual ->
+    if String.equal actual release.release_id
+    then Pointer_confirmed
+    else Pointer_names actual
 ;;
 
-let pointer_report_ok (r : pointer_report) = r.pointer_ok
+let pointer_report_ok = function
+  | Pointer_confirmed -> true
+  | Pointer_names _ | Pointer_unreadable _ -> false
+;;
 
-let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report) : string =
-  Printf.sprintf
-    "pointer mismatch: %s names %s, expected %s"
-    (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
-    (display_actual r.pointer_actual)
-    release.release_id
+let pointer_report_to_string ~(release : Sol_cli_release.t) = function
+  | Pointer_confirmed ->
+    Printf.sprintf
+      "pointer verified: %s names %s"
+      (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
+      release.release_id
+  | Pointer_names actual ->
+    Printf.sprintf
+      "pointer mismatch: %s names %s, expected %s"
+      (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
+      (display_actual actual)
+      release.release_id
+  | Pointer_unreadable reason ->
+    Printf.sprintf
+      "pointer unreadable: %s could not be read, so the release it names is unknown \
+       (%s); expected %s"
+      (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
+      reason
+      release.release_id
 ;;
 
 type transaction_deps =
@@ -895,7 +915,7 @@ let execute
     Error
       (Printf.sprintf
          "%s\n\
-          rollback incomplete: the pointer was moved but does not read back as the \
+          rollback incomplete: the pointer was moved but could not be confirmed as the \
           restored release; verify cluster state before relying on this rollback."
          (pointer_report_to_string ~release pointer))
   else (

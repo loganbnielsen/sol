@@ -114,9 +114,9 @@ val prune_workloads
   -> (prune_report, string) result
 
 type pointer_report =
-  { pointer_actual : string
-  ; pointer_ok : bool
-  }
+  | Pointer_confirmed
+  | Pointer_names of string
+  | Pointer_unreadable of string
 
 val verify_pointer
   :  ctx:Sol_cli_kube_destination.context
