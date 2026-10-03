@@ -37,6 +37,30 @@ The `@sol-fab` packages live in their own repositories, outside this one. Bring 
 
 **Demo/example coverage:** this ticket *is* the TypeScript example update.
 
-## Blocked On
+## Design (2026-10-02): what a framework must expose
 
-The next `@sol-fab/*` release after BUG-105 lands. Until then Sol's own OCaml framework is the single implementation of the contract, and a TypeScript-only workspace is skipped by the reconciliation stage (it declares no OCaml workload to run it in); the capability matrix records the delta with this ticket as its trigger.
+The unresolved question was *how Sol obtains a workspace's projection* without the CLI
+knowing a language's build. The answer is a single, language-neutral entry point at a fixed
+path, with a fixed protocol:
+
+- **The workspace exposes `contract/run`**, an executable the framework provides. Sol drafts
+  `sh ./contract/run <--json|--check|--apply> --scope <scope>` from the workspace root with
+  `SCHEMA_REGISTRY_URL` set — no `dune`, `npm` or `gradle` in the CLI. An OCaml workspace's
+  `contract/run` is one line (`exec dune exec ./contract/contract.exe -- "$@"`); a
+  TypeScript workspace's runs its projection program; a Spring workspace's will run its
+  Gradle task. `--json` prints the object BUG-105 defines (one line, stdout); `--check` is
+  read-only; `--apply` sets `FULL` then registers; a non-zero exit is failure.
+- **The scope is passed**, so a mixed workspace (pluto has OCaml events and the TS demo)
+  can select the projection a scope needs without Sol knowing which is which. The
+  projection is a workspace property, so units sharing a language share one implementation.
+- **Every application image installs the same program at `/usr/local/bin/contract`**, the
+  path `sol deploy`'s in-destination Job already runs. One Job per language in scope is
+  submitted.
+- **`has_projection` is file-presence on `contract/run`**, replacing the `scope_has_ocaml`
+  language gate: a scope's ability to reconcile is now a property of the workspace, not of
+  the languages in it.
+
+The existing OCaml behavior is unchanged behind the entry point; the object format and the
+`--json`/`--check`/`--apply` protocol are byte-compatible, so Sol consumes both languages
+through one code path.
+
