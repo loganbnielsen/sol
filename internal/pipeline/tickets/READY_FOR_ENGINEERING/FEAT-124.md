@@ -60,3 +60,36 @@ a real TypeScript application that needs the facts-to-jobs composition.
 
 **TypeScript parity:** this ticket *is* the TypeScript side of the capability VERIF-001 proves
 for OCaml.
+
+## Design (2026-10-02): a new package, not an extension
+
+**A new `@sol-fab/outbox` in `loganbnielsen/sol-typescript`** (alongside `svc`/`worker`/`jobs`,
+the same repository FEAT-126 established for a new Postgres-backed contract). Extending an
+existing package was rejected on substance, not taste: `@sol-fab/kafka` deliberately has no
+Postgres dependency — it is the Kafka policy layer, and the outbox is a storage-side
+primitive that injects its publish callback so it needs no Kafka dependency either; folding
+it into `@sol-fab/jobs` would put two different contracts (events vs. jobs, per-key order vs.
+claim-once) under one name.
+
+The API mirrors `framework/ocaml/sol-outbox`'s observable contract (DEC-022):
+
+- `publish(client, contract, event, { key, ord })` is a plain `INSERT`. Taking a `PoolClient`
+  is what makes it join the caller's transaction — the same shape `@sol-fab/jobs.enqueue` uses,
+  and `ord` is the caller's per-key ordering token, never a generated sequence.
+- `runRelay({ pool, publish, signal, ... })` scans the oldest unpublished row of each key
+  (`ord = min(ord)` per key, ordered by `id`), calls the injected `publish`, and `DELETE`s the
+  row only after it resolves; a publish failure leaves the row and does not advance the key.
+  One relay owner in v1, exactly as the OCaml spec records.
+- It exports the `sol_outbox_published_total` / `sol_outbox_pending` /
+  `sol_outbox_oldest_pending_seconds` names and an `onMetrics` snapshot, so the app wires the
+  same Grafana panels an OCaml service feeds.
+
+`examples/pluto/app/demo_ts/fulfillment_worker` composes the split the way the OCaml
+`notify_worker` does: the fulfilled-order row, the confirmation job and the outbox intent
+commit in one transaction, and the worker hosts the relay, publishing through
+`@sol-fab/kafka` with the event key so partition order is the published order.
+
+**Publishing.** npm rejects `npm trust` for a package that does not exist yet, so `0.1.0` is
+bootstrapped with one authenticated publish (no provenance) and its trusted publisher is
+configured immediately afterwards; every release from `0.1.1` goes through the tag-triggered
+OIDC workflow with provenance, like `svc`/`worker`/`jobs`.
