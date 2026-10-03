@@ -332,6 +332,17 @@ fixture" is not expressible and the procedure must say what it means. Stop condi
 met: the run stopped rather than restarting the workload or reaching for
 `kubectl delete pod`.
 
+**Resolved 2026-10-03 (`INFRA-062`) -- teardown and recreate.** The reset is now written
+into `aws-run-procedure.md` § *Re-establishing a workload fixture*: freeze the failing
+epoch's evidence, tear down through `sol cloud destroy <target> --apply` to verified
+`Absent`, then recreate the target and redeploy the workload from the same `--image-ref`
+digests, declaring the new epoch at the recreated fixture's `Ready`. The epochs are
+compared by artefact (the digests), not by release identity, and B2 is untouched. A
+namespace-scoped teardown was rejected rather than unimplemented: DEC-039's transport
+grant is non-mutating and the provisioner mutates only through Sol's lifecycle, so
+`kubectl delete namespace` would mean widening an identity or an out-of-band mutation.
+The reset's live exercise belongs to `HARDEN-007`.
+
 **Consequence.** B3 is still `NOT REACHED`, now for two documented reasons rather than
 one unexplained one. §B4-§B7 and the consumer-dependent §D/§E rows are in the same
 position. Also noted post-boundary: `sol deploy` cannot write `sol-deploy-state-pluto`
