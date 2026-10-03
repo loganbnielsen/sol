@@ -58,6 +58,7 @@ convention on each side.
 | DLQ | `Kafka_service_dlq` | `@sol-fab/kafka` `retry.ts`/`routing.ts` |
 | Trace propagation | `Sol_obs`, `Kafka_service` | `@sol-fab/obs` `traceparentOf`/`extractTraceparent` |
 | Metric names and labels | `worker.ml`, `service.ml`, `fn.ml`, `sol_jobs.ml` | `@sol-fab/obs` constants/helpers |
+| Semantic workload identity | `Sol_obs.of_env` / `Sol_obs.taxonomy` | `@sol-fab/obs` `workloadIdentity`/`resourceAttributes` + `makeLokiPusher` |
 | Config and secrets | `Kafka_service.config_of_env`, `Sol_obs.of_env` | none (apps read env directly) |
 | Job semantics | `Sol_jobs` | none |
 | Transactional publication | `Sol_outbox` | `@sol-fab/outbox` (`publish`, `runRelay`) |
@@ -93,6 +94,7 @@ deferred, not applicable}. A row with no verdict is the failure DEC-022 names.
 | 18 | Synchronous peer calls | `Peer.url`/`Peer.headers` (`x-api-key` + `traceparent`), `sol.toml` `calls` opens the NetworkPolicy pair | none | intentionally deferred — trigger: the first TypeScript app that declares a `calls` edge |
 | 19 | Env access | `Sol_env.timed`, `Sol_runtime.setting` | `process.env`; the variable **names** are the contract | already equivalent |
 | 20 | Consumer idempotency (duplicate delivery) | A unique key plus `ON CONFLICT DO NOTHING` on the consumer's domain write, and a dedupe-keyed job for the follow-up effect (`BUG-112` in `notify_worker`) | Same: `fulfilled_orders_ts` primary key + `ON CONFLICT DO NOTHING`, and a `send_confirmation` job dedupe-keyed by the order id | implemented — FEAT-123 (2026-10-02), tested in `demo_ts/test/delivery.test.ts` |
+| 21 | Semantic workload identity | `Sol_obs.of_env` reads the six `SOL_*` variables the manifest injects and composes them into the Loki stream labels and the OTLP resource attributes, `SOL_SERVICE` (the workload's bare Kubernetes name) winning over the passed `~service` (`sol_obs.ml:29-89`) | `@sol-fab/obs@0.4.0` `workloadIdentity`/`resourceAttributes` read the same six and `makeLokiPusher` composes them into the stream labels, injected values winning over caller labels; the `demo_ts` units build their OTLP resource from `resourceAttributes(...)` | implemented — OBS-051 (2026-10-03): `v0.4.0` published through the OIDC/`provenance` workflow (`loganbnielsen/sol-obs#9`), the TypeScript golden-path smoke asserts each trace's `service.name` is the Sol name (`order-svc`) and that its resource carries every identity label the pod injects, and `check_platform_component_drift.py` guards the TypeScript side |
 
 ## 3. Findings filed
 
