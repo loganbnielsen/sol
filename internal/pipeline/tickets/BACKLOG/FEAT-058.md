@@ -46,3 +46,15 @@ Promote this out of backlog when any of these becomes true:
 - Two contexts aliasing one cluster are detected at deploy time, even when provider/region/name differ in configuration.
 - The failure names both environments and the cluster, and says how to resolve it.
 - The config-level lint remains, and its false positives are documented rather than silent.
+
+
+## Disposition (2026-10-03) — deferred (objective trigger)
+
+Triggers (from the ticket): Sol Cloud owns credentials and cluster selection;
+two environments deliberately share one cluster; an observed instance of a
+destination resolving somewhere unexpected; multiple contributors or CI jobs
+share one kubeconfig. Any one promotes it; DEC-020 already closes the
+ambient-context path.
+
+Left in `BACKLOG/` against that trigger; see
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

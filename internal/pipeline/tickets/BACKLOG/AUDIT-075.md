@@ -65,3 +65,13 @@ no app-facing config surface.
 **TypeScript-parity note (DEC-022):** No language-parity impact — this is
 CLI/deploy-orchestration bookkeeping, independent of the deployed
 workload's language.
+
+
+## Disposition (2026-10-03) — deferred (objective trigger)
+
+Trigger: a team shares CI runners or cluster credentials, or deployment records
+are used as an audit control (maturity B). Until then the `SOL_ACTOR` field is
+documented best-effort provenance, not a security control.
+
+Left in `BACKLOG/` against that trigger; see
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

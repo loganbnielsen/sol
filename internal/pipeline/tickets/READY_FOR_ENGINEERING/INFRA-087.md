@@ -17,3 +17,10 @@ leader election in `kube-system` (GKE Autopilot denies it).
 
 The real defect and the proposed fix are recorded in **FND-0010** and **INFRA-088**; FND-0060 is
 marked `FALSIFIED`. Nothing here should be implemented.
+
+## Disposition (2026-10-03) — closed, withdrawn
+
+Withdrawn 2026-09-26: forensic re-analysis of the Attempt 10 bundle falsified
+FND-0060's scheduling-delay reading; the real defect is FND-0010, fixed by
+INFRA-088 (DONE). Nothing to implement. Closed by the pre-alpha BACKLOG
+adjudication.

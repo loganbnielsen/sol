@@ -83,3 +83,11 @@ identifying a rollback target without the CLI, and DOCS-029 must document it.
 
 **TypeScript parity:** No language-parity impact — release metadata is
 app-language neutral.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: DEC-057 §9 portability promise is open; `sol_cli_release` metadata is Sol-shaped with no stated durable owner (see AUDIT-075/076/077).
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

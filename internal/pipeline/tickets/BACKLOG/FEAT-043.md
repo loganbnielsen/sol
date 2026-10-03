@@ -29,3 +29,11 @@ A decision, not code: is this core, a connector, or deferred?
 
 - A DEC ticket exists with a recommendation (build / connector / defer) and rationale.
 - No production implementation is added under this ticket.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: is analytics/warehouse export a Sol product surface, a documented escape-hatch connector, or out of scope? Options: a timeboxed discovery spike toward a DEC (build connector), or declare it a non-goal. Consequence: a managed export surface is a second product (CDC, schema evolution, PII, governance, cost).
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

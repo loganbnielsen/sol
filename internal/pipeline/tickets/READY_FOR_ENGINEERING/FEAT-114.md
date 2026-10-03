@@ -57,3 +57,11 @@ contrasting with handing independent work to `sol-jobs`.
 
 **TypeScript parity:** record the verdict — a TS equivalent in `@sol-fab/*`, or a
 tracked follow-up with a trigger (DEC-022).
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `max_attempts`/`jitter_ratio`/`base_delay_s` appear only under `framework/ocaml/sol-jobs`; there is no shared bounded operation-retry helper.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

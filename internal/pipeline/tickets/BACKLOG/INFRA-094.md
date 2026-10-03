@@ -43,3 +43,11 @@ until the decision is recorded.
 - Do not add a silent forget path or automatic state surgery.
 - Do not add zone fallback, retry or any provisioning-behaviour change: the stockout is
   provider-owned and transient.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: how the supported destroy converges a target whose provider-create failed mid-apply — distinguish "never finished creating" from "exists but diverged", a supported explicit unblock path, or a documented emergency procedure. Consequence: must not weaken no-construction-during-destroy; zone fallback/retry stay out of scope.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

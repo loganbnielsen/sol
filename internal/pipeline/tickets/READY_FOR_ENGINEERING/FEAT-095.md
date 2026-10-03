@@ -46,3 +46,10 @@ the reason. The work lives in the external `@sol-fab/*` repositories.
 - A TypeScript worker emits `status="dead_letter"` and `status="relay_failed"` with the
   same meaning as sol-worker's (or the verdict is recorded as not applicable, with why).
 - The TS demo's `metrics.ts` status comment is updated to match.
+
+## Disposition (2026-10-03) — closed, withdrawn
+
+Withdrawn 2026-10-02: FEAT-113 removed `Dead_letter` and the retry relay from the
+OCaml worker, so the status vocabulary this ticket wanted TypeScript to match no
+longer exists. The TypeScript obligation is FEAT-118's `Ack | Fail` alignment.
+Closed by the pre-alpha BACKLOG adjudication.

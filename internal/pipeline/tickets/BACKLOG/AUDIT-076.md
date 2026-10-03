@@ -63,3 +63,13 @@ change, not an app-facing config surface.
 
 **TypeScript-parity note (DEC-022):** No language-parity impact —
 deploy-orchestration bookkeeping, independent of workload language.
+
+
+## Disposition (2026-10-03) — deferred (objective trigger)
+
+Trigger: deployment-event volume creates measurable ConfigMap growth in a
+namespace, or a cross-cluster retention/compliance requirement appears. Until
+then the in-cluster history is acceptable for one team and one cluster.
+
+Left in `BACKLOG/` against that trigger; see
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

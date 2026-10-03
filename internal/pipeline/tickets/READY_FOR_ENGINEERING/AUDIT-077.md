@@ -62,3 +62,11 @@ only.
 **TypeScript-parity note (DEC-022):** No language-parity impact — this is
 release-record bookkeeping internal to the OCaml CLI, not a
 framework-level contract either language's SDK participates in.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `Sol_cli_release.validate` (`cli/lib/deploy/sol_cli_release.ml:138-155`) still emits `"release record %s is corrupt: its content rederives %s"` without checking `encoding_version` (now `sol-release-v4`, `sol_cli_release_id.ml:33`).
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

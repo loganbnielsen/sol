@@ -26,3 +26,11 @@ Is removing the process-wide cwd dependency worth a change of this size and regr
 - `rg -n 'Sys.chdir' cli/lib cli/bin` returns nothing.
 - `dune test cli/test/` and the golden-path smoke pass.
 - **Demo/example:** not applicable (internal).
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: remove the last process-wide `chdir` (resolve every workspace-relative path against an explicit root, ~119 sites) or keep the single-entry-point convention from REFAC-108. Consequence: removal is a wide, behavior-preserving refactor with real regression surface; keeping it closes the ticket.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

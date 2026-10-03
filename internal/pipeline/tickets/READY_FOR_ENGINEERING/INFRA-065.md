@@ -57,3 +57,11 @@ It is real but mechanical: ~44 files of test churn with no behavioural change, s
 it should be prioritised deliberately rather than picked up as drive-by work. The
 one thing worth keeping in view is that the *signature* inconsistency is a
 correctness hazard (a reader can invert the arguments), not just tidiness.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `rg "let contains|let contains_substring|let contains_needle" --glob "*.ml"` finds 49 definitions in four signatures.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).

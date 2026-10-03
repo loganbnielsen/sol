@@ -30,3 +30,11 @@ Decide whether and when a cache component is warranted, and if so, scope it cons
 
 - Either demand evidence exists and a scoped implementation ticket is filed, or a DEC ticket documents why caching is deferred.
 - No component is added under this ticket.
+
+## Disposition (2026-10-03) — decision required
+
+Smallest decision: is a Redis-compatible cache primitive in scope for the alpha, and against what demand evidence? Options: the ticket's own gate — demand evidence before adding a component — or declare it out of scope. Consequence: a component touches config, transport security, observability, local dev substrate and Helm/Terraform.
+
+Surfaced to the operator as a category-5 decision; not deferred. Moves to
+`READY_FOR_ENGINEERING/` once the decision is recorded. See
+`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.

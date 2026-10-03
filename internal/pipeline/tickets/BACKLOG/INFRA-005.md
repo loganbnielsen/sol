@@ -56,3 +56,12 @@ have. Moved to `BACKLOG` rather than left in `READY_FOR_ENGINEERING` so
 On above. When GCP access exists, the remaining task is "exercise this
 against reality, fix anything discovered, then remove the gate," not
 rediscovering the wiring.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires live GCP cluster access (no `gcloud` CLI or credentials in this
+environment) to validate the GCS Helm wiring before opening OBS-034's gate.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

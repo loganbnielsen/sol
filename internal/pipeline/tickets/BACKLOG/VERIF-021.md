@@ -48,3 +48,12 @@ does.
 - Language parity: no application-facing contract change; state that in one line.
 - Demo/example: not applicable — a qualification run, not an app-author-visible
   change.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires explicit authorization for a live-cloud qualification run and a
+qualified AWS/GCP target.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

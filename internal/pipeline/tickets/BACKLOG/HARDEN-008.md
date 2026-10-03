@@ -67,3 +67,12 @@ attempt has reached.
 - `FND-0010` moves to `QUALIFIED` **only if** the check passed and the install continued;
 - any further failure is filed as its own finding with the widened discriminator attached;
 - supported teardown verified, durable prerequisites intact, no billable residue.
+
+
+## Disposition (2026-10-03) — live/operator blocked
+
+Requires explicit operator authorization for a live GCP run against a fresh
+target.
+
+Gated on explicit authorization and/or the live reference-app campaign; see
+AGENTS.md § Live qualification.

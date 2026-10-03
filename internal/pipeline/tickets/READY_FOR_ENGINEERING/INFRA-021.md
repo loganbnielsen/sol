@@ -44,3 +44,11 @@ that precondition is met.
 
 **TypeScript parity:** Neutral by design: each language gets its own golden
 path whenever its code changes.
+
+## Disposition (2026-10-03) — actionable pre-alpha
+
+Premise re-checked against current `origin/main`; the work is still real.
+Evidence: `internal/ci/classify-changes.sh` still yields only `docs-only|source`; no per-language classification.
+
+Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
+(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
