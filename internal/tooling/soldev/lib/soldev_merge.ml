@@ -889,23 +889,32 @@ let parse_worktree_porcelain lines =
   go None [] lines
 ;;
 
-let shell_output_trim cmd = Sol_process.output_shell ~echo:false cmd |> String.trim
+let read_failure_reason (r : Sol_process.result) =
+  let stderr = String.trim r.stderr in
+  if stderr <> ""
+  then stderr
+  else Printf.sprintf "git exited %d" (Sol_process.exit_code r)
+;;
 
 type worktree_snapshot =
   { ws_path : string
   ; ws_branch : string
-  ; ws_dirty : bool
-  ; ws_unpushed : bool
+  ; ws_dirty : bool option
+  ; ws_unpushed : bool option
   }
 
 let worktree_snapshot_of_entry = function
   | _, None -> None
   | path, Some branch ->
     let qpath = Filename.quote path in
-    let status =
-      shell_output_trim (Printf.sprintf "git -C %s status --porcelain" qpath)
+    let dirty =
+      match
+        Sol_process.output_shell_checked
+          (Printf.sprintf "git -C %s status --porcelain" qpath)
+      with
+      | Ok status -> Some (status <> "")
+      | Error _ -> None
     in
-    let dirty = status <> "" in
     let upstream = "origin/" ^ branch in
     let upstream_rc =
       Sol_process.run_shell_rc
@@ -916,16 +925,15 @@ let worktree_snapshot_of_entry = function
            (Filename.quote upstream))
     in
     let commits_ahead_of ref =
-      let count =
-        shell_output_trim
+      match
+        Sol_process.output_shell_checked
           (Printf.sprintf
              "git -C %s rev-list --count %s..HEAD"
              qpath
              (Filename.quote ref))
-      in
-      match int_of_string_opt count with
-      | Some count -> count > 0
-      | None -> true
+      with
+      | Ok count -> Option.map (fun n -> n > 0) (int_of_string_opt count)
+      | Error _ -> None
     in
     let unpushed =
       commits_ahead_of (if upstream_rc = 0 then upstream else "origin/main")
@@ -934,28 +942,40 @@ let worktree_snapshot_of_entry = function
 ;;
 
 let worktree_snapshots () =
-  Soldev_shell.run_cmd_lines "git worktree list --porcelain"
-  |> parse_worktree_porcelain
-  |> List.filter_map worktree_snapshot_of_entry
+  match Soldev_shell.run_cmd_lines_checked "git worktree list --porcelain" with
+  | Ok lines ->
+    Ok (lines |> parse_worktree_porcelain |> List.filter_map worktree_snapshot_of_entry)
+  | Error _ as error -> error
 ;;
 
-let find_ticket_worktree ticket_id =
-  worktree_snapshots ()
-  |> List.find_opt (fun wt ->
-    wt.ws_branch <> "main" && ticket_id_of_branch wt.ws_branch = ticket_id)
+let find_ticket_worktree ticket_id snapshots =
+  List.find_opt
+    (fun wt -> wt.ws_branch <> "main" && ticket_id_of_branch wt.ws_branch = ticket_id)
+    snapshots
 ;;
 
 let worktree_annotation_for_ticket ticket_id =
-  match find_ticket_worktree ticket_id with
-  | None -> None
-  | Some wt ->
-    let notes =
-      (if wt.ws_dirty then [ "dirty worktree" ] else [])
-      @ if wt.ws_unpushed then [ "unpushed commits" ] else []
-    in
-    if notes = []
-    then None
-    else Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path)
+  match worktree_snapshots () with
+  | Error r ->
+    Some (Printf.sprintf "(worktree state unreadable: %s)" (read_failure_reason r))
+  | Ok snapshots ->
+    (match find_ticket_worktree ticket_id snapshots with
+     | None -> None
+     | Some wt ->
+       let notes =
+         (match wt.ws_dirty with
+          | Some true -> [ "dirty worktree" ]
+          | Some false -> []
+          | None -> [ "worktree state unreadable" ])
+         @
+         match wt.ws_unpushed with
+         | Some true -> [ "unpushed commits" ]
+         | Some false -> []
+         | None -> [ "push state unreadable" ]
+       in
+       if notes = []
+       then None
+       else Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path))
 ;;
 
 let evaluate_premise ~echo probe =

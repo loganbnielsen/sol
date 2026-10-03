@@ -69,3 +69,35 @@ call sites.
   this is an internal-only refactor (maintainer tooling).
 - Record the per-language capability verdict for framework/application
   contracts, or explain why language parity is unaffected.
+
+## Completion (2026-10-02)
+
+**Premise verified:** the probe
+`! rg -q 'open_process_in|Sys.command' internal/tooling/sol_process/lib/sol_process.ml`
+held on `origin/main @ f7d45074` — the legacy family was still present at
+`sol_process.ml:160,168,176`.
+
+**Implemented:** the `open_process_in`/`Sys.command` family is deleted;
+`lines_shell`/`output_shell`/`run_shell_rc`/`run_shell_ok` now delegate to
+`run_shell` (i.e. `run_argv [ "sh"; "-c"; cmd ]`), and `lines_shell_checked` /
+`output_shell_checked` return `(_, Sol_process.result) result` so a nonzero exit
+is a distinct outcome. `soldev_merge`'s git reads use the checked variants; a
+`worktree_snapshot` carries `ws_dirty`/`ws_unpushed` as `bool option`, where
+`None` is unreadable, and an unreadable `git worktree list` annotates the ticket
+as `(worktree state unreadable: …)` rather than reading as "no worktree".
+
+**Evidence:**
+
+- `rg -n 'open_process_in|Sys.command' internal/tooling/sol_process/lib/sol_process.ml`
+  → no matches.
+- `dune test internal/tooling/sol_process internal/tooling/soldev` → all pass,
+  including two new `soldev_merge` cases: a fake `git` that exits nonzero yields
+  the unreadable annotation, and a non-repository `git status` is not reported
+  clean.
+- `internal/ci/check_ocamlformat.sh --staged` → clean.
+
+**Demo/example coverage:** Not applicable — maintainer tooling
+(`internal/tooling/`); no app-author surface.
+
+**TypeScript-parity note (DEC-022):** No language-parity impact — this is
+maintainer CLI tooling (`soldev`), not a framework/application contract.
