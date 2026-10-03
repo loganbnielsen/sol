@@ -29,7 +29,9 @@ let inspect scope =
   in
   let* findings = findings_for ~facts scope in
   let result =
-    if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
+    if Sol_cli_check.has_errors findings
+    then Error (Sol_cli_exit.reported ~code:2 ())
+    else Ok ()
   in
   Ok { findings; result }
 ;;
