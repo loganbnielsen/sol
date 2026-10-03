@@ -261,6 +261,24 @@ jobs:
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @ci-integration-kafka @ci-integration-pg
 
+      # VERIF-023: a "server closed the connection unexpectedly" on the
+      # integration step is a runner-side failure unless the container is shown
+      # to have died. Capture that distinction in the log of the failing run,
+      # instead of leaving the next reader to guess from a re-run.
+      - name: Integration failure diagnostics
+        if: failure() && needs.classify.outputs.kind != 'docs-only'
+        run: |
+          echo "=== containers ==="
+          docker ps -a || true
+          for container in sol-postgres redpanda; do
+            echo "=== $container ==="
+            docker inspect "$container" \
+              --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} started={{.State.StartedAt}}' || true
+            docker logs "$container" --tail 40 2>&1 || true
+          done
+          echo "=== runner memory ==="
+          free -m || true
+
       # VERIF-001: the supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
       # transaction; the relay publishes an ordered Kafka fact; a worker
