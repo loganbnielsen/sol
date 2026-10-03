@@ -9,7 +9,7 @@
     "contract": "npm run build && node dist/main.js"
   },
   "dependencies": {
-    "@sol-fab/kafka": "^0.5.1"
+    "@sol-fab/kafka": "^0.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

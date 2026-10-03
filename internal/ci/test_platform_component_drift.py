@@ -22,6 +22,9 @@ FILES = [
     "examples/pluto/app/demo_ts/fulfillment_worker/src/tracing.ts",
     "examples/pluto/app/demo_ts/fulfillment_worker/src/index.ts",
     "examples/pluto/app/demo_ts/fulfillment_worker/package.json",
+    "examples/pluto/app/demo_ts/package-lock.json",
+    "platform/shared/templates/svc-ts/package.json",
+    "platform/shared/templates/worker-ts/package.json",
 ]
 
 
@@ -106,6 +109,19 @@ def drop_ts_loki_pusher(root):
     path.write_text(text.replace("makeLokiPusher(", "consoleJson(", 1))
 
 
+def downgrade_ts_template_obs_pin(root):
+    path = root / "platform/shared/templates/svc-ts/package.json"
+    text = path.read_text()
+    path.write_text(text.replace('"@sol-fab/obs": "^0.4.0"', '"@sol-fab/obs": "^0.3.0"', 1))
+
+
+def duplicate_obs_in_demo_lockfile(root):
+    path = root / "examples/pluto/app/demo_ts/package-lock.json"
+    lock = json.loads(path.read_text())
+    lock["packages"]["node_modules/@sol-fab/kafka/node_modules/@sol-fab/obs"] = {"version": "0.1.2"}
+    path.write_text(json.dumps(lock, indent=2) + "\n")
+
+
 CASES = [
     ("a migrated key back in the local platform", "fail",
      append("cli/lib/local/sol_cli_local_platform.ml", '\nlet _ = "deploymentMode"\n')),
@@ -127,6 +143,8 @@ CASES = [
     ("the TypeScript trace hardcodes its service name", "fail", hardcode_ts_trace_service),
     ("the TypeScript obs pin predates identity support", "fail", downgrade_ts_obs_pin),
     ("the TypeScript service stops pushing through makeLokiPusher", "fail", drop_ts_loki_pusher),
+    ("a TypeScript template falls below the identity floor", "fail", downgrade_ts_template_obs_pin),
+    ("the demo lockfile resolves two @sol-fab/obs versions", "fail", duplicate_obs_in_demo_lockfile),
     ("the real tree", "pass", lambda root: None),
 ]
 

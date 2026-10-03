@@ -55,6 +55,11 @@ DEMO_TS_PACKAGES = [
 ]
 OBS_TS_IDENTITY_FLOOR = (0, 4, 0)
 OBS_TS_DEP = re.compile(r'"@sol-fab/obs":\s*"\^(\d+)\.(\d+)\.(\d+)"')
+TS_TEMPLATE_PACKAGES = [
+    "platform/shared/templates/svc-ts/package.json",
+    "platform/shared/templates/worker-ts/package.json",
+]
+DEMO_TS_LOCKFILE = f"{DEMO_TS}/package-lock.json"
 DOCUMENTED_TAXONOMY = ["workspace", "env", "domain", "service", "primitive", "release"]
 DEV_TAXONOMY = re.compile(r"~taxonomy_labels:\[(.*?)\]", re.S)
 
@@ -151,7 +156,7 @@ def typescript_identity_problems(root):
                 f"{rel} must push its logs through makeLokiPusher() so the Loki stream carries Sol's "
                 "injected workload identity (DEC-064/OBS-051)"
             )
-    for rel in DEMO_TS_PACKAGES:
+    for rel in DEMO_TS_PACKAGES + TS_TEMPLATE_PACKAGES:
         path = root / rel
         if not path.is_file():
             problems.append(f"{rel} is missing, so the TypeScript identity floor cannot be checked")
@@ -165,6 +170,44 @@ def typescript_identity_problems(root):
                 f"{rel} pins @sol-fab/obs {match.group(0)}, which predates Sol workload-identity support "
                 f"({floor}); the app's own service name would win (OBS-051)"
             )
+    return problems
+
+
+def typescript_lockfile_problems(root):
+    problems = []
+    path = root / DEMO_TS_LOCKFILE
+    if not path.is_file():
+        problems.append(f"{DEMO_TS_LOCKFILE} is missing, so the resolved @sol-fab/obs version cannot be checked")
+        return problems
+    try:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        problems.append(f"{DEMO_TS_LOCKFILE} could not be parsed: {error}")
+        return problems
+    versions = sorted(
+        {
+            entry.get("version")
+            for name, entry in lock.get("packages", {}).items()
+            if name.endswith("@sol-fab/obs") and isinstance(entry, dict)
+        }
+    )
+    if len(versions) != 1:
+        problems.append(
+            f"{DEMO_TS_LOCKFILE} resolves {versions or 'no versions of'} @sol-fab/obs; a consumer must "
+            "carry exactly one, or @sol-fab/kafka's re-exported tracing and the app's own logs drift "
+            "apart (BUG-127)"
+        )
+        return problems
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(versions[0]))
+    if match is None:
+        problems.append(f"{DEMO_TS_LOCKFILE} resolves @sol-fab/obs {versions[0]!r}, which is not a version")
+        return problems
+    if tuple(int(part) for part in match.groups()) < OBS_TS_IDENTITY_FLOOR:
+        floor = ".".join(str(part) for part in OBS_TS_IDENTITY_FLOOR)
+        problems.append(
+            f"{DEMO_TS_LOCKFILE} resolves @sol-fab/obs {versions[0]}, which predates Sol workload-identity "
+            f"support ({floor}) (OBS-051)"
+        )
     return problems
 
 
@@ -252,6 +295,7 @@ def main():
     problems.extend(taxonomy_problems(root))
     problems.extend(identity_problems(root))
     problems.extend(typescript_identity_problems(root))
+    problems.extend(typescript_lockfile_problems(root))
     for problem in problems:
         print(f"guardrail: {problem}", file=sys.stderr)
     if problems:
@@ -260,6 +304,7 @@ def main():
     print("guardrail: the cloud and local Alloy log-promotion taxonomies match and carry all six labels.")
     print("guardrail: the framework, manifest and workload identity injection carry the same six labels under the same SOL_* names.")
     print("guardrail: the TypeScript demo builds its Loki stream and OTLP resource from the injected identity, not the app's own service name.")
+    print("guardrail: the demo and the TypeScript templates pin @sol-fab/obs at or above the identity floor, and the demo lockfile resolves exactly one copy.")
 
 
 main()

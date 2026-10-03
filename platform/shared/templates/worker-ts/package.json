@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@prometheus-io/client": "^0.16.1",
-    "@sol-fab/kafka": "^0.5.1",
-    "@sol-fab/obs": "^0.3.0",
+    "@sol-fab/kafka": "^0.5.2",
+    "@sol-fab/obs": "^0.4.0",
     "@sol-fab/worker": "^0.1.0",
     "kafkajs": "^2.2.4"
   },
