@@ -3,6 +3,10 @@
 Goal: make Sol feel like a simple software factory for local dev and live
 deploys without hiding cost, state, or rollback risk.
 
+> **Pre-alpha execution order** is organized into workstreams in
+> [`PRE_ALPHA_WORKSTREAMS.md`](PRE_ALPHA_WORKSTREAMS.md) — the coordination
+> layer over the ticket tree.
+
 ## Current Reality
 
 - `sol local infra up` creates the local substrate.
