@@ -1,6 +1,7 @@
 type t =
   | Aws
   | Gcp
+  | Byo
 
 val of_string : string -> t option
 val to_string : t -> string

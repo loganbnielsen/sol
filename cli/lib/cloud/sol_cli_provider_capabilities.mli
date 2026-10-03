@@ -1,3 +1,8 @@
+type root_status =
+  | Root_present
+  | Root_not_applicable
+  | Root_not_implemented
+
 type platform_storage =
   { storage_class : string
   ; csi_driver : string
@@ -20,7 +25,8 @@ type authorization_workload =
   }
 
 type t =
-  { backend_config :
+  { root_status : root_status
+  ; backend_config :
       Sol_cli_config.target
       -> bucket:string
       -> object_key:string
@@ -112,6 +118,7 @@ val gcp_effective_access
 val required : string -> string option -> (string, string) result
 val aws : t
 val gcp : t
+val byo : t
 val capabilities_of : Sol_cli_provider.t -> t
 val provider_console_url : Sol_cli_config.target -> string option
 val installation_nameservers_output : Sol_cli_provider.t -> string

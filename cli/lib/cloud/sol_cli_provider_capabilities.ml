@@ -1,3 +1,8 @@
+type root_status =
+  | Root_present
+  | Root_not_applicable
+  | Root_not_implemented
+
 type platform_storage =
   { storage_class : string
   ; csi_driver : string
@@ -42,7 +47,8 @@ type authorization_workload =
   }
 
 type t =
-  { backend_config :
+  { root_status : root_status
+  ; backend_config :
       Sol_cli_config.target
       -> bucket:string
       -> object_key:string
@@ -759,7 +765,8 @@ let aws_installation_identity_contracts : identity_contract list =
 ;;
 
 let aws : t =
-  { backend_config = aws_backend_config
+  { root_status = Root_present
+  ; backend_config = aws_backend_config
   ; cluster_access_role_arn = aws_cluster_access_role_arn
   ; platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
   ; cluster_substrate = None
@@ -961,7 +968,8 @@ let gcp_installation_zone_lookup : string -> string list =
 ;;
 
 let gcp : t =
-  { backend_config =
+  { root_status = Root_present
+  ; backend_config =
       (fun _target ~bucket ~object_key ->
         Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
   ; cluster_access_role_arn = (fun _target -> Ok None)
@@ -1034,9 +1042,61 @@ let gcp : t =
   }
 ;;
 
+let byo_no_root =
+  "the byo driver owns no cloud Terraform root: it is bring-your-own infrastructure, so \
+   Sol has no provider lifecycle to run for it (DEC-051)"
+;;
+
+let byo : t =
+  { root_status = Root_not_applicable
+  ; backend_config = (fun _ ~bucket:_ ~object_key:_ -> Error byo_no_root)
+  ; cluster_access_role_arn = (fun _ -> Ok None)
+  ; platform_storage = { storage_class = ""; csi_driver = "" }
+  ; cluster_substrate = None
+  ; disk_quota = None
+  ; installation_prerequisites = []
+  ; installation_probes = (fun _ -> [])
+  ; installation_backend = (fun _ -> Error byo_no_root)
+  ; installation_vars = (fun ~manage_dns_zone:_ ?parent_zone_id:_ _ -> [])
+  ; installation_zone_address = ""
+  ; installation_zone_import_address = ""
+  ; installation_zone_lookup = (fun _ -> [])
+  ; installation_nameservers_output = ""
+  ; installation_failure_means_absent = (fun _ -> false)
+  ; installation_identity_contracts = []
+  ; installation_created_prerequisites = []
+  ; installation_state_backend_address = ""
+  ; installation_retire_state_backend = (fun ~run:_ _ -> Ok ())
+  ; own_vars = (fun _ ~workspace:_ shared -> shared)
+  ; profile_vars = (fun ~production:_ ~production_postgres:_ -> [])
+  ; guarded_removals = []
+  ; root_declared_vars =
+      (fun ~has_postgres:_ ~production_postgres:_ ~ecr_repositories:_ -> Ok [])
+  ; destroy_guard_vars = (fun ~final_snapshot:_ -> [])
+  ; bootstrap_matchers = []
+  ; bootstrap_scope = Sol_cli_terraform.targets "" []
+  ; reconciliation_scope = (fun _ -> Sol_cli_terraform.targets "" [])
+  ; guarded_addresses = []
+  ; cloud_ready_expectation = "the bring-your-own cluster is reachable"
+  ; production_qualified = false
+  ; sol_keys = []
+  ; state_locking = None
+  ; scoped_identities = []
+  ; authorization_reconciler_field = ""
+  ; authorization_trust_field = ""
+  ; authorization_root_vars = (fun _ -> Ok [])
+  ; authorization_fence_addresses = []
+  ; authorization_reconciler = (fun _ -> Error byo_no_root)
+  ; authorization_assumption = (fun _ -> Error byo_no_root)
+  ; authorization_principal_matches = (fun _ ~principal:_ -> Error byo_no_root)
+  ; authorization_effective_access = (fun _ _ -> Ok ())
+  }
+;;
+
 let capabilities_of = function
   | Sol_cli_provider.Aws -> aws
   | Sol_cli_provider.Gcp -> gcp
+  | Sol_cli_provider.Byo -> byo
 ;;
 
 let provider_console_url (target : Sol_cli_config.target) =
@@ -1054,6 +1114,7 @@ let provider_console_url (target : Sol_cli_config.target) =
             "https://console.cloud.google.com/kubernetes/list/overview?project=%s"
             (String.trim project))
      | _ -> None)
+  | Sol_cli_provider.Byo -> None
 ;;
 
 let installation_nameservers_output provider =
