@@ -290,6 +290,83 @@ let rev_parse ref =
   String.trim line
 ;;
 
+let guard_source =
+  Filename.concat (rev_parse "--show-toplevel") "internal/ci/context/check_ticket_move.sh"
+;;
+
+let install_ticket_move_guard () =
+  Unix.mkdir "internal/ci" 0o755;
+  Unix.mkdir "internal/ci/context" 0o755;
+  let content = In_channel.with_open_bin guard_source In_channel.input_all in
+  let installed = "internal/ci/context/check_ticket_move.sh" in
+  Out_channel.with_open_bin installed (fun oc -> output_string oc content);
+  Unix.chmod installed 0o755
+;;
+
+let guard_verdict ~branch =
+  Sys.command
+    (Printf.sprintf
+       "internal/ci/context/check_ticket_move.sh --base origin/main --branch %s \
+        >/dev/null 2>&1"
+       (Filename.quote branch))
+  = 0
+;;
+
+let with_submit_stubs f =
+  let old_path = Sys.getenv "PATH" in
+  let dir = Sys.getcwd () in
+  git_ok "init -q --bare origin.git";
+  git_ok "remote add origin origin.git";
+  write_file
+    "gh"
+    "#!/bin/sh\n\
+     case \"$1 $2\" in\n\
+     \"pr list\") printf '[]' ;;\n\
+     \"pr create\") printf 'https://example.test/pull/9\\n' ;;\n\
+     *) exit 1 ;;\n\
+     esac\n";
+  Unix.chmod "gh" 0o755;
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect ~finally:(fun () -> Unix.putenv "PATH" old_path) f
+;;
+
+let ready_ticket_body ticket_id =
+  Printf.sprintf
+    "---\n\
+     id: %s\n\
+     type: bug\n\
+     severity: low\n\
+     source: test\n\
+     ---\n\n\
+     An implementation left in READY\n\n\
+     **Depends on:** None.\n"
+    ticket_id
+;;
+
+let scratch_ready_tickets ticket_ids =
+  Unix.mkdir "internal" 0o755;
+  Unix.mkdir "internal/pipeline" 0o755;
+  Unix.mkdir "internal/pipeline/tickets" 0o755;
+  List.iter
+    (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
+    [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
+  List.iter
+    (fun ticket_id ->
+       write_file
+         (Printf.sprintf
+            "internal/pipeline/tickets/READY_FOR_ENGINEERING/%s.md"
+            ticket_id)
+         (ready_ticket_body ticket_id))
+    ticket_ids;
+  install_ticket_move_guard ();
+  git_ok "init -q";
+  git_ok "config user.email soldev@test";
+  git_ok "config user.name soldev";
+  git_ok "add -A internal";
+  git_ok "commit -qm base";
+  git_ok "update-ref refs/remotes/origin/main HEAD"
+;;
+
 let test_merge_without_review_marker () =
   in_temp_dir (fun () ->
     let old_path = Sys.getenv "PATH" in
@@ -784,39 +861,92 @@ let test_submit_accepts_a_filing_and_a_done_move () =
            (Soldev_merge.run_submit "BUG-201" = Ok ())))
 ;;
 
+let submit_refused_by_guard ticket_id =
+  match Soldev_merge.run_submit ticket_id with
+  | Error { Soldev_exit.message = Some message; _ } -> containing message "does not move"
+  | Error { Soldev_exit.message = None; _ } | Ok () -> false
+;;
+
 let test_submit_refuses_a_base_ready_ticket_left_in_ready () =
   in_temp_dir (fun () ->
-    Unix.mkdir "internal" 0o755;
-    Unix.mkdir "internal/pipeline" 0o755;
-    Unix.mkdir "internal/pipeline/tickets" 0o755;
-    List.iter
-      (fun state -> Unix.mkdir ("internal/pipeline/tickets/" ^ state) 0o755)
-      [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ];
-    write_file
-      "internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-301.md"
-      "---\n\
-       id: BUG-301\n\
-       type: bug\n\
-       severity: low\n\
-       source: test\n\
-       ---\n\n\
-       An implementation left in READY\n\n\
-       **Depends on:** None.\n";
-    git_ok "init -q";
-    git_ok "config user.email soldev@test";
-    git_ok "config user.name soldev";
-    git_ok "add internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-301.md";
-    git_ok "commit -qm base";
-    git_ok "update-ref refs/remotes/origin/main HEAD";
+    scratch_ready_tickets [ "BUG-301" ];
     git_ok "checkout -q -b BUG-301/impl";
+    git_ok "commit -q --allow-empty -m 'fix it, with no part declaration'";
     check_bool
-      "a ticket READY at the base must be carried to DONE before submitting"
+      "the guard refuses an ordinary implementation left in READY"
+      false
+      (guard_verdict ~branch:"BUG-301/impl");
+    check_bool
+      "submit refuses it too, quoting the guard"
       true
-      (match Soldev_merge.run_submit "BUG-301" with
-       | Error { Soldev_exit.message = Some message; _ } ->
-         containing message "move it to DONE"
-       | Error { Soldev_exit.message = None; _ } -> false
-       | Ok () -> false))
+      (submit_refused_by_guard "BUG-301"))
+;;
+
+let test_submit_accepts_a_declared_part () =
+  in_temp_dir (fun () ->
+    scratch_ready_tickets [ "BUG-302" ];
+    git_ok "checkout -q -b BUG-302/part";
+    git_ok "commit -q --allow-empty -m 'implement part A (BUG-302, part A)'";
+    check_bool
+      "the guard accepts a declared part"
+      true
+      (guard_verdict ~branch:"BUG-302/part");
+    with_submit_stubs (fun () ->
+      check_bool
+        "submit accepts the same declaration"
+        true
+        (Soldev_merge.run_submit "BUG-302" = Ok ())))
+;;
+
+let test_submit_refuses_a_malformed_part_declaration () =
+  in_temp_dir (fun () ->
+    scratch_ready_tickets [ "BUG-303" ];
+    git_ok "checkout -q -b BUG-303/part";
+    git_ok "commit -q --allow-empty -m 'implement part A (BUG-303 part A)'";
+    check_bool
+      "the guard refuses a declaration that is not exactly '(ID, part ...)'"
+      false
+      (guard_verdict ~branch:"BUG-303/part");
+    check_bool
+      "submit fails closed on the same malformed declaration"
+      true
+      (submit_refused_by_guard "BUG-303"))
+;;
+
+let test_submit_refuses_an_unrelated_done_move () =
+  in_temp_dir (fun () ->
+    scratch_ready_tickets [ "BUG-305"; "BUG-306" ];
+    git_ok "checkout -q -b BUG-305/impl";
+    git_ok
+      "mv internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-306.md \
+       internal/pipeline/tickets/DONE/BUG-306.md";
+    git_ok "add -A internal/pipeline/tickets";
+    git_ok "commit -qm 'finish BUG-306'";
+    check_bool
+      "the guard refuses a DONE move for a different ticket"
+      false
+      (guard_verdict ~branch:"BUG-305/impl");
+    check_bool "submit refuses it too" true (submit_refused_by_guard "BUG-305"))
+;;
+
+let test_submit_accepts_the_final_done_transition () =
+  in_temp_dir (fun () ->
+    scratch_ready_tickets [ "BUG-307" ];
+    git_ok "checkout -q -b BUG-307/impl";
+    git_ok
+      "mv internal/pipeline/tickets/READY_FOR_ENGINEERING/BUG-307.md \
+       internal/pipeline/tickets/DONE/BUG-307.md";
+    git_ok "add -A internal/pipeline/tickets";
+    git_ok "commit -qm done";
+    check_bool
+      "the guard accepts the final DONE transition"
+      true
+      (guard_verdict ~branch:"BUG-307/impl");
+    with_submit_stubs (fun () ->
+      check_bool
+        "submit accepts the final DONE transition"
+        true
+        (Soldev_merge.run_submit "BUG-307" = Ok ())))
 ;;
 
 let test_stale_binary_fails_after_rename () =
@@ -1172,6 +1302,18 @@ let () =
         ; Windtrap.test
             "submit refuses a base-READY ticket left in READY"
             test_submit_refuses_a_base_ready_ticket_left_in_ready
+        ; Windtrap.test
+            "submit accepts a ticket declared as one part"
+            test_submit_accepts_a_declared_part
+        ; Windtrap.test
+            "submit fails closed on a malformed part declaration"
+            test_submit_refuses_a_malformed_part_declaration
+        ; Windtrap.test
+            "submit refuses a DONE move for an unrelated ticket"
+            test_submit_refuses_an_unrelated_done_move
+        ; Windtrap.test
+            "submit accepts the final DONE transition"
+            test_submit_accepts_the_final_done_transition
         ]
     ]
 ;;

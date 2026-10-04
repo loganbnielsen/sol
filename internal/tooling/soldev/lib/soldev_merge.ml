@@ -608,8 +608,37 @@ let run_check_reverts () =
          Soldev_exit.reported ()))
 ;;
 
+let ticket_move_guard_refusal ~branch =
+  let guard_path = "internal/ci/context/check_ticket_move.sh" in
+  let command =
+    Printf.sprintf
+      "guard=\"$(git rev-parse --show-toplevel)/%s\"\n\
+       if [ ! -x \"$guard\" ]; then echo \"$guard is missing or not executable, so the \
+       ticket-move rule cannot be checked.\" >&2; exit 2; fi\n\
+       \"$guard\" --base %s --branch %s"
+      guard_path
+      (Filename.quote base_ref)
+      (Filename.quote branch)
+  in
+  let result = Sol_process.run_shell ~echo:false command in
+  if Sol_process.succeeded result
+  then None
+  else (
+    match String.trim result.Sol_process.stderr with
+    | "" -> Some (Sol_process.failure_message result)
+    | said -> Some said)
+;;
+
 let run_submit ticket_id =
   let open Result.Syntax in
+  let* branch = current_branch () in
+  let* () =
+    if branch = "main" || branch = ""
+    then
+      Soldev_exit.error
+        (Printf.sprintf "error: not on a ticket branch (currently on %s)" branch)
+    else Ok ()
+  in
   let* ticket_path =
     match Soldev_ticket.find_ticket ticket_id with
     | None ->
@@ -624,13 +653,9 @@ let run_submit ticket_id =
       (match ticket_at_base ~ref:base_ref ticket_id with
        | Ticket_not_ready_at_base -> Ok path
        | Ticket_ready_at_base ->
-         Soldev_exit.error
-           (Printf.sprintf
-              "error: %s is READY_FOR_ENGINEERING at %s, but this branch does not move \
-               it to DONE/. Run this from the ticket's worktree after your final commit \
-               has moved the ticket file to DONE/ on this branch."
-              ticket_id
-              base_ref)
+         (match ticket_move_guard_refusal ~branch with
+          | None -> Ok path
+          | Some refusal -> Soldev_exit.error (String.trim refusal))
        | Ticket_base_unreadable ->
          Soldev_exit.error
            (Printf.sprintf
@@ -639,14 +664,6 @@ let run_submit ticket_id =
                and retry."
               base_ref
               ticket_id))
-  in
-  let* branch = current_branch () in
-  let* () =
-    if branch = "main" || branch = ""
-    then
-      Soldev_exit.error
-        (Printf.sprintf "error: not on a ticket branch (currently on %s)" branch)
-    else Ok ()
   in
   Printf.printf "[%s] pushing %s...\n%!" ticket_id branch;
   let* () =
