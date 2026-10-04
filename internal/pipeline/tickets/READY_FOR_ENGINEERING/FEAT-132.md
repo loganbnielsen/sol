@@ -119,6 +119,13 @@ read-back, a missing DLQ record, a redelivery republishing the fact), and `main`
 closed naming a missing row-driver tool. CI runs the suite (`ci.yml`, "Local OCaml row
 driver test").
 
+Also wires `internal/ci/context/check_ticket_move.sh` into the pre-push fast checks
+(`internal/ci/run_fast_checks.sh`), so a branch whose *name* names a
+`READY_FOR_ENGINEERING` ticket without moving it fails locally instead of only in CI.
+This PR's own first branch name tripped that guard (a slug mentioning `verif-027` is
+read as naming `VERIF-027`), and the fix is why the same class is now caught before a
+push.
+
 **Remaining for the ticket to close:** running those rows on the cluster and recording
 them in a `VERIF-027` run record (which needs `FEAT-133` and `RELEASE-006` first), then
 the identity rows (G1–G4, G9) for the OCaml units. This ticket closes when that evidence
