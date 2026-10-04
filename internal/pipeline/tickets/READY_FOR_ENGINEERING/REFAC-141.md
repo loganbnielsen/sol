@@ -81,8 +81,10 @@ resolved, and item 11 cannot be implemented as written.
   so the command was an orphaned public lifecycle surface with no pipeline phase
   behind it; the operator chose to delete it rather than keep a misleading entry
   point.
-- **12 — real.** `Sol_cli_manifest_yaml.migration_configmap_doc` renders the
-  ConfigMap unconditionally; nothing refuses a set past the 1 MiB cap.
+- **12 — implemented in Part C.** `Sol_cli_manifest_yaml.migration_configmap_doc`
+  renders the ConfigMap unconditionally, so the cap is enforced where the files are
+  read (`Sol_cli_migration_gate.migration_files`) — the layer that already returns a
+  `result` and validates NUL, and the only path into `migration_configmap_doc`.
 - **13 — implemented in this change** (see below).
 - **14 — real.** `framework/ocaml/sol-svc/lib/auth_internal.ml`'s `get_jwks` fixes
   `max_age_s` to `Auth_cache.ttl_s`.
@@ -124,5 +126,26 @@ semantics that describe what it actually does.
 - Demo/example coverage: not applicable — internal tooling; no author-facing surface.
 - Language parity: no impact — pipeline tooling, not a framework contract or primitive.
 
-The remaining real items (2-7, 9, 10, 12, 14) stay open; the ticket remains in
+## Part C (2026-10-03) — item 12
+
+`Sol_cli_migration_gate.migration_files` now refuses a set whose files total more
+than 1 MiB (`1024 * 1024` bytes), instead of letting the apply fail on an oversized
+ConfigMap. The refusal names both the total and the limit, and rides the existing
+`result` channel: `sol migrate` reports it as an error, and the verification gate
+surfaces it as `Unavailable` rather than as drift or absence.
+
+The cap is enforced at the read layer, not in
+`Sol_cli_manifest_yaml.migration_configmap_doc`: the renderer returns a YAML document
+rather than a `result`, and `migration_files` is the only path that feeds it, so
+this keeps the error channel in one place. `internal/tooling/scripts/run_tests.sh`
+and the perf baseline are untouched.
+
+- Test: `test_migration_gate.ml` adds `test_oversized_set_is_refused`, which writes a
+  file one byte over the limit and asserts both the limit and the total appear in the
+  error.
+- Demo/example coverage: not applicable — a refusal on an internal input, no
+  author-facing surface changes.
+- Language parity: no impact — CLI-internal, no framework contract or primitive.
+
+The remaining real items (2-7, 9, 10, 14) stay open; the ticket remains in
 `READY_FOR_ENGINEERING/`.

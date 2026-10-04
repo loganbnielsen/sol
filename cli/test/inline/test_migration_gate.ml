@@ -38,6 +38,25 @@ let test_nul_is_refused_by_name () =
       (Sol_cli_string.contains ~needle:"001_a.sql" e)
 ;;
 
+let test_oversized_set_is_refused () =
+  let dir = temp_dir () in
+  let oversized = (1024 * 1024) + 1 in
+  write dir "001_big.sql" (String.make oversized 'x');
+  match Sol_cli_migration_gate.migration_files dir with
+  | Ok _ -> Windtrap.fail "expected a set past the 1 MiB ConfigMap limit to be refused"
+  | Error e ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the limit"
+      true
+      (Sol_cli_string.contains ~needle:"1 MiB" e);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the total"
+      true
+      (Sol_cli_string.contains ~needle:(string_of_int oversized) e)
+;;
+
 let test_missing_dir_is_an_error () =
   match Sol_cli_migration_gate.migration_files "/nonexistent/sol-migrations" with
   | Ok _ -> Windtrap.fail "expected a missing directory to be an error"
@@ -108,6 +127,7 @@ let test_verify_refuses_an_unreadable_migrations_dir () =
 
 let%test "migration files: sql only, sorted" = test_files_are_sql_only_and_sorted ()
 let%test "migration files: NUL refused" = test_nul_is_refused_by_name ()
+let%test "migration files: oversized set refused" = test_oversized_set_is_refused ()
 let%test "migration files: missing dir" = test_missing_dir_is_an_error ()
 
 let%test "verification gate: absent and empty dirs mean no migrations" =
