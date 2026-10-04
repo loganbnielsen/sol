@@ -13,28 +13,34 @@ DEC-063, FEAT-134, HARDEN-002 (closed epic).
 
 ## Blocked On
 
-**Authorization is given** (2026-10-04, AWS only; GCP withheld). What remains is host and account
-setup, and it is what stopped the first attempt at preflight, before anything billable:
+**Authorization is given** (2026-10-04, AWS only; GCP withheld), and the host and account gates
+from the first preflight are cleared: the `sol-qual` SSO session is live, `dig` is installed
+(`dig +short NS qual-aws.sol-fab.dev` answers the four nameservers), the target exists, and the
+durable prerequisites are verified present — state bucket `sol-qual5-876701109436-tfstate`, lock
+table `sol-qual5-tflock`, the delegated `qual-aws.sol-fab.dev` zone, and all six roles
+(`sol-qual5-{provisioner,cluster-access,deploy,operator,publisher,qualifier}`). The account was
+clean before the run: no clusters, EIPs, volumes or load balancers.
 
-1. **An unexpired SSO session for the qualification account.** `aws sts get-caller-identity
-   --profile sol-qual` currently answers `Error when retrieving token from sso: Token has expired
-   and refresh failed`, and no default credentials are configured. Clear it with
-   `aws sso login --profile sol-qual`.
-2. **`dig` on `PATH`** (`sudo apt-get install -y dnsutils`; `dig`, `nslookup` and `host` are all
-   absent here, and `sudo` needs a password). This one is load-bearing rather than convenient:
-   Sol itself runs `dig +short NS <domain>` in the installation stage's delegation wait
-   (`cli/lib/cloud/sol_cli_installation_stage.ml:142`) and in the capability probe
-   (`cli/lib/cloud/sol_cli_provider_capabilities.ml:141`).
-3. **The target**, `examples/pluto/sol/environments.local.yml`, copied from
-   `run8-aws-target.example.yml` and filled with the account's real values (it is untracked by
-   design).
-4. **The durable prerequisites**, `UNVERIFIED` without a session: the applied bootstrap root
-   (state bucket, lock table, the delegated `qual-aws.sol-fab.dev` zone) and the five roles plus
-   the qualification transport role.
+**Attempt 2 (2026-10-04) is blocked by a product defect, not by a gate.** Running the published
+`v0.1.0-alpha.7` bundle against a *fresh* target (`qualalpha7/aws/us-east-1`, a new state key)
+stopped at `sol cloud plan`:
 
-Promote to `READY_FOR_ENGINEERING` once these are met. Preflight-only attempts produce no run
-record and no ledger row — the gate is recorded here
-(`internal/qualification/README.md` § *How qualification is tracked*).
+```console
+[terraform-plan] ok (7.6s)
+error: terraform state list failed with exit 1
+```
+
+That is `BUG-205`: an environment whose Terraform state does not exist yet is reported as
+*unreadable* rather than *holding nothing*, so a never-applied target cannot be planned, applied
+or deployed. No resource was created and nothing was billed. The fix and its regression test (the
+first-run test now drives a state that has never been written) are on `BUG-205`'s branch, unmerged,
+and **`v0.1.0-alpha.7` is published and immutable and cannot carry them**.
+
+**Therefore this run needs a new candidate** built from a revision containing `BUG-205`'s fix
+(`RELEASE-006`'s next version), and then the whole matrix is run fresh on that bundle — not on
+alpha.7, and not by seeding alpha.7's environment to work around the defect.
+
+Promote to `READY_FOR_ENGINEERING` when that candidate exists.
 
 ## Goal
 

@@ -162,6 +162,26 @@ let state_list ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "state"; "list" ])
 ;;
 
+let state_pull ?(env = []) ~chdir () =
+  run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "state"; "pull" ])
+;;
+
+let addresses_of_stdout stdout =
+  stdout
+  |> String.split_on_char '\n'
+  |> List.map String.trim
+  |> List.filter (fun address -> address <> "")
+;;
+
+let state_addresses ?(env = []) ~chdir () =
+  match state_list ~env ~chdir () with
+  | Ok result -> Ok (addresses_of_stdout result.stdout)
+  | Error _ as error ->
+    (match state_pull ~env ~chdir () with
+     | Ok _ -> Ok []
+     | Error _ -> error)
+;;
+
 let show_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json" ])
 ;;

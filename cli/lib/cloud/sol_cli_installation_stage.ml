@@ -16,16 +16,8 @@ let durable_root_policy : Sol_cli_terraform_plan.policy =
 ;;
 
 let state_addresses ~chdir : (string list, string) result =
-  let open Result.Syntax in
-  let* output =
-    Sol_cli_terraform.state_list ~chdir ()
-    |> Result.map_error Sol_cli_process.error_to_string
-  in
-  Ok
-    (output.stdout
-     |> String.split_on_char '\n'
-     |> List.map String.trim
-     |> List.filter (fun address -> address <> ""))
+  Sol_cli_terraform.state_addresses ~chdir ()
+  |> Result.map_error Sol_cli_process.error_to_string
 ;;
 
 let owns_the_delegated_zone ~provider ~chdir =
