@@ -210,14 +210,19 @@ re-confirmed there; a row whose `aws` target has never been observed is that run
 
 | Row | Capability | Observable behaviour | OCaml evidence | TS evidence | Shared / substrate evidence | Target(s) | Existing obligation | Status |
 |---|---|---|---|---|---|---|---|---|
-| B1 | Service accepts a request | `POST /orders` → `202`; duplicate is idempotent | `orders_svc` | `order_svc` | HTTP probe | local, aws, gcp | FEAT-131/132/133 | NOT RUN (unified scenario); TS demo PASS (LOCAL) |
-| B2 | Request transaction | domain row + job + outbox commit or roll back together | new `orders_svc` tx | new `orders_svc` tx | Postgres inspection | local | FEAT-111/120/124 | NOT RUN (the service-side tx is the scenario's new work in both languages; the existing worker-side tx is B4) |
+| B1 | Service accepts a request | `POST /orders` → `202`; duplicate is idempotent | `orders_svc` | `order_svc` | HTTP probe | local, aws, gcp | FEAT-131/132/133 | PASS (LOCAL) — both namespaces |
+| B2 | Request transaction | domain row + job + outbox commit or roll back together | new `orders_svc` tx | new `orders_svc` tx | Postgres inspection | local | FEAT-111/120/124 | PASS (LOCAL) — both namespaces |
 | B3 | Outbox relay | fact published only after the domain commit, in `ord` order, removed only after broker ack | `Notification_sent_outbox.relay` | `runRelay` | Kafka topic inspection | local, aws, gcp | FEAT-120, FEAT-124 | PASS (LOCAL, worker-side in both) |
 | B4 | Worker consumes and mutates | `OrderPlaced` → one `fulfilled_orders` row + job + outbox intent | `notify_worker` | `fulfillment_worker` | Postgres + broker | local, aws, gcp | FEAT-120, FEAT-124 | PASS (LOCAL) |
-| B5 | Downstream behaviour | job runner executes the confirmation; read-back reflects `fulfilled`/`confirmed` | `Sol_jobs` runner | `@sol-fab/jobs` runner | HTTP read-back, DB | local | FEAT-077, FEAT-111 | NOT RUN |
-| B6 | Duplicate delivery absorbed | one fact yields exactly one row/job/intent/effect | `~dedupe_key` (BUG-112 guard) | `ON CONFLICT` + dedupe (`delivery.test.ts`) | DB row counts | local | BUG-112, FEAT-124 | PASS (LOCAL, TS); partial (OCaml) |
+| B5 | Downstream behaviour | job runner executes the confirmation; read-back reflects `fulfilled`/`confirmed` | `Sol_jobs` runner | `@sol-fab/jobs` runner | HTTP read-back, DB | local | FEAT-077, FEAT-111 | PASS (LOCAL) — both namespaces (BUG-202) |
+| B6 | Duplicate delivery absorbed | one fact yields exactly one row/job/intent/effect | `~dedupe_key` (BUG-112 guard) | `ON CONFLICT` + dedupe (`delivery.test.ts`) | DB row counts | local | BUG-112, FEAT-124 | PASS (LOCAL) — both namespaces (BUG-201) |
 | B7 | Cross-language contract equivalence | the two declarative scopes declare the same schema; both bindings generate and drift-check | generated OCaml binding | generated TS binding | `sol contract generate --check` | clean | FEAT-116/129, DEC-065, FEAT-131 | NOT RUN (the two scopes declare different events today; the generate/drift mechanism is PASS OFFLINE) |
 | B8 | Cross-language wire interop | a fact produced by one language is consumed by the other's worker | producer | consumer | broker | local | DEC-022 (stretch; not an alpha requirement) | NOT RUN |
+
+**Run evidence (B, and the capability rows below).** `VERIF-027`'s local rows were observed
+at `origin/main @ 47fc2266` with the staged `v0.1.0-alpha.7` bundle; the record is
+`internal/qualification/records/2026-10-04-local-alpha-1.md` and the bundle is
+`/tmp/alpha-verif027-47fc2266/`.
 
 ### C. Data: PostgreSQL, migrations, jobs, outbox
 
