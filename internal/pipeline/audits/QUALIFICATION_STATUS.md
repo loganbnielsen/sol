@@ -30,7 +30,26 @@ have failed" — it never means "false".
 
 ---
 
+### 2026-10-04 — the local integrated qualification cannot deploy on this host (`VERIF-027`)
+
+`VERIF-027`'s first attempt is recorded in
+`internal/qualification/records/2026-10-04-local-alpha-1.md` (revision `5e5eba74`, staged
+bundle `v0.1.0-alpha.7`). It reached a fresh `sol-local` cluster, the harness's ten
+port-forwards and `sol local migrate` → `Done.`, then stopped: `sol up` registered the
+workspace's contracts at `http://localhost:8081`, which on this host is the **native dev
+Redpanda** (user `redpanda`, pid 370) rather than the harness's IPv6-loopback forward, so
+the deployed units verified against an empty in-cluster registry and crash-looped
+(`subject 'pluto-comms-notifications-value' has no registered schema matching the declared
+contract`). No acceptance row is promoted; every `local` row of the campaign matrix is
+`BLOCKED` for this attempt with that mechanism. **Exact remaining dependency:** an
+operator action on this host — stop the native Redpanda (or grant password-less `sudo`)
+so the run's forwards own `9092`/`8081`/`9644`. Filed as `INFRA-102` (the literal address
+`sol up` registers against, and the silent mismatch it hides). The TypeScript namespace's
+row driver (`rows-ts.sh` + its offline suite) and the drivers' `sol up local` →
+`sol up` fix landed with the attempt.
+
 ### 2026-09-28 — FND-0070 filed: a failed apply can leave resources the state never adopted
+
 
 Attempt 25's substrate apply failed at the Cloud SQL instance (`Error waiting for Create Instance`) but the
 provider created it anyway, so Terraform recorded nothing. The supported destroy then correctly destroyed

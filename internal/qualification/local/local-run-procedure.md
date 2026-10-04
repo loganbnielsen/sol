@@ -104,7 +104,7 @@ inventory; it does not satisfy `INV-DESTROY-*`, which needs the provider.
 
 The environment phases are application-independent. The rows need the reference
 scenario (`FEAT-131`/`FEAT-132`/`FEAT-133`), so `rows` takes a `ROWS_SH` script and
-refuses without one. `local-rows.sh` should drive, per `ALPHA_CAMPAIGN.md` §3:
+refuses without one. One driver per namespace covers the scenario rows:
 
 - **B1–B6** — `POST /orders` through the OCaml and TS namespaces; one row/one job/one
   intent/one effect; duplicate delivery; the outbox relay's ordering.
@@ -123,10 +123,14 @@ refuses without one. `local-rows.sh` should drive, per `ALPHA_CAMPAIGN.md` §3:
 Each row records the verbatim command and output; a local observation is `LOCAL`, and
 a row that needs a cluster-with-provider stays `NOT RUN`.
 
+The capability rows above the scenario — `C1–C3`/`C5`/`C6`, `D1–D4`/`D6`, `F6`/`F8`/`F9`,
+`G1–G9`, `H7`, and teardown — are driven directly by the run and recorded from the
+commands' verbatim output; no namespace-specific driver can establish them.
+
 ### The OCaml namespace's rows (`FEAT-132`)
 
 `rows-ocaml.sh` in this directory is the OCaml half's driver. It deploys the
-workspace (`sol up local`, unless `ROWS_OCAML_SKIP_DEPLOY=1`), then drives its rows
+workspace (`sol up`, unless `ROWS_OCAML_SKIP_DEPLOY=1`), then drives its rows
 and writes each row's verbatim commands and output to `$LOG_DIR/rows/<row>.txt`
 with a `verdict` line; a row whose observation did not hold exits non-zero and is
 named. Run it directly, or pass it as `ROWS_SH`:
@@ -146,8 +150,37 @@ ROWS_SH=internal/qualification/local/rows-ocaml.sh bash internal/qualification/l
 
 It uses `psql`, `rpk` and `jq` against the harness's port-forwards (override the
 binaries with `QUAL_PSQL`, `QUAL_RPK`, `QUAL_JQ`); `test-rows-ocaml.sh` is its
-offline, mutation-checked suite. The `local-rows.sh` that also covers the TS
-namespace's rows is the run's to compose from this driver and `FEAT-133`'s.
+offline, mutation-checked suite.
+
+### The TypeScript namespace's rows (`FEAT-133`)
+
+`rows-ts.sh` is the TS half's driver: the same rows against the TS namespace's own
+topics (`sol-demo-ts-orders`, `sol-demo-ts-fulfilled`), tables (`orders_ts`,
+`fulfilled_orders_ts`, `order_confirmations_ts`), job workspace (`pluto.demo_ts`) and
+consumer group. It writes `$LOG_DIR/rows/ts-<row>.txt`, so both drivers' evidence
+lives in one bundle without colliding, and takes the same environment plus
+`ORDERS_TS_HOST`/`ORDERS_TS_INGRESS_URL`. `test-rows-ts.sh` is its offline,
+mutation-checked suite.
+
+| Row | Observation | Failure injection |
+|---|---|---|
+| `b1` | `POST /orders` 202, duplicate idempotent, one row/one job | — |
+| `b2` | the request transaction rolls back whole | a pre-inserted `sol_outbox (key, ord)` collision |
+| `b5` | read-back `accepted` → `fulfilled` → `confirmed` | — |
+| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | the same fact produced twice |
+| `d5` / `h1` | decode log, metric and DLQ record with the raw bytes; the offset advances | an undecodable record on `sol-demo-ts-orders` |
+
+The TS half has no `h2` row: the broker-unavailable injection is driven once, on the
+OCaml namespace, because both namespaces relay through the same broker and the
+injection's observable (the outbox holds, then drains) is a property of the relay.
+
+Both drivers are run in one `rows` phase by the run's composed driver — the run passes
+whichever driver(s) `ALPHA_CAMPAIGN.md` §3 needs for the rows it is moving:
+
+```sh
+ROWS_SH=internal/qualification/local/rows-ocaml.sh bash internal/qualification/local/local-qual.sh rows
+ROWS_SH=internal/qualification/local/rows-ts.sh     bash internal/qualification/local/local-qual.sh rows
+```
 
 ## 6. Deviations from the cloud run rules, and why
 
