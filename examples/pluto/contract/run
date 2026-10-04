@@ -14,7 +14,14 @@ case "$scope" in
   demo_ts|demo_ts/*)
     exec npm --prefix app/demo_ts run --silent contract -- "$@"
     ;;
-  *)
+  payments|payments/*|comms|comms/*|orders|orders/*|checkout|checkout/*)
     exec dune exec ./contract/contract.exe -- "$@"
+    ;;
+  *)
+    # A workspace-wide deploy starts every scope this workspace declares, so it
+    # must register every scope's contracts: the OCaml events here first, then
+    # the TypeScript scope's, whose units fatally verify theirs at startup.
+    dune exec ./contract/contract.exe -- "$@" || exit $?
+    exec npm --prefix app/demo_ts run --silent contract -- "$@"
     ;;
 esac
