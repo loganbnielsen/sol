@@ -135,6 +135,7 @@ end
 
 module Jobs = Sol_jobs.Make (Email)
 module Strays = Sol_outbox.Make (Other)
+module Email_outbox = Sol_outbox.Make (Email)
 
 let publish_in_transaction pool ~key ~ord event =
   match Pg_db.transaction pool (fun tx -> Outbox.publish tx ~key ~ord event) with
@@ -357,6 +358,59 @@ let test_a_blocked_key_does_not_block_other_keys () =
     Eio.Fiber.yield ())
 ;;
 
+let test_a_relay_publishes_only_its_own_kinds () =
+  with_pool (fun env sw pool ->
+    List.iter (exec_sql pool) ddl;
+    publish_in_transaction pool ~key:"k1" ~ord:1L { Ev.id = "placed" };
+    (match
+       Pg_db.transaction pool (fun tx ->
+         Email_outbox.publish tx ~key:"k2" ~ord:1L { Email.id = "mail" })
+     with
+     | Ok () -> ()
+     | Error e -> Windtrap.failf "email publish: %s" (Pg_error.to_string e));
+    let recorded = ref [] in
+    let stop, stop_r = Eio.Promise.create () in
+    Eio.Fiber.fork ~sw (fun () ->
+      ignore
+        (Outbox.relay
+           ~env
+           ~pool
+           ~publish:(fun p ->
+             recorded := p.Sol_outbox.key :: !recorded;
+             Ok ())
+           ~poll_interval_s:0.01
+           ~stop
+           ()));
+    let deadline = Unix.gettimeofday () +. 5.0 in
+    let rec wait () =
+      if pending pool = [ "k2", 1L ]
+      then ()
+      else if Unix.gettimeofday () > deadline
+      then
+        Windtrap.failf
+          "the relay did not drain its own kind past the other owner's row: %s"
+          (pending pool
+           |> List.map (fun (k, o) -> Printf.sprintf "%s@%Ld" k o)
+           |> String.concat ", ")
+      else (
+        Eio.Time.sleep env#clock 0.01;
+        wait ())
+    in
+    wait ();
+    Eio.Promise.resolve stop_r ();
+    Eio.Fiber.yield ();
+    Windtrap.equal
+      (Windtrap.list Windtrap.string)
+      ~msg:"the relay published only the key whose kind it owns"
+      [ "k1" ]
+      (List.rev !recorded);
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.int64))
+      ~msg:"the other owner's row is still unpublished"
+      [ "k2", 1L ]
+      (pending pool))
+;;
+
 let test_the_outbox_and_jobs_share_one_transaction () =
   with_pool (fun _env _sw pool ->
     List.iter (exec_sql pool) ddl;
@@ -423,6 +477,9 @@ let () =
         ; Windtrap.test
             "a blocked key does not block other keys"
             test_a_blocked_key_does_not_block_other_keys
+        ; Windtrap.test
+            "a relay publishes only the kinds it owns"
+            test_a_relay_publishes_only_its_own_kinds
         ]
     ; Windtrap.group
         "composition"
