@@ -105,4 +105,4 @@ Premise re-checked against current `origin/main`; the work is still real.
 Evidence: the banner seams the ticket enumerates remain; the splitting work is unchanged in scope.
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
-(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+.

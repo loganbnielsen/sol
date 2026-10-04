@@ -57,4 +57,4 @@ share one kubeconfig. Any one promotes it; DEC-020 already closes the
 ambient-context path.
 
 Left in `BACKLOG/` against that trigger; see
-`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+.

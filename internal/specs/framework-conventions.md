@@ -17,7 +17,7 @@ two disagree, the linked definition wins, and this page is the one to fix.
   live in their own repositories; see [`framework/typescript/`](../../framework/typescript/README.md).
 - **Per-language verdicts** (implemented / already equivalent / intentionally
   deferred / not applicable): the complete capability inventory in
-  [`2026-10-02_cross_language_contract_audit.md`](../pipeline/audits/2026-10-02_cross_language_contract_audit.md),
+  [`typescript-capability-inventory.md`](typescript-capability-inventory.md),
   which covers every row below and names the ticket that owns each gap; a row
   added after that audit states its verdict inline (operation-level retry:
   TypeScript deliberately deferred, FEAT-135). The

@@ -2,7 +2,7 @@
 
 > **How to use.** Copy this file to `internal/qualification/<YYYY-MM-DD>-run<N>-<provider>.md`,
 > fill every field, and link it from the epic ticket (`HARDEN-002` for AWS,
-> `HARDEN-004` for GCP) and from `internal/pipeline/audits/QUALIFICATION_STATUS.md`.
+> `HARDEN-004` for GCP) and from the matrix row that carries the run's verdict.
 >
 > **Rules that make the record usable.**
 > - A field that was not observed is `NOT REACHED` or `NOT OBSERVED`. Never blank,

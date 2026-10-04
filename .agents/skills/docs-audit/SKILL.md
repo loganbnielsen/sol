@@ -1,11 +1,11 @@
 ---
 name: docs-audit
-description: Run a documentation truth audit of Sol. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Produces a dated report in internal/pipeline/audits/ and materialises open findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a documentation truth audit of Sol. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Files each finding it makes as a ticket in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /docs-audit — Documentation Truth Audit
 
-Works through every section of `internal/pipeline/audits/DOCS_AUDIT.md`. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_docs_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `internal/pipeline/audits/DOCS_AUDIT.md`. Files each finding it makes as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question: *can a startup engineer trust this documentation as the truth without reading source code or old work summaries?*
 
@@ -21,7 +21,7 @@ Read `internal/pipeline/audits/DOCS_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 
-Read the most recent `internal/pipeline/audits/*_docs_audit.md` report if one exists. Check all `internal/pipeline/tickets/` subdirectories for existing `DOCS-*` ticket files. Do not re-materialise a finding already tracked anywhere — but before trusting a `DONE/` ticket, run `soldev pipeline check-reverts` and treat anything it flags as still-open (see EXP-032: a merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved).
+Check all `internal/pipeline/tickets/` subdirectories for existing `DOCS-*` ticket files. Do not re-materialise a finding already tracked anywhere — but before trusting a `DONE/` ticket, run `soldev pipeline check-reverts` and treat anything it flags as still-open (see EXP-032: a merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved).
 
 ### 3. Verify source-of-truth docs
 
@@ -48,13 +48,15 @@ Read the most recent `internal/pipeline/audits/*_docs_audit.md` report if one ex
 - for each package-level `*.md` under `framework/`, compare public API claims against nearby `.mli` files
 - Mark deferred or speculative claims as findings if they are not clearly labeled
 
-### 7. Write the report
+### 5. File the findings
 
-Create `internal/pipeline/audits/<YYYY-MM-DD>_docs_audit.md` with:
-- A header showing the date and previous-finding status changes
-- Each section with `[x]` / `[ ]` checklist results
-- A Findings section with `Status: Open` or `Status: Resolved`
-- A summary table
+An audit keeps no report of its own. The ticket tree is the record of every previous pass, so
+read it before filing; the report-shaped content below becomes the ticket body:
+
+- the observation and the exact command or line that shows it
+- the mechanism, and what the product actually does
+- what it would take to fix, and what would make a fix fail (the acceptance criteria)
+- the next free `<FAMILY>-NNN`, continuing from the highest id across `internal/pipeline/tickets/`
 
 ### 8. Materialise tickets
 
@@ -65,7 +67,7 @@ For each open finding not already tracked, create `internal/pipeline/tickets/REA
 id: <DOCS-NNN>
 type: docs-finding
 severity: <critical|high|medium|low>
-source: internal/pipeline/audits/<YYYY-MM-DD>_docs_audit.md
+source: the pass that found this, by date
 ---
 
 <one-line title>

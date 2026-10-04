@@ -1,11 +1,11 @@
 ---
 name: audit
-description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in internal/pipeline/audits/AUDIT.md. Produces a dated report in internal/pipeline/audits/ and materialises open findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in internal/pipeline/audits/AUDIT.md. Files each finding it makes as a ticket in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /audit — Production Readiness Audit
 
-Works through every section of `internal/pipeline/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `internal/pipeline/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Files each finding it makes as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The audit must evaluate both operational readiness and mission alignment: autonomous domain teams, typed event contracts, generated infrastructure, explicit security, framework-owned lifecycles, and AI-agent-friendly conventions.
 
@@ -30,7 +30,7 @@ Read `internal/pipeline/audits/AUDIT.md` in full before starting. This is the ch
 Use the current date for the output filename in `YYYY-MM-DD` format.
 
 ### 3. Check previous findings
-Read the most recent report in `internal/pipeline/audits/` (highest date). Note which findings were already open — verify whether they are now resolved before logging them again.
+
 
 Check all `internal/pipeline/tickets/` subdirectories for existing AUDIT-* ticket files. A finding already tracked anywhere in `internal/pipeline/tickets/` should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
@@ -69,21 +69,19 @@ For each checklist item in `internal/pipeline/audits/AUDIT.md`, read the relevan
 - Verify `Sol.Service.Make`, `Sol.Worker.Make`, and `Sol.Fn.Make` own lifecycle concerns in generated apps
 - Verify package specs and user-facing docs do not claim commands or guarantees that are unavailable
 
-### 5. Write the report
+### 5. File the findings
 
-Create `internal/pipeline/audits/<YYYY-MM-DD>_audit.md` with:
-- A header showing the date and which findings from the previous report changed status
-- Every checklist section with `[x]` / `[ ]` and finding IDs
-- A Findings section with `Status: Open` or `Status: Resolved`
-- A summary table
+An audit keeps no report of its own. The ticket tree is the record of every previous pass, so
+read it before filing; the report-shaped content below becomes the ticket body:
 
-Assign finding IDs continuing from the highest AUDIT-NNN across all existing `internal/pipeline/tickets/` files and previous reports.
-
-Do not copy resolved findings forward unless their status changed.
+- the observation and the exact command or line that shows it
+- the mechanism, and what the product actually does
+- what it would take to fix, and what would make a fix fail (the acceptance criteria)
+- the next free `<FAMILY>-NNN`, continuing from the highest id across `internal/pipeline/tickets/`
 
 ### 6. Materialise tickets
 
-For each finding with `Status: Open` in the report:
+For each finding:
 
 1. Search all `internal/pipeline/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
 2. If not found, create `internal/pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
@@ -93,7 +91,7 @@ For each finding with `Status: Open` in the report:
 id: <AUDIT-NNN>
 type: audit-finding
 severity: <critical|high|medium|low>
-source: internal/pipeline/audits/<YYYY-MM-DD>_audit.md
+source: the pass that found this, by date
 ---
 
 <one-line title>

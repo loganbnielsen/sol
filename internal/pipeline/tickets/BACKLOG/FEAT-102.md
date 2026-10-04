@@ -44,7 +44,7 @@ DEC-026 §2's three triggers hold, and one of those triggers is a change in anot
 
 Standing qualification goals live in the qualification ledger
 (`internal/qualification/README.md`, the matrices, and
-`internal/pipeline/audits/QUALIFICATION_STATUS.md`); each *live* run is its own ticket, gated in
+`internal/qualification/ALPHA_CAMPAIGN.md`); each *live* run is its own ticket, gated in
 `BACKLOG/` on explicit authorization. The trigger state in this ticket's evidence section
 (1 met, 2 not met, 3 partly met, checked 2026-09-26) remains the record.
 

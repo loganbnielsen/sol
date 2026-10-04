@@ -119,7 +119,7 @@ for example:
 If the current shape is already lean, say so and list only residual risks.
 
 For a full audit of Sol, also write
-`internal/pipeline/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
+the tickets it files. If actionable findings are
 open and `internal/pipeline/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
 as `CODE_LAYER-NNN`, continuing from the highest existing `CODE_LAYER-*` ID
 across `internal/pipeline/audits/` and `internal/pipeline/tickets/`. Do not create ticket

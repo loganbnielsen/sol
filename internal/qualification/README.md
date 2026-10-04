@@ -1,9 +1,20 @@
-# Qualification ledger
+# Qualification
 
 Live qualification asks one question: **does reality independently confirm what Sol claims?**
-This directory holds the evidence for that question: the per-run records, the executable
-contracts (matrices), and the procedures. Where each provider currently stands is summarised in
-`internal/pipeline/audits/QUALIFICATION_STATUS.md`; this file is the index and the rules.
+This directory holds the claim, the verdict and the evidence for that question — three layers,
+one home per fact:
+
+| Layer | Home | What it holds |
+|---|---|---|
+| Claim + current verdict | the matrix that owns the surface: `ALPHA_CAMPAIGN.md` §3 for the alpha surface, `internal/qualification/<provider>/…matrix.*` for a provider's own rows, `observability/observability-diagnostic-matrix.md` for that workstream | one row: what is claimed, how it is exercised, what would make it pass, the evidence class it needs, and where it currently stands — citing the record that established it |
+| Evidence | `internal/qualification/records/` | one record per run, from `run-record-template.md`: identity, commands, verbatim observations, per-row results, and what the run does **not** establish |
+| Work, decisions, user-facing truth | `internal/pipeline/tickets/` (including `DEC-*`), `docs/` | what must change; what was decided; what the product's behaviour is |
+
+Nothing else is qualification state. The ledger, the findings registry and the dated audit reports
+that used to sit beside these layers are gone: each duplicated a fact that already had a home,
+and the ledger's own copy had drifted out of step with the matrices it was derived from. An audit
+is an activity (`internal/pipeline/audits/README.md`) that produces tickets, row verdicts and
+documentation edits — not a fourth store.
 
 ## How qualification is tracked
 
@@ -20,11 +31,11 @@ contracts (matrices), and the procedures. Where each provider currently stands i
   product, so such an attempt adds no record, no transitions row and no row verdict — however
   many times it is retried. Operator authorization, cost, and host or account prerequisites are
   all gates of this kind.
-- **Defects a run finds** become findings (`internal/pipeline/audits/findings/`) and ordinary
-  tickets, credited to the ticket that fixes them, not to the run.
-- **Updating `QUALIFICATION_STATUS.md` is part of every run ticket's acceptance criteria** — the
-  run's verdict changes become one row in its transitions table, citing the record by identity.
-  The ledger is an index; the run's narrative stays in the record.
+- **Defects a run finds** become ordinary tickets, credited to the ticket that fixes them, not
+  to the run.
+- **Updating the verdicts a run moved is part of its ticket's acceptance criteria**: the row in
+  the matrix that owns the claim, carrying the evidence class and citing this run's record. The
+  run's narrative stays in the record.
 - **The alpha campaign is coordinated here.** `ALPHA_CAMPAIGN.md` defines the frozen
   alpha surface, the one language-neutral reference scenario, the acceptance matrix
   that maps every supported capability to its evidence and target, and the parallel
@@ -99,7 +110,7 @@ workstream; they apply to every provider's live runs.
 9. **Keep the target file until teardown is verified**; destroy needs it (Attempt 5).
 10. **Terraform's exit status is not the cost verdict for qualification**; the independent provider
     inventory is. That inventory belongs to qualification, not to the product runtime
-    (`internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md`).
+.
 11. **Resolve DNS over HTTPS in this environment**; port 53 is blocked, so `dig` waits are unreliable
     (Attempt 5).
 

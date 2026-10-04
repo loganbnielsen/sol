@@ -95,7 +95,7 @@ post-boundary observation that shares `INFRA-051`'s root cause).
   never promoted to behavioural (matrix § Governing rules).
 - Teardown to `Absent`, verified independently of Sol's report, including the matrix H6 classes
   and the durable Route 53 zone unchanged.
-- `internal/pipeline/audits/QUALIFICATION_STATUS.md` updated.
+- The rows this run qualifies carry its verdicts, each citing this run's record.
 
 **Demo/example coverage:** not applicable — this is a qualification run, not an app-author
 surface change. The runnable proof is the AWS harness and its offline self-test
