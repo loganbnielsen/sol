@@ -74,8 +74,10 @@ resolved, and item 11 cannot be implemented as written.
   to the canonical encoding without a version bump fails that test.
 - **9 — real.** `Sol_cli_terraform_plan.show_and_record` still takes a bare
   `~show:(unit -> ...)`, so `run_phase` can be handed the secret-bearing plan JSON.
-- **10 — real.** `format_service_diagnosis` still takes `pod_status list`, where
-  `[]` is overloaded to mean "confirmed zero pods".
+- **10 — implemented in Part D.** `format_service_diagnosis` took a bare
+  `pod_status list`, where `[]` could mean either "confirmed zero pods" or "nothing
+  was ever read"; it now takes a confirmed-pods value only a successful parse
+  constructs.
 - **11 — resolved by operator decision; implemented in Part B.** `merge`
   deliberately does not invoke `merge-finish` automatically (BUG-038 removed that),
   so the command was an orphaned public lifecycle surface with no pipeline phase
@@ -147,5 +149,22 @@ and the perf baseline are untouched.
   author-facing surface changes.
 - Language parity: no impact — CLI-internal, no framework contract or primitive.
 
-The remaining real items (2-7, 9, 10, 14) stay open; the ticket remains in
+## Part D (2026-10-04) — item 10
+
+`Sol_cli_rollout_diagnosis` now has a `confirmed_pods` type: a pod list that only a
+successful `parse_pods_json`/fetch constructs. `format_service_diagnosis` and
+`format_active_run_diagnosis` take it, `pod_list` is the read-only accessor, and the
+fetch functions return `(confirmed_pods, string) result`. A caller can no longer
+hand the diagnosis a bare `[]` that might mean "the list was never read"; passing
+zero pods now requires a fetch that actually succeeded and confirmed zero.
+
+- `cli/test/inline/test_rollout_diagnosis.ml` splits its fixture helper into
+  `pods_of` (unwrapped, for the parsing tests) and `confirmed_of` (the confirmed
+  value the format tests pass), and the "reports empty pod list" test now builds a
+  confirmed empty from `{"items": []}` rather than passing `[]` — the literal the
+  type exists to forbid.
+- Demo/example coverage: not applicable — an internal type, no author-facing surface.
+- Language parity: no impact — CLI-internal diagnosis, not a framework contract.
+
+The remaining real items (2-7, 9, 14) stay open; the ticket remains in
 `READY_FOR_ENGINEERING/`.

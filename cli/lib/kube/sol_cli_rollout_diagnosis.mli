@@ -30,7 +30,10 @@ type event =
   ; involved_name : string
   }
 
-val parse_pods_json : string -> (pod_status list, string) result
+type confirmed_pods
+
+val pod_list : confirmed_pods -> pod_status list
+val parse_pods_json : string -> (confirmed_pods, string) result
 val parse_events_json : string -> (event list, string) result
 val events_for_pod : ?limit:int -> pod_name:string -> event list -> event list
 val is_healthy : pod_status -> bool
@@ -52,7 +55,7 @@ type diagnosis =
 
 val format_service_diagnosis
   :  service_name:string
-  -> pod_status list
+  -> confirmed_pods
   -> events_fetch_result
   -> diagnosis
 
@@ -73,7 +76,7 @@ val format_cronjob_diagnosis : service_name:string -> cronjob_fetch_result -> di
 
 val format_active_run_diagnosis
   :  service_name:string
-  -> pod_status list
+  -> confirmed_pods
   -> events_fetch_result
   -> diagnosis
 

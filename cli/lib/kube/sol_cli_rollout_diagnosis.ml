@@ -81,8 +81,13 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
     }
 ;;
 
-let parse_pods_json (s : string) : (pod_status list, string) result =
-  Sol_cli_json.items ~what:"pods" s |> Result.map (List.map parse_pod)
+type confirmed_pods = Confirmed of pod_status list
+
+let pod_list (Confirmed pods) = pods
+
+let parse_pods_json (s : string) : (confirmed_pods, string) result =
+  Sol_cli_json.items ~what:"pods" s
+  |> Result.map (fun items -> Confirmed (List.map parse_pod items))
 ;;
 
 let parse_event (item : Yojson.Safe.t) : event =
@@ -192,10 +197,11 @@ type diagnosis =
 
 let format_service_diagnosis
       ~service_name
-      (pods : pod_status list)
+      (pods : confirmed_pods)
       (events : events_fetch_result)
   : diagnosis
   =
+  let pods = pod_list pods in
   if pods = []
   then
     Unhealthy
@@ -230,10 +236,11 @@ let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool
 
 let format_active_run_diagnosis
       ~service_name
-      (pods : pod_status list)
+      (pods : confirmed_pods)
       (events : events_fetch_result)
   : diagnosis
   =
+  let pods = pod_list pods in
   let unhealthy = List.filter (fun p -> not (is_active_run_pod_ok ~events p)) pods in
   if unhealthy = []
   then Healthy
@@ -342,7 +349,7 @@ let kubectl_read_failure ~what ~exit_code ~stdout ~stderr =
   Printf.sprintf "%s could not be read%s" what suffix
 ;;
 
-let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
+let fetch_pod_statuses ~ctx ~ns ~k8s_name : (confirmed_pods, string) result =
   match
     Sol_cli_kubectl.get_raw
       ~ctx
@@ -359,7 +366,7 @@ let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result =
+let fetch_job_pod_statuses ~ctx ~ns ~job_name : (confirmed_pods, string) result =
   match
     Sol_cli_kubectl.get_raw
       ~ctx
@@ -376,14 +383,14 @@ let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) result =
+let fetch_active_cronjob_pods ~ctx ~ns job_names : (confirmed_pods, string) result =
   let results =
     List.map (fun job_name -> fetch_job_pod_statuses ~ctx ~ns ~job_name) job_names
   in
   let fetched =
     List.filter_map
       (function
-        | Ok pods -> Some pods
+        | Ok (Confirmed pods) -> Some pods
         | Error _ -> None)
       results
   in
@@ -398,7 +405,7 @@ let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) res
       |> List.sort_uniq String.compare
     in
     Error (String.concat "; " reasons)
-  | _ -> Ok (List.concat fetched)
+  | _ -> Ok (Confirmed (List.concat fetched))
 ;;
 
 let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
@@ -438,10 +445,10 @@ let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name () :
     (match cronjob with
      | Found { active_job_names = _ :: _ as job_names; _ } ->
        (match fetch_active_cronjob_pods ~ctx ~ns job_names with
-        | Ok (_ :: _ as pods) ->
+        | Ok (Confirmed (_ :: _) as pods) ->
           let events = fetch_namespace_events ~ctx ~ns in
           format_active_run_diagnosis ~service_name pods events
-        | Ok [] -> format_cronjob_diagnosis ~service_name cronjob
+        | Ok (Confirmed []) -> format_cronjob_diagnosis ~service_name cronjob
         | Error why ->
           Undetermined (Printf.sprintf "the active run's pods could not be read: %s" why))
      | _ -> format_cronjob_diagnosis ~service_name cronjob)

@@ -9,7 +9,8 @@ let ok what = function
   | Error e -> Windtrap.failf "%s: unexpected decode error: %s" what e
 ;;
 
-let pods_of json = D.parse_pods_json json |> ok "pods"
+let pods_of json = D.parse_pods_json json |> ok "pods" |> D.pod_list
+let confirmed_of json = D.parse_pods_json json |> ok "pods"
 let events_of json = D.parse_events_json json |> ok "events"
 
 let reports_healthy = function
@@ -209,7 +210,7 @@ let test_events_for_pod_excludes_other_pods () =
 ;;
 
 let test_format_service_diagnosis_none_when_healthy () =
-  let pods = pods_of healthy_pod_json in
+  let pods = confirmed_of healthy_pod_json in
   check_bool
     "no diagnosis for healthy service"
     true
@@ -218,7 +219,7 @@ let test_format_service_diagnosis_none_when_healthy () =
 ;;
 
 let test_format_service_diagnosis_includes_events_and_reason () =
-  let pods = pods_of image_pull_backoff_json in
+  let pods = confirmed_of image_pull_backoff_json in
   let events = events_of events_json in
   match D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events events) with
   | D.Healthy -> Windtrap.fail "expected a diagnosis"
@@ -240,7 +241,12 @@ let test_format_service_diagnosis_includes_events_and_reason () =
 ;;
 
 let test_format_service_diagnosis_reports_empty_pod_list () =
-  match D.format_service_diagnosis ~service_name:"charge-svc" [] (D.Events []) with
+  match
+    D.format_service_diagnosis
+      ~service_name:"charge-svc"
+      (confirmed_of {|{"items": []}|})
+      (D.Events [])
+  with
   | D.Healthy -> Windtrap.fail "expected a diagnosis for zero pods, not a healthy verdict"
   | D.Undetermined why ->
     Windtrap.fail ("the pod list was readable, so a verdict is expected: " ^ why)
@@ -256,7 +262,7 @@ let test_format_service_diagnosis_reports_empty_pod_list () =
 ;;
 
 let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous () =
-  let pods = pods_of succeeded_pod_json in
+  let pods = confirmed_of succeeded_pod_json in
   check_bool
     "a Succeeded pod is still a finding for Continuous (Svc/Worker)"
     true
@@ -400,7 +406,7 @@ let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
 ;;
 
 let test_format_active_run_diagnosis_running_pod_is_ok () =
-  let pods = pods_of healthy_pod_json in
+  let pods = confirmed_of healthy_pod_json in
   check_bool
     "a Running, ready pod is not a finding"
     true
@@ -409,7 +415,7 @@ let test_format_active_run_diagnosis_running_pod_is_ok () =
 ;;
 
 let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
-  let pods = pods_of succeeded_pod_json in
+  let pods = confirmed_of succeeded_pod_json in
   check_bool
     "a Succeeded active-run pod is not a finding"
     true
@@ -418,7 +424,7 @@ let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
 ;;
 
 let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
-  let pods = pods_of image_pull_backoff_json in
+  let pods = confirmed_of image_pull_backoff_json in
   check_bool
     "a stuck (ImagePullBackOff) active-run pod is a finding"
     true
@@ -427,7 +433,7 @@ let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
 ;;
 
 let test_format_active_run_diagnosis_pending_startup_is_ok () =
-  let pods = pods_of pending_no_containers_json in
+  let pods = confirmed_of pending_no_containers_json in
   check_bool
     "a freshly-scheduled pod with no container status yet is not a finding"
     true
@@ -436,7 +442,7 @@ let test_format_active_run_diagnosis_pending_startup_is_ok () =
 ;;
 
 let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
-  let pods = pods_of pending_no_containers_json in
+  let pods = confirmed_of pending_no_containers_json in
   let events = events_of events_json in
   check_bool
     "a FailedScheduling pod is still a finding despite looking like normal startup"
@@ -446,7 +452,7 @@ let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
 ;;
 
 let test_format_active_run_diagnosis_container_creating_is_ok () =
-  let pods = pods_of container_creating_json in
+  let pods = confirmed_of container_creating_json in
   check_bool
     "ContainerCreating with no restarts is not a finding"
     true
@@ -455,7 +461,7 @@ let test_format_active_run_diagnosis_container_creating_is_ok () =
 ;;
 
 let test_format_active_run_diagnosis_container_creating_after_restart_is_flagged () =
-  let pods = pods_of container_creating_after_restart_json in
+  let pods = confirmed_of container_creating_after_restart_json in
   check_bool
     "ContainerCreating after a restart is still a finding"
     true
@@ -547,7 +553,7 @@ let test_unavailable_events_are_named_not_empty () =
   match
     D.format_service_diagnosis
       ~service_name:"charge-svc"
-      (pods_of crash_loop_json)
+      (confirmed_of crash_loop_json)
       (D.Events_unavailable
          "Error from server (Forbidden): events is forbidden: cannot list resource \
           \"events\"")
@@ -574,7 +580,7 @@ let test_zero_events_are_reported_as_zero () =
   match
     D.format_service_diagnosis
       ~service_name:"charge-svc"
-      (pods_of crash_loop_json)
+      (confirmed_of crash_loop_json)
       (D.Events [])
   with
   | D.Healthy -> Windtrap.fail "an unhealthy pod must be diagnosed"
