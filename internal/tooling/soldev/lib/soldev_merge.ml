@@ -816,37 +816,6 @@ let run_review ticket_id result_file =
           Ok ()))
 ;;
 
-type post_merge_action =
-  | Report_success
-  | Report_local_failure of int
-
-let post_merge_action_of_rc = function
-  | 0 -> Report_success
-  | rc -> Report_local_failure rc
-;;
-
-let run_merge_finish ~ticket_id ~merge_sha =
-  let suite_rc = Soldev_shell.run_cmd "./internal/tooling/scripts/run_tests.sh" in
-  match post_merge_action_of_rc suite_rc with
-  | Report_local_failure rc ->
-    Soldev_exit.error
-      (Printf.sprintf
-         "  local post-merge suite failed (rc=%d) — %s is NOT reverted.\n\
-         \  The merge is on origin/main (the required checks verified it before it \
-          landed) and the ticket's DONE move travelled with it: nothing is rolled back, \
-          here or there.\n\
-         \  This run reflects this machine — missing kafka/e2e infra is the usual cause \
-          — not the code CI already verified.\n\
-         \  If this is a real regression, revert it deliberately on the remote:\n\
-         \    git revert %s && git push origin main"
-         rc
-         ticket_id
-         merge_sha)
-  | Report_success ->
-    Printf.printf "  ✓  local post-merge suite passed; %s remains merged\n%!" ticket_id;
-    Ok ()
-;;
-
 type merge_outcome =
   | All_requested
   | Some_requests_failed

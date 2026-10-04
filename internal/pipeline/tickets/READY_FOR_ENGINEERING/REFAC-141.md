@@ -76,9 +76,11 @@ resolved, and item 11 cannot be implemented as written.
   `~show:(unit -> ...)`, so `run_phase` can be handed the secret-bearing plan JSON.
 - **10 — real.** `format_service_diagnosis` still takes `pod_status list`, where
   `[]` is overloaded to mean "confirmed zero pods".
-- **11 — needs a design call.** `merge` deliberately does not invoke `merge-finish`
-  automatically (BUG-038 removed that), so "unreachable except from `merge`" and
-  "available as an optional operator step" are mutually exclusive today.
+- **11 — resolved by operator decision; implemented in Part B.** `merge`
+  deliberately does not invoke `merge-finish` automatically (BUG-038 removed that),
+  so the command was an orphaned public lifecycle surface with no pipeline phase
+  behind it; the operator chose to delete it rather than keep a misleading entry
+  point.
 - **12 — real.** `Sol_cli_manifest_yaml.migration_configmap_doc` renders the
   ConfigMap unconditionally; nothing refuses a set past the 1 MiB cap.
 - **13 — implemented in this change** (see below).
@@ -95,6 +97,32 @@ exist. The function was not exported by the `.mli` and no test referenced it.
 - Demo/example coverage: not applicable — an internal CLI guard; no author-facing
   surface changes.
 - Language parity: no impact — CLI-internal, no framework contract or primitive.
+
+## Part B (2026-10-03) — item 11
+
+Operator decision: `merge-finish` no longer represents a real pipeline phase after
+BUG-038 removed the automatic post-merge path, so it is deleted rather than kept as
+an orphaned public command. Removed:
+
+- The `merge-finish` subcommand, its `merge_sha_arg` positional and its group
+  registration in `internal/tooling/soldev/bin/cmd_pipeline.ml`.
+- `Soldev_merge.run_merge_finish`, `post_merge_action` and
+  `post_merge_action_of_rc` in `internal/tooling/soldev/lib/soldev_merge.ml`, which
+  nothing else called.
+- The two `post_merge_action_of_rc` tests and their group in
+  `internal/tooling/soldev/test/test_merge.ml`.
+- The `pipeline merge-finish` bullet in `AGENTS.md` (both the role list and the
+  "Shepherding PRs to merge" paragraph) and the `merge-finish` sentence in
+  `CONTRIBUTING.md`.
+
+`internal/tooling/scripts/run_tests.sh` and the informational perf baseline are
+untouched: `run_tests.sh` remains the local correctness suite, and
+`perf.sh record --update-baseline` remains the only baseline writer. If an explicit
+post-merge diagnostic is wanted later, it should be a new ticket exposing it under
+semantics that describe what it actually does.
+
+- Demo/example coverage: not applicable — internal tooling; no author-facing surface.
+- Language parity: no impact — pipeline tooling, not a framework contract or primitive.
 
 The remaining real items (2-7, 9, 10, 12, 14) stay open; the ticket remains in
 `READY_FOR_ENGINEERING/`.

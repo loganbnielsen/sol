@@ -75,31 +75,6 @@ let ticket_arg =
     required & pos 0 (some string) None & info [] ~docv:"TICKET-ID" ~doc:"e.g. EXP-005")
 ;;
 
-let merge_sha_arg =
-  Arg.(
-    required
-    & pos 1 (some string) None
-    & info
-        []
-        ~docv:"MERGE-SHA"
-        ~doc:"The merged commit being checked in this owned checkout")
-;;
-
-let run_merge_finish ticket_id merge_sha =
-  Soldev_merge.run_merge_finish ~ticket_id ~merge_sha |> exit_on
-;;
-
-let merge_finish_cmd =
-  Cmd.v
-    (Cmd.info
-       "merge-finish"
-       ~doc:
-         "Optional post-merge test run in an owned checkout. Reports performance \
-          regressions without writing a baseline, gating merges, or reverting failures. \
-          Not invoked automatically by merge.")
-    Term.(const run_merge_finish $ ticket_arg $ merge_sha_arg)
-;;
-
 let submit_cmd =
   Cmd.v
     (Cmd.info
@@ -218,7 +193,6 @@ let cmd =
     ; validate_cmd
     ; submit_cmd
     ; merge_cmd
-    ; merge_finish_cmd
     ; review_cmd
     ; check_reverts_cmd
     ]
