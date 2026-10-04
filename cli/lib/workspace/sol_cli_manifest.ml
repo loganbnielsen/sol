@@ -1,4 +1,5 @@
 include Sol_cli_manifest_yaml
+include Sol_cli_manifest_cluster_env
 
 type secret_backend =
   | Kubernetes_live
