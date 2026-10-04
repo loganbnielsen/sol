@@ -358,6 +358,13 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/aws/test-live-row.sh
 
+      # The local run's OCaml row driver builds the effective row assertions handed
+      # to VERIF-027; a driver that passes a row that did not happen is exactly the
+      # defect this suite mutation-checks. Stubs every external command; spends nothing.
+      - name: Local OCaml row driver test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: bash internal/qualification/local/test-rows-ocaml.sh
+
       # The observer owns the harness's structured parts: kubeconfig inspection by structure
       # and the bounded, independently-attempted failure-time capture. Its regression covers
       # the real gcloud kubeconfig shape and the failure modes that lost evidence in 15c-15g

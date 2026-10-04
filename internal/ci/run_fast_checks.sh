@@ -48,6 +48,11 @@ if ! git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets |
   bash internal/ci/context/check_ticket_transitions.sh; then
   context_failed=1
 fi
+git fetch --no-tags origin main -q 2>/dev/null || true
+if ! bash internal/ci/context/check_ticket_move.sh \
+  --base origin/main --branch "$(git rev-parse --abbrev-ref HEAD)"; then
+  context_failed=1
+fi
 
 guards_failed=0
 echo "fast checks: verification classes"
