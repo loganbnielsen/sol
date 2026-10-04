@@ -111,7 +111,7 @@ topic_produce() {
 topic_records() {
   log_cmd "timeout $CONSUME_TIMEOUT_S" "$RPK" topic consume "$1" "-o" beginning
   timeout "$CONSUME_TIMEOUT_S" "$RPK" -X "brokers=$KAFKA_BROKERS" topic consume "$1" \
-    -o beginning -f '%v\n' 2>>"$CURRENT_LOG" || true
+    -o start -f '%v\n' 2>>"$CURRENT_LOG" || true
 }
 
 prom_sum() {
