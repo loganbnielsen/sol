@@ -181,3 +181,70 @@ landed and their offline suites pass (§7).
   deploy crash-loops with "no registered schema matching the declared contract".
   Filed, not fixed: the fix changes which address the local deploy trusts, and the
   campaign's own procedure treats the collision as an environment condition.
+
+## Resume (2026-10-04, attempt 2) — deployed, OCaml rows observed
+
+Attempt 1 was blocked by `INFRA-102` (the contract registration went to the host dev
+broker rather than the cluster's registry). That is fixed and merged (`449d933c`), and the
+staged bundle was rebuilt from that revision (`/tmp/sol-install-fixed/`). The same cluster
+and run directory were reused; the host's native dev broker still owns `8081`, which is
+now harmless by construction.
+
+**Two defects the resume exposed and fixed** (both independent of `INFRA-102`):
+
+- `BUG-200` — the reference workspace's `contract/run` sent every scope but `demo_ts/*` to
+  the OCaml runner, so an unscoped `sol up` never registered the TypeScript scope's two
+  events; `pluto-demo-ts/order-svc` fatally verified `sol-demo-ts-orders-value` and
+  crash-looped. The dispatcher now runs every scope for a workspace-wide deploy. Evidence
+  (pod status, events, logs) is in the ticket; the log line that named the mechanism:
+  `[order-svc-ts] fatal: Error: subject 'sol-demo-ts-orders-value' has no registered schema
+  matching the declared contract`.
+- Environment, not a defect: the TypeScript scope's runner needs `tsc`, so
+  `app/demo_ts` must have `npm ci` run once before a whole-workspace deploy
+  (`sh: 1: tsc: not found`, exit 127). Recorded as a prerequisite of this run.
+
+**Deployed state after both fixes.**
+
+```console
+$ sol up                      # unscoped, from examples/pluto, bundle v0.1.0-alpha.7 @ 449d933c(+BUG-200)
+exit 0                        # every rollout waited successfully
+$ kubectl -n redpanda exec redpanda-0 -- curl -s http://localhost:8081/subjects
+["sol-demo-ts-orders-value","pluto-comms-notifications-value","pluto-payments-charges-value",
+ "orders-fulfilled.v1-value","sol-demo-ts-fulfilled-value","orders.v1-value"]
+$ curl -s localhost:8081/subjects      # the unrelated host broker on the same port
+[]
+```
+
+Both namespaces run: `pluto-comms/notify-worker` ×2, `pluto-comms/fulfilment-worker`,
+`pluto-checkout/checkout-svc`, `pluto-payments/charge-svc`, `pluto-payments/orders-svc`,
+`pluto-demo-ts/order-svc`, `pluto-demo-ts/fulfillment-worker`.
+
+### OCaml-lane rows (`rows-ocaml.sh all`, `ROWS_OCAML_SKIP_DEPLOY=1`)
+
+```console
+row b1: PASS     row b2: PASS     row b5: PASS
+row b6: FAIL (2 assertion(s))
+row d5: FAIL (4 assertion(s))
+row h2: PASS
+rows-ocaml: 2/6 row(s) failed
+```
+
+| Row | Verdict | Observation |
+|---|---|---|
+| `B1` | **PASS (LOCAL)** | `POST /orders` → `202 accepted`; duplicate idempotent; exactly one `orders` row and one `send_confirmation` job; the relay drains the key's outbox. |
+| `B2` | **PASS (LOCAL)** | A pre-inserted `sol_outbox (key, ord)` collision makes the request fail (500) and leaves no domain row and no job — the transaction rolls back whole. |
+| `B5` | **PASS (LOCAL)** | Read-back reaches `confirmed` through `fulfilled`; exactly one `fulfilled_orders` row, one `order_confirmations` row, one `release_inventory` job, one `send_confirmation` job; the relays drain. |
+| `B6` | **FAIL (LOCAL)** | The duplicate-absorption assertions that passed (`one fulfilled row`, `one release_inventory job`, `one confirmation`, `no pending outbox`), but `orders-fulfilled.v1` carries **no record** for the key: "the OrderFulfilled fact is published before the duplicate: not satisfied after 90s" and "exactly one OrderFulfilled was published: expected [1], observed [0]". Mechanism not yet established (`B5` passes, so the flow completes): either the OCaml half never publishes `OrderFulfilled`, or the driver's probe of the topic is wrong. Next: `rpk topic consume orders-fulfilled.v1 -o beginning` and the relay's own log for that key. |
+| `D5`/`H1` | **FAIL (LOCAL)** | The undecodable record produced **no** DLQ record on the group-scoped DLQ topic, `sol_worker_decode_errors_total` did not advance (`0 -> 0`), and a later valid order stayed `accepted` — the consumer did not advance past the poisoned record. Mechanism not yet established: either the decode path does not engage locally, or the driver's DLQ topic name differs from the worker's. Next: the worker's log for the poisoned key, and `rpk topic list` for the actual DLQ topic. |
+| `H2` | **PASS (LOCAL)** | With the broker scaled to zero the requests still commit and the outbox holds the intent; after the broker returns and the workloads restart, both keys drain and reach `confirmed`. |
+
+`B3`, `B4`, `C5`, `C6` were already `PASS (LOCAL)` from earlier evidence and are consistent
+with `B1`/`B2`/`B5` here (one fact, one row, one job, one intent, ordering per key).
+
+### Not yet run
+
+- The TypeScript-lane rows (`rows-ts.sh all`) and the capability rows (`C1`–`C3`, `D1`–`D4`,
+  `D6`, `F6`/`F8`/`F9`, `G1`–`G9`, `H7`), `capture`, and `teardown`. The deployment is
+  healthy and the harness is in place, so these are observations, not blockers.
+- `B6` and `D5`/`H1` above stay `FAIL` until their mechanisms are established; neither row
+  is weakened to make the matrix look green.
