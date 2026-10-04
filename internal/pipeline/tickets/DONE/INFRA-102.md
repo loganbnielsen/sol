@@ -76,3 +76,33 @@ Filed from the local integrated qualification (`VERIF-027`) rather than fixed th
 change decides which address the local deploy trusts, and the campaign's procedure
 (`internal/qualification/local/local-run-procedure.md` §2.2) already treats the port
 collision as an environment condition the run records.
+
+## Completion notes (2026-10-04)
+
+Promoted and fixed in this branch. **Mechanism** (established in
+`internal/qualification/records/2026-10-04-local-alpha-1.md`): `sol up` passed a
+literal `http://localhost:8081` to the contract step, and the port-forward
+primitive called a port ready as soon as *something* accepted a connection — so a
+host dev broker on that port took the registration (answering with schema ids a
+fresh registry cannot have), while the deployed units address the in-cluster
+registry and crash-looped.
+
+**Fixed at the boundary, not for one machine.** The local platform module owns the
+registry endpoint once (`schema_registry_forward`/`summary`, used by `endpoints`),
+and `with_schema_registry_endpoint` reaches that endpoint through a forward this
+command establishes on a free local port it picks, failing closed with a message
+naming the intended registry; `sol up` uses it, so no literal address is trusted
+and an unrelated listener on 8081 is irrelevant. The forward primitive refuses a
+port another process already owns and treats a forward whose process exited as not
+ready, so the false-ready path is gone for every caller (`sol local migrate`,
+`sol deploy-event`, the contract step).
+
+**Regression tests** (`cli/test/inline/test_kubectl_temporary_forward.ml`): an
+unrelated listener on the requested port is refused, never adopted; a forward
+whose process exits is not reported ready; a live forward that owns the port is
+ready. `dune build @ci-unit` passes except the two `Test_scaffold` compile tests,
+which fail identically on unmodified `main` on this host.
+
+**Post-merge verification** is the resumed run: with the native dev broker still
+holding 8081 on this host, `sol up` must register into the cluster's registry and
+the units must roll out. That is `VERIF-027`'s next attempt.
