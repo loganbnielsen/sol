@@ -67,3 +67,27 @@ never weakened).
 
 Leave each row's before/after verdict, the run record path, and the list of defects the
 run exposed and their tickets.
+
+## Attempt 1 (2026-10-04) — blocked by a host service; not runnable yet
+
+Premise re-checked at `origin/main @ 5e5eba74`: the run own remaining dependency was the
+TypeScript namespace driver. It now exists (`internal/qualification/local/rows-ts.sh`,
+with its offline mutation-checked suite), and both drivers deploy step is fixed
+(`sol up local` -> `sol up`, which the CLI refuses).
+
+The run reached a fresh `sol-local` cluster and `sol local migrate` -> `Done.`, then
+stopped at `sol up`: the contract registration goes to `http://localhost:8081`, which on
+this host is the native dev Redpanda rather than the harness IPv6-loopback port-forward,
+so every deployed unit crash-looped verifying against an empty in-cluster registry. No
+row is promoted; the mechanism, the verbatim output and the row-by-row verdicts are in
+`internal/qualification/records/2026-10-04-local-alpha-1.md`.
+
+**Blocked on an operator action:** stop the native Redpanda on this host (user
+`redpanda`, pid 370; `kill` from this session returned `Operation not permitted`, and
+`sudo` needs a password), or grant it, so the run forwards own `9092`/`8081`/`9644`. Then:
+`local-qual.sh preflight` -> `infra` -> `sol local secret set POSTGRES_URL`/`SOL_API_KEY`
+-> `sol local migrate` -> `ROWS_SH=.../rows-ocaml.sh ... rows` -> `rows-ts.sh` ->
+`capture` -> `teardown`.
+
+Filed from the attempt: `INFRA-102` (`sol up` registers against a literal address and
+reports success against whatever answers there).

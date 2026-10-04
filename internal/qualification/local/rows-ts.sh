@@ -12,18 +12,17 @@ SOL="${SOL:-sol}"
 WORKSPACE="${WORKSPACE:-}"
 LOG_DIR="${LOG_DIR:-}"
 
-INGRESS_URL="${ORDERS_INGRESS_URL:-http://localhost:8088}"
-ORDERS_HOST="${ORDERS_HOST:-orders-svc.pluto-payments.localhost}"
-ORDERS_PATH="${ORDERS_PATH:-/orders}"
+INGRESS_URL="${ORDERS_TS_INGRESS_URL:-http://localhost:8088}"
+ORDERS_HOST="${ORDERS_TS_HOST:-order-svc.pluto-demo-ts.localhost}"
+ORDERS_PATH="${ORDERS_TS_PATH:-/orders}"
 POSTGRES_URL="${POSTGRES_URL:-postgresql://postgres:dev@localhost:5432/sol_dev}"
 KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
-ORDERS_TOPIC="${ORDERS_TOPIC:-orders.v1}"
-FULFILLED_TOPIC="${FULFILLED_TOPIC:-orders-fulfilled.v1}"
-ORDERS_GROUP_ID="${ORDERS_GROUP_ID:-pluto-orders-fulfilment-worker}"
-ORDERS_WORKSPACE="${ORDERS_WORKSPACE:-pluto.orders}"
-ORDERS_NS="${ORDERS_NS:-pluto-payments}"
-FULFIL_NS="${FULFIL_NS:-pluto-comms}"
+ORDERS_TOPIC="${ORDERS_TS_TOPIC:-sol-demo-ts-orders}"
+FULFILLED_TOPIC="${FULFILLED_TS_TOPIC:-sol-demo-ts-fulfilled}"
+ORDERS_GROUP_ID="${ORDERS_TS_GROUP_ID:-sol-demo-ts-fulfillment-worker}"
+ORDERS_WORKSPACE="${ORDERS_TS_WORKSPACE:-pluto.demo_ts}"
+ORDERS_NS="${ORDERS_TS_NS:-pluto-demo-ts}"
 BROKER_NS="${BROKER_NS:-redpanda}"
 BROKER_STATEFULSET="${BROKER_STATEFULSET:-redpanda}"
 HTTP_TIMEOUT_S="${HTTP_TIMEOUT_S:-30}"
@@ -31,22 +30,26 @@ POLL_INTERVAL_S="${POLL_INTERVAL_S:-1}"
 POLL_TIMEOUT_S="${POLL_TIMEOUT_S:-90}"
 HTTP_POLL_INTERVAL_S="${HTTP_POLL_INTERVAL_S:-0.2}"
 CONSUME_TIMEOUT_S="${CONSUME_TIMEOUT_S:-6}"
-SKIP_DEPLOY="${ROWS_OCAML_SKIP_DEPLOY:-0}"
+SKIP_DEPLOY="${ROWS_TS_SKIP_DEPLOY:-1}"
 
 ROW_FAILURES=0
 CURRENT_LOG=""
 
 usage() {
-  printf 'usage: rows-ocaml.sh [row ...]\n\n'
-  printf 'rows: b1 b2 b5 b6 d5 h1 h2 all\n\n'
+  printf 'usage: rows-ts.sh [row ...]\n\n'
+  printf 'rows: b1 b2 b5 b6 d5 all\n\n'
   printf 'environment: SOL WORKSPACE LOG_DIR (from local-qual.sh rows), plus\n'
-  printf '  ORDERS_INGRESS_URL ORDERS_HOST POSTGRES_URL KAFKA_BROKERS PROMETHEUS_URL\n'
-  printf '  ORDERS_TOPIC FULFILLED_TOPIC ORDERS_GROUP_ID ORDERS_NS FULFIL_NS\n'
-  printf '  BROKER_NS BROKER_STATEFULSET ROWS_OCAML_SKIP_DEPLOY\n'
+  printf '  ORDERS_TS_INGRESS_URL ORDERS_TS_HOST ORDERS_TS_PATH POSTGRES_URL KAFKA_BROKERS\n'
+  printf '  PROMETHEUS_URL ORDERS_TS_TOPIC FULFILLED_TS_TOPIC ORDERS_TS_GROUP_ID\n'
+  printf '  ORDERS_TS_WORKSPACE ORDERS_TS_NS BROKER_NS BROKER_STATEFULSET\n'
+  printf '  ROWS_TS_SKIP_DEPLOY\n'
   printf 'tools: curl, jq, psql, rpk, kubectl (override with QUAL_CURL, QUAL_JQ, QUAL_PSQL, QUAL_RPK, QUAL_KUBECTL)\n'
+  printf '\nThe TypeScript namespace is the reference scenario''s second implementation\n'
+  printf '(FEAT-133): its own topics, tables and job workspace, run through the same\n'
+  printf 'ingress and the same local infrastructure as the OCaml namespace.\n'
 }
 
-row_say() { printf '[rows-ocaml %s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+row_say() { printf '[rows-ts %s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 
 log_cmd() {
   {
@@ -155,11 +158,11 @@ group_segment() {
 
 dlq_topic() { printf '%s.%s.dlq' "$ORDERS_TOPIC" "$(group_segment "$ORDERS_GROUP_ID")"; }
 
-new_order_id() { printf 'qual-%s-%s' "$1" "$(date -u +%Y%m%d%H%M%S)"; }
+new_order_id() { printf 'qual-ts-%s-%s' "$1" "$(date -u +%Y%m%d%H%M%S)"; }
 
-order_body() { printf '{"order_id":"%s","item":"widget","quantity":3}' "$1"; }
+order_body() { printf '{"order_id":"%s","item":"widget","quantity":3,"correlation_id":"%s"}' "$1" "$1"; }
 
-orders_count() { db_scalar "SELECT count(*) FROM orders WHERE order_id = '$1'"; }
+orders_count() { db_scalar "SELECT count(*) FROM orders_ts WHERE order_id = '$1'"; }
 
 jobs_count() {
   db_scalar "SELECT count(*) FROM sol_jobs WHERE workspace = '$ORDERS_WORKSPACE' \
@@ -168,13 +171,13 @@ jobs_count() {
 
 pending_count() { db_scalar "SELECT count(*) FROM sol_outbox WHERE aggregate_key = '$1'"; }
 
-fulfilled_count() { db_scalar "SELECT count(*) FROM fulfilled_orders WHERE order_id = '$1'"; }
+fulfilled_count() { db_scalar "SELECT count(*) FROM fulfilled_orders_ts WHERE order_id = '$1'"; }
 
 confirmations_count() {
-  db_scalar "SELECT count(*) FROM order_confirmations WHERE order_id = '$1'"
+  db_scalar "SELECT count(*) FROM order_confirmations_ts WHERE order_id = '$1'"
 }
 
-order_status() { db_scalar "SELECT status FROM orders WHERE order_id = '$1'"; }
+order_status() { db_scalar "SELECT status FROM orders_ts WHERE order_id = '$1'"; }
 
 pending_drained() { [ "$(pending_count "$1")" = 0 ]; }
 
@@ -212,15 +215,15 @@ observe_read_back() {
   if [ "$status" = 200 ]; then "$JQ" -r '.status // empty' <<<"$body" 2>/dev/null; fi
 }
 
-deploy_workspace() {
+deploy_scopes() {
   if [ "$SKIP_DEPLOY" = 1 ]; then return 0; fi
   [ -n "$WORKSPACE" ] || { fail_row "WORKSPACE is not set, so the workspace cannot be deployed"; return 1; }
   mkdir -p "$LOG_DIR/rows"
-  log_cmd "(cd $WORKSPACE && $SOL up)"
-  if ( cd "$WORKSPACE" && "$SOL" up ) >>"$LOG_DIR/rows/deploy.txt" 2>&1; then
-    pass "deployed $WORKSPACE with sol up"
+  log_cmd "(cd $WORKSPACE && $SOL up --scope=demo_ts)"
+  if ( cd "$WORKSPACE" && "$SOL" up --scope=demo_ts ) >>"$LOG_DIR/rows/deploy-ts.txt" 2>&1; then
+    pass "deployed the demo_ts scope with sol up --scope=demo_ts"
   else
-    fail_row "sol up failed; see $LOG_DIR/rows/deploy.txt"
+    fail_row "sol up --scope=demo_ts failed; see $LOG_DIR/rows/deploy-ts.txt"
     return 1
   fi
 }
@@ -231,15 +234,15 @@ row_b1() {
   printf 'order_id\t%s\n' "$id" >>"$CURRENT_LOG"
   response="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
   printf 'POST %s\t%s\t%s\n' "$ORDERS_PATH" "$(status_of "$response")" "$(body_of "$response")" >>"$CURRENT_LOG"
-  check_eq "B1 POST /orders returns 202" 202 "$(status_of "$response")"
-  check_eq "B1 POST /orders reports accepted" accepted "$(status_field "$response")"
+  check_eq "B1 (TS) POST /orders returns 202" 202 "$(status_of "$response")"
+  check_eq "B1 (TS) POST /orders reports accepted" accepted "$(status_field "$response")"
   duplicate="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
   printf 'POST duplicate\t%s\t%s\n' "$(status_of "$duplicate")" "$(body_of "$duplicate")" >>"$CURRENT_LOG"
-  check_eq "B1 duplicate POST returns 202" 202 "$(status_of "$duplicate")"
-  check_eq "B1 duplicate POST is idempotent" "$(status_field "$response")" "$(status_field "$duplicate")"
-  check_eq "B1 exactly one orders row" 1 "$(orders_count "$id")"
-  check_eq "B1 exactly one send_confirmation job" 1 "$(jobs_count "$id" send_confirmation)"
-  wait_until "B1 the relay drains the key's outbox" "$POLL_TIMEOUT_S" pending_drained "$id"
+  check_eq "B1 (TS) duplicate POST returns 202" 202 "$(status_of "$duplicate")"
+  check_eq "B1 (TS) duplicate POST is idempotent" "$(status_field "$response")" "$(status_field "$duplicate")"
+  check_eq "B1 (TS) exactly one orders_ts row" 1 "$(orders_count "$id")"
+  check_eq "B1 (TS) exactly one send_confirmation job" 1 "$(jobs_count "$id" send_confirmation)"
+  wait_until "B1 (TS) the relay drains the key's outbox" "$POLL_TIMEOUT_S" pending_drained "$id"
 }
 
 row_b2() {
@@ -250,9 +253,9 @@ row_b2() {
     VALUES ('OrderPlaced', '$id', 1, '{}') ON CONFLICT DO NOTHING"
   response="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
   printf 'POST %s\t%s\t%s\n' "$ORDERS_PATH" "$(status_of "$response")" "$(body_of "$response")" >>"$CURRENT_LOG"
-  check_eq "B2 the injected intent collision fails the request" 500 "$(status_of "$response")"
-  check_eq "B2 no orders row survives the rollback" 0 "$(orders_count "$id")"
-  check_eq "B2 no job survives the rollback" 0 "$(jobs_count "$id" send_confirmation)"
+  check_eq "B2 (TS) the injected intent collision fails the request" 500 "$(status_of "$response")"
+  check_eq "B2 (TS) no orders_ts row survives the rollback" 0 "$(orders_count "$id")"
+  check_eq "B2 (TS) no job survives the rollback" 0 "$(jobs_count "$id" send_confirmation)"
   db_exec "DELETE FROM sol_outbox WHERE kind = 'OrderPlaced' AND aggregate_key = '$id' \
     AND ord = 1 AND payload = '{}'"
 }
@@ -263,17 +266,17 @@ row_b5() {
   printf 'order_id\t%s\n' "$id" >>"$CURRENT_LOG"
   response="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
   printf 'POST %s\t%s\t%s\n' "$ORDERS_PATH" "$(status_of "$response")" "$(body_of "$response")" >>"$CURRENT_LOG"
-  check_eq "B5 POST /orders returns 202" 202 "$(status_of "$response")"
+  check_eq "B5 (TS) POST /orders returns 202" 202 "$(status_of "$response")"
   terminal="$(await_status "$id" confirmed "$POLL_TIMEOUT_S")"
-  check_eq "B5 the read-back reaches confirmed" confirmed "$terminal"
+  check_eq "B5 (TS) the read-back reaches confirmed" confirmed "$terminal"
   observed="$(grep -c $'\tfulfilled$' "$CURRENT_LOG")"
-  check_ge "B5 the read-back observes fulfilled before confirmed" 1 "$observed"
-  check_eq "B5 the read-back field agrees with the row" confirmed "$(observe_read_back "$id")"
-  check_eq "B5 exactly one fulfilled_orders row" 1 "$(fulfilled_count "$id")"
-  check_eq "B5 exactly one order_confirmations row" 1 "$(confirmations_count "$id")"
-  check_eq "B5 exactly one release_inventory job" 1 "$(jobs_count "$id" release_inventory)"
-  check_eq "B5 exactly one send_confirmation job" 1 "$(jobs_count "$id" send_confirmation)"
-  wait_until "B5 the relays drain the key's outbox" "$POLL_TIMEOUT_S" pending_drained "$id"
+  check_ge "B5 (TS) the read-back observes fulfilled before confirmed" 1 "$observed"
+  check_eq "B5 (TS) the read-back field agrees with the row" confirmed "$(observe_read_back "$id")"
+  check_eq "B5 (TS) exactly one fulfilled_orders_ts row" 1 "$(fulfilled_count "$id")"
+  check_eq "B5 (TS) exactly one order_confirmations_ts row" 1 "$(confirmations_count "$id")"
+  check_eq "B5 (TS) exactly one release_inventory job" 1 "$(jobs_count "$id" release_inventory)"
+  check_eq "B5 (TS) exactly one send_confirmation job" 1 "$(jobs_count "$id" send_confirmation)"
+  wait_until "B5 (TS) the relays drain the key's outbox" "$POLL_TIMEOUT_S" pending_drained "$id"
 }
 
 row_b6() {
@@ -282,23 +285,23 @@ row_b6() {
   printf 'order_id\t%s\n' "$id" >>"$CURRENT_LOG"
   response="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
   printf 'POST %s\t%s\t%s\n' "$ORDERS_PATH" "$(status_of "$response")" "$(body_of "$response")" >>"$CURRENT_LOG"
-  check_eq "B6 POST /orders returns 202" 202 "$(status_of "$response")"
-  check_eq "B6 the order reaches confirmed before the duplicate" confirmed \
+  check_eq "B6 (TS) POST /orders returns 202" 202 "$(status_of "$response")"
+  check_eq "B6 (TS) the order reaches confirmed before the duplicate" confirmed \
     "$(await_status "$id" confirmed "$POLL_TIMEOUT_S")"
-  wait_until "B6 the OrderFulfilled fact is published before the duplicate" \
+  wait_until "B6 (TS) the OrderFulfilled fact is published before the duplicate" \
     "$POLL_TIMEOUT_S" fulfilled_published "$id"
   published_before="$(fulfilled_published_count "$id")"
-  duplicate="{\"order_id\":\"$id\",\"item\":\"widget\",\"quantity\":3,\"correlation_id\":\"qual-b6-duplicate\"}"
+  duplicate="$(order_body "$id")"
   topic_produce "$ORDERS_TOPIC" "$id" "$duplicate"
   printf 'duplicate fact produced\ttopic=%s\tkey=%s\n' "$ORDERS_TOPIC" "$id" >>"$CURRENT_LOG"
   sleep_s "$POLL_TIMEOUT_S"
   published_after="$(fulfilled_published_count "$id")"
-  check_eq "B6 the duplicate is absorbed: one fulfilled_orders row" 1 "$(fulfilled_count "$id")"
-  check_eq "B6 the duplicate is absorbed: one release_inventory job" 1 "$(jobs_count "$id" release_inventory)"
-  check_eq "B6 the duplicate is absorbed: one confirmation effect" 1 "$(confirmations_count "$id")"
-  check_eq "B6 the duplicate publishes no second OrderFulfilled" "$published_before" "$published_after"
-  check_eq "B6 exactly one OrderFulfilled was published" 1 "$published_after"
-  check_eq "B6 no pending outbox for the key" 0 "$(pending_count "$id")"
+  check_eq "B6 (TS) the duplicate is absorbed: one fulfilled_orders_ts row" 1 "$(fulfilled_count "$id")"
+  check_eq "B6 (TS) the duplicate is absorbed: one release_inventory job" 1 "$(jobs_count "$id" release_inventory)"
+  check_eq "B6 (TS) the duplicate is absorbed: one confirmation effect" 1 "$(confirmations_count "$id")"
+  check_eq "B6 (TS) the duplicate publishes no second OrderFulfilled" "$published_before" "$published_after"
+  check_eq "B6 (TS) exactly one OrderFulfilled was published" 1 "$published_after"
+  check_eq "B6 (TS) no pending outbox for the key" 0 "$(pending_count "$id")"
 }
 
 row_dlq() {
@@ -309,49 +312,26 @@ row_dlq() {
   before="$(prom_sum 'sol_worker_decode_errors_total')"
   topic_produce "$ORDERS_TOPIC" "$id" 'this is not a valid OrderPlaced payload'
   printf 'undecodable record produced\ttopic=%s\tkey=%s\n' "$ORDERS_TOPIC" "$id" >>"$CURRENT_LOG"
-  wait_until "D5/H1 the DLQ topic receives the raw record" "$POLL_TIMEOUT_S" dlq_has_record "$dlq"
+  wait_until "D5 (TS) the DLQ topic receives the raw record" "$POLL_TIMEOUT_S" dlq_has_record "$dlq"
   records="$(topic_records "$dlq")"
   raw="$(printf '%s' "$records" | grep -c 'this is not a valid OrderPlaced payload')"
-  check_ge "D5/H1 the DLQ record carries the raw bytes" 1 "$raw"
+  check_ge "D5 (TS) the DLQ record carries the raw bytes" 1 "$raw"
   after="$(prom_sum 'sol_worker_decode_errors_total')"
   if [ "${after:-0}" -gt "${before:-0}" ] 2>/dev/null; then
-    pass "D5/H1 sol_worker_decode_errors_total advanced ($before -> $after)"
+    pass "D5 (TS) sol_worker_decode_errors_total advanced ($before -> $after)"
   else
-    fail_row "D5/H1 sol_worker_decode_errors_total did not advance ($before -> $after)"
+    fail_row "D5 (TS) sol_worker_decode_errors_total did not advance ($before -> $after)"
   fi
   valid="$(new_order_id d5-follow)"
   http_request POST "$ORDERS_PATH" "$(order_body "$valid")" >/dev/null
-  check_eq "D5/H1 the source offset advanced: a later fact is still applied" confirmed \
+  check_eq "D5 (TS) the source offset advanced: a later fact is still applied" confirmed \
     "$(await_status "$valid" confirmed "$POLL_TIMEOUT_S")"
-}
-
-row_h2() {
-  local id1 id2
-  id1="$(new_order_id h2a)"
-  id2="$(new_order_id h2b)"
-  printf 'order_ids\t%s\t%s\n' "$id1" "$id2" >>"$CURRENT_LOG"
-  broker_scale 0
-  sleep_s "$POLL_INTERVAL_S"
-  http_request POST "$ORDERS_PATH" "$(order_body "$id1")" >/dev/null
-  http_request POST "$ORDERS_PATH" "$(order_body "$id2")" >/dev/null
-  check_eq "H2 the requests commit while the broker is unavailable" 1 "$(orders_count "$id1")"
-  check_eq "H2 the requests commit while the broker is unavailable (second)" 1 "$(orders_count "$id2")"
-  check_ge "H2 the outbox holds the unpublished intent" 1 "$(pending_count "$id1")"
-  broker_scale 1
-  restart_deploys "$ORDERS_NS" 'app.kubernetes.io/component=svc'
-  restart_deploys "$FULFIL_NS" 'app.kubernetes.io/component=worker'
-  wait_until "H2 the outbox drains after recovery" "$POLL_TIMEOUT_S" pending_drained "$id1"
-  check_eq "H2 the outbox drains after recovery (second)" 0 "$(pending_count "$id2")"
-  check_eq "H2 the recovered flow reaches confirmed" confirmed \
-    "$(await_status "$id1" confirmed "$POLL_TIMEOUT_S")"
-  check_eq "H2 the recovered flow reaches confirmed (second)" confirmed \
-    "$(await_status "$id2" confirmed "$POLL_TIMEOUT_S")"
 }
 
 run_row() {
   local row="$1"
   mkdir -p "$LOG_DIR/rows"
-  CURRENT_LOG="$LOG_DIR/rows/$row.txt"
+  CURRENT_LOG="$LOG_DIR/rows/ts-$row.txt"
   : >"$CURRENT_LOG"
   ROW_FAILURES=0
   row_say "row $row"
@@ -361,7 +341,6 @@ run_row() {
     b5) row_b5 ;;
     b6) row_b6 ;;
     d5 | h1) row_dlq ;;
-    h2) row_h2 ;;
     *) fail_row "unknown row $row" ;;
   esac
   if [ "$ROW_FAILURES" -eq 0 ]; then
@@ -377,7 +356,7 @@ run_row() {
 require_tool() {
   local name="$1" value="$2"
   command -v "$value" >/dev/null 2>&1 || {
-    printf 'rows-ocaml: %s=%s is not executable or not on PATH\n' "$name" "$value" >&2
+    printf 'rows-ts: %s=%s is not executable or not on PATH\n' "$name" "$value" >&2
     return 1
   }
 }
@@ -397,19 +376,19 @@ main() {
   case "${1:-all}" in
     -h | --help | help) usage; return 0 ;;
   esac
-  [ -n "$LOG_DIR" ] || { printf 'rows-ocaml: LOG_DIR is not set\n' >&2; return 2; }
+  [ -n "$LOG_DIR" ] || { printf 'rows-ts: LOG_DIR is not set\n' >&2; return 2; }
   require_tools || return 2
   mkdir -p "$LOG_DIR/rows"
   local rows=("$@")
-  [ "${#rows[@]}" -eq 0 ] && rows=(b1 b2 b5 b6 d5 h2)
-  if [ "${rows[0]}" = all ]; then rows=(b1 b2 b5 b6 d5 h2); fi
+  [ "${#rows[@]}" -eq 0 ] && rows=(b1 b2 b5 b6 d5)
+  if [ "${rows[0]}" = all ]; then rows=(b1 b2 b5 b6 d5); fi
   local failures=0
-  deploy_workspace || true
+  deploy_scopes || true
   local row
   for row in "${rows[@]}"; do
     run_row "$row" || failures=$((failures + 1))
   done
-  printf 'rows-ocaml: %d/%d row(s) failed; logs under %s/rows\n' \
+  printf 'rows-ts: %d/%d row(s) failed; logs under %s/rows\n' \
     "$failures" "${#rows[@]}" "$LOG_DIR"
   [ "$failures" -eq 0 ]
 }
