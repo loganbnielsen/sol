@@ -199,7 +199,6 @@ let renew_q =
        {|UPDATE %s
          SET locked_until = now() + (?::float8 * interval '1 second')
          WHERE id = ? AND attempts = ? AND workspace = ? AND status = 'pending'
-           AND locked_until > now()
          RETURNING id|}
        table)
 ;;
