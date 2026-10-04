@@ -88,13 +88,41 @@ runtime assertions are `assert`-based):
 - `internal/ci/check_no_comments.sh` → 863 files, none commented;
   `internal/ci/check_examples_self_contained.sh` → 39 files, none reference `internal/`.
 
-**Remaining for the ticket to close:** the live rows in the `VERIF-027` environment
-(one `POST /orders` producing exactly one row/job/`OrderPlaced`/fulfilled
-row/`OrderFulfilled`/confirmation and a terminal read-back; an undecodable record
-producing the decode log, metric and DLQ with the offset advancing; the six identity
-dimensions agreeing across a request's log line, metric series and trace). These are
-the local integrated qualification's rows and are recorded by `VERIF-027`, not
-re-derived here.
+**Part B — the OCaml row driver `VERIF-027` consumes (landed; the run is `VERIF-027`'s).**
+
+`VERIF-028` landed the local harness (`local-qual.sh`, phases `preflight` / `infra` /
+`status` / `rows` / `capture` / `teardown`) and deliberately left the row drivers to
+the reference applications. `internal/qualification/local/rows-ocaml.sh` is this
+namespace's driver for those rows: it deploys the workspace with `sol up local` and
+drives the OCaml-side observations and failure injections the matrix needs —
+
+- B1: `POST /orders` 202 and an idempotent duplicate, one row and one job;
+- B2: the transaction rolls back whole, injected by a pre-inserted
+  `sol_outbox (aggregate_key, ord)` collision;
+- B5: the `accepted` → `fulfilled` → `confirmed` read-back and one row/job/effect;
+- B6: a redelivered `OrderPlaced` yields one row/job/effect/fact, with the fact
+  redelivered onto `orders.v1`;
+- D5/H1: an undecodable record yields the group-scoped DLQ record carrying the raw
+  bytes, advances `sol_worker_decode_errors_total`, and the offset advances;
+- H2: the relay holds while the broker is scaled to zero and drains after recovery
+  and a relay restart.
+
+Each row writes its verbatim commands and output to `$LOG_DIR/rows/<row>.txt` with a
+`verdict` line, and fails the driver when an observation does not hold. The procedure's
+row-driver section names it and its tool requirements (`psql`, `rpk`, `jq`).
+
+Evidence (offline; the driver's external commands are stubbed):
+`bash internal/qualification/local/test-rows-ocaml.sh` → `all expectations hold (9
+checks)`: every row passes against a correct implementation, an unknown row fails, four
+mutations fail for the reason under test (a duplicate `POST` leaking an effect, a stalled
+read-back, a missing DLQ record, a redelivery republishing the fact), and `main` fails
+closed naming a missing row-driver tool. CI runs the suite (`ci.yml`, "Local OCaml row
+driver test").
+
+**Remaining for the ticket to close:** running those rows on the cluster and recording
+them in a `VERIF-027` run record (which needs `FEAT-133` and `RELEASE-006` first), then
+the identity rows (G1–G4, G9) for the OCaml units. This ticket closes when that evidence
+exists, not when these drivers land.
 
 ## Completion notes
 

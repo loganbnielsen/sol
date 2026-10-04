@@ -123,6 +123,32 @@ refuses without one. `local-rows.sh` should drive, per `ALPHA_CAMPAIGN.md` §3:
 Each row records the verbatim command and output; a local observation is `LOCAL`, and
 a row that needs a cluster-with-provider stays `NOT RUN`.
 
+### The OCaml namespace's rows (`FEAT-132`)
+
+`rows-ocaml.sh` in this directory is the OCaml half's driver. It deploys the
+workspace (`sol up local`, unless `ROWS_OCAML_SKIP_DEPLOY=1`), then drives its rows
+and writes each row's verbatim commands and output to `$LOG_DIR/rows/<row>.txt`
+with a `verdict` line; a row whose observation did not hold exits non-zero and is
+named. Run it directly, or pass it as `ROWS_SH`:
+
+```sh
+ROWS_SH=internal/qualification/local/rows-ocaml.sh bash internal/qualification/local/local-qual.sh rows
+```
+
+| Row | Observation | Failure injection |
+|---|---|---|
+| `b1` | `POST /orders` 202, duplicate idempotent, one row/one job | — |
+| `b2` | the request transaction rolls back whole | a pre-inserted `sol_outbox (key, ord)` collision |
+| `b5` | read-back `accepted` → `fulfilled` → `confirmed` | — |
+| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | the same fact produced twice |
+| `d5` / `h1` | decode log, metric and DLQ record with the raw bytes; the offset advances | an undecodable record on `orders.v1` |
+| `h2` | the relay holds while the broker is unavailable, then drains after recovery | the broker scaled to zero, then restored |
+
+It uses `psql`, `rpk` and `jq` against the harness's port-forwards (override the
+binaries with `QUAL_PSQL`, `QUAL_RPK`, `QUAL_JQ`); `test-rows-ocaml.sh` is its
+offline, mutation-checked suite. The `local-rows.sh` that also covers the TS
+namespace's rows is the run's to compose from this driver and `FEAT-133`'s.
+
 ## 6. Deviations from the cloud run rules, and why
 
 - **No forced teardown.** The ledger's cost rule (tear down before asking) exists
