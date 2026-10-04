@@ -220,9 +220,11 @@ re-confirmed there; a row whose `aws` target has never been observed is that run
 | B8 | Cross-language wire interop | a fact produced by one language is consumed by the other's worker | producer | consumer | broker | local | DEC-022 (stretch; not an alpha requirement) | NOT RUN |
 
 **Run evidence (B, and the capability rows below).** `VERIF-027`'s local rows were observed
-at `origin/main @ 47fc2266` with the staged `v0.1.0-alpha.7` bundle; the record is
-`internal/qualification/records/2026-10-04-local-alpha-1.md` and the bundle is
-`/tmp/alpha-verif027-47fc2266/`.
+at `origin/main @ 47fc2266` with the staged `v0.1.0-alpha.7` bundle, and re-observed
+(including on a freshly provisioned cluster) after `BUG-203` at `origin/main @ bddd58e3`;
+the record is `internal/qualification/records/2026-10-04-local-alpha-1.md` and the bundles
+are `/tmp/alpha-verif027-47fc2266/` and `/tmp/alpha-verif027-bddd58e3/`. The `B5`/`B6` rows
+also exercise the `sol-jobs` runner `BUG-203` fixed.
 
 ### C. Data: PostgreSQL, migrations, jobs, outbox
 

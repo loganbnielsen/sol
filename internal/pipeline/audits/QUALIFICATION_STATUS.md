@@ -33,30 +33,34 @@ have failed" — it never means "false".
 ### 2026-10-04 — the local integrated qualification completes on this host (`VERIF-027`)
 
 The campaign's local run completed against `origin/main @ 47fc2266` with the staged bundle
-`v0.1.0-alpha.7`; the full record is
-`internal/qualification/records/2026-10-04-local-alpha-1.md` (attempts 1–3 and the final
-run at `47fc2266`; bundle `/tmp/alpha-verif027-47fc2266/`). Every scenario row observed is
-now `PASS (LOCAL)`, in **both** the OCaml and TypeScript namespaces: `B1`, `B2`, `B5`,
-`B6`, `D5`/`H1` and `H2`. Capability rows observed `PASS (LOCAL)`: `C1`, `D1`–`D4`, `D6`,
-`G1`, `G2`, `G6`, `G7`. Teardown reached verified absence (`cluster ABSENT`,
-`containers ABSENT`). Provider rows (`C2`/`C4`, `D7`/`D8`, `E2`, `E4`–`E8`, `F1`–`F5`,
-`F7`, `H3`–`H6`, `I*`) stay `NOT RUN`/`BLOCKED` — they need a real target. `C3`, `F8`,
-`F9`, `G3`–`G5`, `G8`, `G9` and `H7` were not observed by this run and keep their prior
-verdicts; none was weakened.
+`v0.1.0-alpha.7`, and was re-observed after `BUG-203` at `origin/main @ bddd58e3`; the full
+record is `internal/qualification/records/2026-10-04-local-alpha-1.md` (attempts 1–3, the
+final run at `47fc2266`, the rerun at `bddd58e3`; bundles `/tmp/alpha-verif027-47fc2266/`
+and `/tmp/alpha-verif027-bddd58e3/`). Every scenario row observed is `PASS (LOCAL)`, in
+**both** the OCaml and TypeScript namespaces: `B1`, `B2`, `B5`, `B6`, `D5`/`H1` and `H2`.
+Capability rows observed `PASS (LOCAL)`: `C1`, `D1`–`D4`, `D6`, `G1`, `G2`, `G6`, `G7`.
+Teardown reached verified absence (`cluster ABSENT`, `containers ABSENT`) both times.
+Provider rows (`C2`/`C4`, `D7`/`D8`, `E2`, `E4`–`E8`, `F1`–`F5`, `F7`, `H3`–`H6`, `I*`)
+stay `NOT RUN`/`BLOCKED` — they need a real target. `C3`, `F8`, `F9`, `G3`–`G5`, `G8`,
+`G9` and `H7` were not observed by this run and keep their prior verdicts; none was
+weakened.
 
-Four defects the run exposed are fixed, mutation-tested and merged: `INFRA-102` (contract
-registration against a literal `localhost:8081`, `449d933c`), `BUG-200` (the workspace
-contract runner skipped the TypeScript scope, `9c59d4be`), `BUG-201` (the OCaml
+Five defects the campaign exposed are fixed, mutation-tested and merged: `INFRA-102`
+(contract registration against a literal `localhost:8081`, `449d933c`), `BUG-200` (the
+workspace contract runner skipped the TypeScript scope, `9c59d4be`), `BUG-201` (the OCaml
 `sol-outbox` relay drained every kind in the shared table and cross-published another
-unit's rows, `478bd72c`), and `BUG-202` (the TypeScript confirmation confirmed an
-unfulfilled order, `47fc2266`). The run's own drivers were corrected in `VERIF-027` parts
-C–E. Attempts 1 and 2 stopped at the `INFRA-102` and `BUG-200` mechanisms the record
-documents, so they are not re-derived here.
+unit's rows, `478bd72c`), `BUG-202` (the TypeScript confirmation confirmed an unfulfilled
+order, `47fc2266`), and `BUG-203` (a `sol-jobs` lease heartbeat that woke after the lease
+lapsed surrendered a live, unclaimed claim, so a second poller ran the handler —
+`bddd58e3`, found by the post-merge `test` failure on `main` and reproduced
+deterministically). The run's own drivers were corrected in `VERIF-027` parts C–E.
+Attempts 1 and 2 stopped at the `INFRA-102` and `BUG-200` mechanisms the record documents,
+so they are not re-derived here.
 
-The cluster was reused from the preceding attempt (Helm could not fetch a chart to
-re-reconcile infra on this host), and the bundle's migration-runner digest is synthetic
-(the real digest is written by the release tag); both are recorded deviations, not
-shortcuts.
+The first attempt's cluster was reused from the preceding one (Helm could not fetch a chart
+to re-reconcile infra on this host); the rerun recreated it and provisioned from empty. The
+bundle's migration-runner digest is synthetic (the real digest is written by the release
+tag). Both are recorded deviations, not shortcuts.
 
 ### 2026-09-28 — FND-0070 filed: a failed apply can leave resources the state never adopted
 
