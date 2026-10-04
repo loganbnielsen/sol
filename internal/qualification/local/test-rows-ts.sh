@@ -141,6 +141,14 @@ db_scalar() {
       id="$(sql_id "$sql")"
       grep -c "^$id|" "$STATE/orders" || true
       ;;
+    *"accepted_at IS NOT NULL"*)
+      id="$(sql_id "$sql")"
+      if grep -q "^$id|" "$STATE/fulfilled" && grep -q "^$id|" "$STATE/confirmations"; then
+        printf 't'
+      else
+        printf 'f'
+      fi
+      ;;
     *) printf '' ;;
   esac
 }
@@ -201,6 +209,7 @@ topic_records() {
   fi
 }
 
+prom_query() { cat "$STATE/decode_errors"; }
 prom_sum() { cat "$STATE/decode_errors"; }
 
 broker_scale() {
