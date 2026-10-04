@@ -1,16 +1,11 @@
 # Sol qualification status
 
-**As of:** 2026-09-20 · **Code revision verified:** `main @ 9cd186c0`
-**Owner:** the independent audit function (`internal/pipeline/audits/`).
-**Reconciled** 2026-09-19 after rebasing onto `origin/main` (PRs #362/#363/#364:
-INFRA-042 fixed, GCP Attempt 4, HARDEN Run 7; #365/#366: entry-point docs and a
-GCP inventory restructure, against which the findings' citations were re-anchored
-to sections and rows).
-**Reconciled** 2026-09-24 (ledger restructure only — see the last section; the tables above
-that section were not re-audited).
-**Reconciled** 2026-09-20: #369 (FND-0010, item 5), then #370 and #376 landed plan
-items 1, 2, 3, 4, 6 and 7 — FND-0001 and FND-0002 move to `FIXED_UNQUALIFIED`, and
-the five tickets moved to `DONE` with their behavioural remainder named.
+**As of:** 2026-10-04 (the findings' `State:` lines were last reconciled 2026-09-24; the
+transitions table below is current). **Owner:** the independent audit function
+(`internal/pipeline/audits/`).
+**Reconciled** 2026-09-24 (ledger restructure only) and 2026-10-04 (transitions table added;
+the AWS and GCP *status* tables removed — they restated the matrices they were derived from
+and had drifted out of date).
 
 This is the compact answer to "what does Sol currently know?". It links to the
 authoritative detail; it does not duplicate it. Detail lives in:
@@ -30,68 +25,21 @@ have failed" — it never means "false".
 
 ---
 
-### 2026-10-04 — the local integrated qualification completes on this host (`VERIF-027`)
+## Qualification transitions
 
-The campaign's local run completed against `origin/main @ 47fc2266` with the staged bundle
-`v0.1.0-alpha.7`, and was re-observed after `BUG-203` at `origin/main @ bddd58e3`; the full
-record is `internal/qualification/records/2026-10-04-local-alpha-1.md` (attempts 1–3, the
-final run at `47fc2266`, the rerun at `bddd58e3`; bundles `/tmp/alpha-verif027-47fc2266/`
-and `/tmp/alpha-verif027-bddd58e3/`). Every scenario row observed is `PASS (LOCAL)`, in
-**both** the OCaml and TypeScript namespaces: `B1`, `B2`, `B5`, `B6`, `D5`/`H1` and `H2`.
-Capability rows observed `PASS (LOCAL)`: `C1`, `D1`–`D4`, `D6`, `G1`, `G2`, `G6`, `G7`.
-Teardown reached verified absence (`cluster ABSENT`, `containers ABSENT`) both times.
-Provider rows (`C2`/`C4`, `D7`/`D8`, `E2`, `E4`–`E8`, `F1`–`F5`, `F7`, `H3`–`H6`, `I*`)
-stay `NOT RUN`/`BLOCKED` — they need a real target. `C3`, `F8`, `F9`, `G3`–`G5`, `G8`,
-`G9` and `H7` were not observed by this run and keep their prior verdicts; none was
-weakened.
+One row per event that moves a verdict, opens or closes a gate, or changes a recorded state.
+The row is an index entry, not a narrative: the evidence is in the run record, the per-item
+state in the finding, the current verdict in the matrix that owns it. A run adds **one row
+here and nothing else**; what the run saw goes in its record. Newest first.
 
-Five defects the campaign exposed are fixed, mutation-tested and merged: `INFRA-102`
-(contract registration against a literal `localhost:8081`, `449d933c`), `BUG-200` (the
-workspace contract runner skipped the TypeScript scope, `9c59d4be`), `BUG-201` (the OCaml
-`sol-outbox` relay drained every kind in the shared table and cross-published another
-unit's rows, `478bd72c`), `BUG-202` (the TypeScript confirmation confirmed an unfulfilled
-order, `47fc2266`), and `BUG-203` (a `sol-jobs` lease heartbeat that woke after the lease
-lapsed surrendered a live, unclaimed claim, so a second poller ran the handler —
-`bddd58e3`, found by the post-merge `test` failure on `main` and reproduced
-deterministically). The run's own drivers were corrected in `VERIF-027` parts C–E.
-Attempts 1 and 2 stopped at the `INFRA-102` and `BUG-200` mechanisms the record documents,
-so they are not re-derived here.
+| Date | Revision | Scope | What moved | Evidence |
+|---|---|---|---|---|
+| 2026-10-04 | `f4284422` | release (`v0.1.0-alpha.7`) | `A1`, `J1`, `J4` → `PASS`; `J2` re-verified against the **published** archive (it had been staged); `J3` `NOT RUN` (no live run authorized) | `records/2026-10-04-release-alpha-7-clean-user.md` |
+| 2026-10-04 | `bddd58e3` | local alpha (`VERIF-027`) | every observed scenario row → `PASS (LOCAL)` in **both** namespaces (`B1`, `B2`, `B5`, `B6`, `D5`/`H1`, `H2`); capability rows `C1`, `D1`–`D4`, `D6`, `G1`, `G2`, `G6`, `G7` → `PASS (LOCAL)`; teardown verified `ABSENT`; provider rows stay `NOT RUN`/`BLOCKED`; five defects fixed (`INFRA-102`, `BUG-200`–`BUG-203`) | `records/2026-10-04-local-alpha-1.md` |
+| 2026-10-03 | `main` | AWS Run 9 preparation | authorization → execute package prepared; `E5` (`VERIF-022`) stays blocked on `FEAT-134` — an implementation gap, not an authorization one | `aws/aws-run-procedure.md` § *Run 9* |
 
-The first attempt's cluster was reused from the preceding one (Helm could not fetch a chart
-to re-reconcile infra on this host); the rerun recreated it and provisioned from empty. The
-bundle's migration-runner digest is synthetic (the real digest is written by the release
-tag). Both are recorded deviations, not shortcuts.
-
-### 2026-10-04 — `v0.1.0-alpha.7` is published, and the clean-user install qualifies (`RELEASE-006`)
-
-The alpha campaign release was cut through `release.yml` from the frozen campaign revision
-`f4284422` and published on 2026-10-04. Rows `A1` (released install), `J1` (one aligned unit;
-a re-publish is refused) and `J4` (provenance) move to **PASS**, and `J2` (installed-layout
-smoke) is now also verified against the *published* archive rather than a staged one. The
-record is `internal/qualification/records/2026-10-04-release-alpha-7-clean-user.md`;
-evidence is in `/tmp/clean-user/`.
-
-The clean-user qualification ran with no checkout and no `SOL_HOME`: the canonical `curl` of
-the published archive (`sha256:f7b34b05…`, 9812981 bytes), `sol --version` →
-`v0.1.0-alpha.7`, `sol assets` → every consumer ok and `all assets present` with the
-migration-runner digest
-`ghcr.io/loganbnielsen/sol-migration-runner@sha256:65f74feb…`, the installed-release smoke
-with all four positive controls, and the bundle's 209 files carrying `bin/sol` plus
-`share/sol/v0.1.0-alpha.7/{VERSION, platform/, migration-runner-image, SUPPORT_REFS}` and no
-framework source. The runner image answers anonymously by digest and by tag.
-
-`BUG-204` was exposed and fixed in the cutting: the workflow's generated release body exceeded
-the API's 125000-character limit (126890 generated), and because the runner image is pushed
-before that step and the workflow refused an image that already existed, the interrupted
-publish could not be resumed. The body is now bounded with a pointer to the full compare
-range, the runner digest is reused rather than overwritten, a version whose *release* exists
-is refused, and a `workflow_dispatch` input resumes a publish from the default branch. The tag
-did not move, so the release names the frozen revision.
-
-`J3` stays `NOT RUN`: the AWS and GCP harnesses are prepared to drive the installed bundle but
-no live run has been authorized. One environment gap is recorded rather than fixed: this host
-has no `dig` (nor `nslookup`/`host`/`drill`/`delv`), which the guide's §4 delegation steps
-require, and installing it is an operator action — `sudo` needs a password here.
+Older events stay in the frozen narrative archive at the end of this file (the `2026-09-21` →
+`2026-10-03` sections, written when they happened). Do not add sections there again.
 
 ### 2026-09-28 — FND-0070 filed: a failed apply can leave resources the state never adopted
 
@@ -206,39 +154,23 @@ Full realization and sources: `invariants/PROVIDER-NEUTRAL-INVARIANTS.md`.
 
 ---
 
-## AWS campaign status (from the matrix and HARDEN-002)
+## Per-provider status
 
-Runs 1–7 are recorded in `internal/qualification/` (one record per run; index in
-`internal/qualification/README.md` — moved verbatim from the HARDEN-002 ticket on 2026-09-24).
-**Runs 3 and 4's bundles are not in the tree and may not be cited as
-qualification evidence** (they are defect-discovery history only).
+The rows are authoritative in the matrices, not here. The status tables that used to sit here
+were **removed on 2026-10-04**: they were derived from the matrices and had drifted — the AWS
+table still described Run 8 as "the first attempt that can pass" §B after Run 8 had run and
+stopped, and the GCP table still carried Attempt 4's `Ready` failure, which `FND-0010`'s fix,
+Attempts 11/17 and Attempt 28 had all superseded. Read:
 
-| Matrix section | Status | Evidence |
-|---|---|---|
-| A target-capability preflight | PASS (behavioral) | Run 2 recorded A2/A4/A6/A10 negatives; A12 capacity enforced from Run 5 onward; Run 7 preflight PASS |
-| B deploy / pointer / rollback | **NOT RUN** | was blocked by `INFRA-043` (deploy lease); the grant landed in #370, so Run 8 is the first attempt that can pass it |
-| C migration ordering | **PARTIAL PASS** | Run 7: `sol migrate apply` reached `Done.` and the deploy migration gate passed for the first time; ordering/rollback beyond the gate not run |
-| D availability (drain, node loss, worker probes) | **NOT RUN** | blocked upstream of a running workload; the `INFRA-043` lease grant (#370) removes the known blocker |
-| E durability | E1 PASS; E5 PASS (0 loss); E2 partial (status-level RTO, no client); E3/E4 not run; E6/E7 not distinctly recorded | Run 5 Attempt 5 |
-| F security posture | F1 mechanism; F5 partial (deploy deny/allow, corrected `can-i`); F2–F4 not run. Run 7 recorded a *refusal* of the deploy identity (a missing grant, `INFRA-043`, not a security pass) | Run 1 F5; Run 5 Attempt 5 I3 |
-| G alerting | BLOCKED | no real receiver |
-| H evidence-bundle integrity | Run 7 run record present; the H6 EIP/NAT/EBS absence gap in `verify_aws_destroy` is closed in #376 (the verifier now checks all three), awaiting a live residual assertion | Run 5/6/7 |
-| I lifecycle phases | I1–I6 PASS (Run 5 Attempt 5); I10 PASS (Run 5 Attempt 1); Run 7 destroy under `destroy_retention: none` qualified live; I11/I12 unrun | Run 5/6/7 |
-| J exclusions | Recorded | matrix |
+- **AWS** → `internal/qualification/aws/production-single-region-v1-matrix.md`
+- **GCP** → `internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv` and
+  `gcp-bootstrap-inventory.md`
+- **the alpha surface** → `internal/qualification/ALPHA_CAMPAIGN.md` §3
+- **the furthest live state reached** → the one-line frontier table above
 
-## GCP campaign status (from the inventory)
-
-| Stage | Status | Evidence |
-|---|---|---|
-| Bootstrap inventory | Complete (read-only) | `gcp-bootstrap-inventory.md` |
-| Cloud substrate apply | QUALIFIED (behavioral) | Attempts 1–4 |
-| Provisioner impersonation + install window | QUALIFIED (behavioral) | Attempt 4: platform stage ran as the declared provisioner 424.2 s; window revoked (8.1 s) |
-| Platform install → Ready | **FAILED** | Attempt 4: `helm_release.cert_manager` post-install `startupapicheck` (cert-manager itself healthy); cause narrowed, not yet established — FND-0010 |
-| Destroy from `Ready` | not reached | — |
-| Destroy from partial install | FIXED_UNQUALIFIED, observed live | Attempt 4 completed the documented destroy; INFRA-042 (DONE) |
-| Service-networking peering absence | QUALIFIED (behavioral, Attempts 3+4) | verified by provider API, not Terraform exit status |
-| Cloud SQL deletion protection / prepare | MECHANISM (prepared and verified 21 s) | Attempt 2 |
-| GCP query matrix / equivalent profile | **EXISTS, NOT RUN** | `gcp-production-single-region-v1-matrix.tsv`; verifier and mutation test make missing/failing/weak-evidence rows fail |
+**Runs 3 and 4's bundles are not in the tree and may not be cited as qualification evidence**
+(they are defect-discovery history only). Runs are recorded one file per run in
+`internal/qualification/records/`; the index is `internal/qualification/README.md`.
 
 ---
 
@@ -305,14 +237,18 @@ without the third is not evidence.
 
 ## How to update this index
 
-When a finding's **state** changes (classification rarely does), update the
-finding's `State:` line and add a dated line recording the transition, then its
-row here, then the matching invariant's qualification table. When a run is
-executed, record the run identity (`provider`, `target`, `revision`, `profile`,
-`timestamp`, cleanup deviations) in the run record and cite it here by that
-identity. Do not promote `STATIC`/`MECHANISM` evidence to `BEHAVIORAL` to make a
-row look green, and do not rewrite a finding's earlier conclusion to reflect a
-later state.
+- A **verdict** that moves: add one row to *Qualification transitions* above, citing the run
+  record by its identity (`provider`, `target`, `revision`, `profile`, `timestamp`). Do not add
+  a narrative section; what the run saw belongs in its record.
+- A **finding's** state: update `findings/FND-*.md` (its `State:` line plus a dated transition
+  line), then its row here, then the matching row of `invariants/PROVIDER-NEUTRAL-INVARIANTS.md`.
+- A **row's** verdict: update the matrix that owns it — never restate it here.
+- A run that **never reached the system under test** gets no record and adds no row here: its
+  gate goes on the ticket (`## Blocked On`) and, if it is new, into the procedure's
+  prerequisites. A gate is not qualification evidence — see
+  `internal/qualification/README.md` § *How qualification is tracked*.
+- Never promote `STATIC`/`MECHANISM` evidence to `BEHAVIORAL` to make a row look green, and
+  never rewrite a finding's earlier conclusion to reflect a later state.
 
 ## The operator identity and the status model (2026-09-21)
 
@@ -336,6 +272,12 @@ and no *workload* identity holds `pods/portforward` by design (DEC-038 §4 exclu
 from the operator, and the deploy identity is denied it), so B3 must be driven with
 the qualification operator's `cluster-access` capability, and the run record must say
 which identity served each read.
+
+## Narrative archive (`2026-09-21` → `2026-10-03`) — frozen
+
+Everything below is history, written when it happened and kept verbatim. It is not the place to
+add anything: a new event adds one row to *Qualification transitions* above. Superseded
+conclusions here are superseded by later sections and by the matrices — not erased.
 
 ## Run 8 §B from B3 — attempted 2026-09-21: **BLOCKED**, and stopping
 

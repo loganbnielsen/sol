@@ -14,9 +14,17 @@ contracts (matrices), and the procedures. Where each provider currently stands i
   its preconditions and its cost gate. It starts in `BACKLOG` with a `## Blocked On` section for
   the explicit operator authorization, and is promoted only when that authorization is given.
 - **Each run produces a record** from `run-record-template.md`, named `<date>-<provider>-<run>.md`.
+- **A run that never reaches the system under test produces no record.** Its gate goes on the
+  ticket (`## Blocked On`: the gate, the verbatim failure, and the command that clears it) and,
+  if the gate is new, into the procedure's prerequisites. A gate is not evidence about the
+  product, so such an attempt adds no record, no transitions row and no row verdict — however
+  many times it is retried. Operator authorization, cost, and host or account prerequisites are
+  all gates of this kind.
 - **Defects a run finds** become findings (`internal/pipeline/audits/findings/`) and ordinary
   tickets, credited to the ticket that fixes them, not to the run.
-- **Updating `QUALIFICATION_STATUS.md` is part of every run ticket's acceptance criteria.**
+- **Updating `QUALIFICATION_STATUS.md` is part of every run ticket's acceptance criteria** — the
+  run's verdict changes become one row in its transitions table, citing the record by identity.
+  The ledger is an index; the run's narrative stays in the record.
 - **The alpha campaign is coordinated here.** `ALPHA_CAMPAIGN.md` defines the frozen
   alpha surface, the one language-neutral reference scenario, the acceptance matrix
   that maps every supported capability to its evidence and target, and the parallel
