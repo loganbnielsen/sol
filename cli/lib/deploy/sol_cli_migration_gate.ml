@@ -1,5 +1,23 @@
 open Result.Syntax
 
+let configmap_byte_limit = 1024 * 1024
+
+let refuse_oversized_configmap files =
+  let total =
+    List.fold_left (fun bytes (_, content) -> bytes + String.length content) 0 files
+  in
+  if total > configmap_byte_limit
+  then
+    Error
+      (Printf.sprintf
+         "the migration files total %d bytes, which exceeds the %d-byte (1 MiB) \
+          ConfigMap that carries them into the migration Job; split them across \
+          releases, or keep an oversized migration out of db/migrations"
+         total
+         configmap_byte_limit)
+  else Ok files
+;;
+
 let migration_files dir =
   let ext = ".sql" in
   match Sys.readdir dir with
@@ -17,16 +35,18 @@ let migration_files dir =
              fname)
       else Ok (fname, content)
     in
-    Array.to_list arr
-    |> List.filter (fun f -> Filename.check_suffix f ext)
-    |> List.sort String.compare
-    |> List.fold_left
-         (fun acc fname ->
-            let* files = acc in
-            let* file = read fname in
-            Ok (file :: files))
-         (Ok [])
-    |> Result.map List.rev
+    let* files =
+      Array.to_list arr
+      |> List.filter (fun f -> Filename.check_suffix f ext)
+      |> List.sort String.compare
+      |> List.fold_left
+           (fun acc fname ->
+              let* files = acc in
+              let* file = read fname in
+              Ok (file :: files))
+           (Ok [])
+    in
+    refuse_oversized_configmap (List.rev files)
 ;;
 
 let reconcile_operator_bindings ~ctx ~workspace ~services =
