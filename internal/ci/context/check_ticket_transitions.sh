@@ -17,7 +17,7 @@ awk -F'\t' '
   }
   function transition_ok(from, to) {
     # A same-state rename (including moving the ticket root) is not a deletion.
-    return (from == to) || (from == "BACKLOG" && to == "READY_FOR_ENGINEERING") || (from == "READY_FOR_ENGINEERING" && to == "BACKLOG") || (from == "READY_FOR_ENGINEERING" && to == "DONE") || (from == "DONE" && to == "READY_FOR_ENGINEERING")
+    return (from == to) || (from == "BACKLOG" && to == "READY_FOR_ENGINEERING") || (from == "READY_FOR_ENGINEERING" && to == "BACKLOG") || (from == "READY_FOR_ENGINEERING" && to == "DONE") || (from == "BACKLOG" && to == "DONE") || (from == "DONE" && to == "READY_FOR_ENGINEERING")
   }
   /^$/ { next }
   /^R/ {

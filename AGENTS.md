@@ -44,6 +44,8 @@ internal/pipeline/tickets/
 **Implementation state machine (REFAC-077):** `READY_FOR_ENGINEERING` → `DONE`.
 Triage may promote or demote between `BACKLOG` and `READY_FOR_ENGINEERING`, and
 reverting a merged implementation returns `DONE` to `READY_FOR_ENGINEERING`.
+A ticket may also be filed, implemented and closed in one PR — `BACKLOG` → `DONE` in
+one branch — when the work needs no queue state in between.
 There is no separate "in progress," "in review," "ready to merge," or
 "blocked by performance" directory any more.
 
