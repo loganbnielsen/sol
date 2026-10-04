@@ -148,7 +148,7 @@ User-facing docs live in `README.md`, `docs/DEVELOPER_EXPERIENCE.md`, `docs/guid
 Audit checklists live in `internal/pipeline/audits/`; dated audit findings belong under
 `internal/pipeline/audits/`, not in reusable checklist files. That directory also
 carries the durable qualification ledger — `internal/pipeline/audits/README.md`
-for the conventions and `internal/pipeline/audits/QUALIFICATION_STATUS.md` for the
+for the conventions and `internal/qualification/ALPHA_CAMPAIGN.md` for the
 current "what does Sol know" index of findings, provider-neutral invariants and
 open qualification rows.
 

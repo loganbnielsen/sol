@@ -109,4 +109,4 @@ installable by name. DEC-025 accepted the immutable-pin interim, and the
 workspace template carries the documented development channel until then.
 
 Left in `BACKLOG/` against that trigger; see
-`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+.

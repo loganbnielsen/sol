@@ -18,7 +18,7 @@ the observability matrix stay authoritative for their own rows, and tickets stay
 authoritative for their own work.
 
 **The surface is frozen for this campaign.** A feature deliberately deferred during
-pre-alpha adjudication (`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`)
+pre-alpha adjudication
 is not an alpha requirement because it remains in the backlog. New product features
 are not added to make the demonstration richer; a gap in the frozen contract is
 recorded as a gap.
@@ -388,7 +388,7 @@ exists is refused — and that refusal is part of `J1`'s evidence.
 | `examples/pluto` shared files (`sol.yml`, `sol/environments.yml`, `pluto.opam`, `db/migrations/`, `events/*`) | one actor at a time | the shared scenario contract (`FEAT-131`) lands before the per-language streams fork; afterwards each stream owns only its own directories |
 | `examples/pluto/app/**` (OCaml units) | the OCaml stream | disjoint from the TS stream's directories |
 | `examples/pluto/app/demo_ts/**` + `events/demo_ts/**` | the TS stream | disjoint from the OCaml stream's directories |
-| `internal/qualification/records/` | the run's owner | one record per run, from `run-record-template.md`; update `QUALIFICATION_STATUS.md` in the same ticket |
+| `internal/qualification/records/` | the run's owner | one record per run, from `run-record-template.md`; the row's verdict in this matrix (or the provider matrix that owns the row) cites that record |
 | `internal/qualification/local/**` | the local run | the harness and procedure (`VERIF-028`); one literal `sol-local` cluster, so local runs serialize like the cloud runs |
 | `internal/qualification/aws/**` / `gcp/**` | one owner per provider | provider harnesses are edited by one actor at a time; live runs are serialized one target at a time |
 | `internal/pipeline/tickets/**` | the filing actor | every change through a PR; no direct-to-main bookkeeping |
@@ -407,7 +407,7 @@ streams are preparation-only until §7.
 
 | Stream | Owner (proposed) | Scope / files | Depends on | Gate |
 |---|---|---|---|---|
-| **T0 Campaign lead** | this session | this artifact, the acceptance matrix, filings, evidence reconciliation, `QUALIFICATION_STATUS.md` | — | — |
+| **T0 Campaign lead** | this session | this artifact, the acceptance matrix, filings, evidence reconciliation, and the verdicts the matrices carry | — | — |
 | **T1 Scenario contract** | next available agent | the shared, language-neutral skeleton: `examples/pluto/sol.yml`, `sol/environments.yml`, `db/migrations/`, `events/orders*/`, HTTP/event contract | — | `FEAT-131` |
 | **T2 OCaml reference app** | agent A | `examples/pluto/app/payments/**`, `examples/pluto/app/comms/**`, `examples/pluto/lib/**`, `examples/pluto/test/**` | T1 | `FEAT-132` |
 | **T3 TypeScript reference app** | agent B | `examples/pluto/app/demo_ts/**`, `events/demo_ts/**` | T1 | `FEAT-133` |

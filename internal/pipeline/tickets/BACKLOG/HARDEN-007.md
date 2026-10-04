@@ -13,8 +13,28 @@ DEC-063, FEAT-134, HARDEN-002 (closed epic).
 
 ## Blocked On
 
-Explicit operator authorization for a live, billable AWS run, and the prerequisites below.
-Promote to `READY_FOR_ENGINEERING` only when the authorization is given.
+**Authorization is given** (2026-10-04, AWS only; GCP withheld). What remains is host and account
+setup, and it is what stopped the first attempt at preflight, before anything billable:
+
+1. **An unexpired SSO session for the qualification account.** `aws sts get-caller-identity
+   --profile sol-qual` currently answers `Error when retrieving token from sso: Token has expired
+   and refresh failed`, and no default credentials are configured. Clear it with
+   `aws sso login --profile sol-qual`.
+2. **`dig` on `PATH`** (`sudo apt-get install -y dnsutils`; `dig`, `nslookup` and `host` are all
+   absent here, and `sudo` needs a password). This one is load-bearing rather than convenient:
+   Sol itself runs `dig +short NS <domain>` in the installation stage's delegation wait
+   (`cli/lib/cloud/sol_cli_installation_stage.ml:142`) and in the capability probe
+   (`cli/lib/cloud/sol_cli_provider_capabilities.ml:141`).
+3. **The target**, `examples/pluto/sol/environments.local.yml`, copied from
+   `run8-aws-target.example.yml` and filled with the account's real values (it is untracked by
+   design).
+4. **The durable prerequisites**, `UNVERIFIED` without a session: the applied bootstrap root
+   (state bucket, lock table, the delegated `qual-aws.sol-fab.dev` zone) and the five roles plus
+   the qualification transport role.
+
+Promote to `READY_FOR_ENGINEERING` once these are met. Preflight-only attempts produce no run
+record and no ledger row — the gate is recorded here
+(`internal/qualification/README.md` § *How qualification is tracked*).
 
 ## Goal
 
@@ -75,7 +95,7 @@ post-boundary observation that shares `INFRA-051`'s root cause).
   never promoted to behavioural (matrix § Governing rules).
 - Teardown to `Absent`, verified independently of Sol's report, including the matrix H6 classes
   and the durable Route 53 zone unchanged.
-- `internal/pipeline/audits/QUALIFICATION_STATUS.md` updated.
+- The rows this run qualifies carry its verdicts, each citing this run's record.
 
 **Demo/example coverage:** not applicable — this is a qualification run, not an app-author
 surface change. The runnable proof is the AWS harness and its offline self-test

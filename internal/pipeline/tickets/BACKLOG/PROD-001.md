@@ -18,7 +18,7 @@ the qualification ledger) — so its `DONE` state no longer means the profile is
 must not make this pilot look actionable. Promote only when all of these hold:
 
 - the AWS `production-single-region` matrix is qualified end to end on a clean target, as recorded
-  in `internal/pipeline/audits/QUALIFICATION_STATUS.md` (it is not today: §B deploy, §D
+  in the matrix that owns each row (it is not today: §B deploy, §D
   availability, §G alerting and parts of §E/§F are unrun or blocked);
 - DEC-026 and DEC-027 are decided and reflected in the shipped profile;
 - a named owning team and a real non-critical workload have accepted the terms below.

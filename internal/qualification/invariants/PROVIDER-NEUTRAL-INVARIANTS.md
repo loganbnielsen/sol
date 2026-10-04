@@ -14,8 +14,8 @@ columns use the shared evidence taxonomy (`STATIC` / `MECHANISM` /
 means "not yet established by evidence that could have failed".
 
 IDs are stable: `INV-<group>-<n>`. The summary table below uses the short form
-(`AUTH-1`); each section heading uses the full ID (`INV-AUTH-1`). Findings live in
-`../findings/FND-*.md`; the compact roll-up is `../QUALIFICATION_STATUS.md`.
+(`AUTH-1`); each section heading uses the full ID (`INV-AUTH-1`). A row's current verdict is carried by the matrix that owns it; an audit that
+finds something actionable files a ticket (`internal/pipeline/tickets/`).
 
 ---
 

@@ -44,7 +44,7 @@ Premise re-checked against current `origin/main`; the work is still real.
 Evidence: the comment-removal invariants the ticket lists are still prose-only; items 1-14 are unimplemented.
 
 Promoted to `READY_FOR_ENGINEERING/` by the pre-alpha BACKLOG adjudication
-(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`).
+.
 
 ## Premise verification (2026-10-03, part A)
 

@@ -72,7 +72,7 @@ namespace, or a cross-cluster retention/compliance requirement appears. Until
 then the in-cluster history is acceptable for one team and one cluster.
 
 Left in `BACKLOG/` against that trigger; see
-`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+.
 
 ## Settlement (2026-10-03) — kept, and the policy is now stated
 

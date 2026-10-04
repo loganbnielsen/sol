@@ -155,4 +155,4 @@ interference under its preregistered conditions, and
 the gate is explicitly not closed.
 
 Left in `BACKLOG/` against that trigger; see
-`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+.

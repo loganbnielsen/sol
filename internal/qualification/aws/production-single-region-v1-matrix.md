@@ -42,6 +42,27 @@ rows I2, I5, I7 and I10 are the ones that would have caught them live.
    bundle is marked non-conformant, and the smallest implementation/contract
    issue is reported. No test is weakened and no contract is edited to pass.
 
+## Where each row stands
+
+A row's verdict lives with the claim it belongs to, and cites the record that established it:
+the **alpha-surface** rows in `ALPHA_CAMPAIGN.md` §3 (the release view), and this file's own rows
+in the run records below. The newest AWS evidence, and what it covers:
+
+- `records/2026-09-30-aws-application-row-complete.md` — the whole application row on a fresh
+  specimen (`sol-qual-aws-35`, `qualreg/aws/us-east-1`) with **no manual patch at any point**:
+  `cloud plan` → `cloud apply` (`CloudBootstrap` → `PlatformInstalling` → `Ready`, `Done.`),
+  authority hand-off, four nodes Ready, the identity boundary, build + push, `migrate-apply`,
+  the substrate prerequisite, and the application contract.
+- `records/2026-09-30-aws-attempt33-…-except-network-policy-egress.md` and its attempt-32
+  predecessor — the point where everything passed except one row, the network policy's egress.
+- `records/2026-09-20-run8-aws.md` — the run that first reached §B from B3 and stopped at the
+  transport boundary (no workload identity may port-forward into an application namespace,
+  DEC-039).
+
+Rows this run has not exercised stay `NOT RUN` in the record that covers them. Nothing in this
+file restates a verdict: it holds the claim, the method and the pass condition, and points at the
+record that says where the row got to.
+
 ## Run identity (recorded once, in the bundle header)
 
 | Field | Source | Example |

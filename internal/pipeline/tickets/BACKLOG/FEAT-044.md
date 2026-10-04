@@ -37,7 +37,7 @@ Smallest decision: is a Redis-compatible cache primitive in scope for the alpha,
 
 Surfaced to the operator as a category-5 decision; not deferred. Moves to
 `READY_FOR_ENGINEERING/` once the decision is recorded. See
-`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`.
+.
 
 
 ## Decision (2026-10-03) — out of the alpha

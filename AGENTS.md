@@ -80,7 +80,7 @@ Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
 
-**Tickets are for work that can finish.** A standing goal that never closes — "qualify the production profile on a provider", as HARDEN-002 and HARDEN-004 were — does not belong in `READY_FOR_ENGINEERING/`, where `/work` treats it as actionable and later work gets credited to it instead of to the ticket it implements. Standing qualification goals live in the qualification ledger (`internal/qualification/README.md`, the matrices, `internal/pipeline/audits/QUALIFICATION_STATUS.md`); each live run is its own ticket, gated in `BACKLOG/` on explicit authorization. When work implements a ticket, name *that* ticket on the branch or in the commit subject, so the Ticket-move guard moves it.
+**Tickets are for work that can finish.** A standing goal that never closes — "qualify the production profile on a provider", as HARDEN-002 and HARDEN-004 were — does not belong in `READY_FOR_ENGINEERING/`, where `/work` treats it as actionable and later work gets credited to it instead of to the ticket it implements. Standing qualification goals live in the qualification area (`internal/qualification/README.md`, and the matrix that carries each row's claim and current verdict); each live run is its own ticket, gated in `BACKLOG/` on explicit authorization. When work implements a ticket, name *that* ticket on the branch or in the commit subject, so the Ticket-move guard moves it.
 
 **Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` **Every ticket id on that line becomes a dependency**, whatever prose surrounds it — so a mention like `Implemented by FEAT-059` or `Related: DEC-016` creates a dependency you did not intend, and two tickets referring to each other that way deadlock. Put other mentions on their own line. The field is exactly one line: a wrapped continuation is never parsed, so `soldev pipeline validate` rejects it (BUG-114) — put commentary in its own paragraph. `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `internal/pipeline/tickets/DONE/` stays blocked; if a cycle does form, `soldev pipeline check` and `pipeline ls` report it as a cycle rather than as ordinary waiting.
 
@@ -154,7 +154,7 @@ Sol is an opinionated production platform for backend systems. Its platform/CLI 
 
 ## Organization rules (DEC-046)
 
-When a new file has no obvious home, apply these rules rather than copying the tree. The full reasoning and the target layout are in `internal/pipeline/audits/2026-09-25_organization_proposal.md`.
+When a new file has no obvious home, apply these rules rather than copying the tree. The decision behind them is `DEC-046`; the work is `REFAC-099`…`REFAC-105`.
 
 1. **The top level is split by audience.** `docs/` is for people *using* Sol; `internal/` is for people *building* Sol.
 2. **Code and assets are separate.** `cli/` holds the binary and what it needs (OCaml and its test scripts). `platform/` holds what the CLI drives (Helm values, Terraform, templates, scripts) and no OCaml.

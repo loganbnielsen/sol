@@ -8,7 +8,7 @@ what blocks alpha, and what can run in parallel. It does **not** replace tickets
 directory (`BACKLOG/`, `READY_FOR_ENGINEERING/`, `DONE/`).
 
 The 2026-10-03 adjudication
-(`internal/pipeline/audits/2026-10-03_backlog_adjudication.md`) established every
+ established every
 ticket's disposition; this document groups that work. Where this document and a
 ticket disagree, the ticket is authoritative for its own content.
 
