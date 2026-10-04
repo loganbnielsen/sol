@@ -69,18 +69,18 @@ cannot be known before the tag; that is why the archive cannot be produced ahead
 
 ## Acceptance criteria
 
-- [ ] `v0.1.0-alpha.7` is published and its three assets are retrievable; the workflow
-  refuses a re-publish of the tag. *(tag deferred to the operator gate above)*
+- [x] `v0.1.0-alpha.7` is published and its three assets are retrievable; the workflow
+  refuses a re-publish of the tag. *(published 2026-10-04T15:28:09Z; the runner image is
+  anonymously retrievable by digest and tag; a second run is refused by name — see part B)*
 - [x] `sol assets` succeeds in the no-checkout container and fails when one bundled asset
   is removed (positive control).
 - [x] The installed `sol` names the migration-runner image of its own version.
 - [x] The AWS and GCP harnesses invoke the installed bundle; `test-live-row.sh` and
   `test-live-qual.sh` pin it, and the run identity carries the bundle version and runner
   digest.
-- [ ] Demo/example: the `docs/guides/installation.md` walkthrough executed against the
-  published archive with its observed output recorded. *(the walkthrough's commands were
-  executed verbatim against the staged archive — see completion notes; the `curl` of the
-  published URL needs the tag)*
+- [x] Demo/example: the `docs/guides/installation.md` walkthrough executed against the
+  published archive with its observed output recorded. *(§1 verbatim against the published
+  URL, §3 and §4–§7 recorded as NOT REACHED with their reasons — see part B and the record)*
 - [x] Language parity: no application-facing contract change; the release carries the
   language-neutral CLI and platform (DEC-022).
 
@@ -164,6 +164,23 @@ publish resume from the default branch.
 
 The tag **does not move**: the release is resumed against the same revision, so it still
 names the frozen campaign revision, and the artifact is built from that revision's tree.
-Remaining for this ticket: the resumed publish, the clean-user qualification from the
-published archive (`A1`, `J1`, `J2`, `J4`, and `docs/guides/installation.md`), and the
-recorded run identity with the real runner digest.
+
+**Published and qualified.** The resume run (`37212693146`) completed every step: it logged
+`ghcr.io/loganbnielsen/sol-migration-runner:v0.1.0-alpha.7 is already published; reusing its
+digest rather than overwriting it` and published `v0.1.0-alpha.7` at
+2026-10-04T15:28:09Z with `sol-v0.1.0-alpha.7-linux-x86_64.tar.gz` (9812981 bytes), a body of
+100324 bytes carrying the revision `f4284422…`, the runner digest
+`sha256:65f74feb5d2290e4e676bc292d971eaf9fc0188099169db7a82d1e93715aef4d` and a pointer to the
+full compare range. A second dispatch was refused in its second step with
+`v0.1.0-alpha.7 is already published, and a version is published once`, and the runner image
+answers anonymously by digest and by tag (HTTP 200).
+
+The clean-user qualification ran from the published archive with no checkout and no
+`SOL_HOME`: the guide's §1 verbatim (`sol --version` → `v0.1.0-alpha.7`; `sol assets` → every
+consumer ok, `all assets present`), the installed-release smoke against the published archive
+with all four positive controls, the bundle's provenance (`VERSION`, `migration-runner-image`,
+11 `SUPPORT_REFS` pins, 209 files, no framework source), and `sol cloud plan` / `sol plan` from
+a read-only install. Guide §3 is optional and needs a cluster; §4–§7 need an authenticated
+provider account. The record is
+`internal/qualification/records/2026-10-04-release-alpha-7-clean-user.md`; the one environment
+gap it found is that this host has no `dig` at all, which §4's delegation steps require.
