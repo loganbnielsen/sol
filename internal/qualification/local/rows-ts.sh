@@ -114,12 +114,18 @@ topic_records() {
     -o start -f '%v\n' 2>>"$CURRENT_LOG" || true
 }
 
-prom_sum() {
-  log_cmd "$CURL" "$PROMETHEUS_URL/api/v1/query" "$1"
+prom_query() {
   "$CURL" -sS -m "$HTTP_TIMEOUT_S" --data-urlencode "query=$1" \
     "$PROMETHEUS_URL/api/v1/query" 2>>"$CURRENT_LOG" |
     "$JQ" -r '[.data.result[]?.value[1] | tonumber] | add // 0' 2>>"$CURRENT_LOG"
 }
+
+prom_sum() {
+  log_cmd "$CURL" "$PROMETHEUS_URL/api/v1/query" "$1"
+  prom_query "$1"
+}
+
+prom_advanced() { [ "$(prom_query "$1")" -gt "$2" ] 2>/dev/null; }
 
 broker_scale() {
   log_cmd "$KUBECTL" -n "$BROKER_NS" scale "statefulset/$BROKER_STATEFULSET" "--replicas=$1"
@@ -260,6 +266,12 @@ row_b2() {
     AND ord = 1 AND payload = '{}'"
 }
 
+passed_through_fulfilled() {
+  db_scalar "SELECT accepted_at IS NOT NULL AND fulfilled_at IS NOT NULL \
+    AND confirmed_at IS NOT NULL AND accepted_at <= fulfilled_at \
+    AND fulfilled_at <= confirmed_at FROM orders_ts WHERE order_id = '$1'"
+}
+
 row_b5() {
   local id response terminal observed
   id="$(new_order_id b5)"
@@ -270,7 +282,9 @@ row_b5() {
   terminal="$(await_status "$id" confirmed "$POLL_TIMEOUT_S")"
   check_eq "B5 (TS) the read-back reaches confirmed" confirmed "$terminal"
   observed="$(grep -c $'\tfulfilled$' "$CURRENT_LOG")"
-  check_ge "B5 (TS) the read-back observes fulfilled before confirmed" 1 "$observed"
+  printf 'fulfilled read-back samples observed\t%s\n' "$observed" >>"$CURRENT_LOG"
+  check_eq "B5 (TS) the order's persisted state passed accepted -> fulfilled -> confirmed" t \
+    "$(passed_through_fulfilled "$id")"
   check_eq "B5 (TS) the read-back field agrees with the row" confirmed "$(observe_read_back "$id")"
   check_eq "B5 (TS) exactly one fulfilled_orders_ts row" 1 "$(fulfilled_count "$id")"
   check_eq "B5 (TS) exactly one order_confirmations_ts row" 1 "$(confirmations_count "$id")"
@@ -319,12 +333,10 @@ row_dlq() {
   records="$(topic_records "$dlq")"
   raw="$(printf '%s' "$records" | grep -c 'this is not a valid OrderPlaced payload')"
   check_ge "D5 (TS) the DLQ record carries the raw bytes" 1 "$raw"
+  wait_until "D5 (TS) sol_worker_decode_errors_total advances past $before" \
+    "$POLL_TIMEOUT_S" prom_advanced 'sol_worker_decode_errors_total' "${before:-0}"
   after="$(prom_sum 'sol_worker_decode_errors_total')"
-  if [ "${after:-0}" -gt "${before:-0}" ] 2>/dev/null; then
-    pass "D5 (TS) sol_worker_decode_errors_total advanced ($before -> $after)"
-  else
-    fail_row "D5 (TS) sol_worker_decode_errors_total did not advance ($before -> $after)"
-  fi
+  printf 'decode errors\tbefore=%s\tafter=%s\n' "${before:-0}" "${after:-0}" >>"$CURRENT_LOG"
   valid="$(new_order_id d5-follow)"
   http_request POST "$ORDERS_PATH" "$(order_body "$valid")" >/dev/null
   check_eq "D5 (TS) the source offset advanced: a later fact is still applied" confirmed \
