@@ -41,6 +41,7 @@ POLL_TIMEOUT_S=4
 POLL_INTERVAL_S=0.01
 HTTP_POLL_INTERVAL_S=0.01
 CONSUME_TIMEOUT_S=1
+DUPLICATE_SETTLE_S=0
 
 deploy_scopes() { return 0; }
 sleep_s() { sleep "$1"; }
@@ -148,8 +149,17 @@ db_exec() {
   local sql="$1" id
   case "$sql" in
     *"INSERT INTO sol_outbox"*)
-      id="$(printf '%s' "$sql" | sed -n "s/.*'OrderPlaced', '\([^']*\)'.*/\1/p")"
-      printf '%s|OrderPlaced|1|{}\n' "$id" >>"$STATE/outbox"
+      id="$(printf '%s' "$sql" | sed -n "s/.*', '\([^']*\)', 1, '.*/\1/p")"
+      case "$sql" in
+        *"'{}'"*)
+          printf '%s|OrderPlaced|1|{}\n' "$id" >>"$STATE/outbox"
+          ;;
+        *)
+          if [ "${STUB_REPUBLISH_DUPLICATE:-0}" = 1 ]; then
+            printf '{"order_id":"%s"}\n' "$id" >>"$STATE/topic_fulfilled"
+          fi
+          ;;
+      esac
       ;;
     *"DELETE FROM sol_outbox"*)
       id="$(printf '%s' "$sql" | sed -n "s/.*aggregate_key = '\([^']*\)'.*/\1/p")"

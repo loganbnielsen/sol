@@ -101,12 +101,12 @@ db_exec() {
 
 topic_produce() {
   log_cmd "$RPK" topic produce "$1" "-k" "$2"
-  printf '%s' "$3" | "$RPK" -X "brokers=$KAFKA_BROKERS" topic produce "$1" -k "$2" \
+  printf '%s\n' "$3" | "$RPK" -X "brokers=$KAFKA_BROKERS" topic produce "$1" -k "$2" \
     >>"$CURRENT_LOG" 2>&1
 }
 
 topic_records() {
-  log_cmd "timeout $CONSUME_TIMEOUT_S" "$RPK" topic consume "$1" "-o" beginning
+  log_cmd "timeout $CONSUME_TIMEOUT_S" "$RPK" topic consume "$1" "-o" start
   timeout "$CONSUME_TIMEOUT_S" "$RPK" -X "brokers=$KAFKA_BROKERS" topic consume "$1" \
     -o start -f '%v\n' 2>>"$CURRENT_LOG" || true
 }
@@ -277,7 +277,7 @@ row_b5() {
 }
 
 row_b6() {
-  local id response duplicate published_before published_after
+  local id response duplicate_payload published_before published_after
   id="$(new_order_id b6)"
   printf 'order_id\t%s\n' "$id" >>"$CURRENT_LOG"
   response="$(http_request POST "$ORDERS_PATH" "$(order_body "$id")")"
@@ -288,10 +288,13 @@ row_b6() {
   wait_until "B6 the OrderFulfilled fact is published before the duplicate" \
     "$POLL_TIMEOUT_S" fulfilled_published "$id"
   published_before="$(fulfilled_published_count "$id")"
-  duplicate="{\"order_id\":\"$id\",\"item\":\"widget\",\"quantity\":3,\"correlation_id\":\"qual-b6-duplicate\"}"
-  topic_produce "$ORDERS_TOPIC" "$id" "$duplicate"
-  printf 'duplicate fact produced\ttopic=%s\tkey=%s\n' "$ORDERS_TOPIC" "$id" >>"$CURRENT_LOG"
-  sleep_s "$POLL_TIMEOUT_S"
+  duplicate_payload="{\"order_id\":\"$id\",\"item\":\"widget\",\"quantity\":3,\"correlation_id\":\"qual-b6-duplicate\"}"
+  db_exec "INSERT INTO sol_outbox (kind, aggregate_key, ord, payload) \
+    VALUES ('OrderPlaced', '$id', 1, '$duplicate_payload')"
+  printf 'duplicate OrderPlaced intent injected\tkey=%s\n' "$id" >>"$CURRENT_LOG"
+  wait_until "B6 the duplicate intent is relayed onto ${ORDERS_TOPIC}" \
+    "$POLL_TIMEOUT_S" pending_drained "$id"
+  sleep_s "${DUPLICATE_SETTLE_S:-20}"
   published_after="$(fulfilled_published_count "$id")"
   check_eq "B6 the duplicate is absorbed: one fulfilled_orders row" 1 "$(fulfilled_count "$id")"
   check_eq "B6 the duplicate is absorbed: one release_inventory job" 1 "$(jobs_count "$id" release_inventory)"

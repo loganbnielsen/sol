@@ -144,7 +144,7 @@ ROWS_SH=internal/qualification/local/rows-ocaml.sh bash internal/qualification/l
 | `b1` | `POST /orders` 202, duplicate idempotent, one row/one job | — |
 | `b2` | the request transaction rolls back whole | a pre-inserted `sol_outbox (key, ord)` collision |
 | `b5` | read-back `accepted` → `fulfilled` → `confirmed` | — |
-| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | the same fact produced twice |
+| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | a duplicate `OrderPlaced` outbox intent re-inserted, which the relay republishes as the fact |
 | `d5` / `h1` | decode log, metric and DLQ record with the raw bytes; the offset advances | an undecodable record on `orders.v1` |
 | `h2` | the relay holds while the broker is unavailable, then drains after recovery | the broker scaled to zero, then restored |
 
@@ -167,7 +167,7 @@ mutation-checked suite.
 | `b1` | `POST /orders` 202, duplicate idempotent, one row/one job | — |
 | `b2` | the request transaction rolls back whole | a pre-inserted `sol_outbox (key, ord)` collision |
 | `b5` | read-back `accepted` → `fulfilled` → `confirmed` | — |
-| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | the same fact produced twice |
+| `b6` | a redelivered `OrderPlaced` yields one row/job/effect/fact | a duplicate `order_placed` outbox intent re-inserted, which the relay republishes as the fact |
 | `d5` / `h1` | decode log, metric and DLQ record with the raw bytes; the offset advances | an undecodable record on `sol-demo-ts-orders` |
 
 The TS half has no `h2` row: the broker-unavailable injection is driven once, on the
