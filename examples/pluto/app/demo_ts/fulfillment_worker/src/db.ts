@@ -33,6 +33,21 @@ export async function makeDb(postgresUrl: string) {
     },
     markConfirmed: async (orderId: string, client?: pg.PoolClient): Promise<void> => {
       const target = client ?? pool;
+      const progress = await target.query(
+        `SELECT fulfilled_at IS NOT NULL AS fulfilled, confirmed_at IS NOT NULL AS confirmed
+           FROM orders_ts WHERE order_id = $1`,
+        [orderId]
+      );
+      const row = progress.rows[0] as { fulfilled: boolean; confirmed: boolean } | undefined;
+      if (!row) {
+        throw new Error(`order ${orderId} is missing`);
+      }
+      if (row.confirmed) {
+        return;
+      }
+      if (!row.fulfilled) {
+        throw new Error(`order ${orderId} is not fulfilled yet`);
+      }
       await target.query(
         `INSERT INTO order_confirmations_ts (order_id)
          VALUES ($1)
@@ -42,7 +57,7 @@ export async function makeDb(postgresUrl: string) {
       await target.query(
         `UPDATE orders_ts
             SET status = 'confirmed', confirmed_at = now()
-          WHERE order_id = $1 AND confirmed_at IS NULL`,
+          WHERE order_id = $1 AND fulfilled_at IS NOT NULL AND confirmed_at IS NULL`,
         [orderId]
       );
     },
