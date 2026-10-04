@@ -34,8 +34,9 @@ and its HTTP contract, and nothing else.
 The two namespaces use the same job kind names; `sol_jobs.workspace` separates
 their rows, and each unit's job contract pins its own workspace string. The
 scenario's shared tables ship as migrations (`0005_orders.sql`,
-`0006_orders_ts.sql`); `sol_jobs` and `sol_outbox` are the workspace-shared DDL
-in `0002`/`0003`.
+`0006_orders_ts.sql`, and `0007_orders_ts_traceparent.sql` for the accepted
+order's W3C trace context, which the service-side relay replays onto the record);
+`sol_jobs` and `sol_outbox` are the workspace-shared DDL in `0002`/`0003`.
 
 `orders_svc` and `fulfilment_worker` are declared in `sol.yml` with their
 language and in `sol/environments.yml` with their environment settings.

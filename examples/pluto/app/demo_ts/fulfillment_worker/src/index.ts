@@ -23,8 +23,9 @@ import { decodeOrderFulfilled, decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
-import { makeConfirmationJobs } from "./jobs.js";
+import { makeOrderJobs } from "./jobs.js";
 import { fulfillOrder } from "./fulfill.js";
+import { FULFILLED_KIND } from "./outbox.js";
 
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -73,7 +74,6 @@ const {
   outboxPending,
   outboxOldestPendingSeconds,
 } = makeWorkerMetrics();
-const confirmationJobs = makeConfirmationJobs(log);
 
 async function handleOrder(
   order: ReturnType<typeof decodeOrderPlaced>,
@@ -91,7 +91,7 @@ async function handleOrder(
     if (db) {
       try {
         await db.withTransaction(async (client) => {
-          await fulfillOrder(db!, client, order, confirmationJobs);
+          await fulfillOrder(db!, client, order, orderJobs!);
         });
       } catch (err) {
         messagesTotal.inc({ status: "fail" });
@@ -109,10 +109,16 @@ async function handleOrder(
 }
 
 let db: Awaited<ReturnType<typeof makeDb>> | undefined;
+let orderJobs: ReturnType<typeof makeOrderJobs> | undefined;
 
 async function main() {
   db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
   if (!db) console.log("[fulfillment-worker-ts] POSTGRES_URL not set — skipping DB storage");
+  orderJobs = makeOrderJobs(log, {
+    markConfirmed: async (orderId) => {
+      if (db) await db.markConfirmed(orderId);
+    },
+  });
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", ...KAFKA_ENV });
 
@@ -185,6 +191,11 @@ async function main() {
       ? runRelay({
           pool: db.pool,
           publish: async (publication) => {
+            if (publication.kind !== FULFILLED_KIND) {
+              throw new Error(
+                `outbox kind ${publication.kind} is not this relay's ${FULFILLED_KIND}; its owner publishes it`,
+              );
+            }
             const event = decodeOrderFulfilled(JSON.parse(publication.payload));
             const key = fulfilledTopic.key(event);
             if (key !== publication.key) {
@@ -222,7 +233,7 @@ async function main() {
   const jobsRunning = db
     ? runJobs({
         pool: db.pool,
-        contract: confirmationJobs,
+        contract: orderJobs!,
         signal: jobsAbort.signal,
         pollIntervalS: 0.5,
         onOutcome: (outcome) => {

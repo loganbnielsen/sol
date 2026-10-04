@@ -1181,6 +1181,14 @@ jobs:
 
           sol local infra up
 
+          # FEAT-133: the demo's tables are the workspace's migrations now
+          # (db/migrations/0006_orders_ts.sql owns orders_ts, fulfilled_orders_ts
+          # and order_confirmations_ts; 0007 adds the accept's trace context), so
+          # the units create nothing at runtime and this must run before `sol up`.
+          # Applying them here is also what proves the migrations cover the
+          # TypeScript namespace, rather than the apps' own `CREATE TABLE`.
+          sol local migrate
+
           # BUG-054: seed the demo_ts namespace's secrets before the deploy;
           # ordinary deploy verifies them and never writes a value.
           sol local secret set POSTGRES_URL --domain demo_ts \
@@ -1272,9 +1280,9 @@ jobs:
           fi
           echo "POST /orders OK (202, marker=${marker}, trace=${trace_id})"
 
-          # fulfilled_orders_ts is created by fulfillment_worker itself
-          # (CREATE TABLE IF NOT EXISTS in db.ts) -- no Sol migration owns
-          # this table, so there is nothing to `sol migrate` here.
+          # fulfilled_orders_ts is one of the workspace's migrations now
+          # (db/migrations/0006_orders_ts.sql, applied by `sol local migrate`
+          # above) -- the units create nothing at runtime (FEAT-133).
           #
           # POSTGRES_URL comes from fulfillment_worker's own injected Secret
           # (the exact credential the app itself uses), not the Postgres

@@ -181,7 +181,14 @@ let test_pluto_events_migrations_and_targets () =
     ]
     facts.Sol_cli_workspace_model.targets;
   (match facts.Sol_cli_workspace_model.migrations with
-   | [ notifications; sol_jobs; sol_outbox; charge_id_unique; orders; orders_ts ] ->
+   | [ notifications
+     ; sol_jobs
+     ; sol_outbox
+     ; charge_id_unique
+     ; orders
+     ; orders_ts
+     ; orders_ts_traceparent
+     ] ->
      Windtrap.equal
        Windtrap.string
        ~msg:"file"
@@ -287,13 +294,38 @@ let test_pluto_events_migrations_and_targets () =
         Windtrap.fail "expected the orders-ts migration to be an expand migration"
       | Error reason ->
         Windtrap.fail
-          ("expected the orders-ts migration to declare a disposition: " ^ reason))
+          ("expected the orders-ts migration to declare a disposition: " ^ reason));
+     Windtrap.equal
+       Windtrap.string
+       ~msg:"orders-ts-traceparent migration file"
+       "0007_orders_ts_traceparent.sql"
+       (Sol_cli_plan_ids.Migration_file.to_string orders_ts_traceparent.file);
+     Windtrap.equal
+       (Windtrap.option Windtrap.int)
+       ~msg:"orders-ts-traceparent version"
+       (Some 7)
+       orders_ts_traceparent.version;
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"orders-ts-traceparent name"
+       (Some "orders_ts_traceparent")
+       orders_ts_traceparent.name;
+     (match orders_ts_traceparent.disposition with
+      | Ok Sol_cli_migration_disposition.Expand -> ()
+      | Ok Sol_cli_migration_disposition.Contract ->
+        Windtrap.fail
+          "expected the orders-ts-traceparent migration to be an expand migration"
+      | Error reason ->
+        Windtrap.fail
+          ("expected the orders-ts-traceparent migration to declare a disposition: "
+           ^ reason))
    | other ->
-     Windtrap.fail (Printf.sprintf "expected six migrations, got %d" (List.length other)));
+     Windtrap.fail
+       (Printf.sprintf "expected seven migrations, got %d" (List.length other)));
   Windtrap.equal
     Windtrap.int
     ~msg:"unapplied migrations"
-    6
+    7
     (Sol_cli_workspace_model.count_unapplied_migrations facts)
 ;;
 
