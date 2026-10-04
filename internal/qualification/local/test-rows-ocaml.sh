@@ -264,15 +264,29 @@ names "mutated B6" "B6 the duplicate publishes no second OrderFulfilled" \
 ok "B6 fails for the reason under test when a redelivery republishes"
 
 mkdir -p "$TMP/tools"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/tools/psql"
-chmod +x "$TMP/tools/psql"
+for tool in curl psql rpk jq kubectl md5sum
+do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/tools/$tool"
+  chmod +x "$TMP/tools/$tool"
+done
 
 reset_state
-SAVED_PSQL="$PSQL"
+SAVED_CURL="$CURL" SAVED_PSQL="$PSQL" SAVED_RPK="$RPK"
+SAVED_JQ="$JQ" SAVED_KUBECTL="$KUBECTL" SAVED_MD5SUM="$MD5SUM"
+CURL="$TMP/tools/curl"
 PSQL="$TMP/tools/psql"
+RPK="$TMP/tools/rpk"
+JQ="$TMP/tools/jq"
+KUBECTL="$TMP/tools/kubectl"
+MD5SUM="$TMP/tools/md5sum"
 LOG_DIR="$LOG_DIR" main b2 >"$TMP/main-ok.out" 2>&1
 MAIN_RC=$?
+CURL="$SAVED_CURL"
 PSQL="$SAVED_PSQL"
+RPK="$SAVED_RPK"
+JQ="$SAVED_JQ"
+KUBECTL="$SAVED_KUBECTL"
+MD5SUM="$SAVED_MD5SUM"
 [ "$MAIN_RC" -eq 0 ] || bad "main runs when every tool resolves (exit $MAIN_RC)"
 ok "main runs once every row-driver tool resolves"
 
