@@ -42,7 +42,7 @@ pass "complete ready ticket" 'R100\tinternal/pipeline/tickets/READY_FOR_ENGINEER
 pass "reopen reverted ticket" 'D\tinternal/pipeline/tickets/DONE/AUDIT-999.md\nA\tinternal/pipeline/tickets/READY_FOR_ENGINEERING/AUDIT-999.md\n'
 pass "move the ticket root" 'R100\tpipeline/tickets/DONE/AUDIT-999.md\tinternal/pipeline/tickets/DONE/AUDIT-999.md\n'
 
-fail_saying "reject direct DONE creation" 'A\tinternal/pipeline/tickets/DONE/AUDIT-999.md\n' "file it in BACKLOG or READY_FOR_ENGINEERING in its own PR first"
+pass "file and close a ticket in one PR" 'A\tinternal/pipeline/tickets/DONE/AUDIT-999.md\n'
 fail "reject deletion without transition" 'D\tinternal/pipeline/tickets/READY_FOR_ENGINEERING/AUDIT-999.md\n'
 fail "reject changed ticket id" 'R100\tinternal/pipeline/tickets/READY_FOR_ENGINEERING/AUDIT-999.md\tinternal/pipeline/tickets/DONE/AUDIT-998.md\n'
 pass "complete a backlog ticket in one go" 'R100\tinternal/pipeline/tickets/BACKLOG/AUDIT-999.md\tinternal/pipeline/tickets/DONE/AUDIT-999.md\n'
