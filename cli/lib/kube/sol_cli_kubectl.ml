@@ -212,8 +212,29 @@ let accepts_connections ~local_port =
     result
 ;;
 
+let forward_alive pid =
+  match Unix.waitpid [ Unix.WNOHANG ] pid with
+  | 0, _ -> true
+  | _ -> false
+  | exception Unix.Unix_error (Unix.ECHILD, _, _) -> false
+  | exception Unix.Unix_error _ -> true
+;;
+
 let temporary_port_forward ~ctx ~service ~namespace ~local_port ~remote_port =
   let open Result.Syntax in
+  let* () =
+    match accepts_connections ~local_port with
+    | `Ready ->
+      Error
+        (Readiness_check_failed
+           (Printf.sprintf
+              "something is already listening on localhost:%d, so a forward to %s/%s \
+               cannot own it; refusing to treat that listener as this forward"
+              local_port
+              namespace
+              service))
+    | `Not_listening_yet | `Failed _ -> Ok ()
+  in
   let* forward =
     Sol_cli_process.spawn
       (invocation
@@ -227,8 +248,18 @@ let temporary_port_forward ~ctx ~service ~namespace ~local_port ~remote_port =
     |> Result.map_error (fun e -> Not_started e)
   in
   at_exit (fun () -> Sol_cli_process.stop forward);
+  let pid = Sol_cli_process.pid forward in
   let rec wait attempts =
-    if attempts = 0
+    if not (forward_alive pid)
+    then
+      Error
+        (Readiness_check_failed
+           (Printf.sprintf
+              "the port-forward to %s/%s exited before localhost:%d was ready"
+              namespace
+              service
+              local_port))
+    else if attempts = 0
     then Error Not_ready
     else (
       match accepts_connections ~local_port with
