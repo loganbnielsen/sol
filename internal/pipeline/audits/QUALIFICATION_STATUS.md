@@ -91,7 +91,7 @@ did not move, so the release names the frozen revision.
 `J3` stays `NOT RUN`: the AWS and GCP harnesses are prepared to drive the installed bundle but
 no live run has been authorized. One environment gap is recorded rather than fixed: this host
 has no `dig` (nor `nslookup`/`host`/`drill`/`delv`), which the guide's §4 delegation steps
-require.
+require, and installing it is an operator action — `sudo` needs a password here.
 
 ### 2026-09-28 — FND-0070 filed: a failed apply can leave resources the state never adopted
 
