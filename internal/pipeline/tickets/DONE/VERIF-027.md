@@ -113,3 +113,11 @@ Not established here, left at their prior verdicts: `C3`, `F8`, `F9`, `G3`–`G5
 cluster was reused rather than recreated (Helm could not fetch a chart to re-reconcile
 infra on this host), and the bundle's migration-runner digest is synthetic pending the
 release tag.
+
+**Rerun after `BUG-203` (`bddd58e3`).** The post-merge `test` failure on `main` for
+`d0cff2f6` was a real `sol-jobs` lease defect, not a flake: a heartbeat that woke after the
+lease lapsed surrendered a live, unclaimed claim, and a second poller ran the handler.
+`BUG-203` fixed it, and the rows that exercise `sol-jobs` were re-observed at
+`bddd58e3` on a freshly provisioned cluster: `B1`, `B2`, `B5`, `B6`, `D5`/`H1` and `H2`
+pass in both namespaces, and teardown again reached verified absence. `47fc2266` and
+`bddd58e3` differ only by `BUG-203`'s renewal fence.

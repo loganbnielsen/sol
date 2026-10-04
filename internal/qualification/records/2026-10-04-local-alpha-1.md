@@ -427,3 +427,45 @@ Teardown: `sol local infra down --cluster` → `cluster ABSENT`, `containers ABS
   synthetic runner digest, as attempts 1–3 recorded.
 - The cluster was reused rather than recreated (deviation 1).
 
+## Rerun after `BUG-203` (2026-10-04, `bddd58e3`) — the rows re-observed on the fixed framework
+
+`BUG-203` fixed a real `sol-jobs` lease defect — the heartbeat surrendered a live, unclaimed
+claim — that surfaced as the post-merge `test` failure on `main` for `d0cff2f6`. It changes
+the OCaml framework the scenario's jobs run on, so the rows that exercise `sol-jobs` were
+re-observed on the fixed revision.
+
+Run identity: revision `bddd58e3e03acf967204877db055c7bccd39a129`, staged bundle
+`v0.1.0-alpha.7` (same synthetic runner digest), workspace `examples/pluto`, fresh `k3d`
+`sol-local` cluster with all ten forwards, `sol local migrate` → `Done.`, `sol up`
+`[apply] ok (298.5s)`, every unit on image tag `bddd58e3`. Bundle
+`/tmp/alpha-verif027-bddd58e3/` (22 entries).
+
+**The cluster was recreated for this run**, so unlike the previous attempt it also
+establishes provisioning from empty. A fresh cluster carries no secrets, so
+`sol local secret set POSTGRES_URL --value
+postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev` and
+`SOL_API_KEY` were re-applied from `examples/pluto/README.md`'s local walkthrough before
+`sol up`; the first `sol up` failed on the empty secrets, which is the documented step, not
+a defect.
+
+**Two rows failed on the cold pass and pass on the settled cluster.** OCaml `B6` and TS
+`B5` observed their order stay `accepted` while `redpanda-0` was created
+(`startTime 2026-10-04T09:29:07Z`, well after the cluster came up): the fulfilment-worker
+log shows `GroupCoordinator … Connect … failed: Connection refused` and a pod restart
+inside the window, and the consumer group's lag was 0 afterwards. Both rows pass on the
+rerun with the broker stable; the cold-pass failures are recorded rather than discarded.
+
+| Row | Verdict | Observation |
+|---|---|---|
+| `B1` OCaml + TS | **PASS (LOCAL)** | `POST /orders` → 202; duplicate idempotent. |
+| `B2` OCaml + TS | **PASS (LOCAL)** | The outbox collision fails the request and the rollback is whole. |
+| `B5` OCaml + TS | **PASS (LOCAL)** | Read-back `accepted → fulfilled → confirmed`; one row, job and effect. |
+| `B6` OCaml + TS | **PASS (LOCAL)** | The duplicate intent is relayed and absorbed: exactly one `OrderFulfilled`. |
+| `D5`/`H1` OCaml + TS | **PASS (LOCAL)** | The poison record produced the decode log, the counter increment, the DLQ record with raw bytes, and the next order still fulfilled. |
+| `H2` OCaml | **PASS (LOCAL)** | Broker scaled to zero: requests commit, the outbox holds, both keys drain after recovery. |
+
+`capture` indexed 22 entries; `teardown` reached `cluster ABSENT`, `containers ABSENT`.
+
+The rerun supersedes `47fc2266` as the revision whose rows were observed; the only
+framework change between them is `BUG-203`'s renewal fence.
+
