@@ -66,9 +66,12 @@ become a second one. So there is nothing to retain, no `published_at` column to 
 and no bloat to sweep — the table holds only what is not yet published. `created_at` exists
 for the lag metric and for a stable scan order, not for retention.
 
-The scan is `ord = (SELECT min(ord) … WHERE aggregate_key = o.aggregate_key)`, one row per
-key, ordered by `id`. The `(aggregate_key, ord)` index serves both the per-key minimum and
-the uniqueness check.
+The scan is `kind = ANY(E.kinds) AND ord = (SELECT min(ord) … WHERE aggregate_key =
+o.aggregate_key)`, one row per key, ordered by `id`. The `kind` predicate scopes a relay to the
+rows it owns, so a table shared by more than one relay has each row published by exactly its
+owner's relay; the `(aggregate_key, ord)` index serves both the per-key minimum and the
+uniqueness check — and, because a later event cannot be enqueued until the earlier one's row
+has been deleted, it also carries per-key order *across* kinds.
 
 ## The relay protocol
 
@@ -95,12 +98,13 @@ A publish that cannot succeed blocks **later events for that key** — which is 
 is visible as lag, not a silent gap. The relay does not exit; it retries on the poll
 interval, so a broker outage drains once the broker returns.
 
-**v1 is one logical relay owner.** Overlapping owners are a correctness problem, not a
-performance one: two owners publishing a key can invert it, and leases alone do not prevent
-it, because an expired-but-alive relay can still publish and a plain producer carries no
-fencing token. Scaling is a trigger, not a design: when measured relay throughput is
-inadequate, an ownership/fencing mechanism is spiked then. No mechanism is chosen in
-advance.
+**v1 is one logical relay owner per kind.** A table may be shared by several relays, one per
+`E.kinds` set — each publishes only the kinds it owns, so every row has exactly one owner.
+Two owners of the *same kind* are a correctness problem, not a performance one: they can
+invert a key, and leases alone do not prevent it, because an expired-but-alive relay can still
+publish and a plain producer carries no fencing token. Scaling is a trigger, not a design:
+when measured relay throughput is inadequate, an ownership/fencing mechanism is spiked then.
+No mechanism is chosen in advance.
 
 ## Public API
 

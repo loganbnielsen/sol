@@ -38,10 +38,11 @@ module Q = struct
   ;;
 
   let oldest_per_key =
-    (int ->* t5 int64 int64 string string string)
+    (t2 string int ->* t5 int64 int64 string string string)
       (Printf.sprintf
          "SELECT o.id, o.ord, o.aggregate_key, o.kind, o.payload FROM %s o \n\
-         \         WHERE o.ord = (SELECT min(i.ord) FROM %s i \n\
+         \         WHERE o.kind = ANY(string_to_array(?, ',')) \n\
+         \           AND o.ord = (SELECT min(i.ord) FROM %s i \n\
          \                        WHERE i.aggregate_key = o.aggregate_key) \n\
          \         ORDER BY o.id LIMIT ?"
          table
@@ -199,7 +200,9 @@ module Make (E : EVENT) = struct
           | None -> false
         in
         let drain () =
-          match Pg_db.collect pool Q.oldest_per_key batch with
+          match
+            Pg_db.collect pool Q.oldest_per_key (String.concat "," E.kinds, batch)
+          with
           | Error e -> Error (`Database (Pg_error.to_string e))
           | Ok rows ->
             List.fold_left
