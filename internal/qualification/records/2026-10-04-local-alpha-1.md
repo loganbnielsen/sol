@@ -248,3 +248,87 @@ with `B1`/`B2`/`B5` here (one fact, one row, one job, one intent, ordering per k
   healthy and the harness is in place, so these are observations, not blockers.
 - `B6` and `D5`/`H1` above stay `FAIL` until their mechanisms are established; neither row
   is weakened to make the matrix look green.
+
+## Resume (2026-10-04, attempt 3) — probe defect fixed; B6 and D5/H1 mechanisms narrowed
+
+`BUG-200` is merged (`f4bcaa5e` + the transition-guard relaxations) and the staged
+`v0.1.0-alpha.7` candidate was rebuilt from the resulting `origin/main`
+(`/tmp/sol-install-fixed/`, revision recorded in the run identity). The deployment under
+test is the one attempt 2 produced.
+
+### Defect in the run's own tooling (found, fixed here)
+
+`rows-ocaml.sh` (and the TypeScript driver copied from it) read topics with
+`rpk topic consume … -o beginning`, which this `rpk` rejects:
+
+```console
+$ timeout 6 rpk topic consume orders-fulfilled.v1 -o beginning
+invalid --offset "beginning": unable to parse offset: cannot parse
+```
+
+Every topic read therefore returned nothing, and two assertions in the previous attempt
+were unproven rather than failing: `B6`'s "OrderFulfilled was published" and
+`D5`/`H1`'s "the DLQ topic receives the raw record". Both drivers now use `-o start`
+(`rows-ocaml.sh:topic_records`, `rows-ts.sh:topic_records`).
+
+### `B6` — the topic does hold the fact; the mechanism is elsewhere
+
+With the read fixed, `orders-fulfilled.v1` holds the records (`rpk topic consume
+orders-fulfilled.v1 -o start` → one per order key, including `qual-b6-…`), and the rerun
+asserts:
+
+```console
+ok: B6 the order reaches confirmed before the duplicate
+ok: B6 the OrderFulfilled fact is published before the duplicate
+ok: B6 the duplicate is absorbed: one fulfilled_orders row
+ok: B6 the duplicate is absorbed: one release_inventory job
+ok: B6 the duplicate is absorbed: one confirmation effect
+ok: B6 the duplicate publishes no second OrderFulfilled
+FAIL: B6 exactly one OrderFulfilled was published: expected [1], observed [2]
+verdict FAIL 1
+```
+
+So the duplicate injection does **not** add a third record — the third assertion is about
+the count before it. The observation is that **two `OrderFulfilled` records exist for one
+order before any injected duplicate**. Leading mechanism, to be confirmed next:
+`sol_outbox` carries the intent as a unique `(aggregate_key, ord)` row that the relay
+**deletes after the broker acknowledges**, so a redelivery of `OrderPlaced` — or a relay
+republish after an unacknowledged send — re-creates `(key, 1)` and publishes a second
+fact; the domain-row, job and confirmation dedupe absorb the redelivery at the effects,
+but nothing gates the *intent*. Next probes: `sol_outbox` row id/ord history for the key
+under a fresh row, the relay's publish log for both sends, and the consumer group's
+offsets for the partition at the moment of the second publish. `B6` stays `FAIL`.
+
+### `D5`/`H1` — the poisoned record does not take the decode-error path
+
+Rerun after the probe fix (row executing at the time of writing; the earlier attempt's
+observations below). The poisoned record is consumed — the group is `Stable` with
+`TOTAL-LAG 0` and its offsets at `LOG-END-OFFSET` — yet:
+
+```console
+$ rpk group describe pluto-orders-fulfilment-worker
+STATE Stable   TOTAL-LAG 0      # orders.v1 offsets 3/1/3 == log-end
+$ curl -s --data-urlencode 'query=sol_worker_decode_errors_total' localhost:9090/api/v1/query
+{"metric":{"__name__":"sol_worker_decode_errors_total", … "pod":"notify-worker-…"}}   # present, value 0
+$ rpk topic consume orders.v1.pluto-orders-fulfilment-worker-97a0a6dbb628.dlq -o start | wc -l
+0                                                                                      # the DLQ topic exists, empty
+$ psql -c "select count(*) from fulfilled_orders where order_id='qual-d5-follow-20261004051500'"   # the later valid order
+0        # while orders=1, sol_jobs=1, confirmations=0, sol_outbox=0
+```
+
+and the worker's log (last 25 lines) carries no decode/DLQ line at all.
+
+Three facts, all independent of the broken probe: the DLQ topic exists and is empty; the
+decode-error counter did not move; and the valid order that followed the poisoned record
+was **never fulfilled** (`fulfilled_orders = 0`) although its `send_confirmation` job
+exists. So the poisoned record neither produced the required decode log/metric/DLQ nor
+left the consumer able to apply what followed it — while the offsets advanced. That is a
+concrete, bounded defect in the OCaml worker's decode-error path (or in how the local
+profile configures it), and it is the next thing to file and fix. `D5`/`H1` stay `FAIL`.
+
+### Still not run
+
+The TypeScript-lane rows (`rows-ts.sh all`), the capability rows (`C1`–`C3`, `D1`–`D4`,
+`D6`, `F6`/`F8`/`F9`, `G1`–`G9`, `H7`), `capture` and `teardown`. The deployment is
+healthy (both namespaces, all six subjects registered, the unrelated host broker on the
+same port holding none), so these are observations rather than blockers.
