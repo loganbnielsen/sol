@@ -200,7 +200,7 @@ re-confirmed there; a row whose `aws` target has never been observed is that run
 
 | Row | Capability | Observable behaviour | OCaml evidence | TS evidence | Shared / substrate evidence | Target(s) | Existing obligation | Status |
 |---|---|---|---|---|---|---|---|---|
-| A1 | Released install | download `sol-<version>-linux-x86_64.tar.gz`, `sol assets` reports every asset present; no `SOL_HOME`, no checkout | — | — | release archive; `sol assets` | clean | FEAT-101 (DONE), `RELEASE-006` | NOT RUN (no release since `v0.1.0-alpha.6`, 2026-06-11) |
+| A1 | Released install | download `sol-<version>-linux-x86_64.tar.gz`, `sol assets` reports every asset present; no `SOL_HOME`, no checkout | — | — | release archive; `sol assets` | clean | FEAT-101 (DONE), `RELEASE-006` | PASS (published archive `v0.1.0-alpha.7`) |
 | A2 | OCaml workspace scaffold | `sol new workspace` builds first try | scaffolded workspace `dune build` | — | CLI | local, clean | DOGFOOD-001, FEAT-085 | PASS (OFFLINE) |
 | A3 | Unit scaffold | `sol new svc/worker/fn/event` adds units the workspace builds | scaffolded units | — | CLI | local | ROADMAP Phase 5 | PASS (OFFLINE) |
 | A4 | TypeScript unit scaffold | — | — | — | — | — | FEAT-084 | N/A (deferred; TS app is hand-authored) |
@@ -321,10 +321,10 @@ also exercise the `sol-jobs` runner `BUG-203` fixed.
 
 | Row | Capability | Observable behaviour | OCaml evidence | TS evidence | Shared / substrate evidence | Target(s) | Existing obligation | Status |
 |---|---|---|---|---|---|---|---|---|
-| J1 | Release publishes one aligned unit | tag `v*` publishes `bin/sol` + `share/sol/<version>/platform` + `sol-migration-runner:<version>`; republishing a tag is refused | — | — | release archive, GHCR | clean | FEAT-101, DEC-049, `RELEASE-006` | NOT RUN (mechanism PASS OFFLINE) |
-| J2 | Installed-layout smoke | the bundle runs in a container with no checkout and no `SOL_HOME`; a planted reach-back fails it | — | — | CI job | clean | FEAT-101 | PASS (OFFLINE) |
+| J1 | Release publishes one aligned unit | tag `v*` publishes `bin/sol` + `share/sol/<version>/platform` + `sol-migration-runner:<version>`; republishing a tag is refused | — | — | release archive, GHCR | clean | FEAT-101, DEC-049, `RELEASE-006` | PASS (`v0.1.0-alpha.7`: one tag, the bundle and the release body name the same runner digest, anonymously retrievable; a second run is refused by name) |
+| J2 | Installed-layout smoke | the bundle runs in a container with no checkout and no `SOL_HOME`; a planted reach-back fails it | — | — | CI job | clean | FEAT-101 | PASS (OFFLINE + run against the published archive, all four controls) |
 | J3 | Live runs use the released artifact | the AWS/GCP harness drives the installed bundle, not a checkout | — | — | harness config | aws, gcp | `RELEASE-006` (divergence recorded) | NOT RUN (harness prepared: requires `SOL_INSTALL`, refuses a checkout build, records bundle version + runner digest; pinned by `test-live-row.sh`/`test-live-qual.sh`) |
-| J4 | Provenance | `SUPPORT_REFS`/`--version` identify the build's revision and support pins | — | — | release archive | clean | BUG-059 | PASS (OFFLINE) |
+| J4 | Provenance | `SUPPORT_REFS`/`--version` identify the build's revision and support pins | — | — | release archive | clean | BUG-059 | PASS (`VERSION`, the release body's revision, and 11 `SUPPORT_REFS` pins in the published archive) |
 
 ## 4. Clean-user starting condition and canonical install
 
@@ -356,27 +356,28 @@ sol cloud destroy <target> --apply      # remove the environment (installation s
 sol uninstall <target> --confirm        # remove the installation (separate)
 ```
 
-**The release gap (recorded, Phase 2 work).** The mechanism is implemented (FEAT-101,
-DEC-049) but the newest published release is `v0.1.0-alpha.6` (2026-06-11), which
-predates the whole S1–S4 surface. A clean-user campaign cannot start from it. Cutting
-and verifying an alpha release from the frozen revision is `RELEASE-006`. The AWS/GCP
-harnesses currently run `sol` from a checkout; `RELEASE-006` also moves them onto the
-released bundle, so the live runs qualify the artifact a user actually installs (J3).
+**The release gap is closed (RELEASE-006, part B).** The mechanism is implemented (FEAT-101,
+DEC-049) and the newest published release was `v0.1.0-alpha.6` (2026-06-11), which predates
+the whole S1–S4 surface; a clean-user campaign could not start from it. `v0.1.0-alpha.7` was
+cut from the frozen campaign revision `f4284422` and published on 2026-10-04, and the
+clean-user side of it is qualified — the install, the layout, the provenance and the
+retrievability of every part (rows `A1`, `J1`, `J2`, `J4`). The AWS/GCP harnesses still run
+`sol` from a checkout until `J3`'s live runs qualify the artifact a user actually installs.
+The release record is
+`internal/qualification/records/2026-10-04-release-alpha-7-clean-user.md`.
 
-**Staging state (RELEASE-006, part A).** The harness change has landed: `SOL_INSTALL`
-names the extracted `sol-<version>-linux-x86_64.tar.gz` prefix, the harness refuses a
-development build and a non-digest runner reference, and it records the bundle version
-and the migration-runner digest in `sol-identity.txt`, which the run-record template now
-carries. The installed-layout smoke also drives `sol plan` on `examples/pluto` with no
-checkout and no `SOL_HOME`. The release itself is **staged, not tagged**: the archive and
-its runner digest are produced by `release.yml` from the tag, and a version is published
-once, so the tag waits on the operator's §7.6 version confirmation. The bundle's contents
-(`bin/sol` + `platform/`) are independent of FEAT-131/132/133, which change only
-`examples/pluto`, so no *content* is missing today; the revision is deferred so the
-release and the reference-app inputs are one campaign revision, and so a Sol-side gap the
-reference-app stream exposes (its own rule: a missing primitive is a finding) does not
-require superseding an already-published version. The tag command is recorded in
-`RELEASE-006`.
+**Staging, tagging, and what they cost (RELEASE-006, part B).** The harness change landed in
+part A: `SOL_INSTALL` names the extracted `sol-<version>-linux-x86_64.tar.gz` prefix, the
+harness refuses a development build and a non-digest runner reference, and it records the
+bundle version and the migration-runner digest in `sol-identity.txt`, which the run-record
+template carries. The installed-layout smoke also drives `sol plan` on `examples/pluto` with
+no checkout and no `SOL_HOME`. Cutting the release then exposed `BUG-204`: the workflow's
+`--generate-notes` body exceeded the API's 125000-character limit (the campaign's range
+generated 126890), and because the runner image is pushed before that step and the workflow
+refused an image that already existed, an interrupted publish could not be resumed. Both are
+fixed; the version was resumed against the same tag, which never moved, so the release still
+names the frozen revision. A version is still published once — a version whose *release*
+exists is refused — and that refusal is part of `J1`'s evidence.
 
 ## 5. Shared infrastructure and ownership boundaries
 
@@ -455,8 +456,8 @@ harness preparation, evidence-matrix work — proceeds without asking.
 5. **`PROD-001`** — the maturity-A pilot, which additionally needs a named owning team
    and a real non-critical workload; the campaign brings it to the point where those
    are the only missing inputs.
-6. **Release version** — the alpha release tag/version for `RELEASE-006`. Recommended:
-   `v0.1.0-alpha.7` from the frozen campaign revision, confirmed alongside (1).
+6. **Release version** — *(resolved 2026-10-04: `v0.1.0-alpha.7`, cut from the frozen
+   campaign revision `f4284422` and published; see `RELEASE-006` part B.)*
 
 **The single ask.** Once the offline/local work reaches the point where the runs are
 fully specified (matrix rows, expected resources, prerequisites, cost, teardown), the
