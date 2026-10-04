@@ -122,3 +122,49 @@ withDb("one accepted order reaches a confirmed read-back with every effect once"
     await Promise.all([svc.close(), worker.close()]);
   }
 });
+
+withDb("a confirmation is refused until the order is fulfilled", async () => {
+  const svc = await makeSvcDb(POSTGRES_URL!);
+  await applyMigrations(svc.pool);
+  const worker = await makeWorkerDb(POSTGRES_URL!);
+  const workerJobs = makeOrderJobs(() => {}, {
+    markConfirmed: async (orderId) => {
+      await worker.markConfirmed(orderId);
+    },
+  });
+  try {
+    await clean(svc);
+
+    await svc.withTransaction(async (client) => {
+      assert.equal(await placeOrder(svc, client, accepted, confirmationJobs()), true);
+    });
+
+    await assert.rejects(
+      () => worker.markConfirmed(ORDER_ID),
+      /is not fulfilled yet/,
+      "a confirmation before fulfilment is refused so the runner retries",
+    );
+    assert.equal((await svc.readOrder(ORDER_ID))?.status, "accepted");
+    const early = await worker.pool.query(
+      "SELECT count(*)::int AS n FROM order_confirmations_ts WHERE order_id = $1",
+      [ORDER_ID],
+    );
+    assert.equal(early.rows[0].n, 0, "no confirmation effect is recorded before fulfilment");
+
+    await worker.withTransaction(async (client) => {
+      await fulfillOrder(worker, client, placed, workerJobs);
+    });
+    assert.equal((await svc.readOrder(ORDER_ID))?.status, "fulfilled");
+
+    await worker.markConfirmed(ORDER_ID);
+    assert.equal((await svc.readOrder(ORDER_ID))?.status, "confirmed");
+    const confirmations = await worker.pool.query(
+      "SELECT count(*)::int AS n FROM order_confirmations_ts WHERE order_id = $1",
+      [ORDER_ID],
+    );
+    assert.equal(confirmations.rows[0].n, 1);
+  } finally {
+    await clean(svc);
+    await Promise.all([svc.close(), worker.close()]);
+  }
+});
