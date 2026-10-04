@@ -509,6 +509,44 @@ let test_long_handler_renews_lease () =
       (rows pool))
 ;;
 
+let test_a_late_heartbeat_keeps_an_unclaimed_lease () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    enqueue_slow pool;
+    let lapsed, lapsed_r = Eio.Promise.create () in
+    let stop, stop_r = Eio.Promise.create () in
+    let handled = ref 0 in
+    (Slow.on_handle
+     := fun () ->
+          incr handled;
+          exec_sql pool "UPDATE sol_jobs SET locked_until = now() - interval '1 second'";
+          ignore (Eio.Promise.try_resolve lapsed_r ());
+          Eio.Time.sleep env#clock 0.6;
+          Ok ());
+    (match
+       Eio.Time.with_timeout env#clock 5.0 (fun () ->
+         Eio.Fiber.both
+           (fun () -> run_slow ~lease_s:0.1 ~max_jobs:1 env pool)
+           (fun () ->
+              Eio.Promise.await lapsed;
+              Eio.Time.sleep env#clock 0.25;
+              Eio.Fiber.both
+                (fun () -> run_slow ~lease_s:0.1 ~stop env pool)
+                (fun () ->
+                   Eio.Time.sleep env#clock 0.2;
+                   ignore (Eio.Promise.try_resolve stop_r ())));
+         Ok ())
+     with
+     | Ok () -> ()
+     | Error `Timeout -> Windtrap.fail "pollers did not finish");
+    Windtrap.equal Windtrap.int ~msg:"one handler ran" 1 !handled;
+    Windtrap.equal
+      (Windtrap.list (Windtrap.triple Windtrap.string Windtrap.string Windtrap.int))
+      ~msg:"the handler completed the claim it kept"
+      [ "slow", "completed", 1 ]
+      (rows pool))
+;;
+
 let test_lost_renewal_is_logged () =
   with_pool (fun env pool ->
     List.iter (exec_sql pool) ddl;
@@ -743,6 +781,9 @@ let () =
         ; Windtrap.test "stale fail is a no-op" test_stale_fail_is_a_no_op
         ; Windtrap.test "stale retry is a no-op" test_stale_retry_is_a_no_op
         ; Windtrap.test "long handler renews its lease" test_long_handler_renews_lease
+        ; Windtrap.test
+            "a late heartbeat keeps an unclaimed lease"
+            test_a_late_heartbeat_keeps_an_unclaimed_lease
         ; Windtrap.test "lost renewal is logged" test_lost_renewal_is_logged
         ]
     ; Windtrap.group
