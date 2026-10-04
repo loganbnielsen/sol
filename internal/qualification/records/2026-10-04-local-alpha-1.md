@@ -332,3 +332,98 @@ The TypeScript-lane rows (`rows-ts.sh all`), the capability rows (`C1`–`C3`, `
 `D6`, `F6`/`F8`/`F9`, `G1`–`G9`, `H7`), `capture` and `teardown`. The deployment is
 healthy (both namespaces, all six subjects registered, the unrelated host broker on the
 same port holding none), so these are observations rather than blockers.
+
+## Resume (2026-10-04, final run at `47fc2266`) — the local rows qualify
+
+Run identity: revision `47fc2266971bdd3db4ca1643e36e93dabd75984b`, staged bundle
+`v0.1.0-alpha.7` (`bin/sol` + `share/sol/v0.1.0-alpha.7/platform`; runner digest synthetic,
+as attempt 1 recorded), workspace `examples/pluto` of that revision, target `local` (k3d
+`sol-local`), no cloud account and no provider call. Started `2026-10-04T07:16:09Z`;
+`sol up` `[apply] ok (87.1s)`, 7 services, every unit on image tag `47fc2266`. Evidence
+bundle `/tmp/alpha-verif027-47fc2266/` (33 entries, `evidence-manifest.txt`).
+
+### What the candidate is, exactly
+
+`origin/main` at `47fc2266` carries all of: `BUG-201` (#1063, the OCaml outbox relay drains
+only the kinds it owns); `VERIF-027, part D` (#1064, the drivers inject a real duplicate
+intent and terminate the produced record); `VERIF-027, part E` (#1065, poll the decode
+metric; prove B5's ordering from timestamps); `BUG-202` (#1066, the TypeScript confirmation
+requires a fulfilled order). The staged bundle was built from that revision, and the app
+images were built from it too — the Docker build cache was pruned first, so the OCaml
+framework was fetched fresh from the fixed `main` rather than reusing the pre-`BUG-201`
+layer.
+
+### Deviations, recorded
+
+1. **`sol local infra up` could not re-reconcile.** Helm could not fetch the
+   `bitnami/postgresql` chart from `registry-1.docker.io` (`UtilAcceptVsock … accept4
+   failed 110`), so that phase failed before writing the run kubeconfig. The cluster from
+   the preceding attempt was reused (Postgres, Redpanda, Loki, Grafana, Prometheus, Tempo
+   and ingress already `Running`); the run kubeconfig and the namespace/release/pod
+   inventory were captured directly (`k3d kubeconfig get`, `kubectl`, `helm list`). The
+   cluster was **not** recreated, so this run does not independently re-establish
+   provisioning from empty.
+2. The unrelated native dev broker still owns `0.0.0.0:9092`/`8081`/`9644`; the deployed
+   units and the drivers address the cluster (the drivers through `kubectl exec`), so it is
+   inert.
+3. **`sol local infra down` wrote its verdict to the default log dir** (the env was not
+   exported into that invocation); its verdict — `cluster ABSENT`, `containers ABSENT` — is
+   copied into the bundle as `teardown-verdict.txt`.
+
+### Row verdicts
+
+| Row | Verdict | Observation |
+|---|---|---|
+| `B1` OCaml + TS | **PASS (LOCAL)** | `POST /orders` → 202; duplicate idempotent; one row and one job in each namespace. |
+| `B2` OCaml + TS | **PASS (LOCAL)** | The injected `sol_outbox (key, ord)` collision fails the request (500); no domain row and no job survive the rollback. |
+| `B5` OCaml + TS | **PASS (LOCAL)** | Read-back `accepted → fulfilled → confirmed`, proven by `accepted_at <= fulfilled_at <= confirmed_at`; one row, job and effect. |
+| `B6` OCaml + TS | **PASS (LOCAL)** | A duplicate `OrderPlaced` intent is relayed to the topic and absorbed: one row, one job, one effect, and **exactly one** `OrderFulfilled`. |
+| `D5` / `H1` OCaml + TS | **PASS (LOCAL)** | An undecodable record → the structured decode log, `sol_worker_decode_errors_total` `0→1` (OCaml) and `1→2` (TS), a DLQ record carrying the raw bytes, and the next valid order still fulfilled. |
+| `H2` | **PASS (LOCAL)** | Broker scaled to zero: requests commit and the outbox holds; after recovery and a relay restart both keys drain to `confirmed`. |
+| `C1` | **PASS (LOCAL)** | `sol local migrate` → `Applying migrations …` / `Done.` |
+| `D1` | **PASS (LOCAL)** | Every declared topic at 3 partitions (`orders.v1`, `orders-fulfilled.v1`, `sol-demo-ts-*`). |
+| `D2` | **PASS (LOCAL)** | All six declared subjects present in the cluster registry. |
+| `D3` | **PASS (LOCAL)** | A key's records all on one partition (`qual-b6-…` → partition 0). |
+| `D4` | **PASS (LOCAL)** | Group-scoped `.dlq` topics exist for both namespaces; `D5` exercises the route. |
+| `D6` | **PASS (LOCAL)** | `sol contract generate --check` → `the checked-in bindings match the declaration`. |
+| `G1` | **PASS (LOCAL)** | `sol local logs --scope payments/orders-svc` returns that unit's lines with the identity fields on each. |
+| `G2` | **PASS (LOCAL)** | `sol_worker_messages_total` carries `status`; `sol_svc_requests_total` carries `method`/`route`/`status_class`; both carry `workspace`/`domain`/`service`/`primitive`/`release`. The `env` dimension was **not** present on these series — recorded, not promoted. |
+| `G6` | **PASS (LOCAL)** | `sol local status` → every domain `healthy`; observability `logs`/`metrics` `healthy`. |
+| `G7` | **PASS (LOCAL)** | `sol check` → `ok`, exit 0. |
+| `B3`, `B4`, `C5`, `C6` | unchanged `PASS (LOCAL)` | Prior evidence; B1/B2/B5/B6 re-exercise the same relay/job/outbox paths here. |
+| `C3`, `F8`, `F9`, `G3`–`G5`, `G8`, `G9`, `H7` | **NOT RUN (this run)** | Not observed here; they keep their prior verdicts (mostly `PASS OFFLINE`/`PASS (LOCAL)`). No verdict was weakened. |
+| `B7`, `A*`, `F6`, `J*` | unchanged | Need the installed bundle or a cross-language contract that is `NOT RUN`/`OFFLINE` as before. |
+| `C2`, `C4`, `D7`, `D8`, `E2`, `E4`–`E8`, `F1`–`F5`, `F7`, `H3`–`H6`, `I*` | unchanged | Provider rows; a local cluster cannot establish them. |
+
+Capability-row commands and output are in `/tmp/alpha-verif027-47fc2266/capability/`.
+
+Teardown: `sol local infra down --cluster` → `cluster ABSENT`, `containers ABSENT`.
+
+### Defects this campaign exposed, and their state
+
+- `INFRA-102` — `sol up` registered contracts at a literal `localhost:8081` that is the
+  native dev broker on this host. Fixed and merged (`449d933c`).
+- `BUG-200` — the workspace's `contract/run` sent the whole-workspace scope only to the
+  OCaml runner, so the TypeScript scope was never registered. Fixed and merged (`9c59d4be`).
+- `BUG-201` — `Sol_outbox.Make(E).relay` drained every kind in the shared `sol_outbox`
+  table, so each relay cross-published another unit's rows (two `OrderFulfilled` records
+  for one order before `B6`'s injection). Fixed, mutation-tested and merged (`478bd72c`);
+  `B6` reruns green above.
+- `BUG-202` — the TypeScript `send_confirmation` job confirmed with no `fulfilled_at`
+  guard, so a job claimed before `OrderPlaced` was consumed confirmed an unfulfilled order
+  (`confirmed_at` preceded `fulfilled_at`) and the read-back never reached `confirmed`.
+  Fixed, mutation-tested and merged (`47fc2266`); TS `B5`/`B6` rerun green above.
+- The run's own drivers carried three defects, fixed in the campaign's own PRs: `rpk topic
+  consume -o beginning` rejected by this `rpk` (part C); a payload with no trailing newline
+  (never produced) and a raw-JSON duplicate that is not Confluent-framed (part D); and a
+  decode-metric read taken before Prometheus scraped, plus a race-prone transient
+  `fulfilled` sample (part E). Each mutation-checked.
+
+### What this run does not establish
+
+- Nothing provider-side: `C2`, `C4`, `D7`/`D8`, `E2`, `E4`–`E8`, `F1`–`F5`, `F7`,
+  `H3`–`H6` and `I*` stay `NOT RUN`/`BLOCKED`.
+- `A1`, `J1`–`J4` need the published release; this bundle is the staged archive with a
+  synthetic runner digest, as attempts 1–3 recorded.
+- The cluster was reused rather than recreated (deviation 1).
+

@@ -91,3 +91,25 @@ row is promoted; the mechanism, the verbatim output and the row-by-row verdicts 
 
 Filed from the attempt: `INFRA-102` (`sol up` registers against a literal address and
 reports success against whatever answers there).
+
+## Completion (2026-10-04) — the local rows qualify at `47fc2266`
+
+The campaign's local run completed at `origin/main @ 47fc2266` with the staged
+`v0.1.0-alpha.7` bundle. Scenario rows `B1`, `B2`, `B5`, `B6`, `D5`/`H1` and `H2` are
+`PASS (LOCAL)` in **both** the OCaml and TypeScript namespaces; capability rows `C1`,
+`D1`–`D4`, `D6`, `G1`, `G2`, `G6` and `G7` are `PASS (LOCAL)`; teardown reached verified
+absence (`cluster ABSENT`, `containers ABSENT`). The record is
+`internal/qualification/records/2026-10-04-local-alpha-1.md`; the bundle is
+`/tmp/alpha-verif027-47fc2266/`; `internal/qualification/ALPHA_CAMPAIGN.md` and
+`internal/pipeline/audits/QUALIFICATION_STATUS.md` carry the row changes.
+
+Defects the campaign exposed, fixed, mutation-tested and merged: `INFRA-102`
+(`449d933c`), `BUG-200` (`9c59d4be`), `BUG-201` (`478bd72c`), `BUG-202` (`47fc2266`). The
+run's own drivers were corrected in `VERIF-027` parts C–E (#1062, #1064, #1065).
+
+Not established here, left at their prior verdicts: `C3`, `F8`, `F9`, `G3`–`G5`, `G8`,
+`G9`, `H7` (not observed by this run); the provider rows (need a real target); `A1` and
+`J*` (need the published release). No verdict was weakened. Recorded deviations: the
+cluster was reused rather than recreated (Helm could not fetch a chart to re-reconcile
+infra on this host), and the bundle's migration-runner digest is synthetic pending the
+release tag.
