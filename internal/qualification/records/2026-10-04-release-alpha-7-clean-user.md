@@ -28,7 +28,9 @@
   working directory (`/tmp/clean-user/release`).
 - **Host tools** the guide's table names: `aws`, `terraform` (1.5+), `kubectl`, `docker`,
   `dig`. All present except **`dig`** — this host has no `dig`, `nslookup`, `host`, `drill`
-  or `delv` (recorded below; it gates the DNS-delegation steps of §4, not this run).
+  or `delv` (recorded below; it gates the DNS-delegation steps of §4, not this run), and
+  `sudo` here requires a password (`sudo -n true` → `sudo: a password is required`), so
+  installing it is an operator action rather than something a run can do.
 - **No checkout, no `SOL_HOME`:** every command ran from `/tmp/clean-user/release`, and the
   installed-release smoke's own controls assert that a release binary never reaches back
   into a checkout.
