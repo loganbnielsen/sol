@@ -145,3 +145,25 @@ artifact record the installed-bundle runner and the staging state.
 
 **Release tag / runner digest.** Not yet produced; the tag above produces them, and this
 section is completed when it lands.
+
+## Part B (2026-10-04) — the tag is cut, and the workflow's publish step failed
+
+`v0.1.0-alpha.7` was tagged at the frozen campaign revision `f4284422` and pushed, so
+`release.yml` ran from that revision (`37210258576`). It built the release binary, published
+`ghcr.io/loganbnielsen/sol-migration-runner:v0.1.0-alpha.7`, built the archive from the
+revision's `platform/` tree and passed the installed-release smoke — then failed at
+`gh release create`: `body is too long (maximum is 125000 characters)`, because
+`--generate-notes` is unbounded and the campaign's range is large.
+
+The runner image is published and a version is published once, so as the workflow stood the
+version could not be completed: its runner step refuses an image that exists. Both halves of
+that are `BUG-204`, now fixed — the body is bounded at a line boundary with a pointer to the
+full compare range, the runner digest is reused rather than refused (it cannot move), a
+version whose *release* exists is refused, and a `workflow_dispatch` `version` input lets the
+publish resume from the default branch.
+
+The tag **does not move**: the release is resumed against the same revision, so it still
+names the frozen campaign revision, and the artifact is built from that revision's tree.
+Remaining for this ticket: the resumed publish, the clean-user qualification from the
+published archive (`A1`, `J1`, `J2`, `J4`, and `docs/guides/installation.md`), and the
+recorded run identity with the real runner digest.

@@ -22,13 +22,23 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # The tag push is the normal path. workflow_dispatch is the recovery path: the
+  # workflow definition comes from the default branch, so a publish that was
+  # interrupted after the runner image was pushed can be completed without moving
+  # the tag (BUG-204). The artifact is still built from the tag's tree below.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release tag to publish or resume, e.g. v0.1.0-alpha.7'
+        required: true
+        type: string
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -36,10 +46,39 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
-      VERSION: ${{ github.ref_name }}
+      VERSION: ${{ inputs.version || github.ref_name }}
       RUNNER_REPO: ghcr.io/${{ github.repository_owner }}/sol-migration-runner
     steps:
+      # The tagged tree on both paths: the archive is built from the revision the
+      # version names, never from the default branch.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version || github.ref_name }}
+          fetch-depth: 0
+
+      # A version is published once, and only from its own tag: this refuses a
+      # branch, a version whose release already exists, and a checkout that is not
+      # the tag's commit, before anything is built.
+      - name: Require a tag and an unpublished version
+        id: revision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          revision="$(git rev-parse HEAD)"
+          if ! git rev-parse --verify --quiet "refs/tags/$VERSION^{commit}" >/dev/null; then
+            echo "::error::$VERSION is not a tag; refusing to publish a version that names a branch"
+            exit 1
+          fi
+          if [ "$(git rev-parse "refs/tags/$VERSION^{commit}")" != "$revision" ]; then
+            echo "::error::$VERSION does not point at the checked-out revision $revision"
+            exit 1
+          fi
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::$VERSION is already published, and a version is published once"
+            exit 1
+          fi
+          echo "revision=$revision" >>"$GITHUB_OUTPUT"
+          echo "publishing $VERSION from $revision"
 
       - name: Install system dependencies
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
@@ -74,18 +113,22 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # The runner image is published once and never overwritten: if the tag is
+      # already in the registry this reuses its digest, so an interrupted publish
+      # resumes instead of failing (BUG-204). The digest is what Sol consumes, and
+      # it cannot move once pushed (SEC-011).
       - name: Publish the migration runner, once
         id: runner
         run: |
-          if docker manifest inspect "$RUNNER_REPO:$VERSION" >/dev/null 2>&1; then
-            echo "::error::$RUNNER_REPO:$VERSION already exists; a release version is published once"
-            exit 1
+          if docker pull --quiet "$RUNNER_REPO:$VERSION" >/dev/null 2>&1; then
+            echo "$RUNNER_REPO:$VERSION is already published; reusing its digest rather than overwriting it"
+          else
+            docker build -f internal/tooling/release/migration-runner.Dockerfile \
+              -t "$RUNNER_REPO:$VERSION" "$RUNNER_TEMP/runner"
+            docker push "$RUNNER_REPO:$VERSION"
           fi
-          docker build -f internal/tooling/release/migration-runner.Dockerfile \
-            -t "$RUNNER_REPO:$VERSION" "$RUNNER_TEMP/runner"
-          docker push "$RUNNER_REPO:$VERSION"
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$RUNNER_REPO:$VERSION")"
-          [[ "$digest" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for the pushed runner ($digest)"; exit 1; }
+          [[ "$digest" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for the published runner ($digest)"; exit 1; }
           echo "image=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Build the release archive
@@ -105,10 +148,48 @@ jobs:
             "${{ steps.bundle.outputs.archive }}" "$VERSION" \
             "${{ steps.runner.outputs.image }}" "$RUNNER_TEMP/sol-dev"
 
+      # GitHub rejects a release body over 125000 characters, and the generated
+      # changelog carries one entry per merged pull request since the previous
+      # release, so its length is unbounded. The body keeps the first $limit
+      # characters on a line boundary and points at the full compare range
+      # (BUG-204).
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          limit=100000
+          notes="$RUNNER_TEMP/generated-notes.md"
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$VERSION" --jq .body >"$notes" 2>/dev/null; then
+            echo "::warning::could not generate the changelog; publishing the runner digest and the compare range only"
+            : >"$notes"
+          fi
+          previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // ""' 2>/dev/null || true)"
+          if [ -z "$previous" ]; then
+            compare="https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
+          else
+            compare="https://github.com/$GITHUB_REPOSITORY/compare/$previous...$VERSION"
+          fi
+          if [ "$(wc -c <"$notes")" -gt "$limit" ]; then
+            echo "::warning::the generated changelog is $(wc -c <"$notes") characters; keeping the first $limit at a line boundary"
+            awk -v limit="$limit" -v compare="$compare" '
+              BEGIN { used = 0; truncated = 0 }
+              truncated { next }
+              {
+                if (used + length($0) + 1 > limit) {
+                  printf "\nThis changelog is longer than a release body may be; the full range is at <%s>.\n", compare
+                  truncated = 1
+                  next
+                }
+                used += length($0) + 1
+                print
+              }' "$notes" >"$notes.bounded"
+            mv "$notes.bounded" "$notes"
+          fi
+          {
+            printf 'Sol %s, from `%s`.\n\n' "$VERSION" "${{ steps.revision.outputs.revision }}"
+            printf 'Migration runner: `%s`\n\n' "${{ steps.runner.outputs.image }}"
+            cat "$notes"
+          } >"$RUNNER_TEMP/release-body.md"
           gh release create "$VERSION" "${{ steps.bundle.outputs.archive }}" \
-            --title "Sol $VERSION" --generate-notes \
-            --notes "Migration runner: \`${{ steps.runner.outputs.image }}\`"
+            --title "Sol $VERSION" --notes-file "$RUNNER_TEMP/release-body.md"
