@@ -286,11 +286,12 @@ let record_release_and_prune ~workspace ~keep ~previous ~retained plan =
 let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
     let* () =
-      Sol_cli_contract.report
-        ~workspace:repo_root
-        ~registry_url:"http://localhost:8081"
-        ~scope:plan.Sol_cli_deployment_plan.requested_scope
-        ~mode:Sol_cli_contract.Apply
+      Sol_cli_local_platform.with_schema_registry_endpoint (fun ~url ->
+        Sol_cli_contract.report
+          ~workspace:repo_root
+          ~registry_url:url
+          ~scope:plan.Sol_cli_deployment_plan.requested_scope
+          ~mode:Sol_cli_contract.Apply)
     in
     plan.services
     |> List.fold_left

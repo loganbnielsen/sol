@@ -228,6 +228,67 @@ type endpoint =
   }
 
 let ingress_local_port = 8088
+let schema_registry_service = "redpanda"
+let schema_registry_remote_port = 8081
+
+let schema_registry_forward =
+  { Sol_cli_port_forward.name = "schema-registry"
+  ; namespace = schema_registry_service
+  ; target = "svc/" ^ schema_registry_service
+  ; local_port = 8081
+  ; remote_port = schema_registry_remote_port
+  }
+;;
+
+let schema_registry_summary =
+  Printf.sprintf
+    "  schema-reg   ✓  http://localhost:%d"
+    schema_registry_forward.local_port
+;;
+
+let free_local_port () =
+  let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close socket)
+    (fun () ->
+       Unix.bind socket (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+       match Unix.getsockname socket with
+       | Unix.ADDR_INET (_, port) -> port
+       | Unix.ADDR_UNIX _ -> 0)
+;;
+
+let with_schema_registry_endpoint f =
+  let local_port = free_local_port () in
+  match
+    Sol_cli_kubectl.temporary_port_forward
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~service:schema_registry_service
+      ~namespace:schema_registry_forward.namespace
+      ~local_port
+      ~remote_port:schema_registry_forward.remote_port
+  with
+  | Ok () -> f ~url:(Printf.sprintf "http://localhost:%d" local_port)
+  | Error (Not_started e) ->
+    Error
+      ("could not reach the cluster's schema registry ("
+       ^ schema_registry_service
+       ^ "/"
+       ^ schema_registry_service
+       ^ ":"
+       ^ string_of_int schema_registry_forward.remote_port
+       ^ "): "
+       ^ Sol_cli_process.error_to_string e)
+  | Error Not_ready ->
+    Error
+      (Printf.sprintf
+         "the port-forward to the cluster's schema registry did not become ready on \
+          localhost:%d"
+         local_port)
+  | Error (Readiness_check_failed message) ->
+    Error
+      ("the schema registry this deploy would register against is not the cluster's: "
+       ^ message)
+;;
 
 let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
   let endpoint name ~namespace ~target ~local_port ~remote_port summary =
@@ -246,13 +307,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
           ~local_port:9092
           ~remote_port:9094
           "  kafka        ✓  localhost:9092  (port-forwarded)"
-      ; endpoint
-          "schema-registry"
-          ~namespace:"redpanda"
-          ~target:"svc/redpanda"
-          ~local_port:8081
-          ~remote_port:8081
-          "  schema-reg   ✓  http://localhost:8081"
+      ; { forward = schema_registry_forward; summary = schema_registry_summary }
       ]
     else []
   in
