@@ -5,6 +5,8 @@ CONTAINER="redpanda"
 KAFKA_PORT="${KAFKA_PORT:-9092}"
 ADMIN_PORT="${ADMIN_PORT:-9644}"
 SCHEMA_REGISTRY_PORT="${SCHEMA_REGISTRY_PORT:-8081}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/images.sh"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
   echo "Redpanda already running (container: ${CONTAINER})"
@@ -21,7 +23,7 @@ docker run -d --name "${CONTAINER}" \
   -p "${KAFKA_PORT}:9092" \
   -p "${ADMIN_PORT}:9644" \
   -p "${SCHEMA_REGISTRY_PORT}:8081" \
-  docker.redpanda.com/redpandadata/redpanda:latest \
+  "$SOL_IMAGE_REDPANDA" \
   redpanda start \
   --overprovisioned \
   --smp 1 \

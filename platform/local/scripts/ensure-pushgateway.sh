@@ -3,6 +3,8 @@ set -euo pipefail
 
 NETWORK=sol-obs
 PUSHGATEWAY_PORT=9091
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/images.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -21,7 +23,7 @@ else
       --name pushgateway \
       --network "$NETWORK" \
       -p "${PUSHGATEWAY_PORT}:9091" \
-      prom/pushgateway:latest
+      "$SOL_IMAGE_PUSHGATEWAY"
   fi
 
   echo -n "Waiting for Pushgateway to be ready"
