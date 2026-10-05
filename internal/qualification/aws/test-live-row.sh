@@ -45,6 +45,7 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 printf 'sol %s [runner=%s] [home=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" "${SOL_HOME:-unset}" >>"$SOL_LOG"
+if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 exit 0
 STUB
   chmod +x "$dir/bin/sol"
@@ -262,6 +263,72 @@ run_phase() {
   echo "$?" >"$TMP/$name.rc"
 }
 
+run_phase_closed_stdout() {
+  local name="$1" phase="$2"
+  shift 2
+  export AWS_LOG="$TMP/$name.aws"
+  export KUBECTL_LOG="$TMP/$name.kubectl"
+  export DOCKER_LOG="$TMP/$name.docker"
+  export SOL_LOG="$TMP/$name.sol"
+  export TRANSPORT_LOG="$TMP/$name.transport"
+  export ESTABLISH_LOG="$TMP/$name.establish"
+  export TERRAFORM_LOG="$TMP/$name.terraform"
+  export LOG_DIR="$TMP/$name.logs"
+  : >"$AWS_LOG"
+  : >"$KUBECTL_LOG"
+  : >"$DOCKER_LOG"
+  : >"$SOL_LOG"
+  : >"$TRANSPORT_LOG"
+  : >"$ESTABLISH_LOG"
+  : >"$TERRAFORM_LOG"
+  rm -rf "$LOG_DIR"
+  env PATH="$TMP/bin:$PATH" \
+    WORKSPACE="$WORKSPACE" TARGET=qualreg/aws/us-east-1 ECR_REGISTRY="$ECR" \
+    CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
+    CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
+    OPERATOR_ROLE_ARN=arn:aws:iam::1:role/operator QUALIFIER_ROLE=qualifier \
+    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    "$ROOT/internal/qualification/aws/live-row.sh" "$phase" 2>"$TMP/$name.err" | true
+  local -a codes=("${PIPESTATUS[@]}")
+  printf '%s\n' "${codes[0]}" >"$TMP/$name.rc"
+}
+
+run_phase_sigterm() {
+  local name="$1" signal="$2" phase="$3"
+  shift 3
+  export AWS_LOG="$TMP/$name.aws"
+  export KUBECTL_LOG="$TMP/$name.kubectl"
+  export DOCKER_LOG="$TMP/$name.docker"
+  export SOL_LOG="$TMP/$name.sol"
+  export TRANSPORT_LOG="$TMP/$name.transport"
+  export ESTABLISH_LOG="$TMP/$name.establish"
+  export TERRAFORM_LOG="$TMP/$name.terraform"
+  export LOG_DIR="$TMP/$name.logs"
+  : >"$AWS_LOG"
+  : >"$KUBECTL_LOG"
+  : >"$DOCKER_LOG"
+  : >"$SOL_LOG"
+  : >"$TRANSPORT_LOG"
+  : >"$ESTABLISH_LOG"
+  : >"$TERRAFORM_LOG"
+  rm -rf "$LOG_DIR"
+  env PATH="$TMP/bin:$PATH" \
+    WORKSPACE="$WORKSPACE" TARGET=qualreg/aws/us-east-1 ECR_REGISTRY="$ECR" \
+    CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
+    CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
+    OPERATOR_ROLE_ARN=arn:aws:iam::1:role/operator QUALIFIER_ROLE=qualifier \
+    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    "$ROOT/internal/qualification/aws/live-row.sh" "$phase" >"$TMP/$name.out" 2>&1 &
+  local harness_pid=$! waited=0
+  while [ ! -e "$LOG_DIR/cloud-apply.log" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -"$signal" "$harness_pid" 2>/dev/null || true
+  wait "$harness_pid"
+  printf '%s\n' "$?" >"$TMP/$name.rc"
+}
+
 run_transaction() {
   local name="$1" scenario="$2"
   shift 2
@@ -440,6 +507,25 @@ has "and pushed under its k8s name" \
 has "the worker image too" \
   "docker push $ECR/pluto/fulfilment-worker:row-" "$TMP/alphaunits.docker"
 lacks "and no pre-campaign image is built" "charge-svc" "$TMP/alphaunits.docker"
+
+printf '\nscenario: the destroy phase survives a closed stdout reader and records the inventory\n'
+run_phase_closed_stdout destroyclosed destroy
+is "exit 0" "$(cat "$TMP/destroyclosed.rc")" "0"
+has "the teardown still ran" "cloud destroy qualreg/aws/us-east-1 --apply" "$TMP/destroyclosed.sol"
+exists "the independent inventory is captured" "$TMP/destroyclosed.logs/aws-inventory.txt"
+has "the harness writes its own narrative" "destroy returned success" \
+  "$TMP/destroyclosed.logs/harness.log"
+
+printf '\nscenario: SIGTERM during cloud tears down and records the independent inventory\n'
+run_phase_sigterm cloudterm TERM cloud STUB_SOL_SLEEP=2
+if [ "$(cat "$TMP/cloudterm.rc")" = "0" ]; then
+  no "a terminated cloud run exits non-zero" "non-zero" "0"
+else
+  ok "a terminated cloud run exits non-zero"
+fi
+has "the teardown runs" "cloud destroy qualreg/aws/us-east-1 --apply" "$TMP/cloudterm.sol"
+exists "the independent inventory is captured" "$TMP/cloudterm.logs/aws-inventory.txt"
+has "the harness records the signal" "received SIGTERM" "$TMP/cloudterm.logs/harness.log"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then
