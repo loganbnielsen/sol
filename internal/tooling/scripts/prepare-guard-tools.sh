@@ -3,8 +3,6 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 requirements="$root/internal/ci/requirements.txt"
-bindir="${HOME}/.local/bin"
-shfmt_version="v3.12.0"
 
 python_deps_present() {
   python3 -c 'import hcl2, yaml, lark, regex, tomli' 2>/dev/null
@@ -28,22 +26,4 @@ install_python_deps() {
   }
 }
 
-install_shfmt() {
-  if [ -x "$bindir/shfmt" ] && "$bindir/shfmt" --version 2>/dev/null | grep -qx "$shfmt_version"; then
-    echo "shfmt $shfmt_version: already installed"
-    return 0
-  fi
-  mkdir -p "$bindir"
-  curl -fsSL -o "$bindir/shfmt" \
-    "https://github.com/mvdan/sh/releases/download/${shfmt_version}/shfmt_${shfmt_version}_linux_amd64"
-  chmod +x "$bindir/shfmt"
-  "$bindir/shfmt" --version
-}
-
 install_python_deps
-install_shfmt
-
-case ":${PATH}:" in
-  *":${bindir}:"*) ;;
-  *) echo "prepare-guard-tools: add ${bindir} to PATH for check_no_comments.sh to find shfmt" ;;
-esac
