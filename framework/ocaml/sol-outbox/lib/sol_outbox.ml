@@ -52,15 +52,18 @@ module Q = struct
   let delete = (int64 ->. unit) (Printf.sprintf "DELETE FROM %s WHERE id = ?" table)
 
   let pending_by_kind =
-    (unit ->* t2 string int)
-      (Printf.sprintf "SELECT kind, count(*) FROM %s GROUP BY kind" table)
+    (string ->* t2 string int)
+      (Printf.sprintf
+         "SELECT kind, count(*) FROM %s WHERE kind = ANY(string_to_array(?, ',')) GROUP \
+          BY kind"
+         table)
   ;;
 
   let oldest_age_by_kind =
-    (unit ->* t2 string float)
+    (string ->* t2 string float)
       (Printf.sprintf
-         "SELECT kind, extract(epoch from (now() - min(created_at))) FROM %s GROUP BY \
-          kind"
+         "SELECT kind, extract(epoch from (now() - min(created_at))) FROM %s WHERE kind \
+          = ANY(string_to_array(?, ',')) GROUP BY kind"
          table)
   ;;
 
@@ -79,6 +82,10 @@ let pending pool ?(limit = 1000) () = Pg_db.collect pool Q.pending_list limit
 
 let pending_count pool =
   Pg_db.find pool Q.pending_count () |> Result.map (Option.value ~default:0)
+;;
+
+let scoped_snapshot ~kinds rows =
+  List.map (fun kind -> kind, Option.value (List.assoc_opt kind rows) ~default:0.0) kinds
 ;;
 
 module type EVENT = sig
@@ -107,22 +114,31 @@ module Make (E : EVENT) = struct
         ~pool
         ~(pending_gauge : Obs_eio.gauge_fn option)
         ~(age_gauge : Obs_eio.gauge_fn option)
+        ~on_error
     =
+    let kinds = String.concat "," E.kinds in
     (match pending_gauge with
      | None -> ()
      | Some gauge ->
-       (match Pg_db.collect pool Q.pending_by_kind () with
-        | Error _ -> ()
+       (match Pg_db.collect pool Q.pending_by_kind kinds with
+        | Error e ->
+          on_error ("sol_outbox_pending snapshot failed: " ^ Pg_error.to_string e)
         | Ok rows ->
+          let rows = List.map (fun (kind, count) -> kind, float_of_int count) rows in
           List.iter
-            (fun (kind, count) -> gauge ~labels:[ "kind", kind ] (float_of_int count))
-            rows));
+            (fun (kind, value) -> gauge ~labels:[ "kind", kind ] value)
+            (scoped_snapshot ~kinds:E.kinds rows)));
     match age_gauge with
     | None -> ()
     | Some gauge ->
-      (match Pg_db.collect pool Q.oldest_age_by_kind () with
-       | Error _ -> ()
-       | Ok rows -> List.iter (fun (kind, age) -> gauge ~labels:[ "kind", kind ] age) rows)
+      (match Pg_db.collect pool Q.oldest_age_by_kind kinds with
+       | Error e ->
+         on_error
+           ("sol_outbox_oldest_pending_seconds snapshot failed: " ^ Pg_error.to_string e)
+       | Ok rows ->
+         List.iter
+           (fun (kind, value) -> gauge ~labels:[ "kind", kind ] value)
+           (scoped_snapshot ~kinds:E.kinds rows))
   ;;
 
   let relay
@@ -248,7 +264,7 @@ module Make (E : EVENT) = struct
             then Ok ()
             else
               let* () = drain () in
-              report_metrics ~pool ~pending_gauge ~age_gauge;
+              report_metrics ~pool ~pending_gauge ~age_gauge ~on_error:warn;
               if should_stop ()
               then Ok ()
               else (
@@ -262,4 +278,5 @@ end
 module For_testing = struct
   let pending = pending
   let pending_count = pending_count
+  let scoped_snapshot = scoped_snapshot
 end

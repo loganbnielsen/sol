@@ -53,4 +53,9 @@ module For_testing : sig
     -> ((string * int64) list, Pg_error.t) result
 
   val pending_count : Pg_db.pool -> (int, Pg_error.t) result
+
+  val scoped_snapshot
+    :  kinds:string list
+    -> (string * float) list
+    -> (string * float) list
 end

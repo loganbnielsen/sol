@@ -191,6 +191,12 @@ unbounded cardinality, and a key that is blocked raises its kind's oldest-pendin
 immediately — which is the signal an alert needs. Alert on
 `sol_outbox_oldest_pending_seconds` crossing a threshold.
 
+Both gauges are a complete snapshot of the relay's own `E.kinds`: every declared kind is emitted on
+every successful sample, so a drained or never-used kind reports `0` instead of keeping a stale
+positive value, and a kind owned by another relay is never emitted. A failed snapshot query emits
+nothing for that gauge and warns with the database error, so a query failure is never reported as
+a zero backlog.
+
 ## What it does not prove, and is not
 
 - The ordering guarantee is as good as the caller's `ord`. Passing an insertion counter
