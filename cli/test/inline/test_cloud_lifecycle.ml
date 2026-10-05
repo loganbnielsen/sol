@@ -946,6 +946,7 @@ let test_deferred () =
      platform_plan_phases
        ~cluster_exists:false
        ~rbac_established:false
+       ~install_window_open:false
        ~crds_established:false
    with
    | Deferred _, Deferred _ -> ()
@@ -954,6 +955,7 @@ let test_deferred () =
      platform_plan_phases
        ~cluster_exists:true
        ~rbac_established:false
+       ~install_window_open:false
        ~crds_established:false
    with
    | Deferred _, Deferred _ -> ()
@@ -962,18 +964,69 @@ let test_deferred () =
      platform_plan_phases
        ~cluster_exists:true
        ~rbac_established:true
+       ~install_window_open:false
        ~crds_established:false
    with
    | Plannable, Deferred _ -> ()
    | _ -> Windtrap.fail "existing cluster must plan prerequisites only");
+  (match
+     platform_plan_phases
+       ~cluster_exists:true
+       ~rbac_established:true
+       ~install_window_open:false
+       ~crds_established:true
+   with
+   | Plannable, Deferred reason ->
+     if not (Sol_cli_string.contains ~needle:"installation window" reason)
+     then
+       Windtrap.fail
+         ("a steady-state plan must defer the whole-root platform on the install window, \
+           but said: "
+          ^ reason)
+   | _ ->
+     Windtrap.fail
+       "a steady-state plan without the install window must defer the whole-root platform");
+  (match
+     platform_plan_phases
+       ~cluster_exists:true
+       ~rbac_established:false
+       ~install_window_open:true
+       ~crds_established:true
+   with
+   | Plannable, Plannable -> ()
+   | _ -> Windtrap.fail "the install window must make both platform phases plannable");
   match
     platform_plan_phases
       ~cluster_exists:true
-      ~rbac_established:true
-      ~crds_established:true
+      ~rbac_established:false
+      ~install_window_open:true
+      ~crds_established:false
   with
-  | Plannable, Plannable -> ()
-  | _ -> Windtrap.fail "fully established cluster must plan both phases"
+  | Plannable, Deferred _ -> ()
+  | _ ->
+    Windtrap.fail
+      "the install window with unestablished CRDs must still defer the substrate"
+;;
+
+let test_install_window_open () =
+  let open L in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"both bootstrap-only capabilities permitted means the install window is open"
+    true
+    (install_window_open ~can_i:(fun _ -> true));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a denied bootstrap-only capability means the install window is closed"
+    false
+    (install_window_open ~can_i:(fun args -> List.mem "bind" args |> not));
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:
+      "the window is probed through the bootstrap-only capabilities, not the steady state"
+    [ "escalate clusterroles"; "bind clusterroles" ]
+    (install_window_authorization_checks
+     |> List.map (fun (_, args) -> String.concat " " args))
 ;;
 
 let converged_cluster provider =
@@ -1870,6 +1923,11 @@ let%test "contracts: separate backends" = test_backends ()
 let%test "contracts: provider-shaped cloud target" = test_cloud_target ()
 let%test "contracts: provider-specific platform root" = test_platform_root_selection ()
 let%test "contracts: deferred plan" = test_deferred ()
+
+let%test "contracts: the install window is the bootstrap-only capability set" =
+  test_install_window_open ()
+;;
+
 let%test "contracts: readiness predicates" = test_readiness_fails_each_predicate ()
 
 let%test "contracts: a declared certificate gates Ready (DEC-056)" =

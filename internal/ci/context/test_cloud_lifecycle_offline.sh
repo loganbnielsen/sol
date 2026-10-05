@@ -484,12 +484,83 @@ if ! plan "$log"; then
   exit 1
 fi
 grep -F -- '-target=module.platform.helm_release.cert_manager' "$log" >/dev/null
-grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' | grep -v -- '-target=' >/dev/null
-if grep -F 'DEFERRED' "$log.out" >/dev/null; then
-  echo "cloud plan deferred a phase on a fully established target" >&2
+if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' \
+    | grep -v -- '-target=' >/dev/null; then
+  echo "cloud plan planned the whole-root platform although no installation window is open:" >&2
+  cat "$log" >&2
   exit 1
 fi
+grep -F 'requires the installation window that `sol cloud apply` opens' "$log.out" >/dev/null || {
+  echo "cloud plan did not report the whole-root platform deferred on the installation window:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+grep -F 'DEFERRED' "$log.out" >/dev/null || {
+  echo "cloud plan did not report the deferred whole-root platform phase:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
 no_plan_mutation "$log"
+
+window_log="$tmp/plan-window-open.log"
+if ! (export WINDOW_OPEN=1; plan "$window_log"); then
+  cat "$window_log.out" >&2
+  echo "cloud plan failed while the installation window was open" >&2
+  exit 1
+fi
+grep -F 'terraform ' "$window_log" | grep 'cloud/[a-z]*/platform.* plan ' \
+  | grep -v -- '-target=' >/dev/null || {
+  echo "cloud plan did not plan the whole-root platform while the window was open:" >&2
+  cat "$window_log" >&2
+  exit 1
+}
+if grep -F 'DEFERRED' "$window_log.out" >/dev/null; then
+  echo "cloud plan deferred a phase while the installation window was open:" >&2
+  cat "$window_log.out" >&2
+  exit 1
+fi
+no_plan_mutation "$window_log"
+
+retry_fail_log="$tmp/retry-platform-failure.log"
+rm -f "$FAIL_MARKER_DIR/platform"
+if (export FAIL_ON=platform; run_apply "$retry_fail_log"); then
+  echo "the injected platform failure did not fail the apply" >&2
+  cat "$retry_fail_log.out" >&2
+  exit 1
+fi
+retry_plan_log="$tmp/retry-plan.log"
+if ! plan "$retry_plan_log"; then
+  cat "$retry_plan_log.out" >&2
+  echo "cloud plan after a failed platform install must exit zero, not fail on authorization" >&2
+  exit 1
+fi
+if grep -Fi 'forbidden' "$retry_plan_log.out" >/dev/null; then
+  echo "cloud plan after a failed platform install surfaced an authorization failure:" >&2
+  cat "$retry_plan_log.out" >&2
+  exit 1
+fi
+grep -F 'requires the installation window that `sol cloud apply` opens' \
+  "$retry_plan_log.out" >/dev/null || {
+  echo "the retry plan did not name the installation window as the deferred prerequisite:" >&2
+  cat "$retry_plan_log.out" >&2
+  exit 1
+}
+retry_resume_log="$tmp/retry-resume.log"
+if ! (export FAIL_ON=""; run_apply "$retry_resume_log"); then
+  cat "$retry_resume_log.out" >&2
+  echo "cloud apply did not resume after the failed platform install" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: Ready' "$retry_resume_log.out" >/dev/null || {
+  echo "the resumed apply did not reach Ready:" >&2
+  cat "$retry_resume_log.out" >&2
+  exit 1
+}
+grep -F -- 'provisioner_bootstrap_admin=true' "$retry_resume_log" >/dev/null || {
+  echo "the resumed apply did not reopen the temporary installation window:" >&2
+  cat "$retry_resume_log" >&2
+  exit 1
+}
 
 log="$tmp/plan-fail.log"
 rm -f "$tmp/markers/plan"

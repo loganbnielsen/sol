@@ -157,6 +157,11 @@ let provisioner_rbac_established env =
     process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
 ;;
 
+let install_window_open env =
+  Sol_cli_cloud_lifecycle.install_window_open ~can_i:(fun args ->
+    process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
+;;
+
 let platform_prerequisite_targets =
   let address = Sol_cli_cloud_lifecycle.platform_address in
   Sol_cli_terraform.targets
@@ -687,12 +692,16 @@ let plan ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs) =
                    refusing to report an unavailable cluster credential as a deferred \
                    phase")
          in
+         let install_window_open = install_window_open env in
          let rbac_established = provisioner_rbac_established env in
-         let crds_established = rbac_established && crds_established env in
+         let crds_established =
+           (rbac_established || install_window_open) && crds_established env
+         in
          let prerequisites, substrate =
            Sol_cli_cloud_lifecycle.platform_plan_phases
              ~cluster_exists:true
              ~rbac_established
+             ~install_window_open
              ~crds_established
          in
          let* () =

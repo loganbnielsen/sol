@@ -42,7 +42,8 @@ case " $* " in
           printf 'maybe\n'
           exit 0
         fi
-        if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+        if [ "${WINDOW_OPEN:-}" = 1 ] ||
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
           printf 'yes\n'
           exit 0
         fi

@@ -53,6 +53,16 @@ platform phases `Deferred` because granting temporary bootstrap access would be
 a mutation. Apply grants that access for the bootstrap window and removes it
 after the RBAC exists.
 
+That window remains a prerequisite of planning the *whole-root* platform
+substrate, not only of the first install: the platform root manages objects in
+`default` and `kube-system` that the steady-state provisioner's namespaced
+bindings deliberately do not cover, so a read-only plan cannot refresh them. On
+an established target with the window closed, plan reports the platform
+prerequisites `Plannable` (or `Deferred` on their own prerequisites) and the
+platform substrate `Deferred` with the window as the missing prerequisite, naming
+`sol cloud apply` as the command that opens it. Planning still never opens the
+window itself.
+
 Exit status is defined as follows:
 
 - zero: every currently plannable phase planned successfully; explicitly
