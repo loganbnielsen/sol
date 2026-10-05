@@ -374,6 +374,70 @@ let await_platform_readiness ~provider ~env =
 
 let confirm_guarded_removal_flag = "confirm-ecr-removal"
 
+let required_platform_credentials ~assets ~platform_vars =
+  match Sol_cli_cloud_lifecycle.profile_of_platform_vars platform_vars with
+  | None -> Ok []
+  | Some platform_profile ->
+    (match Yojson.Safe.from_file (Sol_cli_platform_assets.components_json assets) with
+     | json ->
+       Ok
+         (Sol_cli_cloud_lifecycle.platform_credentials_of_components
+            ~platform_profile
+            json)
+     | exception _ ->
+       Error
+         "the platform's operator-supplied credential prerequisites could not be read \
+          from platform/shared/components.json, so Sol cannot check them before the \
+          platform install")
+;;
+
+let verify_platform_prerequisites ~assets ~env ~platform_vars =
+  let open Result.Syntax in
+  let* required =
+    required_platform_credentials ~assets ~platform_vars
+    |> Result.map_error (fun message -> Sol_cli_cloud_apply.Refused message)
+  in
+  let investigate (credential : Sol_cli_cloud_lifecycle.platform_credential) =
+    let argv =
+      [ "kubectl"
+      ; "get"
+      ; "secret"
+      ; credential.secret
+      ; "-n"
+      ; credential.namespace
+      ; "-o"
+      ; "name"
+      ]
+    in
+    match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+    | Ok _ -> Sol_cli_cloud_lifecycle.Credential_present
+    | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
+      Sol_cli_cloud_lifecycle.credential_presence
+        ~exit_code
+        ~output:(stderr ^ " " ^ stdout)
+    | Error error ->
+      Sol_cli_cloud_lifecycle.Credential_unverifiable
+        (Sol_cli_process.error_to_string error)
+  in
+  List.fold_left
+    (fun accumulated (credential : Sol_cli_cloud_lifecycle.platform_credential) ->
+       let* () = accumulated in
+       match investigate credential with
+       | Sol_cli_cloud_lifecycle.Credential_present -> Ok ()
+       | Sol_cli_cloud_lifecycle.Credential_absent ->
+         Error
+           (Sol_cli_cloud_apply.Refused
+              (Sol_cli_cloud_lifecycle.missing_platform_credential_message credential))
+       | Sol_cli_cloud_lifecycle.Credential_unverifiable reason ->
+         Error
+           (Sol_cli_cloud_apply.Refused
+              (Sol_cli_cloud_lifecycle.unverifiable_platform_credential_message
+                 credential
+                 reason)))
+    (Ok ())
+    required
+;;
+
 let apply_deps
       ~assets
       ~confirm_ecr_removal
@@ -533,6 +597,8 @@ let apply_deps
           ; "crd/clusterissuers.cert-manager.io"
           ; "--timeout=180s"
           ])
+  ; verify_platform_prerequisites =
+      (fun env platform_vars -> verify_platform_prerequisites ~assets ~env ~platform_vars)
   ; apply_platform =
       platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
   ; await_readiness = (fun env -> await_platform_readiness ~provider ~env)

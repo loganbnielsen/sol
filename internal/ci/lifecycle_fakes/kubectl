@@ -74,6 +74,18 @@ case " $* " in
     esac
 esac
 case " $* " in
+  *" get secret redpanda-users -n redpanda "*)
+    if [ "${PLATFORM_CREDENTIAL_ABSENT:-}" = 1 ]; then
+      printf 'Error from server (NotFound): secrets "redpanda-users" not found\n' >&2
+      exit 1
+    fi
+    if [ "${PLATFORM_CREDENTIAL_UNVERIFIABLE:-}" = 1 ]; then
+      printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+      exit 1
+    fi
+    printf 'secret/redpanda-users\n'
+    exit 0
+    ;;
   *" get deployment -n "*)
     if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
       printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2

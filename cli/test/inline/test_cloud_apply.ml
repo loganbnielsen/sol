@@ -68,6 +68,7 @@ let deps calls : (unit, unit, unit) A.deps =
         calls.prerequisites_applied <- true;
         Ok ())
   ; await_crds = (fun () -> true)
+  ; verify_platform_prerequisites = (fun () _ -> Ok ())
   ; apply_platform =
       (fun () _ ->
         calls.events <- "apply_platform" :: calls.events;
@@ -375,6 +376,45 @@ let test_disk_quota_unreadable_refuses () =
     calls.platform_applied
 ;;
 
+let test_missing_platform_prerequisite_refuses_before_the_platform () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with
+      verify_platform_prerequisites =
+        (fun () _ ->
+          calls.events <- "verify_platform_prerequisites" :: calls.events;
+          Error
+            (A.Refused
+               "the platform install cannot start: the operator-supplied Secret \
+                redpanda-users is absent from namespace redpanda"))
+    }
+  in
+  let message, cleanup = failed_with (A.execute ~deps) in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the refusal names the operator-supplied prerequisite"
+    true
+    (Sol_cli_string.contains ~needle:"redpanda-users" message);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the platform was never applied on a missing prerequisite"
+    false
+    calls.platform_applied;
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:
+      "the prerequisite check sits between the namespace/RBAC apply and the platform \
+       apply"
+    [ "substrate_supported"
+    ; "cloud_ready"
+    ; "observe_disk_quota"
+    ; "apply_prerequisites"
+    ; "verify_platform_prerequisites"
+    ]
+    (List.rev calls.events);
+  cleanup_is `Succeeded cleanup
+;;
+
 let%test "execute: happy path" = test_happy_path ()
 
 let%test "execute: failure in the window removes it" =
@@ -432,3 +472,9 @@ let%test "execute: an unobserved quota is reported, not passed off as room" =
 ;;
 
 let%test "execute: an unreadable quota refuses" = test_disk_quota_unreadable_refuses ()
+
+let%test
+    "execute: a missing operator-supplied platform credential refuses before the platform"
+  =
+  test_missing_platform_prerequisite_refuses_before_the_platform ()
+;;
