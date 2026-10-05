@@ -75,6 +75,13 @@ ordinary development; follow `internal/qualification/README.md` when a claim req
 - package-local docs — package-specific public/maintainer contracts.
 - `internal/qualification/` — qualification claims, procedures, and evidence.
 
+## Simplicity budget
+
+Repository-wide process or tooling must protect a concrete guarantee that Git, GitHub, or existing
+CI does not already provide. Prefer a simpler design or a test at the failure boundary over turning
+an incident into a permanent global rule. Historical state belongs in Git and pull requests unless
+it is a current product, architecture, or qualification authority.
+
 History belongs in Git and pull requests, not current instructions. If prose conflicts
 with executable behavior, verify the implementation and fix or remove the stale prose
 rather than adding another authority.
