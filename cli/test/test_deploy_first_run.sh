@@ -310,10 +310,25 @@ for argument in "\$@"; do
 done
 case " \$* " in
   *" state list "*)
+    if [ -f "$tmp/unreadable-state" ]; then
+      printf '%s\n' 'Error: the backend could not be reached' >&2
+      exit 1
+    fi
+    if [ -f "$tmp/fresh-state" ]; then
+      printf '%s\n' 'No state file was found!' >&2
+      exit 1
+    fi
     case "\$tf_chdir" in
       *cloud/aws/cluster*) printf '%s\n' 'module.eks.aws_eks_cluster.this[0]' ;;
       *) printf '%s\n' 'aws_s3_bucket.state' ;;
     esac
+    exit 0
+    ;;
+  *" state pull "*)
+    if [ -f "$tmp/unreadable-state" ]; then
+      printf '%s\n' 'Error: the backend could not be reached' >&2
+      exit 1
+    fi
     exit 0
     ;;
   *" init "*) exit 0 ;;
@@ -541,6 +556,31 @@ check_absent \
   "an installed account repeats no installation work" \
   "aws-bootstrap" \
   "$(terraform_log)"
+
+: >"$tmp/fresh-state"
+run "$tmp/bin-installed:$tmp/bin-tf:/usr/bin:/bin"
+check_absent \
+  "an environment with no state file yet is not reported as an unreadable one" \
+  "terraform state list failed" \
+  "$output"
+check_contains \
+  "a never-applied environment is provisioned anyway" \
+  " apply " \
+  "$(terraform_log)"
+rm -f "$tmp/fresh-state"
+
+: >"$tmp/unreadable-state"
+run "$tmp/bin-installed:$tmp/bin-tf:/usr/bin:/bin"
+check "a state that cannot be read at all still fails closed" 1 "$rc"
+check_contains \
+  "and the run names the read that failed" \
+  "terraform state list failed" \
+  "$output"
+check_absent \
+  "a genuinely unreadable state does not provision" \
+  " apply " \
+  "$(terraform_log)"
+rm -f "$tmp/unreadable-state"
 
 run_with stale/aws/us-east-1 "$tmp/bin-installed:$tmp/bin-kubectl:/usr/bin:/bin" --confirm-group-change
 check "a target whose cluster is unreachable exits 1" 1 "$rc"
