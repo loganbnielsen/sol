@@ -106,6 +106,12 @@ publish and a plain producer carries no fencing token. Scaling is a trigger, not
 when measured relay throughput is inadequate, an ownership/fencing mechanism is spiked then.
 No mechanism is chosen in advance.
 
+`E.kinds` is the declaration and selection contract. The relay refuses to start when it is empty
+or contains a duplicate, and publication refuses a kind that is empty or contains a comma: the
+relay selects kinds through a comma-separated list, so such a name could be committed but never
+selected. Kinds are otherwise unconstrained (the current `OrderPlaced`/`OrderFulfilled` names are
+valid), and the same rule guards both the producer and the relay.
+
 ## Public API
 
 ```ocaml

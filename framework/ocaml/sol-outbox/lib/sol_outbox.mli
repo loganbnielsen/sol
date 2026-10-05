@@ -58,4 +58,7 @@ module For_testing : sig
     :  kinds:string list
     -> (string * float) list
     -> (string * float) list
+
+  val kind_is_selectable : string -> bool
+  val validate_kinds : string list -> run_error option
 end
