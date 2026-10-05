@@ -49,11 +49,12 @@ carry the attempt, target and state key.
 
 ## Checks
 
-- `internal/qualification/gcp/test-live-qual.sh` — 290 passed, including new scenarios:
+- `internal/qualification/gcp/test-live-qual.sh` — 292 passed, including new scenarios:
   an occupied state key refused with nothing applied or torn down; an evidence directory
   for another attempt refused; a credential for a replaced same-name cluster reported as
   no credential, with the endpoint-binding reason; the attempt identity asserted on every
-  API-readiness sample, in the manifest and in the provider inventory.
+  API-readiness sample, in the manifest and in the provider inventory; and the failure
+  capture completing when the cluster is absent (the endpoint read must not end it).
 - `internal/qualification/aws/test-live-row.sh` — 87 passed, including the same occupied-key,
   foreign-directory, replaced-endpoint and identity-in-inventory scenarios.
 - `python3 internal/qualification/gcp/test_observer.py` — 38 passed; the new checks bind a

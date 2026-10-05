@@ -1204,6 +1204,10 @@ present "$TMP/bundle-pre-platform.logs/state/cloud.tfstate" \
 has "the pre-platform stop is recorded as such" \
   "the platform root was never initialised" "$TMP/bundle-pre-platform.logs/evidence-manifest.txt" \
   || true
+present "$TMP/bundle-pre-platform.logs/platform-failure/capture-summary.txt" \
+  "the failure capture completes even when the cluster is absent"
+present "$TMP/bundle-pre-platform.logs/platform-failure/NO-KUBECONFIG.txt" \
+  "and records that no credential bound to this run existed"
 
 printf '\nscenario: a bundle that reached the platform still requires its state\n'
 run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists \

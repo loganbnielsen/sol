@@ -927,7 +927,7 @@ kubeconfig_has_cluster() {
 
 current_endpoint() {
   gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-    --format='value(endpoint)' 2>/dev/null | tr -d '\r'
+    --format='value(endpoint)' 2>/dev/null | tr -d '\r' || true
 }
 
 cluster_kubeconfig_waiter() {
