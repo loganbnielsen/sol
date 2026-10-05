@@ -533,8 +533,6 @@ bundle_manifest() {
     printf 'terraform state (durable) . %s\n' "$(artifact_status "$LOG_DIR/state/durable.tfstate")"
     printf 'inventory (pre-teardown) .. %s\n' "$(artifact_status "$LOG_DIR/inventory-pre.tsv")"
     printf 'inventory (post-teardown) . %s\n' "$(artifact_status "$LOG_DIR/inventory-post.tsv")"
-    printf 'discriminator class ....... %s\n' "$(artifact_status "$LOG_DIR/fnd0010-classification.txt")"
-    printf 'discriminator probes ...... %s file(s)\n' "$(find "$LOG_DIR" -maxdepth 1 -name 'fnd0010-*.log' 2>/dev/null | wc -l | tr -d ' ')"
     printf '\nphase transcripts:\n'
     for f in "$LOG_DIR"/*.log; do [ -e "$f" ] || continue; printf '  %s\n' "$(basename "$f")"; done
   } >"$m"
@@ -556,7 +554,7 @@ verify_bundle() {
   root_reached platform && required+=( "state/platform.tfstate" )
   [ "$TEARDOWN_ATTEMPTED" = "1" ] && required+=( "inventory-post.tsv" )
   case "$INSTALL_STATE" in
-    failed)    required+=( "fnd0010-classification.txt" ) ;;
+    failed)    ;;
     succeeded) required+=( "ready-phases.txt" ) ;;
     none) : ;;
   esac
