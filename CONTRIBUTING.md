@@ -179,6 +179,20 @@ guard and review of its contents passes while it sits on someone else's branch.
 git worktree add -b <TICKET-ID>/<short-slug> ../sol-<TICKET-ID>-<short-slug> main
 ```
 
+**Dependent tickets stack; they do not idle.** When ticket B's work needs ticket A's, branch B from A's branch and open B's PR against it instead of waiting for A's review and merge:
+
+```bash
+git worktree add -b <B-ID>/<short-slug> ../sol-<B-ID>-<short-slug> <A-ID>/<A-short-slug>
+```
+
+B's PR then contains only B's commits, and reviewing it does not mean reviewing A again. Before B lands, retarget it to `main` and reconcile A's final state into it — rebasing B onto the merged A is the normal case, not an exception:
+
+```bash
+gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -f base=main
+```
+
+Two limits. The order is not negotiable: a dependent PR never merges before its prerequisite, and `soldev pipeline merge` refuses a PR whose base branch has no required checks, so a stacked PR is retargeted rather than merged in place. And do not stack at all when the dependency is unresolved — a ticket still carrying `## Open Questions`, `## Decision Required` or `## Blocked On` — or when B's correct implementation depends on the outcome of A's review. That is a decision boundary rather than a merge boundary, and B waits.
+
 Before **every** commit and push, resolve and verify:
 
 - the **worktree** you are in, and that it is not the canonical checkout;
