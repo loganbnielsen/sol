@@ -45,14 +45,11 @@ echo "classify-changes: allowlist boundaries"
 check docs-only README.md
 check docs-only docs/foo.md
 check docs-only docs/architecture/deep/nested.md
-check docs-only internal/pipeline/tickets/DONE/FEAT-036.md
-check docs-only internal/pipeline/tickets/READY_FOR_ENGINEERING/DEC-025.md
 check docs-only README.md docs/foo.md
 
 echo
 echo "classify-changes: a verification input does not ride the docs-only path"
 check source internal/tooling/perf/perf_baseline.json
-check source docs/foo.md internal/pipeline/tickets/X.md internal/tooling/perf/perf_baseline.json
 check source internal/tooling/perf/perf_baseline.json cli/bin/main.ml
 
 echo
@@ -118,13 +115,11 @@ echo "classify-changes: a mixed-language diff is source"
 check source framework/ocaml/foo.ml examples/pluto/app/demo_ts/order_svc/src/index.ts
 check source examples/pluto/app/checkout/checkout_svc/main.ml examples/pluto/app/demo_ts/order_svc/src/index.ts
 check source framework/ocaml/foo.ml cli/lib/sol_cli.ml
-check ocaml framework/ocaml/foo.ml README.md internal/pipeline/tickets/DONE/X.md
 check typescript examples/pluto/app/demo_ts/order_svc/src/index.ts docs/foo.md
 
 echo
 echo "classify-changes: mixed diffs are source"
 check source README.md framework/foo.ml
-check source internal/pipeline/tickets/X.md package.json
 check source docs/foo.md .github/workflows/ci.yml
 check source internal/tooling/perf/perf_baseline.json cli/bin/main.ml
 
@@ -145,7 +140,6 @@ mkdir -p "$SCRATCH"
   scratch_repo_init .
   git config user.email test@example.com
   git config user.name test
-  mkdir -p docs internal/pipeline/tickets
   printf 'x\n' > README.md
   git add -A && git commit -qm base
   BASE="$(git rev-parse HEAD)"
