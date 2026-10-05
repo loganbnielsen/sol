@@ -171,8 +171,8 @@ let dev_down delete_cluster =
   then (
     let* () = check_tool "k3d" "https://k3d.io/" in
     Printf.printf "Deleting cluster %s...\n%!" Sol_cli_local_cluster.name;
-    Sol_cli_local_cluster.delete ();
-    Ok ())
+    let* () = Sol_cli_local_cluster.delete () |> Sol_cli_exit.of_msg in
+    Sol_cli_local_cluster.confirm_removed () |> Sol_cli_exit.of_msg)
   else (
     Printf.printf
       "Port-forwards stopped. Cluster %s is still running.\n"
