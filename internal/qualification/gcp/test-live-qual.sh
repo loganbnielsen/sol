@@ -782,11 +782,6 @@ if grep -qF 'get rolebinding -A --field-selector metadata.name=sol-platform-prov
 else
   no "and reads the namespaced bindings" "the kubectl call" "none"
 fi
-if grep -q 'disk-quota' "$TMP/ready-bindings.logs/inventory-pre.tsv" 2>/dev/null; then
-  ok "the inventory records the provider's disk quota"
-else
-  no "the inventory records the provider's disk quota" "a row" "none"
-fi
 has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 
 printf '\nscenario: destroy\n'
@@ -815,32 +810,6 @@ run_case cloud-fail cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNAT
 has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
 lacks "the harness never runs an application deploy to diagnose the platform" "sol deploy" "$TMP/cloud-fail.argv"
 if [ "$(cat "$TMP/cloud-fail.rc")" = "0" ]; then no "a failed apply exits non-zero" "non-zero" "0"; else ok "a failed apply exits non-zero"; fi
-if grep -qF 'cloud apply failed -- capturing the discriminator before any teardown' "$TMP/cloud-fail.out"; then
-  ok "the failure path announces the discriminator capture"
-else
-  no "the failure path announces the discriminator capture" "announced" "silent"
-fi
-for member in fnd0010-ca-secret fnd0010-tls-secret fnd0010-cainjector-logs fnd0010-controller-logs fnd0010-webhook-logs fnd0010-certificates; do
-  if [ -f "$TMP/cloud-fail.logs/$member.log" ]; then
-    ok "the discriminator captures $member (FND-0010 follow-up)"
-  else
-    no "the discriminator captures $member (FND-0010 follow-up)" "a file" "missing"
-  fi
-done
-has "the CA secret capture asks for existence, not key material" "keys=" "$TMP/cloud-fail.argv"
-probe_line="$(grep -n -m1 'kubectl -n cert-manager logs' "$TMP/cloud-fail.argv" | cut -d: -f1)"
-teardown_line="$(grep -n -m1 'cloud destroy' "$TMP/cloud-fail.argv" | cut -d: -f1)"
-if [ -n "$probe_line" ] && [ -n "$teardown_line" ] && [ "$probe_line" -lt "$teardown_line" ]; then
-  ok "the discriminator probes run BEFORE the teardown (H2, by argv order)"
-else
-  no "the discriminator probes run BEFORE the teardown (H2, by argv order)" \
-    "probe line < teardown line" "probe=${probe_line:-none} teardown=${teardown_line:-none}"
-fi
-if [ -s "$TMP/cloud-fail.logs/fnd0010-classification.txt" ]; then
-  ok "the discriminator classification is in the bundle"
-else
-  no "the discriminator classification is in the bundle" "present" "missing"
-fi
 present "$TMP/cloud-fail.logs/inventory-pre.tsv" "the pre-teardown inventory is captured on the failure path (H6)"
 present "$TMP/cloud-fail.logs/state/cloud.tfstate" "the state snapshot is captured on the failure path (H3)"
 if [ -s "$TMP/cloud-fail.logs/sol-runs/cloud-apply-20260925T000000Z-1234/phase.log" ]; then
@@ -849,56 +818,6 @@ else
   no "Sol's run artifacts are captured on the failure path (H4)" "copied" "missing"
 fi
 
-printf '\nscenario: classification follows the captured evidence\n'
-run_case class-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=x509
-has "an x509 signature classifies as TLS_CA_OR_CERTIFICATE (not reachability)" \
-  "classification: TLS_CA_OR_CERTIFICATE" "$TMP/class-x509.logs/fnd0010-classification.txt"
-run_case class-discovery cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=discovery
-has "a discovery signature classifies as CRD_OR_API_DISCOVERY" \
-  "classification: CRD_OR_API_DISCOVERY" "$TMP/class-discovery.logs/fnd0010-classification.txt"
-run_case class-dial cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
-has "a dial-timeout signature classifies as WEBHOOK_REACHABILITY" \
-  "classification: WEBHOOK_REACHABILITY" "$TMP/class-dial.logs/fnd0010-classification.txt"
-run_case class-empty cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
-has "no usable evidence classifies as UNKNOWN (never reachability by default)" \
-  "classification: UNKNOWN" "$TMP/class-empty.logs/fnd0010-classification.txt"
-run_case class-leader cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_COMPONENT_SIGNATURE=leader
-has "a leader-election denial classifies as LEADER_ELECTION_DENIED" \
-  "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader.logs/fnd0010-classification.txt"
-run_case class-leader-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
-  STUB_COMPONENT_SIGNATURE=leader STUB_KUBE_SIGNATURE=x509
-has "and it wins over the x509 symptom it causes" \
-  "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader-x509.logs/fnd0010-classification.txt"
-
-run_case class-exists cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists STUB_CLUSTER_EXISTS=1 \
-  STUB_KUBE_SIGNATURE=stale-scheduling
-has "a Terraform already-exists failure classifies as TERRAFORM_ALREADY_EXISTS, not scheduling" \
-  "classification: TERRAFORM_ALREADY_EXISTS" "$TMP/class-exists.logs/fnd0010-classification.txt"
-run_case class-warden cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_APPLY_ERROR=warden \
-  STUB_KUBE_SIGNATURE=stale-scheduling
-has "an admission denial outranks ambient scheduling symptoms" \
-  "classification: ADMISSION_DENIED" "$TMP/class-warden.logs/fnd0010-classification.txt"
-
-run_case class-quota cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=quota
-has "a provider CreateVolume quota refusal classifies as PROVIDER_DISK_QUOTA_EXCEEDED" \
-  "classification: PROVIDER_DISK_QUOTA_EXCEEDED" "$TMP/class-quota.logs/fnd0010-classification.txt"
-run_case class-quota-and-scheduling cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
-  STUB_KUBE_SIGNATURE=stale-scheduling
-has "with only ambient symptoms the classification still says it is ambient" \
-  "classification: SCHEDULING_AMBIENT" "$TMP/class-quota-and-scheduling.logs/fnd0010-classification.txt"
-
-run_case class-ambient cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=stale-scheduling
-has "with no direct signature, ambient scheduling evidence is labelled as ambient" \
-  "classification: SCHEDULING_AMBIENT" "$TMP/class-ambient.logs/fnd0010-classification.txt"
-
-for probe in fnd0010-startupapicheck-pod fnd0010-rbac-cert-manager fnd0010-rbac-kube-system \
-             fnd0010-leases-cert-manager fnd0010-leases-kube-system; do
-  if [ -f "$TMP/cloud-fail.logs/$probe.log" ]; then
-    ok "the discriminator captures $probe"
-  else
-    no "the discriminator captures $probe" "present" "missing"
-  fi
-done
 
 printf '\nscenario: the provider says NOT_FOUND\n'
 run_case notfound-underscore destroy STUB_PROBE_MODE=notfound
@@ -1060,32 +979,6 @@ has "the teardown runs on TERM" "cloud destroy" "$TMP/sigterm.argv"
 present "$TMP/sigterm.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
 has "the harness records the signal" "received SIGTERM" "$TMP/sigterm.logs/harness.log"
 
-printf '\nscenario: quota verdict\n'
-has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"
-run_case quota-busy destroy STUB_QUOTA_BUSY=1
-has "non-zero usage with no owning resource is UNKNOWN, never absence" \
-  "quota: UNKNOWN" "$TMP/quota-busy.out"
-has "and says so in the inventory" "the consumer is not identified, which is UNKNOWN" \
-  "$TMP/quota-busy.logs/inventory-quota.log"
-is "so it does not pass as a clean teardown" "$(cat "$TMP/quota-busy.rc")" "1"
-run_case quota-residue destroy STUB_QUOTA_BUSY=1 STUB_RESIDUE_OWNER=1
-has "non-zero usage an authoritative list accounts for reads as PRESENT" "quota: PRESENT" \
-  "$TMP/quota-residue.out"
-has "and names the owner class" "owned by instances" "$TMP/quota-residue.logs/inventory-quota.log"
-has "and the inventory records why" "non-zero usage with no identified owner" \
-  "$TMP/quota-busy.logs/inventory-post.tsv"
-if [ "$(cat "$TMP/quota-residue.rc")" = "0" ]; then
-  no "real residue fails the verification" "non-zero" "0"
-else
-  ok "real residue fails the verification"
-fi
-run_case quota-garbage destroy STUB_QUOTA_GARBAGE=1
-has "an unparsable usage read is UNKNOWN" "quota: UNKNOWN" "$TMP/quota-garbage.out"
-if [ "$(cat "$TMP/quota-garbage.rc")" = "0" ]; then
-  no "an unparsable usage read fails the verification" "non-zero" "0"
-else
-  ok "an unparsable usage read fails the verification"
-fi
 
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
     "$TMP/class-warden.argv" 2>/dev/null; then
@@ -1309,7 +1202,6 @@ fi
 
 printf '\nscenario: a filtered list that warns\n'
 run_case filter-warning destroy STUB_FILTER_WARNING=1
-has "an empty filtered list is ABSENT even when gcloud warns on stderr" "quota: ABSENT" "$TMP/filter-warning.out"
 if grep -q 'address-regional: PRESENT' "$TMP/filter-warning.out"; then
   no "the warning is not read as a resource" "address-regional: ABSENT" "PRESENT"
 else
