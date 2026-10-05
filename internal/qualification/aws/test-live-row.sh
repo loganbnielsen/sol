@@ -55,6 +55,7 @@ if [ "${1:-} ${2:-}" = "cloud apply" ] && [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}
   exit 1
 fi
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
+if [ "$1 $2" = "cloud bootstrap" ]; then exit "${STUB_BOOTSTRAP_RC:-0}"; fi
 exit 0
 STUB
   chmod +x "$dir/bin/sol"
@@ -436,6 +437,15 @@ run_transaction() {
     bash "$REPO/internal/qualification/aws/transport-transaction.sh" "$dir" >"$TMP/$name.out" 2>&1
   echo "$?" >"$TMP/$name.rc"
 }
+
+printf '\nscenario: installation failure stops cloud lifecycle at the supported interface\n'
+run_phase bootstrap-refused cloud STUB_BOOTSTRAP_RC=1
+refused bootstrap-refused "an unresolved installation refuses the cloud phase"
+has "the installed Sol command owns durable reconciliation" "sol cloud bootstrap qualreg/aws/us-east-1 --apply" "$TMP/bootstrap-refused.sol"
+lacks "cloud plan does not follow a failed bootstrap" "sol cloud plan" "$TMP/bootstrap-refused.sol"
+lacks "cloud apply does not follow a failed bootstrap" "sol cloud apply" "$TMP/bootstrap-refused.sol"
+[ ! -s "$TMP/bootstrap-refused.terraform" ] && ok "no direct Terraform operation runs" \
+  || no "no direct Terraform operation runs" absent present
 
 printf '\nscenario: the app phase runs the installed release bundle and hands Sol no runner\n'
 run_row ok TRANSPORT=0

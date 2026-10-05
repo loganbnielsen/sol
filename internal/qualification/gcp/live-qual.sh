@@ -93,7 +93,6 @@ source "$ROOT/internal/qualification/attempt.sh"
 case "${1:-}" in
   cloud | app | destroy | stop)
     sol_under_test_resolve
-    BOOTSTRAP_ROOT="$SOL_PLATFORM_ROOT/cloud/gcp/bootstrap"
     ;;
 esac
 
@@ -201,6 +200,7 @@ $TARGET_ENV:
     $TARGET_KEY:
       cluster_name: $CLUSTER
       base_domain: $BASE_DOMAIN
+      dns_zone_ownership: sol
       profile: $PROFILE_NAME
       letsencrypt_email: $LE_EMAIL
       cluster_issuer: $CLUSTER_ISSUER
@@ -269,56 +269,6 @@ destroy_vars() {
     "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
 }
 
-reconcile_durable_root() {
-  local base=(-backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp")
-  local v=(-var="project_id=$PROJECT" -var="region=$REGION" -var="state_bucket=$STATE_BUCKET"
-           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN")
-
-  if ! gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
-    say "bootstrap: state bucket absent — creating it first (the backend cannot create itself)"
-  else
-    say "bootstrap: state bucket gs://$STATE_BUCKET present"
-  fi
-
-  say "bootstrap: reconciling the durable root against its declared state"
-  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform init -input=false "${base[@]}" ) \
-    >"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at init — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log" || true; return 1;
-    }
-
-  local plan_rc=0
-  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform plan -input=false -detailed-exitcode \
-      -out="$LOG_DIR/durable.tfplan" "${v[@]}" ) >>"$LOG_DIR/bootstrap.log" 2>&1 || plan_rc=$?
-
-  case "$plan_rc" in
-    0)
-      say "bootstrap: durable root already matches its declared state"
-      return 0
-      ;;
-    1)
-      say "bootstrap FAILED at plan — see $LOG_DIR/bootstrap.log"
-      tail -n 20 "$LOG_DIR/bootstrap.log" || true
-      return 1
-      ;;
-  esac
-
-  ( cd "$BOOTSTRAP_ROOT" && terraform show -no-color "$LOG_DIR/durable.tfplan" ) \
-    >"$LOG_DIR/durable.plan.txt" 2>&1 || true
-  if grep -qE 'must be replaced|will be destroyed' "$LOG_DIR/durable.plan.txt"; then
-    say "bootstrap REFUSED: the durable root's plan would replace or destroy a durable resource."
-    say "  A recreated zone gets different nameservers (breaking the registrar delegation) and a"
-    say "  recreated bucket is the state store for every root. Review $LOG_DIR/durable.plan.txt;"
-    say "  this needs a human decision, not an automatic apply."
-    return 1
-  fi
-
-  say "bootstrap: applying in-place changes to the durable root (metadata only today)"
-  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform apply -input=false "$LOG_DIR/durable.tfplan" ) \
-    >>"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at apply — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log" || true; return 1;
-    }
-  say "bootstrap: durable root reconciled"
-}
 
 provider_probe() {
   local class="$1" expect="$2"; shift 2
@@ -663,7 +613,7 @@ cleanup() {
     return "$rc"
   fi
   if [ "$TEARDOWN_ATTEMPTED" = "0" ] \
-    && { [ "$CLOUD_APPLIED" = "1" ] || { [ "$rc" != "0" ] && ! plan_only; }; }; then
+    && [ "$CLOUD_APPLIED" = "1" ]; then
     destroy || true
   fi
   say "logs: $LOG_DIR"
@@ -708,7 +658,7 @@ phase_cloud() {
     return 0
   fi
 
-  reconcile_durable_root || return 1
+  run cloud-bootstrap "$SOL" cloud bootstrap "$TARGET" --apply || return 1
 
   CLOUD_APPLIED=1
   INSTALL_STATE=succeeded

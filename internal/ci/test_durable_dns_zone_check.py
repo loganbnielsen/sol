@@ -25,6 +25,8 @@ COPIED_FILES = [
     "internal/qualification/gcp/qual-gcp.tfvars",
     "cli/lib/cloud/sol_cli_aws_absence.ml",
     "cli/lib/cloud/sol_cli_gcp_absence.ml",
+    "cli/lib/cloud/sol_cli_installation_stage.ml",
+    "cli/lib/cloud/sol_cli_terraform_plan.ml",
 ]
 COPIED_DIRS = [
     "platform/cloud/aws/bootstrap",
@@ -138,16 +140,25 @@ def main():
     mutate(
         tmp,
         "internal/qualification/aws/live-row.sh",
-        "  if grep -qE 'must be replaced|will be destroyed' \"$LOG_DIR/durable.plan.txt\"; then",
-        "  if false; then",
+        "cloud bootstrap '$TARGET' --apply",
+        "cloud plan '$TARGET' --apply",
     )
     cases.append(
         (
-            "aws-harness-stops-refusing-a-destructive-plan",
+            "aws-harness-delegates-to-guarded-bootstrap",
             tmp,
-            "must be replaced|will be destroyed",
+            "cloud bootstrap",
         )
     )
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_installation_stage.ml",
+        "allows = [ Create; Update; Read; No_op ]",
+        "allows = [ Create; Update; Read; No_op; Delete ]",
+    )
+    cases.append(("durable-root-policy-allows-delete", tmp, "must refuse delete, replace"))
 
     tmp = scratch()
     mutate(
