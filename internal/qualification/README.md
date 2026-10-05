@@ -47,6 +47,17 @@ documentation edits — not a fourth store.
 Moved verbatim on 2026-09-24 from HARDEN-004's "Standing constraints". Written for the GCP
 workstream; they apply to every provider's live runs.
 
+**Attempt isolation.** Every attempt uses a fresh disposable environment and state key; the durable
+bucket and zone stay. A logical row label (`qual`, `qualalpha7`, `qualreg`) may be reused, but a
+repeated invocation must never silently inherit the previous attempt's state, kubeconfig or captured
+evidence, and an old capture is never evidence for a later attempt — `INFRA-107` implements the
+harness constraint.
+
+**Stages are not claims.** `cloud`, `platform` and `app` name execution stages; the matrices name
+claims. A stage's exit code grants no row: the mapping from a stage's assertions to the rows it may
+establish is recorded with the run, and only assertions that actually ran produce evidence
+(`INFRA-104`).
+
 1. **Cost rule, absolute.** Never wait for user input while billable qualification
    resources exist. On any blocker — a defect, a semantic or security decision, a
    missing prerequisite, an external dependency — the order is: preserve evidence →
@@ -84,6 +95,10 @@ workstream; they apply to every provider's live runs.
    about the tool it models.
 
 ## Lessons learned (with the evidence that taught them)
+
+**Qualification invocations use absolute paths.** The harnesses `cd` into the workspace before
+invoking Sol, so a relative `--var-file` resolves from the workspace, not from where the operator
+typed it (`records/2026-10-04-alpha7-cloud-campaign.md`, AWS attempt 1).
 
 1. **Act on the process identity you launched, never on a pattern.** `pkill -f 'live-qual.sh cloud'`
    matched the operator's own shell, and killing the harness left its `terraform apply` running

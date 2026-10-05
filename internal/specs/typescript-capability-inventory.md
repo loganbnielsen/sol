@@ -1,5 +1,9 @@
 # Cross-language framework contract audit
 
+**Formerly** `internal/pipeline/audits/2026-10-02_cross_language_contract_audit.md`, moved here on
+2026-10-04 when the audit report area became rulebooks only. The old path is named so citations in
+closed tickets still resolve to this file.
+
 **Date:** 2026-10-02
 **Base:** `origin/main` @ `54f53c8e` (PR #883). OCaml line references are to that
 commit. TypeScript references are to each package's own `origin/main` at the
