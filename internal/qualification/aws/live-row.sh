@@ -150,6 +150,35 @@ run() {
   fi
 }
 
+platform_credential_missing() {
+  grep -qF 'the platform install cannot start' "$LOG_DIR/cloud-apply.log" 2>/dev/null &&
+    grep -qF 'redpanda-users' "$LOG_DIR/cloud-apply.log" 2>/dev/null
+}
+
+supply_platform_credential() {
+  local source
+  if [ -n "${KAFKA_SASL_PASSWORD:-}" ]; then
+    source="operator-supplied"
+  else
+    source="generated-for-this-run"
+    KAFKA_SASL_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
+  fi
+  if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" create secret generic redpanda-users -n redpanda \
+      --from-literal="users.txt=sol-workloads:$KAFKA_SASL_PASSWORD:SCRAM-SHA-256" \
+      >"$LOG_DIR/platform-credential.log" 2>&1; then
+    say "could not create the platform's documented prerequisite Secret redpanda/redpanda-users"
+    say "(see $LOG_DIR/platform-credential.log); the harness stands in for the operator and will not proceed without it"
+    return 1
+  fi
+  {
+    printf 'platform_credential: redpanda/redpanda-users\n'
+    printf 'platform_credential_username: sol-workloads\n'
+    printf 'platform_credential_source: %s\n' "$source"
+    printf 'platform_credential_value: never recorded\n'
+  } >>"$LOG_DIR/prerequisites.txt"
+  say "supplied the documented pre-platform Secret redpanda/redpanda-users ($source); its value is never recorded"
+}
+
 k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 image_ref() { printf '%s/pluto/%s:%s' "$ECR_REGISTRY" "$(k8s_name "$1")" "$APP_TAG"; }
 
@@ -431,7 +460,16 @@ phase_cloud() {
   reconcile_durable_root || return 1
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET' --var-file '$TFVARS'" || return 1
   CLOUD_APPLIED=1
-  run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'" || return 1
+  if ! run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'"; then
+    if platform_credential_missing; then
+      say "cloud apply stopped at the platform's documented credential prerequisite; supplying it and resuming"
+      ensure_contexts || return 1
+      supply_platform_credential || return 1
+      run cloud-apply-resume bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'" || return 1
+    else
+      return 1
+    fi
+  fi
   ensure_contexts || return 1
   run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
   capture_kube_evidence

@@ -62,6 +62,18 @@ teardown leaves required durable prerequisites intact.
 directory, an installed release selected with `SOL_INSTALL`, the provider/project inputs named
 by the script, and explicit operator authorization before creating billable resources.
 
+The production profile's broker SASL credential is a pre-platform operator input. `sol cloud
+apply` creates the `redpanda` namespace in its prerequisite stage, then checks the
+`redpanda-users` Secret exists before the platform apply and stops naming it when absent
+(`docs/deployment/production-bootstrap.md` § *Production Kafka transport (SASL_SSL)*). The
+harness stands in for the operator: it generates a run-scoped `sol-workloads` SCRAM credential
+(or uses `KAFKA_SASL_PASSWORD` when supplied), creates the Secret with the documented
+`kubectl create secret generic redpanda-users -n redpanda` shape at that boundary, records that
+it supplied the input without its value in `prerequisites.txt`, and re-runs `sol cloud apply`
+to resume — the same ordered steps the bootstrap guide gives the operator. Credential creation
+failing fails the phase rather than letting the platform apply proceed without the
+prerequisite.
+
 Run only the phases needed for the claims being exercised. On any blocker while billable
 resources exist, preserve evidence, destroy through Sol, independently verify provider absence,
 then stop.

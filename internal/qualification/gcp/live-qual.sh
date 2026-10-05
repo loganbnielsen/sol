@@ -150,6 +150,35 @@ run() {
   say "ok: $name"
 }
 
+platform_credential_missing() {
+  grep -qF 'the platform install cannot start' "$LOG_DIR/cloud-apply.log" 2>/dev/null &&
+    grep -qF 'redpanda-users' "$LOG_DIR/cloud-apply.log" 2>/dev/null
+}
+
+supply_platform_credential() {
+  local source
+  if [ -n "${KAFKA_SASL_PASSWORD:-}" ]; then
+    source="operator-supplied"
+  else
+    source="generated-for-this-run"
+    KAFKA_SASL_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
+  fi
+  if ! kubectl create secret generic redpanda-users -n redpanda \
+      --from-literal="users.txt=sol-workloads:$KAFKA_SASL_PASSWORD:SCRAM-SHA-256" \
+      >"$LOG_DIR/platform-credential.log" 2>&1; then
+    say "  could not create the platform's documented prerequisite Secret redpanda/redpanda-users"
+    say "  (see $LOG_DIR/platform-credential.log); the harness stands in for the operator and will not proceed without it"
+    return 1
+  fi
+  {
+    printf 'platform_credential: redpanda/redpanda-users\n'
+    printf 'platform_credential_username: sol-workloads\n'
+    printf 'platform_credential_source: %s\n' "$source"
+    printf 'platform_credential_value: never recorded\n'
+  } >>"$LOG_DIR/prerequisites.txt"
+  say "supplied the documented pre-platform Secret redpanda/redpanda-users ($source); its value is never recorded"
+}
+
 owns_target_file() {
   if [ ! -s "$TARGET_FILE" ]; then return 0; fi
   head -1 "$TARGET_FILE" | grep -qF "live-qual.sh"
@@ -683,7 +712,16 @@ phase_cloud() {
   start_ns_watcher
   start_cluster_kubeconfig_waiter
   api_readiness_probe_start
-  if ! run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}"; then
+  local apply_rc=0
+  run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}" || apply_rc=$?
+  if [ "$apply_rc" != 0 ] && platform_credential_missing; then
+    say "cloud apply stopped at the platform's documented credential prerequisite; supplying it and resuming"
+    if supply_platform_credential; then
+      apply_rc=0
+      run cloud-apply-resume "$SOL" cloud apply "$TARGET" "${vars[@]}" || apply_rc=$?
+    fi
+  fi
+  if [ "$apply_rc" != 0 ]; then
     INSTALL_STATE=failed
     say "cloud apply failed -- capturing the discriminator before any teardown"
     capture_pre_teardown_inventory
@@ -1408,7 +1446,12 @@ usage: live-qual.sh PHASE
 
 phases
   cloud     reconcile the durable root, start the run-kubeconfig waiter and the
-            API-readiness probe, run `sol cloud apply`, and on failure capture the
+            API-readiness probe, run `sol cloud apply`. When it stops at the
+            pre-platform `redpanda-users` credential, create the Secret with the
+            run's generated or operator-supplied `sol-workloads` SCRAM credential,
+            record that it was supplied (never the value) in prerequisites.txt, and
+            re-run `sol cloud apply` to resume -- the same ordered steps the
+            production bootstrap guide gives the operator. On failure it captures the
             Kubernetes evidence, the cert-manager discriminator and the provider
             inventory before any teardown. On success it continues to the delegation
             hand-off and keeps the substrate for the TLS rows.

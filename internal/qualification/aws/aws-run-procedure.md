@@ -120,6 +120,18 @@ command's output.
    set to a real receiver only when pursuing G1–G3, and the run records G as blocked otherwise.
 9. Explicit operator authorization for the live run and the release
    version (§7.6).
+10. The production profile's **pre-platform broker credential**. `sol cloud apply` creates the
+   `redpanda` namespace in its prerequisite stage, then checks the `redpanda-users` Secret
+   exists before the platform apply and stops naming it when absent
+   (`docs/deployment/production-bootstrap.md` § *Production Kafka transport (SASL_SSL)*). The
+   harness stands in for
+   the operator: it generates a run-scoped `sol-workloads` SCRAM credential (or uses
+   `KAFKA_SASL_PASSWORD` when the operator supplies one), creates the Secret with the
+   documented `kubectl create secret generic redpanda-users -n redpanda` shape at that
+   boundary, records that it supplied the input without its value in `prerequisites.txt`, and
+   re-runs `sol cloud apply` to resume — the same ordered steps the bootstrap guide gives the
+   operator. The credential never enters the repository, Terraform state, a command line or a
+   run log.
 
 ### Expected resources and cost-bearing steps
 
@@ -150,12 +162,15 @@ phase: `cloud` reconciles the *durable* bootstrap root (the operator's prerequis
 bundle.
 
 **`cloud`** — reconcile the durable root; `sol cloud plan <target> --var-file <tfvars>`;
-`sol cloud apply <target> --var-file <tfvars>` (the row's `qual-aws-row.tfvars`); build the
-deploy/access/operator kubeconfigs; capture nodes and the cluster root state. The profile emits
-its `-var` arguments after the var file, so the profile still wins on every variable it sets.
-Evidence: `bootstrap.log`, `cloud-plan.log`, `cloud-apply.log`, `k8s-nodes.txt`,
-`state/cloud.tfstate`, and the verbatim `lifecycle phase:` line per invocation. Rows: I1, I2,
-I4, A, F1, F2.
+`sol cloud apply <target> --var-file <tfvars>` (the row's `qual-aws-row.tfvars`); when that
+stops at the pre-platform `redpanda-users` credential, create the Secret with the run's
+generated or operator-supplied `sol-workloads` SCRAM credential, record the supplied input,
+and re-run `sol cloud apply` to resume; build the deploy/access/operator kubeconfigs; capture
+nodes and the cluster root state. The profile emits its `-var` arguments after the var file,
+so the profile still wins on every variable it sets. Evidence: `bootstrap.log`,
+`cloud-plan.log`, `cloud-apply.log`, `cloud-apply-resume.log`, `platform-credential.log`,
+`prerequisites.txt`, `k8s-nodes.txt`, `state/cloud.tfstate`, and the verbatim
+`lifecycle phase:` line per invocation. Rows: I1, I2, I4, A, F1, F2.
 
 **`transport`** — probe the production identities for `pods/portforward` (must answer `no`),
 establish the qualification transport
