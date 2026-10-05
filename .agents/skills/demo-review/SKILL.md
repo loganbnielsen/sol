@@ -19,7 +19,6 @@ normally subagents. If your harness has no subagent facility, do not simulate
 two personas: stop and report that the demo review could not run, or, with the
 operator's agreement, review it once yourself and label the result a self-review.
 
-Do this from a worktree/branch already set up for the ticket (see `/work` for
 that setup) — this skill only covers the review loop itself.
 
 ## Workflow
@@ -30,13 +29,13 @@ that setup) — this skill only covers the review loop itself.
    Capture the real transcript — stdout, which assertions passed/failed,
    what infra was unavailable. Persona reviewers get this transcript, not
    just the diff — a demo that reads well but doesn't run is not done.
-   If something fails for a reason outside this ticket's scope (a
+   If something fails for a reason outside this issue's scope (a
    pre-existing infra bug, a flaky dependency), say so plainly and keep
    the real failure visible — do not quietly loosen an assertion or
    delete a check to make the run look clean.
 2. **Demo agent** — launch a fresh reviewer the author has not primed (a
    subagent where the harness provides one; see *Reviewer independence*)
-   with: the ticket/task, the diff, and the real run transcript from
+   with: the issue/task, the diff, and the real run transcript from
    step 1. Ask it to play a developer *demoing this platform to someone
    else* — running it live, narrating what it proves. Give it the criteria
    below under "Demo agent criteria." Ask for concrete findings only, most
@@ -50,9 +49,9 @@ that setup) — this skill only covers the review loop itself.
    evaluating whether it would want to write code that looks like this.
    Give it the criteria below under "Client agent criteria."
 4. **Triage.** Merge both agents' findings. For each: is this actually
-   this ticket's problem, or does it belong in a different ticket (e.g.
+   this issue's problem, or does it belong in a different issue (e.g.
    a pre-existing infra bug uncovered but not caused by this diff)? File
-   the latter as its own ticket rather than scope-creeping this one, but
+   the latter as its own issue rather than scope-creeping this one, but
    don't silently drop it either — mention it in the handoff.
 5. **Fix and reconfirm.** Apply the actionable fixes. Re-run the demo for
    real again if the fix could plausibly change runtime behavior — don't
@@ -62,9 +61,8 @@ that setup) — this skill only covers the review loop itself.
    actionable feedback.
 6. **Finish once selected findings are resolved.** Do not require a fresh final
    reviewer. Another pass is appropriate only for materially new risk or a request.
-7. Hand off per the ticket's normal path (`soldev pipeline submit`,
    etc.) — this skill only gates "is the demo actually good," not the
-   ticket state machine itself.
+   issue state machine itself.
 
 ## Demo agent criteria
 
@@ -73,7 +71,7 @@ Playing someone running the demo live for an audience:　
 1. Does it actually complete without manual intervention (right env vars
    documented, right setup scripts named, no undocumented prerequisite)?
 2. Does every capability the demo claims to show (in its header comment,
-   README, or the ticket) actually get exercised and confirmed — not just
+   README, or the issue) actually get exercised and confirmed — not just
    attempted? A backend that's wired but whose assertion is silently
    skipped is not "shown off."
 3. Would watching this run make someone *understand* the underlying
@@ -81,7 +79,7 @@ Playing someone running the demo live for an audience:　
    trace that's created but never looked up, a metric registered but
    never rendered)?
 4. Is the narration/output honest about what's real vs. simulated, and
-   about anything that's currently flaky or disabled (link the ticket
+   about anything that's currently flaky or disabled (link the issue
    rather than pretend it's fine)?
 5. Failure-mode check: if a dependency is down, does the demo fail with a
    clear, actionable message, or hang/crash confusingly?
@@ -124,4 +122,4 @@ Each agent's findings: concrete, file/line-referenced, ranked by severity, the
 same bar as a correctness-focused adversarial review — no speculative
 redesigns, no non-actionable style preference. The final handoff summarizes:
 what the real run showed, what each persona found, what was fixed vs. filed as
-a separate ticket, and whether selected findings are resolved.
+a separate issue, and whether selected findings are resolved.

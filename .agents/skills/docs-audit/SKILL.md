@@ -1,17 +1,16 @@
 ---
 name: docs-audit
-description: Run a documentation truth audit of Sol. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Files each finding it makes as a ticket in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a documentation truth audit of Sol. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Files actionable findings as ordinary GitHub Issues.
 ---
 
 # /docs-audit — Documentation Truth Audit
 
-Works through every section of `internal/pipeline/audits/DOCS_AUDIT.md`. Files each finding it makes as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question: *can a startup engineer trust this documentation as the truth without reading source code or old work summaries?*
 
-## Ticket IDs
+## Finding identity
 
-Use `DOCS-NNN`, continuing from the highest existing `DOCS-*` ID across `internal/pipeline/audits/` and all `internal/pipeline/tickets/` subdirectories.
+Use descriptive GitHub Issue titles. Historical issue-number sequences are retired and do not need to continue.
 
 ## Steps
 
@@ -21,7 +20,6 @@ Read `internal/pipeline/audits/DOCS_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 
-Check all `internal/pipeline/tickets/` subdirectories for existing `DOCS-*` ticket files. Do not re-materialise a finding already tracked anywhere — but before trusting a `DONE/` ticket, run `soldev pipeline check-reverts` and treat anything it flags as still-open (see EXP-032: a merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved).
 
 ### 3. Verify source-of-truth docs
 
@@ -50,33 +48,12 @@ Check all `internal/pipeline/tickets/` subdirectories for existing `DOCS-*` tick
 
 ### 5. File the findings
 
-An audit keeps no report of its own. The ticket tree is the record of every previous pass, so
-read it before filing; the report-shaped content below becomes the ticket body:
+read it before filing; the report-shaped content below becomes the issue body:
 
 - the observation and the exact command or line that shows it
 - the mechanism, and what the product actually does
 - what it would take to fix, and what would make a fix fail (the acceptance criteria)
-- the next free `<FAMILY>-NNN`, continuing from the highest id across `internal/pipeline/tickets/`
 
-### 8. Materialise tickets
+### File actionable findings
 
-For each open finding not already tracked, create `internal/pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
-
-```markdown
----
-id: <DOCS-NNN>
-type: docs-finding
-severity: <critical|high|medium|low>
-source: the pass that found this, by date
----
-
-<one-line title>
-
-**Description:** <from finding>
-
-**Impact:** <from finding>
-
-**Remediation:** <from finding>
-```
-
-Do not set `branch:` or `worktree:`.
+For each distinct actionable finding not already represented by a GitHub Issue, create an ordinary issue with the problem, evidence, affected files, desired end state, and acceptance criteria. Prefer one coherent issue per ownership/refactor boundary over line-level findings.

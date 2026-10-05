@@ -10,7 +10,7 @@ CI. This review is optional, selected for infrastructure, security,
 lifecycle/concurrency, substantial API changes, or an operator request.
 
 Keep the PR draft while a selected review is outstanding. Give one independent
-reviewer the ticket, worktree, exact diff against origin/main, and applicable
+reviewer the issue, worktree, exact diff against origin/main, and applicable
 architecture/type-audit contracts. Ask for concrete actionable findings, not
 speculative redesign or pre-alpha compatibility shims. A clean result is valid.
 
