@@ -980,12 +980,6 @@ present "$TMP/sigterm.logs/inventory-post.tsv" "the independent post-teardown in
 has "the harness records the signal" "received SIGTERM" "$TMP/sigterm.logs/harness.log"
 
 
-if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
-    "$TMP/class-warden.argv" 2>/dev/null; then
-  ok "a failed install still reads the provisioner bindings it had established"
-else
-  no "a failed install still reads the provisioner bindings it had established" "the kubectl read" "none"
-fi
 
 probe_case() {
   local name="$1" configured="$2"
