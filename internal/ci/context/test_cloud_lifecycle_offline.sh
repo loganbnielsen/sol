@@ -1576,6 +1576,16 @@ if ! run_destroy "$log"; then
   echo "cloud destroy on an established target must succeed" >&2
   exit 1
 fi
+if grep -F 'auth can-i create namespaces' "$log" >/dev/null; then
+  echo "FND-0076: the destroy ran the apply-path successor probe, which cannot hold while tearing down:" >&2
+  grep -F 'auth can-i create' "$log" >&2
+  exit 1
+fi
+if grep -F 'could not be verified' "$log.out" >/dev/null; then
+  echo "FND-0076: a healthy teardown warned that de-escalation could not be verified:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
 grep -F -- '-target=aws_db_instance.postgres' "$log" | grep -F 'rds_deletion_protection=false' \
   | grep -F 'rds_skip_final_snapshot=false' >/dev/null
 snapshot_line="$(grep -F -- '-target=aws_db_instance.postgres' "$log" | head -1)"

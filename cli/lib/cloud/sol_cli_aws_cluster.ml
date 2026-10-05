@@ -749,27 +749,27 @@ let cluster ~region ~provisioner_role_arn ~deploy_role_arn outputs : Sol_cli_clu
                      ~assumable_role_arn
                      ~before:!before
                  with
-                 | Sol_cli_cloud_lifecycle.Deescalated ->
-                   (match successor_probe ~region ~outputs () with
+                 | Sol_cli_cloud_lifecycle.Deescalated -> Ok ()
+                 | verdict ->
+                   Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
+           ; successor =
+               (fun () ->
+                 match successor_probe ~region ~outputs () with
+                 | Error why ->
+                   Error
+                     (Printf.sprintf
+                        "the durable cluster-access identity could not be probed for the \
+                         authority the lifecycle needs next: %s"
+                        why)
+                 | Ok probes ->
+                   (match Sol_cli_cloud_lifecycle.successor_authority probes with
+                    | Ok () -> Ok ()
                     | Error why ->
                       Error
                         (Printf.sprintf
-                           "the bootstrap elevation was relinquished, but the durable \
-                            cluster-access identity could not be probed for the \
-                            authority the lifecycle needs next: %s"
-                           why)
-                    | Ok probes ->
-                      (match Sol_cli_cloud_lifecycle.successor_authority probes with
-                       | Ok () -> Ok ()
-                       | Error why ->
-                         Error
-                           (Printf.sprintf
-                              "the bootstrap elevation was relinquished, but the durable \
-                               cluster-access identity was not demonstrated to hold the \
-                               authority the lifecycle needs next: %s"
-                              why)))
-                 | verdict ->
-                   Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
+                           "the durable cluster-access identity was not demonstrated to \
+                            hold the authority the lifecycle needs next: %s"
+                           why)))
            }))
   }
 ;;
