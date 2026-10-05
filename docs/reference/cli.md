@@ -65,18 +65,10 @@ marked `documented` in the tables below, and `sol <command> --help` is the autho
 Machine-readable output exists where the tables' flags say so (`--json`, `--emit-plan-to`,
 `--emit-to`); plan output is the same shape `sol plan` prints.
 
-## Commands that are not registered yet
-
-The reference covers what the binary registers, so the documented-but-planned operations do
-not appear here, and each names the ticket that will add it:
-
-- `sol ci init github` — FEAT-109.
-
-Inline first-run onboarding (FEAT-106) adds no command of its own: `sol deploy`
-observes the target's durable installation, guides it in place, then reconciles
-the target's environment and reaches the cluster as the target's deploy identity
-(DEC-058) — so the whole first run is documented with that command rather than
-listed here.
+First-run onboarding adds no command of its own: `sol deploy` observes the target's
+durable installation, guides it in place, then reconciles the target's environment and
+reaches the cluster as the target's deploy identity (DEC-058) — so the whole first run is
+documented with that command rather than listed here.
 
 ## Target-addressed commands
 
