@@ -70,3 +70,9 @@ Findings are ticketed as `TYPE_AUDIT-<n>` and appended here.
   *Fixed 2026-09-14:* `push_deploy_events` and `Sol_cli_deploy_event.t` now carry
   `Deployment_id.t` / `Release_id.t`; `to_string` happens only in the logfmt
   field set, the message body, and the stream labels the pusher builds.
+
+- **2026-10-04 — `Sol_cli_up_execution.service_execution`.** Resolved workload
+  namespace/name types are erased into strings in an internal execution record
+  before image build/push and rollout. The serialization edges are kubectl argv
+  construction and terminal formatting. Filed as [TYPE_AUDIT-079](../tickets/READY_FOR_ENGINEERING/TYPE_AUDIT-079.md)
+  in the [37-principle review](2026-10-04_37_principles_review.md).

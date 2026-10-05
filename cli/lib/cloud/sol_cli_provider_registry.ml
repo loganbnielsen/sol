@@ -51,14 +51,13 @@ let resolution_failure_to_string = function
 ;;
 
 let state_holds_any ~chdir prefixes =
-  match Sol_cli_terraform.state_list ~chdir () with
-  | Ok result ->
+  match Sol_cli_terraform.state_addresses ~chdir () with
+  | Ok addresses ->
     Ok
-      (result.stdout
-       |> String.split_on_char '\n'
-       |> List.exists (fun line ->
-         let line = String.trim line in
-         List.exists (fun prefix -> String.starts_with ~prefix line) prefixes))
+      (List.exists
+         (fun address ->
+            List.exists (fun prefix -> String.starts_with ~prefix address) prefixes)
+         addresses)
   | Error (Sol_cli_process.Non_zero result) ->
     Error
       (State_unreadable

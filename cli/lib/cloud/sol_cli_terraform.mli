@@ -120,6 +120,12 @@ val state_list
   -> unit
   -> (Sol_cli_process.output, Sol_cli_process.error) result
 
+val state_addresses
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> unit
+  -> (string list, Sol_cli_process.error) result
+
 val show_json
   :  ?env:(string * string) list
   -> chdir:string

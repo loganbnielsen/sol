@@ -284,6 +284,7 @@ let rec observe_final_snapshot ~interval ~declared ~snapshot_id ~region ~attempt
 ;;
 
 let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
+let rds_address = "aws_db_instance.postgres[0]"
 
 let unique_rds_snapshot_id cluster_name =
   Printf.sprintf
@@ -294,7 +295,7 @@ let unique_rds_snapshot_id cluster_name =
 
 let rds_of_state state =
   let open Sol_cli_cloud_destroy in
-  match find_address state "aws_db_instance.postgres" with
+  match find_address state rds_address with
   | Some resource when resource.kind = "aws_db_instance" ->
     (match resource.deletion_protection with
      | Some deletion_protection ->
@@ -307,12 +308,28 @@ let rds_of_state state =
   | Some resource ->
     Error
       (Printf.sprintf
-         "address aws_db_instance.postgres is a %s, not an aws_db_instance"
+         "address %s is a %s, not an aws_db_instance"
+         rds_address
          resource.kind)
   | None ->
     (match substrate_presence state with
      | Substrate_unknown -> Error "could not read this target's state"
-     | Substrate_present | Substrate_absent -> Ok None)
+     | Substrate_absent -> Ok None
+     | Substrate_present ->
+       (match
+          List.find_opt
+            (fun (resource : Sol_cli_cloud_destroy.resource) ->
+               String.equal resource.kind "aws_db_instance")
+            (Sol_cli_cloud_destroy.resources state)
+        with
+        | Some resource ->
+          Error
+            (Printf.sprintf
+               "the state represents an aws_db_instance at %s, but this target's counted \
+                database address is %s"
+               resource.address
+               rds_address)
+        | None -> Ok None))
 ;;
 
 let aws_preparation_policy ~retention =
