@@ -174,6 +174,40 @@ capture_kube_evidence() {
     >"$LOG_DIR/app-worker.log" 2>&1 || true
 }
 
+aws_residue_class() {
+  local out="$1" class="$2" query="$3" terminal="$4"
+  shift 4
+  local raw live
+  if ! raw="$("$@" --query "$query" --output json 2>/dev/null)"; then
+    printf '%s: UNKNOWN (the inventory read failed; a failed read is never absence)\n' "$class" >>"$out"
+    return 1
+  fi
+  if ! printf '%s' "$raw" | jq -e . >/dev/null 2>&1; then
+    printf '%s: UNKNOWN (the inventory read did not parse; a failed read is never absence)\n' "$class" >>"$out"
+    return 1
+  fi
+  live="$(printf '%s' "$raw" | jq -r --arg terminal "$terminal" \
+    '[.[] | .state as $s | select(($terminal | split(" ")) | index($s) | not)] | length')"
+  if [ "$live" = 0 ]; then
+    printf '%s: ABSENT (only %s records remain)\n' "$class" "$terminal" >>"$out"
+    return 0
+  fi
+  printf '%s: PRESENT (%s live)\n' "$class" "$live" >>"$out"
+  return 1
+}
+
+aws_residue_verdict() {
+  local out="$LOG_DIR/aws-inventory-verdict.txt" rc=0
+  : >"$out"
+  aws_residue_class "$out" ec2-instances \
+    'Reservations[].Instances[].{id:InstanceId,state:State.Name}' 'terminated shutting-down' \
+    aws ec2 describe-instances --filters "Name=tag:Name,Values=*$CLUSTER*" || rc=$?
+  aws_residue_class "$out" nat-gateways \
+    'NatGateways[].{id:NatGatewayId,state:State}' 'deleted deleting failed' \
+    aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=*$CLUSTER*" || rc=$?
+  return "$rc"
+}
+
 aws_inventory() {
   {
     printf 'attempt=%s\n' "${ATTEMPT:--}"
@@ -185,7 +219,7 @@ aws_inventory() {
     aws eks list-clusters --query 'clusters' --output text
     printf 'ec2 instances tagged for this run\n'
     aws ec2 describe-instances --filters "Name=tag:Name,Values=*$CLUSTER*" \
-      --query 'Reservations[].Instances[].InstanceId' --output text
+      --query 'Reservations[].Instances[].{id:InstanceId,state:State.Name}' --output json
     printf 'vpcs\n'
     aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$CLUSTER" \
       --query 'Vpcs[].VpcId' --output text
@@ -195,7 +229,7 @@ aws_inventory() {
     aws ecr describe-repositories --query 'repositories[].repositoryName' --output text
     printf 'nat gateways\n'
     aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=*$CLUSTER*" \
-      --query 'NatGateways[].NatGatewayId' --output text
+      --query 'NatGateways[].{id:NatGatewayId,state:State}' --output json
     printf 'elastic ips\n'
     aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text
     printf 'load balancers\n'
@@ -204,6 +238,7 @@ aws_inventory() {
     aws route53 list-hosted-zones --query "HostedZones[?contains(Name, 'sol-fab')].Name" --output text
   } >"$LOG_DIR/aws-inventory.txt" 2>&1
   cat "$LOG_DIR/aws-inventory.txt"
+  aws_residue_verdict
 }
 
 reconcile_durable_root() {
@@ -469,14 +504,18 @@ phase_app() {
 phase_destroy() {
   TEARDOWN_ATTEMPTED=1
   capture_state
-  local destroy_rc=0
+  local destroy_rc=0 verdict_rc=0
   run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply --var-file '$TFVARS'" || destroy_rc=$?
   if [ "$destroy_rc" = 0 ]; then
     say "destroy returned success; the independent inventory decides absence"
   else
     say "destroy exited non-zero; the independent inventory decides absence"
   fi
-  aws_inventory
+  aws_inventory || verdict_rc=$?
+  if [ "$verdict_rc" != 0 ]; then
+    say "the independent inventory does not read ABSENT, so teardown is not complete"
+    return 1
+  fi
   return "$destroy_rc"
 }
 
