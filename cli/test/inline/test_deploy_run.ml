@@ -321,12 +321,21 @@ let test_the_group_check_reads_the_record_under_the_lease () =
         }
       in
       let outcome =
-        Sol_cli_deploy_run.apply
-          ctx
-          ~prepare_plan:(fun _ -> Ok ())
+        Sol_cli_deploy_run.run_lifecycle
+          ~cluster:ctx.execution.cluster
+          ~workspace:ctx.execution.workspace
+          ~sha:ctx.sha
+          ~target:(Some ctx.target_name)
+          ~run_log:ctx.run_log
+          ~keep_releases:ctx.keep_releases
           ~confirm_group_change:false
-          ~push_events:(fun _ -> ())
+          ~present_plan:(fun _ -> Ok ())
+          ~gates:(fun _ -> Ok ())
+          ~before_apply:(fun _ -> Ok ())
+          ~apply:(fun ~lease:_ ~release_id:_ _ ->
+            Windtrap.fail "a group the plan no longer carries must refuse before apply")
           ~report_success:(fun _ _ -> ())
+          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
           plan
       in
       (match outcome with
@@ -390,14 +399,16 @@ let%test "consumer-group guard (BUG-088): the record is read under the boundary 
 ;;
 
 let%test
-    "apply: a failed prepared-plan gate releases the lease before any workload mutation"
+    "apply: a refused prerequisite gate releases the lease before any workload mutation"
   =
   with_fake_kubectl (fun ~calls ->
     with_context (fun ctx ->
       let outcome =
         Sol_cli_deploy_run.apply
           ctx
-          ~prepare_plan:(fun _ -> Error "prerequisite refused")
+          ~present_plan:(fun _ -> Ok ())
+          ~effective_access:(fun () -> Error "prerequisite refused")
+          ~on_substrate_refused:(fun _ -> ())
           ~confirm_group_change:true
           ~push_events:(fun _ -> Windtrap.fail "a refused prerequisite emitted events")
           ~report_success:(fun _ _ ->
@@ -411,4 +422,120 @@ let%test
       let log = calls () in
       Windtrap.equal Windtrap.bool false (Sol_cli_string.contains ~needle:" apply " log);
       Windtrap.equal Windtrap.bool true (Sol_cli_string.contains ~needle:" delete " log)))
+;;
+
+let%test "lifecycle: a refused gate releases the lease before apply" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      let applied = ref false in
+      let outcome =
+        Sol_cli_deploy_run.run_lifecycle
+          ~cluster:ctx.execution.cluster
+          ~workspace:ctx.execution.workspace
+          ~sha:ctx.sha
+          ~target:(Some ctx.target_name)
+          ~run_log:ctx.run_log
+          ~keep_releases:ctx.keep_releases
+          ~confirm_group_change:true
+          ~present_plan:(fun _ -> Ok ())
+          ~gates:(fun _ -> Error "gate refused")
+          ~before_apply:(fun _ -> Ok ())
+          ~apply:(fun ~lease:_ ~release_id:_ _ ->
+            applied := true;
+            Ok [])
+          ~report_success:(fun _ _ -> ())
+          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          (plan [])
+      in
+      Windtrap.equal
+        (Windtrap.result Windtrap.unit Windtrap.string)
+        (Error "gate refused")
+        outcome;
+      Windtrap.equal Windtrap.bool ~msg:"a refused gate must not apply" false !applied;
+      let log = calls () in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the lease is released when the gate refuses"
+        true
+        (Sol_cli_string.contains ~needle:" delete " log)))
+;;
+
+let%test "lifecycle: presentation, gates and apply run in order under one lease" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      let order = ref [] in
+      let note step = order := step :: !order in
+      let outcome =
+        Sol_cli_deploy_run.run_lifecycle
+          ~cluster:ctx.execution.cluster
+          ~workspace:ctx.execution.workspace
+          ~sha:ctx.sha
+          ~target:(Some ctx.target_name)
+          ~run_log:ctx.run_log
+          ~keep_releases:ctx.keep_releases
+          ~confirm_group_change:true
+          ~present_plan:(fun _ ->
+            note "present";
+            Ok ())
+          ~gates:(fun _ ->
+            note "gates";
+            Ok ())
+          ~before_apply:(fun _ ->
+            note "before_apply";
+            Ok ())
+          ~apply:(fun ~lease:_ ~release_id:_ _ ->
+            note "apply";
+            Error "stop before recording")
+          ~report_success:(fun _ _ -> ())
+          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          (plan [])
+      in
+      Windtrap.equal
+        (Windtrap.result Windtrap.unit Windtrap.string)
+        (Error "stop before recording")
+        outcome;
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"presentation, then gates, then apply"
+        [ "present"; "gates"; "before_apply"; "apply" ]
+        (List.rev !order);
+      let log = calls () in
+      let lease_at = first_line_matching log "sol-boundary-lease-myapp" in
+      let contract_at = first_line_matching log "sol-release-current-myapp" in
+      match lease_at, contract_at with
+      | Some lease_at, Some contract_at ->
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:"the prior contract is read under the lease"
+          true
+          (lease_at < contract_at)
+      | _ -> Windtrap.failf "expected a lease and a prior-contract read:\n%s" log))
+;;
+
+let%test "lifecycle: a failed apply does not report success" =
+  with_fake_kubectl (fun ~calls:_ ->
+    with_context (fun ctx ->
+      let reported = ref false in
+      let outcome =
+        Sol_cli_deploy_run.run_lifecycle
+          ~cluster:ctx.execution.cluster
+          ~workspace:ctx.execution.workspace
+          ~sha:ctx.sha
+          ~target:(Some ctx.target_name)
+          ~run_log:ctx.run_log
+          ~keep_releases:ctx.keep_releases
+          ~confirm_group_change:true
+          ~present_plan:(fun _ -> Ok ())
+          ~gates:(fun _ -> Ok ())
+          ~before_apply:(fun _ -> Ok ())
+          ~apply:(fun ~lease:_ ~release_id:_ _ -> Error "apply failed")
+          ~report_success:(fun _ _ -> reported := true)
+          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          (plan [])
+      in
+      Windtrap.equal
+        (Windtrap.result Windtrap.unit Windtrap.string)
+        (Error "apply failed")
+        outcome;
+      Windtrap.equal Windtrap.bool ~msg:"no success is reported" false !reported))
 ;;

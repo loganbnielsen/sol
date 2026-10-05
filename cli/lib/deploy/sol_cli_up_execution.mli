@@ -59,10 +59,3 @@ val post_deploy_summary
   :  facts:Sol_cli_workspace_model.t
   -> Sol_cli_deployment_plan.t
   -> post_deploy_summary
-
-val record_applied
-  :  ctx:Sol_cli_kube_destination.context
-  -> workspace:string
-  -> sha:string
-  -> Sol_cli_deployment_plan.t
-  -> (unit, string) result

@@ -72,11 +72,47 @@ val confirm_consumer_groups
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
 
+val run_lifecycle
+  :  cluster:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> sha:string
+  -> target:string option
+  -> run_log:Sol_cli_run_log.t
+  -> keep_releases:int
+  -> confirm_group_change:bool
+  -> present_plan:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> gates:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> before_apply:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> apply:
+       (lease:Sol_cli_boundary_lease.held
+        -> release_id:Sol_cli_release_id.t
+        -> Sol_cli_deployment_plan.t
+        -> (Sol_cli_executor.result list, string) result)
+  -> report_success:(Sol_cli_deployment_plan.t -> Sol_cli_executor.result list -> unit)
+  -> push_events:
+       (release_id:Sol_cli_release_id.t
+        -> deployment_id:Sol_cli_deployment_id.t
+        -> Sol_cli_deployment_plan.t
+        -> unit)
+  -> Sol_cli_deployment_plan.t
+  -> (unit, string) result
+
 val apply
   :  context
-  -> prepare_plan:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> present_plan:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> effective_access:(unit -> (unit, string) result)
+  -> on_substrate_refused:(gate_failure -> unit)
   -> push_events:(Sol_cli_deploy_event.t list -> unit)
   -> report_success:(Sol_cli_deployment_plan.t -> Sol_cli_executor.result list -> unit)
   -> confirm_group_change:bool
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
+
+val run_offline
+  :  context
+  -> phase:string
+  -> mode:Sol_cli_executor.mode
+  -> present_plan:(Sol_cli_deployment_plan.t -> (unit, string) result)
+  -> on_substrate_refused:(gate_failure -> unit)
+  -> Sol_cli_deployment_plan.t
+  -> (Sol_cli_executor.result list, string) result
