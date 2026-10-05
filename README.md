@@ -80,7 +80,7 @@ responsibility are in **[The Sol developer experience](docs/DEVELOPER_EXPERIENCE
 A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
 `sol-vX.Y.Z/share/sol/vX.Y.Z/` (Terraform roots, Helm values, dashboards) and the
 migration-runner image published with that version, pinned by digest
-([DEC-049](internal/pipeline/tickets/DONE/DEC-049.md)). It needs glibc 2.35 or newer
+(see [installation](docs/guides/installation.md)). It needs glibc 2.35 or newer
 (Ubuntu 22.04+) and the `libpq5` and `libgmp10` libraries. The install can be
 read-only: `sol cloud` runs Terraform in a working directory of its own per target,
 under `~/.local/share/sol/terraform/`.
@@ -187,10 +187,9 @@ JavaScript workspace to consume them (DEC-024). CI deploys it for real
 (`golden-path-smoke-ts`, plus the demo's own install/typecheck and Dockerfile
 smoke jobs), so the deployed path is exercised, not merely claimed.
 
-What is **not** available yet is the scaffolding: `sol new` writes OCaml units
-only, so a TypeScript unit is authored by hand today. The `sol new --language
-typescript` → `sol local up` → `sol deploy` path above is the target, tracked as
-FEAT-084; nothing in this README should be read as that flag existing.
+`sol new svc` and `sol new worker` support `--language typescript`; OCaml
+remains the default. `sol new fn` currently supports OCaml only. See
+[application authoring](docs/guides/application-authoring.md) for both languages.
 
 ---
 
@@ -204,7 +203,7 @@ of lifecycle confusion:
 - **Installation** is the durable, account-level layer — Terraform state and
   locking, the provisioner/deploy/operator identities, and the delegated DNS
   zone. It is designed to be set up once and removed only by an explicit
-  `sol uninstall` (planned, FEAT-108), never by destroying an environment.
+  `sol uninstall`, never by destroying an environment.
 - **An environment** is one disposable target — its network, cluster, database
   and workloads. `sol cloud destroy <target>` removes the environment and is
   designed to leave the installation intact, so redeploying does not redo
@@ -236,12 +235,12 @@ sol/
 ├── framework/   # first-party implementations: OCaml here, TypeScript in sibling repos
 ├── examples/    # runnable applications that teach the product (start with pluto)
 ├── docs/        # for people using Sol: guides, reference (the application contract), deployment, architecture
-└── internal/    # maintainer machinery: ci, qualification, pipeline, tooling, fixtures
+└── internal/    # maintainer machinery: ci, qualification, tooling, fixtures
 ```
 
 - **Use or manage Sol** → [`cli/`](cli/) and [`docs/reference/`](docs/reference/).
 - **Build an application** → [`framework/`](framework/) and [`examples/pluto/`](examples/pluto/).
-- **Work on Sol itself** → [`internal/`](internal/) and [`internal/contributing-map.md`](internal/contributing-map.md).
+- **Work on Sol itself** → [contributor guidance](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md).
 
 ## Docs
 
@@ -254,7 +253,6 @@ sol/
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
 - [Developer experience](docs/DEVELOPER_EXPERIENCE.md) — current product behavior, ownership, and lifecycle
-- [Contributor map](internal/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`AGENTS.md`](AGENTS.md)
 
 ## License

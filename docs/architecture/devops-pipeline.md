@@ -12,10 +12,10 @@ factory machinery that turns a workspace directory scan and CLI flags into a
 typed deployment plan, Kubernetes/GitOps artifacts, release state, and live
 cluster changes.
 
-The deployment pipeline is composed of five distinct phases that run in
-sequence: **Plan**, **Render**, **Change Set**, **Execute**, and **State**. Each
-phase is isolated in its own module with typed inputs and outputs, so individual
-phases can be tested or replaced without touching the others.
+Plans carry typed intent. `Sol_cli_factory.execute` dispatches to
+`Sol_cli_executor.run_plan`, which renders the selected workload artifacts before
+executing the chosen mode. Direct deployment is coordinated by
+`Sol_cli_deploy_run.apply`, including boundary leasing and release/group recording.
 
 Normal users should experience this as one paved path. Contributors should keep
 the internals shaped like a compiler pipeline: raw CLI inputs are validated once,
@@ -26,45 +26,17 @@ escape hatches do not become public API.
 
 ## Pipeline Phases
 
-```
-CLI flags
-    │
-    ▼
-[Plan]  Sol_cli_deployment_plan.of_services_result
-    │   Inputs:  workspace name, env_config, list of discovered services
-    │   Output:  plan : t
-    │              ├─ services    : service_spec list
-    │              ├─ topics      : Topic_name.t list
-    │              ├─ migrations  : Migration_file.t list
-    │              ├─ schema_subjects
-    │              └─ consumer_groups
-    │
-    ▼
-[Render]  Sol_cli_deployment_render.render_spec
-    │   Inputs:  service_spec, secret_backend variant
-    │   Output:  (namespace_yaml * workload_yaml) result
-    │              Workload shape: Render_svc | Render_worker | Render_fn
-    │              Secret shape:   Kubernetes_live | Kubernetes_placeholder |
-    │                              External_secrets
-    │
-    ▼
-[Change Set]  Sol_cli_change_set.build + execute  (sol deploy only)
-    │   Inputs:  plan, execution_mode (Dry_run | Emit_to dir | Apply)
-    │   Output:  change_set : { plan; artifacts; mode }
-    │   Execute: iterates artifacts, dispatches to kubectl apply / file write
-    │
-    ▼
-[Execute]  Sol_cli_executor  (sol up uses executor directly)
-    │   local  : render + kubectl apply (local k3d)
-    │   direct : render + kubectl apply (live cluster, no build step)
-    │   gitops : render + emit_to_dir   (write YAML files, no cluster touch)
-    │
-    ▼
-[State]  Sol_cli_deployment_state
-         Reads/writes a ConfigMap "sol-deploy-state-<workspace>" in the default
-         namespace.  Currently tracks deployed consumer group IDs so that the
-         next deploy can warn when groups are removed.
-```
+| Responsibility | Current owner |
+|---|---|
+| Build typed deployment intent | `Sol_cli_deployment_plan.of_services_result` |
+| Render each workload | `Sol_cli_deployment_render.render_spec` |
+| Render all workloads, then apply/emit/print | `Sol_cli_factory.execute` → `Sol_cli_executor.run_plan` |
+| Direct-deploy lease, attempt, release and group recording | `Sol_cli_deploy_run.apply` |
+| Local build, execution and group recording | `Sol_cli_up_execution` and `cmd_up` |
+
+The modes are `Dry_run`, `Emit_to dir` and `Apply`. Live secret references are
+verified before application; emitted artifacts must use an artifact-safe backend.
+
 
 ---
 
@@ -156,9 +128,9 @@ Pipeline:
    - `--dry-run` → `Dry_run`
    - `--emit-to DIR` → `Emit_to dir`
    - neither → `Apply`
-8. **Change Set:** `Sol_cli_change_set.build` renders all artifacts for the whole plan
-   in a single pass (collecting any render errors before touching the cluster), then
-   `Sol_cli_change_set.execute` applies or emits them.
+8. **Execution:** `Sol_cli_factory.execute` uses `Sol_cli_executor.run_plan` to
+   render the selected artifacts before applying or emitting them. Direct apply is
+   coordinated by `Sol_cli_deploy_run.apply`.
 9. **State:** `record_outcome` (skipped in GitOps/dry-run modes).
 
 **Flags:**
@@ -586,61 +558,15 @@ reported as corruption, and both fail closed.
 
 ---
 
-## Request-to-state diagram
-
-```
-CLI flags + workspace directory
-          │
-          │  Sol_cli_manifest.discover_services
-          │  Sol_cli_workspace_scan.*
-          ▼
-Sol_cli_deployment_plan.of_services_result
-          │  plan.t:
-          │    services       : service_spec list
-          │    topics, migrations, schema_subjects, consumer_groups
-          │
-          │  [sol up: also builds + pushes Docker images here]
-          ▼
-Sol_cli_deployment_render.render_spec  (per service)
-          │  (namespace_yaml, workload_yaml) result
-          │
-          │  Secret backend switch:
-          │    Kubernetes_live        → real env var values  (sol up / sol deploy Apply)
-          │    Kubernetes_placeholder → empty stringData     (GitOps default)
-          │    External_secrets       → ExternalSecret CRD   (--secret-backend=external-secrets)
-          │  (an emit refuses Kubernetes_live rather than substituting a placeholder)
-          │
-          ▼
-Sol_cli_change_set.build  [sol deploy path]
-          │  change_set.t:  { plan; artifacts; mode }
-          │  mode: Dry_run | Emit_to dir | Apply
-          │
-          ▼
-Sol_cli_change_set.execute  /  Sol_cli_executor.local
-          │
-          ├─ Dry_run   → Sol_cli_manifest.apply ~dry_run:true  (prints YAML)
-          ├─ Emit_to   → emit_to_dir + release record/pointer (write files)
-          └─ Apply     → Sol_cli_manifest.apply ~dry_run:false (kubectl apply)
-                              │
-                              ▼ kubectl rollout status  [sol up: wait per service]
-          │
-          ▼
-Sol_cli_deployment_state.record_outcome
-          └─ Applied → kubectl apply ConfigMap "sol-deploy-state-<workspace>"
-                        data.consumer_groups = newline-separated group IDs
-```
-
----
-
 ## Where to add tests
 
-All test files live in `cli/test/`. Each file covers one pipeline layer:
+Inline tests live in `cli/test/inline/`; process-level tests remain in `cli/test/`. Each file covers one pipeline layer:
 
 | What you're changing | Test file |
 |---|---|
 | Plan construction (`of_services_result`, `service_spec` fields, workspace scan) | `test_deployment_plan.ml` |
 | Manifest rendering (`render_spec`, YAML shape, secret backends) | `test_manifest_render.ml` |
-| Change set build and execute logic (`Sol_cli_change_set`) | `test_change_set.ml` |
+| Factory dispatch and executor modes | `test_factory.ml`, `test_executor.ml` |
 | Full deploy sequence (plan → render → execute ordering) | `test_deployment_phases.ml` |
 | Rollback target selection and `execute_rollback` paths | `test_rollback.ml` |
 | Deployment state ConfigMap read/write | `test_deployment_state.ml` |
@@ -658,7 +584,7 @@ All test files live in `cli/test/`. Each file covers one pipeline layer:
   the expected `service_spec` value.
 
 - **Adding a new execution mode or changing how artifacts are applied**: add a test
-  in `test_change_set.ml` or `test_deployment_phases.ml` that mocks the plan and
+  in `test_factory.ml` or `test_deployment_phases.ml` that mocks the plan and
   checks which executor path is taken.
 
 - **Changing rollback behavior** (e.g. supporting a new progressive delivery
@@ -666,8 +592,7 @@ All test files live in `cli/test/`. Each file covers one pipeline layer:
 
 - **Any new deployment behavior in `sol up` or `sol deploy`** that is not already
   covered by the above should get an integration-level test in
-  `test_deployment_phases.ml`, which exercises the full plan → change-set →
-  execute sequence using a dry-run or stubbed executor to avoid cluster access.
+  `test_deployment_phases.ml`, which exercises the plan → render → execute sequence using a dry-run or stubbed executor to avoid cluster access.
 
 Tests run without a cluster: `eval $(opam env) && dune test cli/test/`.
 
