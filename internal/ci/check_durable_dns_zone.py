@@ -12,8 +12,9 @@ This guard reads both providers and fails closed: each bootstrap root owns its z
 managing flag and keeps that ownership in a remote backend; each cluster root owns a zone
 only when told to create one, reads an existing one otherwise, and carries no wildcard
 authority that would hide the difference; each qualification target selects the durable zone;
-each qualification harness refuses a destructive durable-root plan; and each absence verifier
-reports the retained zone as the declared prerequisite rather than as residue.
+each qualification harness delegates durable reconciliation to Sol's guarded installation
+bootstrap; and each absence verifier reports the retained zone as the declared prerequisite
+rather than as residue.
 """
 
 from __future__ import annotations
@@ -51,6 +52,8 @@ PROVIDERS = {
         "forbidden_authority": "roles/dns.admin",
     },
 }
+INSTALLATION_POLICY = "cli/lib/cloud/sol_cli_installation_stage.ml"
+TERRAFORM_PLAN = "cli/lib/cloud/sol_cli_terraform_plan.ml"
 
 
 def text_of(directory) -> str:
@@ -148,12 +151,11 @@ def check_provider(root: pathlib.Path, provider: str, spec: dict) -> list[str]:
         )
 
     harness = (root / spec["harness"]).read_text()
-    for needle in ("-detailed-exitcode", "must be replaced|will be destroyed"):
-        if needle not in harness:
-            problems.append(
-                f"{provider}: {spec['harness']} does not carry {needle!r}, so a plan that would "
-                "replace or destroy a durable resource is not refused"
-            )
+    if "cloud bootstrap" not in harness or "--apply" not in harness:
+        problems.append(
+            f"{provider}: {spec['harness']} does not reconcile the durable installation "
+            "through `sol cloud bootstrap <target> --apply`"
+        )
 
     absence = (root / spec["absence"]).read_text()
     if spec["zone_class"] not in absence:
@@ -180,6 +182,12 @@ def main() -> int:
         if missing:
             problems.append(f"{provider}: cannot read {', '.join(missing)}")
 
+    missing_policy = [
+        path for path in (INSTALLATION_POLICY, TERRAFORM_PLAN) if not (root / path).exists()
+    ]
+    if missing_policy:
+        problems.append(f"cannot read {', '.join(missing_policy)}")
+
     if problems:
         print("check_durable_dns_zone: cannot evaluate the tree:")
         for problem in problems:
@@ -188,6 +196,24 @@ def main() -> int:
 
     for provider, spec in PROVIDERS.items():
         problems.extend(check_provider(root, provider, spec))
+
+    installation_policy = (root / INSTALLATION_POLICY).read_text()
+    if "allows = [ Create; Update; Read; No_op ]" not in installation_policy:
+        problems.append(
+            f"{INSTALLATION_POLICY} must refuse delete, replace and unknown changes in "
+            "the durable root"
+        )
+    if "~policy:durable_root_policy" not in installation_policy:
+        problems.append(
+            f"{INSTALLATION_POLICY} does not use the durable-root policy when applying "
+            "the bootstrap plan"
+        )
+
+    terraform_plan = (root / TERRAFORM_PLAN).read_text()
+    if "List.mem action rule.allows" not in terraform_plan:
+        problems.append(
+            f"{TERRAFORM_PLAN} does not enforce the action allowlist for guarded plans"
+        )
 
     if problems:
         print("check_durable_dns_zone: the durable-zone contract is broken:")

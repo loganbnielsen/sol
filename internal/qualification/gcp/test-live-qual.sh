@@ -83,6 +83,12 @@ fi
 printf 'sol %s [runner=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" >>"$ARGV_LOG"
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 case "$1 $2" in
+  "cloud bootstrap")
+    if [ "${STUB_BOOTSTRAP_RC:-0}" != 0 ]; then
+      printf 'bootstrap REFUSED: installation is Unmet or UNKNOWN\n'
+      exit "$STUB_BOOTSTRAP_RC"
+    fi
+    ;;
   "cloud apply")
     printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-cluster-stub/platform/cloud/gcp/cluster' 'apply'\n" \
       "${XDG_DATA_HOME:-/tmp}"
@@ -112,6 +118,7 @@ case "$1 $2" in
     printf 'provisioner-bootstrap-access-remove ok\n'
     printf 'lifecycle phase: Ready\nDone.\n'
     [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
+  "cloud plan") [ "${STUB_CLOUD_PLAN_RC:-0}" = "0" ] ;;
   "cloud destroy") [ "${STUB_DESTROY_RC:-0}" = "0" ] ;;
   "deploy")        [ "${STUB_DEPLOY_RC:-0}" = "0" ] ;;
   *) : ;;
@@ -153,7 +160,9 @@ case "$*" in
     if [ "${STUB_STATE_PRESENT:-0}" = "1" ]; then printf 'gs://sol-qualification-tfstate/state\n'; exit 0; fi
     printf 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND: The specified object was not found.\n' >&2
     exit 1 ;;
-  *"storage buckets describe"*) printf "sol-qualification-tfstate\n"; exit 0 ;;
+  *"storage buckets describe"*)
+    [ "${STUB_BUCKET_ABSENT:-0}" = 1 ] && exit 1
+    printf "sol-qualification-tfstate\n"; exit 0 ;;
   *"storage cat"*)
     if [ "${STUB_STATE_UNREADABLE:-0}" = "1" ]; then
       printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
@@ -542,6 +551,24 @@ run_case_without_a_phase() {
   sed -i 's/ //' "$TMP/no-phase.rc"
 }
 
+printf '\nscenario: planning skips durable reconciliation and cleanup\n'
+for scenario in absent drift failure; do
+  plan_rc=0
+  [ "$scenario" = failure ] && plan_rc=1
+  run_case "plan-$scenario" cloud PLAN_ONLY=1 STUB_PLAN_RC=2 STUB_CLOUD_PLAN_RC="$plan_rc" STUB_BUCKET_ABSENT=1
+  is "$scenario: plan exit status is preserved" "$(cat "$TMP/plan-$scenario.rc")" "$plan_rc"
+  has "$scenario: supported cloud planning runs" "sol cloud plan" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no durable Terraform operation runs" "terraform " "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no installation apply runs" "sol cloud bootstrap" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no cloud apply runs" "sol cloud apply" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no destroy runs on exit" "sol cloud destroy" "$TMP/plan-$scenario.argv"
+  [ ! -e "$TARGET_FILE" ] && ok "$scenario: scratch target is removed" \
+    || no "$scenario: scratch target is removed" absent present
+  if [ "$plan_rc" = 1 ]; then
+    lacks "a failed plan makes no success claim" "no infrastructure mutation requested" "$TMP/plan-$scenario.out"
+  fi
+done
+
 printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
@@ -554,6 +581,9 @@ has "and the events resource" "events: {}" "$TARGET_FILE"
 has "and the OCaml units the alpha scenario runs" "orders_svc: {}" "$TARGET_FILE"
 has "and the TypeScript units" "order_svc: {}" "$TARGET_FILE"
 has "Sol validates the declarations in this phase" "sol check" "$TMP/cloud-ok.argv"
+has "installation lifecycle is exercised through Sol" "sol cloud bootstrap $TARGET --apply" "$TMP/cloud-ok.argv"
+lacks "the harness never mutates the durable Terraform root directly" "terraform apply" "$TMP/cloud-ok.argv"
+
 if [ "$(awk '/sol check/{c=NR} /sol cloud apply/{a=NR} END{print (c && a && c<a) ? "yes" : "no"}' \
     "$TMP/cloud-ok.argv")" = "yes" ]; then
   ok "before it mutates the provider"
@@ -914,7 +944,7 @@ else
 fi
 
 printf '\nscenario: the durable root would be replaced\n'
-run_case durable-refusal cloud STUB_PLAN_DESTROYS=1
+run_case durable-refusal cloud STUB_BOOTSTRAP_RC=1
 if [ "$(cat "$TMP/durable-refusal.rc")" = "0" ]; then
   no "a plan that would replace a durable prerequisite refuses" "non-zero" "0"
 else
@@ -922,6 +952,7 @@ else
 fi
 has "the refusal names the durable risk" "REFUSED" "$TMP/durable-refusal.out"
 lacks "no cloud apply runs after a refused durable reconcile" "cloud apply" "$TMP/durable-refusal.argv"
+lacks "an unresolved installation never tears down a disposable target it did not apply" "cloud destroy" "$TMP/durable-refusal.argv"
 
 printf '\nscenario: platform subcommand\n'
 run_case platform-refused platform

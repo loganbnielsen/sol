@@ -81,7 +81,6 @@ source "$ROOT/internal/qualification/attempt.sh"
 case "${1:-}" in
   cloud | app | destroy)
     sol_under_test_resolve
-    DURABLE_ROOT="$SOL_PLATFORM_ROOT/cloud/aws/bootstrap"
     ;;
 esac
 
@@ -270,58 +269,6 @@ aws_inventory() {
   aws_residue_verdict
 }
 
-reconcile_durable_root() {
-  local base=(-backend-config="bucket=$STATE_BUCKET" -backend-config="key=bootstrap/aws/default.tfstate"
-              -backend-config="region=$AWS_REGION" -backend-config="dynamodb_table=$LOCK_TABLE"
-              -backend-config="encrypt=true")
-  local v=(-var="region=$AWS_REGION" -var="state_bucket=$STATE_BUCKET" -var="state_lock_table=$LOCK_TABLE"
-           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN")
-
-  if aws s3api head-bucket --bucket "$STATE_BUCKET" >/dev/null 2>&1; then
-    say "bootstrap: state bucket s3://$STATE_BUCKET present"
-  else
-    say "bootstrap: state bucket absent -- it must exist before the durable root can store state in it"
-  fi
-
-  say "bootstrap: reconciling the durable root against its declared state"
-  ( cd "$DURABLE_ROOT" && timeout "$PHASE_TIMEOUT" terraform init -input=false "${base[@]}" ) \
-    >"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at init -- see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
-    }
-
-  local plan_rc=0
-  ( cd "$DURABLE_ROOT" && timeout "$PHASE_TIMEOUT" terraform plan -input=false -detailed-exitcode \
-      -out="$LOG_DIR/durable.tfplan" "${v[@]}" ) >>"$LOG_DIR/bootstrap.log" 2>&1 || plan_rc=$?
-
-  case "$plan_rc" in
-    0)
-      say "bootstrap: durable root already matches its declared state"
-      return 0
-      ;;
-    1)
-      say "bootstrap FAILED at plan -- see $LOG_DIR/bootstrap.log"
-      tail -n 20 "$LOG_DIR/bootstrap.log"
-      return 1
-      ;;
-  esac
-
-  ( cd "$DURABLE_ROOT" && terraform show -no-color "$LOG_DIR/durable.tfplan" ) \
-    >"$LOG_DIR/durable.plan.txt" 2>&1 || true
-  if grep -qE 'must be replaced|will be destroyed' "$LOG_DIR/durable.plan.txt"; then
-    say "bootstrap REFUSED: the durable root's plan would replace or destroy a durable resource."
-    say "  A recreated hosted zone gets different nameservers, breaking the registrar delegation, and a"
-    say "  recreated bucket is the state store for every root. Review $LOG_DIR/durable.plan.txt;"
-    say "  this needs a human decision, not an automatic apply."
-    return 1
-  fi
-
-  say "bootstrap: applying in-place changes to the durable root (metadata only today)"
-  ( cd "$DURABLE_ROOT" && timeout "$PHASE_TIMEOUT" terraform apply -input=false "$LOG_DIR/durable.tfplan" ) \
-    >>"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at apply -- see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
-    }
-  say "bootstrap: durable root reconciled"
-}
 
 DEPLOY_KUBECONFIG="$LOG_DIR/kubeconfig-deploy.yaml"
 ACCESS_KUBECONFIG="$LOG_DIR/kubeconfig-access.yaml"
@@ -457,7 +404,7 @@ phase_transport() {
 }
 
 phase_cloud() {
-  reconcile_durable_root || return 1
+  run cloud-bootstrap bash -c "cd '$WORKSPACE' && exec '$SOL' cloud bootstrap '$TARGET' --apply" || return 1
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET' --var-file '$TFVARS'" || return 1
   CLOUD_APPLIED=1
   if ! run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'"; then
