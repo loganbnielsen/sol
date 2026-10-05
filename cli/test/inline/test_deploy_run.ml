@@ -353,7 +353,6 @@ let test_the_group_check_reads_the_record_under_the_lease () =
          Windtrap.failf
            "contract observation must run under the lease before the group guard:\n%s"
            log);
-
       (match lease_at, recorded_at with
        | Some lease_at, Some recorded_at ->
          Windtrap.equal

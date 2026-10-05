@@ -630,7 +630,8 @@ let run_apply
        print_contract_changes plan;
        let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
        let* () =
-         verify_effective_access planning ~target_cfg:ctx.target_cfg |> Sol_cli_exit.of_msg
+         verify_effective_access planning ~target_cfg:ctx.target_cfg
+         |> Sol_cli_exit.of_msg
        in
        record_plan ctx.run_log plan;
        Ok ())
