@@ -534,7 +534,34 @@ let test_decode_topic_partitions_errors () =
   check_error "object instead of list" {|{"name":"orders"}|};
   check_error "missing replicas" {|[{"partition_id":0}]|};
   check_error "empty partitions" {|[]|};
-  check_error "malformed json" {|[{"partition_id":|}
+  check_error "malformed json" {|[{"partition_id":|};
+  check_error "null partition entry" {|[null]|};
+  check_error
+    "non-object replica entry"
+    {|[{"partition_id":0,"replicas":[null,null,null]}]|};
+  check_error "missing partition identity" {|[{"replicas":[{"node_id":0}]}]|};
+  check_error
+    "non-integer partition identity"
+    {|[{"partition_id":"0","replicas":[{"node_id":0}]}]|};
+  check_error "missing replica identity" {|[{"partition_id":0,"replicas":[{"core":0}]}]|};
+  check_error "empty replicas" {|[{"partition_id":0,"replicas":[]}]|};
+  check_error
+    "duplicate partition identity"
+    {|[{"partition_id":0,"replicas":[{"node_id":0}]},{"partition_id":0,"replicas":[{"node_id":1}]}]|};
+  check_error
+    "duplicate replica identity"
+    {|[{"partition_id":0,"replicas":[{"node_id":0},{"node_id":0},{"node_id":1}]}]|}
+;;
+
+let test_fabricated_replicas_cannot_satisfy_durability () =
+  let body = {|[{"partition_id":0,"replicas":[null,null,null]}]|} in
+  match Kafka_service.Admin.decode_topic_partitions body with
+  | Ok (Kafka_service.Admin.Topic_partitions { replication_factor; _ }) ->
+    Windtrap.failf
+      "fabricated replica entries produced replication factor %d"
+      replication_factor
+  | Ok Kafka_service.Admin.Topic_not_found -> Windtrap.fail "unexpected Topic_not_found"
+  | Error _ -> ()
 ;;
 
 let () =
@@ -607,6 +634,9 @@ let () =
         "admin_topic_metadata"
         [ test "topic partitions" test_decode_topic_partitions
         ; test "topic partition errors" test_decode_topic_partitions_errors
+        ; test
+            "fabricated replicas cannot satisfy durability"
+            test_fabricated_replicas_cannot_satisfy_durability
         ]
     ]
 ;;
