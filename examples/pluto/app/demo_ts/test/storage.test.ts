@@ -9,7 +9,7 @@ import {
   type OrderHandlerDeps,
   type OrderStore,
 } from "../fulfillment_worker/src/handler.js";
-import { decodeOrderPlaced } from "../fulfillment_worker/src/wire.js";
+import { decodeOrderPlaced } from "../contract/src/index.js";
 import { makeOrderJobs } from "../fulfillment_worker/src/jobs.js";
 
 const ORDER = {

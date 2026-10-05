@@ -5,7 +5,7 @@ import { context, propagation, SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
 import { connectTopic, kafkaConfigFromEnv, publish } from "@sol-fab/kafka";
-import { ORDER_PLACED } from "@demo-ts/contract";
+import { ORDER_PLACED, decodeOrderPlaced } from "@demo-ts/contract";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
 import { runRelay } from "@sol-fab/outbox";
 import { runService, type ServiceLifecycle } from "@sol-fab/svc";
@@ -15,7 +15,6 @@ import { makeDb } from "./db.js";
 import { confirmationJobs } from "./jobs.js";
 import { placeOrder } from "./orders.js";
 import { ORDER_PLACED_KIND } from "./outbox.js";
-import { decodeOrderPlaced } from "./wire.js";
 import { supervise, watch } from "./runner-supervision.js";
 
 function setting(name: string): string | undefined {

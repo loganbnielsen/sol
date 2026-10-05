@@ -26,9 +26,13 @@ npm packages:
   order, removing a row only after the broker acknowledged it.
 
 Alongside them, the local `@demo-ts/contract` workspace package is the single
-source of truth for both events: `order_svc` imports `OrderPlaced` to produce it,
-`fulfillment_worker` imports `OrderFulfilled` for its outbox relay to publish
-under, and `main.ts` is the workspace's projection program. `sol up
+source of truth for both events — the interfaces, the topic contracts and the
+validated runtime decoders (`decodeOrderPlaced`, `decodeOrderFulfilled`), so a
+producer and a consumer cannot accept different payloads under the same event
+name: `order_svc` imports `OrderPlaced`/`decodeOrderPlaced` to produce and relay
+it, `fulfillment_worker` imports `OrderFulfilled`/`OrderPlaced` and their
+decoders for its consumer and its outbox relay, and `main.ts` is the workspace's
+projection program. `sol up
 --scope=demo_ts` runs it (`npm run contract`) before any workload, so both topics
 and subjects are registered by the deployment lifecycle; both services only
 resolve the topic and schema id at startup and fail if a contract is not

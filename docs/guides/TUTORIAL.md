@@ -261,6 +261,13 @@ In both languages the contract facts come from the declaration rather than from
 hand-written code — the declared `key` becomes a generated field extractor — so there
 is nothing to keep in sync.
 
+Runtime acceptance belongs to the contract as well: the interface and its validated
+decoder live in the same module (`decodeOrderPlaced`/`decodeOrderFulfilled` beside
+`OrderPlaced`/`OrderFulfilled` in `app/demo_ts/contract`), exactly as an OCaml event
+module pairs `type t` with `decode`. Every producer and consumer imports that one
+decoder instead of re-implementing the field checks, so a producer and a consumer
+cannot disagree about which payloads the same event accepts.
+
 `sol new event <team>/<name>` appends a declaration to the team's `sol.toml` and
 regenerates its binding, so a new event follows the same path.
 
