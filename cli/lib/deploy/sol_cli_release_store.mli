@@ -37,6 +37,11 @@ val current
   -> workspace:string
   -> (string option, string) result
 
+val deployed_contract
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> (Sol_cli_release_id.contract_fact list, string) result
+
 val delete
   :  ctx:Sol_cli_kube_destination.context
   -> release_id:string
