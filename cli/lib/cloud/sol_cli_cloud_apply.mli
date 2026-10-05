@@ -30,6 +30,7 @@ type ('outputs, 'env, 'control) deps =
   ; platform_installed : 'env -> bool
   ; apply_prerequisites : 'env -> string list -> (unit, failure) result
   ; await_crds : 'env -> bool
+  ; verify_platform_prerequisites : 'env -> string list -> (unit, failure) result
   ; apply_platform : 'env -> string list -> (unit, failure) result
   ; await_readiness : 'env -> (string * Sol_cli_cloud_lifecycle.readiness) list
   ; remove_bootstrap_access : unit -> (unit, failure) result

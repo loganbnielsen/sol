@@ -20,6 +20,28 @@ val cloud_backend : cloud_target -> string list
 val platform_backend : cloud_target -> string list
 val platform_address : string -> string
 
+type platform_credential =
+  { namespace : string
+  ; secret : string
+  }
+
+val profile_of_platform_vars : string list -> string option
+
+val platform_credentials_of_components
+  :  platform_profile:string
+  -> Yojson.Safe.t
+  -> platform_credential list
+
+val missing_platform_credential_message : platform_credential -> string
+
+type credential_presence =
+  | Credential_present
+  | Credential_absent
+  | Credential_unverifiable of string
+
+val credential_presence : exit_code:int -> output:string -> credential_presence
+val unverifiable_platform_credential_message : platform_credential -> string -> string
+
 type platform_inputs
 
 val platform_inputs

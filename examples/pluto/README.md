@@ -213,9 +213,14 @@ In `sol/environments.yml`, the `pilot` environment selects the
 `production-single-region` profile; `prod` deliberately does not, because an
 environment's name never makes a production claim.
 
-The profile runs Kafka as SASL_SSL. Before the first deploy, create the broker's
-SASL users Secret and give the workload namespaces the credential and the CA;
-`sol deploy` fails closed without them:
+The profile runs Kafka as SASL_SSL. The broker's SASL users Secret is a
+pre-platform operator input: `sol cloud apply` creates the `redpanda` namespace
+in its prerequisite stage, then stops before the privileged platform apply if
+the Secret is absent, naming it and the command that creates it. On a fresh
+target the order is `sol cloud apply pilot/aws/us-east-1`, create the Secret when
+the run names it, then `sol cloud apply pilot/aws/us-east-1` again to resume.
+Give the workload namespaces the credential and the CA as well; `sol deploy`
+fails closed without them:
 
 ```bash
 kubectl create secret generic redpanda-users -n redpanda \

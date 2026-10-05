@@ -1994,3 +1994,86 @@ let%test "driver: byo has nothing to observe, identify or credential (DEC-051)" 
      | Error _ -> true
      | Ok () -> false)
 ;;
+
+let credential_components ~platform_profile =
+  `Assoc
+    [ ( "redpanda"
+      , `Assoc
+          [ ( platform_profile
+            , `Assoc
+                [ ( "auth"
+                  , `Assoc [ "sasl", `Assoc [ "secretRef", `String "redpanda-users" ] ] )
+                ] )
+          ] )
+    ]
+;;
+
+let credential_labels credentials =
+  List.map
+    (fun (credential : L.platform_credential) ->
+       credential.namespace ^ "/" ^ credential.secret)
+    credentials
+;;
+
+let%test "platform credentials: the durable layer requires the broker SASL Secret" =
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the durable layer declares redpanda/redpanda-users"
+    [ "redpanda/redpanda-users" ]
+    (credential_labels
+       (L.platform_credentials_of_components
+          ~platform_profile:"durable"
+          (credential_components ~platform_profile:"durable")))
+;;
+
+let%test "platform credentials: the local layer requires none" =
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"the local layer carries no SASL secretRef"
+    []
+    (credential_labels
+       (L.platform_credentials_of_components
+          ~platform_profile:"local"
+          (credential_components ~platform_profile:"durable")))
+;;
+
+let%test "platform credentials: the profile comes from the effective platform vars" =
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"platform_profile=durable is read from the vars sent to Terraform"
+    (Some "durable")
+    (L.profile_of_platform_vars
+       [ "base_domain=acme.example"; "platform_profile=durable" ])
+;;
+
+let%test "credential presence: a successful check is present" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"exit 0 means the Secret exists"
+    true
+    (match L.credential_presence ~exit_code:0 ~output:"" with
+     | L.Credential_present -> true
+     | L.Credential_absent | L.Credential_unverifiable _ -> false)
+;;
+
+let%test "credential presence: NotFound is absent, any other failure is unverifiable" =
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a NotFound is a positive absence; a denied or unreachable check is not"
+    true
+    ((match
+        L.credential_presence
+          ~exit_code:1
+          ~output:"Error from server (NotFound): secrets \"redpanda-users\" not found"
+      with
+      | L.Credential_absent -> true
+      | L.Credential_present | L.Credential_unverifiable _ -> false)
+     &&
+     match
+       L.credential_presence
+         ~exit_code:1
+         ~output:"error: You must be logged in to the server (Unauthorized)"
+     with
+     | L.Credential_unverifiable _ -> true
+     | L.Credential_present | L.Credential_absent -> false)
+;;

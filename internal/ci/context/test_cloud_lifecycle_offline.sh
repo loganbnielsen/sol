@@ -304,6 +304,71 @@ if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line
 fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
+credential_log="$tmp/platform-credential-absent.log"
+rm -f "$PLATFORM_INSTALLED_FILE"
+if (export FAIL_ON=""; export PLATFORM_CREDENTIAL_ABSENT=1; run_apply "$credential_log"); then
+  cat "$credential_log.out" >&2
+  echo "cloud apply succeeded although an operator-supplied platform credential was absent" >&2
+  exit 1
+fi
+grep -F 'redpanda-users' "$credential_log.out" >/dev/null || {
+  echo "the missing platform credential refusal did not name the Secret:" >&2
+  cat "$credential_log.out" >&2
+  exit 1
+}
+grep -F -- 'kubectl create secret generic redpanda-users -n redpanda' "$credential_log.out" \
+  >/dev/null || {
+  echo "the refusal did not show how the operator supplies the credential out of band:" >&2
+  cat "$credential_log.out" >&2
+  exit 1
+}
+if grep -F 'terraform ' "$credential_log" | grep 'cloud/[a-z]*/platform.* apply ' \
+    | grep -v -- '-target=' >/dev/null; then
+  echo "the whole-root platform apply ran although the operator-supplied credential was absent:" >&2
+  cat "$credential_log" >&2
+  exit 1
+fi
+grep -F 'the platform install cannot start:' "$credential_log.out" >/dev/null || {
+  echo "the apply did not report the missing credential as the install's own error:" >&2
+  cat "$credential_log.out" >&2
+  exit 1
+}
+if grep -qF '[platform-apply] FAILED' "$credential_log.out"; then
+  echo "the missing credential reached the platform apply and was reported as a timeout:" >&2
+  cat "$credential_log.out" >&2
+  exit 1
+fi
+if ! grep -F -- 'provisioner_bootstrap_admin=false' "$credential_log" >/dev/null; then
+  echo "the missing-credential refusal left the bootstrap window open:" >&2
+  grep -nE 'provisioner_bootstrap_admin|redpanda-users' "$credential_log" >&2 || true
+  exit 1
+fi
+
+unverifiable_log="$tmp/platform-credential-unverifiable.log"
+rm -f "$PLATFORM_INSTALLED_FILE"
+if (export FAIL_ON=""; export PLATFORM_CREDENTIAL_UNVERIFIABLE=1; run_apply "$unverifiable_log"); then
+  cat "$unverifiable_log.out" >&2
+  echo "cloud apply succeeded although the credential check could not reach the cluster" >&2
+  exit 1
+fi
+grep -F 'could not establish whether the operator-supplied Secret' \
+  "$unverifiable_log.out" >/dev/null || {
+  echo "a failed credential check was not distinguished from an absent Secret:" >&2
+  cat "$unverifiable_log.out" >&2
+  exit 1
+}
+if grep -F 'is absent from namespace' "$unverifiable_log.out" >/dev/null; then
+  echo "an unverifiable credential check was reported as a positively absent Secret:" >&2
+  cat "$unverifiable_log.out" >&2
+  exit 1
+fi
+if grep -F 'terraform ' "$unverifiable_log" | grep 'cloud/[a-z]*/platform.* apply ' \
+    | grep -v -- '-target=' >/dev/null; then
+  echo "the whole-root platform apply ran although the credential check failed:" >&2
+  cat "$unverifiable_log" >&2
+  exit 1
+fi
+
 fresh_log="$tmp/phase-fresh.log"
 rm -f "$PLATFORM_INSTALLED_FILE"
 if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$fresh_log"); then

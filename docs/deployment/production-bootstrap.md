@@ -291,18 +291,32 @@ TLS. Sol sets the module's `platform_profile` from the target's profile,
 independently of `observability_backend`, so a production target whose telemetry
 goes to an external backend still gets the production transport.
 
-Sol never generates or stores the workload credential. Two operator steps make
-the transport usable, and both fail closed:
+Sol never generates or stores the workload credential. The broker's SASL users
+Secret is a **pre-platform operator input**: `sol cloud apply` creates the
+platform namespaces in its prerequisite stage and then, before the privileged
+platform apply, checks that the Secret exists. When it is absent the run stops
+naming the missing input and the command that creates it, rather than starting a
+release whose pods cannot mount their volumes and reporting only a timeout after
+several minutes. Create the Secret and re-run to resume.
 
-1. **Create the broker's SASL users Secret in `redpanda` before the platform
-   apply.** The chart's `auth.sasl.secretRef` is `redpanda-users`; when that
-   Secret is absent the Redpanda release cannot start. Its `users.txt` holds
-   `name:password:mechanism`, one user per line:
+Two operator steps make the transport usable, and both fail closed:
+
+1. **Create the broker's SASL users Secret in `redpanda`.** The chart's
+   `auth.sasl.secretRef` is `redpanda-users`; the chart mounts it as a required
+   volume on both the broker StatefulSet and the post-install Job, and does not
+   create it. Its `users.txt` holds `name:password:mechanism`, one user per line:
 
    ```bash
    kubectl create secret generic redpanda-users -n redpanda \
      --from-literal=users.txt="sol-workloads:$(your-secret-tool get sol-kafka-sasl-password):SCRAM-SHA-256"
    ```
+
+   On a fresh target the `redpanda` namespace does not exist until the first
+   `sol cloud apply` has run its prerequisite stage, so the order is
+   `sol cloud apply <target>`, create the Secret when the run names it, then
+   `sol cloud apply <target>` again to resume the install. The credential is
+   supplied out of band: Sol never reads it, and it never enters Terraform
+   state, a command line, a release artifact or a run log.
 
 2. **Give every workload namespace the credential and the CA.** `sol secret set`
    writes the key to the runtime Secret and to every `<service>-secrets` in the

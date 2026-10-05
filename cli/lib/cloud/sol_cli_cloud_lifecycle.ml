@@ -75,6 +75,91 @@ let platform_profile (target : Sol_cli_config.target) =
   | None -> "local"
 ;;
 
+let profile_of_platform_vars vars =
+  vars
+  |> List.find_map (fun var ->
+    match String.index_opt var '=' with
+    | Some i when String.sub var 0 i = "platform_profile" ->
+      let value = String.sub var (i + 1) (String.length var - i - 1) in
+      if Sol_cli_string.is_blank value then None else Some value
+    | _ -> None)
+;;
+
+type platform_credential =
+  { namespace : string
+  ; secret : string
+  }
+
+let redpanda_namespace = "redpanda"
+
+let platform_credentials_of_components ~platform_profile json =
+  match
+    Sol_cli_json.field [ "redpanda"; platform_profile; "auth"; "sasl"; "secretRef" ] json
+  with
+  | `String secret when not (Sol_cli_string.is_blank secret) ->
+    [ { namespace = redpanda_namespace; secret } ]
+  | _ -> []
+;;
+
+let missing_platform_credential_message { namespace; secret } =
+  String.concat
+    "\n"
+    [ Printf.sprintf
+        "the platform install cannot start: the operator-supplied Secret %s is absent \
+         from namespace %s."
+        secret
+        namespace
+    ; Printf.sprintf
+        "The Redpanda chart declares auth.sasl.secretRef=%s and mounts that Secret as a \
+         required volume on both the broker StatefulSet and the post-install Job, but \
+         the chart does not create it."
+        secret
+    ; "Without it those pods never leave ContainerCreating, so Helm waits until its \
+       timeout and the install reports only `context deadline exceeded`."
+    ; "The credential is yours: Sol never generates, reads or stores it. Create the \
+       Secret out of band, for example:"
+    ; ""
+    ; Printf.sprintf "    kubectl create secret generic %s -n %s \\" secret namespace
+    ; "      --from-literal=users.txt=\"sol-workloads:<password>:SCRAM-SHA-256\""
+    ; ""
+    ; "then re-run `sol cloud apply <target>` to resume the install."
+    ]
+;;
+
+type credential_presence =
+  | Credential_present
+  | Credential_absent
+  | Credential_unverifiable of string
+
+let credential_presence ~exit_code ~output =
+  if exit_code = 0
+  then Credential_present
+  else (
+    let said = String.lowercase_ascii output in
+    if
+      Sol_cli_string.contains ~needle:"notfound" said
+      || Sol_cli_string.contains ~needle:"not found" said
+    then Credential_absent
+    else Credential_unverifiable (String.trim output))
+;;
+
+let unverifiable_platform_credential_message { namespace; secret } reason =
+  String.concat
+    "\n"
+    [ Printf.sprintf
+        "the platform install cannot start: Sol could not establish whether the \
+         operator-supplied Secret %s exists in namespace %s, and it will not read a \
+         failed check as an absent one."
+        secret
+        namespace
+    ; Printf.sprintf "The check itself failed: %s" reason
+    ; ""
+    ; Printf.sprintf "    kubectl get secret %s -n %s -o name" secret namespace
+    ; ""
+    ; "Resolve that, then re-run `sol cloud apply <target>` to resume the install."
+    ]
+;;
+
 let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
   match
     cluster.check_identity ~cluster_access_role_arn:target.cluster_access_role_arn
