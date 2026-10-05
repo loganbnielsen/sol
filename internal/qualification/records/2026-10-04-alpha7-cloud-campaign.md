@@ -57,3 +57,23 @@ No alpha row is qualified. No provider reached the end of the platform install, 
 `app`, `destroy`-as-a-run and `verify` stages did not run at all. The 700-second deadline's first
 failing pod/hook condition was not captured; BUG-206 owns reproducing it from a fixture. The AWS
 destroy's deletion-protection failure is documented by BUG-209, not qualified here.
+
+## The failed-install retry, verbatim (AWS attempt 2)
+
+The retry was the harness re-running `sol cloud apply` for `qualalpha7/aws/us-east-1`. Sol resumed
+the platform apply as `sol-qual5-cluster-access` and was refused:
+
+```
+Error: roles.rbac.authorization.k8s.io "sol-boundary-lease" is forbidden: User
+"arn:aws:sts::123456789012:assumed-role/sol-qual5-cluster-access/EKSGetTokenAuth" cannot get
+resource "roles" in API group "rbac.authorization.k8s.io" in the namespace "default"
+Error: configmaps "sol-platform-network" is forbidden: … in the namespace "kube-system"
+```
+
+The one manual re-acquisition attempted — `terraform apply -var=provisioner_bootstrap_admin=true`
+against the saved cluster root, mirroring the form the GCP records show Sol planning — changed
+nothing observable: `aws eks list-access-entries --cluster-name sol-qual-alpha7` afterwards listed
+only `cluster-access`, `deploy`, `operator`, the node role and the EKS service role (no entry for
+`sol-qual5-provisioner`), and a kubeconfig built from the provisioner role answered `Unauthorized`.
+BUG-207 owns tracing that path; the point here is that the temporary window did not survive the
+failure and nothing in the retry reacquired it.
