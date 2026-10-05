@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+"""Regression tests for the AWS absence observer.
+
+The point of these tests is the verdict's failure modes, because those are what
+a live teardown depends on: a class that is actually present, a provider read
+that failed, a response that was JSON but not the shape the class requires, a
+required class that was never observed, and an unrelated account resource that
+must not be mistaken for the target's residue. Each residue class gets its own
+present/absent pair, and the durable prerequisite is checked to be excluded
+from the residue verdict.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import stat
+import subprocess
+import sys
+import tempfile
+
+import absence
+
+CLUSTER = "qual-cluster"
+REGION = "us-east-1"
+ACCOUNT = "123456789012"
+
+RUNTIME = absence.Runtime(
+    cluster=CLUSTER,
+    region=REGION,
+    account=ACCOUNT,
+    registry_prefix="pluto",
+    base_domain="qual-aws.sol-fab.dev",
+    attempt="attempt-1",
+    target="qualreg/aws/us-east-1",
+    state_key="sol/qualreg/aws/us-east-1/cloud.tfstate",
+)
+
+CLUSTER_TAG = {"Key": f"kubernetes.io/cluster/{CLUSTER}", "Value": "owned"}
+
+# The read each residue class uses, and a resource that is attributable to the
+# target. Kept beside each other so adding a class without a fixture fails the
+# suite rather than passing unnoticed.
+PRESENT_FIXTURES: dict[str, tuple[tuple[str, str], object]] = {
+    "eks-cluster": (("eks", "list-clusters"), {"clusters": [CLUSTER]}),
+    "rds-instance": (
+        ("rds", "describe-db-instances"),
+        {"DBInstances": [{"DBInstanceIdentifier": f"{CLUSTER}-postgres"}]},
+    ),
+    "rds-snapshot": (
+        ("rds", "describe-db-snapshots"),
+        {"DBSnapshots": [{"DBSnapshotIdentifier": f"{CLUSTER}-postgres-final"}]},
+    ),
+    "ec2-instance": (
+        ("ec2", "describe-instances"),
+        {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {"InstanceId": "i-residue", "State": {"Name": "running"}, "Tags": [CLUSTER_TAG]}
+                    ]
+                }
+            ]
+        },
+    ),
+    "vpc": (("ec2", "describe-vpcs"), {"Vpcs": [{"VpcId": "vpc-residue", "Tags": [CLUSTER_TAG]}]}),
+    "nat-gateway": (
+        ("ec2", "describe-nat-gateways"),
+        {"NatGateways": [{"NatGatewayId": "nat-residue", "State": "available", "Tags": [CLUSTER_TAG]}]},
+    ),
+    "elastic-ip": (
+        ("ec2", "describe-addresses"),
+        {"Addresses": [{"PublicIp": "198.51.100.5", "Tags": [CLUSTER_TAG]}]},
+    ),
+    "ebs-volume": (
+        ("ec2", "describe-volumes"),
+        {"Volumes": [{"VolumeId": "vol-residue", "State": "available", "Tags": [CLUSTER_TAG]}]},
+    ),
+    "load-balancer": (
+        ("elbv2", "describe-load-balancers"),
+        {"LoadBalancers": [{"LoadBalancerArn": "arn:aws:elbv2:::loadbalancer/app/k8s-residue", "LoadBalancerName": "k8s-residue"}]},
+    ),
+    "ecr-repository": (
+        ("ecr", "describe-repositories"),
+        {"repositories": [{"repositoryName": "pluto/charge-svc"}]},
+    ),
+    "cloudwatch-log-group": (
+        ("logs", "describe-log-groups"),
+        {"logGroups": [{"logGroupName": f"/aws/eks/{CLUSTER}/cluster"}]},
+    ),
+    "rds-subnet-group": (
+        ("rds", "describe-db-subnet-groups"),
+        {"DBSubnetGroups": [{"DBSubnetGroupName": f"{CLUSTER}-postgres"}]},
+    ),
+    "iam-role": (("iam", "list-roles"), {"Roles": [{"RoleName": f"{CLUSTER}-ebs-csi"}]}),
+    "iam-policy": (("iam", "list-policies"), {"Policies": [{"PolicyName": f"{CLUSTER}-cert-manager"}]}),
+    "s3-bucket": (("s3api", "list-buckets"), {"Buckets": [{"Name": f"{CLUSTER}-loki-logs"}]}),
+    "cloudwatch-dashboard": (
+        ("cloudwatch", "list-dashboards"),
+        {"DashboardEntries": [{"DashboardName": f"{CLUSTER}-postgres"}]},
+    ),
+}
+
+EMPTY_RESPONSES: dict[tuple[str, str], object] = {
+    ("eks", "list-clusters"): {"clusters": []},
+    ("rds", "describe-db-instances"): {"DBInstances": []},
+    ("rds", "describe-db-subnet-groups"): {"DBSubnetGroups": []},
+    ("rds", "describe-db-snapshots"): {"DBSnapshots": []},
+    ("ec2", "describe-instances"): {"Reservations": []},
+    ("ec2", "describe-vpcs"): {"Vpcs": []},
+    ("ec2", "describe-nat-gateways"): {"NatGateways": []},
+    ("ec2", "describe-addresses"): {"Addresses": []},
+    ("ec2", "describe-volumes"): {"Volumes": []},
+    ("elbv2", "describe-load-balancers"): {"LoadBalancers": []},
+    ("elbv2", "describe-tags"): {"TagDescriptions": []},
+    ("ecr", "describe-repositories"): {"repositories": []},
+    ("iam", "list-roles"): {"Roles": []},
+    ("iam", "list-policies"): {"Policies": []},
+    ("s3api", "list-buckets"): {"Buckets": []},
+    ("cloudwatch", "list-dashboards"): {"DashboardEntries": []},
+    ("logs", "describe-log-groups"): {"logGroups": []},
+    ("sts", "get-caller-identity"): {"Account": ACCOUNT, "Arn": f"arn:aws:iam::{ACCOUNT}:user/qualifier"},
+    ("route53", "list-hosted-zones"): {"HostedZones": [{"Name": "qual-aws.sol-fab.dev.", "Id": "/hostedzone/Z1"}]},
+}
+
+
+class FakeAws:
+    """A provider runner keyed by the read's (service, subcommand)."""
+
+    def __init__(self) -> None:
+        self.responses = dict(EMPTY_RESPONSES)
+        self.returncodes: dict[tuple[str, str], int] = {}
+        self.timeouts: set[tuple[str, str]] = set()
+        self.calls: list[list[str]] = []
+
+    def set(self, key: tuple[str, str], value: object) -> None:
+        self.responses[key] = value
+
+    def fail(self, key: tuple[str, str], returncode: int = 255) -> None:
+        self.returncodes[key] = returncode
+
+    def hang(self, key: tuple[str, str]) -> None:
+        self.timeouts.add(key)
+
+    def __call__(self, argv: list[str]) -> absence.ReadResult:
+        self.calls.append(list(argv))
+        key = (argv[0], argv[1]) if len(argv) > 1 else (argv[0], "")
+        if key in self.timeouts:
+            return absence.ReadResult(argv, 124, "", "timed out", timed_out=True)
+        code = self.returncodes.get(key, 0)
+        if code != 0:
+            return absence.ReadResult(argv, code, "", "stub provider failure")
+        value = self.responses.get(key, {})
+        text = value if isinstance(value, str) else json.dumps(value)
+        return absence.ReadResult(argv, 0, text, "")
+
+
+failures: list[str] = []
+checks = 0
+
+
+def check(description: str, condition: bool) -> None:
+    global checks
+    checks += 1
+    if condition:
+        print(f"  ok   {description}")
+    else:
+        print(f"  FAIL {description}")
+        failures.append(description)
+
+
+def states(report: absence.Report) -> dict[str, str]:
+    return {o.resource_class: o.state for o in report.observations}
+
+
+def main() -> int:  # noqa: C901 - one linear suite reads better than nested fixtures
+    print("absence: the declared class set matches the checks")
+    runner = FakeAws()
+    report = absence.evaluate(RUNTIME, runner)
+    check("every declared residue class is observed", sorted(states(report)) == sorted(absence.RESIDUE_CLASSES))
+    check("a clean account passes", report.ok)
+    check("every class is ABSENT when nothing is attributable", set(states(report).values()) == {absence.ABSENT})
+
+    print("absence: each required class participates in the verdict")
+    for resource_class, (key, value) in PRESENT_FIXTURES.items():
+        runner = FakeAws()
+        runner.set(key, value)
+        if resource_class == "load-balancer":
+            runner.set(
+                ("elbv2", "describe-tags"),
+                {"TagDescriptions": [{"ResourceArn": "arn:aws:elbv2:::loadbalancer/app/k8s-residue", "Tags": [CLUSTER_TAG]}]},
+            )
+        report = absence.evaluate(RUNTIME, runner)
+        result = states(report)
+        check(f"{resource_class}: a target resource reads PRESENT", result[resource_class] == absence.PRESENT)
+        check(f"{resource_class}: only that class fails", report.failed and all(o.resource_class == resource_class for o in report.failed))
+        check(f"{resource_class}: the failure is reported as residue", report.failed[0].state == absence.PRESENT and bool(report.failed[0].detail))
+
+    print("absence: unrelated account resources are not the target's residue")
+    runner = FakeAws()
+    runner.set(
+        ("ec2", "describe-instances"),
+        {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-other",
+                            "State": {"Name": "running"},
+                            "Tags": [{"Key": "kubernetes.io/cluster/another-cluster", "Value": "owned"}],
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+    runner.set(("ec2", "describe-vpcs"), {"Vpcs": [{"VpcId": "vpc-other", "Tags": [{"Key": "Name", "Value": "another-cluster"}]}]})
+    runner.set(("rds", "describe-db-instances"), {"DBInstances": [{"DBInstanceIdentifier": "another-cluster-postgres"}]})
+    runner.set(("ecr", "describe-repositories"), {"repositories": [{"repositoryName": "otherservice/api"}]})
+    runner.set(("logs", "describe-log-groups"), {"logGroups": [{"logGroupName": "/aws/eks/another-cluster/cluster"}]})
+    report = absence.evaluate(RUNTIME, runner)
+    result = states(report)
+    check("an unrelated cluster's instance is not residue", result["ec2-instance"] == absence.ABSENT)
+    check("a similarly named VPC is not matched by substring", result["vpc"] == absence.ABSENT)
+    check("another cluster's database is not residue", result["rds-instance"] == absence.ABSENT)
+    check("another registry path is not residue", result["ecr-repository"] == absence.ABSENT)
+    check("another cluster's log group is not residue", result["cloudwatch-log-group"] == absence.ABSENT)
+    check("the clean run still passes", report.ok)
+
+    print("absence: terminal records are not live residue")
+    runner = FakeAws()
+    runner.set(
+        ("ec2", "describe-instances"),
+        {"Reservations": [{"Instances": [{"InstanceId": "i-dead", "State": {"Name": "terminated"}, "Tags": [CLUSTER_TAG]}]}]},
+    )
+    runner.set(("ec2", "describe-nat-gateways"), {"NatGateways": [{"NatGatewayId": "nat-dead", "State": "deleted", "Tags": [CLUSTER_TAG]}]})
+    report = absence.evaluate(RUNTIME, runner)
+    result = states(report)
+    check("a terminated instance reads ABSENT", result["ec2-instance"] == absence.ABSENT)
+    check("a deleted NAT gateway reads ABSENT", result["nat-gateway"] == absence.ABSENT)
+    check("terminal records do not fail the verdict", report.ok)
+
+    print("absence: a failed, hanging, malformed or wrong-shaped read is UNKNOWN, never absence")
+    for label, configure in (
+        ("a provider failure", lambda r: r.fail(("ec2", "describe-volumes"))),
+        ("a hanging read", lambda r: r.hang(("ec2", "describe-volumes"))),
+        ("a non-JSON response", lambda r: r.set(("ec2", "describe-volumes"), "not json at all")),
+        ("a wrong-shaped response", lambda r: r.set(("ec2", "describe-volumes"), {"Volumes": {}})),
+        ("a response missing its key", lambda r: r.set(("ec2", "describe-volumes"), {"unexpected": []})),
+    ):
+        runner = FakeAws()
+        configure(runner)
+        report = absence.evaluate(RUNTIME, runner)
+        result = states(report)
+        check(f"{label}: ebs-volume reads UNKNOWN", result["ebs-volume"] == absence.UNKNOWN)
+        check(f"{label}: UNKNOWN is not absence", result["ebs-volume"] != absence.ABSENT)
+        check(f"{label}: the verdict fails", not report.ok)
+
+    print("absence: the account identity is a prerequisite for attribution")
+    runner = FakeAws()
+    runner.set(("sts", "get-caller-identity"), {"Account": "999999999999", "Arn": "arn:aws:iam::999999999999:user/other"})
+    report = absence.evaluate(RUNTIME, runner)
+    check("a foreign account is refused", not report.identity.ok)
+    check("and every class is UNKNOWN rather than absent", set(states(report).values()) == {absence.UNKNOWN})
+    check("so the verdict fails", not report.ok)
+
+    runner = FakeAws()
+    runner.fail(("sts", "get-caller-identity"))
+    report = absence.evaluate(RUNTIME, runner)
+    check("an unreadable identity fails closed", not report.identity.ok and not report.ok)
+
+    print("absence: durable prerequisites are distinct from residue")
+    runner = FakeAws()
+    report = absence.evaluate(RUNTIME, runner)
+    check("a present durable zone is recorded", report.durable and report.durable[0].state == absence.PRESENT)
+    check("and does not fail the residue verdict", report.ok)
+    runner = FakeAws()
+    runner.set(("route53", "list-hosted-zones"), {"HostedZones": []})
+    report = absence.evaluate(RUNTIME, runner)
+    check("an absent durable zone is still reported", report.durable and report.durable[0].state == absence.ABSENT)
+    check("and is not treated as residue", report.ok)
+
+    print("absence: declared retention is excluded from residue")
+    runner = FakeAws()
+    runner.set(("rds", "describe-db-snapshots"), {"DBSnapshots": [{"DBSnapshotIdentifier": f"{CLUSTER}-postgres-final"}]})
+    retaining = absence.Runtime(
+        cluster=CLUSTER, region=REGION, account=ACCOUNT, registry_prefix="pluto", retention="final-snapshot"
+    )
+    report = absence.evaluate(retaining, runner)
+    check("a declared final snapshot is not residue", states(report)["rds-snapshot"] == absence.ABSENT)
+    check("and the run can still pass", report.ok)
+
+    print("absence: reads arrive as argv vectors, not shell strings")
+    runner = FakeAws()
+    absence.evaluate(RUNTIME, runner)
+    check(
+        "every regional read passes the region as its own argv word",
+        all(call[i + 1] == REGION for call in runner.calls for i, word in enumerate(call[:-1]) if word == "--region"),
+    )
+    check("no call smuggles a shell metacharacter", all(all(";" not in word and "|" not in word for word in call) for call in runner.calls))
+    check("every call starts with the provider program", all(call[0] in {"eks", "rds", "ec2", "elbv2", "ecr", "iam", "s3api", "cloudwatch", "logs", "sts", "route53"} for call in runner.calls))
+
+    print("absence: the evidence bundle is complete")
+    with tempfile.TemporaryDirectory() as scratch:
+        absence.collect(RUNTIME, FakeAws(), scratch)
+        inventory = pathlib.Path(scratch, "aws-inventory.txt").read_text()
+        verdict = pathlib.Path(scratch, "aws-inventory-verdict.txt").read_text()
+        document = json.loads(pathlib.Path(scratch, "aws-inventory-verdict.json").read_text())
+        check("the inventory carries the run identity", "attempt=attempt-1" in inventory and "state_key=" in inventory)
+        check("the inventory retains the raw provider output", '"clusters"' in inventory)
+        check("the verdict names every class", all(name in verdict for name in absence.RESIDUE_CLASSES))
+        check("the verdict states absence", "verdict: ABSENT" in verdict)
+        check("the inventory states its attribution limitations", "limitations:" in inventory and "attribution is by the target's declared identities" in inventory)
+        check("the structured verdict carries the same classes", [c["resource_class"] for c in document["classes"]] == absence.RESIDUE_CLASSES)
+
+    print("absence: the command runs end to end against a stub provider")
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = pathlib.Path(scratch)
+        stub = directory / "aws"
+        empty = {
+            "eks list-clusters": {"clusters": []},
+            "rds describe-db-instances": {"DBInstances": []},
+            "rds describe-db-subnet-groups": {"DBSubnetGroups": []},
+            "rds describe-db-snapshots": {"DBSnapshots": []},
+            "ec2 describe-instances": {"Reservations": []},
+            "ec2 describe-vpcs": {"Vpcs": []},
+            "ec2 describe-nat-gateways": {"NatGateways": []},
+            "ec2 describe-addresses": {"Addresses": []},
+            "ec2 describe-volumes": {"Volumes": []},
+            "elbv2 describe-load-balancers": {"LoadBalancers": []},
+            "ecr describe-repositories": {"repositories": []},
+            "iam list-roles": {"Roles": []},
+            "iam list-policies": {"Policies": []},
+            "s3api list-buckets": {"Buckets": []},
+            "cloudwatch list-dashboards": {"DashboardEntries": []},
+            "logs describe-log-groups": {"logGroups": []},
+            "sts get-caller-identity": {"Account": ACCOUNT, "Arn": f"arn:aws:iam::{ACCOUNT}:user/q"},
+            "route53 list-hosted-zones": {"HostedZones": []},
+        }
+        cases = "\n".join(f'  "{key}") printf \'%s\\n\' \'{json.dumps(value)}\' ;;' for key, value in empty.items())
+        stub.write_text(
+            "#!/bin/sh\n"
+            'case "$1 $2" in\n'
+            f"{cases}\n"
+            "  *) printf '{}\\n' ;;\n"
+            "esac\n"
+            "exit 0\n"
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        environment = dict(os.environ, PATH=f"{directory}:{os.environ['PATH']}", ACCOUNT=ACCOUNT)
+        out = directory / "evidence"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(pathlib.Path(__file__).resolve().parent / "absence.py"),
+                "collect",
+                "--dir",
+                str(out),
+                "--cluster",
+                CLUSTER,
+                "--region",
+                REGION,
+                "--account",
+                ACCOUNT,
+                "--registry-prefix",
+                "pluto",
+            ],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        check("a clean inventory exits 0", result.returncode == 0)
+        check("and writes its verdict", (out / "aws-inventory-verdict.txt").is_file())
+
+        stub.write_text(
+            "#!/bin/sh\n"
+            'case "$1 $2" in\n'
+            '  "sts get-caller-identity") printf \'{"Account":"%s","Arn":"arn:aws:iam::%s:user/q"}\\n\' "$ACCOUNT" "$ACCOUNT" ;;\n'
+            '  "rds describe-db-instances") printf \'{"DBInstances":[{"DBInstanceIdentifier":"qual-cluster-postgres"}]}\\n\' ;;\n'
+            "  *) printf '{}\\n' ;;\n"
+            "esac\n"
+            "exit 0\n"
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(pathlib.Path(__file__).resolve().parent / "absence.py"),
+                "collect",
+                "--dir",
+                str(out),
+                "--cluster",
+                CLUSTER,
+                "--region",
+                REGION,
+                "--account",
+                ACCOUNT,
+                "--registry-prefix",
+                "pluto",
+            ],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        check("residue fails the command", result.returncode != 0)
+        check("and the failing class is named", "rds-instance: PRESENT" in (out / "aws-inventory-verdict.txt").read_text())
+
+    print(f"\n{checks - len(failures)} passed, {len(failures)} failed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -322,6 +322,16 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/aws/test-live-row.sh
 
+      # The independent AWS absence verdict is decided by provider reads and a
+      # tri-state per-class result, not by Sol's destroy exit code. Its regression
+      # pins every required disposable class as able to fail the verdict alone, and
+      # pins a failed, hanging, malformed or wrong-shaped read as UNKNOWN rather than
+      # absence. Unconditional, like the harness test above: it stubs the provider and
+      # spends nothing.
+      - name: AWS absence observer test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: python3 internal/qualification/aws/test_absence.py
+
       # The OCaml row driver builds assertions from the effective qualification
       # rows. This suite mutation-checks that it rejects rows that did not happen.
       - name: Local OCaml row driver test

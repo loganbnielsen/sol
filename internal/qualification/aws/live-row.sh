@@ -39,6 +39,10 @@ LOCK_TABLE="${LOCK_TABLE:-sol-qual5-tflock}"
 BASE_DOMAIN="${BASE_DOMAIN:-qual-aws.sol-fab.dev}"
 ECR_REGISTRY="${ECR_REGISTRY:-$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com}"
 STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
+WORKSPACE_NAME="${WORKSPACE_NAME:-$(basename "$WORKSPACE")}"
+RETENTION="${RETENTION:-$(sed -n 's/^ *destroy_retention: *//p' "$TARGET_FILE" 2>/dev/null | head -1)}"
+RETENTION="${RETENTION:-none}"
+ABSENCE="$ROOT/internal/qualification/aws/absence.py"
 export ECR_REGISTRY
 
 mkdir -p "$LOG_DIR"
@@ -119,6 +123,14 @@ phases
              migrate apply, deploy, the transaction
   destroy    supported teardown, then the independent inventory
   verify     the independent inventory only; invokes no teardown
+
+The independent inventory (absence.py, read-only) decides teardown from provider reads alone: every
+required disposable class -- EKS cluster, RDS instance, subnet group and snapshots, EC2 instances,
+VPCs, NAT gateways, elastic IPs, EBS volumes, load balancers, ECR repositories, IAM roles and
+policies, S3 buckets, CloudWatch dashboards and log groups -- is read, shape-checked and attributed
+to this target, and only an all-ABSENT result passes. A failed, timed-out, unparseable or
+wrong-shaped read, or a class that cannot be attributed, is UNKNOWN, and UNKNOWN never becomes
+absence. The durable delegated zone is recorded separately and is not residue.
 
 The transaction is the causal path, not a health check: the scenario's POST returns an id, and the
 row only passes when the application's own read-back shows the worker's effect (`charges`: the id in
@@ -202,71 +214,39 @@ capture_kube_evidence() {
     >"$LOG_DIR/app-worker.log" 2>&1 || true
 }
 
-aws_residue_class() {
-  local out="$1" class="$2" query="$3" terminal="$4"
-  shift 4
-  local raw live
-  if ! raw="$("$@" --query "$query" --output json 2>/dev/null)"; then
-    printf '%s: UNKNOWN (the inventory read failed; a failed read is never absence)\n' "$class" >>"$out"
-    return 1
-  fi
-  if ! printf '%s' "$raw" | jq -e . >/dev/null 2>&1; then
-    printf '%s: UNKNOWN (the inventory read did not parse; a failed read is never absence)\n' "$class" >>"$out"
-    return 1
-  fi
-  live="$(printf '%s' "$raw" | jq -r --arg terminal "$terminal" \
-    '[.[] | .state as $s | select(($terminal | split(" ")) | index($s) | not)] | length')"
-  if [ "$live" = 0 ]; then
-    printf '%s: ABSENT (only %s records remain)\n' "$class" "$terminal" >>"$out"
-    return 0
-  fi
-  printf '%s: PRESENT (%s live)\n' "$class" "$live" >>"$out"
-  return 1
-}
-
-aws_residue_verdict() {
-  local out="$LOG_DIR/aws-inventory-verdict.txt" rc=0
-  : >"$out"
-  aws_residue_class "$out" ec2-instances \
-    'Reservations[].Instances[].{id:InstanceId,state:State.Name}' 'terminated shutting-down' \
-    aws ec2 describe-instances --filters "Name=tag:Name,Values=*$CLUSTER*" || rc=$?
-  aws_residue_class "$out" nat-gateways \
-    'NatGateways[].{id:NatGatewayId,state:State}' 'deleted deleting failed' \
-    aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=*$CLUSTER*" || rc=$?
-  return "$rc"
-}
-
+# The independent inventory is the teardown verdict's only owner (absence.py).
+# It reads every required disposable class, validates each response's JSON
+# shape, and attributes what it returns to this target by the target's cluster
+# tag, cluster-name prefix or declared registry path. A failed, timed-out,
+# unparseable or wrong-shaped read is UNKNOWN, and UNKNOWN never becomes
+# absence, so an unreadable provider cannot be read as a clean teardown.
+# Durable prerequisites (the delegated zone) are observed separately and are
+# excluded. Nothing here calls terraform or helm, and absence is never inferred
+# from Sol's exit code or Terraform state.
 aws_inventory() {
-  {
-    printf 'attempt=%s\n' "${ATTEMPT:--}"
-    printf 'row=%s\n' "${ROW:-}"
-    printf 'target=%s\n' "${TARGET:-}"
-    printf 'state_key=%s\n' "${STATE_KEY:-}"
-    printf 'cluster=%s\n' "${CLUSTER:-}"
-    printf 'clusters\n'
-    aws eks list-clusters --query 'clusters' --output text
-    printf 'ec2 instances tagged for this run\n'
-    aws ec2 describe-instances --filters "Name=tag:Name,Values=*$CLUSTER*" \
-      --query 'Reservations[].Instances[].{id:InstanceId,state:State.Name}' --output json
-    printf 'vpcs\n'
-    aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$CLUSTER" \
-      --query 'Vpcs[].VpcId' --output text
-    printf 'rds\n'
-    aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text
-    printf 'ecr repositories\n'
-    aws ecr describe-repositories --query 'repositories[].repositoryName' --output text
-    printf 'nat gateways\n'
-    aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=*$CLUSTER*" \
-      --query 'NatGateways[].{id:NatGatewayId,state:State}' --output json
-    printf 'elastic ips\n'
-    aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text
-    printf 'load balancers\n'
-    aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
-    printf 'route53 zones for the qualification domain\n'
-    aws route53 list-hosted-zones --query "HostedZones[?contains(Name, 'sol-fab')].Name" --output text
-  } >"$LOG_DIR/aws-inventory.txt" 2>&1
-  cat "$LOG_DIR/aws-inventory.txt"
-  aws_residue_verdict
+  if ! command -v python3 >/dev/null 2>&1; then
+    say "the independent inventory needs python3, which is not on PATH"
+    return 1
+  fi
+  say "independent inventory (read-only): every required disposable class"
+  if ! python3 "$ABSENCE" collect \
+    --dir "$LOG_DIR" \
+    --cluster "$CLUSTER" \
+    --region "$AWS_REGION" \
+    --account "$ACCOUNT" \
+    --registry-prefix "$WORKSPACE_NAME" \
+    --base-domain "$BASE_DOMAIN" \
+    --retention "$RETENTION" \
+    --attempt "$ATTEMPT" \
+    --target "$TARGET" \
+    --state-key "$STATE_KEY" \
+    >"$LOG_DIR/aws-inventory.stdout" 2>"$LOG_DIR/aws-inventory.err"; then
+    say "the independent inventory does not read ABSENT; teardown is not complete"
+    say "  evidence: $LOG_DIR/aws-inventory.txt and $LOG_DIR/aws-inventory-verdict.txt"
+    return 1
+  fi
+  say "the independent inventory reads ABSENT for every required disposable class"
+  return 0
 }
 
 
