@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+trap '' PIPE
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
@@ -38,7 +39,38 @@ STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
 export ECR_REGISTRY
 
 mkdir -p "$LOG_DIR/state"
-say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+SAY_LOG="$LOG_DIR/harness.log"
+
+say() {
+  local line
+  printf -v line '[%(%H:%M:%S)T] %s' -1 "$*"
+  printf '%s\n' "$line" >>"$SAY_LOG" 2>/dev/null || true
+  printf '%s\n' "$line" 2>/dev/null || true
+}
+
+CLOUD_APPLIED=0
+TEARDOWN_ATTEMPTED=0
+TERMINATION_SIGNAL=""
+
+cleanup() {
+  local rc=$?
+  if [ -n "$TERMINATION_SIGNAL" ] && [ "$CLOUD_APPLIED" = 1 ]; then
+    say "SIG$TERMINATION_SIGNAL ended the run: tearing down $TARGET and verifying absence"
+    phase_destroy || true
+  fi
+  return "$rc"
+}
+
+on_terminate() {
+  if [ -n "$TERMINATION_SIGNAL" ]; then return 0; fi
+  TERMINATION_SIGNAL="$1"
+  say "received SIG$1: finishing the current step, then tearing down and verifying absence"
+  exit 1
+}
+
+trap cleanup EXIT
+trap 'on_terminate TERM' TERM
+trap 'on_terminate INT' INT
 
 source "$ROOT/internal/qualification/sol-under-test.sh"
 
@@ -335,6 +367,7 @@ phase_transport() {
 phase_cloud() {
   reconcile_durable_root || return 1
   run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET' --var-file '$TFVARS'" || return 1
+  CLOUD_APPLIED=1
   run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'" || return 1
   ensure_contexts || return 1
   run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
@@ -406,10 +439,17 @@ phase_app() {
 }
 
 phase_destroy() {
+  TEARDOWN_ATTEMPTED=1
   capture_state
-  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply --var-file '$TFVARS'" || return 1
-  say "destroy returned success; the independent inventory decides absence"
+  local destroy_rc=0
+  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply --var-file '$TFVARS'" || destroy_rc=$?
+  if [ "$destroy_rc" = 0 ]; then
+    say "destroy returned success; the independent inventory decides absence"
+  else
+    say "destroy exited non-zero; the independent inventory decides absence"
+  fi
   aws_inventory
+  return "$destroy_rc"
 }
 
 case "${1:-}" in

@@ -845,16 +845,101 @@ for forbidden in 'pkill' 'killall' 'force-unlock' 'kill -9' 'kill -KILL' 'kill -
     ok "the harness contains no '$forbidden' in code"
   fi
 done
-if grep -qF 'kill -TERM -"$pgid"' "$HARNESS"; then
-  ok "stopping acts on the recorded process group (identity, not pattern)"
+if grep -qF 'kill -TERM "$run_pid"' "$HARNESS"; then
+  ok "stopping signals the recorded run by its own pid (identity, not pattern)"
 else
-  no "stopping acts on the recorded process group (identity, not pattern)" 'kill -TERM -"$pgid"' "missing"
+  no "stopping signals the recorded run by its own pid (identity, not pattern)" 'kill -TERM "$run_pid"' "missing"
 fi
-if grep -qF 'run.pgid' "$HARNESS"; then
-  ok "the run records its own process-group identity"
+if grep -qE 'kill +-[A-Za-z0-9]* +-' "$TMP/harness-code.sh"; then
+  no "stopping never signals a whole process group, which would kill Terraform in flight" \
+    "no group kill" "present"
 else
-  no "the run records its own process-group identity" "run.pgid" "missing"
+  ok "stopping never signals a whole process group, which would kill Terraform in flight"
 fi
+if grep -qF 'run.pid' "$HARNESS"; then
+  ok "the run records its own pid"
+else
+  no "the run records its own pid" "run.pid" "missing"
+fi
+terminate_body="$(sed -n '/^on_terminate()/,/^}/p' "$HARNESS")"
+if [ -n "$terminate_body" ] && ! printf '%s' "$terminate_body" | grep -qE '\bkill\b'; then
+  ok "the SIGTERM trap tears down without killing the Terraform in flight"
+else
+  no "the SIGTERM trap tears down without killing the Terraform in flight" \
+    "an on_terminate body with no kill" "missing, or it kills"
+fi
+
+run_case_closed_stdout() {
+  local name="$1" sub="$2"
+  shift 2
+  export ARGV_LOG="$TMP/$name.argv"
+  export TMP
+  export API_PROBE_LOG="$TMP/$name.probe.argv"
+  CURRENT_CASE="$name"
+  export LOG_DIR="$TMP/$name.logs"
+  export WORKSPACE="$SCRATCH_WS"
+  export XDG_DATA_HOME="$TMP/data"
+  export STUB_KUBECONFIG_FIXTURE="$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
+  export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
+  : >"$ARGV_LOG"
+  : >"$API_PROBE_LOG"
+  rm -f "$TARGET_FILE"
+  rm -rf "$LOG_DIR"
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+    IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
+    PROJECT=sol-qualification REGION=us-central1 \
+    PATH="$TMP/bin:$PATH" "$@" \
+    "$HARNESS" "$sub" 2>"$TMP/$name.err" | true
+  local -a codes=("${PIPESTATUS[@]}")
+  printf '%s\n' "${codes[0]}" >"$TMP/$name.rc"
+}
+
+run_case_sigterm() {
+  local name="$1" signal="$2"
+  shift 2
+  export ARGV_LOG="$TMP/$name.argv"
+  export TMP
+  export API_PROBE_LOG="$TMP/$name.probe.argv"
+  CURRENT_CASE="$name"
+  export LOG_DIR="$TMP/$name.logs"
+  export WORKSPACE="$SCRATCH_WS"
+  export XDG_DATA_HOME="$TMP/data"
+  export STUB_KUBECONFIG_FIXTURE="$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml"
+  export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
+  : >"$ARGV_LOG"
+  : >"$API_PROBE_LOG"
+  rm -f "$TARGET_FILE"
+  rm -rf "$LOG_DIR"
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+    IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
+    PROJECT=sol-qualification REGION=us-central1 \
+    PATH="$TMP/bin:$PATH" "$@" \
+    "$HARNESS" cloud >"$TMP/$name.out" 2>&1 &
+  local run_pid=$! waited=0
+  while [ ! -e "$LOG_DIR/cloud-apply.log" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -"$signal" "$run_pid" 2>/dev/null || true
+  wait "$run_pid"
+  printf '%s\n' "$?" >"$TMP/$name.rc"
+}
+
+printf '\nscenario: the harness survives a closed stdout reader and still tears down (attempt-5 shape)\n'
+run_case_closed_stdout sigpipe cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
+is "the phase still fails" "$(cat "$TMP/sigpipe.rc")" "1"
+has "the teardown runs even though stdout is gone" "cloud destroy" "$TMP/sigpipe.argv"
+present "$TMP/sigpipe.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
+has "the harness narrative records the teardown" "teardown: sol cloud destroy" \
+  "$TMP/sigpipe.logs/harness.log"
+has "and the failure that preceded it" "cloud apply failed" "$TMP/sigpipe.logs/harness.log"
+
+printf '\nscenario: SIGTERM tears down and verifies absence without killing Terraform in flight\n'
+run_case_sigterm sigterm TERM STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_SOL_SLEEP=3
+is "the terminated run exits non-zero" "$(cat "$TMP/sigterm.rc")" "1"
+has "the teardown runs on TERM" "cloud destroy" "$TMP/sigterm.argv"
+present "$TMP/sigterm.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
+has "the harness records the signal" "received SIGTERM" "$TMP/sigterm.logs/harness.log"
 
 printf '\nscenario: quota verdict\n'
 has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"

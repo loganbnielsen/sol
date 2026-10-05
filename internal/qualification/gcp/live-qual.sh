@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap '' PIPE
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
@@ -47,10 +48,10 @@ ZONE_LABEL="${BASE_DOMAIN%%.*}"
 say() {
   local line
   printf -v line '[%(%H:%M:%S)T] %s' -1 "$*"
-  printf '%s\n' "$line"
   if [ -n "${SAY_LOG:-}" ]; then
     printf '%s\n' "$line" >>"$SAY_LOG" 2>/dev/null || true
   fi
+  printf '%s\n' "$line" 2>/dev/null || true
 }
 
 dns_ns() {
@@ -112,6 +113,7 @@ INSTALL_STATE=none
 APP_STATE=none
 CLOUD_APPLIED=0
 TEARDOWN_ATTEMPTED=0
+TERMINATION_SIGNAL=""
 
 run() {
   local name="$1"; local rc=0; shift
@@ -193,8 +195,8 @@ start_ns_watcher() {
       if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
           --format='value(nameServers)' >"$LOG_DIR/nameservers.txt" 2>/dev/null; then
         : >"$LOG_DIR/nameservers.ready"
-        printf '\n[%(%H:%M:%S)T] DELEGATION HAND-OFF READY — paste these four NS records at the registrar, named %s:\n' -1 "$ZONE_LABEL"
-        tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /'
+        printf '\n[%(%H:%M:%S)T] DELEGATION HAND-OFF READY — paste these four NS records at the registrar, named %s:\n' -1 "$ZONE_LABEL" 2>/dev/null || true
+        tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /' 2>/dev/null || true
         break
       fi
       sleep 5
@@ -228,7 +230,7 @@ reconcile_durable_root() {
   say "bootstrap: reconciling the durable root against its declared state"
   ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform init -input=false "${base[@]}" ) \
     >"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at init — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
+      say "bootstrap FAILED at init — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log" || true; return 1;
     }
 
   local plan_rc=0
@@ -242,7 +244,7 @@ reconcile_durable_root() {
       ;;
     1)
       say "bootstrap FAILED at plan — see $LOG_DIR/bootstrap.log"
-      tail -n 20 "$LOG_DIR/bootstrap.log"
+      tail -n 20 "$LOG_DIR/bootstrap.log" || true
       return 1
       ;;
   esac
@@ -260,7 +262,7 @@ reconcile_durable_root() {
   say "bootstrap: applying in-place changes to the durable root (metadata only today)"
   ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform apply -input=false "$LOG_DIR/durable.tfplan" ) \
     >>"$LOG_DIR/bootstrap.log" 2>&1 || {
-      say "bootstrap FAILED at apply — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
+      say "bootstrap FAILED at apply — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log" || true; return 1;
     }
   say "bootstrap: durable root reconciled"
 }
@@ -730,7 +732,17 @@ cleanup() {
   return "$rc"
 }
 TEARDOWN_OK=0
+
+on_terminate() {
+  if [ -n "$TERMINATION_SIGNAL" ]; then return 0; fi
+  TERMINATION_SIGNAL="$1"
+  say "received SIG$1: finishing the current step, then tearing down and verifying absence"
+  exit 1
+}
+
 trap cleanup EXIT
+trap 'on_terminate TERM' TERM
+trap 'on_terminate INT' INT
 
 plan_only() { [ "${PLAN_ONLY:-0}" = "1" ]; }
 
@@ -773,7 +785,7 @@ phase_cloud() {
     return 1
   fi
   say "authoritative nameservers for $BASE_DOMAIN (paste these at Squarespace as NS records named 'qual-gcp'):"
-  tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /'
+  tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /' 2>/dev/null || true
 
   capture_pre_teardown_inventory
   freeze_evidence
@@ -1089,7 +1101,7 @@ classify_fnd0010() {
     printf 'here: remediation is a separate authorization.\n'
   } >"$out" 2>&1
   say "discriminator classification: $out"
-  sed -n '1p' "$out"
+  sed -n '1p' "$out" 2>/dev/null || true
 }
 
 capture_provisioner_bindings() {
@@ -1545,7 +1557,8 @@ phases
             addition to the bundle (identity/identity.tsv). An unreadable read is UNKNOWN, never
             absence or a pass. The behavioural probes are run by the procedure, not here.
   destroy   freeze and destroy an existing target, then verify absence
-  stop      stop the run recorded in LOG_DIR (by its own process group), then destroy
+  stop      SIGTERM the run recorded in LOG_DIR by its own pid, so its trap tears down while any
+            Terraform it is running is allowed to finish; then verify absence
   verify    read-only absence check; invokes no teardown
 
 required
@@ -1579,18 +1592,26 @@ case "${1:-}" in
     exit 2
     ;;
   stop)
-    if [ -s "$LOG_DIR/run.pgid" ]; then
-      pgid="$(cat "$LOG_DIR/run.pgid")"
-      say "stopping the run in $LOG_DIR (process group $pgid)"
-      kill -TERM -"$pgid" 2>/dev/null || true
-      while kill -0 -"$pgid" 2>/dev/null; do
-        say "  waiting for the run (and the Terraform it is stopping) to exit..."
+    stop_rc=0
+    if [ -s "$LOG_DIR/run.pid" ]; then
+      run_pid="$(cat "$LOG_DIR/run.pid")"
+      say "stopping the run in $LOG_DIR (pid $run_pid) with SIGTERM; its own trap tears down and"
+      say "the Terraform it is running is allowed to finish rather than being killed in flight"
+      kill -TERM "$run_pid" 2>/dev/null || true
+      while kill -0 "$run_pid" 2>/dev/null; do
+        say "  waiting for the run (and the Terraform it is finishing) to exit..."
         sleep 5
       done
     else
-      say "no run.pgid in $LOG_DIR — nothing recorded to stop"
+      say "no run.pid in $LOG_DIR — nothing recorded to stop"
     fi
-    phase_destroy
+    if verify_absent; then
+      say "stop: absence independently verified"
+    else
+      say "stop: the run did not verify absence — running the destroy path"
+      phase_destroy || stop_rc=$?
+    fi
+    exit "$stop_rc"
     ;;
   destroy)  phase_destroy ;;
   verify)
