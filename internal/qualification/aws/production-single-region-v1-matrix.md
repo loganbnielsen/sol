@@ -339,7 +339,7 @@ section is the matrix-side reconciliation; the procedure is authoritative for th
 
 **The run's scope is the alpha campaign's `aws` rows**, not the pre-campaign
 `charge_svc`/`notify_worker` pair. The workload is the frozen reference scenario
-(`ALPHA_CAMPAIGN.md` §2), implemented by `FEAT-131`/`FEAT-132`; the TypeScript half is not in
+implemented by the reference orders scenario; the TypeScript half is not in
 the production profile (DEC-026 §2). The row map — which alpha row each section qualifies,
 what is already `PASS (LIVE)`, and what stays blocked — is the procedure's § *Alpha row
 reconciliation*. Read this matrix's sections as the evidence contract for those alpha rows.
