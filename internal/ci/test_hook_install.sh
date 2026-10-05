@@ -19,10 +19,20 @@ git_test() {
 scratch="$tmp/repo"
 mkdir -p "$scratch/internal/tooling/scripts" "$scratch/internal/tooling/hooks"
 cp "$root/internal/tooling/scripts/install-hooks.sh" "$scratch/internal/tooling/scripts/"
-cat >"$scratch/internal/tooling/hooks/pre-commit" <<'HOOK'
+cp "$root/internal/tooling/hooks/pre-commit" "$scratch/internal/tooling/hooks/"
+mkdir -p "$scratch/internal/ci" "$tmp/bin"
+cp "$root/internal/ci/classify-changes.sh" "$root/internal/ci/check_ocamlformat.sh" "$scratch/internal/ci/"
+cat >"$tmp/bin/opam" <<'TOOL'
 #!/usr/bin/env bash
-touch "$(git rev-parse --show-toplevel)/hook-ran"
-HOOK
+[ "$1" = env ]
+TOOL
+cat >"$tmp/bin/ocamlformat" <<'TOOL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$(git rev-parse --show-toplevel)/hook-ran"
+[ "${FORMAT_FAIL:-0}" = 0 ]
+TOOL
+chmod +x "$tmp/bin/"*
+export PATH="$tmp/bin:$PATH"
 scratch_repo_init "$scratch" -b main
 printf 'hook-ran\n' >"$scratch/.gitignore"
 
@@ -39,6 +49,7 @@ pass "the installer points core.hooksPath at the tracked hooks"
   || fail "the installer did not make the hook sources executable"
 pass "hook sources are executable"
 
+printf 'let value = 1\n' >"$scratch/example.ml"
 git_test -C "$scratch" add -A
 git_test -C "$scratch" commit -q -m init
 [ -e "$scratch/hook-ran" ] || fail "a commit in the main checkout did not run the tracked hook"
@@ -50,16 +61,28 @@ pass "re-running the installer is safe"
 
 linked="$tmp/linked"
 git -C "$scratch" worktree add -q -b linked "$linked"
-cat >"$linked/internal/tooling/hooks/pre-commit" <<'HOOK'
-#!/usr/bin/env bash
-touch "$(git rev-parse --show-toplevel)/linked-hook-ran"
-HOOK
-printf 'linked-hook-ran\n' >>"$linked/.gitignore"
+printf 'let value = 2\n' >"$linked/example.ml"
 git_test -C "$linked" add -A
 git_test -C "$linked" commit -q -m linked
-[ -e "$linked/linked-hook-ran" ] \
+[ -e "$linked/hook-ran" ] \
   || fail "a commit in a linked worktree did not run that worktree's own hook"
 pass "a linked worktree runs its own checkout's hooks with no install of its own"
+
+printf 'let value = 3\n' >"$linked/example.ml"
+git_test -C "$linked" add example.ml
+if FORMAT_FAIL=1 git_test -C "$linked" commit -q -m unformatted; then
+  fail "the shipped hook accepted a formatter failure"
+fi
+pass "the shipped hook blocks a formatter failure"
+git -C "$linked" restore --staged --worktree example.ml
+
+rm "$linked/hook-ran"
+printf 'documentation\n' >"$linked/README.md"
+git_test -C "$linked" add README.md
+git_test -C "$linked" commit -q -m docs
+[ ! -e "$linked/hook-ran" ] || fail "a docs-only commit invoked the formatter"
+pass "the shipped hook skips formatting for docs-only changes"
+
 
 mkdir -p "$linked/internal/ci"
 cp "$root/internal/tooling/hooks/pre-push" "$linked/internal/tooling/hooks/pre-push"
