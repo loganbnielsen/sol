@@ -230,7 +230,7 @@ that belongs in OCaml, oversized functions, parameter smells, naming and error
 semantics, and dead compatibility code.
 
 **Folders walked.** `cli/lib/` (base, kube, workspace, cloud, deploy, local),
-`cli/bin/`, `framework/ocaml/*/lib`, `internal/tooling/soldev/lib`. Seeded with
+`cli/bin/`, `framework/ocaml/*/lib`. Seeded with
 `Sys.command`/`Unix.open_process`, `failwith`/`raise`/`assert`, `[@deprecated]`/
 `legacy`/`compat`, `Option.get`/`List.hd`/`List.nth`, identity `Error x -> Error x`,
 catch-all `exception _ ->`, `exit` from `cli/lib`, and a top-level function
