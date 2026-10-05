@@ -72,14 +72,14 @@ eval $(opam env) && dune build
 * [ ] `dune build` produces zero warnings and zero errors on the generated code
 * [ ] The auditor understands the project layout from reading the generated README alone — no prior Sol knowledge required
 * [ ] The auditor can identify which domain owns each generated event, service, worker, database module, and migration
-* [ ] **TypeScript verdict recorded:** this stage's gate is OCaml-only, and `sol new` has no `--language` flag, so a TypeScript project cannot be scaffolded to walk. Record that explicitly — the gap is FEAT-084, and the audit continues against the shipped TypeScript path in Stage 3 (see *Language Coverage*). An unrecorded absence reads as coverage.
+* [ ] **TypeScript verdict recorded:** `sol new workspace` is OCaml-only and has no `--language` flag, so a TypeScript *workspace* cannot be scaffolded whole and walked; a TypeScript *unit* can (`sol new svc|worker --language typescript`). Record which path this walk took, and start a TypeScript walk from `examples/pluto/app/demo_ts` (see *Language Coverage*). An unrecorded scope reads as coverage.
 
-**TypeScript at this stage:** a TypeScript workspace is hand-authored today. If the
-auditor is asked to walk the TypeScript path, it starts from
-`examples/pluto/app/demo_ts` (its own npm project root, consuming the published
-`@sol-fab/*` packages) rather than from `sol new`, and the finding to look for is a
-missing or misleading *guide*, not a missing scaffold — the scaffold is a known,
-owned gap.
+**TypeScript at this stage:** a TypeScript workspace is still hand-authored, while an
+individual unit is scaffolded with `--language typescript`. If the auditor is asked to
+walk the TypeScript path, it starts from `examples/pluto/app/demo_ts` (its own npm
+project root, consuming the published `@sol-fab/*` packages) or from a scaffolded
+TypeScript unit, and the finding to look for is a missing or misleading *guide*, not a
+missing scaffold.
 
 ---
 
@@ -285,15 +285,18 @@ applicable today" as a verdict rather than an omission.
 * [ ] **The nine stages above were walked in OCaml.** Say so explicitly in the run
   record; it is a scope statement, not an assumption.
 * [ ] **TypeScript status recorded as staged, not shipped:** TypeScript is a
-  first-class *application* language (four published `@sol-fab/*` packages, the
-  `demo_ts` showcase deployed in CI), but it is staged behind the production
-  profile's parity triggers (DEC-026 §2 — see `docs/deployment/compatibility.md`)
-  and lacks a `sol new` scaffold (FEAT-084). The UX verdict is: *can a new engineer
+  first-class *application* language (six published `@sol-fab/*` packages, the
+  `demo_ts` showcase deployed in CI, and unit scaffolds for `-svc`/`-worker`), but it
+  is staged behind the production profile's parity triggers (DEC-026 §2 — see
+  `docs/deployment/compatibility.md`), a TypeScript `-fn` is refused, and a TypeScript
+  *workspace* is still hand-authored. The UX verdict is: *can a new engineer
   get a TypeScript service running using only documented commands?* Answer it from
   the guide, and record the answer.
 * [ ] **The guide states the split where a reader will hit it:** the README's
-  TypeScript section is the current statement of what is shipped versus staged; a
-  guide that implies `sol new --language typescript` exists is a finding.
+  TypeScript section is the current statement of what is shipped versus staged. A guide
+  that says `sol new` has no language option, or that TypeScript units cannot be
+  scaffolded, is now a finding — just as a guide implying a TypeScript `-fn` or a
+  TypeScript workspace scaffold exists would be.
 * [ ] **Local dev path for TypeScript:** `sol up` deploys whatever `sol.yml`
   declares regardless of language, so a TypeScript unit in the workspace is covered
   by the same commands — verify that the documentation makes that legible instead of

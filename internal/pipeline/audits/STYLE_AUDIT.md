@@ -114,22 +114,26 @@ Already correct examples:
 If a value is required for the operation to succeed, its absence must produce a
 typed `Error`, not an empty string or zero default.
 
-**Kubernetes_live secret rendering** (`sol_cli_deployment_render.ml`):
-When `secret_backend = Kubernetes_live`, every user-declared secret key in
-`spec.secrets` must be present in the process environment.  A missing key
-returns `Error "Kubernetes_live render failed: required secret env var(s) not
-set: KEY_NAME"`.  This propagates through `Sol_cli_deployment_render.render_spec`
-(returns `(string * string, string) result`) and `Sol_cli_change_set.build`
-(returns `(change_set, string) result`), so callers must handle the error
-before any side effect occurs.
+**Live secret references** (`cli/lib/deploy/sol_cli_secret.ml`): the default backend
+for `sol up` and a direct `sol deploy` is `kubernetes-live`, and
+`Sol_cli_deployment_render` renders **no** Secret resource for it — the workload
+carries references only. Before an apply (and before a rollback restores a boundary)
+`Sol_cli_secret.verify_workload_secret` reads the namespace's
+`<k8s-name>-secrets` and fails closed when any required key is absent or empty,
+naming every missing key and the way to seed it: `sol secret set --target
+<env>/<provider>/<region> <KEY>`. Sol's ordinary deploy and rollback deliver
+references and never write values; a GitOps artifact is never emitted with
+`kubernetes-live` at all (§ *Secret strategy contract*).
 
 ### 3. Intentional defaults for omitted optional fields are acceptable
 
 `Option.value toml.replicas ~default:1` is correct — the field is optional and
-the default is documented.  Platform-default secrets such as `POSTGRES_URL`
-(in `default_secrets`) intentionally use `""` when unset; operators fill them
-in via a secrets manager before applying.  This is an explicit, documented
-design choice, not a silent failure.
+the default is documented.  Platform-default secret *keys* such as `POSTGRES_URL`
+and `SOL_API_KEY` (in `Sol_cli_manifest.default_secrets`) are declared for every
+workload; the `kubernetes-placeholder` backend renders them with empty values, and
+`kubernetes-live` renders no Secret and verifies the cluster's existing one
+instead (§2).  Declaring a key with no value is an explicit, documented design
+choice, not a silent failure.
 
 ### 4. Parsers return `Result`
 
@@ -151,21 +155,27 @@ Secret handling is encoded as a deployment-phase decision derived from the
 
 | Target | Allowed secret backends | Notes |
 |--------|------------------------|-------|
-| `Local` (`sol up`) | `Kubernetes_live` | Reads values from the process environment |
-| `Customer_direct` | `Kubernetes_live` | Reads values from the process environment |
-| `Customer_gitops` | `Kubernetes_placeholder`, `External_secrets` | **Never** `Kubernetes_live` |
-| `Sol_hosted` | `Kubernetes_placeholder` (default) | Real secrets managed by the Sol platform |
+| `Local` (`sol up`) | `Kubernetes_live` | Sol renders no Secret; the workload references one that already exists, verified before apply |
+| `Customer_direct` | `Kubernetes_live` | Sol renders no Secret; the workload references one that already exists, verified before apply |
+| `Customer_gitops` | `Kubernetes_placeholder`, `External_secrets` | **Never** `Kubernetes_live`: the artifact is committed to a repository |
+| `Sol_hosted` | `Kubernetes_placeholder` (default) | Real secrets are owned by the Sol hosting plane |
 
-`Sol_cli_env_target.default_secret_backend` derives the correct default backend
-from the target, replacing the previous hard-coded `Kubernetes_placeholder` for
-all targets.  `cmd_deploy.ml` additionally enforces the invariant at the CLI
-layer: specifying `--secret-backend kubernetes-live` together with `--emit-to`
+`Sol_cli_env_target.default_secret_backend` derives the default backend from the
+target.  `cmd_deploy.ml`/`Sol_cli_deploy_selection` additionally enforces the
+invariant: specifying `--secret-backend kubernetes-live` together with `--emit-to`
 (which selects a `Customer_gitops` target) is rejected with an actionable error
-message before any rendering begins.
+before anything is rendered or written.
 
 This makes GitOps plaintext leakage impossible by construction: the type system
 plus the explicit guard ensure that `Kubernetes_live` can never reach the YAML
 renderer when the output goes to a file on disk destined for a git repository.
+
+The finding table above records an earlier fix that made `render_spec` fail on
+missing process-environment secret values. That mechanism is superseded: with
+`kubernetes-live` there is nothing to render and nothing to read from the process
+environment, so the guarantee moved to `verify_workload_secret` reading the
+cluster's Secret (§2). `kubernetes-placeholder` and `external-secrets` render
+empty placeholders rather than refusing.
 
 ## Sites examined in the support libraries and deliberately left (2026-09-29)
 
@@ -267,5 +277,9 @@ pass should read them before re-deriving them.
   `Result.map`, but each remaining one carries a preceding multi-line match and
   the forwarding arm is the clearest form. Left, per the checklist's
   "candidates, not automatic findings".
-- `sol_process`'s `open_process_in`/`Sys.command` shell family is CODE_LAYER-030
-  (filed, awaiting the verification workstream's `sol_process/test` move).
+- `internal/tooling/sol_process.run_shell` is the deliberate shell entry point
+  (`sh -c`) of a maintainer tooling library; no shipped code depends on it.
+  Shipped subprocess calls go through `Sol_cli_process.cmd`, whose `cmd` carries
+  a `string list` argv, and `Sys.command` appears nowhere in `cli/`, `framework/`
+  or `platform/`. Left: the shell entry point is that library's interface, and
+  the argv helpers quote each element for display.
