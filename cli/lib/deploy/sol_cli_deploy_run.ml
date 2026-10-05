@@ -356,7 +356,7 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
     |> Result.map (fun _ -> ())
 ;;
 
-let apply ctx ~push_events ~report_success ~confirm_group_change plan =
+let apply ctx ~prepare_plan ~push_events ~report_success ~confirm_group_change plan =
   Sol_cli_boundary_lease.with_boundary_lease
     ~ctx:ctx.execution.cluster
     ~workspace:ctx.execution.workspace
@@ -365,6 +365,8 @@ let apply ctx ~push_events ~report_success ~confirm_group_change plan =
     ~wait_s:0.
     (fun lease ->
        let* () = Sol_cli_boundary_lease.ensure_held lease in
+       let* plan = observe_contract ctx plan in
+       let* () = prepare_plan plan in
        let* () =
          confirm_consumer_groups
            ~ctx:ctx.execution.cluster
@@ -409,6 +411,6 @@ let apply ctx ~push_events ~report_success ~confirm_group_change plan =
                           Sol_cli_plan_ids.Consumer_group.to_string
                           plan.consumer_groups
                     }))
-             ~report_success:(fun () -> report_success results))
+             ~report_success:(fun () -> report_success plan results))
          plan)
 ;;

@@ -622,24 +622,27 @@ let run_apply
       ~guide:(not established)
       ()
   in
-  let* plan = observe_contract ctx plan in
-  let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
-  print_planned_services plan;
-  print_contract_changes plan;
-  let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
-  let* () =
-    verify_effective_access planning ~target_cfg:ctx.target_cfg |> Sol_cli_exit.of_msg
-  in
-  record_plan ctx.run_log plan;
   Sol_cli_deploy_run.apply
     ctx
+    ~prepare_plan:(fun plan ->
+      (let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
+       print_planned_services plan;
+       print_contract_changes plan;
+       let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
+       let* () =
+         verify_effective_access planning ~target_cfg:ctx.target_cfg
+         |> Sol_cli_exit.of_msg
+       in
+       record_plan ctx.run_log plan;
+       Ok ())
+      |> Result.map_error (fun (failure : Sol_cli_exit.failure) -> failure.text))
     ~confirm_group_change
     ~push_events:
       (push_deploy_events
          ~ctx:ctx.execution.cluster
          ~target_cfg:ctx.target_cfg
          ~loki_push_url)
-    ~report_success:(report_apply_success ctx plan)
+    ~report_success:(report_apply_success ctx)
     plan
   |> Result.map_error run_failed
 ;;
