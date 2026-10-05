@@ -237,7 +237,7 @@ previous=""
 for a in "$@"; do
   if [ "$previous" = "-f" ]; then file="$a"; fi
   case "$a" in
-    sol-boundary-lease-*|sol-deploy-state-*) name="$a" ;;
+    sol-boundary-lease-*|sol-deploy-state-*|sol-release-current-*) name="$a" ;;
   esac
   previous="$a"
 done
@@ -257,6 +257,10 @@ case "$name" in
       printf 'Error from server (NotFound): configmaps "lease" not found\n' >&2
       exit 1
     fi
+    ;;
+  sol-release-current-*)
+    printf 'Error from server (NotFound): configmaps "current" not found\n' >&2
+    exit 1
     ;;
   sol-deploy-state-*) printf 'alpha\nbravo' ;;
 esac
@@ -319,9 +323,10 @@ let test_the_group_check_reads_the_record_under_the_lease () =
       let outcome =
         Sol_cli_deploy_run.apply
           ctx
+          ~prepare_plan:(fun _ -> Ok ())
           ~confirm_group_change:false
           ~push_events:(fun _ -> ())
-          ~report_success:(fun _ -> ())
+          ~report_success:(fun _ _ -> ())
           plan
       in
       (match outcome with
@@ -337,6 +342,18 @@ let test_the_group_check_reads_the_record_under_the_lease () =
       let log = calls () in
       let lease_at = first_line_matching log "sol-boundary-lease-myapp" in
       let recorded_at = first_line_matching log "sol-deploy-state-myapp" in
+      let contract_at = first_line_matching log "sol-release-current-myapp" in
+      (match lease_at, contract_at, recorded_at with
+       | Some lease_at, Some contract_at, Some recorded_at ->
+         Windtrap.equal
+           Windtrap.bool
+           true
+           (lease_at < contract_at && contract_at < recorded_at)
+       | _ ->
+         Windtrap.failf
+           "contract observation must run under the lease before the group guard:\n%s"
+           log);
+
       (match lease_at, recorded_at with
        | Some lease_at, Some recorded_at ->
          Windtrap.equal
@@ -371,4 +388,25 @@ let%test "deploy events (FEAT-071): one per service" =
 
 let%test "consumer-group guard (BUG-088): the record is read under the boundary lease" =
   test_the_group_check_reads_the_record_under_the_lease ()
+;;
+
+let%test "apply: a failed prepared-plan gate releases the lease before any workload mutation" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      let outcome =
+        Sol_cli_deploy_run.apply
+          ctx
+          ~prepare_plan:(fun _ -> Error "prerequisite refused")
+          ~confirm_group_change:true
+          ~push_events:(fun _ -> Windtrap.fail "a refused prerequisite emitted events")
+          ~report_success:(fun _ _ -> Windtrap.fail "a refused prerequisite reported success")
+          (plan [])
+      in
+      Windtrap.equal
+        (Windtrap.result Windtrap.unit Windtrap.string)
+        (Error "prerequisite refused")
+        outcome;
+      let log = calls () in
+      Windtrap.equal Windtrap.bool false (Sol_cli_string.contains ~needle:" apply " log);
+      Windtrap.equal Windtrap.bool true (Sol_cli_string.contains ~needle:" delete " log)))
 ;;

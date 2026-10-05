@@ -74,8 +74,9 @@ val confirm_consumer_groups
 
 val apply
   :  context
+  -> prepare_plan:(Sol_cli_deployment_plan.t -> (unit, string) result)
   -> push_events:(Sol_cli_deploy_event.t list -> unit)
-  -> report_success:(Sol_cli_executor.result list -> unit)
+  -> report_success:(Sol_cli_deployment_plan.t -> Sol_cli_executor.result list -> unit)
   -> confirm_group_change:bool
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
