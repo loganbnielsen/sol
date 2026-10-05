@@ -1,12 +1,5 @@
-# The "Pluto orders" scenario's TypeScript binding scope (FEAT-131).
-#
-# This scope is a *projection* of the scenario's canonical event contract in
-# events/orders/sol.toml. It carries its own namespace topics (the TypeScript
-# deployment runs beside the OCaml one), and it may carry nothing else of its
-# own: CI requires every event here to reproduce the canonical name, schema,
-# partitions and key, and to add no event of its own.
-# `sol contract generate` writes the TypeScript binding into the scope's contract
-# package and CI fails when the two drift.
+# TypeScript projection of `events/orders/sol.toml`; keep event schemas and keys
+# aligned while retaining this deployment's own topic names.
 
 [contract]
 language = "typescript"

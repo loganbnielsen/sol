@@ -52,13 +52,10 @@ prod:
       letsencrypt_email: ops@example.test
       cluster_endpoint_cidr: 203.0.113.0/24
       state_bucket: lifecycle-state
-      # REFAC-098: provider-native identity lives in the provider's own block.
       aws:
         state_lock_table: lifecycle-lock
         provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
         cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
-        # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
-        # so the module creates the deploy EKS access entry (INFRA-025).
         deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
       resources:

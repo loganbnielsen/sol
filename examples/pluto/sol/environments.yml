@@ -1,10 +1,4 @@
-# Pluto's deployment environments (DEC-047). Each environment sets its policy
-# once; its targets say where it runs. `sol deploy prod/aws/us-east-1` resolves
-# sol.yml -> prod -> aws/us-east-1, a lower layer overriding a higher one.
-#
-# Account-specific values you would rather not commit go in
-# sol/environments.local.yml (gitignored), which may only add keys this file
-# leaves unset.
+# Keep account-specific values in the ignored `sol/environments.local.yml`.
 
 # The production environment, without the production profile: an environment's
 # name never selects one (see pilot).
@@ -14,8 +8,7 @@ prod:
   # this domain shares it, and no environment destroy removes it.
   dns_zone_ownership: sol
   letsencrypt_email: ops@pluto.example.com
-  # AUDIT-080: one spare node's capacity per node-failure-tolerant workload, so
-  # a lost node's replicas can be restored inside DEC-026 §3's bound.
+  # Spare capacity for one node failure.
   node_failure_headroom_nodes: 1
   resources:
     app_db:
@@ -29,9 +22,6 @@ prod:
       scale:
         min: 1
         max: 2
-    # The "Pluto orders" scenario's OCaml namespace (FEAT-131). The scenario
-    # runs in every environment that carries its resources; `dev` omits it the
-    # way it omits the other app_db/events workloads.
     orders_svc:
       scale:
         min: 1
@@ -50,11 +40,7 @@ prod:
 # preflight, which refuses until this target establishes every guarantee the
 # profile requires, listing each unmet guarantee and who must act.
 #
-# The alert-delivery contract (OBS-043): a provider-neutral receiver, an
-# accountable owner and a first-response runbook. `sol alert test --target
-# pilot/aws/us-east-1` sends a synthetic alert through this route. The URL below
-# is a placeholder — replace it with your real receiver endpoint (never commit
-# routing credentials; put them in the receiver URL behind your secret store).
+# Configure a real alert receiver; never embed routing credentials in its URL.
 pilot:
   profile: production-single-region
   base_domain: pluto.example.com
@@ -64,7 +50,6 @@ pilot:
   alert_receiver_url: https://alerts.example.com/sol/webhook
   alert_owner: pluto-oncall
   alert_runbook_url: https://runbooks.example.com/sol
-  # AUDIT-080: notify_worker declares node-failure-tolerant, so this must be >= 1.
   node_failure_headroom_nodes: 1
   targets:
     aws/us-east-1:
@@ -110,9 +95,7 @@ customer_cloud:
   targets:
     aws/us-east-1:
       cluster_name: pluto-customer
-    # A cluster you already own. `byo` is a driver whose defining property is
-    # that it owns no cloud Terraform root, so `sol deploy` consumes this
-    # cluster and `sol cloud plan|apply|destroy` refuses it (DEC-051).
+    # BYO targets use an existing cluster; cloud lifecycle commands refuse them.
     byo/onprem:
       kube_context: pluto-customer
       registry: registry.example.com/pluto

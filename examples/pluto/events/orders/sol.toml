@@ -1,16 +1,5 @@
-# The "Pluto orders" reference scenario's canonical event contract (FEAT-131).
-#
-# This declaration is the single source of truth for the scenario's event
-# semantics: the event names, their schemas, partition counts and message keys.
-# `sol contract generate` writes the OCaml binding beside it
-# (orders_contract.ml) and CI fails when the two drift.
-#
-# events/demo_ts/sol.toml is the TypeScript *projection* of this one. The two
-# namespaces are separate deployments (see README.md), so their topics differ,
-# but a projection may differ in nothing else: CI requires every projection
-# event to carry this declaration's name, schema, partitions and key, and to
-# introduce no event of its own. Author a semantic change here, regenerate both
-# bindings, and let the check fail until the projection agrees.
+# Canonical event contract for the Pluto orders scenario. Generate the OCaml
+# binding from this file; the TypeScript projection must match its schemas and keys.
 
 [contract]
 language = "ocaml"

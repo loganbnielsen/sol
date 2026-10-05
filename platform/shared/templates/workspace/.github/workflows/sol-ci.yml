@@ -13,7 +13,7 @@
 #                                    prod/aws/us-east-1. It must be declared in
 #                                    sol/environments.yml. The workflow never
 #                                    infers a target from the branch or the
-#                                    event (DEC-016).
+#                                    event.
 #   SOL_REGISTRY                     image registry prefix, e.g.
 #                                      123456789.dkr.ecr.us-east-1.amazonaws.com
 #                                      us-central1-docker.pkg.dev/my-project/{{name}}
@@ -32,10 +32,10 @@
 #
 # The authorize job runs under the `sol-authorization` environment. Protect that
 # environment with required reviewers so adopting a workload cloud grant is a
-# reviewed action, separate from the deploy (DEC-062 rule 1); dropping or
+# reviewed action, separate from the deploy; dropping or
 # widening a grant then needs an approval, not just a merge.
 #
-# Workload secret values are never held here (FEAT-053). Seed them out of band
+# Workload secret values are never held here. Seed them out of band
 # with `sol secret set --target <env>/<provider>/<region> <KEY>`; the deploy
 # verifies them and fails closed, naming any key that is missing.
 

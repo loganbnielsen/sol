@@ -1,14 +1,9 @@
-# Deployment environments (DEC-047). Each environment sets its policy once, and
-# its targets say where it runs: `sol deploy prod/aws/us-east-1` resolves
-# sol.yml -> prod -> aws/us-east-1, a lower layer overriding a higher one.
-#
+# Each environment sets policy once, and
 # This is a placeholder: rename the environment and target to your real ones,
 # and set the SOL_TARGET repository variable in GitHub (used by
 # .github/workflows/sol-ci.yml) to match.
 #
-# Account-specific values you would rather not commit (a registry, role ARNs) go
-# in sol/environments.local.yml, which .gitignore excludes. That file has the
-# same shape and may only add keys this file leaves unset.
+# Account-specific values can go in ignored `sol/environments.local.yml`.
 prod:
   targets:
     aws/us-east-1:

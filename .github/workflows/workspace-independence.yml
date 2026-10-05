@@ -1,7 +1,5 @@
 name: workspace-independence
 
-# DEC-024 / DEC-025 / FEAT-085.
-#
 # The strongest of the three boundaries:
 #
 #   ci.yml              -> does the code work?

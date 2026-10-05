@@ -1,4 +1,4 @@
-# FEAT-101 / DEC-049: publish a Sol release -- binary, platform bundle and
+# Publish a Sol release -- binary, platform bundle and
 # migration-runner image -- from one build, so every Sol-owned asset the release
 # uses is version-aligned with it.
 #
@@ -7,16 +7,13 @@
 #   ├── share/sol/<version>/platform  this commit's platform/ tree
 #   ├── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
 #   │                                 the same binary, published once
-#   └── SUPPORT_REFS                  this commit's support-refs.txt (BUG-059): the
+#   └── SUPPORT_REFS                  this commit's support-refs.txt, containing the
 #                                     exact support-library revisions it was built from
 #
 # A version is published once: the workflow refuses a tag whose runner image
 # already exists, so nothing a released CLI names can move afterwards.
 #
-# Replaces the pre-DEC-049 workflow (v0.1.0-alpha.1..6), which shipped bin/sol
-# with the framework/ source and no platform/ tree, plus a standalone binary.
-# Neither survives: sol new stopped reading framework source at DEC-025, and a
-# release binary without its bundle now refuses to run rather than guess.
+# A release binary without its platform bundle refuses to run rather than guess.
 name: Release
 
 on:
@@ -25,7 +22,7 @@ on:
   # The tag push is the normal path. workflow_dispatch is the recovery path: the
   # workflow definition comes from the default branch, so a publish that was
   # interrupted after the runner image was pushed can be completed without moving
-  # the tag (BUG-204). The artifact is still built from the tag's tree below.
+  # the tag. The artifact is still built from the tag's tree below.
   workflow_dispatch:
     inputs:
       version:
@@ -115,8 +112,7 @@ jobs:
 
       # The runner image is published once and never overwritten: if the tag is
       # already in the registry this reuses its digest, so an interrupted publish
-      # resumes instead of failing (BUG-204). The digest is what Sol consumes, and
-      # it cannot move once pushed (SEC-011).
+      # resumes instead of failing. Sol consumes the immutable digest.
       - name: Publish the migration runner, once
         id: runner
         run: |
@@ -151,8 +147,7 @@ jobs:
       # GitHub rejects a release body over 125000 characters, and the generated
       # changelog carries one entry per merged pull request since the previous
       # release, so its length is unbounded. The body keeps the first $limit
-      # characters on a line boundary and points at the full compare range
-      # (BUG-204).
+      # characters on a line boundary and points at the full compare range.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
