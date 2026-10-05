@@ -8,14 +8,15 @@ let to_string = function
 ;;
 
 let entries path =
-  if not (Sys.file_exists path)
-  then Error (Absent path)
-  else if not (Sys.is_directory path)
-  then Error (Unreadable (path, "not a directory"))
-  else (
-    match Sys.readdir path with
-    | names -> Ok (List.sort String.compare (Array.to_list names))
-    | exception Sys_error reason -> Error (Unreadable (path, reason)))
+  match Unix.stat path with
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Error (Absent path)
+  | exception Unix.Unix_error (err, _, _) ->
+    Error (Unreadable (path, Unix.error_message err))
+  | { Unix.st_kind = Unix.S_DIR; _ } ->
+    (match Sys.readdir path with
+     | names -> Ok (List.sort String.compare (Array.to_list names))
+     | exception Sys_error reason -> Error (Unreadable (path, reason)))
+  | _ -> Error (Unreadable (path, "not a directory"))
 ;;
 
 let selected path keep =

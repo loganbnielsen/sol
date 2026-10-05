@@ -1,25 +1,17 @@
 let in_root root path = if root = "" then path else Filename.concat root path
 
-let fold_dir dir ~init ~f =
+let entries_or_empty dir =
   match Sol_cli_fs_walk.entries dir with
-  | Ok names ->
-    List.fold_left (fun acc entry -> f acc entry (Filename.concat dir entry)) init names
-  | Error (Sol_cli_fs_walk.Absent _) -> init
-  | Error error ->
-    Sol_cli_report.warn "sol: warning: %s" (Sol_cli_fs_walk.to_string error);
-    init
+  | Ok names -> Ok names
+  | Error (Sol_cli_fs_walk.Absent _) -> Ok []
+  | Error error -> Error error
 ;;
 
-let fold_dir_result dir ~init ~f =
-  match Sol_cli_fs_walk.entries dir with
-  | Ok names ->
-    Ok
-      (List.fold_left
-         (fun acc entry -> f acc entry (Filename.concat dir entry))
-         init
-         names)
-  | Error (Sol_cli_fs_walk.Absent _) -> Ok init
-  | Error error -> Error (Sol_cli_fs_walk.to_string error)
+let fs_error_to_parse_error = function
+  | Sol_cli_fs_walk.Absent path ->
+    Sol_cli_toml.Validation { path; message = "no such directory" }
+  | Sol_cli_fs_walk.Unreadable (path, message) ->
+    Sol_cli_toml.Validation { path; message }
 ;;
 
 let filter_validated ~kind of_string strings =
@@ -36,25 +28,48 @@ let generated_binding_name ~entry = entry ^ "_contract.ml"
 
 let discover_schema_subjects ?root () =
   let root = Option.value root ~default:"" in
-  let subjects =
-    fold_dir (in_root root "events") ~init:[] ~f:(fun acc entry path ->
-      if entry.[0] = '.'
-      then acc
-      else if Sys.is_directory path
-      then (
-        let generated = generated_binding_name ~entry in
-        fold_dir path ~init:acc ~f:(fun acc2 fname _p ->
-          if Filename.check_suffix fname ".ml" && not (String.equal fname generated)
-          then
-            (entry ^ "." ^ String.capitalize_ascii (Filename.chop_suffix fname ".ml"))
-            :: acc2
-          else acc2))
-      else if Filename.check_suffix entry ".ml"
-      then Filename.chop_suffix entry ".ml" :: acc
-      else acc)
+  let events = in_root root "events" in
+  let open Result.Syntax in
+  let* names = entries_or_empty events |> Result.map_error Sol_cli_fs_walk.to_string in
+  let* subjects =
+    List.fold_left
+      (fun acc entry ->
+         let* acc = acc in
+         let path = Filename.concat events entry in
+         if entry.[0] = '.'
+         then Ok acc
+         else if Sys.is_directory path
+         then (
+           let generated = generated_binding_name ~entry in
+           let* files =
+             entries_or_empty path |> Result.map_error Sol_cli_fs_walk.to_string
+           in
+           Ok
+             (List.fold_left
+                (fun acc2 fname ->
+                   if
+                     Filename.check_suffix fname ".ml"
+                     && not (String.equal fname generated)
+                   then
+                     (entry
+                      ^ "."
+                      ^ String.capitalize_ascii (Filename.chop_suffix fname ".ml"))
+                     :: acc2
+                   else acc2)
+                acc
+                files))
+         else if Filename.check_suffix entry ".ml"
+         then Ok (Filename.chop_suffix entry ".ml" :: acc)
+         else Ok acc)
+      (Ok [])
+      names
   in
   let sorted = List.sort_uniq String.compare subjects in
-  filter_validated ~kind:"schema subject" Sol_cli_plan_ids.Schema_subject.of_string sorted
+  Ok
+    (filter_validated
+       ~kind:"schema subject"
+       Sol_cli_plan_ids.Schema_subject.of_string
+       sorted)
 ;;
 
 let derive_consumer_groups workspace workers =
@@ -94,18 +109,24 @@ let contracts_of_manifest ~dir (manifest : Sol_cli_toml.t) =
 
 let discover_contracts ?root () =
   let root = Option.value root ~default:"" in
+  let events = in_root root "events" in
   let open Result.Syntax in
   let* top_level = Sol_cli_toml.load_result (in_root root "events/sol.toml") in
+  let* names = entries_or_empty events |> Result.map_error fs_error_to_parse_error in
   let* sub_contracts =
-    fold_dir (in_root root "events") ~init:(Ok []) ~f:(fun acc entry path ->
-      let* acc = acc in
-      if entry.[0] = '.'
-      then Ok acc
-      else if Sys.is_directory path
-      then
-        let* manifest = Sol_cli_toml.load_result (Filename.concat path "sol.toml") in
-        Ok (acc @ contracts_of_manifest ~dir:(Filename.concat "events" entry) manifest)
-      else Ok acc)
+    List.fold_left
+      (fun acc entry ->
+         let* acc = acc in
+         let path = Filename.concat events entry in
+         if entry.[0] = '.'
+         then Ok acc
+         else if Sys.is_directory path
+         then
+           let* manifest = Sol_cli_toml.load_result (Filename.concat path "sol.toml") in
+           Ok (acc @ contracts_of_manifest ~dir:(Filename.concat "events" entry) manifest)
+         else Ok acc)
+      (Ok [])
+      names
   in
   Ok (contracts_of_manifest ~dir:"events" top_level @ sub_contracts)
 ;;
@@ -123,18 +144,24 @@ let discover_events ?root () =
 
 let discover_topics ?root () =
   let root = Option.value root ~default:"" in
+  let events = in_root root "events" in
   let open Result.Syntax in
   let* top_level = topics_of_toml (in_root root "events/sol.toml") in
+  let* names = entries_or_empty events |> Result.map_error fs_error_to_parse_error in
   let* sub_topics =
-    fold_dir (in_root root "events") ~init:(Ok []) ~f:(fun acc entry path ->
-      let* acc = acc in
-      if entry.[0] = '.'
-      then Ok acc
-      else if Sys.is_directory path
-      then
-        let* topics = topics_of_toml (Filename.concat path "sol.toml") in
-        Ok (topics @ acc)
-      else Ok acc)
+    List.fold_left
+      (fun acc entry ->
+         let* acc = acc in
+         let path = Filename.concat events entry in
+         if entry.[0] = '.'
+         then Ok acc
+         else if Sys.is_directory path
+         then
+           let* topics = topics_of_toml (Filename.concat path "sol.toml") in
+           Ok (topics @ acc)
+         else Ok acc)
+      (Ok [])
+      names
   in
   let sorted = List.sort_uniq String.compare (top_level @ sub_topics) in
   Ok (filter_validated ~kind:"topic name" Sol_cli_plan_ids.Topic_name.of_string sorted)
@@ -143,11 +170,15 @@ let discover_topics ?root () =
 let discover_migrations ?root () =
   let open Result.Syntax in
   let root = Option.value root ~default:"" in
-  let* files =
-    fold_dir_result (in_root root "db/migrations") ~init:[] ~f:(fun acc f _path ->
-      if Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql")
-      then f :: acc
-      else acc)
+  let* names =
+    entries_or_empty (in_root root "db/migrations")
+    |> Result.map_error Sol_cli_fs_walk.to_string
+  in
+  let files =
+    List.filter
+      (fun f ->
+         Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql"))
+      names
   in
   let sorted = List.sort String.compare files in
   Ok
