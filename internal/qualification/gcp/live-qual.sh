@@ -7,10 +7,15 @@ WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 OBSERVER="${OBSERVER:-$ROOT/internal/qualification/gcp/observer.py}"
 
-TARGET="${TARGET:-qual/gcp/us-central1}"
+TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
+
+ROW="${ROW:-qual}"
+PROVIDER=gcp
+ATTEMPT="${ATTEMPT:-}"
+TARGET="${TARGET:-$ROW-$ATTEMPT/gcp/us-central1}"
 TARGET_ENV="${TARGET%%/*}"
 TARGET_KEY="${TARGET#*/}"
-TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
+STATE_KEY="sol/$TARGET/cloud.tfstate/default.tfstate"
 TARGET_MARK="# Written by internal/qualification/gcp/live-qual.sh for $TARGET; each phase rewrites it for the target that phase needs, and it is removed after a verified teardown."
 
 PROJECT="${PROJECT:-sol-qualification}"
@@ -19,7 +24,7 @@ export PROJECT REGION
 BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2700}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
-LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$(date +%Y%m%d-%H%M%S)}"
+LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$ATTEMPT}"
 RUN_KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
 export KUBECONFIG="$RUN_KUBECONFIG"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
@@ -84,6 +89,7 @@ assert_environment() {
 assert_environment
 
 source "$ROOT/internal/qualification/sol-under-test.sh"
+source "$ROOT/internal/qualification/attempt.sh"
 case "${1:-}" in
   cloud | app | destroy | stop)
     sol_under_test_resolve
@@ -91,8 +97,21 @@ case "${1:-}" in
     ;;
 esac
 
+disposable_state_present() {
+  gcloud storage objects describe "gs://$STATE_BUCKET/$STATE_KEY" --project "$PROJECT" \
+    >/dev/null 2>&1
+}
+
 mkdir -p "$LOG_DIR"
 SAY_LOG="$LOG_DIR/harness.log"
+case "${1:-}" in
+  cloud)
+    attempt_begin 1
+    ;;
+  app | destroy | identity)
+    attempt_begin 0
+    ;;
+esac
 say "environment: work tree $ROOT, revision $(git -C "$ROOT" rev-parse --short HEAD)"
 case "${1:-}" in
   cloud | app | destroy | stop)
@@ -480,7 +499,14 @@ inventory() {
   local mode="$1"
   INVENTORY_TSV="$LOG_DIR/inventory-$mode.tsv"
   : >"$INVENTORY_TSV"
-  say "inventory ($mode): provider reads only, no mutation"
+  {
+    printf 'attempt\t%s\n' "${ATTEMPT:--}"
+    printf 'row\t%s\n' "${ROW:-}"
+    printf 'target\t%s\n' "${TARGET:-}"
+    printf 'state_key\t%s\n' "${STATE_KEY:-}"
+    printf 'cluster\t%s\n' "${CLUSTER:-}"
+  } >"$LOG_DIR/inventory-$mode.identity" 2>/dev/null || true
+  say "inventory ($mode): attempt ${ATTEMPT:--}, target $TARGET, state key $STATE_KEY, cluster $CLUSTER; provider reads only, no mutation"
   disk_quota_record
   provider_probe gke-cluster    absent  gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(name)'
   provider_probe sql-instance   absent  gcloud sql instances describe "$CLUSTER-postgres" --project "$PROJECT" --format='value(name)'
@@ -605,8 +631,10 @@ bundle_manifest() {
   fi
   {
     printf 'evidence bundle: %s\n' "$LOG_DIR"
-    printf 'target: %s  project: %s  region: %s  revision: %s\n' \
-      "$TARGET" "$PROJECT" "$REGION" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    printf 'attempt: %s  row: %s\n' "${ATTEMPT:--}" "${ROW:-}"
+    printf 'target: %s  state_key: %s\n' "$TARGET" "$STATE_KEY"
+    printf 'project: %s  region: %s  revision: %s\n' \
+      "$PROJECT" "$REGION" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     printf 'cluster: %s\n\n' "$CLUSTER"
     printf 'sol run evidence .......... %s run director(ies)\n' "$(find "$LOG_DIR/sol-runs" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
     printf 'terraform state (cloud) ... %s\n' "$(artifact_status "$LOG_DIR/state/cloud.tfstate")"
@@ -837,7 +865,7 @@ api_probe_sample() {
   else
     verdict=UNREACHABLE
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${reported:--}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${ATTEMPT:--}" "${reported:--}" \
     "${configured:--}" "$verdict" "$(printf '%s' "$detail" | tr '\n' ' ' | cut -c1-120)" \
     >>"$out" 2>/dev/null || true
 }
@@ -845,8 +873,8 @@ api_probe_sample() {
 api_probe_sample_or_record() {
   local out="$1"
   if ! api_probe_sample "$out" 2>/dev/null; then
-    printf '%s\t-\t-\tPROBE_FAILED\tapi_probe_sample exited non-zero\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$out" 2>/dev/null || true
+    printf '%s\t%s\t-\t-\tPROBE_FAILED\tapi_probe_sample exited non-zero\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${ATTEMPT:--}" >>"$out" 2>/dev/null || true
   fi
 }
 
@@ -871,11 +899,11 @@ api_readiness_probe_start() {
     say "api readiness probe: DISABLED (cannot write $out) — the run continues unobserved"
     return 0
   fi
-  printf 'timestamp\tserver_reported\tserver_configured\tverdict\tdetail\n' >>"$out" || true
+  printf 'timestamp\tattempt\tserver_reported\tserver_configured\tverdict\tdetail\n' >>"$out" || true
   api_probe_sample_or_record "$out"
   api_probe_loop "$out" &
   API_PROBE_PID=$!
-  say "api readiness probe: every ${API_PROBE_INTERVAL_S:-15}s -> $out (pid $API_PROBE_PID)"
+  say "api readiness probe: every ${API_PROBE_INTERVAL_S:-15}s -> $out (attempt ${ATTEMPT:--}, pid $API_PROBE_PID)"
 }
 
 api_readiness_probe_stop() {
@@ -888,11 +916,22 @@ api_readiness_probe_stop() {
 }
 
 kubeconfig_has_cluster() {
-  python3 "$OBSERVER" kubeconfig --file "${1:-}" --cluster "${2:-}" >/dev/null 2>&1
+  local server="${3:-}"
+  if [ -n "$server" ]; then
+    python3 "$OBSERVER" kubeconfig --file "${1:-}" --cluster "${2:-}" --server "$server" \
+      >/dev/null 2>&1
+  else
+    python3 "$OBSERVER" kubeconfig --file "${1:-}" --cluster "${2:-}" >/dev/null 2>&1
+  fi
+}
+
+current_endpoint() {
+  gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
+    --format='value(endpoint)' 2>/dev/null | tr -d '\r'
 }
 
 cluster_kubeconfig_waiter() {
-  local parent=$$ status polls=0
+  local parent=$$ status polls=0 expected=""
   local journal="$LOG_DIR/kubeconfig-waiter.tsv"
   local deadline
   deadline=$(( $(date +%s) + ${CLUSTER_WAIT_TIMEOUT_S:-1800} ))
@@ -912,8 +951,9 @@ cluster_kubeconfig_waiter() {
       say "run kubeconfig waiter: TIMEOUT after ${CLUSTER_WAIT_TIMEOUT_S:-1800}s ($journal)"
       exit 0
     fi
-    if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
-      note "-" "established" "credentials for $CLUSTER exist"
+    expected="$(current_endpoint)"
+    if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
+      note "-" "established" "credentials for $CLUSTER at ${expected:-<no endpoint>} exist"
       say "run kubeconfig: ready ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
       exit 0
     fi
@@ -922,7 +962,8 @@ cluster_kubeconfig_waiter() {
     case "$status" in
       RUNNING)
         kubeconfig_for_cluster || true
-        if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+        expected="$(current_endpoint)"
+        if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
           note "$status" "credentials-established" "context pinned to $CLUSTER"
           say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
           exit 0
@@ -950,7 +991,7 @@ stop_cluster_kubeconfig_waiter() {
   if [ -n "${KUBECONFIG_WAITER_PID:-}" ] && kill -0 "$KUBECONFIG_WAITER_PID" 2>/dev/null; then
     kill -TERM "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
     wait "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
-    if [ -s "$RUN_KUBECONFIG" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+    if [ -s "$RUN_KUBECONFIG" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$(current_endpoint)"; then
       printf '%s\t-\t-\tstopped-by-run\tcredentials existed; the run ended\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
     else
@@ -962,9 +1003,12 @@ stop_cluster_kubeconfig_waiter() {
 }
 
 kube_capture_evidence() {
-  local dir="$1"
+  local dir="$1" endpoint server_args=()
+  endpoint="$(current_endpoint)"
+  if [ -n "$endpoint" ]; then server_args=(--server "$endpoint"); fi
   if ! python3 "$OBSERVER" capture --dir "$dir" --kubeconfig "$RUN_KUBECONFIG" \
-      --cluster "$CLUSTER" --bound "${KUBE_CAPTURE_TIMEOUT_S:-30}"; then
+      --cluster "$CLUSTER" --attempt "$ATTEMPT" "${server_args[@]}" \
+      --bound "${KUBE_CAPTURE_TIMEOUT_S:-30}"; then
     say "  platform-failure evidence: the observer could not run at all — recorded, not interpreted"
     printf 'observer.py could not run: no Kubernetes evidence was collected for this failure.\n' \
       >>"$dir/CAPTURE-UNAVAILABLE.txt" 2>/dev/null || true
@@ -978,11 +1022,11 @@ capture_platform_failure_evidence() {
     say "  platform-failure evidence: DISABLED (cannot create $dir) — the run continues unobserved"
     return 0
   fi
-  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$(current_endpoint)"; then
     kubeconfig_for_cluster || true
   fi
   local credentials=yes
-  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$(current_endpoint)"; then
     credentials=no
     say "  platform-failure evidence: NO CREDENTIALS for $CLUSTER — every read is recorded, none is evidence"
   fi
@@ -1016,6 +1060,13 @@ capture_fnd0010() {
     return 0
   fi
   kubeconfig_for_cluster
+  local endpoint
+  endpoint="$(current_endpoint)"
+  if [ -n "$endpoint" ] && ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$endpoint"; then
+    say "  the run credential does not address this cluster's current endpoint ($endpoint):"
+    say "  the discriminator capture is not taken through a replaced cluster of the same name"
+    return 0
+  fi
   kube_capture fnd0010-startupapicheck-logs kubectl -n cert-manager logs \
     job/cert-manager-startupapicheck --all-containers --tail=-1
   kube_capture fnd0010-events  kubectl -n cert-manager get events --sort-by=.lastTimestamp
@@ -1124,6 +1175,13 @@ capture_ready_evidence() {
     return 0
   fi
   kubeconfig_for_cluster
+  local endpoint
+  endpoint="$(current_endpoint)"
+  if [ -n "$endpoint" ] && ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$endpoint"; then
+    say "  the run credential does not address this cluster's current endpoint ($endpoint):"
+    say "  the Ready-path cluster reads are not taken through a replaced cluster of the same name"
+    return 0
+  fi
   kube_capture ready-pods kubectl get pods -A -o wide
   kube_capture ready-startupapicheck-status kubectl -n cert-manager get job cert-manager-startupapicheck -o json
   kube_capture ready-startupapicheck-logs kubectl -n cert-manager logs \
@@ -1562,18 +1620,22 @@ phases
   verify    read-only absence check; invokes no teardown
 
 required
+  ATTEMPT        a unique identity for this disposable run; the target, state key and
+                 evidence directory are bound to it, and a repeated ATTEMPT continues it
   CLUSTER        this run's cluster name (also the name every provider probe filters on)
   IMPERSONATOR   user:<email> the provisioner is impersonated as
   LE_EMAIL       ACME contact address, for the platform's certificates
   SOL_INSTALL    the extracted release prefix holding bin/sol and share/sol/<version>
 
 optional (defaults shown)
-  TARGET=qual/gcp/us-central1
+  ROW=qual                    the stable logical row label
+  TARGET=qual-<attempt>/gcp/us-central1
+  CONTINUE_ATTEMPT=0          set 1 to continue an occupied state key for the same ATTEMPT
   PROJECT=sol-qualification   REGION=us-central1
   BASE_DOMAIN=qual-gcp.sol-fab.dev
   PHASE_TIMEOUT=2700          how long one phase may take before the harness ends it
   WORKSPACE=examples/pluto    TFVARS=internal/qualification/gcp/qual-gcp.tfvars
-  LOG_DIR=/tmp/sol-gcp-qual-<timestamp>   XDG_DATA_HOME
+  LOG_DIR=/tmp/sol-gcp-qual-<attempt>   XDG_DATA_HOME
 
 The bundle is LOG_DIR: the harness's own narrative (harness.log), phase transcripts,
 the run kubeconfig and the waiter journal, the API-readiness samples, the failure

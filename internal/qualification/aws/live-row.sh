@@ -4,8 +4,11 @@ trap '' PIPE
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
-TARGET="${TARGET:-qualreg/aws/us-east-1}"
 TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
+ROW="${ROW:-qualreg}"
+PROVIDER=aws
+ATTEMPT="${ATTEMPT:-}"
+TARGET="${TARGET:-$ROW-$ATTEMPT/aws/us-east-1}"
 TFVARS="${TFVARS:-$ROOT/internal/qualification/aws/qual-aws-row.tfvars}"
 AWS_PROFILE="${AWS_PROFILE:-sol-qual}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
@@ -27,7 +30,7 @@ WORKER_DIR="${WORKER_DIR:-comms}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
 APP_TAG="${APP_TAG:-row-$(date -u +%Y%m%d-%H%M%S)}"
-LOG_DIR="${LOG_DIR:-/tmp/sol-aws-row-$(date +%Y%m%d-%H%M%S)}"
+LOG_DIR="${LOG_DIR:-/tmp/sol-aws-row-$ATTEMPT}"
 export AWS_PROFILE AWS_REGION APP_TAG APP_NS WORKER_NS APP_SERVICE APP_PORT SCENARIO
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)"
@@ -38,7 +41,7 @@ ECR_REGISTRY="${ECR_REGISTRY:-$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com}"
 STATE_KEY="$LEDGER_PREFIX/$TARGET/cloud.tfstate"
 export ECR_REGISTRY
 
-mkdir -p "$LOG_DIR/state"
+mkdir -p "$LOG_DIR"
 SAY_LOG="$LOG_DIR/harness.log"
 
 say() {
@@ -73,14 +76,12 @@ trap 'on_terminate TERM' TERM
 trap 'on_terminate INT' INT
 
 source "$ROOT/internal/qualification/sol-under-test.sh"
+source "$ROOT/internal/qualification/attempt.sh"
 
 case "${1:-}" in
   cloud | app | destroy)
     sol_under_test_resolve
     DURABLE_ROOT="$SOL_PLATFORM_ROOT/cloud/aws/bootstrap"
-    sol_under_test_record_identity "$LOG_DIR"
-    say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
-    say "  migration runner: $SOL_RUNNER_IMAGE"
     ;;
 esac
 
@@ -91,16 +92,20 @@ live-row.sh — the AWS regression row: the application contract GCP Attempt 28 
 usage: live-row.sh PHASE      PHASE in: cloud | transport | app | destroy | verify
 
 required
+  ATTEMPT           a unique identity for this disposable run; the target, state key and
+                    evidence directory are bound to it, and a repeated ATTEMPT continues it
   CLUSTER           this run's EKS cluster name
   DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
   SOL_INSTALL       the extracted release prefix holding bin/sol and share/sol/<version>
   QUALIFIER_ROLE    the qualification-only transport role; required unless TRANSPORT=0
 optional (defaults shown)
-  TARGET=qualreg/aws/us-east-1   ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
+  ROW=qualreg                    the stable logical row label
+  TARGET=qualreg-<attempt>/aws/us-east-1   CONTINUE_ATTEMPT=0
+  ECR_REGISTRY=<account>.dkr.ecr.us-east-1.amazonaws.com
   AWS_PROFILE=sol-qual           AWS_REGION=us-east-1
   TFVARS=internal/qualification/aws/qual-aws-row.tfvars
   WORKSPACE=examples/pluto
-  PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<timestamp>
+  PHASE_TIMEOUT=2400             LOG_DIR=/tmp/sol-aws-row-<attempt>
   OPERATOR_ROLE_ARN=<unset>      TRANSPORT=1
   APP_NS=pluto-payments          APP_SERVICE=charge-svc
   APP_PORT=80                    SCENARIO=charges
@@ -171,6 +176,11 @@ capture_kube_evidence() {
 
 aws_inventory() {
   {
+    printf 'attempt=%s\n' "${ATTEMPT:--}"
+    printf 'row=%s\n' "${ROW:-}"
+    printf 'target=%s\n' "${TARGET:-}"
+    printf 'state_key=%s\n' "${STATE_KEY:-}"
+    printf 'cluster=%s\n' "${CLUSTER:-}"
     printf 'clusters\n'
     aws eks list-clusters --query 'clusters' --output text
     printf 'ec2 instances tagged for this run\n'
@@ -254,6 +264,21 @@ ACCESS_KUBECONFIG="$LOG_DIR/kubeconfig-access.yaml"
 OPERATOR_KUBECONFIG="$LOG_DIR/kubeconfig-operator.yaml"
 QUALIFIER_KUBECONFIG="$LOG_DIR/kubeconfig-qualifier.yaml"
 
+verify_kubeconfig_endpoint() {
+  local kubeconfig="$1" endpoint configured
+  endpoint="$(aws eks describe-cluster --name "$CLUSTER" --region "$AWS_REGION" \
+    --query 'cluster.endpoint' --output text 2>/dev/null | tr -d '\r')"
+  [ -n "$endpoint" ] || return 0
+  configured="$(kubectl --kubeconfig "$kubeconfig" config view --minify \
+    --output 'jsonpath={.clusters[0].cluster.server}' 2>/dev/null)"
+  if [ "$configured" != "$endpoint" ]; then
+    say "the credential at $kubeconfig addresses ${configured:-<nothing>}, not this cluster's current"
+    say "endpoint $endpoint: a replaced cluster of the same name is not this run's target"
+    return 1
+  fi
+  return 0
+}
+
 ensure_contexts() {
   say "kubeconfig"
   KUBECONFIG="$DEPLOY_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
@@ -264,6 +289,9 @@ ensure_contexts() {
     KUBECONFIG="$OPERATOR_KUBECONFIG" aws eks update-kubeconfig --region "$AWS_REGION" \
       --name "$CLUSTER" --alias "$CLUSTER-operator" --role-arn "$OPERATOR_ROLE_ARN" >/dev/null || return 1
   fi
+  verify_kubeconfig_endpoint "$DEPLOY_KUBECONFIG" || return 1
+  verify_kubeconfig_endpoint "$ACCESS_KUBECONFIG" || return 1
+  if [ -n "$OPERATOR_ROLE_ARN" ]; then verify_kubeconfig_endpoint "$OPERATOR_KUBECONFIG" || return 1; fi
   export KUBECONFIG="$DEPLOY_KUBECONFIG"
 }
 
@@ -451,6 +479,27 @@ phase_destroy() {
   aws_inventory
   return "$destroy_rc"
 }
+
+disposable_state_present() {
+  aws s3api head-object --bucket "$(target_state_bucket)" --key "$STATE_KEY" >/dev/null 2>&1
+}
+
+case "${1:-}" in
+  cloud)
+    attempt_begin 1
+    mkdir -p "$LOG_DIR/state"
+    sol_under_test_record_identity "$LOG_DIR"
+    say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
+    say "  migration runner: $SOL_RUNNER_IMAGE"
+    ;;
+  app | destroy)
+    attempt_begin 0
+    mkdir -p "$LOG_DIR/state"
+    sol_under_test_record_identity "$LOG_DIR"
+    say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
+    say "  migration runner: $SOL_RUNNER_IMAGE"
+    ;;
+esac
 
 case "${1:-}" in
   cloud) phase_cloud ;;

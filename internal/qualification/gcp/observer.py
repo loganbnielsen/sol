@@ -170,7 +170,22 @@ def context_for_cluster(document: dict[str, Any], cluster: str) -> str | None:
     return matching[0] if matching else None
 
 
-def inspect(path: str, cluster: str) -> dict[str, Any]:
+def endpoint_host(value: str) -> str:
+    """The bare host a kubeconfig server or provider endpoint addresses.
+
+    The provider reports `136.115.125.189`; the kubeconfig writes
+    `https://136.115.125.189`. Comparing them requires dropping the scheme, path
+    and port, or a bound credential would never look bound.
+    """
+    text = value.strip()
+    for scheme in ("https://", "http://"):
+        if text.startswith(scheme):
+            text = text[len(scheme) :]
+    text = text.split("/", 1)[0]
+    return text.split(":", 1)[0]
+
+
+def inspect(path: str, cluster: str, expected_server: str | None = None) -> dict[str, Any]:
     document = load_kubeconfig(path)
     names = cluster_names(document)
     if not names:
@@ -188,6 +203,18 @@ def inspect(path: str, cluster: str) -> dict[str, Any]:
             "reason": f"no cluster entry names {cluster}",
             "server": None,
             "context": None,
+            "clusters": names,
+        }
+    if expected_server and endpoint_host(server) != endpoint_host(expected_server):
+        return {
+            "has_cluster": False,
+            "reason": (
+                f"the entry for {cluster} is at {server}, not the current endpoint "
+                f"{expected_server}; a credential for a replaced cluster of the same name "
+                "does not establish this run's target"
+            ),
+            "server": server,
+            "context": context_for_cluster(document, cluster),
             "clusters": names,
         }
     return {
@@ -219,19 +246,27 @@ def run_read(command: list[str], bound: float, env: dict[str, str]) -> tuple[int
     return completed.returncode, completed.stdout, completed.stderr
 
 
-def capture(directory: str, kubeconfig: str, cluster: str, bound: float) -> int:
+def capture(
+    directory: str,
+    kubeconfig: str,
+    cluster: str,
+    bound: float,
+    attempt: str = "",
+    expected_server: str | None = None,
+) -> int:
     """Attempt every read, keep what each produced, and account for all of it.
 
     Returns 0 whenever the capture ran and accounted for every read -- a read that failed
     on the cluster is recorded in its artifact and in the summary, never fatal.
     """
     os.makedirs(directory, exist_ok=True)
-    facts = inspect(kubeconfig, cluster)
+    facts = inspect(kubeconfig, cluster, expected_server)
     credentials = "yes" if facts["has_cluster"] else "no"
 
     if not facts["has_cluster"]:
         with open(os.path.join(directory, "NO-KUBECONFIG.txt"), "w", encoding="utf-8") as handle:
             handle.write(
+                f"attempt: {attempt}\n"
                 f"Qualification capture could not establish credentials for cluster {cluster}.\n"
                 f"Reason: {facts['reason']}.\n"
                 f"Clusters present: {', '.join(facts['clusters']) or 'none'}.\n"
@@ -272,6 +307,7 @@ def capture(directory: str, kubeconfig: str, cluster: str, bound: float) -> int:
         )
 
     summary = {
+        "attempt": attempt,
         "cluster": cluster,
         "kubeconfig": kubeconfig,
         "credentials": credentials,
@@ -287,6 +323,7 @@ def capture(directory: str, kubeconfig: str, cluster: str, bound: float) -> int:
         json.dump(summary, handle, indent=2, sort_keys=True)
         handle.write("\n")
     with open(os.path.join(directory, "capture-summary.txt"), "w", encoding="utf-8") as handle:
+        handle.write(f"attempt: {attempt}\n")
         handle.write(f"credentials for {cluster}: {credentials}\n")
         if facts["reason"]:
             handle.write(f"credentials reason: {facts['reason']}\n")
@@ -312,6 +349,7 @@ def main(argv: list[str]) -> int:
     inspect_parser = subparsers.add_parser("kubeconfig")
     inspect_parser.add_argument("--file", required=True)
     inspect_parser.add_argument("--cluster", required=True)
+    inspect_parser.add_argument("--server", default=None)
     inspect_parser.add_argument("--json", action="store_true")
 
     server_parser = subparsers.add_parser("server")
@@ -322,12 +360,14 @@ def main(argv: list[str]) -> int:
     capture_parser.add_argument("--dir", required=True)
     capture_parser.add_argument("--kubeconfig", required=True)
     capture_parser.add_argument("--cluster", required=True)
+    capture_parser.add_argument("--attempt", default="")
+    capture_parser.add_argument("--server", default=None)
     capture_parser.add_argument("--bound", type=float, default=30.0)
 
     arguments = parser.parse_args(argv)
 
     if arguments.command == "kubeconfig":
-        facts = inspect(arguments.file, arguments.cluster)
+        facts = inspect(arguments.file, arguments.cluster, arguments.server)
         if arguments.json:
             print(json.dumps(facts, sort_keys=True))
         elif facts["has_cluster"]:
@@ -341,7 +381,14 @@ def main(argv: list[str]) -> int:
         print(facts["server"] if facts["server"] else "-")
         return 0
 
-    return capture(arguments.dir, arguments.kubeconfig, arguments.cluster, arguments.bound)
+    return capture(
+        arguments.dir,
+        arguments.kubeconfig,
+        arguments.cluster,
+        arguments.bound,
+        arguments.attempt,
+        arguments.server,
+    )
 
 
 if __name__ == "__main__":
