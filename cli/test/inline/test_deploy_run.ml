@@ -390,7 +390,9 @@ let%test "consumer-group guard (BUG-088): the record is read under the boundary 
   test_the_group_check_reads_the_record_under_the_lease ()
 ;;
 
-let%test "apply: a failed prepared-plan gate releases the lease before any workload mutation" =
+let%test
+    "apply: a failed prepared-plan gate releases the lease before any workload mutation"
+  =
   with_fake_kubectl (fun ~calls ->
     with_context (fun ctx ->
       let outcome =
@@ -399,7 +401,8 @@ let%test "apply: a failed prepared-plan gate releases the lease before any workl
           ~prepare_plan:(fun _ -> Error "prerequisite refused")
           ~confirm_group_change:true
           ~push_events:(fun _ -> Windtrap.fail "a refused prerequisite emitted events")
-          ~report_success:(fun _ _ -> Windtrap.fail "a refused prerequisite reported success")
+          ~report_success:(fun _ _ ->
+            Windtrap.fail "a refused prerequisite reported success")
           (plan [])
       in
       Windtrap.equal
