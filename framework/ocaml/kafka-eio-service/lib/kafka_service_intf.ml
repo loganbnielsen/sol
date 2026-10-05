@@ -96,27 +96,59 @@ let topic_partition_error_to_string = function
 ;;
 
 let decode_topic_partitions body =
-  try
-    match Yojson.Safe.from_string body with
-    | `List (_ :: _ as parts) ->
-      let replicas =
-        List.map
-          (function
-            | `Assoc fields ->
-              (match List.assoc_opt "replicas" fields with
-               | Some (`List replicas) -> List.length replicas
-               | _ -> raise Exit)
-            | _ -> raise Exit)
-          parts
-      in
+  let malformed = Topic_admin_malformed_response body in
+  let open Result.Syntax in
+  let partition_replicas (json : Yojson.Safe.t) =
+    match json with
+    | `Assoc fields ->
+      (match List.assoc_opt "partition_id" fields, List.assoc_opt "replicas" fields with
+       | Some (`Int partition_id), Some (`List (_ :: _ as replicas)) ->
+         let* node_ids =
+           List.fold_left
+             (fun acc replica ->
+                let* acc = acc in
+                match replica with
+                | `Assoc fields ->
+                  (match List.assoc_opt "node_id" fields with
+                   | Some (`Int node_id) -> Ok (node_id :: acc)
+                   | Some _ | None -> Error malformed)
+                | _ -> Error malformed)
+             (Ok [])
+             replicas
+         in
+         Ok (partition_id, List.rev node_ids)
+       | _ -> Error malformed)
+    | _ -> Error malformed
+  in
+  match Yojson.Safe.from_string body with
+  | exception Yojson.Json_error _ -> Error malformed
+  | `List (_ :: _ as parts) ->
+    let* records =
+      List.fold_left
+        (fun acc part ->
+           let* acc = acc in
+           let* record = partition_replicas part in
+           Ok (record :: acc))
+        (Ok [])
+        parts
+    in
+    let records = List.rev records in
+    let partition_ids = List.map fst records in
+    let replicas = List.map snd records in
+    let distinct xs = List.length xs = List.length (List.sort_uniq Int.compare xs) in
+    if distinct partition_ids && List.for_all distinct replicas
+    then
       Ok
         (Topic_partitions
-           { partitions = List.length parts
-           ; replication_factor = List.fold_left min max_int replicas
+           { partitions = List.length records
+           ; replication_factor =
+               List.fold_left
+                 (fun acc node_ids -> min acc (List.length node_ids))
+                 max_int
+                 replicas
            })
-    | _ -> Error (Topic_admin_malformed_response body)
-  with
-  | Yojson.Json_error _ | Exit -> Error (Topic_admin_malformed_response body)
+    else Error malformed
+  | _ -> Error malformed
 ;;
 
 let query_topic_partitions net ~clock ~admin_url ~topic_name =
