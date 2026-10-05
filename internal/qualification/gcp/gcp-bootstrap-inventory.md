@@ -9,4 +9,4 @@ The read-only inventory in this document was taken on 2026-09-18. Its billing, A
 - The durable Terraform root owns the state bucket and qualification Cloud DNS zone. The zone is adopted by import when needed so parent delegation survives. Changing the durable-root region can replace the bucket; never silently accept that plan. A move also requires re-adopting the zone (DEC-043).
 - Before mutation and after teardown, inventory the provider's resources. A Terraform exit status does not establish an `ABSENT` cost verdict.
 
-This file is retained as a dated pointer because older run records link to it. The operative procedure is `internal/qualification/gcp/live-qual.sh`, with rows in `gcp-production-single-region-v1-matrix.md` and its TSV.
+The original inventory and chronological notes are preserved in [the dated record](../records/2026-09-18-gcp-bootstrap-inventory.md). This file is retained as a pointer because older run records link to it. The operative procedure is `internal/qualification/gcp/live-qual.sh`, with rows in `gcp-production-single-region-v1-matrix.md` and its TSV.

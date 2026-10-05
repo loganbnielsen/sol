@@ -2,22 +2,22 @@
 id: INFRA-103
 type: infra
 severity: medium
-source: alpha.7 AWS qualification inventory, 2026-10-04
-title: Make AWS qualification reconciliation and absence inventory accurate
+source: alpha.7 AWS qualification H2, 2026-10-04
+title: Exclude terminal AWS resources from qualification residue inventory
 ---
 
 **Depends on:** None.
 
 ## Premise verified
 
-`internal/qualification/aws/live-row.sh` remains the AWS evidence owner. In the alpha.7 run, its recovery imported `aws_db_instance.postgres` although the resource lives in a module, so Terraform rejected the address. Its post-inventory also listed deleted NAT gateways and terminated instances as live residue.
+`internal/qualification/aws/live-row.sh` inventories all matching EC2 instances and NAT gateways without filtering their states. The alpha.7 campaign listed terminated instances and a deleted NAT gateway as leftovers.
 
 ## Remediation
 
-Use the state/configuration's qualified database address for recovery. Exclude provider terminal states from the live-resource verdict while retaining raw responses as evidence.
+Exclude provider terminal states from the live-resource verdict while retaining raw responses as evidence. Keep unknown/read failures distinct from absence.
 
 ## Acceptance criteria
 
-- An orphaned RDS instance is attributed with a valid import address.
-- `deleted` NAT gateways and `terminated` instances do not prevent an `ABSENT` verdict; live ones do.
-- Offline harness checks cover both cases. Example impact: none; qualification machinery only. Language-parity impact: none.
+- Deleted NAT gateways and terminated instances do not prevent an `ABSENT` verdict; live resources do.
+- Offline harness checks cover both cases and unreadable inventory.
+- Example impact: none; qualification machinery only. Language-parity impact: none.
