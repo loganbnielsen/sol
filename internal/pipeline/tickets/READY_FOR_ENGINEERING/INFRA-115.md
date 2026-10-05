@@ -71,6 +71,8 @@ contract coverage. CI selectors and local selectors must not reuse local result 
 - Tests prove selection for hook-only, `sol-jobs`, CLI lifecycle, TypeScript demo/scaffold, shared,
   global metadata, mixed and unknown paths. Mutations that omit a required affected check fail.
 - The INFRA-109 run’s lease-fencing failure and TypeScript deployment failure remain recorded as
-  failures to diagnose; tiering must not relabel them as passes or erase their evidence.
+  failures to diagnose; tiering must not relabel them as passes or erase their evidence. CI failures
+  are reviewed for deterministic, low-cost candidates for relevant local checks, while costly or
+  environment-sensitive coverage remains independently exercised in CI.
 - Live cloud qualification remains authorization-gated and outside PR CI.
 - Example impact: none; developer tooling. Language-parity impact: none.

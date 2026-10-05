@@ -69,7 +69,9 @@ the unsupported “about 12s warm” duration.
   Version-sensitive tests run locally only with their pinned toolchain; otherwise the authoritative
   CI job owns them.
 - INFRA-109's pushed-tree regression remains green, and INFRA-112's cache invalidates on a changed
-  tree, validation plan, runner or toolchain. CI does not read or reuse local evidence.
+  tree, validation plan, runner or toolchain. CI does not read or reuse local evidence. Review CI test
+  failures for deterministic, low-cost candidates to add to the relevant local plan; do not mirror
+  costly or environment-sensitive failures into hooks.
 - Local evidence never suppresses or substitutes for independent CI. Per-PR CI selection follows
   INFRA-115; the broad cross-surface suite remains independently run on every push to `main` and on
   any PR whose impact is global, mixed, unknown or cannot be classified safely.
