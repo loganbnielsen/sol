@@ -9,7 +9,7 @@ scenario, in both languages.
 
 `examples/pluto` is the alpha campaign's reference application: one realistic
 backend workflow implemented independently in OCaml and TypeScript with the same
-externally observable behaviour (`internal/qualification/ALPHA_CAMPAIGN.md` §2).
+externally observable behaviour (`internal/qualification/README.md` §2).
 `FEAT-131` lands the shared scenario contract and skeleton; `FEAT-132` implements
 the OCaml half and `FEAT-133` the TypeScript half.
 
