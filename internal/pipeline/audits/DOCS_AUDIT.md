@@ -12,7 +12,7 @@ This is a reusable audit template. When performing an audit, copy this file or u
 
 Sol has several root-level and package-level docs. They must agree on what Sol is, what is complete, and what is still planned.
 
-**Source locations:** `README.md` · `docs/ROADMAP.md` · `docs/guides/TUTORIAL.md` · package-level `*.md` specs
+**Source locations:** `README.md` · `docs/DEVELOPER_EXPERIENCE.md` · `docs/guides/TUTORIAL.md` · package-level `*.md` specs
 
 ### Checklist
 

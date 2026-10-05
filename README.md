@@ -219,7 +219,7 @@ the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/de
 
 Sol is under active development and not yet production-stable. HTTP services, Kafka workers, scheduled functions, PostgreSQL, observability, local development, and Kubernetes deployment are implemented and dogfooded end-to-end. Cloud infrastructure provisioning and the AWS integration layer are further along than most other pieces but still experimental.
 
-See [ROADMAP.md](docs/ROADMAP.md) for the current implementation status, layer by layer, and what's planned next.
+Current product behavior and status are described in [The Sol developer experience](docs/DEVELOPER_EXPERIENCE.md); future work is tracked in GitHub Issues.
 
 ---
 
@@ -253,7 +253,7 @@ sol/
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
-- [Roadmap](docs/ROADMAP.md) — current status and what's next
+- [Developer experience](docs/DEVELOPER_EXPERIENCE.md) — current product behavior, ownership, and lifecycle
 - [Contributor map](internal/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`AGENTS.md`](AGENTS.md)
 
