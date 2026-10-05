@@ -17,9 +17,9 @@ if docker ps --format '{{.Names}}' | grep -q '^pushgateway$'; then
   echo "Pushgateway already running at http://localhost:${PUSHGATEWAY_PORT}"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^pushgateway$'; then
+    require_local_publish pushgateway 9091
     echo "Restarting stopped Pushgateway container..."
     docker start pushgateway
-    require_local_publish pushgateway 9091
   else
     echo "Starting Pushgateway..."
     dev_publish_ports "$PUSHGATEWAY_PORT:9091"

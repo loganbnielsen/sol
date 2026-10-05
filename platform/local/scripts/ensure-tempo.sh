@@ -24,10 +24,10 @@ if docker ps --format '{{.Names}}' | grep -q '^tempo$'; then
   echo "Tempo already running"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^tempo$'; then
-    echo "Restarting stopped Tempo container..."
-    docker start tempo
     require_local_publish tempo 4318
     require_local_publish tempo 3200
+    echo "Restarting stopped Tempo container..."
+    docker start tempo
   else
     echo "Starting Tempo..."
     dev_publish_ports "$OTLP_PORT:4318" "$QUERY_PORT:3200"

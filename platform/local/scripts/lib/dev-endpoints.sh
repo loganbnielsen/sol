@@ -24,8 +24,22 @@ dev_publish_ports() {
 require_local_publish() {
   local container="${1:?container required}"
   local container_port="${2:?container port required}"
-  local published offenders
-  published="$(docker port "$container" "$container_port" 2>/dev/null || true)"
+  local bindings published offenders host_ip host_port
+  if ! bindings="$(docker inspect --format \
+    "{{range (index .HostConfig.PortBindings \"${container_port}/tcp\")}}{{printf \"%s|%s\\n\" .HostIp .HostPort}}{{end}}" \
+    "$container" 2>/dev/null)"; then
+    echo "ERROR: cannot inspect ${container}'s published ports; refusing to start it." >&2
+    return 1
+  fi
+  published=""
+  while IFS='|' read -r host_ip host_port; do
+    [ -n "$host_port" ] || continue
+    case "$host_ip" in
+      127.0.0.1) published="${published}${published:+$'\n'}127.0.0.1:${host_port}" ;;
+      ::1) published="${published}${published:+$'\n'}[::1]:${host_port}" ;;
+      *) published="${published}${published:+$'\n'}${host_ip:-0.0.0.0}:${host_port}" ;;
+    esac
+  done <<<"$bindings"
   [ -z "$published" ] && return 0
   offenders="$(printf '%s\n' "$published" | grep -v -e '^127\.0\.0\.1:' -e '^\[::1\]:' || true)"
   if [ -z "$offenders" ] && dev_has_ipv6_loopback \

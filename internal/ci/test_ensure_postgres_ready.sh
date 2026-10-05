@@ -22,8 +22,9 @@ case "${1:-} ${2:-}" in
     printf 'run -d %s\n' "$*" >>"$state/invocations"
     echo started-container-id
     ;;
-  "port "*)
-    if [ -f "$state/published" ]; then cat "$state/published"; else printf '127.0.0.1:%s\n[::1]:%s\n' "$3" "$3"; fi
+  "inspect --format")
+    port="$(printf '%s' "$3" | sed -n 's/.*PortBindings "\([0-9]*\)\/tcp".*/\1/p')"
+    if [ -f "$state/published" ]; then cat "$state/published"; else printf '127.0.0.1|%s\n::1|%s\n' "$port" "$port"; fi
     ;;
   "run --rm")
     attempts=0
@@ -152,7 +153,7 @@ echo
 echo "ensure-postgres: an existing container published beyond loopback is refused"
 reset_state
 touch "$work/state/running"
-printf '0.0.0.0:5432\n' >"$work/state/published"
+printf '0.0.0.0|5432\n' >"$work/state/published"
 run_ensure
 expect_exit 1 "a broadly published database is refused"
 expect_no_text "Postgres ready at" "readiness is not claimed"

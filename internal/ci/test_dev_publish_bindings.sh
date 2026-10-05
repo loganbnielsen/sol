@@ -18,15 +18,22 @@ case "${1:-} ${2:-}" in
       [ -e "$f" ] || continue
       printf '%s\n' "${f##*/running-}"
     done
+    if [ "${1:-} ${2:-}" = "ps -a" ]; then
+      for f in "$state"/stopped-*; do
+        [ -e "$f" ] || continue
+        printf '%s\n' "${f##*/stopped-}"
+      done
+    fi
     ;;
   "network inspect" | "network connect" | "network create")
     exit 0
     ;;
-  "port "*)
-    if [ -f "$state/port-$2-$3" ]; then
-      cat "$state/port-$2-$3"
+  "inspect --format")
+    port="$(printf '%s' "$3" | sed -n 's/.*PortBindings "\([0-9]*\)\/tcp".*/\1/p')"
+    if [ -f "$state/port-$4-$port" ]; then
+      cat "$state/port-$4-$port"
     else
-      printf '127.0.0.1:%s\n' "$3"
+      printf '127.0.0.1|%s\n' "$port"
     fi
     ;;
   "run -d")
@@ -38,6 +45,7 @@ case "${1:-} ${2:-}" in
     ;;
   "start "*)
     touch "$state/running-$2"
+    printf 'start %s\n' "$2" >>"$state/invocations"
     ;;
   "rm "*)
     rm -f "$state/running-$2"
@@ -139,12 +147,22 @@ echo
 echo "dev-endpoints: an existing container published beyond loopback is refused"
 reset_state
 touch "$work/state/running-grafana"
-printf '0.0.0.0:3000\n' >"$work/state/port-grafana-3000"
+printf '0.0.0.0|3000\n' >"$work/state/port-grafana-3000"
 run_script ensure-grafana.sh
 expect_exit 1 "a broadly published grafana fails"
 expect_text "not on 127.0.0.1" "the refusal names the binding"
 expect_text "docker rm -f grafana" "the refusal names the recreation"
 expect_no_text "Grafana already running" "compliance is not silently accepted"
+
+echo
+echo "dev-endpoints: an unsafe stopped container is refused before it can start"
+reset_state
+touch "$work/state/stopped-grafana"
+printf '0.0.0.0|3000\n' >"$work/state/port-grafana-3000"
+run_script ensure-grafana.sh
+expect_exit 1 "a stopped broadly published grafana fails"
+expect_no_text "Restarting stopped Grafana" "the unsafe container is rejected before restart"
+expect_no_text "start grafana" "Docker never starts the unsafe container"
 
 echo
 if [ "$failures" -eq 0 ]; then

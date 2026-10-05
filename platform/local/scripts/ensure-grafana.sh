@@ -45,9 +45,9 @@ if docker ps --format '{{.Names}}' | grep -q '^grafana$'; then
   echo "Grafana already running at http://localhost:${GRAFANA_PORT}"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^grafana$'; then
+    require_local_publish grafana 3000
     echo "Restarting stopped Grafana container..."
     docker start grafana
-    require_local_publish grafana 3000
   else
     echo "Starting Grafana..."
     dev_publish_ports "$GRAFANA_PORT:3000"
