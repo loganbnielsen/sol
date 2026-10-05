@@ -171,6 +171,29 @@ let current ~ctx ~(workspace : string) : (string option, string) result =
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
+let deployed_contract ~ctx ~(workspace : string)
+  : (Sol_cli_release_id.contract_fact list, string) result
+  =
+  match current ~ctx ~workspace with
+  | Error msg ->
+    Error
+      (Printf.sprintf
+         "the deployed contract could not be observed: reading the current release \
+          pointer failed: %s"
+         msg)
+  | Ok None -> Ok []
+  | Ok (Some release_id) ->
+    (match get ~ctx ~workspace ~release_id with
+     | Ok record -> Ok record.Sol_cli_release.contract
+     | Error msg ->
+       Error
+         (Printf.sprintf
+            "the deployed contract could not be observed: the current release %s could \
+             not be read: %s"
+            release_id
+            msg))
+;;
+
 let delete ~ctx ~(release_id : string) : (unit, string) result =
   let open Result.Syntax in
   let* id = Sol_cli_release_id.of_string release_id in

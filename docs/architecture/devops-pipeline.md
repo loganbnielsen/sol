@@ -530,6 +530,14 @@ and keeps reading the declaration. A change that cannot be reconciled in place �
 partition reduction, a record-key change, or a topic rename — fails closed and
 names the reason before anything is applied.
 
+Reading that baseline needs the current release pointer and the record it names. If
+either cannot be read — permission denied, a malformed record, or a pointer naming a
+release that is not there — the deploy refuses and reports the read that failed
+instead of treating the target as a first deployment: an unreadable baseline cannot
+prove a change is compatible. Nothing has been applied, so fix the read (for example
+`kubectl -n <namespace> get configmap sol-release-current-<workspace>`) and deploy
+again. Only a genuinely absent pointer is a first deployment.
+
 **Reading it with no Sol binary.** Everything the CLI reads is in those
 ConfigMaps, under the `record` key:
 
