@@ -100,18 +100,17 @@ let expose_service
       (spec : Sol_cli_deployment_plan.service_spec)
       (exec : Sol_cli_up_execution.service_execution)
   =
+  let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string exec.k8s_name in
+  let namespace = Sol_cli_deployment_plan.namespace_to_string exec.namespace in
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
-    let pf_name = Printf.sprintf "%s-%s" exec.namespace exec.k8s_name in
-    let target = "svc/" ^ exec.k8s_name in
+    let pf_name = Printf.sprintf "%s-%s" namespace k8s_name in
+    let target = "svc/" ^ k8s_name in
     if not (Sol_cli_port_forward.is_running pf_name)
     then (
       let replaced =
-        Sol_cli_port_forward.replace_conflicting
-          ~local_port
-          ~namespace:exec.namespace
-          ~target
+        Sol_cli_port_forward.replace_conflicting ~local_port ~namespace ~target
       in
       replaced
       |> List.iter (fun (old : Sol_cli_port_forward.spec) ->
@@ -123,12 +122,7 @@ let expose_service
       if replaced <> [] then Unix.sleepf 0.4;
       Sol_cli_port_forward.start
         ~ctx:Sol_cli_kube_destination.local_context
-        { name = pf_name
-        ; namespace = exec.namespace
-        ; target
-        ; local_port
-        ; remote_port = 80
-        }
+        { name = pf_name; namespace; target; local_port; remote_port = 80 }
       |> Result.iter_error (Printf.eprintf "  warning: port-forward not started: %s\n%!"));
     let pf_alive =
       match Sol_cli_port_forward.check_alive ~name:pf_name with
@@ -148,7 +142,7 @@ let expose_service
         Printf.printf "           Run: kill $(lsof -ti:%d) && sol up\n%!" local_port;
         false
     in
-    Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
+    Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
     if pf_alive
     then
       Printf.printf
@@ -158,7 +152,7 @@ let expose_service
       pf_failed := true;
       Printf.printf "\n%!")
   | _ ->
-    Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
+    Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
     Printf.printf "\n%!"
 ;;
 

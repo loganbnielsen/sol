@@ -1,6 +1,6 @@
 type service_execution =
-  { k8s_name : string
-  ; namespace : string
+  { k8s_name : Sol_cli_deployment_plan.k8s_name
+  ; namespace : Sol_cli_deployment_plan.namespace
   ; push_image : string
   ; context : string
   ; dockerfile : string
