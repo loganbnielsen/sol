@@ -16,6 +16,7 @@ import { confirmationJobs } from "./jobs.js";
 import { placeOrder } from "./orders.js";
 import { ORDER_PLACED_KIND } from "./outbox.js";
 import { decodeOrderPlaced } from "./wire.js";
+import { supervise, watch } from "./runner-supervision.js";
 
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -89,6 +90,7 @@ async function main() {
   const app = Fastify({ logger: false });
 
   let lifecycle: ServiceLifecycle | undefined;
+  const supervisor = supervise((message) => console.error(`[order-svc-ts] ${message}`));
 
   app.addHook("onResponse", async (req, reply) => {
     const route = routeLabel(req.routeOptions?.url);
@@ -201,7 +203,8 @@ async function main() {
     : undefined;
 
   const outboxAbort = new AbortController();
-  const outboxRunning = runRelay({
+  const outboxRunning = watch(
+    runRelay({
     pool: db.pool,
     publish: async (publication) => {
       if (publication.kind !== ORDER_PLACED_KIND) {
@@ -236,9 +239,10 @@ async function main() {
       console.error(`[order-svc-ts] ${message}`, fields);
       log("error", message, fields);
     },
-  }).then((error) => {
-    if (error) console.error(`[order-svc-ts] outbox relay stopped: ${error.message}`);
-  });
+    }),
+    "outbox relay",
+    supervisor,
+  );
 
   lifecycle = runService({
     drain: async () => {
@@ -257,8 +261,13 @@ async function main() {
         await db.close();
       },
       () => shutdownTracing(),
+      async () => {
+        const failure = supervisor.failure();
+        if (failure) throw failure;
+      },
     ],
   });
+  supervisor.attach(lifecycle);
 }
 
 main().catch((err) => {

@@ -23,6 +23,7 @@ import { makeOrderJobs } from "./jobs.js";
 import { FULFILLED_KIND } from "./outbox.js";
 import { intEnv, requiredPostgresUrl, requiredRegistry, setting } from "./config.js";
 import { handleOrder, type OrderHandlerDeps } from "./handler.js";
+import { supervise, watch } from "./runner-supervision.js";
 
 const KAFKA_ENV = kafkaConfigFromEnv();
 const TOPIC_NAME = ORDER_PLACED.name;
@@ -132,8 +133,11 @@ async function main() {
       }, 3000)
     : undefined;
 
+  const supervisor = supervise((message) => console.error(`[fulfillment-worker-ts] ${message}`));
+
   const outboxAbort = new AbortController();
-  const outboxRunning = runRelay({
+  const outboxRunning = watch(
+    runRelay({
     pool: db.pool,
     publish: async (publication) => {
       if (publication.kind !== FULFILLED_KIND) {
@@ -167,12 +171,14 @@ async function main() {
       console.error(`[fulfillment-worker-ts] ${message}`, fields);
       log("error", message, fields);
     },
-  }).then((error) => {
-    if (error) console.error(`[fulfillment-worker-ts] outbox relay stopped: ${error.message}`);
-  });
+    }),
+    "outbox relay",
+    supervisor,
+  );
 
   const jobsAbort = new AbortController();
-  const jobsRunning = runJobs({
+  const jobsRunning = watch(
+    runJobs({
     pool: db.pool,
     contract: orderJobs,
     signal: jobsAbort.signal,
@@ -188,9 +194,10 @@ async function main() {
       console.error(`[fulfillment-worker-ts] ${message}`, fields);
       log("error", message, fields);
     },
-  }).then((error) => {
-    if (error) console.error(`[fulfillment-worker-ts] jobs stopped: ${error.message}`);
-  });
+    }),
+    "jobs runner",
+    supervisor,
+  );
 
   const lifecycle = runWorker({
     drain: async () => {
@@ -213,8 +220,13 @@ async function main() {
         await db.close();
       },
       () => shutdownTracing(),
+      async () => {
+        const failure = supervisor.failure();
+        if (failure) throw failure;
+      },
     ],
   });
+  supervisor.attach(lifecycle);
 
   wireCrashListener(consumer, {
     onCrash: (error) => console.error(`[fulfillment-worker-ts] consumer crashed: ${String(error)}`),

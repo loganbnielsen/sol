@@ -43,3 +43,38 @@ Observe terminal runner outcomes through the owning service/worker lifecycle. A 
 The three swallowed child outcomes share a lifecycle root cause and belong in one ticket. No open matching ticket was found. This can be implemented for configured runners independently of the required-storage ticket.
 
 This filing records a source review, not a completed implementation or live qualification. Keep the implementation focused on the named boundary; preserve cancellation, cleanup, and established successful behavior.
+
+## Completion notes (2026-10-05)
+
+**Premise re-verified at pickup** on `origin/main`: `order_svc/src/index.ts` and
+`fulfillment_worker/src/index.ts` both ended their `runRelay` chains with
+`.then((error) => { if (error) console.error(...) })`, and the worker did the same for `runJobs`,
+turning a returned `RunError` into a fulfilled `Promise<void>` and erasing it before the drain
+awaited it.
+
+**Fix.** Each unit has `src/runner-supervision.ts`: `supervise(post)` records the first terminal
+runner failure, reports it once, and calls the owning lifecycle's `shutdown()`; a failure that
+arrives before `attach(lifecycle)` still triggers shutdown when the lifecycle is registered; a
+second runner failure neither replaces the cause nor shuts down twice. `watch(running, label,
+supervisor)` adapts a `Promise<RunError | undefined>` (a clean stop resolves `undefined`). Both
+units pass their relays and the worker's job runner through `watch`, and each adds a final shutdown
+hook that rethrows the recorded cause so `runService`/`runWorker` report a non-success outcome
+(exit 1) after every real cleanup hook has run. The service's `isReady()` therefore flips to false
+for `/readyz`, and its drain `app.close()`s to stop new work; the worker's drain aborts both
+runners and disconnects the consumer.
+
+**Tests.** `test/supervision.test.ts` drives both units' helpers: a first failure shuts down once
+and keeps its cause, a second failure does not shut down again or change the cause, a failure
+before registration shuts down once attached, a clean stop is not a failure, and `watch` reports
+only a terminal error. `npm run build -w order-svc -w fulfillment-worker` typechecks and the
+demo's `npm test` passes.
+
+**Demo/example.** The runnable `demo_ts` service and worker are the example and now supervise
+their runners; no application-author-facing contract changed.
+
+**Language parity (DEC-022).** The OCaml reference app owns its relay/jobs fibers under the
+service/worker lifecycle; this restores the explicit TS equivalent and is recorded as
+already-equivalent for required-child supervision.
+
+**Limitations.** The tests exercise the supervision policy and lifecycle signalling, not a real
+SIGTERM against a live broker; the lifecycle library's exit-code path is its own contract.
