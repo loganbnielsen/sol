@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD_PROVIDER_FILE="$SCRIPT_DIR/../config/grafana-dashboards.yml"
 DASHBOARD_DIR="$SCRIPT_DIR/../config/grafana-dashboards"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 check_port_forward_conflict "$GRAFANA_PORT" grafana
 
@@ -40,17 +41,20 @@ else
 fi
 
 if docker ps --format '{{.Names}}' | grep -q '^grafana$'; then
+  require_local_publish grafana 3000
   echo "Grafana already running at http://localhost:${GRAFANA_PORT}"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^grafana$'; then
+    require_local_publish grafana 3000
     echo "Restarting stopped Grafana container..."
     docker start grafana
   else
     echo "Starting Grafana..."
+    dev_publish_ports "$GRAFANA_PORT:3000"
     docker run -d \
       --name grafana \
       --network "$NETWORK" \
-      -p "${GRAFANA_PORT}:3000" \
+      "${DEV_PUBLISH_ARGS[@]}" \
       -e GF_AUTH_ANONYMOUS_ENABLED=true \
       -e GF_AUTH_ANONYMOUS_ORG_ROLE=Admin \
       -e GF_AUTH_DISABLE_LOGIN_FORM=true \

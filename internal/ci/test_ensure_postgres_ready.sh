@@ -19,8 +19,12 @@ case "${1:-} ${2:-}" in
     ;;
   "run -d")
     touch "$state/running"
-    printf 'run -d\n' >>"$state/invocations"
+    printf 'run -d %s\n' "$*" >>"$state/invocations"
     echo started-container-id
+    ;;
+  "inspect --format")
+    port="$(printf '%s' "$3" | sed -n 's/.*PortBindings "\([0-9]*\)\/tcp".*/\1/p')"
+    if [ -f "$state/published" ]; then cat "$state/published"; else printf '127.0.0.1|%s\n::1|%s\n' "$port" "$port"; fi
     ;;
   "run --rm")
     attempts=0
@@ -96,7 +100,7 @@ expect_no_text() {
 }
 
 expect_invocation() {
-  if grep -qF "$1" "$work/state/invocations"; then ok "$2"; else bad "$2"; fi
+  if grep -qF -- "$1" "$work/state/invocations"; then ok "$2"; else bad "$2"; fi
 }
 
 echo "ensure-postgres: a database that answers a query through the published port is ready"
@@ -106,7 +110,8 @@ run_ensure
 expect_exit 0 "an answering database is accepted"
 expect_text "Postgres ready at localhost:5432" "the readiness message is reported"
 expect_text "export POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev" "the consumer URL is reported"
-expect_invocation "host.docker.internal:5432/sol_dev" "the gate asked the published address"
+expect_invocation "localhost:5432/sol_dev" "the gate asked the published address"
+expect_invocation "--network host" "the gate reached the loopback publication from the host network"
 expect_invocation "SELECT 1" "the gate asked a query, not a port"
 
 echo
@@ -127,6 +132,7 @@ touch "$work/state/not-a-database"
 run_ensure
 expect_exit 1 "a started container that cannot answer fails readiness"
 expect_invocation "run -d" "the container was started"
+expect_invocation "127.0.0.1:5432:5432" "the started container binds the loopback address"
 expect_no_text "Postgres ready at" "readiness is not claimed for having started it"
 
 echo
@@ -142,6 +148,17 @@ if [ "$(cat "$work/state/attempts")" -ge 3 ]; then
 else
   bad "the gate did not retry the query"
 fi
+
+echo
+echo "ensure-postgres: an existing container published beyond loopback is refused"
+reset_state
+touch "$work/state/running"
+printf '0.0.0.0|5432\n' >"$work/state/published"
+run_ensure
+expect_exit 1 "a broadly published database is refused"
+expect_no_text "Postgres ready at" "readiness is not claimed"
+expect_text "not on 127.0.0.1" "the refusal names the binding"
+expect_text "docker rm -f sol-postgres" "the refusal names the recreation"
 
 echo
 if [ "$failures" -eq 0 ]; then

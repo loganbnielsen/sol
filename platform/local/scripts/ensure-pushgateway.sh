@@ -5,6 +5,7 @@ NETWORK=sol-obs
 PUSHGATEWAY_PORT=9091
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/images.sh"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -12,17 +13,20 @@ if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
 fi
 
 if docker ps --format '{{.Names}}' | grep -q '^pushgateway$'; then
+  require_local_publish pushgateway 9091
   echo "Pushgateway already running at http://localhost:${PUSHGATEWAY_PORT}"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^pushgateway$'; then
+    require_local_publish pushgateway 9091
     echo "Restarting stopped Pushgateway container..."
     docker start pushgateway
   else
     echo "Starting Pushgateway..."
+    dev_publish_ports "$PUSHGATEWAY_PORT:9091"
     docker run -d \
       --name pushgateway \
       --network "$NETWORK" \
-      -p "${PUSHGATEWAY_PORT}:9091" \
+      "${DEV_PUBLISH_ARGS[@]}" \
       "$SOL_IMAGE_PUSHGATEWAY"
   fi
 
