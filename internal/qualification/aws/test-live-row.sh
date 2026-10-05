@@ -4,6 +4,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 TMP="$(mktemp -d)"
+export TMP
 export ATTEMPT="${ATTEMPT:-aws-self-test}"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -47,6 +48,12 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 printf 'sol %s [runner=%s] [home=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" "${SOL_HOME:-unset}" >>"$SOL_LOG"
+if [ "${1:-} ${2:-}" = "cloud apply" ] && [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] \
+  && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
+  printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
+  printf 'Resolve that, then re-run `sol cloud apply <target>` to resume the install.\n'
+  exit 1
+fi
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
 exit 0
 STUB
@@ -174,6 +181,15 @@ cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf 'kubectl %s\n' "$*" >>"$KUBECTL_LOG"
 case " $* " in
+  *" create secret generic "*)
+    if [ "${STUB_SECRET_CREATE_FAILS:-0}" = "1" ]; then
+      printf 'Error from server (Forbidden): secrets "redpanda-users" is forbidden\n' >&2
+      exit 1
+    fi
+    : >"${TMP:-/tmp}/credential-supplied"
+    printf 'secret/redpanda-users created\n'
+    exit 0
+    ;;
   *" config view "*)
     kubeconfig="${KUBECONFIG:-}"
     while [ $# -gt 0 ]; do
@@ -322,6 +338,7 @@ run_phase() {
   : >"$ESTABLISH_LOG"
   : >"$TERRAFORM_LOG"
   rm -rf "$LOG_DIR"
+  rm -f "$TMP/credential-supplied"
   if [ -n "${PRESEED_FOREIGN_ATTEMPT:-}" ]; then
     mkdir -p "$LOG_DIR"
     printf 'attempt=%s\n' "$PRESEED_FOREIGN_ATTEMPT" >"$LOG_DIR/attempt.txt"
@@ -563,6 +580,39 @@ has "the plan carries the row's var file" \
 has "and so does the apply" \
   "cloud apply qualreg/aws/us-east-1 --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
   "$TMP/cloudrun.sol"
+
+printf '\nscenario: the harness supplies the platform credential the install names, then resumes\n'
+run_phase credential-boundary cloud STUB_APPLY_CREDENTIAL_MISSING=1
+is "exit 0" "$(cat "$TMP/credential-boundary.rc")" "0"
+has "the harness creates the documented Secret in the namespace the install named" \
+  "create secret generic redpanda-users -n redpanda" "$TMP/credential-boundary.kubectl"
+has "with the SASL user the workload renderer names" "sol-workloads:" "$TMP/credential-boundary.kubectl"
+has "and the SCRAM mechanism the durable layer declares" "SCRAM-SHA-256" "$TMP/credential-boundary.kubectl"
+has "bound to the deploy identity's own kubeconfig" \
+  "kubeconfig-deploy.yaml" "$TMP/credential-boundary.kubectl"
+if [ "$(grep -c 'cloud apply' "$TMP/credential-boundary.sol")" -ge 2 ]; then
+  ok "and resumes the apply once the prerequisite exists"
+else
+  no "and resumes the apply once the prerequisite exists" "two cloud apply invocations" \
+    "$(grep -c 'cloud apply' "$TMP/credential-boundary.sol")"
+fi
+has "the run record states the credential was supplied" \
+  "platform_credential: redpanda/redpanda-users" "$TMP/credential-boundary.logs/prerequisites.txt"
+has "and that this run generated it" "platform_credential_source: generated-for-this-run" \
+  "$TMP/credential-boundary.logs/prerequisites.txt"
+lacks "and never records the value" "SCRAM-SHA-256" "$TMP/credential-boundary.logs/prerequisites.txt"
+
+printf '\nscenario: a platform credential the harness cannot supply fails the run\n'
+run_phase credential-refused cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_SECRET_CREATE_FAILS=1
+refused credential-refused "the install does not proceed without the prerequisite the harness stands in for"
+has "and the failure names the input the harness could not create" "redpanda/redpanda-users" \
+  "$TMP/credential-refused.out"
+if [ "$(grep -c 'cloud apply' "$TMP/credential-refused.sol")" = "1" ]; then
+  ok "and the harness does not resume the apply"
+else
+  no "and the harness does not resume the apply" "one cloud apply invocation" \
+    "$(grep -c 'cloud apply' "$TMP/credential-refused.sol")"
+fi
 
 run_phase destroyrun destroy
 is "exit 0" "$(cat "$TMP/destroyrun.rc")" "0"

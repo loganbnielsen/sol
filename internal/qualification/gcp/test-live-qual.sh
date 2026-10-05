@@ -93,6 +93,11 @@ case "$1 $2" in
       exit "${STUB_APPLY_RC:-1}"
     fi
     printf 'lifecycle phase: PlatformInstalling\n'
+    if [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
+      printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
+      printf 'Resolve that, then re-run `sol cloud apply <target>` to resume the install.\n'
+      exit 1
+    fi
     if [ "${STUB_APPLY_ERROR:-none}" = "already-exists" ]; then
     printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\n" \
         "${XDG_DATA_HOME:-/tmp}"
@@ -100,6 +105,8 @@ case "$1 $2" in
       printf '[platform-apply] FAILED (31.0s)\n'
       printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
     else
+      printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\\n" \
+        "${XDG_DATA_HOME:-/tmp}"
       printf 'platform-apply ok\n'
     fi
     printf 'provisioner-bootstrap-access-remove ok\n'
@@ -318,6 +325,14 @@ kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
 case "$*" in
+  "create secret generic"*)
+    if [ "${STUB_SECRET_CREATE_FAILS:-0}" = "1" ]; then
+      printf 'Error from server (Forbidden): secrets "redpanda-users" is forbidden\n' >&2
+      exit 1
+    fi
+    : >"${TMP:-/tmp}/credential-supplied"
+    printf 'secret/redpanda-users created\n'
+    exit 0 ;;
   "get pods --all-namespaces -o json")
     if [ "${STUB_PROJECTED_TOKENS:-0}" = "1" ]; then
       printf '{"items":[{"metadata":{"namespace":"pluto-payments","name":"charge-svc-abc123"},"spec":{"volumes":[{"name":"api-token","projected":{"sources":[{"serviceAccountToken":{"audience":"order-svc","expirationSeconds":3600}}]}}]}}]}\n'
@@ -474,7 +489,7 @@ run_case() {
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
-  rm -f "$TARGET_FILE"
+  rm -f "$TARGET_FILE" "$TMP/credential-supplied"
   if [ "${PRESEED_EMPTY_TARGET:-0}" = "1" ]; then
     : >"$TARGET_FILE"
   fi
@@ -564,6 +579,46 @@ has "the run identity and state key are in the manifest" \
 has "and the attempt identity too" "attempt: $ATTEMPT" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 present "$TMP/cloud-ok.logs/inventory-pre.identity" \
   "the provider inventory carries the attempt, target and state key"
+
+printf '\nscenario: the harness supplies the platform credential the install names, then resumes\n'
+run_case credential-boundary cloud STUB_APPLY_CREDENTIAL_MISSING=1
+is "exit 0" "$(cat "$TMP/credential-boundary.rc")" "0"
+has "the harness creates the documented Secret in the namespace the install named" \
+  "create secret generic redpanda-users -n redpanda" "$TMP/credential-boundary.argv"
+has "with the SASL user the workload renderer names" "sol-workloads:" "$TMP/credential-boundary.argv"
+has "and the SCRAM mechanism the durable layer declares" "SCRAM-SHA-256" "$TMP/credential-boundary.argv"
+has "bound to the run's own kubeconfig" \
+  "[kubeconfig=$TMP/credential-boundary.logs/run-kubeconfig.yaml]" "$TMP/credential-boundary.argv"
+if [ "$(grep -c 'cloud apply' "$TMP/credential-boundary.argv")" -ge 2 ]; then
+  ok "and resumes the apply once the prerequisite exists"
+else
+  no "and resumes the apply once the prerequisite exists" "two cloud apply invocations" \
+    "$(grep -c 'cloud apply' "$TMP/credential-boundary.argv")"
+fi
+has "the run record states the credential was supplied" \
+  "platform_credential: redpanda/redpanda-users" "$TMP/credential-boundary.logs/prerequisites.txt"
+has "and that this run generated it" "platform_credential_source: generated-for-this-run" \
+  "$TMP/credential-boundary.logs/prerequisites.txt"
+lacks "and never records the value" "SCRAM-SHA-256" "$TMP/credential-boundary.logs/prerequisites.txt"
+present "$TMP/credential-boundary.logs/state/platform.tfstate" \
+  "the resumed apply's platform root is still credited in the bundle"
+
+printf '\nscenario: the resumed platform root is still required in the bundle\n'
+run_case credential-boundary-nostate cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_STATE_UNREADABLE=1
+has "a resumed platform root whose state could not be captured is incomplete" \
+  "bundle member missing or empty: state/platform.tfstate" "$TMP/credential-boundary-nostate.out"
+
+printf '\nscenario: a platform credential the harness cannot supply fails the run\n'
+run_case credential-refused cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_SECRET_CREATE_FAILS=1
+if [ "$(cat "$TMP/credential-refused.rc")" != "0" ]; then
+  ok "the install does not proceed without the prerequisite the harness stands in for"
+else
+  no "the install does not proceed without the prerequisite the harness stands in for" "non-zero" "0"
+fi
+has "and the failure names the input the harness could not create" "redpanda/redpanda-users" \
+  "$TMP/credential-refused.out"
+lacks "and the harness does not claim a successful platform apply" "platform-apply ok" \
+  "$TMP/credential-refused.logs/cloud-apply.log"
 
 printf '\nscenario: a repeated invocation cannot reuse an occupied disposable target\n'
 run_case occupied cloud STUB_STATE_PRESENT=1
