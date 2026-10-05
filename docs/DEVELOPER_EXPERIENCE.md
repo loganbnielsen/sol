@@ -8,8 +8,7 @@ build next.
 
 It is a *contract of intent*, not a status report. Every capability below is
 marked with where it stands today, so a reader is never told that something
-planned already works. The decisions this document rests on are recorded in
-[DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md) (the OSS developer
+planned already works. The decisions this document rests on are recorded in the OSS developer
 experience contract) and `DEC-019` (the OSS/hosted boundary); the implementation
 of anything marked **Target** is tracked by a ticket, listed in
 [§ Where this is tracked](#where-this-is-tracked).
@@ -131,7 +130,7 @@ Internally, Sol has explicit `bootstrap`, `preflight`, `provision`, `platform`,
 `migration`, `deployment`, `verification` and `reconciliation` stages. Those
 stages exist for correctness and diagnosis. **They are not user-facing
 complexity**: on the happy path the user runs one command. The stage model is
-decided in [DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md), extending the
+defined by the
 `bootstrap → preflight → apply` contract `DEC-043` left open.
 
 **Today:** the stages exist as code and as separate commands
@@ -738,7 +737,7 @@ The experience is achieved when:
 
 | Area | Record |
 |---|---|
-| The experience contract and its decisions | [DEC-057](../internal/pipeline/tickets/DONE/DEC-057.md) |
+| The experience contract and its decisions | this document |
 | OSS / hosted boundary | `DEC-019` |
 | Target addressing (no `--env`) | `DEC-016`, `DEC-032`, `DEC-031` |
 | Installation lifecycle implementation | INFRA-096 |
