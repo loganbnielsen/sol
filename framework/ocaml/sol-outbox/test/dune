@@ -3,6 +3,11 @@
  (modules test_sol_outbox)
  (libraries windtrap eio_main eio.unix sol-outbox sol-jobs pg-eio caqti))
 
+(test
+ (name test_metric_snapshot)
+ (modules test_metric_snapshot)
+ (libraries windtrap sol-outbox))
+
 (rule
  (alias runtest-integration)
  (action
