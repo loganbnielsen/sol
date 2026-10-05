@@ -1,9 +1,4 @@
-# Workspace dependency declaration (DEC-025).
-#
-# The Sol framework packages this workspace consumes. `dune build` resolves them
-# from the current opam switch, and the generated Dockerfile reproduces them with
-# `opam install . --deps-only` -- so the Dockerfile carries no repository list of
-# its own. The workspace owns this choice; Docker only reconstructs it.
+# Dune and generated Docker builds read dependencies from this manifest.
 opam-version: "2.0"
 synopsis: "Pluto -- the standalone Sol workspace example"
 # TODO(you): fill these in before publishing this workspace anywhere. They are
@@ -23,11 +18,8 @@ depends: [
   "kafka-eio-service"
 ]
 
-# DEVELOPMENT CHANNEL: track the framework's main branch. Its exact revision is
-# whatever main was when you last updated. For a released or reproducible setup,
-# constrain the versions in `depends` above and delete this block. Replacing
-# `#main` with a tag or commit is strictly more reproducible and needs no other
-# change -- see DEC-025's development/release channel policy.
+# Track Sol main during development. Use published versions for reproducible
+# builds, then remove this block.
 pin-depends: [
   [ "sol-runtime.dev"       "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-env.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
@@ -40,27 +32,14 @@ pin-depends: [
   [ "sol-outbox.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-retry.dev"         "git+https://github.com/loganbnielsen/sol.git#main" ]
 
-  # The framework's own dependencies that are not yet in the public
-  # opam-repository. opam does NOT apply a dependency's pin-depends transitively,
-  # so a workspace tracking an unreleased framework channel has to name them
-  # itself -- that is part of what choosing this channel costs. Once RELEASE-005
-  # publishes these packages, delete this block; the workspace then no longer
-  # needs to know anything about them.
-  #
-  # Pinned by immutable commit SHA rather than a branch: unlike the channel
-  # choice above, these carry no "track development" intent.
+  # opam does not apply pins transitively. Keep source pins for dependencies
+  # not yet published at the versions required by this workspace.
   [ "obs-loki-eio.0.2.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#148a970651b299114b881bb382d3590caf8d38fa" ]
   [ "obs-tempo-eio.0.2.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#e117aece43bd498ea4b2af62a4572f2f3c8fc93a" ]
   [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#0c47f9115fefd90524cce33e6c92e8c87f51cfa1" ]
   [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#4a0cf964238fbef87e4b691c067b958f4cfe35bd" ]
 
-  # These are published, but the published releases LAG what the framework needs
-  # (concretely: obs-loki-eio requires obs-eio >= 0.1.1, which is not in
-  # opam-repository). opam can only see the versions the registry offers, so a
-  # consumer of an unreleased framework channel has to point at the same sources
-  # the framework itself does. Commit-pinned, since this is not a "track
-  # development" choice. All of it disappears when RELEASE-005 publishes the
-  # framework and its dependencies.
+  # Published versions do not yet meet the framework's required constraints.
   [ "https-eio.0.1.1"           "git+https://github.com/loganbnielsen/https-eio.git#e548f47cd8cc607e4781638fa3f4aec996b60d60" ]
   [ "kafka-eio.0.3.0"           "git+https://github.com/loganbnielsen/kafka-eio.git#3bb2d278896cee66a4e92dcaa7822c8832c1cc29" ]
   [ "obs-eio.0.1.2"             "git+https://github.com/loganbnielsen/obs-eio.git#b425c55eba8b1bc65378d7fc7d6c77a573001fb4" ]

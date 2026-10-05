@@ -1,5 +1,3 @@
-# REFAC-092 baseline (2026-09-24, main @ 73d13ff9). Entries may only go down; each PR that
-# moves provider knowledge behind a capability lowers its file's count here. Target: none.
 # Format: <kind> <path> <count> [reason]
 #   dispatch  occurrences of Sol_cli_provider.Aws|Gcp and Aws_outputs|Gcp_outputs
 #   wildcard  `| _` arms in a match whose other arms are provider constructors

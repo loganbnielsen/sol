@@ -1,23 +1,3 @@
-# DEC-039 / FND-0020: qualification-only transport into private application services.
-#
-# This is NOT production infrastructure. No production Terraform root references it,
-# `sol cloud apply` never applies it, and no target field names the qualifier
-# principal. The capability exists so a live qualification run can drive a
-# transaction against a ClusterIP service that no production identity can reach --
-# which is the desired state, not a defect to work around by widening provisioner,
-# publisher, deploy or operator.
-#
-# The grant is transport and addressing only:
-#
-#   pods, services    get, list   -- resolve a service's selector to a pod to attach to
-#   pods/portforward  create      -- the transport itself
-#
-# Deliberately absent: every mutating verb, pods/exec, pods/log, events, secrets.
-# Diagnosis belongs to the operator identity; a qualifier carries traffic and
-# nothing else. Applied by internal/qualification/transport/establish.sh during a
-# temporary cluster-admin window that it opens and closes on the qualifier's own
-# principal (by deleting and recreating the access entry, never by a
-# disassociation), then verifies the effective surface. Never by Sol's lifecycle.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

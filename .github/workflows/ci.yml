@@ -116,7 +116,7 @@ jobs:
 
       - name: Cache opam download cache
         if: needs.classify.outputs.kind != 'docs-only'
-        # INFRA-008: setup-ocaml caches the switch (~/.opam) keyed on the
+        # setup-ocaml caches the switch (~/.opam) keyed on the
         # switch files, so a key change — or a cold cache on a new branch —
         # re-fetches every source. The download cache is content-addressed and
         # safe to share, and the broad restore-key lets a pull request reuse
@@ -137,7 +137,7 @@ jobs:
       - name: Install OCaml dependencies
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
-        # INFRA-008: retry a transient upstream fetch failure before failing
+        # Retry transient upstream fetch failures before failing
         # the job, and name the unreachable host when the failure is permanent.
         run: |
           set -o pipefail
@@ -180,7 +180,7 @@ jobs:
             cli/bin/main.exe \
             cli/test/print_providers.exe
 
-      # INFRA-035: the unit-test step below runs cli/test's runtest rule that
+      # The unit-test step below runs cli/test's runtest rule that
       # validates the readiness checks' kubectl argv against a real kubectl (*), so
       # kubectl has to exist. Pinned to the version the dogfood job installs
       # (internal/tooling/scripts/ci-toolchain.sh), because whether an argv is
@@ -223,21 +223,18 @@ jobs:
       # their own topics through the schema registry.
       # Membership is the `ci-integration` alias each suite declares in its own
       # `test/dune`, so this step names one class rather than three directories.
-      # Each suite's dependency is pinned in its own `test/dune` (VERIF-002): the
+      # Each suite's dependency is pinned in its own `test/dune`: the
       # database alias passes the Postgres URL as an argument and the broker
       # alias sets the Kafka endpoints, so this step supplies only the
       # containers. That also means a target built under one ambient environment
       # can never be served from another's cache, and no invocation needs
-      # `--force` to be believed. The two database suites share the server but
-      # own separate schemas (VERIF-007: each derives and creates its own, and
-      # drops only its own), so one invocation is safe and they may build in
-      # parallel — there is no serialization rule here to maintain.
+      # `--force` to be believed. The database suites use separate schemas, so
+      # they can run in parallel.
       #
-      # BUG-129: `ensure-postgres.sh` reports ready only after a query comes back
-      # through the published port, because a connection to :5432 can be accepted
-      # while the image's initialization server is still the one listening — the
-      # shape of VERIF-023's intermittent "server closed the connection
-      # unexpectedly". `POSTGRES_READY_TIMEOUT_S`/`POSTGRES_READY_INTERVAL_S` tune
+      # `ensure-postgres.sh` reports ready only after a query comes back
+      # through the published port; port 5432 can accept connections before image
+      # initialization finishes. `POSTGRES_READY_TIMEOUT_S` and
+      # `POSTGRES_READY_INTERVAL_S` tune
       # its retry budget, and it dumps the container's last 20 log lines when it
       # gives up. The broker steps keep their own gate: `rpk cluster health`, and
       # `rpk topic list` in `create-topics.sh`, which fail loudly.
@@ -249,7 +246,7 @@ jobs:
           bash platform/local/scripts/ensure-postgres.sh
           opam exec -- dune build @ci-integration-kafka @ci-integration-pg
 
-      # VERIF-023: a "server closed the connection unexpectedly" on the
+      # A "server closed the connection unexpectedly" on the
       # integration step is a runner-side failure unless the container is shown
       # to have died. Capture that distinction in the log of the failing run,
       # instead of leaving the next reader to guess from a re-run.
@@ -267,7 +264,7 @@ jobs:
           echo "=== runner memory ==="
           free -m || true
 
-      # VERIF-001: the supported application architecture, end to end and with
+      # The supported application architecture, end to end and with
       # its failure boundaries — domain state and outbox intent commit in one
       # transaction; the relay publishes an ordered Kafka fact; a worker
       # acknowledges it after idempotently enqueueing an independent effect;
@@ -276,9 +273,9 @@ jobs:
       # duplicate delivery, a handler Fail, a transient job failure, a blocked
       # earlier event for one key, and a crash between the broker ack and the
       # row mark. Runs after the step above so it reuses the same broker and
-      # Postgres. The target pins its own addresses (VERIF-002), including the
+      # Postgres. The target pins its own addresses, including the
       # Loki URL; this step starts Loki too, because the E2E class requires it
-      # and its Loki cases now fail rather than self-skip (VERIF-006).
+      # and its Loki cases fail rather than self-skip.
       - name: Facts-to-jobs golden-path smoke (broker, database and Loki backed)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 15
@@ -314,11 +311,9 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/gcp/test-live-qual.sh
 
-      # The publisher boundary (SEC-011, INFRA-100): Sol never builds or publishes the
-      # migration runner, so the harness that runs a checkout binary has to publish it and
-      # hand Sol a digest. These two stub docker/aws/opam and spend nothing, and they fail
-      # if a runner that is not digest-pinned can reach Sol, if the migrate step is asked to
-      # publish again, or if Sol is invoked at all when the publisher could not deliver.
+      # Checkout-based harnesses publish the migration runner and give Sol its
+      # digest. These stubs spend nothing and fail if it is not digest-pinned, if
+      # the migrate step publishes again, or if Sol runs when publication failed.
       - name: Migration-runner publisher test
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/test-publish-migration-runner.sh
@@ -327,17 +322,14 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/aws/test-live-row.sh
 
-      # The local run's OCaml row driver builds the effective row assertions handed
-      # to VERIF-027; a driver that passes a row that did not happen is exactly the
-      # defect this suite mutation-checks. Stubs every external command; spends nothing.
+      # The OCaml row driver builds assertions from the effective qualification
+      # rows. This suite mutation-checks that it rejects rows that did not happen.
       - name: Local OCaml row driver test
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/qualification/local/test-rows-ocaml.sh
 
-      # The observer owns the harness's structured parts: kubeconfig inspection by structure
-      # and the bounded, independently-attempted failure-time capture. Its regression covers
-      # the real gcloud kubeconfig shape and the failure modes that lost evidence in 15c-15g
-      # (a failed read ending the capture, a hang with no bound, a jsonpath split into words).
+      # The observer tests structured kubeconfig inspection and bounded failure-time
+      # capture, including failed reads and timeouts.
       # Unconditional, like the harness test above: it stubs kubectl and spends nothing.
       - name: Qualification observer test
         if: needs.classify.outputs.kind != 'docs-only'
@@ -384,7 +376,7 @@ jobs:
           ocaml-compiler: 5.4.1
 
       - name: Cache opam download cache
-        # INFRA-008: same shared download cache as the `test` job's step.
+        # Use the same download cache as the `test` job.
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
@@ -407,7 +399,7 @@ jobs:
         # flag and watching golden-path-smoke fail with "Library
         # alcotest not found" on a real CI run.
         #
-        # INFRA-008: retry a transient upstream fetch failure before failing
+        # Retry transient upstream fetch failures before failing
         # the job, and name the unreachable host when the failure is permanent.
         run: |
           set -o pipefail
@@ -466,7 +458,7 @@ jobs:
           sol new workspace ci_smoke
           cd ci_smoke
 
-          # FEAT-041: the workspace scaffold ships exactly one -svc plus one
+          # The workspace scaffold ships exactly one -svc plus one
           # worker, and only -svc gets a ClusterIP Service -- so a real
           # cross-namespace request needs a second service to call. Add a
           # throwaway peer and declare the synchronous dependency on charge_svc
@@ -475,7 +467,7 @@ jobs:
           sol new svc checkout/checkout
           printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge_svc/sol.toml
 
-          # FEAT-079: no -fn app exists anywhere in the scaffold or examples
+          # No -fn app exists in the scaffold or examples
           # yet, and this is the only place a real cluster is already up --
           # add one here (rather than a whole new example app) to exercise
           # scheduled_concurrency/backoff_limit rendering and `sol fn run`
@@ -496,7 +488,7 @@ jobs:
 
           # The scaffolded workspace pins the framework to sol.git#main, so its
           # images would build this PR's scaffold against main's framework: any
-          # PR changing a framework API the scaffold uses (BUG-048's Fn.trigger)
+          # A change to an API used by the scaffold, such as `Fn.trigger`,
           # could never pass. Build against the commit under test instead.
           internal_ci_pin_ref="${SOL_FRAMEWORK_REF:?}"
           grep -rl 'loganbnielsen/sol.git#main' --include='*.opam' . \
@@ -510,7 +502,7 @@ jobs:
 
           sol local infra up
 
-          # BUG-054: ordinary deploy delivers secret references and never
+          # Ordinary deploy delivers secret references and never
           # writes a value, so seed the workspace secrets first. `sol local
           # secret set` is the only Sol path that writes one, and it creates
           # the namespace it needs.
@@ -520,7 +512,7 @@ jobs:
 
           sol up
 
-          # FEAT-042/BUG-021: `sol local infra up` installs ingress-nginx and forwards
+          # `sol local infra up` installs ingress-nginx and forwards
           # the controller to localhost:8088, so the Ingress `sol up` generated
           # for charge_svc must route a request end to end. A service with no
           # declared ingress_host gets a per-service dev host
@@ -582,7 +574,7 @@ jobs:
             exit 1
           fi
 
-          # FEAT-041: the declared call's network path is a pair of
+          # A declared call's network path is a pair of
           # NetworkPolicies plus an injected peer URL. Assert that the deploy
           # applied all three as rendered -- this covers resolution, rendering
           # and apply end to end.
@@ -592,9 +584,8 @@ jobs:
           # does not match `namespaceSelector` ingress rules for freshly created
           # namespaces and ignores egress policy entirely, so an allow-probe is
           # denied even though the policy is correct per the Kubernetes spec.
-          # BUG-022 has the deterministic repro. Rendering is unit-tested in
-          # cli/test/test_manifest_render.ml, and customer-cloud CNIs
-          # enforce it.
+          # The deterministic reproducer is in `cli/test/test_manifest_render.ml`;
+          # customer-cloud CNIs enforce it.
           #
           # Derive namespaces from the cluster rather than assuming the
           # workspace->namespace normalization, so this keeps working if the
@@ -630,7 +621,7 @@ jobs:
           done
           echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
 
-          # FEAT-067/FEAT-069: a successful deploy must leave a content-addressed
+          # A successful deploy must leave a content-addressed
           # release record — listed by `sol releases`, carried verbatim as the
           # workload's `release` label, pointed at by the current-release object,
           # and not editable in place.
@@ -642,7 +633,7 @@ jobs:
           fi
           listed_ids=$(awk 'NR>1 {print $1}' "$GITHUB_WORKSPACE/releases.txt" | tr '\n' ' ')
 
-          # FEAT-069: the taxonomy label a workload carries must be one of the
+          # The taxonomy label a workload carries must be one of the
           # ids `sol releases` lists — that equality is the join key from a
           # deploy record to its telemetry.
           label_release=$(kubectl -n "$caller_ns" get deployment charge-svc -o jsonpath='{.spec.template.metadata.labels.release}' 2>/dev/null || true)
@@ -671,7 +662,7 @@ jobs:
           fi
           echo "release record written, listed, labelled and immutable OK"
 
-          # FEAT-070: the same deploy is also a deployment event — an immutable
+          # The same deploy also records an immutable deployment event —
           # sol-deployment-<id> record whose release_id is the release above, and
           # whose deployment_id is the id `sol deployments` lists. The event is
           # the deploy invocation; the release is what it put in place.
@@ -691,7 +682,7 @@ jobs:
             echo "::error::FEAT-070: deployment event points at '$listed_deployment_release', workload release is '$label_release'"
             exit 1
           fi
-          # FEAT-071: a successful apply records outcome=applied.
+          # A successful apply records outcome=applied.
           listed_status=$(awk 'NR==2 {print $5}' "$GITHUB_WORKSPACE/deployments.txt")
           if [ "$listed_status" != "applied" ]; then
             echo "::error::FEAT-071: successful sol up recorded status '$listed_status', expected applied"
@@ -711,7 +702,7 @@ jobs:
           fi
           echo "deployment event written, listed, joined to its release and immutable OK"
 
-          # FEAT-079: scheduled_concurrency/backoff_limit render into the
+          # `scheduled_concurrency` and `backoff_limit` render into the
           # deployed CronJob, and `sol fn run` creates a real ad-hoc Job from
           # it. Both are fast kubectl reads/creates -- no health-wait loop
           # needed, unlike the HTTP-serving workloads above.
@@ -841,13 +832,13 @@ jobs:
   #
   # Scoped to the OCaml example Dockerfiles only: those are the ones a Sol
   # scaffold template actually generates. examples/pluto/app/demo_ts/ (the
-  # FEAT-033 TypeScript spike) is hand-maintained with no Sol template to
+  # TypeScript demo) is hand-maintained with no Sol template to
   # drift from, so it's out of scope here.
   #
   # Build context is each workspace's OWN root (the directory holding sol.yml),
   # which is exactly what `sol up` and the README use. These examples are now
-  # ordinary Sol workspaces: DEC-025 removed the coupling where `sol new`
-  # symlinked framework source into the generated workspace, so each has its own
+  # ordinary Sol workspaces: `sol new` no longer symlinks framework source,
+  # so each has its own
   # dune-project and .opam and resolves the framework through INSTALLED opam
   # packages. The context is deliberately no longer this repository, so the job
   # fails if a workspace ever starts needing the enclosing repository again.
@@ -883,10 +874,10 @@ jobs:
             | xargs -r sed -i "s|loganbnielsen/sol.git#main|loganbnielsen/sol.git#${SOL_FRAMEWORK_REF:?}|g"
           docker build --no-cache -f ${{ matrix.dockerfile }} ${{ matrix.context }}
 
-  # FEAT-039/FEAT-085: example-dockerfile-smoke above deliberately excludes
+  # The example-dockerfile-smoke job above excludes
   # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift
   # from). Its two Dockerfiles still need an ongoing build check, and since
-  # FEAT-085 they build from the *Sol workspace root* (examples/pluto, the
+  # These Dockerfiles build from the *Sol workspace root* (examples/pluto, the
   # directory holding sol.yml) rather than from the Sol repository root: the
   # demo_ts TypeScript project (app/demo_ts) resolves @sol-fab/obs and
   # @sol-fab/kafka from npm, so the workspace is self-contained. This job builds
@@ -918,10 +909,10 @@ jobs:
         working-directory: examples/pluto
         run: docker build --no-cache -f app/demo_ts/${{ matrix.service }}/Dockerfile .
 
-  # DEC-022: OCaml and TypeScript are both first-class application languages, so
+  # OCaml and TypeScript are both application languages, so
   # a first-class language's demo must build in CI.
   #
-  # FEAT-085: this job consumes @sol-fab/* the way an external developer's
+  # This job consumes @sol-fab/* the way an external developer's
   # workspace would -- from npm, with examples/pluto/app/demo_ts as the npm
   # project root and no Sol repository npm workspace involved.
   #
@@ -947,7 +938,7 @@ jobs:
     name: TypeScript demo (install + build/typecheck + tests)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
-    # FEAT-123: the demo's duplicate-delivery test observes a schema property
+    # The duplicate-delivery test observes a schema property
     # (the row's primary key plus the enqueue's dedupe key) that Kafka cannot
     # exercise and a mock cannot reproduce, so the job runs a Postgres and passes
     # POSTGRES_URL. Without it the case self-skips rather than passing silently.
@@ -989,40 +980,20 @@ jobs:
         run: npm test
 
       - name: Dependency advisories (AUDIT-068)
-        # Production dependencies only, and only high or above: this is the bar
-        # AUDIT-068 was filed against (11 OpenTelemetry advisories, 2 of them
-        # high), and it is deliberately not an all-severity gate -- a
-        # moderate-only advisory in a devDependency should not block an
-        # unrelated change. Drift past this line fails visibly rather than
-        # waiting for the next audit to notice.
+        # Fail on high-severity production advisories; ignore development dependencies.
         working-directory: examples/pluto/app/demo_ts
         run: npm audit --omit=dev --audit-level=high
 
-  # FEAT-087: `golden-path-smoke` (OCaml) is the only job that proves a real
-  # deploy works end to end -- `ts-tests`/`demo-ts-dockerfile-smoke` above stop
-  # at typecheck and `docker build`. TypeScript is a first-class Sol
-  # application language (DEC-022), so it gets the same platform-contract
-  # proof: deploy `demo_ts` to a real cluster, confirm it's Ready, confirm
-  # `/healthz`, and run one real transaction through Kafka into Postgres.
+  # Deploy the TypeScript demo to a real cluster, check readiness and `/healthz`,
+  # then send a transaction through Kafka into Postgres. Other TypeScript jobs
+  # stop at typecheck and `docker build`.
   #
-  # Deliberately narrow -- this is NOT a reproduction of FEAT-082's lifecycle
-  # experiments (SIGTERM-mid-flight ordering, retry/DLQ exhaustion). Those
-  # already have a recorded evidence trail; this job answers a different,
-  # narrower question: can a real TypeScript Sol application go from
-  # published-package dependency through the platform and actually work.
+  # The job uses published framework packages; it never touches the
+  # `loganbnielsen/sol-typescript` repository. It resolves `@sol-fab/svc` and
+  # `@sol-fab/worker` from the public npm registry at the version pinned by
+  # `examples/pluto/app/demo_ts/package-lock.json`.
   #
-  # Version boundary (see FEAT-087): this job never touches the
-  # `loganbnielsen/sol-typescript` repository. It resolves `@sol-fab/svc`/
-  # `@sol-fab/worker` from the public npm registry, at whatever version
-  # `examples/pluto/app/demo_ts/package-lock.json` pins -- exactly what an
-  # external developer's `npm ci` would do. Bumping that pin is an ordinary
-  # PR in this repo (see FEAT-086), the same way `golden-path-smoke` bumps its
-  # opam-pinned `*-eio` versions rather than building them from sibling
-  # source checkouts.
-  #
-  # Not a required check yet (matches `golden-path-smoke`'s own bring-up
-  # precedent) -- get it stable first, then decide separately whether it
-  # should gate merges.
+  # Keep this non-required until the live test is stable.
   golden-path-smoke-ts:
     # This is the TypeScript golden path: an `ocaml`-only diff cannot change what
     # `sol new --language typescript` scaffolds here or how it builds, so that
@@ -1057,8 +1028,7 @@ jobs:
 
       - name: Install OCaml dependencies
         timeout-minutes: 20
-        # Same retry/host-naming pattern as `test`/`golden-path-smoke` --
-        # INFRA-008.
+        # Use the same retry and host diagnostics as `test` and `golden-path-smoke`.
         run: |
           set -o pipefail
           log="$(mktemp)"
@@ -1085,7 +1055,7 @@ jobs:
         timeout-minutes: 5
         run: bash internal/tooling/scripts/ci-toolchain.sh
 
-      # FEAT-119: `sol up` reconciles the scope's contract projection from the
+      # `sol up` reconciles the scope's contract projection from the
       # workspace, so this path needs the language toolchain just as the OCaml
       # golden path needs dune. The demo images still build with no host Node.
       - uses: actions/setup-node@v4
@@ -1113,7 +1083,7 @@ jobs:
 
           sol local infra up
 
-          # FEAT-133: the demo's tables are the workspace's migrations now
+          # The demo's tables are workspace migrations now
           # (db/migrations/0006_orders_ts.sql owns orders_ts, fulfilled_orders_ts
           # and order_confirmations_ts; 0007 adds the accept's trace context), so
           # the units create nothing at runtime and this must run before `sol up`.
@@ -1121,7 +1091,7 @@ jobs:
           # TypeScript namespace, rather than the apps' own `CREATE TABLE`.
           sol local migrate
 
-          # BUG-054: seed the demo_ts namespace's secrets before the deploy;
+          # Seed the demo_ts namespace's secrets before the deploy;
           # ordinary deploy verifies them and never writes a value.
           sol local secret set POSTGRES_URL --domain demo_ts \
             --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
@@ -1197,7 +1167,7 @@ jobs:
           # so a re-run (or a flaky retry) can't misread a stale row from a
           # previous attempt as this run's evidence. The request also carries a
           # traceparent we chose, so the trace id is known in advance and can be
-          # asserted end to end below (BUG-070).
+          # asserted end to end below.
           marker="ci-ts-golden-$(date +%s)-${RANDOM}"
           trace_id=$(openssl rand -hex 16)
           span_id=$(openssl rand -hex 8)
@@ -1214,7 +1184,7 @@ jobs:
 
           # fulfilled_orders_ts is one of the workspace's migrations now
           # (db/migrations/0006_orders_ts.sql, applied by `sol local migrate`
-          # above) -- the units create nothing at runtime (FEAT-133).
+          # above); the units create nothing at runtime.
           #
           # POSTGRES_URL comes from fulfillment_worker's own injected Secret
           # (the exact credential the app itself uses), not the Postgres
@@ -1247,14 +1217,14 @@ jobs:
           fi
           echo "Postgres row for ${marker} confirmed OK -- HTTP -> Kafka -> worker -> Postgres path proven"
 
-          # Caller-to-worker trace continuity (BUG-070): the traceparent sent
+          # The traceparent sent
           # with that request must survive order_svc and the Kafka header, so
           # the trace holds a span from each unit rather than two rooted traces.
           # Asserted against Tempo's query API (the same store the demo's README
           # tells a user to read), so an app that starts a fresh root trace --
           # the pre-fix behaviour -- fails here. The service names are Sol's --
           # the workload's bare Kubernetes name, not the app's own label --
-          # because `@sol-fab/obs` composes the injected identity (OBS-051).
+          # because `@sol-fab/obs` composes the injected identity.
           trace_ok=0
           for i in $(seq 1 30); do
             trace=$(curl -sf "http://localhost:3200/api/traces/${trace_id}" 2>/dev/null || true)
@@ -1272,7 +1242,7 @@ jobs:
           fi
           echo "trace ${trace_id} spans order-svc and fulfillment-worker -- inbound trace context preserved"
 
-          # OBS-051: the framework, not the app, owns the semantic workload
+          # The framework, not the app, owns the semantic workload
           # identity, so the trace resource carries every identity label the pod
           # was injected with. Read the expected labels off the running pod
           # rather than restating them, so a manifest that injects five (no
@@ -1296,8 +1266,8 @@ jobs:
           done <<< "$expected_identity"
           echo "trace ${trace_id} carries every Sol workload-identity label the pod injects"
 
-          # Coarse liveness check, not a reproduction of FEAT-082's
-          # forced-shutdown/redelivery experiments: a graceful pod delete
+          # Coarse liveness check, not a reproduction of the forced-shutdown
+          # and redelivery experiments: a graceful pod delete
           # must produce a clean replacement, not a CrashLoopBackOff.
           order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod -n "$demo_ns" "$order_pod" --grace-period=30 --wait=false

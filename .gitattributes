@@ -1,5 +1,5 @@
 internal/tooling/perf/perf_baseline.json merge=ours
 # No merge=union for dune files: a union merge keeps both sides' last line, so
 # two branches that each append to a `(names ... last)` list produce a list that
-# closes twice -- a broken file, merged without a conflict (REFAC-139 hit it three
+# closes twice -- a broken file, merged without a conflict
 # times). An ordinary merge reports the conflict instead.

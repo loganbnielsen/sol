@@ -25,11 +25,6 @@ services:
     uses: [app_db, events]
     language: ocaml
 
-  # The "Pluto orders" reference scenario's OCaml namespace (FEAT-131 declares
-  # the units here with their language and resources; FEAT-132 adds their
-  # directories under these paths and owns each unit's own `[service] calls`,
-  # because sol.yml carries no calls key). The TypeScript namespace is the
-  # existing app/demo_ts pair below.
   orders_svc:
     type: http
     path: app/payments/orders_svc
@@ -42,9 +37,7 @@ services:
     uses: [app_db, events]
     language: ocaml
 
-  # The TypeScript demo pair. They declare their language explicitly; the
-  # production profile's preflight reports TypeScript as not yet qualified
-  # (DEC-026 §2), which is the honest state until the TS parity triggers fire.
+  # The production profile does not yet qualify TypeScript workloads.
   order_svc:
     type: http
     path: app/demo_ts/order_svc
