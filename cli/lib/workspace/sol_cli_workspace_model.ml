@@ -109,6 +109,7 @@ let load ~root =
     Sol_cli_workspace_scan.discover_events ~root ()
     |> Result.map_error Sol_cli_toml.parse_error_to_string
   in
+  let* schema_subjects = Sol_cli_workspace_scan.discover_schema_subjects ~root () in
   Ok
     { root
     ; app_dir = Option.map (fun _ -> Filename.concat root "app") scanned
@@ -118,7 +119,7 @@ let load ~root =
          | None -> []
          | Some scan -> scan.unexpected)
     ; topics
-    ; schema_subjects = Sol_cli_workspace_scan.discover_schema_subjects ~root ()
+    ; schema_subjects
     ; migrations
     ; events
     ; targets

@@ -25,34 +25,55 @@ let test_levels () =
     (List.map (fun (level, text) -> level_name level, text) reported)
 ;;
 
-let test_scan_warning_is_reported () =
+let test_scan_non_directory_is_an_error () =
   let root = Filename.temp_dir "sol-report-" "" in
-  let domain = Filename.concat (Filename.concat root "events") "payments" in
-  Unix.mkdir (Filename.concat root "events") 0o755;
-  Unix.mkdir domain 0o000;
+  let events = Filename.concat root "events" in
+  let oc = open_out events in
+  close_out oc;
   Fun.protect
     ~finally:(fun () ->
-      Unix.chmod domain 0o755;
-      Unix.rmdir domain;
-      Unix.rmdir (Filename.concat root "events");
+      Sys.remove events;
       Unix.rmdir root)
     (fun () ->
-       let _, reported =
-         Sol_cli_report.collect (fun () ->
-           Sol_cli_workspace_scan.discover_schema_subjects ~root ())
-       in
-       match reported with
-       | [ (Logs.Warning, text) ] ->
+       match Sol_cli_workspace_scan.discover_schema_subjects ~root () with
+       | Error message ->
          Windtrap.equal
            Windtrap.bool
-           ~msg:"names the unreadable directory"
+           ~msg:"names the non-directory events path"
            true
-           (Sol_cli_string.contains ~needle:"payments" text)
-       | other ->
-         Windtrap.failf
-           "expected one warning, got: %s"
-           (other |> List.map snd |> String.concat " | "))
+           (Sol_cli_string.contains ~needle:"events" message)
+       | Ok _ -> Windtrap.fail "a non-directory events path must not load as empty")
+;;
+
+let test_scan_unreadable_subdirectory_is_an_error () =
+  if Unix.geteuid () = 0
+  then ()
+  else (
+    let root = Filename.temp_dir "sol-report-" "" in
+    let domain = Filename.concat (Filename.concat root "events") "payments" in
+    Unix.mkdir (Filename.concat root "events") 0o755;
+    Unix.mkdir domain 0o000;
+    Fun.protect
+      ~finally:(fun () ->
+        Unix.chmod domain 0o755;
+        Unix.rmdir domain;
+        Unix.rmdir (Filename.concat root "events");
+        Unix.rmdir root)
+      (fun () ->
+         match Sol_cli_workspace_scan.discover_schema_subjects ~root () with
+         | Error message ->
+           Windtrap.equal
+             Windtrap.bool
+             ~msg:"names the unreadable directory"
+             true
+             (Sol_cli_string.contains ~needle:"payments" message)
+         | Ok _ ->
+           Windtrap.fail "an unreadable declaration directory must not load as empty"))
 ;;
 
 let%test "REFAC-135: levels and order" = test_levels ()
-let%test "REFAC-135: a scan warning is reported" = test_scan_warning_is_reported ()
+let%test "a non-directory events path is refused" = test_scan_non_directory_is_an_error ()
+
+let%test "an unreadable declaration directory is refused" =
+  test_scan_unreadable_subdirectory_is_an_error ()
+;;
