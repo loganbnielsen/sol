@@ -1,5 +1,3 @@
-> **Work tracking:** GitHub Issues and pull requests are the authority for new work. The repository-local ticket directories are transitional legacy state being retired by META-001/META-002. Do not create new repository tickets, premise probes, ticket dependencies, or ticket-workflow rules. Existing in-flight ticket work may finish normally until the migration is reconciled; do not duplicate it. Branches/worktrees are ordinary Git tools and do not need ticket-derived identity.
-
 # Contributing to Sol
 
 Sol is Apache-2.0 — see [`LICENSE`](LICENSE).
@@ -78,182 +76,15 @@ the tree. It also validates ticket
 state transitions: ticket creation and correction happen on ordinary PR
 branches, while deletion is only allowed as a same-ID state move.
 
-## Commits and branch protection
+## Commits, branches, and pull requests
 
-**Every change reaches `main` through a pull request.** There is no exception,
-including internal/pipeline/planning/bookkeeping under `internal/pipeline/`, documentation
-(`*.md`), and the perf baseline.
+Use ordinary Git branches or worktrees. Branch names and worktree names have no repository-specific semantics.
 
-```text
-branch → push → pull request → required checks green → squash merge
-```
+Open a focused pull request, let required CI establish the repository's merge gates, and request review proportional to the risk of the change. Use GitHub's native auto-merge when appropriate; do not bypass required checks. Squash merge is the normal merge shape.
 
-The informational perf baseline follows the same PR path.
+GitHub Issues are the work tracker when a change is useful to track. Do not recreate the former repository-local ticket state machine with labels, branch conventions, dependency validators, bots, or project automation.
 
-`main` is protected with required status check `test`, no mandatory approving review,
-and admin enforcement enabled — so the rule
-binds maintainers and administrators too, not only contributors. Direct pushes
-to `main` are rejected by GitHub:
-
-```text
-remote: error: GH006: Protected branch update failed for refs/heads/main.
-remote: - Changes must be made through a pull request.
-remote: - Required status check "test" is expected.
-```
-
-Routine refactors, documentation, and ticket filings use focused author validation
-plus required CI, without a review marker or adversarial loop. Native squash
-auto-merge is the default: from an owned worktree run
-`soldev pipeline merge <TICKET-ID>` to queue it as soon as the PR is
-non-draft with its prerequisites resolved, and GitHub lands it when required checks
-pass. A PR that names no ticket is targeted by number or URL instead —
-`soldev pipeline merge --pr <n>` — which applies the same non-draft, required-check
-and head-pin rules, and refuses a branch with no required checks configured. An
-immediate merge is the opt-in exception, via `--immediate` and only when required
-checks are already green, for when you want it merged synchronously. Whoever queues
-it monitors it to completion and reports
-whether it actually merged — a queued request is not a completed merge. The command
-pins the PR head and preserves local worktrees; it does not delete trees, switch
-branches, or sync the canonical checkout. Post-merge performance maintenance remains
-optional and informational, not another merge gate.
-
-Select targeted review for infrastructure, security, lifecycle/concurrency,
-substantial API changes, or when requested. Keep these PRs draft until the review
-is satisfactory and its actionable findings are resolved, then mark ready and
-queue auto-merge. One satisfactory pass is enough; fresh-reviewer loops and
-SOLDEV-REVIEW markers are not universal requirements. Do not introduce a risk
-classifier or a second approval state machine for this judgment.
-
-### Ticket state moves land in order
-
-A ticket's directory is its state, and the transition guard
-(`internal/ci/context/check_ticket_transitions.sh`, also run by the pre-commit hook)
-holds the lifecycle: `BACKLOG ↔ READY_FOR_ENGINEERING`, `READY_FOR_ENGINEERING →
-DONE`, and `DONE → READY_FOR_ENGINEERING` for a revert. A new ticket must start
-in `BACKLOG` or `READY_FOR_ENGINEERING`; it can reach `DONE` only by moving
-there in the pull request that implements it.
-
-So file first, implement second — even when the finding is your own. A small
-filing pull request puts the ticket in the queue that `/work`, `soldev pipeline
-ls`, and the human-judgment gates read; the implementation pull request then
-shows a `READY_FOR_ENGINEERING → DONE` rename. Creating and completing a ticket
-in one pull request is refused: a ticket born in `DONE/` was never triaged and
-never appeared in the queue.
-
-### Why there is no bookkeeping exception
-
-An earlier revision of this file allowed maintainers to commit
-non-source changes — tickets, `*.md`, the perf baseline — directly to `main`.
-That exception was withdrawn after it was used, in practice, for *everything*:
-25 consecutive commits on `main`, including a large refactor and the change that
-broke `main`'s CI, all landed by direct push. A gate that is bypassed for
-convenience is not a gate, and the failure mode is silent — `main` stayed red
-across ~10 further commits before anyone noticed.
-
-Evidence-only pull requests are cheap and immediately mergeable. That is a
-better trade than discovering hours later that the authoritative branch has been
-broken for a dozen commits.
-
-### The pre-commit hook is not the gate
-
-The pre-commit hook (`internal/tooling/scripts/install-hooks.sh`) still skips its
-format and build for staged bookkeeping-only changes, which is a useful local speed-up. It
-is **not** a substitute for CI: run CI on the pull request, and do not treat "the
-hook was quiet" as evidence a change is safe. CI is the gate.
-
-### Isolation and ownership
-
-**Each concurrent actor owns one worktree. Agents do not perform mutating work in
-the canonical checkout.** The canonical checkout — the first entry in
-`git worktree list`, the one that holds `.git/` — belongs to the human operator.
-When canonical `main` is clean, an agent may fetch `origin` and fast-forward it
-with `git merge --ff-only origin/main`, then verify `HEAD` equals `origin/main`.
-This synchronization changes only the checkout's branch and tracked files to
-the published commit. All edits, staging, and commits belong in an owned worktree.
-
-Worktrees share the object database, so commits and refs stay visible to
-everyone, but working-tree state and `HEAD` are isolated. That isolation is the
-point: a shared checkout's branch can change underneath an actor midway through a
-commit, and the resulting commit is *valid but in the wrong place* — every test,
-guard and review of its contents passes while it sits on someone else's branch.
-
-```bash
-git worktree add -b <TICKET-ID>/<short-slug> ../sol-<TICKET-ID>-<short-slug> origin/main
-```
-
-**Independent tickets do not wait on open PRs.** For each actionable ticket with no dependency on work in another PR, submit its PR and queue auto-merge as soon as it is eligible, then pick up the next independent ticket. Do not wait for CI, review, or merge to finish before moving on. If a selected review requires the PR to stay draft, continue with independent work while that review runs; queue auto-merge after the review is resolved. Keep monitoring queued PRs and handle failures while working on the next ticket.
-
-Give every ticket its own branch and worktree, based on `origin/main` for independent work. One actor may own several worktrees at once; each worktree has one owner. Keep unrelated tickets in separate PRs. The sequence is: **submit PR → queue auto-merge → next independent ticket; do not wait for merge.**
-
-**Dependent tickets stack; they do not idle.** When ticket B's work needs ticket A's, branch B from A's branch and open B's PR against it instead of waiting for A's review and merge:
-
-```bash
-git worktree add -b <B-ID>/<short-slug> ../sol-<B-ID>-<short-slug> <A-ID>/<A-short-slug>
-```
-
-B's PR then contains only B's commits, and reviewing it does not mean reviewing A again. Before B lands, retarget it to `main` and reconcile A's final state into it — rebasing B onto the merged A is the normal case, not an exception:
-
-```bash
-gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -f base=main
-```
-
-Two limits. The order is not negotiable: a dependent PR never merges before its prerequisite, and `soldev pipeline merge` refuses a PR whose base branch has no required checks, so a stacked PR is retargeted rather than merged in place. And do not stack at all when the dependency is unresolved — a ticket still carrying `## Open Questions`, `## Decision Required` or `## Blocked On` — or when B's correct implementation depends on the outcome of A's review. That is a decision boundary rather than a merge boundary, and B waits.
-
-Before **every** commit and push, resolve and verify:
-
-- the **worktree** you are in, and that it is not the canonical checkout;
-- the **branch** you are on, and that it is not detached with staged changes;
-- the **upstream**, if any;
-- the **expected base** — what this work is stacked on;
-- **ownership** — whose ticket/PR branch this is. If another actor owns it or is
-  actively rewriting it, do not push to it; produce a clean handoff instead.
-
-**Removing a worktree is a mutating operation on someone else's working tree.**
-`git worktree remove --force` discards uncommitted changes without asking, and a
-worktree that looks finished — your PR merged, branch deleted — can still hold an
-actor's edits made after the merge. Removing one that way destroyed uncommitted
-review edits to two tickets in this repository. Before removing any worktree that is
-not demonstrably yours and clean:
-
-```bash
-git -C <worktree> status --porcelain   # empty, or stop and hand it over
-```
-
-The isolation rule above is about not *working* in a shared checkout; this is the
-same rule applied to cleaning one up.
-
-`internal/ci/check_authority.sh` performs those checks and is wired into the
-pre-commit hook. It is **advisory by default**, because a human committing in the
-canonical checkout is legitimate and a single-worktree clone should be quiet.
-Declare a context to make it strict:
-
-```bash
-SOL_AUTHORITY_WORKTREE=$PWD \
-SOL_AUTHORITY_BRANCH=<TICKET-ID>/<slug> \
-SOL_AUTHORITY_BASE=main \
-git commit ...
-```
-
-A declared mismatch is refused. An undeclared context warns only about the two
-signals that are unambiguous once more than one worktree exists: a commit from
-the canonical checkout, and a detached `HEAD` with staged changes. It never
-requires a branch to have an upstream, and never blocks a merge commit.
-
-### If nothing seems to be running
-
-A stale hook install fails silently — the hook simply never runs, so the gate is
-absent rather than red. If the local hooks appear inert, re-run the documented
-installer:
-
-```bash
-bash internal/tooling/scripts/install-hooks.sh
-```
-
-That path is guarded by `internal/ci/test_hook_install.sh`, which runs the
-installer in a scratch repository with a dangling `.git/hooks` symlink, and asserts
-that `core.hooksPath` points at the tracked hooks and that a commit, in the main
-checkout and in a linked worktree, runs that checkout's own hook. The test exists
-because a stale install is otherwise indistinguishable from a clean one.
+The pre-commit hook is local feedback, not the authority. CI is authoritative for merge requirements.
 
 ## Code conventions
 
@@ -283,21 +114,4 @@ The "Sol" name and logo are **not** covered by the Apache-2.0 licence — see
 
 ### Post-merge cleanup
 
-GitHub automatically deletes remote PR branches after merging. Local cleanup is
-explicit because another actor may still own a worktree. From a different tree,
-preview a worktree you own and know is idle:
-
-```bash
-soldev pipeline cleanup 672 ../sol-parameter-style-lint
-soldev pipeline cleanup 672 ../sol-parameter-style-lint --apply
-```
-
-The command checks that the PR was merged into `main` in this repository, its
-branch and head still match, and the selected worktree is registered and clean.
-It refuses canonical/current trees, primary branches, locked trees, and tracked,
-untracked or ignored local files. Remove expendable build artifacts yourself;
-the command does not decide which ignored files are disposable. Lock a tree with
-`git worktree lock <path>` while an actor uses it. Selecting a path and `--apply`
-declares that you own it and have stopped work there; Git cannot detect idle
-editors or agent processes. Removal never uses force, and branch deletion checks
-the expected head atomically. Cleanup does not change the canonical checkout.
+Delete local branches or worktrees when they are no longer useful. No repository-specific cleanup bookkeeping is required.

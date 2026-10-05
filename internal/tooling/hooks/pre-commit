@@ -6,17 +6,6 @@ if ! "$(git rev-parse --show-toplevel)/internal/ci/check_authority.sh"; then
   exit 1
 fi
 
-STAGED_TICKETS="$(git diff --cached --name-only | grep -E '^(internal/)?pipeline/tickets/' || true)"
-if [ -n "$STAGED_TICKETS" ]; then
-  TICKET_STATUS="$(git diff --cached --name-status -M10% -- pipeline/tickets/ internal/pipeline/tickets/)"
-  if ! REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | "$(git rev-parse --show-toplevel)/internal/ci/context/check_ticket_transitions.sh")"; then
-    echo ""
-    echo "✗ Invalid pipeline ticket state change."
-    printf '%s\n' "$REFUSAL"
-    exit 1
-  fi
-fi
-
 GIT_DIR="$(git rev-parse --git-dir)"
 if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
   echo ""
@@ -27,7 +16,7 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 if [ "$("$REPO_ROOT/internal/ci/classify-changes.sh" --staged)" = "docs-only" ]; then
   echo ""
-  echo "  (docs/tickets only — skipping format and build)"
+  echo "  (docs-only — skipping format and build)"
   exit 0
 fi
 eval "$(opam env)"
