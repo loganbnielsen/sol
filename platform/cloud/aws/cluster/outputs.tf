@@ -55,7 +55,7 @@ output "postgres_endpoint" {
 
 output "postgres_url" {
   description = "POSTGRES_URL for Sol services — set this in your CI secrets and sol.toml [infra.env]"
-  value       = var.create_rds ? "postgresql://postgres:${var.db_password}@${aws_db_instance.postgres[0].endpoint}/app" : null
+  value       = var.create_rds ? "postgresql://postgres:${replace(urlencode(var.db_password), "+", "%20")}@${aws_db_instance.postgres[0].endpoint}/app" : null
   sensitive   = true
 }
 

@@ -40,7 +40,7 @@ output "postgres_private_ip" {
 
 output "postgres_url" {
   description = "POSTGRES_URL for Sol services"
-  value       = "postgresql://postgres:${var.db_password}@${google_sql_database_instance.postgres.private_ip_address}/app"
+  value       = "postgresql://postgres:${replace(urlencode(var.db_password), "+", "%20")}@${google_sql_database_instance.postgres.private_ip_address}/app"
   sensitive   = true
 }
 
