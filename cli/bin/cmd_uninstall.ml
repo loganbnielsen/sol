@@ -46,12 +46,7 @@ let uninstall ~target ~var_file ~vars ~confirm ~confirm_dns_zone () =
     |> Sol_cli_exit.of_msg
   in
   let* addresses =
-    Sol_cli_terraform.state_list ~chdir ()
-    |> Result.map (fun (output : Sol_cli_process.output) ->
-      output.stdout
-      |> String.split_on_char '\n'
-      |> List.map String.trim
-      |> List.filter (fun address -> address <> ""))
+    Sol_cli_terraform.state_addresses ~chdir ()
     |> Result.map_error Sol_cli_process.error_to_string
     |> Sol_cli_exit.of_msg
   in

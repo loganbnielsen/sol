@@ -82,6 +82,7 @@ type plan_phase =
 val platform_plan_phases
   :  cluster_exists:bool
   -> rbac_established:bool
+  -> install_window_open:bool
   -> crds_established:bool
   -> plan_phase * plan_phase
 
@@ -91,6 +92,8 @@ type authorization =
 
 val provisioner_authorization_checks : (authorization * string list) list
 val provisioner_authorization_established : can_i:(string list -> bool) -> bool
+val install_window_authorization_checks : (authorization * string list) list
+val install_window_open : can_i:(string list -> bool) -> bool
 
 type readiness =
   | Established

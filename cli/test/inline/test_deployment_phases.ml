@@ -1131,8 +1131,16 @@ let test_up_execution_descriptor_uses_host_push_image () =
       ~sha:"abc123"
       svc_spec
   in
-  Windtrap.equal Windtrap.string ~msg:"k8s name" "charge-svc" exec.k8s_name;
-  Windtrap.equal Windtrap.string ~msg:"namespace" "myapp-payments" exec.namespace;
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"k8s name"
+    "charge-svc"
+    (Sol_cli_deployment_plan.k8s_name_to_string exec.k8s_name);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"namespace"
+    "myapp-payments"
+    (Sol_cli_deployment_plan.namespace_to_string exec.namespace);
   Windtrap.equal
     Windtrap.string
     ~msg:"Docker context is the workspace"

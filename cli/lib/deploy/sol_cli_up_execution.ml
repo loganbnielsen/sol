@@ -1,6 +1,6 @@
 type service_execution =
-  { k8s_name : string
-  ; namespace : string
+  { k8s_name : Sol_cli_deployment_plan.k8s_name
+  ; namespace : Sol_cli_deployment_plan.namespace
   ; push_image : string
   ; context : string
   ; dockerfile : string
@@ -46,8 +46,8 @@ let service_execution
       ~sha
       (spec : Sol_cli_deployment_plan.service_spec)
   =
-  { k8s_name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name
-  ; namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
+  { k8s_name = spec.k8s_name
+  ; namespace = spec.namespace
   ; push_image = push_image_ref ~workspace ~sha spec
   ; context = ctx_dir
   ; dockerfile = Printf.sprintf "%s/%s/Dockerfile" ctx_dir spec.source_dir
@@ -91,14 +91,16 @@ let apply_service_manifest ~ctx ~workspace ~release_id ~dry_run spec =
 ;;
 
 let wait_for_service_rollout ~ctx spec exec =
+  let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string exec.k8s_name in
+  let namespace = Sol_cli_deployment_plan.namespace_to_string exec.namespace in
   match spec.Sol_cli_deployment_plan.primitive with
   | Sol_cli_deployment_plan.Fn -> Ok ()
   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
     (match
        Sol_cli_kubectl.rollout_status
          ~ctx
-         ~kind_name:("deployment/" ^ exec.k8s_name)
-         ~namespace:exec.namespace
+         ~kind_name:("deployment/" ^ k8s_name)
+         ~namespace
      with
      | Ok _ -> Ok ()
      | _ ->
@@ -109,9 +111,9 @@ let wait_for_service_rollout ~ctx spec exec =
           Sol_cli_rollout_diagnosis.diagnose_service_live
             ~ctx
             ~pod_expectation
-            ~ns:exec.namespace
+            ~ns:namespace
             ~service_name:spec.source_name
-            ~k8s_name:exec.k8s_name
+            ~k8s_name
             ()
         with
         | Sol_cli_rollout_diagnosis.Unhealthy d -> Error d
@@ -119,11 +121,11 @@ let wait_for_service_rollout ~ctx spec exec =
           Error
             (Printf.sprintf
                "could not determine whether the rollout of %s/%s succeeded: %s"
-               exec.namespace
-               exec.k8s_name
+               namespace
+               k8s_name
                why)
         | Sol_cli_rollout_diagnosis.Healthy ->
-          Error (Printf.sprintf "rollout failed: %s/%s" exec.namespace exec.k8s_name)))
+          Error (Printf.sprintf "rollout failed: %s/%s" namespace k8s_name)))
 ;;
 
 let post_deploy_summary ~facts plan =

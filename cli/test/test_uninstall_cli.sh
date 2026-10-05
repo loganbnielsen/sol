@@ -72,11 +72,25 @@ cat >"$tmp/bin/terraform" <<EOF
 printf '%s\n' "\$*" >>"$tmp/terraform.log"
 case " \$* " in
   *" state list "*)
+    if [ -f "$tmp/unreadable-state" ]; then
+      printf '%s\n' 'Error: Failed to read state: the state backend refused the read' >&2
+      exit 1
+    fi
+    if [ -f "$tmp/fresh-state" ]; then
+      printf '%s\n' 'No state file was found!' >&2
+      exit 1
+    fi
     printf '%s\n' \
       'aws_s3_bucket.state' \
       'aws_s3_bucket_versioning.state' \
       'aws_dynamodb_table.lock' \
       'aws_route53_zone.qualification[0]'
+    ;;
+  *" state pull "*)
+    if [ -f "$tmp/unreadable-state" ]; then
+      printf '%s\n' 'Error: Failed to read state: the state backend refused the read' >&2
+      exit 1
+    fi
     ;;
 esac
 exit 0
@@ -202,6 +216,27 @@ if [ -z "$zone_line" ] || [ -z "$user_destroy_line" ] || [ "$zone_line" -ge "$us
   cat "$tmp/terraform.log" >&2
   fail=1
 fi
+
+: >"$tmp/fresh-state"
+run solzone/aws/us-east-1
+check_absent \
+  "a never-written installation state is not reported as unreadable" \
+  "terraform state list failed" \
+  "$output"
+check_contains \
+  "and the uninstall plan is still rendered from a state that holds nothing" \
+  "Uninstall plan for solzone/aws/us-east-1" \
+  "$output"
+rm -f "$tmp/fresh-state"
+
+: >"$tmp/unreadable-state"
+run solzone/aws/us-east-1
+check "a state that cannot be read at all still fails closed" 1 "$rc"
+check_contains \
+  "and the run names the read failure" \
+  "Failed to read state" \
+  "$output"
+rm -f "$tmp/unreadable-state"
 
 if [ "$fail" != 0 ]; then
   exit 1

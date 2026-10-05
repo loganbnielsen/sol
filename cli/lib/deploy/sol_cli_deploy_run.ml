@@ -243,18 +243,14 @@ let read_previous_release ctx =
 ;;
 
 let previous_contract ctx =
-  let cluster = ctx.execution.cluster in
-  let workspace = ctx.execution.workspace in
-  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
-  | Ok (Some release_id) ->
-    (match Sol_cli_release_store.get ~ctx:cluster ~workspace ~release_id with
-     | Ok record -> record.Sol_cli_release.contract
-     | Error _ -> [])
-  | Ok None | Error _ -> []
+  Sol_cli_release_store.deployed_contract
+    ~ctx:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
 ;;
 
 let observe_contract ctx plan =
-  Sol_cli_deployment_plan.with_observed_contract ~observed:(previous_contract ctx) plan
+  let* observed = previous_contract ctx in
+  Sol_cli_deployment_plan.with_observed_contract ~observed plan
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 

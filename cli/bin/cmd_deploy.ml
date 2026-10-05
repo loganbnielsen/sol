@@ -612,10 +612,6 @@ let run_apply
       ()
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
-  let* plan = observe_contract ctx plan in
-  let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
-  print_planned_services plan;
-  print_contract_changes plan;
   let* () =
     check_substrate_prerequisite
       ~ctx
@@ -626,6 +622,10 @@ let run_apply
       ~guide:(not established)
       ()
   in
+  let* plan = observe_contract ctx plan in
+  let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
+  print_planned_services plan;
+  print_contract_changes plan;
   let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   let* () =
     verify_effective_access planning ~target_cfg:ctx.target_cfg |> Sol_cli_exit.of_msg

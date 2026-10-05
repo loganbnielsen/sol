@@ -6,7 +6,7 @@ source: Stream A validation-workflow investigation, 2026-10-05
 title: Reuse canonical check results for an identical committed tree instead of re-running pre-push
 ---
 
-**Depends on:** None.
+**Depends on:** INFRA-109.
 
 ## The gap
 
