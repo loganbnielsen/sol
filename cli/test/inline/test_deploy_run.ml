@@ -241,6 +241,9 @@ for a in "$@"; do
   esac
   previous="$a"
 done
+if [ -n "${SOL_FAKE_KUBECTL_FAIL_GET:-}" ]; then
+  case " $* " in *" $SOL_FAKE_KUBECTL_FAIL_GET "*) printf 'Error from server (NotFound): not found\n' >&2; exit 1 ;; esac
+fi
 case " $* " in
   *" create "*|*" replace "*)
     if [ -n "$file" ] && grep -q sol-boundary-lease "$file" 2>/dev/null; then
@@ -248,6 +251,9 @@ case " $* " in
     fi
     exit 0
     ;;
+esac
+case " $* " in
+  *" get secret sol-secrets "*) printf '{"data":{"POSTGRES_URL":"postgres://user:pass@host/db","SOL_API_KEY":"test"}}'; exit 0 ;;
 esac
 case "$name" in
   sol-boundary-lease-*)
@@ -538,4 +544,83 @@ let%test "lifecycle: a failed apply does not report success" =
         (Error "apply failed")
         outcome;
       Windtrap.equal Windtrap.bool ~msg:"no success is reported" false !reported))
+;;
+
+(* The substrate prerequisite is a library operation an owner runs; its behaviour is
+   asserted here rather than inferred from source positions. #1191. *)
+
+let substrate_prerequisite ctx ~live services =
+  Sol_cli_deploy_run.substrate_prerequisite ctx ~plan:(plan services) ~live
+;;
+
+let worker_plan =
+  [ spec ~domain:"comms" ~name:"notify_worker" ~k8s:"notify-worker" Worker ]
+;;
+
+let%test "substrate_prerequisite: a profile-less live plan establishes its namespaces" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      match substrate_prerequisite ctx ~live:true worker_plan with
+      | Ok () ->
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:"the live path creates the substrate documents for the plan's namespace"
+          true
+          (Sol_cli_string.contains ~needle:"create" (calls ()))
+      | Error _ ->
+        Windtrap.fail
+          "a profile-less live plan must build its namespaces, not skip the substrate"))
+;;
+
+let%test "substrate_prerequisite: a side-effect-free run checks, never creates" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      match substrate_prerequisite ctx ~live:false worker_plan with
+      | Ok () ->
+        let log = calls () in
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:"it reads the namespace"
+          true
+          (Sol_cli_string.contains ~needle:"get namespace" log);
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:"it does not create anything"
+          false
+          (Sol_cli_string.contains ~needle:"create" log)
+      | Error _ ->
+        Windtrap.fail "an offline run must be able to check an established namespace"))
+;;
+
+let refusal_mentions ~fail_on needle =
+  with_fake_kubectl (fun ~calls:_ ->
+    with_context (fun ctx ->
+      Fun.protect
+        ~finally:(fun () -> Unix.putenv "SOL_FAKE_KUBECTL_FAIL_GET" "")
+        (fun () ->
+           Unix.putenv "SOL_FAKE_KUBECTL_FAIL_GET" fail_on;
+           match substrate_prerequisite ctx ~live:false worker_plan with
+           | Ok () -> Windtrap.failf "a %s that cannot be read must refuse" fail_on
+           | Error (Sol_cli_deploy_run.Refused message) ->
+             Windtrap.equal
+               Windtrap.bool
+               ~msg:("names " ^ fail_on)
+               true
+               (Sol_cli_string.contains ~needle message)
+           | Error (Sol_cli_deploy_run.Failed _) ->
+             Windtrap.fail "an unreadable prerequisite is a refusal, not a failure report")))
+;;
+
+let%test "substrate_prerequisite: an offline run checks the namespace and both bindings" =
+  refusal_mentions ~fail_on:"namespace" "does not exist";
+  refusal_mentions ~fail_on:"sol-deploy" "sol-deploy";
+  refusal_mentions ~fail_on:"sol-operator" "sol-operator"
+;;
+
+let%test "substrate_prerequisite: an empty plan establishes nothing" =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      match substrate_prerequisite ctx ~live:true [] with
+      | Ok () -> Windtrap.equal Windtrap.string ~msg:"no kubectl call" "" (calls ())
+      | Error _ -> Windtrap.fail "a plan with no namespaces has nothing to establish"))
 ;;
