@@ -206,14 +206,14 @@ let gcp ~cluster_name =
       ~identity:(cluster_name ^ "-provisioner")
       ~import_identity:(cluster_name ^ "-provisioner")
   ; entry
-      "google_service_account.loki"
+      "google_service_account.loki[0]"
       direct
       ~resource_class:"service account"
       ~observed_as:(cluster_name ^ "-loki@")
       ~identity:(cluster_name ^ "-loki")
       ~import_identity:(cluster_name ^ "-loki")
   ; entry
-      "google_service_account.thanos"
+      "google_service_account.thanos[0]"
       direct
       ~resource_class:"service account"
       ~observed_as:(cluster_name ^ "-thanos@")
@@ -352,21 +352,21 @@ let gcp ~cluster_name =
 
 let aws ~cluster_name =
   [ entry
-      "aws_db_instance.postgres"
+      "aws_db_instance.postgres[0]"
       direct
       ~resource_class:"RDS instance"
       ~observed_as:(cluster_name ^ "-postgres")
       ~identity:(cluster_name ^ "-postgres")
       ~import_identity:(cluster_name ^ "-postgres")
   ; entry
-      "aws_db_subnet_group.main"
+      "aws_db_subnet_group.main[0]"
       direct
       ~resource_class:"RDS subnet group"
       ~observed_as:(cluster_name ^ "-postgres")
       ~identity:(cluster_name ^ "-postgres")
       ~import_identity:(cluster_name ^ "-postgres")
   ; entry
-      "aws_security_group.rds"
+      "aws_security_group.rds[0]"
       direct
       ~resource_class:"security group"
       ~observed_as:(cluster_name ^ "-rds")

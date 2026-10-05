@@ -8,7 +8,8 @@ NAME = "check_resource_identity"
 EXPECTED_TYPE_RULES = ["kubernetes_", "helm_", "terraform_data", "random_", "null_resource"]
 
 ENTRY = re.compile(
-    r'entry\s+"(?P<address>[a-z0-9_]+\.[a-z0-9_]+)"\s+\(?(?P<ownership>[A-Za-z_]+)'
+    r'entry\s+"(?P<address>[a-z0-9_]+\.[a-z0-9_]+)(?P<key>\[[^\]]*\])?"\s+'
+    r"\(?(?P<ownership>[A-Za-z_]+)"
 )
 IMPORT = re.compile(r'~import_identity:\s*(?P<value>"[^"]*"|[^\n;]*)')
 CLASS = re.compile(r'~resource_class:\s*(?P<value>"[^"]*")')
@@ -35,6 +36,7 @@ def registry(path):
         class_match = CLASS.search(window)
         observed_match = OBSERVED.search(window)
         entries[match.group("address")] = {
+            "address": match.group("address") + (match.group("key") or ""),
             "ownership": match.group("ownership").lower(),
             "import_identity": unquote(import_match.group("value")) if import_match else "",
             "resource_class": unquote(class_match.group("value")) if class_match else "",
@@ -104,13 +106,13 @@ def main(argv):
             if entry["ownership"] == "direct":
                 if entry["import_identity"] == "":
                     problems.append(
-                        f"the registry entry for {address} is Direct, so it must carry an "
+                        f"the registry entry for {entry['address']} is Direct, so it must carry an "
                         "~import_identity: the provider identity Sol would import to restore "
                         "Terraform ownership of an unadopted resource (FND-0070)"
                     )
                 if entry["observed_as"] == "":
                     problems.append(
-                        f"the registry entry for {address} is Direct, so it must carry an "
+                        f"the registry entry for {entry['address']} is Direct, so it must carry an "
                         "~observed_as: the provider name the independent inventory reports, "
                         "which is how a found resource is mapped back to this address (FND-0070)"
                     )

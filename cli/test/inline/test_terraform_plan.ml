@@ -266,6 +266,47 @@ let test_guarded_update_is_allowed () =
           ]))
 ;;
 
+let counted_guarded = "aws_db_instance.postgres"
+
+let test_counted_guarded_update_is_allowed () =
+  let preparation =
+    Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:[ counted_guarded ]
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the counted instance's guard-lowering update is in the preparation scope"
+    true
+    (allowlist
+       preparation
+       (plan_of [ update (counted_guarded ^ "[0]") "aws_db_instance" ]));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"creating the counted instance is still refused during preparation"
+    false
+    (allowlist
+       preparation
+       (plan_of [ create (counted_guarded ^ "[0]") "aws_db_instance" ]));
+  let reconciliation =
+    Sol_cli_cloud_destroy.reconciliation_policy
+      ~bootstrap:[ binding ]
+      ~guarded:[ counted_guarded ]
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the counted instance's guard-lowering update is in the reconciliation scope"
+    true
+    (allowlist
+       reconciliation
+       (plan_of [ update (counted_guarded ^ "[0]") "aws_db_instance" ]));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"destroying the counted instance during reconciliation is refused"
+    false
+    (allowlist
+       reconciliation
+       (plan_of [ delete (counted_guarded ^ "[0]") "aws_db_instance" ]))
+;;
+
 let test_removal_with_unexpected_create_is_refused () =
   let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
   Windtrap.equal
@@ -596,6 +637,10 @@ let%test "phase allowlists: indexed sibling create is still refused" =
 ;;
 
 let%test "phase allowlists: guarded update is allowed" = test_guarded_update_is_allowed ()
+
+let%test "phase allowlists: a counted guarded instance is matched (BUG-209)" =
+  test_counted_guarded_update_is_allowed ()
+;;
 
 let%test "phase allowlists: removal with unexpected create is refused" =
   test_removal_with_unexpected_create_is_refused ()

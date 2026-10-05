@@ -3031,3 +3031,46 @@ let%test "verification: fully clean exits 0" = test_fully_clean_is_exit_0 ()
 let%test "verification: blocked destroy never verifies" =
   test_blocked_destroy_never_verifies ()
 ;;
+
+let test_rds_identity_is_the_counted_address () =
+  let rds address =
+    show_json_resources
+      (Printf.sprintf
+         {|{"address":"%s","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}|}
+         address)
+  in
+  let state_with_counted = inventory_of_show_json (rds "aws_db_instance.postgres[0]") in
+  (match Sol_cli_aws_destruction.rds_of_state state_with_counted with
+   | Ok (Some (true, None, Some false)) -> ()
+   | Ok _ ->
+     Windtrap.fail "a state that represents the counted database must expose its guard"
+   | Error message ->
+     Windtrap.failf
+       "a state that represents the counted database must be readable: %s"
+       message);
+  let state_without_database =
+    inventory_of_show_json
+      (show_json_resources
+         {|{"address":"module.eks.aws_eks_cluster.this[0]","type":"aws_eks_cluster","values":{"name":"lifecycle-test"}}|})
+  in
+  (match Sol_cli_aws_destruction.rds_of_state state_without_database with
+   | Ok None -> ()
+   | Ok (Some _) -> Windtrap.fail "a target with no database has nothing to prepare"
+   | Error message ->
+     Windtrap.failf "a target with no database must not be an error: %s" message);
+  let state_with_unindexed = inventory_of_show_json (rds "aws_db_instance.postgres") in
+  match Sol_cli_aws_destruction.rds_of_state state_with_unindexed with
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a database at an unexpected address is diagnosed, not reported absent"
+      true
+      (Sol_cli_string.contains ~needle:"aws_db_instance.postgres[0]" message)
+  | Ok _ ->
+    Windtrap.fail
+      "a malformed database identity must not grant a false absence or retention verdict"
+;;
+
+let%test "verification: RDS identity uses the counted Terraform address (BUG-209)" =
+  test_rds_identity_is_the_counted_address ()
+;;
