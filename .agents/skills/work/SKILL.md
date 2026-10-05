@@ -13,6 +13,10 @@ Resume an existing branch/worktree/PR rather than duplicate interrupted work.
 For actionable tickets without an existing tree, fetch and create an owned
 worktree from `origin/main`. Never mutate the canonical checkout. Follow
 CONTRIBUTING.md's isolation/ownership policy and name the tree on git mutations.
+After submitting a PR and queueing auto-merge when eligible, continue to the next
+actionable independent ticket without waiting for that PR to merge. Keep monitoring
+queued PRs while working; follow CONTRIBUTING.md for separate worktrees and
+dependent-ticket stacks.
 
 Implement the ticket's remediation, keeping changes behavior-preserving where
 specified. Run focused tests and formatting/static checks; expand verification
