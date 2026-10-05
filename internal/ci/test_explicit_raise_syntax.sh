@@ -3,7 +3,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/scratch_repo.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHECK="$ROOT/internal/ci/check_no_exception_control_flow.sh"
+CHECK="$ROOT/internal/ci/check_explicit_raise_syntax.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -44,3 +44,13 @@ expect fail "a command raising its own exception"
 
 mkrepo; printf 'let t s = invalid_arg "something else"\n' >"$tmp/repo/cli/lib/base/sol_cli_time.ml"; commit
 expect fail "an allow-listed file with an unlisted raise"
+
+# The green output must state the narrow property, not claim that runtime failures are
+# returned or cleanup occurs; a later edit must not silently re-overclaim.
+mkrepo; commit
+out="$("$CHECK" "$tmp/repo" 2>&1)"
+if [[ "$out" != *"a syntax check"* ]]; then
+  echo "  [FAIL] success output states the guard's narrow claim, not a runtime guarantee" >&2
+  exit 1
+fi
+echo "  [OK]   success output states the guard's narrow claim, not a runtime guarantee"
