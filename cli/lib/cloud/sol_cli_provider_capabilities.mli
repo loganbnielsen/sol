@@ -125,6 +125,7 @@ val aws : t
 val gcp : t
 val byo : t
 val capabilities_of : Sol_cli_provider.t -> t
+val validate_target : Sol_cli_provider.t -> Sol_cli_config.target -> (unit, string) result
 val owns_root : Sol_cli_provider.t -> bool
 val provider_console_url : Sol_cli_config.target -> string option
 val installation_nameservers_output : Sol_cli_provider.t -> string

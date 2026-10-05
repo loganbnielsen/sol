@@ -1098,6 +1098,15 @@ let capabilities_of = function
   | Sol_cli_provider.Byo -> byo
 ;;
 
+let validate_target provider (target : Sol_cli_config.target) =
+  match provider with
+  | Sol_cli_provider.Gcp ->
+    (match target.cluster_name with
+     | Some cluster_name -> Sol_cli_gcp_cluster.validate_cluster_name cluster_name
+     | None -> Ok ())
+  | Sol_cli_provider.Aws | Sol_cli_provider.Byo -> Ok ()
+;;
+
 let owns_root provider = (capabilities_of provider).root_status = Root_present
 
 let provider_console_url (target : Sol_cli_config.target) =
