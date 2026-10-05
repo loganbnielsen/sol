@@ -68,7 +68,6 @@ while IFS= read -r p; do
         [ "$p" = "$generated" ] && note source
       done
       ;;
-    internal/pipeline/tickets/*)       ;;
     *.md)                              ;;
     framework/ocaml/*)                 note ocaml ;;
     examples/pluto/app/checkout/*)     note ocaml ;;
