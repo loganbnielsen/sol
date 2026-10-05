@@ -125,7 +125,7 @@ workstream; they apply to every provider's live runs.
 | AWS | Run 6 attempt 6 | `2026-09-19-aws-run6-attempt6.md` |
 | AWS | Run 7 attempt 7 | `2026-09-19-aws-run7-attempt7.md` |
 | AWS | Run 8 | `2026-09-20-run8-aws.md` |
-| GCP | Attempts 1–4 | `gcp-bootstrap-inventory.md` |
+| GCP | Attempts 1–4 | `gcp-bootstrap-inventory.md` (dated historical pointer; use each run's inventory for current state) |
 | GCP | Attempt 5 | `2026-09-22-gcp-attempt5.md` |
 | GCP | Attempt 6 | `2026-09-23-gcp-attempt6.md` |
 | GCP | Attempt 7 (stopped pre-live) | `2026-09-24-gcp-attempt7-prelive-falsification.md` |
