@@ -173,18 +173,33 @@ type plan_phase =
   | Plannable
   | Deferred of string
 
-let platform_plan_phases ~cluster_exists ~rbac_established ~crds_established =
+let platform_plan_phases
+      ~cluster_exists
+      ~rbac_established
+      ~install_window_open
+      ~crds_established
+  =
   let requires_cloud = "requires cloud substrate to exist" in
   let requires_rbac =
     "requires provisioner platform RBAC established by an earlier apply"
   in
+  let requires_install_window =
+    "requires the installation window that `sol cloud apply` opens (the platform root \
+     manages objects outside the namespaces the steady-state provisioner holds)"
+  in
   if not cluster_exists
   then Deferred requires_cloud, Deferred requires_cloud
+  else if install_window_open
+  then
+    ( Plannable
+    , if crds_established
+      then Plannable
+      else Deferred "requires cert-manager CRDs to be Established" )
   else if not rbac_established
   then Deferred requires_rbac, Deferred requires_rbac
   else if not crds_established
   then Plannable, Deferred "requires cert-manager CRDs to be Established"
-  else Plannable, Plannable
+  else Plannable, Deferred requires_install_window
 ;;
 
 type authorization =
@@ -213,6 +228,14 @@ let provisioner_authorization_established ~can_i =
     match expected with
     | Required -> can_i args
     | Forbidden -> not (can_i args))
+;;
+
+let install_window_authorization_checks =
+  [ Required, [ "escalate"; "clusterroles" ]; Required, [ "bind"; "clusterroles" ] ]
+;;
+
+let install_window_open ~can_i =
+  install_window_authorization_checks |> List.for_all (fun (_, args) -> can_i args)
 ;;
 
 type readiness =
