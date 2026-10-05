@@ -78,7 +78,7 @@ let save_deployed_groups ~ctx workspace groups =
     | Error e ->
       Error
         (Printf.sprintf
-           "the workloads were applied and the release recorded, but the deployed \
+           "the workload operation completed, but the deployed \
             consumer groups could not be recorded (configmap default/%s): %s\n\
             The next deploy's consumer-group removal check will not know this deploy's \
             groups; fix access to that ConfigMap and deploy again."

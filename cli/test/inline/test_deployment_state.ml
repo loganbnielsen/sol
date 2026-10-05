@@ -127,7 +127,12 @@ let test_failed_write_is_an_error () =
         Windtrap.bool
         ~msg:"names the configmap"
         true
-        (Sol_cli_string.contains ~needle:"sol-deploy-state" msg))
+        (Sol_cli_string.contains ~needle:"sol-deploy-state" msg);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"local up has no release record; shared bookkeeping must not claim one"
+        false
+        (Sol_cli_string.contains ~needle:"release recorded" msg))
 ;;
 
 let test_load_present () =
