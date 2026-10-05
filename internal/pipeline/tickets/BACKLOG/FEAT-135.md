@@ -39,7 +39,7 @@ FEAT-133 reaches for a retry loop of its own instead, that is this ticket being 
   cancellation, jitter bounds, and validation refusals.
 - Record the verdict as **implemented** in the operation-level-retry row of
   `internal/specs/framework-conventions.md`, and update the
-  `2026-10-02_cross_language_contract_audit.md` inventory (or its successor) so the two
+  `internal/specs/typescript-capability-inventory.md` inventory so the two
   agree.
 
 ## Acceptance criteria

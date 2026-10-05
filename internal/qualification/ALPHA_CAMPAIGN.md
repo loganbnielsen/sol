@@ -184,6 +184,11 @@ shared topics.
 The scenario is defined by ticket `FEAT-131` (the shared contract) and implemented by
 `FEAT-132` (OCaml) and `FEAT-133` (TypeScript).
 
+**The scenario runs against managed resources on cloud targets.** `orders_svc` declares
+`uses: [app_db, events]`, and the alpha reference contract and the GCP Cloud SQL variables agree, so
+a cloud target that omits the Postgres and Kafka resources contradicts the scenario it is meant to
+drive (`INFRA-104`).
+
 ## 3. Acceptance matrix
 
 Legend: `local` = this host / k3d; `aws` / `gcp` = a real cloud target; `clean` = a
