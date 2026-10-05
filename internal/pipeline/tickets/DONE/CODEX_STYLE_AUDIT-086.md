@@ -44,3 +44,36 @@ Validate required storage configuration before connecting/subscribing to Kafka. 
 FEAT-132 owns the OCaml reference-app convergence; it does not cover this TypeScript defect. FEAT-124's completed wiring is historical context. No open matching owner was found.
 
 This filing records a source review, not a completed implementation or live qualification. Keep the implementation focused on the named boundary; preserve cancellation, cleanup, and established successful behavior.
+
+## Completion notes (2026-10-05)
+
+**Premise re-verified at pickup** on `origin/main`: `fulfillment_worker/src/index.ts` read
+`POSTGRES_URL` as optional, ran the transaction only `if (db)`, still returned `ACK`/
+`messagesTotal(ok)` when storage was absent, and gated `fulfilledTopic`, the outbox relay and the
+job runner on `db`.
+
+**Fix.** `src/config.ts` owns `requiredPostgresUrl()` (absent, empty and whitespace-only all throw
+before any Kafka work) alongside the existing `setting`/`intEnv`/`requiredRegistry` helpers.
+`src/handler.ts` owns `handleOrder(order, traceContext, deps)`: storage (`store`, `jobs`), logger,
+tracer and metrics are required arguments, the `if (db)` branch and the `!` non-null assertions are
+gone, and a failed transaction still returns `fail("db: …")` without acknowledging. `index.ts` now
+calls `requiredPostgresUrl()` first in `main()`, opens the pool, builds the job contract and passes
+both into the handler; `fulfilledTopic`, `runRelay` and `runJobs` are unconditional.
+
+**Tests.** `test/storage.test.ts`: `requiredPostgresUrl` throws for absent/empty/whitespace and
+returns the trimmed valid value; an already-applied fact (insertFulfilled returns false) returns
+`ACK`; a transaction that throws returns a non-`ACK` outcome. `npm run build -w order-svc -w
+fulfillment-worker` typechecks and the demo's `npm test` passes (11 DB-dependent cases self-skip
+locally; CI supplies Postgres). The existing `delivery.test.ts` integration case continues to prove
+state, outbox and job intent commit in one transaction.
+
+**Demo/example.** The runnable `demo_ts` fulfillment worker is the example and now requires
+storage; `examples/pluto/app/demo_ts/README.md` already lists `POSTGRES_URL` among the addresses
+`sol local run`/`sol deploy` inject, so no documentation change was needed.
+
+**Language parity (DEC-022).** Restored TS parity with the OCaml reference path, which already
+requires its database; recorded as already-equivalent for the fulfillment-worker storage
+capability.
+
+**Limitations.** The unit tests use structural fakes; the real single-transaction grouping is
+exercised by the existing `delivery.test.ts` against Postgres in CI.

@@ -1,18 +1,14 @@
 import { createServer } from "node:http";
 import { Kafka } from "kafkajs";
 import { Pushgateway } from "@prometheus-io/client";
-import type { SpanContext } from "@opentelemetry/api";
 
 import {
-  ACK,
   connectTopic,
-  fail,
   kafkaConfigFromEnv,
   publish,
   provisionDlqTopic,
   wireCrashListener,
   wrapEachMessage,
-  type Outcome,
 } from "@sol-fab/kafka";
 import { runJobs } from "@sol-fab/jobs";
 import { makeLokiPusher } from "@sol-fab/obs";
@@ -20,35 +16,13 @@ import { runRelay } from "@sol-fab/outbox";
 import { runWorker } from "@sol-fab/worker";
 import { ORDER_FULFILLED, ORDER_PLACED } from "@demo-ts/contract";
 import { decodeOrderFulfilled, decodeOrderPlaced } from "./wire.js";
-import { initTracing, startChildSpan } from "./tracing.js";
+import { initTracing } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
 import { makeOrderJobs } from "./jobs.js";
-import { fulfillOrder } from "./fulfill.js";
 import { FULFILLED_KIND } from "./outbox.js";
-
-function setting(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value ? value : undefined;
-}
-
-function intEnv(name: string, fallback: number): number {
-  const raw = setting(name);
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n)) {
-    throw new Error(`${name}=${JSON.stringify(raw)} is not a number`);
-  }
-  return n;
-}
-
-function requiredRegistry(): string {
-  const value = setting("SCHEMA_REGISTRY_URL");
-  if (!value) {
-    throw new Error("SCHEMA_REGISTRY_URL is not set: the outbox relay publishes through the registered contract");
-  }
-  return value;
-}
+import { intEnv, requiredPostgresUrl, requiredRegistry, setting } from "./config.js";
+import { handleOrder, type OrderHandlerDeps } from "./handler.js";
 
 const KAFKA_ENV = kafkaConfigFromEnv();
 const TOPIC_NAME = ORDER_PLACED.name;
@@ -58,7 +32,6 @@ const PARTITIONS = ORDER_PLACED.partitions;
 const METRICS_PORT = intEnv("METRICS_PORT", 9090);
 const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
-const POSTGRES_URL = setting("POSTGRES_URL");
 
 const log = makeLokiPusher({
   lokiUrl: LOKI_URL,
@@ -75,50 +48,22 @@ const {
   outboxOldestPendingSeconds,
 } = makeWorkerMetrics();
 
-async function handleOrder(
-  order: ReturnType<typeof decodeOrderPlaced>,
-  traceContext: SpanContext | undefined,
-): Promise<Outcome> {
-  const start = process.hrtime.bigint();
-  const span = startChildSpan(tracer, "fulfill_order", traceContext);
-  try {
-    log("info", "fulfilling order", {
-      order_id: order.order_id,
-      item: order.item,
-      quantity: String(order.quantity),
-    });
-
-    if (db) {
-      try {
-        await db.withTransaction(async (client) => {
-          await fulfillOrder(db!, client, order, orderJobs!);
-        });
-      } catch (err) {
-        messagesTotal.inc({ status: "fail" });
-        return fail(`db: ${String(err)}`);
-      }
-    }
-
-    console.log(`[worker] fulfilled  order=${order.order_id}  item=${order.item}`);
-    messagesTotal.inc({ status: "ok" });
-    return ACK;
-  } finally {
-    span.end();
-    messageDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);
-  }
-}
-
-let db: Awaited<ReturnType<typeof makeDb>> | undefined;
-let orderJobs: ReturnType<typeof makeOrderJobs> | undefined;
-
 async function main() {
-  db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
-  if (!db) console.log("[fulfillment-worker-ts] POSTGRES_URL not set — skipping DB storage");
-  orderJobs = makeOrderJobs(log, {
+  const postgresUrl = requiredPostgresUrl();
+  const db = await makeDb(postgresUrl);
+  const orderJobs = makeOrderJobs(log, {
     markConfirmed: async (orderId) => {
-      if (db) await db.markConfirmed(orderId);
+      await db.markConfirmed(orderId);
     },
   });
+  const deps: OrderHandlerDeps = {
+    store: db,
+    jobs: orderJobs,
+    log,
+    tracer,
+    messagesTotal,
+    messageDuration,
+  };
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", ...KAFKA_ENV });
 
@@ -130,9 +75,11 @@ async function main() {
     source: { name: TOPIC_NAME, partitions: PARTITIONS },
   });
 
-  const fulfilledTopic = db
-    ? await connectTopic({ kafka, registryUrl: requiredRegistry(), contract: ORDER_FULFILLED })
-    : undefined;
+  const fulfilledTopic = await connectTopic({
+    kafka,
+    registryUrl: requiredRegistry(),
+    contract: ORDER_FULFILLED,
+  });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
   await consumer.connect();
@@ -172,7 +119,7 @@ async function main() {
         groupId: GROUP_ID,
         sourceTopic: TOPIC_NAME,
       },
-      handler: ({ message, traceContext }) => handleOrder(message, traceContext),
+      handler: ({ message, traceContext }) => handleOrder(message, traceContext, deps),
     }),
   });
 
@@ -186,71 +133,64 @@ async function main() {
     : undefined;
 
   const outboxAbort = new AbortController();
-  const outboxRunning =
-    db && fulfilledTopic
-      ? runRelay({
-          pool: db.pool,
-          publish: async (publication) => {
-            if (publication.kind !== FULFILLED_KIND) {
-              throw new Error(
-                `outbox kind ${publication.kind} is not this relay's ${FULFILLED_KIND}; its owner publishes it`,
-              );
-            }
-            const event = decodeOrderFulfilled(JSON.parse(publication.payload));
-            const key = fulfilledTopic.key(event);
-            if (key !== publication.key) {
-              throw new Error(
-                `outbox key ${publication.key} does not match the contract key ${key}`,
-              );
-            }
-            await publish(producer, fulfilledTopic, event);
-          },
-          signal: outboxAbort.signal,
-          pollIntervalS: 0.5,
-          onPublication: (publication, status) => {
-            outboxPublishedTotal.inc({ kind: publication.kind, status });
-          },
-          onMetrics: (metrics) => {
-            outboxPending.reset();
-            for (const gauge of metrics.pendingByKind) {
-              outboxPending.set({ kind: gauge.kind }, gauge.value);
-            }
-            outboxOldestPendingSeconds.reset();
-            for (const gauge of metrics.oldestPendingSecondsByKind) {
-              outboxOldestPendingSeconds.set({ kind: gauge.kind }, gauge.value);
-            }
-          },
-          onWarning: (fields, message) => {
-            console.error(`[fulfillment-worker-ts] ${message}`, fields);
-            log("error", message, fields);
-          },
-        }).then((error) => {
-          if (error) console.error(`[fulfillment-worker-ts] outbox relay stopped: ${error.message}`);
-        })
-      : Promise.resolve();
+  const outboxRunning = runRelay({
+    pool: db.pool,
+    publish: async (publication) => {
+      if (publication.kind !== FULFILLED_KIND) {
+        throw new Error(
+          `outbox kind ${publication.kind} is not this relay's ${FULFILLED_KIND}; its owner publishes it`,
+        );
+      }
+      const event = decodeOrderFulfilled(JSON.parse(publication.payload));
+      const key = fulfilledTopic.key(event);
+      if (key !== publication.key) {
+        throw new Error(`outbox key ${publication.key} does not match the contract key ${key}`);
+      }
+      await publish(producer, fulfilledTopic, event);
+    },
+    signal: outboxAbort.signal,
+    pollIntervalS: 0.5,
+    onPublication: (publication, status) => {
+      outboxPublishedTotal.inc({ kind: publication.kind, status });
+    },
+    onMetrics: (metrics) => {
+      outboxPending.reset();
+      for (const gauge of metrics.pendingByKind) {
+        outboxPending.set({ kind: gauge.kind }, gauge.value);
+      }
+      outboxOldestPendingSeconds.reset();
+      for (const gauge of metrics.oldestPendingSecondsByKind) {
+        outboxOldestPendingSeconds.set({ kind: gauge.kind }, gauge.value);
+      }
+    },
+    onWarning: (fields, message) => {
+      console.error(`[fulfillment-worker-ts] ${message}`, fields);
+      log("error", message, fields);
+    },
+  }).then((error) => {
+    if (error) console.error(`[fulfillment-worker-ts] outbox relay stopped: ${error.message}`);
+  });
 
   const jobsAbort = new AbortController();
-  const jobsRunning = db
-    ? runJobs({
-        pool: db.pool,
-        contract: orderJobs!,
-        signal: jobsAbort.signal,
-        pollIntervalS: 0.5,
-        onOutcome: (outcome) => {
-          log("info", "job processed", {
-            kind: outcome.kind,
-            status: outcome.status,
-            duration_s: outcome.durationS.toFixed(3),
-          });
-        },
-        onWarning: (fields, message) => {
-          console.error(`[fulfillment-worker-ts] ${message}`, fields);
-          log("error", message, fields);
-        },
-      }).then((error) => {
-        if (error) console.error(`[fulfillment-worker-ts] jobs stopped: ${error.message}`);
-      })
-    : Promise.resolve();
+  const jobsRunning = runJobs({
+    pool: db.pool,
+    contract: orderJobs,
+    signal: jobsAbort.signal,
+    pollIntervalS: 0.5,
+    onOutcome: (outcome) => {
+      log("info", "job processed", {
+        kind: outcome.kind,
+        status: outcome.status,
+        duration_s: outcome.durationS.toFixed(3),
+      });
+    },
+    onWarning: (fields, message) => {
+      console.error(`[fulfillment-worker-ts] ${message}`, fields);
+      log("error", message, fields);
+    },
+  }).then((error) => {
+    if (error) console.error(`[fulfillment-worker-ts] jobs stopped: ${error.message}`);
+  });
 
   const lifecycle = runWorker({
     drain: async () => {
@@ -270,7 +210,7 @@ async function main() {
         metricsServer.close();
       },
       async () => {
-        if (db) await db.close();
+        await db.close();
       },
       () => shutdownTracing(),
     ],
