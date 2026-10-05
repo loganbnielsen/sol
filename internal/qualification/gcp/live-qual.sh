@@ -189,13 +189,18 @@ $TARGET_ENV:
 
       resources:
         app_db:
-          omit: true
-        events:
-          omit: true
+          size: small
+        events: {}
       services:
+        orders_svc: {}
+        fulfilment_worker: {}
+        order_svc: {}
+        fulfillment_worker: {}
         charge_svc:
           omit: true
         notify_worker:
+          omit: true
+        checkout_svc:
           omit: true
 YAML
   say "wrote target $TARGET ($TARGET_FILE)"
@@ -671,7 +676,9 @@ verify_bundle() {
   esac
   case "$APP_STATE" in
     failed)    required+=( "app-pods-all.txt" ) ;;
-    succeeded) required+=( "app-transaction.txt" "app-deploy.log" "app-pods.txt" ) ;;
+    succeeded)
+      required+=( "alpha-rows.txt" "app-transaction-ocaml.txt" "app-transaction-ts.txt" "app-deploy.log" )
+      ;;
     none) : ;;
   esac
   [ "${IDENTITY_STATE:-none}" = "ran" ] && required+=( "identity/identity.tsv" )
@@ -776,6 +783,7 @@ plan_only() { [ "${PLAN_ONLY:-0}" = "1" ]; }
 
 phase_cloud() {
   write_target
+  run cloud-check "$SOL" check || return 1
   local vars; mapfile -t vars < <(cloud_vars)
 
   reconcile_durable_root || return 1
@@ -1206,12 +1214,12 @@ app_registry() { printf '%s-docker.pkg.dev/%s/%s' "$REGION" "$PROJECT" "$CLUSTER
 
 app_kube_context() { printf 'gke_%s_%s_%s' "$PROJECT" "$REGION" "$CLUSTER"; }
 
-app_services() { printf '%s\n' charge_svc notify_worker; }
+app_services() { printf '%s\n' orders_svc fulfilment_worker order_svc fulfillment_worker; }
 
 app_helpers() {
   printf '%s\n' say app_registry app_kube_context app_services app_k8s_name app_context_path \
     app_image_ref build_app_images push_app_images app_ingress_summary app_load_balancer_address \
-    app_transaction
+    app_orders_transaction
 }
 
 app_postgres_url() {
@@ -1245,8 +1253,10 @@ app_k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 
 app_context_path() {
   case "$1" in
-    charge_svc) printf 'app/payments/charge_svc' ;;
-    notify_worker) printf 'app/comms/notify_worker' ;;
+    orders_svc) printf 'app/payments/orders_svc' ;;
+    fulfilment_worker) printf 'app/comms/fulfilment_worker' ;;
+    order_svc) printf 'app/demo_ts/order_svc' ;;
+    fulfillment_worker) printf 'app/demo_ts/fulfillment_worker' ;;
     *) return 1 ;;
   esac
 }
@@ -1286,21 +1296,24 @@ $TARGET_ENV:
         events: {}
 
       services:
-        charge_svc: {}
-        notify_worker: {}
+        orders_svc: {}
+        fulfilment_worker: {}
+        order_svc: {}
+        fulfillment_worker: {}
+        charge_svc:
+          omit: true
+        notify_worker:
+          omit: true
         checkout_svc:
-          omit: true
-        order_svc:
-          omit: true
-        fulfillment_worker:
           omit: true
 YAML
   say "wrote the app target $TARGET ($TARGET_FILE)"
   say "  no profile is selected: this row qualifies the application path, and the profile's"
   say "  guarantees are not claimed by it (the production profile refuses gcp today)"
-  say "  charge_svc and notify_worker are the pair whose transaction this row exercises;"
-  say "  checkout_svc (ingress_host outside any zone Sol can issue for) and the two TypeScript"
-  say "  services are omitted, so the omitted ones are not silently deployed and unverified"
+  say "  orders_svc/fulfilment_worker (OCaml) and order_svc/fulfillment_worker (TypeScript)"
+  say "  are the alpha scenario this row exercises in both language namespaces; the legacy"
+  say "  charge_svc/notify_worker pair and checkout_svc (ingress_host outside any zone Sol"
+  say "  can issue for) are omitted, so the omitted ones are not silently deployed unverified"
 }
 
 build_app_images() {
@@ -1332,56 +1345,64 @@ app_load_balancer_address() {
     -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true
 }
 
-app_transaction() {
-  local ns=pluto-payments port=18080
-  kubectl -n "$ns" get pods -o wide >"$LOG_DIR/app-pods.txt" 2>&1 || return 1
-  kubectl -n "$ns" get events --sort-by=.lastTimestamp >"$LOG_DIR/app-events.txt" 2>&1 || true
+app_orders_transaction() {
+  local ns="$1" service="$2" label="$3" port="$4"
+  local transcript="$LOG_DIR/app-transaction-$label.txt"
+  local status_file="$LOG_DIR/app-order-status-$label.txt"
+  local order_id="ord-$label-$(date -u +%s)-$$"
+  kubectl -n "$ns" get pods -o wide >"$LOG_DIR/app-pods-$label.txt" 2>&1 || return 1
+  kubectl -n "$ns" get events --sort-by=.lastTimestamp >"$LOG_DIR/app-events-$label.txt" 2>&1 || true
   kubectl -n "$ns" logs -l app.kubernetes.io/component=svc --tail=80 --all-containers=true \
-    >"$LOG_DIR/app-charge-svc.log" 2>&1 || true
+    >"$LOG_DIR/app-svc-$label.log" 2>&1 || true
   kubectl -n "$ns" logs -l app.kubernetes.io/component=worker --tail=80 --all-containers=true \
-    >"$LOG_DIR/app-notify-worker.log" 2>&1 || true
-  kubectl -n "$ns" port-forward "svc/$(app_k8s_name charge_svc)" "$port:80" \
-    >"$LOG_DIR/app-port-forward.log" 2>&1 &
+    >"$LOG_DIR/app-worker-$label.log" 2>&1 || true
+  kubectl -n "$ns" port-forward "svc/$service" "$port:80" \
+    >"$LOG_DIR/app-port-forward-$label.log" 2>&1 &
   local forwarder=$!
+  local attempts="${APP_READBACK_ATTEMPTS:-12}" interval="${APP_READBACK_INTERVAL:-5}"
   local attempt=0
-  until curl -fsS -m 5 "localhost:$port/health" >"$LOG_DIR/app-health.txt" 2>&1; do
+  until curl -fsS -m 5 "localhost:$port/health" >"$LOG_DIR/app-health-$label.txt" 2>&1; do
     attempt=$((attempt + 1))
-    if [ "$attempt" -ge 12 ]; then
-      say "  the service never answered /health over the port-forward"
+    if [ "$attempt" -ge "$attempts" ]; then
+      say "  $label: the service never answered /health over the port-forward"
       kill "$forwarder" 2>/dev/null || true
       return 1
     fi
-    sleep 5
+    sleep "$interval"
   done
   {
-    printf 'health: %s\n' "$(cat "$LOG_DIR/app-health.txt")"
-    printf 'charge: '
-    curl -fsS -m 30 -X POST "localhost:$port/charges" \
+    printf 'namespace: %s  service: %s  language: %s\n' "$ns" "$service" "$label"
+    printf 'health: %s\n' "$(cat "$LOG_DIR/app-health-$label.txt")"
+    printf 'order: '
+    curl -fsS -m 30 -X POST "localhost:$port/orders" \
       -H 'Content-Type: application/json' \
-      -d '{"customer_id":"cus_qualification","amount_cents":4999,"currency":"usd"}' \
-      >"$LOG_DIR/app-charge.txt" 2>&1 && cat "$LOG_DIR/app-charge.txt" || printf 'FAILED\n'
+      -d "{\"order_id\":\"$order_id\",\"item\":\"widget\",\"quantity\":1}" \
+      >"$LOG_DIR/app-order-$label.txt" 2>&1 && cat "$LOG_DIR/app-order-$label.txt" || printf 'FAILED\n'
     printf '\n'
-  } >"$LOG_DIR/app-transaction.txt" 2>&1
-  local charge_id
-  charge_id="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$LOG_DIR/app-charge.txt" 2>/dev/null | head -1)"
+  } >"$transcript" 2>&1
+  if ! grep -qF "$order_id" "$LOG_DIR/app-order-$label.txt" 2>/dev/null; then
+    say "  $label: the order response did not carry the submitted order id ($order_id)"
+    kill "$forwarder" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "$status_file"
   attempt=0
-  until [ -n "$charge_id" ] && grep -qF "$charge_id" "$LOG_DIR/app-notifications.txt" 2>/dev/null; do
+  until grep -qE '"status":"(fulfilled|confirmed)"' "$status_file" 2>/dev/null; do
     attempt=$((attempt + 1))
-    if [ "$attempt" -ge 12 ]; then
-      say "  the worker never wrote the charge back within 60s: $charge_id absent from /notifications"
-      curl -sS -m 20 "localhost:$port/notifications" >"$LOG_DIR/app-notifications.txt" 2>&1 || true
-      printf 'notifications: %s\n' "$(cat "$LOG_DIR/app-notifications.txt" 2>/dev/null)" \
-        >>"$LOG_DIR/app-transaction.txt"
+    if [ "$attempt" -ge "$attempts" ]; then
+      say "  $label: the order never reached fulfilled or confirmed in time: $order_id"
+      curl -sS -m 20 "localhost:$port/orders/$order_id" >"$status_file" 2>&1 || true
+      printf 'final read-back: %s\n' "$(cat "$status_file" 2>/dev/null)" >>"$transcript"
       kill "$forwarder" 2>/dev/null || true
       return 1
     fi
-    sleep 5
-    curl -fsS -m 20 "localhost:$port/notifications" >"$LOG_DIR/app-notifications.txt" 2>&1 || true
+    sleep "$interval"
+    curl -fsS -m 20 "localhost:$port/orders/$order_id" >"$status_file" 2>&1 || true
   done
   {
-    printf 'notifications: %s\n' "$(cat "$LOG_DIR/app-notifications.txt")"
-    printf 'the worker consumed the charge and wrote it back: %s\n' "$charge_id"
-  } >>"$LOG_DIR/app-transaction.txt" 2>&1
+    printf 'read-back: %s\n' "$(cat "$status_file")"
+    printf 'the worker effect is visible to the service: %s reached fulfilled or confirmed\n' "$order_id"
+  } >>"$transcript" 2>&1
   kill "$forwarder" 2>/dev/null || true
   wait "$forwarder" 2>/dev/null || true
   app_ingress_summary
@@ -1436,15 +1457,33 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! run app-transaction bash -c "$(declare -f $(app_helpers)); app_transaction"; then
+  local rows="$LOG_DIR/alpha-rows.txt"
+  : >"$rows"
+  if ! run app-transaction-ocaml bash -c \
+      "$(declare -f $(app_helpers)); app_orders_transaction pluto-payments orders-svc ocaml 18080"; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle
     return 1
   fi
+  printf 'OCaml\tB1\trun\tPOST /orders accepted the order and the response carried the submitted id\n' >>"$rows"
+  printf 'OCaml\tB4\trun\tthe order read back as fulfilled or confirmed through the service\n' >>"$rows"
+  printf 'OCaml\tB3\tnot-run\tthe relay row needs Kafka-topic inspection this HTTP phase does not perform\n' >>"$rows"
+  if ! run app-transaction-ts bash -c \
+      "$(declare -f $(app_helpers)); app_orders_transaction pluto-demo-ts order-svc ts 18081"; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  printf 'TypeScript\tB1\trun\tPOST /orders accepted the order and the response carried the submitted id\n' >>"$rows"
+  printf 'TypeScript\tB4\trun\tthe order read back as fulfilled or confirmed through the service\n' >>"$rows"
+  printf 'TypeScript\tB3\tnot-run\tthe relay row needs Kafka-topic inspection this HTTP phase does not perform\n' >>"$rows"
   APP_STATE=succeeded
-  say "the application transaction completed: a charge was accepted, the worker consumed it, and"
-  say "the service read the worker's row back out of PostgreSQL"
+  say "the alpha orders scenario completed in both language namespaces: the OCaml orders-svc in"
+  say "pluto-payments and the TypeScript order-svc in pluto-demo-ts each accepted an order and"
+  say "read its fulfilment back through the transport; the rows each namespace ran are recorded"
+  say "in alpha-rows.txt (B1 and B4 asserted; B3 needs broker inspection this phase does not do)"
   finalise_bundle
 }
 

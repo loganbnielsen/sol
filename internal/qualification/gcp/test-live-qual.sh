@@ -534,6 +534,17 @@ lacks "no destroy on the success path (the delegation boundary keeps the substra
 lacks "the cloud phase never runs an application deploy" "sol deploy" "$TMP/cloud-ok.argv"
 has "the target is written for the run" "cluster_name" "$TARGET_FILE"
 has "the generated target asks for TLS, which DEC-055 made installable on GCP" "cluster_issuer: letsencrypt-staging" "$TARGET_FILE"
+has "the cloud target declares the app database the enabled units use" "app_db:" "$TARGET_FILE"
+has "and the events resource" "events: {}" "$TARGET_FILE"
+has "and the OCaml units the alpha scenario runs" "orders_svc: {}" "$TARGET_FILE"
+has "and the TypeScript units" "order_svc: {}" "$TARGET_FILE"
+has "Sol validates the declarations in this phase" "sol check" "$TMP/cloud-ok.argv"
+if [ "$(awk '/sol check/{c=NR} /sol cloud apply/{a=NR} END{print (c && a && c<a) ? "yes" : "no"}' \
+    "$TMP/cloud-ok.argv")" = "yes" ]; then
+  ok "before it mutates the provider"
+else
+  no "before it mutates the provider" "check before apply" "wrong order"
+fi
 present "$TMP/cloud-ok.logs/state/cloud.tfstate" "the cloud state snapshot is in the bundle (H3)"
 present "$TMP/cloud-ok.logs/state/platform.tfstate" "the platform state snapshot is in the bundle (H3)"
 if [ -s "$TMP/cloud-ok.logs/sol-runs/cloud-apply-20260925T000000Z-1234/phase.log" ]; then
@@ -587,22 +598,41 @@ printf '\nscenario: the application rows build, push, deploy and verify the tran
 mv "$TMP/bin/curl" "$TMP/bin/curl.delegation"
 cat >"$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"${CURL_LOG:-/dev/null}"
 case " $* " in
-  *"/charges"*) printf '{"id":"ch_qual01","accepted":true}' ;;
-  *"/notifications"*) printf '[{"id":"ch_qual01","amount_cents":4999}]' ;;
+  *"/orders/"*)
+    id="${!#}"
+    printf '{"order_id":"%s","status":"confirmed"}' "$id"
+    ;;
+  *"/orders"*)
+    body=""
+    prev=""
+    for arg in "$@"; do
+      [ "$prev" = "-d" ] && body="$arg"
+      prev="$arg"
+    done
+    id="$(printf '%s' "$body" | sed -n 's/.*"order_id":"\([^"]*\)".*/\1/p')"
+    printf '{"order_id":"%s","status":"accepted"}' "$id"
+    ;;
   *) printf 'ok' ;;
 esac
 STUB
 chmod +x "$TMP/bin/curl"
 export DOCKER_LOG="$TMP/app-docker.argv"
 : >"$DOCKER_LOG"
+export CURL_LOG="$TMP/app-curl.argv"
+: >"$CURL_LOG"
 STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-ok app
 mv "$TMP/bin/curl.delegation" "$TMP/bin/curl"
 is "the app phase exits 0 when every step succeeds" "$(cat "$TMP/app-ok.rc")" "0"
 has "it builds each image from that service's own Dockerfile" \
-  "docker build -f app/payments/charge_svc/Dockerfile" "$DOCKER_LOG"
+  "docker build -f app/payments/orders_svc/Dockerfile" "$DOCKER_LOG"
+has "including the TypeScript namespace's service from its own Dockerfile" \
+  "docker build -f app/demo_ts/order_svc/Dockerfile" "$DOCKER_LOG"
 has "and pushes it into the target's Artifact Registry under the workspace's name" \
-  "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/charge-svc:qual-" "$DOCKER_LOG"
+  "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/orders-svc:qual-" "$DOCKER_LOG"
+has "and the TypeScript namespace's image too" \
+  "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/order-svc:qual-" "$DOCKER_LOG"
 lacks "the harness publishes no migration runner: the release bundle pins its own" \
   "sol-migration-runner" "$DOCKER_LOG"
 has "the workspace's migrations are applied before the deploy" "migrate apply" "$TMP/app-ok.argv"
@@ -624,19 +654,68 @@ lacks "the app target selects no profile, so the row claims none of its guarante
 has "the target declares the project the residue probe needs" "project_id: sol-qualification" "$TARGET_FILE"
 has "the target names the cluster's own kube context" \
   "kube_context: gke_sol-qualification_us-central1_test-cluster" "$TARGET_FILE"
-has "the target declares the resource pair the transaction uses" "events: {}" "$TARGET_FILE"
-has "and the service pair whose transaction it exercises" "charge_svc: {}" "$TARGET_FILE"
+has "the target declares the resource pair the scenario uses" "events: {}" "$TARGET_FILE"
+has "and the OCaml unit pair the scenario exercises" "orders_svc: {}" "$TARGET_FILE"
+has "and the TypeScript unit pair too" "order_svc: {}" "$TARGET_FILE"
+lacks "the legacy charge pair is omitted" "charge_svc: {}" "$TARGET_FILE"
 has "the service whose ingress host is outside any zone Sol can issue for is omitted" "checkout_svc:" "$TARGET_FILE"
-has "and so are the two TypeScript services" "fulfillment_worker:" "$TARGET_FILE"
-present "$TMP/app-ok.logs/app-transaction.txt" "the transaction's evidence is in the bundle"
-has "the transaction records the worker's write-back, not just an accepted charge" \
-  "the worker consumed the charge" "$TMP/app-ok.logs/app-transaction.txt"
+has "and the legacy pair is omitted rather than silently deployed" "charge_svc:" "$TARGET_FILE"
+present "$TMP/app-ok.logs/app-transaction-ocaml.txt" "the OCaml transaction's evidence is in the bundle"
+has "the OCaml transaction records the worker's write-back, not just an accepted order" \
+  "fulfilled or confirmed" "$TMP/app-ok.logs/app-transaction-ocaml.txt"
+present "$TMP/app-ok.logs/app-transaction-ts.txt" "the TypeScript transaction's evidence is in the bundle"
+has "the TypeScript transaction records the worker's write-back too" \
+  "fulfilled or confirmed" "$TMP/app-ok.logs/app-transaction-ts.txt"
+present "$TMP/app-ok.logs/alpha-rows.txt" "the alpha rows each namespace ran are recorded"
+has "the OCaml namespace's row mapping is recorded" "OCaml" "$TMP/app-ok.logs/alpha-rows.txt"
+has "and the TypeScript namespace's" "TypeScript" "$TMP/app-ok.logs/alpha-rows.txt"
+has "and B1 is marked run for the OCaml namespace" "$(printf 'OCaml\tB1\trun')" \
+  "$TMP/app-ok.logs/alpha-rows.txt"
+has "and for the TypeScript namespace" "$(printf 'TypeScript\tB1\trun')" \
+  "$TMP/app-ok.logs/alpha-rows.txt"
+has "the scenario drives the orders path" "/orders" "$CURL_LOG"
+lacks "and never the legacy charges path the old app phase exercised" "/charges" "$CURL_LOG"
+lacks "nor its notification read-back" "/notifications" "$CURL_LOG"
 present "$TMP/app-ok.logs/app-runtime-secrets.txt" "the operator's runtime secrets step is recorded"
 has "the database URL is redacted, because the bundle must never carry the password" "://***@" \
   "$TMP/app-ok.logs/app-runtime-secrets.txt"
 lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-runtime-secrets.txt"
 has "the API key the app's contract requires is accounted for" "SOL_API_KEY:" \
   "$TMP/app-ok.logs/app-runtime-secrets.txt"
+
+printf '\nscenario: a stalled orders read-back fails the phase, so success cannot be manufactured\n'
+export CURL_LOG="$TMP/app-stall.curl"
+: >"$CURL_LOG"
+mv "$TMP/bin/curl" "$TMP/bin/curl.orders"
+cat >"$TMP/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"${CURL_LOG:-/dev/null}"
+case " $* " in
+  *"/orders/"*) printf '{"status":"pending"}' ;;
+  *"/orders"*)
+    body=""
+    prev=""
+    for arg in "$@"; do
+      [ "$prev" = "-d" ] && body="$arg"
+      prev="$arg"
+    done
+    id="$(printf '%s' "$body" | sed -n 's/.*"order_id":"\([^"]*\)".*/\1/p')"
+    printf '{"order_id":"%s","status":"accepted"}' "$id"
+    ;;
+  *) printf 'ok' ;;
+esac
+STUB
+chmod +x "$TMP/bin/curl"
+export DOCKER_LOG="$TMP/app-stall.docker"
+: >"$DOCKER_LOG"
+STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-stall app \
+  APP_READBACK_ATTEMPTS=2 APP_READBACK_INTERVAL=1
+mv "$TMP/bin/curl.orders" "$TMP/bin/curl"
+refused app-stall "a read-back that never reaches fulfilled fails the phase"
+lacks "and no alpha row is recorded as run" "$(printf 'B1\trun')" \
+  "$TMP/app-stall.logs/alpha-rows.txt"
+has "the failure names the order that never completed" "never reached fulfilled or confirmed" \
+  "$TMP/app-stall.logs/app-transaction-ocaml.log"
 
 printf '\nscenario: adversarial — a bundle that cannot pin Sol stops the run before Sol is asked to move anything\n'
 export DOCKER_LOG="$TMP/app-runner-tag.docker"
