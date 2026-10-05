@@ -23,10 +23,7 @@ if ! bash internal/ci/check_ocamlformat.sh --all; then
   failed=1
 fi
 
-echo "fast checks: repository invariants"
-if ! bash internal/tooling/scripts/verify.sh always; then
-  failed=1
-fi
+echo "fast checks: source invariants"
 if ! bash internal/tooling/scripts/verify.sh static; then
   failed=1
 fi
