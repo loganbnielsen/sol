@@ -776,6 +776,49 @@ let test_http_verified_token_boundaries _env () =
     (status [ "exp", `String "soon" ])
 ;;
 
+let test_reports_handler_failure _env () =
+  let reported = ref [] in
+  let report_error ~operation ~exn =
+    reported := (operation, Printexc.to_string exn) :: !reported
+  in
+  let response =
+    Service.For_testing.dispatch
+      ~report_error
+      ~routes:[ Route.get "/boom" ~auth:`Public (fun _ -> failwith "handler boom") ]
+      (Http.Request.make ~meth:`GET "/boom")
+      (Cohttp_eio.Body.of_string "")
+  in
+  Windtrap.equal Windtrap.int ~msg:"generic 500" 500 response.Response.status;
+  match !reported with
+  | [ (operation, message) ] ->
+    Windtrap.equal Windtrap.string ~msg:"route operation" "/boom" operation;
+    Windtrap.is_true ~msg:"cause retained" (String.length message > 0)
+  | _ -> Windtrap.failf "expected one diagnostic, got %d" (List.length !reported)
+;;
+
+let test_reports_outer_dispatch_failure _env () =
+  let reported = ref [] in
+  let report_error ~operation ~exn =
+    reported := (operation, Printexc.to_string exn) :: !reported
+  in
+  let response =
+    Service.For_testing.respond_or_500 ~report_error (fun () -> failwith "outer boom")
+  in
+  Windtrap.equal Windtrap.int ~msg:"generic 500" 500 response.Response.status;
+  match !reported with
+  | [ (operation, message) ] ->
+    Windtrap.equal Windtrap.string ~msg:"dispatch operation" "dispatch" operation;
+    Windtrap.is_true ~msg:"cause retained" (String.length message > 0)
+  | _ -> Windtrap.failf "expected one diagnostic, got %d" (List.length !reported)
+;;
+
+let test_fallback_returns_generic_500 _env () =
+  let response =
+    Service.For_testing.respond_or_500 (fun () -> failwith "fallback boom")
+  in
+  Windtrap.equal Windtrap.int ~msg:"fallback generic 500" 500 response.Response.status
+;;
+
 let () =
   Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
@@ -867,6 +910,18 @@ let () =
           ; Windtrap.test
               "api key file read failure is startup error"
               (test_api_key_file_error_is_startup_error env)
+          ]
+      ; Windtrap.group
+          "failure diagnostics"
+          [ Windtrap.test
+              "handler failure reported once"
+              (test_reports_handler_failure env)
+          ; Windtrap.test
+              "outer dispatch failure reported once"
+              (test_reports_outer_dispatch_failure env)
+          ; Windtrap.test
+              "fallback returns a generic 500"
+              (test_fallback_returns_generic_500 env)
           ]
       ])
 ;;

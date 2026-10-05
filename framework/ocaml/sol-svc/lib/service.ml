@@ -73,7 +73,14 @@ let body_result headers body max_bytes =
   | Some s -> Ok s
 ;;
 
+type error_reporter = operation:string -> exn:exn -> unit
+
+let stderr_error_reporter ~operation ~exn =
+  Printf.eprintf "sol-svc: %s: %s\n%!" operation (Printexc.to_string exn)
+;;
+
 let dispatch_unguarded
+      ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
       ~routes
@@ -170,25 +177,24 @@ let dispatch_unguarded
              | Eio.Cancel.Cancelled _ as exn -> raise exn
              | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
              | exn ->
-               Printf.eprintf
-                 "sol-svc: handler exception: %s\n%!"
-                 (Printexc.to_string exn);
+               report_error ~operation:(Route.pattern_to_string route.Route.pattern) ~exn;
                Ok (Response.internal_error "Internal server error")
            in
            (match result with
             | Ok r | Error r -> r)))
 ;;
 
-let respond_or_500 f =
+let respond_or_500 ?(report_error = stderr_error_reporter) f =
   try f () with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
   | exn ->
-    Printf.eprintf "sol-svc: request failed: %s\n%!" (Printexc.to_string exn);
+    report_error ~operation:"dispatch" ~exn;
     Response.internal_error "Internal server error"
 ;;
 
 let dispatch
+      ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
       ~routes
@@ -200,8 +206,9 @@ let dispatch
       req
       body
   =
-  respond_or_500 (fun () ->
+  respond_or_500 ~report_error (fun () ->
     dispatch_unguarded
+      ~report_error
       ?read_api_key
       ?fetch_jwks
       ~routes
@@ -215,10 +222,11 @@ let dispatch
 ;;
 
 module For_testing = struct
-  let respond_or_500 = respond_or_500
+  let respond_or_500 ?report_error = respond_or_500 ?report_error
 
-  let dispatch ?read_api_key ?fetch_jwks ~routes req body =
+  let dispatch ?report_error ?read_api_key ?fetch_jwks ~routes req body =
     dispatch
+      ?report_error
       ?read_api_key
       ?fetch_jwks
       ~routes
@@ -354,6 +362,16 @@ module Make (H : HANDLER) = struct
     in
     let ot_eio = Option.map Sol_obs.obs_eio ot in
     let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
+    let report_error =
+      match ot with
+      | Some o ->
+        fun ~operation ~exn ->
+          Sol_obs.log_error
+            o
+            ~fields:[ "operation", operation; "exception", Printexc.to_string exn ]
+            "service request failed"
+      | None -> stderr_error_reporter
+    in
     let metrics_fns =
       match ot_eio with
       | None -> None
@@ -420,6 +438,7 @@ module Make (H : HANDLER) = struct
            in
            let sol_resp =
              dispatch
+               ~report_error
                ~fetch_jwks
                ~routes:H.routes
                ~metrics_renderer
@@ -474,8 +493,7 @@ module Make (H : HANDLER) = struct
            (fun () ->
               Cohttp_eio.Server.run
                 ~stop:server_stop
-                ~on_error:(fun e ->
-                  Printf.eprintf "sol-svc: %s\n%!" (Printexc.to_string e))
+                ~on_error:(fun e -> report_error ~operation:"transport" ~exn:e)
                 socket
                 server)
            (fun () ->

@@ -6,6 +6,10 @@ type run_error = [ `Config of string ]
 
 val run_error_to_string : run_error -> string
 
+type error_reporter = operation:string -> exn:exn -> unit
+
+val stderr_error_reporter : error_reporter
+
 module Make (H : HANDLER) : sig
   val run
     :  env:
@@ -44,10 +48,11 @@ val run
   -> (unit, run_error) result
 
 module For_testing : sig
-  val respond_or_500 : (unit -> Response.t) -> Response.t
+  val respond_or_500 : ?report_error:error_reporter -> (unit -> Response.t) -> Response.t
 
   val dispatch
-    :  ?read_api_key:(unit -> string option)
+    :  ?report_error:error_reporter
+    -> ?read_api_key:(unit -> string option)
     -> ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
     -> routes:Route.t list
     -> Http.Request.t
