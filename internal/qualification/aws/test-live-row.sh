@@ -114,6 +114,42 @@ case "$1 $2" in
     mkdir -p "$(dirname "$dest")"
     printf '{"outputs":{"postgres_url":{"value":"postgres://user:qual-secret@db.example.test:5432/pluto"}}}\n' >"$dest"
     ;;
+  "ec2 describe-instances")
+    case " $* " in
+      *"--output json"*)
+        if [ "${STUB_INVENTORY_UNREADABLE:-0}" = "1" ]; then
+          printf 'Unable to locate credentials\n' >&2
+          exit 255
+        fi
+        if [ "${STUB_LIVE_INSTANCE:-0}" = "1" ]; then
+          printf '[{"id":"i-live","state":"running"}]\n'
+        elif [ "${STUB_TERMINATED_INSTANCE:-0}" = "1" ]; then
+          printf '[{"id":"i-dead","state":"terminated"}]\n'
+        else
+          printf '[]\n'
+        fi
+        exit 0
+        ;;
+    esac
+    ;;
+  "ec2 describe-nat-gateways")
+    case " $* " in
+      *"--output json"*)
+        if [ "${STUB_INVENTORY_UNREADABLE:-0}" = "1" ]; then
+          printf 'Unable to locate credentials\n' >&2
+          exit 255
+        fi
+        if [ "${STUB_LIVE_NAT:-0}" = "1" ]; then
+          printf '[{"id":"nat-live","state":"available"}]\n'
+        elif [ "${STUB_DELETED_NAT:-0}" = "1" ]; then
+          printf '[{"id":"nat-dead","state":"deleted"}]\n'
+        else
+          printf '[]\n'
+        fi
+        exit 0
+        ;;
+    esac
+    ;;
   "eks describe-cluster")
     case " $* " in
       *" cluster.endpoint "*) printf '%s\n' "${STUB_CLUSTER_ENDPOINT:-https://10.0.0.1}" ;;
@@ -591,6 +627,36 @@ has "and the inventory carries the attempt, target and state key" "attempt=$ATTE
 has "with the target" "target=qualreg/aws/us-east-1" "$TMP/identitydestroy.logs/aws-inventory.txt"
 has "and the state key" "state_key=sol/qualreg/aws/us-east-1/cloud.tfstate" \
   "$TMP/identitydestroy.logs/aws-inventory.txt"
+
+printf '\nscenario: terminal records do not prevent an ABSENT verdict\n'
+run_phase terminal-residue verify STUB_TERMINATED_INSTANCE=1 STUB_DELETED_NAT=1
+is "exit 0" "$(cat "$TMP/terminal-residue.rc")" "0"
+has "a terminated instance reads ABSENT" "ec2-instances: ABSENT" \
+  "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
+has "a deleted NAT gateway reads ABSENT" "nat-gateways: ABSENT" \
+  "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
+lacks "and nothing is reported PRESENT" "PRESENT" \
+  "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
+has "the raw terminal record is retained as evidence" '"state":"terminated"' \
+  "$TMP/terminal-residue.logs/aws-inventory.txt"
+
+printf '\nscenario: live resources prevent an ABSENT verdict\n'
+run_phase live-residue verify STUB_LIVE_INSTANCE=1
+refused live-residue "a live instance fails the verification"
+has "a live instance reads PRESENT" "ec2-instances: PRESENT" \
+  "$TMP/live-residue.logs/aws-inventory-verdict.txt"
+run_phase live-nat verify STUB_LIVE_NAT=1
+refused live-nat "a live NAT gateway fails the verification"
+has "a live NAT gateway reads PRESENT" "nat-gateways: PRESENT" \
+  "$TMP/live-nat.logs/aws-inventory-verdict.txt"
+
+printf '\nscenario: an unreadable inventory is UNKNOWN, never absence\n'
+run_phase unreadable-residue verify STUB_INVENTORY_UNREADABLE=1
+refused unreadable-residue "an unreadable inventory fails the verification"
+has "the unreadable class reads UNKNOWN" "ec2-instances: UNKNOWN" \
+  "$TMP/unreadable-residue.logs/aws-inventory-verdict.txt"
+lacks "and is never reported ABSENT" "ec2-instances: ABSENT" \
+  "$TMP/unreadable-residue.logs/aws-inventory-verdict.txt"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then
