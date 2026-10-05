@@ -1,5 +1,3 @@
-> **Work tracking:** GitHub Issues and pull requests are the authority for new work. The repository-local ticket directories are transitional legacy state being retired by META-001/META-002. Do not create new repository tickets, premise probes, ticket dependencies, or ticket-workflow rules. Existing in-flight ticket work may finish normally until the migration is reconciled; do not duplicate it. Branches/worktrees are ordinary Git tools and do not need ticket-derived identity.
-
 # Sol — Agent Context
 
 This is the repo's tool-neutral agent context file. It was `CLAUDE.md`; it is
@@ -25,125 +23,13 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in GitHub Issues.
 
 Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
-## Ticket system
+## Work tracking
 
-Work is tracked in `internal/pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter.
-
-```
-internal/pipeline/tickets/
-  BACKLOG/                  ← captured but not yet prioritised
-  READY_FOR_ENGINEERING/    ← actionable; pick up with /work — covers "not started"
-                               through "PR open, in review": GitHub's own open-PR/
-                               review/CI state already tracks that, no local
-                               directory duplicates it
-  DONE/                     ← merged
-```
-
-**Implementation state machine (REFAC-077):** `READY_FOR_ENGINEERING` → `DONE`.
-Triage may promote or demote between `BACKLOG` and `READY_FOR_ENGINEERING`, and
-reverting a merged implementation returns `DONE` to `READY_FOR_ENGINEERING`.
-A ticket may also be filed, implemented and closed in one PR — `BACKLOG` → `DONE` in
-one branch — when the work needs no queue state in between.
-There is no separate "in progress," "in review," "ready to merge," or
-"blocked by performance" directory any more.
-
-Every `internal/pipeline/tickets/` change goes through a PR. New findings are created in
-`BACKLOG/` or `READY_FOR_ENGINEERING/` on the audit/filing branch; promotions,
-corrections, and other bookkeeping use their own branches. An implementation
-branch moves its own ticket from `READY_FOR_ENGINEERING/` to `DONE/` in the
-final commit, so `gh pr merge --squash` carries the code and ticket completion
-into `main` atomically. Reverting that squash commit reverses the move too.
-
-Merge readiness lives on the PR, not a ticket directory. Routine refactors,
-documentation, and filings use focused author validation and required green CI;
-no review marker or approving-review count is required. Select targeted review
-for infrastructure, security, lifecycle/concurrency, substantial API changes, or
-an operator request, and keep the PR draft until actionable findings are resolved.
-One satisfactory targeted pass is sufficient. `soldev pipeline review` still
-posts optional informational verdicts; they are not universal merge gates.
-
-**Auto-merge is the default.** Queue `soldev pipeline merge <id>` as soon as
-a PR is non-draft with its prerequisites resolved; GitHub lands it the moment
-required checks pass. `soldev pipeline merge --pr <n>` does the same for a PR that
-names no ticket. Waiting for green and then merging by hand is the exception,
-not the routine: it is the opt-in `--immediate`, allowed only when required checks
-are already green. The command pins the head SHA, rejects drafts/unresolved
-prerequisites, uses no admin bypass, and preserves local worktrees. Whoever queues
-a merge monitors it to completion and reports whether it actually merged
-(§ *Shepherding PRs to merge*). Reverting the squash returns its ticket to READY
-atomically.
-
-**Ticket frontmatter fields:** `id`, `type` (refactor | feature | bug | audit-finding | decision | ux-finding | dogfood-finding | docs-finding | code-layer-finding | verification | release | infra | performance | documentation), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
-Do not add a `status:` field — the directory encodes status.
-
-**Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
-
-**Tickets are for work that can finish.** A standing goal that never closes — "qualify the production profile on a provider", as HARDEN-002 and HARDEN-004 were — does not belong in `READY_FOR_ENGINEERING/`, where `/work` treats it as actionable and later work gets credited to it instead of to the ticket it implements. Standing qualification goals live in the qualification area (`internal/qualification/README.md`, and the matrix that carries each row's claim and current verdict); each live run is its own ticket, gated in `BACKLOG/` on explicit authorization. When work implements a ticket, name *that* ticket on the branch or in the commit subject, so the Ticket-move guard moves it.
-
-**Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` **Every ticket id on that line becomes a dependency**, whatever prose surrounds it — so a mention like `Implemented by FEAT-059` or `Related: DEC-016` creates a dependency you did not intend, and two tickets referring to each other that way deadlock. Put other mentions on their own line. The field is exactly one line: a wrapped continuation is never parsed, so `soldev pipeline validate` rejects it (BUG-114) — put commentary in its own paragraph. `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `internal/pipeline/tickets/DONE/` stays blocked; if a cycle does form, `soldev pipeline check` and `pipeline ls` report it as a cycle rather than as ordinary waiting.
-
-**Ticket titles:** The PR title and the listing summary both come from the ticket body — an explicit `title:` frontmatter field when present, otherwise the first line that is not a bold-labelled field, with Markdown heading markers stripped. So either state `title:` or open the body with a real title sentence. Two ways this goes wrong, both observed: opening with a paragraph of argument produces a PR subject that reads as a sentence, and opening with a labelled field (any `**Label:**`, not just `**Depends on:**`) makes that field the displayed summary.
-
-**Ticket premises:** A ticket is written at discovery time and rarely re-read, while the code moves on — so before starting a non-`DONE` ticket, verify its *premise* (the claim that the work is still missing) and record that in one line in the ticket, with what was checked. For findings that reduce to an existence check, declare the probe instead and let the pipeline evaluate it:
-
-```yaml
-premise: "rg -q 'fallback_to_kubectl' cli/bin/cmd_logs.ml"
-```
-
-**The probe succeeds when the premise is stale** — the finding has already been fixed. The inverted form is deliberate: the natural form would need every probe wrapped in a negation, and a mis-negated probe fails in the direction of "still actionable", which is the exact failure this exists to catch. A probe has exactly three outcomes: **exit 0 ⇒ premise stale, exit 1 ⇒ premise holds, any other exit ⇒ unverified** — a probe that did not reach a conclusion is never reported as one of the two verdicts, and its exit code and output are shown. A probe that names a repository path which does not exist is unverified as well: a moved file is the common cause, and the negated form (`! rg -q x gone/file`) would otherwise report "stale" from a read that never happened. `soldev pipeline check` runs it and reports `premise-stale` or `premise-unverified` instead of `actionable`; `pipeline ls` shows the same in its label column.
-
-The frontmatter is YAML, read with a YAML parser (REFAC-137), and every ticket's frontmatter must parse: quote a value containing `: `, ` #`, or a leading `` ` ``, and write a probe with backslashes in single quotes (`'...'`, a `'` inside doubled as `''`), where YAML takes the text literally.
-
-Two rules for writing one: **`check` echoes the command before running it, and a probe is shell supplied by whoever wrote the ticket — read it before you let it run.** And keep the probe cheap and read-only; it runs on every `ls`, so a probe with side effects runs on every listing.
-
-**Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles under `examples/` or `internal/fixtures/` are built automatically — `internal/tooling/scripts/dockerfile_matrix.py` derives the `example-dockerfile-smoke` and `demo-ts-dockerfile-smoke` matrices from `git ls-files`. Select `/demo-review` for substantial app-author API/lifecycle changes or when requested, not routine example refactors.
-
-**TypeScript-parity tracking (DEC-022):** Sol's platform is language-neutral, and OCaml and TypeScript are both first-class application languages. Parity is **capability + behavioural parity, not implementation parity** — the contract (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric-naming/label vocabulary, lifecycle/shutdown, config/secrets, job semantics) must hold across languages, while the implementation underneath need not be shared (`kafka-eio`/`pg-eio` stay OCaml; TypeScript keeps the Node ecosystem and Sol supplies only the semantics/glue). Every application-facing capability carries a per-language verdict — **implemented / already equivalent / intentionally deferred / not applicable**; silence is not a verdict, and deferring a language is an explicit, recorded decision with a trigger, never default debt. Two conformance levels both matter: the **TS golden path** (`sol new --language typescript` → `sol local up` → `sol deploy`, adoption/DX — FEAT-082) and the **capability matrix** (per-capability verdicts, architectural parity — the inventory in `internal/pipeline/dogfood/2026-09-07_typescript_demo_spike.md` + FEAT-080). Concretely: any ticket that changes one of those conventions, or introduces a new framework-level concept an app author gets "for free" (a new primitive, a new library like `sol-jobs`, a new retry/backoff/observability contract), must check the cross-language gap and say so in one line in its completion notes — "no language-parity impact" with why, or a reference to the tracking ticket recording what the other language would now need. This is bookkeeping, not permission-gating — it keeps the two frameworks from silently drifting the way FEAT-076 through FEAT-079 accumulated against a spike that predated them.
-
-**Do not wait on an independent PR before starting the next ticket.** Submit the PR, queue auto-merge when eligible, then move to the next actionable independent ticket while monitoring the queued PR. For dependent tickets, use the stacking rules and limits in `CONTRIBUTING.md` § *Isolation and ownership*; B never merges before A, and stacking is wrong when the dependency or review outcome is unresolved.
-
-**Worktree isolation (REFAC-090):** each concurrent actor owns one worktree, and agents do not perform mutating work in the canonical checkout — that checkout belongs to the human operator, and its branch can change underneath an actor midway through a commit, producing a commit that is *valid but in the wrong place*. The authoritative statement, the checks to resolve before every commit and push, and the recovery for a stale hook install live in `CONTRIBUTING.md` § *Isolation and ownership*; the preflight is `internal/ci/check_authority.sh`, wired into the pre-commit hook. That section is the one place to keep true — this file does not restate the policy.
-
-**Refreshing canonical `main` is allowed:** if it is clean, fetch `origin`, fast-forward `main` with `git merge --ff-only origin/main`, and verify `HEAD == origin/main`. Do not edit, stage, or commit there; use an owned worktree for all repository changes. If synchronization fails, diagnose it before relying on that checkout for an audit.
-
-**But name the tree on every mutating command (observed twice in one session).** The preflight catches a *commit* in the wrong place, and only when a context is declared — so it cannot catch the more common failure, which is a **staging** operation: `git add` / `rm` / `mv` / `checkout` run after a `cd` into the canonical checkout stages changes *there*, and every later check passes while the edit is in the wrong repository. Both occurrences were exactly that — a file written into the wrong worktree, and a ticket `git rm`'d from canonical — and in the second the canonical checkout sat with a staged deletion until a later sweep found it.
-
-The discipline, since relying on remembering the current directory has now failed twice:
-
-- **Pass the tree explicitly** — `git -C <worktree> …`, or set `cd` inside the same command and never inherit it. `cd` persists across tool calls; the working tree you *think* you are in is the least reliable fact in the session.
-- **After any batch that touched git, verify the canonical checkout is clean:** `git -C <canonical> status --porcelain` must print nothing. A non-empty canonical checkout is a bug in the workflow, not somebody's local edit — treat it as one and restore it.
-- **Prefer `git worktree add … origin/main`** over the local `main` ref, so a stale canonical checkout never silently bases work on an old commit and there is no reason to reset that checkout at all.
-
-**Skills that interact with tickets:**
-- `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
-- `/review-worktree` — optional targeted review; structured results become informational PR comments.
-- `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
-
-**soldev roles (REFAC-079):** GitHub PRs/CI are the source of truth; `soldev` is an orchestration layer over GitHub, not a second authority.
-- `pipeline ls` / `pipeline check` — orchestration: queue view, preflight gates, PR and dirty-worktree annotations.
-- `pipeline validate` — validation: reads every ticket in the tree (BACKLOG, READY_FOR_ENGINEERING and DONE) with the same parser the other commands use, and exits 1 naming any it cannot read, any id that differs from its filename, or any id duplicated across states. CI runs it unconditionally, so malformed ticket identity fails its PR instead of disappearing from the queue view (BUG-060, BUG-061).
-- `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR. A ticket left in `READY_FOR_ENGINEERING/` is accepted only when the branch declares itself one part of it (`(<ID>, part A)` in a commit subject), and that decision is the same `internal/ci/context/check_ticket_move.sh` the PR check runs — so a partial branch submits and then passes that check instead of one path refusing what the other allows.
-- `pipeline review` — orchestration: posts optional structured review findings as PR comments.
-- `pipeline merge` — orchestration: verifies prerequisites and non-draft status. It queues native squash auto-merge by default, which lands the PR when required checks pass; `--immediate` is the opt-in synchronous merge, and only when required CI is already green. Targets a ticket id, a pull request via `--pr <n|#n|url>`, or with neither sweeps every open ready PR; a PR target is also refused when its base branch has no required checks configured. Head-pinned; no admin bypass or worktree cleanup.
-- `pipeline check-reverts` — safety diagnostic over git history.
-- Pre-commit (format + build) and pre-push (`internal/ci/run_fast_checks.sh`: unit tests + fast CI checks) hooks — convenience local gates; GitHub CI is the authoritative PR gate. **A bypass is exceptional.** `SOL_SKIP_HOOKS=1` disarms every hook at once, so it is the wrong tool for a failure the pushed content cannot explain — a push from a worktree carrying an unrelated local patch is the case that happens here (INFRA-109 makes pre-push evaluate the *pushed tree* and gives it `SOL_SKIP_PRE_PUSH=1` of its own). If a hook fails and you cannot show the failure comes from what you are pushing, evaluate the pushed tree rather than disarming the gate.
-- Post-commit hook — informational perf status + orphaned-worktree warnings.
-
-**CI failure feedback:** When a GitHub PR check fails, inspect the failing test and its ownership before
-closing the PR or treating the failure as unrelated. If it exposes a deterministic regression that is
-cheap and reliable to detect from a local pre-push check, consider adding that test to the affected
-surface’s local validation plan so a later change gets faster feedback. Keep broker/database,
-Kubernetes, cloud and other environment-sensitive checks independently exercised in CI; do not copy a
-flaky or costly CI failure into a local hook merely to reproduce it. Fix or track the underlying
-regression, and preserve independent CI coverage. INFRA-113 and INFRA-115 define the validation tiers
-and selection rules.
-- Ticket filings and promotions go through PRs too; there is no direct-to-main bookkeeping exception.
-
-**Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `perf.sh record --update-baseline` is the only writer, recording the host class beside each entry so comparisons happen only within one host class; `run_tests.sh` is correctness-only and never touches it, and `perf.sh record` without the flag reports a comparison without writing. Pre-commit never stages it into code commits, and merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
+GitHub Issues and pull requests are the work-state authority. Create an issue when work is useful to track; use an ordinary branch or worktree, open a PR, rely on CI, request review proportional to risk, and squash-merge. Branch and worktree names carry no Sol-specific semantics. Do not recreate repository-local ticket states, premise probes, dependency enforcement, or merge bookkeeping.
 
 ## Core design principles every engineer must know
 
@@ -211,7 +97,6 @@ sol/
     tooling/                    ← soldev, sol_process, hooks/, perf/, scripts/ (test runner, perf, hook install)
     fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
   # ── package contracts ────────────────────────────────────────────────────
-  *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
   dune-project / dune-workspace ← unified root build
   README.md / docs/ROADMAP.md   ← project-wide docs
 
@@ -299,8 +184,6 @@ Default broker address: `localhost:9092`
 You must maintain and consult the project's source-of-truth markdown files:
 
 1. **At Startup / Task Initialization**:
-   - Read `docs/ROADMAP.md` and the relevant tickets in `internal/pipeline/tickets/` before writing code.
-   - Align your execution path with the active milestone and ticket state.
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
@@ -410,7 +293,6 @@ tidying up.**
   removing a clean, obsolete worktree that would lose no commits.
 - **Do not stop merely because** the next change is large; the work spans sessions; there
   is no green intermediate state; a ticket or PR just completed; a worktree is dirty; a
-  ticket has no named owner; another repository must change; ticket state needs triage;
   more reconnaissance would answer an engineering question; or the decision in front of
   you is reversible.
 
@@ -433,79 +315,4 @@ possible — never withhold implementation in order to end on a clean or landed 
 
 ## Shepherding PRs to merge
 
-Routine PRs need required green CI, not a review marker. **Queue native squash
-auto-merge by default** — `soldev pipeline merge <id>`, or
-`soldev pipeline merge --pr <n>` for a PR that names no ticket — as soon as a PR is
-non-draft and its prerequisites are resolved. Do not hold a PR until it is green and
-then merge it by hand; an immediate merge is the exception (`--immediate`, and only
-with required checks already green), for when the operator wants it landed
-synchronously.
-
-- **Monitor every queued auto-merge to completion, and report whether it merged.** A
-  queue request is not a completed merge. Read the PR's actual state —
-  `gh pr view <n> --json state,mergedAt,mergeCommit,statusCheckRollup`, or
-  `soldev pipeline check` — rather than sleeping on an assumed duration: the change
-  classifier sends docs-only and ticket-only PRs down a fast path where `test` can
-  finish in seconds, so "wait about fifteen minutes" is wrong and has already let a
-  green PR sit unmerged. On failure, report the failing check and its cause; after a
-  fix, auto-merge is still armed and completes on its own. If the failure is not
-  being addressed, say so explicitly rather than leaving it silently queued.
-- **A re-run does not pick up a repaired base.** GitHub re-runs the check against the
-  merge commit it already computed, so a `test` failure whose cause was on `main` — a
-  duplicate ticket id in the tree, a guard another PR had just fixed — repeats
-  identically after the fix has merged. `gh run rerun --failed` was observed to do
-  exactly that 22 minutes after the repairing PR landed. Compare the run's base with
-  `origin/main`; if `main` moved, update the branch (rebase onto `origin/main` and
-  push) and re-arm auto-merge for the new head SHA instead of re-running.
-- Queue dependent PRs in order: `soldev` reads prerequisites from its current ticket
-  tree, so queue a dependent PR only after its dependency has actually merged.
-
-- Keep intentionally reviewed PRs draft until the selected review is satisfactory.
-  Review comments are optional evidence, never proof that a gate ran.
-- Protection requires `test` on the PR head with admin enforcement, zero mandatory
-  approvals, and no up-to-date-branch requirement. Do not merge with `--admin`.
-  Do not update/retest a green PR solely because main advanced; reconcile actual
-  conflicts or overlapping contracts. Post-merge CI remains the interaction backstop.
-- Do not repeat the full local suite after an unrelated branch update. Build,
-  format, and relevant tests suffice locally; required CI covers the PR head.
-- Use `--match-head-commit <sha>` for direct GitHub commands, and omit
-  `--delete-branch`: its local checkout cleanup can fail after the remote merge
-  succeeds. Always verify `gh pr view <n> --json state,mergedAt,mergeCommit`;
-  an accepted auto-merge request is not necessarily a completed merge.
-- Preserve local worktrees. Cleanup is separate, only for demonstrably owned,
-  clean trees; never remove a tree with `--force` as a merge prerequisite.
-- Merge dependent tickets in order. soldev checks prerequisites from its current
-  ticket tree, so refresh the owned tree after dependency merges before retrying.
-- **The branch name declares the ticket, and CI holds you to it.** The *Ticket-move
-  guard* reads the id from the branch name (`fix/infra-048-namespace-create`,
-  `INFRA-061/probe-tri-state`), the worktree directory (`sol-INFRA-049-omit-authority`)
-  or a `(<ID>)` in a commit subject, and refuses a PR whose branch names a
-  `READY_FOR_ENGINEERING` ticket without moving it to `DONE/`. Landing one part of a
-  longer ticket is fine — declare it in a subject, `(INFRA-057, part A)` — but a
-  branch that names no ticket is exempt. This exists because four tickets once sat in
-  READY with their fix already merged (`INFRA-048`, `INFRA-050`, `INFRA-057`), each
-  costing the next worker a cycle.
-- **Run the format check before pushing.** CI's *Format check* step is
-  `internal/ci/check_ocamlformat.sh --all` (ocamlformat 0.29.0, janestreet
-  profile); a local `dune build` does **not** cover it, so unformatted code is a
-  guaranteed CI bounce that costs a full run. Run
-  `internal/ci/check_ocamlformat.sh --staged` (staged files only, so unrelated
-  work-in-progress cannot block you) or `dune fmt` before pushing. The pre-commit
-  hook runs the `--staged` check too, and the pre-push hook runs
-  `internal/ci/run_fast_checks.sh` (every fast `internal/ci/` guard, in parallel),
-  once installed (`internal/tooling/scripts/install-hooks.sh`, which sets
-  `core.hooksPath`) — it is not installed by default.
-- **Run a guard's mutation suite, not just the guard, when your change touches a
-  file that guard inspects.** The guards and their `test_*_check.py` mutation
-  suites are part of CI's `test` job, but the suites are not wired into `dune
-  test`, so a green local suite says nothing about them. A mutation whose anchor
-  another change made ambiguous *aborts the suite* rather than mutating: one
-  change naming `Release_unestablished` a second time in
-  `sol_cli_cloud_destroy.ml` cost a full CI cycle on an anchor that had been
-  unique when it was written. Find them with `rg -l '<changed file>'
-  internal/ci/*.py internal/ci/*.sh` and run both the guard and any
-  `test_<guard>.py` beside it.
-- **`gh` gaps in this environment:** `gh pr update-branch` does not exist (update
-  locally instead), and `gh pr edit` fails with a Projects-classic GraphQL
-  deprecation — set the body via
-  `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -F body=@file`.
+Once a PR is ready, use GitHub's native auto-merge when appropriate and monitor required CI to completion. Do not bypass required checks. If CI or review finds a real defect, fix it on the same branch; if the PR becomes obsolete, close it. GitHub is the authority for PR, review, check, and merge state.

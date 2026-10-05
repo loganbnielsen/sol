@@ -73,36 +73,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore exact-source ticket validator
-        id: docs_tooling
-        if: needs.classify.outputs.kind == 'docs-only'
-        uses: actions/cache/restore@v4
-        with:
-          path: _build/default/internal/tooling/soldev/bin/main.exe
-          key: soldev-validation-v1-${{ runner.os }}-${{ hashFiles('internal/tooling/soldev/**/*.ml', 'internal/tooling/soldev/**/*.mli', 'internal/tooling/soldev/**/dune', 'internal/tooling/sol_process/**/*.ml', 'internal/tooling/sol_process/**/*.mli', 'internal/tooling/sol_process/**/dune', 'dune-project', 'dune-workspace', '*.opam', 'support-refs.txt') }}
-          restore-keys: |
-            soldev-validation-v1-${{ runner.os }}-
-
-      # The validator is restored exactly, or by prefix from a main build; a
-      # docs-only diff cannot change its source, so any main build is exact-source
-      # for it. Only a total cache miss skips this, visibly -- it never falls back
-      # to the product suite.
-      - name: Validate pipeline tickets
-        if: needs.classify.outputs.kind == 'docs-only'
-        run: |
-          if [ -x _build/default/internal/tooling/soldev/bin/main.exe ]; then
-            _build/default/internal/tooling/soldev/bin/main.exe pipeline validate
-          else
-            echo "::warning::no cached ticket validator was available, so \`pipeline validate\` was skipped. The product suite is deliberately not run for a docs-only diff."
-          fi
-
-      - name: Validate ticket transitions
-        run: |
-          git diff --name-status -M origin/main...HEAD -- internal/pipeline/tickets | bash internal/ci/context/check_ticket_transitions.sh
-
-      # The cheap, offline invariants that must hold on every path, docs-only
-      # included. Membership is the internal/ci/always directory, so a new member
-      # needs no edit here.
       - name: "Verification class: always (every path)"
         run: bash internal/tooling/scripts/verify.sh always
 
@@ -120,11 +90,11 @@ jobs:
             echo "### Classification: docs-only"
             echo ""
             echo "The required \`test\` check is green because **every** changed path is in the"
-            echo "safe allowlist (\`docs/**\`, \`internal/pipeline/tickets/**\`, \`*.md\` outside"
+            echo "safe allowlist (\`docs/**\`, \`*.md\` outside"
             echo "\`.github/**\`, \`internal/tooling/perf/perf_baseline.json\`)."
             echo ""
             echo "The product build, the test suites and the platform smoke jobs were deliberately not"
-            echo "run. Only ticket validation, transition/move checks, specification signatures,"
+            echo "run. Only specification signatures,"
             echo "classification controls, and account-artifact checks run. Classification"
             echo "semantics are pinned by"
             echo "\`internal/ci/always/test_classify_changes.sh\`."
@@ -200,14 +170,13 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune build
 
-      # The static class reads the built soldev, cli and provider-printer binaries (BUG-064).
+      # The static class reads the built CLI and provider-printer binaries.
       - name: Tooling for the verification classes (BUG-064)
         if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         run: |
           opam install --deps-only --with-test -y ./sol.opam
           opam exec -- dune build \
-            internal/tooling/soldev/bin/main.exe \
             cli/bin/main.exe \
             cli/test/print_providers.exe
 
@@ -374,27 +343,6 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: python3 internal/qualification/gcp/test_observer.py
 
-      - name: Ticket-move guard (INFRA-066)
-        # Deliberately unconditional, with no `classify` condition: a ticket move is
-        # itself a docs-only change, and that is exactly the PR shape this checks.
-        # The signal is the branch name, which is how a worker already declares which
-        # ticket it is on (`fix/infra-048-...`, `INFRA-061/...`); a branch that names a
-        # READY ticket must land it, or say "(<ID>, part ...)" if it is one part of a
-        # longer ticket. `soldev pipeline submit` already requires DONE/<id>.md for the
-        # ticket it is given, but nothing covered a hand-pushed branch.
-        run: |
-          git fetch --no-tags origin main -q
-          # The test job's checkout is shallow by default, which hides the branch's
-          # commit subjects -- including the "(<ID>, part A)" declaration this guard
-          # reads -- while leaving the branch *name* visible, so a legitimate partial
-          # PR would be refused. Deepen before running it.
-          git fetch --no-tags --unshallow origin -q 2>/dev/null || git fetch --no-tags origin main -q
-          internal/ci/context/check_ticket_move.sh --base origin/main --branch "${{ github.head_ref }}"
-
-      # FEAT-101 / DEC-049: build the real release archive and prove it works
-      # installed, where it cannot see this checkout. The runner digest is a
-      # fixture: the smoke checks that the binary selects exactly what its bundle
-      # names; publishing is the release workflow's.
       - name: Installed-release smoke (FEAT-101)
         if: needs.classify.outputs.kind != 'docs-only'
         run: |
@@ -404,29 +352,6 @@ jobs:
             --version v0.0.0-ci --runner-image "$runner" --out "$RUNNER_TEMP/release" | tail -1)"
           internal/ci/smoke_installed_release.sh "$archive" v0.0.0-ci "$runner" "$RUNNER_TEMP/sol-dev"
 
-      - name: Cache trusted ticket validator
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: _build/default/internal/tooling/soldev/bin/main.exe
-          key: soldev-validation-v1-${{ runner.os }}-${{ hashFiles('internal/tooling/soldev/**/*.ml', 'internal/tooling/soldev/**/*.mli', 'internal/tooling/soldev/**/dune', 'internal/tooling/sol_process/**/*.ml', 'internal/tooling/sol_process/**/*.mli', 'internal/tooling/sol_process/**/dune', 'dune-project', 'dune-workspace', '*.opam', 'support-refs.txt') }}
-
-  # FRIC-009: smallest check that would have caught a regression like
-  # FRIC-007 (every generated service permanently broken on a fresh
-  # substrate) — nothing above exercises the golden path against live
-  # infra. Deliberately narrow: no migrate/status/Kafka round-trip, that's
-  # periodic /dogfood's job. Separate job (not folded into `test`) so its
-  # cluster-bootstrap time doesn't slow the fast unit-test signal.
-  #
-  # Docker/k3d availability: `ubuntu-22.04` is a GitHub-hosted runner with
-  # Docker Engine preinstalled — no availability gate needed today. If
-  # `runs-on` ever changes to a self-hosted label, re-check this before
-  # assuming Docker is still there.
-  #
-  # The k3d/helm/kubectl pins live in internal/tooling/scripts/ci-toolchain.sh;
-  # DOGFOOD.md's "Kubernetes toolchain" section points at that script for the
-  # versions and explains *why* k3d is pinned to this exact version (chart-value
-  # compatibility).
   golden-path-smoke:
     # Not a required check, so a job-level condition is safe here: skipping it
     # cannot leave a required status unreported. Consumes the SAME classifier

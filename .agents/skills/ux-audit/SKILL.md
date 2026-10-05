@@ -1,27 +1,18 @@
 ---
 name: ux-audit
-description: Run a developer experience audit of Sol. Verifies that a startup engineer can start a project, develop locally, and deploy to the cloud using only Sol's documented commands — without DevOps knowledge. Files each finding it makes as a ticket in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a developer experience audit of Sol. Verifies that a startup engineer can start a project, develop locally, and deploy to the cloud using only Sol's documented commands — without DevOps knowledge. Files actionable findings as ordinary GitHub Issues.
 ---
 
 # /ux-audit — Developer Experience Audit
 
-Works through every stage of `internal/pipeline/audits/UX_AUDIT.md` as if you are a startup engineer encountering Sol for the first time. Each stage has two gates: a **docs gate** (does the guide exist and is it accurate?) and a **reproduction gate** (do the commands actually work?). Files each finding it makes as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question for every check: *would a startup engineer need knowledge outside this repo to get past this step?* If yes, that is a finding.
 
 Also check whether the experience teaches and preserves Sol's mission: autonomous domain teams, typed event contracts, generated infrastructure, explicit auth, day-2 operations through Sol commands, and AI-agent-friendly structure.
 
-## Ticket directory structure
+## Finding tracking
 
-```
-internal/pipeline/tickets/
-  BACKLOG/                  ← captured but not yet ready to act on
-  READY_FOR_ENGINEERING/    ← actionable; this is where new findings land
-                               (also covers "worktree/PR open" — GitHub's own
-                               open-PR/review/CI state tracks that, no local
-                               directory duplicates it; see REFAC-077)
-  DONE/                     ← merged
-```
+Search open and closed GitHub Issues before filing. File an ordinary issue only for a distinct actionable finding that is not already tracked. Do not create labels, status conventions, dependency validators, branch conventions, or other workflow metadata to replace the retired repository issue system.
 
 ## Steps
 
@@ -31,7 +22,6 @@ Read `internal/pipeline/audits/UX_AUDIT.md` in full before starting.
 ### 2. Check previous findings
 Note which findings were already open — verify whether they are now resolved before logging them again.
 
-Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket files. A finding already tracked anywhere in `internal/pipeline/tickets/` (regardless of directory) should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
 ### 3. Work through each stage
 
@@ -84,36 +74,12 @@ Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket 
 
 ### 5. File the findings
 
-An audit keeps no report of its own. The ticket tree is the record of every previous pass, so
-read it before filing; the report-shaped content below becomes the ticket body:
+read it before filing; the report-shaped content below becomes the issue body:
 
 - the observation and the exact command or line that shows it
 - the mechanism, and what the product actually does
 - what it would take to fix, and what would make a fix fail (the acceptance criteria)
-- the next free `<FAMILY>-NNN`, continuing from the highest id across `internal/pipeline/tickets/`
 
-### 5. Materialise tickets
+### File actionable findings
 
-For each finding:
-
-1. Search all `internal/pipeline/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
-2. If not found, create `internal/pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
-
-```markdown
----
-id: <EXP-NNN>
-type: ux-finding
-severity: <blocker|high|medium|low>
-source: the pass that found this, by date
----
-
-<one-line title>
-
-**Description:** <from finding>
-
-**Impact:** <from finding>
-
-**Remediation:** <from finding>
-```
-
-Do not set `branch:` or `worktree:` — those are written by `/start` when work begins.
+For each distinct actionable finding not already represented by a GitHub Issue, create an ordinary issue with the problem, evidence, affected files, desired end state, and acceptance criteria. Prefer one coherent issue per ownership/refactor boundary over line-level findings.

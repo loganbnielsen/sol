@@ -1,6 +1,6 @@
 ---
 name: dogfood
-description: Run a developer dogfood pass of Sol. Executes the golden path from sol new workspace through curl against a live service, times each step, and logs every friction point. Produces a dated report in internal/pipeline/dogfood/ and materialises blocking findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a developer dogfood pass of Sol. Executes the golden path from sol new workspace through curl against a live service, times each step, and logs every friction point. Produces a dated report in internal/pipeline/dogfood/ and files blocking findings as ordinary GitHub Issues.
 ---
 
 # /dogfood — Golden Path Dogfood Run
@@ -10,20 +10,11 @@ the runbook at `internal/pipeline/dogfood/DOGFOOD.md`. Times every step, records
 determines whether the two-minute deploy claim holds on a live local substrate.
 
 Writes a completed report to `internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md` and materialises
-each blocking or high-friction finding as a ticket in
-`internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+each blocking or high-friction finding as a issue in
 
-## Ticket directory structure
+## Finding tracking
 
-```
-internal/pipeline/tickets/
-  BACKLOG/                  ← captured but not yet ready to act on
-  READY_FOR_ENGINEERING/    ← actionable; blocking findings land here
-                               (also covers "worktree/PR open" — GitHub's own
-                               open-PR/review/CI state tracks that, no local
-                               directory duplicates it; see REFAC-077)
-  DONE/                     ← merged
-```
+Search open and closed GitHub Issues before filing. File an ordinary issue only for a distinct actionable finding that is not already tracked. Do not create labels, status conventions, dependency validators, branch conventions, or other workflow metadata to replace the retired repository issue system.
 
 ## Steps
 
@@ -37,13 +28,10 @@ Read the most recent report in `internal/pipeline/dogfood/` (highest date). Note
 friction items were logged — verify whether they are now resolved before logging
 them again.
 
-Check all `internal/pipeline/tickets/` subdirectories for existing `FRIC-*` ticket files.
-A finding already tracked anywhere in `internal/pipeline/tickets/` should not be
 re-materialised. If it exists in `DONE/`, mark it resolved in the report — but
 verify the fix is still actually live in `main` before trusting that (see
-EXP-032: a `DONE` ticket's merge can be reverted after the fact and never
-refixed, leaving the ticket falsely marked resolved). Run
-`soldev pipeline check-reverts` and treat anything it flags as still-open,
+EXP-032: a `DONE` issue's merge can be reverted after the fact and never
+refixed, leaving the issue falsely marked resolved). Run
 not resolved.
 
 ### 3. Prepare the binary
@@ -115,40 +103,8 @@ Create `internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md` using the template from
 - Friction log entries for every step that required knowledge outside the
   command output or docs, produced a confusing message, or failed
 - Findings section for non-obvious correctness or UX observations
-- List of any tickets filed
+- List of any issues filed
 
-### 7. Materialise tickets
+### File actionable findings
 
-For each friction log entry where **Blocks two-minute claim? yes**, or any
-correctness finding that would prevent a user from completing the flow:
-
-1. Search all `internal/pipeline/tickets/` subdirectories for `FRIC-NNN`. If found, skip.
-2. If not found, create `internal/pipeline/tickets/READY_FOR_ENGINEERING/FRIC-NNN.md`:
-
-```markdown
----
-id: FRIC-NNN
-type: dogfood-finding
-severity: <blocker|high|medium|low>
-source: internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md
----
-
-**Depends on:** None.
-
-<one-line title>
-
-**Description:** <what happened>
-
-**Impact:** <what a first-time user would experience>
-
-**Remediation:** <specific, actionable fix>
-```
-
-Assign FRIC IDs starting from one above the highest existing `FRIC-*` ID across
-all `internal/pipeline/tickets/` subdirectories. If none exist, start at `FRIC-001`.
-
-Medium and low friction items that do not block the flow go in the report only —
-do not create tickets for them unless they recur across multiple runs.
-
-Do not set `branch:` or `worktree:` — those are written by `/work` when
-implementation begins.
+For each distinct actionable finding not already represented by a GitHub Issue, create an ordinary issue with the problem, evidence, affected files, desired end state, and acceptance criteria. Prefer one coherent issue per ownership/refactor boundary over line-level findings.

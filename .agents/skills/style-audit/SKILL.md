@@ -1,6 +1,6 @@
 ---
 name: style-audit
-description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed domains, Result/Option pyramids, unnormalized arguments, hidden conceptual groups, mixed effect boundaries, and embedded phase/state handling across the whole repo. Requires manual folder walks beyond grep and creates actionable tickets.
+description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed domains, Result/Option pyramids, unnormalized arguments, hidden conceptual groups, mixed effect boundaries, and embedded phase/state handling across the whole repo. Requires manual folder walks beyond grep and creates actionable issues.
 ---
 
 # /style-audit - OCaml Type Safety and API Design Audit
@@ -14,24 +14,21 @@ source-of-truth checklist.
 
 ## Output
 
-Create actionable tickets in:
+Create actionable issues in:
 
 ```text
-internal/pipeline/tickets/READY_FOR_ENGINEERING/
 ```
 
 Do not put actionable style findings in `BACKLOG/`.
 
 Use prefix `CODEX_STYLE_AUDIT-NNN` unless the user requests another prefix.
-Continue from the highest existing `CODEX_STYLE_AUDIT-*` ticket across all
-`internal/pipeline/tickets/` subdirectories.
 
 ## Core Rule
 
 Do not rely on grep alone.
 
 Use grep/ripgrep to seed candidate locations, then manually read files by
-folder. Every ticket must be based on surrounding code context, not just a regex
+folder. Every issue must be based on surrounding code context, not just a regex
 match.
 
 ## Audit Targets
@@ -101,7 +98,7 @@ Flag these three categories:
 
 ## Manual Folder Walk
 
-Walk these folders even if grep finds enough tickets early:
+Walk these folders even if grep finds enough issues early:
 
 - `framework/ocaml/`
 - `cli/lib/`
@@ -139,7 +136,7 @@ Passing records is idiomatic OCaml when the record is a meaningful value with a
 name and invariants. Avoid vague "dependencies" records that only hide a messy
 signature.
 
-Ticket good targets:
+Issue good targets:
 
 - Manifest/render functions with many fields that should accept a typed render
   spec or workload variant.
@@ -162,12 +159,12 @@ rg -n -U 'List\.concat[[:space:]]*\n[[:space:]]*\[' -g '*.ml'
 ```
 
 After running searches, open files manually with `sed`, `nl`, or an editor.
-Do not file tickets from grep output alone.
+Do not file issues from grep output alone.
 
 ## Multi-Agent Mode
 
 When multiple agents are available, split the audit by folder. Assign one group
-per agent and ask for ticket-quality findings only.
+per agent and ask for issue-quality findings only.
 
 Recommended partitions:
 
@@ -184,44 +181,20 @@ Subagent instruction template:
 Inspect <folder-group> for OCaml style audit findings:
 boolean traps/positional debt, stringly-typed finite domains, and nested
 Option/Result pyramids. Read files manually; grep is only for seeding. Return
-ticket-ready findings with file references, problem, goal, and acceptance
+issue-ready findings with file references, problem, goal, and acceptance
 criteria. Do not edit files.
 ```
 
-Merge duplicate findings by API/refactor boundary. Prefer one coherent ticket
-over many line-level tickets.
+Merge duplicate findings by API/refactor boundary. Prefer one coherent issue
+over many line-level issues.
 
-## Ticket Template
+## Issue content
 
-```markdown
----
-id: CODEX_STYLE_AUDIT-NNN
-type: refactor
-severity: <high|medium|low>
-source: internal/pipeline/audits/STYLE_AUDIT.md
----
-
-<one-line title>
-
-**Depends on:** none.
-
-**Problem:** <specific file references and why this is risky/confusing>
-
-**Goal:** <type-safe or readability target>
-
-**Acceptance criteria:**
-
-- <verifiable criterion>
-- <verifiable criterion>
-```
-
-Use dependencies only when the ticket truly cannot be started first. A ticket in
-`READY_FOR_ENGINEERING/` with an unmet dependency is allowed, but it will not be
-actionable until the dependency reaches `DONE/`.
+Each issue should contain the problem, concrete evidence/file references, desired end state, and acceptance criteria. Add dependencies only as ordinary issue links when they are genuinely useful; do not make them executable workflow state.
 
 ## Quality Bar
 
-Good tickets:
+Good issues:
 
 - Name a concrete API or module boundary.
 - Include exact file references.
@@ -230,23 +203,22 @@ Good tickets:
   record, a mode-specific variant, or a split into smaller phase functions.
 - Have acceptance criteria that a reviewer can verify.
 
-Bad tickets:
+Bad issues:
 
 - "Clean up nested matches in this file."
-- One ticket for every string literal.
+- One issue for every string literal.
 - Findings copied straight from grep.
-- Tickets without a clear owner module or refactor boundary.
+- Issues without a clear owner module or refactor boundary.
 
 ## Final Summary
 
 At the end, report:
 
-- Number of tickets created.
+- Number of issues created.
 - ID range.
 - Folders manually inspected.
 - Any folders not inspected and why.
 - Validation command, usually:
 
 ```bash
-dune exec internal/tooling/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
 ```
