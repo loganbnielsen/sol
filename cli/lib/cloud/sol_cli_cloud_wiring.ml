@@ -628,8 +628,12 @@ let apply_deps
         | Verified window ->
           (match window.deescalated () with
            | Ok () ->
-             Sol_cli_report.app "  de-escalation verified as %s" window.principal;
-             Ok ()
+             (match window.successor () with
+              | Ok () ->
+                Sol_cli_report.app "  de-escalation verified as %s" window.principal;
+                Ok ()
+              | Error verdict ->
+                Error ("de-escalation could not be established: " ^ verdict))
            | Error verdict -> Error ("de-escalation could not be established: " ^ verdict))
         | No_role_declared ->
           Sol_cli_report.app

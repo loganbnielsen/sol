@@ -11,6 +11,7 @@ type window =
   { gate : unit -> (unit, string) result
   ; observe : unit -> (unit, string) result
   ; deescalated : unit -> (unit, string) result
+  ; successor : unit -> (unit, string) result
   ; principal : string
   }
 
