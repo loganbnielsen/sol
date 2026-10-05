@@ -259,7 +259,7 @@ def main() -> int:  # noqa: C901 - one linear suite reads better than nested fix
 
     print("absence: the account identity is a prerequisite for attribution")
     runner = FakeAws()
-    runner.set(("sts", "get-caller-identity"), {"Account": "999999999999", "Arn": "arn:aws:iam::999999999999:user/other"})
+    runner.set(("sts", "get-caller-identity"), {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/other"})
     report = absence.evaluate(RUNTIME, runner)
     check("a foreign account is refused", not report.identity.ok)
     check("and every class is UNKNOWN rather than absent", set(states(report).values()) == {absence.UNKNOWN})
