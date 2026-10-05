@@ -1,3 +1,5 @@
+> **Work tracking:** GitHub Issues and pull requests are the authority for new work. The repository-local ticket directories are transitional legacy state being retired by META-001/META-002. Do not create new repository tickets, premise probes, ticket dependencies, or ticket-workflow rules. Existing in-flight ticket work may finish normally until the migration is reconciled; do not duplicate it. Branches/worktrees are ordinary Git tools and do not need ticket-derived identity.
+
 # Sol — Agent Context
 
 This is the repo's tool-neutral agent context file. It was `CLAUDE.md`; it is
