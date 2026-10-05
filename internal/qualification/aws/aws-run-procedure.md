@@ -118,7 +118,7 @@ command's output.
    `0.0.0.0/0`), `node_failure_headroom_nodes`, `destroy_retention: none`, and the two
    TypeScript units omitted. The alert fields are required by the profile preflight; they are
    set to a real receiver only when pursuing G1–G3, and the run records G as blocked otherwise.
-9. Operator authorization for the live run (`ALPHA_CAMPAIGN.md` §7.1–§7.3) and the release
+9. Explicit operator authorization for the live run and the release
    version (§7.6).
 
 ### Expected resources and cost-bearing steps
