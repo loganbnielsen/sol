@@ -291,35 +291,6 @@ reconcile_durable_root() {
   say "bootstrap: durable root reconciled"
 }
 
-disk_quota_record() {
-  local raw="$LOG_DIR/disk-quota.json"
-  if ! gcloud compute regions describe "$REGION" --project "$PROJECT" --format=json \
-      >"$raw" 2>"$LOG_DIR/disk-quota.stderr"; then
-    printf 'disk-quota\tUNKNOWN\tprovider read failed: %s\n' \
-      "$(head -1 "$LOG_DIR/disk-quota.stderr" 2>/dev/null | cut -c1-100)" >>"$INVENTORY_TSV"
-    say "    disk-quota: UNKNOWN (provider read failed)"
-    return 0
-  fi
-  python3 - "$raw" "$INVENTORY_TSV" <<'PYQUOTA'
-import json, pathlib, sys
-raw, tsv = sys.argv[1], sys.argv[2]
-def record(verdict, detail):
-    pathlib.Path(tsv).open('a').write(f'disk-quota\t{verdict}\t{detail}\n')
-    print(f'    disk-quota: {verdict} ({detail})')
-try:
-    payload = json.load(open(raw))
-except Exception as exc:
-    record('UNKNOWN', f'unparseable: {exc}')
-    sys.exit(0)
-quota = next((q for q in payload.get('quotas', []) if q.get('metric') == 'SSD_TOTAL_GB'), None)
-if quota is None:
-    record('UNKNOWN', 'SSD_TOTAL_GB not reported')
-    sys.exit(0)
-limit, used = int(quota.get('limit', 0)), int(quota.get('usage', 0))
-record('PRESENT', f'SSD_TOTAL_GB limit={limit} usage={used} free={limit - used}')
-PYQUOTA
-}
-
 provider_probe() {
   local class="$1" expect="$2"; shift 2
   local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict
@@ -415,91 +386,6 @@ probe_custom_role() {
 GCP_ROLE_ID="sol_$(printf '%s' "$CLUSTER" | tr '-' '_')_cluster_access"
 GCP_PROVISIONER_SA="$CLUSTER-provisioner@$PROJECT.iam.gserviceaccount.com"
 
-quota_usage() {
-  gcloud compute regions describe "$REGION" --project "$PROJECT" \
-    --format='csv[no-heading](quotas.metric,quotas.usage)' \
-    >"$LOG_DIR/inventory-quota-raw.log" 2>&1 || true
-  local instances_json="" disks_json="" snapshots_json="" sql_json="" addresses_json=""
-  instances_json="$(gcloud compute instances list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
-  disks_json="$(gcloud compute disks list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
-  snapshots_json="$(gcloud compute snapshots list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
-  sql_json="$(gcloud sql instances list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
-  addresses_json="$(gcloud compute addresses list --project "$PROJECT" --format=json 2>/dev/null || printf '[]')"
-  printf '%s' "$instances_json" >"$LOG_DIR/inventory-quota-instances.json"
-  printf '%s' "$disks_json" >"$LOG_DIR/inventory-quota-disks.json"
-  printf '%s' "$snapshots_json" >"$LOG_DIR/inventory-quota-snapshots.json"
-  printf '%s' "$sql_json" >"$LOG_DIR/inventory-quota-sql.json"
-  printf '%s' "$addresses_json" >"$LOG_DIR/inventory-quota-addresses.json"
-  python3 - "$LOG_DIR/inventory-quota-raw.log" "$LOG_DIR/inventory-quota-instances.json" \
-    "$LOG_DIR/inventory-quota-disks.json" "$LOG_DIR/inventory-quota-snapshots.json" \
-    "$LOG_DIR/inventory-quota-sql.json" "$LOG_DIR/inventory-quota-addresses.json" \
-    <<'PY' >"$LOG_DIR/inventory-quota.log" 2>&1 || true
-import json
-import sys
-
-
-def count(path):
-    try:
-        return len(json.loads(open(path).read() or "[]"))
-    except Exception:
-        return None
-
-
-metrics, usage = open(sys.argv[1]).read().strip().split(",")
-owners = {
-    "CPUS": ("instances", count(sys.argv[2])),
-    "INSTANCES": ("instances", count(sys.argv[2])),
-    "IN_USE_ADDRESSES": ("addresses", count(sys.argv[6])),
-    "SSD_TOTAL_GB": ("disks, snapshots and SQL instances", sum(
-        value or 0 for value in (count(sys.argv[3]), count(sys.argv[4]), count(sys.argv[5])))),
-    "DISKS_TOTAL_GB": ("disks", count(sys.argv[3])),
-}
-want = ["CPUS", "IN_USE_ADDRESSES", "SSD_TOTAL_GB", "DISKS_TOTAL_GB", "INSTANCES"]
-read = dict(zip(metrics.split(";"), usage.split(";")))
-busy = []
-lagging = []
-for m in want:
-    value = (read.get(m) or "0").strip()
-    if float(value or 0) == 0:
-        print(f"{m}\t{value}")
-        continue
-    owners_name, owners_count = owners.get(m, (None, None))
-    if owners_count:
-        print(f"{m}\t{value}\towned by {owners_name}")
-        busy.append(m)
-    else:
-        print(f"{m}\t{value}\tno owning resource is listed ({owners_name}): the consumer is "
-              "not identified, which is UNKNOWN -- not absence")
-        lagging.append(m)
-verdict = "PRESENT" if busy else ("UNKNOWN" if lagging else "ABSENT")
-print("VERDICT:" + verdict)
-if lagging:
-    print("UNIDENTIFIED:" + ";".join(lagging))
-PY
-  local verdict
-  verdict="$(sed -n 's/^VERDICT://p' "$LOG_DIR/inventory-quota.log" | tail -1)"
-  case "${verdict:-}" in
-    ABSENT)
-      say "    quota: ABSENT (no usage)"
-      printf 'quota\tABSENT\tabsent\tall zero\n' >>"$INVENTORY_TSV"
-      ;;
-    PRESENT)
-      say "    quota: PRESENT (some usage is non-zero; read $LOG_DIR/inventory-quota-raw.log)"
-      printf 'quota\tPRESENT\tabsent\tnon-zero usage\n' >>"$INVENTORY_TSV"
-      ;;
-    UNKNOWN)
-      say "    quota: UNKNOWN (non-zero usage no listed resource accounts for -- an"
-      say "           unidentified consumer is not absence; read $LOG_DIR/inventory-quota.log)"
-      printf 'quota\tUNKNOWN\tabsent\tnon-zero usage with no identified owner\n' \
-        >>"$INVENTORY_TSV"
-      ;;
-    *)
-      say "    quota: UNKNOWN (the usage read could not be parsed, which is not zero)"
-      printf 'quota\tUNKNOWN\tabsent\tcould not parse the usage read\n' >>"$INVENTORY_TSV"
-      ;;
-  esac
-}
-
 inventory() {
   local mode="$1"
   INVENTORY_TSV="$LOG_DIR/inventory-$mode.tsv"
@@ -512,7 +398,7 @@ inventory() {
     printf 'cluster\t%s\n' "${CLUSTER:-}"
   } >"$LOG_DIR/inventory-$mode.identity" 2>/dev/null || true
   say "inventory ($mode): attempt ${ATTEMPT:--}, target $TARGET, state key $STATE_KEY, cluster $CLUSTER; provider reads only, no mutation"
-  disk_quota_record
+
   provider_probe gke-cluster    absent  gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(name)'
   provider_probe sql-instance   absent  gcloud sql instances describe "$CLUSTER-postgres" --project "$PROJECT" --format='value(name)'
   provider_probe network        absent  gcloud compute networks describe "$CLUSTER" --project "$PROJECT" --format='value(name)'
@@ -533,7 +419,7 @@ inventory() {
   provider_probe peering        absent  gcloud compute networks peerings list --project "$PROJECT" --filter="name~servicenetworking" --format='value(name)'
   provider_probe state-bucket   present gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" --format='value(name)'
   provider_probe dns-zone       present gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" --format='value(name,dnsName)'
-  quota_usage
+
 }
 
 verify_absent() {
@@ -805,7 +691,7 @@ phase_cloud() {
     capture_pre_teardown_inventory
     freeze_evidence
     capture_platform_failure_evidence
-    capture_fnd0010
+
     finalise_bundle
     return 1
   fi
@@ -1058,109 +944,6 @@ kubeconfig_for_cluster() {
 
 kubeconfig_server_for_cluster() {
   python3 "$OBSERVER" server --file "${1:-}" --cluster "${2:-}" 2>/dev/null || printf -- '-\n'
-}
-
-capture_fnd0010() {
-  capture_provisioner_bindings
-  say "capturing FND-0010 discriminator evidence (no remediation)"
-  if ! cluster_describable; then
-    say "  cluster is not describable — the platform stage cannot have run; nothing to probe"
-    return 0
-  fi
-  kubeconfig_for_cluster
-  local endpoint
-  endpoint="$(current_endpoint)"
-  if [ -n "$endpoint" ] && ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$endpoint"; then
-    say "  the run credential does not address this cluster's current endpoint ($endpoint):"
-    say "  the discriminator capture is not taken through a replaced cluster of the same name"
-    return 0
-  fi
-  kube_capture fnd0010-startupapicheck-logs kubectl -n cert-manager logs \
-    job/cert-manager-startupapicheck --all-containers --tail=-1
-  kube_capture fnd0010-events  kubectl -n cert-manager get events --sort-by=.lastTimestamp
-  kube_capture fnd0010-job     kubectl -n cert-manager describe job cert-manager-startupapicheck
-  kube_capture fnd0010-job-status kubectl -n cert-manager get job cert-manager-startupapicheck -o json
-  kube_capture fnd0010-pods    kubectl -n cert-manager get pods -o wide
-  kube_capture fnd0010-objects kubectl -n cert-manager get deploy,svc,sa,issuer,clusterissuer -o wide
-  kube_capture fnd0010-webhook-target-port kubectl -n cert-manager get svc cert-manager-webhook \
-    -o jsonpath='{.spec.ports[*].targetPort}'
-  kube_capture fnd0010-webhook-endpoints kubectl -n cert-manager get endpoints cert-manager-webhook -o wide
-  kube_capture fnd0010-webhook-config kubectl get validatingwebhookconfiguration cert-manager-webhook -o yaml
-  kube_capture fnd0010-cainjector-logs kubectl -n cert-manager logs deploy/cert-manager-cainjector --tail=-1
-  kube_capture fnd0010-controller-logs kubectl -n cert-manager logs deploy/cert-manager --tail=-1
-  kube_capture fnd0010-webhook-logs kubectl -n cert-manager logs deploy/cert-manager-webhook --tail=-1
-  kube_capture fnd0010-ca-secret kubectl -n cert-manager get secret cert-manager-webhook-ca \
-    -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
-  kube_capture fnd0010-tls-secret kubectl -n cert-manager get secret cert-manager-webhook-tls \
-    -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
-  kube_capture fnd0010-startupapicheck-pod kubectl -n cert-manager get pods \
-    -l job-name=cert-manager-startupapicheck -o yaml
-  kube_capture fnd0010-rbac-cert-manager kubectl -n cert-manager get role,rolebinding -o name
-  kube_capture fnd0010-rbac-kube-system kubectl -n kube-system get role,rolebinding -o name
-  kube_capture fnd0010-leases-cert-manager kubectl -n cert-manager get leases -o wide
-  kube_capture fnd0010-leases-kube-system kubectl -n kube-system get leases -o name
-  kube_capture fnd0010-certificates kubectl -n cert-manager get certificates,issuers,clusterissuers -o wide
-  kube_capture fnd0010-nodes   kubectl get nodes -o wide
-  kube_capture fnd0010-firewall-rules gcloud compute firewall-rules list --project "$PROJECT" \
-    --filter="name~$CLUSTER" \
-    --format='table(name,sourceRanges.list(),allowed[].map().firewall_rule().list(),targetTags.list())'
-  kube_capture fnd0010-master-cidr gcloud container clusters describe "$CLUSTER" \
-    --region "$REGION" --project "$PROJECT" --format='value(privateClusterConfig.masterIpv4CidrBlock)'
-  classify_fnd0010
-}
-
-classify_fnd0010() {
-  local out="$LOG_DIR/fnd0010-classification.txt"
-  local job_log="$LOG_DIR/fnd0010-job.log" events="$LOG_DIR/fnd0010-events.log"
-  local check_log="$LOG_DIR/fnd0010-startupapicheck-logs.log"
-  {
-    printf 'classification: '
-    if grep -qiE 'Error: .*already exists|already exists$' \
-        "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" 2>/dev/null; then
-      printf 'TERRAFORM_ALREADY_EXISTS\n'
-    elif grep -qiE 'warden-validating|GKE Warden rejected|autogke-' \
-        "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" "$LOG_DIR/fnd0010-events.log" 2>/dev/null; then
-      printf 'ADMISSION_DENIED\n'
-    elif grep -qiE 'QUOTA_EXCEEDED|CreateVolume failed|failed to insert .*disk' \
-        "$LOG_DIR/fnd0010-events.log" "$LOG_DIR/cloud-apply.log" 2>/dev/null; then
-      printf 'PROVIDER_DISK_QUOTA_EXCEEDED\n'
-    elif grep -qiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"' \
-        "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null; then
-      printf 'LEADER_ELECTION_DENIED\n'
-    elif grep -qiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify' \
-        "$check_log" "$job_log" 2>/dev/null; then
-      printf 'TLS_CA_OR_CERTIFICATE\n'
-    elif grep -qiE 'no matches for kind|could not find the requested resource|failed to discover|unable to retrieve the complete list of server APIs' \
-        "$check_log" "$job_log" 2>/dev/null; then
-      printf 'CRD_OR_API_DISCOVERY\n'
-    elif grep -qiE 'forbidden|cannot create resource|is not allowed to' "$check_log" "$job_log" 2>/dev/null; then
-      printf 'RBAC\n'
-    elif grep -qiE 'context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host' \
-        "$check_log" "$job_log" 2>/dev/null; then
-      printf 'WEBHOOK_REACHABILITY\n'
-    elif grep -qiE 'FailedScheduling|Unschedulable|Insufficient (cpu|memory)|no nodes available' \
-        "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null; then
-      printf 'SCHEDULING_AMBIENT\n'
-    else
-      printf 'UNKNOWN\n'
-    fi
-    printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
-    grep -hiE 'Error: .*already exists|already exists$|warden-validating|GKE Warden rejected|autogke-|QUOTA_EXCEEDED|CreateVolume failed|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
-      "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" \
-      "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" \
-      "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null | head -20 || true
-    printf '\n-- corroboration --\n'
-    printf 'webhook targetPort: %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-target-port.log" 2>/dev/null)"
-    printf 'webhook endpoints : %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-endpoints.log" 2>/dev/null)"
-    printf 'master CIDR       : %s\n' "$(head -1 "$LOG_DIR/fnd0010-master-cidr.log" 2>/dev/null)"
-    printf 'firewall rules:\n'
-    sed 's/^/  /' "$LOG_DIR/fnd0010-firewall-rules.log" 2>/dev/null | head -10 || true
-    printf '\nThis is a classification of the captured evidence, not a conclusion. A run whose\n'
-    printf 'classification is UNKNOWN, or which contradicts the reachability hypothesis, stops\n'
-    printf 'here: remediation is a separate authorization.\n'
-  } >"$out" 2>&1
-  say "discriminator classification: $out"
-  sed -n '1p' "$out" 2>/dev/null || true
 }
 
 capture_provisioner_bindings() {
