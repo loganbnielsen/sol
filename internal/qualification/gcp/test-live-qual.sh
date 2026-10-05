@@ -105,6 +105,8 @@ case "$1 $2" in
       printf '[platform-apply] FAILED (31.0s)\n'
       printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
     else
+      printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\\n" \
+        "${XDG_DATA_HOME:-/tmp}"
       printf 'platform-apply ok\n'
     fi
     printf 'provisioner-bootstrap-access-remove ok\n'
@@ -598,6 +600,13 @@ has "the run record states the credential was supplied" \
 has "and that this run generated it" "platform_credential_source: generated-for-this-run" \
   "$TMP/credential-boundary.logs/prerequisites.txt"
 lacks "and never records the value" "SCRAM-SHA-256" "$TMP/credential-boundary.logs/prerequisites.txt"
+present "$TMP/credential-boundary.logs/state/platform.tfstate" \
+  "the resumed apply's platform root is still credited in the bundle"
+
+printf '\nscenario: the resumed platform root is still required in the bundle\n'
+run_case credential-boundary-nostate cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_STATE_UNREADABLE=1
+has "a resumed platform root whose state could not be captured is incomplete" \
+  "bundle member missing or empty: state/platform.tfstate" "$TMP/credential-boundary-nostate.out"
 
 printf '\nscenario: a platform credential the harness cannot supply fails the run\n'
 run_case credential-refused cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_SECRET_CREATE_FAILS=1

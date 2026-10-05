@@ -570,10 +570,13 @@ bundle_manifest() {
 }
 
 root_reached() {
+  local pattern
   case "$1" in
-    cloud)    grep -qE -- '-chdir=[^ ]*/platform/cloud/[a-z]+/cluster' "$LOG_DIR/cloud-apply.log" 2>/dev/null ;;
-    platform) grep -qE -- '-chdir=[^ ]*/platform/cloud/[a-z]+/platform' "$LOG_DIR/cloud-apply.log" 2>/dev/null ;;
+    cloud)    pattern='-chdir=[^ ]*/platform/cloud/[a-z]+/cluster' ;;
+    platform) pattern='-chdir=[^ ]*/platform/cloud/[a-z]+/platform' ;;
+    *) return 1 ;;
   esac
+  grep -qE -- "$pattern" "$LOG_DIR"/cloud-apply*.log 2>/dev/null
 }
 
 verify_bundle() {
