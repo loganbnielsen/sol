@@ -140,8 +140,8 @@ def main():
     mutate(
         tmp,
         "internal/qualification/aws/live-row.sh",
-        "sol cloud bootstrap '$TARGET' --apply",
-        "sol cloud plan '$TARGET' --apply",
+        "cloud bootstrap '$TARGET' --apply",
+        "cloud plan '$TARGET' --apply",
     )
     cases.append(
         (
