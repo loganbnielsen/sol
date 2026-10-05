@@ -221,5 +221,4 @@ At the end, report:
 - Validation command, usually:
 
 ```bash
-dune exec internal/tooling/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
 ```
