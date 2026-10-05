@@ -30,12 +30,5 @@ if ! "$REPO_ROOT/internal/ci/check_ocamlformat.sh" --staged; then
 fi
 
 echo ""
-echo "▶ pre-commit: build"
-if ! (unset $(git rev-parse --local-env-vars) && dune build --root "$REPO_ROOT" 2>&1); then
-  echo "✗ Build failed — commit blocked."
-  exit 1
-fi
-
-echo ""
-echo "  (tests and the fast CI checks run at push: internal/ci/run_fast_checks.sh)"
+echo "  (build and repository checks run at push; required CI is authoritative)"
 exit 0

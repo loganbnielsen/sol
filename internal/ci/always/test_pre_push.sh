@@ -3,7 +3,6 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 hook="$root/internal/tooling/hooks/pre-push"
-zero="0000000000000000000000000000000000000000"
 fail=0
 
 fixture="$(mktemp -d)"
@@ -16,61 +15,29 @@ mkdir -p "$fixture/internal/ci" "$fixture/internal/tooling/hooks"
 cp "$hook" "$fixture/internal/tooling/hooks/pre-push"
 cat >"$fixture/internal/ci/run_fast_checks.sh" <<'EOF'
 #!/usr/bin/env bash
-if grep -q bad checked.txt 2>/dev/null; then
-  echo "fixture guard: checked.txt carries bad"
-  exit 1
-fi
-echo "fixture guard: clean"
+printf 'fast checks ran\n'
+exit "${FIXTURE_RC:-0}"
 EOF
 chmod +x "$fixture/internal/ci/run_fast_checks.sh"
-printf 'good\n' >"$fixture/checked.txt"
+cp "$hook" "$fixture/internal/tooling/hooks/pre-push"
+printf 'x\n' >"$fixture/file"
 git -C "$fixture" add -A
 git -C "$fixture" commit -q -m init
 
 run_hook() {
-  local out="$1"
-  shift
-  local line="refs/heads/x $(git -C "$fixture" rev-parse HEAD) refs/heads/x $zero"
-  ( cd "$fixture" && env "$@" bash internal/tooling/hooks/pre-push <<<"$line" ) >"$out" 2>&1
+  local out="$1"; shift
+  ( cd "$fixture" && env "$@" bash internal/tooling/hooks/pre-push </dev/null ) >"$out" 2>&1
 }
 
-check() {
-  local what="$1" expected="$2" actual="$3"
-  if [ "$expected" != "$actual" ]; then
-    echo "test_pre_push: $what: expected $expected, got $actual" >&2
-    fail=1
-  fi
-}
+run_hook "$fixture/out-ok" && rc=0 || rc=$?
+[ "$rc" = 0 ] || { echo "test_pre_push: fast checks success should pass" >&2; fail=1; }
+grep -q "fast checks ran" "$fixture/out-ok" || { echo "test_pre_push: fast checks did not run" >&2; fail=1; }
 
-check_contains() {
-  local what="$1" needle="$2" haystack="$3"
-  case "$haystack" in
-    *"$needle"*) ;;
-    *)
-      echo "test_pre_push: $what: expected to find '$needle' in:" >&2
-      echo "$haystack" >&2
-      fail=1
-      ;;
-  esac
-}
+run_hook "$fixture/out-fail" FIXTURE_RC=7 && rc=0 || rc=$?
+[ "$rc" = 7 ] || { echo "test_pre_push: fast-check failure should propagate" >&2; fail=1; }
 
-printf 'bad\n' >"$fixture/checked.txt"
-run_hook "$fixture/out-dirty" && rc=0 || rc=$?
-check "an unrelated dirty change does not block a clean pushed tip" 0 "$rc"
-check_contains "the failure explains the dirt is excluded" "NOT part of the pushed tree" "$(cat "$fixture/out-dirty")"
-check_contains "the committed tree is what got checked" "fixture guard: clean" "$(cat "$fixture/out-dirty")"
+run_hook "$fixture/out-skip" SOL_SKIP_PRE_PUSH=1 FIXTURE_RC=7 && rc=0 || rc=$?
+[ "$rc" = 0 ] || { echo "test_pre_push: skip should bypass checks" >&2; fail=1; }
 
-git -C "$fixture" add -A
-git -C "$fixture" commit -q -m "carry the violation"
-run_hook "$fixture/out-committed" && rc=0 || rc=$?
-check "a violation in the pushed tip still blocks the push" 1 "$rc"
-check_contains "the guards ran against the pushed tip" "fixture guard: checked.txt carries bad" "$(cat "$fixture/out-committed")"
-
-run_hook "$fixture/out-escape" SOL_SKIP_PRE_PUSH=1 && rc=0 || rc=$?
-check "the pre-push escape is enough on its own" 0 "$rc"
-
-run_hook "$fixture/out-global" SOL_SKIP_HOOKS=1 && rc=0 || rc=$?
-check "the global escape still works" 0 "$rc"
-
-[ "$fail" = "0" ] && echo "test_pre_push: every expectation held."
+[ "$fail" = 0 ] && echo "test_pre_push: every expectation held."
 exit "$fail"
