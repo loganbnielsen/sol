@@ -174,7 +174,7 @@ OCaml namespace, because both namespaces relay through the same broker and the
 injection's observable (the outbox holds, then drains) is a property of the relay.
 
 Both drivers are run in one `rows` phase by the run's composed driver — the run passes
-whichever driver(s) `ALPHA_CAMPAIGN.md` §3 needs for the rows it is moving:
+whichever driver(s) are needed for the claims the run is moving:
 
 ```sh
 ROWS_SH=internal/qualification/local/rows-ocaml.sh bash internal/qualification/local/local-qual.sh rows
@@ -194,6 +194,6 @@ ROWS_SH=internal/qualification/local/rows-ts.sh     bash internal/qualification/
 ## 7. Updating the campaign
 
 A run produces a record from `run-record-template.md` and updates the rows it moved in
-`ALPHA_CAMPAIGN.md` §3 (and, for observability rows, the observability matrix). A row
+the current owning matrix (and, for observability rows, the observability matrix). A row
 changes verdict only with evidence of the class it needs; a defect the run exposes is
 filed, fixed if bounded and unowned, mutation-tested, merged, and the row rerun.
