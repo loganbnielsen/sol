@@ -133,7 +133,7 @@ nothing.
 | D3 | Unplanned node loss + **measured** restoration within the 5-minute target (§3) | terminate a node's EC2 instance (no drain) | **measured** time from node `NotReady` → required ready capacity restored = `measured`; PASS iff ≤ 300 s, given declared headroom | timestamped watch samples, node events, measured value |
 | D4 | Drain grace closes the 30s/30s race (§3) | during D2, observe the terminated pod | pod terminates cleanly within `terminationGracePeriodSeconds` (45 s), no SIGKILL mid-drain, in-flight request completes | pod events, app log showing drain completion, rendered grace value |
 | D5 | Slow start is not liveness-killed (§3) | deploy a tolerant workload with a deliberately slow start (within the startup probe budget) | pod reaches Ready without a liveness restart; `restartCount` 0 | pod events, `restartCount` |
-| D6 | Kafka-worker readiness = consumer-join, both directions (§3) | watch `/readyz` across start → assign → forced rebalance | 503 until partitions assigned, then 200; during a rebalance it returns to 503 and recovers to 200 (not permanently true) | endpoint samples with timestamps, broker/consumer-group state |
+| D6 | Kafka-worker readiness = consumer-group join, including a zero-partition member (§3) | watch `/readyz` across start → join → forced rebalance | 503 until the consumer joins its group (the first assignment, which may own **zero** partitions), then 200; a rebalance that reassigns or removes partitions does **not** drop readiness — liveness is D7, not readiness | endpoint samples with timestamps, broker/consumer-group state; the contract is `Worker_health.is_ready` (`framework/ocaml/sol-worker/lib/worker_health.ml`) and its unit test `test_ready_without_owning_a_partition` |
 | D7 | Readiness ≠ liveness; a hung consumer is replaced (§3) | stall the consumer beyond the poll-cadence bound (e.g. block the poll loop / pause the broker) | `/livez` fails while the process is up → pod is restarted; readiness never inferred from "was ready once" | `/livez` samples, `restartCount`, probe events |
 | D8 | Broker unreachable at startup blocks readiness, does not crash-loop (§3) | start the worker while the broker is unreachable | `/readyz` 503 with bounded retry; process stays up (not CrashLoopBackOff) | pod state, `/readyz` samples, restartCount |
 
@@ -258,61 +258,33 @@ rather than reasoned about:
   can acknowledge (G1–G3). A local sink proves the mechanism only and explicitly
   does not qualify the target (DEC-026 §8).
 
-## Before the next run (Run 8)
+## Assertions that ride along at no extra cost
 
-Run 7 reached `Ready`, passed the application preflight, passed the migration Job
-for the first time, and then stopped one grant short of a workload. Three things
-have changed since, and Run 8 is the first attempt that can spend them:
+Obligations the normal run collects, so they are exercised without a separate scenario:
 
-**The target:** start from `internal/qualification/aws/run8-aws-target.example.yml` and copy
-it to `examples/pluto/sol/environments.local.yml` with real values (FEAT-100). That
-file is deliberately **untracked** — gitignored, and the repository forbids tracking it
-(`internal/ci/always/check_no_account_artifacts.sh`), so the run record
-(`internal/qualification/records/2026-09-20-run8-aws.md`) carries the target's contents rather than
-relying on the revision to pin it.
+1. **Make the absence verdict fire.** Section H's independent inventory queries every required
+   disposable class (the run procedure lists them). Leave one residual of a class where
+   `live-row.sh verify` will observe it — or record a real leftover — so the checks are shown
+   able to fail against real resources, not only against the offline harness's mock. A green
+   absence check that has never been seen to go red is not evidence of absence.
+2. **Record the steady-state authority posture as the named identities.** Section F and `I3`:
+   as the bounded cluster-access identity, an `aws eks associate-access-policy` attempt must be
+   **denied**, and the steady-state `can-i` results must be recorded *with the identity that
+   produced each* — positive for steady-state operations, negative for `escalate` and `bind`.
+3. **Exercise the migration gate end to end.** Section C's gate, including a normal
+   failing-then-fixed migration and `INFRA-044`'s redaction on the same path — not a unit test.
 
-- **The deploy lease is granted** (`INFRA-043`, #370). Every previous attempt
-  stopped at `sol-boundary-lease-<workspace>`, so section **B** has never been
-  reached. Run 8 is the first attempt that can pass it.
-- **A failed migration gate now diagnoses itself** (`INFRA-040`, #379). The gate
-  reads the failing Job's evidence out — container waiting reason, and the Job's
-  logs — before anything removes it, and keeps the Job. If the gate fails here,
-  the cause is in the deploy's own output rather than in a second command.
-- **The absence verifier covers EIPs, NAT gateways and EBS volumes**
-  (`INFRA-047`, #376).
+## What a run must not do
 
-### Assertions that ride along at no extra cost
+- Record B or D as passing from a partially deployed workload.
+- Promote inspection or mechanism evidence to behavioural, or a phase line to
+  infrastructure truth (section I).
+- Record G as passed unless a real receiver with an owner is in place.
+- Start from a checkout build rather than the released bundle.
 
-1. **Make the new absence checks fire.** Section H's absence check now queries
-   three resource classes that nothing has ever left behind on purpose. Leave one
-   residual of each class in place at a point `verify_aws_destroy` will observe —
-   or record a real leftover if one appears — so the checks are shown able to
-   fail against real resources, not only against the offline harness's mock
-   (HARDEN-003). A green absence check that has never been seen to go red is not
-   evidence of absence.
-2. **Record the steady-state authority posture as the named identities.** Section
-   F and `I3` are the place for it: as the bounded cluster-access identity, an
-   `aws eks associate-access-policy` attempt must be **denied** (this is FND-0002's
-   behavioural half and the probe plan item 9 asks for), and the steady-state
-   `can-i` results must be recorded *with the identity that produced them* —
-   positive for steady-state operations, negative for `escalate` and `bind`.
-3. **Exercise the migration gate end to end.** Section C's gate passed once in
-   Run 7; `INFRA-044`'s redaction (#376) is on the same path and its behavioural
-   half is a normal failing-then-fixed migration, not a unit test.
+## Host prerequisites the run's own commands need
 
-### What the run must not do
-
-- Do not attribute a deploy failure to the missing lease: it exists now. If `sol
-  deploy` still stops at the boundary lease, that is a new observation, not the
-  one recorded for Runs 6 and 7.
-- Do not record B or D as passing from a partially deployed workload.
-- The alert receiver is still a blocking input: record G as blocked, not passed,
-  unless a real destination with an owner is in place.
-
-### Host prerequisites the run's own commands need (procedure/tooling friction)
-
-These are not product defects; they are things the operator's session must have, and
-Run 8 lost time to one of them.
+These are not product defects; they are things the operator's session must have.
 
 - **Docker group access, in the shell that runs the app phase.** The *publisher*
   builds and pushes the workload images, and the app phase runs Sol from the
@@ -330,59 +302,4 @@ Run 8 lost time to one of them.
   silently authenticates as the deploy role. Verify with
   `kubectl --context <ctx> auth can-i get clusterroles` before trusting a probe's
   identity.
-
-## Before the next run (Run 9)
-
-Run 9 is `HARDEN-007`; its operational package is
-`internal/qualification/aws/aws-run-procedure.md` § *Run 9 — authorization → execute*. This
-section is the matrix-side reconciliation; the procedure is authoritative for the commands.
-
-**The run's scope is the alpha campaign's `aws` rows**, not the pre-campaign
-`charge_svc`/`notify_worker` pair. The workload is the frozen reference scenario
-implemented by the reference orders scenario; the TypeScript half is not in
-the production profile (DEC-026 §2). The row map — which alpha row each section qualifies,
-what is already `PASS (LIVE)`, and what stays blocked — is the procedure's § *Alpha row
-reconciliation*. Read this matrix's sections as the evidence contract for those alpha rows.
-
-**What changed since the Run 8 section above**
-
-- **B3's `-svc` half runs through the qualification transport.** The procedure's
-  § *Qualification transport into private application services* states how; the harness
-  establishes it (`live-row.sh transport`), verifies the qualifier's effective surface,
-  records the qualifier identity separately (DEC-039 §4), and shows that none of the
-  production identities holds `pods/portforward` before or after.
-- **The harness runs the released bundle, which pins its own migration runner by digest**
-  (`RELEASE-006`, landed; `share/sol/<version>/migration-runner-image`, DEC-049). The harness
-  publishes the application images and nothing else, and hands Sol no runner reference
-  (procedure § *Released-bundle interface*). The run does not start against a checkout build.
-- **Five production identities, not four**: provisioner, cluster-access, deploy, operator and
-  publisher (the Run 5 procedure's precondition 3 named four and omitted cluster-access; the
-  Run 9 section corrects it).
-- **`VERIF-021` / `VERIF-022` collect in this target.** `VERIF-021` (managed secret projection
-  and the fenced grant) is collectable; `VERIF-022` (projected ServiceAccount tokens) is
-  **blocked on `FEAT-134`**, because DEC-063's projected-token volume and caller API are not
-  implemented — the callee-side JWKS verification alone is not the mechanism. The procedure
-  records the evidence collection for both.
-
-**Assertions that ride along at no extra cost** (carried from Run 8, still unexercised live)
-
-1. **Make the absence checks fire.** Section H's absence check queries EKS/RDS/VPC/NAT/EIP/EBS,
-   load balancers, ECR and log groups. Leave one residual of a class in place at a point
-   `verify_aws_destroy` will observe — or record a real leftover — so the checks are shown able
-   to fail against real resources, not only against the offline harness (HARDEN-003).
-2. **Record the steady-state authority posture as the named identities.** As the bounded
-   cluster-access identity, an `aws eks associate-access-policy` attempt must be **denied**;
-   the steady-state `can-i` results must be recorded *with the identity that produced them* —
-   positive for steady-state operations, negative for `escalate` and `bind`.
-3. **Exercise the migration gate end to end.** A normal failing-then-fixed migration, with
-   `INFRA-044`'s redaction on the same path — not a unit test.
-
-**What the run must not do**
-
-- Do not record B or D as passing from a partially deployed workload.
-- Do not promote inspection or mechanism evidence to behavioural, or a phase line to
-  infrastructure truth (section I).
-- Record G as blocked, not passed, unless a real receiver with an owner is in place.
-- Do not start before `RELEASE-006`, `FEAT-132` and `VERIF-027` have landed, and do not start
-  on a checkout build.
 
