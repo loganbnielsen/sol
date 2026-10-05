@@ -702,13 +702,13 @@ phase_cloud() {
   run cloud-check "$SOL" check || return 1
   local vars; mapfile -t vars < <(cloud_vars)
 
-  reconcile_durable_root || return 1
-
   if plan_only; then
-    run cloud-plan "$SOL" cloud plan "$TARGET" "${vars[@]}"
-    say "PLAN_ONLY=1: nothing created; target and variables validated"
+    run cloud-plan "$SOL" cloud plan "$TARGET" "${vars[@]}" || return 1
+    say "PLAN_ONLY=1: no infrastructure mutation requested; durable setup skipped"
     return 0
   fi
+
+  reconcile_durable_root || return 1
 
   CLOUD_APPLIED=1
   INSTALL_STATE=succeeded

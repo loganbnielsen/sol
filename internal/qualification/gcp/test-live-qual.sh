@@ -112,6 +112,7 @@ case "$1 $2" in
     printf 'provisioner-bootstrap-access-remove ok\n'
     printf 'lifecycle phase: Ready\nDone.\n'
     [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
+  "cloud plan") [ "${STUB_CLOUD_PLAN_RC:-0}" = "0" ] ;;
   "cloud destroy") [ "${STUB_DESTROY_RC:-0}" = "0" ] ;;
   "deploy")        [ "${STUB_DEPLOY_RC:-0}" = "0" ] ;;
   *) : ;;
@@ -153,7 +154,9 @@ case "$*" in
     if [ "${STUB_STATE_PRESENT:-0}" = "1" ]; then printf 'gs://sol-qualification-tfstate/state\n'; exit 0; fi
     printf 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND: The specified object was not found.\n' >&2
     exit 1 ;;
-  *"storage buckets describe"*) printf "sol-qualification-tfstate\n"; exit 0 ;;
+  *"storage buckets describe"*)
+    [ "${STUB_BUCKET_ABSENT:-0}" = 1 ] && exit 1
+    printf "sol-qualification-tfstate\n"; exit 0 ;;
   *"storage cat"*)
     if [ "${STUB_STATE_UNREADABLE:-0}" = "1" ]; then
       printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
@@ -541,6 +544,23 @@ run_case_without_a_phase() {
   echo "$? " >"$TMP/no-phase.rc"
   sed -i 's/ //' "$TMP/no-phase.rc"
 }
+
+printf '\nscenario: planning skips durable reconciliation and cleanup\n'
+for scenario in absent drift failure; do
+  plan_rc=0
+  [ "$scenario" = failure ] && plan_rc=1
+  run_case "plan-$scenario" cloud PLAN_ONLY=1 STUB_PLAN_RC=2 STUB_CLOUD_PLAN_RC="$plan_rc" STUB_BUCKET_ABSENT=1
+  is "$scenario: plan exit status is preserved" "$(cat "$TMP/plan-$scenario.rc")" "$plan_rc"
+  has "$scenario: supported cloud planning runs" "sol cloud plan" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no durable Terraform operation runs" "terraform " "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no cloud apply runs" "sol cloud apply" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no destroy runs on exit" "sol cloud destroy" "$TMP/plan-$scenario.argv"
+  [ ! -e "$TARGET_FILE" ] && ok "$scenario: scratch target is removed" \
+    || no "$scenario: scratch target is removed" absent present
+  if [ "$plan_rc" = 1 ]; then
+    lacks "a failed plan makes no success claim" "no infrastructure mutation requested" "$TMP/plan-$scenario.out"
+  fi
+done
 
 printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
