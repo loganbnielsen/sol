@@ -8,29 +8,33 @@ PORT="${POSTGRES_PORT:-5432}"
 IMAGE="postgres:16-alpine"
 READY_TIMEOUT="${POSTGRES_READY_TIMEOUT_S:-60}"
 READY_INTERVAL="${POSTGRES_READY_INTERVAL_S:-1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+  require_local_publish "${CONTAINER}" 5432
   echo "Postgres already running (container: ${CONTAINER})"
 else
   echo "Starting Postgres..."
+  dev_publish_ports "${PORT}:5432"
   docker run -d \
     --name "${CONTAINER}" \
     --rm \
     -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
     -e POSTGRES_DB="${POSTGRES_DB}" \
-    -p "${PORT}:5432" \
+    "${DEV_PUBLISH_ARGS[@]}" \
     "${IMAGE}" \
     > /dev/null
 fi
 
 url="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${PORT}/${POSTGRES_DB}"
-published_url="postgresql://postgres:${POSTGRES_PASSWORD}@host.docker.internal:${PORT}/${POSTGRES_DB}"
+published_url="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${PORT}/${POSTGRES_DB}"
 client_error="$(mktemp)"
 trap 'rm -f "${client_error}"' EXIT
 
 postgres_answers() {
   local answer status=0
-  answer="$(docker run --rm --add-host host.docker.internal:host-gateway "${IMAGE}" \
+  answer="$(docker run --rm --network host "${IMAGE}" \
     psql "${published_url}" -tAc 'SELECT 1' 2>"${client_error}")" || status=$?
   [ "$status" = 0 ] && [ "$answer" = 1 ]
 }

@@ -7,6 +7,7 @@ GRAFANA_PORT=3000
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/prometheus.yml"
 source "${SCRIPT_DIR}/lib/images.sh"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -14,17 +15,20 @@ if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
 fi
 
 if docker ps --format '{{.Names}}' | grep -q '^prometheus$'; then
+  require_local_publish prometheus 9090
   echo "Prometheus already running at http://localhost:${PROMETHEUS_PORT}"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^prometheus$'; then
     echo "Restarting stopped Prometheus container..."
     docker start prometheus
+    require_local_publish prometheus 9090
   else
     echo "Starting Prometheus..."
+    dev_publish_ports "$PROMETHEUS_PORT:9090"
     docker run -d \
       --name prometheus \
       --network "$NETWORK" \
-      -p "${PROMETHEUS_PORT}:9090" \
+      "${DEV_PUBLISH_ARGS[@]}" \
       -v "${CONFIG_FILE}:/etc/prometheus/prometheus.yml:ro" \
       "$SOL_IMAGE_PROMETHEUS" \
       --config.file=/etc/prometheus/prometheus.yml \

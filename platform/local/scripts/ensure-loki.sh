@@ -3,20 +3,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 check_port_forward_conflict 3100 loki
 
 if docker ps --format '{{.Names}}' | grep -q '^loki$'; then
+  require_local_publish loki 3100
   echo "Loki already running"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^loki$'; then
     echo "Restarting stopped Loki container..."
     docker start loki
+    require_local_publish loki 3100
   else
     echo "Starting Loki..."
+    dev_publish_ports "3100:3100"
     docker run -d \
       --name loki \
-      -p 3100:3100 \
+      "${DEV_PUBLISH_ARGS[@]}" \
       grafana/loki:3.0.0 \
       -config.file=/etc/loki/local-config.yaml
   fi

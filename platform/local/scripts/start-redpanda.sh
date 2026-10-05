@@ -7,8 +7,12 @@ ADMIN_PORT="${ADMIN_PORT:-9644}"
 SCHEMA_REGISTRY_PORT="${SCHEMA_REGISTRY_PORT:-8081}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/images.sh"
+source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+  require_local_publish "${CONTAINER}" 9092
+  require_local_publish "${CONTAINER}" 9644
+  require_local_publish "${CONTAINER}" 8081
   echo "Redpanda already running (container: ${CONTAINER})"
   exit 0
 fi
@@ -19,10 +23,9 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
 fi
 
 echo "Starting Redpanda..."
+dev_publish_ports "${KAFKA_PORT}:9092" "${ADMIN_PORT}:9644" "${SCHEMA_REGISTRY_PORT}:8081"
 docker run -d --name "${CONTAINER}" \
-  -p "${KAFKA_PORT}:9092" \
-  -p "${ADMIN_PORT}:9644" \
-  -p "${SCHEMA_REGISTRY_PORT}:8081" \
+  "${DEV_PUBLISH_ARGS[@]}" \
   "$SOL_IMAGE_REDPANDA" \
   redpanda start \
   --overprovisioned \
