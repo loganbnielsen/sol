@@ -45,8 +45,7 @@ rows I2, I5, I7 and I10 are the ones that would have caught them live.
 ## Where each row stands
 
 A row's verdict lives with the claim it belongs to, and cites the record that established it:
-the **alpha-surface** rows in `ALPHA_CAMPAIGN.md` §3 (the release view), and this file's own rows
-in the run records below. The newest AWS evidence, and what it covers:
+this matrix and the run records it cites. The newest AWS evidence, and what it covers:
 
 - `records/2026-09-30-aws-application-row-complete.md` — the whole application row on a fresh
   specimen (`sol-qual-aws-35`, `qualreg/aws/us-east-1`) with **no manual patch at any point**:
@@ -340,7 +339,7 @@ section is the matrix-side reconciliation; the procedure is authoritative for th
 
 **The run's scope is the alpha campaign's `aws` rows**, not the pre-campaign
 `charge_svc`/`notify_worker` pair. The workload is the frozen reference scenario
-(`ALPHA_CAMPAIGN.md` §2), implemented by `FEAT-131`/`FEAT-132`; the TypeScript half is not in
+implemented by the reference orders scenario; the TypeScript half is not in
 the production profile (DEC-026 §2). The row map — which alpha row each section qualifies,
 what is already `PASS (LIVE)`, and what stays blocked — is the procedure's § *Alpha row
 reconciliation*. Read this matrix's sections as the evidence contract for those alpha rows.
