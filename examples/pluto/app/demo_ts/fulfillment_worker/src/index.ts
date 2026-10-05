@@ -14,8 +14,12 @@ import { runJobs } from "@sol-fab/jobs";
 import { makeLokiPusher } from "@sol-fab/obs";
 import { runRelay } from "@sol-fab/outbox";
 import { runWorker } from "@sol-fab/worker";
-import { ORDER_FULFILLED, ORDER_PLACED } from "@demo-ts/contract";
-import { decodeOrderFulfilled, decodeOrderPlaced } from "./wire.js";
+import {
+  ORDER_FULFILLED,
+  ORDER_PLACED,
+  decodeOrderFulfilled,
+  decodeOrderPlaced,
+} from "@demo-ts/contract";
 import { initTracing } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
