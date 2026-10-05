@@ -7,6 +7,7 @@ NETWORK=sol-obs
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/tempo.yaml"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"
+source "${SCRIPT_DIR}/lib/images.sh"
 
 check_port_forward_conflict "$OTLP_PORT" tempo
 check_port_forward_conflict "$QUERY_PORT" tempo
@@ -30,7 +31,7 @@ else
       -p "${OTLP_PORT}:4318" \
       -p "${QUERY_PORT}:3200" \
       -v "${CONFIG_FILE}:/etc/tempo.yaml:ro" \
-      grafana/tempo:latest \
+      "$SOL_IMAGE_TEMPO" \
       -config.file=/etc/tempo.yaml
   fi
 

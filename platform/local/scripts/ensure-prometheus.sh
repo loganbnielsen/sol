@@ -6,6 +6,7 @@ PROMETHEUS_PORT=9090
 GRAFANA_PORT=3000
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/prometheus.yml"
+source "${SCRIPT_DIR}/lib/images.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -25,7 +26,7 @@ else
       --network "$NETWORK" \
       -p "${PROMETHEUS_PORT}:9090" \
       -v "${CONFIG_FILE}:/etc/prometheus/prometheus.yml:ro" \
-      prom/prometheus:latest \
+      "$SOL_IMAGE_PROMETHEUS" \
       --config.file=/etc/prometheus/prometheus.yml \
       --storage.tsdb.path=/prometheus \
       --web.enable-lifecycle

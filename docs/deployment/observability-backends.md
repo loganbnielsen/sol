@@ -381,3 +381,33 @@ the underlying trace_id/regex/datasource-uid mechanism was verified against
 real data as above, but "click a log line and land on the trace in
 Grafana's UI" itself was not visually confirmed. Do this before trusting
 the click-through in a real review.
+
+## Local container backends
+
+For local development and the repository's own integration checks, the Docker helpers
+under `platform/local/scripts/` run the backends in containers. Their image references
+are declared once in `platform/local/scripts/lib/images.sh` and pinned by digest, so one
+source snapshot starts the same backend on every host:
+
+| Backend | Helper |
+|---|---|
+| Redpanda | `start-redpanda.sh`, via `ensure-broker.sh` |
+| Tempo | `ensure-tempo.sh` |
+| Prometheus | `ensure-prometheus.sh` |
+| Pushgateway | `ensure-pushgateway.sh` |
+
+`ensure-loki.sh` (`grafana/loki:3.0.0`), `ensure-grafana.sh` (`grafana/grafana:11.3.0`)
+and `ensure-postgres.sh` (`postgres:16-alpine`) already carry explicit tags; they adopt
+the same declaration when they are next touched. The digests recorded here are the
+images the former `:latest` references resolved to when they were pinned (2026-10-05);
+they are a reproducibility pin, not a qualification claim.
+
+**Changing one.** Resolve the digest of the version you intend
+(`docker buildx imagetools inspect <repo>:<tag>`), update its entry in `lib/images.sh`,
+then `docker rm <name>` and re-run the helper — an existing container keeps the image it
+was created from. These helpers are separate from the product's shared Helm definitions:
+`sol local infra up` deploys the charts, not these containers, so a helper upgrade does
+not by itself change a profile. Because it is still a version change, re-run the local
+demo (`internal/fixtures/local-demo`) and the observability qualification row
+(`internal/qualification/observability/`) against the new image rather than folding the
+upgrade into an unrelated change.
