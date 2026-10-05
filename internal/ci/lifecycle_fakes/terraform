@@ -108,7 +108,7 @@ JSON
         }
         case " $plan_args " in
           *" -target=aws_db_instance.postgres "*)
-            add_change "aws_db_instance.postgres" "aws_db_instance" "update"
+            add_change "aws_db_instance.postgres[0]" "aws_db_instance" "update"
             ;;
         esac
         case " $plan_args " in
@@ -177,7 +177,7 @@ JSON
             ;;
           *cloud/aws/cluster*)
             add_declared '{"address":"module.eks.aws_eks_cluster.this[0]","mode":"managed","type":"aws_eks_cluster","values":{"name":"lifecycle-test"}}'
-            add_declared '{"address":"aws_db_instance.postgres","mode":"managed","type":"aws_db_instance","values":{"identifier":"lifecycle-test-postgres"}}'
+            add_declared '{"address":"aws_db_instance.postgres[0]","mode":"managed","type":"aws_db_instance","values":{"identifier":"lifecycle-test-postgres"}}'
             ;;
         esac
         printf '{"resource_changes":[%s],"planned_values":{"root_module":{"resources":[%s]}}}\n' \
@@ -262,16 +262,16 @@ JSON
     elif [ -e "$RDS_PREPARED_FILE" ]; then
       prepared_value="$(cat "$RDS_PREPARED_FILE")"
       if [ "$prepared_value" = "skip" ]; then
-        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres[0]","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
           "$eks_resource"
       else
         printf \
-          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres[0]","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
           "$eks_resource" "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
       fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres[0]","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
         "$eks_resource"
     fi
     ;;

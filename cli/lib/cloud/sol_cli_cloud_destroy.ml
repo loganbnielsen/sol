@@ -572,7 +572,7 @@ let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =
   let open Sol_cli_terraform_plan in
   { phase = "guard-preparation"
   ; rules =
-      [ { matches = List.map (fun address -> Exact address) addresses
+      [ { matches = List.map (fun address -> Resource address) addresses
         ; allows = [ Update ]
         ; reason =
             "a guarded resource the inventory already represents may only have its \
@@ -606,7 +606,7 @@ let reconciliation_policy ~bootstrap ~guarded : Sol_cli_terraform_plan.policy =
             "the temporary bootstrap-access mechanism may be created or updated to \
              obtain destruction authority"
         }
-      ; { matches = List.map (fun address -> Exact address) guarded
+      ; { matches = List.map (fun address -> Resource address) guarded
         ; allows = [ Update ]
         ; reason =
             "a guarded resource the inventory represents may only be reconciled to the \

@@ -111,6 +111,15 @@ def main():
     mutate(
         tmp,
         "cli/lib/cloud/sol_cli_resource_identity.ml",
+        '"aws_db_instance.postgres[0]"',
+        '"aws_db_instance.a_database_no_root_declares[0]"',
+    )
+    cases.append(("a counted entry naming a resource no root declares", tmp))
+
+    tmp = scratch()
+    mutate(
+        tmp,
+        "cli/lib/cloud/sol_cli_resource_identity.ml",
         '{ terraform_type = "kubernetes_"; ownership = in_cluster }',
         '{ terraform_type = "kubernetes_object_"; ownership = in_cluster }',
     )
