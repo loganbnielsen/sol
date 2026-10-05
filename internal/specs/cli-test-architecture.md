@@ -67,5 +67,4 @@ semantics are required:
 
 Mutating `PATH`, the working directory, or environment variables is not a reason
 to retain an executable: per-module process isolation already contains that.
-Each retained executable is recorded with its reason in
-`internal/specs/cli-test-migration.md`.
+The executable stanza and its test should make the required process boundary clear.

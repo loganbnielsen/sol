@@ -199,14 +199,11 @@ observability vocabulary — is identical either way. Parity means **capability 
 parity, not implementation parity**: the contract holds in both languages, while TypeScript
 keeps the Node ecosystem underneath and the OCaml path keeps `kafka-eio`/`pg-eio`.
 
-Pick for the team you have. What differs today is the entry point and the production profile,
-and both gaps are recorded rather than glossed:
+Pick for the team you have. Scaffolding supports both languages; production-profile qualification remains limited:
 
-- **Scaffolding.** `sol new svc|worker|fn` scaffolds the OCaml shape. There is no
-  `sol new --language typescript` yet — that is **FEAT-084**, and until it lands a TypeScript
-  unit is written by hand in the same shape as the OCaml one, as
-  [`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts) does. The units are ordinary
-  units: the same `sol.toml`, the same declaration in `sol.yml`, the same `sol check`.
+- **Scaffolding.** `sol new svc` and `sol new worker` support
+  `--language typescript`; OCaml remains the default. `sol new fn` supports OCaml
+  only. Both language shapes use the same workspace declaration and `sol check`.
 - **The production profile.** The production profile's preflight still refuses a TypeScript
   workload, because DEC-026 §2's triggers are not all met; the state and the remaining trigger
   are recorded in **FEAT-102** and in

@@ -38,11 +38,15 @@ detailed control-plane API before the factory contract is stable.
 
 **Security on Day 1.** Sol's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, read from environment variables. The transport posture is never defaulted: `config_of_env` refuses a workload that does not set `KAFKA_SECURITY_PROTOCOL`, and Sol's rendered manifests set it explicitly (SEC-007). The **production profile** declares `KAFKA_SECURITY_PROTOCOL=sasl_ssl`: Redpanda serves TLS-encrypted Kafka, schema registry and admin API, with SASL authentication, from an in-cluster CA that cert-manager issues (FEAT-093). Workloads receive the CA and the SASL credential through their own Secret, so a deploy fails closed when either is missing. Local dev stays plaintext and says so.
 
-**Dev mirrors prod exactly.** `sol local infra up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sol eliminates that divergence.
+**Shared components, deliberate environment differences.** Local and production
+use the shared platform component definitions. Local development uses a small k3d
+cluster, convenient port-forwards and plaintext Kafka; the production profile adds
+TLS/SASL, durable storage and availability requirements. Local success does not
+establish the production guarantees.
 
-**FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Strimzi, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
+**FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Redpanda, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
 
-**Cloud-agnostic Kubernetes.** Sol services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
+**Cloud-agnostic Kubernetes.** Sol services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Redpanda for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
 
 **Sol owns only its declared contract boundary.** Sol guarantees stable interfaces at its boundary; users are free to provision and integrate arbitrary infrastructure outside Sol, and Sol neither plans nor manages it. `sol plan` describes changes within the Sol-owned contract, not every resource in the account, and integration with externally managed infrastructure is the user's responsibility — through the stable identities, roles, service accounts, namespaces and endpoints Sol owns. See [ADR 0005](adr/0005-sol-owns-only-its-contract-boundary.md).
 
