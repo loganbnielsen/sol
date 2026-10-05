@@ -46,8 +46,8 @@ success. A skipped capability is named as skipped; it is not silently promoted.
 
 - `local/local-qual.sh` plus `rows-ocaml.sh` / `rows-ts.sh` — integrated local behavioral
   evidence. Local evidence never promotes a provider claim.
-- `aws/live-row.sh` — AWS lifecycle/application qualification and provider-backed absence
-  inventory.
+- `aws/live-row.sh` — AWS lifecycle/application qualification; its `verify` phase runs
+  `aws/absence.py`, the read-only tri-state absence inventory that decides teardown.
 - `gcp/live-qual.sh` — GCP lifecycle/application qualification and provider-backed absence
   inventory.
 - provider matrices — claims, required evidence class, scenario, pass condition, and current

@@ -6,6 +6,9 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 TMP="$(mktemp -d)"
 export TMP
 export ATTEMPT="${ATTEMPT:-aws-self-test}"
+# The workspace whose repositories the target declares; it matches the "pluto"
+# image path the harness publishes under.
+export WORKSPACE_NAME=pluto
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0
@@ -33,6 +36,7 @@ TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
 mkdir -p "$ROOT/internal/qualification/aws" "$ROOT/internal/qualification/transport" \
   "$WORKSPACE/sol" "$TMP/bin"
 cp "$REPO/internal/qualification/aws/live-row.sh" "$ROOT/internal/qualification/aws/"
+cp "$REPO/internal/qualification/aws/absence.py" "$ROOT/internal/qualification/aws/"
 cp "$REPO/internal/qualification/sol-under-test.sh" "$ROOT/internal/qualification/"
 cp "$REPO/internal/qualification/attempt.sh" "$ROOT/internal/qualification/"
 
@@ -110,8 +114,30 @@ ECR="123456789012.dkr.ecr.us-east-1.amazonaws.com"
 cat >"$TMP/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 printf 'aws %s\n' "$*" >>"$AWS_LOG"
+class_read() {
+  case "$1 $2" in
+    "eks list-clusters" | "rds describe-db-instances" | "rds describe-db-subnet-groups" | \
+      "rds describe-db-snapshots" | "ec2 describe-instances" | "ec2 describe-vpcs" | \
+      "ec2 describe-nat-gateways" | "ec2 describe-addresses" | "ec2 describe-volumes" | \
+      "elbv2 describe-load-balancers" | "elbv2 describe-tags" | "ecr describe-repositories" | \
+      "iam list-roles" | "iam list-policies" | "s3api list-buckets" | \
+      "cloudwatch list-dashboards" | "logs describe-log-groups")
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+if [ "${STUB_INVENTORY_UNREADABLE:-0}" = "1" ] && class_read "$1" "$2"; then
+  printf 'Unable to locate credentials\n' >&2
+  exit 255
+fi
 case "$1 $2" in
-  "sts get-caller-identity") printf '123456789012\n' ;;
+  "sts get-caller-identity")
+    case " $* " in
+      *"--output json"*) printf '{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/qualifier"}\n' ;;
+      *) printf '123456789012\n' ;;
+    esac
+    ;;
   "s3api head-object")
     if [ "${STUB_STATE_PRESENT:-0}" = "1" ]; then exit 0; fi
     printf 'An error occurred (404) when calling the HeadObject operation: Not Found\n' >&2
@@ -122,41 +148,123 @@ case "$1 $2" in
     mkdir -p "$(dirname "$dest")"
     printf '{"outputs":{"postgres_url":{"value":"postgres://user:qual-secret@db.example.test:5432/pluto"}}}\n' >"$dest"
     ;;
+  "eks list-clusters")
+    if [ "${STUB_LIVE_EKS:-0}" = "1" ]; then printf '{"clusters":["test-cluster"]}\n'; else printf '{"clusters":[]}\n'; fi
+    ;;
+  "rds describe-db-instances")
+    if [ "${STUB_MALFORMED_RDS:-0}" = "1" ]; then
+      printf '{"DBInstances":{}}\n'
+    elif [ "${STUB_LIVE_RDS:-0}" = "1" ]; then
+      printf '{"DBInstances":[{"DBInstanceIdentifier":"test-cluster-postgres"}]}\n'
+    else
+      printf '{"DBInstances":[]}\n'
+    fi
+    ;;
+  "rds describe-db-snapshots")
+    if [ "${STUB_LIVE_RDS_SNAPSHOT:-0}" = "1" ]; then
+      printf '{"DBSnapshots":[{"DBSnapshotIdentifier":"test-cluster-postgres-final"}]}\n'
+    else
+      printf '{"DBSnapshots":[]}\n'
+    fi
+    ;;
   "ec2 describe-instances")
-    case " $* " in
-      *"--output json"*)
-        if [ "${STUB_INVENTORY_UNREADABLE:-0}" = "1" ]; then
-          printf 'Unable to locate credentials\n' >&2
-          exit 255
-        fi
-        if [ "${STUB_LIVE_INSTANCE:-0}" = "1" ]; then
-          printf '[{"id":"i-live","state":"running"}]\n'
-        elif [ "${STUB_TERMINATED_INSTANCE:-0}" = "1" ]; then
-          printf '[{"id":"i-dead","state":"terminated"}]\n'
-        else
-          printf '[]\n'
-        fi
-        exit 0
-        ;;
-    esac
+    if [ "${STUB_LIVE_INSTANCE:-0}" = "1" ]; then
+      printf '{"Reservations":[{"Instances":[{"InstanceId":"i-live","State":{"Name":"running"},"Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}]}\n'
+    elif [ "${STUB_TERMINATED_INSTANCE:-0}" = "1" ]; then
+      printf '{"Reservations":[{"Instances":[{"InstanceId":"i-dead","State":{"Name":"terminated"},"Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}]}\n'
+    elif [ "${STUB_FOREIGN_INSTANCE:-0}" = "1" ]; then
+      printf '{"Reservations":[{"Instances":[{"InstanceId":"i-other","State":{"Name":"running"},"Tags":[{"Key":"kubernetes.io/cluster/another-cluster","Value":"owned"}]}]}]}\n'
+    else
+      printf '{"Reservations":[]}\n'
+    fi
+    ;;
+  "ec2 describe-vpcs")
+    if [ "${STUB_LIVE_VPC:-0}" = "1" ]; then
+      printf '{"Vpcs":[{"VpcId":"vpc-live","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    else
+      printf '{"Vpcs":[]}\n'
+    fi
     ;;
   "ec2 describe-nat-gateways")
-    case " $* " in
-      *"--output json"*)
-        if [ "${STUB_INVENTORY_UNREADABLE:-0}" = "1" ]; then
-          printf 'Unable to locate credentials\n' >&2
-          exit 255
-        fi
-        if [ "${STUB_LIVE_NAT:-0}" = "1" ]; then
-          printf '[{"id":"nat-live","state":"available"}]\n'
-        elif [ "${STUB_DELETED_NAT:-0}" = "1" ]; then
-          printf '[{"id":"nat-dead","state":"deleted"}]\n'
-        else
-          printf '[]\n'
-        fi
-        exit 0
-        ;;
-    esac
+    if [ "${STUB_LIVE_NAT:-0}" = "1" ]; then
+      printf '{"NatGateways":[{"NatGatewayId":"nat-live","State":"available","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    elif [ "${STUB_DELETED_NAT:-0}" = "1" ]; then
+      printf '{"NatGateways":[{"NatGatewayId":"nat-dead","State":"deleted","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    else
+      printf '{"NatGateways":[]}\n'
+    fi
+    ;;
+  "ec2 describe-addresses")
+    if [ "${STUB_LIVE_EIP:-0}" = "1" ]; then
+      printf '{"Addresses":[{"PublicIp":"198.51.100.5","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    else
+      printf '{"Addresses":[]}\n'
+    fi
+    ;;
+  "ec2 describe-volumes")
+    if [ "${STUB_LIVE_VOLUME:-0}" = "1" ]; then
+      printf '{"Volumes":[{"VolumeId":"vol-live","State":"available","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    else
+      printf '{"Volumes":[]}\n'
+    fi
+    ;;
+  "elbv2 describe-load-balancers")
+    if [ "${STUB_LIVE_LB:-0}" = "1" ]; then
+      printf '{"LoadBalancers":[{"LoadBalancerArn":"arn:aws:elbv2:us-east-1:123456789012:loadbalancer/app/k8s-live/1","LoadBalancerName":"k8s-live"}]}\n'
+    else
+      printf '{"LoadBalancers":[]}\n'
+    fi
+    ;;
+  "elbv2 describe-tags")
+    printf '{"TagDescriptions":[{"ResourceArn":"arn:aws:elbv2:us-east-1:123456789012:loadbalancer/app/k8s-live/1","Tags":[{"Key":"kubernetes.io/cluster/test-cluster","Value":"owned"}]}]}\n'
+    ;;
+  "ecr describe-repositories")
+    if [ "${STUB_LIVE_ECR:-0}" = "1" ]; then
+      printf '{"repositories":[{"repositoryName":"pluto/charge-svc"}]}\n'
+    else
+      printf '{"repositories":[]}\n'
+    fi
+    ;;
+  "rds describe-db-subnet-groups")
+    if [ "${STUB_LIVE_RDS_SUBNET_GROUP:-0}" = "1" ]; then
+      printf '{"DBSubnetGroups":[{"DBSubnetGroupName":"test-cluster-postgres"}]}\n'
+    else
+      printf '{"DBSubnetGroups":[]}\n'
+    fi
+    ;;
+  "iam list-roles")
+    if [ "${STUB_LIVE_IAM_ROLE:-0}" = "1" ]; then
+      printf '{"Roles":[{"RoleName":"test-cluster-ebs-csi"}]}\n'
+    else
+      printf '{"Roles":[]}\n'
+    fi
+    ;;
+  "iam list-policies")
+    printf '{"Policies":[]}\n'
+    ;;
+  "s3api list-buckets")
+    if [ "${STUB_LIVE_S3_BUCKET:-0}" = "1" ]; then
+      printf '{"Buckets":[{"Name":"test-cluster-loki-logs"}]}\n'
+    else
+      printf '{"Buckets":[]}\n'
+    fi
+    ;;
+  "cloudwatch list-dashboards")
+    if [ "${STUB_LIVE_DASHBOARD:-0}" = "1" ]; then
+      printf '{"DashboardEntries":[{"DashboardName":"test-cluster-postgres"}]}\n'
+    else
+      printf '{"DashboardEntries":[]}\n'
+    fi
+    ;;
+  "logs describe-log-groups")
+    if [ "${STUB_LIVE_LOG_GROUP:-0}" = "1" ]; then
+      printf '{"logGroups":[{"logGroupName":"/aws/eks/test-cluster/cluster"}]}\n'
+    else
+      printf '{"logGroups":[]}\n'
+    fi
+    ;;
+  "route53 list-hosted-zones")
+    printf '{"HostedZones":[{"Name":"qual-aws.sol-fab.dev.","Id":"/hostedzone/Z123"}]}\n'
     ;;
   "eks describe-cluster")
     case " $* " in
@@ -691,32 +799,86 @@ has "and the state key" "state_key=sol/qualreg/aws/us-east-1/cloud.tfstate" \
 printf '\nscenario: terminal records do not prevent an ABSENT verdict\n'
 run_phase terminal-residue verify STUB_TERMINATED_INSTANCE=1 STUB_DELETED_NAT=1
 is "exit 0" "$(cat "$TMP/terminal-residue.rc")" "0"
-has "a terminated instance reads ABSENT" "ec2-instances: ABSENT" \
+has "a terminated instance reads ABSENT" "ec2-instance: ABSENT" \
   "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
-has "a deleted NAT gateway reads ABSENT" "nat-gateways: ABSENT" \
+has "a deleted NAT gateway reads ABSENT" "nat-gateway: ABSENT" \
   "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
 lacks "and nothing is reported PRESENT" "PRESENT" \
   "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
-has "the raw terminal record is retained as evidence" '"state":"terminated"' \
+has "the raw terminal record is retained as evidence" '"Name":"terminated"' \
   "$TMP/terminal-residue.logs/aws-inventory.txt"
+has "and the durable zone is recorded but excluded from the residue verdict" \
+  "durable-hosted-zone: retained" "$TMP/terminal-residue.logs/aws-inventory-verdict.txt"
 
-printf '\nscenario: live resources prevent an ABSENT verdict\n'
+printf '\nscenario: any required disposable class can fail the verdict alone\n'
 run_phase live-residue verify STUB_LIVE_INSTANCE=1
 refused live-residue "a live instance fails the verification"
-has "a live instance reads PRESENT" "ec2-instances: PRESENT" \
+has "a live instance reads PRESENT" "ec2-instance: PRESENT" \
   "$TMP/live-residue.logs/aws-inventory-verdict.txt"
 run_phase live-nat verify STUB_LIVE_NAT=1
 refused live-nat "a live NAT gateway fails the verification"
-has "a live NAT gateway reads PRESENT" "nat-gateways: PRESENT" \
+has "a live NAT gateway reads PRESENT" "nat-gateway: PRESENT" \
   "$TMP/live-nat.logs/aws-inventory-verdict.txt"
+run_phase live-rds verify STUB_LIVE_RDS=1
+refused live-rds "a live RDS instance fails the verification"
+has "the database reads PRESENT" "rds-instance: PRESENT" \
+  "$TMP/live-rds.logs/aws-inventory-verdict.txt"
+has "while the empty classes still read ABSENT, not as a blanket failure" \
+  "ec2-instance: ABSENT" "$TMP/live-rds.logs/aws-inventory-verdict.txt"
+run_phase live-ecr verify STUB_LIVE_ECR=1
+refused live-ecr "a live repository at the target's registry path fails the verification"
+has "the registry class reads PRESENT" "ecr-repository: PRESENT" \
+  "$TMP/live-ecr.logs/aws-inventory-verdict.txt"
+run_phase live-volume verify STUB_LIVE_VOLUME=1
+refused live-volume "an orphaned EBS volume fails the verification"
+has "the volume class reads PRESENT" "ebs-volume: PRESENT" \
+  "$TMP/live-volume.logs/aws-inventory-verdict.txt"
+run_phase live-lb verify STUB_LIVE_LB=1
+refused live-lb "a load balancer fails the verification"
+has "the load balancer class reads PRESENT" "load-balancer: PRESENT" \
+  "$TMP/live-lb.logs/aws-inventory-verdict.txt"
+run_phase live-iam verify STUB_LIVE_IAM_ROLE=1
+refused live-iam "a leftover target-owned IAM role fails the verification"
+has "the identity class reads PRESENT" "iam-role: PRESENT" \
+  "$TMP/live-iam.logs/aws-inventory-verdict.txt"
+run_phase live-bucket verify STUB_LIVE_S3_BUCKET=1
+refused live-bucket "a leftover target-owned bucket fails the verification"
+has "the bucket class reads PRESENT" "s3-bucket: PRESENT" \
+  "$TMP/live-bucket.logs/aws-inventory-verdict.txt"
 
-printf '\nscenario: an unreadable inventory is UNKNOWN, never absence\n'
+printf '\nscenario: retained snapshots follow the target declaration\n'
+run_phase snapshot-residue verify STUB_LIVE_RDS_SNAPSHOT=1
+refused snapshot-residue "a snapshot fails a retention:none target"
+has "the snapshot reads PRESENT under retention none" "rds-snapshot: PRESENT" \
+  "$TMP/snapshot-residue.logs/aws-inventory-verdict.txt"
+run_phase retaining-snapshot verify STUB_LIVE_RDS_SNAPSHOT=1 RETENTION=final-snapshot
+is "exit 0" "$(cat "$TMP/retaining-snapshot.rc")" "0"
+has "the declared final snapshot is excluded from residue" "rds-snapshot: ABSENT" \
+  "$TMP/retaining-snapshot.logs/aws-inventory-verdict.txt"
+
+printf '\nscenario: a failed read is UNKNOWN, never absence\n'
 run_phase unreadable-residue verify STUB_INVENTORY_UNREADABLE=1
 refused unreadable-residue "an unreadable inventory fails the verification"
-has "the unreadable class reads UNKNOWN" "ec2-instances: UNKNOWN" \
+has "the unreadable class reads UNKNOWN" "ec2-instance: UNKNOWN" \
   "$TMP/unreadable-residue.logs/aws-inventory-verdict.txt"
-lacks "and is never reported ABSENT" "ec2-instances: ABSENT" \
+lacks "and is never reported ABSENT" "ec2-instance: ABSENT" \
   "$TMP/unreadable-residue.logs/aws-inventory-verdict.txt"
+has "and the overall verdict is not ABSENT" "verdict: NOT ABSENT" \
+  "$TMP/unreadable-residue.logs/aws-inventory-verdict.txt"
+
+printf '\nscenario: a syntactically valid but wrong-shaped response is UNKNOWN, never absence\n'
+run_phase malformed-rds verify STUB_MALFORMED_RDS=1
+refused malformed-rds "a wrong-shaped response fails the verification"
+has "the malformed class reads UNKNOWN" "rds-instance: UNKNOWN" \
+  "$TMP/malformed-rds.logs/aws-inventory-verdict.txt"
+lacks "and is never read as ABSENT" "rds-instance: ABSENT" \
+  "$TMP/malformed-rds.logs/aws-inventory-verdict.txt"
+
+printf '\nscenario: unrelated account resources are not the target residue\n'
+run_phase unrelated-residue verify STUB_FOREIGN_INSTANCE=1
+is "exit 0" "$(cat "$TMP/unrelated-residue.rc")" "0"
+has "another cluster's instance does not read as residue" "ec2-instance: ABSENT" \
+  "$TMP/unrelated-residue.logs/aws-inventory-verdict.txt"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then

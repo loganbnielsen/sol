@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# LEGACY, NON-AUTHORITATIVE SMOKE ENTRY POINT. The active qualification runner is
+# `live-row.sh`, and the only independent teardown/absence verdict is `absence.py`
+# invoked by `live-row.sh verify` (matrix H6). This script's cleanup below reads
+# only the EKS cluster and one VPC filter: that is a best-effort smoke convenience,
+# NOT an H6 absence guarantee, and it must not be cited as one. Use
+# `live-row.sh verify` when the claim is "the target is gone".
+
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TARGET="${TARGET:-qual2/aws/us-east-1}"
@@ -32,7 +39,7 @@ cleanup() {
   local rc=$?
   say "cleanup: target destroy"
   (cd "$WORKSPACE" && AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" "$SOL" cloud destroy "$TARGET" --apply) >"$LOG_DIR/aws-destroy.log" 2>&1 || true
-  say "cleanup: verify"
+  say "cleanup: best-effort smoke check of the cluster and one VPC (not the H6 verdict)"
   AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws eks describe-cluster --name "$CLUSTER" --region "$REGION" >"$LOG_DIR/verify-eks.log" 2>&1 && rc=1 || true
   if AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws ec2 describe-vpcs --filters Name=tag:Name,Values="$CLUSTER" --query 'length(Vpcs)' --output text >"$LOG_DIR/verify-vpcs.log" 2>&1; then
     [ "$(cat "$LOG_DIR/verify-vpcs.log")" = "0" ] || rc=1

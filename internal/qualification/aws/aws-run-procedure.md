@@ -262,13 +262,20 @@ lands, E5 is `BLOCKED` — recorded as blocked, never weakened.
    **before** any teardown (ledger rule 4).
 2. `sol cloud destroy <target> --apply`; capture every `lifecycle phase:` line and the
    terraform argv (I7's `-var` order, I8's targeted preparation, I9's `Destroying` → `Absent`).
-3. Independent inventory, tri-state `PRESENT` / `ABSENT` / `UNKNOWN`, over EKS clusters, RDS
-   instances and snapshots, EC2 instances, VPCs, NAT gateways, EIPs, EBS volumes, ELBv2 load
-   balancers, ECR repositories and CloudWatch log groups. A failed or unreadable read is
-   `UNKNOWN`, never absence. The matrix's H6 classes are the set; the matrix's "assertions that
-   ride along" requires the absence checks to have been seen to fail against a real residual.
-4. Confirm the durable Route 53 zone and its nameservers are unchanged, and that no snapshot,
-   bucket, address or volume is retained (`retention: none`).
+3. Independent inventory (`absence.py`, read-only), tri-state `PRESENT` / `ABSENT` / `UNKNOWN`,
+   over EKS clusters, RDS instances, subnet groups and snapshots, EC2 instances, VPCs, NAT gateways,
+   EIPs, EBS volumes, ELBv2 load balancers, ECR repositories, IAM roles and policies, S3 buckets,
+   CloudWatch dashboards and log groups. Each class enumerates the provider and attributes what it
+   returns to this target by the target's cluster tag, cluster-name prefix or declared registry
+   path, so an unrelated account resource is not residue and an attributable one is found after the
+   target disappears. A read that failed, timed out, was not JSON, did not have the class's expected
+   shape, or could not be attributed is `UNKNOWN`, never absence. Only an all-`ABSENT` verdict
+   passes; the matrix's H6 row is this set and this tri-state contract. The matrix's "assertions
+   that ride along" requires the absence checks to have been seen to fail against a real residual.
+4. The durable Route 53 delegation zone is recorded separately and is not part of the residue
+   verdict: it is the contract that outlives the target, not a leak. Confirm it is present and its
+   nameservers are unchanged, and that no snapshot, bucket, address or volume is retained
+   (`retention: none`).
 5. Re-run `sol cloud destroy <target> --apply` against the now-`Absent` target: exit 0,
    `Absent`, no preparation (I11).
 
