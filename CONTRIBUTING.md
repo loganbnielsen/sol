@@ -176,8 +176,12 @@ commit, and the resulting commit is *valid but in the wrong place* — every tes
 guard and review of its contents passes while it sits on someone else's branch.
 
 ```bash
-git worktree add -b <TICKET-ID>/<short-slug> ../sol-<TICKET-ID>-<short-slug> main
+git worktree add -b <TICKET-ID>/<short-slug> ../sol-<TICKET-ID>-<short-slug> origin/main
 ```
+
+**Independent tickets do not wait on open PRs.** For each actionable ticket with no dependency on work in another PR, submit its PR and queue auto-merge as soon as it is eligible, then pick up the next independent ticket. Do not wait for CI, review, or merge to finish before moving on. If a selected review requires the PR to stay draft, continue with independent work while that review runs; queue auto-merge after the review is resolved. Keep monitoring queued PRs and handle failures while working on the next ticket.
+
+Give every ticket its own branch and worktree, based on `origin/main` for independent work. One actor may own several worktrees at once; each worktree has one owner. Keep unrelated tickets in separate PRs. The sequence is: **submit PR → queue auto-merge → next independent ticket; do not wait for merge.**
 
 **Dependent tickets stack; they do not idle.** When ticket B's work needs ticket A's, branch B from A's branch and open B's PR against it instead of waiting for A's review and merge:
 
