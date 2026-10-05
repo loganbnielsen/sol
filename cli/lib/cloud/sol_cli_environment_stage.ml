@@ -171,6 +171,10 @@ type prepared =
 let prepare ~strict ~assets ~target ~var_file ~vars () =
   let* config_vars, target_cfg = target_vars ~strict target in
   let provider = target_cfg.Sol_cli_config.provider in
+  let* () =
+    Sol_cli_provider_capabilities.validate_target provider target_cfg
+    |> Result.map_error (fun message -> Refused message)
+  in
   let var_file =
     resolve_var_file ~flag:var_file ~target:target_cfg.Sol_cli_config.terraform_var_file
   in

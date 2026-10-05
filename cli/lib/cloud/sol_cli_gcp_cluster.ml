@@ -1,5 +1,59 @@
 open Result.Syntax
 
+let service_account_id_min_length = 6
+let service_account_id_max_length = 30
+let account_id_suffixes = [ "-cert-manager"; "-provisioner"; "-thanos"; "-loki" ]
+
+let longest_account_id_suffix =
+  List.fold_left
+    (fun longest suffix ->
+       if String.length suffix > String.length longest then suffix else longest)
+    ""
+    account_id_suffixes
+;;
+
+let valid_service_account_id id =
+  let length = String.length id in
+  length >= service_account_id_min_length
+  && length <= service_account_id_max_length
+  && (match id.[0] with
+      | 'a' .. 'z' -> true
+      | _ -> false)
+  && (match id.[length - 1] with
+      | 'a' .. 'z' | '0' .. '9' -> true
+      | _ -> false)
+  && String.for_all
+       (function
+         | 'a' .. 'z' | '0' .. '9' | '-' -> true
+         | _ -> false)
+       id
+;;
+
+let validate_cluster_name cluster_name =
+  match
+    List.find_opt
+      (fun suffix -> not (valid_service_account_id (cluster_name ^ suffix)))
+      account_id_suffixes
+  with
+  | None -> Ok ()
+  | Some suffix ->
+    let account_id = cluster_name ^ suffix in
+    Error
+      (Printf.sprintf
+         "GCP service-account ids must be %d-%d characters and match \
+          ^[a-z](?:[-a-z0-9]{4,28}[a-z0-9])$, but cluster name %S derives the account id \
+          %S (%d characters) by appending %S. Shorten the cluster name to at most %d \
+          characters; the longest suffix a derived id appends is %S."
+         service_account_id_min_length
+         service_account_id_max_length
+         cluster_name
+         account_id
+         (String.length account_id)
+         suffix
+         (service_account_id_max_length - String.length longest_account_id_suffix)
+         longest_account_id_suffix)
+;;
+
 type gcp_outputs =
   { cluster_name : string
   ; project_id : string
