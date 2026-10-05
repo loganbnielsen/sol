@@ -40,6 +40,37 @@ verified before application; emitted artifacts must use an artifact-safe backend
 
 ---
 
+## Consumer-group bookkeeping ownership
+
+`Sol_cli_deployment_state` stores the last successfully recorded workspace intent
+for Kafka consumer groups. It is a removal-warning baseline, not provider evidence
+that a group is active or that a workload succeeded.
+
+There are three writers: local `sol up` (`Sol_cli_up_execution.record_applied`),
+direct deploy (`Sol_cli_deploy_run.apply`), and rollback
+(`Sol_cli_rollback.execute`). Local up has no release record, so release persistence
+cannot replace this shared record without also changing that local lifecycle.
+Direct deploy writes the release and then the group record; rollback verifies and
+moves the release pointer before correcting the group record. A failed group write
+therefore reports partial completion, not success.
+
+Plans derive group intent from the workspace service inventory, including units
+outside a scoped deployment (`Sol_cli_deployment_plan.derive_consumer_groups`).
+Releases describe selected and retained workloads, and rollback reconstructs groups
+from Kafka-consuming workers (`Sol_cli_rollback.consumer_groups_of_release`). Those
+representations have different inputs: a scoped plan's declaration is not necessarily
+the applied boundary, and legacy topic declarations also affect `consumes_kafka`.
+Do not equate them without tests for scoped changes and retained workers.
+
+The remaining question in #1190 is whether direct deploy and rollback can derive
+their removal baseline from the verified release boundary, retaining bookkeeping
+only for local up. That requires deciding whether the warning protects declared
+workspace intent or the last applied workload boundary. Missing records currently
+mean a first deployment; unreadable records fail the guard unless the operator
+explicitly passes `--confirm-group-change`.
+
+---
+
 ## Command map
 
 ### `sol local infra up`
