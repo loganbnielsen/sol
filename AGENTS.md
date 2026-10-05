@@ -130,6 +130,15 @@ The discipline, since relying on remembering the current directory has now faile
 - `pipeline check-reverts` — safety diagnostic over git history.
 - Pre-commit (format + build) and pre-push (`internal/ci/run_fast_checks.sh`: unit tests + fast CI checks) hooks — convenience local gates; GitHub CI is the authoritative PR gate. **A bypass is exceptional.** `SOL_SKIP_HOOKS=1` disarms every hook at once, so it is the wrong tool for a failure the pushed content cannot explain — a push from a worktree carrying an unrelated local patch is the case that happens here (INFRA-109 makes pre-push evaluate the *pushed tree* and gives it `SOL_SKIP_PRE_PUSH=1` of its own). If a hook fails and you cannot show the failure comes from what you are pushing, evaluate the pushed tree rather than disarming the gate.
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
+
+**CI failure feedback:** When a GitHub PR check fails, inspect the failing test and its ownership before
+closing the PR or treating the failure as unrelated. If it exposes a deterministic regression that is
+cheap and reliable to detect from a local pre-push check, consider adding that test to the affected
+surface’s local validation plan so a later change gets faster feedback. Keep broker/database,
+Kubernetes, cloud and other environment-sensitive checks independently exercised in CI; do not copy a
+flaky or costly CI failure into a local hook merely to reproduce it. Fix or track the underlying
+regression, and preserve independent CI coverage. INFRA-113 and INFRA-115 define the validation tiers
+and selection rules.
 - Ticket filings and promotions go through PRs too; there is no direct-to-main bookkeeping exception.
 
 **Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `perf.sh record --update-baseline` is the only writer, recording the host class beside each entry so comparisons happen only within one host class; `run_tests.sh` is correctness-only and never touches it, and `perf.sh record` without the flag reports a comparison without writing. Pre-commit never stages it into code commits, and merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.

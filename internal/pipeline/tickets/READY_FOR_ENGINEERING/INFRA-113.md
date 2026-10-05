@@ -6,7 +6,7 @@ source: validation workflow review 2026-10-05
 title: Make local git validation content-correct and change-relevant
 ---
 
-**Depends on:** INFRA-109, INFRA-112.
+**Depends on:** INFRA-109, INFRA-112, INFRA-115.
 
 ## Premise verified
 
@@ -17,9 +17,9 @@ of 113s, 156s and 170s on trees whose checks had already passed. `CONTRIBUTING.m
 the warm run about 12 seconds and does not say the local hook runs the lifecycle suite.
 
 The hook change in INFRA-109 makes the pushed tree the input and keeps whole-tree guards whole-tree;
-it does not narrow product-test work. The required CI `test` job independently builds and runs the
-full unit, lifecycle, integration, end-to-end and static checks. Those checks must remain independent
-of any local result cache.
+it does not narrow product-test work. The required CI `test` job independently builds and runs the full unit, lifecycle, integration,
+end-to-end and static checks for each non-docs PR. CI must remain independent of local result caches,
+but this current PR membership is not itself a required invariant; INFRA-115 defines the CI tiers.
 
 The local suite also has inputs that are not reliably fixed by the developer environment: CI pins
 `kubectl` before running the CLI unit alias because a command-argument check depends on the actual
@@ -69,9 +69,12 @@ the unsupported “about 12s warm” duration.
   Version-sensitive tests run locally only with their pinned toolchain; otherwise the authoritative
   CI job owns them.
 - INFRA-109's pushed-tree regression remains green, and INFRA-112's cache invalidates on a changed
-  tree, validation plan, runner or toolchain. CI does not read or reuse local evidence.
-- The required CI `test` job still runs its full independent product suite on every non-docs-only
-  change, including the broker/Postgres integration and E2E classes.
+  tree, validation plan, runner or toolchain. CI does not read or reuse local evidence. Review CI test
+  failures for deterministic, low-cost candidates to add to the relevant local plan; do not mirror
+  costly or environment-sensitive failures into hooks.
+- Local evidence never suppresses or substitutes for independent CI. Per-PR CI selection follows
+  INFRA-115; the broad cross-surface suite remains independently run on every push to `main` and on
+  any PR whose impact is global, mixed, unknown or cannot be classified safely.
 - Tests prove selection for a tooling-only change, a `sol-jobs` change, a CLI lifecycle change, a
   shared/global change, and an unknown path; a mutation that drops an affected package or reverse
   dependent from the plan fails.
