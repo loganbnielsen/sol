@@ -5,6 +5,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$HERE/live-qual.sh"
 REPO="$(cd "$HERE/../../.." && pwd)"
 TMP="$(mktemp -d)"
+export ATTEMPT="${ATTEMPT:-qual-self-test}"
+export TARGET="${TARGET:-qual/gcp/us-central1}"
 
 SCRATCH_WS="$TMP/workspace"
 TARGET_FILE="$SCRATCH_WS/sol/environments.local.yml"
@@ -140,6 +142,10 @@ gcloud_log_to="$ARGV_LOG"
 case " $* " in *"value(endpoint)"*) gcloud_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf "gcloud %s" "$*" >>"$gcloud_log_to"; printf "\n" >>"$gcloud_log_to"
 case "$*" in
+  *"storage objects describe"*)
+    if [ "${STUB_STATE_PRESENT:-0}" = "1" ]; then printf 'gs://sol-qualification-tfstate/state\n'; exit 0; fi
+    printf 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND: The specified object was not found.\n' >&2
+    exit 1 ;;
   *"storage buckets describe"*) printf "sol-qualification-tfstate\n"; exit 0 ;;
   *"storage cat"*)
     if [ "${STUB_STATE_UNREADABLE:-0}" = "1" ]; then
@@ -248,7 +254,7 @@ if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
     fi
     printf "%s\n" "${STUB_CLUSTER_STATUS:-RUNNING}"
     exit 0 ;;
-  *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
+  *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-34.0.0.1}"; exit 0 ;;
     *"container clusters describe"*"--format=json"*)
       if [ "${STUB_CLUSTER_JSON_FAIL:-0}" = "1" ]; then
         printf 'ERROR: (gcloud.container.clusters.describe) PERMISSION_DENIED\n' >&2
@@ -476,13 +482,19 @@ run_case() {
     printf '# Written by internal/qualification/gcp/live-qual.sh (test preseed)\nqual:\n  targets:\n    gcp/us-central1:\n      cluster_name: test-cluster\n      base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
   fi
   rm -rf "$LOG_DIR"
+  if [ -n "${PRESEED_FOREIGN_ATTEMPT:-}" ]; then
+    mkdir -p "$LOG_DIR"
+    printf 'attempt=%s\n' "$PRESEED_FOREIGN_ATTEMPT" >"$LOG_DIR/attempt.txt"
+  fi
   if [ "${PRESEED_CREDENTIALS:-0}" = "1" ]; then
     mkdir -p "$LOG_DIR"
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
+    printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
   if [ "${PRESEED_INVENTORY:-0}" = "1" ]; then
     mkdir -p "$LOG_DIR"
     : >"$LOG_DIR/inventory-pre.tsv"
+    [ -s "$LOG_DIR/attempt.txt" ] || printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
   env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
@@ -535,6 +547,34 @@ has "the harness's own narrative is part of the bundle" "phase: cloud-apply" \
   "$TMP/cloud-ok.logs/harness.log"
 has "and it opens with the revision the attempt ran from" "environment: work tree" \
   "$TMP/cloud-ok.logs/harness.log"
+has "the run identity and state key are in the manifest" \
+  "state_key: sol/qual/gcp/us-central1/cloud.tfstate/default.tfstate" \
+  "$TMP/cloud-ok.logs/evidence-manifest.txt"
+has "and the attempt identity too" "attempt: $ATTEMPT" "$TMP/cloud-ok.logs/evidence-manifest.txt"
+present "$TMP/cloud-ok.logs/inventory-pre.identity" \
+  "the provider inventory carries the attempt, target and state key"
+
+printf '\nscenario: a repeated invocation cannot reuse an occupied disposable target\n'
+run_case occupied cloud STUB_STATE_PRESENT=1
+is "exit 2" "$(cat "$TMP/occupied.rc")" "2"
+has "the refusal names the occupied state key" "already exists" "$TMP/occupied.out"
+lacks "nothing is applied" "cloud apply" "$TMP/occupied.argv"
+lacks "and nothing is torn down" "cloud destroy" "$TMP/occupied.argv"
+
+printf '\nscenario: an evidence directory that belongs to another attempt is refused\n'
+PRESEED_FOREIGN_ATTEMPT=another-attempt run_case reused-dir cloud
+is "exit 2" "$(cat "$TMP/reused-dir.rc")" "2"
+has "the refusal names the attempt the directory belongs to" "another-attempt" "$TMP/reused-dir.out"
+lacks "nothing is applied" "cloud apply" "$TMP/reused-dir.argv"
+
+printf '\nscenario: a credential for a replaced same-name cluster is not this run'"'"'s\n'
+run_case stale-endpoint cloud STUB_CLUSTER_EXISTS=1 STUB_ENDPOINT_REPORTED=10.9.9.9 \
+  STUB_APPLY_RC=1 CLUSTER_WAIT_TIMEOUT_S=1 CLUSTER_KUBECONFIG_POLL_S=1
+has "the capture is taken with no credentials, not the replaced cluster's" \
+  "credentials for test-cluster: no" \
+  "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
+has "and the reason names the endpoint binding" "not the current endpoint" \
+  "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
 
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -987,7 +1027,8 @@ probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-rea
 
 probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
 has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
-is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
+is "each API sample carries the attempt identity" "$(probe_col sampling 2)" "$ATTEMPT"
+is "the sample carries the provider-reported endpoint" "$(probe_col sampling 3)" "34.0.0.1"
 sampling_kc="$TMP/probe-sampling.logs/run-kubeconfig.yaml"
 sampling_name_line="$(grep -n -m1 '^  name:' "$sampling_kc" | cut -d: -f1)"
 sampling_server_line="$(grep -n -m1 '^    server:' "$sampling_kc" | cut -d: -f1)"
@@ -995,11 +1036,11 @@ is "the run-owned kubeconfig is the gcloud shape the shell matcher could not rea
   "$sampling_name_line" "$(( ${sampling_server_line:-0} + 1 ))"
 has "and it names this run's cluster, at the fixture's endpoint" "server: https://34.0.0.1" "$sampling_kc"
 lacks "and no cluster of another run appears in it" "sol-qual-gcp-15c" "$sampling_kc"
-if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+if awk -F'\t' 'NR>1 && $4 != "-" && $4 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
     "$TMP/probe-sampling.logs/api-readiness.tsv"; then
   no "the configured endpoint is never anything but this run's kubeconfig entry" \
     "34.0.0.1 while credentials exist, '-' before that" \
-    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/probe-sampling.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
+    "$(awk -F'\t' 'NR>1{print $4}' "$TMP/probe-sampling.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
 else
   ok "the configured endpoint is never anything but this run's kubeconfig entry"
 fi
@@ -1080,12 +1121,12 @@ has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
   "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
 
 is "the probe resolves this run's configured endpoint from the run-owned kubeconfig once credentials exist" \
-  "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "34.0.0.1"
-if awk -F'\t' 'NR>1 && $3 != "-" && $3 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
+  "$(awk -F'\t' 'NR>1{v=$4} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "34.0.0.1"
+if awk -F'\t' 'NR>1 && $4 != "-" && $4 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
     "$TMP/e2e-credentials.logs/api-readiness.tsv"; then
   no "the ambient cluster is never the configured endpoint" \
     "34.0.0.1 while credentials exist, '-' before that" \
-    "$(awk -F'\t' 'NR>1{print $3}' "$TMP/e2e-credentials.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
+    "$(awk -F'\t' 'NR>1{print $4}' "$TMP/e2e-credentials.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
 else
   ok "the ambient cluster is never the configured endpoint"
 fi
@@ -1163,6 +1204,10 @@ present "$TMP/bundle-pre-platform.logs/state/cloud.tfstate" \
 has "the pre-platform stop is recorded as such" \
   "the platform root was never initialised" "$TMP/bundle-pre-platform.logs/evidence-manifest.txt" \
   || true
+present "$TMP/bundle-pre-platform.logs/platform-failure/capture-summary.txt" \
+  "the failure capture completes even when the cluster is absent"
+present "$TMP/bundle-pre-platform.logs/platform-failure/NO-KUBECONFIG.txt" \
+  "and records that no credential bound to this run existed"
 
 printf '\nscenario: a bundle that reached the platform still requires its state\n'
 run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists \

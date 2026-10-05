@@ -121,6 +121,19 @@ def main() -> int:
         check("an absent cluster is reported absent, not inferred", absent["has_cluster"] is False)
         check("and the reason names what was there", "sol-qual-gcp-15g" in " ".join(absent["clusters"]))
 
+    bound = json.loads(
+        run("kubeconfig", "--file", str(FIXTURE), "--cluster", "sol-qual-gcp-15g", "--server", "34.0.0.1", "--json").stdout
+    )
+    check("a matching provider endpoint keeps the credential bound", bound["has_cluster"] is True)
+    replaced = json.loads(
+        run("kubeconfig", "--file", str(FIXTURE), "--cluster", "sol-qual-gcp-15g", "--server", "10.9.9.9", "--json").stdout
+    )
+    check(
+        "a replaced same-name cluster's endpoint does not accept the old credential",
+        replaced["has_cluster"] is False,
+    )
+    check("and the reason names the endpoint binding", "not the current endpoint" in replaced["reason"])
+
     check("a missing file is not a crash", run("server", "--file", "/nonexistent", "--cluster", "x").stdout.strip() == "-")
 
     print("observer: capture")

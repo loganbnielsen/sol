@@ -4,6 +4,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 TMP="$(mktemp -d)"
+export ATTEMPT="${ATTEMPT:-aws-self-test}"
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0
@@ -32,6 +33,7 @@ mkdir -p "$ROOT/internal/qualification/aws" "$ROOT/internal/qualification/transp
   "$WORKSPACE/sol" "$TMP/bin"
 cp "$REPO/internal/qualification/aws/live-row.sh" "$ROOT/internal/qualification/aws/"
 cp "$REPO/internal/qualification/sol-under-test.sh" "$ROOT/internal/qualification/"
+cp "$REPO/internal/qualification/attempt.sh" "$ROOT/internal/qualification/"
 
 bundle() {
   local dir="$1"
@@ -102,13 +104,30 @@ cat >"$TMP/bin/aws" <<'STUB'
 printf 'aws %s\n' "$*" >>"$AWS_LOG"
 case "$1 $2" in
   "sts get-caller-identity") printf '123456789012\n' ;;
+  "s3api head-object")
+    if [ "${STUB_STATE_PRESENT:-0}" = "1" ]; then exit 0; fi
+    printf 'An error occurred (404) when calling the HeadObject operation: Not Found\n' >&2
+    exit 1
+    ;;
   "s3 cp")
     dest="${@: -1}"
     mkdir -p "$(dirname "$dest")"
     printf '{"outputs":{"postgres_url":{"value":"postgres://user:qual-secret@db.example.test:5432/pluto"}}}\n' >"$dest"
     ;;
+  "eks describe-cluster")
+    case " $* " in
+      *" cluster.endpoint "*) printf '%s\n' "${STUB_CLUSTER_ENDPOINT:-https://10.0.0.1}" ;;
+    esac
+    ;;
   "eks update-kubeconfig")
-    if [ -n "${KUBECONFIG:-}" ]; then : >"$KUBECONFIG"; fi
+    if [ -n "${KUBECONFIG:-}" ]; then
+      if [ "${STUB_KUBECONFIG_STALE:-0}" = "1" ]; then
+        printf 'apiVersion: v1\nclusters:\n- cluster:\n    server: https://9.9.9.9\n  name: c\n' >"$KUBECONFIG"
+      else
+        printf 'apiVersion: v1\nclusters:\n- cluster:\n    server: %s\n  name: c\n' \
+          "${STUB_CLUSTER_ENDPOINT:-https://10.0.0.1}" >"$KUBECONFIG"
+      fi
+    fi
     ;;
 esac
 exit 0
@@ -119,6 +138,20 @@ cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf 'kubectl %s\n' "$*" >>"$KUBECTL_LOG"
 case " $* " in
+  *" config view "*)
+    kubeconfig="${KUBECONFIG:-}"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --kubeconfig)
+          kubeconfig="$2"
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    grep -m1 'server:' "$kubeconfig" 2>/dev/null | awk '{print $2}'
+    exit 0
+    ;;
   *" port-forward "*)
     if [ -n "${STUB_PF_NO_PORT:-}" ]; then
       sleep 5
@@ -253,6 +286,10 @@ run_phase() {
   : >"$ESTABLISH_LOG"
   : >"$TERRAFORM_LOG"
   rm -rf "$LOG_DIR"
+  if [ -n "${PRESEED_FOREIGN_ATTEMPT:-}" ]; then
+    mkdir -p "$LOG_DIR"
+    printf 'attempt=%s\n' "$PRESEED_FOREIGN_ATTEMPT" >"$LOG_DIR/attempt.txt"
+  fi
   env PATH="$TMP/bin:$PATH" \
     WORKSPACE="$WORKSPACE" TARGET=qualreg/aws/us-east-1 ECR_REGISTRY="$ECR" \
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
@@ -526,6 +563,34 @@ fi
 has "the teardown runs" "cloud destroy qualreg/aws/us-east-1 --apply" "$TMP/cloudterm.sol"
 exists "the independent inventory is captured" "$TMP/cloudterm.logs/aws-inventory.txt"
 has "the harness records the signal" "received SIGTERM" "$TMP/cloudterm.logs/harness.log"
+
+printf '\nscenario: a repeated invocation cannot reuse an occupied disposable target\n'
+run_phase occupied cloud STUB_STATE_PRESENT=1
+refused occupied "an occupied state key is refused as a fresh target"
+has "the refusal names the occupied state key" "already exists" "$TMP/occupied.out"
+lacks "nothing is applied" "cloud apply" "$TMP/occupied.sol"
+
+printf '\nscenario: an evidence directory that belongs to another attempt is refused\n'
+PRESEED_FOREIGN_ATTEMPT=another-attempt run_phase reused-dir cloud
+refused reused-dir "an evidence directory for another attempt is refused"
+has "the refusal names the attempt the directory belongs to" "another-attempt" "$TMP/reused-dir.out"
+lacks "nothing is applied" "cloud apply" "$TMP/reused-dir.sol"
+
+printf '\nscenario: a credential for a replaced same-name cluster is refused\n'
+run_phase stale-endpoint cloud STUB_KUBECONFIG_STALE=1
+refused stale-endpoint "a credential for a replaced cluster is refused"
+has "the refusal names the endpoint binding" "not this cluster's current" "$TMP/stale-endpoint.out"
+
+printf '\nscenario: the run identity reaches the provider inventory\n'
+run_phase identitycloud cloud
+has "the fresh attempt records its identity" "state_key=sol/qualreg/aws/us-east-1/cloud.tfstate" \
+  "$TMP/identitycloud.logs/attempt.txt"
+run_phase identitydestroy destroy
+has "and the inventory carries the attempt, target and state key" "attempt=$ATTEMPT" \
+  "$TMP/identitydestroy.logs/aws-inventory.txt"
+has "with the target" "target=qualreg/aws/us-east-1" "$TMP/identitydestroy.logs/aws-inventory.txt"
+has "and the state key" "state_key=sol/qualreg/aws/us-east-1/cloud.tfstate" \
+  "$TMP/identitydestroy.logs/aws-inventory.txt"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then
