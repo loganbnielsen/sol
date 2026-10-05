@@ -69,6 +69,24 @@ mechanisms. Its scenarios use GCP impersonation, GKE authorization, Cloud SQL,
 Artifact Registry, and provider-side GCP absence queries. This preserves the
 semantic contract while making provider differences observable.
 
+## Alpha-row mapping
+
+The app phase drives the campaign's alpha orders scenario
+(`internal/qualification/ALPHA_CAMPAIGN.md`) in both language namespaces and records which
+rows it actually ran in `alpha-rows.txt` inside the evidence bundle. The mapping from an
+alpha row to this matrix's provider-neutral row and its evidence is fixed here, once:
+
+| Alpha row | Assertion the app phase makes | Provider row | Evidence |
+|---|---|---|---|
+| B1 | `POST /orders` is accepted and carried back by the same service | INV-IDENT-1 | `app-transaction-ocaml.txt`, `app-transaction-ts.txt` |
+| B3 | the outbox relay publishes after the domain commit, in order, and removes only after broker ack | INV-SUBSTRATE-1 (messaging) | not asserted by this HTTP phase; needs Kafka-topic inspection, and is reported `not-run` |
+| B4 | the worker consumed `OrderPlaced` and the order reached fulfilled or confirmed | INV-IDENT-1, INV-SUBSTRATE-1 (database, messaging) | `app-transaction-ocaml.txt`, `app-transaction-ts.txt` |
+
+A successful app phase is evidence only for the alpha rows `alpha-rows.txt` marks `run`; a
+row marked `not-run` is not established by it. The legacy `/charges` + `/notifications`
+evidence the app phase used before this mapping is not evidence for B1/B3/B4 and is not
+produced by this harness.
+
 ## The app phase runs the installed release bundle, whose runner is digest-pinned (SEC-011, RELEASE-006)
 
 The harness runs Sol from the installed release bundle, not from a checkout (`SOL_INSTALL`). A
