@@ -1208,6 +1208,20 @@ present "$TMP/bundle-pre-platform.logs/platform-failure/capture-summary.txt" \
   "the failure capture completes even when the cluster is absent"
 present "$TMP/bundle-pre-platform.logs/platform-failure/NO-KUBECONFIG.txt" \
   "and records that no credential bound to this run existed"
+lacks "a pre-provisioning failure is a complete bundle" "evidence bundle is INCOMPLETE" \
+  "$TMP/bundle-pre-platform.out"
+present "$TMP/bundle-pre-platform.logs/fnd0010-not-reached.txt" \
+  "the discriminator is recorded as explicitly not reached"
+has "with its reasoning" "classification: NOT REACHED" \
+  "$TMP/bundle-pre-platform.logs/fnd0010-not-reached.txt"
+has "and the manifest says so" "discriminator class ....... NOT REACHED" \
+  "$TMP/bundle-pre-platform.logs/evidence-manifest.txt"
+
+printf '\nscenario: a reached classifier without its artifact is an evidence failure\n'
+run_case classifier-dropped cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 FND0010_CLASSIFY=0
+has "the reached classifier's missing artifact is named" \
+  "bundle member missing or empty: fnd0010-classification.txt" "$TMP/classifier-dropped.out"
+has "and the bundle is incomplete" "evidence bundle is INCOMPLETE" "$TMP/classifier-dropped.out"
 
 printf '\nscenario: a bundle that reached the platform still requires its state\n'
 run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists \

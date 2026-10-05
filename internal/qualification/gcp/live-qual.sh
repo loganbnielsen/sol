@@ -129,6 +129,7 @@ KEEP=0
 BUNDLE_ATTEMPTED=0
 BUNDLE_OK=0
 INSTALL_STATE=none
+FND0010_STATE=not-reached
 APP_STATE=none
 CLOUD_APPLIED=0
 TEARDOWN_ATTEMPTED=0
@@ -642,7 +643,12 @@ bundle_manifest() {
     printf 'terraform state (durable) . %s\n' "$(artifact_status "$LOG_DIR/state/durable.tfstate")"
     printf 'inventory (pre-teardown) .. %s\n' "$(artifact_status "$LOG_DIR/inventory-pre.tsv")"
     printf 'inventory (post-teardown) . %s\n' "$(artifact_status "$LOG_DIR/inventory-post.tsv")"
-    printf 'discriminator class ....... %s\n' "$(artifact_status "$LOG_DIR/fnd0010-classification.txt")"
+    if [ "$FND0010_STATE" = reached ]; then
+      printf 'discriminator class ....... %s\n' "$(artifact_status "$LOG_DIR/fnd0010-classification.txt")"
+    else
+      printf 'discriminator class ....... NOT REACHED (%s)\n' \
+        "$(artifact_status "$LOG_DIR/fnd0010-not-reached.txt")"
+    fi
     printf 'discriminator probes ...... %s file(s)\n' "$(find "$LOG_DIR" -maxdepth 1 -name 'fnd0010-*.log' 2>/dev/null | wc -l | tr -d ' ')"
     printf '\nphase transcripts:\n'
     for f in "$LOG_DIR"/*.log; do [ -e "$f" ] || continue; printf '  %s\n' "$(basename "$f")"; done
@@ -665,7 +671,13 @@ verify_bundle() {
   root_reached platform && required+=( "state/platform.tfstate" )
   [ "$TEARDOWN_ATTEMPTED" = "1" ] && required+=( "inventory-post.tsv" )
   case "$INSTALL_STATE" in
-    failed)    required+=( "fnd0010-classification.txt" ) ;;
+    failed)
+      if [ "$FND0010_STATE" = reached ]; then
+        required+=( "fnd0010-classification.txt" )
+      else
+        required+=( "fnd0010-not-reached.txt" )
+      fi
+      ;;
     succeeded) required+=( "ready-phases.txt" ) ;;
     none) : ;;
   esac
@@ -1052,11 +1064,24 @@ kubeconfig_server_for_cluster() {
   python3 "$OBSERVER" server --file "${1:-}" --cluster "${2:-}" 2>/dev/null || printf -- '-\n'
 }
 
+fnd0010_not_reached() {
+  FND0010_STATE=not-reached
+  {
+    printf 'classification: NOT REACHED\n'
+    printf 'reason: %s\n' "$1"
+    printf 'The FND-0010 discriminator runs only after the platform stage could have run. This\n'
+    printf "attempt's failure came before that point, so there is no failed-install evidence to\n"
+    printf 'classify. This is a recorded not-reached, not a clean result and not missing evidence.\n'
+  } >"$LOG_DIR/fnd0010-not-reached.txt" 2>&1 || true
+  say "  discriminator: NOT REACHED — $1"
+}
+
 capture_fnd0010() {
   capture_provisioner_bindings
   say "capturing FND-0010 discriminator evidence (no remediation)"
   if ! cluster_describable; then
     say "  cluster is not describable — the platform stage cannot have run; nothing to probe"
+    fnd0010_not_reached "the cluster is not describable, so the platform stage cannot have run"
     return 0
   fi
   kubeconfig_for_cluster
@@ -1065,6 +1090,7 @@ capture_fnd0010() {
   if [ -n "$endpoint" ] && ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$endpoint"; then
     say "  the run credential does not address this cluster's current endpoint ($endpoint):"
     say "  the discriminator capture is not taken through a replaced cluster of the same name"
+    fnd0010_not_reached "the run credential addresses a replaced cluster, not $CLUSTER's endpoint $endpoint"
     return 0
   fi
   kube_capture fnd0010-startupapicheck-logs kubectl -n cert-manager logs \
@@ -1098,6 +1124,7 @@ capture_fnd0010() {
     --format='table(name,sourceRanges.list(),allowed[].map().firewall_rule().list(),targetTags.list())'
   kube_capture fnd0010-master-cidr gcloud container clusters describe "$CLUSTER" \
     --region "$REGION" --project "$PROJECT" --format='value(privateClusterConfig.masterIpv4CidrBlock)'
+  FND0010_STATE=reached
   classify_fnd0010
 }
 
@@ -1105,6 +1132,10 @@ classify_fnd0010() {
   local out="$LOG_DIR/fnd0010-classification.txt"
   local job_log="$LOG_DIR/fnd0010-job.log" events="$LOG_DIR/fnd0010-events.log"
   local check_log="$LOG_DIR/fnd0010-startupapicheck-logs.log"
+  if [ "${FND0010_CLASSIFY:-1}" != 1 ]; then
+    say "discriminator classification: DISABLED by FND0010_CLASSIFY — the reached classifier produced no artifact"
+    return 0
+  fi
   {
     printf 'classification: '
     if grep -qiE 'Error: .*already exists|already exists$' \
