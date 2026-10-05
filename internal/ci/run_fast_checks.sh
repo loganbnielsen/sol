@@ -12,7 +12,7 @@ fi
 
 started=$SECONDS
 echo "fast checks: building (the checks read built artifacts)"
-if ! build_output="$(dune build 2>&1)"; then
+if ! build_output="$(dune build 2>&1 && dune build internal/tooling/soldev/bin/main.exe 2>&1)"; then
   printf '%s\n' "$build_output"
   echo "fast checks: build failed; no checks run"
   exit 1
