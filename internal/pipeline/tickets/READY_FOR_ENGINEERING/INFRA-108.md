@@ -6,7 +6,12 @@ source: alpha.7 AWS attempt 2 and GCP attempt 5, 2026-10-04
 title: Make the provider harnesses supply the documented pre-platform prerequisites
 ---
 
-**Depends on:** None.
+**Depends on:** BUG-206.
+
+Ownership: BUG-206 establishes the supported credential handoff at the product boundary and this
+ticket consumes that interface in both harnesses; the harness implementation is not part of the
+product stream and the interface is not part of this one. Do not invent a handoff here — if BUG-206
+has not settled one, this ticket is blocked rather than free to choose.
 
 ## Premise verified
 
