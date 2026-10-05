@@ -8,6 +8,11 @@
  (modules test_metric_snapshot)
  (libraries windtrap sol-outbox))
 
+(test
+ (name test_kind_validation)
+ (modules test_kind_validation)
+ (libraries windtrap sol-outbox))
+
 (rule
  (alias runtest-integration)
  (action

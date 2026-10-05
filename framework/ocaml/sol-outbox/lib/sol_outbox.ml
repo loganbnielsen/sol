@@ -84,6 +84,34 @@ let pending_count pool =
   Pg_db.find pool Q.pending_count () |> Result.map (Option.value ~default:0)
 ;;
 
+let kind_is_selectable kind =
+  (not (String.equal kind "")) && not (String.contains kind ',')
+;;
+
+let validate_kinds kinds =
+  let has_duplicate =
+    let sorted = List.sort String.compare kinds in
+    let rec go = function
+      | a :: (b :: _ as rest) -> String.equal a b || go rest
+      | _ -> false
+    in
+    go sorted
+  in
+  if kinds = []
+  then Some (`Config "E.kinds is empty: a relay with no kinds polls nothing")
+  else (
+    match List.find_opt (fun kind -> not (kind_is_selectable kind)) kinds with
+    | Some kind ->
+      Some
+        (`Config
+            (Printf.sprintf
+               "E.kinds contains %S, which the relay's comma-separated kind selection \
+                cannot select; remove the comma or the empty name"
+               kind))
+    | None ->
+      if has_duplicate then Some (`Config "E.kinds contains a duplicate kind") else None)
+;;
+
 let scoped_snapshot ~kinds rows =
   List.map (fun kind -> kind, Option.value (List.assoc_opt kind rows) ~default:0.0) kinds
 ;;
@@ -99,13 +127,13 @@ end
 module Make (E : EVENT) = struct
   let publish tx ~key ~ord (event : E.t) =
     let kind = E.kind event in
-    if List.mem kind E.kinds
+    if List.mem kind E.kinds && kind_is_selectable kind
     then publish tx ~key ~ord ~payload:(E.encode event) ~kind
     else
       Error
         (Pg_error.Query_error
            (Printf.sprintf
-              "sol-outbox: kind %S is not in E.kinds; the relay would leave it \
+              "sol-outbox: kind %S is not a selectable member of E.kinds; the relay \
                unpublished forever"
               kind))
   ;;
@@ -153,125 +181,130 @@ module Make (E : EVENT) = struct
         ?stop
         ()
     =
-    match Pg_db.find pool Q.table_exists () with
-    | Error e -> Error (`Database (Pg_error.to_string e))
-    | Ok None ->
-      Error
-        (`Database
-            (Printf.sprintf
-               "the %s table does not exist; apply the migration that creates it before \
-                starting the relay"
-               table))
-    | Ok (Some _) ->
-      if batch < 1
-      then Error (`Config "batch must be at least 1")
-      else if (not (Float.is_finite poll_interval_s)) || poll_interval_s < 0.0
-      then Error (`Config "poll_interval_s must be finite and non-negative")
-      else (
-        let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
-        let obs = Option.map Sol_obs.obs_eio ot in
-        let published, pending_gauge, age_gauge =
-          match obs with
-          | None -> None, None, None
-          | Some o ->
-            ( Some
-                (Obs_eio.register_counter
-                   o
-                   ~name:"sol_outbox_published_total"
-                   ~help:
-                     "Outbox events whose publication was acknowledged, by kind and \
-                      outcome"
-                   ~label_names:[ "kind"; "status" ])
-            , Some
-                (Obs_eio.register_gauge
-                   o
-                   ~name:"sol_outbox_pending"
-                   ~help:"Outbox rows waiting to be published, by kind"
-                   ~label_names:[ "kind" ])
-            , Some
-                (Obs_eio.register_gauge
-                   o
-                   ~name:"sol_outbox_oldest_pending_seconds"
-                   ~help:
-                     "Age of the oldest unpublished row for a kind: per-key publication \
-                      lag"
-                   ~label_names:[ "kind" ]) )
-        in
-        let count (p : publication) status =
-          match published with
-          | None -> ()
-          | Some c -> c ~labels:[ "kind", p.kind; "status", status ] 1
-        in
-        let warn msg =
-          match ot with
-          | Some o -> Sol_obs.log_warn o msg
-          | None -> Printf.eprintf "sol-outbox: %s\n%!" msg
-        in
-        let signal_stop, signal_stop_r = Eio.Promise.create () in
-        let should_stop () =
-          Eio.Promise.is_resolved signal_stop
-          ||
-          match stop with
-          | Some p -> Eio.Promise.is_resolved p
-          | None -> false
-        in
-        let drain () =
-          match
-            Pg_db.collect pool Q.oldest_per_key (String.concat "," E.kinds, batch)
-          with
-          | Error e -> Error (`Database (Pg_error.to_string e))
-          | Ok rows ->
-            List.fold_left
-              (fun acc (id, ord, key, kind, payload) ->
-                 let* () = acc in
-                 let event = { kind; key; ord; payload } in
-                 match publish event with
-                 | Error msg ->
-                   count event "failed";
-                   warn
-                     (Printf.sprintf
-                        "publish failed for kind %s key %s (ord %Ld); leaving it \
-                         unpublished and not advancing the key: %s"
-                        kind
-                        key
-                        ord
-                        msg);
-                   Ok ()
-                 | Ok () ->
-                   (match Pg_db.exec pool Q.delete id with
-                    | Error e ->
-                      count event "mark_failed";
-                      Error (`Database (Pg_error.to_string e))
-                    | Ok () ->
-                      count event "ok";
-                      Ok ()))
-              (Ok ())
-              rows
-        in
-        Eio.Switch.run (fun sw ->
-          Sol_runtime.install_signal_handler ~sw signal_stop_r;
-          Option.iter
-            (fun render ->
-               Obs_prometheus.serve
-                 ~sw
-                 ~net:env#net
-                 (`Tcp (Eio.Net.Ipaddr.V4.any, metrics_port))
-                 render)
-            metrics_renderer;
-          on_ready ();
-          let rec loop () =
-            if should_stop ()
-            then Ok ()
-            else
-              let* () = drain () in
-              report_metrics ~pool ~pending_gauge ~age_gauge ~on_error:warn;
+    let start () =
+      match Pg_db.find pool Q.table_exists () with
+      | Error e -> Error (`Database (Pg_error.to_string e))
+      | Ok None ->
+        Error
+          (`Database
+              (Printf.sprintf
+                 "the %s table does not exist; apply the migration that creates it \
+                  before starting the relay"
+                 table))
+      | Ok (Some _) ->
+        if batch < 1
+        then Error (`Config "batch must be at least 1")
+        else if (not (Float.is_finite poll_interval_s)) || poll_interval_s < 0.0
+        then Error (`Config "poll_interval_s must be finite and non-negative")
+        else (
+          let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
+          let obs = Option.map Sol_obs.obs_eio ot in
+          let published, pending_gauge, age_gauge =
+            match obs with
+            | None -> None, None, None
+            | Some o ->
+              ( Some
+                  (Obs_eio.register_counter
+                     o
+                     ~name:"sol_outbox_published_total"
+                     ~help:
+                       "Outbox events whose publication was acknowledged, by kind and \
+                        outcome"
+                     ~label_names:[ "kind"; "status" ])
+              , Some
+                  (Obs_eio.register_gauge
+                     o
+                     ~name:"sol_outbox_pending"
+                     ~help:"Outbox rows waiting to be published, by kind"
+                     ~label_names:[ "kind" ])
+              , Some
+                  (Obs_eio.register_gauge
+                     o
+                     ~name:"sol_outbox_oldest_pending_seconds"
+                     ~help:
+                       "Age of the oldest unpublished row for a kind: per-key \
+                        publication lag"
+                     ~label_names:[ "kind" ]) )
+          in
+          let count (p : publication) status =
+            match published with
+            | None -> ()
+            | Some c -> c ~labels:[ "kind", p.kind; "status", status ] 1
+          in
+          let warn msg =
+            match ot with
+            | Some o -> Sol_obs.log_warn o msg
+            | None -> Printf.eprintf "sol-outbox: %s\n%!" msg
+          in
+          let signal_stop, signal_stop_r = Eio.Promise.create () in
+          let should_stop () =
+            Eio.Promise.is_resolved signal_stop
+            ||
+            match stop with
+            | Some p -> Eio.Promise.is_resolved p
+            | None -> false
+          in
+          let drain () =
+            match
+              Pg_db.collect pool Q.oldest_per_key (String.concat "," E.kinds, batch)
+            with
+            | Error e -> Error (`Database (Pg_error.to_string e))
+            | Ok rows ->
+              List.fold_left
+                (fun acc (id, ord, key, kind, payload) ->
+                   let* () = acc in
+                   let event = { kind; key; ord; payload } in
+                   match publish event with
+                   | Error msg ->
+                     count event "failed";
+                     warn
+                       (Printf.sprintf
+                          "publish failed for kind %s key %s (ord %Ld); leaving it \
+                           unpublished and not advancing the key: %s"
+                          kind
+                          key
+                          ord
+                          msg);
+                     Ok ()
+                   | Ok () ->
+                     (match Pg_db.exec pool Q.delete id with
+                      | Error e ->
+                        count event "mark_failed";
+                        Error (`Database (Pg_error.to_string e))
+                      | Ok () ->
+                        count event "ok";
+                        Ok ()))
+                (Ok ())
+                rows
+          in
+          Eio.Switch.run (fun sw ->
+            Sol_runtime.install_signal_handler ~sw signal_stop_r;
+            Option.iter
+              (fun render ->
+                 Obs_prometheus.serve
+                   ~sw
+                   ~net:env#net
+                   (`Tcp (Eio.Net.Ipaddr.V4.any, metrics_port))
+                   render)
+              metrics_renderer;
+            on_ready ();
+            let rec loop () =
               if should_stop ()
               then Ok ()
-              else (
-                Eio.Time.sleep env#clock poll_interval_s;
-                loop ())
-          in
-          loop ()))
+              else
+                let* () = drain () in
+                report_metrics ~pool ~pending_gauge ~age_gauge ~on_error:warn;
+                if should_stop ()
+                then Ok ()
+                else (
+                  Eio.Time.sleep env#clock poll_interval_s;
+                  loop ())
+            in
+            loop ()))
+    in
+    match validate_kinds E.kinds with
+    | Some e -> Error e
+    | None -> start ()
   ;;
 end
 
@@ -279,4 +312,6 @@ module For_testing = struct
   let pending = pending
   let pending_count = pending_count
   let scoped_snapshot = scoped_snapshot
+  let kind_is_selectable = kind_is_selectable
+  let validate_kinds = validate_kinds
 end
