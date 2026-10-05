@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This guard checks one narrow syntactic property in CLI sources: no unlisted
+# `failwith`, `invalid_arg`, or `raise` appears outside the named invariants below.
+#
+# It is deliberately *not* proof that runtime failures are returned, that resources are
+# closed, or that every execution path obeys a sequence. An operation can raise without
+# any of this syntax (for example a channel write), and the allow-listed invariants are
+# permitted to raise. Run-log exception and resource policy is owned by #1161.
+
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 allowed=(
@@ -27,7 +35,7 @@ is_allowed() {
 
 files="$(git -C "$root" ls-files -- 'cli/bin/*.ml' 'cli/lib/*.ml')"
 if [ -z "$files" ]; then
-  echo "check_no_exception_control_flow: no CLI sources found" >&2
+  echo "check_explicit_raise_syntax: no CLI sources found" >&2
   exit 1
 fi
 
@@ -38,14 +46,14 @@ while IFS= read -r f; do
   while IFS= read -r hit; do
     [ -n "$hit" ] || continue
     if ! is_allowed "$f" "$hit"; then
-      echo "check_no_exception_control_flow: $f:$hit" >&2
+      echo "check_explicit_raise_syntax: $f:$hit" >&2
       fail=1
     fi
   done < <(grep -nE '\bfailwith\b|\binvalid_arg\b|\braise +(\(|[A-Z]|exn\b)' "$root/$f" || true)
 done <<<"$files"
 
 if [ "$fail" -ne 0 ]; then
-  echo "check_no_exception_control_flow: return the Error instead of raising it; an invariant that may raise is named in this script with its reason" >&2
+  echo "check_explicit_raise_syntax: use an Error instead of raising, or add the invariant to this guard's named allow-list with its reason" >&2
   exit 1
 fi
-echo "check_no_exception_control_flow: $checked CLI source file(s) checked; runtime failures are returned"
+echo "check_explicit_raise_syntax: $checked CLI source file(s) checked; no unlisted explicit failwith/invalid_arg/raise syntax (a syntax check, not proof that runtime failures are returned or cleanup occurs)"
