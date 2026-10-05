@@ -133,18 +133,3 @@ let post_deploy_summary ~facts plan =
   ; pending_migrations = Sol_cli_workspace_model.count_unapplied_migrations facts
   }
 ;;
-
-let record_applied ~ctx ~workspace ~sha plan =
-  Sol_cli_deployment_state.record_outcome
-    ~ctx
-    workspace
-    (Sol_cli_deployment_state.Applied
-       { namespace = "default"
-       ; name = workspace
-       ; image = sha
-       ; consumer_groups =
-           List.map
-             Sol_cli_plan_ids.Consumer_group.to_string
-             plan.Sol_cli_deployment_plan.consumer_groups
-       })
-;;

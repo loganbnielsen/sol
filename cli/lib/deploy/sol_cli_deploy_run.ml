@@ -107,74 +107,70 @@ let migration_prerequisite ctx ~plan ~live =
            applied migration set is only checked against the live cluster by a real \
            deploy (before any workload moves).";
         Ok ())
-    else
-      let* () =
-        Sol_cli_substrate.ensure
-          ~ctx:ctx.execution.cluster
-          ~namespaces:(Sol_cli_substrate.namespaces plan)
-          ~workloads:(plan_workloads plan)
-        |> Result.map_error (fun message -> Refused message)
-      in
+    else (
+      (* The lifecycle owner establishes the plan's namespaces and scoped RBAC once,
+         in [substrate_prerequisite], before this gate. Migration verification must not
+         re-enter that establishment: a second call would be duplicate lifecycle work
+         and would let the two steps drift apart. *)
       Sol_cli_migration_gate.reconcile_operator_bindings
         ~ctx:ctx.execution.cluster
         ~workspace:ctx.execution.workspace
         ~services:ctx.inventory;
-      (match
-         Sol_cli_migration_gate.verify
-           ~ctx:ctx.execution.cluster
-           ~workspace:ctx.execution.workspace
-           ~dir
-           ~services:ctx.inventory
-       with
-       | Sol_cli_migration_gate.No_migrations -> Ok ()
-       | Sol_cli_migration_gate.Satisfied applied ->
-         Sol_cli_report.app
-           "Migrations: OK -- %d declared migration(s) present in schema_migrations"
-           (List.length applied);
-         Ok ()
-       | Sol_cli_migration_gate.Unsatisfied missing ->
-         Error
-           (Failed
-              (Printf.sprintf
-                 "\n\
-                  error: the required migration set is not applied. Missing: %s\n\
-                 \  Migrations are workspace-wide, so this is the same set whatever \
-                  scope the deploy selected. Run `sol migrate apply %s`, then deploy \
-                  again."
-                 (String.concat ", " (List.map Sol_cli_migration.to_string missing))
-                 ctx.target_name))
-       | Sol_cli_migration_gate.Drifted drifted ->
-         Error
-           (Failed
-              (Printf.sprintf
-                 "\n\
-                  error: an already-applied migration no longer matches the file this \
-                  revision carries, so the applied schema record and the deployable \
-                  revision disagree:\n\
-                  %s\n\
-                 \  Restore each file to the content that was applied, or put the change \
-                  in a new migration and apply it with `sol migrate apply %s`. Deploying \
-                  while they disagree would record a boundary whose schema is one of the \
-                  two, not both."
-                 (String.concat
-                    "\n"
-                    (List.map
-                       (fun d -> "  - " ^ Sol_cli_migration.drift_message d)
-                       drifted))
-                 ctx.target_name))
-       | Sol_cli_migration_gate.Unavailable reason ->
-         Error
-           (Failed
-              (Printf.sprintf
-                 "\n\
-                  error: cannot verify the required migration state: %s\n\
-                 \  A deploy against the production profile fails closed rather than \
-                  assume the schema is compatible. Migrations are workspace-wide -- the \
-                  deploy's scope does not select them -- so `sol migrate apply %s` \
-                  checks the same required set this deploy did (it reports the applied \
-                  set). Run it, then deploy again."
-                 reason
-                 ctx.target_name)))
+      match
+        Sol_cli_migration_gate.verify
+          ~ctx:ctx.execution.cluster
+          ~workspace:ctx.execution.workspace
+          ~dir
+          ~services:ctx.inventory
+      with
+      | Sol_cli_migration_gate.No_migrations -> Ok ()
+      | Sol_cli_migration_gate.Satisfied applied ->
+        Sol_cli_report.app
+          "Migrations: OK -- %d declared migration(s) present in schema_migrations"
+          (List.length applied);
+        Ok ()
+      | Sol_cli_migration_gate.Unsatisfied missing ->
+        Error
+          (Failed
+             (Printf.sprintf
+                "\n\
+                 error: the required migration set is not applied. Missing: %s\n\
+                \  Migrations are workspace-wide, so this is the same set whatever scope \
+                 the deploy selected. Run `sol migrate apply %s`, then deploy again."
+                (String.concat ", " (List.map Sol_cli_migration.to_string missing))
+                ctx.target_name))
+      | Sol_cli_migration_gate.Drifted drifted ->
+        Error
+          (Failed
+             (Printf.sprintf
+                "\n\
+                 error: an already-applied migration no longer matches the file this \
+                 revision carries, so the applied schema record and the deployable \
+                 revision disagree:\n\
+                 %s\n\
+                \  Restore each file to the content that was applied, or put the change \
+                 in a new migration and apply it with `sol migrate apply %s`. Deploying \
+                 while they disagree would record a boundary whose schema is one of the \
+                 two, not both."
+                (String.concat
+                   "\n"
+                   (List.map
+                      (fun d -> "  - " ^ Sol_cli_migration.drift_message d)
+                      drifted))
+                ctx.target_name))
+      | Sol_cli_migration_gate.Unavailable reason ->
+        Error
+          (Failed
+             (Printf.sprintf
+                "\n\
+                 error: cannot verify the required migration state: %s\n\
+                \  A deploy against the production profile fails closed rather than \
+                 assume the schema is compatible. Migrations are workspace-wide -- the \
+                 deploy's scope does not select them -- so `sol migrate apply %s` checks \
+                 the same required set this deploy did (it reports the applied set). Run \
+                 it, then deploy again."
+                reason
+                ctx.target_name)))
 ;;
 
 let substrate_prerequisite ctx ~plan ~live =
@@ -231,32 +227,27 @@ let confirm_consumer_groups ~ctx ~workspace ~confirm_group_change plan =
          plan.Sol_cli_deployment_plan.consumer_groups)
 ;;
 
-let read_previous_release ctx =
-  match
-    Sol_cli_release_store.current
-      ~ctx:ctx.execution.cluster
-      ~workspace:ctx.execution.workspace
-  with
+let read_previous_release_in ~cluster ~workspace =
+  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
   | Ok (Some release_id) -> Sol_cli_release_retention.Known release_id
   | Ok None -> Sol_cli_release_retention.None_yet
   | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
-let previous_contract ctx =
-  Sol_cli_release_store.deployed_contract
-    ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
-;;
-
-let observe_contract ctx plan =
-  let* observed = previous_contract ctx in
+let observe_contract_in ~cluster ~workspace plan =
+  let* observed = Sol_cli_release_store.deployed_contract ~ctx:cluster ~workspace in
   Sol_cli_deployment_plan.with_observed_contract ~observed plan
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let record_release_and_prune ctx ~previous ~retained plan =
-  let cluster = ctx.execution.cluster in
-  let workspace = ctx.execution.workspace in
+let observe_contract ctx plan =
+  observe_contract_in
+    ~cluster:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
+    plan
+;;
+
+let record_release_and_prune ~cluster ~workspace ~keep ~previous ~retained plan =
   match
     Sol_cli_release_store.record_plan
       ~ctx:cluster
@@ -278,7 +269,7 @@ let record_release_and_prune ctx ~previous ~retained plan =
        Sol_cli_release_retention.with_retention
          ~ctx:cluster
          ~workspace
-         ~keep:ctx.keep_releases
+         ~keep
          ~current:boundary_id
          ~previous
      with
@@ -287,10 +278,25 @@ let record_release_and_prune ctx ~previous ~retained plan =
        Sol_cli_report.app
          "Pruned %d release record(s) beyond the last %d."
          (List.length pruned)
-         ctx.keep_releases
+         keep
      | Deferred reason -> Sol_cli_report.app "Retention: not run -- %s" reason
      | Failed msg -> Sol_cli_report.warn "warning: could not prune old releases: %s" msg);
     Ok ()
+;;
+
+let record_applied_state ~cluster ~workspace ~sha plan =
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:cluster
+    workspace
+    (Sol_cli_deployment_state.Applied
+       { namespace = "default"
+       ; name = workspace
+       ; image = sha
+       ; consumer_groups =
+           List.map
+             Sol_cli_plan_ids.Consumer_group.to_string
+             plan.Sol_cli_deployment_plan.consumer_groups
+       })
 ;;
 
 let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
@@ -305,35 +311,6 @@ let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
     | Error _ -> []
     | Ok live ->
       Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst)
-;;
-
-let execute_deployment_attempt ctx ~before_apply ~push_events ~release_id ~finish plan =
-  let attempt = Sol_cli_deployment_attempt.start () in
-  let applied =
-    run_plan_result ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply ~before_apply plan
-  in
-  let completed = Result.bind applied finish in
-  let outcome = Sol_cli_deployment_attempt.outcome_of completed in
-  let recorded =
-    Sol_cli_deployment_attempt.record
-      ~ctx:ctx.execution.cluster
-      ~target:(Some ctx.target_name)
-      ~release_id
-      plan
-      attempt
-      outcome
-  in
-  (match outcome with
-   | Sol_cli_deployment.Applied when recorded ->
-     push_events
-       (deploy_events
-          ~workspace:ctx.execution.workspace
-          ~target_cfg:ctx.target_cfg
-          ~deployment_id:(Sol_cli_deployment_attempt.deployment_id attempt)
-          ~release_id
-          plan)
-   | _ -> ());
-  completed
 ;;
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
@@ -356,30 +333,68 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
     |> Result.map (fun _ -> ())
 ;;
 
-let apply ctx ~prepare_plan ~push_events ~report_success ~confirm_group_change plan =
+let record_plan run_log plan =
+  Sol_cli_run_log.append_phase_log
+    run_log
+    ~phase:"plan"
+    (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
+;;
+
+let gate_message = function
+  | Refused message -> message
+  | Failed report -> report
+;;
+
+let run_gate ~on_refused gate =
+  match gate with
+  | Ok () -> Ok ()
+  | Error failure ->
+    on_refused failure;
+    Error (gate_message failure)
+;;
+
+(* The shared deploy mutation/recording owner. Local `sol up` and cloud/direct
+   `sol deploy` both run this under their boundary lease, so the authoritative
+   prior-contract read, presentation, prerequisite gates, group guard, retained
+   state, execution and durable recording have one ordered owner. The
+   environment-specific operations are supplied: how a plan is presented, which
+   prerequisites a target needs, how it reconciles before applying, how it applies,
+   how it reports success, and whether it publishes deploy events. None of them
+   decides when it runs. *)
+let run_lifecycle
+      ~cluster
+      ~workspace
+      ~sha
+      ~target
+      ~run_log
+      ~keep_releases
+      ~confirm_group_change
+      ~present_plan
+      ~gates
+      ~before_apply
+      ~apply
+      ~report_success
+      ~push_events
+      plan
+  =
   Sol_cli_boundary_lease.with_boundary_lease
-    ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
+    ~ctx:cluster
+    ~workspace
     ~holder:Sol_cli_boundary_lease.Deploy
     ~ttl:Sol_cli_boundary_lease.default_ttl_s
     ~wait_s:0.
     (fun lease ->
        let* () = Sol_cli_boundary_lease.ensure_held lease in
-       let* plan = observe_contract ctx plan in
-       let* () = prepare_plan plan in
+       let* plan = observe_contract_in ~cluster ~workspace plan in
+       let* () = present_plan plan in
+       let* () = gates plan in
+       record_plan run_log plan;
        let* () =
-         confirm_consumer_groups
-           ~ctx:ctx.execution.cluster
-           ~workspace:ctx.execution.workspace
-           ~confirm_group_change
-           plan
+         confirm_consumer_groups ~ctx:cluster ~workspace ~confirm_group_change plan
        in
-       let previous = read_previous_release ctx in
+       let previous = read_previous_release_in ~cluster ~workspace in
        let* retained =
-         Sol_cli_release_store.retained_for_plan
-           ~ctx:ctx.execution.cluster
-           ~workspace:ctx.execution.workspace
-           plan
+         Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan
        in
        let boundary =
          Sol_cli_release.of_plan_with_boundary
@@ -388,29 +403,117 @@ let apply ctx ~prepare_plan ~push_events ~report_success ~confirm_group_change p
            plan
        in
        let* release_id = Sol_cli_release_id.of_string boundary.release_id in
-       let* () = contract_reconciliation ctx plan in
-       execute_deployment_attempt
-         ctx
-         ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
-         ~push_events
-         ~release_id
-         ~finish:(fun results ->
+       let* () = before_apply plan in
+       let attempt = Sol_cli_deployment_attempt.start () in
+       let applied = apply ~lease ~release_id plan in
+       let completed =
+         Result.bind applied (fun results ->
            Sol_cli_release.finish_deployment
              ~record_release:(fun () ->
                let* () = Sol_cli_boundary_lease.ensure_held lease in
-               let* () = record_release_and_prune ctx ~previous ~retained plan in
-               Sol_cli_deployment_state.record_outcome
-                 ~ctx:ctx.execution.cluster
-                 ctx.execution.workspace
-                 (Sol_cli_deployment_state.Applied
-                    { namespace = "default"
-                    ; name = ctx.execution.workspace
-                    ; image = ctx.sha
-                    ; consumer_groups =
-                        List.map
-                          Sol_cli_plan_ids.Consumer_group.to_string
-                          plan.consumer_groups
-                    }))
+               let* () =
+                 record_release_and_prune
+                   ~cluster
+                   ~workspace
+                   ~keep:keep_releases
+                   ~previous
+                   ~retained
+                   plan
+               in
+               record_applied_state ~cluster ~workspace ~sha plan)
              ~report_success:(fun () -> report_success plan results))
-         plan)
+       in
+       let outcome = Sol_cli_deployment_attempt.outcome_of completed in
+       let recorded =
+         Sol_cli_deployment_attempt.record
+           ~ctx:cluster
+           ~target
+           ~release_id
+           plan
+           attempt
+           outcome
+       in
+       (match outcome with
+        | Sol_cli_deployment.Applied when recorded ->
+          push_events
+            ~release_id
+            ~deployment_id:(Sol_cli_deployment_attempt.deployment_id attempt)
+            plan
+        | _ -> ());
+       completed)
+;;
+
+(* Cloud/direct deploy's mutation owner: establish the destination's substrate, then
+   run the shared lifecycle with the cloud operations. *)
+let apply
+      ctx
+      ~present_plan
+      ~effective_access
+      ~on_substrate_refused
+      ~push_events
+      ~report_success
+      ~confirm_group_change
+      plan
+  =
+  let* () =
+    run_gate
+      ~on_refused:on_substrate_refused
+      (substrate_prerequisite ctx ~plan ~live:true)
+  in
+  run_lifecycle
+    ~cluster:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
+    ~sha:ctx.sha
+    ~target:(Some ctx.target_name)
+    ~run_log:ctx.run_log
+    ~keep_releases:ctx.keep_releases
+    ~confirm_group_change
+    ~present_plan
+    ~gates:(fun plan ->
+      let* () =
+        run_gate ~on_refused:(fun _ -> ()) (migration_prerequisite ctx ~plan ~live:true)
+      in
+      effective_access ())
+    ~before_apply:(fun plan -> contract_reconciliation ctx plan)
+    ~apply:(fun ~lease ~release_id:_ plan ->
+      run_plan_result
+        ctx
+        ~phase:"apply"
+        ~mode:Sol_cli_executor.Apply
+        ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
+        plan)
+    ~report_success
+    ~push_events:(fun ~release_id ~deployment_id plan ->
+      push_events
+        (deploy_events
+           ~workspace:ctx.execution.workspace
+           ~target_cfg:ctx.target_cfg
+           ~deployment_id
+           ~release_id
+           plan))
+    plan
+;;
+
+(* The side-effect-free owner: prior-contract observation, presentation, the
+   prerequisite gates, plan recording and execution in the requested mode. [Dry_run]
+   validates the destination's substrate; [Emit_to] only writes artifacts and does not
+   require the destination's substrate, so it deliberately skips that gate. *)
+let run_offline ctx ~phase ~mode ~present_plan ~on_substrate_refused plan =
+  let* plan = observe_contract ctx plan in
+  let* () = present_plan plan in
+  let* () =
+    match mode with
+    | Sol_cli_executor.Dry_run ->
+      run_gate
+        ~on_refused:on_substrate_refused
+        (substrate_prerequisite ctx ~plan ~live:false)
+    | Sol_cli_executor.Emit_to _ -> Ok ()
+    | Sol_cli_executor.Apply ->
+      Error "the offline lifecycle cannot apply; use the live apply owner"
+  in
+  let* () =
+    run_gate ~on_refused:(fun _ -> ()) (migration_prerequisite ctx ~plan ~live:false)
+  in
+  record_plan ctx.run_log plan;
+  run_plan_result ctx ~phase ~mode plan
 ;;

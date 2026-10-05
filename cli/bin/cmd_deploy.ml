@@ -113,29 +113,14 @@ let print_contract_changes plan =
       Printf.printf "  %s\n%!" (Sol_cli_deployment_plan.contract_change_to_string change))
 ;;
 
-let observe_contract (ctx : Sol_cli_deploy_run.context) plan =
-  Sol_cli_deploy_run.observe_contract ctx plan
-  |> Result.map_error (fun message -> Sol_cli_exit.failure ("\nerror: " ^ message))
-;;
-
-let record_plan run_log plan =
-  Sol_cli_run_log.append_phase_log
-    run_log
-    ~phase:"plan"
-    (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
-;;
-
 let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
 
-let run_plan ctx ~phase ~mode plan =
-  Sol_cli_deploy_run.run_plan_result ctx ~phase ~mode plan |> Result.map_error run_failed
-;;
-
-let check_migration_prerequisite ~ctx ~plan ~live =
-  Sol_cli_deploy_run.migration_prerequisite ctx ~plan ~live
-  |> Result.map_error (function
-    | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
-    | Failed report -> Sol_cli_exit.failure report)
+let present_plan (ctx : Sol_cli_deploy_run.context) plan =
+  (let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
+   print_planned_services plan;
+   print_contract_changes plan;
+   Ok ())
+  |> Result.map_error (fun (failure : Sol_cli_exit.failure) -> failure.text)
 ;;
 
 let print_guided lines = List.iter (fun line -> Printf.printf "%s\n%!" line) lines
@@ -439,27 +424,6 @@ let destination_or_environment_stage
     Error (Sol_cli_exit.error message)
 ;;
 
-let check_substrate_prerequisite
-      ~ctx
-      ~plan
-      ~live
-      ~action
-      ~await_delegation
-      ?(guide = true)
-      ()
-  =
-  match Sol_cli_deploy_run.substrate_prerequisite ctx ~plan ~live with
-  | Ok () -> Ok ()
-  | Error error ->
-    let* () =
-      if guide then guide_installation_of_ctx ~ctx ~action ~await_delegation else Ok ()
-    in
-    Error
-      (match error with
-       | Sol_cli_deploy_run.Refused message -> Sol_cli_exit.error message
-       | Failed report -> Sol_cli_exit.failure report)
-;;
-
 let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
   let backend =
     Option.bind
@@ -479,23 +443,20 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
-  let* plan = observe_contract ctx plan in
-  let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
-  print_planned_services plan;
-  print_contract_changes plan;
-  let* () =
-    check_substrate_prerequisite
-      ~ctx
-      ~plan
-      ~live:false
-      ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
-      ~await_delegation
-      ()
-  in
-  let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
-  record_plan ctx.run_log plan;
-  let* _ = run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan in
-  Ok ()
+  Sol_cli_deploy_run.run_offline
+    ctx
+    ~phase:"dry-run"
+    ~mode:Sol_cli_executor.Dry_run
+    ~present_plan:(present_plan ctx)
+    ~on_substrate_refused:(fun _ ->
+      guide_installation_of_ctx
+        ~ctx
+        ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
+        ~await_delegation
+      |> ignore)
+    plan
+  |> Result.map (fun _ -> ())
+  |> Result.map_error run_failed
 ;;
 
 let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
@@ -505,13 +466,16 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
-  let* plan = observe_contract ctx plan in
-  let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
-  print_planned_services plan;
-  print_contract_changes plan;
-  let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
-  record_plan ctx.run_log plan;
-  let* results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
+  let* results =
+    Sol_cli_deploy_run.run_offline
+      ctx
+      ~phase:"emit"
+      ~mode:(Sol_cli_executor.Emit_to dir)
+      ~present_plan:(present_plan ctx)
+      ~on_substrate_refused:(fun _ -> ())
+      plan
+    |> Result.map_error run_failed
+  in
   results
   |> List.iter (fun (r : Sol_cli_executor.result) ->
     let path = Filename.concat dir (Printf.sprintf "%s-%s.yaml" r.namespace r.name) in
@@ -577,6 +541,15 @@ let verify_effective_access
     workloads
 ;;
 
+let check_effective_access
+      (planning : Sol_cli_deploy_selection.Planning_input.t)
+      ~target_cfg
+  =
+  verify_effective_access planning ~target_cfg
+  |> Sol_cli_exit.of_msg
+  |> Result.map_error (fun (failure : Sol_cli_exit.failure) -> failure.text)
+;;
+
 let run_apply
       ~planning
       ~context_of
@@ -612,30 +585,19 @@ let run_apply
       ()
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
-  let* () =
-    check_substrate_prerequisite
-      ~ctx
-      ~plan
-      ~live:true
-      ~action:Sol_cli_command_request.Deploy_apply
-      ~await_delegation
-      ~guide:(not established)
-      ()
-  in
   Sol_cli_deploy_run.apply
     ctx
-    ~prepare_plan:(fun plan ->
-      (let* () = write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan in
-       print_planned_services plan;
-       print_contract_changes plan;
-       let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
-       let* () =
-         verify_effective_access planning ~target_cfg:ctx.target_cfg
-         |> Sol_cli_exit.of_msg
-       in
-       record_plan ctx.run_log plan;
-       Ok ())
-      |> Result.map_error (fun (failure : Sol_cli_exit.failure) -> failure.text))
+    ~present_plan:(present_plan ctx)
+    ~effective_access:(fun () ->
+      check_effective_access planning ~target_cfg:ctx.target_cfg)
+    ~on_substrate_refused:(fun _ ->
+      if not established
+      then
+        guide_installation_of_ctx
+          ~ctx
+          ~action:Sol_cli_command_request.Deploy_apply
+          ~await_delegation
+        |> ignore)
     ~confirm_group_change
     ~push_events:
       (push_deploy_events

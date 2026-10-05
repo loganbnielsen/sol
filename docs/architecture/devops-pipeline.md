@@ -31,8 +31,9 @@ escape hatches do not become public API.
 | Build typed deployment intent | `Sol_cli_deployment_plan.of_services_result` |
 | Render each workload | `Sol_cli_deployment_render.render_spec` |
 | Render all workloads, then apply/emit/print | `Sol_cli_factory.execute` → `Sol_cli_executor.run_plan` |
-| Direct-deploy lease, attempt, release and group recording | `Sol_cli_deploy_run.apply` |
-| Local build, execution and group recording | `Sol_cli_up_execution` and `cmd_up` |
+| Shared deploy lifecycle: lease, contract read, gates, apply, release and group recording | `Sol_cli_deploy_run.run_lifecycle` |
+| Cloud substrate, migration/effective-access gates and provider apply | `Sol_cli_deploy_run.apply` and `cmd_deploy` |
+| Local build, push, port-forward and apply operations | `Sol_cli_up_execution` and `cmd_up` |
 
 The modes are `Dry_run`, `Emit_to dir` and `Apply`. Live secret references are
 verified before application; emitted artifacts must use an artifact-safe backend.
@@ -46,13 +47,13 @@ verified before application; emitted artifacts must use an artifact-safe backend
 for Kafka consumer groups. It is a removal-warning baseline, not provider evidence
 that a group is active or that a workload succeeded.
 
-There are three writers: local `sol up` (`Sol_cli_up_execution.record_applied`),
-direct deploy (`Sol_cli_deploy_run.apply`), and rollback
-(`Sol_cli_rollback.execute`). Local up has no release record, so release persistence
-cannot replace this shared record without also changing that local lifecycle.
-Direct deploy writes the release and then the group record; rollback verifies and
-moves the release pointer before correcting the group record. A failed group write
-therefore reports partial completion, not success.
+There are three writers: local `sol up` and direct deploy both run
+`Sol_cli_deploy_run.run_lifecycle`, which records the release boundary and then the
+group record; rollback (`Sol_cli_rollback.execute`) writes separately. Local up has no
+release record, so release persistence cannot replace this shared record without also
+changing that local lifecycle. The shared owner writes the release and then the group
+record; rollback verifies and moves the release pointer before correcting the group
+record. A failed group write therefore reports partial completion, not success.
 
 Plans derive group intent from the workspace service inventory, including units
 outside a scoped deployment (`Sol_cli_deployment_plan.derive_consumer_groups`).
@@ -68,6 +69,23 @@ only for local up. That requires deciding whether the warning protects declared
 workspace intent or the last applied workload boundary. Missing records currently
 mean a first deployment; unreadable records fail the guard unless the operator
 explicitly passes `--confirm-group-change`.
+
+---
+
+## Deploy lifecycle ownership
+
+Local `sol up` and cloud/direct `sol deploy` share one correctness-sequence owner,
+`Sol_cli_deploy_run.run_lifecycle`. Under the boundary lease it reads the prior
+contract, presents the plan, runs the target's prerequisite gates, records the plan,
+checks consumer-group removal, reads retained state, reconciles and applies, then
+records the release boundary and group bookkeeping. The command modules supply only
+environment-specific operations — how a plan is presented, which gates a target needs,
+how it reconciles and applies, how it reports success, and whether it emits deploy
+events — so changing command presentation cannot reorder the sequence. Cloud
+`Sol_cli_deploy_run.apply` additionally establishes the destination's substrate and
+supplies the migration and effective-access gates. Side-effect-free `--dry-run` and
+`--emit-to` run through `Sol_cli_deploy_run.run_offline`, which reads the contract
+without a lease because they do not mutate the boundary.
 
 ---
 
@@ -129,8 +147,8 @@ Pipeline:
    then `Sol_cli_executor.local ~dry_run`.
 8. Wait for rollout (`Sol_cli_kubectl.rollout_status`) for Svc and Worker primitives.
 9. Start/refresh port-forward for Svc services.
-10. **State:** `Sol_cli_deployment_state.record_outcome` writes the applied consumer
-    groups to the cluster ConfigMap.
+10. **State:** `Sol_cli_deploy_run.run_lifecycle` records the release boundary and
+    `Sol_cli_deployment_state.record_outcome` writes the applied consumer groups.
 
 **Flags:** `--dry-run` (prints YAML, skips build/push/apply), `--tag TAG`,
 `--confirm-group-change`
@@ -160,9 +178,11 @@ Pipeline:
    - `--emit-to DIR` → `Emit_to dir`
    - neither → `Apply`
 8. **Execution:** `Sol_cli_factory.execute` uses `Sol_cli_executor.run_plan` to
-   render the selected artifacts before applying or emitting them. Direct apply is
-   coordinated by `Sol_cli_deploy_run.apply`.
-9. **State:** `record_outcome` (skipped in GitOps/dry-run modes).
+   render the selected artifacts before applying or emitting them. Direct apply runs
+   through `Sol_cli_deploy_run.apply` → `run_lifecycle`; dry-run and emit run through
+   `Sol_cli_deploy_run.run_offline`.
+9. **State:** `run_lifecycle` records the release boundary and `record_outcome`
+   (skipped in GitOps/dry-run modes).
 
 **Flags:**
 - `--image-tag TAG` — image tag produced by the CI build job

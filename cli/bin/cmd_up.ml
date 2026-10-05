@@ -229,50 +229,6 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~serv
          (Ok ()))
 ;;
 
-let read_previous_release ~workspace =
-  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
-  | Ok (Some release_id) -> Sol_cli_release_retention.Known release_id
-  | Ok None -> Sol_cli_release_retention.None_yet
-  | Error msg -> Sol_cli_release_retention.Unreadable msg
-;;
-
-let record_release_and_prune ~workspace ~keep ~previous ~retained plan =
-  match
-    Sol_cli_release_store.record_plan
-      ~ctx:cluster
-      ~apply_mode:Sol_cli_release.Direct
-      ~retained
-      plan
-  with
-  | Error msg ->
-    Error
-      (Printf.sprintf
-         "the release was applied but could not be recorded: %s\n\
-         \  The workloads for this release may already be running; the release state was \
-          not advanced, so `sol rollback` and release retention still describe the \
-          previous release.\n\
-         \  Fix the cause and deploy again -- nothing on the cluster needs undoing."
-         msg)
-  | Ok boundary_id ->
-    (match
-       Sol_cli_release_retention.with_retention
-         ~ctx:cluster
-         ~workspace
-         ~keep
-         ~current:boundary_id
-         ~previous
-     with
-     | Pruned [] -> ()
-     | Pruned pruned ->
-       Printf.printf
-         "Pruned %d release record(s) beyond the last %d.\n"
-         (List.length pruned)
-         keep
-     | Deferred reason -> Printf.printf "Retention: not run -- %s\n%!" reason
-     | Failed msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg);
-    Ok ()
-;;
-
 let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
     let* () =
@@ -351,80 +307,37 @@ let run_apply
   =
   let* () = check_contract ~facts ~services in
   ensure_postgres_url ();
-  let* plan =
-    prepare_plan
-      ~run_log
-      ~dry_run:false
-      ~requested_scope
-      ~workspace
-      ~sha
-      ~facts
-      ~declared
-      ~services
-  in
+  print_header ~workspace ~sha ~dry_run:false;
+  let* plan = build_plan ~requested_scope ~workspace ~sha ~facts ~declared ~services in
   let pf_failed = ref false in
   let result =
-    Sol_cli_boundary_epoch.run
-      { acquire_lease =
-          (fun f ->
-            Sol_cli_boundary_lease.with_boundary_lease
-              ~ctx:cluster
-              ~workspace
-              ~holder:Sol_cli_boundary_lease.Deploy
-              ~ttl:Sol_cli_boundary_lease.default_ttl_s
-              ~wait_s:0.
-              f)
-      ; read_boundary_holding =
-          (fun lease ->
-            let* () = Sol_cli_boundary_lease.ensure_held lease in
-            let* () =
-              Sol_cli_deploy_run.confirm_consumer_groups
-                ~ctx:cluster
-                ~workspace
-                ~confirm_group_change
-                plan
-            in
-            Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan)
-      ; apply =
-          (fun lease retained ->
-            let previous = read_previous_release ~workspace in
-            let boundary =
-              Sol_cli_release.of_plan_with_boundary
-                ~apply_mode:Sol_cli_release.Direct
-                ~retained
-                plan
-            in
-            let* release_id = Sol_cli_release_id.of_string boundary.release_id in
-            let attempt = Sol_cli_deployment_attempt.start () in
-            let applied =
-              apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
-            in
-            let completed =
-              let* () = applied in
-              Sol_cli_release.finish_deployment
-                ~record_release:(fun () ->
-                  let* () = Sol_cli_boundary_lease.ensure_held lease in
-                  let* () =
-                    record_release_and_prune
-                      ~workspace
-                      ~keep:keep_releases
-                      ~previous
-                      ~retained
-                      plan
-                  in
-                  Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
-                ~report_success:(fun () -> report_apply_success ~workspace ~facts plan)
-            in
-            ignore
-              (Sol_cli_deployment_attempt.record
-                 ~ctx:cluster
-                 ~target:(Some "local")
-                 ~release_id
-                 plan
-                 attempt
-                 (Sol_cli_deployment_attempt.outcome_of completed));
-            completed)
-      }
+    Sol_cli_deploy_run.run_lifecycle
+      ~cluster
+      ~workspace
+      ~sha
+      ~target:(Some "local")
+      ~run_log
+      ~keep_releases
+      ~confirm_group_change
+      ~present_plan:(fun plan ->
+        (match plan.Sol_cli_deployment_plan.contract_changes with
+         | [] -> ()
+         | changes ->
+           Printf.printf "\nContract changes:\n%!";
+           changes
+           |> List.iter (fun change ->
+             Printf.printf
+               "  %s\n%!"
+               (Sol_cli_deployment_plan.contract_change_to_string change)));
+        Ok ())
+      ~gates:(fun _ -> Ok ())
+      ~before_apply:(fun _ -> Ok ())
+      ~apply:(fun ~lease ~release_id:_ plan ->
+        apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
+        |> Result.map (fun () -> []))
+      ~report_success:(fun plan _ -> report_apply_success ~workspace ~facts plan)
+      ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+      plan
   in
   Result.map_error run_failed
   @@ let* () = result in

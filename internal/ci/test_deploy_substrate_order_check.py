@@ -55,16 +55,16 @@ def mutate(tmp, relative, old, new):
 
 
 def mutate_live_call(tmp, old, new):
-    """The live deploy path stops asking for the live substrate check.
+    """The cloud mutation owner stops asking for the live substrate check.
 
     The call is located by its shape rather than by one spelling of it, so reformatting the call
     across lines does not make this case mutate something else or nothing at all.
     """
-    path = tmp / "cli/bin/cmd_deploy.ml"
+    path = tmp / "cli/lib/deploy/sol_cli_deploy_run.ml"
     text = path.read_text()
-    pattern = re.compile(r"check_substrate_prerequisite\s+~ctx\s+~plan\s+" + re.escape(old))
+    pattern = re.compile(r"substrate_prerequisite ctx ~plan " + re.escape(old))
     if not pattern.search(text):
-        raise SystemExit(f"mutation anchor not found in cli/bin/cmd_deploy.ml: {old!r}")
+        raise SystemExit(f"mutation anchor not found in cli/lib/deploy/sol_cli_deploy_run.ml: {old!r}")
     path.write_text(pattern.sub(lambda match: match.group(0).replace(old, new), text, count=1))
 
 
@@ -124,7 +124,7 @@ def main():
 
     tmp = scratch()
     mutate_live_call(tmp, "~live:true", "~live:false")
-    cases.append(("live-path-loses-its-live-check", tmp, "not invoked for both"))
+    cases.append(("live-path-loses-its-live-check", tmp, "does not establish the plan's substrate"))
 
     tmp = scratch()
     mutate(

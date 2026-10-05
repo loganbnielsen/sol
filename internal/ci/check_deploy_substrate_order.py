@@ -98,31 +98,41 @@ def check(root: pathlib.Path) -> list[str]:
                 "dry-run would discover a missing prerequisite as a cluster refusal"
             )
 
-    cmd = read(root, CMD_DEPLOY)
-    if "let check_substrate_prerequisite" not in cmd:
-        problems.append(f"{CMD_DEPLOY}: the substrate prerequisite is never called")
-    else:
-        dry = cmd.find('run_plan ctx ~phase:"dry-run"')
-        apply = cmd.find("Sol_cli_deploy_run.apply")
-        live_calls = [
-            index
-            for index, arguments in call_sites(cmd, "check_substrate_prerequisite")
-            if "~live:true" in arguments
-        ]
-        dry_calls = [
-            index
-            for index, arguments in call_sites(cmd, "check_substrate_prerequisite")
-            if "~live:false" in arguments
-        ]
-        if dry == -1 or apply == -1 or not live_calls or not dry_calls:
+    try:
+        mutation_owner = function_body(deploy_run, "let apply\n")
+    except ValueError:
+        problems.append(
+            f"{DEPLOY_RUN}: there is no cloud mutation owner to establish the plan's "
+            "substrate before it takes the boundary lease"
+        )
+        mutation_owner = ""
+
+    if mutation_owner and "substrate_prerequisite ctx ~plan ~live:true" not in mutation_owner:
+        problems.append(
+            f"{DEPLOY_RUN}: the cloud mutation owner does not establish the plan's "
+            "substrate with the live check before it acquires the boundary lease"
+        )
+
+    try:
+        offline_owner = function_body(deploy_run, "let run_offline")
+    except ValueError:
+        problems.append(
+            f"{DEPLOY_RUN}: there is no side-effect-free owner to check the substrate"
+        )
+        offline_owner = ""
+
+    if offline_owner:
+        dry = offline_owner.find("substrate_prerequisite ctx ~plan ~live:false")
+        run = offline_owner.find("run_plan_result")
+        if dry == -1:
             problems.append(
-                f"{CMD_DEPLOY}: the substrate prerequisite is not invoked for both the "
-                "side-effect-free and the live deploy paths"
+                f"{DEPLOY_RUN}: the side-effect-free owner has no substrate check, so a "
+                "dry-run would discover a missing prerequisite as a cluster refusal"
             )
-        elif min(live_calls) > apply or min(dry_calls) > dry:
+        elif run != -1 and dry > run:
             problems.append(
-                f"{CMD_DEPLOY}: a dry-run or apply is reached before the substrate "
-                "prerequisite, which is the ordering this guard exists to keep"
+                f"{DEPLOY_RUN}: the side-effect-free owner executes before it checks the "
+                "substrate, which is the ordering this guard exists to keep"
             )
 
     substrate = read(root, SUBSTRATE)
@@ -196,8 +206,9 @@ def main() -> int:
 
     print(
         "check_deploy_substrate_order: the substrate step is profile-independent, covers the "
-        "plan's namespaces, precedes every dry-run and apply, refuses side-effect-free runs "
-        "with an explanation, and widens nobody's authority"
+        "plan's namespaces, is established by the cloud mutation owner before its lease and "
+        "checked by the side-effect-free owner before execution, refuses with an explanation, "
+        "and widens nobody's authority"
     )
     return 0
 
