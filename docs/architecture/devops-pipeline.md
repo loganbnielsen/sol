@@ -63,12 +63,15 @@ representations have different inputs: a scoped plan's declaration is not necess
 the applied boundary, and legacy topic declarations also affect `consumes_kafka`.
 Do not equate them without tests for scoped changes and retained workers.
 
-The remaining question in #1190 is whether direct deploy and rollback can derive
-their removal baseline from the verified release boundary, retaining bookkeeping
-only for local up. That requires deciding whether the warning protects declared
-workspace intent or the last applied workload boundary. Missing records currently
-mean a first deployment; unreadable records fail the guard unless the operator
-explicitly passes `--confirm-group-change`.
+Decision (#1190): the record stays independent. The warning protects the workspace's
+**declared** consumer-group intent, while a recorded release describes the **applied and
+retained** boundary; a scoped deploy deliberately carries every declared group so the
+units it leaves out are not read as removals
+(`Sol_cli_deployment_plan.derive_consumer_groups`). Release state therefore cannot
+supply the baseline for a scoped deploy. Local `sol up` and direct `sol deploy` record
+the plan's declared intent; rollback records the restored release's applied groups
+because it restores that boundary. Missing records mean a first deployment; unreadable
+records fail the guard unless the operator explicitly passes `--confirm-group-change`.
 
 ---
 

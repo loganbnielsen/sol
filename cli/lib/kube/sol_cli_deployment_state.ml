@@ -1,3 +1,20 @@
+(** This module owns one independent lifecycle fact: the removal-warning baseline for
+    the workspace's consumer groups.
+
+    It is not derivable from release/boundary state. A plan's [consumer_groups] are the
+    workspace's declared Kafka-consuming workers, including units a scoped deploy does
+    not apply ({!Sol_cli_deployment_plan.derive_consumer_groups}); a recorded release's
+    workloads are the applied and retained boundary. The two legitimately differ, so the
+    guard that warns before a deploy drops a group compares the new plan's declared
+    intent against this record and the record must exist separately.
+
+    The writers leave the baseline for the lifecycle they completed: local [sol up] and
+    direct [sol deploy] record the plan's declared intent, while rollback records the
+    restored release's applied groups because it restores that boundary. A missing
+    record means a first deployment; an unreadable record fails the guard closed unless
+    the operator passes [--confirm-group-change]. Neither may be read as an empty or
+    successful observation. *)
+
 type execution_outcome =
   | Applied of
       { namespace : string

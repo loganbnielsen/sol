@@ -324,3 +324,24 @@ let%test "check_removed_groups: passes when stable or first" =
 
 let%test "helpers: removed_consumer_groups" = test_removed_consumer_groups ()
 let%test "helpers: configmap name" = test_configmap_name_sanitizes_workspace ()
+
+let test_the_baseline_is_recorded_declared_intent () =
+  (* #1190: the removal warning protects the declared workspace intent recorded by the
+     last lifecycle, not the applied release boundary. A recorded group the new plan
+     drops is refused; a plan that keeps the recorded set is not a removal, which is
+     why a scoped plan carries every declared group. *)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"dropping a recorded declared group is refused"
+    true
+    (Result.is_error (check ~mode:"present" ~confirm:false [ "a" ]));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a plan that keeps the recorded declared set is not a removal"
+    true
+    (Result.is_ok (check ~mode:"present" ~confirm:false [ "a"; "b"; "c" ]))
+;;
+
+let%test "consumer-group state (#1190): the baseline is recorded declared intent" =
+  test_the_baseline_is_recorded_declared_intent ()
+;;
