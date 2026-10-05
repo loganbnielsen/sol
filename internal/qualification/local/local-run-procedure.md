@@ -5,8 +5,7 @@ local rows against the reference application, on one host, with the released `so
 bundle. It is preparation for that run, not evidence of it: nothing here is
 `PASS` until a run record says so at the class the row needs.
 
-The executable contract is `internal/qualification/ALPHA_CAMPAIGN.md` §3 — the rows
-whose target includes `local`. The harness is `local-qual.sh`; its offline suite is
+The executable contract is the current reference scenario and the row drivers below; local evidence applies only to claims those drivers actually observe. The harness is `local-qual.sh`; its offline suite is
 `test-local-qual.sh`.
 
 ## 1. What the local run can and cannot establish
@@ -14,7 +13,7 @@ whose target includes `local`. The harness is `local-qual.sh`; its offline suite
 | Class | Meaning here |
 |---|---|
 | `LOCAL` | Observed on this host against the real k3d cluster, the real framework runtime and the real `sol` binary. |
-| `LIVE` | **Not reachable locally.** Provider, authority, retention, multi-AZ and alert-acknowledgement rows stay `NOT RUN`; they belong to `HARDEN-007`/`HARDEN-008`. |
+| `LIVE` | **Not reachable locally.** Provider, authority, retention, multi-AZ and alert-acknowledgement rows stay `NOT RUN`; they belong to live provider qualification. |
 
 The local run is the closest practical clean-user environment before the cloud runs.
 It exercises the same charts (`dev` runs the profile's charts at single-replica
@@ -92,7 +91,7 @@ file). Members: `run-identity.txt` (revision, `sol --version`, workspace, cluste
 start time, ambient context, tool versions), `infra-up.log`, `infra-status.log`,
 `namespaces.txt`, `helm-releases.txt`, `pods.txt`, `teardown-verdict.txt`, and the
 row drivers' own logs. Copy the bundle outside Sol's 20-run pruning window
-(`internal/qualification/README.md`, lesson 5) before it can be lost.
+(outside any ephemeral runtime directory) before it can be lost.
 
 **Absence is tri-state.** `teardown` records `cluster` and `containers` verdicts
 (`ABSENT` / `PRESENT` / `UNKNOWN`) and refuses to report success unless both are
