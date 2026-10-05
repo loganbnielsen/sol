@@ -167,7 +167,7 @@ Pipeline:
 - `--emit-to DIR` — GitOps mode: write one `<ns>-<name>.yaml` per service to DIR, plus the release artifact (`sol-release-<id>.yaml` and `sol-current-release.yaml`, both derived from the plan's release id)
 - `--emit-plan-to FILE` — write plan JSON to FILE (experimental)
 - `--dry-run` — print YAML, no cluster contact
-- `--secret-backend` — `kubernetes-placeholder` (default) or `external-secrets`. The chosen backend is preserved through `--emit-to`; `kubernetes-live` is refused there, because a GitOps artifact is committed to a repository and a plaintext Secret must never be
+- `--secret-backend` — overrides the destination's default: `kubernetes-live` (local and direct deploys — Sol renders no Secret and the workload references the one that already exists), `kubernetes-placeholder` (the GitOps default — a redacted Secret with empty values) or `external-secrets` (with `--emit-to` — an `ExternalSecret` for the External Secrets Operator). The chosen backend is preserved through `--emit-to`; `kubernetes-live` is refused there, because a GitOps artifact is committed to a repository and must never carry live secret values.
 - `--secret-store-ref`, `--secret-store-kind`, `--key-prefix`, `--refresh-interval` — External Secrets Operator fields
 
 ---

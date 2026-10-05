@@ -12,12 +12,12 @@ This is a reusable audit template. When performing an audit, copy this file (e.g
 
 Sol must eliminate "it works on my machine" syndrome. The local loop must mirror production architectures without introducing operational overhead.
 
-**Source locations:** `cli/sol/bin/` · `cli/sol/lib/sol_cli_scaffold.ml`
+**Source locations:** `cli/bin/` · `cli/lib/base/sol_cli_scaffold.ml` · `cli/lib/base/sol_cli_scaffold_tree.ml`
 
 ### Checklist
 
 * [ ] **Zero-Knowledge Onboarding:** `sol new workspace <name>` generates a fully compiling, zero-warnings codebase on the first try. Library names are workspace-namespaced to prevent collisions in multi-workspace monorepos.
-* [ ] **Atomic CLI Transactions:** If `sol up` or `sol deploy` fails mid-run (Docker build error, manifest validation failure), the CLI exits non-zero and leaves no partially-applied, orphaned resources in the cluster. There is no "half-deployed" state.
+* [ ] **Whole-plan prevalidation, recorded failure:** `sol up`/`sol deploy` build and render the whole plan before touching the cluster (`Sol_cli_change_set.build` collects every render error first, and `--dry-run` contacts no cluster), so a refusal before the billable boundary changes nothing. Once apply begins, a failure exits non-zero and is recorded as a deploy *attempt* with outcome `apply_failed` (`sol deployments`), and the release record is written only when apply succeeded. Sol does not promise atomic rollback of a partially-applied set: recovery is re-running `sol deploy` (the plan is idempotent) or `sol rollback <release_id>` to restore a recorded boundary. A scoped deploy or a rollback refuses, before any mutation, when the boundary it must read cannot be read.
 * [ ] **Hermetic Test Harnesses:** The E2E test sequence does not rely on ambient `sleep N` timing, manual port-forwards, or host-level broker state. Infrastructure setup is fully scripted and idempotent.
 
 ---
@@ -26,16 +26,16 @@ Sol must eliminate "it works on my machine" syndrome. The local loop must mirror
 
 Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthesis engine must be deterministic and structurally secure by default — a startup should not need to understand Kubernetes security internals to ship a hardened deployment.
 
-**Source locations:** `cli/sol/lib/sol_cli_manifest.ml` · `cli/sol/lib/sol_cli_manifest_yaml.ml`
+**Source locations:** `cli/lib/workspace/sol_cli_manifest.ml` · `cli/lib/workspace/sol_cli_manifest_yaml.ml` · `cli/lib/deploy/sol_cli_deployment_render.ml`
 
 ### Checklist
 
 * [ ] **Containers never run as root:** Every generated `Deployment` and `CronJob` sets `runAsNonRoot: true`, `runAsUser`, and `runAsGroup`. Container-level contexts enforce `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true`.
 * [ ] **Seccomp profile is set:** Pod security contexts include `seccompProfile: type: RuntimeDefault`, passing standard Kubernetes security scanners.
-* [ ] **Credentials are never in ConfigMaps:** Sensitive env vars (e.g., `POSTGRES_URL`) are generated into a Kubernetes `Secret` resource. The `ConfigMap` holds only non-sensitive config.
+* [ ] **Credentials are never rendered as plaintext:** The generated `ConfigMap` holds only non-sensitive config. With the default backend for `sol up` and a direct `sol deploy` (`kubernetes-live`) Sol renders **no** Secret at all — the workload references a Secret that already exists in the cluster, `sol secret set` (or the operator's secret authority) seeds it, and the deploy fails closed naming every required key that is absent or empty. `kubernetes-placeholder` renders a Secret whose values are empty strings, and `external-secrets` renders an `ExternalSecret`. No backend renders a value.
 * [ ] **Services use ClusterIP + Ingress, never NodePort:** Generated `Service` resources use `type: ClusterIP`. HTTP services generate an `Ingress` with TLS redirect.
 * [ ] **NetworkPolicy is generated for every workload:** Each workload gets a `NetworkPolicy` restricting ingress and egress to only what it needs (ingress-nginx, in-cluster pods, Redpanda, PostgreSQL, monitoring namespaces, DNS).
-* [ ] **`kubectl apply` paths are shell-injection safe:** Temp file paths passed to `Sys.command` are wrapped with `Filename.quote`.
+* [ ] **Subprocesses run from an argv list:** Shipped code (`cli/`, `framework/`, `platform/`) invokes subprocesses through `Sol_cli_process.cmd`, which carries a `string list` argv and never a shell string; `Sys.command` appears nowhere in those trees. The deliberate shell exceptions are `sol local run`'s generated command and maintainer tooling (`internal/tooling/sol_process.run_shell`), and both `Filename.quote` every interpolated value.
 * [ ] **Escape hatches via `sol.yml`/target files:** A startup needing custom annotations, non-default resource limits, or a progressive rollout strategy can inject it via `sol.yml` or a `sol/<env>/<provider>/<region>.yml` target file without forking the framework.
 * [ ] **Generated infrastructure is a build artifact:** Kubernetes, Kafka, and NetworkPolicy YAML are synthesized deterministically from workspace structure, `sol.yml`, and the resolved target file; service repos do not require hand-committed per-workload manifests to deploy.
 * [ ] **Team boundaries are reflected in infrastructure:** Namespaces, service accounts, Kafka topics, ACLs, and NetworkPolicies are derived from `app/<team>/...` and `events/<team>/...`, so domain ownership is visible and enforceable at runtime.
@@ -46,7 +46,7 @@ Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 
 High performance must not compromise correctness. Every blocking librdkafka call must release the OCaml domain lock so the Eio scheduler can continue running. Generated worker code must enforce at-least-once semantics.
 
-**Source locations:** `~/Code/kafka-eio/lib/kafka_stubs.c` · `~/Code/kafka-eio/lib/kafka_consumer.ml` (standalone `kafka-eio` opam package, opam-pinned into this switch — not in this repo) · `framework/ocaml/sol-worker/lib/worker.ml` · `cli/sol/lib/sol_cli_cmd_new.ml`
+**Source locations:** `~/Code/kafka-eio/lib/kafka_stubs.c` · `~/Code/kafka-eio/lib/kafka_consumer.ml` (standalone `kafka-eio` opam package, opam-pinned into this switch — not in this repo) · `framework/ocaml/sol-worker/lib/worker.ml` · `cli/lib/workspace/sol_cli_cmd_new.ml`
 
 ### Checklist
 
@@ -110,28 +110,36 @@ KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_U
 
 ---
 
-### 5.2 Failure Atomicity Verification
+### 5.2 Failure Behaviour Verification
+
+Each step below must leave the cluster and the workspace exactly as it was before it.
 
 ```bash
-# 1. Simulate a Docker build failure
+# 1. Refusal before the cluster is touched: a build failure
 echo "RUN this_command_does_not_exist" >> app/payments/charge_svc/Dockerfile
 sol up
-# Expected: non-zero exit; no partially-running containers
-
+# Expected: non-zero exit, reported before any manifest is applied
 kubectl get pods -l workspace=audit_test --all-namespaces  # must be empty
-
-# 2. Simulate a manifest validation failure
-sol deploy dev/aws/us-east-1 --image-tag "!invalid-ref" --dry-run
-# Expected: exits non-zero before any kubectl apply
-
-# 3. Restore
 git checkout app/payments/charge_svc/Dockerfile
+
+# 2. Refusal before anything is written: an incompatible secret backend
+sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> \
+  --secret-backend kubernetes-live --emit-to /tmp/audit-gitops
+# Expected: non-zero exit naming the incompatible combination; /tmp/audit-gitops holds
+# nothing new, because a GitOps artifact must never carry a live secret.
+
+# 3. Recovery facts are recorded, not assumed (live-only: needs an apply that fails)
+sol deployments --target dev/aws/us-east-1
+# A deploy that failed after apply began appears as an attempt with status apply_failed;
+# sol releases shows no release record for it. Recovery is another sol deploy or
+# sol rollback <release_id>; Sol does not roll the partial apply back for you.
 ```
 
 **Invariants:**
-* [ ] A build failure leaves zero orphaned containers or services
-* [ ] A manifest dry-run failure produces a clear error message and zero cluster side-effects
-* [ ] CLI exit codes are non-zero on all failure paths (`echo $?`)
+* [ ] A build failure exits non-zero and leaves zero orphaned containers or services
+* [ ] An incompatible secret backend is refused before any file or cluster state changes
+* [ ] CLI exit codes are non-zero on every failure path (`echo $?`)
+* [ ] A failed apply is recorded as an `apply_failed` attempt and writes no release record (live-only)
 
 ---
 
@@ -173,11 +181,21 @@ grep "runAsNonRoot: true"     /tmp/sol-manifest.yaml  # must appear per containe
 grep "readOnlyRootFilesystem" /tmp/sol-manifest.yaml  # must appear per container
 grep "seccompProfile"         /tmp/sol-manifest.yaml  # must appear per pod
 grep "kind: NetworkPolicy"    /tmp/sol-manifest.yaml  # must appear per workload
-grep "kind: Secret"           /tmp/sol-manifest.yaml  # must appear for credentials
+
+# A direct deploy defaults to kubernetes-live, so it renders secret *references* only:
+grep -E "kind: (Secret|ExternalSecret)" /tmp/sol-manifest.yaml  # must be empty
+grep -E "POSTGRES_URL|SOL_API_KEY"      /tmp/sol-manifest.yaml  # referenced, never a value
+
+# Force the placeholder backend to confirm Sol can render a Secret, with empty values:
+sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> \
+  --secret-backend kubernetes-placeholder --dry-run 2>&1 | tee /tmp/sol-manifest-placeholder.yaml
+grep "kind: Secret" /tmp/sol-manifest-placeholder.yaml  # must appear per workload
+grep "POSTGRES_URL" /tmp/sol-manifest-placeholder.yaml  # must have an empty value, never plaintext
 ```
 
 **Invariants:**
 * [ ] All `grep` checks above produce the expected matches/non-matches before any cluster state is touched
+* [ ] The default direct deploy renders no plaintext secret value and no `Secret` resource; `kubernetes-placeholder` renders only empty values
 
 ---
 
@@ -215,7 +233,7 @@ CREATE UNIQUE INDEX idx_charges_idempotency ON charges(idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 EOF
 
-sol migrate --env production 2>&1
+sol migrate apply dev/aws/us-east-1 2>&1
 
 # Verify migration tracking is workspace-prefixed
 # Replace <workspace> with the workspace directory name (e.g. sol_pluto_schema_migrations)
@@ -226,9 +244,9 @@ kubectl logs -n payments -l app=charge_worker --since=5m | grep -i error
 ```
 
 **Invariants:**
-* [ ] `sol migrate` is idempotent — running it twice produces no error
+* [ ] `sol migrate apply` is idempotent — running it twice produces no error
 * [ ] Migration tracking table is workspace-prefixed, never shared across workspaces
-* [ ] `sol migrate --dry-run` prints the SQL before touching the database
+* [ ] `sol migrate apply <target> --dry-run` prints the SQL before touching the database
 * [ ] Zero application errors in worker logs immediately after migration
 
 ---
@@ -295,7 +313,7 @@ KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 REDPANDA_ADMIN_UR
 
 Sol's central architecture is autonomous domain teams coordinating through typed events. The framework should make that model easy to follow and deviations easy to spot.
 
-**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `cli/sol/lib/sol_cli_workspace.ml` · workspace examples under `internal/fixtures/venus/` and `examples/pluto/`
+**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/lib/workspace/sol_cli_cmd_new.ml` · `cli/lib/workspace/sol_cli_workspace.ml` · workspace examples under `internal/fixtures/venus/` and `examples/pluto/`
 
 ### Checklist
 
@@ -312,7 +330,7 @@ Sol's central architecture is autonomous domain teams coordinating through typed
 
 Sol is intentionally a framework at infrastructure and network boundaries, and a library inside business logic boundaries. It is also designed for AI-assisted development. The codebase should preserve predictable structure, explicit contracts, and one clear path for common tasks.
 
-**Source locations:** `README.md` · `docs/DEVELOPER_EXPERIENCE.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `framework/*/lib/` · package-level `*.md` specs
+**Source locations:** `README.md` · `docs/DEVELOPER_EXPERIENCE.md` · `docs/guides/TUTORIAL.md` · `cli/lib/workspace/sol_cli_cmd_new.ml` · `framework/*/lib/` · package-level `*.md` specs
 
 ### Checklist
 

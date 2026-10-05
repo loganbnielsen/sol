@@ -14,7 +14,7 @@ The default workspace should be a complete, multi-domain Sol application that de
 
 **Command:** `sol new workspace <name>`
 
-**Source locations:** `cli/sol/lib/sol_cli_cmd_new.ml` · `cli/sol/lib/sol_cli_scaffold.ml` · `cli/sol/lib/sol_cli_scaffold_templates.ml`
+**Source locations:** `cli/lib/workspace/sol_cli_cmd_new.ml` · `cli/lib/base/sol_cli_scaffold.ml` · the templates under `platform/shared/templates/`
 
 ### Checklist
 
@@ -138,25 +138,31 @@ The scaffold should be easy for an AI agent to modify correctly because names, m
 
 ## 9. Language Coverage
 
-Sol's application languages are OCaml and TypeScript, but the *scaffolding* is OCaml
-only today. An audit that walks `sol new` and reports nothing about TypeScript is
-silent about half the product, so this section states the current position and what a
-pass must record. Audit each item and record the verdict explicitly — "not applicable"
-is a verdict; silence is not.
+Sol's application languages are OCaml and TypeScript. `sol new svc` and `sol new worker`
+take `--language typescript` and scaffold from `platform/shared/templates/svc-ts/` and
+`worker-ts/`; `sol new fn --language typescript` is refused because no TypeScript function
+runtime contract exists; and `sol new workspace` scaffolds an OCaml workspace whose units
+are then added per language. Audit each item and record the verdict explicitly — "not
+applicable" is a verdict; silence is not.
 
-* [ ] **OCaml is the scaffolded path:** every command in sections 1–8 produces OCaml,
-  and that is the path these checklists are written against.
-* [ ] **TypeScript has no `sol new` path yet — recorded, not assumed:** `sol new` has
-  no `--language` flag and its templates are dune/OCaml only, so a TypeScript unit is
-  authored by hand. **Scaffolding TypeScript units is FEAT-084**, still open. Do not
-  record the absence of TypeScript output from `sol new` as a scaffold *defect* — it is
-  a known gap with an owner — and do not record it as *covered* either. If a pass finds
-  `sol new` emitting TypeScript, FEAT-084 has landed and this section is stale.
-* [ ] **The TypeScript path is audited against its real artefact:** `examples/pluto/app/demo_ts`
+* [ ] **Both languages are scaffoldable where a runtime contract exists:** `sol new svc
+  <domain>/<name> --language typescript` and `sol new worker <domain>/<name> --language
+  typescript` write a TypeScript unit and declare `language: typescript` in `sol.yml`;
+  `ocaml` is the default for every command.
+* [ ] **The TypeScript refusal is named, not silent:** `sol new fn --language typescript`
+  exits non-zero with a message naming the missing TypeScript function runtime contract.
+  A `--language typescript` request must never quietly produce OCaml.
+* [ ] **A TypeScript workspace is assembled, not generated whole:** `sol new workspace`
+  has no `--language` flag. A TS-first workspace is hand-authored — `examples/pluto/app/demo_ts`
+  is the reference — while a scaffolded workspace gains TypeScript units afterwards with
+  `--language typescript`. Record that as the current shape: a recorded limitation with an
+  open issue, not a scaffold defect.
+* [ ] **The TypeScript path is audited against its real artefacts:** `examples/pluto/app/demo_ts`
   (a TypeScript `-svc` and `-worker` deployed by the same CLI and Kubernetes machinery,
-  built in CI by `golden-path-smoke-ts`) plus the four published `@sol-fab/*` packages
-  (`kafka`, `obs`, `svc`, `worker`) that a hand-written unit consumes. The parity
-  question is whether those teach the same conventions the OCaml scaffolds do.
+  built in CI by `golden-path-smoke-ts`) plus a scaffolded TypeScript unit and the six
+  published `@sol-fab/*` packages (`kafka`, `obs`, `svc`, `worker`, `jobs`, `outbox`) that
+  a hand-written unit consumes. The parity question is whether those teach the same
+  conventions the OCaml scaffolds do.
 * [ ] **Open parity gaps are named, not implied:** `@sol-fab/worker` has no `on_ready`
   equivalent (DEC-028), which is one of the triggers that stages TypeScript behind the
   production profile (DEC-026 §2, see `docs/deployment/compatibility.md`). A pass that
@@ -164,9 +170,6 @@ is a verdict; silence is not.
 * [ ] **Scaffolds stay language-honest:** nothing in the OCaml scaffolds claims a
   TypeScript equivalent already exists, and no generated doc tells an author to run a
   command that is not shipped.
-
-**What closes this section:** FEAT-084 landing a TypeScript scaffold path, at which
-point sections 1–8 gain `--language typescript` counterparts instead of this note.
 
 ---
 
