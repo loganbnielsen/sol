@@ -89,7 +89,6 @@ let test_requirements_follow_usage () =
     ; "alert_delivery"
     ; "immutable_artifacts"
     ; "credential_posture"
-    ; "platform_capacity"
     ]
   in
   check_strs "no used capabilities: target-level guarantees only" always (names []);

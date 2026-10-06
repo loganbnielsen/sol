@@ -198,16 +198,6 @@ let establish
                can be restored (DEC-026 §3)"
               required
               required ))
-  | Platform_capacity ->
-    let headroom = Option.value target.node_failure_headroom_nodes ~default:0 in
-    (match
-       Sol_cli_profile.satisfies_capacity
-         ~envelope:Sol_cli_profile.platform_capacity_envelope
-         ~shape:Sol_cli_profile.recommended_node_shape
-         ~headroom_nodes:headroom
-     with
-     | Ok () -> Established
-     | Error reason -> Unmet (Target, reason))
   | Postgres_durability ->
     if List.mem target.provider qualified_providers
     then Established

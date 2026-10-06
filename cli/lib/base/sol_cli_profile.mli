@@ -14,7 +14,6 @@ type capability =
   | Alert_delivery
   | Immutable_artifacts
   | Credential_posture
-  | Platform_capacity
   | Workload_availability
   | Postgres_durability
   | Kafka_durability

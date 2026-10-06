@@ -99,7 +99,13 @@ nothing.
 | A9 | Availability claim validated against the workload (§3) | deploy a `-fn` or volume-backed workload declaring `node-failure-tolerant` | `Unsupported_availability` naming the supported alternative; refuses | plan error |
 | A10 | Headroom declared for every tolerant workload (§3, §4) | tolerant workload with `node_failure_headroom_nodes` absent / < count | `workload_availability` unmet naming the required headroom | preflight report |
 | A11 | Durability capability only when used (§4) | workspace with a Kafka consumer but a target without RF≥3 policy | `kafka_durability` unmet for that workload only; a workspace with no Kafka is unaffected | preflight report |
-| A12 | The profile's capacity contract holds (INFRA-030) | a profile target whose effective shape cannot host the platform envelope after `node_failure_headroom_nodes`, and a target declaring a headroom that leaves the platform unschedulable | `platform_capacity` unmet, naming the per-node and/or post-headroom shortfall; the profile's own shape cannot be weakened by a target field or `--var` | preflight report; rendered Terraform `node_instance_types` / `node_desired_size` |
+
+Capacity for the platform's own components is no longer a target preflight
+capability: Sol does not declare those charts' CPU/memory requests, so it cannot
+assert a capacity envelope for an arbitrary environment. The profile still holds
+the provider driver defaults to its declared sizing envelope statically, in
+`internal/ci/check_node_shape_fits_platform.py` (FND-0066), verified by the
+repository checks rather than this harness.
 
 ## B. Deployment, pointer and rollback (HARDEN-002 scenarios 1–3, 9, 10)
 
