@@ -244,13 +244,92 @@ let platform_vars outputs _context ~cluster_issuer:_ ~region:_ =
 let label = "GCP"
 let of_outputs_json = gcp_outputs_of_json
 
+let probe_bootstrap ~region ~outputs () =
+  gcp_provisioner_kubeconfig_result ~region outputs (fun ~env ->
+    Ok
+      (Sol_cli_bootstrap_window.probe
+         ~run:(fun argv -> Sol_cli_process.run (Sol_cli_process.cmd ~env argv))
+         Sol_cli_bootstrap_window.bootstrap_only))
+;;
+
+let probe_successor ~region ~outputs () =
+  gcp_provisioner_kubeconfig_result ~region outputs (fun ~env ->
+    Ok
+      (Sol_cli_bootstrap_window.probe
+         ~run:(fun argv -> Sol_cli_process.run (Sol_cli_process.cmd ~env argv))
+         Sol_cli_bootstrap_window.successor))
+;;
+
+(* Establish that the temporary installation window is effective before the
+   privileged platform apply, so a window that did not take effect is reported
+   as a missing window rather than discovered as a Kubernetes RBAC denial
+   inside the apply. *)
+let bootstrap_window_control ~region ~outputs () =
+  let open Result.Syntax in
+  let* probes = probe_bootstrap ~region ~outputs () in
+  let permitted = Sol_cli_bootstrap_window.permitted probes in
+  let indeterminate = Sol_cli_bootstrap_window.indeterminate probes in
+  match permitted, indeterminate with
+  | true, [] ->
+    Sol_cli_report.app
+      "  bootstrap window control: provisioner %s holds a bootstrap-only capability"
+      outputs.provisioner_service_account;
+    Ok probes
+  | _ -> Error (Sol_cli_bootstrap_window.control_failure ~permitted indeterminate)
+;;
+
 let cluster ~region outputs : Sol_cli_cluster.t =
+  let before = ref [] in
   { name = outputs.cluster_name
   ; check_identity = (fun ~cluster_access_role_arn:_ -> Ok ())
   ; platform_vars = platform_vars outputs
   ; with_access = (fun f -> gcp_provisioner_kubeconfig_result ~region outputs f)
   ; ready = (fun () -> gcp_cloud_ready outputs)
-  ; bootstrap_window = Sol_cli_cluster.Closed_by_platform_root
+  ; bootstrap_window =
+      Sol_cli_cluster.Verified
+        { principal = outputs.provisioner_service_account
+        ; gate =
+            (fun () -> Result.map ignore (bootstrap_window_control ~region ~outputs ()))
+        ; observe =
+            (fun () ->
+              let open Result.Syntax in
+              let* probes = probe_bootstrap ~region ~outputs () in
+              before := probes;
+              Ok ())
+        ; deescalated =
+            (fun () ->
+              let open Result.Syntax in
+              let* after = probe_bootstrap ~region ~outputs () in
+              match
+                Sol_cli_capability.deescalation_transition
+                  ~before:!before
+                  ~after_principal:
+                    (Sol_cli_capability.Principal_confirmed
+                       outputs.provisioner_service_account)
+                  ~after
+              with
+              | Sol_cli_capability.Deescalated -> Ok ()
+              | verdict ->
+                Error (Sol_cli_capability.deescalation_verdict_to_string verdict))
+        ; successor =
+            (fun () ->
+              match probe_successor ~region ~outputs () with
+              | Error why ->
+                Error
+                  (Printf.sprintf
+                     "the durable cluster-access identity could not be probed for the \
+                      authority the lifecycle needs next: %s"
+                     why)
+              | Ok probes ->
+                (match Sol_cli_capability.successor_authority probes with
+                 | Ok () -> Ok ()
+                 | Error why ->
+                   Error
+                     (Printf.sprintf
+                        "the durable cluster-access identity was not demonstrated to \
+                         hold the authority the lifecycle needs next: %s"
+                        why)))
+        }
   ; deploy_access = (fun () -> Ok None)
   }
 ;;

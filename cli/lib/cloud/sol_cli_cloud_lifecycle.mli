@@ -153,23 +153,23 @@ val policy_vars
 val phase_to_string : phase -> string
 val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
 
-type deescalation_principal =
+type deescalation_principal = Sol_cli_capability.deescalation_principal =
   | Principal_confirmed of string
   | Principal_refused_by_cluster of string
   | Principal_probe_failed of string
   | Principal_unexpected of string
 
-type deescalation_verdict =
+type deescalation_verdict = Sol_cli_capability.deescalation_verdict =
   | Deescalated
   | Still_elevated of string list
   | Undetermined of string
 
-type capability_answer =
+type capability_answer = Sol_cli_capability.capability_answer =
   | Permitted
   | Denied
   | Indeterminate of string
 
-type capability =
+type capability = Sol_cli_capability.capability =
   { verb : string
   ; resource : string
   }
