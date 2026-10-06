@@ -52,9 +52,7 @@ let gcp_run
       argv
   =
   seen := argv :: !seen;
-  if List.mem "print-access-token" argv
-  then Ok "ya29.fake-token\n"
-  else if List.mem "curl" argv
+  if List.mem "curl" argv
   then Ok (gcp_discovery_json issuer)
   else Error ("unexpected gcloud command: " ^ String.concat " " argv)
 ;;
@@ -123,7 +121,14 @@ let%test "issuer: gcp reads the cluster's OIDC discovery document" =
                     ~needle:"/.well-known/openid-configuration"
                     argument)
             argv)
-       !seen)
+       !seen);
+  check_bool
+    "the document is read without an operator credential, as the callee will read it"
+    true
+    (List.length !seen = 1
+     && List.for_all
+          (fun argv -> List.mem "curl" argv && not (List.mem "--config" argv))
+          !seen)
 ;;
 
 (* ----------------------------------------------------------------- *)
@@ -202,7 +207,7 @@ let%test "issuer: aws rejects an issuer that is not a URL" =
 ;;
 
 let%test "issuer: gcp requires the cluster declaration" =
-  let run _ = Windtrap.fail "gcloud was consulted without a declared cluster_name" in
+  let run _ = Windtrap.fail "discovery was requested without a declared cluster_name" in
   check_mentions
     ~msg:"gcp requires the cluster declaration"
     ~needle:"cluster_name"
@@ -212,7 +217,7 @@ let%test "issuer: gcp requires the cluster declaration" =
 ;;
 
 let%test "issuer: gcp requires the project declaration" =
-  let run _ = Windtrap.fail "gcloud was consulted without a declared project_id" in
+  let run _ = Windtrap.fail "discovery was requested without a declared project_id" in
   check_mentions
     ~msg:"gcp requires the project declaration"
     ~needle:"project_id"
@@ -221,14 +226,14 @@ let%test "issuer: gcp requires the project declaration" =
        (target ~cluster_name:"prod" Sol_cli_provider.Gcp))
 ;;
 
-let%test "issuer: gcp fails closed when the access token cannot be read" =
+let%test "issuer: gcp fails closed when the discovery document cannot be read" =
   let run argv =
     ignore argv;
-    Error "gcloud auth print-access-token exited with code 1"
+    Error "curl: (6) Could not resolve host: container.googleapis.com"
   in
   check_mentions
-    ~msg:"the token failure is reported"
-    ~needle:"print-access-token"
+    ~msg:"the unreadable discovery document is reported"
+    ~needle:"Could not resolve host"
     (Sol_cli_provider_capabilities.gcp_workload_identity_issuer
        ~run
        (target
@@ -253,9 +258,7 @@ let%test "issuer: gcp refuses an issuer that is not on the GKE API host" =
 let%test "issuer: gcp fails closed on a discovery document with no issuer" =
   let run argv =
     ignore argv;
-    if List.mem "print-access-token" argv
-    then Ok "ya29.fake-token"
-    else Ok {|{"jwks_uri":"https://container.googleapis.com/jwks.json"}|}
+    Ok {|{"jwks_uri":"https://container.googleapis.com/jwks.json"}|}
   in
   check_mentions
     ~msg:"a discovery document without an issuer is refused"

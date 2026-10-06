@@ -138,8 +138,11 @@ val aws_workload_identity_issuer
   -> Sol_cli_config.target
   -> (string, string) result
 
-(** GKE's issuer is read from the cluster's OIDC discovery document, whose
-    reported [issuer] must be on the GKE API host. *)
+(** GKE's issuer is read from the cluster's public OIDC discovery document (the
+    Google API `well-known.getOpenid-configuration` endpoint), whose reported
+    [issuer] must be on the GKE API host. The document is fetched without an
+    operator credential because the callee fetches it, and the advertised JWKS,
+    without Google credentials at runtime. *)
 val gcp_workload_identity_issuer
   :  run:(string list -> (string, string) result)
   -> Sol_cli_config.target

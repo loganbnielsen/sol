@@ -443,16 +443,12 @@ let gcp_workload_identity_issuer ~run (target : Sol_cli_config.target) =
         (path_segment cluster_name)
     in
     let open Result.Syntax in
-    let* token = run [ "gcloud"; "auth"; "print-access-token" ] in
-    let auth_config = Printf.sprintf "header = \"Authorization: Bearer %s\"\n" token in
-    let* response =
-      Sol_cli_fs.with_temp_file
-        ~prefix:"sol-gke-oidc-"
-        ~suffix:".curl"
-        auth_config
-        (fun path -> run [ "curl"; "-fsS"; "--config"; path; url ])
-      |> Result.join
-    in
+    (* The GKE cluster OIDC discovery document is part of Google's public API:
+       the callee fetches it and the advertised JWKS without Google credentials,
+       so discovery here must not depend on an operator credential either — a
+       deploy that only "works" with operator credentials would hide a target
+       whose workloads cannot verify tokens at runtime. *)
+    let* response = run [ "curl"; "-fsS"; url ] in
     let issuer =
       match Yojson.Safe.from_string response with
       | `Assoc fields ->
