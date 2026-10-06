@@ -249,16 +249,7 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
 let final_snapshot_attempts = 12
 
 let final_snapshot_interval_s () =
-  match Sol_cli_string.env "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
-  | None -> Ok 10.
-  | Some raw ->
-    (match float_of_string_opt raw with
-     | Some seconds when seconds >= 0. -> Ok seconds
-     | _ ->
-       Error
-         (Printf.sprintf
-            "SOL_DESTROY_SNAPSHOT_INTERVAL_S=%S is not a non-negative number of seconds"
-            raw))
+  Sol_cli_duration.env_seconds ~name:"SOL_DESTROY_SNAPSHOT_INTERVAL_S" ~default:10.
 ;;
 
 let rec observe_final_snapshot ~interval ~declared ~snapshot_id ~region ~attempts =

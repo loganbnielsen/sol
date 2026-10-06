@@ -170,12 +170,7 @@ let successor_probe ~region ~outputs () =
 ;;
 
 let whoami_retry_interval_s () =
-  match Sol_cli_string.env "SOL_WHOAMI_RETRY_INTERVAL_S" with
-  | None -> 10.
-  | Some raw ->
-    (match float_of_string_opt raw with
-     | Some seconds when Float.is_finite seconds && seconds >= 0. -> seconds
-     | _ -> 10.)
+  Sol_cli_duration.env_seconds ~name:"SOL_WHOAMI_RETRY_INTERVAL_S" ~default:10.
 ;;
 
 let cluster_propagation_attempts = 10
@@ -442,8 +437,9 @@ let persist_whoami_capture ~run_id json =
 ;;
 
 let verify_whoami_shape ~region ~outputs ~window_role_arn =
+  let open Result.Syntax in
   let fail message = Error message in
-  let interval_s = whoami_retry_interval_s () in
+  let* interval_s = whoami_retry_interval_s () in
   let expected = normalize_role_arn window_role_arn in
   let run_id = Printf.sprintf "%d" (int_of_float (Unix.gettimeofday ())) in
   let rec attempt remaining =
@@ -532,7 +528,8 @@ let verify_whoami_shape ~region ~outputs ~window_role_arn =
 ;;
 
 let await_deescalation ~region ~outputs ~window_role_arn ~assumable_role_arn ~before =
-  let interval_s = whoami_retry_interval_s () in
+  let open Result.Syntax in
+  let* interval_s = whoami_retry_interval_s () in
   let rec loop remaining =
     let principal, probes =
       deescalation_probe ~region ~outputs ~window_role_arn ~assumable_role_arn ()
@@ -544,8 +541,9 @@ let await_deescalation ~region ~outputs ~window_role_arn ~assumable_role_arn ~be
         ~after:probes
     in
     match verdict with
-    | Sol_cli_cloud_lifecycle.Deescalated -> verdict
-    | _ when remaining <= 1 -> verdict
+    | Sol_cli_cloud_lifecycle.Deescalated -> Ok ()
+    | _ when remaining <= 1 ->
+      Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict)
     | verdict ->
       Sol_cli_report.app
         "  awaiting effective de-escalation: %s"
@@ -598,7 +596,8 @@ let observe_bootstrap_window_result
       ~assumable_role_arn
       ()
   =
-  let interval_s = whoami_retry_interval_s () in
+  let open Result.Syntax in
+  let* interval_s = whoami_retry_interval_s () in
   let rec attempt remaining =
     let control =
       deescalation_probe ~region ~outputs ~window_role_arn ~assumable_role_arn ()
@@ -741,17 +740,12 @@ let cluster ~region ~provisioner_role_arn ~deploy_role_arn outputs : Sol_cli_clu
                  Ok ())
            ; deescalated =
                (fun () ->
-                 match
-                   await_deescalation
-                     ~region
-                     ~outputs
-                     ~window_role_arn
-                     ~assumable_role_arn
-                     ~before:!before
-                 with
-                 | Sol_cli_cloud_lifecycle.Deescalated -> Ok ()
-                 | verdict ->
-                   Error (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
+                 await_deescalation
+                   ~region
+                   ~outputs
+                   ~window_role_arn
+                   ~assumable_role_arn
+                   ~before:!before)
            ; successor =
                (fun () ->
                  match successor_probe ~region ~outputs () with

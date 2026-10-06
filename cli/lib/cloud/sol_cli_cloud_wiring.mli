@@ -69,7 +69,9 @@ val apply_deps
   -> run_log:Sol_cli_run_log.t
   -> cloud_target:Sol_cli_cloud_lifecycle.cloud_target
   -> inputs:terraform_inputs
-  -> (Sol_cli_cluster.t, (string * string) list, unit) Sol_cli_cloud_apply.deps
+  -> ( (Sol_cli_cluster.t, (string * string) list, unit) Sol_cli_cloud_apply.deps
+       , Sol_cli_cloud_apply.failure )
+       result
 
 val destroy_preview
   :  assets:Sol_cli_platform_assets.t
