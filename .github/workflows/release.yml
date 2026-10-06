@@ -1,32 +1,41 @@
-# Publish a Sol release -- binary, platform bundle and
-# migration-runner image -- from one build, so every Sol-owned asset the release
-# uses is version-aligned with it.
+# Build one immutable release candidate -- binary, platform bundle and
+# migration-runner image -- from one tagged revision, and record it as a draft
+# release. The tag never publishes.
 #
-#   sol <version>
+#   v<version> candidate (draft, unpublished)
 #   ├── bin/sol                       built with SOL_RELEASE_VERSION=<version>
-#   ├── share/sol/<version>/platform  this commit's platform/ tree
+#   ├── share/sol/<version>/platform  this tag's platform/ tree
 #   ├── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
 #   │                                 the same binary, published once
-#   └── SUPPORT_REFS                  this commit's support-refs.txt, containing the
+#   ├── candidate.json                the candidate identity: revision, bundle
+#   │                                 digest and runner digest
+#   └── SUPPORT_REFS                  this tag's support-refs.txt, containing the
 #                                     exact support-library revisions it was built from
 #
-# A version is published once: the workflow refuses a tag whose runner image
-# already exists, so nothing a released CLI names can move afterwards.
+# Promotion is a separate workflow (`promote.yml`). It publishes this exact draft
+# candidate only after an operator-authorized AWS and GCP qualification verdict,
+# attached to the candidate, refers to the same revision, bundle and runner. The
+# tag never publishes, so qualification always precedes publication and a
+# published version is never rebuilt.
+#
+# A version's candidate is built once: a re-run reuses the recorded candidate
+# only when it matches the rebuild, so the candidate cannot move underneath a
+# qualification run.
 #
 # A release binary without its platform bundle refuses to run rather than guess.
-name: Release
+name: Release candidate
 
 on:
   push:
     tags: ['v*']
   # The tag push is the normal path. workflow_dispatch is the recovery path: the
-  # workflow definition comes from the default branch, so a publish that was
-  # interrupted after the runner image was pushed can be completed without moving
-  # the tag. The artifact is still built from the tag's tree below.
+  # workflow definition comes from the default branch, so a candidate build that
+  # was interrupted can be resumed without moving the tag. The candidate is still
+  # built from the tag's tree below.
   workflow_dispatch:
     inputs:
       version:
-        description: 'The release tag to publish or resume, e.g. v0.1.0-alpha.7'
+        description: 'The release tag to build or resume, e.g. v0.1.0-alpha.8'
         required: true
         type: string
 
@@ -35,47 +44,52 @@ permissions:
   packages: write
 
 concurrency:
-  group: release-${{ inputs.version || github.ref_name }}
+  group: release-candidate-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  candidate:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
       RUNNER_REPO: ghcr.io/${{ github.repository_owner }}/sol-migration-runner
+    outputs:
+      revision: ${{ steps.revision.outputs.revision }}
+      runner_image: ${{ steps.runner.outputs.image }}
     steps:
-      # The tagged tree on both paths: the archive is built from the revision the
-      # version names, never from the default branch.
+      # The tagged tree on both paths: the candidate is built from the revision
+      # the version names, never from the default branch.
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.version || github.ref_name }}
           fetch-depth: 0
 
-      # A version is published once, and only from its own tag: this refuses a
-      # branch, a version whose release already exists, and a checkout that is not
-      # the tag's commit, before anything is built.
-      - name: Require a tag and an unpublished version
+      # The candidate is tied to its own tag: this refuses a branch, a checkout
+      # that is not the tag's commit, and an already-published version, before
+      # anything is built. A draft is this version's recorded candidate and is
+      # resumed below.
+      - name: Require a tag, resolve the candidate revision, and refuse a published version
         id: revision
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           revision="$(git rev-parse HEAD)"
           if ! git rev-parse --verify --quiet "refs/tags/$VERSION^{commit}" >/dev/null; then
-            echo "::error::$VERSION is not a tag; refusing to publish a version that names a branch"
+            echo "::error::$VERSION is not a tag; refusing to build a candidate for a version that names a branch"
             exit 1
           fi
           if [ "$(git rev-parse "refs/tags/$VERSION^{commit}")" != "$revision" ]; then
             echo "::error::$VERSION does not point at the checked-out revision $revision"
             exit 1
           fi
-          if gh release view "$VERSION" >/dev/null 2>&1; then
+          if gh release view "$VERSION" --json isDraft --jq .isDraft >"$RUNNER_TEMP/is-draft.txt" 2>/dev/null \
+            && [ "$(cat "$RUNNER_TEMP/is-draft.txt")" != "true" ]; then
             echo "::error::$VERSION is already published, and a version is published once"
             exit 1
           fi
           echo "revision=$revision" >>"$GITHUB_OUTPUT"
-          echo "publishing $VERSION from $revision"
+          echo "building the candidate for $VERSION from $revision"
 
       - name: Install system dependencies
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
@@ -111,8 +125,9 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # The runner image is published once and never overwritten: if the tag is
-      # already in the registry this reuses its digest, so an interrupted publish
-      # resumes instead of failing. Sol consumes the immutable digest.
+      # already in the registry this reuses its digest, so an interrupted
+      # candidate build resumes instead of failing. Sol consumes the immutable
+      # digest.
       - name: Publish the migration runner, once
         id: runner
         run: |
@@ -138,53 +153,54 @@ jobs:
             --out "$RUNNER_TEMP/dist" | tail -1)"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
+      - name: Record the candidate identity
+        run: |
+          python3 internal/tooling/release/promotion.py record \
+            --version "$VERSION" \
+            --revision "${{ steps.revision.outputs.revision }}" \
+            --bundle "${{ steps.bundle.outputs.archive }}" \
+            --runner-image "${{ steps.runner.outputs.image }}" \
+            --out "$RUNNER_TEMP/candidate.json"
+
       - name: Installed-release smoke
         run: |
           internal/ci/smoke_installed_release.sh \
             "${{ steps.bundle.outputs.archive }}" "$VERSION" \
             "${{ steps.runner.outputs.image }}" "$RUNNER_TEMP/sol-dev"
 
-      # GitHub rejects a release body over 125000 characters, and the generated
-      # changelog carries one entry per merged pull request since the previous
-      # release, so its length is unbounded. The body keeps the first $limit
-      # characters on a line boundary and points at the full compare range.
-      - name: Publish the GitHub release
+      # The candidate is recorded as a draft release: the bundle and the
+      # candidate identity are attached, but nothing is published. A re-run only
+      # succeeds when the recorded candidate matches the rebuild, so the
+      # candidate cannot move underneath a qualification run.
+      - name: Record the candidate as a draft release, once
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          limit=100000
-          notes="$RUNNER_TEMP/generated-notes.md"
-          if ! gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="$VERSION" --jq .body >"$notes" 2>/dev/null; then
-            echo "::warning::could not generate the changelog; publishing the runner digest and the compare range only"
-            : >"$notes"
-          fi
-          previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // ""' 2>/dev/null || true)"
-          if [ -z "$previous" ]; then
-            compare="https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
-          else
-            compare="https://github.com/$GITHUB_REPOSITORY/compare/$previous...$VERSION"
-          fi
-          if [ "$(wc -c <"$notes")" -gt "$limit" ]; then
-            echo "::warning::the generated changelog is $(wc -c <"$notes") characters; keeping the first $limit at a line boundary"
-            awk -v limit="$limit" -v compare="$compare" '
-              BEGIN { used = 0; truncated = 0 }
-              truncated { next }
-              {
-                if (used + length($0) + 1 > limit) {
-                  printf "\nThis changelog is longer than a release body may be; the full range is at <%s>.\n", compare
-                  truncated = 1
-                  next
-                }
-                used += length($0) + 1
-                print
-              }' "$notes" >"$notes.bounded"
-            mv "$notes.bounded" "$notes"
-          fi
+          candidate_notes="$RUNNER_TEMP/candidate-notes.md"
           {
-            printf 'Sol %s, from `%s`.\n\n' "$VERSION" "${{ steps.revision.outputs.revision }}"
+            printf 'Sol %s release candidate. Not published.\n\n' "$VERSION"
+            printf 'Source revision: `%s`\n\n' "${{ steps.revision.outputs.revision }}"
             printf 'Migration runner: `%s`\n\n' "${{ steps.runner.outputs.image }}"
-            cat "$notes"
-          } >"$RUNNER_TEMP/release-body.md"
-          gh release create "$VERSION" "${{ steps.bundle.outputs.archive }}" \
-            --title "Sol $VERSION" --notes-file "$RUNNER_TEMP/release-body.md"
+            printf 'This draft is the immutable candidate. Promotion publishes it only after an operator-authorized AWS and GCP qualification verdict, attached as `qualification-verdict.json`, refers to this exact revision, bundle and runner.\n'
+          } >"$candidate_notes"
+          if gh release view "$VERSION" --json isDraft --jq .isDraft >"$RUNNER_TEMP/is-draft.txt" 2>/dev/null; then
+            if [ "$(cat "$RUNNER_TEMP/is-draft.txt")" != "true" ]; then
+              echo "::error::$VERSION is already published, and a version is published once"
+              exit 1
+            fi
+            mkdir -p "$RUNNER_TEMP/existing-candidate"
+            gh release download "$VERSION" --dir "$RUNNER_TEMP/existing-candidate" --pattern candidate.json
+            if ! python3 internal/tooling/release/promotion.py same \
+              --left "$RUNNER_TEMP/existing-candidate/candidate.json" \
+              --right "$RUNNER_TEMP/candidate.json"; then
+              echo "::error::a candidate for $VERSION is already recorded and differs from this rebuild; refusing to move it"
+              exit 1
+            fi
+            echo "the candidate for $VERSION is already recorded and matches this rebuild; nothing to publish"
+          else
+            gh release create "$VERSION" \
+              "${{ steps.bundle.outputs.archive }}" "$RUNNER_TEMP/candidate.json" \
+              --draft --verify-tag --title "Sol $VERSION (candidate)" \
+              --notes-file "$candidate_notes"
+            echo "recorded the draft candidate for $VERSION"
+          fi

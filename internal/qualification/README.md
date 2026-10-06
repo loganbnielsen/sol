@@ -69,6 +69,16 @@ GCP skips bootstrap mutation entirely.
 The offline harness tests protect fail-closed behavior and evidence accounting. They are regression
 tests, not substitutes for live evidence.
 
+## Release qualification
+
+A Sol release is published only from an immutable candidate, and only after the
+AWS and GCP verdicts for that exact candidate are attached to it. The two-stage
+model, the `qualification-verdict.json` schema, and the exact operator action
+are in [`internal/tooling/release/README.md`](../tooling/release/README.md).
+Promotion refuses a verdict that is missing, failed, stale or for another
+candidate; a successful workflow run and a Terraform exit code are still not
+qualification or absence evidence.
+
 ## Records
 
 Keep a record when a run establishes, falsifies, or materially limits a current claim. The record

@@ -1,0 +1,150 @@
+# Publish an already-qualified release candidate. This workflow never builds.
+#
+# It takes the exact draft candidate the Release candidate workflow recorded --
+# the bundle it attached and the candidate.json identity that names its source
+# revision, bundle digest and migration-runner digest -- and publishes that
+# candidate only when the qualification verdict attached to it refers to the same
+# candidate. Publishing flips the draft; it does not reproduce the artifact.
+#
+# The verdict is produced by the operator-authorized live AWS and GCP campaign.
+# The exact operator action is:
+#   1. Qualify the installed candidate per internal/qualification/README.md,
+#      recording the AWS and GCP verdicts against the candidate's identity.
+#   2. Attach the single verdict document to the draft candidate:
+#        gh release upload <version> qualification-verdict.json
+#   3. Run this workflow with version=<version>.
+#
+# A successful workflow run is not qualification evidence, and Terraform success
+# is not proof of absence; both live observations stay in the verdict.
+name: Promote release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release candidate to promote, e.g. v0.1.0-alpha.8'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  # Read-only lookup of the recorded migration-runner digest; promotion never
+  # pushes or republishes the image.
+  packages: read
+
+concurrency:
+  group: promote-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Require the recorded draft candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$VERSION" --json isDraft --jq .isDraft >"$RUNNER_TEMP/is-draft.txt" 2>/dev/null; then
+            echo "::error::$VERSION has no recorded candidate; run the Release candidate workflow for the tag first"
+            exit 1
+          fi
+          if [ "$(cat "$RUNNER_TEMP/is-draft.txt")" != "true" ]; then
+            echo "::error::$VERSION is already published, and a version is published once"
+            exit 1
+          fi
+
+      - name: Download the candidate and its qualification verdict
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/candidate"
+          gh release download "$VERSION" --dir "$RUNNER_TEMP/candidate"
+          for asset in candidate.json qualification-verdict.json; do
+            if [ ! -f "$RUNNER_TEMP/candidate/$asset" ]; then
+              echo "::error::$VERSION has no $asset attached; run the operator-authorized AWS and GCP campaign and attach its verdict before promoting"
+              exit 1
+            fi
+          done
+          echo "the candidate being promoted:"
+          cat "$RUNNER_TEMP/candidate/candidate.json"
+
+      # The published artifact must be the recorded candidate, not merely a
+      # bundle that shares its version. This hashes the attached bundle.
+      - name: Verify the recorded candidate bundle
+        run: |
+          python3 internal/tooling/release/promotion.py verify \
+            --candidate "$RUNNER_TEMP/candidate/candidate.json" \
+            --dir "$RUNNER_TEMP/candidate"
+
+      # The migration-runner digest is part of the candidate identity too. Read
+      # access is enough: this resolves the exact recorded digest and never
+      # rebuilds, republishes, or accepts a tag in its place.
+      - name: Log in to GHCR for the recorded runner lookup
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Establish that the recorded migration runner still resolves
+        run: |
+          internal/tooling/release/verify_runner_image.sh \
+            "$RUNNER_TEMP/candidate/candidate.json"
+
+      # The decision is the gate: identity match plus a complete passing AWS and
+      # GCP verdict, each with an independent absence result. A missing, failed,
+      # stale or other-candidate verdict fails here, before anything is published.
+      - name: Decide promotion eligibility
+        run: |
+          python3 internal/tooling/release/promotion.py decide \
+            --candidate "$RUNNER_TEMP/candidate/candidate.json" \
+            --verdict "$RUNNER_TEMP/candidate/qualification-verdict.json"
+
+      # GitHub rejects a release body over 125000 characters, and the generated
+      # changelog carries one entry per merged pull request since the previous
+      # release, so its length is unbounded. The body keeps the first $limit
+      # characters on a line boundary and points at the full compare range.
+      - name: Publish the qualified candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          limit=100000
+          notes="$RUNNER_TEMP/generated-notes.md"
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$VERSION" --jq .body >"$notes" 2>/dev/null; then
+            echo "::warning::could not generate the changelog; publishing the candidate identity and the compare range only"
+            : >"$notes"
+          fi
+          previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // ""' 2>/dev/null || true)"
+          if [ -z "$previous" ] || [ "$previous" = "$VERSION" ]; then
+            compare="https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
+          else
+            compare="https://github.com/$GITHUB_REPOSITORY/compare/$previous...$VERSION"
+          fi
+          if [ "$(wc -c <"$notes")" -gt "$limit" ]; then
+            echo "::warning::the generated changelog is $(wc -c <"$notes") characters; keeping the first $limit at a line boundary"
+            awk -v limit="$limit" -v compare="$compare" '
+              BEGIN { used = 0; truncated = 0 }
+              truncated { next }
+              {
+                if (used + length($0) + 1 > limit) {
+                  printf "\nThis changelog is longer than a release body may be; the full range is at <%s>.\n", compare
+                  truncated = 1
+                  next
+                }
+                used += length($0) + 1
+                print
+              }' "$notes" >"$notes.bounded"
+            mv "$notes.bounded" "$notes"
+          fi
+          candidate="$(cat "$RUNNER_TEMP/candidate/candidate.json")"
+          {
+            printf 'Sol %s release candidate.\n\n' "$VERSION"
+            printf '```json\n%s\n```\n\n' "$candidate"
+            printf 'Qualification verdict: `qualification-verdict.json` (attached)\n\n'
+            cat "$notes"
+          } >"$RUNNER_TEMP/release-body.md"
+          gh release edit "$VERSION" --draft=false --title "Sol $VERSION" \
+            --notes-file "$RUNNER_TEMP/release-body.md"
+          echo "published the qualified candidate $VERSION without rebuilding it"
