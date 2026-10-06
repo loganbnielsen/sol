@@ -41,33 +41,43 @@ That's the entire predicate. Discovery never opens the Dockerfile or any
 source file — a directory with the right name and an empty Dockerfile
 satisfies it exactly as well as a real, working service does.
 
-## Runtime health contract (`-svc` only) — checked, but only after deploy
+## Runtime health contract (`-svc` only)
 
-The generated Deployment (`sol_cli_manifest_yaml.ml`) declares:
+The generated Deployment uses `/healthz` for startup and liveness probes. For
+workloads with an explicitly declared language, readiness uses `/readyz`; a
+workload with no language declaration falls back to `/healthz`:
 
 ```yaml
 ports:
   - containerPort: 8080
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
 livenessProbe:
   httpGet:
     path: /healthz
     port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 10
 readinessProbe:
   httpGet:
-    path: /healthz
+    path: /readyz
     port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 10
 ```
 
-| Requirement | Actually checked? | When / how |
-|---|---|---|
-| Bind an HTTP server on port 8080 | Yes | Kubernetes readiness/liveness probes, post-deploy. `sol status` and CI's golden-path health-poll loop (`curl -sf http://localhost:8080/health`) also depend on this, also post-deploy. |
-| Serve `GET /healthz` returning 2xx once ready | Yes | Same probes as above. |
-| Serve `GET /metrics` in Prometheus text format | **No hard check anywhere.** | Prometheus scrapes it; a wrong format or missing endpoint produces silently empty/garbage metrics, not an error anyone sees. |
-| Handle `SIGTERM` by draining in-flight requests | **No check.** | `sol-svc`'s `Service.run` installs a self-pipe SIGTERM handler with a `drain_timeout_s` (default 30s) before force-cancelling. Ignore SIGTERM entirely and nothing fails — you just get harsher connection drops during rolling deploys, since Kubernetes SIGKILLs after `terminationGracePeriodSeconds` regardless. |
+| Requirement | Sol's checks |
+|---|---|
+| Bind an HTTP server on port 8080 | Generated Kubernetes probes exercise it after deploy. The golden-path smoke also makes HTTP requests. |
+| Serve `GET /healthz` | Startup and liveness probes use it. The OCaml framework tests cover the built-in endpoint. |
+| Serve `GET /readyz` | Readiness probes use it when the workload declares a language. The OCaml framework tests cover its 503 response after shutdown begins. |
+| Serve `GET /metrics` in Prometheus text format | The OCaml framework tests and golden-path smoke check the response; Prometheus also scrapes it. |
+| Drain in-flight requests on `SIGTERM` | The OCaml framework tests exercise shutdown and bounded drain. Kubernetes gives generated Pods 45 seconds to terminate. |
+
+These checks do not prove that an arbitrary application uses the Sol framework.
+Discovery and planning inspect the workspace layout and declarations, not the
+application's source or runtime behavior.
+
+The OCaml `Service.run` endpoint and shutdown behavior is documented in the
+[`sol-svc` package reference](../../framework/ocaml/sol-svc/sol-svc.md#built-in-endpoints).
 
 Two details worth being precise about, since they're easy to get subtly
 wrong:
@@ -80,14 +90,12 @@ wrong:
   escape hatch (useful if you're not using `sol-svc`'s generated scaffold),
   but nothing in the generated manifest exercises it; the two sides agree by
   convention, not by wiring.
-- **The termination grace period is not explicitly set.** The generated
-  Deployment has no `terminationGracePeriodSeconds`, so it uses Kubernetes'
-  own default of 30 seconds — which happens to equal `Service.run`'s
-  `drain_timeout_s` default. If you ever raise `drain_timeout_s` above 30s
-  without also raising `terminationGracePeriodSeconds` in a `sol.toml`
-  override (if one exists) or generated manifest, Kubernetes will SIGKILL the
-  pod before your own drain logic finishes — a real, currently-unguarded
-  footgun for anyone customizing this value.
+- **The termination budget includes both shutdown delay and drain.**
+  `Service.run` defaults to a 5-second shutdown delay and a 30-second drain;
+  generated Pods have a 45-second `terminationGracePeriodSeconds`. If an
+  application supplies larger shutdown or drain values, keep their combined
+  duration below the Pod's termination grace period or Kubernetes may force
+  termination before draining completes.
 
 ## Config and secret injection — the wiring is real, the naming is trusted
 

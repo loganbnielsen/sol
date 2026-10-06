@@ -602,11 +602,13 @@ Checked before any route in `H.routes`. Cannot be shadowed by user routes.
 
 **`/healthz` and `/readyz` always `Public`:** k8s probes call them without
 credentials. `/healthz` is for the `startupProbe` and `livenessProbe`; `/readyz` is the
-readiness endpoint (INFRA-073), and Sol's rendered manifests switch their
-`readinessProbe` to it once this framework change is released on `main`. On SIGTERM (or `?stop`) `/readyz` turns 503
-while the listener keeps serving for `shutdown_delay_s`, so the pod leaves the
-Service's endpoints before it stops accepting. Closing the listener at once, as
-before, refused requests that kube-proxy was still routing to the pod.
+readiness endpoint (INFRA-073). Sol's rendered manifests use `/readyz` for
+workloads with an explicitly declared language; when language is omitted, the
+readiness probe falls back to `/healthz`. On SIGTERM (or `?stop`) `/readyz`
+turns 503 while the listener keeps serving for `shutdown_delay_s`, so the pod
+leaves the Service's endpoints before it stops accepting. Closing the listener
+at once, as before, refused requests that kube-proxy was still routing to the
+pod.
 
 **`/healthz` not `/health`:** The `z` suffix is the k8s control-plane convention
 (kube-apiserver, etcd, kubelet). The ROADMAP listed `/health`; this spec supersedes it.
