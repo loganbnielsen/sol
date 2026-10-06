@@ -121,8 +121,53 @@ let str key json =
 
 let float_field key json =
   match mem key json with
-  | Some (`String s) -> float_of_string_opt s
-  | _ -> None
+  | Some (`String s) ->
+    (match float_of_string_opt (String.trim s) with
+     | Some value when Float.is_finite value && Sol_cli_time.is_representable value ->
+       Ok value
+     | Some _ ->
+       Error (Printf.sprintf "boundary lease: %s is not a representable time" key)
+     | None -> Error (Printf.sprintf "boundary lease: %s is not a number" key))
+  | Some _ -> Error (Printf.sprintf "boundary lease: %s is not a string" key)
+  | None -> Error (Printf.sprintf "boundary lease: %s is missing" key)
+;;
+
+let required_string data ~field =
+  match mem field data with
+  | Some (`String value) when not (Sol_cli_string.is_blank value) -> Ok value
+  | Some (`String _) -> Error (Printf.sprintf "boundary lease: %s is blank" field)
+  | Some _ -> Error (Printf.sprintf "boundary lease: %s is not a string" field)
+  | None -> Error (Printf.sprintf "boundary lease: %s is missing" field)
+;;
+
+let abort_requested_field data =
+  match mem "abort_requested" data with
+  | Some (`String "true") -> Ok true
+  | Some (`String "false") -> Ok false
+  | Some (`String other) ->
+    Error
+      (Printf.sprintf
+         "boundary lease: abort_requested is %S, not \"true\" or \"false\""
+         other)
+  | Some _ -> Error "boundary lease: abort_requested is not a string"
+  | None -> Error "boundary lease: abort_requested is missing"
+;;
+
+let resource_version_of item =
+  match mem "metadata" item with
+  | Some metadata ->
+    (match mem "resourceVersion" metadata with
+     | Some (`String value) when not (Sol_cli_string.is_blank value) -> Ok value
+     | Some (`String _) ->
+       Error
+         "boundary lease: resourceVersion is blank, so it cannot be compared and swapped \
+          safely"
+     | Some _ -> Error "boundary lease: resourceVersion is not a string"
+     | None ->
+       Error
+         "boundary lease: resourceVersion is missing, so it cannot be compared and \
+          swapped safely")
+  | None -> Error "boundary lease: metadata is missing"
 ;;
 
 let to_data_json t =
@@ -166,40 +211,36 @@ let to_configmap_json ?resource_version t =
 ;;
 
 let of_configmap_item item =
-  let resource_version =
-    match mem "metadata" item with
-    | Some metadata -> str "resourceVersion" metadata
-    | None -> ""
+  let open Result.Syntax in
+  let* data =
+    match mem "data" item with
+    | Some data -> Ok data
+    | None -> Error "boundary lease has no data"
   in
-  match mem "data" item with
-  | None -> Error "boundary lease has no data"
-  | Some data ->
-    (match holder_of_string (str "holder" data) with
-     | Error msg -> Error (Printf.sprintf "boundary lease: %s" msg)
-     | Ok holder ->
-       let boundary = str "boundary" data in
-       if String.equal boundary ""
-       then Error "boundary lease is missing its boundary"
-       else (
-         match float_field "started_at" data, float_field "heartbeat_at" data with
-         | Some started_at, Some heartbeat_at ->
-           Ok
-             ( { boundary
-               ; holder
-               ; run_id = str "run_id" data
-               ; started_at
-               ; heartbeat_at
-               ; abort_requested =
-                   (match mem "abort_requested" data with
-                    | Some (`String "true") -> true
-                    | _ -> false)
-               ; abort_reason =
-                   (match str "abort_reason" data with
-                    | "" -> None
-                    | r -> Some r)
-               }
-             , resource_version )
-         | _ -> Error "boundary lease is missing a valid started_at/heartbeat_at"))
+  let* resource_version = resource_version_of item in
+  let* holder =
+    match holder_of_string (str "holder" data) with
+    | Ok holder -> Ok holder
+    | Error msg -> Error (Printf.sprintf "boundary lease: %s" msg)
+  in
+  let* boundary = required_string data ~field:"boundary" in
+  let* run_id = required_string data ~field:"run_id" in
+  let* started_at = float_field "started_at" data in
+  let* heartbeat_at = float_field "heartbeat_at" data in
+  let* abort_requested = abort_requested_field data in
+  Ok
+    ( { boundary
+      ; holder
+      ; run_id
+      ; started_at
+      ; heartbeat_at
+      ; abort_requested
+      ; abort_reason =
+          (match str "abort_reason" data with
+           | "" -> None
+           | reason -> Some reason)
+      }
+    , resource_version )
 ;;
 
 type write_error =

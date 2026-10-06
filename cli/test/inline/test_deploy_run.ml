@@ -245,7 +245,13 @@ if [ -n "${SOL_FAKE_KUBECTL_FAIL_GET:-}" ]; then
   case " $* " in *" $SOL_FAKE_KUBECTL_FAIL_GET "*) printf 'Error from server (NotFound): not found\n' >&2; exit 1 ;; esac
 fi
 case " $* " in
-  *" create "*|*" replace "*)
+  *" create "*)
+    if [ -n "$file" ] && grep -q sol-boundary-lease "$file" 2>/dev/null; then
+      sed 's/"metadata": {/"metadata": {"resourceVersion": "1",/' "$file" > %s/lease.json
+    fi
+    exit 0
+    ;;
+  *" replace "*)
     if [ -n "$file" ] && grep -q sol-boundary-lease "$file" 2>/dev/null; then
       cp "$file" %s/lease.json
     fi
@@ -272,6 +278,7 @@ case "$name" in
 esac
 exit 0
 |}
+    dir
     dir
     dir
     dir

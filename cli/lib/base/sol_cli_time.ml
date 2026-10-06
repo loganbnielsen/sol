@@ -5,6 +5,7 @@ let ptime seconds =
     invalid_arg (Printf.sprintf "Sol_cli_time: %f is not a representable time" seconds)
 ;;
 
+let is_representable seconds = Ptime.of_float_s seconds <> None
 let rfc3339 seconds = Ptime.to_rfc3339 ~tz_offset_s:0 (ptime seconds)
 
 let compact_with ~t ~z seconds =
