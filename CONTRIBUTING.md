@@ -16,9 +16,10 @@ stack pull requests with ordinary Git branches: base the child on its parent's b
 open the child against that branch, describing the relationship in the PR. Keep each PR
 focused, and rebase or retarget the child to `main` when its parent merges. Do not stack
 across unresolved design decisions. When a PR is complete, validated, and intended to
-land on its correct base, enable GitHub auto-merge; required CI and repository protection
-remain authoritative. A stacked child is ready for auto-merge to `main` after its parent
-merges and it is retargeted.
+land on its correct base, use auto-merge or the merge queue where the repository is
+configured for them; required CI, review, and conversation resolution remain authoritative
+and are never bypassed. A stacked child is ready to land after its parent merges and it is
+retargeted.
 
 Source-build prerequisites and setup are documented in `README.md`. Product and
 architecture documentation lives under `docs/`; qualification procedures live under

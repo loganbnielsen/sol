@@ -38,14 +38,13 @@ the child against `main`, then continue the stack. Use stacking only when the pa
 already the chosen implementation basis; resolve semantic or product-boundary decisions
 before building on them. Keep each PR focused and reviewable.
 
-When a PR is complete, validated, and intended to land on its correct base, enable GitHub
-auto-merge instead of repeatedly polling CI or waiting synchronously. A stacked child is
-not ready to land on `main` until its parent merges and the child is retargeted. Required
-CI, reviews, branch protection, and conversation resolution remain authoritative; never
-bypass them. Resolve failing checks, conflicts, review findings, and changed parents while
-independent or downstream work continues. This repository allows auto-merge and squash
-merges; `main` currently requires the `test` check and resolved conversations, has no
-merge queue, and does not require an approving review.
+When a PR is complete, validated, and intended to land on its correct base, use auto-merge
+or the merge queue where the repository is configured for them, rather than repeatedly
+polling CI or waiting synchronously. A stacked child is not ready to land on `main` until
+its parent merges and the child is retargeted. Required CI, reviews, branch protection, and
+conversation resolution remain authoritative; never bypass them. Resolve failing checks,
+conflicts, review findings, and changed parents while independent or downstream work
+continues.
 
 ## Build and validation
 
