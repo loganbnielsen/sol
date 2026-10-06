@@ -6,10 +6,9 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-dev}"
 POSTGRES_DB="${POSTGRES_DB:-sol_dev}"
 PORT="${POSTGRES_PORT:-5432}"
 IMAGE="postgres:16-alpine"
-READY_TIMEOUT="${POSTGRES_READY_TIMEOUT_S:-60}"
-READY_INTERVAL="${POSTGRES_READY_INTERVAL_S:-1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
   require_local_publish "${CONTAINER}" 5432
@@ -32,30 +31,26 @@ published_url="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${PORT}/${PO
 client_error="$(mktemp)"
 trap 'rm -f "${client_error}"' EXIT
 
+READINESS_TIMEOUT_S="${POSTGRES_READY_TIMEOUT_S:-60}"
+READINESS_INTERVAL_S="${POSTGRES_READY_INTERVAL_S:-1}"
+
 postgres_answers() {
   local answer status=0
-  answer="$(docker run --rm --network host "${IMAGE}" \
+  answer="$(bounded_probe "$READINESS_PROBE_TIMEOUT_S" \
+    docker run --rm --network host "${IMAGE}" \
     psql "${published_url}" -tAc 'SELECT 1' 2>"${client_error}")" || status=$?
   [ "$status" = 0 ] && [ "$answer" = 1 ]
 }
 
-echo -n "Waiting up to ${READY_TIMEOUT}s for a query at localhost:${PORT} "
-deadline=$((SECONDS + READY_TIMEOUT))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  if postgres_answers; then
-    echo "ready."
-    echo "Postgres ready at localhost:${PORT}"
-    echo "  URL: ${url}"
-    echo ""
-    echo "  export POSTGRES_URL=${url}"
-    exit 0
-  fi
-  echo -n "."
-  sleep "${READY_INTERVAL}"
-done
+if wait_ready "Postgres" postgres_answers; then
+  echo "Postgres ready at localhost:${PORT}"
+  echo "  URL: ${url}"
+  echo ""
+  echo "  export POSTGRES_URL=${url}"
+  exit 0
+fi
 
-echo ""
-echo "ERROR: Postgres did not answer a query at ${url} within ${READY_TIMEOUT}s." >&2
+echo "ERROR: Postgres did not answer a query at ${url} within ${READINESS_TIMEOUT_S}s." >&2
 echo "       The container can accept connections before its server is usable; this waited for a" >&2
 echo "       query to come back instead. The last client error:" >&2
 tail -n 3 "${client_error}" >&2

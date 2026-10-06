@@ -396,6 +396,14 @@ source snapshot starts the same backend on every host:
 | Prometheus | `ensure-prometheus.sh` |
 | Pushgateway | `ensure-pushgateway.sh` |
 
+Every helper proves readiness through the shared policy in
+`platform/local/scripts/lib/readiness.sh`: one wall-clock deadline, a
+service-specific probe per attempt, and a hard per-attempt bound (the HTTP probes
+pass both `--connect-timeout` and `--max-time`). Starting a container, or reusing
+one already running, is never itself the success claim; a helper that exhausts
+its deadline prints the last failed observation and exits nonzero, so a consumer
+can trust that a helper exiting `0` observed the endpoint answer.
+
 `ensure-loki.sh` (`grafana/loki:3.0.0`), `ensure-grafana.sh` (`grafana/grafana:11.3.0`)
 and `ensure-postgres.sh` (`postgres:16-alpine`) already carry explicit tags; they adopt
 the same declaration when they are next touched. The digests recorded here are the

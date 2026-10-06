@@ -8,6 +8,7 @@ SCHEMA_REGISTRY_PORT="${SCHEMA_REGISTRY_PORT:-8081}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/images.sh"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
   require_local_publish "${CONTAINER}" 9092
@@ -39,17 +40,12 @@ docker run -d --name "${CONTAINER}" \
   --schema-registry-addr 0.0.0.0:8081 \
   > /dev/null
 
-echo -n "Waiting for broker"
-for i in $(seq 1 30); do
-  if docker exec "${CONTAINER}" rpk cluster health --watch=false > /dev/null 2>&1; then
-    echo " ready."
-    exit 0
-  fi
-  echo -n "."
-  sleep 1
-done
+redpanda_ready() {
+  bounded_probe "$READINESS_PROBE_TIMEOUT_S" \
+    docker exec "${CONTAINER}" rpk cluster health --watch=false
+}
 
-echo ""
-echo "ERROR: Redpanda did not become ready within 30 seconds." >&2
-docker logs --tail 20 "${CONTAINER}" >&2
-exit 1
+if ! wait_ready "broker" redpanda_ready; then
+  docker logs --tail 20 "${CONTAINER}" >&2
+  exit 1
+fi
