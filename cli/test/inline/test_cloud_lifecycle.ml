@@ -330,6 +330,128 @@ let test_cluster_deploy_access () =
        | Error message -> Windtrap.fail message)
 ;;
 
+let fake_gcp_commands () =
+  let dir = Filename.temp_file "sol-gcp-window" "" in
+  (try Sys.remove dir with
+   | Sys_error _ -> ());
+  Unix.mkdir dir 0o755;
+  let log = Filename.concat dir "calls" in
+  let write name body =
+    let path = Filename.concat dir name in
+    let out = open_out path in
+    output_string out body;
+    close_out out;
+    Unix.chmod path 0o755
+  in
+  write "gcloud" "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$SOL_TEST_GCP_LOG\"\nexit 0\n";
+  write "gke-gcloud-auth-plugin" "#!/bin/sh\nexit 0\n";
+  write
+    "kubectl"
+    (String.concat
+       "\n"
+       [ "#!/bin/sh"
+       ; "printf '%s\\n' \"$*\" >>\"$SOL_TEST_GCP_LOG\""
+       ; "case \" $* \" in"
+       ; "  *\" auth can-i escalate clusterroles \"*|*\" auth can-i bind clusterroles \
+          \"*)"
+       ; "    case \"${SOL_TEST_GCP_WINDOW:-}\" in"
+       ; "      open) printf 'yes\\n'; exit 0 ;;"
+       ; "      *) printf 'no - no RBAC policy matched\\n'; exit 1 ;;"
+       ; "    esac ;;"
+       ; "  *\" auth can-i create namespaces \"*|*\" auth can-i create clusterroles \
+          \"*|*\" auth can-i create storageclasses \"*)"
+       ; "    case \"${SOL_TEST_GCP_WINDOW:-}\" in"
+       ; "      closed) printf 'yes\\n'; exit 0 ;;"
+       ; "      *) printf 'no - no RBAC policy matched\\n'; exit 1 ;;"
+       ; "    esac ;;"
+       ; "esac"
+       ; "exit 1"
+       ]);
+  dir, log
+;;
+
+let with_fake_gcp_commands f =
+  let dir, log = fake_gcp_commands () in
+  let previous_path = Sys.getenv_opt "PATH" in
+  let previous_log = Sys.getenv_opt "SOL_TEST_GCP_LOG" in
+  let previous_window = Sys.getenv_opt "SOL_TEST_GCP_WINDOW" in
+  Unix.putenv "SOL_TEST_GCP_LOG" log;
+  Unix.putenv "PATH" (dir ^ ":" ^ Option.value previous_path ~default:"");
+  Fun.protect
+    ~finally:(fun () ->
+      (match previous_path with
+       | Some path -> Unix.putenv "PATH" path
+       | None -> Unix.putenv "PATH" "");
+      (match previous_log with
+       | Some value -> Unix.putenv "SOL_TEST_GCP_LOG" value
+       | None -> Unix.putenv "SOL_TEST_GCP_LOG" "");
+      (match previous_window with
+       | Some value -> Unix.putenv "SOL_TEST_GCP_WINDOW" value
+       | None -> Unix.putenv "SOL_TEST_GCP_WINDOW" "");
+      List.iter
+        (fun name -> Sol_cli_fs.remove_reporting (Filename.concat dir name))
+        [ "gcloud"; "gke-gcloud-auth-plugin"; "kubectl" ];
+      Sol_cli_fs.remove_reporting log;
+      try Unix.rmdir dir with
+      | Unix.Unix_error _ -> ())
+    f
+;;
+
+let gcp_window () =
+  let gcp =
+    Sol_cli_gcp_cluster.cluster
+      ~region:"us-central1"
+      (Result.get_ok (parse_gcp (valid_gcp_outputs ())))
+  in
+  match gcp.Sol_cli_cluster.bootstrap_window with
+  | Sol_cli_cluster.Verified window -> window
+  | Sol_cli_cluster.No_role_declared | Sol_cli_cluster.Closed_by_platform_root ->
+    Windtrap.fail "GCP apply must verify the installation window, not skip it"
+;;
+
+let test_gcp_installation_window () =
+  with_fake_gcp_commands (fun () ->
+    let window = gcp_window () in
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the window names the provisioner"
+      "sol-qual-provisioner@sol-qualification.iam.gserviceaccount.com"
+      window.principal;
+    (* A window that never became effective is reported as a missing window,
+       not discovered as a RBAC denial inside the platform apply. *)
+    Unix.putenv "SOL_TEST_GCP_WINDOW" "closed";
+    (match window.gate () with
+     | Ok () -> Windtrap.fail "a window that never showed a capability passed the gate"
+     | Error message ->
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the gate names the missing window"
+         true
+         (Sol_cli_string.contains ~needle:"bootstrap window" message));
+    (* An effective window passes the gate and is observed. *)
+    Unix.putenv "SOL_TEST_GCP_WINDOW" "open";
+    (match window.gate () with
+     | Ok () -> ()
+     | Error message -> Windtrap.fail message);
+    (match window.observe () with
+     | Ok () -> ()
+     | Error message -> Windtrap.fail message);
+    (* After removal the bootstrap surface is gone and the successor holds. *)
+    Unix.putenv "SOL_TEST_GCP_WINDOW" "closed";
+    (match window.deescalated () with
+     | Ok () -> ()
+     | Error message -> Windtrap.fail message);
+    (match window.successor () with
+     | Ok () -> ()
+     | Error message -> Windtrap.fail message);
+    (* A capability still permitted after removal is refused. *)
+    Unix.putenv "SOL_TEST_GCP_WINDOW" "open";
+    match window.deescalated () with
+    | Ok () ->
+      Windtrap.fail "a still-permitted bootstrap capability was accepted as removal"
+    | Error _ -> ())
+;;
+
 let test_platform_terraform_vars () =
   let vars inputs =
     match L.platform_terraform_vars inputs with
@@ -1907,6 +2029,10 @@ let%test "contracts: cluster identity check" = test_cluster_identity_check ()
 
 let%test "contracts: the deploy identity reaches the cluster (DEC-058)" =
   test_cluster_deploy_access ()
+;;
+
+let%test "contracts: GCP apply verifies the installation window" =
+  test_gcp_installation_window ()
 ;;
 
 let%test "contracts: a preparation failure's policy decides" =

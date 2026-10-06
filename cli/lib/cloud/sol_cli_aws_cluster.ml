@@ -139,34 +139,20 @@ let deploy_access ~region (outputs : aws_outputs) ~deploy_role_arn () =
   | _ -> Ok None
 ;;
 
-let bootstrap_only_capabilities =
-  List.map
-    (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
-    [ "escalate", "clusterroles"; "bind", "clusterroles" ]
-;;
+let bootstrap_only_capabilities = Sol_cli_bootstrap_window.bootstrap_only
+let successor_capabilities = Sol_cli_bootstrap_window.successor
 
-let successor_capabilities =
-  List.map
-    (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
-    [ "create", "namespaces"; "create", "clusterroles"; "create", "storageclasses" ]
-;;
-
-let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
-  with
-  | Ok { stdout; stderr } ->
-    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code:0 ~stdout ~stderr
-  | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
-    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code ~stdout ~stderr
-  | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
+let capability_answer_of_can_i ~env capability =
+  Sol_cli_bootstrap_window.can_i
+    ~run:(fun argv -> Sol_cli_process.run (Sol_cli_process.cmd ~env argv))
+    capability
 ;;
 
 let successor_probe ~region ~outputs () =
   provisioner_kubeconfig ~region outputs (fun env ->
-    successor_capabilities
-    |> List.map (fun capability -> capability, capability_answer_of_can_i ~env capability))
+    Sol_cli_bootstrap_window.probe
+      ~run:(fun argv -> Sol_cli_process.run (Sol_cli_process.cmd ~env argv))
+      successor_capabilities)
 ;;
 
 let whoami_retry_interval_s () =
@@ -568,26 +554,7 @@ let capability_answer_to_string = function
   | Sol_cli_cloud_lifecycle.Indeterminate why -> "indeterminate: " ^ why
 ;;
 
-let window_control_failure ~permitted indeterminate =
-  let stop =
-    "The run stops rather than proceeding to a verification that can only come back \
-     undetermined."
-  in
-  if not permitted
-  then
-    Printf.sprintf
-      "the bootstrap window never showed a capability permitted, so a later denial could \
-       not be told apart from a credential that never worked. %s"
-      stop
-  else
-    Printf.sprintf
-      "the bootstrap window showed a capability permitted but also an indeterminate \
-       probe (%s), which a later denial could not be told apart from. %s"
-      (indeterminate
-       |> List.map (fun (capability, why) -> capability ^ ": " ^ why)
-       |> String.concat ", ")
-      stop
-;;
+let window_control_failure = Sol_cli_bootstrap_window.control_failure
 
 let observe_bootstrap_window_result
       ~region

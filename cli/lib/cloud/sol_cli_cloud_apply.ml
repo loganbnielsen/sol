@@ -100,10 +100,6 @@ let install_platform deps ~closing =
     | Ok None -> Error (Refused "Terraform apply completed without lifecycle outputs")
     | Error message -> Error (Refused message)
   in
-  let* control = deps.open_window outputs |> refused in
-  (match control with
-   | Some _ -> ()
-   | None -> deps.report "  bootstrap window control: not captured");
   let* platform_vars = deps.platform_vars outputs |> refused in
   let* () = deps.cloud_ready outputs |> refused in
   let* () =
@@ -126,6 +122,10 @@ let install_platform deps ~closing =
         ~required_gb:Sol_cli_platform_storage.minimum_gb
       |> refused
   in
+  let* control = deps.open_window outputs |> refused in
+  (match control with
+   | Some _ -> ()
+   | None -> deps.report "  bootstrap window control: not captured");
   deps.with_cluster_access outputs (fun env ->
     let* () = deps.platform_init () in
     let observed =

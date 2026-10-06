@@ -1134,14 +1134,24 @@ fi
 gcp_access_log="$tmp/gcp-access-failure.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access" \
   "$FAIL_MARKER_DIR/bootstrap-window"
-if (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
-  >"$gcp_access_log.out" 2>&1
+if ! (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+    >"$gcp_access_log.out" 2>&1
 then
   cat "$gcp_access_log.out" >&2
-  echo "GCP destroy succeeded although cluster access could not be established" >&2
+  echo "GCP destroy failed despite verifying substrate absence" >&2
   exit 1
 fi
+grep -F 'bootstrap window could not be observed before teardown' "$gcp_access_log.out" >/dev/null || {
+  echo "the cluster access failure was not reported as unobservable before teardown:" >&2
+  cat "$gcp_access_log.out" >&2
+  exit 1
+}
+grep -F 'reached verified absence' "$gcp_access_log.out" >/dev/null || {
+  echo "GCP teardown succeeded without proving substrate absence:" >&2
+  cat "$gcp_access_log.out" >&2
+  exit 1
+}
 grep -F 'could not establish ephemeral cluster access' "$gcp_access_log.out" >/dev/null || {
   echo "the injected get-credentials failure was not the reason the GCP destroy stopped:" >&2
   cat "$gcp_access_log.out" >&2
