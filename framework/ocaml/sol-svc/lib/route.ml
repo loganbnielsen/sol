@@ -13,7 +13,7 @@ type pattern =
 type t =
   { method_ : Request.method_
   ; pattern : pattern
-  ; auth : Auth.level
+  ; is_external : bool
   ; handler : handler
   }
 
@@ -81,17 +81,13 @@ let pattern source =
 
 let pattern_to_string p = p.source
 
-(* Internal by default: a route that does not say otherwise requires the
-   caller's projected workload identity (DEC-063), so a new route cannot be
-   accidentally public. Health, readiness and metrics stay built-in public. *)
-let default_auth : Auth.level = `Workload_identity
-
-let make m pattern_source ?(auth = default_auth) handler =
-  { method_ = m; pattern = pattern pattern_source; auth; handler }
+let make m pattern_source handler =
+  { method_ = m; pattern = pattern pattern_source; is_external = false; handler }
 ;;
 
-let get ?auth p h = make `GET p ?auth h
-let post ?auth p h = make `POST p ?auth h
-let put ?auth p h = make `PUT p ?auth h
-let patch ?auth p h = make `PATCH p ?auth h
-let delete ?auth p h = make `DELETE p ?auth h
+let get p h = make `GET p h
+let post p h = make `POST p h
+let put p h = make `PUT p h
+let patch p h = make `PATCH p h
+let delete p h = make `DELETE p h
+let external_ route = { route with is_external = true }

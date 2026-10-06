@@ -32,7 +32,7 @@ detailed control-plane API before the factory contract is stable.
 
 **One way to do things.** Sol picks conventions and enforces them. Module structure, error handling, configuration, observability — these are not decisions each service makes independently. Deviation is explicit.
 
-**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. This applies especially to security: auth is always declared explicitly on each route. Sol does not infer auth strategy from path conventions or other signals. The developer states intent; the framework enforces it.
+**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. Conforming Sol HTTP adapters require workload identity by default; application code explicitly marks the routes that are external to that Sol boundary. Customer authentication remains application-owned.
 
 **DevOps expertise, not engineering judgment.** Sol productizes the repeatable parts of platform engineering and DevOps. It removes the need to know Terraform, Helm, Kubernetes, image wiring, and CI deployment glue to ship a production service. It does not remove the need to make sound engineering decisions. Security design, data modeling, and business logic stay in the developer's hands and stay readable in the code.
 
@@ -322,7 +322,7 @@ Environment-specific values must be separated from application source.
 Application-owned:
 
 - service primitive and domain
-- route definitions and auth intent
+- route definitions and application-owned authentication
 - event contracts
 - migrations
 - high-level overrides in `sol.toml`

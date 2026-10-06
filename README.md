@@ -23,11 +23,11 @@ still planned — is in
 ```ocaml
 (* app/payments/charge_svc/lib/handler.ml — routes, trimmed *)
 let routes pool = [
-  Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok");
-  Route.post "/charges" ~auth:`Public (fun req -> (* validate req.body, then: *)
+  Route.external_ (Route.get "/health" (fun _req -> Response.ok "ok"));
+  Route.external_ (Route.post "/charges" (fun req -> (* validate req.body, then: *)
     match Notification.insert pool ~charge_id ~customer_id ~amount_cents ~currency with
     | Ok ()   -> Response.json ~status:202 (Printf.sprintf {|{"id":"%s","accepted":true}|} charge_id)
-    | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e));
+    | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e)));
 ]
 ```
 
@@ -260,4 +260,3 @@ sol/
 Apache-2.0 — see [LICENSE](LICENSE). The "Sol" name and logo are covered by
 [TRADEMARK.md](TRADEMARK.md), not by that licence. Outside contributions are not
 being accepted yet — see [CONTRIBUTING.md](CONTRIBUTING.md).
-

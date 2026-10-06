@@ -4,28 +4,13 @@ let get_json _req = Response.json {|{"ok":true}|}
 let echo_body req = Response.ok req.Request.body
 let jwt_cfg scopes = `Jwt Auth.{ scopes; verification = Unverified_dev_only }
 
-let make_jwt ?(scopes = [ "read" ]) () =
-  let header =
-    Base64.encode_exn
-      ~pad:false
-      ~alphabet:Base64.uri_safe_alphabet
-      {|{"alg":"HS256","typ":"JWT"}|}
-  in
-  let now = Unix.gettimeofday () in
-  let exp = int_of_float (now +. 3600.0) in
-  let scope = String.concat " " scopes in
-  let payload = Printf.sprintf {|{"sub":"u1","scope":"%s","exp":%d}|} scope exp in
-  let b64 = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet payload in
-  header ^ "." ^ b64 ^ ".sig"
-;;
-
 module H = struct
   let routes =
-    [ Route.get "/hello" ~auth:`Public get_json
-    ; Route.post "/echo" ~auth:`Public echo_body
-    ; Route.get "/protected" ~auth:(jwt_cfg [ "read" ]) get_json
-    ; Route.get "/users/:id" ~auth:`Public (fun req ->
-        Response.json (Printf.sprintf {|{"id":"%s"}|} (Request.param_exn req "id")))
+    [ Route.external_ (Route.get "/hello" get_json)
+    ; Route.external_ (Route.post "/echo" echo_body)
+    ; Route.external_
+        (Route.get "/users/:id" (fun req ->
+           Response.json (Printf.sprintf {|{"id":"%s"}|} (Request.param_exn req "id"))))
     ]
   ;;
 end
@@ -38,6 +23,7 @@ let with_server env ~sw f =
     S.run
       ~env
       ~port:0
+      ~trusted_issuers:[ "https://issuer.example.com", "https://issuer.example.com/jwks" ]
       ~stop
       ~shutdown_delay_s:0.0
       ~drain_timeout_s:0.1
@@ -166,47 +152,6 @@ let test_echo_body env () =
         (String.trim body = "hello world")))
 ;;
 
-let test_jwt_no_token env () =
-  Switch.run (fun sw ->
-    with_server env ~sw (fun port ->
-      let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/protected" () in
-      Windtrap.equal Windtrap.int ~msg:"status 401" 401 status))
-;;
-
-let test_jwt_valid_token env () =
-  Switch.run (fun sw ->
-    with_server env ~sw (fun port ->
-      let tok = make_jwt ~scopes:[ "read" ] () in
-      let status, _ =
-        http_call
-          env
-          ~sw
-          ~port
-          ~meth:`GET
-          ~path:"/protected"
-          ~headers:[ "authorization", "Bearer " ^ tok ]
-          ()
-      in
-      Windtrap.equal Windtrap.int ~msg:"status 200" 200 status))
-;;
-
-let test_jwt_missing_scope env () =
-  Switch.run (fun sw ->
-    with_server env ~sw (fun port ->
-      let tok = make_jwt ~scopes:[ "other" ] () in
-      let status, _ =
-        http_call
-          env
-          ~sw
-          ~port
-          ~meth:`GET
-          ~path:"/protected"
-          ~headers:[ "authorization", "Bearer " ^ tok ]
-          ()
-      in
-      Windtrap.equal Windtrap.int ~msg:"status 403" 403 status))
-;;
-
 let test_metrics_no_renderer env () =
   Switch.run (fun sw ->
     with_server env ~sw (fun port ->
@@ -217,8 +162,8 @@ let test_metrics_no_renderer env () =
 let test_handler_exception env () =
   let module Hx = struct
     let routes =
-      [ Route.get "/boom" ~auth:`Public (fun _ -> raise (Failure "boom"))
-      ; Route.get "/ok" ~auth:`Public (fun _ -> Response.json {|"ok"|})
+      [ Route.external_ (Route.get "/boom" (fun _ -> raise (Failure "boom")))
+      ; Route.external_ (Route.get "/ok" (fun _ -> Response.json {|"ok"|}))
       ]
     ;;
   end
@@ -323,51 +268,10 @@ let test_metrics_route_pattern_label env () =
         (Sol_runtime.contains_substring ~needle:{|route="/users/999"|} output)))
 ;;
 
-module Hauth = struct
-  let routes =
-    [ Route.post "/upload" ~auth:`Public echo_body
-    ; Route.post "/protected-upload" ~auth:(jwt_cfg [ "write" ]) echo_body
-    ]
-  ;;
-end
-
-module Hapi_key = struct
-  let routes = [ Route.get "/api-key" ~auth:`Api_key get_json ]
-end
-
 let with_env name value f =
   let old = Sys.getenv_opt name in
   Unix.putenv name value;
   Fun.protect f ~finally:(fun () -> Unix.putenv name (Option.value old ~default:""))
-;;
-
-let test_api_key_file_error_is_startup_error env () =
-  with_env "SOL_API_KEY" "" (fun () ->
-    with_env "SOL_API_KEY_FILE" "/definitely/not/a/sol/api/key" (fun () ->
-      let module S = Service.Make (Hapi_key) in
-      match S.run ~env ~port:0 () with
-      | Error (`Config msg) ->
-        Windtrap.equal
-          Windtrap.bool
-          ~msg:"mentions API key file"
-          true
-          (Sol_runtime.contains_substring ~needle:"SOL_API_KEY_FILE" msg)
-      | Ok () -> Windtrap.fail "expected API key file config error"))
-;;
-
-module Hunverified = struct
-  let routes = [ Route.get "/jwt" ~auth:(jwt_cfg [ "read" ]) get_json ]
-end
-
-let expect_unverified_refused result =
-  match result with
-  | Error (`Config msg) ->
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"names the opt-in"
-      true
-      (Sol_runtime.contains_substring ~needle:"SOL_ALLOW_UNVERIFIED_JWT" msg)
-  | Ok () -> Windtrap.fail "expected Unverified_dev_only to be refused without the opt-in"
 ;;
 
 let stopped () =
@@ -376,11 +280,13 @@ let stopped () =
   p
 ;;
 
-let test_unverified_jwt_refused_without_opt_in env () =
-  with_env "SOL_ALLOW_UNVERIFIED_JWT" "" (fun () ->
-    let module S = Service.Make (Hunverified) in
-    expect_unverified_refused
-      (S.run ~env ~port:0 ~stop:(stopped ()) ~drain_timeout_s:0.1 ()))
+let expect_unverified_refused result =
+  match result with
+  | Error (`Config msg) ->
+    Windtrap.is_true
+      ~msg:"names unverified JWT opt-in"
+      (Sol_runtime.contains_substring ~needle:"SOL_ALLOW_UNVERIFIED_JWT" msg)
+  | Ok () -> Windtrap.fail "expected unverified JWT auth to be refused"
 ;;
 
 let test_unverified_metrics_auth_refused_without_opt_in env () =
@@ -413,10 +319,10 @@ let jwks_url_auth url =
       }
 ;;
 
-let run_with_jwks_url env ?(on_route = true) url =
+let run_with_jwks_url env url =
   let auth = jwks_url_auth url in
   let module S = Service.Make (struct
-      let routes = if on_route then [ Route.get "/jwt" ~auth get_json ] else []
+      let routes = []
     end)
   in
   S.run
@@ -424,14 +330,15 @@ let run_with_jwks_url env ?(on_route = true) url =
     ~port:0
     ~stop:(stopped ())
     ~drain_timeout_s:0.1
-    ?metrics_auth:(if on_route then None else Some auth)
+    ~trusted_issuers:[ "https://issuer.example.com", "https://issuer.example.com/jwks" ]
+    ~metrics_auth:auth
     ()
 ;;
 
 let test_http_jwks_url_refused env () =
   List.iter
-    (fun (url, on_route) ->
-       match run_with_jwks_url env ~on_route url with
+    (fun url ->
+       match run_with_jwks_url env url with
        | Error (`Config msg) ->
          Windtrap.equal
            Windtrap.bool
@@ -439,10 +346,7 @@ let test_http_jwks_url_refused env () =
            true
            (Sol_runtime.contains_substring ~needle:url msg)
        | Ok () -> Windtrap.failf "a Jwks_url of %S must not start" url)
-    [ "http://idp.example.com/jwks.json", true
-    ; "idp.example.com/jwks.json", true
-    ; "http://idp.example.com/jwks.json", false
-    ]
+    [ "http://idp.example.com/jwks.json"; "idp.example.com/jwks.json" ]
 ;;
 
 let test_https_jwks_url_starts env () =
@@ -526,6 +430,10 @@ let test_readyz_flips_before_listener_closes env () =
     Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Promise.await finished))
 ;;
 
+module Hauth = struct
+  let routes = [ Route.external_ (Route.post "/upload" echo_body) ]
+end
+
 let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
   let port_p, port_r = Promise.create () in
   let stop, stop_r = Promise.create () in
@@ -550,35 +458,6 @@ let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
     ~finally:(fun () ->
       try Promise.resolve stop_r () with
       | _ -> ())
-;;
-
-let test_unauth_large_body_gets_401 env () =
-  Switch.run (fun sw ->
-    with_small_body_server env ~sw (fun port ->
-      let big_body = String.make 200 'x' in
-      let status, _ =
-        http_call env ~sw ~port ~meth:`POST ~path:"/protected-upload" ~body:big_body ()
-      in
-      Windtrap.equal Windtrap.int ~msg:"401 not 413" 401 status))
-;;
-
-let test_auth_oversized_body_gets_413 env () =
-  Switch.run (fun sw ->
-    with_small_body_server env ~sw (fun port ->
-      let tok = make_jwt ~scopes:[ "write" ] () in
-      let big_body = String.make 200 'x' in
-      let status, _ =
-        http_call
-          env
-          ~sw
-          ~port
-          ~meth:`POST
-          ~path:"/protected-upload"
-          ~headers:[ "authorization", "Bearer " ^ tok ]
-          ~body:big_body
-          ()
-      in
-      Windtrap.equal Windtrap.int ~msg:"413 when auth ok but body too large" 413 status))
 ;;
 
 let test_public_oversized_body_gets_413 env () =
@@ -648,24 +527,6 @@ let test_chunked_body_limit env () =
       Windtrap.equal Windtrap.int ~msg:"N+1 chunked rejected with 413" 413 status_51))
 ;;
 
-let test_non_object_jwt_payload_gets_401 env () =
-  Switch.run (fun sw ->
-    with_server env ~sw (fun port ->
-      let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
-      let tok = enc {|{"alg":"HS256"}|} ^ "." ^ enc "[]" ^ ".sig" in
-      let status, _ =
-        http_call
-          env
-          ~sw
-          ~port
-          ~meth:`GET
-          ~path:"/protected"
-          ~headers:[ "authorization", "Bearer " ^ tok ]
-          ()
-      in
-      Windtrap.equal Windtrap.int ~msg:"status 401" 401 status))
-;;
-
 let test_boundary_turns_exceptions_into_500 _env () =
   let r =
     Service.For_testing.respond_or_500 (fun () ->
@@ -679,103 +540,6 @@ let test_boundary_turns_exceptions_into_500 _env () =
     (Service.For_testing.respond_or_500 (fun () -> Response.created "x")).Response.status
 ;;
 
-let test_dispatch_turns_auth_exception_into_500 _env () =
-  let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
-  let tok = enc {|{"alg":"RS256","kid":"k1"}|} ^ "." ^ enc "{}" ^ "." ^ enc "sig" in
-  let auth =
-    `Jwt
-      Auth.
-        { scopes = []
-        ; verification =
-            Verified_signature_required
-              { issuer = "https://issuer.example.com"
-              ; audience = "svc"
-              ; algorithms = [ `RS256 ]
-              ; key_source = Jwks_url "https://idp.example.com/raising/jwks.json"
-              }
-        }
-  in
-  let req =
-    Http.Request.make
-      ~meth:`GET
-      ~headers:(Http.Header.of_list [ "authorization", "Bearer " ^ tok ])
-      "/jwt"
-  in
-  let r =
-    Service.For_testing.dispatch
-      ~fetch_jwks:(fun _ -> failwith "boom")
-      ~routes:[ Route.get "/jwt" ~auth get_json ]
-      req
-      (Cohttp_eio.Body.of_string "")
-  in
-  Windtrap.equal Windtrap.int ~msg:"500, not a dropped connection" 500 r.Response.status
-;;
-
-let hs256_http_auth () =
-  `Jwt
-    Auth.
-      { scopes = []
-      ; verification =
-          Verified_signature_required
-            { issuer = "https://issuer.example.com"
-            ; audience = "svc"
-            ; algorithms = [ `HS256 ]
-            ; key_source = Hs256_secret "test-hs256-shared-secret"
-            }
-      }
-;;
-
-let sign_hs256_claims temporal =
-  let payload =
-    `Assoc
-      ([ "sub", `String "u1"
-       ; "iss", `String "https://issuer.example.com"
-       ; "aud", `String "svc"
-       ]
-       @ temporal)
-  in
-  match Jose.Jwt.sign ~payload (Jose.Jwk.make_oct "test-hs256-shared-secret") with
-  | Ok t -> Jose.Jwt.to_string t
-  | Error (`Msg m) -> failwith ("sign_hs256_claims: " ^ m)
-;;
-
-let dispatch_signed_hs256 temporal =
-  let req =
-    Http.Request.make
-      ~meth:`GET
-      ~headers:
-        (Http.Header.of_list [ "authorization", "Bearer " ^ sign_hs256_claims temporal ])
-      "/jwt"
-  in
-  Service.For_testing.dispatch
-    ~routes:[ Route.get "/jwt" ~auth:(hs256_http_auth ()) get_json ]
-    req
-    (Cohttp_eio.Body.of_string "")
-;;
-
-let test_http_verified_token_boundaries _env () =
-  let now = Unix.gettimeofday () in
-  let status temporal = (dispatch_signed_hs256 temporal).Response.status in
-  Windtrap.equal
-    Windtrap.int
-    ~msg:"valid verified token → 200"
-    200
-    (status [ "exp", `Int (int_of_float (now +. 3600.)) ]);
-  Windtrap.equal
-    Windtrap.int
-    ~msg:"nbf in the future → 401, not 500 (BUG-079)"
-    401
-    (status
-       [ "nbf", `Int (int_of_float (now +. 3600.))
-       ; "exp", `Int (int_of_float (now +. 7200.))
-       ]);
-  Windtrap.equal
-    Windtrap.int
-    ~msg:"malformed exp → 401, not 500 (BUG-079)"
-    401
-    (status [ "exp", `String "soon" ])
-;;
-
 let test_reports_handler_failure _env () =
   let reported = ref [] in
   let report_error ~operation ~exn =
@@ -784,7 +548,7 @@ let test_reports_handler_failure _env () =
   let response =
     Service.For_testing.dispatch
       ~report_error
-      ~routes:[ Route.get "/boom" ~auth:`Public (fun _ -> failwith "handler boom") ]
+      ~routes:[ Route.external_ (Route.get "/boom" (fun _ -> failwith "handler boom")) ]
       (Http.Request.make ~meth:`GET "/boom")
       (Cohttp_eio.Body.of_string "")
   in
@@ -838,35 +602,18 @@ let () =
           ; Windtrap.test "POST body echoed" (test_echo_body env)
           ]
       ; Windtrap.group
-          "auth"
-          [ Windtrap.test "JWT route, no token → 401" (test_jwt_no_token env)
-          ; Windtrap.test "JWT route, valid token → 200" (test_jwt_valid_token env)
-          ; Windtrap.test "JWT route, wrong scope → 403" (test_jwt_missing_scope env)
-          ; Windtrap.test
-              "Unverified_dev_only without opt-in → startup Config error"
-              (test_unverified_jwt_refused_without_opt_in env)
-          ; Windtrap.test
-              "Unverified_dev_only metrics_auth without opt-in → startup Config error"
+          "metrics_auth"
+          [ Windtrap.test
+              "Unverified_dev_only metrics auth without opt-in is refused"
               (test_unverified_metrics_auth_refused_without_opt_in env)
-          ; Windtrap.test
-              "Jwks_url not https → startup Config error"
-              (test_http_jwks_url_refused env)
-          ; Windtrap.test "Jwks_url https → starts" (test_https_jwks_url_starts env)
+          ; Windtrap.test "Jwks_url not https is refused" (test_http_jwks_url_refused env)
+          ; Windtrap.test "Jwks_url https starts" (test_https_jwks_url_starts env)
           ]
       ; Windtrap.group
           "resilience"
           [ Windtrap.test
-              "non-object JWT payload → 401, not a closed connection"
-              (test_non_object_jwt_payload_gets_401 env)
-          ; Windtrap.test
               "exception outside the handler → 500"
               (test_boundary_turns_exceptions_into_500 env)
-          ; Windtrap.test
-              "auth exception through dispatch → 500"
-              (test_dispatch_turns_auth_exception_into_500 env)
-          ; Windtrap.test
-              "verified JWT nbf/exp through the HTTP adapter (BUG-079)"
-              (test_http_verified_token_boundaries env)
           ; Windtrap.test
               "handler exception → 500, server survives"
               (test_handler_exception env)
@@ -890,15 +637,9 @@ let () =
               (test_metrics_route_pattern_label env)
           ]
       ; Windtrap.group
-          "auth_before_body"
+          "body_limits"
           [ Windtrap.test
-              "unauth + large body → 401 not 413"
-              (test_unauth_large_body_gets_401 env)
-          ; Windtrap.test
-              "auth ok + oversized body → 413"
-              (test_auth_oversized_body_gets_413 env)
-          ; Windtrap.test
-              "public route + oversized body → 413"
+              "external route + oversized body → 413"
               (test_public_oversized_body_gets_413 env)
           ; Windtrap.test
               "body at exactly N accepted, N+1 rejected (BUG-073)"
@@ -907,9 +648,6 @@ let () =
           ; Windtrap.test
               "chunked body at N accepted, N+1 rejected (BUG-073)"
               (test_chunked_body_limit env)
-          ; Windtrap.test
-              "api key file read failure is startup error"
-              (test_api_key_file_error_is_startup_error env)
           ]
       ; Windtrap.group
           "failure diagnostics"

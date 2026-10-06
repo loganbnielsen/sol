@@ -51,7 +51,7 @@ let test_constructor_rejects_malformed_pattern () =
   Windtrap.raises
     ~msg:"constructor validates pattern"
     (Invalid_argument "invalid route pattern \"users\": pattern must start with /")
-    (fun () -> ignore (Route.get "users" ~auth:`Public dummy_handler))
+    (fun () -> ignore (Route.get "users" dummy_handler))
 ;;
 
 let test_parse_valid_path () =

@@ -1,0 +1,6 @@
+(library
+ (name sol_svc_core)
+ (public_name sol-svc-core)
+ (wrapped false)
+ (modules auth lifecycle observation)
+ (libraries jose yojson))

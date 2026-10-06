@@ -40,7 +40,7 @@ let validate_key key =
   then
     Error
       (key
-       ^ " is reserved: it is projected from the declared calls graph and must not be \
+       ^ " is reserved: it is projected from the Sol workload contract and must not be \
           spoofed")
   else Ok ()
 ;;

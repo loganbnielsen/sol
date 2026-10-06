@@ -327,50 +327,35 @@ let service_account_of_subject sub =
   else Ok (String.sub sub plen (String.length sub - plen))
 ;;
 
-(* The token's [iss] is read before verification only to pick a trusted issuer;
-   nothing it says is trusted until [validate_verified_jwt] accepts the
-   signature, audience and temporal claims. An unknown issuer, a bad signature,
-   or an unmapped subject fails closed. *)
+(* The shared auth core selects a trusted issuer and verifies identity policy.
+   This adapter supplies network fetch/cache behavior. *)
 let validate_workload_identity ?fetch_jwks config headers =
-  let* token = bearer_token headers in
-  let* parsed =
-    match Jose.Jwt.unsafe_of_string token with
-    | Ok t -> Ok t
-    | Error _ -> Error (`Unauthorized "Malformed JWT")
+  let authorization = Http.Header.get headers "authorization" in
+  let* key_request, pending = Auth.begin_workload_auth config ~authorization in
+  let* fetch_jwks =
+    match fetch_jwks with
+    | Some fetch -> Ok fetch
+    | None -> Error (`Server_error "no trusted-issuer key resolver was provided")
   in
-  let* claims = require_claims_object parsed.Jose.Jwt.payload in
-  let* issuer =
-    match claim_strings claims "iss" with
-    | [ issuer ] -> Ok issuer
-    | _ -> Error (`Unauthorized "JWT issuer missing")
+  let* jwks =
+    match get_jwks ~fetch_jwks key_request.jwks_url with
+    | Ok jwks -> Ok jwks
+    | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
   in
-  let* jwks_url =
-    match List.assoc_opt issuer config.trusted_issuers with
-    | Some url -> Ok url
-    | None -> Error (`Unauthorized ("JWT issuer is not trusted: " ^ issuer))
-  in
-  let vconfig =
-    { issuer
-    ; audience = config.audience
-    ; algorithms = workload_identity_algorithms
-    ; key_source = Jwks_url jwks_url
-    }
-  in
-  let* verified = validate_verified_jwt ?fetch_jwks vconfig ~scopes:[] headers in
-  let sub =
-    match verified.principal with
-    | User { sub; _ } -> sub
-    | Public | Service _ | Unit _ -> ""
-  in
-  let* service_account = service_account_of_subject sub in
-  match List.assoc_opt service_account config.callers with
-  | None ->
-    Error
-      (`Forbidden
-          (Printf.sprintf
-             "caller %s is authenticated but is not in this unit's called_by set"
-             service_account))
-  | Some unit -> Ok { principal = Unit { unit; service_account } }
+  match Auth.finish_workload_auth pending ~jwks ~now:(Unix.gettimeofday ()) with
+  | Error (`Unauthorized "JWT key id not found in JWKS") ->
+    let* jwks =
+      match
+        get_jwks
+          ~max_age_s:Auth_cache.unknown_kid_refetch_interval_s
+          ~fetch_jwks
+          key_request.jwks_url
+      with
+      | Ok jwks -> Ok jwks
+      | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
+    in
+    Auth.finish_workload_auth pending ~jwks ~now:(Unix.gettimeofday ())
+  | result -> result
 ;;
 
 let validate_jwt ?fetch_jwks config headers =

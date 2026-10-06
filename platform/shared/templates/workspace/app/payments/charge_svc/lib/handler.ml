@@ -86,7 +86,7 @@ let list_notifications pool _req =
 
 let routes pool ~publish_charged ~obs =
   [
-    Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok");
-    Route.post "/charges" ~auth:`Public (handle_charge ~publish_charged ~obs);
-    Route.get "/notifications" ~auth:`Public (list_notifications pool);
+    Route.external_ (Route.get "/health" (fun _req -> Response.ok "ok"));
+    Route.external_ (Route.post "/charges" (handle_charge ~publish_charged ~obs));
+    Route.external_ (Route.get "/notifications" (list_notifications pool));
   ]

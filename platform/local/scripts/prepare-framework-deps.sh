@@ -9,6 +9,7 @@ FRAMEWORK_PACKAGES=(
   sol-runtime
   sol-env
   sol-obs
+  sol-svc-core
   kafka-eio-service
   sol-svc
   sol-worker

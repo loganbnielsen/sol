@@ -10,8 +10,8 @@ bug-reports: "https://github.com/loganbnielsen/sol/issues"
 depends: [
   "ocaml" {>= "5.4.0"}
   "dune" {>= "3.0"}
-  "base64" "cohttp-eio" "eio" "http" "https-eio" "jose" "obs-eio"
-  "ptime" "sol-obs" "sol-runtime" "uri" "yojson"
+  "cohttp-eio" "eio" "http" "https-eio" "jose" "obs-eio"
+  "ptime" "sol-obs" "sol-runtime" "sol-svc-core" "uri" "yojson"
 ]
 build: [
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
