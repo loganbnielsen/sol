@@ -54,6 +54,46 @@ let build_plan (input : Sol_cli_deploy_selection.Planning_input.t) =
   Ok plan
 ;;
 
+let project_trusted_workload_issuer target_cfg plan =
+  if
+    not
+      (List.exists
+         (fun (service : Sol_cli_deployment_plan.service_spec) ->
+            service.primitive = Sol_cli_deployment_plan.Svc)
+         plan.Sol_cli_deployment_plan.services)
+  then Ok plan
+  else (
+    match
+      (Sol_cli_provider_capabilities.capabilities_of target_cfg.Sol_cli_config.provider)
+        .workload_identity_issuer
+        target_cfg
+    with
+    | Error message ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "could not establish the target's trusted Kubernetes workload issuer: %s\n\
+               deployments containing a svc require a target that establishes workload \
+               identity"
+              message))
+    | Ok issuer ->
+      Ok
+        { plan with
+          services =
+            List.map
+              (fun (service : Sol_cli_deployment_plan.service_spec) ->
+                 match service.primitive with
+                 | Svc ->
+                   { service with
+                     config =
+                       ("SOL_TRUSTED_WORKLOAD_ISSUER", issuer)
+                       :: List.remove_assoc "SOL_TRUSTED_WORKLOAD_ISSUER" service.config
+                   }
+                 | Worker | Fn -> service)
+              plan.services
+        })
+;;
+
 let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
   : Sol_cli_deploy_selection.Planning_input.t
   =
@@ -443,6 +483,7 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
+  let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.run_offline
     ctx
     ~phase:"dry-run"
@@ -466,6 +507,7 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
+  let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   let* results =
     Sol_cli_deploy_run.run_offline
       ctx
@@ -585,6 +627,7 @@ let run_apply
       ()
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
+  let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.apply
     ctx
     ~present_plan:(present_plan ctx)

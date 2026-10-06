@@ -1,12 +1,13 @@
 # sol-svc
 
-HTTP service layer for Sol. Provides route definition, authentication middleware,
-request/response types, and the `Service.Make` functor that owns the
-complete server lifecycle under Eio. Route handlers are pure OCaml functions —
-they never import cohttp types.
+`sol-svc` is Sol's current Cohttp/Eio HTTP adapter. Runtime-neutral workload
+authentication, lifecycle state, and request observations live in
+[`sol-svc-core`](../sol-svc-core/sol-svc-core.md). This adapter owns route
+matching and translates Cohttp/Eio requests and server hooks into those shared
+semantics. Route handlers do not import Cohttp types.
 
-HTTP engine: **cohttp-eio**. Entirely hidden behind `Service.Make`.
-Swappable without touching user space.
+The built-in HTTP engine is **cohttp-eio**. Other HTTP adapters can use
+`sol-svc-core` directly without depending on this server or router.
 
 ---
 
@@ -15,7 +16,6 @@ Swappable without touching user space.
 ```
 framework/ocaml/sol-svc/
   lib/
-    auth.ml/.mli          ← auth levels, principals (types only in the .mli)
     auth_internal.ml      ← validation (private module)
     peer.ml/.mli          ← peer address of the connection
     request.ml/.mli       ← request type seen by handlers
@@ -30,12 +30,19 @@ framework/ocaml/sol-svc/
     test_peer.ml
     test_service.ml       ← full round-trip tests (live server, OS-assigned port)
   sol-svc.md
+framework/ocaml/sol-svc-core/
+  lib/auth.ml/.mli       ← workload token verification and caller authorization
+  lib/lifecycle.ml/.mli  ← readiness, draining, and in-flight request semantics
+  lib/observation.ml/.mli ← framework-neutral request completion events
+  sol-svc-core.md
 ```
 
 ### Module names
 
 `sol-svc` is `(wrapped false)`, like every Sol library, so its modules are used
-directly at top level: `Auth`, `Route`, `Request`, `Response`, `Service`. There is no
+directly at top level through `sol-svc`'s dependency on `sol-svc-core`: `Auth`,
+`Lifecycle`, and `Observation`, alongside `Route`, `Request`, `Response`, and
+`Service`. There is no
 `Sol_svc` namespace module to open. The names are short; an application that links a
 library exporting the same top-level names must alias one side.
 
@@ -46,8 +53,9 @@ library exporting the same top-level names must alias one side.
 ### Types
 
 ```ocaml
-(** Authentication strategy, declared explicitly on every route.
-    Sol does not infer auth from path conventions. *)
+(** Auth levels below are used for the built-in /metrics endpoint. Application
+    routes use workload identity by default or explicitly opt out with
+    [Route.external_]; application authentication remains application-owned. *)
 type jwt_algorithm = [ `HS256 | `RS256 | `ES256 | `ES384 | `ES512 ]
 
 type jwt_key_source =
@@ -86,10 +94,19 @@ type jwt_config =
   ; verification : jwt_verification
   }
 
+type workload_identity_config =
+  { audience : string
+  ; callers : (string * string) list
+      (** service account ["<namespace>:<serviceaccount>"] -> caller unit *)
+  ; trusted_issuer : string
+      (** target-established Kubernetes service-account issuer *)
+  }
+
 type level =
   [ `Public
   | `Api_key
   | `Jwt of jwt_config
+  | `Workload_identity
   ]
 
 (** Resolved identity after successful validation.
@@ -106,14 +123,21 @@ type principal =
             ([exp] is int, custom claims may be arrays or objects). Returning the
             raw [Yojson.Safe.t] avoids lossy coercion to [(string * string) list]. *)
       }
+  | Unit of
+      { unit : string
+      ; service_account : string
+        (** The authenticated caller's Sol unit and the
+            ["<namespace>:<serviceaccount>"] it proved. *)
+      }
 
 type context = { principal : principal }
 ```
 
 ### Public API
 
-`Auth` exposes only types in its `.mli`. The validation function is internal,
-called by `Service.Make`, not by user code.
+`Auth` exposes workload-authentication primitives from `sol-svc-core`; adapters
+resolve signing keys in their own runtime and pass them to shared verification.
+The built-in `/metrics` endpoint also uses the `Auth.level` policy values above.
 
 ### Auth strategy details
 
@@ -192,18 +216,37 @@ RSA/EC public key: `jose`'s `Jws.validate` dispatches on the concrete key value
 you pass it (a GADT), not on the token's claimed `alg`, so key selection is
 driven by `kid` lookup in the JWKS, not by attacker input.
 
+**`` `Workload_identity ``** — DEC-063 Sol-to-Sol authentication. It validates
+`Authorization: Bearer <projected ServiceAccount token>` locally:
+
+1. Require the token's `iss` to equal the trusted issuer projected by Sol.
+   An issuer outside that target-established trust root is a 401.
+2. Resolve the issuer's OIDC discovery document and JWKS using the adapter's
+   HTTP runtime and cache. The discovery document must report the exact trusted
+   issuer, and its `jwks_uri` must use that issuer's HTTPS origin. Then check
+   `aud` equals `config.audience`, and `exp`/`nbf`.
+3. Map `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit
+   through `config.callers`. A valid signature whose subject is not a workload
+   identity, or whose unit is not declared, is a 403.
+
+`config.audience` comes from `SOL_UNIT`, `config.callers` from `SOL_CALLED_BY`, and
+`config.trusted_issuer` from `SOL_TRUSTED_WORKLOAD_ISSUER`. Sol derives all three
+from the caller-owned `calls` graph or target capability and projects them into the
+workload. Application code calls `Service.run` without choosing a trusted issuer.
+A route that requires workload authentication without any required projection fails
+at startup with a `Config` error.
+
 **Error responses:**
 
 | Condition | HTTP status |
 |---|---|
 | Missing `Authorization` / `X-Api-Key` header | 401 |
 | Wrong API key | 401 |
-| `SOL_API_KEY` and `SOL_API_KEY_FILE` both unset while a route (or `metrics_auth`) uses `` `Api_key `` | the service does not start: `run` returns a `Config` error |
-| Malformed JWT (not three base64 segments, in dev mode) | 401 |
-| Expired JWT | 401 |
-| JWT missing a required scope | 403 |
-| Verified mode: malformed token, `alg` not in allowlist, unknown/missing `kid`, invalid signature, wrong `iss`/`aud` | 401 |
-| Verified mode: JWKS fetch or parse failure (`Jwks_url`) | 500 (fail closed) |
+| `SOL_API_KEY` and `SOL_API_KEY_FILE` both unset while `/metrics` uses `` `Api_key `` | the service does not start: `run` returns a `Config` error |
+| Workload identity: untrusted `iss`, bad signature, wrong `aud`, missing/expired token | 401 |
+| Workload identity: authenticated subject is not a workload identity, or its unit is not allowed by the declared `calls` graph | 403 |
+| Workload identity: `SOL_UNIT` unset, or no trusted-issuer root supplied | the service does not start: `run` returns a `Config` error |
+| Workload identity: discovery or JWKS fetch/parse/issuer/origin validation fails | 500 (fail closed) |
 
 ---
 
@@ -262,7 +305,7 @@ type pattern = private
 type t =
   { method_ : Request.method_
   ; pattern : pattern
-  ; auth : Auth.level
+  ; is_external : bool
   ; handler : handler
   }
 ```
@@ -270,12 +313,18 @@ type t =
 ### Public API
 
 ```ocaml
-val get    : string -> auth:Auth.level -> handler -> t
-val post   : string -> auth:Auth.level -> handler -> t
-val put    : string -> auth:Auth.level -> handler -> t
-val patch  : string -> auth:Auth.level -> handler -> t
-val delete : string -> auth:Auth.level -> handler -> t
+val get    : string -> handler -> t
+val post   : string -> handler -> t
+val put    : string -> handler -> t
+val patch  : string -> handler -> t
+val delete : string -> handler -> t
+val external_ : t -> t
 ```
+
+Routes require Sol workload identity by default. Mark a route with
+`Route.external_` to exempt it from Sol workload authentication; this says
+nothing about customer authentication, which remains application-owned. `/healthz`, `/readyz` and
+`/metrics` are built in; metrics uses its configured auth policy.
 
 ### HTTP method mapping
 
@@ -339,7 +388,7 @@ type t =
   ; uri      : Uri.t
   (** Full request URI. Use [Uri] functions for query string access. *)
   ; body     : string                   (* pre-read, bounded by max_body_bytes *)
-  ; auth     : Auth.context
+  ; auth     : Auth.context option
   ; trace_ctx : Obs_trace.t option
   (** W3C [traceparent] extracted from the incoming request headers. Pass as
       [?parent] to [Obs_eio.with_span] to link child spans to the caller. *)
@@ -442,6 +491,8 @@ module Make (H : HANDLER) : sig
            sol_svc_request_duration_seconds are emitted per request, and
            GET /metrics renders from the same handle. If omitted,
            GET /metrics → 404. *)
+    -> ?observe:Observation.sink
+       (** Framework-neutral request completion observations. *)
     -> ?max_body_bytes:int
        (** Maximum request body size in bytes. Default: 10_485_760 (10 MB).
            Requests exceeding this limit receive 413 before the handler is called. *)
@@ -677,20 +728,9 @@ Eio.Promise.await server_ready;
 
 ### `test_auth.ml`
 
-- Public: no headers → `Public` principal
-- Api_key from `SOL_API_KEY` env → `Service { key_id }`, truncated key
-- Api_key from `SOL_API_KEY_FILE` env → same, reads file
-- Api_key wrong → 401; missing header → 401
-- Both env vars unset → 500
-- Jwt valid, all scopes → `User` principal, claims is `Yojson.Safe.t`
-- Jwt missing one scope → 403
-- Jwt expired → 401; malformed → 401
-- Jwt scope superset (token has more than required) → ok
-- `verification = Verified_signature_required`, HS256 secret, valid → `User` principal
-- `verification = Verified_signature_required`, RS256 via `Jwks_static`, valid → `User` principal
-- Verified: tampered signature → 401; `alg` outside allowlist → 401
-- Verified: wrong `iss` → 401; wrong `aud` → 401; expired → 401; missing scope → 403
-- Verified: `Jwks_url` unreachable → 500 (fails closed, no fallback to unverified)
+- DEC-063 workload identity: declared caller accepted; undeclared caller 403;
+  untrusted issuer, wrong audience, missing token, and bad signature 401;
+  non-service-account subject 403
 
 ### `test_service.ml`
 
@@ -701,11 +741,7 @@ Eio.Promise.await server_ready;
 - GET `/metrics` with `~metrics_auth:\`Api_key`, no key → 401
 - POST body under limit → handler receives full body
 - POST body over `max_body_bytes` → 413, handler not called
-- POST to `Public` route → 200
-- POST to `Jwt` route without token → 401
-- POST to `Jwt` route with expired token → 401
-- POST to `Jwt` route with missing scope → 403
-- POST to `Jwt` route with valid token → 200
+- External route without a Sol workload token → 200, boundary reported as external
 - Handler raising exception → 500, server continues accepting
 - Unknown path → 404; wrong method → 405
 - Graceful shutdown: SIGTERM turns `/readyz` 503, keeps serving for `shutdown_delay_s`, then stops new accepts; active request completes cleanly
@@ -728,26 +764,10 @@ let handle_internal req =
   let _who = req.Request.auth.Auth.principal in
   Response.json ~status:201 {|{"status":"charged"}|}
 
-(* Verified JWTs: signature, issuer, audience and the algorithm allowlist are all
-   checked before the handler runs. Never use [Unverified_dev_only] on a real route. *)
-let payments_jwt =
-  `Jwt
-    { Auth.scopes = [ "write:payments" ]
-    ; verification =
-        Verified_signature_required
-          { issuer = "https://auth.example.com/"
-          ; audience = "charge-svc"
-          ; algorithms = [ `RS256 ]
-          ; key_source = Jwks_url "https://auth.example.com/.well-known/jwks.json"
-          }
-    }
-
 module H = struct
   let routes =
-    [ Route.post "/payments/charge" ~auth:payments_jwt handle_charge
-    ; Route.post "/payments/internal/charge"
-        ~auth:`Api_key
-        handle_internal
+    [ Route.external_ (Route.post "/payments/charge" handle_charge)
+    ; Route.post "/payments/internal/charge" handle_internal
     ]
 end
 

@@ -1,0 +1,17 @@
+opam-version: "2.0"
+synopsis: "Runtime-neutral security, lifecycle, and observation semantics for Sol HTTP services"
+authors: "Logan Nielsen"
+maintainer: "Logan Nielsen <loganbnielsen@gmail.com>"
+license: "Apache-2.0"
+homepage: "https://github.com/loganbnielsen/sol"
+bug-reports: "https://github.com/loganbnielsen/sol/issues"
+depends: [
+  "ocaml" {>= "5.4.0"}
+  "dune" {>= "3.0"}
+  "jose"
+  "yojson"
+  "windtrap" {with-test}
+]
+build: [
+  [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} "@doc" {with-doc} ]
+]

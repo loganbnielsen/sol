@@ -469,7 +469,7 @@ let () =
   let svc_port_p, svc_port_r = Eio.Promise.create () in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     (Service.run
-       [ Route.post "/orders" ~auth:`Public handle_order ]
+       [ Route.external_ (Route.post "/orders" handle_order) ]
        ~env
        ~port:0
        ~ot:svc_obs

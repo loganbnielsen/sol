@@ -224,6 +224,16 @@ check_absent \
   "create it — network, cluster, database and platform — with:" \
   "$output"
 
+OIDC_ISSUER_UNAVAILABLE=1 run_deploy prod/aws/us-east-1 --image-ref "$image_ref"
+check_contains \
+  "an unavailable issuer refuses an svc deployment" \
+  "error: could not establish the target's trusted Kubernetes workload issuer:" \
+  "$output"
+check_contains \
+  "the refusal explains the target capability requirement" \
+  "deployments containing a svc require a target that establishes workload identity" \
+  "$output"
+
 run_deploy prod/aws/us-east-1 --image-ref "$image_ref" --dry-run
 check_absent \
   "a dry run never provisions the environment" \

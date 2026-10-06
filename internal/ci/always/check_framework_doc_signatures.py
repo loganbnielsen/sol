@@ -8,12 +8,13 @@ else:
 
 import re, sys, pathlib
 MANIFEST = [
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Auth`", ["framework/ocaml/sol-svc/lib/auth.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Auth`", ["framework/ocaml/sol-svc-core/lib/auth.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Peer`", ["framework/ocaml/sol-svc/lib/peer.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Route`", ["framework/ocaml/sol-svc/lib/route.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Request`", ["framework/ocaml/sol-svc/lib/request.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Response`", ["framework/ocaml/sol-svc/lib/response.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Service`", ["framework/ocaml/sol-svc/lib/service.mli"]),
+    ("framework/ocaml/sol-svc-core/sol-svc-core.md", "## Public API", ["framework/ocaml/sol-svc-core/lib/auth.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Configuration", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Public API", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
     ("framework/ocaml/sol-worker/sol-worker.md", "## Module types", ["framework/ocaml/sol-worker/lib/worker.mli"]),

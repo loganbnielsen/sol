@@ -9,11 +9,22 @@ the language is visible in `framework/`; it holds no implementation.
 | --- | --- | --- |
 | `@sol-fab/kafka` | [`loganbnielsen/sol-kafka`](https://github.com/loganbnielsen/sol-kafka) | Kafka policy over `kafkajs`: schema-registry ordering, topic provisioning, the Confluent wire format, retry/DLQ routing, trace propagation |
 | `@sol-fab/obs` | [`loganbnielsen/sol-obs`](https://github.com/loganbnielsen/sol-obs) | Metric names, label vocabularies, the Loki push shape, W3C `traceparent` propagation |
-| `@sol-fab/svc` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The `-svc` lifecycle: bounded drain and idempotent `SIGTERM`/`SIGINT` handling |
+| `@sol-fab/svc` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The `-svc` lifecycle (bounded drain, idempotent `SIGTERM`/`SIGINT`), typed peer-call helpers for the declared `calls` graph, and DEC-063 workload-identity verification for callees |
 | `@sol-fab/worker` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The `-worker` lifecycle, for a unit with no request boundary |
 | `@sol-fab/retry` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The operation-level retry helper: one bounded, jittered policy vocabulary that retries a dependency call in place (mirrors the OCaml `sol-retry`; `@sol-fab/jobs` consumes the same vocabulary) |
 
 All are Apache-2.0 and published with build provenance.
+
+Sol-to-Sol calls use the same DEC-063 contract in both languages. Generated
+bindings receive a typed peer per declared `call`, and `peerHeaders` attaches the
+callee's projected ServiceAccount token as `Authorization: Bearer`. A
+`@sol-fab/svc` callee authenticates those callers by default
+(`createWorkloadIdentityGuard`): it validates the token against the
+target-projected issuer and authorizes the caller unit against the `called_by`
+set Sol derives from `calls`. Only an explicit public exception makes a route
+external. Authentication failures are 401, an authenticated caller outside the
+derived set is 403, and a missing audience or trust projection fails closed. The
+trust root is never taken from the incoming token's `iss`.
 
 ## Start here
 

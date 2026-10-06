@@ -279,9 +279,9 @@ regenerates its binding, so a new event follows the same path.
 
 ```ocaml
 let routes pool ~publish_charged ~ot = [
-  Route.get  "/health"        ~auth:`Public (fun _req -> Response.ok "ok");
-  Route.post "/charges"       ~auth:`Public (fun req -> ...);
-  Route.get  "/notifications" ~auth:`Public (fun _req -> ...);
+  Route.external_ (Route.get  "/health" (fun _req -> Response.ok "ok"));
+  Route.external_ (Route.post "/charges" (fun req -> ...));
+  Route.external_ (Route.get  "/notifications" (fun _req -> ...));
 ]
 ```
 

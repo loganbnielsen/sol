@@ -351,6 +351,14 @@ let test_svc_calls_peer_env_and_network_policy () =
     "the caller config names the projected token file"
     caller_cm
     {|CHECKOUT_SVC_TOKEN_FILE: "/var/run/sol/identity/checkout-svc/token"|};
+  assert_contains
+    "the caller names its own unit as the token audience it is issued for"
+    caller_cm
+    {|SOL_UNIT: "payments/charge-svc"|};
+  assert_absent
+    "a caller with no declared callers has no called_by"
+    caller_cm
+    "SOL_CALLED_BY";
   let caller_deployment = extract_kind_block caller_yaml "kind: Deployment" in
   assert_contains
     "the caller mounts a projected identity volume"
@@ -388,6 +396,15 @@ let test_svc_calls_peer_env_and_network_policy () =
     "a unit that declares no calls receives no projected identity"
     callee_yaml
     "sol-identity-";
+  let callee_cm = extract_kind_block callee_yaml "kind: ConfigMap" in
+  assert_contains
+    "the callee names its own unit"
+    callee_cm
+    {|SOL_UNIT: "checkout/checkout-svc"|};
+  assert_contains
+    "the callee carries its callers as unit=serviceaccount"
+    callee_cm
+    {|SOL_CALLED_BY: "payments/charge-svc=myapp-payments:charge-svc"|};
   let callee_netpol = extract_kind_block callee_yaml "kind: NetworkPolicy" in
   assert_contains "ingress caller namespace" callee_netpol "myapp-payments";
   assert_contains "ingress caller app" callee_netpol "app: charge-svc";
@@ -3148,4 +3165,60 @@ let%test "peer auth: the local bare-process runner opts in explicitly" =
     "sol local sets the opt-in for bare processes"
     true
     (List.mem_assoc "SOL_ALLOW_PLAINTEXT_PEER_AUTH" Sol_cli_local_run.dev_env)
+;;
+
+let%test "workload identity: user config cannot spoof SOL_UNIT" =
+  let _, workload =
+    render_spec_ok { svc_spec with config = [ "SOL_UNIT", "spoofed/unit" ] }
+  in
+  let cm = extract_kind_block workload "kind: ConfigMap" in
+  check_bool
+    "the renderer's own unit wins"
+    true
+    (Sol_cli_string.contains ~needle:{|SOL_UNIT: "payments/charge-svc"|} cm);
+  check_bool
+    "the spoofed unit is dropped"
+    false
+    (Sol_cli_string.contains ~needle:"spoofed/unit" cm)
+;;
+
+let%test "workload identity: sol.toml cannot set SOL_UNIT" =
+  toml_rejects_reserved_key ~key:"SOL_UNIT"
+;;
+
+let%test "workload identity: sol secret set refuses SOL_CALLED_BY" =
+  check_bool
+    "sol secret set refuses the projected key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_CALLED_BY"))
+;;
+
+let%test "workload identity: target issuer is projected into svc config" =
+  let _, workload =
+    render_spec_ok
+      { svc_spec with
+        config =
+          ( "SOL_TRUSTED_WORKLOAD_ISSUER"
+          , "https://oidc.eks.us-east-1.amazonaws.com/id/cluster" )
+          :: svc_spec.config
+      }
+  in
+  check_bool
+    "the trusted issuer is projected into the workload"
+    true
+    (Sol_cli_string.contains
+       ~needle:
+         {|SOL_TRUSTED_WORKLOAD_ISSUER: "https://oidc.eks.us-east-1.amazonaws.com/id/cluster"|}
+       workload)
+;;
+
+let%test "workload identity: sol.toml cannot set the target issuer" =
+  toml_rejects_reserved_key ~key:"SOL_TRUSTED_WORKLOAD_ISSUER"
+;;
+
+let%test "workload identity: sol secret set refuses the target issuer" =
+  check_bool
+    "sol secret set refuses the target-projected key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_TRUSTED_WORKLOAD_ISSUER"))
 ;;

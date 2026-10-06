@@ -130,9 +130,11 @@ let with_request_span obs req name f =
 ;;
 
 let routes ~obs ~deps =
-  [ Route.post "/orders" ~auth:`Public (fun req ->
-      with_request_span obs req "receive_order" (fun () -> handle_accept deps req))
-  ; Route.get "/orders/:order_id" ~auth:`Public (fun req ->
-      with_request_span obs req "read_order" (fun () -> handle_read deps req))
+  [ Route.external_
+      (Route.post "/orders" (fun req ->
+         with_request_span obs req "receive_order" (fun () -> handle_accept deps req)))
+  ; Route.external_
+      (Route.get "/orders/:order_id" (fun req ->
+         with_request_span obs req "read_order" (fun () -> handle_read deps req)))
   ]
 ;;

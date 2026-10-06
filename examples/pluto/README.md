@@ -175,38 +175,22 @@ bash <path-to-sol>/platform/local/scripts/ensure-postgres.sh
 KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
   dune exec app/comms/notify_worker/bin/main.exe
 
-# In another terminal, run checkout. SOL_API_KEY is the shared internal key.
-PORT=8081 SOL_API_KEY=dev-internal-key dune exec app/checkout/checkout_svc/bin/main.exe
-
-# In another terminal, run payments. It calls checkout through CHECKOUT_SVC_URL.
-# A bare process has no projected ServiceAccount token, so it must opt in
-# explicitly to the local shared-key caller path (DEC-063); a deployed workload
-# never sets SOL_ALLOW_PLAINTEXT_PEER_AUTH.
-POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-  CHECKOUT_SVC_URL=http://127.0.0.1:8081 SOL_API_KEY=dev-internal-key \
-  SOL_ALLOW_PLAINTEXT_PEER_AUTH=1 \
-  dune exec app/payments/charge_svc/bin/main.exe
+# `/quote` is an internal route. Sol projects the target's trusted issuer into
+# deployed services; a bare process has no such target projection and fails
+# closed. Run the Sol-to-Sol call in a deployed AWS/GKE target to exercise it.
 ```
 
-`charge_svc` declares `calls = ["checkout/checkout_svc"]`. In a Sol cluster
-that injects `CHECKOUT_SVC_URL` as a cluster DNS URL for the checkout
-ClusterIP, so the east-west request never leaves the cluster network. The
-generated per-pair NetworkPolicy is what permits that caller/target path, and
-the framework attaches the projected ServiceAccount token for `checkout_svc`
-as `Authorization: Bearer` instead of the shared key.
+`charge_svc` declares `calls = ["checkout/checkout_svc"]`. Sol injects
+`CHECKOUT_SVC_URL` as a cluster DNS URL for the checkout ClusterIP, so the
+east-west request stays inside the cluster network. The generated per-pair
+NetworkPolicy permits that caller/target path, and the framework attaches the
+projected ServiceAccount token for `checkout_svc` as `Authorization: Bearer`.
 
-```bash
-curl localhost:8080/checkout-quote
-# {"shipping_cents":799,"currency":"USD","trace_id":"..."}
-```
-
-With `sol local infra up`, `checkout_svc` is exposed through the local north-south URL:
-
-```bash
-curl -H 'Host: checkout-svc.pluto-checkout.localhost' \
-  -H 'x-api-key: dev-internal-key' \
-  http://localhost:8088/quote
-```
+`/checkout-quote` is an external route on `charge_svc`, so application-owned
+customer or anonymous policy applies there. Its call to `/quote` still requires
+Sol workload identity. A bare process or local infrastructure does not establish
+the target's trusted issuer, so `checkout_svc` fails closed; exercise this
+Sol-to-Sol path in a deployed AWS or GKE target.
 
 For customer-cloud, set `ingress_host` in `checkout_svc/sol.toml` to your DNS
 name, run `sol deploy customer_cloud/aws/us-east-1`, then create an

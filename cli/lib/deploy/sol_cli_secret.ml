@@ -36,6 +36,12 @@ let validate_key key =
       "SOL_ALLOW_PLAINTEXT_PEER_AUTH is reserved: it lets a caller fall back to the \
        shared API key when no projected identity was declared, and only local tooling \
        sets it"
+  else if List.mem key [ "SOL_UNIT"; "SOL_CALLED_BY"; "SOL_TRUSTED_WORKLOAD_ISSUER" ]
+  then
+    Error
+      (key
+       ^ " is reserved: it is projected from the Sol workload contract and must not be \
+          spoofed")
   else Ok ()
 ;;
 

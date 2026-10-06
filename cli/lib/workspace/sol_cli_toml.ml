@@ -1003,15 +1003,28 @@ let load_result path =
                key)
       in
       let* () =
+        let reserved_identity =
+          [ "SOL_UNIT"; "SOL_CALLED_BY"; "SOL_TRUSTED_WORKLOAD_ISSUER" ]
+        in
+        let reserved_development =
+          [ "SOL_ALLOW_UNVERIFIED_JWT"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH" ]
+        in
         match
           List.find_opt
             (fun key ->
                List.mem_assoc key env_config
                || List.mem key secret_keys
                || List.mem key build_secret_keys)
-            [ "SOL_ALLOW_UNVERIFIED_JWT"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH" ]
+            (reserved_identity @ reserved_development)
         with
         | None -> Ok ()
+        | Some key when List.mem key reserved_identity ->
+          validation_error
+            path
+            (Printf.sprintf
+               "sol.toml: [infra.env] config, secrets and build_secrets may not set %s \
+                -- it is projected from the declared calls graph and must not be spoofed"
+               key)
         | Some key ->
           validation_error
             path

@@ -1,5 +1,5 @@
 let routes = [
-  Route.get "/health" ~auth:`Public (fun _req ->
+  Route.external_ (Route.get "/health" (fun _req ->
     Response.ok "ok"
-  );
+  ));
 ]

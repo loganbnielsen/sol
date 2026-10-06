@@ -13,7 +13,7 @@ type pattern = private
 type t =
   { method_ : Request.method_
   ; pattern : pattern
-  ; auth : Auth.level
+  ; is_external : bool
   ; handler : handler
   }
 
@@ -21,8 +21,9 @@ val parse_pattern : string -> (pattern, string) result
 val pattern : string -> pattern
 val pattern_to_string : pattern -> string
 val parse_request_path : string -> (string list * bool) option
-val get : string -> auth:Auth.level -> handler -> t
-val post : string -> auth:Auth.level -> handler -> t
-val put : string -> auth:Auth.level -> handler -> t
-val patch : string -> auth:Auth.level -> handler -> t
-val delete : string -> auth:Auth.level -> handler -> t
+val get : string -> handler -> t
+val post : string -> handler -> t
+val put : string -> handler -> t
+val patch : string -> handler -> t
+val delete : string -> handler -> t
+val external_ : t -> t

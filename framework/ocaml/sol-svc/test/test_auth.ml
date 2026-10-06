@@ -1,732 +1,388 @@
 let () = Mirage_crypto_rng_unix.use_default ()
-let headers_of kv = Http.Header.of_list kv
-let bearer tok = headers_of [ "authorization", "Bearer " ^ tok ]
-let api_key k = headers_of [ "x-api-key", k ]
+let workload_issuer = "https://kubernetes.default.svc"
+let workload_audience = "checkout/checkout-svc"
+let caller_service_account = "myapp-payments:charge-svc"
+let caller_subject = "system:serviceaccount:" ^ caller_service_account
+let caller_unit = "payments/charge-svc"
+let rsa_priv_jwk = Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2048 ())
+let rsa_jwks = Jose.Jwks.{ keys = [ Jose.Jwk.pub_of_priv rsa_priv_jwk ] }
 
-let echo_principal req =
-  let json =
-    match req.Request.auth.Auth.principal with
-    | Auth.Public -> `Assoc [ "principal", `String "public" ]
-    | Auth.Service { key_id } ->
-      `Assoc [ "principal", `String "service"; "key_id", `String key_id ]
-    | Auth.User { sub; scopes; _ } ->
-      `Assoc
-        [ "principal", `String "user"
-        ; "sub", `String sub
-        ; "scopes", `List (List.map (fun scope -> `String scope) scopes)
-        ]
-  in
-  Response.json (Yojson.Safe.to_string json)
+let workload_identity ?(callers = [ caller_service_account, caller_unit ]) () =
+  Auth.{ audience = workload_audience; callers; trusted_issuer = workload_issuer }
 ;;
 
-let respond ?read_api_key ?fetch_jwks auth headers =
-  let request = Http.Request.make ~meth:`GET ~headers "/probe" in
+let sign_workload
+      ?(sub = caller_subject)
+      ?(aud = workload_audience)
+      ?(iss = workload_issuer)
+      ?(exp_offset = 3600.0)
+      ()
+  =
+  let payload =
+    `Assoc
+      [ "sub", `String sub
+      ; "iss", `String iss
+      ; "aud", `String aud
+      ; "exp", `Int (int_of_float (Unix.gettimeofday () +. exp_offset))
+      ]
+  in
+  match Jose.Jwt.sign ~payload rsa_priv_jwk with
+  | Ok token -> Jose.Jwt.to_string token
+  | Error (`Msg message) -> failwith ("sign_workload: " ^ message)
+;;
+
+let headers token = Http.Header.of_list [ "authorization", "Bearer " ^ token ]
+
+let with_env bindings f =
+  let previous = List.map (fun (key, _) -> key, Sys.getenv_opt key) bindings in
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter
+        (fun (key, value) ->
+           match value with
+           | Some value -> Unix.putenv key value
+           | None -> Unix.putenv key "")
+        previous)
+    (fun () ->
+       List.iter (fun (key, value) -> Unix.putenv key value) bindings;
+       f ())
+;;
+
+let test_service_reads_the_sol_projected_trust_and_call_policy () =
+  with_env
+    [ "SOL_UNIT", workload_audience
+    ; "SOL_CALLED_BY", caller_unit ^ "=" ^ caller_service_account
+    ; "SOL_TRUSTED_WORKLOAD_ISSUER", workload_issuer
+    ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.get "/probe" (fun _ -> Response.ok "") ]
+           `Public
+       with
+       | Error (`Config message) -> Windtrap.fail message
+       | Ok None -> Windtrap.fail "an internal route did not request workload identity"
+       | Ok (Some config) ->
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"projected audience"
+           workload_audience
+           config.audience;
+         Windtrap.equal
+           (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+           ~msg:"calls-derived caller set"
+           [ caller_service_account, caller_unit ]
+           config.callers;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"target capability issuer projection"
+           workload_issuer
+           config.trusted_issuer)
+;;
+
+let test_internal_route_without_target_issuer_fails_startup () =
+  with_env
+    [ "SOL_UNIT", workload_audience
+    ; "SOL_CALLED_BY", ""
+    ; "SOL_TRUSTED_WORKLOAD_ISSUER", ""
+    ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.get "/probe" (fun _ -> Response.ok "") ]
+           `Public
+       with
+       | Error (`Config message) ->
+         Windtrap.is_true
+           ~msg:"startup failure names the missing target projection"
+           (List.mem "SOL_TRUSTED_WORKLOAD_ISSUER" (String.split_on_char ' ' message))
+       | Ok _ -> Windtrap.fail "an internal route started without a target-trusted issuer");
+  with_env
+    [ "SOL_UNIT", ""; "SOL_CALLED_BY", ""; "SOL_TRUSTED_WORKLOAD_ISSUER", "" ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.external_ (Route.get "/probe" (fun _ -> Response.ok "")) ]
+           `Public
+       with
+       | Ok None -> ()
+       | Error (`Config message) -> Windtrap.fail message
+       | Ok (Some _) ->
+         Windtrap.fail "an external-only service requested Sol workload identity")
+;;
+
+let dispatch
+      ?(callers = [ caller_service_account, caller_unit ])
+      ?(fetch_workload_jwks = fun _ -> Ok rsa_jwks)
+      ?on_boundary
+      headers
+  =
+  let handler req =
+    match req.Request.auth with
+    | Some { Auth.principal = Auth.Unit { unit; service_account }; _ } ->
+      Response.json
+        (Yojson.Safe.to_string
+           (`Assoc [ "unit", `String unit; "service_account", `String service_account ]))
+    | _ -> Response.internal_error "workload principal missing"
+  in
   Service.For_testing.dispatch
-    ?read_api_key
-    ?fetch_jwks
-    ~routes:[ Route.get "/probe" ~auth echo_principal ]
-    request
+    ~fetch_workload_jwks
+    ~workload_identity:(workload_identity ~callers ())
+    ?on_boundary
+    ~routes:[ Route.get "/probe" handler ]
+    (Http.Request.make ~meth:`GET ~headers "/probe")
     (Cohttp_eio.Body.of_string "")
 ;;
 
-let status ?read_api_key ?fetch_jwks auth headers =
-  (respond ?read_api_key ?fetch_jwks auth headers).Response.status
+let test_declared_workload_authenticates_and_authorizes () =
+  let boundary = ref None in
+  let response =
+    dispatch ~on_boundary:(fun b -> boundary := Some b) (headers (sign_workload ()))
+  in
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"internal request boundary"
+    (Some "internal")
+    (Option.map Observation.boundary_to_string !boundary);
+  Windtrap.equal Windtrap.int ~msg:"status" 200 response.Response.status;
+  let payload = Yojson.Safe.from_string response.Response.body in
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"caller unit"
+    caller_unit
+    (Yojson.Safe.Util.member "unit" payload |> Yojson.Safe.Util.to_string)
 ;;
 
-let check_status ?read_api_key ?fetch_jwks ~msg expected auth headers =
+let test_undeclared_caller_is_forbidden () =
   Windtrap.equal
     Windtrap.int
-    ~msg
-    expected
-    (status ?read_api_key ?fetch_jwks auth headers)
+    ~msg:"authenticated caller outside graph → 403"
+    403
+    (dispatch ~callers:[] (headers (sign_workload ()))).Response.status
 ;;
 
-let rejects_unauthorized ?read_api_key ?fetch_jwks ~msg auth headers =
-  check_status ?read_api_key ?fetch_jwks ~msg 401 auth headers
-;;
-
-let rejects_forbidden ?read_api_key ?fetch_jwks ~msg auth headers =
-  check_status ?read_api_key ?fetch_jwks ~msg 403 auth headers
-;;
-
-let rejects_server_error ?read_api_key ?fetch_jwks ~msg auth headers =
-  check_status ?read_api_key ?fetch_jwks ~msg 500 auth headers
-;;
-
-let principal_json ?read_api_key ?fetch_jwks auth headers =
-  let response = respond ?read_api_key ?fetch_jwks auth headers in
-  if response.Response.status <> 200
-  then
-    Windtrap.failf
-      "expected 200, got %d: %s"
-      response.Response.status
-      response.Response.body;
-  Yojson.Safe.from_string response.Response.body
-;;
-
-let field_string name json =
-  match Yojson.Safe.Util.member name json with
-  | `String value -> value
-  | other ->
-    Windtrap.failf "field %s: expected string, got %s" name (Yojson.Safe.to_string other)
-;;
-
-let field_strings name json =
-  match Yojson.Safe.Util.member name json with
-  | `List values ->
-    List.filter_map
-      (function
-        | `String value -> Some value
-        | _ -> None)
-      values
-  | other ->
-    Windtrap.failf "field %s: expected list, got %s" name (Yojson.Safe.to_string other)
-;;
-
-let test_constant_time_equal () =
-  Windtrap.is_true
-    ~msg:"the same bytes"
-    (Auth.For_testing.constant_time_equal "secret" "secret");
-  Windtrap.is_false
-    ~msg:"a changed byte"
-    (Auth.For_testing.constant_time_equal "secret" "secreu");
-  Windtrap.is_false
-    ~msg:"a different length"
-    (Auth.For_testing.constant_time_equal "secret" "secretx");
-  Windtrap.is_true ~msg:"two empty strings" (Auth.For_testing.constant_time_equal "" "")
-;;
-
-let test_public () =
-  let json = principal_json `Public (headers_of []) in
-  Windtrap.equal Windtrap.string ~msg:"principal" "public" (field_string "principal" json)
-;;
-
-let configured key () = Some key
-
-let test_api_key_valid () =
-  let json =
-    principal_json
-      ~read_api_key:(configured "secretkey123")
-      `Api_key
-      (api_key "secretkey123")
+let test_untrusted_issuer_is_unauthorized () =
+  let fetched = ref false in
+  let response =
+    dispatch
+      ~fetch_workload_jwks:(fun _ ->
+        fetched := true;
+        Ok rsa_jwks)
+      (headers (sign_workload ~iss:"https://attacker.example" ()))
   in
   Windtrap.equal
-    Windtrap.string
-    ~msg:"principal"
-    "service"
-    (field_string "principal" json);
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"key_id truncated"
-    "secretke"
-    (field_string "key_id" json)
-;;
-
-let test_api_key_wrong () =
-  rejects_unauthorized
-    ~read_api_key:(configured "secretkey123")
-    ~msg:"wrong key → 401"
-    `Api_key
-    (api_key "wrongkey")
-;;
-
-let test_api_key_missing_header () =
-  rejects_unauthorized
-    ~read_api_key:(configured "secretkey123")
-    ~msg:"missing header → 401"
-    `Api_key
-    (headers_of [])
-;;
-
-let test_api_key_without_reader_fails_closed () =
-  rejects_server_error
-    ~msg:"no reader fails closed → 500"
-    `Api_key
-    (api_key "secretkey123")
-;;
-
-let test_api_key_empty_secret_fails_closed () =
-  rejects_server_error
-    ~read_api_key:(configured "")
-    ~msg:"empty secret fails closed → 500"
-    `Api_key
-    (api_key "")
-;;
-
-let make_jwt ?(sub = "user1") ?(scopes = [ "read" ]) ?(exp_offset = 3600.0) () =
-  let header =
-    Base64.encode_exn
-      ~pad:false
-      ~alphabet:Base64.uri_safe_alphabet
-      {|{"alg":"HS256","typ":"JWT"}|}
-  in
-  let now = Unix.gettimeofday () in
-  let exp = int_of_float (now +. exp_offset) in
-  let scope = String.concat " " scopes in
-  let payload = Printf.sprintf {|{"sub":"%s","scope":"%s","exp":%d}|} sub scope exp in
-  let payload_b64 =
-    Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet payload
-  in
-  header ^ "." ^ payload_b64 ^ ".fakesig"
-;;
-
-let make_jwt_with_payload payload =
-  let header =
-    Base64.encode_exn
-      ~pad:false
-      ~alphabet:Base64.uri_safe_alphabet
-      {|{"alg":"HS256","typ":"JWT"}|}
-  in
-  let payload_b64 =
-    Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet payload
-  in
-  header ^ "." ^ payload_b64 ^ ".fakesig"
-;;
-
-let jwt_cfg scopes = `Jwt Auth.{ scopes; verification = Unverified_dev_only }
-
-let test_jwt_valid () =
-  let json =
-    principal_json
-      (jwt_cfg [ "read"; "write" ])
-      (bearer (make_jwt ~scopes:[ "read"; "write" ] ()))
-  in
-  Windtrap.equal Windtrap.string ~msg:"sub" "user1" (field_string "sub" json);
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"scopes"
-    true
-    (List.mem "write" (field_strings "scopes" json))
-;;
-
-let test_jwt_superset_scopes () =
-  let json =
-    principal_json
-      (jwt_cfg [ "read" ])
-      (bearer (make_jwt ~scopes:[ "read"; "write"; "admin" ] ()))
-  in
-  Windtrap.equal Windtrap.string ~msg:"principal" "user" (field_string "principal" json)
-;;
-
-let test_jwt_missing_scope () =
-  rejects_forbidden
-    ~msg:"missing scope → 403"
-    (jwt_cfg [ "read"; "write" ])
-    (bearer (make_jwt ~scopes:[ "read" ] ()))
-;;
-
-let test_jwt_expired () =
-  rejects_unauthorized
-    ~msg:"expired → 401"
-    (jwt_cfg [])
-    (bearer (make_jwt ~exp_offset:(-1.0) ()))
-;;
-
-let test_jwt_malformed () =
-  rejects_unauthorized
-    ~msg:"malformed → 401"
-    (jwt_cfg [])
-    (bearer "not.a.jwt.at.all.extra")
-;;
-
-let test_jwt_wrong_bearer_scheme () =
-  rejects_unauthorized
-    ~msg:"wrong bearer → 401"
-    (jwt_cfg [])
-    (headers_of [ "authorization", "Token abc" ])
-;;
-
-let test_jwt_payload_not_base64 () =
-  rejects_unauthorized
-    ~msg:"bad payload b64 → 401"
-    (jwt_cfg [])
-    (bearer "header.%.signature")
-;;
-
-let test_jwt_payload_not_json () =
-  rejects_unauthorized
-    ~msg:"bad payload JSON → 401"
-    (jwt_cfg [])
-    (bearer (make_jwt_with_payload "not json"))
-;;
-
-let test_jwt_payload_not_an_object () =
-  rejects_unauthorized
-    ~msg:"non-object payload → 401"
-    (jwt_cfg [])
-    (bearer (make_jwt_with_payload "[]"))
-;;
-
-let test_jwt_missing_header () =
-  rejects_unauthorized ~msg:"missing header → 401" (jwt_cfg []) (headers_of [])
-;;
-
-let issuer = "https://issuer.example.com"
-let audience = "sol-svc-test"
-
-let claims_json ~sub ~scopes ~iss ~aud ~exp_offset =
-  let now = Unix.gettimeofday () in
-  let exp = int_of_float (now +. exp_offset) in
-  `Assoc
-    [ "sub", `String sub
-    ; "scope", `String (String.concat " " scopes)
-    ; "iss", `String iss
-    ; "aud", `String aud
-    ; "exp", `Int exp
-    ]
-;;
-
-let hs256_secret = "test-hs256-shared-secret"
-
-let sign_hs256
-      ?(sub = "user1")
-      ?(scopes = [ "read" ])
-      ?(iss = issuer)
-      ?(aud = audience)
-      ?(exp_offset = 3600.0)
-      ()
-  =
-  let jwk = Jose.Jwk.make_oct hs256_secret in
-  let payload = claims_json ~sub ~scopes ~iss ~aud ~exp_offset in
-  match Jose.Jwt.sign ~payload jwk with
-  | Ok t -> Jose.Jwt.to_string t
-  | Error (`Msg m) -> failwith ("sign_hs256: " ^ m)
-;;
-
-let hs256_verified_cfg
-      ?(scopes = [])
-      ?(algorithms = [ `HS256 ])
-      ?(issuer = issuer)
-      ?(audience = audience)
-      ()
-  =
-  `Jwt
-    Auth.
-      { scopes
-      ; verification =
-          Verified_signature_required
-            { issuer; audience; algorithms; key_source = Hs256_secret hs256_secret }
-      }
-;;
-
-let rsa_priv_jwk = Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2048 ())
-
-let rsa_jwks_doc =
-  Jose.Jwks.to_string { Jose.Jwks.keys = [ Jose.Jwk.pub_of_priv rsa_priv_jwk ] }
-;;
-
-let sign_rs256
-      ?(sub = "user1")
-      ?(scopes = [ "read" ])
-      ?(iss = issuer)
-      ?(aud = audience)
-      ?(exp_offset = 3600.0)
-      ()
-  =
-  let payload = claims_json ~sub ~scopes ~iss ~aud ~exp_offset in
-  match Jose.Jwt.sign ~payload rsa_priv_jwk with
-  | Ok t -> Jose.Jwt.to_string t
-  | Error (`Msg m) -> failwith ("sign_rs256: " ^ m)
-;;
-
-let rs256_verified_cfg
-      ?(scopes = [])
-      ?(algorithms = [ `RS256 ])
-      ?(issuer = issuer)
-      ?(audience = audience)
-      ()
-  =
-  `Jwt
-    Auth.
-      { scopes
-      ; verification =
-          Verified_signature_required
-            { issuer; audience; algorithms; key_source = Jwks_static rsa_jwks_doc }
-      }
-;;
-
-let tamper_signature token =
-  match String.rindex_opt token '.' with
-  | None -> token
-  | Some i ->
-    let prefix = String.sub token 0 (i + 1) in
-    let sig_part = String.sub token (i + 1) (String.length token - i - 1) in
-    let flipped =
-      String.mapi
-        (fun idx c -> if idx = 0 then if c = 'A' then 'B' else 'A' else c)
-        sig_part
-    in
-    prefix ^ flipped
-;;
-
-let test_jwt_verified_hs256_valid () =
-  let json =
-    principal_json
-      (hs256_verified_cfg ~scopes:[ "read"; "write" ] ())
-      (bearer (sign_hs256 ~scopes:[ "read"; "write" ] ()))
-  in
-  Windtrap.equal Windtrap.string ~msg:"sub" "user1" (field_string "sub" json);
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"scopes"
-    true
-    (List.mem "write" (field_strings "scopes" json))
-;;
-
-let test_jwt_verified_rs256_valid () =
-  let json =
-    principal_json
-      (rs256_verified_cfg ~scopes:[ "read" ] ())
-      (bearer (sign_rs256 ~scopes:[ "read" ] ()))
-  in
-  Windtrap.equal Windtrap.string ~msg:"sub" "user1" (field_string "sub" json)
-;;
-
-let test_jwt_verified_tampered_signature () =
-  rejects_unauthorized
-    ~msg:"tampered signature → 401"
-    (hs256_verified_cfg ())
-    (bearer (tamper_signature (sign_hs256 ())))
-;;
-
-let test_jwt_verified_wrong_alg_rejected () =
-  rejects_unauthorized
-    ~msg:"alg not in allowlist → 401"
-    (hs256_verified_cfg ~algorithms:[ `RS256 ] ())
-    (bearer (sign_hs256 ()))
-;;
-
-let test_jwt_verified_wrong_issuer () =
-  rejects_unauthorized
-    ~msg:"wrong issuer → 401"
-    (hs256_verified_cfg ())
-    (bearer (sign_hs256 ~iss:"https://someone-else.example.com" ()))
-;;
-
-let test_jwt_verified_wrong_audience () =
-  rejects_unauthorized
-    ~msg:"wrong audience → 401"
-    (hs256_verified_cfg ())
-    (bearer (sign_hs256 ~aud:"someone-else" ()))
-;;
-
-let test_jwt_verified_expired () =
-  rejects_unauthorized
-    ~msg:"expired → 401"
-    (hs256_verified_cfg ())
-    (bearer (sign_hs256 ~exp_offset:(-1.0) ()))
-;;
-
-let sign_claims payload =
-  match Jose.Jwt.sign ~payload (Jose.Jwk.make_oct hs256_secret) with
-  | Ok t -> Jose.Jwt.to_string t
-  | Error (`Msg m) -> failwith ("sign_claims: " ^ m)
-;;
-
-let verified_claims ?(sub = "user1") ?(scopes = [ "read" ]) temporal =
-  `Assoc
-    ([ "sub", `String sub
-     ; "scope", `String (String.concat " " scopes)
-     ; "iss", `String issuer
-     ; "aud", `String audience
-     ]
-     @ temporal)
-;;
-
-let check_rejected ~msg token =
-  rejects_unauthorized ~msg (hs256_verified_cfg ()) (bearer token)
-;;
-
-let check_accepted ~msg token =
-  let json = principal_json (hs256_verified_cfg ()) (bearer token) in
-  Windtrap.equal
-    Windtrap.string
-    ~msg:(msg ^ ": principal")
-    "user"
-    (field_string "principal" json)
-;;
-
-let test_jwt_verified_future_nbf_rejected () =
-  let now = Unix.gettimeofday () in
-  check_rejected
-    ~msg:"nbf one hour ahead"
-    (sign_claims
-       (verified_claims
-          [ "nbf", `Int (int_of_float (now +. 3600.))
-          ; "exp", `Int (int_of_float (now +. 7200.))
-          ]))
-;;
-
-let test_jwt_verified_current_nbf_accepted () =
-  let now = Unix.gettimeofday () in
-  check_accepted
-    ~msg:"nbf one second ago"
-    (sign_claims
-       (verified_claims
-          [ "nbf", `Int (int_of_float (now -. 1.))
-          ; "exp", `Int (int_of_float (now +. 3600.))
-          ]))
-;;
-
-let test_jwt_verified_fractional_numeric_dates () =
-  let now = Unix.gettimeofday () in
-  check_accepted
-    ~msg:"fractional nbf/exp in range"
-    (sign_claims
-       (verified_claims [ "nbf", `Float (now -. 1.); "exp", `Float (now +. 3600.) ]));
-  check_rejected
-    ~msg:"fractional exp in the past"
-    (sign_claims (verified_claims [ "exp", `Float (now -. 3600.) ]));
-  check_rejected
-    ~msg:"fractional nbf in the future"
-    (sign_claims
-       (verified_claims [ "nbf", `Float (now +. 3600.); "exp", `Float (now +. 7200.) ]))
-;;
-
-let test_jwt_verified_malformed_temporal_claims () =
-  let now = Unix.gettimeofday () in
-  let exp_in_range = `Int (int_of_float (now +. 3600.)) in
-  List.iter
-    (fun (label, temporal) ->
-       check_rejected ~msg:label (sign_claims (verified_claims temporal)))
-    [ "exp is a string", [ "exp", `String "soon" ]
-    ; "exp is an array", [ "exp", `List [] ]
-    ; "exp is an object", [ "exp", `Assoc [] ]
-    ; "nbf is a string", [ "nbf", `String "later"; "exp", exp_in_range ]
-    ; "nbf is a boolean", [ "nbf", `Bool true; "exp", exp_in_range ]
-    ]
-;;
-
-let test_jwt_verified_missing_scope () =
-  rejects_forbidden
-    ~msg:"missing scope → 403"
-    (hs256_verified_cfg ~scopes:[ "read"; "write" ] ())
-    (bearer (sign_hs256 ~scopes:[ "read" ] ()))
-;;
-
-let jwks_url_cfg () =
-  `Jwt
-    Auth.
-      { scopes = []
-      ; verification =
-          Verified_signature_required
-            { issuer
-            ; audience
-            ; algorithms = [ `RS256 ]
-            ; key_source = Jwks_url "https://idp.example.com/jwks.json"
-            }
-      }
-;;
-
-let test_jwt_verified_jwks_fetch_failure_fails_closed () =
-  rejects_server_error
-    ~fetch_jwks:(fun _url -> Error "connection refused")
-    ~msg:"JWKS fetch failure fails closed → 500"
-    (jwks_url_cfg ())
-    (bearer (sign_rs256 ()))
-;;
-
-let test_jwt_verified_jwks_url_without_fetcher_fails_closed () =
-  rejects_server_error
-    ~msg:"Jwks_url with no fetcher fails closed → 500"
-    (jwks_url_cfg ())
-    (bearer (sign_rs256 ()))
-;;
-
-let test_jwt_verified_malformed_static_jwks_fails_closed () =
-  let cfg =
-    `Jwt
-      Auth.
-        { scopes = []
-        ; verification =
-            Verified_signature_required
-              { issuer
-              ; audience
-              ; algorithms = [ `RS256 ]
-              ; key_source = Jwks_static "not json"
-              }
-        }
-  in
-  rejects_server_error
-    ~msg:"malformed static JWKS fails closed → 500"
-    cfg
-    (bearer (sign_rs256 ()))
-;;
-
-let jwks_cfg_for url =
-  `Jwt
-    Auth.
-      { scopes = []
-      ; verification =
-          Verified_signature_required
-            { issuer; audience; algorithms = [ `RS256 ]; key_source = Jwks_url url }
-      }
-;;
-
-let empty_jwks_doc = Jose.Jwks.to_string { Jose.Jwks.keys = [] }
-
-let test_concurrent_cache_misses_share_one_fetch () =
-  Eio_main.run
-  @@ fun env ->
-  let url = "https://idp.example.com/concurrent/jwks.json" in
-  let fetches = ref 0 in
-  let slow_fetch _ =
-    incr fetches;
-    Eio.Time.sleep env#clock 0.1;
-    Ok (Jose.Jwks.of_string rsa_jwks_doc)
-  in
-  let probe () =
-    status ~fetch_jwks:slow_fetch (jwks_cfg_for url) (bearer (sign_rs256 ()))
-  in
-  let a, b = Eio.Fiber.pair probe probe in
-  Windtrap.equal
-    (Windtrap.pair Windtrap.int Windtrap.int)
-    ~msg:"both requests verified"
-    (200, 200)
-    (a, b);
-  Windtrap.equal Windtrap.int ~msg:"one fetch served both" 1 !fetches
-;;
-
-let test_unknown_kid_refetches () =
-  let url = "https://idp.example.com/rotated/jwks.json" in
-  Auth.For_testing.seed_stale_jwks_cache ~url ~age_s:60.0 ~jwks:empty_jwks_doc;
-  let fetches = ref 0 in
-  let fetch _ =
-    incr fetches;
-    Ok (Jose.Jwks.of_string rsa_jwks_doc)
-  in
-  check_status
-    ~fetch_jwks:fetch
-    ~msg:"a key rotated in after the last fetch is found"
-    200
-    (jwks_cfg_for url)
-    (bearer (sign_rs256 ()));
-  Windtrap.equal Windtrap.int ~msg:"refetched once" 1 !fetches
-;;
-
-let test_unknown_kid_refetch_is_rate_limited () =
-  let url = "https://idp.example.com/recent/jwks.json" in
-  Auth.For_testing.seed_stale_jwks_cache ~url ~age_s:5.0 ~jwks:empty_jwks_doc;
-  let fetches = ref 0 in
-  let fetch _ =
-    incr fetches;
-    Ok (Jose.Jwks.of_string rsa_jwks_doc)
-  in
-  check_status
-    ~fetch_jwks:fetch
-    ~msg:"no refetch inside the interval → 401"
+    Windtrap.int
+    ~msg:"issuer is not trusted → 401"
     401
-    (jwks_cfg_for url)
-    (bearer (sign_rs256 ()));
-  Windtrap.equal Windtrap.int ~msg:"no refetch inside the interval" 0 !fetches
+    response.Response.status;
+  Windtrap.is_false ~msg:"an untrusted issuer never reaches key resolution" !fetched
 ;;
 
-let test_failed_fetch_is_shared_not_repeated () =
-  Eio_main.run
-  @@ fun env ->
-  let url = "https://idp.example.com/outage/jwks.json" in
+let test_discovery_must_bind_keys_to_the_trusted_issuer () =
+  let parse body =
+    Service.For_testing.jwks_uri_of_discovery ~issuer:workload_issuer body
+  in
+  let good_uri = workload_issuer ^ "/keys" in
+  let discovery issuer jwks_uri =
+    Yojson.Safe.to_string
+      (`Assoc [ "issuer", `String issuer; "jwks_uri", `String jwks_uri ])
+  in
+  (match parse (discovery workload_issuer good_uri) with
+   | Ok uri -> Windtrap.equal Windtrap.string ~msg:"discovered JWKS URI" good_uri uri
+   | Error error -> Windtrap.fail error);
+  (match parse (discovery "https://attacker.example" good_uri) with
+   | Error error ->
+     Windtrap.is_true
+       ~msg:"mismatched discovery issuer is rejected"
+       (String.equal
+          error
+          "OIDC discovery issuer does not match the trusted target issuer")
+   | Ok _ -> Windtrap.fail "a mismatched discovery issuer was accepted");
+  (match parse (discovery workload_issuer "https://attacker.example/keys") with
+   | Error error ->
+     Windtrap.is_true
+       ~msg:"cross-origin JWKS endpoint is rejected"
+       (String.equal
+          error
+          "OIDC discovery jwks_uri must use the trusted issuer's HTTPS origin")
+   | Ok _ -> Windtrap.fail "a cross-origin JWKS endpoint was accepted");
+  match parse (discovery workload_issuer "http://kubernetes.default.svc/keys") with
+  | Error _ -> ()
+  | Ok _ -> Windtrap.fail "an insecure JWKS endpoint was accepted"
+;;
+
+let test_jwks_resolution_failure_fails_closed () =
+  Service.For_testing.reset_jwks_cache ();
+  let response =
+    dispatch
+      ~fetch_workload_jwks:(fun _ -> Error "issuer discovery unavailable")
+      (headers (sign_workload ()))
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"key resolution failure does not authenticate the request"
+    500
+    response.Response.status;
+  Service.For_testing.reset_jwks_cache ()
+;;
+
+let test_wrong_audience_is_unauthorized () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"wrong audience → 401"
+    401
+    (dispatch (headers (sign_workload ~aud:"another/unit" ()))).Response.status
+;;
+
+let test_tampered_signature_is_unauthorized () =
+  let token = sign_workload () in
+  let parts = String.split_on_char '.' token in
+  let tampered =
+    match parts with
+    | [ header; payload; signature ] ->
+      let replacement = if signature.[0] = 'A' then 'B' else 'A' in
+      String.concat
+        "."
+        [ header
+        ; payload
+        ; String.make 1 replacement ^ String.sub signature 1 (String.length signature - 1)
+        ]
+    | _ -> failwith "signed token should have three parts"
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"signature must verify → 401"
+    401
+    (dispatch (headers tampered)).Response.status
+;;
+
+let test_non_workload_subject_is_forbidden () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"verified user subject → 403"
+    403
+    (dispatch (headers (sign_workload ~sub:"customer-123" ()))).Response.status
+;;
+
+let test_missing_token_is_unauthorized () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"missing bearer → 401"
+    401
+    (dispatch (Http.Header.of_list [])).Response.status
+;;
+
+let test_jwks_cache_reuses_resolved_keys () =
+  Service.For_testing.reset_jwks_cache ();
   let fetches = ref 0 in
-  let failing_fetch _ =
+  let fetch issuer =
     incr fetches;
-    Eio.Time.sleep env#clock 0.1;
-    Error "connection refused"
+    if issuer = workload_issuer then Ok rsa_jwks else Error "unexpected JWKS URL"
   in
-  let tok = sign_rs256 () in
-  let probe () =
-    check_status
-      ~fetch_jwks:failing_fetch
-      ~msg:"the IdP is down → 500"
-      500
-      (jwks_cfg_for url)
-      (bearer tok)
-  in
-  Eio.Fiber.all [ probe; probe; probe; probe; probe ];
-  Windtrap.equal Windtrap.int ~msg:"one fetch for five waiting requests" 1 !fetches
+  let token = headers (sign_workload ()) in
+  let first = dispatch ~fetch_workload_jwks:fetch token in
+  let second = dispatch ~fetch_workload_jwks:fetch token in
+  Windtrap.equal Windtrap.int ~msg:"first request succeeds" 200 first.Response.status;
+  Windtrap.equal Windtrap.int ~msg:"second request succeeds" 200 second.Response.status;
+  Windtrap.equal Windtrap.int ~msg:"cached JWKS is reused" 1 !fetches;
+  Service.For_testing.reset_jwks_cache ()
 ;;
 
-let test_unknown_kid_with_failed_refetch_is_401 () =
-  let url = "https://idp.example.com/down-rotated/jwks.json" in
-  Auth.For_testing.seed_stale_jwks_cache ~url ~age_s:60.0 ~jwks:empty_jwks_doc;
-  rejects_unauthorized
-    ~fetch_jwks:(fun _ -> Error "connection refused")
-    ~msg:"an unknown kid is a 401 even when the refetch fails"
-    (jwks_cfg_for url)
-    (bearer (sign_rs256 ()))
+let test_external_route_bypasses_only_sol_workload_auth () =
+  let boundary = ref None in
+  let workload_principal = ref (Some ("unexpected", "principal")) in
+  let response =
+    Service.For_testing.dispatch
+      ~on_boundary:(fun b -> boundary := Some b)
+      ~on_workload_principal:(fun principal -> workload_principal := principal)
+      ~routes:
+        [ Route.external_
+            (Route.get "/probe" (fun req ->
+               match
+                 req.Request.auth, Http.Header.get req.Request.headers "x-customer-token"
+               with
+               | Some _, _ -> Response.internal_error "Sol principal on external route"
+               | None, None -> Response.unauthorized
+               | None, Some "valid" -> Response.ok "application authenticated"
+               | None, Some _ -> Response.unauthorized))
+        ]
+      (Http.Request.make ~meth:`GET "/probe")
+      (Cohttp_eio.Body.of_string "")
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"external route can apply application-owned auth"
+    401
+    response.Response.status;
+  Windtrap.equal
+    (Windtrap.option Windtrap.string)
+    ~msg:"external boundary is observed"
+    (Some "external")
+    (Option.map Observation.boundary_to_string !boundary);
+  Windtrap.equal
+    (Windtrap.option (Windtrap.pair Windtrap.string Windtrap.string))
+    ~msg:"external route has no Sol workload principal"
+    None
+    !workload_principal;
+  let response =
+    Service.For_testing.dispatch
+      ~routes:
+        [ Route.external_
+            (Route.get "/probe" (fun req ->
+               match
+                 req.Request.auth, Http.Header.get req.Request.headers "x-customer-token"
+               with
+               | Some _, _ -> Response.internal_error "Sol principal on external route"
+               | None, Some "valid" -> Response.ok "application authenticated"
+               | _ -> Response.unauthorized))
+        ]
+      (Http.Request.make
+         ~meth:`GET
+         ~headers:(Http.Header.of_list [ "x-customer-token", "valid" ])
+         "/probe")
+      (Cohttp_eio.Body.of_string "")
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"application auth succeeds independently"
+    200
+    response.Response.status
 ;;
 
 let () =
   Windtrap.run
-    "auth"
-    [ Windtrap.group
-        "auth.for_testing"
-        [ Windtrap.test "constant-time comparison" test_constant_time_equal ]
-    ; Windtrap.group "public" [ Windtrap.test "returns Public principal" test_public ]
-    ; Windtrap.group
-        "api_key"
-        [ Windtrap.test "valid key" test_api_key_valid
-        ; Windtrap.test "wrong key → 401" test_api_key_wrong
-        ; Windtrap.test "missing header → 401" test_api_key_missing_header
-        ; Windtrap.test "no reader fails closed" test_api_key_without_reader_fails_closed
-        ; Windtrap.test "empty secret fails closed" test_api_key_empty_secret_fails_closed
-        ]
-    ; Windtrap.group
-        "jwt_unverified"
-        [ Windtrap.test "valid token" test_jwt_valid
-        ; Windtrap.test "superset scopes → ok" test_jwt_superset_scopes
-        ; Windtrap.test "missing scope → 403" test_jwt_missing_scope
-        ; Windtrap.test "expired → 401" test_jwt_expired
-        ; Windtrap.test "malformed → 401" test_jwt_malformed
-        ; Windtrap.test "wrong bearer → 401" test_jwt_wrong_bearer_scheme
-        ; Windtrap.test "bad payload b64 → 401" test_jwt_payload_not_base64
-        ; Windtrap.test "bad payload JSON → 401" test_jwt_payload_not_json
-        ; Windtrap.test "non-object payload → 401" test_jwt_payload_not_an_object
-        ; Windtrap.test "missing header → 401" test_jwt_missing_header
-        ]
-    ; Windtrap.group
-        "jwt_verified"
-        [ Windtrap.test "HS256 valid → ok" test_jwt_verified_hs256_valid
-        ; Windtrap.test "RS256 valid (JWKS) → ok" test_jwt_verified_rs256_valid
-        ; Windtrap.test "tampered signature → 401" test_jwt_verified_tampered_signature
-        ; Windtrap.test "alg not in allowlist → 401" test_jwt_verified_wrong_alg_rejected
-        ; Windtrap.test "wrong issuer → 401" test_jwt_verified_wrong_issuer
-        ; Windtrap.test "wrong audience → 401" test_jwt_verified_wrong_audience
-        ; Windtrap.test "expired → 401" test_jwt_verified_expired
-        ; Windtrap.test "future nbf → 401 (BUG-079)" test_jwt_verified_future_nbf_rejected
-        ; Windtrap.test
-            "current nbf → ok (BUG-079)"
-            test_jwt_verified_current_nbf_accepted
-        ; Windtrap.test
-            "fractional NumericDate boundaries (BUG-079)"
-            test_jwt_verified_fractional_numeric_dates
-        ; Windtrap.test
-            "malformed temporal claims → 401 (BUG-079)"
-            test_jwt_verified_malformed_temporal_claims
-        ; Windtrap.test "missing scope → 403" test_jwt_verified_missing_scope
-        ; Windtrap.test
-            "JWKS fetch failure fails closed → 500"
-            test_jwt_verified_jwks_fetch_failure_fails_closed
-        ; Windtrap.test
-            "Jwks_url with no fetcher fails closed → 500"
-            test_jwt_verified_jwks_url_without_fetcher_fails_closed
-        ; Windtrap.test
-            "malformed static JWKS fails closed → 500"
-            test_jwt_verified_malformed_static_jwks_fails_closed
-        ]
-    ; Windtrap.group
-        "jwks (BUG-053)"
-        [ Windtrap.test
-            "concurrent cache misses share one fetch"
-            test_concurrent_cache_misses_share_one_fetch
-        ; Windtrap.test "unknown kid refetches" test_unknown_kid_refetches
-        ; Windtrap.test
-            "unknown kid refetch is rate-limited"
-            test_unknown_kid_refetch_is_rate_limited
-        ; Windtrap.test
-            "failed fetch is shared, not repeated"
-            test_failed_fetch_is_shared_not_repeated
-        ; Windtrap.test
-            "unknown kid with failed refetch → 401"
-            test_unknown_kid_with_failed_refetch_is_401
-        ]
+    "sol-svc workload identity"
+    [ Windtrap.test
+        "service consumes the Sol-projected issuer and caller contract"
+        test_service_reads_the_sol_projected_trust_and_call_policy
+    ; Windtrap.test
+        "internal routes fail closed without issuer; external-only routes do not require \
+         it"
+        test_internal_route_without_target_issuer_fails_startup
+    ; Windtrap.test
+        "declared caller authenticates and authorizes"
+        test_declared_workload_authenticates_and_authorizes
+    ; Windtrap.test "undeclared caller is forbidden" test_undeclared_caller_is_forbidden
+    ; Windtrap.test
+        "untrusted issuer is unauthorized"
+        test_untrusted_issuer_is_unauthorized
+    ; Windtrap.test
+        "OIDC discovery and JWKS stay bound to the trusted issuer"
+        test_discovery_must_bind_keys_to_the_trusted_issuer
+    ; Windtrap.test
+        "workload authentication fails closed when key resolution fails"
+        test_jwks_resolution_failure_fails_closed
+    ; Windtrap.test "wrong audience is unauthorized" test_wrong_audience_is_unauthorized
+    ; Windtrap.test
+        "tampered signature is unauthorized"
+        test_tampered_signature_is_unauthorized
+    ; Windtrap.test
+        "non-workload subject is forbidden"
+        test_non_workload_subject_is_forbidden
+    ; Windtrap.test "missing token is unauthorized" test_missing_token_is_unauthorized
+    ; Windtrap.test "JWKS cache reuses resolved keys" test_jwks_cache_reuses_resolved_keys
+    ; Windtrap.test
+        "external route bypasses only Sol workload auth"
+        test_external_route_bypasses_only_sol_workload_auth
     ]
 ;;

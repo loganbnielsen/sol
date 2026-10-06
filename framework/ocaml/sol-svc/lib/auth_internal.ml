@@ -176,6 +176,76 @@ let fetch_jwks_over_https ~env url =
      | exn -> Error ("JWKS parse failed: " ^ Printexc.to_string exn))
 ;;
 
+let jwks_uri_of_discovery ~issuer body =
+  let https_origin uri =
+    match
+      Uri.scheme uri, Uri.host uri, Uri.userinfo uri, Uri.query uri, Uri.fragment uri
+    with
+    | Some "https", Some host, None, [], None when host <> "" ->
+      Some (String.lowercase_ascii host, Option.value ~default:443 (Uri.port uri))
+    | _ -> None
+  in
+  let* fields =
+    match Yojson.Safe.from_string body with
+    | `Assoc fields -> Ok fields
+    | _ -> Error "OIDC discovery response is not a JSON object"
+    | exception Yojson.Json_error message ->
+      Error ("OIDC discovery returned invalid JSON: " ^ message)
+  in
+  let returned_issuer =
+    match List.assoc_opt "issuer" fields with
+    | Some (`String value) -> Some value
+    | _ -> None
+  in
+  if returned_issuer <> Some issuer
+  then Error "OIDC discovery issuer does not match the trusted target issuer"
+  else (
+    match List.assoc_opt "jwks_uri" fields with
+    | Some (`String url) ->
+      let jwks_uri = Uri.of_string url
+      and issuer_uri = Uri.of_string issuer in
+      (match https_origin issuer_uri, https_origin jwks_uri with
+       | Some issuer_origin, Some jwks_origin when issuer_origin = jwks_origin -> Ok url
+       | Some _, Some _ ->
+         Error "OIDC discovery jwks_uri must use the trusted issuer's HTTPS origin"
+       | _ -> Error "OIDC discovery jwks_uri is not an absolute same-origin https:// URL")
+    | _ -> Error "OIDC discovery response has no string jwks_uri")
+;;
+
+let fetch_workload_jwks_over_https ~env issuer =
+  let issuer_uri = Uri.of_string issuer in
+  let issuer_uri_is_https =
+    match Uri.scheme issuer_uri, Uri.host issuer_uri, Uri.userinfo issuer_uri with
+    | Some "https", Some host, None when host <> "" -> true
+    | _ -> false
+  in
+  if not issuer_uri_is_https
+  then Error "trusted workload issuer is not an absolute https:// URL"
+  else (
+    let issuer_base =
+      if String.ends_with ~suffix:"/" issuer
+      then String.sub issuer 0 (String.length issuer - 1)
+      else issuer
+    in
+    let discovery_url = issuer_base ^ "/.well-known/openid-configuration" in
+    let* status, body =
+      Https_eio.request
+        ~net:env#net
+        ~clock:env#clock
+        ~timeout:10.0
+        ~meth:`GET
+        ~url:discovery_url
+        ~headers:[ "Accept", "application/json" ]
+        ()
+      |> Result.map_error Https_eio.request_error_to_string
+    in
+    if status <> 200
+    then Error (Printf.sprintf "OIDC discovery failed: HTTP %d" status)
+    else
+      let* jwks_url = jwks_uri_of_discovery ~issuer body in
+      fetch_jwks_over_https ~env jwks_url)
+;;
+
 let get_jwks ?(max_age_s = Auth_cache.ttl_s) ~fetch_jwks url =
   let usable entry =
     entry.Auth_cache.url = url
@@ -314,6 +384,52 @@ let validate_verified_jwt ?fetch_jwks vconfig ~scopes headers =
   Ok { principal = User { sub = token_sub json; scopes = token_scopes; claims = json } }
 ;;
 
+let workload_identity_algorithms : jwt_algorithm list = [ `RS256; `ES256; `ES384; `ES512 ]
+
+let service_account_of_subject sub =
+  let prefix = "system:serviceaccount:" in
+  let plen = String.length prefix in
+  if String.length sub <= plen || String.sub sub 0 plen <> prefix
+  then
+    Error
+      (`Forbidden
+          (Printf.sprintf "authenticated subject %S is not a workload identity" sub))
+  else Ok (String.sub sub plen (String.length sub - plen))
+;;
+
+(* The shared auth core selects a trusted issuer and verifies identity policy.
+   This adapter supplies network fetch/cache behavior. *)
+let validate_workload_identity ?fetch_workload_jwks config headers =
+  let authorization = Http.Header.get headers "authorization" in
+  let* key_request, pending = Auth.begin_workload_auth config ~authorization in
+  let* fetch_workload_jwks =
+    match fetch_workload_jwks with
+    | Some fetch -> Ok fetch
+    | None -> Error (`Server_error "no trusted-issuer key resolver was provided")
+  in
+  let cache_key = "sol-workload-issuer:" ^ key_request.issuer in
+  let resolve_workload_jwks _ = fetch_workload_jwks key_request.issuer in
+  let* jwks =
+    match get_jwks ~fetch_jwks:resolve_workload_jwks cache_key with
+    | Ok jwks -> Ok jwks
+    | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
+  in
+  match Auth.finish_workload_auth pending ~jwks ~now:(Unix.gettimeofday ()) with
+  | Error (`Unauthorized "JWT key id not found in JWKS") ->
+    let* jwks =
+      match
+        get_jwks
+          ~max_age_s:Auth_cache.unknown_kid_refetch_interval_s
+          ~fetch_jwks:resolve_workload_jwks
+          cache_key
+      with
+      | Ok jwks -> Ok jwks
+      | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
+    in
+    Auth.finish_workload_auth pending ~jwks ~now:(Unix.gettimeofday ())
+  | result -> result
+;;
+
 let validate_jwt ?fetch_jwks config headers =
   match config.verification with
   | Verified_signature_required vconfig ->
@@ -321,9 +437,24 @@ let validate_jwt ?fetch_jwks config headers =
   | Unverified_dev_only -> validate_unverified_jwt config headers
 ;;
 
-let validate ?(read_api_key = Fun.const None) ?fetch_jwks level headers =
+let validate
+      ?(read_api_key = Fun.const None)
+      ?fetch_jwks
+      ?fetch_workload_jwks
+      ?workload_identity
+      level
+      headers
+  =
   match level with
   | `Public -> Ok { principal = Public }
   | `Api_key -> validate_api_key ~read_api_key headers
   | `Jwt cfg -> validate_jwt ?fetch_jwks cfg headers
+  | `Workload_identity ->
+    (match workload_identity with
+     | Some config -> validate_workload_identity ?fetch_workload_jwks config headers
+     | None ->
+       Error
+         (`Server_error
+             "a route requires Sol workload authentication but no target-trusted issuer \
+              is configured"))
 ;;
