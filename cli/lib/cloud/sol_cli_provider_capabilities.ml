@@ -56,6 +56,7 @@ type authorization_workload =
 
 type t =
   { root_status : root_status
+  ; workload_identity_issuer : Sol_cli_config.target -> (string, string) result
   ; backend_config :
       Sol_cli_config.target
       -> bucket:string
@@ -375,6 +376,98 @@ let run_command args =
   Sol_cli_process.run (Sol_cli_process.cmd args)
   |> Result.map (fun (output : Sol_cli_process.output) -> output.stdout)
   |> Result.map_error Sol_cli_process.error_to_string
+;;
+
+(* DEC-051/DEC-063: the trusted Kubernetes service-account OIDC issuer is
+   target/infrastructure truth. A driver establishes exactly one such issuer and
+   reports it here, or reports why it cannot; [Error] means "there is no trusted
+   issuer to consume", and every caller must fail closed. The value is never
+   application configuration and is never taken from the [iss] claim of an
+   incoming token. *)
+let oidc_issuer_of_output ~provider ?expected_host output =
+  let output = String.trim output in
+  let uri = Uri.of_string output in
+  match
+    Uri.scheme uri, Uri.host uri, Uri.userinfo uri, Uri.query uri, Uri.fragment uri
+  with
+  | Some "https", Some host, None, [], None
+    when Option.fold ~none:true ~some:(String.equal host) expected_host -> Ok output
+  | _ ->
+    Error
+      (Printf.sprintf
+         "%s reported no usable HTTPS Kubernetes OIDC issuer URL: %S"
+         provider
+         output)
+;;
+
+let aws_workload_identity_issuer ~run (target : Sol_cli_config.target) =
+  match target.cluster_name with
+  | None ->
+    Error "the aws target must declare cluster_name to establish its trusted OIDC issuer"
+  | Some cluster_name ->
+    Result.bind
+      (run
+         [ "aws"
+         ; "eks"
+         ; "describe-cluster"
+         ; "--name"
+         ; cluster_name
+         ; "--region"
+         ; target.region
+         ; "--query"
+         ; "cluster.identity.oidc.issuer"
+         ; "--output"
+         ; "text"
+         ])
+      (oidc_issuer_of_output ~provider:"AWS EKS")
+;;
+
+let gcp_workload_identity_issuer ~run (target : Sol_cli_config.target) =
+  match target.cluster_name, Sol_cli_config.provider_field target "project_id" with
+  | None, _ ->
+    Error "the gcp target must declare cluster_name to establish its trusted OIDC issuer"
+  | _, None ->
+    Error
+      "the gcp target must declare gcp.project_id to establish its trusted OIDC issuer"
+  | _, Some project_id when Sol_cli_string.is_blank project_id ->
+    Error
+      "the gcp target must declare a non-blank gcp.project_id to establish its OIDC \
+       issuer"
+  | Some cluster_name, Some project_id ->
+    let path_segment = Uri.pct_encode in
+    let expected_issuer =
+      Printf.sprintf
+        "https://container.googleapis.com/v1/projects/%s/locations/%s/clusters/%s"
+        (path_segment project_id)
+        (path_segment target.region)
+        (path_segment cluster_name)
+    in
+    let url = expected_issuer ^ "/.well-known/openid-configuration" in
+    let open Result.Syntax in
+    (* The GKE cluster OIDC discovery document is part of Google's public API:
+       the callee fetches it and the advertised JWKS without Google credentials,
+       so discovery here must not depend on an operator credential either — a
+       deploy that only "works" with operator credentials would hide a target
+       whose workloads cannot verify tokens at runtime. *)
+    let* response = run [ "curl"; "-fsS"; url ] in
+    let discovered_issuer =
+      match Yojson.Safe.from_string response with
+      | `Assoc fields ->
+        (match List.assoc_opt "issuer" fields with
+         | Some (`String issuer) -> Ok issuer
+         | _ -> Error "GKE OIDC discovery response has no string issuer")
+      | _ -> Error "GKE OIDC discovery response is not a JSON object"
+      | exception Yojson.Json_error message ->
+        Error ("GKE OIDC discovery returned invalid JSON: " ^ message)
+    in
+    let* discovered =
+      Result.bind
+        discovered_issuer
+        (oidc_issuer_of_output ~provider:"GKE" ~expected_host:"container.googleapis.com")
+    in
+    if discovered = expected_issuer
+    then Ok discovered
+    else Error "GKE OIDC discovery issuer does not match the declared target cluster"
 ;;
 
 let aws_authorization_root_vars target =
@@ -771,6 +864,8 @@ let aws_installation_identity_contracts : identity_contract list =
 
 let aws : t =
   { root_status = Root_present
+  ; workload_identity_issuer =
+      (fun target -> aws_workload_identity_issuer ~run:run_command target)
   ; backend_config = aws_backend_config
   ; cluster_access_role_arn = aws_cluster_access_role_arn
   ; platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
@@ -969,6 +1064,8 @@ let gcp_installation_zone_lookup : string -> string list =
 
 let gcp : t =
   { root_status = Root_present
+  ; workload_identity_issuer =
+      (fun target -> gcp_workload_identity_issuer ~run:run_command target)
   ; backend_config =
       (fun _target ~bucket ~object_key ->
         Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
@@ -1049,8 +1146,14 @@ let byo_no_root =
    Sol has no provider lifecycle to run for it (DEC-051)"
 ;;
 
+let byo_no_workload_issuer =
+  "the byo driver does not own the cluster's lifecycle, so Sol does not establish a \
+   trusted Kubernetes service-account OIDC issuer for it (DEC-051)"
+;;
+
 let byo : t =
   { root_status = Root_not_applicable
+  ; workload_identity_issuer = (fun _ -> Error byo_no_workload_issuer)
   ; backend_config = (fun _ ~bucket:_ ~object_key:_ -> Error byo_no_root)
   ; cluster_access_role_arn = (fun _ -> Ok None)
   ; platform_storage = { storage_class = ""; csi_driver = "" }
