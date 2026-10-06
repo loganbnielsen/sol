@@ -133,3 +133,156 @@ let%test "bounded installs: serial keeps order" = test_serial_mode_keeps_plan_or
 let%test "bounded installs: a failure stops the queue" =
   test_a_failure_stops_new_installs ()
 ;;
+
+let endpoint ?(required = true) ?(start = fun () -> Ok ()) ?(stop = fun () -> ()) label =
+  { Sol_cli_local_infra.endpoint_label = label
+  ; endpoint_required = required
+  ; endpoint_start = start
+  ; endpoint_stop = stop
+  }
+;;
+
+let outcome_is_ready = function
+  | Sol_cli_local_infra.Ready -> true
+  | Sol_cli_local_infra.Optional_unavailable _ -> false
+;;
+
+let test_every_required_endpoint_ready () =
+  let outcomes =
+    Sol_cli_local_infra.bring_up_endpoints [ endpoint "kafka"; endpoint "ingress" ]
+  in
+  match outcomes with
+  | Error message -> Windtrap.failf "ready endpoints must succeed: %s" message
+  | Ok outcomes ->
+    Windtrap.equal Windtrap.int ~msg:"one outcome per endpoint" 2 (List.length outcomes);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"all ready"
+      true
+      (List.for_all outcome_is_ready outcomes)
+;;
+
+let test_an_optional_endpoint_can_be_unavailable () =
+  let order = ref [] in
+  let outcomes =
+    Sol_cli_local_infra.bring_up_endpoints
+      [ endpoint "core" ~start:(fun () ->
+          order := "start core" :: !order;
+          Ok ())
+      ; endpoint ~required:false "grafana" ~start:(fun () ->
+          order := "start grafana" :: !order;
+          Error "no route to localhost:3000")
+      ; endpoint "ingress" ~start:(fun () ->
+          order := "start ingress" :: !order;
+          Ok ())
+      ]
+  in
+  match outcomes with
+  | Error message -> Windtrap.failf "optional failures must not fail the run: %s" message
+  | Ok
+      [ Sol_cli_local_infra.Ready
+      ; Sol_cli_local_infra.Optional_unavailable message
+      ; Sol_cli_local_infra.Ready
+      ] ->
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the optional cause is preserved"
+      "no route to localhost:3000"
+      message;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a later endpoint still starts"
+      true
+      (List.mem "start ingress" !order)
+  | Ok _ -> Windtrap.fail "expected two ready outcomes around one optional failure"
+;;
+
+let test_a_required_failure_stops_owned_endpoints () =
+  let started = ref [] in
+  let stopped = ref [] in
+  let outcomes =
+    Sol_cli_local_infra.bring_up_endpoints
+      [ endpoint
+          "kafka"
+          ~start:(fun () ->
+            started := "kafka" :: !started;
+            Ok ())
+          ~stop:(fun () -> stopped := "kafka" :: !stopped)
+      ; endpoint
+          "postgres"
+          ~start:(fun () -> Error "target has no endpoints")
+          ~stop:(fun () -> stopped := "postgres" :: !stopped)
+      ; endpoint "ingress" ~start:(fun () ->
+          started := "ingress" :: !started;
+          Ok ())
+      ]
+  in
+  match outcomes with
+  | Ok _ -> Windtrap.fail "a required failure must fail the run"
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the failure names the endpoint"
+      true
+      (Sol_cli_string.contains ~needle:"endpoint postgres" message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the failure keeps the original cause"
+      true
+      (Sol_cli_string.contains ~needle:"target has no endpoints" message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the failure gives retry guidance and says the cluster survives"
+      true
+      (Sol_cli_string.contains ~needle:"re-run `sol local infra up`" message
+       && Sol_cli_string.contains ~needle:"left in place" message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the already-started endpoint is stopped"
+      true
+      (List.mem "kafka" !stopped);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the failed endpoint is stopped too"
+      true
+      (List.mem "postgres" !stopped);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no endpoint after the failure starts"
+      false
+      (List.mem "ingress" !started)
+;;
+
+let test_an_optional_failure_does_not_stop_the_rest () =
+  let stopped = ref [] in
+  let outcomes =
+    Sol_cli_local_infra.bring_up_endpoints
+      [ endpoint "core" ~stop:(fun () -> stopped := "core" :: !stopped)
+      ; endpoint ~required:false "tempo" ~start:(fun () -> Error "not ready")
+      ]
+  in
+  (match outcomes with
+   | Error message -> Windtrap.failf "optional failures must not fail the run: %s" message
+   | Ok _ -> ());
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"nothing is torn down for an optional failure"
+    []
+    !stopped
+;;
+
+let%test "endpoints: every required endpoint ready" =
+  test_every_required_endpoint_ready ()
+;;
+
+let%test "endpoints: an optional endpoint may be unavailable" =
+  test_an_optional_endpoint_can_be_unavailable ()
+;;
+
+let%test "endpoints: a required failure stops owned endpoints" =
+  test_a_required_failure_stops_owned_endpoints ()
+;;
+
+let%test "endpoints: an optional failure leaves the rest running" =
+  test_an_optional_failure_does_not_stop_the_rest ()
+;;

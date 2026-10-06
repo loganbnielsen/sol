@@ -32,4 +32,23 @@ type liveness =
       }
 
 val check_alive : name:string -> liveness
+
+type readiness_error =
+  | Not_started of string
+  | Port_conflict of string
+  | Not_ready of
+      { log : string
+      ; log_tail : string list
+      }
+
+val readiness_error_to_string : readiness_error -> string
+
+val ensure_ready
+  :  ?supervisor:string
+  -> ?timeout_s:float
+  -> ?interval_s:float
+  -> ctx:Sol_cli_kube_destination.context
+  -> spec
+  -> (unit, readiness_error) result
+
 val replace_conflicting : local_port:int -> namespace:string -> target:string -> spec list

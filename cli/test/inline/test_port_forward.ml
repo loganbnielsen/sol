@@ -310,3 +310,164 @@ let%test "records and liveness (REFAC-126): start and stop end to end" =
 ;;
 
 let%test "port-forward policy: the fail streak and its limit" = test_fail_streak_policy ()
+
+let free_port () =
+  let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close socket)
+    (fun () ->
+       Unix.bind socket (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+       match Unix.getsockname socket with
+       | Unix.ADDR_INET (_, port) -> port
+       | Unix.ADDR_UNIX _ -> 0)
+;;
+
+let listening_socket port =
+  let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt socket Unix.SO_REUSEADDR true;
+  Unix.bind socket (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
+  Unix.listen socket 1;
+  socket
+;;
+
+let with_fake_kubectl ~script f =
+  let dir = Filename.temp_file "sol-fake-kubectl" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  let path = Filename.concat dir "kubectl" in
+  let channel = open_out path in
+  output_string channel script;
+  close_out channel;
+  Unix.chmod path 0o755;
+  let saved = Sys.getenv_opt "PATH" in
+  Unix.putenv "PATH" (dir ^ ":" ^ Option.value saved ~default:"");
+  Fun.protect f ~finally:(fun () ->
+    Unix.putenv "PATH" (Option.value saved ~default:"");
+    Sys.remove path;
+    Unix.rmdir dir)
+;;
+
+let ready_script port =
+  Printf.sprintf
+    "#!/bin/sh\n\
+     python3 -c \"import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, \
+     socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', %d)); s.listen(1); time.sleep(30)\"\n"
+    port
+;;
+
+let ensure ?(timeout_s = 3.) ~name ~local_port () =
+  P.ensure_ready
+    ~supervisor:(sol_binary ())
+    ~timeout_s
+    ~interval_s:0.05
+    ~ctx:Sol_cli_kube_destination.local_context
+    (spec ~name ~local_port ())
+;;
+
+let test_ensure_ready_refuses_a_foreign_listener () =
+  Sol_cli_state.ensure () |> Result.get_ok;
+  let name = unique "conflict" in
+  let port = free_port () in
+  let socket = listening_socket port in
+  let result = ensure ~timeout_s:1. ~name ~local_port:port () in
+  Unix.close socket;
+  match result with
+  | Error (P.Port_conflict message) ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names the port"
+      true
+      (Sol_cli_string.contains ~needle:(string_of_int port) message)
+  | Error (P.Not_started _) | Error (P.Not_ready _) ->
+    Windtrap.fail "a foreign listener must be refused as a conflict, not waited on"
+  | Ok () -> Windtrap.fail "a foreign listener must not be adopted"
+;;
+
+let test_ensure_ready_times_out_on_a_dead_target () =
+  Sol_cli_state.ensure () |> Result.get_ok;
+  let name = unique "dead-target" in
+  let port = free_port () in
+  let result =
+    with_fake_kubectl ~script:"#!/bin/sh\nexit 1\n" (fun () ->
+      ensure ~timeout_s:1. ~name ~local_port:port ())
+  in
+  P.stop name;
+  match result with
+  | Error (P.Not_ready _) -> ()
+  | Error (P.Not_started _) ->
+    Windtrap.fail "a reachable supervisor with a failing kubectl is a readiness timeout"
+  | Error (P.Port_conflict _) -> Windtrap.fail "nothing owned the port"
+  | Ok () -> Windtrap.fail "a failing target must not be reported ready"
+;;
+
+let test_ensure_ready_times_out_when_the_supervisor_never_starts () =
+  Sol_cli_state.ensure () |> Result.get_ok;
+  let name = unique "no-supervisor" in
+  let port = free_port () in
+  let result =
+    P.ensure_ready
+      ~supervisor:
+        (Filename.concat (Filename.get_temp_dir_name ()) "sol-missing-supervisor")
+      ~timeout_s:1.
+      ~interval_s:0.05
+      ~ctx:Sol_cli_kube_destination.local_context
+      (spec ~name ~local_port:port ())
+  in
+  P.stop name;
+  match result with
+  | Error (P.Not_ready _) -> ()
+  | Error (P.Not_started _) -> ()
+  | Error (P.Port_conflict _) -> Windtrap.fail "nothing owned the port"
+  | Ok () -> Windtrap.fail "a supervisor that never runs must not be reported ready"
+;;
+
+let test_ensure_ready_accepts_a_forward_that_owns_the_port () =
+  Sol_cli_state.ensure () |> Result.get_ok;
+  let name = unique "ready" in
+  let port = free_port () in
+  let result =
+    with_fake_kubectl ~script:(ready_script port) (fun () ->
+      ensure ~timeout_s:5. ~name ~local_port:port ())
+  in
+  P.stop name;
+  match result with
+  | Ok () -> ()
+  | Error _ -> Windtrap.fail "a forward that owns the port must be ready"
+;;
+
+let test_ensure_ready_bounds_a_hung_forward () =
+  Sol_cli_state.ensure () |> Result.get_ok;
+  let name = unique "hung" in
+  let port = free_port () in
+  let result =
+    with_fake_kubectl ~script:"#!/bin/sh\nsleep 30\n" (fun () ->
+      ensure ~timeout_s:1. ~name ~local_port:port ())
+  in
+  P.stop name;
+  match result with
+  | Error (P.Not_ready _) -> ()
+  | Error (P.Not_started _) ->
+    Windtrap.fail "the supervisor started; this is a readiness timeout"
+  | Error (P.Port_conflict _) -> Windtrap.fail "nothing owned the port"
+  | Ok () -> Windtrap.fail "a forward that never binds must not be reported ready"
+;;
+
+let%test "endpoint readiness: a foreign listener is refused" =
+  test_ensure_ready_refuses_a_foreign_listener ()
+;;
+
+let%test "endpoint readiness: a dead target is bounded" =
+  test_ensure_ready_times_out_on_a_dead_target ()
+;;
+
+let%test "endpoint readiness: a supervisor that never runs is bounded" =
+  test_ensure_ready_times_out_when_the_supervisor_never_starts ()
+;;
+
+let%test "endpoint readiness: a forward that owns the port is ready" =
+  test_ensure_ready_accepts_a_forward_that_owns_the_port ()
+;;
+
+let%test "endpoint readiness: a hung forward is bounded" =
+  test_ensure_ready_bounds_a_hung_forward ()
+;;

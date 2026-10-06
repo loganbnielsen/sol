@@ -274,6 +274,91 @@ let check_alive ~name =
     Dead { log; log_tail = last_lines log 5 })
 ;;
 
+type readiness_error =
+  | Not_started of string
+  | Port_conflict of string
+  | Not_ready of
+      { log : string
+      ; log_tail : string list
+      }
+
+let readiness_error_to_string = function
+  | Not_started message -> message
+  | Port_conflict message -> message
+  | Not_ready { log; log_tail } ->
+    let tail =
+      match log_tail with
+      | [] -> ""
+      | lines -> "\n  " ^ String.concat "\n  " lines
+    in
+    Printf.sprintf "the port-forward did not become ready; see %s%s" log tail
+;;
+
+let loopback_accepts_connection port =
+  let is_not_listening_yet = function
+    | Unix.ECONNREFUSED
+    | Unix.ETIMEDOUT
+    | Unix.ENETUNREACH
+    | Unix.EHOSTUNREACH
+    | Unix.ECONNRESET -> true
+    | _ -> false
+  in
+  match Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 with
+  | exception Unix.Unix_error _ -> false
+  | socket ->
+    Fun.protect
+      ~finally:(fun () ->
+        try Unix.close socket with
+        | Unix.Unix_error _ -> ())
+      (fun () ->
+         match Unix.connect socket (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
+         | () -> true
+         | exception Unix.Unix_error (e, _, _) when is_not_listening_yet e -> false
+         | exception Unix.Unix_error _ -> false)
+;;
+
+let endpoint_ready_timeout_s = 20.
+let endpoint_ready_interval_s = 0.25
+let endpoint_ready_log_lines = 5
+
+let ensure_ready
+      ?(supervisor = Sys.executable_name)
+      ?(timeout_s = endpoint_ready_timeout_s)
+      ?(interval_s = endpoint_ready_interval_s)
+      ~ctx
+      (pf : spec)
+  =
+  let log = Sol_cli_state.log_file pf.name in
+  let* () =
+    if is_running pf.name
+    then Ok ()
+    else if loopback_accepts_connection pf.local_port
+    then
+      Error
+        (Port_conflict
+           (Printf.sprintf
+              "something is already listening on localhost:%d, so the %s port-forward \
+               cannot own it"
+              pf.local_port
+              pf.name))
+    else start ~supervisor ~ctx pf |> Result.map_error (fun e -> Not_started e)
+  in
+  let deadline = Unix.gettimeofday () +. timeout_s in
+  let rec wait () =
+    if is_running pf.name && loopback_accepts_connection pf.local_port
+    then Ok ()
+    else if Unix.gettimeofday () >= deadline
+    then (
+      let log_tail = last_lines log endpoint_ready_log_lines in
+      stop pf.name;
+      Error (Not_ready { log; log_tail }))
+    else (
+      Unix.sleepf interval_s;
+      wait ())
+  in
+  wait ()
+;;
+
 let replace_conflicting ~local_port ~namespace ~target =
   let recorded, _unreadable = records () in
   recorded
