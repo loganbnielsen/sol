@@ -56,6 +56,7 @@ type authorization_workload =
 
 type t =
   { root_status : root_status
+  ; workload_identity_issuer : Sol_cli_config.target -> (string, string) result
   ; backend_config :
       Sol_cli_config.target
       -> bucket:string
@@ -375,6 +376,89 @@ let run_command args =
   Sol_cli_process.run (Sol_cli_process.cmd args)
   |> Result.map (fun (output : Sol_cli_process.output) -> output.stdout)
   |> Result.map_error Sol_cli_process.error_to_string
+;;
+
+let oidc_issuer_of_output ~provider ?expected_host output =
+  let output = String.trim output in
+  let uri = Uri.of_string output in
+  match
+    Uri.scheme uri, Uri.host uri, Uri.userinfo uri, Uri.query uri, Uri.fragment uri
+  with
+  | Some "https", Some host, None, [], None
+    when Option.fold ~none:true ~some:(String.equal host) expected_host -> Ok output
+  | _ ->
+    Error
+      (Printf.sprintf
+         "%s reported an invalid Kubernetes OIDC issuer URL: %S"
+         provider
+         output)
+;;
+
+let aws_workload_identity_issuer (target : Sol_cli_config.target) =
+  match target.cluster_name with
+  | None -> Error "the AWS target must declare cluster_name to establish its OIDC issuer"
+  | Some cluster_name ->
+    Result.bind
+      (run_command
+         [ "aws"
+         ; "eks"
+         ; "describe-cluster"
+         ; "--name"
+         ; cluster_name
+         ; "--region"
+         ; target.region
+         ; "--query"
+         ; "cluster.identity.oidc.issuer"
+         ; "--output"
+         ; "text"
+         ])
+      (oidc_issuer_of_output ~provider:"AWS EKS")
+;;
+
+let gcp_workload_identity_issuer (target : Sol_cli_config.target) =
+  match target.cluster_name, Sol_cli_config.provider_field target "project_id" with
+  | None, _ ->
+    Error "the GCP target must declare cluster_name to establish its OIDC issuer"
+  | _, None ->
+    Error "the GCP target must declare gcp.project_id to establish its OIDC issuer"
+  | Some cluster_name, Some project_id ->
+    let path_segment = Uri.pct_encode in
+    let url =
+      Printf.sprintf
+        "https://container.googleapis.com/v1/projects/%s/locations/%s/clusters/%s/.well-known/openid-configuration"
+        (path_segment project_id)
+        (path_segment target.region)
+        (path_segment cluster_name)
+    in
+    let open Result.Syntax in
+    let* token = run_command [ "gcloud"; "auth"; "print-access-token" ] in
+    let auth_config = Printf.sprintf "header = \"Authorization: Bearer %s\"\n" token in
+    let* response =
+      Sol_cli_fs.with_temp_file
+        ~prefix:"sol-gke-oidc-"
+        ~suffix:".curl"
+        auth_config
+        (fun path ->
+           Sol_cli_process.run
+             ~echo:false
+             (Sol_cli_process.cmd [ "curl"; "-fsS"; "--config"; path; url ])
+           |> Result.map (fun (output : Sol_cli_process.output) -> output.stdout)
+           |> Result.map_error Sol_cli_process.error_to_string)
+      |> Result.join
+    in
+    let issuer =
+      match Yojson.Safe.from_string response with
+      | `Assoc fields ->
+        (match List.assoc_opt "issuer" fields with
+         | Some (`String issuer) -> Ok issuer
+         | _ -> Error "GKE OIDC discovery response has no string issuer")
+      | _ -> Error "GKE OIDC discovery response is not a JSON object"
+      | exception Yojson.Json_error message ->
+        Error ("GKE OIDC discovery returned invalid JSON: " ^ message)
+    in
+    Result.bind
+      issuer
+      (oidc_issuer_of_output ~provider:"GKE" ~expected_host:"container.googleapis.com")
 ;;
 
 let aws_authorization_root_vars target =
@@ -771,6 +855,7 @@ let aws_installation_identity_contracts : identity_contract list =
 
 let aws : t =
   { root_status = Root_present
+  ; workload_identity_issuer = aws_workload_identity_issuer
   ; backend_config = aws_backend_config
   ; cluster_access_role_arn = aws_cluster_access_role_arn
   ; platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
@@ -969,6 +1054,7 @@ let gcp_installation_zone_lookup : string -> string list =
 
 let gcp : t =
   { root_status = Root_present
+  ; workload_identity_issuer = gcp_workload_identity_issuer
   ; backend_config =
       (fun _target ~bucket ~object_key ->
         Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
@@ -1051,6 +1137,9 @@ let byo_no_root =
 
 let byo : t =
   { root_status = Root_not_applicable
+  ; workload_identity_issuer =
+      (fun _ ->
+        Error "the BYO target capability does not establish a trusted OIDC issuer")
   ; backend_config = (fun _ ~bucket:_ ~object_key:_ -> Error byo_no_root)
   ; cluster_access_role_arn = (fun _ -> Ok None)
   ; platform_storage = { storage_class = ""; csi_driver = "" }

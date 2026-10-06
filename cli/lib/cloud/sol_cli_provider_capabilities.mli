@@ -34,6 +34,7 @@ type authorization_workload =
 
 type t =
   { root_status : root_status
+  ; workload_identity_issuer : Sol_cli_config.target -> (string, string) result
   ; backend_config :
       Sol_cli_config.target
       -> bucket:string
