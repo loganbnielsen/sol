@@ -9,7 +9,7 @@
   "dependencies": {
     "@prometheus-io/client": "^0.16.1",
     "@sol-fab/obs": "^0.4.0",
-    "@sol-fab/svc": "^0.2.0",
+    "@sol-fab/svc": "^0.3.0",
     "fastify": "^5.1.0"
   },
   "devDependencies": {
