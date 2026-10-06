@@ -24,13 +24,14 @@ Sol is pre-alpha. There are no compatibility guarantees for current APIs or repo
 structure: prefer the correct design over compatibility shims, deprecated aliases, or
 version gates. Update callers and tests in the same change.
 
-GitHub Issues and pull requests are the work-state authority. Use ordinary Git branches
-or worktrees; their names carry no Sol-specific semantics. Open focused PRs, rely on
-required CI, request review proportional to risk, and squash-merge. Do not recreate
-repository-local workflow state with labels, bots, branch conventions, or custom tooling.
+GitHub Issues and pull requests are the work-state authority. Make every change in a Git
+worktree, never by switching the primary checkout off `main`; branch and worktree names
+carry no Sol-specific semantics. Open focused PRs, rely on required CI, request review
+proportional to risk, and squash-merge. Do not recreate repository-local workflow state
+with labels, bots, branch conventions, or custom tooling.
 
-Independent work proceeds concurrently from current `main` in separate branches or
-worktrees. Do not wait for an open PR to merge merely because later work depends on it.
+Independent work proceeds concurrently from current `main` in separate worktrees. Do not
+wait for an open PR to merge merely because later work depends on it.
 For a mechanical dependency, branch the dependent PR from the prerequisite PR's head and
 open it against that branch, so its diff contains only its own changes. State the stack
 relationship in the PR description. Once the parent merges, retarget and rebase or refresh

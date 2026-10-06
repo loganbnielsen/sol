@@ -6,10 +6,10 @@ contributor terms are being settled.
 Bug reports, design critique, questions, and reports of confusing behavior are welcome
 as GitHub Issues. Report security problems privately rather than in a public issue.
 
-For maintainer changes, use an ordinary Git branch or worktree and a focused pull
-request. Run targeted tests while developing and `bash internal/ci/run_fast_checks.sh`
-before proposing the change. Required GitHub CI is the merge authority; request review
-proportional to risk and squash-merge.
+For maintainer changes, create a Git worktree and open a focused pull request from it,
+leaving the primary checkout on `main`. Run targeted tests while developing and
+`bash internal/ci/run_fast_checks.sh` before proposing the change. Required GitHub CI is
+the merge authority; request review proportional to risk and squash-merge.
 
 Independent changes can proceed concurrently from `main`. For mechanical dependencies,
 stack pull requests with ordinary Git branches: base the child on its parent's branch and
