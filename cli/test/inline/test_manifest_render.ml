@@ -68,6 +68,7 @@ let workload
   { Sol_cli_manifest.Workload_spec.extra_labels = []
   ; secret_keys = []
   ; volumes = []
+  ; projected_identities = []
   ; env = None
   ; config_hash = "test-hash"
   ; availability = Sol_cli_availability.Single
@@ -311,6 +312,7 @@ let test_svc_networkpolicy_allows_monitoring_ingress () =
 let test_svc_calls_peer_env_and_network_policy () =
   let checkout =
     { Sol_cli_deployment_plan.env_var = "CHECKOUT_SVC_URL"
+    ; unit_id = "checkout/checkout-svc"
     ; url = "http://checkout-svc.myapp-checkout.svc.cluster.local"
     ; target_domain = "checkout"
     ; target_name = k8s_name "checkout-svc"
@@ -319,6 +321,7 @@ let test_svc_calls_peer_env_and_network_policy () =
   in
   let payments =
     { Sol_cli_deployment_plan.env_var = "CHARGE_SVC_URL"
+    ; unit_id = "payments/charge-svc"
     ; url = "http://charge-svc.myapp-payments.svc.cluster.local"
     ; target_domain = "payments"
     ; target_name = k8s_name "charge-svc"
@@ -344,6 +347,34 @@ let test_svc_calls_peer_env_and_network_policy () =
     "peer url env"
     caller_cm
     {|CHECKOUT_SVC_URL: "http://checkout-svc.myapp-checkout.svc.cluster.local"|};
+  assert_contains
+    "the caller config names the projected token file"
+    caller_cm
+    {|CHECKOUT_SVC_TOKEN_FILE: "/var/run/sol/identity/checkout-svc/token"|};
+  let caller_deployment = extract_kind_block caller_yaml "kind: Deployment" in
+  assert_contains
+    "the caller mounts a projected identity volume"
+    caller_deployment
+    "name: sol-identity-checkout-svc";
+  assert_contains
+    "the projected token's audience is the callee's canonical unit"
+    caller_deployment
+    "checkout/checkout-svc";
+  assert_contains "the projected token expires in an hour" caller_deployment "3600";
+  assert_contains
+    "the projected token is mounted at the stable path"
+    caller_deployment
+    "/var/run/sol/identity/checkout-svc";
+  assert_contains "the projected token is read-only" caller_deployment "readOnly: true";
+  assert_contains "the volume is a projection" caller_deployment "projected:";
+  assert_contains
+    "the projection carries a service account token"
+    caller_deployment
+    "serviceAccountToken:";
+  assert_contains
+    "the token file is the framework's stable name"
+    caller_deployment
+    "path: token";
   assert_contains "egress peer namespace" caller_netpol "myapp-checkout";
   assert_contains "egress peer app" caller_netpol "app: checkout-svc";
   let egress_block =
@@ -353,10 +384,39 @@ let test_svc_calls_peer_env_and_network_policy () =
   in
   assert_absent "caller egress is not port-pinned" egress_block "port: 8080";
   let _ns, callee_yaml = render_spec_ok callee in
+  assert_absent
+    "a unit that declares no calls receives no projected identity"
+    callee_yaml
+    "sol-identity-";
   let callee_netpol = extract_kind_block callee_yaml "kind: NetworkPolicy" in
   assert_contains "ingress caller namespace" callee_netpol "myapp-payments";
   assert_contains "ingress caller app" callee_netpol "app: charge-svc";
   assert_contains "ingress uses the container port" callee_netpol "port: 8080"
+;;
+
+let fn_call : Sol_cli_deployment_plan.service_call =
+  { env_var = "LEDGER_SVC_URL"
+  ; unit_id = "payments/ledger-svc"
+  ; url = "http://ledger-svc.myapp-payments.svc.cluster.local"
+  ; target_domain = "payments"
+  ; target_name = k8s_name "ledger-svc"
+  ; target_namespace = namespace ~workspace:"myapp" ~domain:"payments"
+  }
+;;
+
+let test_fn_calls_render_a_projected_identity () =
+  let fn = { fn_spec with calls = [ fn_call ] } in
+  let _ns, yaml = render_spec_ok fn in
+  let cronjob = extract_kind_block yaml "kind: CronJob" in
+  assert_contains "fn projected identity volume" cronjob "name: sol-identity-ledger-svc";
+  assert_contains "fn projected audience" cronjob "payments/ledger-svc";
+  assert_contains "fn projected expiry" cronjob "3600";
+  assert_contains "fn projected mount" cronjob "/var/run/sol/identity/ledger-svc";
+  let cm = extract_kind_block yaml "kind: ConfigMap" in
+  assert_contains
+    "fn token file env"
+    cm
+    {|LEDGER_SVC_TOKEN_FILE: "/var/run/sol/identity/ledger-svc/token"|}
 ;;
 
 let test_svc_has_ports () =
@@ -2598,6 +2658,10 @@ let%test "svc: calls peer env and NetworkPolicy" =
   test_svc_calls_peer_env_and_network_policy ()
 ;;
 
+let%test "fn: a declared call renders a projected identity (DEC-063)" =
+  test_fn_calls_render_a_projected_identity ()
+;;
+
 let%test "svc: has containerPort" = test_svc_has_ports ()
 let%test "svc: replicas from spec" = test_svc_replicas ()
 let%test "svc: default resources (replicas/cpu/memory)" = test_svc_default_resources ()
@@ -3018,4 +3082,27 @@ let%test
 
 let%test "contract reconciliation: one in-destination Job per language in scope" =
   test_contract_scope_rule ()
+;;
+
+let%test "identity projection: labels are bounded and the token file is stable" =
+  let long = String.make 63 'a' in
+  let p =
+    Sol_cli_identity_projection.of_call
+      ~callee_k8s_name:long
+      ~audience:"domain/unit"
+      ~url_env_var:"LEDGER_SVC_URL"
+  in
+  check_bool
+    "the volume name is a bounded DNS label"
+    true
+    (String.length p.volume_name <= 63);
+  check_bool "the volume name has no spaces" false (String.contains p.volume_name ' ');
+  check_bool
+    "the token file env var mirrors the URL env var"
+    true
+    (Sol_cli_identity_projection.token_file_env_var p = "LEDGER_SVC_TOKEN_FILE");
+  check_bool
+    "the token file is the stable projection path"
+    true
+    (Sol_cli_identity_projection.token_file p = "/var/run/sol/identity/" ^ long ^ "/token")
 ;;

@@ -95,6 +95,16 @@ let render
       (key, ns ^ "." ^ name) :: List.filter (fun (k, _) -> k <> key) config
     | _ -> config
   in
+  (* The projected-token file path is part of the workload's environment and is
+     derived from the same declared calls as the projected volume, so the env
+     and the mount can never name different files. *)
+  let config =
+    List.map
+      (fun (c : Sol_cli_deployment_plan.service_call) ->
+         Sol_cli_deployment_plan.identity_env c)
+      calls
+    @ config
+  in
   let transport = Sol_cli_manifest.kafka_transport_of_config config in
   let base_cluster_env = Sol_cli_manifest.cluster_env Sol_cli_manifest.Plaintext in
   let cfg_hash = Sol_cli_manifest.config_hash base_cluster_env config in
@@ -187,6 +197,7 @@ let render
              { Sol_cli_manifest.Workload_spec.extra_labels
              ; secret_keys
              ; volumes
+             ; projected_identities = Sol_cli_deployment_plan.identity_projections calls
              ; env
              ; config_hash = cfg_hash
              ; availability
@@ -299,6 +310,7 @@ let render
              in
              let workload : Scheduled_workload_spec.t =
                { secret_keys
+               ; projected_identities = Sol_cli_deployment_plan.identity_projections calls
                ; env
                ; ns
                ; name

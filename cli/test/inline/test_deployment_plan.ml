@@ -1631,7 +1631,17 @@ calls = ["checkout/checkout_svc"]
              , "http://checkout-svc.myworkspace-checkout.svc.cluster.local" )
            ]
            caller.config;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"the call names the callee's canonical unit as the token audience"
+           "checkout/checkout-svc"
+           (List.hd caller.calls).unit_id;
          Windtrap.equal Windtrap.int ~msg:"caller calls" 1 (List.length caller.calls);
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"the reverse edge names the caller's canonical unit for authorization"
+           "payments/charge-svc"
+           (List.hd callee.called_by).unit_id;
          Windtrap.equal
            Windtrap.int
            ~msg:"callee called_by"

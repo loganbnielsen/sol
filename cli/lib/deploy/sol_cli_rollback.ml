@@ -24,6 +24,7 @@ let decode_call
      | Ok target_namespace ->
        Ok
          { Sol_cli_deployment_plan.env_var
+         ; unit_id = target_domain ^ "/" ^ target_name_s
          ; url =
              Sol_cli_kubernetes_name.service_url
                ~namespace:target_namespace
@@ -230,6 +231,10 @@ let with_called_by (specs : Sol_cli_deployment_plan.service_spec list) =
           Some
             { Sol_cli_deployment_plan.env_var =
                 Sol_cli_kubernetes_name.call_env_var caller.source_name
+            ; unit_id =
+                caller.domain
+                ^ "/"
+                ^ Sol_cli_kubernetes_name.k8s_name_to_string caller.k8s_name
             ; url =
                 Sol_cli_kubernetes_name.service_url
                   ~namespace:caller.namespace

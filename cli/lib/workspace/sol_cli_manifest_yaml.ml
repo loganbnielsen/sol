@@ -91,6 +91,7 @@ module Workload_spec = struct
     { extra_labels : (string * string) list
     ; secret_keys : string list
     ; volumes : Sol_cli_toml.volume list
+    ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; config_hash : string
     ; availability : Sol_cli_availability.t
@@ -436,6 +437,7 @@ let pod_template
       { Workload_spec.extra_labels
       ; secret_keys
       ; volumes
+      ; projected_identities
       ; env
       ; config_hash
       ; availability
@@ -507,6 +509,36 @@ let pod_template
     |> List.map (fun (v : Sol_cli_toml.volume) ->
       Y.map [ "name", Y.string v.name; "mountPath", Y.string v.mount_path ])
   in
+  let projected_identity_volumes =
+    projected_identities
+    |> List.map (fun (p : Sol_cli_identity_projection.t) ->
+      Y.map
+        [ "name", Y.string p.volume_name
+        ; ( "projected"
+          , Y.map
+              [ ( "sources"
+                , Y.list
+                    [ Y.map
+                        [ ( "serviceAccountToken"
+                          , Y.map
+                              [ "audience", Y.string p.audience
+                              ; "expirationSeconds", Y.int 3600
+                              ; "path", Y.string "token"
+                              ] )
+                        ]
+                    ] )
+              ] )
+        ])
+  in
+  let projected_identity_mounts =
+    projected_identities
+    |> List.map (fun (p : Sol_cli_identity_projection.t) ->
+      Y.map
+        [ "name", Y.string p.volume_name
+        ; "mountPath", Y.string p.mount_path
+        ; "readOnly", Y.bool true
+        ])
+  in
   let kafka_ca_volumes =
     if kafka_tls
     then
@@ -546,7 +578,9 @@ let pod_template
        ; "securityContext", container_security
        ; "ports", Y.list [ Y.map [ "containerPort", Y.int port ] ]
        ]
-       @ non_empty_list "volumeMounts" (volume_mounts @ kafka_ca_mount)
+       @ non_empty_list
+           "volumeMounts"
+           (volume_mounts @ projected_identity_mounts @ kafka_ca_mount)
        @ non_empty_list "env" (secret_key_refs ~name secret_keys)
        @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ]
        @ probes ~shape ~consumes_kafka ~readiness_path)
@@ -560,7 +594,9 @@ let pod_template
            ; "terminationGracePeriodSeconds", Y.int default_termination_grace_seconds
            ]
            @ spread
-           @ non_empty_list "volumes" (pod_volumes @ kafka_ca_volumes)
+           @ non_empty_list
+               "volumes"
+               (pod_volumes @ projected_identity_volumes @ kafka_ca_volumes)
            @ [ "containers", Y.list [ container ] ]) )
     ]
 ;;
@@ -832,6 +868,7 @@ module Scheduled_workload_spec = struct
     ; name : string
     ; image : string
     ; secret_keys : string list
+    ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; schedule : string
     ; concurrency_policy : string
@@ -851,6 +888,7 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
       ; name
       ; image
       ; secret_keys
+      ; projected_identities
       ; env
       ; schedule
       ; concurrency_policy
@@ -877,42 +915,76 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
           ()
         |> List.map (fun (k, v) -> k, Y.quoted v))
   in
-  let kafka_ca =
+  let projected_identity_mounts =
+    projected_identities
+    |> List.map (fun (p : Sol_cli_identity_projection.t) ->
+      Y.map
+        [ "name", Y.string p.volume_name
+        ; "mountPath", Y.string p.mount_path
+        ; "readOnly", Y.bool true
+        ])
+  in
+  let projected_identity_volumes =
+    projected_identities
+    |> List.map (fun (p : Sol_cli_identity_projection.t) ->
+      Y.map
+        [ "name", Y.string p.volume_name
+        ; ( "projected"
+          , Y.map
+              [ ( "sources"
+                , Y.list
+                    [ Y.map
+                        [ ( "serviceAccountToken"
+                          , Y.map
+                              [ "audience", Y.string p.audience
+                              ; "expirationSeconds", Y.int 3600
+                              ; "path", Y.string "token"
+                              ] )
+                        ]
+                    ] )
+              ] )
+        ])
+  in
+  let kafka_ca_mounts =
     if kafka_tls
     then
-      [ ( "volumeMounts"
-        , Y.list
-            [ Y.map
-                [ "name", Y.string kafka_ca_volume
-                ; "mountPath", Y.string kafka_ca_mount_path
-                ; "readOnly", Y.bool true
-                ]
-            ] )
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; "mountPath", Y.string kafka_ca_mount_path
+          ; "readOnly", Y.bool true
+          ]
+      ]
+    else []
+  in
+  let kafka_ca =
+    match kafka_ca_mounts @ projected_identity_mounts with
+    | [] -> []
+    | mounts -> [ "volumeMounts", Y.list mounts ]
+  in
+  let kafka_ca_volume_items =
+    if kafka_tls
+    then
+      [ Y.map
+          [ "name", Y.string kafka_ca_volume
+          ; ( "secret"
+            , Y.map
+                [ "secretName", Y.string (workload_secret_name name)
+                ; ( "items"
+                  , Y.list
+                      [ Y.map
+                          [ "key", Y.string kafka_ca_secret_key
+                          ; "path", Y.string "ca.crt"
+                          ]
+                      ] )
+                ] )
+          ]
       ]
     else []
   in
   let kafka_ca_volumes =
-    if kafka_tls
-    then
-      [ ( "volumes"
-        , Y.list
-            [ Y.map
-                [ "name", Y.string kafka_ca_volume
-                ; ( "secret"
-                  , Y.map
-                      [ "secretName", Y.string (workload_secret_name name)
-                      ; ( "items"
-                        , Y.list
-                            [ Y.map
-                                [ "key", Y.string kafka_ca_secret_key
-                                ; "path", Y.string "ca.crt"
-                                ]
-                            ] )
-                      ] )
-                ]
-            ] )
-      ]
-    else []
+    match kafka_ca_volume_items @ projected_identity_volumes with
+    | [] -> []
+    | volumes -> [ "volumes", Y.list volumes ]
   in
   let container =
     Y.map

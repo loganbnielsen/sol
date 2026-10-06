@@ -119,6 +119,7 @@ module Workload_spec : sig
     { extra_labels : (string * string) list
     ; secret_keys : string list
     ; volumes : Sol_cli_toml.volume list
+    ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; config_hash : string
     ; availability : Sol_cli_availability.t
@@ -191,6 +192,7 @@ module Scheduled_workload_spec : sig
     ; name : string
     ; image : string
     ; secret_keys : string list
+    ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; schedule : string
     ; concurrency_policy : string
