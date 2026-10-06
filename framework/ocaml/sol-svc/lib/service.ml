@@ -561,6 +561,7 @@ module For_testing = struct
 
   let parse_called_by = Auth.callers_of_projection
   let workload_identity_requested = workload_identity_requested
+  let jwks_uri_of_discovery = Auth_internal.jwks_uri_of_discovery
 end
 
 module Make (H : HANDLER) = struct

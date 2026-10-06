@@ -222,8 +222,9 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 1. Require the token's `iss` to equal the trusted issuer projected by Sol.
    An issuer outside that target-established trust root is a 401.
 2. Resolve the issuer's OIDC discovery document and JWKS using the adapter's
-   HTTP runtime and cache, then check `aud` equals
-   `config.audience`, and `exp`/`nbf`.
+   HTTP runtime and cache. The discovery document must report the exact trusted
+   issuer, and its `jwks_uri` must use that issuer's HTTPS origin. Then check
+   `aud` equals `config.audience`, and `exp`/`nbf`.
 3. Map `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit
    through `config.callers`. A valid signature whose subject is not a workload
    identity, or whose unit is not declared, is a 403.
@@ -245,6 +246,7 @@ at startup with a `Config` error.
 | Workload identity: untrusted `iss`, bad signature, wrong `aud`, missing/expired token | 401 |
 | Workload identity: authenticated subject is not a workload identity, or its unit is not allowed by the declared `calls` graph | 403 |
 | Workload identity: `SOL_UNIT` unset, or no trusted-issuer root supplied | the service does not start: `run` returns a `Config` error |
+| Workload identity: discovery or JWKS fetch/parse/issuer/origin validation fails | 500 (fail closed) |
 
 ---
 

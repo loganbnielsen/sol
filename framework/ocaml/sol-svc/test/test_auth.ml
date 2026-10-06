@@ -113,7 +113,7 @@ let test_internal_route_without_target_issuer_fails_startup () =
 
 let dispatch
       ?(callers = [ caller_service_account, caller_unit ])
-      ?(fetch_jwks = fun _ -> Ok rsa_jwks)
+      ?(fetch_workload_jwks = fun _ -> Ok rsa_jwks)
       ?on_boundary
       headers
   =
@@ -126,7 +126,7 @@ let dispatch
     | _ -> Response.internal_error "workload principal missing"
   in
   Service.For_testing.dispatch
-    ~fetch_workload_jwks:fetch_jwks
+    ~fetch_workload_jwks
     ~workload_identity:(workload_identity ~callers ())
     ?on_boundary
     ~routes:[ Route.get "/probe" handler ]
@@ -162,12 +162,68 @@ let test_undeclared_caller_is_forbidden () =
 ;;
 
 let test_untrusted_issuer_is_unauthorized () =
+  let fetched = ref false in
+  let response =
+    dispatch
+      ~fetch_workload_jwks:(fun _ ->
+        fetched := true;
+        Ok rsa_jwks)
+      (headers (sign_workload ~iss:"https://attacker.example" ()))
+  in
   Windtrap.equal
     Windtrap.int
     ~msg:"issuer is not trusted → 401"
     401
-    (dispatch (headers (sign_workload ~iss:"https://attacker.example" ())))
-      .Response.status
+    response.Response.status;
+  Windtrap.is_false ~msg:"an untrusted issuer never reaches key resolution" !fetched
+;;
+
+let test_discovery_must_bind_keys_to_the_trusted_issuer () =
+  let parse body =
+    Service.For_testing.jwks_uri_of_discovery ~issuer:workload_issuer body
+  in
+  let good_uri = workload_issuer ^ "/keys" in
+  let discovery issuer jwks_uri =
+    Yojson.Safe.to_string
+      (`Assoc [ "issuer", `String issuer; "jwks_uri", `String jwks_uri ])
+  in
+  (match parse (discovery workload_issuer good_uri) with
+   | Ok uri -> Windtrap.equal Windtrap.string ~msg:"discovered JWKS URI" good_uri uri
+   | Error error -> Windtrap.fail error);
+  (match parse (discovery "https://attacker.example" good_uri) with
+   | Error error ->
+     Windtrap.is_true
+       ~msg:"mismatched discovery issuer is rejected"
+       (String.equal
+          error
+          "OIDC discovery issuer does not match the trusted target issuer")
+   | Ok _ -> Windtrap.fail "a mismatched discovery issuer was accepted");
+  (match parse (discovery workload_issuer "https://attacker.example/keys") with
+   | Error error ->
+     Windtrap.is_true
+       ~msg:"cross-origin JWKS endpoint is rejected"
+       (String.equal
+          error
+          "OIDC discovery jwks_uri must use the trusted issuer's HTTPS origin")
+   | Ok _ -> Windtrap.fail "a cross-origin JWKS endpoint was accepted");
+  match parse (discovery workload_issuer "http://kubernetes.default.svc/keys") with
+  | Error _ -> ()
+  | Ok _ -> Windtrap.fail "an insecure JWKS endpoint was accepted"
+;;
+
+let test_jwks_resolution_failure_fails_closed () =
+  Service.For_testing.reset_jwks_cache ();
+  let response =
+    dispatch
+      ~fetch_workload_jwks:(fun _ -> Error "issuer discovery unavailable")
+      (headers (sign_workload ()))
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"key resolution failure does not authenticate the request"
+    500
+    response.Response.status;
+  Service.For_testing.reset_jwks_cache ()
 ;;
 
 let test_wrong_audience_is_unauthorized () =
@@ -224,8 +280,8 @@ let test_jwks_cache_reuses_resolved_keys () =
     if issuer = workload_issuer then Ok rsa_jwks else Error "unexpected JWKS URL"
   in
   let token = headers (sign_workload ()) in
-  let first = dispatch ~fetch_jwks:fetch token in
-  let second = dispatch ~fetch_jwks:fetch token in
+  let first = dispatch ~fetch_workload_jwks:fetch token in
+  let second = dispatch ~fetch_workload_jwks:fetch token in
   Windtrap.equal Windtrap.int ~msg:"first request succeeds" 200 first.Response.status;
   Windtrap.equal Windtrap.int ~msg:"second request succeeds" 200 second.Response.status;
   Windtrap.equal Windtrap.int ~msg:"cached JWKS is reused" 1 !fetches;
@@ -310,6 +366,12 @@ let () =
     ; Windtrap.test
         "untrusted issuer is unauthorized"
         test_untrusted_issuer_is_unauthorized
+    ; Windtrap.test
+        "OIDC discovery and JWKS stay bound to the trusted issuer"
+        test_discovery_must_bind_keys_to_the_trusted_issuer
+    ; Windtrap.test
+        "workload authentication fails closed when key resolution fails"
+        test_jwks_resolution_failure_fails_closed
     ; Windtrap.test "wrong audience is unauthorized" test_wrong_audience_is_unauthorized
     ; Windtrap.test
         "tampered signature is unauthorized"

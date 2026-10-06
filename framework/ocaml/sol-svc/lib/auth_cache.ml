@@ -11,6 +11,11 @@ let unknown_kid_refetch_interval_s = 30.0
 let failure_backoff_s = 5.0
 let peek () = Atomic.get cache
 let replace entry = Atomic.set cache (Some entry)
-let clear () = Atomic.set cache None
+
+let clear () =
+  Atomic.set cache None;
+  Atomic.set failure None
+;;
+
 let last_failure () = Atomic.get failure
 let set_last_failure f = Atomic.set failure f
