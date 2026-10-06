@@ -28,3 +28,39 @@ val build_line : command -> string
 val launch_line : command -> string
 val dev_registry_url : string
 val dev_env : (string * string) list
+
+type child =
+  { child_label : string
+  ; child_pid : int
+  }
+
+type child_failure =
+  | Spawn_failed of
+      { label : string
+      ; message : string
+      }
+  | Exited of
+      { label : string
+      ; code : int
+      }
+  | Signaled of
+      { label : string
+      ; signal : int
+      }
+  | Interrupted of int
+
+val child_failure_to_string : child_failure -> string
+val interrupt_exit_code : int -> int
+val launch : output:Unix.file_descr -> recipe -> (child, child_failure) result
+
+val launch_all
+  :  output:(recipe -> Unix.file_descr)
+  -> recipe list
+  -> (child list, child_failure) result
+
+val terminate : child list -> unit
+
+val supervise
+  :  ?on_status:(child -> Unix.process_status -> unit)
+  -> child list
+  -> (unit, child_failure) result

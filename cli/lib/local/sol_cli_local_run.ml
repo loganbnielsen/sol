@@ -346,3 +346,163 @@ let shell_line ?(prefix = "") (command : command) =
 let opam_env_prefix = "eval $(opam env 2>/dev/null) 2>/dev/null; "
 let build_line command = shell_line ~prefix:opam_env_prefix command
 let launch_line command = shell_line command
+
+type child =
+  { child_label : string
+  ; child_pid : int
+  }
+
+type child_failure =
+  | Spawn_failed of
+      { label : string
+      ; message : string
+      }
+  | Exited of
+      { label : string
+      ; code : int
+      }
+  | Signaled of
+      { label : string
+      ; signal : int
+      }
+  | Interrupted of int
+
+let child_failure_to_string = function
+  | Spawn_failed { label; message } ->
+    Printf.sprintf "could not start %s: %s" label message
+  | Exited { label; code } -> Printf.sprintf "%s exited with code %d" label code
+  | Signaled { label; signal } -> Printf.sprintf "%s was signalled (%d)" label signal
+  | Interrupted signal -> Printf.sprintf "interrupted by signal %d" signal
+;;
+
+let interrupt_exit_code signal =
+  if signal = Sys.sigint then 130 else if signal = Sys.sigterm then 143 else 1
+;;
+
+let launch ~output (recipe : recipe) =
+  match
+    Sol_cli_process.spawn_detached
+      ~output
+      (Sol_cli_process.cmd ~cwd:recipe.launch.cwd ~env:recipe.env recipe.launch.argv)
+  with
+  | Ok background ->
+    Ok { child_label = recipe.label; child_pid = Sol_cli_process.pid background }
+  | Error (Sol_cli_process.Spawn_failed message) ->
+    Error (Spawn_failed { label = recipe.label; message })
+  | Error error ->
+    Error
+      (Spawn_failed
+         { label = recipe.label; message = Sol_cli_process.error_to_string error })
+;;
+
+let child_is_running pid =
+  match Unix.waitpid [ Unix.WNOHANG ] pid with
+  | 0, _ -> true
+  | _, _ -> false
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> true
+  | exception Unix.Unix_error _ -> false
+;;
+
+let terminate children =
+  List.iter
+    (fun child ->
+       try Unix.kill (-child.child_pid) Sys.sigterm with
+       | Unix.Unix_error _ -> ())
+    children;
+  let deadline = Unix.gettimeofday () +. 2.0 in
+  let rec wait () =
+    let running = List.filter (fun child -> child_is_running child.child_pid) children in
+    if running = [] || Unix.gettimeofday () >= deadline
+    then running
+    else (
+      Unix.sleepf 0.05;
+      wait ())
+  in
+  let stubborn = wait () in
+  List.iter
+    (fun child ->
+       try Unix.kill (-child.child_pid) Sys.sigkill with
+       | Unix.Unix_error _ -> ())
+    stubborn;
+  List.iter
+    (fun child ->
+       try ignore (Unix.waitpid [] child.child_pid) with
+       | Unix.Unix_error _ -> ())
+    stubborn
+;;
+
+let launch_all ~output recipes =
+  let rec go launched = function
+    | [] -> Ok (List.rev launched)
+    | recipe :: rest ->
+      (match launch ~output:(output recipe) recipe with
+       | Ok child -> go (child :: launched) rest
+       | Error failure ->
+         terminate launched;
+         Error failure)
+  in
+  go [] recipes
+;;
+
+let reap_owned children =
+  let rec go = function
+    | [] -> None
+    | child :: rest ->
+      (match Unix.waitpid [ Unix.WNOHANG ] child.child_pid with
+       | 0, _ -> go rest
+       | _, status -> Some (child, status)
+       | exception Unix.Unix_error (Unix.EINTR, _, _) -> None
+       | exception Unix.Unix_error _ -> go rest)
+  in
+  go children
+;;
+
+let supervise ?(on_status = fun _ _ -> ()) children =
+  if children = []
+  then Ok ()
+  else (
+    let interrupted = ref None in
+    let handler signal = interrupted := Some signal in
+    let previous_int = Sys.signal Sys.sigint (Sys.Signal_handle handler) in
+    let previous_term = Sys.signal Sys.sigterm (Sys.Signal_handle handler) in
+    let restore () =
+      Sys.set_signal Sys.sigint previous_int;
+      Sys.set_signal Sys.sigterm previous_term
+    in
+    let pending = ref children in
+    let stop_rest () =
+      terminate !pending;
+      pending := []
+    in
+    let rec loop () =
+      match !interrupted with
+      | Some signal ->
+        stop_rest ();
+        Error (Interrupted signal)
+      | None ->
+        (match reap_owned !pending with
+         | None ->
+           (try Unix.sleepf 0.05 with
+            | Unix.Unix_error (Unix.EINTR, _, _) -> ());
+           loop ()
+         | Some (child, status) ->
+           pending := List.filter (fun c -> c.child_pid <> child.child_pid) !pending;
+           on_status child status;
+           (match status with
+            | Unix.WEXITED 0 -> if !pending = [] then Ok () else loop ()
+            | Unix.WEXITED code ->
+              stop_rest ();
+              Error (Exited { label = child.child_label; code })
+            | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
+              stop_rest ();
+              Error (Signaled { label = child.child_label; signal })))
+    in
+    let result =
+      try loop () with
+      | error ->
+        restore ();
+        raise error
+    in
+    restore ();
+    result)
+;;

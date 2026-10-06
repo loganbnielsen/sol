@@ -253,11 +253,6 @@ let prefix_lines_thread fd label =
   | _ -> ()
 ;;
 
-type child =
-  { pid : int
-  ; label : string
-  }
-
 let resolve_run workspace_dir scope =
   workspace_dir |> Option.iter Unix.chdir;
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
@@ -335,77 +330,35 @@ let build_services (plan : Sol_cli_local_run.plan) =
 ;;
 
 let launch_services (plan : Sol_cli_local_run.plan) =
-  let children =
+  Sol_cli_local_run.launch_all
+    ~output:(fun (recipe : Sol_cli_local_run.recipe) ->
+      let pipe_read, pipe_write = Unix.pipe ~cloexec:true () in
+      let _t = Thread.create (fun () -> prefix_lines_thread pipe_read recipe.label) () in
+      pipe_write)
     plan.launches
-    |> List.filter_map (fun (recipe : Sol_cli_local_run.recipe) ->
-      let label = recipe.label in
-      let cmd_str = Sol_cli_local_run.launch_line recipe.launch in
-      let pipe_read, pipe_write = Unix.pipe () in
-      let spawned =
-        Sol_cli_process.spawn
-          ~output:pipe_write
-          (Sol_cli_process.cmd ~env:recipe.env [ "sh"; "-c"; cmd_str ])
-      in
-      Unix.close pipe_write;
-      match spawned with
-      | Ok child ->
-        let _t = Thread.create (fun () -> prefix_lines_thread pipe_read label) () in
-        Some { pid = Sol_cli_process.pid child; label }
-      | Error e ->
-        Unix.close pipe_read;
-        Printf.eprintf
-          "error: failed to spawn [%s]: %s\n"
-          label
-          (Sol_cli_process.error_to_string e);
-        None)
-  in
-  let* children =
-    match children with
-    | [] -> Error (Sol_cli_exit.error "no services could be started")
-    | children -> Ok children
-  in
-  Ok children
+  |> Result.map_error Sol_cli_local_run.child_failure_to_string
+  |> Sol_cli_exit.of_msg
 ;;
 
 let supervise_children children =
   Printf.printf "  Services running — press Ctrl-C to stop all.\n\n%!";
-  let kill_all () =
-    Printf.printf "\n  Stopping services...\n%!";
-    children
-    |> List.iter (fun c ->
-      try Unix.kill c.pid Sys.sigterm with
-      | _ -> ());
-    Unix.sleepf 0.5;
-    children
-    |> List.iter (fun c ->
-      try Unix.kill c.pid Sys.sigkill with
-      | _ -> ())
+  let on_status (child : Sol_cli_local_run.child) status =
+    match status with
+    | Unix.WEXITED 0 -> ()
+    | Unix.WEXITED code ->
+      Printf.eprintf "[%s] exited with code %d\n%!" child.child_label code
+    | Unix.WSIGNALED signal ->
+      Printf.eprintf "[%s] was signalled (%d)\n%!" child.child_label signal
+    | Unix.WSTOPPED signal ->
+      Printf.eprintf "[%s] was stopped (%d)\n%!" child.child_label signal
   in
-  Sys.set_signal
-    Sys.sigint
-    (Sys.Signal_handle
-       (fun _ ->
-         kill_all ();
-         exit 130));
-  let by_pid = Hashtbl.create 8 in
-  List.iter (fun c -> Hashtbl.replace by_pid c.pid c) children;
-  let remaining = ref (Hashtbl.length by_pid) in
-  while !remaining > 0 do
-    try
-      let pid, status = Unix.wait () in
-      decr remaining;
-      match Hashtbl.find_opt by_pid pid with
-      | None -> ()
-      | Some c ->
-        (match status with
-         | Unix.WEXITED 0 -> ()
-         | Unix.WEXITED n -> Printf.eprintf "[%s] exited with code %d\n%!" c.label n
-         | Unix.WSIGNALED _ -> ()
-         | Unix.WSTOPPED _ -> ())
-    with
-    | Unix.Unix_error _ -> remaining := 0
-  done;
-  Ok ()
+  match Sol_cli_local_run.supervise ~on_status children with
+  | Ok () -> Ok ()
+  | Error (Sol_cli_local_run.Interrupted signal) ->
+    Printf.printf "\n  Stopping services...\n%!";
+    Error (Sol_cli_exit.reported ~code:(Sol_cli_local_run.interrupt_exit_code signal) ())
+  | Error failure ->
+    Error (Sol_cli_exit.error (Sol_cli_local_run.child_failure_to_string failure))
 ;;
 
 let dev_run workspace_dir scope =
