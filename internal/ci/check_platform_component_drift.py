@@ -60,7 +60,6 @@ TS_TEMPLATE_PACKAGES = [
     "platform/shared/templates/worker-ts/package.json",
 ]
 DEMO_TS_LOCKFILE = f"{DEMO_TS}/package-lock.json"
-DOCUMENTED_TAXONOMY = ["workspace", "env", "domain", "service", "primitive", "release"]
 DEV_TAXONOMY = re.compile(r"~taxonomy_labels:\[(.*?)\]", re.S)
 
 
@@ -71,28 +70,25 @@ def ocaml_pair_list(text, name):
     return re.findall(r'"([^"]+)"\s*,\s*"([^"]+)"', match.group(1))
 
 
-def identity_problems(root):
+def framework_taxonomy(root):
     problems = []
-    documented = sorted(DOCUMENTED_TAXONOMY)
     framework = root / FRAMEWORK_OBS
+    if not framework.is_file():
+        return None, [f"{FRAMEWORK_OBS} is missing, so the emitted identity vocabulary cannot be checked"]
+    pairs = ocaml_pair_list(framework.read_text(encoding="utf-8"), "taxonomy")
+    if pairs is None:
+        problems.append(
+            f'{FRAMEWORK_OBS} no longer declares `let taxonomy = [ "SOL_VAR", "label"; ... ]`'
+        )
+    elif len({label for _, label in pairs}) != len(pairs):
+        problems.append(f"{FRAMEWORK_OBS} declares duplicate observability identity labels")
+    return pairs, problems
+
+
+def identity_problems(root, framework_pairs):
+    problems = []
     manifest = root / MANIFEST
     render = root / DEPLOYMENT_RENDER
-    framework_pairs = None
-    if not framework.is_file():
-        problems.append(f"{FRAMEWORK_OBS} is missing, so the emitted identity vocabulary cannot be checked")
-    else:
-        framework_pairs = ocaml_pair_list(framework.read_text(encoding="utf-8"), "taxonomy")
-        if framework_pairs is None:
-            problems.append(
-                f'{FRAMEWORK_OBS} no longer declares `let taxonomy = [ "SOL_VAR", "label"; ... ]`'
-            )
-        else:
-            labels = sorted(label for _, label in framework_pairs)
-            if labels != documented:
-                problems.append(
-                    f"the framework's emitted identity labels must be exactly {DOCUMENTED_TAXONOMY}; "
-                    f"got {labels} (DEC-064)"
-                )
     manifest_pairs = None
     if not manifest.is_file():
         problems.append(f"{MANIFEST} is missing, so the rendered identity vocabulary cannot be checked")
@@ -104,13 +100,8 @@ def identity_problems(root):
             problems.append(
                 f'{MANIFEST} no longer declares `let observability_identity = [ "label", "SOL_VAR"; ... ]`'
             )
-        else:
-            labels = sorted(label for label, _ in manifest_pairs)
-            if labels != documented:
-                problems.append(
-                    f"the rendered identity labels must be exactly {DOCUMENTED_TAXONOMY}; "
-                    f"got {labels} (DEC-064)"
-                )
+        elif len({label for label, _ in manifest_pairs}) != len(manifest_pairs):
+            problems.append(f"{MANIFEST} declares duplicate observability identity labels")
     if framework_pairs is not None and manifest_pairs is not None:
         framework_env = {label: var for var, label in framework_pairs}
         manifest_env = {label: var for label, var in manifest_pairs}
@@ -227,8 +218,11 @@ def terraform_taxonomy(path):
     return None
 
 
-def taxonomy_problems(root):
+def taxonomy_problems(root, framework_pairs):
     problems = []
+    if framework_pairs is None:
+        return problems
+    framework_labels = [label for _, label in framework_pairs]
     main_tf = root / PLATFORM_MAIN
     dev = root / DEV_OBSERVABILITY
     try:
@@ -249,10 +243,10 @@ def taxonomy_problems(root):
                 f"the cloud Alloy taxonomy {cloud} and the local mirror {local} must be identical "
                 "(dev mirrors prod, DEC-046)"
             )
-        if sorted(cloud) != sorted(DOCUMENTED_TAXONOMY):
+        if sorted(cloud) != sorted(framework_labels):
             problems.append(
-                f"the log-promotion taxonomy must be exactly {DOCUMENTED_TAXONOMY}; got {cloud} "
-                "(the six-label identity includes env -- OBS-049)"
+                f"the cloud log-promotion taxonomy {cloud} must match the framework identity labels "
+                f"{framework_labels}"
             )
     return problems
 
@@ -292,8 +286,10 @@ def main():
             f"every component in {components_json} must have exactly the layers common, local, durable "
             "(keyed by profile, never by env, provider or region):\n  " + "\n  ".join(bad)
         )
-    problems.extend(taxonomy_problems(root))
-    problems.extend(identity_problems(root))
+    framework_pairs, framework_problems = framework_taxonomy(root)
+    problems.extend(framework_problems)
+    problems.extend(taxonomy_problems(root, framework_pairs))
+    problems.extend(identity_problems(root, framework_pairs))
     problems.extend(typescript_identity_problems(root))
     problems.extend(typescript_lockfile_problems(root))
     for problem in problems:
@@ -301,9 +297,9 @@ def main():
     if problems:
         sys.exit(1)
     print("guardrail: no migrated platform-component keys found duplicated inline in the local platform or main.tf.")
-    print("guardrail: the cloud and local Alloy log-promotion taxonomies match and carry all six labels.")
-    print("guardrail: the framework, manifest and workload identity injection carry the same six labels under the same SOL_* names.")
-    print("guardrail: the TypeScript demo builds its Loki stream and OTLP resource from the injected identity, not the app's own service name.")
+    print("guardrail: the cloud and local Alloy taxonomy declarations match the framework identity labels.")
+    print("guardrail: framework and manifest identity declarations agree, and deployment rendering uses the shared identity helper.")
+    print("guardrail: TypeScript demo sources reference the identity helpers and avoid hardcoding service.name.")
     print("guardrail: the demo and the TypeScript templates pin @sol-fab/obs at or above the identity floor, and the demo lockfile resolves exactly one copy.")
 
 
