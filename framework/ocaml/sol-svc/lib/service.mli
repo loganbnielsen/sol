@@ -19,7 +19,6 @@ module Make (H : HANDLER) : sig
          ; .. >
     -> ?port:int
     -> ?metrics_auth:Auth.level
-    -> ?trusted_issuers:(string * string) list
     -> ?ot:Sol_obs.t
     -> ?observe:Observation.sink
     -> ?max_body_bytes:int
@@ -40,7 +39,6 @@ val run
        ; .. >
   -> ?port:int
   -> ?metrics_auth:Auth.level
-  -> ?trusted_issuers:(string * string) list
   -> ?ot:Sol_obs.t
   -> ?observe:Observation.sink
   -> ?max_body_bytes:int
@@ -60,6 +58,7 @@ module For_testing : sig
     :  ?report_error:error_reporter
     -> ?read_api_key:(unit -> string option)
     -> ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
+    -> ?fetch_workload_jwks:(string -> (Jose.Jwks.t, string) result)
     -> ?workload_identity:Auth.workload_identity_config
     -> ?on_boundary:(Observation.boundary -> unit)
     -> ?on_workload_principal:((string * string) option -> unit)
@@ -69,7 +68,7 @@ module For_testing : sig
     -> Response.t
 
   val workload_identity_config
-    :  trusted_issuers:(string * string) list
+    :  trusted_issuer:string option
     -> Route.t list
     -> Auth.level
     -> (Auth.workload_identity_config option, run_error) result

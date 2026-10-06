@@ -23,7 +23,6 @@ let with_server env ~sw f =
     S.run
       ~env
       ~port:0
-      ~trusted_issuers:[ "https://issuer.example.com", "https://issuer.example.com/jwks" ]
       ~stop
       ~shutdown_delay_s:0.0
       ~drain_timeout_s:0.1
@@ -325,14 +324,7 @@ let run_with_jwks_url env url =
       let routes = []
     end)
   in
-  S.run
-    ~env
-    ~port:0
-    ~stop:(stopped ())
-    ~drain_timeout_s:0.1
-    ~trusted_issuers:[ "https://issuer.example.com", "https://issuer.example.com/jwks" ]
-    ~metrics_auth:auth
-    ()
+  S.run ~env ~port:0 ~stop:(stopped ()) ~drain_timeout_s:0.1 ~metrics_auth:auth ()
 ;;
 
 let test_http_jwks_url_refused env () =

@@ -8,11 +8,7 @@ let rsa_priv_jwk = Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2
 let rsa_jwks = Jose.Jwks.{ keys = [ Jose.Jwk.pub_of_priv rsa_priv_jwk ] }
 
 let workload_identity ?(callers = [ caller_service_account, caller_unit ]) () =
-  Auth.
-    { audience = workload_audience
-    ; callers
-    ; trusted_issuers = [ workload_issuer, "https://cluster.example/jwks" ]
-    }
+  Auth.{ audience = workload_audience; callers; trusted_issuer = workload_issuer }
 ;;
 
 let sign_workload
@@ -52,7 +48,7 @@ let dispatch
     | _ -> Response.internal_error "workload principal missing"
   in
   Service.For_testing.dispatch
-    ~fetch_jwks
+    ~fetch_workload_jwks:fetch_jwks
     ~workload_identity:(workload_identity ~callers ())
     ?on_boundary
     ~routes:[ Route.get "/probe" handler ]
@@ -145,11 +141,9 @@ let test_missing_token_is_unauthorized () =
 let test_jwks_cache_reuses_resolved_keys () =
   Service.For_testing.reset_jwks_cache ();
   let fetches = ref 0 in
-  let fetch url =
+  let fetch issuer =
     incr fetches;
-    if url = "https://cluster.example/jwks"
-    then Ok rsa_jwks
-    else Error "unexpected JWKS URL"
+    if issuer = workload_issuer then Ok rsa_jwks else Error "unexpected JWKS URL"
   in
   let token = headers (sign_workload ()) in
   let first = dispatch ~fetch_jwks:fetch token in

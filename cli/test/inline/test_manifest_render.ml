@@ -3192,3 +3192,33 @@ let%test "workload identity: sol secret set refuses SOL_CALLED_BY" =
     true
     (Result.is_error (Sol_cli_secret.validate_key "SOL_CALLED_BY"))
 ;;
+
+let%test "workload identity: target issuer is projected into svc config" =
+  let _, workload =
+    render_spec_ok
+      { svc_spec with
+        config =
+          ( "SOL_TRUSTED_WORKLOAD_ISSUER"
+          , "https://oidc.eks.us-east-1.amazonaws.com/id/cluster" )
+          :: svc_spec.config
+      }
+  in
+  check_bool
+    "the trusted issuer is projected into the workload"
+    true
+    (Sol_cli_string.contains
+       ~needle:
+         {|SOL_TRUSTED_WORKLOAD_ISSUER: "https://oidc.eks.us-east-1.amazonaws.com/id/cluster"|}
+       workload)
+;;
+
+let%test "workload identity: sol.toml cannot set the target issuer" =
+  toml_rejects_reserved_key ~key:"SOL_TRUSTED_WORKLOAD_ISSUER"
+;;
+
+let%test "workload identity: sol secret set refuses the target issuer" =
+  check_bool
+    "sol secret set refuses the target-projected key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_TRUSTED_WORKLOAD_ISSUER"))
+;;

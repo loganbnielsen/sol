@@ -257,10 +257,11 @@ Only local development opts in to that key explicitly with
 the supplied `trace_ctx` as a W3C `traceparent`, which the callee's `Sol_svc`
 extracts into `Request.trace_ctx`.
 
-After the token is attached, the callee's `` `Workload_identity`` route
-verifies it offline: it reads `iss` only to select an issuer in the configured
-trusted set, checks the signature against that issuer's JWKS, checks `aud`
-equals the callee's own unit (`SOL_UNIT`), then maps
+After the token is attached, the callee's Sol HTTP adapter requires the token's
+`iss` to equal `SOL_TRUSTED_WORKLOAD_ISSUER`, which Sol projects from the target's
+established capability. The adapter fetches that issuer's OIDC discovery document
+and JWKS, checks the signature, and checks `aud` equals the callee's own unit
+(`SOL_UNIT`), then maps
 `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit and
 requires that unit in the projected `SOL_CALLED_BY` set. An unauthenticated
 caller (bad token, untrusted issuer, wrong audience) is a `401`; an

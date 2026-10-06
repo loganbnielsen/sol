@@ -98,8 +98,8 @@ type workload_identity_config =
   { audience : string
   ; callers : (string * string) list
       (** service account ["<namespace>:<serviceaccount>"] -> caller unit *)
-  ; trusted_issuers : (string * string) list
-      (** accepted issuer -> its JWKS URL *)
+  ; trusted_issuer : string
+      (** target-established Kubernetes service-account issuer *)
   }
 
 type level =
@@ -219,23 +219,21 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 **`` `Workload_identity ``** — DEC-063 Sol-to-Sol authentication. It validates
 `Authorization: Bearer <projected ServiceAccount token>` locally:
 
-1. Read `iss` from the token only to select an issuer in `trusted_issuers`.
-   An issuer outside that set is a 401; nothing in the token is trusted yet.
-2. Verify the signature against that issuer's JWKS (fetched from the configured
-   URL, same cache/refetch rules as `` `Jwt ``), then check `aud` equals
+1. Require the token's `iss` to equal the trusted issuer projected by Sol.
+   An issuer outside that target-established trust root is a 401.
+2. Resolve the issuer's OIDC discovery document and JWKS using the adapter's
+   HTTP runtime and cache, then check `aud` equals
    `config.audience`, and `exp`/`nbf`.
 3. Map `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit
    through `config.callers`. A valid signature whose subject is not a workload
    identity, or whose unit is not declared, is a 403.
 
-`config.audience` comes from `SOL_UNIT` and `config.callers` from `SOL_CALLED_BY`,
-both projected by the CLI from the canonical caller-owned `calls` graph. The
-shared `Auth.callers_of_projection` decoder handles the derived caller set.
-trusted-issuer set is **not** read from the environment; the application passes it
-to `Service.run ~trusted_issuers` (a list of `issuer, jwks_url`). A route that
-uses `` `Workload_identity `` without `SOL_UNIT` or without a trust root fails at
-startup with a `Config` error. Issuing discovery and its capability check land
-separately; until then the trust root is explicit.
+`config.audience` comes from `SOL_UNIT`, `config.callers` from `SOL_CALLED_BY`, and
+`config.trusted_issuer` from `SOL_TRUSTED_WORKLOAD_ISSUER`. Sol derives all three
+from the caller-owned `calls` graph or target capability and projects them into the
+workload. Application code calls `Service.run` without choosing a trusted issuer.
+A route that requires workload authentication without any required projection fails
+at startup with a `Config` error.
 
 **Error responses:**
 
@@ -486,10 +484,6 @@ module Make (H : HANDLER) : sig
        (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
            Set to [`Api_key] for production clusters that don't use NetworkPolicy
            to restrict Prometheus scraper access. *)
-    -> ?trusted_issuers:(string * string) list
-       (** Trusted workload token issuers and their JWKS URLs. Required when a route
-           uses [`Workload_identity]; this list must come from Sol's verified target
-           capability, never from the incoming token. *)
     -> ?ot:Sol_obs.t
        (** Observability handle. When provided, sol_svc_requests_total/
            sol_svc_request_duration_seconds are emitted per request, and
