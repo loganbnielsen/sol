@@ -326,6 +326,7 @@ let install_window_open ~can_i =
 type readiness =
   | Established
   | Unmet of string
+  | Unobservable of string
 
 type readiness_check =
   { name : string
@@ -589,29 +590,70 @@ let readiness_checks ~provider =
     @ platform_certificate_checks)
 ;;
 
+(* Probe outcomes stay typed and keep the probe's own evidence. A probe that
+   could not run (refused, timed out, tool missing, malformed output) is
+   [Unobservable], never promoted to a confirmed [Unmet] condition. *)
 let readiness ~provider ~run =
   readiness_checks ~provider
   |> List.map (fun check ->
     ( check.name
     , match run check.argv with
-      | Some output when check.accept (String.trim output) -> Established
-      | _ -> Unmet check.reason ))
+      | Ok output when check.accept (String.trim output) -> Established
+      | Ok _ -> Unmet check.reason
+      | Error why ->
+        Unobservable (Printf.sprintf "could not observe %s: %s" check.name why) ))
 ;;
 
 let readiness_invocations ~provider =
   List.map (fun check -> check.name, check.argv) (readiness_checks ~provider)
 ;;
 
+let readiness_entries pick checks =
+  checks
+  |> List.filter_map (fun (name, result) ->
+    match pick result with
+    | None -> None
+    | Some reason -> Some (name ^ ": " ^ reason))
+;;
+
 let readiness_summary checks =
-  match
-    checks
-    |> List.filter_map (fun (name, result) ->
-      match result with
-      | Established -> None
-      | Unmet reason -> Some (name ^ ": " ^ reason))
-  with
-  | [] -> "Ready"
-  | unmet -> "Unmet — " ^ String.concat "; " unmet
+  let unmet =
+    readiness_entries
+      (function
+        | Unmet reason -> Some reason
+        | Established | Unobservable _ -> None)
+      checks
+  in
+  let unobservable =
+    readiness_entries
+      (function
+        | Unobservable reason -> Some reason
+        | Established | Unmet _ -> None)
+      checks
+  in
+  match unmet, unobservable with
+  | [], [] -> "Ready"
+  | unmet, [] -> "Unmet — " ^ String.concat "; " unmet
+  | [], unobservable -> "Unobservable — " ^ String.concat "; " unobservable
+  | unmet, unobservable ->
+    Printf.sprintf
+      "Unmet — %s; unobservable — %s"
+      (String.concat "; " unmet)
+      (String.concat "; " unobservable)
+;;
+
+(* The lifecycle decision reads the typed outcomes, not the rendered summary, so
+   changing readiness wording cannot change whether an apply advances. *)
+let readiness_decision checks =
+  if
+    List.for_all
+      (fun (_, result) ->
+         match result with
+         | Established -> true
+         | Unmet _ | Unobservable _ -> false)
+      checks
+  then Ok ()
+  else Error (readiness_summary checks)
 ;;
 
 type phase =

@@ -74,3 +74,12 @@ let process_output ?(env = []) argv =
   | Ok result -> Some result.stdout
   | _ -> None
 ;;
+
+(* A probe that keeps the tool's own failure instead of collapsing it to
+   [None]. Readiness uses this so a refused, timed-out or unlaunchable probe is
+   an unobservable check with its evidence, never a confirmed unmet one. *)
+let process_output_result ?(env = []) argv : (string, string) result =
+  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+  | Ok result -> Ok result.stdout
+  | Error error -> Error (Sol_cli_process.error_to_string error)
+;;

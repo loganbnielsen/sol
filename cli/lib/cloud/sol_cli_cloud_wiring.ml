@@ -105,7 +105,7 @@ let cluster_of ~(target_cfg : Sol_cli_config.target) provider infra_dir =
 ;;
 
 let process_ok = Sol_cli_cluster.process_ok
-let process_output = Sol_cli_cluster.process_output
+let process_output_result = Sol_cli_cluster.process_output_result
 
 let platform_vars_of_result
       ?(context = Sol_cli_cloud_lifecycle.Install)
@@ -340,15 +340,16 @@ let with_cluster_access_apply cluster f =
 let await_platform_readiness ~provider ~env =
   let sample () =
     Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
-      process_output ~env ("kubectl" :: args))
+      process_output_result ~env ("kubectl" :: args))
   in
-  let unmet_count checks =
+  let unestablished_count checks =
     List.length
       (checks
        |> List.filter (fun (_, state) ->
          match state with
          | Sol_cli_cloud_lifecycle.Established -> false
-         | Sol_cli_cloud_lifecycle.Unmet _ -> true))
+         | Sol_cli_cloud_lifecycle.Unmet _ | Sol_cli_cloud_lifecycle.Unobservable _ ->
+           true))
   in
   let deadline_s =
     match Sol_cli_string.env "SOL_PLATFORM_READINESS_TIMEOUT_S" with
@@ -363,13 +364,13 @@ let await_platform_readiness ~provider ~env =
   let waiting_since = Unix.gettimeofday () in
   let rec await () =
     let checks = sample () in
-    let unmet = unmet_count checks in
-    if unmet = 0 || Unix.gettimeofday () >= deadline
+    let unestablished = unestablished_count checks in
+    if unestablished = 0 || Unix.gettimeofday () >= deadline
     then checks
     else (
       Sol_cli_report.app
-        "  awaiting platform readiness: %d check(s) unmet, %.0fs elapsed"
-        unmet
+        "  awaiting platform readiness: %d check(s) not established, %.0fs elapsed"
+        unestablished
         (Unix.gettimeofday () -. waiting_since);
       Unix.sleepf poll_s;
       await ())

@@ -143,11 +143,9 @@ let install_platform deps ~closing =
     in
     let* () = deps.verify_platform_prerequisites env platform_vars in
     let* () = deps.apply_platform env platform_vars in
-    let summary = Sol_cli_cloud_lifecycle.readiness_summary (deps.await_readiness env) in
     let* () =
-      if summary = "Ready"
-      then Ok ()
-      else Error (Refused ("platform readiness " ^ summary))
+      Sol_cli_cloud_lifecycle.readiness_decision (deps.await_readiness env)
+      |> Result.map_error (fun summary -> Refused ("platform readiness " ^ summary))
     in
     closing := true;
     let* () = deps.remove_bootstrap_access () in

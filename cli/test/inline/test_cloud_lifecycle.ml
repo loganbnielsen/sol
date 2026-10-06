@@ -1033,13 +1033,13 @@ let converged_cluster provider =
   let { L.storage_class; csi_driver } = L.platform_storage provider in
   function
   | "get" :: "storageclass" :: _ ->
-    Some (Printf.sprintf "%s|%s|true " storage_class csi_driver)
-  | "get" :: "service/ingress-nginx-controller" :: _ -> Some "example.elb.amazonaws.com"
-  | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
-  | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
-  | "get" :: "pvc" :: _ -> Some "Bound Bound "
-  | "get" :: "nodes" :: _ -> Some "True True "
-  | _ -> Some ""
+    Ok (Printf.sprintf "%s|%s|true " storage_class csi_driver)
+  | "get" :: "service/ingress-nginx-controller" :: _ -> Ok "example.elb.amazonaws.com"
+  | "get" :: "daemonset" :: _ -> Ok "4/4 4/4 "
+  | "get" :: "statefulset" :: _ -> Ok "3/3 1/1 "
+  | "get" :: "pvc" :: _ -> Ok "Bound Bound "
+  | "get" :: "nodes" :: _ -> Ok "True True "
+  | _ -> Ok ""
 ;;
 
 let test_readiness_fails_each_predicate () =
@@ -1059,7 +1059,7 @@ let test_readiness_fails_each_predicate () =
       let checks =
         L.readiness ~provider:p ~run:(fun argv ->
           incr index;
-          if !index = failed then None else succeeds argv)
+          if !index = failed then Error "the probe could not run" else succeeds argv)
       in
       Windtrap.equal
         Windtrap.bool
@@ -1072,11 +1072,12 @@ let test_readiness_fails_each_predicate () =
         (L.readiness_summary checks <> "Ready")))
 ;;
 
-let readiness_with_unready_certificates ~provider =
+let readiness_with_unobservable_certificates ~provider =
   L.readiness ~provider ~run:(fun argv ->
     match argv with
     | "wait" :: "--for=condition=Ready" :: certificate :: _
-      when String.starts_with ~prefix:"certificate/" certificate -> None
+      when String.starts_with ~prefix:"certificate/" certificate ->
+      Error "exited with code 1: error: timed out waiting for the condition"
     | other -> converged_cluster provider other)
 ;;
 
@@ -1085,12 +1086,15 @@ let test_ready_requires_the_declared_certificates () =
   |> List.filter Sol_cli_provider_capabilities.owns_root
   |> List.iter (fun provider ->
     let label = Sol_cli_provider.to_string provider in
-    let summary = L.readiness_summary (readiness_with_unready_certificates ~provider) in
+    let summary =
+      L.readiness_summary (readiness_with_unobservable_certificates ~provider)
+    in
     Windtrap.equal
       Windtrap.bool
       ~msg:
         (Printf.sprintf
-           "a cluster whose declared certificates are unready is not Ready (%s)"
+           "a cluster whose declared certificates could not be observed ready is not \
+            Ready (%s)"
            label)
       false
       (String.equal summary "Ready");
@@ -1100,7 +1104,7 @@ let test_ready_requires_the_declared_certificates () =
         Windtrap.bool
         ~msg:
           (Printf.sprintf
-             "the unmet reason names %s/%s (%s)"
+             "the reason names %s/%s (%s)"
              declared.namespace
              declared.certificate
              label)
@@ -1111,7 +1115,7 @@ let test_ready_requires_the_declared_certificates () =
 let readiness_with_storage ~provider storage_output =
   L.readiness ~provider ~run:(fun argv ->
     match argv with
-    | "get" :: "storageclass" :: _ -> Some storage_output
+    | "get" :: "storageclass" :: _ -> Ok storage_output
     | other -> converged_cluster provider other)
   |> L.readiness_summary
 ;;
@@ -1251,7 +1255,7 @@ let test_convergence_predicates () =
   let summary_with kind output =
     L.readiness ~provider ~run:(fun argv ->
       match argv with
-      | "get" :: listed :: _ when listed = kind -> Some output
+      | "get" :: listed :: _ when listed = kind -> Ok output
       | other -> converged_cluster provider other)
     |> L.readiness_summary
   in
@@ -1917,6 +1921,92 @@ let%test "contracts: destruction is not refused by an install-time requirement" 
   test_platform_vars_destruction_context ()
 ;;
 
+(* Readiness evidence is typed: a probe that could not run is [Unobservable]
+   with its own evidence, a probe that ran and reported a bad state is a
+   confirmed [Unmet], and the two are never collapsed. *)
+let test_readiness_classifies_probe_failure_as_unobservable () =
+  Sol_cli_provider.all
+  |> List.filter Sol_cli_provider_capabilities.owns_root
+  |> List.iter (fun provider ->
+    let label = Sol_cli_provider.to_string provider in
+    let checks =
+      L.readiness ~provider ~run:(fun _ -> Error "exited with code 5: Forbidden")
+    in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:(label ^ ": no failed probe reads as a confirmed condition")
+      true
+      (List.for_all
+         (function
+           | _, L.Unobservable why -> Sol_cli_string.contains ~needle:"Forbidden" why
+           | _, (L.Established | L.Unmet _) -> false)
+         checks))
+;;
+
+let test_confirmed_unmet_and_unobservable_are_distinct () =
+  let provider = Sol_cli_provider.Aws in
+  let checks =
+    L.readiness ~provider ~run:(fun argv ->
+      match argv with
+      | "get" :: "storageclass" :: _ -> Ok "wrong-class|wrong.csi|true "
+      | "get" :: resource :: _ when String.starts_with ~prefix:"csidriver/" resource ->
+        Error "exited with code 5: Forbidden"
+      | other -> converged_cluster provider other)
+  in
+  (match List.assoc_opt "default StorageClass" checks with
+   | Some (L.Unmet _) -> ()
+   | _ -> Windtrap.fail "an unacceptable successful result must be a confirmed Unmet");
+  (match List.assoc_opt "block-storage CSI driver" checks with
+   | Some (L.Unobservable why) ->
+     Windtrap.equal
+       Windtrap.bool
+       ~msg:"the probe evidence is kept"
+       true
+       (Sol_cli_string.contains ~needle:"Forbidden" why)
+   | _ -> Windtrap.fail "an errored probe must be Unobservable, not Unmet");
+  let summary = L.readiness_summary checks in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the summary distinguishes confirmed unmet from unobservable"
+    true
+    (Sol_cli_string.contains ~needle:"Unmet —" summary
+     && Sol_cli_string.contains ~needle:"nobservable —" summary);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the decision refuses the mixed outcome"
+    true
+    (Result.is_error (L.readiness_decision checks))
+;;
+
+let test_readiness_decision_follows_the_typed_state () =
+  Windtrap.equal
+    (Windtrap.result Windtrap.unit Windtrap.string)
+    ~msg:"every check established"
+    (Ok ())
+    (L.readiness_decision [ "a", L.Established; "b", L.Established ]);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a confirmed unmet refuses"
+    true
+    (Result.is_error (L.readiness_decision [ "a", L.Unmet "still coming up" ]));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unobservable check refuses"
+    true
+    (Result.is_error (L.readiness_decision [ "a", L.Unobservable "no tool" ]));
+  let summary = L.readiness_summary [ "a", L.Unobservable "no tool" ] in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unobservable summary is marked unobservable"
+    true
+    (Sol_cli_string.contains ~needle:"Unobservable —" summary);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"an unobservable summary is never a confirmed unmet condition"
+    false
+    (Sol_cli_string.contains ~needle:"Unmet —" summary)
+;;
+
 let%test "contracts: provisioner kubeconfig env" = test_provisioner_kube_env ()
 let%test "contracts: lifecycle phases and policy" = test_lifecycle_phases ()
 let%test "contracts: separate backends" = test_backends ()
@@ -1929,6 +2019,18 @@ let%test "contracts: the install window is the bootstrap-only capability set" =
 ;;
 
 let%test "contracts: readiness predicates" = test_readiness_fails_each_predicate ()
+
+let%test "contracts: a probe that could not run is unobservable, with its evidence" =
+  test_readiness_classifies_probe_failure_as_unobservable ()
+;;
+
+let%test "contracts: confirmed unmet and unobservable stay distinct" =
+  test_confirmed_unmet_and_unobservable_are_distinct ()
+;;
+
+let%test "contracts: the readiness decision follows the typed state" =
+  test_readiness_decision_follows_the_typed_state ()
+;;
 
 let%test "contracts: a declared certificate gates Ready (DEC-056)" =
   test_ready_requires_the_declared_certificates ()
