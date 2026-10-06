@@ -65,6 +65,7 @@ convention on each side.
 | Semantic workload identity | `Sol_obs.of_env` / `Sol_obs.taxonomy` | `@sol-fab/obs` `workloadIdentity`/`resourceAttributes` + `makeLokiPusher` |
 | Config and secrets | `Kafka_service.config_of_env`, `Sol_obs.of_env` | none (apps read env directly) |
 | Job semantics | `Sol_jobs` | none |
+| Operation-level retry | `Sol_retry` | `@sol-fab/retry` (`retry`, `retryWith`); `@sol-fab/jobs` re-exports the shared vocabulary |
 | Transactional publication | `Sol_outbox` | `@sol-fab/outbox` (`publish`, `runRelay`) |
 | Auth | `Sol_svc.Auth`, `Route` DSL | none |
 | Synchronous peer calls | `Sol_svc.Peer`, `sol.toml` `calls` | none |
@@ -99,6 +100,7 @@ deferred, not applicable}. A row with no verdict is the failure DEC-022 names.
 | 19 | Env access | `Sol_env.timed`, `Sol_runtime.setting` | `process.env`; the variable **names** are the contract | already equivalent |
 | 20 | Consumer idempotency (duplicate delivery) | A unique key plus `ON CONFLICT DO NOTHING` on the consumer's domain write, and a dedupe-keyed job for the follow-up effect (`BUG-112` in `notify_worker`) | Same: `fulfilled_orders_ts` primary key + `ON CONFLICT DO NOTHING`, and a `send_confirmation` job dedupe-keyed by the order id | implemented — FEAT-123 (2026-10-02), tested in `demo_ts/test/delivery.test.ts` |
 | 21 | Semantic workload identity | `Sol_obs.of_env` reads the six `SOL_*` variables the manifest injects and composes them into the Loki stream labels and the OTLP resource attributes, `SOL_SERVICE` (the workload's bare Kubernetes name) winning over the passed `~service` (`sol_obs.ml:29-89`) | `@sol-fab/obs@0.4.0` `workloadIdentity`/`resourceAttributes` read the same six and `makeLokiPusher` composes them into the stream labels, injected values winning over caller labels; the `demo_ts` units build their OTLP resource from `resourceAttributes(...)` | implemented — OBS-051 (2026-10-03): `v0.4.0` published through the OIDC/`provenance` workflow (`loganbnielsen/sol-obs#9`), the TypeScript golden-path smoke asserts each trace's `service.name` is the Sol name (`order-svc`) and that its resource carries every identity label the pod injects, and `check_platform_component_drift.py` guards the TypeScript side |
+| 22 | Operation-level retry | `Sol_retry`'s one bounded, jittered vocabulary (`base_delay_s`, `max_delay_s`, `max_attempts`, `jitter_ratio`): `run` yields to Eio between attempts, exhaustion returns the last error to the caller, cancellation propagates, and zero `max_attempts` is refused while negative means unbounded (`sol_retry.ml`) | `@sol-fab/retry` `retry`/`retryWith` with the same four-field vocabulary (`baseDelayS`, `maxDelayS`, `maxAttempts`, `jitterRatio`) and defaults, an `await`ed delay, `AbortSignal` cancellation and exhaustion returning the last error; `@sol-fab/jobs` consumes the shared vocabulary instead of its own copy | implemented — FEAT-135 (`loganbnielsen/sol-typescript#10`) |
 
 ## 3. Findings filed
 

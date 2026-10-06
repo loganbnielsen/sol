@@ -11,8 +11,9 @@ the language is visible in `framework/`; it holds no implementation.
 | `@sol-fab/obs` | [`loganbnielsen/sol-obs`](https://github.com/loganbnielsen/sol-obs) | Metric names, label vocabularies, the Loki push shape, W3C `traceparent` propagation |
 | `@sol-fab/svc` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The `-svc` lifecycle: bounded drain and idempotent `SIGTERM`/`SIGINT` handling |
 | `@sol-fab/worker` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The `-worker` lifecycle, for a unit with no request boundary |
+| `@sol-fab/retry` | [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript) | The operation-level retry helper: one bounded, jittered policy vocabulary that retries a dependency call in place (mirrors the OCaml `sol-retry`; `@sol-fab/jobs` consumes the same vocabulary) |
 
-All four are Apache-2.0 and published with build provenance.
+All are Apache-2.0 and published with build provenance.
 
 ## Start here
 
