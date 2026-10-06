@@ -514,3 +514,135 @@ let%test "refusals: TypeScript dependencies that are not installed" =
 let%test "refusals: one undrivable unit refuses the whole plan" =
   test_one_bad_unit_refuses_the_whole_plan ()
 ;;
+
+let standalone_ts_unit ~package_json ?tsconfig () =
+  [ "sol.yml", "services:\n  api_svc:\n    language: typescript\n"
+  ; "app/api/api_svc/package.json", package_json
+  ; "app/api/api_svc/node_modules/.keep", ""
+  ; "app/api/api_svc/Dockerfile", dockerfile
+  ; "app/api/api_svc/sol.toml", ""
+  ]
+  @
+  match tsconfig with
+  | None -> []
+  | Some content -> [ "app/api/api_svc/tsconfig.json", content ]
+;;
+
+let plan_of root =
+  let facts = facts_of root in
+  Sol_cli_local_run.plan ~root ~facts (services_of facts)
+;;
+
+let test_an_absent_tsconfig_keeps_the_documented_default () =
+  with_workspace (standalone_ts_unit ~package_json:{|{"name": "api"}|} ())
+  @@ fun root ->
+  match plan_of root with
+  | Error errors ->
+    Windtrap.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (match plan.launches with
+     | [ launch ] ->
+       check_strings "the dist default" [ "node"; "dist/index.js" ] launch.launch.argv;
+       check_string "artifact under dist" "app/api/api_svc/dist/index.js" launch.artifact
+     | launches ->
+       Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+;;
+
+let%test "metadata: an absent tsconfig keeps the dist default" =
+  test_an_absent_tsconfig_keeps_the_documented_default ()
+;;
+
+let test_a_malformed_tsconfig_is_refused () =
+  with_workspace
+    (standalone_ts_unit ~package_json:{|{"name": "api"}|} ~tsconfig:"{ not json" ())
+  @@ fun root -> plan_of root |> expect_error ~needle:"tsconfig.json"
+;;
+
+let%test "metadata: a malformed tsconfig is refused" =
+  test_a_malformed_tsconfig_is_refused ()
+;;
+
+let test_an_unreadable_tsconfig_is_refused () =
+  if Unix.geteuid () = 0
+  then ()
+  else
+    with_workspace
+      (standalone_ts_unit ~package_json:{|{"name": "api"}|} ~tsconfig:"{}" ())
+    @@ fun root ->
+    let path = Filename.concat root "app/api/api_svc/tsconfig.json" in
+    Unix.chmod path 0o000;
+    let result =
+      Fun.protect (fun () -> plan_of root) ~finally:(fun () -> Unix.chmod path 0o644)
+    in
+    result |> expect_error ~needle:"tsconfig.json"
+;;
+
+let%test "metadata: an unreadable tsconfig is refused" =
+  test_an_unreadable_tsconfig_is_refused ()
+;;
+
+let test_an_outdir_of_the_wrong_type_is_refused () =
+  with_workspace
+    (standalone_ts_unit
+       ~package_json:{|{"name": "api"}|}
+       ~tsconfig:{|{"compilerOptions": {"outDir": 5}}|}
+       ())
+  @@ fun root ->
+  plan_of root |> expect_error ~needle:"compilerOptions.outDir must be text"
+;;
+
+let%test "metadata: a non-text outDir is refused" =
+  test_an_outdir_of_the_wrong_type_is_refused ()
+;;
+
+let test_compiler_options_of_the_wrong_type_is_refused () =
+  with_workspace
+    (standalone_ts_unit
+       ~package_json:{|{"name": "api"}|}
+       ~tsconfig:{|{"compilerOptions": "nope"}|}
+       ())
+  @@ fun root -> plan_of root |> expect_error ~needle:"compilerOptions must be an object"
+;;
+
+let%test "metadata: non-object compilerOptions is refused" =
+  test_compiler_options_of_the_wrong_type_is_refused ()
+;;
+
+let test_a_non_text_main_is_refused () =
+  with_workspace (standalone_ts_unit ~package_json:{|{"name": "api", "main": 123}|} ())
+  @@ fun root -> plan_of root |> expect_error ~needle:"main must be text"
+;;
+
+let%test "metadata: a non-text main is refused" = test_a_non_text_main_is_refused ()
+
+let test_a_malformed_ancestor_package_is_refused () =
+  with_workspace (api_svc_workspace ~root_package_json:"{ not json")
+  @@ fun root -> plan_of root |> expect_error ~needle:"app/package.json"
+;;
+
+let%test "metadata: a malformed ancestor package.json is refused" =
+  test_a_malformed_ancestor_package_is_refused ()
+;;
+
+let test_malformed_workspaces_is_refused () =
+  with_workspace
+    (api_svc_workspace ~root_package_json:{|{"name": "app-root", "workspaces": "api/*"}|})
+  @@ fun root ->
+  plan_of root |> expect_error ~needle:"workspaces must be a list of strings"
+;;
+
+let%test "metadata: a non-list workspaces field is refused" =
+  test_malformed_workspaces_is_refused ()
+;;
+
+let test_workspaces_with_non_string_entries_is_refused () =
+  with_workspace
+    (api_svc_workspace ~root_package_json:{|{"name": "app-root", "workspaces": [1, 2]}|})
+  @@ fun root ->
+  plan_of root |> expect_error ~needle:"workspaces must be a list of strings"
+;;
+
+let%test "metadata: non-string workspaces entries are refused" =
+  test_workspaces_with_non_string_entries_is_refused ()
+;;
