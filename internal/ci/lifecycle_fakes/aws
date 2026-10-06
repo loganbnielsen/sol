@@ -113,6 +113,12 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   if [ "${FAIL_ON:-}" = cloud-verify ] && [ ! -e "$FAIL_MARKER_DIR/cloud-verify" ]; then
     : >"$FAIL_MARKER_DIR/cloud-verify"; exit 20
   fi
+  case " $* " in
+    *" --query cluster.identity.oidc.issuer "*)
+      printf 'https://oidc.eks.us-east-1.amazonaws.com/id/LIFECYCLETEST\n'
+      exit 0
+      ;;
+  esac
   printf 'ACTIVE\n'; exit 0
 fi
 case " $* " in
