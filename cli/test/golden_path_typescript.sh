@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$repo_root}"
+export SOL_HOME="$GITHUB_WORKSPACE"
+cd "$GITHUB_WORKSPACE"
+mkdir -p "$SOL_HOME/.ci-bin"
+ln -sf "$SOL_HOME/_build/default/cli/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+export PATH="$SOL_HOME/.ci-bin:$PATH"
+hash -r
+
+cd examples/pluto
+
+sol local infra up
+
+# The demo's tables are workspace migrations now
+# (db/migrations/0006_orders_ts.sql owns orders_ts, fulfilled_orders_ts
+# and order_confirmations_ts; 0007 adds the accept's trace context), so
+# the units create nothing at runtime and this must run before `sol up`.
+# Applying them here is also what proves the migrations cover the
+# TypeScript namespace, rather than the apps' own `CREATE TABLE`.
+sol local migrate
+
+# Seed the demo_ts namespace's secrets before the deploy;
+# ordinary deploy verifies them and never writes a value.
+sol local secret set POSTGRES_URL --domain demo_ts \
+  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+sol local secret set SOL_API_KEY --domain demo_ts --value dev-internal-key
+
+sol up --scope=demo_ts
+
+demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
+
+# fulfillment_worker subscribes with `fromBeginning: false`
+# (app code, out of scope to change here). For a genuinely new
+# consumer group -- exactly what a fresh cluster's first-ever
+# deploy creates -- that means "start from the tail": a message
+# produced before the group finishes joining is not delayed, it
+# is invisible to it forever. This job's first real run hit
+# exactly this: POST /orders succeeded at a timestamp 8.8s
+# *before* the worker's own log showed "[ConsumerGroup] Consumer
+# has joined the group", so the message landed in a topic no
+# consumer had subscribed to yet, and no retry budget on the
+# Postgres check downstream could ever have found it.
+#
+# A Kubernetes-level `kubectl wait --for=condition=ready` cannot
+# establish this (verified experimentally, see git history on
+# this file): the worker Deployment has no readiness probe, so
+# that condition means "container started," nothing more. The
+# only real signal is the application's own evidence that it
+# joined -- so wait on that directly, the same "poll for the
+# actual observed effect" pattern `probe()` below uses for HTTP.
+# The wait itself must not be fragile. This step runs under
+# `set -o pipefail`, and `kubectl logs ... | grep -q PATTERN`
+# reports *no match* whenever PATTERN appears early in a stream
+# larger than the pipe buffer: `grep -q` exits at the first match,
+# kubectl keeps writing into a now-closed pipe, and pipefail
+# propagates kubectl's SIGPIPE exit (141) out of the whole
+# pipeline -- so the success case reads as a miss. Reproduced
+# locally: a 2,000,000-line producer with the pattern on line 2
+# returned NOMATCH. Capture the logs first, then match with a
+# herestring, so no pipeline is involved and no exit status can
+# come from anything but grep.
+wait_for_consumer_join() {
+  local i logs
+  for i in $(seq 1 30); do
+    logs=$(kubectl logs -n "$demo_ns" -l app=fulfillment-worker --all-containers 2>/dev/null || true)
+    if grep -Fq '"message":"[ConsumerGroup] Consumer has joined the group","groupId":"sol-demo-ts-fulfillment-worker"' <<< "$logs"; then
+      echo "fulfillment-worker consumer group joined OK"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "::error::TS golden-path smoke test: fulfillment-worker's consumer group never reported joining within the timeout"
+  return 1
+}
+wait_for_consumer_join
+
+probe() {
+  local path=$1
+  local i
+  for i in $(seq 1 30); do
+    if curl -sf "http://localhost:8080${path}" > /dev/null; then
+      echo "${path} OK"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "::error::TS golden-path smoke test: ${path} never became reachable"
+  return 1
+}
+
+probe /healthz
+
+# One real transaction through the whole path: HTTP -> order_svc ->
+# Kafka -> fulfillment_worker -> Postgres. Marker is unique per run
+# so a re-run (or a flaky retry) can't misread a stale row from a
+# previous attempt as this run's evidence. The request also carries a
+# traceparent we chose, so the trace id is known in advance and can be
+# asserted end to end below.
+marker="ci-ts-golden-$(date +%s)-${RANDOM}"
+trace_id=$(openssl rand -hex 16)
+span_id=$(openssl rand -hex 8)
+http_code=$(curl -s -o /tmp/order_response.json -w '%{http_code}' \
+  -X POST http://localhost:8080/orders \
+  -H 'Content-Type: application/json' \
+  -H "traceparent: 00-${trace_id}-${span_id}-01" \
+  -d "{\"order_id\":\"${marker}\",\"item\":\"widget\",\"quantity\":1}")
+if [ "$http_code" != "202" ]; then
+  echo "::error::TS golden-path smoke test: POST /orders returned $http_code, expected 202 ($(cat /tmp/order_response.json))"
+  exit 1
+fi
+echo "POST /orders OK (202, marker=${marker}, trace=${trace_id})"
+
+# fulfilled_orders_ts is one of the workspace's migrations now
+# (db/migrations/0006_orders_ts.sql, applied by `sol local migrate`
+# above); the units create nothing at runtime.
+#
+# POSTGRES_URL comes from fulfillment_worker's own injected Secret
+# (the exact credential the app itself uses), not the Postgres
+# Helm chart's internal secret path -- decoupled from that chart's
+# own implementation, which this job has no reason to know about.
+pg_url=$(kubectl get secret -n "$demo_ns" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
+pg_pod=$(kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
+row_found=0
+# With the consumer-join wait above having closed the cold-start
+# window, what remains is genuine in-flight latency (publish ->
+# broker -> handler -> Postgres), so this stays an eventual
+# assertion with an outer deadline rather than a fixed sleep.
+# It is also the assertion that actually matters: the contract
+# under test is "an accepted order is eventually fulfilled", not
+# "Kafka group membership became ready". 90*2s=3min is a generous
+# but bounded ceiling so CI cannot hang forever, not an assumption
+# about how long startup should take.
+for i in $(seq 1 90); do
+  row=$(kubectl exec -n postgresql "$pg_pod" -- psql "$pg_url" -tAc \
+    "SELECT order_id FROM fulfilled_orders_ts WHERE order_id = '${marker}';" 2>/dev/null || true)
+  if [ "$row" = "$marker" ]; then
+    row_found=1
+    break
+  fi
+  sleep 2
+done
+if [ "$row_found" -ne 1 ]; then
+  echo "::error::TS golden-path smoke test: order ${marker} never reached fulfilled_orders_ts (Kafka -> worker -> Postgres path did not complete)"
+  exit 1
+fi
+echo "Postgres row for ${marker} confirmed OK -- HTTP -> Kafka -> worker -> Postgres path proven"
+
+# The traceparent sent
+# with that request must survive order_svc and the Kafka header, so
+# the trace holds a span from each unit rather than two rooted traces.
+# Asserted against Tempo's query API (the same store the demo's README
+# tells a user to read), so an app that starts a fresh root trace --
+# the pre-fix behaviour -- fails here. The service names are Sol's --
+# the workload's bare Kubernetes name, not the app's own label --
+# because `@sol-fab/obs` composes the injected identity.
+trace_ok=0
+for i in $(seq 1 30); do
+  trace=$(curl -sf "http://localhost:3200/api/traces/${trace_id}" 2>/dev/null || true)
+  services=$(jq -r '[.batches[].resource.attributes[]? | select(.key == "service.name") | .value.stringValue] | unique | .[]' <<< "$trace" 2>/dev/null || true)
+  if grep -Fxq 'order-svc' <<< "$services" && grep -Fxq 'fulfillment-worker' <<< "$services"; then
+    trace_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "$trace_ok" -ne 1 ]; then
+  echo "::error::TS golden-path smoke test: trace ${trace_id} did not span both order-svc and fulfillment-worker -- inbound trace context was not preserved"
+  curl -s "http://localhost:3200/api/traces/${trace_id}" | head -c 500 || true
+  exit 1
+fi
+echo "trace ${trace_id} spans order-svc and fulfillment-worker -- inbound trace context preserved"
+
+# The framework, not the app, owns the semantic workload
+# identity, so the trace resource carries every identity label the pod
+# was injected with. Read the expected labels off the running pod
+# rather than restating them, so a manifest that injects five (no
+# release for a local target) is asserted as five.
+order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
+expected_identity=$(kubectl exec -n "$demo_ns" "$order_pod" -- env 2>/dev/null \
+  | grep -oE '^SOL_(WORKSPACE|ENV|DOMAIN|SERVICE|PRIMITIVE|RELEASE)=' \
+  | sed -E 's/^SOL_//; s/=$//' | tr 'A-Z' 'a-z' | sort -u || true)
+if [ -z "$expected_identity" ]; then
+  echo "::error::TS golden-path smoke test: ${order_pod} carries none of the SOL_* identity variables, so OBS-051 cannot be verified"
+  exit 1
+fi
+keys=$(jq -r '[.batches[].resource.attributes[]?.key] | unique | .[]' <<< "$trace" 2>/dev/null || true)
+while IFS= read -r key; do
+  [ -z "$key" ] && continue
+  if ! grep -Fxq "$key" <<< "$keys"; then
+    echo "::error::TS golden-path smoke test: the pod injects SOL_${key} but trace ${trace_id} has no '${key}' identity attribute (OBS-051)"
+    curl -s "http://localhost:3200/api/traces/${trace_id}" | head -c 500 || true
+    exit 1
+  fi
+done <<< "$expected_identity"
+echo "trace ${trace_id} carries every Sol workload-identity label the pod injects"
+
+# Coarse liveness check, not a reproduction of the forced-shutdown
+# and redelivery experiments: a graceful pod delete
+# must produce a clean replacement, not a CrashLoopBackOff.
+order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
+kubectl delete pod -n "$demo_ns" "$order_pod" --grace-period=30 --wait=false
+replacement_ok=0
+for i in $(seq 1 30); do
+  new_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  phase=$(kubectl get pod "$new_pod" -n "$demo_ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  restarts=$(kubectl get pod "$new_pod" -n "$demo_ns" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
+  if [ -n "$new_pod" ] && [ "$new_pod" != "$order_pod" ] && [ "$phase" = "Running" ] && [ "$restarts" = "0" ]; then
+    replacement_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "$replacement_ok" -ne 1 ]; then
+  echo "::error::TS golden-path smoke test: order-svc replacement pod did not come up cleanly after a graceful delete"
+  exit 1
+fi
+echo "graceful pod delete OK -- clean replacement, 0 restarts"
