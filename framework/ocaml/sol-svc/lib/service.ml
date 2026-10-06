@@ -422,7 +422,7 @@ let workload_identity_requested routes metrics_auth =
 
 (* The canonical calls graph supplies the audience and allowed callers. Sol projects
    the issuer established by the target capability. *)
-let workload_identity_config ~trusted_issuer routes metrics_auth =
+let workload_identity_config routes metrics_auth =
   if not (workload_identity_requested routes metrics_auth)
   then Ok None
   else
@@ -440,7 +440,7 @@ let workload_identity_config ~trusted_issuer routes metrics_auth =
       | None -> []
       | Some raw -> Auth.callers_of_projection raw
     in
-    match trusted_issuer with
+    match Sol_runtime.setting "SOL_TRUSTED_WORKLOAD_ISSUER" with
     | None ->
       Error
         (`Config
@@ -555,8 +555,8 @@ module For_testing = struct
       body
   ;;
 
-  let workload_identity_config ~trusted_issuer routes metrics_auth =
-    workload_identity_config ~trusted_issuer routes metrics_auth
+  let workload_identity_config routes metrics_auth =
+    workload_identity_config routes metrics_auth
   ;;
 
   let parse_called_by = Auth.callers_of_projection
@@ -622,10 +622,7 @@ module Make (H : HANDLER) = struct
     let* () = refuse_unverified_jwt metrics_auth in
     let* () = refuse_non_https_jwks metrics_auth in
     let* read_api_key = api_key_reader ~env ~required:(api_key_required metrics_auth) in
-    let trusted_issuer = Sol_runtime.setting "SOL_TRUSTED_WORKLOAD_ISSUER" in
-    let* workload_identity =
-      workload_identity_config ~trusted_issuer H.routes metrics_auth
-    in
+    let* workload_identity = workload_identity_config H.routes metrics_auth in
     let fetch_workload_jwks = Auth_internal.fetch_workload_jwks_over_https ~env in
     let lifecycle = Lifecycle.create () in
     let signal_stop, signal_stop_r = Eio.Promise.create () in

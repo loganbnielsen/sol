@@ -33,6 +33,84 @@ let sign_workload
 
 let headers token = Http.Header.of_list [ "authorization", "Bearer " ^ token ]
 
+let with_env bindings f =
+  let previous = List.map (fun (key, _) -> key, Sys.getenv_opt key) bindings in
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter
+        (fun (key, value) ->
+           match value with
+           | Some value -> Unix.putenv key value
+           | None -> Unix.putenv key "")
+        previous)
+    (fun () ->
+       List.iter (fun (key, value) -> Unix.putenv key value) bindings;
+       f ())
+;;
+
+let test_service_reads_the_sol_projected_trust_and_call_policy () =
+  with_env
+    [ "SOL_UNIT", workload_audience
+    ; "SOL_CALLED_BY", caller_unit ^ "=" ^ caller_service_account
+    ; "SOL_TRUSTED_WORKLOAD_ISSUER", workload_issuer
+    ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.get "/probe" (fun _ -> Response.ok "") ]
+           `Public
+       with
+       | Error (`Config message) -> Windtrap.fail message
+       | Ok None -> Windtrap.fail "an internal route did not request workload identity"
+       | Ok (Some config) ->
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"projected audience"
+           workload_audience
+           config.audience;
+         Windtrap.equal
+           (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+           ~msg:"calls-derived caller set"
+           [ caller_service_account, caller_unit ]
+           config.callers;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"target capability issuer projection"
+           workload_issuer
+           config.trusted_issuer)
+;;
+
+let test_internal_route_without_target_issuer_fails_startup () =
+  with_env
+    [ "SOL_UNIT", workload_audience
+    ; "SOL_CALLED_BY", ""
+    ; "SOL_TRUSTED_WORKLOAD_ISSUER", ""
+    ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.get "/probe" (fun _ -> Response.ok "") ]
+           `Public
+       with
+       | Error (`Config message) ->
+         Windtrap.is_true
+           ~msg:"startup failure names the missing target projection"
+           (List.mem "SOL_TRUSTED_WORKLOAD_ISSUER" (String.split_on_char ' ' message))
+       | Ok _ -> Windtrap.fail "an internal route started without a target-trusted issuer");
+  with_env
+    [ "SOL_UNIT", ""; "SOL_CALLED_BY", ""; "SOL_TRUSTED_WORKLOAD_ISSUER", "" ]
+    (fun () ->
+       match
+         Service.For_testing.workload_identity_config
+           [ Route.external_ (Route.get "/probe" (fun _ -> Response.ok "")) ]
+           `Public
+       with
+       | Ok None -> ()
+       | Error (`Config message) -> Windtrap.fail message
+       | Ok (Some _) ->
+         Windtrap.fail "an external-only service requested Sol workload identity")
+;;
+
 let dispatch
       ?(callers = [ caller_service_account, caller_unit ])
       ?(fetch_jwks = fun _ -> Ok rsa_jwks)
@@ -219,6 +297,13 @@ let () =
   Windtrap.run
     "sol-svc workload identity"
     [ Windtrap.test
+        "service consumes the Sol-projected issuer and caller contract"
+        test_service_reads_the_sol_projected_trust_and_call_policy
+    ; Windtrap.test
+        "internal routes fail closed without issuer; external-only routes do not require \
+         it"
+        test_internal_route_without_target_issuer_fails_startup
+    ; Windtrap.test
         "declared caller authenticates and authorizes"
         test_declared_workload_authenticates_and_authorizes
     ; Windtrap.test "undeclared caller is forbidden" test_undeclared_caller_is_forbidden
