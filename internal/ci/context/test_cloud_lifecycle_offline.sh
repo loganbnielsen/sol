@@ -256,11 +256,16 @@ if (export FAIL_READINESS_ALWAYS=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply
   echo "cloud apply succeeded although the platform never became ready" >&2
   exit 1
 fi
-grep -F 'platform readiness Unmet' "$log.out" >/dev/null || {
-  echo "a never-ready platform did not report the unmet readiness summary:" >&2
+grep -F 'platform readiness Unobservable' "$log.out" >/dev/null || {
+  echo "a platform readiness probe failure was not reported as unobservable:" >&2
   cat "$log.out" >&2
   exit 1
 }
+if grep -F 'platform readiness Unmet' "$log.out" >/dev/null; then
+  echo "an unobservable readiness probe was reported as a confirmed unmet condition:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
 
 log="$tmp/storage-class-wrong.log"
 if (export STORAGE_CLASS_WRONG=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply "$log"); then
