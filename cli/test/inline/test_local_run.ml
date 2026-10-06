@@ -646,3 +646,312 @@ let test_workspaces_with_non_string_entries_is_refused () =
 let%test "metadata: non-string workspaces entries are refused" =
   test_workspaces_with_non_string_entries_is_refused ()
 ;;
+
+let temp_dir prefix =
+  let dir = Filename.temp_file prefix "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  dir
+;;
+
+let launch_recipe ?(label = "probe") ?(cwd = "") ?(env = []) argv =
+  { Sol_cli_local_run.label
+  ; language = Sol_cli_compat.Ocaml
+  ; build = None
+  ; launch = { Sol_cli_local_run.argv; cwd }
+  ; artifact = ""
+  ; env
+  }
+;;
+
+let devnull () = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0
+let to_devnull (_ : Sol_cli_local_run.recipe) = devnull ()
+
+let alive pid =
+  match Unix.kill pid 0 with
+  | () -> true
+  | exception Unix.Unix_error (Unix.ESRCH, _, _) -> false
+;;
+
+let wait_gone ?(tries = 100) pid =
+  let rec go remaining =
+    if not (alive pid)
+    then true
+    else if remaining = 0
+    then false
+    else (
+      Unix.sleepf 0.02;
+      go (remaining - 1))
+  in
+  go tries
+;;
+
+let cleanup_tree dir = ignore (Sol_cli_fs.remove_tree dir)
+
+let test_launch_uses_literal_argv_and_cwd () =
+  let sandbox = temp_dir "sol-launch-literal-" in
+  Fun.protect
+    ~finally:(fun () -> cleanup_tree sandbox)
+    (fun () ->
+       let dir = Filename.concat sandbox "a dir with spaces" in
+       Unix.mkdir dir 0o755;
+       let script = Filename.concat dir "probe;script.sh" in
+       let marker = Filename.concat sandbox "marker" in
+       write_file
+         script
+         (Printf.sprintf
+            "#!/bin/sh\nprintf '%%s\\n' \"$PWD\" > %s\nprintf '%%s\\n' \"$1\" >> %s\n"
+            (Filename.quote marker)
+            (Filename.quote marker));
+       Unix.chmod script 0o755;
+       let recipe = launch_recipe ~cwd:dir [ script; "arg with $meta;chars" ] in
+       let run =
+         match Sol_cli_local_run.launch_all ~output:to_devnull [ recipe ] with
+         | Error failure -> Error failure
+         | Ok children -> Sol_cli_local_run.supervise children
+       in
+       (match run with
+        | Ok () -> ()
+        | Error failure ->
+          Windtrap.fail (Sol_cli_local_run.child_failure_to_string failure));
+       let lines =
+         In_channel.with_open_text marker In_channel.input_all
+         |> String.split_on_char '\n'
+       in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the child ran in the literal cwd"
+         true
+         (List.mem dir lines);
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the argument reached the child unexpanded"
+         true
+         (List.mem "arg with $meta;chars" lines))
+;;
+
+let%test "runtime: launch uses literal argv and cwd" =
+  test_launch_uses_literal_argv_and_cwd ()
+;;
+
+let test_a_failed_launch_stops_owned_children () =
+  let sandbox = temp_dir "sol-partial-launch-" in
+  Fun.protect
+    ~finally:(fun () -> cleanup_tree sandbox)
+    (fun () ->
+       let marker = Filename.concat sandbox "pid" in
+       let script = Filename.concat sandbox "sleeper.sh" in
+       write_file
+         script
+         (Printf.sprintf "#!/bin/sh\necho $$ > %s\nsleep 30\n" (Filename.quote marker));
+       Unix.chmod script 0o755;
+       let sleeper = launch_recipe ~label:"sleeper" [ script ] in
+       let missing =
+         launch_recipe ~label:"missing" [ "/nonexistent/sol-probe-program" ]
+       in
+       let output = function
+         | recipe when String.equal recipe.Sol_cli_local_run.label "sleeper" -> devnull ()
+         | _ ->
+           Unix.sleepf 0.3;
+           devnull ()
+       in
+       (match Sol_cli_local_run.launch_all ~output [ sleeper; missing ] with
+        | Ok _ -> Windtrap.fail "a missing program must fail the launch"
+        | Error (Sol_cli_local_run.Spawn_failed { label; _ }) ->
+          Windtrap.equal
+            Windtrap.string
+            ~msg:"names the recipe that failed"
+            "missing"
+            label
+        | Error failure ->
+          Windtrap.fail
+            ("unexpected failure: " ^ Sol_cli_local_run.child_failure_to_string failure));
+       let pid =
+         int_of_string
+           (String.trim (In_channel.with_open_text marker In_channel.input_all))
+       in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the started child was stopped"
+         true
+         (wait_gone pid))
+;;
+
+let%test "runtime: a failed launch stops owned children" =
+  test_a_failed_launch_stops_owned_children ()
+;;
+
+let test_supervise_refuses_a_nonzero_exit () =
+  let recipe = launch_recipe ~label:"bad" [ "sh"; "-c"; "exit 3" ] in
+  match Sol_cli_local_run.launch_all ~output:to_devnull [ recipe ] with
+  | Error failure -> Windtrap.fail (Sol_cli_local_run.child_failure_to_string failure)
+  | Ok children ->
+    (match Sol_cli_local_run.supervise children with
+     | Error (Sol_cli_local_run.Exited { label; code }) ->
+       Windtrap.equal Windtrap.string ~msg:"names the child" "bad" label;
+       Windtrap.equal Windtrap.int ~msg:"keeps the code" 3 code
+     | Error failure ->
+       Windtrap.fail
+         ("wrong failure: " ^ Sol_cli_local_run.child_failure_to_string failure)
+     | Ok () -> Windtrap.fail "a nonzero exit must not complete successfully")
+;;
+
+let%test "runtime: a nonzero child exit fails the run" =
+  test_supervise_refuses_a_nonzero_exit ()
+;;
+
+let test_supervise_refuses_a_signalled_child () =
+  let recipe = launch_recipe ~label:"killed" [ "sh"; "-c"; "kill -TERM $$" ] in
+  match Sol_cli_local_run.launch_all ~output:to_devnull [ recipe ] with
+  | Error failure -> Windtrap.fail (Sol_cli_local_run.child_failure_to_string failure)
+  | Ok children ->
+    (match Sol_cli_local_run.supervise children with
+     | Error (Sol_cli_local_run.Signaled { label; signal }) ->
+       Windtrap.equal Windtrap.string ~msg:"names the child" "killed" label;
+       Windtrap.equal Windtrap.int ~msg:"keeps the signal" Sys.sigterm signal
+     | Error failure ->
+       Windtrap.fail
+         ("wrong failure: " ^ Sol_cli_local_run.child_failure_to_string failure)
+     | Ok () -> Windtrap.fail "a signalled child must not complete successfully")
+;;
+
+let%test "runtime: a signalled child fails the run" =
+  test_supervise_refuses_a_signalled_child ()
+;;
+
+let test_supervise_reaps_only_owned_children () =
+  let unrelated =
+    Sol_cli_process.spawn (Sol_cli_process.cmd [ "sleep"; "0.05" ])
+    |> Result.get_ok
+    |> Sol_cli_process.pid
+  in
+  let owned = launch_recipe ~label:"owned" [ "sh"; "-c"; "sleep 0.3" ] in
+  let supervised =
+    match Sol_cli_local_run.launch_all ~output:to_devnull [ owned ] with
+    | Error failure -> Error failure
+    | Ok children -> Sol_cli_local_run.supervise children
+  in
+  let not_reaped =
+    match Unix.waitpid [ Unix.WNOHANG ] unrelated with
+    | exception Unix.Unix_error (Unix.ECHILD, _, _) -> false
+    | _ -> true
+  in
+  (match supervised with
+   | Ok () -> ()
+   | Error failure -> Windtrap.fail (Sol_cli_local_run.child_failure_to_string failure));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"supervise never reaps an unrelated child"
+    true
+    not_reaped;
+  (try Unix.kill unrelated Sys.sigkill with
+   | Unix.Unix_error _ -> ());
+  try ignore (Unix.waitpid [] unrelated) with
+  | Unix.Unix_error _ -> ()
+;;
+
+let%test "runtime: supervise reaps only its own children" =
+  test_supervise_reaps_only_owned_children ()
+;;
+
+let test_sigterm_stops_owned_children () =
+  let ready_read, ready_write = Unix.pipe () in
+  match Unix.fork () with
+  | 0 ->
+    (try
+       Unix.close ready_read;
+       let recipe = launch_recipe ~label:"sleeper" [ "sleep"; "30" ] in
+       match Sol_cli_local_run.launch ~output:(devnull ()) recipe with
+       | Error _ -> Unix._exit 8
+       | Ok child ->
+         let text = string_of_int child.Sol_cli_local_run.child_pid in
+         ignore (Unix.write_substring ready_write text 0 (String.length text));
+         Unix.close ready_write;
+         (match Sol_cli_local_run.supervise [ child ] with
+          | Error (Sol_cli_local_run.Interrupted signal) ->
+            Unix._exit (Sol_cli_local_run.interrupt_exit_code signal)
+          | _ -> Unix._exit 9)
+     with
+     | _ -> Unix._exit 7)
+  | helper ->
+    Unix.close ready_write;
+    let buffer = Bytes.create 32 in
+    let count = Unix.read ready_read buffer 0 32 in
+    Unix.close ready_read;
+    let child_pid = int_of_string (Bytes.sub_string buffer 0 count) in
+    Unix.sleepf 0.2;
+    Unix.kill helper Sys.sigterm;
+    let _, status = Unix.waitpid [] helper in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the interrupted run exits 143"
+      true
+      (status = Unix.WEXITED 143);
+    Windtrap.equal Windtrap.bool ~msg:"the owned child is gone" false (alive child_pid)
+;;
+
+let%test "runtime: SIGTERM stops owned children and restores the run" =
+  test_sigterm_stops_owned_children ()
+;;
+
+let read_all fd =
+  let buffer = Buffer.create 64 in
+  let chunk = Bytes.create 4096 in
+  let rec go () =
+    match Unix.read fd chunk 0 (Bytes.length chunk) with
+    | 0 -> Buffer.contents buffer
+    | count ->
+      Buffer.add_subbytes buffer chunk 0 count;
+      go ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> go ()
+  in
+  go ()
+;;
+
+let test_ocaml_launch_recipe_runs () =
+  with_workspace
+    [ "sol.yml", "services:\n  charge_svc:\n    language: ocaml\n"
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ; "app/payments/charge_svc/bin/dune", "(executable (name main))\n"
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Windtrap.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (match plan.launches with
+     | [ recipe ] ->
+       let artifact = Filename.concat root (List.hd recipe.launch.argv) in
+       write_file artifact "#!/bin/sh\necho ocaml-launched\n";
+       Unix.chmod artifact 0o755;
+       let read_fd, write_fd = Unix.pipe ~cloexec:true () in
+       let recipe = { recipe with launch = { recipe.launch with cwd = root } } in
+       let result =
+         match Sol_cli_local_run.launch ~output:write_fd recipe with
+         | Error failure -> Error failure
+         | Ok child ->
+           (match Sol_cli_local_run.supervise [ child ] with
+            | Ok () -> Ok ()
+            | Error failure -> Error failure)
+       in
+       let output = read_all read_fd in
+       Unix.close read_fd;
+       (match result with
+        | Ok () -> ()
+        | Error failure ->
+          Windtrap.fail (Sol_cli_local_run.child_failure_to_string failure));
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the planned OCaml binary ran"
+         true
+         (Sol_cli_string.contains ~needle:"ocaml-launched" output)
+     | launches ->
+       Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+;;
+
+let%test "runtime: an OCaml launch recipe runs without a shell" =
+  test_ocaml_launch_recipe_runs ()
+;;

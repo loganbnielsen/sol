@@ -320,6 +320,97 @@ let spawn ?output c =
     spawned
 ;;
 
+let resolve_program prog =
+  if String.contains prog '/'
+  then prog
+  else (
+    let path = Option.value (Sys.getenv_opt "PATH") ~default:"/usr/bin:/bin" in
+    let rec search = function
+      | [] -> prog
+      | dir :: rest ->
+        let candidate = Filename.concat dir prog in
+        if Sys.file_exists candidate then candidate else search rest
+    in
+    search (String.split_on_char ':' path))
+;;
+
+let spawn_detached ?output c =
+  match c.argv with
+  | [] -> Error (Spawn_failed "empty argv")
+  | prog :: _ as argv ->
+    let program = resolve_program prog in
+    let env_arr =
+      match c.env with
+      | None -> Unix.environment ()
+      | Some extras -> merge_env extras
+    in
+    let devnull_in = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
+    let out =
+      match output with
+      | Some fd -> fd
+      | None -> Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0
+    in
+    let exec_read, exec_write = Unix.pipe ~cloexec:true () in
+    let started =
+      match Unix.fork () with
+      | 0 ->
+        (try
+           close_noerr exec_read;
+           ignore (Unix.setsid ());
+           (match c.cwd with
+            | None | Some "" | Some "." -> ()
+            | Some dir -> Unix.chdir dir);
+           Unix.dup2 devnull_in Unix.stdin;
+           Unix.dup2 out Unix.stdout;
+           Unix.dup2 out Unix.stderr;
+           close_noerr devnull_in;
+           close_noerr out;
+           Unix.execve program (Array.of_list argv) env_arr
+         with
+         | Unix.Unix_error (error, _, _) ->
+           let message = Unix.error_message error in
+           (try
+              ignore (Unix.write_substring exec_write message 0 (String.length message))
+            with
+            | _ -> ());
+           close_noerr exec_write;
+           Unix._exit 127
+         | _ ->
+           let message = "the child could not start" in
+           (try
+              ignore (Unix.write_substring exec_write message 0 (String.length message))
+            with
+            | _ -> ());
+           close_noerr exec_write;
+           Unix._exit 127)
+      | pid -> `Started pid
+      | exception Unix.Unix_error (error, fn, _) ->
+        `Failed (Printf.sprintf "%s: %s" fn (Unix.error_message error))
+    in
+    close_noerr devnull_in;
+    close_noerr out;
+    (match started with
+     | `Failed message ->
+       close_noerr exec_read;
+       close_noerr exec_write;
+       Error (Spawn_failed message)
+     | `Started pid ->
+       close_noerr exec_write;
+       let buffer = Bytes.create 256 in
+       let count =
+         match Unix.read exec_read buffer 0 (Bytes.length buffer) with
+         | count -> count
+         | exception Unix.Unix_error _ -> 0
+       in
+       close_noerr exec_read;
+       if count = 0
+       then Ok { pid }
+       else (
+         (try ignore (wait_reap pid) with
+          | Unix.Unix_error _ -> ());
+         Error (Spawn_failed (Bytes.sub_string buffer 0 count))))
+;;
+
 let pid { pid } = pid
 
 let stop { pid } =
