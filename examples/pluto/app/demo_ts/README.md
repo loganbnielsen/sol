@@ -2,7 +2,7 @@
 
 `order_svc` and `fulfillment_worker` are a real TypeScript service and worker
 running on Sol's deploy machinery (CLI, Docker builds, Kubernetes manifests
-are all language-neutral) and consuming Sol's own conventions via six published
+are all language-neutral) and consuming Sol's own conventions via seven published
 npm packages:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — declared
@@ -24,6 +24,10 @@ npm packages:
   transactional outbox, matching `sol-outbox`: `publish` records the intent in
   the caller's transaction, and `runRelay` publishes each key's events in `ord`
   order, removing a row only after the broker acknowledged it.
+- [`@sol-fab/retry`](https://github.com/loganbnielsen/sol-typescript) — the
+  operation-level retry helper, matching `sol-retry`: one bounded, jittered
+  policy vocabulary (`baseDelayS`, `maxDelayS`, `maxAttempts`, `jitterRatio`)
+  that retries a dependency call in place, never a message or a handler.
 
 Alongside them, the local `@demo-ts/contract` workspace package is the single
 source of truth for both events — the interfaces, the topic contracts and the
@@ -62,6 +66,11 @@ alongside its consumer; the relay publishes each key's events to
 it. The runner executes both kinds: `send_confirmation` writes the confirmation
 effect (`order_confirmations_ts` plus the acceptance row's `confirmed_at`) and
 `release_inventory` records its release, so the read-back reaches `confirmed`.
+The transaction is retried in place with `@sol-fab/retry`'s bounded, jittered
+policy — the same `{ baseDelayS: 0.25, maxDelayS: 5, maxAttempts: 4,
+jitterRatio: 0.25 }` the OCaml `notify_worker` uses — so a transient Postgres
+failure does not cost the message; only an operation that keeps failing after
+the attempt budget returns `Fail`.
 
 The two relays share one `sol_outbox` table, so each owns a disjoint slice of it
 and refuses the other's: `OrderPlaced` is `order_placed`/`ord = 1` and
@@ -111,7 +120,7 @@ without an author having to reconstruct Sol's policy by hand — see each
 package's own tests for the specific bugs a hand-rolled first attempt hit
 (FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
 repository with their own CI, including the broker-backed DLQ/partitioning tests;
-`svc`, `worker`, `jobs` and `outbox` share
+`svc`, `worker`, `jobs`, `outbox` and `retry` share
 [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
 
 This example is the *runnable* TypeScript path, not the scaffolded one: `sol new`

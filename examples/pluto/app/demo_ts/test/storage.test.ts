@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { trace } from "@opentelemetry/api";
 import type pg from "pg";
 import { ACK } from "@sol-fab/kafka";
+import type { RetryPolicy } from "@sol-fab/retry";
 import { requiredPostgresUrl } from "../fulfillment_worker/src/config.js";
 import {
   handleOrder,
@@ -31,7 +32,10 @@ function withPostgres(value: string | undefined, body: () => void): void {
   }
 }
 
-function deps(store: OrderStore): OrderHandlerDeps {
+/** No delay, so the retry cases stay fast; the worker uses `DB_RETRY_POLICY`. */
+const FAST_RETRY: RetryPolicy = { baseDelayS: 0, maxDelayS: 0, maxAttempts: 4, jitterRatio: 0 };
+
+function deps(store: OrderStore, retryPolicy: RetryPolicy = FAST_RETRY): OrderHandlerDeps {
   return {
     store,
     jobs: makeOrderJobs(
@@ -44,6 +48,7 @@ function deps(store: OrderStore): OrderHandlerDeps {
     tracer: trace.getTracer("storage-test"),
     messagesTotal: { inc: () => {} },
     messageDuration: { observe: () => {} },
+    retryPolicy,
   };
 }
 
@@ -82,4 +87,40 @@ test("a failed transaction returns failure without acknowledgement", async () =>
   };
   const outcome = await handleOrder(decodeOrderPlaced(ORDER), undefined, deps(store));
   assert.notEqual(outcome, ACK);
+});
+
+test("a transient transaction failure is retried in place and then acknowledged", async () => {
+  let attempts = 0;
+  const store: OrderStore = {
+    insertFulfilled: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("serialization failure");
+      return false;
+    },
+    markFulfilled: async () => {},
+    withTransaction: async <T>(
+      body: (client: pg.PoolClient) => Promise<T>,
+    ): Promise<T> => body({} as pg.PoolClient),
+  };
+  const outcome = await handleOrder(decodeOrderPlaced(ORDER), undefined, deps(store));
+  assert.equal(outcome, ACK);
+  assert.equal(attempts, 2, "the failed operation is retried exactly once");
+});
+
+test("an operation that keeps failing is retried to the policy budget and then fails", async () => {
+  let attempts = 0;
+  const store: OrderStore = {
+    insertFulfilled: async () => {
+      attempts += 1;
+      throw new Error("db down");
+    },
+    markFulfilled: async () => {},
+    withTransaction: async <T>(
+      body: (client: pg.PoolClient) => Promise<T>,
+    ): Promise<T> => body({} as pg.PoolClient),
+  };
+  const policy: RetryPolicy = { baseDelayS: 0, maxDelayS: 0, maxAttempts: 3, jitterRatio: 0 };
+  const outcome = await handleOrder(decodeOrderPlaced(ORDER), undefined, deps(store, policy));
+  assert.notEqual(outcome, ACK);
+  assert.equal(attempts, 3, "the operation is attempted exactly maxAttempts times");
 });
