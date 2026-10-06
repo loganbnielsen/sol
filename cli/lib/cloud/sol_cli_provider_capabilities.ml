@@ -435,13 +435,14 @@ let gcp_workload_identity_issuer ~run (target : Sol_cli_config.target) =
        issuer"
   | Some cluster_name, Some project_id ->
     let path_segment = Uri.pct_encode in
-    let url =
+    let expected_issuer =
       Printf.sprintf
-        "https://container.googleapis.com/v1/projects/%s/locations/%s/clusters/%s/.well-known/openid-configuration"
+        "https://container.googleapis.com/v1/projects/%s/locations/%s/clusters/%s"
         (path_segment project_id)
         (path_segment target.region)
         (path_segment cluster_name)
     in
+    let url = expected_issuer ^ "/.well-known/openid-configuration" in
     let open Result.Syntax in
     (* The GKE cluster OIDC discovery document is part of Google's public API:
        the callee fetches it and the advertised JWKS without Google credentials,
@@ -449,7 +450,7 @@ let gcp_workload_identity_issuer ~run (target : Sol_cli_config.target) =
        deploy that only "works" with operator credentials would hide a target
        whose workloads cannot verify tokens at runtime. *)
     let* response = run [ "curl"; "-fsS"; url ] in
-    let issuer =
+    let discovered_issuer =
       match Yojson.Safe.from_string response with
       | `Assoc fields ->
         (match List.assoc_opt "issuer" fields with
@@ -459,9 +460,14 @@ let gcp_workload_identity_issuer ~run (target : Sol_cli_config.target) =
       | exception Yojson.Json_error message ->
         Error ("GKE OIDC discovery returned invalid JSON: " ^ message)
     in
-    Result.bind
-      issuer
-      (oidc_issuer_of_output ~provider:"GKE" ~expected_host:"container.googleapis.com")
+    let* discovered =
+      Result.bind
+        discovered_issuer
+        (oidc_issuer_of_output ~provider:"GKE" ~expected_host:"container.googleapis.com")
+    in
+    if discovered = expected_issuer
+    then Ok discovered
+    else Error "GKE OIDC discovery issuer does not match the declared target cluster"
 ;;
 
 let aws_authorization_root_vars target =

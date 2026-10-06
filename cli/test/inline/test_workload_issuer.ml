@@ -255,6 +255,24 @@ let%test "issuer: gcp refuses an issuer that is not on the GKE API host" =
           Sol_cli_provider.Gcp))
 ;;
 
+let%test "issuer: gcp refuses an issuer for a different cluster on the GKE API host" =
+  let seen = ref [] in
+  check_mentions
+    ~msg:"a discovery document for a different GKE cluster is refused"
+    ~needle:"does not match the declared target cluster"
+    (Sol_cli_provider_capabilities.gcp_workload_identity_issuer
+       ~run:
+         (gcp_run
+            ~issuer:
+              "https://container.googleapis.com/v1/projects/other/locations/us-central1/clusters/other"
+            seen)
+       (target
+          ~cluster_name:"prod"
+          ~region:"us-central1"
+          ~fields:[ "project_id", "my-project" ]
+          Sol_cli_provider.Gcp))
+;;
+
 let%test "issuer: gcp fails closed on a discovery document with no issuer" =
   let run argv =
     ignore argv;
