@@ -7,6 +7,16 @@ let assets =
       ; tempo = "tempo-values"
       ; prometheus = "prometheus-values"
       }
+  ; versions =
+      { Sol_cli_local_platform.redpanda = "26.1.11"
+      ; postgresql = "18.8.17"
+      ; loki = "18.12.1"
+      ; grafana = "13.2.1"
+      ; alloy = "1.12.1"
+      ; tempo = "2.3.0"
+      ; prometheus = "25.20.1"
+      ; ingress_nginx = "4.10.1"
+      }
   ; alloy_values = "alloy-values"
   ; dashboards = "dashboards"
   }
@@ -87,6 +97,35 @@ let test_values_come_from_the_assets () =
     (find "Redpanda").version
 ;;
 
+(* The versions are declared once in platform/shared/components.json; reading the
+   real assets proves every release projects its version from that declaration. *)
+let test_versions_come_from_components_json () =
+  let real =
+    match Sol_cli_local_platform.read_assets () with
+    | Ok a -> a
+    | Error e -> Windtrap.fail e
+  in
+  let released =
+    Sol_cli_local_platform.releases
+      ~req:(req ~kafka:true ~postgres:true ~observability:true ())
+      ~assets:real
+    |> List.filter_map (fun (r : Sol_cli_local_platform.release) -> r.version)
+  in
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"every local chart version is the one components.json declares"
+    [ real.versions.redpanda
+    ; real.versions.postgresql
+    ; real.versions.loki
+    ; real.versions.grafana
+    ; real.versions.alloy
+    ; real.versions.tempo
+    ; real.versions.prometheus
+    ; real.versions.ingress_nginx
+    ]
+    released
+;;
+
 let forwards req =
   Sol_cli_local_platform.endpoints ~req
   |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.name)
@@ -165,6 +204,11 @@ let%test "REFAC-139 part B: everything" = test_everything ()
 let%test "REFAC-139 part B: ingress always" = test_ingress_always ()
 let%test "REFAC-139 part B: declared postgres" = test_declared_postgres ()
 let%test "REFAC-139 part B: values from the assets" = test_values_come_from_the_assets ()
+
+let%test "chart versions come from components.json" =
+  test_versions_come_from_components_json ()
+;;
+
 let%test "REFAC-139 part F: no endpoints declared" = test_endpoints_nothing_declared ()
 let%test "REFAC-139 part F: every endpoint" = test_endpoints_everything ()
 let%test "REFAC-139 part F: distinct host ports" = test_endpoint_ports_are_distinct ()

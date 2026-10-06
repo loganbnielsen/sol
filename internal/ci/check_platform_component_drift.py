@@ -276,6 +276,14 @@ def main():
     except (OSError, ValueError) as e:
         problems.append(f"{components_json} could not be read: {e}")
         components = {}
+    versions = components.pop("versions", None)
+    if not isinstance(versions, dict) or not versions:
+        problems.append(
+            f"{components_json} must declare a top-level `versions` object of platform chart "
+            "versions, shared by the local platform and the production Terraform module"
+        )
+    elif any(not isinstance(version, str) or not version for version in versions.values()):
+        problems.append(f"{components_json}: every versions entry must be a non-empty string")
     bad = [
         f"{name}: {sorted(layers) if isinstance(layers, dict) else type(layers).__name__}"
         for name, layers in sorted(components.items())
