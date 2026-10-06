@@ -51,25 +51,34 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
       | Error message -> Sol_cli_target_report.Unreadable (context, message))
 ;;
 
-let platform_status ~check (target : Sol_cli_config.target) =
+let platform_status ~check ~verbose (target : Sol_cli_config.target) =
   if not check
   then None
   else (
     match Sol_cli_config.destination_of_target target with
-    | Error reason -> Some (Printf.sprintf "Unmet — %s" reason)
+    | Error reason ->
+      Some
+        (Printf.sprintf
+           "Unknown — %s"
+           (Sol_cli_target_report.redact_context
+              ~verbose
+              ~context:(Option.value target.kube_context ~default:"")
+              reason))
     | Ok destination ->
       let prefix = Sol_cli_kube_destination.kubectl_args destination in
       let env = Sol_cli_kube_destination.environment destination in
       let run args =
-        match
-          Sol_cli_process.run (Sol_cli_process.cmd ~env (("kubectl" :: prefix) @ args))
-        with
-        | Ok result -> Some result.stdout
-        | _ -> None
+        Sol_cli_cluster.process_output_result ~env (("kubectl" :: prefix) @ args)
+      in
+      let summary =
+        Sol_cli_cloud_lifecycle.readiness ~provider:target.provider ~run
+        |> Sol_cli_cloud_lifecycle.readiness_summary
       in
       Some
-        (Sol_cli_cloud_lifecycle.readiness ~provider:target.provider ~run
-         |> Sol_cli_cloud_lifecycle.readiness_summary))
+        (Sol_cli_target_report.redact_context
+           ~verbose
+           ~context:destination.context
+           summary))
 ;;
 
 let cloud_status (target : Sol_cli_config.target) =
@@ -148,7 +157,7 @@ let show target verbose json check =
   in
   let* target_config = declared_target target in
   let status = kubernetes_status ~check target_config in
-  let platform = platform_status ~check target_config in
+  let platform = platform_status ~check ~verbose target_config in
   let cloud = if check then Some (cloud_status target_config) else None in
   let drift = if check then Some (drift_status target_config) else None in
   let substrate = substrate_status ~check ~verbose target_config status in

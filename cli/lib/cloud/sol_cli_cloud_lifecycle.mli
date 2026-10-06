@@ -98,6 +98,7 @@ val install_window_open : can_i:(string list -> bool) -> bool
 type readiness =
   | Established
   | Unmet of string
+  | Unobservable of string
 
 type platform_storage = Sol_cli_provider_capabilities.platform_storage =
   { storage_class : string
@@ -108,11 +109,12 @@ val platform_storage : Sol_cli_provider.t -> platform_storage
 
 val readiness
   :  provider:Sol_cli_provider.t
-  -> run:(string list -> string option)
+  -> run:(string list -> (string, string) result)
   -> (string * readiness) list
 
 val readiness_invocations : provider:Sol_cli_provider.t -> (string * string list) list
 val readiness_summary : (string * readiness) list -> string
+val readiness_decision : (string * readiness) list -> (unit, string) result
 
 type phase =
   | Absent

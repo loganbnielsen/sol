@@ -110,6 +110,8 @@ qual:
         operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
     aws/reserved:
       kube_context: k3d-sol-local
+    aws/probe:
+      kube_context: qual-deploy
 EOF
 
 export SOL_HOME="$root"
@@ -142,6 +144,12 @@ check "an established installation reads Healthy" "Healthy" "$(row cloud "$outpu
 check_contains "a clean refresh reads None" "None" "$(row drift "$output")"
 check_contains "last operation reports unavailability" "unavailable" "$(row 'last operation' "$output")"
 check_absent "the status read does not echo the terraform it runs" '$ terraform' "$output"
+
+run_case qual/aws/probe 0 ok --check
+check "the probe target run exits 0" 0 "$rc"
+check_contains "a refused platform probe reads Unobservable" "Unobservable — " "$(row platform "$output")"
+check_contains "and keeps the probe's own detail" "the context does not exist" "$(row platform "$output")"
+check_absent "a refused probe is never a confirmed unmet condition" "Unmet" "$(row platform "$output")"
 
 run 0 unmet --check
 check_contains "an absent prerequisite reads Unmet" "Unmet — " "$(row cloud "$output")"

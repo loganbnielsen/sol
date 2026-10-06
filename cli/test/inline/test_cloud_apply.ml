@@ -415,7 +415,56 @@ let test_missing_platform_prerequisite_refuses_before_the_platform () =
   cleanup_is `Succeeded cleanup
 ;;
 
+(* Readiness is decided by the typed check outcomes, never by rendering. An
+   unobservable check must fail the apply just as a confirmed unmet one does,
+   and it must keep the probe's own evidence. *)
+let test_unobservable_readiness_refuses () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with
+      await_readiness =
+        (fun () ->
+          [ "platform", Sol_cli_cloud_lifecycle.Unobservable "kubectl is not installed" ])
+    }
+  in
+  let message, _ = failed_with (A.execute ~deps) in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the refusal keeps the probe's evidence"
+    true
+    (Sol_cli_string.contains ~needle:"kubectl is not installed" message);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the lifecycle never advances to Ready"
+    false
+    (List.mem "  lifecycle phase: Ready" calls.reports)
+;;
+
+let test_confirmed_unmet_readiness_refuses () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with
+      await_readiness =
+        (fun () -> [ "platform", Sol_cli_cloud_lifecycle.Unmet "still installing" ])
+    }
+  in
+  let message, _ = failed_with (A.execute ~deps) in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the refusal names the confirmed unmet reason"
+    true
+    (Sol_cli_string.contains ~needle:"still installing" message)
+;;
+
 let%test "execute: happy path" = test_happy_path ()
+
+let%test "execute: an unobservable readiness check refuses" =
+  test_unobservable_readiness_refuses ()
+;;
+
+let%test "execute: a confirmed unmet readiness check refuses" =
+  test_confirmed_unmet_readiness_refuses ()
+;;
 
 let%test "execute: failure in the window removes it" =
   test_failure_in_window_removes_it ()
