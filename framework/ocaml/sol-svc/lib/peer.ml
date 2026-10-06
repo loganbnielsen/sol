@@ -2,6 +2,15 @@ type error = [ `Config of string ]
 
 let error_to_string (`Config msg) = "sol-svc peer: config error: " ^ msg
 
+type t =
+  { unit_id : string
+  ; service_name : string
+  }
+
+module For_codegen = struct
+  let declared ~unit_id ~service_name = { unit_id; service_name }
+end
+
 let env_var source_name =
   source_name
   |> String.map (function
@@ -25,7 +34,7 @@ let token_file_env_var source_name =
 ;;
 
 let url peer =
-  let name = env_var peer in
+  let name = env_var peer.service_name in
   match Sol_runtime.setting name with
   | Some value ->
     let uri = Uri.of_string value in
@@ -64,7 +73,7 @@ let api_key ~env =
    projection was declared, and an error when a declared projection cannot be
    read: an unreadable token is a failure, not an absence. *)
 let projected_token ~env peer =
-  let name = token_file_env_var peer in
+  let name = token_file_env_var peer.service_name in
   match Sol_runtime.setting name with
   | None -> Ok None
   | Some path ->
@@ -80,8 +89,8 @@ let missing_projection_error peer =
        "%s is not set, so this unit has no projected identity for %s. A deployed \
         Sol-to-Sol call authenticates with the projected ServiceAccount token; set %s=1 \
         only for local development to use SOL_API_KEY instead."
-       (token_file_env_var peer)
-       peer
+       (token_file_env_var peer.service_name)
+       peer.unit_id
        plaintext_auth_opt_in)
 ;;
 

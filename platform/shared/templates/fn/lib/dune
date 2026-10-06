@@ -2,4 +2,4 @@
  (name {{lib}})
  (wrapped false)
  (libraries sol-fn)
- (modules {{Mod}}))
+ (modules :standard))

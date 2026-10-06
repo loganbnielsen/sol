@@ -11,6 +11,10 @@ let describe_headers headers =
   String.concat ", " (List.map (fun (k, v) -> k ^ "=" ^ v) headers)
 ;;
 
+let checkout_svc =
+  Peer.For_codegen.declared ~unit_id:"checkout/checkout_svc" ~service_name:"checkout_svc"
+;;
+
 let expect_ok = function
   | Ok headers -> headers
   | Error err -> Windtrap.fail (Peer.error_to_string err)
@@ -50,7 +54,7 @@ let test_token_file_env_var () =
 
 let test_url () =
   with_env "CHECKOUT_SVC_URL" "http://checkout.pluto.svc.cluster.local" (fun () ->
-    match Peer.url "checkout_svc" with
+    match Peer.url checkout_svc with
     | Ok uri ->
       Windtrap.equal
         Windtrap.string
@@ -62,7 +66,7 @@ let test_url () =
 
 let test_relative_url_fails () =
   with_env "CHECKOUT_SVC_URL" "localhost:8081" (fun () ->
-    match Peer.url "checkout_svc" with
+    match Peer.url checkout_svc with
     | Error (`Config msg) ->
       Windtrap.equal
         Windtrap.string
@@ -79,7 +83,7 @@ let test_projected_token_is_bearer env () =
     [ "SOL_API_KEY", "shared"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH", "1" ]
     (fun () ->
        with_token_file "projected-token\n" (fun () ->
-         let headers = expect_ok (Peer.headers ~env ~peer:"checkout_svc" ()) in
+         let headers = expect_ok (Peer.headers ~env ~peer:checkout_svc ()) in
          Windtrap.equal
            (Windtrap.option Windtrap.string)
            ~msg:"bearer token"
@@ -101,7 +105,7 @@ let test_unreadable_projection_fails_closed env () =
     ; "CHECKOUT_SVC_TOKEN_FILE", "/nonexistent/sol/projected/token"
     ]
     (fun () ->
-       let msg = expect_config_error (Peer.headers ~env ~peer:"checkout_svc" ()) in
+       let msg = expect_config_error (Peer.headers ~env ~peer:checkout_svc ()) in
        Windtrap.equal
          Windtrap.bool
          ~msg:"names the unreadable projection"
@@ -114,7 +118,7 @@ let test_empty_projection_fails_closed env () =
     [ "SOL_API_KEY", "shared"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH", "1" ]
     (fun () ->
        with_token_file "" (fun () ->
-         let msg = expect_config_error (Peer.headers ~env ~peer:"checkout_svc" ()) in
+         let msg = expect_config_error (Peer.headers ~env ~peer:checkout_svc ()) in
          Windtrap.equal
            Windtrap.bool
            ~msg:"an empty projection is named"
@@ -131,7 +135,7 @@ let test_missing_projection_without_opt_in_fails_closed env () =
     ; "CHECKOUT_SVC_TOKEN_FILE", ""
     ]
     (fun () ->
-       let msg = expect_config_error (Peer.headers ~env ~peer:"checkout_svc" ()) in
+       let msg = expect_config_error (Peer.headers ~env ~peer:checkout_svc ()) in
        Windtrap.equal
          Windtrap.bool
          ~msg:"points at the development opt-in"
@@ -147,7 +151,7 @@ let test_opt_in_uses_shared_key env () =
     ; "CHECKOUT_SVC_TOKEN_FILE", ""
     ]
     (fun () ->
-       let headers = expect_ok (Peer.headers ~env ~peer:"checkout_svc" ()) in
+       let headers = expect_ok (Peer.headers ~env ~peer:checkout_svc ()) in
        Windtrap.equal
          (Windtrap.option Windtrap.string)
          ~msg:"shared key"
@@ -167,7 +171,7 @@ let test_opt_in_still_needs_a_credential env () =
     ; "SOL_ALLOW_PLAINTEXT_PEER_AUTH", "1"
     ; "CHECKOUT_SVC_TOKEN_FILE", ""
     ]
-    (fun () -> ignore (expect_config_error (Peer.headers ~env ~peer:"checkout_svc" ())))
+    (fun () -> ignore (expect_config_error (Peer.headers ~env ~peer:checkout_svc ())))
 ;;
 
 let test_file_precedes_env env () =
@@ -182,7 +186,7 @@ let test_file_precedes_env env () =
          (fun () ->
             with_env "SOL_API_KEY_FILE" path (fun () ->
               with_env "SOL_API_KEY" "from-env" (fun () ->
-                let headers = expect_ok (Peer.headers ~env ~peer:"checkout_svc" ()) in
+                let headers = expect_ok (Peer.headers ~env ~peer:checkout_svc ()) in
                 Windtrap.equal
                   (Windtrap.option Windtrap.string)
                   ~msg:"file api key"
@@ -207,7 +211,7 @@ let test_traceparent_with_projection env () =
       in
       Sol_obs.with_span obs "caller" (fun span ->
         let trace_ctx = Sol_obs.current_trace_context span in
-        let headers = expect_ok (Peer.headers ~env ~peer:"checkout_svc" ~trace_ctx ()) in
+        let headers = expect_ok (Peer.headers ~env ~peer:checkout_svc ~trace_ctx ()) in
         Windtrap.equal
           (Windtrap.option Windtrap.string)
           ~msg:"traceparent"

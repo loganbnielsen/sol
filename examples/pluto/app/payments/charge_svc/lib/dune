@@ -1,7 +1,7 @@
 (library
  (name pluto_payments_charge_svc)
  (wrapped false)
- (modules Handler)
+ (modules Handler Peer_bindings)
  (libraries
   pluto_storage
   sol-svc

@@ -214,22 +214,25 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 ```ocaml
 type error = [ `Config of string ]
 
+type t
 val env_var : string -> string
 val token_file_env_var : string -> string
-val url : string -> (Uri.t, error) result
+val url : t -> (Uri.t, error) result
 
 val headers
   :  env:< fs : Eio.Fs.dir_ty Eio.Path.t ; .. >
-  -> peer:string
+  -> peer:t
   -> ?trace_ctx:Obs_trace.t
   -> ?headers:(string * string) list
   -> unit
   -> ((string * string) list, error) result
 ```
 
-`Peer.url "checkout_svc"` reads `CHECKOUT_SVC_URL`, matching the env var Sol
-injects for `calls = ["checkout/checkout_svc"]`. `Peer.headers ~peer:"checkout_svc"`
-reads the projected ServiceAccount token named by `CHECKOUT_SVC_TOKEN_FILE` and
+Sol generates `Peer_bindings` from each workload's `[service] calls`. For example,
+`Peer_bindings.checkout_checkout_svc` is the handle for
+`calls = ["checkout/checkout_svc"]`; `Peer.url` and `Peer.headers` accept that
+handle instead of an arbitrary peer name. `Peer.headers` reads the projected
+ServiceAccount token named by `CHECKOUT_SVC_TOKEN_FILE` and
 attaches it as `Authorization: Bearer`; a declared projection that is missing or
 unreadable is a config error, never a fallback. Only a deliberate local
 development opt-in (`SOL_ALLOW_PLAINTEXT_PEER_AUTH=1`, reserved in `sol.toml` and
