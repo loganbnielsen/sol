@@ -85,7 +85,10 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
          "carries the primitive"
          "svc"
          (Option.value ~default:"" (List.assoc_opt "SOL_PRIMITIVE" launch.env));
-       check_bool "keeps the dev addresses" true (List.mem_assoc "LOKI_URL" launch.env);
+       check_string
+         "carries the local port-forward address"
+         "http://localhost:3100"
+         (Option.value ~default:"" (List.assoc_opt "LOKI_URL" launch.env));
        check_bool
          "omits env locally by design"
          false

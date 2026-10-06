@@ -1,5 +1,7 @@
 open Result.Syntax
 
+let monitoring_namespace = Sol_cli_manifest.monitoring_namespace
+
 type component =
   | Redpanda
   | Postgresql
@@ -83,7 +85,9 @@ let read_assets () =
   let* prometheus = read_component ~platform_assets:assets Prometheus in
   let* alloy_values = Sol_cli_dev_observability.alloy_values_yaml ~assets in
   let* dashboards =
-    Sol_cli_dev_observability.dashboard_configmap_yaml ~assets ~namespace:"monitoring"
+    Sol_cli_dev_observability.dashboard_configmap_yaml
+      ~assets
+      ~namespace:monitoring_namespace
   in
   let* declared_versions = Sol_cli_platform_component.versions ~assets in
   let* redpanda_version = require_version ~versions:declared_versions "redpanda" in
@@ -191,7 +195,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~label:"Loki"
           "loki"
           "grafana-community/loki"
-          ~namespace:"monitoring"
+          ~namespace:monitoring_namespace
           ~version:assets.versions.loki
           ~values_yaml:(values_of assets Loki)
           ()
@@ -199,7 +203,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~label:"Grafana"
           "grafana"
           "grafana-community/grafana"
-          ~namespace:"monitoring"
+          ~namespace:monitoring_namespace
           ~version:assets.versions.grafana
           ~values:[ "adminPassword", Str "dev" ]
           ~values_yaml:(values_of assets Grafana)
@@ -208,7 +212,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~label:"Alloy"
           "alloy"
           "grafana/alloy"
-          ~namespace:"monitoring"
+          ~namespace:monitoring_namespace
           ~version:assets.versions.alloy
           ~values_yaml:assets.alloy_values
           ()
@@ -222,7 +226,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~label:"Tempo"
           "tempo"
           "grafana-community/tempo"
-          ~namespace:"monitoring"
+          ~namespace:monitoring_namespace
           ~version:assets.versions.tempo
           ~values_yaml:(values_of assets Tempo)
           ()
@@ -236,7 +240,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           ~label:"Prometheus"
           "prometheus"
           "prometheus-community/prometheus"
-          ~namespace:"monitoring"
+          ~namespace:monitoring_namespace
           ~version:assets.versions.prometheus
           ~values:[ "prometheus-node-exporter.enabled", Bool false ]
           ~values_yaml:(values_of assets Prometheus)
@@ -342,6 +346,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     }
   in
   let grafana = needs_grafana req in
+  let service name = "svc/" ^ name in
   let kafka_endpoints =
     if req.kafka
     then
@@ -381,19 +386,23 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
       [ endpoint
           ~required:req.loki
           "loki"
-          ~namespace:"monitoring"
-          ~target:"svc/loki"
-          ~local_port:3100
-          ~remote_port:3100
-          "  loki         ✓  http://localhost:3100  (port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.loki_service)
+          ~local_port:Sol_cli_manifest.loki_host_port
+          ~remote_port:Sol_cli_manifest.loki_service_port
+          (Printf.sprintf
+             "  loki         ✓  %s  (port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.loki_host_port))
       ; endpoint
           ~required:grafana
           "grafana"
-          ~namespace:"monitoring"
-          ~target:"svc/grafana"
-          ~local_port:3000
-          ~remote_port:80
-          "  grafana      ✓  http://localhost:3000  (port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.grafana_service)
+          ~local_port:Sol_cli_manifest.grafana_host_port
+          ~remote_port:Sol_cli_manifest.grafana_service_port
+          (Printf.sprintf
+             "  grafana      ✓  %s  (port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.grafana_host_port))
       ]
     else []
   in
@@ -403,19 +412,23 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
       [ endpoint
           ~required:req.prometheus
           "prometheus"
-          ~namespace:"monitoring"
-          ~target:"svc/prometheus-server"
-          ~local_port:9090
-          ~remote_port:80
-          "  prometheus   ✓  http://localhost:9090  (port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.prometheus_service)
+          ~local_port:Sol_cli_manifest.prometheus_host_port
+          ~remote_port:Sol_cli_manifest.prometheus_service_port
+          (Printf.sprintf
+             "  prometheus   ✓  %s  (port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.prometheus_host_port))
       ; endpoint
           ~required:req.prometheus
           "pushgateway"
-          ~namespace:"monitoring"
-          ~target:"svc/prometheus-prometheus-pushgateway"
-          ~local_port:9091
-          ~remote_port:9091
-          "  pushgateway  ✓  http://localhost:9091  (port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.pushgateway_service)
+          ~local_port:Sol_cli_manifest.pushgateway_host_port
+          ~remote_port:Sol_cli_manifest.pushgateway_service_port
+          (Printf.sprintf
+             "  pushgateway  ✓  %s  (port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.pushgateway_host_port))
       ]
     else []
   in
@@ -425,19 +438,23 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
       [ endpoint
           ~required:req.tempo
           "tempo"
-          ~namespace:"monitoring"
-          ~target:"svc/tempo"
-          ~local_port:4318
-          ~remote_port:4318
-          "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.tempo_service)
+          ~local_port:Sol_cli_manifest.tempo_otlp_host_port
+          ~remote_port:Sol_cli_manifest.tempo_otlp_port
+          (Printf.sprintf
+             "  tempo        ✓  %s  (OTLP, port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.tempo_otlp_host_port))
       ; endpoint
           ~required:req.tempo
           "tempo-query"
-          ~namespace:"monitoring"
-          ~target:"svc/tempo"
-          ~local_port:3200
-          ~remote_port:3200
-          "  tempo-query  ✓  http://localhost:3200  (port-forwarded)"
+          ~namespace:monitoring_namespace
+          ~target:(service Sol_cli_manifest.tempo_service)
+          ~local_port:Sol_cli_manifest.tempo_query_host_port
+          ~remote_port:Sol_cli_manifest.tempo_query_port
+          (Printf.sprintf
+             "  tempo-query  ✓  %s  (port-forwarded)"
+             (Sol_cli_manifest.local_url Sol_cli_manifest.tempo_query_host_port))
       ]
     else []
   in

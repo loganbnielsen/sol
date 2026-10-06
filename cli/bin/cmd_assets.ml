@@ -86,7 +86,7 @@ let checks assets =
         "dashboards"
         (Sol_cli_dev_observability.dashboard_configmap_yaml
            ~assets
-           ~namespace:"monitoring"
+           ~namespace:Sol_cli_manifest.monitoring_namespace
          |> as_detail "")
     ; check "alloy" (Sol_cli_dev_observability.alloy_values_yaml ~assets |> as_detail "")
     ; runner_check ()

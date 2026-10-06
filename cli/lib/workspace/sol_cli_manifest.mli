@@ -71,6 +71,27 @@ val kafka_transport_of_config : (string * string) list -> kafka_transport
 val cluster_env : kafka_transport -> (string * string) list
 val production_kafka_config : (string * string) list
 val default_cluster_env : (string * string) list
+val monitoring_namespace : string
+val loki_service : string
+val loki_service_port : int
+val loki_host_port : int
+val grafana_service : string
+val grafana_service_port : int
+val grafana_host_port : int
+val prometheus_service : string
+val prometheus_service_port : int
+val prometheus_host_port : int
+val pushgateway_service : string
+val pushgateway_service_port : int
+val pushgateway_host_port : int
+val tempo_service : string
+val tempo_query_port : int
+val tempo_query_host_port : int
+val tempo_otlp_port : int
+val tempo_otlp_host_port : int
+val service_host : namespace:string -> name:string -> string
+val service_url : scheme:string -> namespace:string -> name:string -> port:int -> string
+val local_url : int -> string
 val default_secrets : (string * string) list
 val runtime_secret_name : string
 val workload_secret_name : string -> string

@@ -70,7 +70,13 @@ let unserved_manifest_resources ~served ~chdir =
 ;;
 
 let absent env =
-  [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
+  [ "cert-manager"
+  ; "ingress-nginx"
+  ; "argocd"
+  ; "redpanda"
+  ; Sol_cli_manifest.monitoring_namespace
+  ; "postgresql"
+  ]
   |> List.for_all (fun namespace ->
     not (Sol_cli_cluster.process_ok ~env [ "kubectl"; "get"; "namespace"; namespace ]))
 ;;

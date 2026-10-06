@@ -1,7 +1,7 @@
 let loki_local_port = 13100
-let loki_remote_port = 3100
-let loki_namespace = "monitoring"
-let loki_service = "loki"
+let loki_remote_port = Sol_cli_manifest.loki_service_port
+let loki_namespace = Sol_cli_manifest.monitoring_namespace
+let loki_service = Sol_cli_manifest.loki_service
 
 let cluster_loki_exists ~ctx () =
   Result.is_ok
