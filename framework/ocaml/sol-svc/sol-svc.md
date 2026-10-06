@@ -215,10 +215,12 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 type error = [ `Config of string ]
 
 val env_var : string -> string
+val token_file_env_var : string -> string
 val url : string -> (Uri.t, error) result
 
 val headers
   :  env:< fs : Eio.Fs.dir_ty Eio.Path.t ; .. >
+  -> peer:string
   -> ?trace_ctx:Obs_trace.t
   -> ?headers:(string * string) list
   -> unit
@@ -226,8 +228,13 @@ val headers
 ```
 
 `Peer.url "checkout_svc"` reads `CHECKOUT_SVC_URL`, matching the env var Sol
-injects for `calls = ["checkout/checkout_svc"]`. `Peer.headers` sets
-`x-api-key` from `SOL_API_KEY_FILE`/`SOL_API_KEY` and adds `traceparent` when
+injects for `calls = ["checkout/checkout_svc"]`. `Peer.headers ~peer:"checkout_svc"`
+reads the projected ServiceAccount token named by `CHECKOUT_SVC_TOKEN_FILE` and
+attaches it as `Authorization: Bearer`; a declared projection that is missing or
+unreadable is a config error, never a fallback. Only a deliberate local
+development opt-in (`SOL_ALLOW_PLAINTEXT_PEER_AUTH=1`, reserved in `sol.toml` and
+`sol secret set`) lets a caller with no declared projection use `x-api-key` from
+`SOL_API_KEY_FILE`/`SOL_API_KEY` instead. Either way it adds `traceparent` when
 given the current span context.
 
 ---

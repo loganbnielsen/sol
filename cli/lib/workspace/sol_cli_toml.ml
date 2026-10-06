@@ -1003,17 +1003,23 @@ let load_result path =
                key)
       in
       let* () =
-        if
-          List.mem_assoc "SOL_ALLOW_UNVERIFIED_JWT" env_config
-          || List.mem "SOL_ALLOW_UNVERIFIED_JWT" secret_keys
-          || List.mem "SOL_ALLOW_UNVERIFIED_JWT" build_secret_keys
-        then
+        match
+          List.find_opt
+            (fun key ->
+               List.mem_assoc key env_config
+               || List.mem key secret_keys
+               || List.mem key build_secret_keys)
+            [ "SOL_ALLOW_UNVERIFIED_JWT"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH" ]
+        with
+        | None -> Ok ()
+        | Some key ->
           validation_error
             path
-            "sol.toml: [infra.env] config, secrets and build_secrets may not set \
-             SOL_ALLOW_UNVERIFIED_JWT -- it allows JWT auth without signature checks, \
-             and `sol up` sets it on the local cluster only"
-        else Ok ()
+            (Printf.sprintf
+               "sol.toml: [infra.env] config, secrets and build_secrets may not set %s \
+                -- it enables a development-only authentication posture, and only local \
+                tooling sets it"
+               key)
       in
       let* volumes = parse_volumes path doc in
       let* rollout_strategy =

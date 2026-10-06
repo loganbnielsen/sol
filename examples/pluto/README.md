@@ -179,15 +179,21 @@ KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_U
 PORT=8081 SOL_API_KEY=dev-internal-key dune exec app/checkout/checkout_svc/bin/main.exe
 
 # In another terminal, run payments. It calls checkout through CHECKOUT_SVC_URL.
+# A bare process has no projected ServiceAccount token, so it must opt in
+# explicitly to the local shared-key caller path (DEC-063); a deployed workload
+# never sets SOL_ALLOW_PLAINTEXT_PEER_AUTH.
 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
   CHECKOUT_SVC_URL=http://127.0.0.1:8081 SOL_API_KEY=dev-internal-key \
+  SOL_ALLOW_PLAINTEXT_PEER_AUTH=1 \
   dune exec app/payments/charge_svc/bin/main.exe
 ```
 
 `charge_svc` declares `calls = ["checkout/checkout_svc"]`. In a Sol cluster
 that injects `CHECKOUT_SVC_URL` as a cluster DNS URL for the checkout
 ClusterIP, so the east-west request never leaves the cluster network. The
-generated per-pair NetworkPolicy is what permits that caller/target path.
+generated per-pair NetworkPolicy is what permits that caller/target path, and
+the framework attaches the projected ServiceAccount token for `checkout_svc`
+as `Authorization: Bearer` instead of the shared key.
 
 ```bash
 curl localhost:8080/checkout-quote

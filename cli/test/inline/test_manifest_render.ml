@@ -3106,3 +3106,46 @@ let%test "identity projection: labels are bounded and the token file is stable" 
     true
     (Sol_cli_identity_projection.token_file p = "/var/run/sol/identity/" ^ long ^ "/token")
 ;;
+
+let toml_rejects_reserved_key ~key =
+  let path = Filename.temp_file "sol-toml-reserved-" ".toml" in
+  let oc = open_out path in
+  output_string oc (Printf.sprintf "[infra.env]\nconfig = { %s = \"1\" }\n" key);
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool
+      (Printf.sprintf "%s is named in the error" key)
+      true
+      (Sol_cli_string.contains ~needle:key message)
+  | Ok _ -> Windtrap.fail (key ^ " must be reserved in sol.toml")
+  | Error (Sol_cli_toml.Toml_syntax _) -> Windtrap.fail "expected a validation error"
+;;
+
+let%test "peer auth: sol.toml cannot set the plaintext peer opt-in" =
+  toml_rejects_reserved_key ~key:"SOL_ALLOW_PLAINTEXT_PEER_AUTH"
+;;
+
+let%test "peer auth: sol secret set refuses the plaintext peer opt-in" =
+  check_bool
+    "sol secret set refuses the reserved key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_PLAINTEXT_PEER_AUTH"))
+;;
+
+let%test "peer auth: a deployed render never carries the plaintext peer opt-in" =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool
+    "a deploy/GitOps render never carries the opt-in"
+    false
+    (Sol_cli_string.contains ~needle:"SOL_ALLOW_PLAINTEXT_PEER_AUTH" workload)
+;;
+
+let%test "peer auth: the local bare-process runner opts in explicitly" =
+  check_bool
+    "sol local sets the opt-in for bare processes"
+    true
+    (List.mem_assoc "SOL_ALLOW_PLAINTEXT_PEER_AUTH" Sol_cli_local_run.dev_env)
+;;

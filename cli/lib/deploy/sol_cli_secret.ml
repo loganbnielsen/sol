@@ -30,6 +30,12 @@ let validate_key key =
     Error
       "SOL_ALLOW_UNVERIFIED_JWT is reserved: it allows JWT auth without signature \
        checks, and `sol up` sets it on the local cluster only"
+  else if String.equal key "SOL_ALLOW_PLAINTEXT_PEER_AUTH"
+  then
+    Error
+      "SOL_ALLOW_PLAINTEXT_PEER_AUTH is reserved: it lets a caller fall back to the \
+       shared API key when no projected identity was declared, and only local tooling \
+       sets it"
   else Ok ()
 ;;
 
