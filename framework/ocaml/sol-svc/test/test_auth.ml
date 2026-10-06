@@ -15,6 +15,12 @@ let echo_principal req =
         ; "sub", `String sub
         ; "scopes", `List (List.map (fun scope -> `String scope) scopes)
         ]
+    | Auth.Unit { unit; service_account } ->
+      `Assoc
+        [ "principal", `String "unit"
+        ; "unit", `String unit
+        ; "service_account", `String service_account
+        ]
   in
   Response.json (Yojson.Safe.to_string json)
 ;;
@@ -654,6 +660,177 @@ let test_unknown_kid_with_failed_refetch_is_401 () =
     (bearer (sign_rs256 ()))
 ;;
 
+(* DEC-063: Sol-to-Sol workload identity *)
+
+let workload_issuer = "https://kubernetes.default.svc"
+let workload_audience = "checkout/checkout-svc"
+let caller_service_account = "myapp-payments:charge-svc"
+let caller_subject = "system:serviceaccount:" ^ caller_service_account
+let caller_unit = "payments/charge-svc"
+
+let workload_identity ?(callers = [ caller_service_account, caller_unit ]) () =
+  Auth.
+    { audience = workload_audience
+    ; callers
+    ; trusted_issuers =
+        [ workload_issuer, "https://kubernetes.default.svc/openid/v1/jwks" ]
+    }
+;;
+
+let fetch_static_jwks _url = Ok (Jose.Jwks.of_string rsa_jwks_doc)
+
+let sign_workload
+      ?(sub = caller_subject)
+      ?(aud = workload_audience)
+      ?(iss = workload_issuer)
+      ?(exp_offset = 3600.0)
+      ()
+  =
+  let payload = claims_json ~sub ~scopes:[] ~iss ~aud ~exp_offset in
+  match Jose.Jwt.sign ~payload rsa_priv_jwk with
+  | Ok t -> Jose.Jwt.to_string t
+  | Error (`Msg m) -> failwith ("sign_workload: " ^ m)
+;;
+
+let workload_dispatch ?(callers = [ caller_service_account, caller_unit ]) headers =
+  Service.For_testing.dispatch
+    ~fetch_jwks:fetch_static_jwks
+    ~workload_identity:(workload_identity ~callers ())
+    ~routes:[ Route.get "/probe" echo_principal ]
+    (Http.Request.make ~meth:`GET ~headers "/probe")
+    (Cohttp_eio.Body.of_string "")
+;;
+
+let workload_status ?callers headers =
+  (workload_dispatch ?callers headers).Response.status
+;;
+
+let test_workload_identity_authenticates_and_authorizes () =
+  let json =
+    Yojson.Safe.from_string (workload_dispatch (bearer (sign_workload ()))).Response.body
+  in
+  Windtrap.equal Windtrap.string ~msg:"principal" "unit" (field_string "principal" json);
+  Windtrap.equal Windtrap.string ~msg:"unit" caller_unit (field_string "unit" json);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"service account"
+    caller_service_account
+    (field_string "service_account" json)
+;;
+
+let test_workload_identity_undeclared_caller_is_forbidden () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"an authenticated but undeclared caller → 403"
+    403
+    (workload_status ~callers:[] (bearer (sign_workload ())))
+;;
+
+let test_workload_identity_untrusted_issuer_is_unauthorized () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"an untrusted issuer → 401"
+    401
+    (workload_status (bearer (sign_workload ~iss:"https://someone-else.example.com" ())))
+;;
+
+let test_workload_identity_wrong_audience_is_unauthorized () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a token minted for another unit → 401"
+    401
+    (workload_status (bearer (sign_workload ~aud:"payments/other-svc" ())))
+;;
+
+let test_workload_identity_tampered_signature_is_unauthorized () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a tampered signature → 401"
+    401
+    (workload_status (bearer (tamper_signature (sign_workload ()))))
+;;
+
+let test_workload_identity_non_service_account_is_forbidden () =
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a verified but non-workload subject → 403"
+    403
+    (workload_status (bearer (sign_workload ~sub:"user1" ())))
+;;
+
+let test_workload_identity_missing_token_is_unauthorized () =
+  Windtrap.equal Windtrap.int ~msg:"no token → 401" 401 (workload_status (headers_of []))
+;;
+
+let with_env name value f =
+  let old = Sys.getenv_opt name in
+  Unix.putenv name value;
+  Fun.protect f ~finally:(fun () -> Unix.putenv name (Option.value old ~default:""))
+;;
+
+let test_workload_identity_config_requires_unit () =
+  with_env "SOL_UNIT" "" (fun () ->
+    match
+      Service.For_testing.workload_identity_config
+        ~trusted_issuers:[ workload_issuer, "https://x/jwks" ]
+        [ Route.get "/probe" echo_principal ]
+        `Workload_identity
+    with
+    | Error (`Config msg) ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names SOL_UNIT"
+        true
+        (Sol_runtime.contains_substring ~needle:"SOL_UNIT" msg)
+    | Ok _ -> Windtrap.fail "a workload-identity route without SOL_UNIT must fail closed")
+;;
+
+let test_workload_identity_config_requires_a_trust_root () =
+  with_env "SOL_UNIT" workload_audience (fun () ->
+    match
+      Service.For_testing.workload_identity_config
+        ~trusted_issuers:[]
+        [ Route.get "/probe" echo_principal ]
+        `Workload_identity
+    with
+    | Error (`Config msg) ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the trust root"
+        true
+        (Sol_runtime.contains_substring ~needle:"trust" msg)
+    | Ok _ ->
+      Windtrap.fail "a workload-identity route without a trust root must fail closed")
+;;
+
+let test_workload_identity_config_reads_the_declared_graph () =
+  with_env "SOL_UNIT" workload_audience (fun () ->
+    with_env
+      "SOL_CALLED_BY"
+      (caller_unit ^ "=" ^ caller_service_account)
+      (fun () ->
+         match
+           Service.For_testing.workload_identity_config
+             ~trusted_issuers:[ workload_issuer, "https://x/jwks" ]
+             [ Route.get "/probe" echo_principal ]
+             `Workload_identity
+         with
+         | Error err -> Windtrap.fail (Service.run_error_to_string err)
+         | Ok None ->
+           Windtrap.fail "workload identity was requested, so a config is required"
+         | Ok (Some config) ->
+           Windtrap.equal
+             Windtrap.string
+             ~msg:"audience is the callee's unit"
+             workload_audience
+             config.Auth.audience;
+           Windtrap.equal
+             (Windtrap.option Windtrap.string)
+             ~msg:"the declared called_by maps the service account to the caller unit"
+             (Some caller_unit)
+             (List.assoc_opt caller_service_account config.Auth.callers)))
+;;
+
 let () =
   Windtrap.run
     "auth"
@@ -727,6 +904,39 @@ let () =
         ; Windtrap.test
             "unknown kid with failed refetch → 401"
             test_unknown_kid_with_failed_refetch_is_401
+        ]
+    ; Windtrap.group
+        "workload_identity (DEC-063)"
+        [ Windtrap.test
+            "a declared caller authenticates and authorizes"
+            test_workload_identity_authenticates_and_authorizes
+        ; Windtrap.test
+            "an undeclared caller → 403"
+            test_workload_identity_undeclared_caller_is_forbidden
+        ; Windtrap.test
+            "an untrusted issuer → 401"
+            test_workload_identity_untrusted_issuer_is_unauthorized
+        ; Windtrap.test
+            "a token for another audience → 401"
+            test_workload_identity_wrong_audience_is_unauthorized
+        ; Windtrap.test
+            "a tampered signature → 401"
+            test_workload_identity_tampered_signature_is_unauthorized
+        ; Windtrap.test
+            "a verified non-workload subject → 403"
+            test_workload_identity_non_service_account_is_forbidden
+        ; Windtrap.test
+            "no token → 401"
+            test_workload_identity_missing_token_is_unauthorized
+        ; Windtrap.test
+            "no SOL_UNIT fails closed"
+            test_workload_identity_config_requires_unit
+        ; Windtrap.test
+            "no trust root fails closed"
+            test_workload_identity_config_requires_a_trust_root
+        ; Windtrap.test
+            "the declared graph supplies audience and callers"
+            test_workload_identity_config_reads_the_declared_graph
         ]
     ]
 ;;

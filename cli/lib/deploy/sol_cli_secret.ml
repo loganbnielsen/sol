@@ -36,6 +36,12 @@ let validate_key key =
       "SOL_ALLOW_PLAINTEXT_PEER_AUTH is reserved: it lets a caller fall back to the \
        shared API key when no projected identity was declared, and only local tooling \
        sets it"
+  else if String.equal key "SOL_UNIT" || String.equal key "SOL_CALLED_BY"
+  then
+    Error
+      (key
+       ^ " is reserved: it is projected from the declared calls graph and must not be \
+          spoofed")
   else Ok ()
 ;;
 

@@ -27,10 +27,20 @@ type jwt_config =
   ; verification : jwt_verification
   }
 
+(** DEC-063: Sol-to-Sol workload identity. [callers] maps a service-account
+    subject ("<namespace>:<serviceaccount>") to the caller's Sol unit;
+    [trusted_issuers] maps an accepted issuer to its JWKS URL. *)
+type workload_identity_config =
+  { audience : string
+  ; callers : (string * string) list
+  ; trusted_issuers : (string * string) list
+  }
+
 type level =
   [ `Public
   | `Api_key
   | `Jwt of jwt_config
+  | `Workload_identity
   ]
 
 type principal =
@@ -40,6 +50,10 @@ type principal =
       { sub : string
       ; scopes : string list
       ; claims : Yojson.Safe.t
+      }
+  | Unit of
+      { unit : string
+      ; service_account : string
       }
 
 type context = { principal : principal }

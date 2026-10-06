@@ -81,12 +81,17 @@ let pattern source =
 
 let pattern_to_string p = p.source
 
-let make m pattern_source ~auth handler =
+(* Internal by default: a route that does not say otherwise requires the
+   caller's projected workload identity (DEC-063), so a new route cannot be
+   accidentally public. Health, readiness and metrics stay built-in public. *)
+let default_auth : Auth.level = `Workload_identity
+
+let make m pattern_source ?(auth = default_auth) handler =
   { method_ = m; pattern = pattern pattern_source; auth; handler }
 ;;
 
-let get p ~auth h = make `GET p ~auth h
-let post p ~auth h = make `POST p ~auth h
-let put p ~auth h = make `PUT p ~auth h
-let patch p ~auth h = make `PATCH p ~auth h
-let delete p ~auth h = make `DELETE p ~auth h
+let get ?auth p h = make `GET p ?auth h
+let post ?auth p h = make `POST p ?auth h
+let put ?auth p h = make `PUT p ?auth h
+let patch ?auth p h = make `PATCH p ?auth h
+let delete ?auth p h = make `DELETE p ?auth h

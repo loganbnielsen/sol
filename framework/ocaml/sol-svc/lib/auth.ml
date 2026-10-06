@@ -27,10 +27,23 @@ type jwt_config =
   ; verification : jwt_verification
   }
 
+(* DEC-063: a Sol-to-Sol call authenticates with the caller's projected
+   ServiceAccount token. The callee checks the token against a trusted issuer,
+   maps the subject to a caller unit, and requires that unit in [callers]. The
+   trust root is an explicit (issuer, JWKS URL) set; issuing discovery is a
+   separate concern. *)
+type workload_identity_config =
+  { audience : string
+  ; callers : (string * string) list
+    (* service account "<namespace>:<serviceaccount>" -> caller unit *)
+  ; trusted_issuers : (string * string) list (* issuer -> JWKS URL *)
+  }
+
 type level =
   [ `Public
   | `Api_key
   | `Jwt of jwt_config
+  | `Workload_identity
   ]
 
 type principal =
@@ -40,6 +53,10 @@ type principal =
       { sub : string
       ; scopes : string list
       ; claims : Yojson.Safe.t
+      }
+  | Unit of
+      { unit : string
+      ; service_account : string
       }
 
 type context = { principal : principal }

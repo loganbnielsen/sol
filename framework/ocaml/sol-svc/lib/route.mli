@@ -21,8 +21,9 @@ val parse_pattern : string -> (pattern, string) result
 val pattern : string -> pattern
 val pattern_to_string : pattern -> string
 val parse_request_path : string -> (string list * bool) option
-val get : string -> auth:Auth.level -> handler -> t
-val post : string -> auth:Auth.level -> handler -> t
-val put : string -> auth:Auth.level -> handler -> t
-val patch : string -> auth:Auth.level -> handler -> t
-val delete : string -> auth:Auth.level -> handler -> t
+val default_auth : Auth.level
+val get : ?auth:Auth.level -> string -> handler -> t
+val post : ?auth:Auth.level -> string -> handler -> t
+val put : ?auth:Auth.level -> string -> handler -> t
+val patch : ?auth:Auth.level -> string -> handler -> t
+val delete : ?auth:Auth.level -> string -> handler -> t

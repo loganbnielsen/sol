@@ -84,6 +84,27 @@ let render
       ~primitive
       ()
   in
+  (* The callee's own unit and the callers declared for it (DEC-063). Derived
+     from the committed declaration, never from user config: a workload cannot
+     spoof its audience or widen its called_by set. *)
+  let identity =
+    (("SOL_UNIT", domain ^ "/" ^ name)
+     ::
+     (match called_by with
+      | [] -> []
+      | callers ->
+        [ ( "SOL_CALLED_BY"
+          , callers
+            |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
+              Printf.sprintf
+                "%s=%s:%s"
+                c.unit_id
+                (Sol_cli_kubernetes_name.namespace_to_string c.target_namespace)
+                (Sol_cli_kubernetes_name.k8s_name_to_string c.target_name))
+            |> String.concat "," )
+        ]))
+    @ identity
+  in
   let reserved = List.map fst identity in
   let config =
     identity @ List.filter (fun (key, _) -> not (List.mem key reserved)) config

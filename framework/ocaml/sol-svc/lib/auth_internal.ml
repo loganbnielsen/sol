@@ -314,6 +314,65 @@ let validate_verified_jwt ?fetch_jwks vconfig ~scopes headers =
   Ok { principal = User { sub = token_sub json; scopes = token_scopes; claims = json } }
 ;;
 
+let workload_identity_algorithms : jwt_algorithm list = [ `RS256; `ES256; `ES384; `ES512 ]
+
+let service_account_of_subject sub =
+  let prefix = "system:serviceaccount:" in
+  let plen = String.length prefix in
+  if String.length sub <= plen || String.sub sub 0 plen <> prefix
+  then
+    Error
+      (`Forbidden
+          (Printf.sprintf "authenticated subject %S is not a workload identity" sub))
+  else Ok (String.sub sub plen (String.length sub - plen))
+;;
+
+(* The token's [iss] is read before verification only to pick a trusted issuer;
+   nothing it says is trusted until [validate_verified_jwt] accepts the
+   signature, audience and temporal claims. An unknown issuer, a bad signature,
+   or an unmapped subject fails closed. *)
+let validate_workload_identity ?fetch_jwks config headers =
+  let* token = bearer_token headers in
+  let* parsed =
+    match Jose.Jwt.unsafe_of_string token with
+    | Ok t -> Ok t
+    | Error _ -> Error (`Unauthorized "Malformed JWT")
+  in
+  let* claims = require_claims_object parsed.Jose.Jwt.payload in
+  let* issuer =
+    match claim_strings claims "iss" with
+    | [ issuer ] -> Ok issuer
+    | _ -> Error (`Unauthorized "JWT issuer missing")
+  in
+  let* jwks_url =
+    match List.assoc_opt issuer config.trusted_issuers with
+    | Some url -> Ok url
+    | None -> Error (`Unauthorized ("JWT issuer is not trusted: " ^ issuer))
+  in
+  let vconfig =
+    { issuer
+    ; audience = config.audience
+    ; algorithms = workload_identity_algorithms
+    ; key_source = Jwks_url jwks_url
+    }
+  in
+  let* verified = validate_verified_jwt ?fetch_jwks vconfig ~scopes:[] headers in
+  let sub =
+    match verified.principal with
+    | User { sub; _ } -> sub
+    | Public | Service _ | Unit _ -> ""
+  in
+  let* service_account = service_account_of_subject sub in
+  match List.assoc_opt service_account config.callers with
+  | None ->
+    Error
+      (`Forbidden
+          (Printf.sprintf
+             "caller %s is authenticated but is not in this unit's called_by set"
+             service_account))
+  | Some unit -> Ok { principal = Unit { unit; service_account } }
+;;
+
 let validate_jwt ?fetch_jwks config headers =
   match config.verification with
   | Verified_signature_required vconfig ->
@@ -321,9 +380,18 @@ let validate_jwt ?fetch_jwks config headers =
   | Unverified_dev_only -> validate_unverified_jwt config headers
 ;;
 
-let validate ?(read_api_key = Fun.const None) ?fetch_jwks level headers =
+let validate ?(read_api_key = Fun.const None) ?fetch_jwks ?workload_identity level headers
+  =
   match level with
   | `Public -> Ok { principal = Public }
   | `Api_key -> validate_api_key ~read_api_key headers
   | `Jwt cfg -> validate_jwt ?fetch_jwks cfg headers
+  | `Workload_identity ->
+    (match workload_identity with
+     | Some config -> validate_workload_identity ?fetch_jwks config headers
+     | None ->
+       Error
+         (`Server_error
+             "a route uses Workload_identity auth but no workload-identity trust root is \
+              configured"))
 ;;

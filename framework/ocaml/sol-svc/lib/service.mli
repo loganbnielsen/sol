@@ -19,6 +19,7 @@ module Make (H : HANDLER) : sig
          ; .. >
     -> ?port:int
     -> ?metrics_auth:Auth.level
+    -> ?trusted_issuers:(string * string) list
     -> ?ot:Sol_obs.t
     -> ?max_body_bytes:int
     -> ?drain_timeout_s:float
@@ -38,6 +39,7 @@ val run
        ; .. >
   -> ?port:int
   -> ?metrics_auth:Auth.level
+  -> ?trusted_issuers:(string * string) list
   -> ?ot:Sol_obs.t
   -> ?max_body_bytes:int
   -> ?drain_timeout_s:float
@@ -54,8 +56,18 @@ module For_testing : sig
     :  ?report_error:error_reporter
     -> ?read_api_key:(unit -> string option)
     -> ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
+    -> ?workload_identity:Auth.workload_identity_config
     -> routes:Route.t list
     -> Http.Request.t
     -> Cohttp_eio.Body.t
     -> Response.t
+
+  val workload_identity_config
+    :  trusted_issuers:(string * string) list
+    -> Route.t list
+    -> Auth.level
+    -> (Auth.workload_identity_config option, run_error) result
+
+  val parse_called_by : string -> (string * string) list
+  val workload_identity_requested : Route.t list -> Auth.level -> bool
 end
