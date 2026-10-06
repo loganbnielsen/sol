@@ -7,11 +7,27 @@ let caller_unit = "payments/charge-svc"
 let rsa_priv_jwk = Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2048 ())
 let rsa_jwks = Jose.Jwks.{ keys = [ Jose.Jwk.pub_of_priv rsa_priv_jwk ] }
 
+(* A second issuer key, and the JWKS an issuer serves while both keys overlap
+   during a rotation. *)
+let rotated_priv_jwk =
+  Jose.Jwk.make_priv_rsa (Mirage_crypto_pk.Rsa.generate ~bits:2048 ())
+;;
+
+let rotated_jwks =
+  Jose.Jwks.
+    { keys = [ Jose.Jwk.pub_of_priv rsa_priv_jwk; Jose.Jwk.pub_of_priv rotated_priv_jwk ]
+    }
+;;
+
+(* The identity key `Auth_internal.get_jwks` caches workload-issuer keys under. *)
+let workload_jwks_cache_key = "sol-workload-issuer:" ^ workload_issuer
+
 let workload_identity ?(callers = [ caller_service_account, caller_unit ]) () =
   Auth.{ audience = workload_audience; callers; trusted_issuer = workload_issuer }
 ;;
 
 let sign_workload
+      ?(key = rsa_priv_jwk)
       ?(sub = caller_subject)
       ?(aud = workload_audience)
       ?(iss = workload_issuer)
@@ -26,7 +42,7 @@ let sign_workload
       ; "exp", `Int (int_of_float (Unix.gettimeofday () +. exp_offset))
       ]
   in
-  match Jose.Jwt.sign ~payload rsa_priv_jwk with
+  match Jose.Jwt.sign ~payload key with
   | Ok token -> Jose.Jwt.to_string token
   | Error (`Msg message) -> failwith ("sign_workload: " ^ message)
 ;;
@@ -288,6 +304,62 @@ let test_jwks_cache_reuses_resolved_keys () =
   Service.For_testing.reset_jwks_cache ()
 ;;
 
+(* A rotation: the cache holds only the old key and is younger than the 300s
+   freshness window, so the primary lookup returns it; the token's unknown kid
+   must trigger the unknown-kid refetch and pick up the overlapping new key. *)
+let test_jwks_unknown_kid_refetches_a_rotation () =
+  Service.For_testing.reset_jwks_cache ();
+  Service.For_testing.seed_stale_jwks_cache
+    ~url:workload_jwks_cache_key
+    ~age_s:60.0
+    ~jwks:(Jose.Jwks.to_string rsa_jwks);
+  let fetches = ref 0 in
+  let fetch issuer =
+    incr fetches;
+    if issuer = workload_issuer then Ok rotated_jwks else Error "unexpected JWKS URL"
+  in
+  let response =
+    dispatch ~fetch_workload_jwks:fetch (headers (sign_workload ~key:rotated_priv_jwk ()))
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a token signed by the rotated key authenticates after the refetch"
+    200
+    response.Response.status;
+  Windtrap.equal Windtrap.int ~msg:"the unknown kid caused exactly one refetch" 1 !fetches;
+  Service.For_testing.reset_jwks_cache ()
+;;
+
+(* Kid-flood resistance: an unknown kid does not refetch a cache younger than
+   the 30s unknown-kid interval, and the request stays refused rather than
+   authenticating against a key that is not in the set. *)
+let test_jwks_unknown_kid_refetch_is_debounced () =
+  Service.For_testing.reset_jwks_cache ();
+  Service.For_testing.seed_stale_jwks_cache
+    ~url:workload_jwks_cache_key
+    ~age_s:5.0
+    ~jwks:(Jose.Jwks.to_string rsa_jwks);
+  let fetches = ref 0 in
+  let fetch issuer =
+    incr fetches;
+    if issuer = workload_issuer then Ok rotated_jwks else Error "unexpected JWKS URL"
+  in
+  let response =
+    dispatch ~fetch_workload_jwks:fetch (headers (sign_workload ~key:rotated_priv_jwk ()))
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"a fresh cache is not refetched on an unknown kid"
+    0
+    !fetches;
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"and the request is refused"
+    401
+    response.Response.status;
+  Service.For_testing.reset_jwks_cache ()
+;;
+
 let test_external_route_bypasses_only_sol_workload_auth () =
   let boundary = ref None in
   let workload_principal = ref (Some ("unexpected", "principal")) in
@@ -381,6 +453,12 @@ let () =
         test_non_workload_subject_is_forbidden
     ; Windtrap.test "missing token is unauthorized" test_missing_token_is_unauthorized
     ; Windtrap.test "JWKS cache reuses resolved keys" test_jwks_cache_reuses_resolved_keys
+    ; Windtrap.test
+        "an unknown kid refetches and picks up a rotated issuer key"
+        test_jwks_unknown_kid_refetches_a_rotation
+    ; Windtrap.test
+        "an unknown kid does not refetch a cache younger than the refetch interval"
+        test_jwks_unknown_kid_refetch_is_debounced
     ; Windtrap.test
         "external route bypasses only Sol workload auth"
         test_external_route_bypasses_only_sol_workload_auth
