@@ -208,6 +208,60 @@ let test_read_only_assets () =
        = 0))
 ;;
 
+let test_unreadable_manifest_refuses () =
+  with_tmpdir (fun root ->
+    let assets = fake_assets root in
+    let target = "unreadable/aws/us-east-1" in
+    let chdir = materialize assets ~target () in
+    write (Filename.concat root "platform/cloud/aws/cluster/added.tf") "# new\n";
+    ignore (materialize assets ~target ());
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the added source was copied"
+      true
+      (Sys.file_exists (Filename.concat chdir "added.tf"));
+    Sys.remove (Filename.concat root "platform/cloud/aws/cluster/added.tf");
+    let manifest =
+      Filename.concat
+        (W.dir
+           ~provider:Sol_cli_provider.Aws
+           ~role:A.Cluster
+           ~backend_config:(backend target))
+        W.manifest_name
+    in
+    Sys.remove manifest;
+    Unix.mkdir manifest 0o755;
+    (match
+       W.materialize
+         ~assets
+         ~provider:Sol_cli_provider.Aws
+         ~role:A.Cluster
+         ~backend_config:(backend target)
+     with
+     | Ok _ -> Windtrap.fail "an unobservable manifest was accepted as a first run"
+     | Error message ->
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"the refusal names the manifest"
+         true
+         (Sol_cli_string.contains ~needle:W.manifest_name message));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a source the manifest tracked is not removed on a failed read"
+      true
+      (Sys.file_exists (Filename.concat chdir "added.tf"));
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the copied asset is unchanged"
+      "# cluster v1\n"
+      (read (Filename.concat chdir "main.tf"));
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the unobservable manifest is left in place"
+      true
+      (Sys.file_exists manifest))
+;;
+
 let%test "workdir: identity isolates states" = test_identity ()
 let%test "workdir: materializes the assets" = test_materializes_the_assets ()
 
@@ -220,3 +274,9 @@ let%test "workdir: re-materialization is authoritative and preserves" =
 ;;
 
 let%test "workdir: read-only assets" = test_read_only_assets ()
+
+let%test
+    "workdir: an unobservable manifest refuses without changing the working directory"
+  =
+  test_unreadable_manifest_refuses ()
+;;

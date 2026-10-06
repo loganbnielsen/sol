@@ -12,6 +12,11 @@ val chdir
 
 val is_runtime_artifact : string -> bool
 
+(* The file Sol writes in a materialized working directory to record the source
+   assets it copied, so a later materialization can remove what it no longer
+   needs. *)
+val manifest_name : string
+
 val materialize
   :  assets:Sol_cli_platform_assets.t
   -> provider:Sol_cli_provider.t

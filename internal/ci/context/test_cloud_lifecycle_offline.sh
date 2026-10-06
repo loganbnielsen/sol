@@ -2206,6 +2206,31 @@ cmp -s "$aws_wd/main.tf" "$root/platform/cloud/aws/cluster/main.tf" ||
   { echo "DEC-050: Terraform's own directory was removed" >&2; exit 1; }
 echo "DEC-050: re-materialization restores sources, drops stale ones, keeps what Sol did not write"
 
+# An existing provenance record that cannot be read is not a first run: treating
+# it as one would leave stale copied sources active while losing the cleanup
+# history. The read must fail closed, before Terraform evaluates the directory.
+cp "$wd_base/.sol-materialized" "$tmp/dec050-manifest.expected"
+mv "$wd_base/.sol-materialized" "$wd_base/.sol-materialized.keep"
+mkdir "$wd_base/.sol-materialized"
+unreadable_log="$tmp/dec050-unreadable-manifest.log"
+if run_plan_aws "$unreadable_log"; then
+  cat "$unreadable_log.out" >&2
+  echo "DEC-050: a plan proceeded with an unreadable materialization manifest" >&2
+  exit 1
+fi
+assert_contains "DEC-050: the refusal names the manifest" "$unreadable_log.out" \
+  ".sol-materialized" || exit 1
+if grep -E '^terraform .* plan( |$)' "$unreadable_log" >/dev/null 2>&1; then
+  echo "DEC-050: terraform plan ran despite the unreadable manifest:" >&2
+  grep -E '^terraform .* plan' "$unreadable_log" >&2
+  exit 1
+fi
+rmdir "$wd_base/.sol-materialized"
+mv "$wd_base/.sol-materialized.keep" "$wd_base/.sol-materialized"
+cmp -s "$wd_base/.sol-materialized" "$tmp/dec050-manifest.expected" ||
+  { echo "DEC-050: the refused run changed the materialization manifest" >&2; exit 1; }
+echo "DEC-050: an unreadable materialization manifest refuses before Terraform"
+
 printf '{"version":4,"serial":7,"lineage":"dec050"}\n' >"$aws_wd/errored.tfstate"
 cp "$aws_wd/errored.tfstate" "$tmp/errored.expected"
 errored_log="$tmp/dec050-errored.log"

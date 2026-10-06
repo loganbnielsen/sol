@@ -55,10 +55,22 @@ let rec source_files root rel =
   else [ rel ]
 ;;
 
-let read_lines path =
-  match In_channel.with_open_bin path In_channel.input_all with
-  | s -> String.split_on_char '\n' s |> List.filter (fun l -> l <> "")
-  | exception Sys_error _ -> []
+(* The source list Sol wrote on the previous materialization. Only confirmed
+   initial absence is empty: a manifest that exists but cannot be read is
+   unobservable, so materialization must refuse rather than treat it as a first
+   run, which would leave stale copied sources active and lose the cleanup
+   history. *)
+let read_manifest path =
+  match Unix.lstat path with
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
+  | exception Unix.Unix_error (e, _, _) ->
+    Error (Printf.sprintf "%s: %s" path (Unix.error_message e))
+  | { Unix.st_kind = Unix.S_REG; _ } ->
+    (match Sol_cli_fs.read_file path with
+     | Ok content ->
+       Ok (String.split_on_char '\n' content |> List.filter (fun l -> l <> ""))
+     | Error message -> Error message)
+  | _ -> Error (Printf.sprintf "%s is not a readable regular file" path)
 ;;
 
 let materialize ~assets ~provider ~role ~backend_config =
@@ -86,8 +98,9 @@ let materialize ~assets ~provider ~role ~backend_config =
   in
   let prepare sources =
     let* () = Sol_cli_fs.mkdir_p root in
+    let* previous = read_manifest manifest in
     let* _ =
-      read_lines manifest
+      previous
       |> List.filter (fun rel -> not (List.mem rel sources))
       |> Sol_cli_result.map_list (fun rel ->
         Sol_cli_fs.remove_if_present (Filename.concat root rel))
