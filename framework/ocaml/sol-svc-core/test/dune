@@ -1,0 +1,8 @@
+(tests
+ (names test_core)
+ (libraries sol_svc_core windtrap))
+
+(alias
+ (name ci-unit)
+ (deps
+  (alias_rec runtest)))

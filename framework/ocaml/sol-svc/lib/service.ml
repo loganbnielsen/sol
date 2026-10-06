@@ -21,6 +21,35 @@ let find_route routes meth path =
   loop routes
 ;;
 
+let route_and_boundary routes metrics_auth req =
+  let uri = Uri.of_string (Http.Request.resource req) in
+  let path = Uri.path uri in
+  let builtin =
+    match Http.Request.meth req, path with
+    | `GET, ("/healthz" | "/readyz") -> Some (path, Observation.External)
+    | `GET, "/metrics" ->
+      Some
+        ( "/metrics"
+        , match metrics_auth with
+          | `Workload_identity -> Observation.Internal
+          | `Public | `Api_key | `Jwt _ -> Observation.External )
+    | _ -> None
+  in
+  match builtin with
+  | Some (route, boundary) -> route, boundary
+  | None ->
+    let route_match =
+      match Route_internal.method_of_http (Http.Request.meth req) with
+      | None -> Not_found
+      | Some meth -> find_route routes meth path
+    in
+    (match route_match with
+     | Found (route, _) ->
+       ( Route.pattern_to_string route.Route.pattern
+       , if route.Route.is_external then Observation.External else Observation.Internal )
+     | Method_not_allowed | Not_found -> "unmatched", Observation.Internal)
+;;
+
 let http_status_of_int = function
   | 200 -> `OK
   | 201 -> `Created
@@ -69,6 +98,14 @@ let auth_result ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers =
   | Ok ctx -> Ok ctx
 ;;
 
+let authenticate_route ?fetch_jwks ?workload_identity route headers =
+  if route.Route.is_external
+  then Ok None
+  else
+    auth_result ?fetch_jwks ?workload_identity `Workload_identity headers
+    |> Result.map Option.some
+;;
+
 let body_result headers body max_bytes =
   match read_body_limited headers body max_bytes with
   | None -> Error Response.payload_too_large
@@ -86,6 +123,8 @@ let dispatch_unguarded
       ?read_api_key
       ?fetch_jwks
       ?workload_identity
+      ?on_boundary
+      ?on_workload_principal
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -114,9 +153,11 @@ let dispatch_unguarded
       let builtin =
         match meth, path with
         | `GET, "/healthz" ->
+          Option.iter (fun f -> f Observation.External) on_boundary;
           observe "/healthz";
           Some (Response.json {|{"status":"ok"}|})
         | `GET, "/readyz" ->
+          Option.iter (fun f -> f Observation.External) on_boundary;
           observe "/readyz";
           Some
             (if ready ()
@@ -127,6 +168,13 @@ let dispatch_unguarded
                ; body = {|{"status":"shutting down"}|}
                })
         | `GET, "/metrics" ->
+          Option.iter
+            (fun f ->
+               f
+                 (match metrics_auth with
+                  | `Workload_identity -> Observation.Internal
+                  | `Public | `Api_key | `Jwt _ -> Observation.External))
+            on_boundary;
           observe "/metrics";
           (match metrics_renderer with
            | None -> Some Response.not_found
@@ -162,16 +210,25 @@ let dispatch_unguarded
            observe "unmatched";
            { Response.status = 405; headers = []; body = "" }
          | Found (route, params) ->
+           Option.iter
+             (fun f ->
+                f
+                  (if route.Route.is_external
+                   then Observation.External
+                   else Observation.Internal))
+             on_boundary;
            observe (Route.pattern_to_string route.Route.pattern);
            let result =
              let* auth_ctx =
-               auth_result
-                 ?read_api_key
-                 ?fetch_jwks
-                 ?workload_identity
-                 route.Route.auth
-                 headers
+               authenticate_route ?fetch_jwks ?workload_identity route headers
              in
+             Option.iter
+               (fun f ->
+                  match auth_ctx with
+                  | Some { Auth.principal = Auth.Unit { unit; service_account }; _ } ->
+                    f (Some (unit, service_account))
+                  | _ -> f None)
+               on_workload_principal;
              let* body_str = body_result headers body max_body_bytes in
              let trace_ctx =
                Http.Header.to_list headers |> Obs_trace.extract_from_headers
@@ -213,6 +270,8 @@ let dispatch
       ?read_api_key
       ?fetch_jwks
       ?workload_identity
+      ?on_boundary
+      ?on_workload_principal
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -228,6 +287,8 @@ let dispatch
       ?read_api_key
       ?fetch_jwks
       ?workload_identity
+      ?on_boundary
+      ?on_workload_principal
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -249,11 +310,7 @@ let auth_uses_api_key = function
   | `Public | `Jwt _ | `Workload_identity -> false
 ;;
 
-let api_key_required routes metrics_auth =
-  auth_uses_api_key metrics_auth
-  || List.exists (fun route -> auth_uses_api_key route.Route.auth) routes
-;;
-
+let api_key_required metrics_auth = auth_uses_api_key metrics_auth
 let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
 
 let auth_is_unverified_jwt = function
@@ -262,11 +319,8 @@ let auth_is_unverified_jwt = function
   | `Public | `Api_key | `Workload_identity -> false
 ;;
 
-let refuse_unverified_jwt routes metrics_auth =
-  let used =
-    auth_is_unverified_jwt metrics_auth
-    || List.exists (fun route -> auth_is_unverified_jwt route.Route.auth) routes
-  in
+let refuse_unverified_jwt metrics_auth =
+  let used = auth_is_unverified_jwt metrics_auth in
   if used && Sol_runtime.setting unverified_jwt_opt_in <> Some "1"
   then
     Error
@@ -288,7 +342,7 @@ let jwks_url_of = function
   | `Public | `Api_key | `Workload_identity -> None
 ;;
 
-let refuse_non_https_jwks routes metrics_auth =
+let refuse_non_https_jwks metrics_auth =
   let is_https url =
     let uri = Uri.of_string url in
     match Uri.scheme uri, Uri.host uri with
@@ -301,7 +355,7 @@ let refuse_non_https_jwks routes metrics_auth =
          match jwks_url_of auth with
          | Some url when not (is_https url) -> Some url
          | _ -> None)
-      (metrics_auth :: List.map (fun route -> route.Route.auth) routes)
+      [ metrics_auth ]
   with
   | None -> Ok ()
   | Some url ->
@@ -334,34 +388,12 @@ let api_key_reader ~env ~required =
   | None, _ -> Ok (fun () -> None)
 ;;
 
-let auth_uses_workload_identity = function
-  | `Workload_identity -> true
-  | `Public | `Api_key | `Jwt _ -> false
-;;
-
 let workload_identity_requested routes metrics_auth =
-  auth_uses_workload_identity metrics_auth
-  || List.exists (fun route -> auth_uses_workload_identity route.Route.auth) routes
+  metrics_auth = `Workload_identity
+  || List.exists (fun route -> not route.Route.is_external) routes
 ;;
 
-(* SOL_CALLED_BY is projected by the CLI from the declared called_by graph as
-   "unit=namespace:serviceaccount" entries. Malformed entries are dropped: they
-   can only narrow the caller set, never widen it. *)
-let parse_called_by raw =
-  raw
-  |> String.split_on_char ','
-  |> List.filter_map (fun entry ->
-    match String.index_opt entry '=' with
-    | None -> None
-    | Some i ->
-      let unit = String.sub entry 0 i |> String.trim in
-      let service_account =
-        String.sub entry (i + 1) (String.length entry - i - 1) |> String.trim
-      in
-      if unit = "" || service_account = "" then None else Some (service_account, unit))
-;;
-
-(* The declared graph supplies the audience and the allowed callers; the trust
+(* The canonical calls graph supplies the audience and the allowed callers; the trust
    root is an explicit input, because issuing discovery and its capability check
    are a separate concern. Workload-identity routes without either fail closed at
    startup. *)
@@ -381,7 +413,7 @@ let workload_identity_config ~trusted_issuers routes metrics_auth =
     let callers =
       match Sol_runtime.setting "SOL_CALLED_BY" with
       | None -> []
-      | Some raw -> parse_called_by raw
+      | Some raw -> Auth.callers_of_projection raw
     in
     if trusted_issuers = []
     then
@@ -392,16 +424,100 @@ let workload_identity_config ~trusted_issuers routes metrics_auth =
     else Ok (Some { Auth.audience; callers; trusted_issuers })
 ;;
 
+let emit_request_observation
+      ~ot
+      ~observe
+      ~(metrics_fns : (Obs_eio.counter_fn * Obs_eio.histogram_fn) option)
+      req
+      ~route
+      ~boundary
+      ~workload_principal
+      ~status
+      ~duration_s
+  =
+  let meth_str =
+    match Http.Request.meth req with
+    | `GET -> "GET"
+    | `POST -> "POST"
+    | `PUT -> "PUT"
+    | `PATCH -> "PATCH"
+    | `DELETE -> "DELETE"
+    | _ -> "OTHER"
+  in
+  let path = Uri.(of_string (Http.Request.resource req) |> path) in
+  let trace_id =
+    Option.bind
+      (Http.Header.get (Http.Request.headers req) "traceparent")
+      (fun value ->
+         match String.split_on_char '-' value with
+         | [ _version; id; _parent; _flags ] when String.length id = 32 -> Some id
+         | _ -> None)
+  in
+  let event =
+    Observation.request_finished
+      ~method_:meth_str
+      ~path
+      ~route
+      ?trace_id
+      ~boundary
+      ?workload_principal
+      ~status
+      ~duration_s
+      ()
+  in
+  let fields =
+    [ "method", meth_str
+    ; "path", path
+    ; "route", route
+    ; "status", string_of_int status
+    ; "duration_ms", string_of_int (int_of_float (duration_s *. 1000.))
+    ; "boundary", Observation.boundary_to_string boundary
+    ]
+    @
+    match workload_principal with
+    | None -> []
+    | Some (unit, _service_account) -> [ "caller", unit ]
+  in
+  Option.iter (fun o -> Sol_obs.log_info o ~fields "http request completed") ot;
+  Option.iter (fun sink -> sink event) observe;
+  Option.iter
+    (fun ((req_count : Obs_eio.counter_fn), (req_duration : Obs_eio.histogram_fn)) ->
+       let sc = string_of_int (status / 100) ^ "xx" in
+       req_count ~labels:[ "method", meth_str; "route", route; "status_class", sc ] 1;
+       req_duration ~labels:[ "method", meth_str; "route", route ] duration_s)
+    metrics_fns
+;;
+
 module For_testing = struct
   let respond_or_500 ?report_error = respond_or_500 ?report_error
+  let reset_jwks_cache () = Auth_cache.clear ()
 
-  let dispatch ?report_error ?read_api_key ?fetch_jwks ?workload_identity ~routes req body
+  let seed_stale_jwks_cache ~url ~age_s ~jwks =
+    Auth_cache.replace
+      { Auth_cache.url
+      ; fetched_at = Unix.gettimeofday () -. age_s
+      ; jwks = Jose.Jwks.of_string jwks
+      }
+  ;;
+
+  let dispatch
+        ?report_error
+        ?read_api_key
+        ?fetch_jwks
+        ?workload_identity
+        ?on_boundary
+        ?on_workload_principal
+        ~routes
+        req
+        body
     =
     dispatch
       ?report_error
       ?read_api_key
       ?fetch_jwks
       ?workload_identity
+      ?on_boundary
+      ?on_workload_principal
       ~routes
       ~metrics_renderer:None
       ~metrics_auth:`Public
@@ -415,7 +531,7 @@ module For_testing = struct
     workload_identity_config ~trusted_issuers routes metrics_auth
   ;;
 
-  let parse_called_by = parse_called_by
+  let parse_called_by = Auth.callers_of_projection
   let workload_identity_requested = workload_identity_requested
 end
 
@@ -430,6 +546,7 @@ module Make (H : HANDLER) = struct
         ?(metrics_auth = `Public)
         ?(trusted_issuers = [])
         ?ot
+        ?observe
         ?(max_body_bytes = 10_485_760)
         ?(drain_timeout_s = 30.0)
         ?(shutdown_delay_s = 5.0)
@@ -475,15 +592,13 @@ module Make (H : HANDLER) = struct
         Some (req_count, req_duration)
     in
     let fetch_jwks = Auth_internal.fetch_jwks_over_https ~env in
-    let* () = refuse_unverified_jwt H.routes metrics_auth in
-    let* () = refuse_non_https_jwks H.routes metrics_auth in
-    let* read_api_key =
-      api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
-    in
+    let* () = refuse_unverified_jwt metrics_auth in
+    let* () = refuse_non_https_jwks metrics_auth in
+    let* read_api_key = api_key_reader ~env ~required:(api_key_required metrics_auth) in
     let* workload_identity =
       workload_identity_config ~trusted_issuers H.routes metrics_auth
     in
-    let ready = Atomic.make true in
+    let lifecycle = Lifecycle.create () in
     let signal_stop, signal_stop_r = Eio.Promise.create () in
     let await_stop () =
       match stop with
@@ -514,69 +629,76 @@ module Make (H : HANDLER) = struct
           | None -> ());
          Printf.eprintf "sol-svc listening on :%d\n%!" actual_port;
          let callback _conn req body =
-           let t0 =
-             match metrics_fns with
-             | Some _ -> Some (Eio.Time.now env#clock)
-             | None -> None
-           in
-           let route_ref = ref "unmatched" in
-           let route_observer =
-             match metrics_fns with
-             | None -> None
-             | Some _ -> Some (fun lbl -> route_ref := lbl)
-           in
-           let sol_resp =
-             dispatch
-               ~report_error
-               ~fetch_jwks
-               ?workload_identity
-               ~routes:H.routes
-               ~metrics_renderer
-               ~metrics_auth
-               ~read_api_key
-               ~max_body_bytes
-               ?route_observer
-               ~ready:(fun () -> Atomic.get ready)
+           let t0 = Eio.Time.now env#clock in
+           let route, initial_boundary = route_and_boundary H.routes metrics_auth req in
+           let route_ref = ref route in
+           let boundary_ref = ref initial_boundary in
+           let workload_principal = ref None in
+           let observe_request status =
+             emit_request_observation
+               ~ot
+               ~observe
+               ~metrics_fns
                req
-               body
+               ~route:!route_ref
+               ~boundary:!boundary_ref
+               ~workload_principal:!workload_principal
+               ~status
+               ~duration_s:(Eio.Time.now env#clock -. t0)
            in
-           (match metrics_fns, t0 with
-            | Some (req_count, req_duration), Some t0 ->
-              let dt = Eio.Time.now env#clock -. t0 in
-              let meth_str =
-                match Http.Request.meth req with
-                | `GET -> "GET"
-                | `POST -> "POST"
-                | `PUT -> "PUT"
-                | `PATCH -> "PATCH"
-                | `DELETE -> "DELETE"
-                | _ -> "OTHER"
-              in
-              let route = !route_ref in
-              let sc = string_of_int (sol_resp.Response.status / 100) ^ "xx" in
-              req_count
-                ~labels:[ "method", meth_str; "route", route; "status_class", sc ]
-                1;
-              req_duration ~labels:[ "method", meth_str; "route", route ] dt
-            | _ -> ());
-           let body_str = sol_resp.Response.body in
-           let headers =
-             Http.Header.of_list
-               (("content-length", string_of_int (String.length body_str))
-                :: sol_resp.Response.headers)
+           let send_response response =
+             let body_str = response.Response.body in
+             let headers =
+               Http.Header.of_list
+                 (("content-length", string_of_int (String.length body_str))
+                  :: response.Response.headers)
+             in
+             Cohttp_eio.Server.respond
+               ~status:(http_status_of_int response.Response.status)
+               ~headers
+               ~body:(Cohttp_eio.Body.of_string body_str)
+               ()
            in
-           Cohttp_eio.Server.respond
-             ~status:(http_status_of_int sol_resp.Response.status)
-             ~headers
-             ~body:(Cohttp_eio.Body.of_string body_str)
-             ()
+           match Lifecycle.begin_request lifecycle with
+           | None ->
+             let response =
+               { Response.status = 503; headers = [ "content-length", "0" ]; body = "" }
+             in
+             observe_request response.Response.status;
+             send_response response
+           | Some lease ->
+             Fun.protect
+               ~finally:(fun () -> Lifecycle.finish_request lease)
+               (fun () ->
+                  let route_observer = Some (fun lbl -> route_ref := lbl) in
+                  let response =
+                    dispatch
+                      ~report_error
+                      ~fetch_jwks
+                      ?workload_identity
+                      ~routes:H.routes
+                      ~metrics_renderer
+                      ~metrics_auth
+                      ~read_api_key
+                      ~max_body_bytes
+                      ?route_observer
+                      ~on_boundary:(fun boundary -> boundary_ref := boundary)
+                      ~on_workload_principal:(fun principal ->
+                        workload_principal := principal)
+                      ~ready:(fun () -> Lifecycle.ready lifecycle)
+                      req
+                      body
+                  in
+                  observe_request response.Response.status;
+                  send_response response)
          in
          let server = Cohttp_eio.Server.make ~callback () in
          let server_stop, server_stop_r = Eio.Promise.create () in
          Eio.Fiber.fork_daemon ~sw (fun () ->
            await_stop ();
-           Atomic.set ready false;
+           Lifecycle.begin_shutdown lifecycle;
            if shutdown_delay_s > 0.0 then Eio.Time.sleep env#clock shutdown_delay_s;
+           Lifecycle.begin_draining lifecycle;
            ignore (Eio.Promise.try_resolve server_stop_r ());
            `Stop_daemon);
          Eio.Fiber.first

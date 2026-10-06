@@ -13,7 +13,7 @@ type t =
   ; params : (string * string) list
   ; uri : Uri.t
   ; body : string
-  ; auth : Auth.context
+  ; auth : Auth.context option
   ; trace_ctx : Obs_trace.t option
   }
 

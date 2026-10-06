@@ -103,6 +103,15 @@
   sol-runtime))
 
 (package
+ (name sol-svc-core)
+ (synopsis "Runtime-neutral security, lifecycle, and observation semantics for Sol HTTP services")
+ (depends
+  (ocaml (>= 5.4.0))
+  (dune (>= 3.0))
+  jose
+  yojson))
+
+(package
  (name sol-svc)
  (synopsis "Sol's HTTP service application shape")
  (depends
@@ -117,6 +126,7 @@
   obs-eio
   ptime
   sol-obs
+  sol-svc-core
   sol-runtime
   uri
   yojson))

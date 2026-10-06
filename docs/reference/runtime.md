@@ -204,12 +204,10 @@ choice was made at all:
   from talking to Kafka a completely different way (a raw client, a different
   library) that never constructs this type at all — Sol's orchestration layer
   has no visibility into that choice either way.
-- `sol-svc`'s `Route` DSL enforces that auth is declared per route, at the
-  point you write `Route.get`/`Route.post` calls using it. This is real,
-  useful, and entirely internal to code that opts into the DSL. A `*_svc`
-  directory that never touches `sol-svc` at all is invisible to this
-  enforcement, and indistinguishable to Sol's discovery/deploy tooling from
-  one that uses it correctly.
+- A conforming Sol HTTP adapter applies Sol workload authentication to every
+  application route by default. Application code marks only exceptions with
+  `Route.external_`; customer authentication remains application-owned. This
+  guarantee applies only to traffic served through that adapter.
 
 ## Synchronous service calls
 
@@ -266,8 +264,10 @@ equals the callee's own unit (`SOL_UNIT`), then maps
 `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit and
 requires that unit in the projected `SOL_CALLED_BY` set. An unauthenticated
 caller (bad token, untrusted issuer, wrong audience) is a `401`; an
-authenticated caller that is not declared is a `403`. A route that omits
-`~auth` is internal by default, so a new route cannot be accidentally public.
+authenticated caller that is not declared is a `403`. Routes require Sol
+workload identity by default. `Route.external_ route` exempts a route from that
+Sol authentication boundary only; application authentication remains the
+handler/framework's responsibility.
 
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
@@ -286,7 +286,7 @@ the normal Secret or ExternalSecret path.
 | Env var names read correctly | Nothing | Never — surfaces as a runtime connection failure |
 | Migration SQL correctness | The database itself | At apply time, via whatever error the driver returns |
 | Kafka security config shape | OCaml compiler | Only if code constructs `kafka-eio`'s types directly |
-| Per-route auth declaration | OCaml compiler | Only if code uses `sol-svc`'s `Route` DSL |
+| Sol workload auth by default; explicit external exceptions | OCaml compiler | Only if code uses a conforming Sol HTTP adapter |
 | Service call NetworkPolicy | `sol.toml` `calls` declaration | Only for explicitly declared caller/target pairs |
 
 If you're building anything on top of Sol that generates code or containers

@@ -27,16 +27,13 @@ type jwt_config =
   ; verification : jwt_verification
   }
 
-(* DEC-063: a Sol-to-Sol call authenticates with the caller's projected
-   ServiceAccount token. The callee checks the token against a trusted issuer,
-   maps the subject to a caller unit, and requires that unit in [callers]. The
-   trust root is an explicit (issuer, JWKS URL) set; issuing discovery is a
-   separate concern. *)
+(** DEC-063: Sol-to-Sol workload identity. [callers] maps a service-account
+    subject ("<namespace>:<serviceaccount>") to the caller's Sol unit;
+    [trusted_issuers] maps an accepted issuer to its JWKS URL. *)
 type workload_identity_config =
   { audience : string
   ; callers : (string * string) list
-    (* service account "<namespace>:<serviceaccount>" -> caller unit *)
-  ; trusted_issuers : (string * string) list (* issuer -> JWKS URL *)
+  ; trusted_issuers : (string * string) list
   }
 
 type level =
@@ -67,28 +64,31 @@ type error =
   | `Server_error of string
   ]
 
-let constant_time_equal s1 s2 =
-  let len1 = String.length s1
-  and len2 = String.length s2 in
-  if len1 <> len2
-  then false
-  else (
-    let res = ref 0 in
-    for i = 0 to len1 - 1 do
-      res := !res lor (Char.code s1.[i] lxor Char.code s2.[i])
-    done;
-    !res = 0)
-;;
+type key_request =
+  { issuer : string
+  ; jwks_url : string
+  ; key_id : string option
+  }
 
-module For_testing = struct
-  let constant_time_equal = constant_time_equal
-  let reset_jwks_cache () = Auth_cache.clear ()
+type pending_workload_auth
 
-  let seed_stale_jwks_cache ~url ~age_s ~jwks =
-    Auth_cache.replace
-      { Auth_cache.url
-      ; fetched_at = Unix.gettimeofday () -. age_s
-      ; jwks = Jose.Jwks.of_string jwks
-      }
-  ;;
+(** Decode the CLI-projected [unit=namespace:serviceaccount] caller set.
+    Invalid entries are ignored, which can only narrow authorization. *)
+val callers_of_projection : string -> (string * string) list
+
+val begin_workload_auth
+  :  workload_identity_config
+  -> authorization:string option
+  -> (key_request * pending_workload_auth, error) result
+
+val finish_workload_auth
+  :  pending_workload_auth
+  -> jwks:Jose.Jwks.t
+  -> now:float
+  -> (context, error) result
+
+val constant_time_equal : string -> string -> bool
+
+module For_testing : sig
+  val constant_time_equal : string -> string -> bool
 end

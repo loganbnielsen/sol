@@ -2,6 +2,15 @@
  (name sol_svc)
  (public_name sol-svc)
  (wrapped false)
+ (modules
+  auth_cache
+  auth_internal
+  peer
+  request
+  response
+  route
+  route_internal
+  service)
  (private_modules auth_cache auth_internal route_internal)
  (libraries
   cohttp-eio
@@ -16,4 +25,5 @@
   jose
   ptime
   https-eio
+  sol-svc-core
   sol_runtime))
