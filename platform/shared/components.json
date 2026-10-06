@@ -1,4 +1,14 @@
 {
+  "versions": {
+    "redpanda": "26.1.11",
+    "postgresql": "18.8.17",
+    "loki": "18.12.1",
+    "grafana": "13.2.1",
+    "alloy": "1.12.1",
+    "tempo": "2.3.0",
+    "prometheus": "25.20.1",
+    "ingress-nginx": "4.10.1"
+  },
   "grafana": {
     "common": {
       "sidecar": {

@@ -35,8 +35,20 @@ let value (values : component_values) = function
   | Prometheus -> values.prometheus
 ;;
 
+type component_versions =
+  { redpanda : string
+  ; postgresql : string
+  ; loki : string
+  ; grafana : string
+  ; alloy : string
+  ; tempo : string
+  ; prometheus : string
+  ; ingress_nginx : string
+  }
+
 type assets =
   { component_values : component_values
+  ; versions : component_versions
   ; alloy_values : string
   ; dashboards : string
   }
@@ -46,6 +58,16 @@ let read_component ~platform_assets component =
     ~assets:platform_assets
     ~component:(name component)
     ~profile:"local"
+;;
+
+let require_version ~versions name =
+  match List.assoc_opt name versions with
+  | Some version -> Ok version
+  | None ->
+    Error
+      (Printf.sprintf
+         "the shared platform component versions do not declare versions.%s"
+         name)
 ;;
 
 let read_assets () =
@@ -63,8 +85,29 @@ let read_assets () =
   let* dashboards =
     Sol_cli_dev_observability.dashboard_configmap_yaml ~assets ~namespace:"monitoring"
   in
+  let* declared_versions = Sol_cli_platform_component.versions ~assets in
+  let* redpanda_version = require_version ~versions:declared_versions "redpanda" in
+  let* postgresql_version = require_version ~versions:declared_versions "postgresql" in
+  let* loki_version = require_version ~versions:declared_versions "loki" in
+  let* grafana_version = require_version ~versions:declared_versions "grafana" in
+  let* alloy_version = require_version ~versions:declared_versions "alloy" in
+  let* tempo_version = require_version ~versions:declared_versions "tempo" in
+  let* prometheus_version = require_version ~versions:declared_versions "prometheus" in
+  let* ingress_nginx_version =
+    require_version ~versions:declared_versions "ingress-nginx"
+  in
   Ok
     { component_values = { redpanda; postgresql; loki; grafana; tempo; prometheus }
+    ; versions =
+        { redpanda = redpanda_version
+        ; postgresql = postgresql_version
+        ; loki = loki_version
+        ; grafana = grafana_version
+        ; alloy = alloy_version
+        ; tempo = tempo_version
+        ; prometheus = prometheus_version
+        ; ingress_nginx = ingress_nginx_version
+        }
     ; alloy_values
     ; dashboards
     }
@@ -114,7 +157,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "redpanda"
           "redpanda/redpanda"
           ~namespace:"redpanda"
-          ~version:"26.1.11"
+          ~version:assets.versions.redpanda
           ~values:
             [ "storage.persistentVolume.size", Str "1Gi"
             ; "external.enabled", Bool true
@@ -135,7 +178,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "postgresql"
           "bitnami/postgresql"
           ~namespace:"postgresql"
-          ~version:"18.8.17"
+          ~version:assets.versions.postgresql
           ~values_yaml:(values_of assets Postgresql)
           ()
       ]
@@ -149,7 +192,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "loki"
           "grafana-community/loki"
           ~namespace:"monitoring"
-          ~version:"18.12.1"
+          ~version:assets.versions.loki
           ~values_yaml:(values_of assets Loki)
           ()
       ; release
@@ -157,7 +200,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "grafana"
           "grafana-community/grafana"
           ~namespace:"monitoring"
-          ~version:"13.2.1"
+          ~version:assets.versions.grafana
           ~values:[ "adminPassword", Str "dev" ]
           ~values_yaml:(values_of assets Grafana)
           ()
@@ -166,7 +209,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "alloy"
           "grafana/alloy"
           ~namespace:"monitoring"
-          ~version:"1.12.1"
+          ~version:assets.versions.alloy
           ~values_yaml:assets.alloy_values
           ()
       ]
@@ -180,7 +223,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "tempo"
           "grafana-community/tempo"
           ~namespace:"monitoring"
-          ~version:"2.3.0"
+          ~version:assets.versions.tempo
           ~values_yaml:(values_of assets Tempo)
           ()
       ]
@@ -194,7 +237,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
           "prometheus"
           "prometheus-community/prometheus"
           ~namespace:"monitoring"
-          ~version:"25.20.1"
+          ~version:assets.versions.prometheus
           ~values:[ "prometheus-node-exporter.enabled", Bool false ]
           ~values_yaml:(values_of assets Prometheus)
           ()
@@ -207,7 +250,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
         "ingress-nginx"
         "ingress-nginx/ingress-nginx"
         ~namespace:"ingress-nginx"
-        ~version:"4.10.1"
+        ~version:assets.versions.ingress_nginx
         ~values:[ "controller.service.type", Str "NodePort" ]
         ()
     ]

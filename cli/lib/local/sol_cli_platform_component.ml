@@ -48,3 +48,29 @@ let merged_values_yaml ~assets ~component ~profile =
   let* profile_json = layer ~path components ~component ~name:profile in
   Ok (Yojson.Safe.pretty_to_string (deep_merge common profile_json))
 ;;
+
+(* The single declared source of the platform charts' versions, read by both the
+   local platform and the production Terraform module. *)
+let versions ~assets =
+  let open Result.Syntax in
+  let path = Sol_cli_platform_assets.components_json assets in
+  let* components = read_components path in
+  match components with
+  | `Assoc fields ->
+    (match List.assoc_opt "versions" fields with
+     | Some (`Assoc entries) ->
+       let* pairs =
+         List.fold_left
+           (fun acc (name, value) ->
+              let* acc = acc in
+              match value with
+              | `String version -> Ok ((name, version) :: acc)
+              | _ -> Error (Printf.sprintf "%s: versions.%s is not a string" path name))
+           (Ok [])
+           entries
+       in
+       Ok (List.rev pairs)
+     | Some _ -> Error (path ^ ": versions is not an object")
+     | None -> Error (path ^ ": versions is missing"))
+  | _ -> Error (path ^ " is not a JSON object")
+;;

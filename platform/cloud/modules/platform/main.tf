@@ -154,7 +154,7 @@ resource "helm_release" "ingress_nginx" {
   name       = "ingress-nginx"
   repository = "https://kubernetes.github.io/ingress-nginx"
   chart      = "ingress-nginx"
-  version    = "4.10.1"
+  version    = local.platform_components.versions["ingress-nginx"]
   namespace  = kubernetes_namespace.ingress_nginx.metadata[0].name
 
   set {
@@ -225,7 +225,7 @@ resource "helm_release" "redpanda" {
   name       = "redpanda"
   repository = "https://charts.redpanda.com"
   chart      = "redpanda"
-  version    = "26.1.11"
+  version    = local.platform_components.versions.redpanda
   namespace  = kubernetes_namespace.redpanda.metadata[0].name
   timeout    = 600
 
@@ -252,7 +252,7 @@ resource "helm_release" "postgresql" {
   name       = "postgresql"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "postgresql"
-  version    = "18.8.17"
+  version    = local.platform_components.versions.postgresql
   namespace  = kubernetes_namespace.postgresql[0].metadata[0].name
 
   set {
@@ -379,7 +379,7 @@ resource "helm_release" "loki" {
   name       = "loki"
   repository = "https://grafana-community.github.io/helm-charts"
   chart      = "loki"
-  version    = "18.12.1"
+  version    = local.platform_components.versions.loki
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
   set {
@@ -404,7 +404,7 @@ resource "helm_release" "grafana" {
   name       = "grafana"
   repository = "https://grafana-community.github.io/helm-charts"
   chart      = "grafana"
-  version    = "13.2.1"
+  version    = local.platform_components.versions.grafana
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
   set {
@@ -480,7 +480,7 @@ resource "kubernetes_config_map" "grafana_managed_resource_dashboards" {
 
 resource "helm_release" "alloy" {
   name      = "alloy"
-  chart     = "https://github.com/grafana/helm-charts/releases/download/alloy-1.12.1/alloy-1.12.1.tgz"
+  chart     = "https://github.com/grafana/helm-charts/releases/download/alloy-${local.platform_components.versions.alloy}/alloy-${local.platform_components.versions.alloy}.tgz"
   namespace = kubernetes_namespace.monitoring.metadata[0].name
 
   values = [yamlencode({
@@ -505,7 +505,7 @@ resource "helm_release" "tempo" {
   name       = "tempo"
   repository = "https://grafana-community.github.io/helm-charts"
   chart      = "tempo"
-  version    = "2.3.0"
+  version    = local.platform_components.versions.tempo
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
   values = local.tempo_component_values
@@ -915,7 +915,7 @@ resource "helm_release" "prometheus" {
   name       = "prometheus"
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
-  version    = "25.20.1"
+  version    = local.platform_components.versions.prometheus
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
   set {

@@ -44,19 +44,24 @@ not qualify:
 | Kubernetes (EKS) | 1.36 | `platform/cloud/aws/cluster/variables.tf` (`kubernetes_version`) |
 | Provider module | AWS (`platform/cloud/aws/cluster/`) — the only qualified provider; GCP is not qualified for this profile | `platform/cloud/aws/cluster/`, `Sol_cli_provider` |
 | cert-manager chart | v1.14.4 | `platform/cloud/modules/platform/main.tf` |
-| ingress-nginx chart | 4.10.1 | `platform/cloud/modules/platform/main.tf` |
+| ingress-nginx chart | 4.10.1 | `platform/shared/components.json` (`versions`) |
 | Argo CD chart | 6.7.3 | `platform/cloud/modules/platform/main.tf` |
-| Redpanda chart | 26.1.11 | `platform/cloud/modules/platform/main.tf`, `cli/bin/cmd_local.ml` |
-| PostgreSQL chart | 18.8.17 | `platform/cloud/modules/platform/main.tf` |
-| Loki chart | 18.12.1 | `platform/cloud/modules/platform/main.tf` |
-| Grafana chart | 13.2.1 | `platform/cloud/modules/platform/main.tf` |
-| Alloy chart | 1.12.1 | `platform/cloud/modules/platform/main.tf` |
-| Tempo chart | 2.3.0 | `platform/cloud/modules/platform/main.tf` |
-| Prometheus chart | 25.20.1 | `platform/cloud/modules/platform/main.tf` |
+| Redpanda chart | 26.1.11 | `platform/shared/components.json` (`versions`) |
+| PostgreSQL chart | 18.8.17 | `platform/shared/components.json` (`versions`) |
+| Loki chart | 18.12.1 | `platform/shared/components.json` (`versions`) |
+| Grafana chart | 13.2.1 | `platform/shared/components.json` (`versions`) |
+| Alloy chart | 1.12.1 | `platform/shared/components.json` (`versions`) |
+| Tempo chart | 2.3.0 | `platform/shared/components.json` (`versions`) |
+| Prometheus chart | 25.20.1 | `platform/shared/components.json` (`versions`) |
 | Workspace framework deps | per-workspace immutable pins (DEC-025) | the workspace's `dune-project` and `*.opam` |
 
 `dev` runs the same charts at single-replica scale, so the component versions
-above are the ones local development exercises too.
+above are the ones local development exercises too. The shared charts' versions
+are declared once in `platform/shared/components.json`; both the local platform
+(`Sol_cli_local_platform`) and the production module
+(`platform/cloud/modules/platform/main.tf`) project them from that one
+declaration, so there is nothing to drift. The production-only charts
+(cert-manager, Argo CD) stay pinned in the module.
 
 ## Components a CSI-backed `byo` secret projection would add (not in the supported set)
 
