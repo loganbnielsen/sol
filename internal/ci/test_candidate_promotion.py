@@ -230,6 +230,24 @@ def test_command_line() -> None:
             text=True,
         )
         check("same refuses a candidate that moved", different.returncode == 1)
+        recorded = subprocess.run(
+            [sys.executable, script, "runner-image", "--candidate", candidate_path],
+            capture_output=True,
+            text=True,
+        )
+        check(
+            "the command line prints the exact recorded runner digest",
+            recorded.returncode == 0 and recorded.stdout.strip() == CANDIDATE["runner_image"],
+        )
+        tagged_path = os.path.join(directory, "tagged.json")
+        with open(tagged_path, "w", encoding="utf-8") as handle:
+            json.dump({**CANDIDATE, "runner_image": "ghcr.io/example/sol-migration-runner:latest"}, handle)
+        tagged = subprocess.run(
+            [sys.executable, script, "runner-image", "--candidate", tagged_path],
+            capture_output=True,
+            text=True,
+        )
+        check("the command line refuses a mutable tag as a runner identity", tagged.returncode == 2)
 
 
 def main() -> int:

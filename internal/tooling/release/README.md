@@ -89,16 +89,26 @@ result — Sol's exit code and Terraform state are not absence evidence.
 ## 3. Promotion (automated gate, operator-triggered)
 
 `.github/workflows/promote.yml` never builds. It downloads the draft candidate
-and the verdict attached to it, runs
-`python3 internal/tooling/release/promotion.py decide`, and only then flips the
-draft to published with `gh release edit --draft=false`. The published bundle is
-byte-for-byte the candidate that was qualified.
+and the verdict attached to it, then, before deciding, establishes that every
+Sol-owned artifact the candidate identifies still exists exactly as recorded:
+
+- `promotion.py verify` hashes the attached bundle against the candidate's
+  `bundle_sha256`;
+- `verify_runner_image.sh` resolves the exact `runner_image` digest in GHCR
+  (read-only — no rebuild, republish or tag substitution);
+- `promotion.py decide` checks the verdict.
+
+Only then does it flip the draft to published with `gh release edit
+--draft=false`. The published bundle is byte-for-byte the candidate that was
+qualified.
 
 The decision refuses when the verdict is missing, malformed, for another
 candidate, missing a required provider, or has a failing/omitted/blocked
-release-blocking row or no independent absence result. Its mechanics are pinned
-by `internal/ci/test_candidate_promotion.py`; those tests establish the decision
-only and are not qualification evidence.
+release-blocking row or no independent absence result, and promotion refuses
+when the recorded bundle or runner cannot be established. Its mechanics are
+pinned by `internal/ci/test_candidate_promotion.py` and
+`internal/ci/test_runner_image_resolution.sh`; those tests establish the
+mechanics only and are not qualification evidence.
 
 ### Exact operator action
 

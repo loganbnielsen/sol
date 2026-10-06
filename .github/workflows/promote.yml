@@ -28,6 +28,9 @@ on:
 
 permissions:
   contents: write
+  # Read-only lookup of the recorded migration-runner digest; promotion never
+  # pushes or republishes the image.
+  packages: read
 
 concurrency:
   group: promote-release-${{ inputs.version }}
@@ -77,6 +80,17 @@ jobs:
           python3 internal/tooling/release/promotion.py verify \
             --candidate "$RUNNER_TEMP/candidate/candidate.json" \
             --dir "$RUNNER_TEMP/candidate"
+
+      # The migration-runner digest is part of the candidate identity too. Read
+      # access is enough: this resolves the exact recorded digest and never
+      # rebuilds, republishes, or accepts a tag in its place.
+      - name: Log in to GHCR for the recorded runner lookup
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Establish that the recorded migration runner still resolves
+        run: |
+          internal/tooling/release/verify_runner_image.sh \
+            "$RUNNER_TEMP/candidate/candidate.json"
 
       # The decision is the gate: identity match plus a complete passing AWS and
       # GCP verdict, each with an independent absence result. A missing, failed,

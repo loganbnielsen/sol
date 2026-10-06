@@ -91,6 +91,23 @@ def identity(record: dict) -> dict:
     return {field: record.get(field) for field in IDENTITY_FIELDS}
 
 
+def runner_image(candidate: object) -> str:
+    """Return the candidate's migration-runner digest reference, refusing anything else.
+
+    A mutable tag is never a substituted identity for the digest the candidate
+    recorded; promotion looks up exactly this reference.
+    """
+    if not isinstance(candidate, dict):
+        raise InputError("the candidate record is not a JSON object")
+    value = candidate.get("runner_image")
+    if not isinstance(value, str) or not DIGEST.search(value):
+        raise InputError(
+            "the candidate's migration-runner image "
+            f"{value!r} is not an <image>@sha256:<64 hex> reference"
+        )
+    return value
+
+
 def verify_bundle(candidate: object, directory: str) -> None:
     """Raise unless the candidate's recorded bundle is present and matches its digest."""
     if not isinstance(candidate, dict):
@@ -209,6 +226,8 @@ def main(argv: list[str]) -> int:
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("--candidate", required=True)
     verify_parser.add_argument("--dir", required=True)
+    runner_parser = commands.add_parser("runner-image")
+    runner_parser.add_argument("--candidate", required=True)
     args = parser.parse_args(argv[1:])
     try:
         if args.command == "record":
@@ -227,6 +246,9 @@ def main(argv: list[str]) -> int:
         if args.command == "verify":
             verify_bundle(load(args.candidate), args.dir)
             print("the recorded bundle matches the candidate identity")
+            return 0
+        if args.command == "runner-image":
+            print(runner_image(load(args.candidate)))
             return 0
         candidate = load(args.candidate)
         verdict = load(args.verdict)
