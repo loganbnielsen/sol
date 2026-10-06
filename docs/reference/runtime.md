@@ -275,6 +275,11 @@ fails. Sol does not currently distinguish services that need internal workload
 authentication from those that do not, so every `svc` requires a target that
 establishes workload identity.
 
+The discovery document must report the exact target-projected issuer, and its
+JWKS URL must use the same HTTPS origin. Discovery, key-fetch, or validation
+failures reject the request; workload authentication never falls back to an
+application-provided key source.
+
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
 `SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty

@@ -176,6 +176,42 @@ let fetch_jwks_over_https ~env url =
      | exn -> Error ("JWKS parse failed: " ^ Printexc.to_string exn))
 ;;
 
+let jwks_uri_of_discovery ~issuer body =
+  let https_origin uri =
+    match
+      Uri.scheme uri, Uri.host uri, Uri.userinfo uri, Uri.query uri, Uri.fragment uri
+    with
+    | Some "https", Some host, None, [], None when host <> "" ->
+      Some (String.lowercase_ascii host, Option.value ~default:443 (Uri.port uri))
+    | _ -> None
+  in
+  let* fields =
+    match Yojson.Safe.from_string body with
+    | `Assoc fields -> Ok fields
+    | _ -> Error "OIDC discovery response is not a JSON object"
+    | exception Yojson.Json_error message ->
+      Error ("OIDC discovery returned invalid JSON: " ^ message)
+  in
+  let returned_issuer =
+    match List.assoc_opt "issuer" fields with
+    | Some (`String value) -> Some value
+    | _ -> None
+  in
+  if returned_issuer <> Some issuer
+  then Error "OIDC discovery issuer does not match the trusted target issuer"
+  else (
+    match List.assoc_opt "jwks_uri" fields with
+    | Some (`String url) ->
+      let jwks_uri = Uri.of_string url
+      and issuer_uri = Uri.of_string issuer in
+      (match https_origin issuer_uri, https_origin jwks_uri with
+       | Some issuer_origin, Some jwks_origin when issuer_origin = jwks_origin -> Ok url
+       | Some _, Some _ ->
+         Error "OIDC discovery jwks_uri must use the trusted issuer's HTTPS origin"
+       | _ -> Error "OIDC discovery jwks_uri is not an absolute same-origin https:// URL")
+    | _ -> Error "OIDC discovery response has no string jwks_uri")
+;;
+
 let fetch_workload_jwks_over_https ~env issuer =
   let issuer_uri = Uri.of_string issuer in
   let issuer_uri_is_https =
@@ -206,33 +242,7 @@ let fetch_workload_jwks_over_https ~env issuer =
     if status <> 200
     then Error (Printf.sprintf "OIDC discovery failed: HTTP %d" status)
     else
-      let* jwks_url =
-        match Yojson.Safe.from_string body with
-        | `Assoc fields ->
-          let returned_issuer =
-            match List.assoc_opt "issuer" fields with
-            | Some (`String value) -> Some value
-            | _ -> None
-          in
-          let jwks_url =
-            match List.assoc_opt "jwks_uri" fields with
-            | Some (`String value) -> Some value
-            | _ -> None
-          in
-          if returned_issuer <> Some issuer
-          then Error "OIDC discovery issuer does not match the trusted target issuer"
-          else (
-            match jwks_url with
-            | Some url ->
-              let uri = Uri.of_string url in
-              (match Uri.scheme uri, Uri.host uri, Uri.userinfo uri with
-               | Some "https", Some host, None when host <> "" -> Ok url
-               | _ -> Error "OIDC discovery jwks_uri is not an absolute https:// URL")
-            | None -> Error "OIDC discovery response has no string jwks_uri")
-        | _ -> Error "OIDC discovery response is not a JSON object"
-        | exception Yojson.Json_error message ->
-          Error ("OIDC discovery returned invalid JSON: " ^ message)
-      in
+      let* jwks_url = jwks_uri_of_discovery ~issuer body in
       fetch_jwks_over_https ~env jwks_url)
 ;;
 
