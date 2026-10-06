@@ -40,34 +40,45 @@ let relative_under ~prefix dir =
         (String.length dir - String.length prefix - 1)
 ;;
 
-let read_json path =
+let read_json_opt path =
   match In_channel.with_open_bin path In_channel.input_all with
   | text ->
     (match Yojson.Safe.from_string text with
-     | json -> Ok json
+     | json -> Ok (Some json)
      | exception Yojson.Json_error msg -> Error (Printf.sprintf "%s: %s" path msg))
-  | exception Sys_error msg -> Error msg
+  | exception Sys_error msg ->
+    if Sys.file_exists path then Error (Printf.sprintf "%s: %s" path msg) else Ok None
 ;;
 
-let string_member key json = Sol_cli_json.field [ key ] json |> Sol_cli_json.string
+let optional_string_field ~what json key =
+  match json with
+  | `Assoc fields ->
+    (match List.assoc_opt key fields with
+     | None | Some `Null -> Ok None
+     | Some (`String value) -> Ok (Some value)
+     | Some _ -> Error (Printf.sprintf "%s: %s must be text" what key))
+  | _ -> Error (Printf.sprintf "%s: expected a JSON object" what)
+;;
 
-let string_list = function
-  | `List entries ->
-    List.filter_map
-      (function
-        | `String s -> Some s
-        | _ -> None)
-      entries
-  | _ -> []
+let strings_field ~what value =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | `String item :: rest -> go (item :: acc) rest
+    | _ -> Error (Printf.sprintf "%s must be a list of strings" what)
+  in
+  match value with
+  | `List entries -> go [] entries
+  | _ -> Error (Printf.sprintf "%s must be a list of strings" what)
 ;;
 
 let workspaces_of json =
   match Sol_cli_json.field [ "workspaces" ] json with
+  | `Null -> Ok []
   | `Assoc fields ->
     (match List.assoc_opt "packages" fields with
-     | Some packages -> string_list packages
-     | None -> [])
-  | workspaces -> string_list workspaces
+     | None | Some `Null -> Ok []
+     | Some packages -> strings_field ~what:"workspaces.packages" packages)
+  | workspaces -> strings_field ~what:"workspaces" workspaces
 ;;
 
 let glob_matches pattern path =
@@ -110,40 +121,57 @@ let declares ~entry ~relative_dir =
   String.equal entry relative_dir || glob_matches entry relative_dir
 ;;
 
-let package_json ~root dir = read_json (Filename.concat (join root dir) "package.json")
-
-let npm_project_root ~root ~unit_dir ~package_name:_ =
+let npm_project_root ~root ~unit_dir =
   let rec up dir =
     if String.equal dir "" || String.equal dir "."
-    then None
+    then Ok None
     else (
       let parent = Filename.dirname dir in
       let parent = if String.equal parent "." then "" else parent in
       let relative_dir = relative_under ~prefix:parent unit_dir in
-      match package_json ~root parent with
-      | Ok json
-        when List.exists (fun entry -> declares ~entry ~relative_dir) (workspaces_of json)
-        -> Some parent
-      | _ -> up parent)
+      let package_path = Filename.concat (join root parent) "package.json" in
+      let* package = read_json_opt package_path in
+      match package with
+      | None -> up parent
+      | Some json ->
+        let* entries =
+          workspaces_of json
+          |> Result.map_error (fun msg -> Printf.sprintf "%s: %s" package_path msg)
+        in
+        if List.exists (fun entry -> declares ~entry ~relative_dir) entries
+        then Ok (Some parent)
+        else up parent)
   in
   match up unit_dir with
-  | Some npm_root -> npm_root
-  | None -> unit_dir
+  | Ok (Some npm_root) -> Ok npm_root
+  | Ok None -> Ok unit_dir
+  | Error _ as error -> error
 ;;
 
-let entry_in_unit ~root ~unit_dir ~package_json =
-  match Option.bind package_json (string_member "main") with
-  | Some main -> main
+let entry_in_unit ~root ~unit_dir ~package_path ~package_json =
+  let* main = optional_string_field ~what:package_path package_json "main" in
+  match main with
+  | Some main -> Ok main
   | None ->
-    let out_dir =
-      match read_json (Filename.concat (join root unit_dir) "tsconfig.json") with
-      | Ok json ->
-        Sol_cli_json.field [ "compilerOptions"; "outDir" ] json
-        |> Sol_cli_json.string
-        |> Option.value ~default:"dist"
-      | Error _ -> "dist"
+    let tsconfig_path = Filename.concat (join root unit_dir) "tsconfig.json" in
+    let* tsconfig = read_json_opt tsconfig_path in
+    let* out_dir =
+      match tsconfig with
+      | None -> Ok "dist"
+      | Some json ->
+        (match Sol_cli_json.field [ "compilerOptions" ] json with
+         | `Null -> Ok "dist"
+         | `Assoc fields ->
+           (match List.assoc_opt "outDir" fields with
+            | None | Some `Null -> Ok "dist"
+            | Some (`String out_dir) -> Ok out_dir
+            | Some _ ->
+              Error
+                (Printf.sprintf "%s: compilerOptions.outDir must be text" tsconfig_path))
+         | _ ->
+           Error (Printf.sprintf "%s: compilerOptions must be an object" tsconfig_path))
     in
-    Filename.concat out_dir "index.js"
+    Ok (Filename.concat out_dir "index.js")
 ;;
 
 let dev_registry_url = "http://localhost:8081"
@@ -183,9 +211,16 @@ let recipe_of_ocaml ~root (svc : Sol_cli_manifest.service) =
 
 let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
   let unit_dir = svc.Sol_cli_manifest.dir in
+  let package_path = Filename.concat (join root unit_dir) "package.json" in
   let* package =
-    match package_json ~root unit_dir with
-    | Ok json -> Ok json
+    match read_json_opt package_path with
+    | Ok (Some json) -> Ok json
+    | Ok None ->
+      Error
+        (Printf.sprintf
+           "declares language: typescript, but its package.json could not be read (%s: \
+            no such file)"
+           package_path)
     | Error msg ->
       Error
         (Printf.sprintf
@@ -193,14 +228,15 @@ let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
            msg)
   in
   let* package_name =
-    match string_member "name" package with
+    let* name = optional_string_field ~what:package_path package "name" in
+    match name with
     | Some name -> Ok name
     | None ->
       Error
         "declares language: typescript, but its package.json declares no name, so there \
          is no npm package to build"
   in
-  let npm_root = npm_project_root ~root ~unit_dir ~package_name in
+  let* npm_root = npm_project_root ~root ~unit_dir in
   let* () =
     if Sys.file_exists (Filename.concat (join root npm_root) "node_modules")
     then Ok ()
@@ -217,7 +253,7 @@ let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
     then { argv = [ "npm"; "run"; "build" ]; cwd = npm_root }
     else { argv = [ "npm"; "run"; "build"; "--workspace"; package_name ]; cwd = npm_root }
   in
-  let entry = entry_in_unit ~root ~unit_dir ~package_json:(Some package) in
+  let* entry = entry_in_unit ~root ~unit_dir ~package_path ~package_json:package in
   Ok
     { label = label svc
     ; language = Sol_cli_compat.Typescript
