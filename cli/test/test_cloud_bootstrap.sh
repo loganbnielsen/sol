@@ -52,7 +52,7 @@ case " \$* " in
     ;;
   *" show "*) cat "$tmp/plan.json"; exit 0 ;;
   *" output -json "*) cat "$tmp/outputs.json"; exit 0 ;;
-  *" apply "*) exit 0 ;;
+  *" apply "*) touch "$tmp/applied"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -131,14 +131,33 @@ case "\$1 \$2" in
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
   "route53 list-hosted-zones-by-name")
-    case " \$* " in
-      *" --query "*)
-        case " \$* " in
-          *"--dns-name example.test "*) cat "$tmp/parent-zone-id" 2>/dev/null ;;
-          *) cat "$tmp/existing-zone-id" 2>/dev/null ;;
-        esac
+    zone=""
+    previous=""
+    for argument in "\$@"; do
+      if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
+      previous="\$argument"
+    done
+    case "\$zone" in
+      example.test)
+        # The parent. When the account holds no zone for it, Route53's
+        # ListHostedZonesByName answers with the *next* zone in name order -- the
+        # installation's own zone, which sorts immediately after. BUG-211.
+        if [ -f "$tmp/parent-zone-id" ]; then
+          printf '{"HostedZones":[{"Id":"%s","Name":"example.test.","Config":{"PrivateZone":false}}]}\n' "\$(cat "$tmp/parent-zone-id")"
+        else
+          printf '%s\n' '{"HostedZones":[{"Id":"/hostedzone/ZINSTALL","Name":"qual-aws.example.test.","Config":{"PrivateZone":false}}]}'
+        fi
         ;;
-      *) printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}' ;;
+      *)
+        if [ -f "$tmp/existing-zone-id" ]; then
+          printf '{"HostedZones":[{"Id":"%s","Name":"%s.","Config":{"PrivateZone":false}}]}\n' "\$(cat "$tmp/existing-zone-id")" "\$zone"
+        elif [ -f "$tmp/applied" ]; then
+          # the durable root has applied, so the zone it owns now exists
+          printf '{"HostedZones":[{"Id":"/hostedzone/ZCREATED","Name":"%s.","Config":{"PrivateZone":false}}]}\n' "\$zone"
+        else
+          printf '%s\n' '{"HostedZones":[]}'
+        fi
+        ;;
     esac
     ;;
 esac
@@ -188,10 +207,7 @@ case "$1 $2" in
     exit 254
     ;;
   "route53 list-hosted-zones-by-name")
-    case " $* " in
-      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
-      *) printf '%s\n' '{"HostedZones":[{"Name":"qual-aws.example.test."}]}' ;;
-    esac
+    printf '%s\n' '{"HostedZones":[{"Id":"/hostedzone/Z0123","Name":"qual-aws.example.test.","Config":{"PrivateZone":false}}]}'
     ;;
 esac
 exit 0
@@ -208,6 +224,9 @@ run() {
   rc=$?
   set -e
 }
+
+# An established installation: the Route53 zone for the target's domain exists.
+printf '%s\n' '/hostedzone/ZINSTALL' >"$tmp/existing-zone-id"
 
 run "$tmp/bin-ok:/usr/bin:/bin" qual/aws/us-east-1
 check "an established installation exits 0" 0 "$rc"
@@ -326,6 +345,10 @@ check_contains \
   "$output"
 check_contains "the instruction lists the zone's nameservers" "NS  ns-1.awsdns.test" "$output"
 check_contains "and the second nameserver" "NS  ns-2.awsdns.test" "$output"
+check_absent \
+  "BUG-211: the installation's own zone is never read as its parent" \
+  "parent_zone_id=/hostedzone/ZINSTALL" \
+  "$(cat "$tmp/terraform.log")"
 run "$tmp/bin-no-roles:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1
 check "a report with the identities still missing exits 1" 1 "$rc"
 check_contains \
@@ -371,7 +394,7 @@ check_contains \
   "/hostedzone/ZADOPTED" \
   "$(cat "$tmp/terraform.log")"
 
-rm -f "$tmp/existing-zone-id" "$tmp/terraform.log"
+rm -f "$tmp/existing-zone-id" "$tmp/applied" "$tmp/terraform.log"
 run "$tmp/bin-ok:$tmp/bin-tf:/usr/bin:/bin" qual/aws/us-east-1 --apply
 check "creating a zone that does not exist exits 0" 0 "$rc"
 check_contains "the run says the root creates it" "creates it" "$output"

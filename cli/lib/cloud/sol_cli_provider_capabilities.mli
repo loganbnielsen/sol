@@ -74,6 +74,12 @@ type t =
   ; installation_zone_address : string
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
+  ; installation_zone_candidates : string -> ((string * string) list, string) result
+    (** Parse the lookup's stdout into [(identity, dns name)] candidates. The
+        provider's list is a superset -- Route53 answers a prefix query with the
+        next zone when there is no exact match -- so callers must select the one
+        whose name is exactly the requested domain (see
+        {!Sol_cli_installation.select_zone_identity}). *)
   ; installation_nameservers_output : string
   ; installation_failure_means_absent : string -> bool
   ; installation_identity_contracts : identity_contract list

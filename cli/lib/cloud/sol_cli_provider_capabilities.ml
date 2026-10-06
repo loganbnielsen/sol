@@ -88,6 +88,7 @@ type t =
   ; installation_zone_address : string
   ; installation_zone_import_address : string
   ; installation_zone_lookup : string -> string list
+  ; installation_zone_candidates : string -> ((string * string) list, string) result
   ; installation_nameservers_output : string
   ; installation_failure_means_absent : string -> bool
   ; installation_identity_contracts : identity_contract list
@@ -194,6 +195,61 @@ let aws_cluster_access_role_arn : Sol_cli_config.target -> (string option, strin
        (Sol_cli_config.provider_field target "cluster_access_role_arn"))
 ;;
 
+(* The answer is the provider's own document; the lookup's exact zone is
+   decided by name (see [installation_zone_candidates] and BUG-211). No
+   [--query] projection is used, because Route53's ListHostedZonesByName is a
+   prefix listing, and asking for element 0 is precisely what misattributed the
+   installation's own zone to its parent. *)
+let aws_installation_zone_lookup : string -> string list =
+  fun domain ->
+  [ "aws"
+  ; "route53"
+  ; "list-hosted-zones-by-name"
+  ; "--dns-name"
+  ; domain
+  ; "--output"
+  ; "json"
+  ]
+;;
+
+(* [(name, identity, private)] for every zone the provider returned. [Id] is
+   optional because the delegated-zone probe only needs the name; the adoption
+   lookup requires it. *)
+let aws_zones output =
+  let open Sol_cli_json in
+  let open Result.Syntax in
+  let what = "the Route53 hosted-zone answer" in
+  let* json = decode ~what output in
+  let* zones = require ~what [ "HostedZones" ] list json in
+  zones
+  |> Sol_cli_result.map_list (fun zone ->
+    let* name = require ~what [ "Name" ] string zone in
+    let* private_zone = optional ~what [ "Config"; "PrivateZone" ] bool zone in
+    let* identity = optional ~what [ "Id" ] string zone in
+    Ok (name, identity, Option.value private_zone ~default:false))
+;;
+
+let public_zone_names zones =
+  List.filter_map
+    (fun (name, _, private_zone) -> if private_zone then None else Some name)
+    zones
+;;
+
+let aws_installation_zone_candidates output =
+  let open Result.Syntax in
+  let* zones = aws_zones output in
+  zones
+  |> Sol_cli_result.map_list (fun (name, identity, private_zone) ->
+    if private_zone
+    then Ok None
+    else (
+      match identity with
+      | Some identity -> Ok (Some (identity, name))
+      | None ->
+        Error "a public hosted zone in the Route53 answer named no identity to adopt"))
+  |> Result.map (List.filter_map (fun candidate -> candidate))
+;;
+
 let aws_zone_probes
   : Sol_cli_installation.installation_config -> Sol_cli_installation.probe list
   =
@@ -212,7 +268,13 @@ let aws_zone_probes
     ]
   | Service_zone { domain; ownership } ->
     [ present_if_output_names
-        ~present:(fun output -> Sol_cli_string.contains ~needle:domain output)
+        ~present:(fun output ->
+          match aws_zones output with
+          | Ok zones ->
+            List.exists
+              (Sol_cli_installation.dns_names_equal domain)
+              (public_zone_names zones)
+          | Error _ -> false)
         ~reason:
           (Printf.sprintf
              "no Route53 hosted zone named %s, although the target declares it %s"
@@ -222,7 +284,7 @@ let aws_zone_probes
               | User_supplied -> "user-supplied"
               | Externally_delegated -> "(external)"))
         Delegated_zone
-        [ "aws"; "route53"; "list-hosted-zones-by-name"; "--dns-name"; domain ]
+        (aws_installation_zone_lookup domain)
     ]
     @ [ public_delegation_probe domain ]
 ;;
@@ -828,20 +890,6 @@ let aws_destroy_guard_vars : final_snapshot:string option -> (string * string) l
    | None -> [ "rds_skip_final_snapshot", "true" ])
 ;;
 
-let aws_installation_zone_lookup : string -> string list =
-  fun domain ->
-  [ "aws"
-  ; "route53"
-  ; "list-hosted-zones-by-name"
-  ; "--dns-name"
-  ; domain
-  ; "--query"
-  ; "HostedZones[0].Id"
-  ; "--output"
-  ; "text"
-  ]
-;;
-
 let aws_installation_identity_contracts : identity_contract list =
   [ { identity = Sol_cli_installation.Provisioning_identity
     ; policy_output = "provisioner_policy_json"
@@ -907,6 +955,7 @@ let aws : t =
   ; installation_zone_address = "aws_route53_zone.qualification"
   ; installation_zone_import_address = "aws_route53_zone.qualification[0]"
   ; installation_zone_lookup = aws_installation_zone_lookup
+  ; installation_zone_candidates = aws_installation_zone_candidates
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = aws_failure_means_absent
   ; installation_identity_contracts = aws_installation_identity_contracts
@@ -1050,16 +1099,39 @@ let gcp_own_vars
            | _ -> "604800"))
 ;;
 
+(* gcloud's [=] filter is documented as not reliably exact across Google APIs,
+   so the project's managed zones are listed and the exact zone is chosen by
+   dnsName (see [installation_zone_candidates]). No filter is trusted to narrow
+   that choice: a filter that under-matched would hide the zone and make Sol
+   create a second one. *)
 let gcp_installation_zone_lookup : string -> string list =
-  fun domain ->
-  [ "gcloud"
-  ; "dns"
-  ; "managed-zones"
-  ; "list"
-  ; "--filter"
-  ; Printf.sprintf "dnsName=%s." domain
-  ; "--format=value(name)"
-  ]
+  fun _domain -> [ "gcloud"; "dns"; "managed-zones"; "list"; "--format=json" ]
+;;
+
+(* [(name, dns name, visibility)] for every managed zone the provider returned.
+   Cloud DNS's default visibility is public, and a Sol installation publishes
+   its delegation from a public zone. *)
+let gcp_zones output =
+  let open Sol_cli_json in
+  let open Result.Syntax in
+  let what = "the Cloud DNS managed-zone answer" in
+  let* json = decode ~what output in
+  let* zones = require ~what [] list json in
+  zones
+  |> Sol_cli_result.map_list (fun zone ->
+    let* name = require ~what [ "name" ] string zone in
+    let* dns_name = require ~what [ "dnsName" ] string zone in
+    let* visibility = optional ~what [ "visibility" ] string zone in
+    Ok (name, dns_name, Option.value visibility ~default:"public"))
+;;
+
+let gcp_installation_zone_candidates output =
+  let open Result.Syntax in
+  let* zones = gcp_zones output in
+  zones
+  |> Sol_cli_result.map_list (fun (name, dns_name, visibility) ->
+    if String.equal visibility "private" then Ok None else Ok (Some (name, dns_name)))
+  |> Result.map (List.filter_map (fun candidate -> candidate))
 ;;
 
 let gcp : t =
@@ -1116,6 +1188,7 @@ let gcp : t =
   ; installation_zone_address = "google_dns_managed_zone.qualification"
   ; installation_zone_import_address = "google_dns_managed_zone.qualification[0]"
   ; installation_zone_lookup = gcp_installation_zone_lookup
+  ; installation_zone_candidates = gcp_installation_zone_candidates
   ; installation_nameservers_output = "dns_zone_nameservers"
   ; installation_failure_means_absent = gcp_failure_means_absent
   ; installation_identity_contracts = []
@@ -1166,6 +1239,7 @@ let byo : t =
   ; installation_zone_address = ""
   ; installation_zone_import_address = ""
   ; installation_zone_lookup = (fun _ -> [])
+  ; installation_zone_candidates = (fun _ -> Ok [])
   ; installation_nameservers_output = ""
   ; installation_failure_means_absent = (fun _ -> false)
   ; installation_identity_contracts = []

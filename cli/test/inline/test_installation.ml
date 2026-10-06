@@ -1946,3 +1946,124 @@ let test_address_in_zone () =
 ;;
 
 let%test "address_in_zone: the zone or a record under it" = test_address_in_zone ()
+
+(* BUG-211: Route53's ListHostedZonesByName is a prefix listing that returns the
+   next zone in name order when the requested name has no exact match. A lookup
+   must therefore select by name, never by position. *)
+
+let test_zone_lookup_selects_by_exact_name () =
+  let candidates =
+    [ "/hostedzone/ZINSTALL", "qual-aws.sol-fab.dev."
+    ; "/hostedzone/ZPARENT", "sol-fab.dev."
+    ]
+  in
+  let select domain = Sol_cli_installation.select_zone_identity ~domain candidates in
+  (match select "sol-fab.dev" with
+   | Ok (Some identity) ->
+     check_string
+       "the exact zone is selected wherever it sits"
+       "/hostedzone/ZPARENT"
+       identity
+   | _ -> Windtrap.fail "the zone named exactly for the request was not selected");
+  (match select "qual-aws.sol-fab.dev" with
+   | Ok (Some identity) ->
+     check_string
+       "the installation's own zone is selected for its own name"
+       "/hostedzone/ZINSTALL"
+       identity
+   | _ -> Windtrap.fail "the exact installation zone was not selected");
+  (match select "zzz.sol-fab.dev" with
+   | Ok None -> ()
+   | Ok (Some identity) ->
+     Windtrap.fail
+       (Printf.sprintf "BUG-211: %s was selected for a request it does not name" identity)
+   | Error reason -> Windtrap.fail ("unexpected ambiguity: " ^ reason));
+  (match select "SOL-FAB.DEV" with
+   | Ok (Some identity) ->
+     check_string "names compare case-insensitively" "/hostedzone/ZPARENT" identity
+   | _ -> Windtrap.fail "a case-different exact name was not matched");
+  match
+    Sol_cli_installation.select_zone_identity
+      ~domain:"sol-fab.dev"
+      [ "/hostedzone/A", "sol-fab.dev."; "/hostedzone/B", "sol-fab.dev" ]
+  with
+  | Error _ -> ()
+  | Ok _ -> Windtrap.fail "two exact matches must fail closed rather than guess"
+;;
+
+let%test "zone lookup: a zone is selected by its exact name, never its position" =
+  test_zone_lookup_selects_by_exact_name ()
+;;
+
+let test_aws_zone_candidates_ignore_the_next_zone () =
+  (* The live BUG-211 answer: the parent is not in the account, so
+     ListHostedZonesByName --dns-name sol-fab.dev returned the installation's own
+     zone, which sorts immediately after it. *)
+  let output =
+    {|{"HostedZones":[{"Id":"/hostedzone/Z0555133LN4ZIDB3U52A","Name":"qual-aws.sol-fab.dev.","Config":{"PrivateZone":false}}]}|}
+  in
+  match Sol_cli_provider_capabilities.aws.installation_zone_candidates output with
+  | Error reason -> Windtrap.fail ("the observed Route53 answer should parse: " ^ reason)
+  | Ok candidates ->
+    (match Sol_cli_installation.select_zone_identity ~domain:"sol-fab.dev" candidates with
+     | Ok None -> ()
+     | Ok (Some identity) ->
+       Windtrap.fail
+         (Printf.sprintf
+            "BUG-211: the installation's own zone %s was read as the parent"
+            identity)
+     | Error reason -> Windtrap.fail ("unexpected ambiguity: " ^ reason))
+;;
+
+let%test "AWS zone lookup: the next zone is not the parent" =
+  test_aws_zone_candidates_ignore_the_next_zone ()
+;;
+
+let test_aws_zone_candidates_drop_private_zones () =
+  let output =
+    {|{"HostedZones":[{"Id":"/hostedzone/ZPRIVATE","Name":"sol-fab.dev.","Config":{"PrivateZone":true}}]}|}
+  in
+  match Sol_cli_provider_capabilities.aws.installation_zone_candidates output with
+  | Ok [] -> ()
+  | Ok _ -> Windtrap.fail "a private hosted zone is not the installation's public zone"
+  | Error reason -> Windtrap.fail ("the answer should parse: " ^ reason)
+;;
+
+let%test "AWS zone lookup: a private zone is not the installation zone" =
+  test_aws_zone_candidates_drop_private_zones ()
+;;
+
+let test_gcp_zone_candidates_select_by_dns_name () =
+  (* gcloud's `=` filter is documented as not reliably exact across APIs, so a
+     response can hold a zone whose dnsName merely contains the requested
+     domain; only the exact dnsName may be selected. *)
+  let output =
+    {|[{"name":"qual-gcp-sol-fab-dev","dnsName":"qual-gcp.sol-fab.dev.","visibility":"public"}]|}
+  in
+  match Sol_cli_provider_capabilities.gcp.installation_zone_candidates output with
+  | Error reason -> Windtrap.fail ("the Cloud DNS answer should parse: " ^ reason)
+  | Ok candidates ->
+    (match Sol_cli_installation.select_zone_identity ~domain:"sol-fab.dev" candidates with
+     | Ok None -> ()
+     | Ok (Some identity) ->
+       Windtrap.fail
+         (Printf.sprintf "gcloud: %s was read as a domain it does not name" identity)
+     | Error reason -> Windtrap.fail ("unexpected ambiguity: " ^ reason))
+;;
+
+let%test "GCP zone lookup: only the exact dnsName may be selected" =
+  test_gcp_zone_candidates_select_by_dns_name ()
+;;
+
+let test_zone_candidates_refuse_a_missing_identity () =
+  let output =
+    {|{"HostedZones":[{"Name":"sol-fab.dev.","Config":{"PrivateZone":false}}]}|}
+  in
+  match Sol_cli_provider_capabilities.aws.installation_zone_candidates output with
+  | Error _ -> ()
+  | Ok _ -> Windtrap.fail "a zone with no identity cannot be adopted"
+;;
+
+let%test "zone lookup: a candidate with no identity is refused" =
+  test_zone_candidates_refuse_a_missing_identity ()
+;;

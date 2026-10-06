@@ -54,6 +54,21 @@ type installation_config =
 val zone_domain : zone -> string option
 val owns_the_zone : zone -> bool
 val address_in_zone : zone:string -> string -> bool
+
+(** The trailing root dot and DNS's case-insensitivity normalized away, so a
+    provider's fully qualified answer compares equal to a declared domain. *)
+val normalized_dns_name : string -> string
+
+val dns_names_equal : string -> string -> bool
+
+(** Select the identity of the one zone named exactly [domain] from a provider's
+    lookup candidates. [Ok None] is positively-established absence; more than
+    one exact match is an error rather than a guess. *)
+val select_zone_identity
+  :  domain:string
+  -> (string * string) list
+  -> (string option, string) result
+
 val of_target : Sol_cli_config.target -> (installation_config, string) result
 val resolved_configuration_to_lines : installation_config -> string list
 
