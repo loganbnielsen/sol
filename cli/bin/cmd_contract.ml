@@ -28,12 +28,15 @@ let generate =
   Cmd.v
     (Cmd.info
        "generate"
-       ~doc:"Generate each scope's language bindings from its declarative event contract.")
+       ~doc:
+         "Generate application peer and event bindings from their declarative contracts.")
     Term.(const Sol_cli_exit.exit_on $ (const run $ check_arg))
 ;;
 
 let cmd =
   Cmd.group
-    (Cmd.info "contract" ~doc:"Work with the workspace's declarative event contract.")
+    (Cmd.info
+       "contract"
+       ~doc:"Generate bindings from the workspace's declarative contracts.")
     [ generate ]
 ;;
