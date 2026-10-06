@@ -88,9 +88,22 @@ let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
 
 open Result.Syntax
 
-let auth_result ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers =
+let auth_result
+      ?read_api_key
+      ?fetch_jwks
+      ?fetch_workload_jwks
+      ?workload_identity
+      auth_cfg
+      headers
+  =
   match
-    Auth_internal.validate ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers
+    Auth_internal.validate
+      ?read_api_key
+      ?fetch_jwks
+      ?fetch_workload_jwks
+      ?workload_identity
+      auth_cfg
+      headers
   with
   | Error (`Unauthorized _) -> Error Response.unauthorized
   | Error (`Forbidden _) -> Error Response.forbidden
@@ -98,11 +111,16 @@ let auth_result ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers =
   | Ok ctx -> Ok ctx
 ;;
 
-let authenticate_route ?fetch_jwks ?workload_identity route headers =
+let authenticate_route ?fetch_jwks ?fetch_workload_jwks ?workload_identity route headers =
   if route.Route.is_external
   then Ok None
   else
-    auth_result ?fetch_jwks ?workload_identity `Workload_identity headers
+    auth_result
+      ?fetch_jwks
+      ?fetch_workload_jwks
+      ?workload_identity
+      `Workload_identity
+      headers
     |> Result.map Option.some
 ;;
 
@@ -122,6 +140,7 @@ let dispatch_unguarded
       ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
+      ?fetch_workload_jwks
       ?workload_identity
       ?on_boundary
       ?on_workload_principal
@@ -184,6 +203,7 @@ let dispatch_unguarded
                  auth_result
                    ?read_api_key
                    ?fetch_jwks
+                   ?fetch_workload_jwks
                    ?workload_identity
                    metrics_auth
                    headers
@@ -220,7 +240,12 @@ let dispatch_unguarded
            observe (Route.pattern_to_string route.Route.pattern);
            let result =
              let* auth_ctx =
-               authenticate_route ?fetch_jwks ?workload_identity route headers
+               authenticate_route
+                 ?fetch_jwks
+                 ?fetch_workload_jwks
+                 ?workload_identity
+                 route
+                 headers
              in
              Option.iter
                (fun f ->
@@ -269,6 +294,7 @@ let dispatch
       ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
+      ?fetch_workload_jwks
       ?workload_identity
       ?on_boundary
       ?on_workload_principal
@@ -286,6 +312,7 @@ let dispatch
       ~report_error
       ?read_api_key
       ?fetch_jwks
+      ?fetch_workload_jwks
       ?workload_identity
       ?on_boundary
       ?on_workload_principal
@@ -393,11 +420,9 @@ let workload_identity_requested routes metrics_auth =
   || List.exists (fun route -> not route.Route.is_external) routes
 ;;
 
-(* The canonical calls graph supplies the audience and the allowed callers; the trust
-   root is an explicit input, because issuing discovery and its capability check
-   are a separate concern. Workload-identity routes without either fail closed at
-   startup. *)
-let workload_identity_config ~trusted_issuers routes metrics_auth =
+(* The canonical calls graph supplies the audience and allowed callers. Sol projects
+   the issuer established by the target capability. *)
+let workload_identity_config ~trusted_issuer routes metrics_auth =
   if not (workload_identity_requested routes metrics_auth)
   then Ok None
   else
@@ -415,13 +440,14 @@ let workload_identity_config ~trusted_issuers routes metrics_auth =
       | None -> []
       | Some raw -> Auth.callers_of_projection raw
     in
-    if trusted_issuers = []
-    then
+    match trusted_issuer with
+    | None ->
       Error
         (`Config
-            "a route uses Workload_identity auth but no trusted issuer/JWKS root was \
-             provided; the caller's token issuer cannot be trusted")
-    else Ok (Some { Auth.audience; callers; trusted_issuers })
+            "a route requires Sol workload authentication but \
+             SOL_TRUSTED_WORKLOAD_ISSUER is not set by Sol's target capability \
+             projection")
+    | Some trusted_issuer -> Ok (Some { Auth.audience; callers; trusted_issuer })
 ;;
 
 let emit_request_observation
@@ -504,6 +530,7 @@ module For_testing = struct
         ?report_error
         ?read_api_key
         ?fetch_jwks
+        ?fetch_workload_jwks
         ?workload_identity
         ?on_boundary
         ?on_workload_principal
@@ -515,6 +542,7 @@ module For_testing = struct
       ?report_error
       ?read_api_key
       ?fetch_jwks
+      ?fetch_workload_jwks
       ?workload_identity
       ?on_boundary
       ?on_workload_principal
@@ -527,8 +555,8 @@ module For_testing = struct
       body
   ;;
 
-  let workload_identity_config ~trusted_issuers routes metrics_auth =
-    workload_identity_config ~trusted_issuers routes metrics_auth
+  let workload_identity_config ~trusted_issuer routes metrics_auth =
+    workload_identity_config ~trusted_issuer routes metrics_auth
   ;;
 
   let parse_called_by = Auth.callers_of_projection
@@ -544,7 +572,6 @@ module Make (H : HANDLER) = struct
            ; .. >)
         ?(port = 8080)
         ?(metrics_auth = `Public)
-        ?(trusted_issuers = [])
         ?ot
         ?observe
         ?(max_body_bytes = 10_485_760)
@@ -595,9 +622,11 @@ module Make (H : HANDLER) = struct
     let* () = refuse_unverified_jwt metrics_auth in
     let* () = refuse_non_https_jwks metrics_auth in
     let* read_api_key = api_key_reader ~env ~required:(api_key_required metrics_auth) in
+    let trusted_issuer = Sol_runtime.setting "SOL_TRUSTED_WORKLOAD_ISSUER" in
     let* workload_identity =
-      workload_identity_config ~trusted_issuers H.routes metrics_auth
+      workload_identity_config ~trusted_issuer H.routes metrics_auth
     in
+    let fetch_workload_jwks = Auth_internal.fetch_workload_jwks_over_https ~env in
     let lifecycle = Lifecycle.create () in
     let signal_stop, signal_stop_r = Eio.Promise.create () in
     let await_stop () =
@@ -675,6 +704,7 @@ module Make (H : HANDLER) = struct
                     dispatch
                       ~report_error
                       ~fetch_jwks
+                      ~fetch_workload_jwks
                       ?workload_identity
                       ~routes:H.routes
                       ~metrics_renderer

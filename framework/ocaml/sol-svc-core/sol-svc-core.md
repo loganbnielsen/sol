@@ -24,12 +24,11 @@ runtime dependency.
 type workload_identity_config =
   { audience : string
   ; callers : (string * string) list
-  ; trusted_issuers : (string * string) list
+  ; trusted_issuer : string
   }
 
 type key_request =
   { issuer : string
-  ; jwks_url : string
   ; key_id : string option
   }
 
@@ -52,24 +51,24 @@ workload principal separately.
 ## Configuration
 
 The adapter supplies the callee audience, callers derived from Sol's canonical
-`calls` graph, and issuer/JWKS pairs established by the deployment target. The
+`calls` graph, and the issuer established by the deployment target. The
 core parses neither process environment nor framework-specific request objects.
 
 ## Example usage
 
 An adapter extracts the bearer value from its native request, calls
-`begin_workload_auth`, resolves the returned key request with its own async HTTP
-client and cache, then calls `finish_workload_auth` with the JWKS and runtime
-clock. It enforces the returned error or passes the Sol principal to the
+`begin_workload_auth`, resolves the returned issuer with its own runtime's OIDC
+discovery, HTTP client, and key cache, then calls `finish_workload_auth` with the
+JWKS and runtime clock. It enforces the returned error or passes the Sol principal to the
 application. An external route skips this Sol auth flow and continues through
 application middleware.
 
 ## Security flow
 
-`Auth.begin_workload_auth` parses the bearer token and uses the unverified issuer
-only to select a previously trusted issuer and JWKS URL. The adapter resolves
-signing keys using its own runtime's HTTP and cache mechanisms. It then passes
-the keys to `Auth.finish_workload_auth`, which verifies the signature, issuer,
+`Auth.begin_workload_auth` parses the bearer token and requires its unverified
+issuer to equal the one trusted issuer projected by Sol. The adapter resolves
+signing keys using that issuer and its own runtime's HTTP and cache mechanisms.
+It then passes the keys to `Auth.finish_workload_auth`, which verifies the signature, issuer,
 audience, time claims, workload subject, and caller authorization.
 
 The core deliberately does not fetch keys, cache them, synchronize refreshes,

@@ -30,13 +30,12 @@ type jwt_config =
 (* DEC-063: a Sol-to-Sol call authenticates with the caller's projected
    ServiceAccount token. The callee checks the token against a trusted issuer,
    maps the subject to a caller unit, and requires that unit in [callers]. The
-   trust root is an explicit (issuer, JWKS URL) set; issuing discovery is a
-   separate concern. *)
+   trusted issuer is projected from the target capability. *)
 type workload_identity_config =
   { audience : string
   ; callers : (string * string) list
     (* service account "<namespace>:<serviceaccount>" -> caller unit *)
-  ; trusted_issuers : (string * string) list (* issuer -> JWKS URL *)
+  ; trusted_issuer : string
   }
 
 type level =
@@ -84,7 +83,6 @@ open Result.Syntax
 
 type key_request =
   { issuer : string
-  ; jwks_url : string
   ; key_id : string option
   }
 
@@ -163,13 +161,13 @@ let begin_workload_auth config ~authorization =
     | Some issuer -> Ok issuer
     | None -> Error (`Unauthorized "JWT issuer missing")
   in
-  let* jwks_url =
-    match List.assoc_opt issuer config.trusted_issuers with
-    | Some url -> Ok url
-    | None -> Error (`Unauthorized ("JWT issuer is not trusted: " ^ issuer))
+  let* () =
+    if issuer = config.trusted_issuer
+    then Ok ()
+    else Error (`Unauthorized ("JWT issuer is not trusted: " ^ issuer))
   in
   let key_id = parsed.Jose.Jwt.header.Jose.Header.kid in
-  Ok ({ issuer; jwks_url; key_id }, { token; issuer; config; key_id })
+  Ok ({ issuer; key_id }, { token; issuer; config; key_id })
 ;;
 
 let finish_workload_auth pending ~jwks ~now =

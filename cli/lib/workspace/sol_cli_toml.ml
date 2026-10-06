@@ -1003,7 +1003,9 @@ let load_result path =
                key)
       in
       let* () =
-        let reserved_identity = [ "SOL_UNIT"; "SOL_CALLED_BY" ] in
+        let reserved_identity =
+          [ "SOL_UNIT"; "SOL_CALLED_BY"; "SOL_TRUSTED_WORKLOAD_ISSUER" ]
+        in
         let reserved_development =
           [ "SOL_ALLOW_UNVERIFIED_JWT"; "SOL_ALLOW_PLAINTEXT_PEER_AUTH" ]
         in

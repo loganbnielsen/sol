@@ -29,11 +29,11 @@ type jwt_config =
 
 (** DEC-063: Sol-to-Sol workload identity. [callers] maps a service-account
     subject ("<namespace>:<serviceaccount>") to the caller's Sol unit;
-    [trusted_issuers] maps an accepted issuer to its JWKS URL. *)
+    [trusted_issuer] is the target-established Kubernetes issuer. *)
 type workload_identity_config =
   { audience : string
   ; callers : (string * string) list
-  ; trusted_issuers : (string * string) list
+  ; trusted_issuer : string
   }
 
 type level =
@@ -66,7 +66,6 @@ type error =
 
 type key_request =
   { issuer : string
-  ; jwks_url : string
   ; key_id : string option
   }
 
