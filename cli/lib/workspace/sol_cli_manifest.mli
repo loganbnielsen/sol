@@ -1,9 +1,17 @@
+type secret_store_kind =
+  | Secret_store
+  | Cluster_secret_store
+
+val secret_store_kind_to_string : secret_store_kind -> string
+val secret_store_kind_of_string : string -> (secret_store_kind, string) result
+val refresh_interval_of_string : string -> (string, string) result
+
 type secret_backend =
   | Kubernetes_live
   | Kubernetes_placeholder
   | External_secrets of
       { store_ref : string
-      ; store_kind : string
+      ; store_kind : secret_store_kind
       ; key_prefix : string
       ; refresh_interval : string
       }
@@ -94,7 +102,7 @@ val secret_doc
 
 val external_secret_doc
   :  store_ref:string
-  -> store_kind:string
+  -> store_kind:secret_store_kind
   -> key_prefix:string
   -> refresh_interval:string
   -> secret_keys:string list

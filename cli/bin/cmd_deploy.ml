@@ -837,11 +837,13 @@ let secret_backend_arg =
         ~docv:"BACKEND"
         ~doc:
           "Override how the runtime Secret is rendered. Omitted -- the usual case -- the \
-           destination decides: a direct or local deploy writes real values \
-           ('kubernetes-live'), while a GitOps target writes a redacted \
-           'kubernetes-placeholder'. Pass 'kubernetes-placeholder' to force a redacted \
-           Secret, or 'external-secrets' (with --emit-to) to emit an ExternalSecret CRD \
-           for the External Secrets Operator instead.")
+           destination decides: a direct or local deploy uses the operator-owned live \
+           Secret ('kubernetes-live'; Sol emits no Secret for it, so populate it with \
+           'sol secret set'), while a GitOps target writes a redacted \
+           'kubernetes-placeholder' Secret. Pass 'kubernetes-placeholder' to force a \
+           redacted Secret, or 'external-secrets' (requires --emit-to and \
+           --secret-store-ref) to emit an ExternalSecret CRD for the External Secrets \
+           Operator instead.")
 ;;
 
 let secret_store_ref_arg =
@@ -864,8 +866,8 @@ let secret_store_kind_arg =
         [ "secret-store-kind" ]
         ~docv:"KIND"
         ~doc:
-          "Kind of the secret store reference (default: ClusterSecretStore). Use \
-           'SecretStore' for a namespace-scoped store.")
+          "Kind of the secret store reference. One of 'SecretStore' (namespace-scoped) \
+           or 'ClusterSecretStore' (default).")
 ;;
 
 let key_prefix_arg =
@@ -889,42 +891,24 @@ let refresh_interval_arg =
         [ "refresh-interval" ]
         ~docv:"INTERVAL"
         ~doc:
-          "How often ESO should sync the secret from the external store (default: 1h). \
-           Examples: '1h', '30m', '5m'.")
+          "How often ESO should sync the secret from the external store (default: 1h). A \
+           Go duration: one or more number/unit groups, e.g. '1h', '30m', '5m', '1h30m', \
+           '500ms' (units: ns, us, µs, ms, s, m, h).")
 ;;
 
 let secret_backend_term =
-  let build str store_ref store_kind key_prefix refresh_interval emit_to =
-    match str with
-    | None -> `Ok None
-    | Some "kubernetes-placeholder" -> `Ok (Some Sol_cli_manifest.Kubernetes_placeholder)
-    | Some "kubernetes-live" -> `Ok (Some Sol_cli_manifest.Kubernetes_live)
-    | Some "external-secrets" when emit_to = None ->
-      Printf.eprintf
-        "warning: --secret-backend external-secrets is only meaningful with --emit-to; \
-         using kubernetes-placeholder.\n";
-      `Ok (Some Sol_cli_manifest.Kubernetes_placeholder)
-    | Some "external-secrets" ->
-      (match store_ref with
-       | None ->
-         `Error
-           (true, "--secret-store-ref is required when --secret-backend=external-secrets")
-       | Some sref ->
-         `Ok
-           (Some
-              (Sol_cli_manifest.External_secrets
-                 { store_ref = sref
-                 ; store_kind = Option.value store_kind ~default:"ClusterSecretStore"
-                 ; key_prefix = Option.value key_prefix ~default:""
-                 ; refresh_interval = Option.value refresh_interval ~default:"1h"
-                 })))
-    | Some other ->
-      `Error
-        ( true
-        , Printf.sprintf
-            "unknown --secret-backend value %S (expected: kubernetes-live | \
-             kubernetes-placeholder | external-secrets)"
-            other )
+  let build backend store_ref store_kind key_prefix refresh_interval emit_to =
+    match
+      Sol_cli_secret_backend.emission_backend
+        ~emit_to
+        ~backend
+        ~store_ref
+        ~store_kind
+        ~key_prefix
+        ~refresh_interval
+    with
+    | Ok backend -> `Ok backend
+    | Error message -> `Error (true, message)
   in
   Term.(
     ret

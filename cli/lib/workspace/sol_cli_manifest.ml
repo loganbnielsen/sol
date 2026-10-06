@@ -6,7 +6,7 @@ type secret_backend =
   | Kubernetes_placeholder
   | External_secrets of
       { store_ref : string
-      ; store_kind : string
+      ; store_kind : secret_store_kind
       ; key_prefix : string
       ; refresh_interval : string
       }

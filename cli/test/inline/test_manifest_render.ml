@@ -1516,7 +1516,7 @@ steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
 let eso_backend =
   Sol_cli_manifest.External_secrets
     { store_ref = "aws-secrets-manager"
-    ; store_kind = "ClusterSecretStore"
+    ; store_kind = Sol_cli_manifest.Cluster_secret_store
     ; key_prefix = "myapp/"
     ; refresh_interval = "1h"
     }
@@ -1526,7 +1526,7 @@ let test_external_secret_doc_no_stringdata () =
   let doc =
     Sol_cli_manifest.external_secret_doc
       ~store_ref:"aws-secrets-manager"
-      ~store_kind:"ClusterSecretStore"
+      ~store_kind:Sol_cli_manifest.Cluster_secret_store
       ~key_prefix:"myapp/"
       ~refresh_interval:"1h"
       ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY" ]
@@ -1544,7 +1544,7 @@ let test_external_secret_doc_keys_present () =
   let doc =
     Sol_cli_manifest.external_secret_doc
       ~store_ref:"aws-secrets-manager"
-      ~store_kind:"ClusterSecretStore"
+      ~store_kind:Sol_cli_manifest.Cluster_secret_store
       ~key_prefix:""
       ~refresh_interval:"1h"
       ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY"; "SENDGRID_API_KEY" ]
@@ -1561,7 +1561,7 @@ let test_external_secret_doc_target_name () =
   let doc =
     Sol_cli_manifest.external_secret_doc
       ~store_ref:"my-store"
-      ~store_kind:"ClusterSecretStore"
+      ~store_kind:Sol_cli_manifest.Cluster_secret_store
       ~key_prefix:""
       ~refresh_interval:"1h"
       ~secret_keys:[ "POSTGRES_URL" ]
@@ -1570,6 +1570,22 @@ let test_external_secret_doc_target_name () =
     |> render_doc
   in
   assert_contains "target name is charge-svc-secrets" doc "name: charge-svc-secrets"
+;;
+
+let test_external_secret_doc_namespace_scoped_store () =
+  let doc =
+    Sol_cli_manifest.external_secret_doc
+      ~store_ref:"my-store"
+      ~store_kind:Sol_cli_manifest.Secret_store
+      ~key_prefix:""
+      ~refresh_interval:"1h"
+      ~secret_keys:[ "POSTGRES_URL" ]
+      ~ns:"myapp-payments"
+      ~name:"charge-svc"
+    |> render_doc
+  in
+  assert_contains "namespace-scoped store kind" doc "kind: SecretStore";
+  assert_absent "not a ClusterSecretStore" doc "kind: ClusterSecretStore"
 ;;
 
 let test_render_spec_eso_backend_no_k8s_secret () =
@@ -2856,6 +2872,10 @@ let%test "external_secrets: external_secret_doc: keys present" =
 
 let%test "external_secrets: external_secret_doc: target name" =
   test_external_secret_doc_target_name ()
+;;
+
+let%test "external_secrets: external_secret_doc: namespace-scoped store kind" =
+  test_external_secret_doc_namespace_scoped_store ()
 ;;
 
 let%test "external_secrets: render_spec ESO: no k8s Secret" =

@@ -20,6 +20,72 @@ type workload_shape =
   | Http_service
   | Background_worker
 
+(* The ExternalSecret's secretStoreRef.kind is a closed set, not free text: an
+   unknown value would produce an artifact the operator cannot act on. *)
+type secret_store_kind =
+  | Secret_store
+  | Cluster_secret_store
+
+let secret_store_kind_to_string = function
+  | Secret_store -> "SecretStore"
+  | Cluster_secret_store -> "ClusterSecretStore"
+;;
+
+let secret_store_kind_of_string = function
+  | "SecretStore" -> Ok Secret_store
+  | "ClusterSecretStore" -> Ok Cluster_secret_store
+  | other ->
+    Error
+      (Printf.sprintf
+         "unknown secret store kind %S (expected: SecretStore | ClusterSecretStore)"
+         other)
+;;
+
+let refresh_interval_units = [ "ns"; "us"; "µs"; "ms"; "s"; "m"; "h" ]
+
+(* Accept the refreshInterval syntax the External Secrets Operator parses (a Go
+   time.ParseDuration): one or more decimal number/unit groups such as "1h",
+   "30m" or "500ms", plus the bare "0". Anything else is refused so Sol never
+   emits an ExternalSecret whose refresh interval cannot be used. *)
+let refresh_interval_of_string raw =
+  let text = String.trim raw in
+  let len = String.length text in
+  let malformed () =
+    Error
+      (Printf.sprintf
+         "%S is not a duration such as \"1h\", \"30m\", or \"1h30m\" (units: ns, us, µs, \
+          ms, s, m, h)"
+         raw)
+  in
+  let is_digit c = c >= '0' && c <= '9' in
+  let skip_digits i =
+    let rec go i = if i < len && is_digit text.[i] then go (i + 1) else i in
+    go i
+  in
+  let unit_at i =
+    List.find_map
+      (fun unit ->
+         let n = String.length unit in
+         if i + n <= len && String.equal (String.sub text i n) unit
+         then Some (i + n)
+         else None)
+      refresh_interval_units
+  in
+  let rec groups i =
+    if i = len
+    then Ok text
+    else (
+      let number_start = i in
+      let i = skip_digits i in
+      let i = if i < len && text.[i] = '.' then skip_digits (i + 1) else i in
+      let number = String.sub text number_start (i - number_start) in
+      match number, unit_at i with
+      | "", _ | _, None -> malformed ()
+      | _number, Some next -> groups next)
+  in
+  if String.equal text "0" then Ok text else if len = 0 then malformed () else groups 0
+;;
+
 module Workload_spec = struct
   type t =
     { extra_labels : (string * string) list
@@ -198,7 +264,10 @@ let external_secret_doc
       , Y.map
           [ "refreshInterval", Y.string refresh_interval
           ; ( "secretStoreRef"
-            , Y.map [ "name", Y.string store_ref; "kind", Y.string store_kind ] )
+            , Y.map
+                [ "name", Y.string store_ref
+                ; "kind", Y.string (secret_store_kind_to_string store_kind)
+                ] )
           ; ( "target"
             , Y.map
                 [ "name", Y.string (workload_secret_name name)

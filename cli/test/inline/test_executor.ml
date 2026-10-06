@@ -272,7 +272,7 @@ let secretful_spec : Sol_cli_deployment_plan.service_spec =
 let external_secrets_backend =
   Sol_cli_manifest.External_secrets
     { store_ref = "probe-store"
-    ; store_kind = "ClusterSecretStore"
+    ; store_kind = Sol_cli_manifest.Cluster_secret_store
     ; key_prefix = "myapp/"
     ; refresh_interval = "1h"
     }
