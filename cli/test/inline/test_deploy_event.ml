@@ -1,6 +1,10 @@
 let check_string msg expected actual = Windtrap.equal Windtrap.string ~msg expected actual
 let check_bool msg expected actual = Windtrap.equal Windtrap.bool ~msg expected actual
 
+let check_strings msg expected actual =
+  Windtrap.equal (Windtrap.list Windtrap.string) ~msg expected actual
+;;
+
 module E = Sol_cli_deploy_event
 module U = Sol_cli_observability_url
 
@@ -30,14 +34,41 @@ let test_fields_includes_deployment_id_join_key () =
     (List.mem ("deployment_id", "d-20260101t000000z-0123456789abcdef") fields)
 ;;
 
+(* The deploy event and the rendered workload taxonomy share one identity key
+   set; assert the event covers every key the taxonomy owner declares, so a
+   rename cannot leave the dashboard join with a stale field name. *)
 let test_fields_matches_taxonomy_label_set () =
   let fields = E.fields sample in
-  check_bool "workspace" true (List.mem ("workspace", "acme") fields);
-  check_bool "env" true (List.mem ("env", "prod") fields);
-  check_bool "domain" true (List.mem ("domain", "billing") fields);
-  check_bool "service" true (List.mem ("service", "invoicer") fields);
-  check_bool "primitive" true (List.mem ("primitive", "svc") fields);
-  check_bool "release" true (List.mem ("release", "r-0123456789abcdef") fields)
+  let identity_keys = List.map fst Sol_cli_manifest.observability_identity in
+  List.iter
+    (fun key ->
+       check_bool
+         (Printf.sprintf "deploy event carries taxonomy key %S" key)
+         true
+         (List.mem_assoc key fields))
+    identity_keys;
+  List.iter
+    (fun key ->
+       check_bool
+         (Printf.sprintf "the release-timeline join key %S is a taxonomy key" key)
+         true
+         (List.mem key identity_keys))
+    [ "workspace"; "domain"; "service" ];
+  check_string "workspace value" "acme" (List.assoc "workspace" fields);
+  check_string "env value" "prod" (List.assoc "env" fields);
+  check_string "domain value" "billing" (List.assoc "domain" fields);
+  check_string "service value" "invoicer" (List.assoc "service" fields);
+  check_string "primitive value" "svc" (List.assoc "primitive" fields);
+  check_string "release value" "r-0123456789abcdef" (List.assoc "release" fields)
+;;
+
+let test_fields_are_event_then_identity_then_join_key () =
+  let labels = List.map fst (E.fields sample) in
+  let identity_keys = List.map fst Sol_cli_manifest.observability_identity in
+  check_strings
+    "event, the taxonomy keys, then the deployment join key"
+    ([ "event" ] @ identity_keys @ [ "deployment_id" ])
+    labels
 ;;
 
 let test_message_mentions_domain_service_and_release () =
@@ -80,6 +111,10 @@ let test_external_without_override_skips () =
 
 let%test "fields: includes event=deploy" = test_fields_includes_event_deploy ()
 let%test "fields: matches taxonomy label set" = test_fields_matches_taxonomy_label_set ()
+
+let%test "fields: event, taxonomy keys, then deployment_id" =
+  test_fields_are_event_then_identity_then_join_key ()
+;;
 
 let%test "fields: includes deployment_id join key" =
   test_fields_includes_deployment_id_join_key ()
