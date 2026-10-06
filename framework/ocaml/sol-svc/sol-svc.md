@@ -388,7 +388,7 @@ type t =
   ; uri      : Uri.t
   (** Full request URI. Use [Uri] functions for query string access. *)
   ; body     : string                   (* pre-read, bounded by max_body_bytes *)
-  ; auth     : Auth.context
+  ; auth     : Auth.context option
   ; trace_ctx : Obs_trace.t option
   (** W3C [traceparent] extracted from the incoming request headers. Pass as
       [?parent] to [Obs_eio.with_span] to link child spans to the caller. *)
@@ -495,6 +495,8 @@ module Make (H : HANDLER) : sig
            sol_svc_request_duration_seconds are emitted per request, and
            GET /metrics renders from the same handle. If omitted,
            GET /metrics → 404. *)
+    -> ?observe:Observation.sink
+       (** Framework-neutral request completion observations. *)
     -> ?max_body_bytes:int
        (** Maximum request body size in bytes. Default: 10_485_760 (10 MB).
            Requests exceeding this limit receive 413 before the handler is called. *)
