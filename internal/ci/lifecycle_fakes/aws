@@ -115,7 +115,9 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   fi
   case " $* " in
     *" --query cluster.identity.oidc.issuer "*)
-      printf 'https://oidc.eks.us-east-1.amazonaws.com/id/LIFECYCLETEST\n'
+      if [ "${OIDC_ISSUER_UNAVAILABLE:-}" != 1 ]; then
+        printf 'https://oidc.eks.us-east-1.amazonaws.com/id/LIFECYCLETEST\n'
+      fi
       exit 0
       ;;
   esac
