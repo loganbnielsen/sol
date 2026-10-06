@@ -126,9 +126,9 @@ sol check --scope payments/checkout-svc
 ```
 
 `sol check` validates declarations **without Docker or Kubernetes**: the workspace
-manifest, every `sol.toml`, the Dockerfile each unit needs, the app/unit layout, and the
-declared contracts. It is the command to run before a deploy, in CI, or after a merge that
-touched declarations.
+manifest, every `sol.toml`, the Dockerfile each unit needs, the app/unit layout, that every
+service declared in `sol.yml` has the unit directory it names, and the declared contracts. It is
+the command to run before a deploy, in CI, or after a merge that touched declarations.
 
 Exit status is part of the interface (`DEC-031`'s exit vocabulary): **0** means the
 declaration is valid, **2** means it ran and the answer is *no* — a check failed, and the

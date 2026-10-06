@@ -84,7 +84,21 @@
  (deps ../bin/main.exe)
  (action
   (bash
-   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  api:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app/core/api_svc\"\n: > \"$tmp/app/core/api_svc/Dockerfile\"\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  api_svc:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol\"\ncat > \"$tmp/sol/environments.yml\" <<'EOF'\nprod:\n  targets:\n    aws/us-east-1:\n      cluster_name: probe\nEOF\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  ghost_svc:\n    path: app/core/ghost_svc\nEOF\ncd \"$tmp\"\nif \"$sol\" plan prod/aws/us-east-1 >\"$tmp/out\" 2>\"$tmp/err\"; then\n  echo 'sol plan rendered a declared service with no unit directory' >&2\n  exit 1\nfi\ngrep -F 'ghost_svc' \"$tmp/err\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app\"\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  ghost_svc:\n    path: app/core/ghost_svc\nEOF\ncd \"$tmp\"\nif \"$sol\" check >\"$tmp/out\" 2>\"$tmp/err\"; then\n  echo 'sol check accepted a declared service with no unit directory' >&2\n  exit 1\nfi\ngrep -F 'ghost_svc' \"$tmp/err\" >/dev/null")))
 
 (rule
  (alias runtest)

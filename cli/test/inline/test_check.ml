@@ -203,6 +203,172 @@ let test_declared_workload_does_not_warn () =
       (has_msg "declares no language" findings))
 ;;
 
+let test_declared_unit_without_directory_fails () =
+  with_tmp (fun _ ->
+    write
+      "sol.yml"
+      "services:\n  ghost_svc:\n    type: http\n    path: app/core/ghost_svc\n";
+    mkdir_p "app";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a declared unit with no directory is an error"
+      true
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and names the missing unit"
+      true
+      (has_msg "no unit directory exists there" findings))
+;;
+
+let test_declared_unit_wrong_leaf_fails () =
+  with_tmp (fun _ ->
+    write
+      "sol.yml"
+      "services:\n  charge_svc:\n    type: http\n    path: app/core/other_svc\n";
+    mkdir_p "app/core/other_svc";
+    write "app/core/other_svc/Dockerfile" "FROM scratch\n";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a declared path whose leaf is not the service name is an error"
+      true
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and says which directory it found"
+      true
+      (has_msg "its directory is named other_svc" findings))
+;;
+
+let test_declared_unit_without_suffix_fails () =
+  with_tmp (fun _ ->
+    write "sol.yml" "services:\n  api:\n    type: http\n    path: app/core/api\n";
+    mkdir_p "app/core/api";
+    write "app/core/api/Dockerfile" "FROM scratch\n";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a declared path with no workload suffix is an error"
+      true
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and says the suffix is missing"
+      true
+      (has_msg "carries no *_svc, *_worker or *_fn suffix" findings))
+;;
+
+let test_declared_name_only_without_directory_fails () =
+  with_tmp (fun _ ->
+    write "sol.yml" "services:\n  ghost_svc:\n    language: ocaml\n";
+    mkdir_p "app";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a declared service with no unit anywhere is an error"
+      true
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and names the service"
+      true
+      (has_msg "declares service ghost_svc" findings))
+;;
+
+let test_declared_type_mismatch_warns () =
+  with_tmp (fun _ ->
+    write
+      "sol.yml"
+      "services:\n\
+      \  notify_worker:\n\
+      \    type: http\n\
+      \    path: app/comms/notify_worker\n\
+      \    language: ocaml\n";
+    mkdir_p "app/comms/notify_worker";
+    write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
+    write "app/comms/notify_worker/sol.toml" "";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"a declared type that disagrees with the suffix is a warning, not an error"
+      false
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and the warning names the mismatch"
+      true
+      (has_msg "declares type \"http\"" findings))
+;;
+
+let test_omitted_declared_unit_without_directory_is_ignored () =
+  with_tmp (fun _ ->
+    write
+      "sol.yml"
+      "services:\n\
+      \  real_svc:\n\
+      \    type: http\n\
+      \    path: app/core/real_svc\n\
+      \    language: ocaml\n\
+      \  ignored_svc:\n\
+      \    type: http\n\
+      \    path: app/core/ignored_svc\n\
+      \    omit: true\n";
+    mkdir_p "app/core/real_svc";
+    write "app/core/real_svc/Dockerfile" "FROM scratch\n";
+    write "app/core/real_svc/sol.toml" "";
+    let findings = Sol_cli_check.run ~facts:(facts ()) in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"an omitted declaration need not have a directory"
+      false
+      (Sol_cli_check.has_errors findings);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and it is not reported"
+      false
+      (has_msg "ignored_svc" findings))
+;;
+
+let test_scoped_check_reports_declaration_issues_in_domain () =
+  with_tmp (fun _ ->
+    write
+      "sol.yml"
+      "services:\n\
+      \  real_svc:\n\
+      \    type: http\n\
+      \    path: app/payments/real_svc\n\
+      \    language: ocaml\n\
+      \  ghost_svc:\n\
+      \    type: http\n\
+      \    path: app/comms/ghost_svc\n";
+    mkdir_p "app/payments/real_svc";
+    write "app/payments/real_svc/Dockerfile" "FROM scratch\n";
+    write "app/payments/real_svc/sol.toml" "";
+    let facts = facts () in
+    let comms =
+      Sol_cli_check.declaration_findings_in_scope
+        ~facts
+        (Sol_cli_deployment_scope.Whole_domain "comms")
+    in
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the phantom unit is reported in its own domain"
+      true
+      (Sol_cli_check.has_errors comms);
+    let payments =
+      Sol_cli_check.declaration_findings_in_scope
+        ~facts
+        (Sol_cli_deployment_scope.Whole_domain "payments")
+    in
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"and not in a domain that implements everything it declares"
+      0
+      (List.length payments))
+;;
+
 let run_sol ~root args =
   let stdout_path = Filename.concat root "stdout" in
   let stderr_path = Filename.concat root "stderr" in
@@ -297,6 +463,47 @@ let test_unreadable_config_is_an_error () =
         (Sol_cli_string.contains ~needle:"sol.yml" (Sol_cli_config.error_to_string e)))
 ;;
 
+let with_plan_workspace f =
+  let root = Filename.temp_dir "sol-plan-" "" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree root))
+    (fun () ->
+       let write rel body =
+         let path = Filename.concat root rel in
+         ignore (Sol_cli_fs.mkdir_p (Filename.dirname path));
+         Result.get_ok (Sol_cli_fs.write_atomic path body)
+       in
+       write "sol.yml" "services:\n  charge_svc:\n    language: ocaml\n";
+       write
+         "sol/environments.yml"
+         "prod:\n  targets:\n    aws/us-east-1:\n      cluster_name: probe\n";
+       f root ~write)
+;;
+
+let test_plan_refuses_declared_unit_without_directory () =
+  with_plan_workspace (fun root ~write ->
+    ignore write;
+    let code, _stdout, stderr = run_sol ~root [ "plan"; "prod/aws/us-east-1" ] in
+    Windtrap.equal Windtrap.int ~msg:"plan refuses an unimplemented declaration" 1 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and names the declared service"
+      true
+      (Sol_cli_string.contains ~needle:"charge_svc" stderr))
+;;
+
+let test_plan_accepts_implemented_unit () =
+  with_plan_workspace (fun root ~write ->
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    let code, stdout, _stderr = run_sol ~root [ "plan"; "prod/aws/us-east-1" ] in
+    Windtrap.equal Windtrap.int ~msg:"plan succeeds" 0 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"and prints the plan"
+      true
+      (Sol_cli_string.contains ~needle:"Project:" stdout))
+;;
+
 let%test "discover: missing app returns error" = test_missing_app_result ()
 let%test "discover: outside a workspace returns error" = test_not_in_workspace_result ()
 let%test "discover: valid service" = test_discover_valid_service ()
@@ -320,8 +527,42 @@ let%test "check: a declared workload does not warn" =
   test_declared_workload_does_not_warn ()
 ;;
 
+let%test "check: a declared unit with no directory fails" =
+  test_declared_unit_without_directory_fails ()
+;;
+
+let%test "check: a declared path whose leaf is another unit fails" =
+  test_declared_unit_wrong_leaf_fails ()
+;;
+
+let%test "check: a declared path with no workload suffix fails" =
+  test_declared_unit_without_suffix_fails ()
+;;
+
+let%test "check: a declared service with no unit fails" =
+  test_declared_name_only_without_directory_fails ()
+;;
+
+let%test "check: a declared type that disagrees warns but does not fail" =
+  test_declared_type_mismatch_warns ()
+;;
+
+let%test "check: an omitted declaration needs no directory" =
+  test_omitted_declared_unit_without_directory_is_ignored ()
+;;
+
+let%test "check: scoped declaration findings stay in their domain" =
+  test_scoped_check_reports_declaration_issues_in_domain ()
+;;
+
 let%test "check: a failed check exits 2" = test_failed_check_exits_two ()
 let%test "check: an unreadable workspace exits 1" = test_unreadable_workspace_exits_one ()
+
+let%test "plan: refuses an unimplemented declaration" =
+  test_plan_refuses_declared_unit_without_directory ()
+;;
+
+let%test "plan: accepts an implemented unit" = test_plan_accepts_implemented_unit ()
 
 let%test "check: an unreadable sol.yml is an error, not an exception" =
   test_unreadable_config_is_an_error ()

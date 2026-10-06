@@ -16,6 +16,46 @@ let print_index (index : Sol_cli_config.index) =
       (Option.value sort_key ~default:"?")
 ;;
 
+let fail_unimplemented (issues : Sol_cli_workspace_model.declaration_issue list) =
+  let describe (issue : Sol_cli_workspace_model.declaration_issue) =
+    Printf.sprintf "%s: %s" issue.path issue.message
+  in
+  Sol_cli_exit.error
+    (Printf.sprintf
+       "sol.yml declares units this workspace does not implement:\n  %s"
+       (String.concat "\n  " (List.map describe issues)))
+;;
+
+let check_declared_units services =
+  let open Result.Syntax in
+  let* root =
+    Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
+    |> Result.map_error (fun e ->
+      Sol_cli_exit.error (Sol_cli_workspace.workspace_error_to_string e))
+  in
+  let* scan =
+    match Sol_cli_manifest.scan_workspace ~root () with
+    | Ok scan -> Ok scan
+    | Error Sol_cli_manifest.Missing_app_dir ->
+      Ok { Sol_cli_manifest.workloads = []; unexpected = [] }
+    | Error e -> Error (Sol_cli_exit.error (Sol_cli_manifest.discover_error_to_string e))
+  in
+  let issues = Sol_cli_workspace_model.declaration_issues ~scan services in
+  let warnings, errors =
+    List.partition
+      (fun (issue : Sol_cli_workspace_model.declaration_issue) ->
+         issue.severity = `Warning)
+      issues
+  in
+  List.iter
+    (fun (issue : Sol_cli_workspace_model.declaration_issue) ->
+       Printf.eprintf "warning: %s: %s\n%!" issue.path issue.message)
+    warnings;
+  match errors with
+  | [] -> Ok ()
+  | _ -> Error (fail_unimplemented errors)
+;;
+
 let run target_name =
   let open Result.Syntax in
   let* cfg =
@@ -26,6 +66,7 @@ let run target_name =
   let target = cfg.target in
   let resources = Sol_cli_config.resources cfg in
   let services = Sol_cli_config.services cfg in
+  let* () = check_declared_units services in
   Printf.printf "Project: %s\n" project;
   Printf.printf "Target: %s\n\n" target_name;
   Printf.printf "Target config:\n";
