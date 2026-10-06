@@ -162,10 +162,7 @@ case "\$1 \$2" in
       if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
       previous="\$argument"
     done
-    case " \$* " in
-      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
-      *) printf '{"HostedZones":[{"Name":"%s."}]}\n' "\$zone" ;;
-    esac
+    printf '{"HostedZones":[{"Id":"/hostedzone/Z0123","Name":"%s.","Config":{"PrivateZone":false}}]}\n' "\$zone"
     ;;
 esac
 exit 0
@@ -217,10 +214,7 @@ case "\$1 \$2" in
       if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
       previous="\$argument"
     done
-    case " \$* " in
-      *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
-      *) printf '{"HostedZones":[{"Name":"%s."}]}\n' "\$zone" ;;
-    esac
+    printf '{"HostedZones":[{"Id":"/hostedzone/Z0123","Name":"%s.","Config":{"PrivateZone":false}}]}\n' "\$zone"
     ;;
 esac
 exit 0
@@ -273,14 +267,25 @@ case "\$1 \$2" in
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
   "route53 list-hosted-zones-by-name")
-    if [ -f "$tmp/applied" ]; then
-      case " \$* " in
-        *" --query "*) printf '%s\n' '/hostedzone/Z0123' ;;
-        *) printf '%s\n' '{"HostedZones":[{"Name":"prod.example.test."}]}' ;;
-      esac
-      exit 0
-    fi
-    printf '%s\n' '{"HostedZones":[]}'
+    zone=""
+    previous=""
+    for argument in "\$@"; do
+      if [ "\$previous" = "--dns-name" ]; then zone="\$argument"; fi
+      previous="\$argument"
+    done
+    case "\$zone" in
+      example.test)
+        # The zone that publishes prod.example.test is already in the account.
+        printf '%s\n' '{"HostedZones":[{"Id":"/hostedzone/ZPARENT","Name":"example.test.","Config":{"PrivateZone":false}}]}'
+        ;;
+      *)
+        if [ -f "$tmp/applied" ]; then
+          printf '{"HostedZones":[{"Id":"/hostedzone/Z0123","Name":"%s.","Config":{"PrivateZone":false}}]}\n' "\$zone"
+        else
+          printf '%s\n' '{"HostedZones":[]}'
+        fi
+        ;;
+    esac
     exit 0
     ;;
 esac

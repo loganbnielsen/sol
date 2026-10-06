@@ -178,6 +178,7 @@ case "$*" in
     printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
       "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
     exit 0 ;;
+  *"dns managed-zones list"*)     printf '[{"name":"qual-gcp-sol-fab-dev","dnsName":"qual-gcp.sol-fab.dev.","visibility":"public"}]\n'; exit 0 ;;
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"compute addresses list"*)

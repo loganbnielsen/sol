@@ -30,22 +30,28 @@ let owns_the_delegated_zone ~provider ~chdir =
   Ok (List.exists owns addresses)
 ;;
 
+let zone_lookup_refusal domain reason =
+  Printf.sprintf
+    "cannot tell whether a zone for %s already exists (%s), and Sol will not risk \
+     creating a second one"
+    domain
+    reason
+;;
+
+(* The provider's answer is a set of candidates, not the zone that was asked
+   for: Route53's ListHostedZonesByName is a prefix listing that returns the
+   next zone when there is no exact match (BUG-211). Only the zone named exactly
+   [domain] may be adopted, and a response that names none is positively-absent,
+   never another zone's identity. *)
 let existing_zone_id ~run ~provider ~domain =
-  let argv =
-    (Sol_cli_provider_capabilities.capabilities_of provider).installation_zone_lookup
-      domain
-  in
-  match run argv with
+  let capabilities = Sol_cli_provider_capabilities.capabilities_of provider in
+  match run (capabilities.installation_zone_lookup domain) with
   | Sol_cli_installation.Observed output when not (Sol_cli_string.is_blank output) ->
-    Ok (Some (String.trim output))
+    (match capabilities.installation_zone_candidates output with
+     | Ok candidates -> Sol_cli_installation.select_zone_identity ~domain candidates
+     | Error reason -> Error (zone_lookup_refusal domain reason))
   | Sol_cli_installation.Observed _ | Sol_cli_installation.Absent _ -> Ok None
-  | Sol_cli_installation.Unobservable reason ->
-    Error
-      (Printf.sprintf
-         "cannot tell whether a zone for %s already exists (%s), and Sol will not risk \
-          creating a second one"
-         domain
-         reason)
+  | Sol_cli_installation.Unobservable reason -> Error (zone_lookup_refusal domain reason)
 ;;
 
 let zone_nameservers ~provider ~chdir : (string list, string) result =

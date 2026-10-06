@@ -172,6 +172,47 @@ let address_in_zone ~zone address =
   String.equal address zone || String.starts_with ~prefix:(zone ^ "[") address
 ;;
 
+(* A provider answers with the fully qualified DNS name, which carries the
+   root's trailing dot, while the declared domain is written without one; DNS
+   names are also case-insensitive. Normalizing both is what lets a lookup be
+   decided by the zone's name rather than by the position the provider put it
+   in. *)
+let normalized_dns_name name =
+  let name = String.trim name in
+  let name =
+    if String.length name > 0 && name.[String.length name - 1] = '.'
+    then String.sub name 0 (String.length name - 1)
+    else name
+  in
+  String.lowercase_ascii name
+;;
+
+let dns_names_equal left right =
+  String.equal (normalized_dns_name left) (normalized_dns_name right)
+;;
+
+(* [select_zone_identity ~domain candidates] picks the identity of the one zone
+   named exactly [domain]. Providers list zones by name prefix (Route53's
+   ListHostedZonesByName returns the next zone when the requested name is
+   absent), so a response can hold the request's descendants -- including, for
+   the parent lookup, the installation's own zone -- and those must never be
+   read as the zone that was asked for. [Ok None] is positively-established
+   absence; more than one exact match is an error, because Sol will not guess
+   which zone the installation already owns. *)
+let select_zone_identity ~domain candidates =
+  let matches = List.filter (fun (_, name) -> dns_names_equal domain name) candidates in
+  match matches with
+  | [] -> Ok None
+  | [ (identity, _) ] -> Ok (Some identity)
+  | _ ->
+    Error
+      (Printf.sprintf
+         "%d zones are named exactly %s, and Sol will not guess which one this \
+          installation already owns"
+         (List.length matches)
+         domain)
+;;
+
 let resolved_configuration_to_lines configuration =
   let named label = function
     | None -> Printf.sprintf "  %-24s (none)" label
