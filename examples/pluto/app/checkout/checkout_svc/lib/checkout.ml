@@ -10,4 +10,4 @@ let quote req =
            [ "shipping_cents", `Int 799; "currency", `String "USD"; "trace_id", trace ]))
 ;;
 
-let routes = [ Route.external_ (Route.get "/quote" quote) ]
+let routes = [ Route.get "/quote" quote ]
