@@ -69,10 +69,12 @@ let project_trusted_workload_issuer target_cfg plan =
         target_cfg
     with
     | Error message ->
-      Error
-        (Sol_cli_exit.error
-           ("could not establish the target's trusted Kubernetes workload issuer: "
-            ^ message))
+      Printf.eprintf
+        "warning: could not establish the target's trusted Kubernetes workload issuer: %s\n\
+         services with internal routes will fail closed at startup\n\
+         %!"
+        message;
+      Ok plan
     | Ok issuer ->
       Ok
         { plan with

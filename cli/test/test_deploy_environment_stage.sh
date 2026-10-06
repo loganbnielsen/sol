@@ -224,6 +224,16 @@ check_absent \
   "create it — network, cluster, database and platform — with:" \
   "$output"
 
+OIDC_ISSUER_UNAVAILABLE=1 run_deploy prod/aws/us-east-1 --image-ref "$image_ref"
+check_contains \
+  "an unavailable issuer is surfaced to the operator" \
+  "internal routes will fail closed at startup" \
+  "$output"
+check_absent \
+  "issuer absence is surfaced as a warning instead of a deployment refusal" \
+  "error: could not establish the target's trusted Kubernetes workload issuer:" \
+  "$output"
+
 run_deploy prod/aws/us-east-1 --image-ref "$image_ref" --dry-run
 check_absent \
   "a dry run never provisions the environment" \
