@@ -207,3 +207,38 @@ let%test "runs_to_prune: never prunes the excluded run" =
 let%test "runs_to_prune: never prunes a live run" =
   test_runs_to_prune_never_prunes_a_live_run ()
 ;;
+
+let temp_dir () =
+  let dir = Filename.temp_file "sol-run-log-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  dir
+;;
+
+(* Replacing the run's directory with a regular file makes an append fail with
+   ENOTDIR. That is not a permission, so root cannot bypass it, and it exercises
+   the same failure an unavailable, full or unwritable log target produces. *)
+let poison_dir log =
+  let dir = R.dir log in
+  ignore (Sol_cli_fs.remove_tree dir : (unit, string) result);
+  Out_channel.with_open_text dir (fun oc -> output_string oc "not a directory")
+;;
+
+let test_append_phase_log_failure_is_best_effort () =
+  let log = R.create ~base:(temp_dir ()) ~prefix:"deploy" () in
+  poison_dir log;
+  let result, reports =
+    Sol_cli_report.collect (fun () -> R.append_phase_log log ~phase:"plan" "record me")
+  in
+  check_bool "append returns unit rather than raising" true (result = ());
+  check_bool
+    "the unavailable log is reported"
+    true
+    (List.exists
+       (fun (_, line) -> Sol_cli_string.contains ~needle:"run log unavailable" line)
+       reports)
+;;
+
+let%test "append_phase_log: an unavailable log warns instead of raising" =
+  test_append_phase_log_failure_is_best_effort ()
+;;

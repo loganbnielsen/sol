@@ -103,29 +103,45 @@ let wait_for_service_rollout ~ctx spec exec =
          ~namespace
      with
      | Ok _ -> Ok ()
-     | _ ->
+     | Error primary ->
+       (* The rollout's own error is the operator's evidence for why the deploy
+          failed. Keep it as the primary cause and attach the live diagnosis as
+          context: a later healthy probe must never replace or obscure the first
+          failure. *)
        let pod_expectation =
          Sol_cli_status.pod_expectation_of_primitive (manifest_primitive spec.primitive)
        in
-       (match
-          Sol_cli_rollout_diagnosis.diagnose_service_live
-            ~ctx
-            ~pod_expectation
-            ~ns:namespace
-            ~service_name:spec.source_name
-            ~k8s_name
-            ()
-        with
-        | Sol_cli_rollout_diagnosis.Unhealthy d -> Error d
-        | Sol_cli_rollout_diagnosis.Undetermined why ->
-          Error
-            (Printf.sprintf
-               "could not determine whether the rollout of %s/%s succeeded: %s"
-               namespace
-               k8s_name
-               why)
-        | Sol_cli_rollout_diagnosis.Healthy ->
-          Error (Printf.sprintf "rollout failed: %s/%s" namespace k8s_name)))
+       let diagnosis =
+         match
+           Sol_cli_rollout_diagnosis.diagnose_service_live
+             ~ctx
+             ~pod_expectation
+             ~ns:namespace
+             ~service_name:spec.source_name
+             ~k8s_name
+             ()
+         with
+         | Sol_cli_rollout_diagnosis.Unhealthy d -> d
+         | Sol_cli_rollout_diagnosis.Undetermined why ->
+           Printf.sprintf
+             "could not determine whether the rollout of %s/%s succeeded: %s"
+             namespace
+             k8s_name
+             why
+         | Sol_cli_rollout_diagnosis.Healthy ->
+           Printf.sprintf
+             "%s/%s did not report a successful rollout, but its current pods look \
+              healthy"
+             namespace
+             k8s_name
+       in
+       Error
+         (Printf.sprintf
+            "rollout of %s/%s did not succeed: %s\n%s"
+            namespace
+            k8s_name
+            (Sol_cli_process.error_to_string primary)
+            diagnosis))
 ;;
 
 let post_deploy_summary ~facts plan =

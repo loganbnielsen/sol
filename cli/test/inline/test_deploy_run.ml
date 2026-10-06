@@ -311,49 +311,65 @@ let first_line_matching log needle =
   go 0 lines
 ;;
 
+(* A lifecycle run whose plan drops a consumer group the record still names:
+   [record_plan] runs, then the group guard refuses before apply. *)
+let removed_group_lifecycle ~(ctx : Sol_cli_deploy_run.context) =
+  let notify =
+    spec
+      ~domain:"comms"
+      ~name:"notify_worker"
+      ~k8s:"notify-worker"
+      Sol_cli_deployment_plan.Worker
+  in
+  let plan =
+    { (plan [ notify ]) with
+      consumer_groups = [ consumer_group_exn "myapp.comms.notify_worker" ]
+    }
+  in
+  Sol_cli_deploy_run.run_lifecycle
+    ~cluster:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
+    ~sha:ctx.sha
+    ~target:(Some ctx.target_name)
+    ~run_log:ctx.run_log
+    ~keep_releases:ctx.keep_releases
+    ~confirm_group_change:false
+    ~present_plan:(fun _ -> Ok ())
+    ~gates:(fun _ -> Ok ())
+    ~before_apply:(fun _ -> Ok ())
+    ~apply:(fun ~lease:_ ~release_id:_ _ ->
+      Windtrap.fail "a group the plan no longer carries must refuse before apply")
+    ~report_success:(fun _ _ -> ())
+    ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+    plan
+;;
+
+let group_refusal outcome =
+  match outcome with
+  | Ok () ->
+    Windtrap.fail
+      "a record the plan no longer carries must refuse the deploy before it applies"
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the refusal names the groups the plan no longer carries"
+      true
+      (Sol_cli_string.contains ~needle:"no longer present" message)
+;;
+
+(* Replacing the run's directory with a regular file makes an append fail with
+   ENOTDIR, which no privilege bypasses, so this is not a permissions test. *)
+let poison_run_log log =
+  let dir = Sol_cli_run_log.dir log in
+  ignore (Sol_cli_fs.remove_tree dir : (unit, string) result);
+  Out_channel.with_open_text dir (fun oc -> output_string oc "not a directory")
+;;
+
 let test_the_group_check_reads_the_record_under_the_lease () =
   with_fake_kubectl (fun ~calls ->
     with_context (fun ctx ->
-      let notify =
-        spec
-          ~domain:"comms"
-          ~name:"notify_worker"
-          ~k8s:"notify-worker"
-          Sol_cli_deployment_plan.Worker
-      in
-      let plan =
-        { (plan [ notify ]) with
-          consumer_groups = [ consumer_group_exn "myapp.comms.notify_worker" ]
-        }
-      in
-      let outcome =
-        Sol_cli_deploy_run.run_lifecycle
-          ~cluster:ctx.execution.cluster
-          ~workspace:ctx.execution.workspace
-          ~sha:ctx.sha
-          ~target:(Some ctx.target_name)
-          ~run_log:ctx.run_log
-          ~keep_releases:ctx.keep_releases
-          ~confirm_group_change:false
-          ~present_plan:(fun _ -> Ok ())
-          ~gates:(fun _ -> Ok ())
-          ~before_apply:(fun _ -> Ok ())
-          ~apply:(fun ~lease:_ ~release_id:_ _ ->
-            Windtrap.fail "a group the plan no longer carries must refuse before apply")
-          ~report_success:(fun _ _ -> ())
-          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
-          plan
-      in
-      (match outcome with
-       | Ok () ->
-         Windtrap.fail
-           "a record the plan no longer carries must refuse the deploy before it applies"
-       | Error message ->
-         Windtrap.equal
-           Windtrap.bool
-           ~msg:"the refusal names the groups the plan no longer carries"
-           true
-           (Sol_cli_string.contains ~needle:"no longer present" message));
+      let outcome = removed_group_lifecycle ~ctx in
+      group_refusal outcome;
       let log = calls () in
       let lease_at = first_line_matching log "sol-boundary-lease-myapp" in
       let recorded_at = first_line_matching log "sol-deploy-state-myapp" in
@@ -386,6 +402,34 @@ let test_the_group_check_reads_the_record_under_the_lease () =
         (Sol_cli_string.contains ~needle:" apply " log)))
 ;;
 
+let test_an_unavailable_run_log_does_not_change_the_lifecycle_outcome () =
+  with_fake_kubectl (fun ~calls ->
+    with_context (fun ctx ->
+      poison_run_log ctx.run_log;
+      let outcome, reports =
+        Sol_cli_report.collect (fun () -> removed_group_lifecycle ~ctx)
+      in
+      group_refusal outcome;
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the unavailable log is reported"
+        true
+        (List.exists
+           (fun (_, line) -> Sol_cli_string.contains ~needle:"run log unavailable" line)
+           reports);
+      let log = calls () in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the lease is still released when the log is unavailable"
+        true
+        (Sol_cli_string.contains ~needle:" delete " log);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"and nothing was applied"
+        false
+        (Sol_cli_string.contains ~needle:" apply " log)))
+;;
+
 let%test "migration gate (AUDIT-069): no profile" = test_no_profile_is_not_checked ()
 
 let%test "migration gate (AUDIT-069): offline: not verified" =
@@ -402,6 +446,10 @@ let%test "deploy events (FEAT-071): one per service" =
 
 let%test "consumer-group guard (BUG-088): the record is read under the boundary lease" =
   test_the_group_check_reads_the_record_under_the_lease ()
+;;
+
+let%test "lifecycle: an unavailable run log does not change the outcome" =
+  test_an_unavailable_run_log_does_not_change_the_lifecycle_outcome ()
 ;;
 
 let%test
