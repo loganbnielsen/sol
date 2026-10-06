@@ -27,6 +27,15 @@ installs the candidate by the digest the bundle records; the image is immutable
 and reused by digest on a resume. What promotion gates is the user-facing
 release: the bundle and the release page.
 
+The image's namespace is the repository owner that builds the candidate:
+`release.yml` derives it from `github.repository_owner` rather than naming an
+account. GitHub Container Registry packages belong to the namespace that
+published them and are not moved by a repository transfer, so a transfer changes
+where the next candidate publishes while already-published digests stay under
+the namespace that received them. Because `candidate.json` records the exact
+digest, qualification and promotion keep resolving the image a candidate
+actually recorded.
+
 `candidate.json` is the identity qualification and promotion must agree on:
 
 ```json
