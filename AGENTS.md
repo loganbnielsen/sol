@@ -36,8 +36,9 @@ duplicate the predecessor's changes into it. Land a stack bottom-up through GitH
 stack-aware merge flow (`gh stack`, or the stack UI) rather than custom polling, rebasing,
 or merge-order machinery; independent PRs may use auto-merge. Stacked pull requests are a
 public preview, so prefer the workflow without building repository invariants on its
-current API. A merge queue only helps once the required workflows also run on
-`merge_group`.
+current API. Required CI runs on both `pull_request` and `merge_group`, which is what a
+merge queue needs; GitHub only offers merge queues on organization-owned repositories, so
+a user-owned repository lands stacks directly with `gh stack merge`.
 
 ## Build and validation
 
