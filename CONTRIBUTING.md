@@ -11,10 +11,15 @@ request. Run targeted tests while developing and `bash internal/ci/run_fast_chec
 before proposing the change. Required GitHub CI is the merge authority; request review
 proportional to risk and squash-merge.
 
+When a change depends on an unmerged pull request, prefer a native GitHub stacked pull
+request: base the dependent PR on the predecessor's branch, keep each layer reviewable,
+and land the stack bottom-up with `gh stack` (or the stack UI). Do not duplicate the
+predecessor's changes or build custom merge-order tooling.
+
 Source-build prerequisites and setup are documented in `README.md`. Product and
 architecture documentation lives under `docs/`; qualification procedures live under
 `internal/qualification/`.
 
 Do not introduce repository-specific issue states, branch/worktree naming protocols,
-merge bookkeeping, or other workflow machinery. GitHub Issues and pull requests are
-sufficient work state.
+merge bookkeeping, or other workflow machinery. GitHub Issues, pull requests, and native
+stack relationships are sufficient work state.

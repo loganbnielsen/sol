@@ -29,6 +29,16 @@ or worktrees; their names carry no Sol-specific semantics. Open focused PRs, rel
 required CI, request review proportional to risk, and squash-merge. Do not recreate
 repository-local workflow state with labels, bots, branch conventions, or custom tooling.
 
+When work depends on an unmerged PR, prefer a native GitHub stacked pull request over
+waiting for the predecessor or hand-rolling the dependency. Base the dependent PR on the
+predecessor's branch, keep each layer focused and independently reviewable, and never
+duplicate the predecessor's changes into it. Land a stack bottom-up through GitHub's
+stack-aware merge flow (`gh stack`, or the stack UI) rather than custom polling, rebasing,
+or merge-order machinery; independent PRs may use auto-merge. Stacked pull requests are a
+public preview, so prefer the workflow without building repository invariants on its
+current API. A merge queue only helps once the required workflows also run on
+`merge_group`.
+
 ## Build and validation
 
 Set up the pinned support packages and dependencies as described in the README, then:
