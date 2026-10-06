@@ -29,15 +29,23 @@ or worktrees; their names carry no Sol-specific semantics. Open focused PRs, rel
 required CI, request review proportional to risk, and squash-merge. Do not recreate
 repository-local workflow state with labels, bots, branch conventions, or custom tooling.
 
-When work depends on an unmerged PR, prefer a native GitHub stacked pull request over
-waiting for the predecessor or hand-rolling the dependency. Base the dependent PR on the
-predecessor's branch, keep each layer focused and independently reviewable, and never
-duplicate the predecessor's changes into it. Land a stack bottom-up through GitHub's
-stack-aware merge flow (`gh stack`, or the stack UI) rather than custom polling, rebasing,
-or merge-order machinery; independent PRs may use auto-merge. Stacked pull requests are a
-public preview, so prefer the workflow without building repository invariants on its
-current API. A merge queue only helps once the required workflows also run on
-`merge_group`.
+Independent work proceeds concurrently from current `main` in separate branches or
+worktrees. Do not wait for an open PR to merge merely because later work depends on it.
+For a mechanical dependency, branch the dependent PR from the prerequisite PR's head and
+open it against that branch, so its diff contains only its own changes. State the stack
+relationship in the PR description. Once the parent merges, retarget and rebase or refresh
+the child against `main`, then continue the stack. Use stacking only when the parent is
+already the chosen implementation basis; resolve semantic or product-boundary decisions
+before building on them. Keep each PR focused and reviewable.
+
+When a PR is complete, validated, and intended to land on its correct base, enable GitHub
+auto-merge instead of repeatedly polling CI or waiting synchronously. A stacked child is
+not ready to land on `main` until its parent merges and the child is retargeted. Required
+CI, reviews, branch protection, and conversation resolution remain authoritative; never
+bypass them. Resolve failing checks, conflicts, review findings, and changed parents while
+independent or downstream work continues. This repository allows auto-merge and squash
+merges; `main` currently requires the `test` check and resolved conversations, has no
+merge queue, and does not require an approving review.
 
 ## Build and validation
 
