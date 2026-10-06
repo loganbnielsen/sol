@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/prometheus.yml"
 source "${SCRIPT_DIR}/lib/images.sh"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -16,7 +17,7 @@ fi
 
 if docker ps --format '{{.Names}}' | grep -q '^prometheus$'; then
   require_local_publish prometheus 9090
-  echo "Prometheus already running at http://localhost:${PROMETHEUS_PORT}"
+  echo "Prometheus already running"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^prometheus$'; then
     echo "Restarting stopped Prometheus container..."
@@ -35,17 +36,15 @@ else
       --storage.tsdb.path=/prometheus \
       --web.enable-lifecycle
   fi
+fi
 
-  echo -n "Waiting for Prometheus to be ready"
-  for i in $(seq 1 30); do
-    if curl -sf "http://localhost:${PROMETHEUS_PORT}/-/healthy" > /dev/null 2>&1; then
-      echo " ready"
-      break
-    fi
-    sleep 1
-    echo -n "."
-  done
-  echo ""
+prometheus_ready() {
+  http_probe "http://localhost:${PROMETHEUS_PORT}/-/healthy"
+}
+
+if ! wait_ready "Prometheus" prometheus_ready; then
+  docker logs prometheus | tail -20 >&2
+  exit 1
 fi
 
 if curl -sf "http://localhost:${GRAFANA_PORT}/api/health" > /dev/null 2>&1; then

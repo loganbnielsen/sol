@@ -10,6 +10,7 @@ DASHBOARD_PROVIDER_FILE="$SCRIPT_DIR/../config/grafana-dashboards.yml"
 DASHBOARD_DIR="$SCRIPT_DIR/../config/grafana-dashboards"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 check_port_forward_conflict "$GRAFANA_PORT" grafana
 
@@ -42,7 +43,7 @@ fi
 
 if docker ps --format '{{.Names}}' | grep -q '^grafana$'; then
   require_local_publish grafana 3000
-  echo "Grafana already running at http://localhost:${GRAFANA_PORT}"
+  echo "Grafana already running"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^grafana$'; then
     require_local_publish grafana 3000
@@ -62,17 +63,15 @@ else
       -v "${DASHBOARD_DIR}:/etc/grafana/dashboards:ro" \
       grafana/grafana:11.3.0
   fi
+fi
 
-  echo -n "Waiting for Grafana to be ready"
-  for i in $(seq 1 30); do
-    if curl -sf "http://localhost:${GRAFANA_PORT}/api/health" > /dev/null 2>&1; then
-      echo " ready"
-      break
-    fi
-    sleep 1
-    echo -n "."
-  done
-  echo ""
+grafana_ready() {
+  http_probe "http://localhost:${GRAFANA_PORT}/api/health"
+}
+
+if ! wait_ready "Grafana" grafana_ready; then
+  docker logs grafana | tail -20 >&2
+  exit 1
 fi
 
 upsert_datasource () {

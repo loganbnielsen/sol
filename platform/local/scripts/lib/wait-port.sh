@@ -6,7 +6,7 @@ wait_for_port() {
   local delay="${3:-1}"
 
   for _ in $(seq 1 "$max"); do
-    nc -z localhost "$port" 2>/dev/null && return 0
+    nc -z -w 1 localhost "$port" 2>/dev/null && return 0
     sleep "$delay"
   done
 

@@ -6,6 +6,7 @@ PUSHGATEWAY_PORT=9091
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/images.sh"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
@@ -14,7 +15,7 @@ fi
 
 if docker ps --format '{{.Names}}' | grep -q '^pushgateway$'; then
   require_local_publish pushgateway 9091
-  echo "Pushgateway already running at http://localhost:${PUSHGATEWAY_PORT}"
+  echo "Pushgateway already running"
 else
   if docker ps -a --format '{{.Names}}' | grep -q '^pushgateway$'; then
     require_local_publish pushgateway 9091
@@ -29,17 +30,15 @@ else
       "${DEV_PUBLISH_ARGS[@]}" \
       "$SOL_IMAGE_PUSHGATEWAY"
   fi
+fi
 
-  echo -n "Waiting for Pushgateway to be ready"
-  for i in $(seq 1 20); do
-    if curl -sf "http://localhost:${PUSHGATEWAY_PORT}/-/healthy" > /dev/null 2>&1; then
-      echo " ready"
-      break
-    fi
-    sleep 1
-    echo -n "."
-  done
-  echo ""
+pushgateway_ready() {
+  http_probe "http://localhost:${PUSHGATEWAY_PORT}/-/healthy"
+}
+
+if ! wait_ready "Pushgateway" pushgateway_ready; then
+  docker logs pushgateway | tail -20 >&2
+  exit 1
 fi
 
 echo "  Pushgateway -> http://localhost:${PUSHGATEWAY_PORT}"

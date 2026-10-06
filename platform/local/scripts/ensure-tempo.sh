@@ -9,6 +9,7 @@ CONFIG_FILE="$SCRIPT_DIR/../config/tempo.yaml"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"
 source "${SCRIPT_DIR}/lib/images.sh"
 source "${SCRIPT_DIR}/lib/dev-endpoints.sh"
+source "${SCRIPT_DIR}/lib/readiness.sh"
 
 check_port_forward_conflict "$OTLP_PORT" tempo
 check_port_forward_conflict "$QUERY_PORT" tempo
@@ -39,18 +40,13 @@ else
       "$SOL_IMAGE_TEMPO" \
       -config.file=/etc/tempo.yaml
   fi
+fi
 
-  echo -n "Waiting for Tempo to be ready"
-  for i in $(seq 1 30); do
-    if curl -sf "http://localhost:${QUERY_PORT}/ready" > /dev/null 2>&1; then
-      echo " ready"
-      break
-    fi
-    sleep 1
-    echo -n "."
-  done
-  echo ""
-  echo "ERROR: Tempo did not become ready within 30s" >&2
+tempo_ready() {
+  http_probe "http://localhost:${QUERY_PORT}/ready"
+}
+
+if ! wait_ready "Tempo" tempo_ready; then
   docker logs tempo | tail -20 >&2
   exit 1
 fi
