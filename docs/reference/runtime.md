@@ -259,13 +259,21 @@ Only local development opts in to that key explicitly with
 the supplied `trace_ctx` as a W3C `traceparent`, which the callee's `Sol_svc`
 extracts into `Request.trace_ctx`.
 
+After the token is attached, the callee's `` `Workload_identity`` route
+verifies it offline: it reads `iss` only to select an issuer in the configured
+trusted set, checks the signature against that issuer's JWKS, checks `aud`
+equals the callee's own unit (`SOL_UNIT`), then maps
+`sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit and
+requires that unit in the projected `SOL_CALLED_BY` set. An unauthenticated
+caller (bad token, untrusted issuer, wrong audience) is a `401`; an
+authenticated caller that is not declared is a `403`. A route that omits
+`~auth` is internal by default, so a new route cannot be accidentally public.
+
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
 `SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty
 placeholder value, so operators can provide one shared internal key through
-the normal Secret or ExternalSecret path. Sol-to-Sol routes move to identity
-verification (401 for an unauthenticated caller, 403 for an authenticated but
-undeclared one) as the framework middleware lands.
+the normal Secret or ExternalSecret path.
 
 ## Summary
 

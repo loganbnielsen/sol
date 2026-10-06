@@ -86,10 +86,19 @@ type jwt_config =
   ; verification : jwt_verification
   }
 
+type workload_identity_config =
+  { audience : string
+  ; callers : (string * string) list
+      (** service account ["<namespace>:<serviceaccount>"] -> caller unit *)
+  ; trusted_issuers : (string * string) list
+      (** accepted issuer -> its JWKS URL *)
+  }
+
 type level =
   [ `Public
   | `Api_key
   | `Jwt of jwt_config
+  | `Workload_identity
   ]
 
 (** Resolved identity after successful validation.
@@ -105,6 +114,12 @@ type principal =
         (** Full decoded JWT payload as JSON. JWT claims are not always strings
             ([exp] is int, custom claims may be arrays or objects). Returning the
             raw [Yojson.Safe.t] avoids lossy coercion to [(string * string) list]. *)
+      }
+  | Unit of
+      { unit : string
+      ; service_account : string
+        (** The authenticated caller's Sol unit and the
+            ["<namespace>:<serviceaccount>"] it proved. *)
       }
 
 type context = { principal : principal }
@@ -192,6 +207,26 @@ RSA/EC public key: `jose`'s `Jws.validate` dispatches on the concrete key value
 you pass it (a GADT), not on the token's claimed `alg`, so key selection is
 driven by `kid` lookup in the JWKS, not by attacker input.
 
+**`` `Workload_identity ``** — DEC-063 Sol-to-Sol authentication. It validates
+`Authorization: Bearer <projected ServiceAccount token>` locally:
+
+1. Read `iss` from the token only to select an issuer in `trusted_issuers`.
+   An issuer outside that set is a 401; nothing in the token is trusted yet.
+2. Verify the signature against that issuer's JWKS (fetched from the configured
+   URL, same cache/refetch rules as `` `Jwt ``), then check `aud` equals
+   `config.audience`, and `exp`/`nbf`.
+3. Map `sub = system:serviceaccount:<namespace>:<serviceaccount>` to a Sol unit
+   through `config.callers`. A valid signature whose subject is not a workload
+   identity, or whose unit is not declared, is a 403.
+
+`config.audience` comes from `SOL_UNIT` and `config.callers` from `SOL_CALLED_BY`,
+both projected by the CLI from the committed `calls`/`called_by` declaration. The
+trusted-issuer set is **not** read from the environment; the application passes it
+to `Service.run ~trusted_issuers` (a list of `issuer, jwks_url`). A route that
+uses `` `Workload_identity `` without `SOL_UNIT` or without a trust root fails at
+startup with a `Config` error. Issuing discovery and its capability check land
+separately; until then the trust root is explicit.
+
 **Error responses:**
 
 | Condition | HTTP status |
@@ -204,6 +239,9 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 | JWT missing a required scope | 403 |
 | Verified mode: malformed token, `alg` not in allowlist, unknown/missing `kid`, invalid signature, wrong `iss`/`aud` | 401 |
 | Verified mode: JWKS fetch or parse failure (`Jwks_url`) | 500 (fail closed) |
+| Workload identity: untrusted `iss`, bad signature, wrong `aud`, missing/expired token | 401 |
+| Workload identity: authenticated subject is not a workload identity, or its unit is not in `called_by` | 403 |
+| Workload identity: `SOL_UNIT` unset, or no trusted-issuer root supplied | the service does not start: `run` returns a `Config` error |
 
 ---
 
@@ -270,12 +308,17 @@ type t =
 ### Public API
 
 ```ocaml
-val get    : string -> auth:Auth.level -> handler -> t
-val post   : string -> auth:Auth.level -> handler -> t
-val put    : string -> auth:Auth.level -> handler -> t
-val patch  : string -> auth:Auth.level -> handler -> t
-val delete : string -> auth:Auth.level -> handler -> t
+val default_auth : Auth.level
+val get    : ?auth:Auth.level -> string -> handler -> t
+val post   : ?auth:Auth.level -> string -> handler -> t
+val put    : ?auth:Auth.level -> string -> handler -> t
+val patch  : ?auth:Auth.level -> string -> handler -> t
+val delete : ?auth:Auth.level -> string -> handler -> t
 ```
+
+A route that omits `~auth` is internal by default: it requires
+`` `Workload_identity`` (DEC-063), so a new route cannot be accidentally public.
+`/healthz`, `/readyz` and `/metrics` are built in and stay public.
 
 ### HTTP method mapping
 

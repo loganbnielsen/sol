@@ -59,8 +59,10 @@ let read_body_limited headers (body : Cohttp_eio.Body.t) max_bytes =
 
 open Result.Syntax
 
-let auth_result ?read_api_key ?fetch_jwks auth_cfg headers =
-  match Auth_internal.validate ?read_api_key ?fetch_jwks auth_cfg headers with
+let auth_result ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers =
+  match
+    Auth_internal.validate ?read_api_key ?fetch_jwks ?workload_identity auth_cfg headers
+  with
   | Error (`Unauthorized _) -> Error Response.unauthorized
   | Error (`Forbidden _) -> Error Response.forbidden
   | Error (`Server_error msg) -> Error (Response.internal_error msg)
@@ -83,6 +85,7 @@ let dispatch_unguarded
       ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
+      ?workload_identity
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -129,7 +132,14 @@ let dispatch_unguarded
            | None -> Some Response.not_found
            | Some render ->
              let result =
-               let* _ = auth_result ?read_api_key ?fetch_jwks metrics_auth headers in
+               let* _ =
+                 auth_result
+                   ?read_api_key
+                   ?fetch_jwks
+                   ?workload_identity
+                   metrics_auth
+                   headers
+               in
                Ok
                  (Response.ok
                     ~headers:
@@ -155,7 +165,12 @@ let dispatch_unguarded
            observe (Route.pattern_to_string route.Route.pattern);
            let result =
              let* auth_ctx =
-               auth_result ?read_api_key ?fetch_jwks route.Route.auth headers
+               auth_result
+                 ?read_api_key
+                 ?fetch_jwks
+                 ?workload_identity
+                 route.Route.auth
+                 headers
              in
              let* body_str = body_result headers body max_body_bytes in
              let trace_ctx =
@@ -197,6 +212,7 @@ let dispatch
       ?(report_error = stderr_error_reporter)
       ?read_api_key
       ?fetch_jwks
+      ?workload_identity
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -211,6 +227,7 @@ let dispatch
       ~report_error
       ?read_api_key
       ?fetch_jwks
+      ?workload_identity
       ~routes
       ~metrics_renderer
       ~metrics_auth
@@ -221,24 +238,6 @@ let dispatch
       body)
 ;;
 
-module For_testing = struct
-  let respond_or_500 ?report_error = respond_or_500 ?report_error
-
-  let dispatch ?report_error ?read_api_key ?fetch_jwks ~routes req body =
-    dispatch
-      ?report_error
-      ?read_api_key
-      ?fetch_jwks
-      ~routes
-      ~metrics_renderer:None
-      ~metrics_auth:`Public
-      ~max_body_bytes:1_048_576
-      ~ready:(fun () -> true)
-      req
-      body
-  ;;
-end
-
 exception Drain_timeout
 
 type run_error = [ `Config of string ]
@@ -247,7 +246,7 @@ let run_error_to_string (`Config msg) = "sol-svc: config error: " ^ msg
 
 let auth_uses_api_key = function
   | `Api_key -> true
-  | `Public | `Jwt _ -> false
+  | `Public | `Jwt _ | `Workload_identity -> false
 ;;
 
 let api_key_required routes metrics_auth =
@@ -260,7 +259,7 @@ let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
 let auth_is_unverified_jwt = function
   | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } -> true
   | `Jwt { Auth.verification = Auth.Verified_signature_required _; _ }
-  | `Public | `Api_key -> false
+  | `Public | `Api_key | `Workload_identity -> false
 ;;
 
 let refuse_unverified_jwt routes metrics_auth =
@@ -285,7 +284,8 @@ let jwks_url_of = function
     (match key_source with
      | Auth.Jwks_url url -> Some url
      | Auth.Jwks_static _ | Auth.Hs256_secret _ -> None)
-  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } | `Public | `Api_key -> None
+  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ }
+  | `Public | `Api_key | `Workload_identity -> None
 ;;
 
 let refuse_non_https_jwks routes metrics_auth =
@@ -334,6 +334,91 @@ let api_key_reader ~env ~required =
   | None, _ -> Ok (fun () -> None)
 ;;
 
+let auth_uses_workload_identity = function
+  | `Workload_identity -> true
+  | `Public | `Api_key | `Jwt _ -> false
+;;
+
+let workload_identity_requested routes metrics_auth =
+  auth_uses_workload_identity metrics_auth
+  || List.exists (fun route -> auth_uses_workload_identity route.Route.auth) routes
+;;
+
+(* SOL_CALLED_BY is projected by the CLI from the declared called_by graph as
+   "unit=namespace:serviceaccount" entries. Malformed entries are dropped: they
+   can only narrow the caller set, never widen it. *)
+let parse_called_by raw =
+  raw
+  |> String.split_on_char ','
+  |> List.filter_map (fun entry ->
+    match String.index_opt entry '=' with
+    | None -> None
+    | Some i ->
+      let unit = String.sub entry 0 i |> String.trim in
+      let service_account =
+        String.sub entry (i + 1) (String.length entry - i - 1) |> String.trim
+      in
+      if unit = "" || service_account = "" then None else Some (service_account, unit))
+;;
+
+(* The declared graph supplies the audience and the allowed callers; the trust
+   root is an explicit input, because issuing discovery and its capability check
+   are a separate concern. Workload-identity routes without either fail closed at
+   startup. *)
+let workload_identity_config ~trusted_issuers routes metrics_auth =
+  if not (workload_identity_requested routes metrics_auth)
+  then Ok None
+  else
+    let* audience =
+      match Sol_runtime.setting "SOL_UNIT" with
+      | Some unit -> Ok unit
+      | None ->
+        Error
+          (`Config
+              "a route uses Workload_identity auth but SOL_UNIT is not set; the callee's \
+               own unit is required to check the token audience")
+    in
+    let callers =
+      match Sol_runtime.setting "SOL_CALLED_BY" with
+      | None -> []
+      | Some raw -> parse_called_by raw
+    in
+    if trusted_issuers = []
+    then
+      Error
+        (`Config
+            "a route uses Workload_identity auth but no trusted issuer/JWKS root was \
+             provided; the caller's token issuer cannot be trusted")
+    else Ok (Some { Auth.audience; callers; trusted_issuers })
+;;
+
+module For_testing = struct
+  let respond_or_500 ?report_error = respond_or_500 ?report_error
+
+  let dispatch ?report_error ?read_api_key ?fetch_jwks ?workload_identity ~routes req body
+    =
+    dispatch
+      ?report_error
+      ?read_api_key
+      ?fetch_jwks
+      ?workload_identity
+      ~routes
+      ~metrics_renderer:None
+      ~metrics_auth:`Public
+      ~max_body_bytes:1_048_576
+      ~ready:(fun () -> true)
+      req
+      body
+  ;;
+
+  let workload_identity_config ~trusted_issuers routes metrics_auth =
+    workload_identity_config ~trusted_issuers routes metrics_auth
+  ;;
+
+  let parse_called_by = parse_called_by
+  let workload_identity_requested = workload_identity_requested
+end
+
 module Make (H : HANDLER) = struct
   let run
         ~(env :
@@ -343,6 +428,7 @@ module Make (H : HANDLER) = struct
            ; .. >)
         ?(port = 8080)
         ?(metrics_auth = `Public)
+        ?(trusted_issuers = [])
         ?ot
         ?(max_body_bytes = 10_485_760)
         ?(drain_timeout_s = 30.0)
@@ -394,6 +480,9 @@ module Make (H : HANDLER) = struct
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
+    let* workload_identity =
+      workload_identity_config ~trusted_issuers H.routes metrics_auth
+    in
     let ready = Atomic.make true in
     let signal_stop, signal_stop_r = Eio.Promise.create () in
     let await_stop () =
@@ -440,6 +529,7 @@ module Make (H : HANDLER) = struct
              dispatch
                ~report_error
                ~fetch_jwks
+               ?workload_identity
                ~routes:H.routes
                ~metrics_renderer
                ~metrics_auth
