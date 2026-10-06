@@ -480,6 +480,10 @@ module Make (H : HANDLER) : sig
        (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
            Set to [`Api_key] for production clusters that don't use NetworkPolicy
            to restrict Prometheus scraper access. *)
+    -> ?trusted_issuers:(string * string) list
+       (** Trusted workload token issuers and their JWKS URLs. Required when a route
+           uses [`Workload_identity]; this list must come from Sol's verified target
+           capability, never from the incoming token. *)
     -> ?ot:Sol_obs.t
        (** Observability handle. When provided, sol_svc_requests_total/
            sol_svc_request_duration_seconds are emitted per request, and
