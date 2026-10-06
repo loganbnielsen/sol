@@ -337,7 +337,7 @@ let with_cluster_access_apply cluster f =
   with_cluster_access cluster ~refused:(fun m -> Sol_cli_cloud_apply.Refused m) f
 ;;
 
-let await_platform_readiness ~provider ~env =
+let await_platform_readiness ~provider ~deadline_s ~env =
   let sample () =
     Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
       process_output ~env ("kubectl" :: args))
@@ -349,14 +349,6 @@ let await_platform_readiness ~provider ~env =
          match state with
          | Sol_cli_cloud_lifecycle.Established -> false
          | Sol_cli_cloud_lifecycle.Unmet _ -> true))
-  in
-  let deadline_s =
-    match Sol_cli_string.env "SOL_PLATFORM_READINESS_TIMEOUT_S" with
-    | Some raw ->
-      (match float_of_string_opt raw with
-       | Some seconds when seconds >= 0. -> seconds
-       | _ -> 900.)
-    | None -> 900.
   in
   let poll_s = 15. in
   let deadline = Unix.gettimeofday () +. deadline_s in
@@ -450,6 +442,10 @@ let apply_deps
       ~cloud_target
       ~(inputs : terraform_inputs)
   =
+  let* deadline_s =
+    Sol_cli_duration.env_seconds ~name:"SOL_PLATFORM_READINESS_TIMEOUT_S" ~default:900.
+    |> Result.map_error (fun message -> Sol_cli_cloud_apply.Refused message)
+  in
   let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let { provider; pname; infra_dir; platform_dir; platform_backend; _ } =
     terraform_layout ~cloud_target
@@ -471,178 +467,182 @@ let apply_deps
            ~vars:platform_vars
            ()))
   in
-  { Sol_cli_cloud_apply.substrate_exists =
-      (fun () ->
-        cluster_of ~target_cfg provider infra_dir
-        |> Result.map Option.is_some
-        |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
-  ; plan =
-      (fun () ->
-        let* () =
+  Ok
+    { Sol_cli_cloud_apply.substrate_exists =
+        (fun () ->
+          cluster_of ~target_cfg provider infra_dir
+          |> Result.map Option.is_some
+          |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
+    ; plan =
+        (fun () ->
+          let* () =
+            terraform_failure
+              (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
+                 Sol_cli_terraform.plan_saved
+                   ~scope:Sol_cli_terraform.whole_root
+                   ~chdir:infra_dir
+                   ~var_files
+                   ~vars:
+                     (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
+                      @ vars)
+                   ~out:plan_file
+                   ()))
+          in
+          match
+            Sol_cli_terraform.show_saved_plan
+              ~run_log
+              ~phase:"terraform-plan-show"
+              ~chdir:infra_dir
+              ~plan_file
+              ()
+          with
+          | Ok (_, changes) -> Ok changes
+          | Error message ->
+            Error
+              (Sol_cli_cloud_apply.Refused ("could not read the cloud plan: " ^ message)))
+    ; guarded_removals = (capabilities provider).guarded_removals
+    ; confirm_guarded_removal = confirm_ecr_removal
+    ; confirmation_flag = "--" ^ confirm_guarded_removal_flag
+    ; apply_plan =
+        (fun () ->
           terraform_failure
-            (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
-               Sol_cli_terraform.plan_saved
-                 ~scope:Sol_cli_terraform.whole_root
-                 ~chdir:infra_dir
-                 ~var_files
-                 ~vars:
-                   (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
-                 ~out:plan_file
-                 ()))
-        in
-        match
-          Sol_cli_terraform.show_saved_plan
-            ~run_log
-            ~phase:"terraform-plan-show"
-            ~chdir:infra_dir
-            ~plan_file
-            ()
-        with
-        | Ok (_, changes) -> Ok changes
-        | Error message ->
-          Error
-            (Sol_cli_cloud_apply.Refused ("could not read the cloud plan: " ^ message)))
-  ; guarded_removals = (capabilities provider).guarded_removals
-  ; confirm_guarded_removal = confirm_ecr_removal
-  ; confirmation_flag = "--" ^ confirm_guarded_removal_flag
-  ; apply_plan =
-      (fun () ->
-        terraform_failure
-          (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
-             Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
-  ; discard_plan
-  ; outputs =
-      (fun () ->
-        cluster_of ~target_cfg provider infra_dir
-        |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
-  ; open_window =
-      (fun cluster ->
-        match cluster.bootstrap_window with
-        | Verified window ->
-          let* () = window.gate () in
-          Result.map Option.some (window.observe ())
-        | No_role_declared | Closed_by_platform_root -> Ok None)
-  ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
-  ; substrate_supported =
-      (fun () ->
-        match
-          (Sol_cli_provider_capabilities.capabilities_of provider).cluster_substrate
-        with
-        | None -> Ok ()
-        | Some observe ->
-          (match cluster_of ~target_cfg provider infra_dir with
-           | Ok None -> Ok ()
-           | Ok (Some cluster) ->
-             let outputs_json =
-               match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-               | Ok result -> result.Sol_cli_process.stdout
-               | Error _ -> ""
-             in
-             (match
-                Result.bind
-                  (observe
-                     ~outputs_json
-                     ~region:target_cfg.region
-                     ~cluster_name:cluster.Sol_cli_cluster.name)
-                  Sol_cli_cluster_substrate.acceptable
-              with
-              | Ok () -> Ok ()
-              | Error message -> Error (Sol_cli_cloud_apply.Refused message))
-           | Error _ -> Ok ()))
-  ; observe_disk_quota =
-      (fun _ ->
-        match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
-        | None -> Ok None
-        | Some observe ->
-          (match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-           | Error _ ->
-             Error
-               "could not read the cloud root's outputs to scope the disk-quota \
-                observation"
-           | Ok outputs ->
-             Result.map
-               Option.some
-               (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
-  ; cloud_ready =
-      (fun cluster ->
-        if cluster.ready ()
-        then Ok ()
-        else
-          Error
-            (Printf.sprintf
-               "%s cloud substrate is not Ready: %s"
-               pname
-               (cloud_ready_expectation provider)))
-  ; with_cluster_access = with_cluster_access_apply
-  ; platform_init =
-      (fun () ->
-        match
-          materialize_workdir
-            ~assets
-            provider
-            Sol_cli_platform_assets.Platform
-            ~backend_config:platform_backend
-        with
-        | Error message -> Error (Sol_cli_cloud_apply.Refused message)
-        | Ok () ->
-          terraform_failure (terraform_init run_log platform_dir platform_backend))
-  ; platform_installed = crds_established
-  ; apply_prerequisites =
-      platform_apply
-        ~name:"platform-prerequisites-apply"
-        ~scope:platform_prerequisite_targets
-  ; await_crds =
-      (fun env ->
-        process_ok
-          ~env
-          [ "kubectl"
-          ; "wait"
-          ; "--for=condition=Established"
-          ; "crd/certificates.cert-manager.io"
-          ; "crd/clusterissuers.cert-manager.io"
-          ; "--timeout=180s"
-          ])
-  ; verify_platform_prerequisites =
-      (fun env platform_vars -> verify_platform_prerequisites ~assets ~env ~platform_vars)
-  ; apply_platform =
-      platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
-  ; await_readiness = (fun env -> await_platform_readiness ~provider ~env)
-  ; remove_bootstrap_access =
-      (fun () ->
-        terraform_failure
-          (Sol_cli_run_log.run_phase
-             run_log
-             ~name:"provisioner-bootstrap-access-remove"
-             (fun () ->
-                Sol_cli_terraform.apply
-                  ~scope:Sol_cli_terraform.whole_root
-                  ~chdir:infra_dir
-                  ~var_files
-                  ~vars:
-                    (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
-                     @ vars)
-                  ())))
-  ; verify_deescalation =
-      (fun cluster _control ->
-        match cluster.bootstrap_window with
-        | Verified window ->
-          (match window.deescalated () with
-           | Ok () ->
-             (match window.successor () with
-              | Ok () ->
-                Sol_cli_report.app "  de-escalation verified as %s" window.principal;
-                Ok ()
-              | Error verdict ->
-                Error ("de-escalation could not be established: " ^ verdict))
-           | Error verdict -> Error ("de-escalation could not be established: " ^ verdict))
-        | No_role_declared ->
-          Sol_cli_report.app
-            "  no provisioner role declared: no bootstrap elevation to verify";
-          Ok ()
-        | Closed_by_platform_root -> Ok ())
-  ; provisioner_effective = provisioner_rbac_established
-  ; report = (fun line -> Sol_cli_report.app "%s" line)
-  }
+            (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
+               Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
+    ; discard_plan
+    ; outputs =
+        (fun () ->
+          cluster_of ~target_cfg provider infra_dir
+          |> Result.map_error Sol_cli_provider_registry.resolution_failure_to_string)
+    ; open_window =
+        (fun cluster ->
+          match cluster.bootstrap_window with
+          | Verified window ->
+            let* () = window.gate () in
+            Result.map Option.some (window.observe ())
+          | No_role_declared | Closed_by_platform_root -> Ok None)
+    ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
+    ; substrate_supported =
+        (fun () ->
+          match
+            (Sol_cli_provider_capabilities.capabilities_of provider).cluster_substrate
+          with
+          | None -> Ok ()
+          | Some observe ->
+            (match cluster_of ~target_cfg provider infra_dir with
+             | Ok None -> Ok ()
+             | Ok (Some cluster) ->
+               let outputs_json =
+                 match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+                 | Ok result -> result.Sol_cli_process.stdout
+                 | Error _ -> ""
+               in
+               (match
+                  Result.bind
+                    (observe
+                       ~outputs_json
+                       ~region:target_cfg.region
+                       ~cluster_name:cluster.Sol_cli_cluster.name)
+                    Sol_cli_cluster_substrate.acceptable
+                with
+                | Ok () -> Ok ()
+                | Error message -> Error (Sol_cli_cloud_apply.Refused message))
+             | Error _ -> Ok ()))
+    ; observe_disk_quota =
+        (fun _ ->
+          match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
+          | None -> Ok None
+          | Some observe ->
+            (match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+             | Error _ ->
+               Error
+                 "could not read the cloud root's outputs to scope the disk-quota \
+                  observation"
+             | Ok outputs ->
+               Result.map
+                 Option.some
+                 (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
+    ; cloud_ready =
+        (fun cluster ->
+          if cluster.ready ()
+          then Ok ()
+          else
+            Error
+              (Printf.sprintf
+                 "%s cloud substrate is not Ready: %s"
+                 pname
+                 (cloud_ready_expectation provider)))
+    ; with_cluster_access = with_cluster_access_apply
+    ; platform_init =
+        (fun () ->
+          match
+            materialize_workdir
+              ~assets
+              provider
+              Sol_cli_platform_assets.Platform
+              ~backend_config:platform_backend
+          with
+          | Error message -> Error (Sol_cli_cloud_apply.Refused message)
+          | Ok () ->
+            terraform_failure (terraform_init run_log platform_dir platform_backend))
+    ; platform_installed = crds_established
+    ; apply_prerequisites =
+        platform_apply
+          ~name:"platform-prerequisites-apply"
+          ~scope:platform_prerequisite_targets
+    ; await_crds =
+        (fun env ->
+          process_ok
+            ~env
+            [ "kubectl"
+            ; "wait"
+            ; "--for=condition=Established"
+            ; "crd/certificates.cert-manager.io"
+            ; "crd/clusterissuers.cert-manager.io"
+            ; "--timeout=180s"
+            ])
+    ; verify_platform_prerequisites =
+        (fun env platform_vars ->
+          verify_platform_prerequisites ~assets ~env ~platform_vars)
+    ; apply_platform =
+        platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
+    ; await_readiness = (fun env -> await_platform_readiness ~provider ~deadline_s ~env)
+    ; remove_bootstrap_access =
+        (fun () ->
+          terraform_failure
+            (Sol_cli_run_log.run_phase
+               run_log
+               ~name:"provisioner-bootstrap-access-remove"
+               (fun () ->
+                  Sol_cli_terraform.apply
+                    ~scope:Sol_cli_terraform.whole_root
+                    ~chdir:infra_dir
+                    ~var_files
+                    ~vars:
+                      (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
+                       @ vars)
+                    ())))
+    ; verify_deescalation =
+        (fun cluster _control ->
+          match cluster.bootstrap_window with
+          | Verified window ->
+            (match window.deescalated () with
+             | Ok () ->
+               (match window.successor () with
+                | Ok () ->
+                  Sol_cli_report.app "  de-escalation verified as %s" window.principal;
+                  Ok ()
+                | Error verdict ->
+                  Error ("de-escalation could not be established: " ^ verdict))
+             | Error verdict ->
+               Error ("de-escalation could not be established: " ^ verdict))
+          | No_role_declared ->
+            Sol_cli_report.app
+              "  no provisioner role declared: no bootstrap elevation to verify";
+            Ok ()
+          | Closed_by_platform_root -> Ok ())
+    ; provisioner_effective = provisioner_rbac_established
+    ; report = (fun line -> Sol_cli_report.app "%s" line)
+    }
 ;;
 
 let plan ~assets ~run_log ~cloud_target ~(inputs : terraform_inputs) =

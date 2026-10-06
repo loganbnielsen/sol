@@ -301,6 +301,45 @@ if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line
 fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
+# Operational duration overrides are validated through one shared parser before
+# any cloud mutation. A malformed or unbounded value refuses and names the
+# setting instead of silently selecting a different policy.
+for bad in abc inf -1 nan; do
+  readiness_log="$tmp/readiness-override-$bad.log"
+  if (export FAIL_ON="" SOL_PLATFORM_READINESS_TIMEOUT_S="$bad"; run_apply "$readiness_log"); then
+    echo "an apply accepted SOL_PLATFORM_READINESS_TIMEOUT_S=$bad" >&2
+    cat "$readiness_log.out" >&2
+    exit 1
+  fi
+  assert_contains "the refusal names the readiness override" "$readiness_log.out" \
+    "SOL_PLATFORM_READINESS_TIMEOUT_S=\"$bad\" is not a non-negative number of seconds" || exit 1
+  if grep -E '^terraform .* apply( |$)' "$readiness_log" >/dev/null 2>&1; then
+    echo "terraform apply ran despite the refused SOL_PLATFORM_READINESS_TIMEOUT_S=$bad" >&2
+    cat "$readiness_log" >&2
+    exit 1
+  fi
+done
+echo "REFAC-115: a malformed or unbounded readiness override refuses before the apply"
+
+for bad in abc inf -1 nan; do
+  whoami_log="$tmp/whoami-override-$bad.log"
+  rm -f "$FAIL_MARKER_DIR/bootstrap-window" "$tmp/markers/access"
+  if (export FAIL_ON="" SOL_WHOAMI_RETRY_INTERVAL_S="$bad"; run_apply "$whoami_log"); then
+    echo "an apply accepted SOL_WHOAMI_RETRY_INTERVAL_S=$bad" >&2
+    cat "$whoami_log.out" >&2
+    exit 1
+  fi
+  assert_contains "the refusal names the whoami override" "$whoami_log.out" \
+    "SOL_WHOAMI_RETRY_INTERVAL_S=\"$bad\" is not a non-negative number of seconds" || exit 1
+  if grep -F 'terraform ' "$whoami_log" | grep 'cloud/[a-z]*/platform.* apply ' \
+      | grep -v -- '-target=' >/dev/null; then
+    echo "the platform apply ran despite the refused SOL_WHOAMI_RETRY_INTERVAL_S=$bad" >&2
+    cat "$whoami_log" >&2
+    exit 1
+  fi
+done
+echo "REFAC-115: a malformed or unbounded whoami override refuses before the platform apply"
+
 credential_log="$tmp/platform-credential-absent.log"
 rm -f "$PLATFORM_INSTALLED_FILE"
 if (export FAIL_ON=""; export PLATFORM_CREDENTIAL_ABSENT=1; run_apply "$credential_log"); then
@@ -2265,22 +2304,24 @@ case "$retention_region" in
     exit 1
     ;;
 esac
-if (cd "$tmp/work" && FAIL_ON="" DESTROYING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc \
-      LIFECYCLE_LOG="$interval_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
-    >"$interval_log.out" 2>&1; then
-  cat "$interval_log.out" >&2
-  echo "REFAC-115: a destroy proceeded with a malformed snapshot interval" >&2
-  exit 1
-fi
-assert_contains "REFAC-115: the refusal names the setting" "$interval_log.out" \
-  'SOL_DESTROY_SNAPSHOT_INTERVAL_S="abc" is not a non-negative number of seconds' || exit 1
-if grep -E '^terraform .* destroy( |$)' "$interval_log" >/dev/null 2>&1; then
-  echo "REFAC-115: terraform destroy ran despite the refused preparation:" >&2
-  grep -E '^terraform .* destroy' "$interval_log" >&2
-  exit 1
-fi
+for bad in abc inf -1 nan; do
+  if (cd "$tmp/work" && FAIL_ON="" DESTROYING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S="$bad" \
+        LIFECYCLE_LOG="$interval_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+      >"$interval_log.out" 2>&1; then
+    cat "$interval_log.out" >&2
+    echo "REFAC-115: a destroy proceeded with SOL_DESTROY_SNAPSHOT_INTERVAL_S=$bad" >&2
+    exit 1
+  fi
+  assert_contains "REFAC-115: the refusal names the setting" "$interval_log.out" \
+    "SOL_DESTROY_SNAPSHOT_INTERVAL_S=\"$bad\" is not a non-negative number of seconds" || exit 1
+  if grep -E '^terraform .* destroy( |$)' "$interval_log" >/dev/null 2>&1; then
+    echo "REFAC-115: terraform destroy ran despite the refused preparation:" >&2
+    grep -E '^terraform .* destroy' "$interval_log" >&2
+    exit 1
+  fi
+done
 mv "$tmp/work/envs.before-refac115.yml" "$tmp/work/sol/environments.yml"
-echo "REFAC-115: a malformed snapshot interval refuses the destroy, and only the destroy"
+echo "REFAC-115: a malformed or unbounded snapshot interval refuses the destroy, and only the destroy"
 
 if ! ls -d "$XDG_DATA_HOME"/sol/runs/cloud-* >/dev/null 2>&1; then
   echo "INFRA-075 canary: no cloud-* run logs under the isolated" >&2

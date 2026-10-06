@@ -331,16 +331,16 @@ let apply
   let var_files = inputs.Sol_cli_cloud_wiring.var_files in
   let vars = inputs.Sol_cli_cloud_wiring.vars in
   reconcile_ownership_at ~provider ~target_cfg ~infra_dir ~var_files ~vars;
-  match
-    Sol_cli_cloud_apply.execute
-      ~deps:
-        (Sol_cli_cloud_wiring.apply_deps
-           ~assets
-           ~confirm_ecr_removal:(Option.value confirm_ecr_removal ~default:false)
-           ~run_log
-           ~cloud_target
-           ~inputs)
-  with
+  let* deps =
+    Sol_cli_cloud_wiring.apply_deps
+      ~assets
+      ~confirm_ecr_removal:(Option.value confirm_ecr_removal ~default:false)
+      ~run_log
+      ~cloud_target
+      ~inputs
+    |> Result.map_error of_apply_failure
+  in
+  match Sol_cli_cloud_apply.execute ~deps with
   | Sol_cli_cloud_apply.Applied ->
     let cluster =
       match
