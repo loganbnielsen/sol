@@ -2,6 +2,8 @@
 set -uo pipefail
 
 LOG_DIR="${1:?usage: transport-transaction.sh LOG_DIR}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+TRANSACTION="$(cd "$HERE/.." && pwd)/transaction.py"
 KUBECONFIG_TRANSPORT="${KUBECONFIG_TRANSPORT:?Set KUBECONFIG_TRANSPORT to the qualification transport principal kubeconfig}"
 APP_NS="${APP_NS:-pluto-payments}"
 APP_SERVICE="${APP_SERVICE:-charge-svc}"
@@ -74,47 +76,43 @@ run_charges() {
     -d '{"customer_id":"cus_qualification","amount_cents":4999,"currency":"usd"}' 2>&1)" ||
     fail "POST /charges failed"
   printf 'charge: %s\n' "$charge" >>"$TRANSCRIPT"
-  id="$(printf '%s' "$charge" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
-  [ -n "$id" ] || fail "the charge response carried no id"
+  id="$(printf '%s' "$charge" | python3 "$TRANSACTION" charge-id 2>>"$TRANSCRIPT")" ||
+    fail "the charge response carried no usable id"
   printf 'charge id: %s\n' "$id" >>"$TRANSCRIPT"
   i=0
   while [ "$i" -lt "$READBACK_ATTEMPTS" ]; do
     i=$((i + 1))
     notifications="$(curl -fsS -m 20 "$URL/notifications" 2>/dev/null || true)"
     printf 'read-back attempt %s: %s\n' "$i" "$notifications" >>"$TRANSCRIPT"
-    case "$notifications" in
-      *"$id"*)
-        printf 'read-back: the worker effect is visible to the service\n' >>"$TRANSCRIPT"
-        return 0
-        ;;
-    esac
+    if printf '%s' "$notifications" | python3 "$TRANSACTION" charge-effect "$id" 2>>"$TRANSCRIPT"; then
+      printf 'read-back: the worker effect is visible to the service\n' >>"$TRANSCRIPT"
+      return 0
+    fi
     sleep "$READBACK_INTERVAL"
   done
   return 1
 }
 
 run_orders() {
-  local order_id placed body i
+  local order_id placed served body i
   order_id="ord-$(date -u +%s)-$$"
   placed="$(curl -fsS -m 30 -X POST "$URL/orders" -H 'Content-Type: application/json' \
     -d "{\"order_id\":\"$order_id\",\"item\":\"widget\",\"quantity\":1}" 2>&1)" ||
     fail "POST /orders failed"
   printf 'order: %s\n' "$placed" >>"$TRANSCRIPT"
-  case "$placed" in
-    *"$order_id"*) : ;;
-    *) fail "the order response did not carry the submitted order id" ;;
-  esac
+  served="$(printf '%s' "$placed" | python3 "$TRANSACTION" order-id 2>>"$TRANSCRIPT")" ||
+    fail "the order response carried no usable order id"
+  [ "$served" = "$order_id" ] ||
+    fail "the order response carried $served, not the submitted $order_id"
   i=0
   while [ "$i" -lt "$READBACK_ATTEMPTS" ]; do
     i=$((i + 1))
     body="$(curl -fsS -m 20 "$URL/orders/$order_id" 2>/dev/null || true)"
     printf 'read-back attempt %s: %s\n' "$i" "$body" >>"$TRANSCRIPT"
-    case "$body" in
-      *'"status":"fulfilled"'* | *'"status":"confirmed"'*)
-        printf 'read-back: the worker effect is visible to the service\n' >>"$TRANSCRIPT"
-        return 0
-        ;;
-    esac
+    if printf '%s' "$body" | python3 "$TRANSACTION" order-effect "$order_id" 2>>"$TRANSCRIPT"; then
+      printf 'read-back: the worker effect is visible to the service\n' >>"$TRANSCRIPT"
+      return 0
+    fi
     sleep "$READBACK_INTERVAL"
   done
   return 1

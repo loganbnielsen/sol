@@ -332,6 +332,19 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: python3 internal/qualification/aws/test_absence.py
 
+      # Both transaction execution paths -- the in-cluster Job log and the
+      # qualification transport -- decide a worker effect through one structural
+      # predicate: a typed nonempty operation identity plus an exact matching
+      # read-back. The regression pins malformed, empty, unrelated and
+      # substring-only evidence as unable to establish success.
+      - name: Transaction evidence predicate test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: python3 internal/qualification/test_transaction.py
+
+      - name: Transaction execution-path test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/qualification/aws/test-transaction.sh
+
       # The OCaml row driver builds assertions from the effective qualification
       # rows. This suite mutation-checks that it rejects rows that did not happen.
       - name: Local OCaml row driver test
