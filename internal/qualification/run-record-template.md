@@ -1,8 +1,8 @@
 # Run record — template
 
-> **How to use.** Copy this file to `internal/qualification/<YYYY-MM-DD>-run<N>-<provider>.md`,
-> fill every field, and link it from the epic ticket (`HARDEN-002` for AWS,
-> `HARDEN-004` for GCP) and from the matrix row that carries the run's verdict.
+> **How to use.** Copy this file to `internal/qualification/<YYYY-MM-DD>-<attempt>-<provider>.md`,
+> fill every field, and link it from the issue or pull request that owns the run's verdict and
+> from the matrix row that carries it.
 >
 > **Rules that make the record usable.**
 > - A field that was not observed is `NOT REACHED` or `NOT OBSERVED`. Never blank,
@@ -42,11 +42,10 @@
 
 **The qualification target is untracked, on purpose.** It is a `qual` environment in
 `<workspace>/sol/environments.local.yml` (start from
-`internal/qualification/aws/run8-aws-target.example.yml`; FEAT-100), and the repository
+`internal/qualification/aws/aws-target.example.yml`), and the repository
 forbids tracking that file — `internal/ci/always/check_no_account_artifacts.sh` fails on a
 tracked `sol/environments.local.yml` or any tracked `sol/qual*/` path, because a real
-target carries a real account, registry and role ARNs. HARDEN-002 run 2 is the incident where one
-was committed and had to be removed.
+target carries a real account, registry and role ARNs.
 
 Two things follow, and both are why the two rows above exist: the revision does
 **not** pin the target, so the record must carry its contents; and the working tree
@@ -55,9 +54,10 @@ and nothing else may be modified.
 
 ## 2. Entry point and environment
 
-- **Procedure followed:** `<link>` + section name (AWS: `HARDEN-002` §"Exact
-  command sequence"; GCP: `internal/qualification/gcp/gcp-production-single-region-v1-matrix.md`
-  §"Before the next attempt").
+- **Procedure followed:** the active procedure for the provider — AWS:
+  `internal/qualification/aws/aws-run-procedure.md`; GCP:
+  `internal/qualification/gcp/gcp-production-single-region-v1-matrix.md` — and the section
+  name within it.
 - **Commands executed, in order, as run** — copied from the log, not reconstructed:
 
   ```sh
@@ -128,40 +128,21 @@ re-issuance.
 Three consequences for a run record:
 
 - **The delegation is a prerequisite, not a finding.** A missing one is recorded as
-  `BLOCKED` with the reason (`FND-0007` did exactly that), never as a failed row.
-- **The zone is created by Sol's cloud root** (`create_dns_zone` /
-  `create_route53_zone`; `dns_nameservers` / `route53_nameservers` are the registrar
-  hand-off). A hand-created zone sits outside Terraform state and collides on the
-  next apply.
+  `BLOCKED` with the reason, never as a failed row.
+- **The delegated zone is owned by the durable bootstrap root** (`manage_dns_zone = true`; its
+  `dns_zone_id` / nameserver outputs are the registrar hand-off), and the target sets
+  `create_route53_zone` / `create_dns_zone = false` so it reads that zone rather than creating
+  one. A hand-created zone sits outside Terraform state and collides on the next apply.
 - **The zone must outlive the target.** Recreating it assigns *new* nameservers, so a
   teardown that removes it silently invalidates the pasted delegation and the TLS
   failure that follows does not name the cause. If the zone is removed, the run
   record must say the delegation has to be redone.
 
-## 5. Run-specific assertions
+## 5. Assertions that ride along
 
-Fill the block that applies to this run; delete the other.
-
-### AWS Run 8 (from `production-single-region-v1-matrix.md` §"Before the next run")
-
-- **Absence checks fired.** How and when the residual was left in place (or the
-  real leftover observed); `verify_aws_destroy` output verbatim; result.
-- **Steady-state authority, as the named identity.** Which identity; the exact
-  command attempted; the observed denial verbatim; the `can-i` positives and
-  negatives **with the identity that produced each**; result.
-- **Migration gate end to end.** Command; result; and if it failed, the
-  `migration-status Job evidence` block verbatim (this is what INFRA-040 added).
-
-### GCP Attempt 5 (from `gcp-production-single-region-v1-matrix.md` §"Before the next attempt")
-
-- **Narrowed provisioner role sufficient.** Evidence the platform stage reached
-  the cluster with the four-permission custom role; result. Plus the denied
-  Kubernetes-object operation, verbatim.
-- **`startupapicheck` capture (FND-0010).** The container log, Job events, the
-  webhook Service `targetPort`, and the cluster firewall listing — verbatim — with
-  the branch they select (unreachable webhook vs CA bundle not injected).
-- **Matrix results file.** Path to the results TSV and
-  `internal/qualification/gcp/verify-matrix.sh` output.
+Collect the cross-row assertions the active procedure names for this run — for AWS, the
+`Assertions that ride along` section of `production-single-region-v1-matrix.md`; for GCP, the
+equivalent in its matrix. Record the command and the verbatim observation for each, as in §3.
 
 ## 6. Measurements (only what was actually measured)
 
@@ -234,8 +215,7 @@ These six items are the **install** path's evidence, and they end at `Ready`. Th
 probe's verdict, but that probe is **advisory** — it does not gate teardown (ADR 0003
 invariant 6) and a destroy never declares a verified de-escalation. So a bootstrap-access
 removal observed during teardown **cannot** be cited as item (4)/(5) for this section; the
-install path's own before/after pair is what establishes it. See `DEC-040`'s scope note and
-`INFRA-061`.
+install path's own before/after pair is what establishes it. See `DEC-040`'s scope note.
 
 The **shape of the authorizer's answer** is checked automatically, in the first minutes
 after the cluster is reachable -- after the cloud apply, before the platform install.

@@ -24,7 +24,7 @@ omitted. The run's precondition is:
 
 The qualification transport principal is a **sixth** identity, created by the harness for the
 transport only (`internal/qualification/transport/`), never named by a target field
-(DEC-039 §3). Earlier procedure text step 10 "four-identity check" is read as five for The run.
+(DEC-039 §3). Earlier procedure text step 10 "four-identity check" is read as five for this run.
 
 ### Alpha row reconciliation (the run's scope)
 
@@ -38,7 +38,7 @@ is `SVC_UNIT=orders_svc WORKER_UNIT=fulfilment_worker APP_SERVICE=orders-svc SCE
 unless `FEAT-131`/`FEAT-132` land different names — then the binding values change, not the
 mechanism). The alpha rows whose target includes `aws`, and the AWS matrix rows that carry them:
 
-| Alpha row | Capability | AWS matrix row(s) | The run |
+| Alpha row | Capability | AWS matrix row(s) | This run |
 |---|---|---|---|
 | B1 | Service accepts a request | B3 | in scope |
 | B3 | Outbox relay | B3 | in scope |
@@ -112,7 +112,7 @@ command's output.
    lifecycle.
 7. The qualification transport role (a name the harness is given, never a target field).
 8. A target file `examples/pluto/sol/environments.local.yml` copied from
-   `run8-aws-target.example.yml` with real values. It is untracked by design, so the record
+   `aws-target.example.yml` with real values. It is untracked by design, so the record
    carries its contents or a hash plus its path. It declares `profile: production-single-region`,
    the five role ARNs, `kube_context`, the registry, `cluster_endpoint_cidr` (never
    `0.0.0.0/0`), `node_failure_headroom_nodes`, `destroy_retention: none`, and the two
@@ -156,13 +156,14 @@ the destroy is part of the run, not a follow-up. A run that stops early is still
 ### The run, phase by phase
 
 `internal/qualification/aws/live-row.sh <phase>` orchestrates Sol's public commands and reads
-provider/Kubernetes state independently. It never invokes `terraform` or `helm` for a target
-phase: `cloud` reconciles the *durable* bootstrap root (the operator's prerequisite) with
-`terraform`, and every disposable-target step goes through Sol. `SOL` selects the released
-bundle.
+provider/Kubernetes state independently. It never invokes `terraform` or `helm`: the `cloud`
+phase reconciles the *durable* bootstrap root (the operator's prerequisite) through the
+installed release's `sol cloud bootstrap <target> --apply`, and every disposable-target step
+goes through Sol. `SOL` selects the released bundle.
 
-**`cloud`** — reconcile the durable root; `sol cloud plan <target> --var-file <tfvars>`;
-`sol cloud apply <target> --var-file <tfvars>` (the row's `qual-aws-row.tfvars`); when that
+**`cloud`** — `sol cloud bootstrap <target> --apply` reconciles the durable root;
+`sol cloud plan <target> --var-file <tfvars>`; `sol cloud apply <target> --var-file <tfvars>`
+(the row's `qual-aws-row.tfvars`); when that
 stops at the pre-platform `redpanda-users` credential, create the Secret with the run's
 generated or operator-supplied `sol-workloads` SCRAM credential, record the supplied input,
 and re-run `sol cloud apply` to resume; build the deploy/access/operator kubeconfigs; capture
@@ -228,7 +229,7 @@ the DEC-029 cell verdicts.
 discovery; caller/`calls`-graph authorization (`401`/`403`/wrong-`aud`); key rotation; and
 refresh without restart.
 
-**It cannot be collected in The run today, and the blocker is implementation, not
+**It cannot be collected in this run today, and the blocker is implementation, not
 authorization.** The callee-side generic JWT verification exists
 (`framework/ocaml/sol-svc/lib/auth.ml`, `Jwks_url` + JWKS fetching), but DEC-063's mechanism
 is absent from the tree: no Kubernetes `serviceAccountToken` projected volume is rendered
@@ -291,7 +292,7 @@ harness does not publish a runner and hands Sol no runner reference; an installe
 records the bundle version and that digest in `sol-identity.txt`. The run does not start against a
 checkout build: the artifact a user installs is the thing under qualification (J3).
 
-### What The run does not establish
+### What a run does not establish
 
 - The delivered-and-acknowledged alert (AWS matrix G1–G3) without a real receiver and an owner.
 - Alpha E5 (`VERIF-022`) until `FEAT-134` lands, and the DEC-063 mechanism on `gcp`/`byo`.

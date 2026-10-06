@@ -1,6 +1,6 @@
-# Example only. Copy to `sol/environments.local.yml`, replace placeholders, and
-# leave untracked because it contains account-specific identifiers. Record its
-# contents or hash with each qualification run. Do not embed credentials in URLs.
+# EXAMPLE qualification target for AWS — not a runnable target.
+# Copy to `<workspace>/sol/environments.local.yml` and replace placeholders.
+# The run procedure and matrix define what qualification asserts.
 qual:
   targets:
     aws/us-east-1:
