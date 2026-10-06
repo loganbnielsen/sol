@@ -229,7 +229,7 @@ should use `Peer` for the URL/header plumbing and ordinary
 ```ocaml
 Sol_obs.with_span obs ?parent:req.trace_ctx "call_checkout" (fun span ->
   let trace_ctx = Sol_obs.current_trace_context span in
-  match Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx () with
+  match Peer.url "checkout_svc", Peer.headers ~env ~peer:"checkout_svc" ~trace_ctx () with
   | Ok base_uri, Ok headers ->
     let uri = Uri.with_path base_uri "/quote" in
     let headers = Http.Header.of_list headers in
@@ -248,15 +248,24 @@ unaffected. Because a live assertion cannot pass here, the golden-path smoke
 asserts the wiring — the injected URL plus the applied policy pair — rather than
 enforcement.
 
-`Peer.headers` sets `x-api-key` from `SOL_API_KEY_FILE`/`SOL_API_KEY` and
-serializes the supplied `trace_ctx` as a W3C `traceparent`. The callee's
-`Sol_svc` extracts that header into `Request.trace_ctx`.
+`Peer.headers ~peer:"checkout_svc"` prefers the projected identity: Sol declares
+the caller a projected ServiceAccount token for `checkout_svc` (audience = the
+callee unit) and names the file through `CHECKOUT_SVC_TOKEN_FILE`, and the
+helper attaches it as `Authorization: Bearer`. A declared projection that is
+missing or unreadable is a config error, never a fallback to the shared key.
+Only local development opts in to that key explicitly with
+`SOL_ALLOW_PLAINTEXT_PEER_AUTH=1`; the name is reserved in `sol.toml` and
+`sol secret set`, so a deployed workload cannot carry it. Either path serializes
+the supplied `trace_ctx` as a W3C `traceparent`, which the callee's `Sol_svc`
+extracts into `Request.trace_ctx`.
 
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
 `SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty
 placeholder value, so operators can provide one shared internal key through
-the normal Secret or ExternalSecret path.
+the normal Secret or ExternalSecret path. Sol-to-Sol routes move to identity
+verification (401 for an unauthenticated caller, 403 for an authenticated but
+undeclared one) as the framework middleware lands.
 
 ## Summary
 

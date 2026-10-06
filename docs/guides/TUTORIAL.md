@@ -304,8 +304,9 @@ calls = ["checkout/checkout_svc"]
 That makes Sol inject `CHECKOUT_SVC_URL` into `charge_svc` and generate the
 per-pair NetworkPolicy. In-cluster, the URL resolves through Kubernetes DNS to
 the checkout ClusterIP; the request never goes out to the public internet.
-The caller endpoint uses `Peer.url "checkout_svc"` and `Peer.headers` so
-`x-api-key` and the current W3C `traceparent` are set in one place.
+The caller endpoint uses `Peer.url "checkout_svc"` and
+`Peer.headers ~peer:"checkout_svc"`, so the projected identity token becomes
+`Authorization: Bearer` and the current W3C `traceparent` is set in one place.
 
 ### The worker
 

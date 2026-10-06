@@ -185,6 +185,10 @@ let dev_env =
   ; "PUSHGATEWAY_URL", "http://localhost:9091"
   ; "TEMPO_URL", "http://localhost:4318"
   ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  ; (* Bare local processes have no projected ServiceAccount token, so they opt
+       in explicitly to the shared-key caller path (DEC-063). Deployed units
+       never set this: the key is reserved in sol.toml and sol secret set. *)
+    "SOL_ALLOW_PLAINTEXT_PEER_AUTH", "1"
   ]
 ;;
 
