@@ -31,11 +31,19 @@ type namespace = Sol_cli_kubernetes_name.namespace
 
 type service_call =
   { env_var : string
+  ; unit_id : string
+    (* the referenced unit's canonical identity, [<domain>/<k8s name>]; for a
+       callee this is the projected-token audience, for a caller it is the
+       identity the callee authorizes. Both forms are derived from the committed
+       declarations, so a release can reconstruct them for rollback. *)
   ; url : string
   ; target_domain : string
   ; target_name : k8s_name
   ; target_namespace : namespace
   }
+
+val identity_projections : service_call list -> Sol_cli_identity_projection.t list
+val identity_env : service_call -> string * string
 
 type service_spec =
   { domain : string

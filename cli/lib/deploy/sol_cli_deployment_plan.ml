@@ -31,6 +31,7 @@ type namespace = Sol_cli_kubernetes_name.namespace
 
 type service_call =
   { env_var : string
+  ; unit_id : string
   ; url : string
   ; target_domain : string
   ; target_name : k8s_name
@@ -795,6 +796,32 @@ let primitive_of_manifest = function
 
 let call_env_var = Sol_cli_kubernetes_name.call_env_var
 
+(* One projected identity per declared callee, deduplicated by the volume it
+   mounts because two calls to the same callee share one token. *)
+let identity_projections (calls : service_call list) =
+  calls
+  |> List.map (fun (c : service_call) ->
+    Sol_cli_identity_projection.of_call
+      ~callee_k8s_name:(k8s_name_to_string c.target_name)
+      ~audience:c.unit_id
+      ~url_env_var:c.env_var)
+  |> List.sort_uniq (fun a b ->
+    String.compare
+      a.Sol_cli_identity_projection.volume_name
+      b.Sol_cli_identity_projection.volume_name)
+;;
+
+let identity_env call =
+  let projection =
+    Sol_cli_identity_projection.of_call
+      ~callee_k8s_name:(k8s_name_to_string call.target_name)
+      ~audience:call.unit_id
+      ~url_env_var:call.env_var
+  in
+  ( Sol_cli_identity_projection.token_file_env_var projection
+  , Sol_cli_identity_projection.token_file projection )
+;;
+
 let sol_yml_replicas_override ~declared ~service_name =
   match declared with
   | None -> None
@@ -977,6 +1004,7 @@ let of_services_result
          let* target_namespace = namespace_result ~workspace ~domain:target.domain in
          Ok
            { env_var = call_env_var target.name
+           ; unit_id = target.domain ^ "/" ^ k8s_name_to_string target_name
            ; url =
                Sol_cli_kubernetes_name.service_url
                  ~namespace:target_namespace
@@ -1077,7 +1105,7 @@ let of_services_result
           kafka_security_config
           @ kafka_durability_config
           @ service_config
-          @ List.map (fun c -> c.env_var, c.url) calls
+          @ List.map (fun (c : service_call) -> c.env_var, c.url) calls
       ; secrets = List.map (fun key -> key, "") toml.secret_keys
       ; build_secret_keys = toml.build_secret_keys
       ; volumes = toml.volumes
@@ -1134,6 +1162,7 @@ let of_services_result
           then
             Some
               { env_var = call_env_var caller.source_name
+              ; unit_id = caller.domain ^ "/" ^ k8s_name_to_string caller.k8s_name
               ; url =
                   Sol_cli_kubernetes_name.service_url
                     ~namespace:caller.namespace

@@ -396,6 +396,7 @@ let render_deployment ~secret_keys =
     { Sol_cli_manifest.Workload_spec.extra_labels = []
     ; secret_keys
     ; volumes = []
+    ; projected_identities = []
     ; env = None
     ; config_hash = "hash"
     ; availability = Sol_cli_availability.Single

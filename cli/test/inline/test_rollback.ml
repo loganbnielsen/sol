@@ -62,6 +62,7 @@ let billing_name = k8s_name "billing-svc"
 
 let billing_call : Sol_cli_deployment_plan.service_call =
   { env_var = Sol_cli_kubernetes_name.call_env_var "ledger_svc"
+  ; unit_id = "payments/" ^ Sol_cli_kubernetes_name.k8s_name_to_string ledger_name
   ; url =
       Sol_cli_kubernetes_name.service_url
         ~namespace:ledger_namespace
@@ -74,6 +75,7 @@ let billing_call : Sol_cli_deployment_plan.service_call =
 
 let billing_as_caller : Sol_cli_deployment_plan.service_call =
   { env_var = Sol_cli_kubernetes_name.call_env_var "billing_svc"
+  ; unit_id = "payments/" ^ Sol_cli_kubernetes_name.k8s_name_to_string billing_name
   ; url =
       Sol_cli_kubernetes_name.service_url
         ~namespace:billing_namespace
