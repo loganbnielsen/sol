@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
 
 jobs:
   # Classifies the diff ONCE for the whole run. Every job consumes this output;
@@ -46,11 +47,22 @@ jobs:
       - name: Classify changed paths
         id: classify
         run: |
-          # Pushes to main are always full CI: post-merge verification is
-          # authoritative, and only pull-request execution is optimised.
+          # Post-merge verification is always full CI; classification only
+          # optimises pre-merge execution. A merge queue entry is the same
+          # change as the pull request that produced it, so pull_request and
+          # merge_group classify the same way.
           kind="source"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            kind="$(internal/ci/classify-changes.sh --range "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" || echo source)"
+          case "${{ github.event_name }}" in
+            pull_request)
+              range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+              ;;
+            merge_group)
+              range="${{ github.event.merge_group.base_sha }}...${{ github.event.merge_group.head_sha }}"
+              ;;
+            *) range="" ;;
+          esac
+          if [ -n "$range" ]; then
+            kind="$(internal/ci/classify-changes.sh --range "$range" || echo source)"
           fi
           case "$kind" in
             docs-only|ocaml|typescript|source) ;;
