@@ -583,6 +583,36 @@ let test_show_and_record_unreadable_plan_is_an_error () =
           ~show:(fun () -> Error "terraform exited 1")))
 ;;
 
+(* A run log the process cannot write is diagnostics for a plan that was read
+   successfully; it must not turn the read into a failure. Replacing the run's
+   directory with a regular file forces ENOTDIR, which no privilege bypasses. *)
+let test_show_and_record_survives_a_failed_append () =
+  let run_log = Sol_cli_run_log.create ~base:(temp_dir ()) ~prefix:"sec008" () in
+  let dir = Sol_cli_run_log.dir run_log in
+  ignore (Sol_cli_fs.remove_tree dir : (unit, string) result);
+  Out_channel.with_open_text dir (fun oc -> output_string oc "not a directory");
+  let result, reports =
+    Sol_cli_report.collect (fun () ->
+      Sol_cli_terraform_plan.show_and_record
+        ~run_log
+        ~phase:"destroy-show"
+        ~show:(fun () -> Ok plan_with_secret))
+  in
+  (match result with
+   | Error message ->
+     Windtrap.failf "an unavailable run log must not fail the operation: %s" message
+   | Ok (json, changes) ->
+     Windtrap.equal Windtrap.string ~msg:"the JSON is returned" plan_with_secret json;
+     Windtrap.equal Windtrap.int ~msg:"the changes are returned" 1 (List.length changes));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the unavailable log is reported"
+    true
+    (List.exists
+       (fun (_, line) -> Sol_cli_string.contains ~needle:"run log unavailable" line)
+       reports)
+;;
+
 let%test "classification: actions" = test_actions ()
 let%test "classification: removed_of_type (INFRA-074)" = test_removed_of_type ()
 let%test "classification: malformed is an error" = test_malformed_is_error ()
@@ -676,4 +706,8 @@ let%test "show_and_record (SEC-008): plan JSON never reaches the run log" =
 
 let%test "show_and_record (SEC-008): unreadable plan is an error" =
   test_show_and_record_unreadable_plan_is_an_error ()
+;;
+
+let%test "show_and_record: an unavailable run log does not fail the read" =
+  test_show_and_record_survives_a_failed_append ()
 ;;

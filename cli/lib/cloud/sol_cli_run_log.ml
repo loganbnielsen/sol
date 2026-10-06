@@ -94,18 +94,26 @@ let run_id t = t.run_id
 let dir t = t.dir
 let ensure_parent path = mkdir_reporting (Filename.dirname path)
 
-let write_file path contents =
-  ensure_parent path;
+(* Best-effort run-log writes: a missing, unwritable or full log target is
+   diagnostics, so it warns and never raises through the operation that owns the
+   real outcome. [Out_channel.with_open_gen] owns the channel so it is closed even
+   when the write itself raises. *)
+let best_effort_write path ~flags contents =
   match
-    Out_channel.with_open_gen
-      [ Open_wronly; Open_creat; Open_trunc; Open_text ]
-      0o600
-      path
-      (fun oc -> Out_channel.output_string oc contents)
+    Out_channel.with_open_gen flags 0o600 path (fun oc ->
+      Out_channel.output_string oc contents)
   with
   | () -> ()
   | exception Sys_error message ->
     Sol_cli_report.warn "warning: run log unavailable: %s" message
+;;
+
+let write_file path contents =
+  ensure_parent path;
+  best_effort_write
+    path
+    ~flags:[ Open_wronly; Open_creat; Open_trunc; Open_text ]
+    contents
 ;;
 
 let finish_phase t ~name ~elapsed_s ~ok ~contents =
@@ -121,9 +129,7 @@ let finish_phase t ~name ~elapsed_s ~ok ~contents =
 let append_phase_log t ~phase text =
   let path = phase_log_path t ~phase in
   ensure_parent path;
-  let oc = open_out_gen [ Open_wronly; Open_creat; Open_append; Open_text ] 0o600 path in
-  output_string oc text;
-  close_out oc
+  best_effort_write path ~flags:[ Open_wronly; Open_creat; Open_append; Open_text ] text
 ;;
 
 let run_phase
