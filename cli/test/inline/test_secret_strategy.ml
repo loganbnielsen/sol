@@ -50,7 +50,7 @@ let test_external_secrets_to_string () =
   let backend =
     Sol_cli_manifest.External_secrets
       { store_ref = "my-store"
-      ; store_kind = "ClusterSecretStore"
+      ; store_kind = Sol_cli_manifest.Cluster_secret_store
       ; key_prefix = "myws/"
       ; refresh_interval = "1h"
       }

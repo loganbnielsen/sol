@@ -870,7 +870,7 @@ let test_to_json_secret_backend_values () =
   check_backend
     (Sol_cli_manifest.External_secrets
        { store_ref = "cluster-secret-store"
-       ; store_kind = "ClusterSecretStore"
+       ; store_kind = Sol_cli_manifest.Cluster_secret_store
        ; key_prefix = "prod/myworkspace"
        ; refresh_interval = "1h"
        })
