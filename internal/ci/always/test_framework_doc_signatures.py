@@ -14,8 +14,9 @@ OBS = "framework/ocaml/sol-obs/sol-obs.md"
 JOBS = "framework/ocaml/sol-jobs/sol-jobs.md"
 OUTBOX = "framework/ocaml/sol-outbox/sol-outbox.md"
 
-PACKAGES = ("sol-svc", "kafka-eio-service", "sol-worker", "sol-fn", "sol-obs", "sol-jobs", "sol-outbox")
-SPECS = (SVC, KAFKA, WORKER, FN, OBS, JOBS, OUTBOX)
+PACKAGES = ("sol-svc-core", "sol-svc", "kafka-eio-service", "sol-worker", "sol-fn", "sol-obs", "sol-jobs", "sol-outbox")
+CORE = "framework/ocaml/sol-svc-core/sol-svc-core.md"
+SPECS = (SVC, CORE, KAFKA, WORKER, FN, OBS, JOBS, OUTBOX)
 
 CASES = [
     ("a dropped Request.t field", "fail", SVC, "  ; trace_ctx : Obs_trace.t option\n", ""),
