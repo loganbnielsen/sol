@@ -11,15 +11,19 @@ request. Run targeted tests while developing and `bash internal/ci/run_fast_chec
 before proposing the change. Required GitHub CI is the merge authority; request review
 proportional to risk and squash-merge.
 
-When a change depends on an unmerged pull request, prefer a native GitHub stacked pull
-request: base the dependent PR on the predecessor's branch, keep each layer reviewable,
-and land the stack bottom-up with `gh stack` (or the stack UI). Do not duplicate the
-predecessor's changes or build custom merge-order tooling.
+Independent changes can proceed concurrently from `main`. For mechanical dependencies,
+stack pull requests with ordinary Git branches: base the child on its parent's branch and
+open the child against that branch, describing the relationship in the PR. Keep each PR
+focused, and rebase or retarget the child to `main` when its parent merges. Do not stack
+across unresolved design decisions. When a PR is complete, validated, and intended to
+land on its correct base, enable GitHub auto-merge; required CI and repository protection
+remain authoritative. A stacked child is ready for auto-merge to `main` after its parent
+merges and it is retargeted.
 
 Source-build prerequisites and setup are documented in `README.md`. Product and
 architecture documentation lives under `docs/`; qualification procedures live under
 `internal/qualification/`.
 
 Do not introduce repository-specific issue states, branch/worktree naming protocols,
-merge bookkeeping, or other workflow machinery. GitHub Issues, pull requests, and native
-stack relationships are sufficient work state.
+merge bookkeeping, or other workflow machinery. GitHub Issues, pull requests, and their
+base branch relationships are sufficient work state.
