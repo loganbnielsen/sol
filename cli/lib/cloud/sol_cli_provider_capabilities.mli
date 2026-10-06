@@ -35,6 +35,14 @@ type authorization_workload =
 type t =
   { root_status : root_status
   ; workload_identity_issuer : Sol_cli_config.target -> (string, string) result
+    (** DEC-051/DEC-063: the single Kubernetes service-account OIDC issuer the
+        target's cluster is trusted to have issued workload tokens with.
+
+        It is target/infrastructure truth: discovered through the driver and
+        never application configuration, and never taken from the [iss] claim
+        of an incoming token. [Ok issuer] is that trusted issuer; [Error reason]
+        means the target establishes none (so a workload-identity consumer must
+        fail closed). *)
   ; backend_config :
       Sol_cli_config.target
       -> bucket:string
@@ -120,6 +128,22 @@ val gcp_effective_access
   -> Sol_cli_config.target
   -> authorization_workload list
   -> (unit, string) result
+
+(** The provider-specific half of {!workload_identity_issuer}: discover the
+    target cluster's trusted Kubernetes service-account OIDC issuer from the
+    provider, failing closed when it cannot be read. [run] is injected so the
+    mechanics can be tested without the real CLIs. *)
+val aws_workload_identity_issuer
+  :  run:(string list -> (string, string) result)
+  -> Sol_cli_config.target
+  -> (string, string) result
+
+(** GKE's issuer is read from the cluster's OIDC discovery document, whose
+    reported [issuer] must be on the GKE API host. *)
+val gcp_workload_identity_issuer
+  :  run:(string list -> (string, string) result)
+  -> Sol_cli_config.target
+  -> (string, string) result
 
 val required : string -> string option -> (string, string) result
 val aws : t
