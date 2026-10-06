@@ -15,7 +15,7 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@prometheus-io/client": "^0.16.1",
-    "@sol-fab/jobs": "^0.1.1",
+    "@sol-fab/jobs": "^0.1.2",
     "@sol-fab/kafka": "^0.5.2",
     "@sol-fab/obs": "^0.4.0",
     "@sol-fab/outbox": "^0.1.0",
