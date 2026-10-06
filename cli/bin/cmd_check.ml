@@ -13,7 +13,9 @@ let findings_for ~facts = function
         (Sol_cli_workspace_model.services facts)
       |> Result.map_error fail
     in
-    Ok (Sol_cli_check.run_services ~facts selected.services)
+    Ok
+      (Sol_cli_check.run_services ~facts selected.services
+       @ Sol_cli_check.declaration_findings_in_scope ~facts selected.request)
 ;;
 
 type outcome =

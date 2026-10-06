@@ -53,6 +53,7 @@ let model workloads =
   ; app_dir = None
   ; workloads
   ; unexpected = []
+  ; declared = []
   ; topics = []
   ; schema_subjects = []
   ; migrations = []

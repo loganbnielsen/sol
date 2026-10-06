@@ -34,9 +34,12 @@ pluto/
 
 A **domain** is a group of units that change together and own their data (`payments`,
 `checkout`, `comms`). A **unit** is one deployable process: `app/<domain>/<name>_{svc,worker,fn}/`.
-The unit's directory name and the `sol.yml` entry must agree, because the declaration is what
-deployment reads — `sol check` fails when a unit exists on disk and is not declared, or the
-declaration points at nothing.
+The unit's directory name and the `sol.yml` entry must agree: discovery finds units by their
+directory, while the declaration is what deployment reads for a unit's `language`, `uses` and
+`scale`. `sol check` fails when a declared service has no unit directory (or its declared `path`
+names a different directory), and warns when a unit exists on disk but is not declared.
+`sol plan` refuses the same unimplemented declaration rather than rendering a service that cannot
+be built or deployed.
 
 `sol.yml` declares resources and services, and the `path`, `type`, `uses` and `language` of
 each service:

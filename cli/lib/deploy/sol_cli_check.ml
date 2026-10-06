@@ -91,6 +91,42 @@ let run_services ~facts services =
   |> List.concat_map (check_workload ~manifest:"sol.yml")
 ;;
 
+let finding_of_declaration_issue (issue : Sol_cli_workspace_model.declaration_issue) =
+  { severity =
+      (match issue.severity with
+       | `Error -> Severity.Error
+       | `Warning -> Severity.Warning)
+  ; path = issue.path
+  ; message = issue.message
+  }
+;;
+
+let declaration_findings ~facts =
+  Sol_cli_workspace_model.declaration_issues_of facts
+  |> List.map finding_of_declaration_issue
+;;
+
+let declaration_findings_in_scope ~facts (request : Sol_cli_deployment_scope.request) =
+  let in_scope (issue : Sol_cli_workspace_model.declaration_issue) =
+    let same_name = Sol_cli_deployment_scope.equal_name in
+    match request with
+    | Sol_cli_deployment_scope.Whole_workspace -> true
+    | Whole_domain domain ->
+      (match issue.domain with
+       | Some declared_domain -> same_name declared_domain domain
+       | None -> false)
+    | Unit_named (domain, name) ->
+      same_name issue.service_name name
+      &&
+        (match issue.domain with
+        | Some declared_domain -> same_name declared_domain domain
+        | None -> true)
+  in
+  Sol_cli_workspace_model.declaration_issues_of facts
+  |> List.filter in_scope
+  |> List.map finding_of_declaration_issue
+;;
+
 let run ~facts =
   match facts.Sol_cli_workspace_model.app_dir with
   | None ->
@@ -105,15 +141,18 @@ let run ~facts =
     let workload_findings =
       List.concat_map (check_workload ~manifest:"sol.yml") facts.workloads
     in
-    (match facts.workloads with
-     | [] ->
-       warnings
-       @ [ { severity = Severity.Error
-           ; path = "app"
-           ; message = "no Sol workloads found with a Dockerfile"
-           }
-         ]
-     | _ :: _ -> warnings @ workload_findings)
+    let declaration = declaration_findings ~facts in
+    let missing_workloads =
+      match facts.workloads with
+      | [] ->
+        [ { severity = Severity.Error
+          ; path = "app"
+          ; message = "no Sol workloads found with a Dockerfile"
+          }
+        ]
+      | _ :: _ -> []
+    in
+    warnings @ workload_findings @ missing_workloads @ declaration
 ;;
 
 let has_errors findings = List.exists is_error findings
