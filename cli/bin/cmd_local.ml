@@ -114,29 +114,51 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
   else Ok ()
 ;;
 
-let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
-  Unix.sleepf 2.;
-  Sol_cli_local_platform.endpoints ~req
-  |> List.iter (fun { Sol_cli_local_platform.forward = pf; _ } ->
-    Printf.printf
-      "  port-forward  %-14s localhost:%d → %s/%s:%d\n%!"
-      pf.name
-      pf.local_port
-      pf.namespace
-      pf.target
-      pf.remote_port;
-    Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context pf
-    |> Result.iter_error
-         (Printf.eprintf "  warning: port-forward %s not started: %s\n%!" pf.name))
+let endpoint_start (e : Sol_cli_local_platform.endpoint) : Sol_cli_local_infra.endpoint =
+  { Sol_cli_local_infra.endpoint_label = e.forward.name
+  ; endpoint_required = e.required
+  ; endpoint_start =
+      (fun () ->
+        Printf.printf
+          "  port-forward  %-14s localhost:%d → %s/%s:%d (waiting for readiness)\n%!"
+          e.forward.name
+          e.forward.local_port
+          e.forward.namespace
+          e.forward.target
+          e.forward.remote_port;
+        Sol_cli_port_forward.ensure_ready
+          ~ctx:Sol_cli_kube_destination.local_context
+          e.forward
+        |> Result.map_error Sol_cli_port_forward.readiness_error_to_string)
+  ; endpoint_stop = (fun () -> Sol_cli_port_forward.stop e.forward.name)
+  }
 ;;
 
-let print_summary ~(req : Sol_cli_workspace.infra_requirements) =
+let print_endpoint_summary endpoints outcomes =
   Printf.printf "\n";
   Printf.printf "  cluster      ✓  %s\n" Sol_cli_local_cluster.name;
   Printf.printf "  registry     ✓  localhost:%d\n" Sol_cli_local_cluster.registry_port;
-  Sol_cli_local_platform.endpoints ~req
-  |> List.iter (fun (e : Sol_cli_local_platform.endpoint) -> print_endline e.summary);
+  List.iter2
+    (fun (e : Sol_cli_local_platform.endpoint) outcome ->
+       match outcome with
+       | Sol_cli_local_infra.Ready -> print_endline e.summary
+       | Sol_cli_local_infra.Optional_unavailable message ->
+         Printf.printf "  %-14s –  optional; not available (%s)\n" e.forward.name message)
+    endpoints
+    outcomes;
   Printf.printf "\n"
+;;
+
+let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
+  let endpoints = Sol_cli_local_platform.endpoints ~req in
+  let* outcomes =
+    endpoints
+    |> List.map endpoint_start
+    |> Sol_cli_local_infra.bring_up_endpoints
+    |> Sol_cli_exit.of_msg
+  in
+  print_endpoint_summary endpoints outcomes;
+  Ok ()
 ;;
 
 let dev_up () =
@@ -157,10 +179,8 @@ let dev_up () =
   let* local = Sol_cli_local_platform.read_assets () |> Sol_cli_exit.of_msg in
   Printf.printf "\n[3/4] Deploying infra...\n%!";
   let* () = deploy_infra ~req ~local in
-  Printf.printf "\n[4/4] Starting port-forwards...\n%!";
-  start_port_forwards ~req;
-  print_summary ~req;
-  Ok ()
+  Printf.printf "\n[4/4] Starting and verifying port-forwards...\n%!";
+  start_port_forwards ~req
 ;;
 
 let dev_down delete_cluster =

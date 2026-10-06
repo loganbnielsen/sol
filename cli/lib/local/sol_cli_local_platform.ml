@@ -224,6 +224,7 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
 
 type endpoint =
   { forward : Sol_cli_port_forward.spec
+  ; required : bool
   ; summary : string
   }
 
@@ -291,8 +292,9 @@ let with_schema_registry_endpoint f =
 ;;
 
 let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
-  let endpoint name ~namespace ~target ~local_port ~remote_port summary =
+  let endpoint ~required name ~namespace ~target ~local_port ~remote_port summary =
     { forward = { Sol_cli_port_forward.name; namespace; target; local_port; remote_port }
+    ; required
     ; summary
     }
   in
@@ -301,13 +303,17 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     if req.kafka
     then
       [ endpoint
+          ~required:req.kafka
           "kafka"
           ~namespace:"redpanda"
           ~target:"pod/redpanda-0"
           ~local_port:9092
           ~remote_port:9094
           "  kafka        ✓  localhost:9092  (port-forwarded)"
-      ; { forward = schema_registry_forward; summary = schema_registry_summary }
+      ; { forward = schema_registry_forward
+        ; required = req.kafka
+        ; summary = schema_registry_summary
+        }
       ]
     else []
   in
@@ -315,6 +321,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     if req.postgres
     then
       [ endpoint
+          ~required:req.postgres
           "postgres"
           ~namespace:"postgresql"
           ~target:"svc/postgresql"
@@ -329,6 +336,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     if grafana
     then
       [ endpoint
+          ~required:req.loki
           "loki"
           ~namespace:"monitoring"
           ~target:"svc/loki"
@@ -336,6 +344,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
           ~remote_port:3100
           "  loki         ✓  http://localhost:3100  (port-forwarded)"
       ; endpoint
+          ~required:grafana
           "grafana"
           ~namespace:"monitoring"
           ~target:"svc/grafana"
@@ -349,6 +358,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     if req.prometheus
     then
       [ endpoint
+          ~required:req.prometheus
           "prometheus"
           ~namespace:"monitoring"
           ~target:"svc/prometheus-server"
@@ -356,6 +366,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
           ~remote_port:80
           "  prometheus   ✓  http://localhost:9090  (port-forwarded)"
       ; endpoint
+          ~required:req.prometheus
           "pushgateway"
           ~namespace:"monitoring"
           ~target:"svc/prometheus-prometheus-pushgateway"
@@ -369,6 +380,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
     if req.tempo
     then
       [ endpoint
+          ~required:req.tempo
           "tempo"
           ~namespace:"monitoring"
           ~target:"svc/tempo"
@@ -376,6 +388,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
           ~remote_port:4318
           "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)"
       ; endpoint
+          ~required:req.tempo
           "tempo-query"
           ~namespace:"monitoring"
           ~target:"svc/tempo"
@@ -387,6 +400,7 @@ let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
   in
   let ingress_endpoints =
     [ endpoint
+        ~required:true
         "ingress"
         ~namespace:"ingress-nginx"
         ~target:"svc/ingress-nginx-controller"

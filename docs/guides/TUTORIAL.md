@@ -80,6 +80,8 @@ Pushgateway     localhost:9091
 
 These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local infra down` tears everything down. Running `sol local infra up` again clears any stale port-forwards first, so repeat runs are safe.
 
+Each forward is observed until the addressed local port is actually owned by it; the command does not print a ready summary just because a supervisor started. If a required endpoint — one of the resources the workspace declares, plus the ingress — does not become ready within Sol's bound, the command names it, prints the forward's log, and exits nonzero, leaving the cluster and its Helm releases in place so you can fix the cause and re-run. Forwards Sol provisions opportunistically, without a corresponding declared requirement, are reported as optional instead of failing the run.
+
 ### Workloads declare their language
 
 `sol.yml`'s `services:` block is where a workload says what it is implemented in. `sol new` records `language: ocaml` for the unit it just generated — it knows what it wrote — and nothing infers a language from a `package.json`, a `dune` file or a directory name (DEC-022 §7). A unit you authored by hand declares it once; `sol check` warns when one has not:

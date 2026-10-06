@@ -123,3 +123,40 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
   then Ok ()
   else Error (describe_failures failed_labels not_started)
 ;;
+
+type endpoint =
+  { endpoint_label : string
+  ; endpoint_required : bool
+  ; endpoint_start : unit -> (unit, string) result
+  ; endpoint_stop : unit -> unit
+  }
+
+type endpoint_outcome =
+  | Ready
+  | Optional_unavailable of string
+
+let endpoint_failure_message (endpoint : endpoint) message =
+  Printf.sprintf
+    "endpoint %s is not ready: %s\n\
+     The local cluster and its Helm releases were left in place. Fix the cause and \
+     re-run `sol local infra up`."
+    endpoint.endpoint_label
+    message
+;;
+
+let bring_up_endpoints endpoints =
+  let rec go started outcomes = function
+    | [] -> Ok (List.rev outcomes)
+    | endpoint :: rest ->
+      (match endpoint.endpoint_start () with
+       | Ok () -> go (endpoint :: started) (Ready :: outcomes) rest
+       | Error message ->
+         if endpoint.endpoint_required
+         then (
+           List.iter (fun (started : endpoint) -> started.endpoint_stop ()) started;
+           endpoint.endpoint_stop ();
+           Error (endpoint_failure_message endpoint message))
+         else go started (Optional_unavailable message :: outcomes) rest)
+  in
+  go [] [] endpoints
+;;

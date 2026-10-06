@@ -169,3 +169,46 @@ let%test "REFAC-139 part F: no endpoints declared" = test_endpoints_nothing_decl
 let%test "REFAC-139 part F: every endpoint" = test_endpoints_everything ()
 let%test "REFAC-139 part F: distinct host ports" = test_endpoint_ports_are_distinct ()
 let%test "REFAC-139 part F: k3d API version" = test_k3d_api_version ()
+
+let required_flags req =
+  Sol_cli_local_platform.endpoints ~req
+  |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.name, e.required)
+;;
+
+let test_required_endpoints () =
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.bool))
+    ~msg:"declared data-plane forwards and ingress are required"
+    [ "kafka", true
+    ; "schema-registry", true
+    ; "postgres", true
+    ; "loki", true
+    ; "grafana", true
+    ; "prometheus", true
+    ; "pushgateway", true
+    ; "tempo", true
+    ; "tempo-query", true
+    ; "ingress", true
+    ]
+    (required_flags (req ~kafka:true ~postgres:true ~observability:true ()));
+  Windtrap.equal
+    (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.bool))
+    ~msg:"an undeclared observability backend is exposed but optional"
+    [ "loki", false
+    ; "grafana", true
+    ; "prometheus", true
+    ; "pushgateway", true
+    ; "ingress", true
+    ]
+    (required_flags
+       { Sol_cli_workspace.kafka = false
+       ; postgres = false
+       ; loki = false
+       ; prometheus = true
+       ; tempo = false
+       })
+;;
+
+let%test "REFAC-139 part F: endpoint requiredness follows declarations" =
+  test_required_endpoints ()
+;;
