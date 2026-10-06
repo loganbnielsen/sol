@@ -60,7 +60,7 @@ mechanism). The alpha rows whose target includes `aws`, and the AWS matrix rows 
 | E6 | Workload cloud authority | I3, F5 | in scope (DEC-062 / `VERIF-021`) |
 | E7 | Scoped identities | I2, I3, I6, F5 | in scope (LIVE completion) |
 | E8 | No ambient token / no leaked secret | F1, F4 | in scope |
-| F1 | Profile preflight | A1–A12 | already `PASS (LIVE, Run 7)`; re-confirm |
+| F1 | Profile preflight | A1–A11 | already `PASS (LIVE, Run 7)`; re-confirm |
 | F2 | Provision + normal deploy | B1 | in scope (the profile row is the one Run 8 did not claim) |
 | F3 | Idempotent re-deploy | B2 | in scope |
 | F4 | Failed deploy + rollback | B4–B6 | in scope |

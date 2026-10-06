@@ -32,7 +32,6 @@ type capability =
   | Alert_delivery
   | Immutable_artifacts
   | Credential_posture
-  | Platform_capacity
   | Workload_availability
   | Postgres_durability
   | Kafka_durability
@@ -46,7 +45,6 @@ let capability_to_string = function
   | Alert_delivery -> "alert_delivery"
   | Immutable_artifacts -> "immutable_artifacts"
   | Credential_posture -> "credential_posture"
-  | Platform_capacity -> "platform_capacity"
   | Workload_availability -> "workload_availability"
   | Postgres_durability -> "postgres_durability"
   | Kafka_durability -> "kafka_durability"
@@ -61,7 +59,6 @@ let capability_description = function
   | Alert_delivery -> "alert delivery to an owner"
   | Immutable_artifacts -> "immutable artifact identity"
   | Credential_posture -> "workload credential posture"
-  | Platform_capacity -> "capacity for the production platform's own components"
   | Workload_availability -> "workload availability"
   | Postgres_durability -> "Postgres durability"
   | Kafka_durability -> "Kafka durability"
@@ -93,6 +90,12 @@ type node_shape =
   ; nodes : int
   }
 
+(* The node-shape sizing contract for Sol's own platform components. The budget
+   is derived from chart defaults Sol does not declare (notably the loki chunks
+   cache), so this is a declared assumption, not an observed property of a
+   target environment: `internal/ci/check_node_shape_fits_platform.py` holds the
+   provider driver defaults against it (FND-0066), and the preflight does not
+   claim it for a target. *)
 let platform_capacity_envelope =
   { largest_pod_vcpu = 2
   ; min_vcpu_per_node = 4
@@ -186,7 +189,6 @@ let requirements Production_single_region uses =
   ; Alert_delivery
   ; Immutable_artifacts
   ; Credential_posture
-  ; Platform_capacity
   ]
   @ List.map guarantee_of_use (List.sort_uniq compare uses)
 ;;
