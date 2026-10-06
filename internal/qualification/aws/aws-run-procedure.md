@@ -190,7 +190,10 @@ transaction through the transport (`transport-transaction.sh`, port-forward to t
 `ClusterIP`). Evidence: `app-transaction.log`, `transport-port-forward.log`,
 `transport-transaction.txt`, `k8s-pods.txt`, `state/cloud.tfstate`. Rows: B1, B3, B4, C1–C6,
 D1, D4, D5, F2, F6–F8. The read-back is the application's own effect — the worker's row
-visible to the service — never broker progress (DEC-039 §5).
+visible to the service — never broker progress (DEC-039 §5). Both paths decide it through
+`transaction.py`: a typed nonempty operation identity and an exact matching read-back entry.
+Textual substring matching cannot establish success, so an empty or malformed response cannot
+be read as the worker's effect.
 
 **`destroy`** — capture both roots' state with `terraform state pull` into the bundle, run
 `sol cloud destroy <target> --apply`, then the independent inventory. **`verify`** runs the

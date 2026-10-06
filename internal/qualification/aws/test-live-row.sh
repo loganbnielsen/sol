@@ -358,7 +358,7 @@ printf 'curl %s\n' "$*" >>"$CURL_LOG"
 case "$*" in
   *"/health"*) printf 'ok\n' ;;
   *"-X POST"*"/charges"*) printf '{"id":"ch_qual01"}\n' ;;
-  *"/notifications"*) printf '[{"id":"ch_qual01"}]\n' ;;
+  *"/notifications"*) printf '[{"charge_id":"ch_qual01"}]\n' ;;
   *"-X POST"*"/orders"*)
     body=""
     while [ $# -gt 0 ]; do
@@ -374,10 +374,12 @@ case "$*" in
     printf '{"order_id":"%s","status":"accepted"}\n' "$id"
     ;;
   *"/orders/"*)
+    url="${!#}"
+    id="${url##*/}"
     if [ "${STUB_ORDER_STATUS:-fulfilled}" = accepted ]; then
-      printf '{"status":"accepted"}\n'
+      printf '{"order_id":"%s","status":"accepted"}\n' "$id"
     else
-      printf '{"status":"fulfilled"}\n'
+      printf '{"order_id":"%s","status":"fulfilled"}\n' "$id"
     fi
     ;;
   *) printf '{}\n' ;;
