@@ -68,8 +68,7 @@ module For_testing : sig
     -> Response.t
 
   val workload_identity_config
-    :  trusted_issuer:string option
-    -> Route.t list
+    :  Route.t list
     -> Auth.level
     -> (Auth.workload_identity_config option, run_error) result
 
