@@ -226,12 +226,12 @@ check_absent \
 
 OIDC_ISSUER_UNAVAILABLE=1 run_deploy prod/aws/us-east-1 --image-ref "$image_ref"
 check_contains \
-  "an unavailable issuer is surfaced to the operator" \
-  "internal routes will fail closed at startup" \
-  "$output"
-check_absent \
-  "issuer absence is surfaced as a warning instead of a deployment refusal" \
+  "an unavailable issuer refuses an svc deployment" \
   "error: could not establish the target's trusted Kubernetes workload issuer:" \
+  "$output"
+check_contains \
+  "the refusal explains the target capability requirement" \
+  "deployments containing a svc require a target that establishes workload identity" \
   "$output"
 
 run_deploy prod/aws/us-east-1 --image-ref "$image_ref" --dry-run

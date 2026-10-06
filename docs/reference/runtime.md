@@ -270,9 +270,10 @@ workload identity by default. `Route.external_ route` exempts a route from that
 Sol authentication boundary only; application authentication remains the
 handler/framework's responsibility.
 
-If a target driver cannot establish an issuer, deploy warns and omits that
-projection. An internal route then fails service startup; an external-only
-service can still start without a Sol workload issuer.
+If a target driver cannot establish an issuer, deployment containing any `svc`
+fails. Sol does not currently distinguish services that need internal workload
+authentication from those that do not, so every `svc` requires a target that
+establishes workload identity.
 
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
