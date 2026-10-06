@@ -22,17 +22,17 @@ depends: [
 # Track Sol main during development. Use published versions for reproducible
 # builds, then remove this block.
 pin-depends: [
-  [ "sol-runtime.dev"       "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-env.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-obs.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "kafka-eio-service.dev" "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-svc.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-svc-core.dev"      "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-worker.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-fn.dev"            "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-jobs.dev"          "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-outbox.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
-  [ "sol-retry.dev"         "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-runtime.dev"       "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-env.dev"           "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-obs.dev"           "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "kafka-eio-service.dev" "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-svc.dev"           "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-svc-core.dev"      "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-worker.dev"        "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-fn.dev"            "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-jobs.dev"          "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-outbox.dev"        "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "sol-retry.dev"         "git+https://github.com/sol-fab/sol.git#main" ]
 
   # opam does not apply pins transitively. Keep source pins for dependencies
   # not yet published at the versions required by this workspace.

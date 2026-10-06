@@ -16,8 +16,8 @@ manifests and the same commands; only the destination differs.
 
 ```bash
 # Linux x86_64 — replace vX.Y.Z with the latest release:
-# https://github.com/loganbnielsen/sol/releases
-curl -L https://github.com/loganbnielsen/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
+# https://github.com/sol-fab/sol/releases
+curl -L https://github.com/sol-fab/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
 export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"
 
 sol assets        # check the install: where this sol's assets come from, and that each is there

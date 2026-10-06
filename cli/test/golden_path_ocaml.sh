@@ -46,9 +46,9 @@ sed -i '/^schedule = /a scheduled_concurrency = "forbid"\nbackoff_limit = 5' \
 # A change to an API used by the scaffold, such as `Fn.trigger`,
 # could never pass. Build against the commit under test instead.
 internal_ci_pin_ref="${SOL_FRAMEWORK_REF:-$(git rev-parse HEAD)}"
-grep -rl 'loganbnielsen/sol.git#main' --include='*.opam' . \
-  | xargs -r sed -i "s|loganbnielsen/sol.git#main|loganbnielsen/sol.git#${internal_ci_pin_ref}|g"
-if grep -rq 'loganbnielsen/sol.git#main' --include='*.opam' .; then
+grep -rl 'sol-fab/sol.git#main' --include='*.opam' . \
+  | xargs -r sed -i "s|sol-fab/sol.git#main|sol-fab/sol.git#${internal_ci_pin_ref}|g"
+if grep -rq 'sol-fab/sol.git#main' --include='*.opam' .; then
   echo "::error::scaffolded workspace still pins sol.git#main"; exit 1
 fi
 

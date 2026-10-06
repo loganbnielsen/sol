@@ -38,7 +38,7 @@ fi
 rm -f "$tmp/prose.md"
 
 run_id="356549406961"
-printf 'run https://github.com/loganbnielsen/sol/actions/runs/%s in us-east-1\n' \
+printf 'run https://github.com/sol-fab/sol/actions/runs/%s in us-east-1\n' \
   "$run_id" >"$tmp/numbers.md"
 printf 'timestamp %s sha a1b2c3d4e5f6 %s\n' "$bare_id" "$run_id" >>"$tmp/numbers.md"
 git -C "$tmp" add -A

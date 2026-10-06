@@ -11,7 +11,7 @@
 | Tag | `v0.1.0-alpha.7` → `f4284422…` (not moved afterwards) | `git ls-remote --tags origin v0.1.0-alpha.7` |
 | Release workflow | run `37210258576` (tag push, failed at the publish step), run `37212693146` (resume, all steps green) | `gh run list --workflow=release.yml` |
 | Re-publish control | run `37213192587`, refused in its second step | `gh run view --job … --log-failed` |
-| Release | `https://github.com/loganbnielsen/sol/releases/tag/v0.1.0-alpha.7`, published `2026-10-04T15:28:09Z` | `gh release view` |
+| Release | `https://github.com/sol-fab/sol/releases/tag/v0.1.0-alpha.7`, published `2026-10-04T15:28:09Z` | `gh release view` |
 | Release asset | `sol-v0.1.0-alpha.7-linux-x86_64.tar.gz`, 9812981 bytes, `uploaded` | `gh release view --json assets` |
 | Archive SHA-256 (as downloaded) | `f7b34b0510d9fde9e364cb7aeeab770df4dbaccff3dfa15fd1b16bc6d3230d92` | `sha256sum` in the clean directory |
 | Sol bundle version | `v0.1.0-alpha.7` | `sol --version` under the installed prefix |
@@ -41,7 +41,7 @@
 
 ```console
 $ cd /tmp/clean-user/release            # no checkout; SOL_HOME unset
-$ curl -sSL https://github.com/loganbnielsen/sol/releases/download/v0.1.0-alpha.7/sol-v0.1.0-alpha.7-linux-x86_64.tar.gz -o sol-v0.1.0-alpha.7-linux-x86_64.tar.gz
+$ curl -sSL https://github.com/sol-fab/sol/releases/download/v0.1.0-alpha.7/sol-v0.1.0-alpha.7-linux-x86_64.tar.gz -o sol-v0.1.0-alpha.7-linux-x86_64.tar.gz
 $ sha256sum sol-v0.1.0-alpha.7-linux-x86_64.tar.gz
 f7b34b0510d9fde9e364cb7aeeab770df4dbaccff3dfa15fd1b16bc6d3230d92  sol-v0.1.0-alpha.7-linux-x86_64.tar.gz
 $ tar xzf sol-v0.1.0-alpha.7-linux-x86_64.tar.gz
@@ -154,7 +154,7 @@ interrupted publish.** The first run (`37210258576`) built the binary, pushed
 installed-release smoke, then failed at `gh release create`:
 
 ```console
-HTTP 422: Validation Failed (https://api.github.com/repos/loganbnielsen/sol/releases)
+HTTP 422: Validation Failed (https://api.github.com/repos/sol-fab/sol/releases)
 body is too long (maximum is 125000 characters)
 ```
 
