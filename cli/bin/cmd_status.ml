@@ -135,7 +135,7 @@ let print_observability_lines ~backend ~explicit_loki_url ~explicit_prometheus_u
       ~signal:Sol_cli_status.Loki
       ~backend
       ~explicit_url:explicit_loki_url
-      ~default_local_url:"http://localhost:3100"
+      ~default_local_url:(Sol_cli_manifest.local_url Sol_cli_manifest.loki_host_port)
       ~probe_path:"/ready"
   in
   let metrics =
@@ -143,7 +143,8 @@ let print_observability_lines ~backend ~explicit_loki_url ~explicit_prometheus_u
       ~signal:Sol_cli_status.Prometheus
       ~backend
       ~explicit_url:explicit_prometheus_url
-      ~default_local_url:"http://localhost:9090"
+      ~default_local_url:
+        (Sol_cli_manifest.local_url Sol_cli_manifest.prometheus_host_port)
       ~probe_path:"/-/healthy"
   in
   Printf.printf "  %-8s %s\n  %-8s %s\n%!" "logs" logs "metrics" metrics

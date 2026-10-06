@@ -30,7 +30,11 @@ let prometheus_datasource_yaml ~namespace =
     ; "access", Y.string "proxy"
     ; ( "url"
       , Y.string
-          (Printf.sprintf "http://prometheus-server.%s.svc.cluster.local:80" namespace) )
+          (Sol_cli_manifest.service_url
+             ~scheme:"http"
+             ~namespace
+             ~name:Sol_cli_manifest.prometheus_service
+             ~port:Sol_cli_manifest.prometheus_service_port) )
     ; "isDefault", Y.bool false
     ]
 ;;
@@ -85,7 +89,12 @@ let tempo_datasource_yaml =
     ; "type", Y.string "tempo"
     ; "access", Y.string "proxy"
     ; "uid", Y.string tempo_datasource_uid
-    ; "url", Y.string "http://tempo:3200"
+    ; ( "url"
+      , Y.string
+          (Printf.sprintf
+             "http://%s:%d"
+             Sol_cli_manifest.tempo_service
+             Sol_cli_manifest.tempo_query_port) )
     ; "isDefault", Y.bool false
     ]
 ;;
@@ -103,7 +112,12 @@ let loki_datasource_yaml =
     [ "name", Y.string "Loki"
     ; "type", Y.string "loki"
     ; "access", Y.string "proxy"
-    ; "url", Y.string "http://loki:3100"
+    ; ( "url"
+      , Y.string
+          (Printf.sprintf
+             "http://%s:%d"
+             Sol_cli_manifest.loki_service
+             Sol_cli_manifest.loki_service_port) )
     ; "isDefault", Y.bool false
     ; ( "jsonData"
       , Y.map
@@ -230,7 +244,11 @@ let alloy_values_yaml ~assets =
     render_alloy_config
       ~assets
       ~taxonomy_labels:[ "workspace"; "env"; "domain"; "service"; "primitive"; "release" ]
-      ~loki_push_url:"http://loki:3100/loki/api/v1/push"
+      ~loki_push_url:
+        (Printf.sprintf
+           "http://%s:%d/loki/api/v1/push"
+           Sol_cli_manifest.loki_service
+           Sol_cli_manifest.loki_service_port)
       ~loki_push_basic_auth_username:""
       ~loki_push_basic_auth_password:""
   in

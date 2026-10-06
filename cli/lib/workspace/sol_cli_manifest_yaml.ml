@@ -814,7 +814,7 @@ let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
       [ ( "from"
         , Y.list
             [ namespace_selector "ingress-nginx"
-            ; namespace_selector "monitoring"
+            ; namespace_selector Sol_cli_manifest_cluster_env.monitoring_namespace
             ; Y.map [ "podSelector", Y.map [] ]
             ] )
       ]
@@ -840,7 +840,7 @@ let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
         , Y.list
             [ namespace_selector "redpanda"
             ; namespace_selector "postgresql"
-            ; namespace_selector "monitoring"
+            ; namespace_selector Sol_cli_manifest_cluster_env.monitoring_namespace
             ] )
       ]
   in

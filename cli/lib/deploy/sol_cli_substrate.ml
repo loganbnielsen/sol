@@ -1,5 +1,11 @@
 let reserved_platform_namespaces =
-  [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
+  [ "cert-manager"
+  ; "ingress-nginx"
+  ; "argocd"
+  ; "redpanda"
+  ; Sol_cli_manifest.monitoring_namespace
+  ; "postgresql"
+  ]
 ;;
 
 let namespaces (plan : Sol_cli_deployment_plan.t) : string list =

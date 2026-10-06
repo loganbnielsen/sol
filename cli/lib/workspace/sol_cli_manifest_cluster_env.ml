@@ -28,6 +28,41 @@ let kafka_brokers = "redpanda.redpanda.svc.cluster.local:9093"
 let schema_registry_host = "redpanda.redpanda.svc.cluster.local:8081"
 let redpanda_admin_host = "redpanda.redpanda.svc.cluster.local:9644"
 
+(* The platform's observability endpoints. The monitoring namespace, the chart
+   service names and their ports are one durable contract: the workload cluster
+   env, the local platform's port-forwards, the Grafana datasources, the status
+   guidance and the deploy-event join all describe the same services. Declare
+   them once here. `*_host_port` is the CLI's local port-forward convention, not
+   a cluster fact. *)
+let monitoring_namespace = "monitoring"
+let loki_service = "loki"
+let loki_service_port = 3100
+let loki_host_port = 3100
+let grafana_service = "grafana"
+let grafana_service_port = 80
+let grafana_host_port = 3000
+let prometheus_service = "prometheus-server"
+let prometheus_service_port = 80
+let prometheus_host_port = 9090
+let pushgateway_service = "prometheus-prometheus-pushgateway"
+let pushgateway_service_port = 9091
+let pushgateway_host_port = 9091
+let tempo_service = "tempo"
+let tempo_query_port = 3200
+let tempo_query_host_port = 3200
+let tempo_otlp_port = 4318
+let tempo_otlp_host_port = 4318
+
+let service_host ~namespace ~name =
+  Printf.sprintf "%s.%s.svc.cluster.local" name namespace
+;;
+
+let service_url ~scheme ~namespace ~name ~port =
+  Printf.sprintf "%s://%s:%d" scheme (service_host ~namespace ~name) port
+;;
+
+let local_url port = Printf.sprintf "http://localhost:%d" port
+
 let kafka_posture_env = function
   | Plaintext -> [ "KAFKA_SECURITY_PROTOCOL", "plaintext" ]
   | Sasl_ssl ->
@@ -48,10 +83,24 @@ let cluster_env transport =
   @ [ "KAFKA_BROKERS", kafka_brokers
     ; "SCHEMA_REGISTRY_URL", Printf.sprintf "%s://%s" scheme schema_registry_host
     ; "REDPANDA_ADMIN_URL", Printf.sprintf "%s://%s" scheme redpanda_admin_host
-    ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"
+    ; ( "LOKI_URL"
+      , service_url
+          ~scheme:"http"
+          ~namespace:monitoring_namespace
+          ~name:loki_service
+          ~port:loki_service_port )
     ; ( "PUSHGATEWAY_URL"
-      , "http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091" )
-    ; "TEMPO_URL", "http://tempo.monitoring.svc.cluster.local:4318"
+      , service_url
+          ~scheme:"http"
+          ~namespace:monitoring_namespace
+          ~name:pushgateway_service
+          ~port:pushgateway_service_port )
+    ; ( "TEMPO_URL"
+      , service_url
+          ~scheme:"http"
+          ~namespace:monitoring_namespace
+          ~name:tempo_service
+          ~port:tempo_otlp_port )
     ]
 ;;
 

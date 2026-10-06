@@ -52,20 +52,22 @@ let install_local_grafana_config ~dashboards ~prometheus ~tempo =
   let* () = apply_yaml dashboards in
   let* () =
     apply_yaml
-      (Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring")
+      (Sol_cli_dev_observability.loki_datasource_configmap_yaml
+         ~namespace:Sol_cli_manifest.monitoring_namespace)
   in
   let* () =
     if prometheus
     then
       apply_yaml
         (Sol_cli_dev_observability.prometheus_datasource_configmap_yaml
-           ~namespace:"monitoring")
+           ~namespace:Sol_cli_manifest.monitoring_namespace)
     else Ok ()
   in
   if tempo
   then
     apply_yaml
-      (Sol_cli_dev_observability.tempo_datasource_configmap_yaml ~namespace:"monitoring")
+      (Sol_cli_dev_observability.tempo_datasource_configmap_yaml
+         ~namespace:Sol_cli_manifest.monitoring_namespace)
   else Ok ()
 ;;
 

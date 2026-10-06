@@ -93,8 +93,20 @@ let signal_flag = function
 ;;
 
 let signal_port_forward = function
-  | Loki -> "kubectl port-forward -n monitoring svc/loki 3100:3100"
-  | Prometheus -> "kubectl port-forward -n monitoring svc/prometheus-server 9090:80"
+  | Loki ->
+    Printf.sprintf
+      "kubectl port-forward -n %s svc/%s %d:%d"
+      Sol_cli_manifest.monitoring_namespace
+      Sol_cli_manifest.loki_service
+      Sol_cli_manifest.loki_host_port
+      Sol_cli_manifest.loki_service_port
+  | Prometheus ->
+    Printf.sprintf
+      "kubectl port-forward -n %s svc/%s %d:%d"
+      Sol_cli_manifest.monitoring_namespace
+      Sol_cli_manifest.prometheus_service
+      Sol_cli_manifest.prometheus_host_port
+      Sol_cli_manifest.prometheus_service_port
 ;;
 
 let not_configured_message ~signal ~backend =

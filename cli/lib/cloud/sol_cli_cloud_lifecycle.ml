@@ -292,7 +292,8 @@ type authorization =
   | Forbidden
 
 let provisioner_authorization_checks =
-  [ Required, [ "create"; "deployments.apps"; "-n"; "monitoring" ]
+  [ ( Required
+    , [ "create"; "deployments.apps"; "-n"; Sol_cli_manifest.monitoring_namespace ] )
   ; Required, [ "create"; "services"; "-n"; "ingress-nginx" ]
   ; Required, [ "create"; "customresourcedefinitions.apiextensions.k8s.io" ]
   ; Required, [ "create"; "storageclasses.storage.k8s.io" ]
