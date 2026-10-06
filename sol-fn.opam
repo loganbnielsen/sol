@@ -5,8 +5,8 @@ synopsis: "Sol's scheduled-function application shape"
 authors: "Logan Nielsen"
 maintainer: "Logan Nielsen <lbendtlynielsen@gmail.com>"
 license: "Apache-2.0"
-homepage: "https://github.com/loganbnielsen/sol"
-bug-reports: "https://github.com/loganbnielsen/sol/issues"
+homepage: "https://github.com/sol-fab/sol"
+bug-reports: "https://github.com/sol-fab/sol/issues"
 depends: [
   "ocaml" {>= "5.4.0"}
   "dune" {>= "3.0"}

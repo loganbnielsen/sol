@@ -37,8 +37,8 @@ The hand-built reference for the TypeScript path is
 Install `sol` (Linux x86_64) — download the self-contained release bundle:
 
 ```bash
-# Replace vX.Y.Z with the latest version from https://github.com/loganbnielsen/sol/releases
-curl -L https://github.com/loganbnielsen/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz \
+# Replace vX.Y.Z with the latest version from https://github.com/sol-fab/sol/releases
+curl -L https://github.com/sol-fab/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz \
   | tar xz
 export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
 sol assets                                # where this sol's assets come from, and that each is there
