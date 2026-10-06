@@ -92,7 +92,7 @@ let checkout_quote ~env ~sw ~obs req =
 
 let routes ~env ~sw ~obs pool =
   [ Route.external_ (Route.get "/health" (fun _req -> Response.ok "ok"))
-  ; Route.get "/checkout-quote" (checkout_quote ~env ~sw ~obs)
+  ; Route.external_ (Route.get "/checkout-quote" (checkout_quote ~env ~sw ~obs))
   ; Route.external_ (Route.post "/charges" (handle_charge pool))
   ; Route.external_ (Route.get "/notifications" (list_notifications pool))
   ]
