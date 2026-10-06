@@ -196,7 +196,15 @@ case "\$1 \$2" in
     printf 'export AWS_ACCESS_KEY_ID=AKIAEXAMPLE\n'
     printf 'export AWS_SECRET_ACCESS_KEY=example-secret\n'
     ;;
-  "eks describe-cluster"|"eks describe-addon")
+  "eks describe-cluster")
+    case " \$* " in
+      *" --query cluster.identity.oidc.issuer "*)
+        printf 'https://oidc.eks.us-east-1.amazonaws.com/id/FIRST-RUN\n'
+        ;;
+      *) printf 'ACTIVE\n' ;;
+    esac
+    ;;
+  "eks describe-addon")
     printf 'ACTIVE\n'
     ;;
   "iam get-role")
