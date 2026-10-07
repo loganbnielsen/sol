@@ -10,8 +10,28 @@ export TARGET="${TARGET:-qual/gcp/us-central1}"
 
 SCRATCH_WS="$TMP/workspace"
 TARGET_FILE="$SCRATCH_WS/sol/environments.local.yml"
-mkdir -p "$SCRATCH_WS/sol"
+mkdir -p "$SCRATCH_WS/sol" "$SCRATCH_WS/app/payments/orders_svc" \
+  "$SCRATCH_WS/app/comms/fulfilment_worker" "$SCRATCH_WS/app/demo_ts/order_svc" \
+  "$SCRATCH_WS/app/demo_ts/fulfillment_worker"
 printf 'project: scratch\n' >"$SCRATCH_WS/sol.yml"
+for unit in app/payments/orders_svc app/comms/fulfilment_worker app/demo_ts/order_svc \
+  app/demo_ts/fulfillment_worker; do
+  printf 'FROM scratch\n' >"$SCRATCH_WS/$unit/Dockerfile"
+done
+cat >"$SCRATCH_WS/pluto.opam" <<'OPAM'
+opam-version: "2.0"
+pin-depends: [
+  [ "sol-svc.dev"           "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "kafka-eio-service.dev" "git+https://github.com/sol-fab/sol.git#main" ]
+]
+OPAM
+# The workspace is the candidate's tree: a live run binds the application it
+# builds to the revision the release names, and to no other (sol-fab/sol#1280).
+git -C "$SCRATCH_WS" init -q
+git -C "$SCRATCH_WS" add -A
+git -c user.name=qualification -c user.email=qualification@example.invalid \
+  -C "$SCRATCH_WS" commit -qm "the candidate revision"
+CANDIDATE_REVISION="$(git -C "$SCRATCH_WS" rev-parse HEAD)"
 cleanup() {
   rm -f "$TARGET_FILE"
   rmdir "$(dirname "$TARGET_FILE")" 2>/dev/null || true
@@ -129,6 +149,7 @@ STUB
 
 bundle "$INSTALL"
 printf '%s\n' "$RUNNER" >"$INSTALL/share/sol/$VERSION/migration-runner-image"
+printf '%s\n' "$CANDIDATE_REVISION" >"$INSTALL/share/sol/$VERSION/REVISION"
 
 TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
 bundle "$TAG_RUNNER_INSTALL"
@@ -724,9 +745,17 @@ STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-ok app
 mv "$TMP/bin/curl.delegation" "$TMP/bin/curl"
 is "the app phase exits 0 when every step succeeds" "$(cat "$TMP/app-ok.rc")" "0"
 has "it builds each image from that service's own Dockerfile" \
-  "docker build -f app/payments/orders_svc/Dockerfile" "$DOCKER_LOG"
+  "docker build -f $TMP/app-ok.logs/app-build-context/app/payments/orders_svc/Dockerfile" "$DOCKER_LOG"
 has "including the TypeScript namespace's service from its own Dockerfile" \
-  "docker build -f app/demo_ts/order_svc/Dockerfile" "$DOCKER_LOG"
+  "docker build -f $TMP/app-ok.logs/app-build-context/app/demo_ts/order_svc/Dockerfile" "$DOCKER_LOG"
+has "and builds from the candidate revision's context, not the checkout" \
+  " $TMP/app-ok.logs/app-build-context" "$DOCKER_LOG"
+present "$TMP/app-ok.logs/candidate-binding.txt" \
+  "the run records the revision it bound the build to"
+has "and that revision is the candidate's" \
+  "candidate_revision: $CANDIDATE_REVISION" "$TMP/app-ok.logs/candidate-binding.txt"
+lacks "so no pin reaches the build from a moving ref" \
+  "#main" "$TMP/app-ok.logs/candidate-binding.txt"
 has "and pushes it into the target's Artifact Registry under the workspace's name" \
   "docker push us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/orders-svc:qual-" "$DOCKER_LOG"
 has "and the TypeScript namespace's image too" \

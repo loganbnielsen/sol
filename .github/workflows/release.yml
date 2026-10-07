@@ -5,6 +5,9 @@
 #   v<version> candidate (draft, unpublished)
 #   ├── bin/sol                       built with SOL_RELEASE_VERSION=<version>
 #   ├── share/sol/<version>/platform  this tag's platform/ tree
+#   ├── share/sol/<version>/REVISION  the revision this candidate was built from,
+#   │                                 so a live run can bind the application it
+#   │                                 builds to this candidate and no other
 #   ├── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
 #   │                                 the same binary, published once
 #   ├── candidate.json                the candidate identity: revision, bundle
@@ -153,6 +156,7 @@ jobs:
         run: |
           archive="$(internal/tooling/scripts/build-release-bundle.sh \
             --version "$VERSION" \
+            --revision "${{ steps.revision.outputs.revision }}" \
             --runner-image "${{ steps.runner.outputs.image }}" \
             --binary "$RUNNER_TEMP/runner/sol" \
             --support-refs support-refs.txt \
