@@ -10,7 +10,15 @@
 (test
  (name test_declared_ca)
  (modules test_declared_ca)
- (libraries kafka_eio_service eio_main tls-eio x509 windtrap yojson unix)
+ (libraries
+  kafka_eio_service
+  eio_main
+  tls-eio
+  x509
+  mirage-crypto-rng.unix
+  windtrap
+  yojson
+  unix)
  (deps
   (source_tree fixtures)))
 

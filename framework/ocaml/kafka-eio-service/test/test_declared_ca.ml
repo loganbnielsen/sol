@@ -6,6 +6,9 @@
    fixture in fixtures/ (CN=localhost, SAN localhost, absent from the system
    store). *)
 
+(* The TLS handshake needs the RNG seeded; do it before any server or client
+   fiber runs, rather than relying on whichever side gets there first. *)
+let () = Mirage_crypto_rng_unix.use_default ()
 let read_file path = In_channel.with_open_bin path In_channel.input_all
 
 module Event = struct
@@ -28,7 +31,8 @@ module Event = struct
 end
 
 (* A TLS registry mock: performs the handshake with the fixture certificate and
-   answers any request with a compatible-schema body. *)
+   answers any request with a compatible-schema body. It listens on both
+   loopback families, because `localhost` may resolve to either one. *)
 let with_private_ca_registry env f =
   Eio.Switch.run
   @@ fun sw ->
@@ -39,44 +43,57 @@ let with_private_ca_registry env f =
   let server_config =
     Result.get_ok (Tls.Config.server ~certificates:(`Single ([ cert ], key)) ())
   in
-  let socket =
-    Eio.Net.listen ~backlog:5 ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  let body = {|{"is_compatible":true}|} in
+  let serve conn =
+    try
+      let flow = Tls_eio.server_of_flow server_config conn in
+      let ic = Eio.Buf_read.of_flow flow ~max_size:(256 * 1024) in
+      ignore (Eio.Buf_read.line ic);
+      let rec skip_headers () =
+        if Eio.Buf_read.line ic = "" then () else skip_headers ()
+      in
+      skip_headers ();
+      let response =
+        Printf.sprintf
+          "HTTP/1.1 200 OK\r\n\
+           Content-Type: application/json\r\n\
+           Content-Length: %d\r\n\
+           Connection: close\r\n\
+           \r\n\
+           %s"
+          (String.length body)
+          body
+      in
+      Eio.Buf_write.with_flow flow (fun oc -> Eio.Buf_write.string oc response);
+      Eio.Flow.close flow
+    with
+    | _ -> ()
   in
+  let accept_loop socket =
+    let rec loop () =
+      match Eio.Net.accept ~sw socket with
+      | conn, _addr ->
+        serve conn;
+        loop ()
+      | exception _ -> ()
+    in
+    loop ()
+  in
+  let v4 = Eio.Net.listen ~backlog:5 ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0)) in
   let port =
-    match Eio.Net.listening_addr socket with
+    match Eio.Net.listening_addr v4 with
     | `Tcp (_, port) -> port
     | _ -> failwith "unexpected address family"
   in
-  let body = {|{"is_compatible":true}|} in
+  let listeners =
+    match
+      Eio.Net.listen ~backlog:5 ~sw env#net (`Tcp (Eio.Net.Ipaddr.V6.loopback, port))
+    with
+    | v6 -> [ v4; v6 ]
+    | exception _ -> [ v4 ]
+  in
   Eio.Fiber.fork_daemon ~sw (fun () ->
-    Eio.Net.accept_fork
-      ~sw
-      socket
-      ~on_error:(fun _ -> ())
-      (fun conn _addr ->
-         try
-           let flow = Tls_eio.server_of_flow server_config conn in
-           let ic = Eio.Buf_read.of_flow flow ~max_size:(256 * 1024) in
-           ignore (Eio.Buf_read.line ic);
-           let rec skip_headers () =
-             if Eio.Buf_read.line ic = "" then () else skip_headers ()
-           in
-           skip_headers ();
-           let response =
-             Printf.sprintf
-               "HTTP/1.1 200 OK\r\n\
-                Content-Type: application/json\r\n\
-                Content-Length: %d\r\n\
-                Connection: close\r\n\
-                \r\n\
-                %s"
-               (String.length body)
-               body
-           in
-           Eio.Buf_write.with_flow flow (fun oc -> Eio.Buf_write.string oc response);
-           Eio.Flow.close flow
-         with
-         | _ -> ());
+    Eio.Fiber.all (List.map (fun socket () -> accept_loop socket) listeners);
     `Stop_daemon);
   f ~port
 ;;
