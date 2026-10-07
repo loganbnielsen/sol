@@ -28,9 +28,6 @@ on:
 
 permissions:
   contents: write
-  # Read-only lookup of the recorded migration-runner digest; promotion never
-  # pushes or republishes the image.
-  packages: read
 
 concurrency:
   group: promote-release-${{ inputs.version }}
@@ -81,13 +78,12 @@ jobs:
             --candidate "$RUNNER_TEMP/candidate/candidate.json" \
             --dir "$RUNNER_TEMP/candidate"
 
-      # The migration-runner digest is part of the candidate identity too. Read
-      # access is enough: this resolves the exact recorded digest and never
-      # rebuilds, republishes, or accepts a tag in its place.
-      - name: Log in to GHCR for the recorded runner lookup
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Establish that the recorded migration runner still resolves
+      # The migration-runner digest is part of the candidate identity too, and a
+      # fresh cluster must still be able to pull it by that digest with no
+      # registry credential. The check reads anonymously, exactly as candidate
+      # construction did, so promotion cannot pass a runner a clean cluster would
+      # be denied; it never rebuilds, republishes, or accepts a tag in its place.
+      - name: Establish that a fresh cluster can still pull the recorded runner
         run: |
           internal/tooling/release/verify_runner_image.sh \
             "$RUNNER_TEMP/candidate/candidate.json"
