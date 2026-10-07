@@ -38,7 +38,7 @@ charge="${STUB_CHARGE-}"
 notifications="${STUB_NOTIFICATIONS-}"
 [ -n "$notifications" ] || notifications='[{"charge_id":"ch_1"}]'
 case "$*" in
-  *"/health"*) printf '%s\n' "${STUB_HEALTH:-ok}" ;;
+  *"/healthz"*) printf '%s\n' "${STUB_HEALTH:-ok}" ;;
   *" -X POST "*"/charges"*) printf '%s\n' "$charge" ;;
   *"/notifications"*) printf '%s\n' "$notifications" ;;
   *" -X POST "*"/orders"*)

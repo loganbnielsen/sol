@@ -67,7 +67,10 @@ URL="http://127.0.0.1:$port"
   printf 'local endpoint: %s (resolved by the port-forward, never assumed)\n' "$URL"
 } >"$TRANSCRIPT" 2>&1
 
-health="$(curl -fsS -m 10 "$URL/health" 2>&1)" || fail "the service health endpoint was unreachable through the transport"
+# The runtime declares its operational endpoints in
+# framework/ocaml/sol-svc/lib/service.ml: `/healthz` and `/readyz`. Probes here
+# must name that endpoint rather than a path the service never serves.
+health="$(curl -fsS -m 10 "$URL/healthz" 2>&1)" || fail "the service health endpoint was unreachable through the transport"
 printf 'health: %s\n' "$health" >>"$TRANSCRIPT"
 
 run_charges() {

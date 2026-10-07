@@ -1234,10 +1234,10 @@ app_orders_transaction() {
   local forwarder=$!
   local attempts="${APP_READBACK_ATTEMPTS:-12}" interval="${APP_READBACK_INTERVAL:-5}"
   local attempt=0
-  until curl -fsS -m 5 "localhost:$port/health" >"$LOG_DIR/app-health-$label.txt" 2>&1; do
+  until curl -fsS -m 5 "localhost:$port/healthz" >"$LOG_DIR/app-health-$label.txt" 2>&1; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge "$attempts" ]; then
-      say "  $label: the service never answered /health over the port-forward"
+      say "  $label: the service never answered /healthz over the port-forward"
       kill "$forwarder" 2>/dev/null || true
       return 1
     fi
