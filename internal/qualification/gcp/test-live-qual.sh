@@ -823,7 +823,8 @@ export DOCKER_LOG="$TMP/app-stall.docker"
 STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case app-stall app \
   APP_READBACK_ATTEMPTS=2 APP_READBACK_INTERVAL=1
 mv "$TMP/bin/curl.orders" "$TMP/bin/curl"
-refused app-stall "a read-back that never reaches fulfilled fails the phase"
+is "a read-back that never reaches fulfilled fails the phase" \
+  "$(cat "$TMP/app-stall.rc")" 1
 lacks "and no alpha row is recorded as run" "$(printf 'B1\trun')" \
   "$TMP/app-stall.logs/alpha-rows.txt"
 has "the failure names the order that never completed" "never reached fulfilled or confirmed" \
