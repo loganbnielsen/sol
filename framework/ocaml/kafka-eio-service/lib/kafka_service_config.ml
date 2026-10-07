@@ -7,6 +7,11 @@ let setting name =
      | trimmed -> Some trimmed)
 ;;
 
+(* The deployment's declared trust root for Sol-managed HTTPS endpoints behind
+   the private CA: the same KAFKA_SSL_CA_LOCATION Sol projects for the Kafka
+   transport. Optional — when unset the system store is used. *)
+let declared_ca_file () = setting "KAFKA_SSL_CA_LOCATION"
+
 let of_env () =
   let env_or name default = Option.value (setting name) ~default in
   let required = [ "KAFKA_BROKERS"; "SCHEMA_REGISTRY_URL"; "REDPANDA_ADMIN_URL" ] in

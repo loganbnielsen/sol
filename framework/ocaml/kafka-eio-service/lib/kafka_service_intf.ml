@@ -151,9 +151,10 @@ let decode_topic_partitions body =
   | _ -> Error malformed
 ;;
 
-let query_topic_partitions net ~clock ~admin_url ~topic_name =
+let query_topic_partitions ?ca_file net ~clock ~admin_url ~topic_name =
   match
     Kafka_service_http.http_get
+      ?ca_file
       net
       ~clock
       ~base_url:admin_url

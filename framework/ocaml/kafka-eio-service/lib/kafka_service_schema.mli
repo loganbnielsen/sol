@@ -5,14 +5,16 @@ type compatibility = Confluent_registry.compatibility =
 
 module Schema : sig
   val check
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module Kafka_service_intf.MESSAGE)
     -> (unit, string) result
 
   val check_all
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module Kafka_service_intf.MESSAGE) list
@@ -20,7 +22,8 @@ module Schema : sig
 end
 
 val register_contract
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string

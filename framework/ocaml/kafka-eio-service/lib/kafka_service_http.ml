@@ -15,7 +15,7 @@ type request =
       ; body_request : body_request
       }
 
-let http_do net ~clock request =
+let http_do ?ca_file net ~clock request =
   let meth, url, headers, body =
     match request with
     | Get { base_url; path } ->
@@ -32,6 +32,7 @@ let http_do net ~clock request =
   Https_eio.request
     ~net
     ~clock
+    ?ca_file
     ~timeout:10.0
     ~meth
     ~url
@@ -42,18 +43,22 @@ let http_do net ~clock request =
   |> Result.map_error (fun e -> "kafka_service: " ^ Https_eio.request_error_to_string e)
 ;;
 
-let http_post net ~clock ~base_url ~path ~content_type ~body =
+let http_post ?ca_file net ~clock ~base_url ~path ~content_type ~body =
   http_do
+    ?ca_file
     net
     ~clock
     (With_body { meth = `POST; base_url; path; body_request = { content_type; body } })
 ;;
 
-let http_put net ~clock ~base_url ~path ~content_type ~body =
+let http_put ?ca_file net ~clock ~base_url ~path ~content_type ~body =
   http_do
+    ?ca_file
     net
     ~clock
     (With_body { meth = `PUT; base_url; path; body_request = { content_type; body } })
 ;;
 
-let http_get net ~clock ~base_url ~path = http_do net ~clock (Get { base_url; path })
+let http_get ?ca_file net ~clock ~base_url ~path =
+  http_do ?ca_file net ~clock (Get { base_url; path })
+;;

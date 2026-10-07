@@ -40,28 +40,32 @@ type decode_error_policy =
 
 module Schema : sig
   val check
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
     -> (unit, error) result
 
   val check_all
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE) list
     -> (unit, error) result
 
   val register
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
     -> (int, error) result
 
   val resolve
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
@@ -123,7 +127,8 @@ module Admin : sig
     -> (topic_partition_metadata, topic_partition_error) result
 
   val query_topic_partitions
-    :  _ Eio.Net.t
+    :  ?ca_file:string
+    -> _ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> admin_url:string
     -> topic_name:string

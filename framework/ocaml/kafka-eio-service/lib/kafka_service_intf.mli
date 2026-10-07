@@ -75,7 +75,8 @@ val decode_topic_partitions
   -> (topic_partition_metadata, topic_partition_error) result
 
 val query_topic_partitions
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> admin_url:string
   -> topic_name:string

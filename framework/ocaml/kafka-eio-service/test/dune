@@ -7,6 +7,13 @@
  (modules test_kafka_service)
  (libraries kafka_eio_service sol_runtime kafka-eio windtrap yojson uri unix))
 
+(test
+ (name test_declared_ca)
+ (modules test_declared_ca)
+ (libraries kafka_eio_service eio_main tls-eio x509 windtrap yojson unix)
+ (deps
+  (source_tree fixtures)))
+
 (executable
  (name test_kafka_service_integration)
  (modules test_kafka_service_integration)
