@@ -4,10 +4,11 @@ type compatibility = Confluent_registry.compatibility =
   | No_schema_registered
 
 module Schema = struct
-  let check ~net ~clock ~registry_url (module M : Kafka_service_intf.MESSAGE) =
+  let check ?ca_file ~net ~clock ~registry_url (module M : Kafka_service_intf.MESSAGE) =
     let topic_name = Kafka_service_intf.topic_name_to_string M.topic_name in
     match
       Confluent_registry.check_compatibility
+        ?ca_file
         net
         ~clock
         ~registry_url
@@ -23,23 +24,28 @@ module Schema = struct
            topic_name)
   ;;
 
-  let check_all ~net ~clock ~registry_url modules =
+  let check_all ?ca_file ~net ~clock ~registry_url modules =
     List.fold_left
       (fun acc m ->
          match acc with
          | Error _ as e -> e
-         | Ok () -> check ~net ~clock ~registry_url m)
+         | Ok () -> check ?ca_file ~net ~clock ~registry_url m)
       (Ok ())
       modules
   ;;
 end
 
-let register_contract net ~clock ~registry_url ~topic_name ~schema =
+let register_contract ?ca_file net ~clock ~registry_url ~topic_name ~schema =
   let open Result.Syntax in
   let* () =
-    Confluent_registry.set_subject_compatibility net ~clock ~registry_url ~topic_name
+    Confluent_registry.set_subject_compatibility
+      ?ca_file
+      net
+      ~clock
+      ~registry_url
+      ~topic_name
   in
-  Confluent_registry.register_schema net ~clock ~registry_url ~topic_name ~schema
+  Confluent_registry.register_schema ?ca_file net ~clock ~registry_url ~topic_name ~schema
 ;;
 
 let decode_message topic raw_msg =

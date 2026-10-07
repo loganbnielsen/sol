@@ -53,7 +53,7 @@ type compatibility =
   | Incompatible
   | No_schema_registered
 
-let check_compatibility net ~clock ~registry_url ~topic_name ~schema =
+let check_compatibility ?ca_file net ~clock ~registry_url ~topic_name ~schema =
   let subject = subject_name topic_name in
   let body =
     Yojson.Safe.to_string
@@ -61,6 +61,7 @@ let check_compatibility net ~clock ~registry_url ~topic_name ~schema =
   in
   match
     Kafka_service_http.http_post
+      ?ca_file
       net
       ~clock
       ~base_url:registry_url
@@ -85,11 +86,12 @@ let check_compatibility net ~clock ~registry_url ~topic_name ~schema =
   | Ok (status, body) -> Error (Printf.sprintf "schema registry HTTP %d: %s" status body)
 ;;
 
-let set_subject_compatibility net ~clock ~registry_url ~topic_name =
+let set_subject_compatibility ?ca_file net ~clock ~registry_url ~topic_name =
   let subject = subject_name topic_name in
   let body = {|{"compatibility":"FULL"}|} in
   match
     Kafka_service_http.http_put
+      ?ca_file
       net
       ~clock
       ~base_url:registry_url
@@ -103,7 +105,7 @@ let set_subject_compatibility net ~clock ~registry_url ~topic_name =
     Error (Printf.sprintf "set compatibility: HTTP %d: %s" status resp_body)
 ;;
 
-let register_schema net ~clock ~registry_url ~topic_name ~schema =
+let register_schema ?ca_file net ~clock ~registry_url ~topic_name ~schema =
   let subject = subject_name topic_name in
   let body =
     Yojson.Safe.to_string
@@ -111,6 +113,7 @@ let register_schema net ~clock ~registry_url ~topic_name ~schema =
   in
   match
     Kafka_service_http.http_post
+      ?ca_file
       net
       ~clock
       ~base_url:registry_url
@@ -127,7 +130,7 @@ let register_schema net ~clock ~registry_url ~topic_name ~schema =
     Error (Printf.sprintf "schema registry: HTTP %d: %s" status resp_body)
 ;;
 
-let lookup_schema net ~clock ~registry_url ~topic_name ~schema =
+let lookup_schema ?ca_file net ~clock ~registry_url ~topic_name ~schema =
   let subject = subject_name topic_name in
   let body =
     Yojson.Safe.to_string
@@ -135,6 +138,7 @@ let lookup_schema net ~clock ~registry_url ~topic_name ~schema =
   in
   match
     Kafka_service_http.http_post
+      ?ca_file
       net
       ~clock
       ~base_url:registry_url

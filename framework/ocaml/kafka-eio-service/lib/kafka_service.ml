@@ -100,25 +100,45 @@ type decode_error_policy = Kafka_service_intf.decode_error_policy =
   | Route_to_dlq
   | Ack_and_drop
 
+(* The deployment's declared trust root for the Kafka schema registry and admin
+   HTTPS endpoints. A caller may name it explicitly; when it does not, the
+   standalone API resolves the same KAFKA_SSL_CA_LOCATION Sol projects for the
+   Kafka transport, while a config built by the caller stays the authority via
+   [ca_file_of_security]. *)
+let ca_file_of_security : Kafka.Security.t -> string option = function
+  | Kafka.Security.Ssl { ssl_ca_location } -> ssl_ca_location
+  | Kafka.Security.Sasl_ssl { ssl_ca_location; _ } -> ssl_ca_location
+  | Kafka.Security.Plaintext | Kafka.Security.Sasl_plaintext _ -> None
+;;
+
+let resolved_ca_file ca_file =
+  match ca_file with
+  | Some _ -> ca_file
+  | None -> Kafka_service_config.declared_ca_file ()
+;;
+
 module Schema = struct
-  let check ~net ~clock ~registry_url (module M : MESSAGE) =
+  let check ?ca_file ~net ~clock ~registry_url (module M : MESSAGE) =
+    let ca_file = resolved_ca_file ca_file in
     let topic = M.topic_name in
     let message = (module M : MESSAGE) in
-    Kafka_service_schema.Schema.check ~net ~clock ~registry_url message
+    Kafka_service_schema.Schema.check ?ca_file ~net ~clock ~registry_url message
     |> Result.map_error (fun msg -> Schema_registry (topic, msg))
   ;;
 
-  let rec check_all ~net ~clock ~registry_url = function
+  let rec check_all ?ca_file ~net ~clock ~registry_url = function
     | [] -> Ok ()
     | (module M : MESSAGE) :: rest ->
       let message = (module M : MESSAGE) in
       let open Result.Syntax in
-      let* () = check ~net ~clock ~registry_url message in
-      check_all ~net ~clock ~registry_url rest
+      let* () = check ?ca_file ~net ~clock ~registry_url message in
+      check_all ?ca_file ~net ~clock ~registry_url rest
   ;;
 
-  let register ~net ~clock ~registry_url (module M : MESSAGE) =
+  let register ?ca_file ~net ~clock ~registry_url (module M : MESSAGE) =
+    let ca_file = resolved_ca_file ca_file in
     Kafka_service_schema.register_contract
+      ?ca_file
       net
       ~clock
       ~registry_url
@@ -127,8 +147,10 @@ module Schema = struct
     |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
   ;;
 
-  let resolve ~net ~clock ~registry_url (module M : MESSAGE) =
+  let resolve ?ca_file ~net ~clock ~registry_url (module M : MESSAGE) =
+    let ca_file = resolved_ca_file ca_file in
     Confluent_registry.lookup_schema
+      ?ca_file
       net
       ~clock
       ~registry_url
@@ -207,7 +229,11 @@ module Admin = struct
 
   let topic_partition_error_to_string = Kafka_service_intf.topic_partition_error_to_string
   let decode_topic_partitions = Kafka_service_intf.decode_topic_partitions
-  let query_topic_partitions = Kafka_service_intf.query_topic_partitions
+
+  let query_topic_partitions ?ca_file net ~clock ~admin_url ~topic_name =
+    let ca_file = resolved_ca_file ca_file in
+    Kafka_service_intf.query_topic_partitions ?ca_file net ~clock ~admin_url ~topic_name
+  ;;
 end
 
 let encode_wire = Confluent_registry.Wire.encode
@@ -260,9 +286,11 @@ let register
               M.partitions))
     else Ok ()
   in
+  let ca_file = ca_file_of_security svc.security in
   let partition_guard () =
     match
       Kafka_service_intf.query_topic_partitions
+        ?ca_file
         net
         ~clock
         ~admin_url:svc.admin_url
@@ -294,9 +322,11 @@ let register
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
-  let* () = Schema.check ~net ~clock ~registry_url:svc.schema_registry_url (module M) in
+  let* () =
+    Schema.check ?ca_file ~net ~clock ~registry_url:svc.schema_registry_url (module M)
+  in
   let* schema_id =
-    Schema.resolve ~net ~clock ~registry_url:svc.schema_registry_url (module M)
+    Schema.resolve ?ca_file ~net ~clock ~registry_url:svc.schema_registry_url (module M)
   in
   Ok
     { Kafka_service_intf.name = M.topic_name

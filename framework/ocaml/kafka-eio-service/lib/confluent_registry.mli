@@ -12,7 +12,8 @@ type compatibility =
   | No_schema_registered
 
 val check_compatibility
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string
@@ -20,14 +21,16 @@ val check_compatibility
   -> (compatibility, string) result
 
 val set_subject_compatibility
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string
   -> (unit, string) result
 
 val register_schema
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string
@@ -35,7 +38,8 @@ val register_schema
   -> (int, string) result
 
 val lookup_schema
-  :  _ Eio.Net.t
+  :  ?ca_file:string
+  -> _ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> registry_url:string
   -> topic_name:string
