@@ -24,7 +24,8 @@ sol_under_test_resolve() {
     *) sol_under_test_die "$SOL reports '$version', which is a development build; a live qualification uses the installed release bundle (DEC-049)" ;;
   esac
   SOL_BUNDLE_VERSION="$version"
-  SOL_PLATFORM_ROOT="$install/share/sol/$version/platform"
+  SOL_SHARE_ROOT="$install/share/sol/$version"
+  SOL_PLATFORM_ROOT="$SOL_SHARE_ROOT/platform"
   [ -f "$SOL_PLATFORM_ROOT/shared/components.json" ] ||
     sol_under_test_die "release $version has no platform bundle at $SOL_PLATFORM_ROOT"
   local runner_file="$install/share/sol/$version/migration-runner-image"
@@ -35,6 +36,19 @@ sol_under_test_resolve() {
     *@sha256:*) ;;
     *) sol_under_test_die "release $version names migration runner '$SOL_RUNNER_IMAGE', which is not a digest reference" ;;
   esac
+  # The revision the release was built from. A live qualification builds the
+  # application under test from that revision -- never from whatever a checkout or
+  # a moving ref happens to hold -- so a release that does not name one cannot be
+  # qualified (sol-fab/sol#1280).
+  local revision_file="$SOL_SHARE_ROOT/REVISION"
+  [ -f "$revision_file" ] ||
+    sol_under_test_die "release $version records no source revision in $revision_file; a live qualification binds the application it builds to the candidate, so the release must name the revision it contains"
+  SOL_REVISION="$(head -n 1 "$revision_file")"
+  case "$SOL_REVISION" in
+    "" | *[!0-9a-f]*) sol_under_test_die "release $version records revision '$SOL_REVISION', which is not a 40-hex commit" ;;
+  esac
+  [ "${#SOL_REVISION}" -eq 40 ] ||
+    sol_under_test_die "release $version records revision '$SOL_REVISION', which is not a 40-hex commit"
   unset SOL_HOME
 }
 
@@ -44,6 +58,7 @@ sol_under_test_record_identity() {
   {
     printf 'sol_install: %s\n' "$SOL_INSTALL"
     printf 'sol_version: %s\n' "$SOL_BUNDLE_VERSION"
+    printf 'sol_revision: %s\n' "$SOL_REVISION"
     printf 'migration_runner_image: %s\n' "$SOL_RUNNER_IMAGE"
   } >"$dir/sol-identity.txt"
 }

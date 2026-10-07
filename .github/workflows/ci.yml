@@ -331,6 +331,15 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/aws/test-live-row.sh
 
+      # The application a live run exercises must be built from the candidate
+      # revision, not from whatever a checkout or a moving ref holds: a stale
+      # checkout once produced images with another revision's framework while the
+      # run reported evidence for the candidate. This drives the binding against
+      # real git trees and mutation-checks the pin rewrite.
+      - name: Candidate-binding test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/qualification/test-candidate-binding.sh
+
       # The independent AWS absence verdict is decided by provider reads and a
       # tri-state per-class result, not by Sol's destroy exit code. Its regression
       # pins every required disposable class as able to fail the verdict alone, and

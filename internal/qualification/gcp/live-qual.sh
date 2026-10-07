@@ -90,6 +90,7 @@ assert_environment() {
 assert_environment
 
 source "$ROOT/internal/qualification/sol-under-test.sh"
+source "$ROOT/internal/qualification/candidate-binding.sh"
 source "$ROOT/internal/qualification/attempt.sh"
 case "${1:-}" in
   cloud | app | destroy | stop)
@@ -1163,11 +1164,19 @@ YAML
 
 build_app_images() {
   local service path ref
+  [ -n "${APP_BUILD_CONTEXT:-}" ] || {
+    say "  no candidate build context: refusing to build the application"
+    return 1
+  }
   for service in $(app_services); do
     path="$(app_context_path "$service")" || return 1
     ref="$(app_image_ref "$service")"
-    say "  docker build $ref (context: the workspace root)"
-    docker build -f "$path/Dockerfile" -t "$ref" . || return 1
+    [ -f "$APP_BUILD_CONTEXT/$path/Dockerfile" ] || {
+      say "  candidate $SOL_REVISION has no $path/Dockerfile"
+      return 1
+    }
+    say "  docker build $ref (context: candidate $SOL_REVISION)"
+    docker build -f "$APP_BUILD_CONTEXT/$path/Dockerfile" -t "$ref" "$APP_BUILD_CONTEXT" || return 1
   done
 }
 
@@ -1290,6 +1299,18 @@ phase_app() {
     exit 2
   fi
   write_app_target
+  local pins
+  if ! pins="$(sol_candidate_bind_context "$WORKSPACE" "$SOL_REVISION" "$LOG_DIR/app-build-context")"; then
+    say "refusing to build the application: it cannot be bound to candidate $SOL_REVISION"
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  APP_BUILD_CONTEXT="$LOG_DIR/app-build-context"
+  export APP_BUILD_CONTEXT
+  sol_candidate_record_binding "$LOG_DIR" "$SOL_REVISION" "$WORKSPACE" "$APP_BUILD_CONTEXT" "$pins"
+  say "app images build from candidate $SOL_REVISION ($WORKSPACE at that revision, framework pinned to it)"
   if ! run app-build bash -c "$(declare -f $(app_helpers)); build_app_images"; then
     capture_app_evidence
     freeze_evidence

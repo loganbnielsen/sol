@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
-version="" runner="" out="" binary="" support_refs=""
+version="" runner="" out="" binary="" support_refs="" revision=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="$2"; shift 2 ;;
@@ -10,6 +10,7 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift 2 ;;
     --binary) binary="$2"; shift 2 ;;
     --support-refs) support_refs="$2"; shift 2 ;;
+    --revision) revision="$2"; shift 2 ;;
     *) echo "build-release-bundle: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -32,6 +33,25 @@ if [ "$reported" != "$version" ]; then
   exit 1
 fi
 
+# The bundle names the revision it was built from, so a live qualification can
+# bind the application it builds and runs to the exact candidate it is gathering
+# evidence for rather than to whatever a checkout or a moving ref happens to hold
+# (sol-fab/sol#1280). A bundle assembled from a modified tree could not honestly
+# name one revision, so it is refused rather than recorded.
+head_revision="$(git -C "$root" rev-parse HEAD 2>/dev/null)" || {
+  echo "build-release-bundle: $root is not a git work tree, so it cannot name the revision it contains" >&2
+  exit 1
+}
+if [ -n "$revision" ] && [ "$revision" != "$head_revision" ]; then
+  echo "build-release-bundle: --revision $revision is not the checked-out revision $head_revision" >&2
+  exit 1
+fi
+revision="$head_revision"
+if [ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]; then
+  echo "build-release-bundle: $root has modified tracked files, so the bundle would name revision $revision while containing other content" >&2
+  exit 1
+fi
+
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 prefix="$stage/sol-$version"
@@ -39,6 +59,7 @@ share="$prefix/share/sol/$version"
 mkdir -p "$prefix/bin" "$share"
 install -m 0755 "$binary" "$prefix/bin/sol"
 printf '%s\n' "$version" >"$share/VERSION"
+printf '%s\n' "$revision" >"$share/REVISION"
 printf '%s\n' "$runner" >"$share/migration-runner-image"
 if [ -n "$support_refs" ]; then cp "$support_refs" "$share/SUPPORT_REFS"; fi
 git -C "$root" ls-files -z -- platform | (cd "$root" && xargs -0 cp --parents -t "$share")

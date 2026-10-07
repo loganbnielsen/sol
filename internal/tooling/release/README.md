@@ -68,6 +68,15 @@ explicitly. Run it against the installed candidate — extract the draft's bundl
 and set `SOL_INSTALL` to its `sol-<version>` prefix — and follow the provider's
 procedure (`aws/aws-run-procedure.md`, `gcp/gcp-production-single-region-v1-matrix.md`).
 
+The bundle also names the revision it was built from
+(`share/sol/<version>/REVISION`), and a live run binds the application and
+framework it builds to that revision: the workspace must be that revision's
+unmodified tree and every `sol-fab/sol.git` pin resolves to that commit rather
+than to `main`. A checkout, or a `main` that moved after the candidate was cut,
+therefore cannot substitute another revision's application while the run reports
+evidence bound to this candidate; a mismatch stops the run before anything is
+built (`candidate-binding.sh`, sol-fab/sol#1280).
+
 The campaign produces one verdict document, `qualification-verdict.json`, whose
 `candidate` block is the candidate identity above:
 

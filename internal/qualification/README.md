@@ -21,7 +21,11 @@ success. A skipped capability is named as skipped; it is not silently promoted.
 ## Live-run rules
 
 1. Qualify the released artifact a user installs, not a checkout build. `sol-under-test.sh`
-   resolves and records the release identity.
+   resolves and records the release identity, including the revision the bundle was built from,
+   and the run builds the application under test from that revision: `candidate-binding.sh`
+   refuses a workspace at another revision, a tree with modified tracked files, or a framework
+   pin still on a moving ref, before anything is built. A stale checkout must not be able to
+   substitute another revision's application while the run reports evidence for the candidate.
 2. Give every disposable run a unique identity and evidence directory. `attempt.sh` refuses
    accidental reuse.
 3. Exercise lifecycle through Sol. Qualification observes Sol; it must not reproduce Sol's

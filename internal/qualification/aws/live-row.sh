@@ -82,6 +82,7 @@ trap 'on_terminate TERM' TERM
 trap 'on_terminate INT' INT
 
 source "$ROOT/internal/qualification/sol-under-test.sh"
+source "$ROOT/internal/qualification/candidate-binding.sh"
 source "$ROOT/internal/qualification/attempt.sh"
 
 case "${1:-}" in
@@ -438,6 +439,13 @@ phase_cloud() {
 app_publish_images() {
   local unit dir ref digest
   : >"$LOG_DIR/app-image-refs.txt"
+  local context="$LOG_DIR/app-build-context" pins
+  if ! pins="$(sol_candidate_bind_context "$WORKSPACE" "$SOL_REVISION" "$context")"; then
+    say "refusing to build the application: it cannot be bound to candidate $SOL_REVISION"
+    return 1
+  fi
+  sol_candidate_record_binding "$LOG_DIR" "$SOL_REVISION" "$WORKSPACE" "$context" "$pins"
+  say "app images build from candidate $SOL_REVISION ($WORKSPACE at that revision, framework pinned to it)"
   run ecr-login bash -c \
     "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'" || return 1
   for unit in $APP_UNITS; do
@@ -445,8 +453,12 @@ app_publish_images() {
       say "no app/*/$unit directory with a Dockerfile in $WORKSPACE"
       return 1
     fi
+    if [ ! -f "$context/$dir/Dockerfile" ]; then
+      say "candidate $SOL_REVISION has no app/*/$unit directory with a Dockerfile"
+      return 1
+    fi
     ref="$(image_ref "$unit")"
-    run "app-build-$unit" docker build -f "$dir/Dockerfile" -t "$ref" "$WORKSPACE" || return 1
+    run "app-build-$unit" docker build -f "$context/$dir/Dockerfile" -t "$ref" "$context" || return 1
     run "app-push-$unit" docker push "$ref" || return 1
     if ! digest="$(image_digest "$ref")"; then return 1; fi
     printf '%s=%s\n' "$unit" "$digest" >>"$LOG_DIR/app-image-refs.txt"

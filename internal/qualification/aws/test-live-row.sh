@@ -32,12 +32,14 @@ DIGEST64="$(printf 'a%.0s' $(seq 1 64))"
 RUNNER="ghcr.io/example/sol-migration-runner:$VERSION@sha256:$DIGEST64"
 NO_RUNNER_INSTALL="$TMP/install-no-runner"
 TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
+NO_REVISION_INSTALL="$TMP/install-no-revision"
 
 mkdir -p "$ROOT/internal/qualification/aws" "$ROOT/internal/qualification/transport" \
   "$WORKSPACE/sol" "$TMP/bin"
 cp "$REPO/internal/qualification/aws/live-row.sh" "$ROOT/internal/qualification/aws/"
 cp "$REPO/internal/qualification/aws/absence.py" "$ROOT/internal/qualification/aws/"
 cp "$REPO/internal/qualification/sol-under-test.sh" "$ROOT/internal/qualification/"
+cp "$REPO/internal/qualification/candidate-binding.sh" "$ROOT/internal/qualification/"
 cp "$REPO/internal/qualification/attempt.sh" "$ROOT/internal/qualification/"
 
 bundle() {
@@ -72,6 +74,12 @@ bundle "$NO_RUNNER_INSTALL"
 
 bundle "$TAG_RUNNER_INSTALL"
 printf 'ghcr.io/example/sol-migration-runner:%s\n' "$VERSION" >"$TAG_RUNNER_INSTALL/share/sol/$VERSION/migration-runner-image"
+
+# A release that names a runner but no source revision: the run cannot bind the
+# application it builds to the candidate, so it must refuse rather than qualify
+# whatever the checkout happens to hold.
+bundle "$NO_REVISION_INSTALL"
+printf '%s\n' "$RUNNER" >"$NO_REVISION_INSTALL/share/sol/$VERSION/migration-runner-image"
 
 cat >"$ROOT/internal/qualification/aws/app-transaction.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -117,6 +125,25 @@ qualreg:
       cluster_name: test-cluster
       state_bucket: sol-qual-test-tfstate
 YAML
+
+# The workspace is the candidate's tree, and every bundle names it: a live run
+# builds the application it qualifies from this revision and no other.
+cat >"$WORKSPACE/pluto.opam" <<'OPAM'
+opam-version: "2.0"
+pin-depends: [
+  [ "sol-svc.dev"           "git+https://github.com/sol-fab/sol.git#main" ]
+  [ "kafka-eio-service.dev" "git+https://github.com/sol-fab/sol.git#main" ]
+]
+OPAM
+git -C "$WORKSPACE" init -q
+git -C "$WORKSPACE" add -A
+git -c user.name=qualification -c user.email=qualification@example.invalid \
+  -C "$WORKSPACE" commit -qm "the candidate revision"
+CANDIDATE_REVISION="$(git -C "$WORKSPACE" rev-parse HEAD)"
+
+for install in "$INSTALL" "$NO_RUNNER_INSTALL" "$TAG_RUNNER_INSTALL"; do
+  printf '%s\n' "$CANDIDATE_REVISION" >"$install/share/sol/$VERSION/REVISION"
+done
 
 ECR="123456789012.dkr.ecr.us-east-1.amazonaws.com"
 
@@ -636,6 +663,12 @@ refused tagrunner "a bundle whose runner is a tag is refused"
 lacks "Sol is never invoked with it" "migrate apply" "$TMP/tagrunner.sol"
 has "and the refusal names the digest boundary" "not a digest reference" "$TMP/tagrunner.out"
 
+run_row norevision TRANSPORT=0 SOL_INSTALL="$NO_REVISION_INSTALL"
+refused norevision "a bundle that names no source revision is refused"
+lacks "Sol is never invoked with it" "migrate apply" "$TMP/norevision.sol"
+has "and the refusal says why the run cannot bind the application" \
+  "records no source revision" "$TMP/norevision.out"
+
 printf '\nscenario: the qualification transport is established and the identity split holds\n'
 run_phase transport transport
 is "exit 0" "$(cat "$TMP/transport.rc")" "0"
@@ -782,7 +815,18 @@ run_row alphaunits TRANSPORT=0 SVC_UNIT=orders_svc WORKER_UNIT=fulfilment_worker
   APP_UNITS="orders_svc fulfilment_worker"
 is "exit 0" "$(cat "$TMP/alphaunits.rc")" "0"
 has "the service image is built from the selected unit" \
-  "docker build -f app/payments/orders_svc/Dockerfile" "$TMP/alphaunits.docker"
+  "docker build -f $TMP/alphaunits.logs/app-build-context/app/payments/orders_svc/Dockerfile" \
+  "$TMP/alphaunits.docker"
+has "and from the candidate revision's context, not the checkout" \
+  " $TMP/alphaunits.logs/app-build-context" "$TMP/alphaunits.docker"
+exists "the run records the revision it bound the build to" \
+  "$TMP/alphaunits.logs/candidate-binding.txt"
+has "and that revision is the candidate's" \
+  "candidate_revision: $CANDIDATE_REVISION" "$TMP/alphaunits.logs/candidate-binding.txt"
+has "and the framework pin names that commit" \
+  "github.com/sol-fab/sol.git#$CANDIDATE_REVISION" "$TMP/alphaunits.logs/candidate-binding.txt"
+lacks "so no pin reaches the build from a moving ref" \
+  "#main" "$TMP/alphaunits.logs/candidate-binding.txt"
 has "and pushed under its k8s name" \
   "docker push $ECR/pluto/orders-svc:row-" "$TMP/alphaunits.docker"
 has "the worker image too" \
@@ -790,6 +834,17 @@ has "the worker image too" \
 lacks "and no unselected image is built" "charge-svc" "$TMP/alphaunits.docker"
 has "and every selected unit is pinned by digest" \
   "image-ref orders_svc=$ECR/pluto/orders-svc@sha256:" "$TMP/alphaunits.sol"
+
+printf '\nscenario: a checkout at another revision cannot qualify as the candidate\n'
+git -c user.name=qualification -c user.email=qualification@example.invalid \
+  -C "$WORKSPACE" commit -q --allow-empty -m "a revision cut after the candidate"
+run_row driftrev TRANSPORT=0 APP_UNITS="orders_svc"
+refused driftrev "the run refuses a workspace that is not the candidate revision"
+lacks "and builds nothing" "docker build" "$TMP/driftrev.docker"
+lacks "and records no candidate binding" "candidate_revision" "$TMP/driftrev.logs/candidate-binding.txt"
+has "and the refusal names the candidate it could not bind to" \
+  "$CANDIDATE_REVISION" "$TMP/driftrev.out"
+git -C "$WORKSPACE" reset -q --hard "$CANDIDATE_REVISION"
 
 printf '\nscenario: the destroy phase survives a closed stdout reader and records the inventory\n'
 run_phase_closed_stdout destroyclosed destroy
