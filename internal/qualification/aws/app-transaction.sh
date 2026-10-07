@@ -40,7 +40,7 @@ spec:
           args:
             - |
               set -e
-              health=\$(curl -fsS -m 10 $URL/health)
+              health=\$(curl -fsS -m 10 $URL/healthz)
               printf 'SOL_TRANSACTION health %s\n' "\$health"
               charge=\$(curl -fsS -m 30 -X POST $URL/charges -H 'Content-Type: application/json' -d '{"customer_id":"cus_qualification","amount_cents":4999,"currency":"usd"}')
               printf 'SOL_TRANSACTION charge %s\n' "\$charge"

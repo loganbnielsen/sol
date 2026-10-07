@@ -400,7 +400,7 @@ cat >"$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf 'curl %s\n' "$*" >>"$CURL_LOG"
 case "$*" in
-  *"/health"*) printf 'ok\n' ;;
+  *"/healthz"*) printf 'ok\n' ;;
   *"-X POST"*"/charges"*) printf '{"id":"ch_qual01"}\n' ;;
   *"/notifications"*) printf '[{"charge_id":"ch_qual01"}]\n' ;;
   *"-X POST"*"/orders"*)
