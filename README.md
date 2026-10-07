@@ -160,10 +160,10 @@ published npm packages, all Apache-2.0:
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric names,
   label vocabularies, Loki push shape, and W3C `traceparent` propagation, so TS
   and OCaml workloads land in the same Grafana panels and Tempo traces.
-- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+- [`@sol-fab/svc`](https://github.com/sol-fab/sol-typescript) — the service
   lifecycle contract: bounded drain (`drainTimeoutMs`, matching the OCaml
   `sol-svc`'s `drain_timeout_s`) and idempotent `SIGTERM`/`SIGINT` handling.
-- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+- [`@sol-fab/worker`](https://github.com/sol-fab/sol-typescript) — the
   worker lifecycle contract, for a unit that owns no request boundary. It has no
   `on_ready` equivalent yet (DEC-028), which is one of the triggers that stages
   TypeScript behind the production profile (DEC-026 §2) — see
@@ -172,7 +172,7 @@ published npm packages, all Apache-2.0:
 Ownership follows the extraction: `@sol-fab/kafka` and `@sol-fab/obs` each live
 in their own public repository with their own CI, while `@sol-fab/svc` and
 `@sol-fab/worker` share
-[`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
+[`sol-fab/sol-typescript`](https://github.com/sol-fab/sol-typescript).
 All four are published with build provenance, the same extraction pattern used
 for the OCaml `*-eio` packages. They are consumed from npm; this repo no longer
 carries `packages/`. Releases are tokenless (npm trusted publishing / OIDC).
@@ -248,7 +248,7 @@ sol/
 - [Documentation map](docs/README.md) — what exists, who each page is for, and the documentation roadmap
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
 - [Contract](docs/reference/README.md) — the language-neutral application contract
-- [TypeScript packages](https://github.com/loganbnielsen/sol-typescript) — the four published `@sol-fab/*` packages ([`kafka`](https://github.com/loganbnielsen/sol-kafka), [`obs`](https://github.com/loganbnielsen/sol-obs), `svc`, `worker`), plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
+- [TypeScript packages](https://github.com/sol-fab/sol-typescript) — the four published `@sol-fab/*` packages ([`kafka`](https://github.com/loganbnielsen/sol-kafka), [`obs`](https://github.com/loganbnielsen/sol-obs), `svc`, `worker`), plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference

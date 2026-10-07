@@ -11,20 +11,20 @@ npm packages:
   decode DLQ, and the contract projection program Sol's deploy lifecycle runs.
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric naming/label
   vocabulary, Loki push shape, and W3C traceparent propagation.
-- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+- [`@sol-fab/svc`](https://github.com/sol-fab/sol-typescript) — the service
   lifecycle contract `order_svc` runs on: bounded drain and idempotent
   `SIGTERM`/`SIGINT`, matching the OCaml `sol-svc`.
-- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+- [`@sol-fab/worker`](https://github.com/sol-fab/sol-typescript) — the
   worker lifecycle contract `fulfillment_worker` runs on, matching the OCaml
   `sol-worker`.
-- [`@sol-fab/jobs`](https://github.com/loganbnielsen/sol-typescript) — the durable
+- [`@sol-fab/jobs`](https://github.com/sol-fab/sol-typescript) — the durable
   Postgres job queue, matching `sol-jobs`: a transactional, dedupe-keyed enqueue
   and a leased runner.
-- [`@sol-fab/outbox`](https://github.com/loganbnielsen/sol-typescript) — the
+- [`@sol-fab/outbox`](https://github.com/sol-fab/sol-typescript) — the
   transactional outbox, matching `sol-outbox`: `publish` records the intent in
   the caller's transaction, and `runRelay` publishes each key's events in `ord`
   order, removing a row only after the broker acknowledged it.
-- [`@sol-fab/retry`](https://github.com/loganbnielsen/sol-typescript) — the
+- [`@sol-fab/retry`](https://github.com/sol-fab/sol-typescript) — the
   operation-level retry helper, matching `sol-retry`: one bounded, jittered
   policy vocabulary (`baseDelayS`, `maxDelayS`, `maxAttempts`, `jitterRatio`)
   that retries a dependency call in place, never a message or a handler.
@@ -121,7 +121,7 @@ package's own tests for the specific bugs a hand-rolled first attempt hit
 (FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
 repository with their own CI, including the broker-backed DLQ/partitioning tests;
 `svc`, `worker`, `jobs`, `outbox` and `retry` share
-[`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
+[`sol-fab/sol-typescript`](https://github.com/sol-fab/sol-typescript).
 
 This example is the *runnable* TypeScript path, not the scaffolded one: `sol new`
 writes OCaml units only, so these two units were authored by hand (FEAT-084
