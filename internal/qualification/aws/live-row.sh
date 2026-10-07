@@ -454,6 +454,78 @@ app_publish_images() {
   done
 }
 
+app_secret_failure() {
+  grep -qF 'does not hold the required non-empty secret key(s)' "$1" 2>/dev/null
+}
+
+app_read_platform_password() {
+  local password
+  if [ -n "${KAFKA_SASL_PASSWORD:-}" ]; then
+    printf '%s' "$KAFKA_SASL_PASSWORD"
+    return 0
+  fi
+  password="$(kubectl --kubeconfig "$ACCESS_KUBECONFIG" get secret redpanda-users -n redpanda \
+    -o jsonpath='{.data.users\.txt}' 2>/dev/null | base64 -d 2>/dev/null |
+    sed -n 's/^sol-workloads:\([^:]*\):.*/\1/p' | head -1)"
+  [ -n "$password" ] || return 1
+  printf '%s' "$password"
+}
+
+app_read_kafka_ca() {
+  kubectl --kubeconfig "$ACCESS_KUBECONFIG" get secret redpanda-default-cert -n redpanda \
+    -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d 2>/dev/null
+}
+
+app_domains() {
+  local unit dir domain
+  for unit in $APP_UNITS; do
+    if dir="$(unit_dir "$unit")"; then
+      domain="${dir#app/}"
+      printf '%s\n' "${domain%%/*}"
+    fi
+  done | sort -u
+}
+
+app_secret_set() {
+  local key="$1" domain
+  for domain in $(app_domains); do
+    run "app-secret-$key-$domain" bash -c \
+      "cd '$WORKSPACE' && printf '%s' \"\$SOL_SECRET_VALUE\" | exec '$SOL' secret set '$key' --target '$TARGET' --domain '$domain'"
+  done
+}
+
+# Production secrets are operator-supplied: Sol's migrate and deploy verify them
+# and fail closed. The harness stands in for the operator, supplying the values it
+# already holds through the supported `sol secret set`, which writes the runtime
+# Secret and every workload Secret in the target's namespaces.
+app_supply_secrets() {
+  local password ca
+  if ! password="$(app_read_platform_password)"; then
+    say "could not establish KAFKA_SASL_PASSWORD: set it in the environment, or ensure redpanda/redpanda-users exists"
+    return 1
+  fi
+  ca="$(app_read_kafka_ca)"
+  if [ -z "$ca" ]; then
+    say "could not read the Redpanda CA from redpanda/redpanda-default-cert"
+    return 1
+  fi
+  export SOL_SECRET_VALUE="$POSTGRES_URL"
+  app_secret_set POSTGRES_URL || return 1
+  export SOL_SECRET_VALUE="$SOL_API_KEY"
+  app_secret_set SOL_API_KEY || return 1
+  export SOL_SECRET_VALUE="$password"
+  app_secret_set KAFKA_SASL_PASSWORD || return 1
+  export SOL_SECRET_VALUE="$ca"
+  app_secret_set KAFKA_SSL_CA_CERT || return 1
+  unset SOL_SECRET_VALUE
+  {
+    printf 'runtime_secret_keys: POSTGRES_URL SOL_API_KEY KAFKA_SASL_PASSWORD KAFKA_SSL_CA_CERT\n'
+    printf 'runtime_secret_sources: the cluster postgres_url output; this run; redpanda/redpanda-users; redpanda/redpanda-default-cert\n'
+    printf 'runtime_secret_values: never recorded\n'
+  } >>"$LOG_DIR/prerequisites.txt"
+  say "supplied the operator's runtime and workload secrets through sol secret set; their values are never recorded"
+}
+
 phase_app() {
   ensure_contexts || return 1
   verify_identity_boundary || return 1
@@ -472,16 +544,6 @@ phase_app() {
     printf 'POSTGRES_URL: %s\n' "$(printf '%s' "$url" | sed 's#://[^@]*@#://***@#')"
     printf 'SOL_API_KEY: %s*** (generated for this run)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
-  run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET'" || return 1
-  deploy_namespaces="$APP_NS $WORKER_NS"
-  say "deploy-substrate"
-  for ns in $deploy_namespaces; do
-    if kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
-      say "  $ns: sol-deploy already bound (not a clean test of the substrate prerequisite)"
-    else
-      say "  $ns: no sol-deploy RoleBinding yet"
-    fi
-  done
   local image_ref_args=""
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
@@ -491,6 +553,26 @@ phase_app() {
     say "no immutable image refs were published, so the profile's artifact guarantee cannot be met"
     return 1
   fi
+  deploy_namespaces="$APP_NS $WORKER_NS"
+  say "deploy-substrate"
+  for ns in $deploy_namespaces; do
+    if kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
+      say "  $ns: sol-deploy already bound (not a clean test of the substrate prerequisite)"
+    else
+      say "  $ns: no sol-deploy RoleBinding yet"
+    fi
+  done
+  say "app-secrets-bootstrap"
+  if ! run app-deploy-bootstrap bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' $image_ref_args"; then
+    if app_secret_failure "$LOG_DIR/app-deploy-bootstrap.log"; then
+      say "  the deploy established the namespaces and their scoped RBAC, then refused the absent operator secrets (expected)"
+    else
+      say "FAILED: the bootstrap deploy did not reach the secret prerequisite"
+      return 1
+    fi
+  fi
+  app_supply_secrets || return 1
+  run migrate-apply bash -c "cd '$WORKSPACE' && exec '$SOL' migrate apply '$TARGET'" || return 1
   run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' $image_ref_args" || return 1
   for ns in $deploy_namespaces; do
     if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then

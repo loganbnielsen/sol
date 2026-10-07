@@ -343,6 +343,12 @@ case "$*" in
     : >"${TMP:-/tmp}/credential-supplied"
     printf 'secret/redpanda-users created\n'
     exit 0 ;;
+  "get secret redpanda-users"*)
+    printf '%s' 'sol-workloads:testpass:SCRAM-SHA-256' | base64
+    exit 0 ;;
+  "get secret redpanda-default-cert"*)
+    printf '%s' 'ca-certificate-for-tests' | base64
+    exit 0 ;;
   "get pods --all-namespaces -o json")
     if [ "${STUB_PROJECTED_TOKENS:-0}" = "1" ]; then
       printf '{"items":[{"metadata":{"namespace":"pluto-payments","name":"charge-svc-abc123"},"spec":{"volumes":[{"name":"api-token","projected":{"sources":[{"serviceAccountToken":{"audience":"order-svc","expirationSeconds":3600}}]}}]}}]}\n'
@@ -742,6 +748,16 @@ has "including the TypeScript namespace's service" \
   "$TMP/app-ok.argv"
 lacks "no mutable tag is passed to a profile that requires immutable artifacts" \
   "--image-tag" "$TMP/app-ok.argv"
+has "the runtime secret is supplied through sol secret set" \
+  "secret set POSTGRES_URL --target qual/gcp/us-central1 --domain payments" "$TMP/app-ok.argv"
+has "the workload API key too" \
+  "secret set SOL_API_KEY --target qual/gcp/us-central1 --domain demo_ts" "$TMP/app-ok.argv"
+has "and the Kafka credential and CA" \
+  "secret set KAFKA_SSL_CA_CERT --target qual/gcp/us-central1 --domain comms" "$TMP/app-ok.argv"
+lacks "no secret value is passed on a command line" \
+  "testpass" "$TMP/app-ok.argv"
+has "the supplied keys are recorded without their values" \
+  "runtime_secret_values: never recorded" "$TMP/app-ok.logs/prerequisites.txt"
 has "the run identity records the bundle version" \
   "sol_version: $VERSION" "$TMP/app-ok.logs/sol-identity.txt"
 has "and the bundle's digest-pinned migration runner" \
