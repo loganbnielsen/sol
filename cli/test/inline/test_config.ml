@@ -1281,6 +1281,53 @@ target:
            ]))
 ;;
 
+(* sol-fab/sol#1275: the durable root owns the delegated zone, so the cluster
+   root must reuse it rather than create a second hosted zone for base_domain
+   (which made its own data.aws_route53_zone lookup ambiguous). *)
+let test_aws_cluster_root_reuses_the_durable_zone () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  base_domain: qual.example.test
+  dns_zone_ownership: sol
+  aws:
+    vpc_cidr: "10.42.0.0/16"
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
+       | Error msg -> Windtrap.fail msg
+       | Ok vars ->
+         check_str_opt
+           "the cluster root reuses the durable root's zone"
+           (Some "false")
+           (List.assoc_opt "create_route53_zone" vars)))
+;;
+
+let test_no_zone_var_without_a_base_domain () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  aws:
+    vpc_cidr: "10.42.0.0/16"
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Windtrap.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
+       | Error msg -> Windtrap.fail msg
+       | Ok vars ->
+         check_bool
+           "a target with no base_domain passes no zone setting"
+           false
+           (List.mem_assoc "create_route53_zone" vars)))
+;;
+
 let test_terraform_vars_workspace_name_and_ecr_repositories () =
   with_temp_dir (fun () ->
     write
@@ -2032,6 +2079,14 @@ let%test "sol.yml: REFAC-098: Sol-owned keys are not passed through" =
 
 let%test "sol.yml: terraform vars: provider-shaped" =
   test_terraform_vars_are_provider_shaped ()
+;;
+
+let%test "sol.yml: terraform vars: the cluster root reuses the durable zone" =
+  test_aws_cluster_root_reuses_the_durable_zone ()
+;;
+
+let%test "sol.yml: terraform vars: no zone setting without a base_domain" =
+  test_no_zone_var_without_a_base_domain ()
 ;;
 
 let%test "sol.yml: terraform vars: GCS soft delete follows destroy_retention" =

@@ -394,19 +394,29 @@ let aws_own_vars
   -> (string * string) list
   =
   fun target ~workspace shared ->
-  shared
-  |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
-  |> add_opt
-       "provisioner_role_arn"
-       (Sol_cli_config.provider_field target "provisioner_role_arn")
-  |> add_opt
-       "cluster_access_role_arn"
-       (Sol_cli_config.provider_field target "cluster_access_role_arn")
-  |> add_opt "deploy_role_arn" (Sol_cli_config.provider_field target "deploy_role_arn")
-  |> add_opt
-       "operator_role_arn"
-       (Sol_cli_config.provider_field target "operator_role_arn")
-  |> add_opt "workspace_name" (Some workspace)
+  let vars =
+    shared
+    |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
+    |> add_opt
+         "provisioner_role_arn"
+         (Sol_cli_config.provider_field target "provisioner_role_arn")
+    |> add_opt
+         "cluster_access_role_arn"
+         (Sol_cli_config.provider_field target "cluster_access_role_arn")
+    |> add_opt "deploy_role_arn" (Sol_cli_config.provider_field target "deploy_role_arn")
+    |> add_opt
+         "operator_role_arn"
+         (Sol_cli_config.provider_field target "operator_role_arn")
+    |> add_opt "workspace_name" (Some workspace)
+  in
+  (* The durable root owns and ensures the delegated zone for every declared
+     dns_zone_ownership, so the cluster root reuses it. It must never create a
+     second hosted zone for base_domain: that would make its own
+     data.aws_route53_zone lookup ambiguous and block an ordinary destroy. *)
+  match target.base_domain with
+  | Some domain when not (Sol_cli_string.is_blank domain) ->
+    ("create_route53_zone", "false") :: vars
+  | _ -> vars
 ;;
 
 let required_field target field =
