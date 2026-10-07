@@ -139,6 +139,7 @@
   },
   "redpanda": {
     "common": {
+      "clusterDomain": "cluster.local",
       "tls": {
         "enabled": false
       },
