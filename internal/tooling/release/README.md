@@ -27,6 +27,16 @@ installs the candidate by the digest the bundle records; the image is immutable
 and reused by digest on a resume. What promotion gates is the user-facing
 release: the bundle and the release page.
 
+A fresh AWS or GCP cluster receives no registry credential: the migration Job
+names the digest-pinned image and configures no `imagePullSecrets`. Before it
+records the candidate, the workflow therefore proves that the exact digest
+resolves **anonymously** — against an empty Docker config, never the publisher's
+authenticated session — and fails closed if it does not. `ghcr.io` container
+packages are private by default, and GitHub removed the API that changed an
+existing package's visibility, so making `sol-migration-runner` public is a
+one-time operator action in that package's settings. All later versions of the
+package inherit the visibility, so the action is not repeated per candidate.
+
 The image's namespace is the repository owner that builds the candidate:
 `release.yml` derives it from `github.repository_owner` rather than naming an
 account. GitHub Container Registry packages belong to the namespace that
@@ -103,8 +113,9 @@ Sol-owned artifact the candidate identifies still exists exactly as recorded:
 
 - `promotion.py verify` hashes the attached bundle against the candidate's
   `bundle_sha256`;
-- `verify_runner_image.sh` resolves the exact `runner_image` digest in GHCR
-  (read-only — no rebuild, republish or tag substitution);
+- `verify_runner_image.sh` proves a fresh cluster can pull the exact
+  `runner_image` digest anonymously in GHCR (read-only — no rebuild, republish
+  or tag substitution);
 - `promotion.py decide` checks the verdict.
 
 Only then does it flip the draft to published with `gh release edit
@@ -114,7 +125,8 @@ qualified.
 The decision refuses when the verdict is missing, malformed, for another
 candidate, missing a required provider, or has a failing/omitted/blocked
 release-blocking row or no independent absence result, and promotion refuses
-when the recorded bundle or runner cannot be established. Its mechanics are
+when the recorded bundle is absent or changed, or when a fresh cluster can no
+longer pull the recorded runner anonymously. Its mechanics are
 pinned by `internal/ci/test_candidate_promotion.py` and
 `internal/ci/test_runner_image_resolution.sh`; those tests establish the
 mechanics only and are not qualification evidence.

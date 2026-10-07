@@ -12,6 +12,12 @@
 #   └── SUPPORT_REFS                  this tag's support-refs.txt, containing the
 #                                     exact support-library revisions it was built from
 #
+# The runner is recorded only once a fresh cluster could actually pull it: the
+# exact recorded digest must resolve anonymously, because a fresh AWS or GCP
+# workload has no registry credential and `ghcr.io` packages are private by
+# default. The candidate fails closed here, before anything is recorded, rather
+# than failing an hour into live qualification.
+#
 # Promotion is a separate workflow (`promote.yml`). It publishes this exact draft
 # candidate only after an operator-authorized AWS and GCP qualification verdict,
 # attached to the candidate, refers to the same revision, bundle and runner. The
@@ -161,6 +167,14 @@ jobs:
             --bundle "${{ steps.bundle.outputs.archive }}" \
             --runner-image "${{ steps.runner.outputs.image }}" \
             --out "$RUNNER_TEMP/candidate.json"
+
+      # A fresh AWS or GCP cluster receives no registry credentials, so the
+      # recorded runner must be anonymously pullable by its exact digest. This is
+      # the boundary #1272 crossed: the push succeeded while every clean workload
+      # got 401. Nothing is recorded until this passes.
+      - name: Establish that a fresh cluster can pull the recorded runner
+        run: |
+          internal/tooling/release/verify_runner_image.sh "$RUNNER_TEMP/candidate.json"
 
       - name: Installed-release smoke
         run: |

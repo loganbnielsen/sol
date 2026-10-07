@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Establish that the exact migration-runner digest a release candidate records
-# still resolves in its registry.
+# Establish that a fresh AWS or GCP cluster can pull the exact migration-runner
+# digest a release candidate records.
 #
-# This is an availability and identity check, not a rebuild: it never pushes,
-# never republishes, and never accepts a mutable tag in place of the recorded
-# digest. Promotion runs it so that every Sol-owned artifact that made up the
-# qualified candidate still exists exactly as identified when that candidate is
-# promoted. A digest that is missing or inaccessible fails closed.
+# A fresh cluster receives no registry credentials: the migration Job names the
+# digest-pinned image and configures no imagePullSecrets. So the check performs
+# the registry read anonymously -- against an empty Docker config, never the
+# authenticated session the publisher used to push -- and fails closed if the
+# digest is missing or the GHCR package is not public.
+#
+# This is an availability, identity and authorization check, not a rebuild: it
+# never pulls image layers, pushes, republishes, or accepts a mutable tag in
+# place of the recorded digest. Candidate construction and promotion both run
+# it, so the runner identity they record is one a fresh cluster can actually pull.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -22,9 +27,18 @@ case "$image" in
     ;;
 esac
 
+# An empty Docker config directory makes the registry read anonymous. Reusing
+# the publisher's config here would only prove that the authenticated release
+# workflow can read its own package, which is exactly the assumption #1272
+# falsified: a private GHCR package is readable by the publisher and not by a
+# fresh cluster.
+anonymous_config="$(mktemp -d)"
+trap 'rm -rf "$anonymous_config"' EXIT
+export DOCKER_CONFIG="$anonymous_config"
+
 # Resolve the manifest by digest. `buildx imagetools` is preferred; `manifest
-# inspect` is the fallback. Neither pulls the image, and both fail when the
-# digest is absent or unreadable.
+# inspect` is the fallback. Neither pulls layers, and both fail when the digest
+# is absent or the anonymous read is denied.
 resolve() {
   "$docker" buildx imagetools inspect "$image" >/dev/null 2>&1 && return 0
   "$docker" manifest inspect "$image" >/dev/null 2>&1 && return 0
@@ -32,7 +46,7 @@ resolve() {
 }
 
 if ! resolve; then
-  echo "verify_runner_image: the recorded migration runner $image does not resolve in its registry; refusing to promote a candidate whose runner is gone" >&2
+  echo "verify_runner_image: a fresh cluster cannot pull the recorded migration runner $image anonymously; the GHCR package must be public, because a fresh cluster has no registry credential to authenticate a private one" >&2
   exit 1
 fi
-echo "the recorded migration runner $image resolves"
+echo "a fresh cluster can pull the recorded migration runner $image"
