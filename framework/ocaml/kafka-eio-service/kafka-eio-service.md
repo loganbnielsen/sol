@@ -328,14 +328,16 @@ module Schema : sig
       Returns Ok () if compatible or if no version is registered yet (new topic).
       Does not register the schema — safe to call in CI without side effects. *)
   val check
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
     -> (unit, error) result
 
   val check_all
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE) list
@@ -346,7 +348,8 @@ module Schema : sig
       (the generated `contract/contract.exe --apply`); never call it from a running
       workload. *)
   val register
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
@@ -355,7 +358,8 @@ module Schema : sig
   (** Read-only: require the declared schema to be the registered one and return its id.
       This is the producer's startup identity check; it never writes. *)
   val resolve
-    :  net:_ Eio.Net.t
+    :  ?ca_file:string
+    -> net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock
     -> registry_url:string
     -> (module MESSAGE)
