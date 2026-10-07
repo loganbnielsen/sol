@@ -67,15 +67,15 @@ independent of the licence Sol's own code carries.
 The four TypeScript framework packages are extracted to their own repositories
 and published under the `@sol-fab` npm scope — `obs` and `kafka` each in their
 own, `svc` and `worker` together in
-[`sol-typescript`](https://github.com/loganbnielsen/sol-typescript):
+[`sol-typescript`](https://github.com/sol-fab/sol-typescript):
 
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — observability
   naming/shape conventions.
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — Kafka policy
   layer on top of `kafkajs`.
-- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+- [`@sol-fab/svc`](https://github.com/sol-fab/sol-typescript) — the service
   lifecycle contract (bounded drain, idempotent signals).
-- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+- [`@sol-fab/worker`](https://github.com/sol-fab/sol-typescript) — the
   worker lifecycle contract.
 
 All four are **Apache-2.0**, as is everything they *ship* (their compiled
