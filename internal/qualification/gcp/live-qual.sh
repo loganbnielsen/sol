@@ -1022,6 +1022,78 @@ app_load_runtime_secrets() {
   say "  (POSTGRES_URL) and generated for this run (SOL_API_KEY): $LOG_DIR/app-runtime-secrets.txt"
 }
 
+app_secret_failure() {
+  grep -qF 'does not hold the required non-empty secret key(s)' "$1" 2>/dev/null
+}
+
+app_read_platform_password() {
+  local password
+  if [ -n "${KAFKA_SASL_PASSWORD:-}" ]; then
+    printf '%s' "$KAFKA_SASL_PASSWORD"
+    return 0
+  fi
+  password="$(kubectl get secret redpanda-users -n redpanda -o jsonpath='{.data.users\.txt}' 2>/dev/null |
+    base64 -d 2>/dev/null | sed -n 's/^sol-workloads:\([^:]*\):.*/\1/p' | head -1)"
+  [ -n "$password" ] || return 1
+  printf '%s' "$password"
+}
+
+app_read_kafka_ca() {
+  kubectl get secret redpanda-default-cert -n redpanda -o jsonpath='{.data.ca\.crt}' 2>/dev/null |
+    base64 -d 2>/dev/null
+}
+
+app_domains() {
+  local service path domain
+  for service in $(app_services); do
+    if path="$(app_context_path "$service")"; then
+      domain="${path#app/}"
+      printf '%s\n' "${domain%%/*}"
+    fi
+  done | sort -u
+}
+
+app_secret_set() {
+  local key="$1" domain
+  for domain in $(app_domains); do
+    if ! run "app-secret-$key-$domain" bash -c \
+      "printf '%s' \"\$SOL_SECRET_VALUE\" | exec '$SOL' secret set '$key' --target '$TARGET' --domain '$domain'"; then
+      return 1
+    fi
+  done
+}
+
+# Production secrets are operator-supplied: Sol's migrate and deploy verify them
+# and fail closed. The harness stands in for the operator, supplying the values it
+# already holds through the supported `sol secret set`.
+app_supply_secrets() {
+  local password ca
+  if ! password="$(app_read_platform_password)"; then
+    say "app: could not establish KAFKA_SASL_PASSWORD: set it in the environment, or ensure redpanda/redpanda-users exists"
+    return 1
+  fi
+  ca="$(app_read_kafka_ca)"
+  if [ -z "$ca" ]; then
+    say "app: could not read the Redpanda CA from redpanda/redpanda-default-cert"
+    return 1
+  fi
+  export SOL_SECRET_VALUE="$POSTGRES_URL"
+  app_secret_set POSTGRES_URL || return 1
+  export SOL_SECRET_VALUE="$SOL_API_KEY"
+  app_secret_set SOL_API_KEY || return 1
+  export SOL_SECRET_VALUE="$password"
+  app_secret_set KAFKA_SASL_PASSWORD || return 1
+  export SOL_SECRET_VALUE="$ca"
+  app_secret_set KAFKA_SSL_CA_CERT || return 1
+  unset SOL_SECRET_VALUE
+  {
+    printf 'runtime_secret_keys: POSTGRES_URL SOL_API_KEY KAFKA_SASL_PASSWORD KAFKA_SSL_CA_CERT\n'
+    printf 'runtime_secret_sources: the cluster postgres_url output; this run; redpanda/redpanda-users; redpanda/redpanda-default-cert\n'
+    printf 'runtime_secret_values: never recorded\n'
+  } >>"$LOG_DIR/prerequisites.txt"
+  say "app: supplied the operator's runtime and workload secrets through sol secret set; their values are never recorded"
+}
+
 app_k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 
 app_context_path() {
@@ -1237,15 +1309,33 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
+  image_ref_args="$(app_image_ref_args)"
+  if [ -z "$image_ref_args" ]; then
+    say "app: no immutable image refs were published, so the profile's artifact guarantee cannot be met"
     capture_app_evidence
     freeze_evidence
     finalise_bundle
     return 1
   fi
-  image_ref_args="$(app_image_ref_args)"
-  if [ -z "$image_ref_args" ]; then
-    say "app: no immutable image refs were published, so the profile's artifact guarantee cannot be met"
+  say "app-secrets-bootstrap"
+  if ! run app-deploy-bootstrap "$SOL" deploy "$TARGET" --registry "$(app_registry)" $image_ref_args; then
+    if app_secret_failure "$LOG_DIR/app-deploy-bootstrap.log"; then
+      say "app: the deploy established the namespaces and their scoped RBAC, then refused the absent operator secrets (expected)"
+    else
+      say "app: the bootstrap deploy did not reach the secret prerequisite"
+      capture_app_evidence
+      freeze_evidence
+      finalise_bundle
+      return 1
+    fi
+  fi
+  if ! app_supply_secrets; then
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run migrate-apply "$SOL" migrate apply "$TARGET"; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle

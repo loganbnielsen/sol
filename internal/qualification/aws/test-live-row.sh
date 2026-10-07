@@ -308,6 +308,14 @@ case " $* " in
     printf 'secret/redpanda-users created\n'
     exit 0
     ;;
+  *" get secret redpanda-users "*)
+    printf '%s' 'sol-workloads:testpass:SCRAM-SHA-256' | base64
+    exit 0
+    ;;
+  *" get secret redpanda-default-cert "*)
+    printf '%s' 'ca-certificate-for-tests' | base64
+    exit 0
+    ;;
   *" config view "*)
     kubeconfig="${KUBECONFIG:-}"
     while [ $# -gt 0 ]; do
@@ -591,6 +599,16 @@ has "and pins every selected workload by digest, not a mutable tag" \
   "image-ref charge_svc=$ECR/pluto/charge-svc@sha256:" "$TMP/ok.sol"
 lacks "no mutable tag is passed to a profile that requires immutable artifacts" \
   "--image-tag" "$TMP/ok.sol"
+has "the runtime secret is supplied through sol secret set" \
+  "secret set POSTGRES_URL --target qualreg/aws/us-east-1 --domain checkout" "$TMP/ok.sol"
+has "the workload API key too" \
+  "secret set SOL_API_KEY --target qualreg/aws/us-east-1 --domain payments" "$TMP/ok.sol"
+has "and the Kafka credential and CA" \
+  "secret set KAFKA_SSL_CA_CERT --target qualreg/aws/us-east-1 --domain comms" "$TMP/ok.sol"
+lacks "no secret value is passed on a command line" \
+  "testpass" "$TMP/ok.sol"
+has "the supplied keys are recorded without their values" \
+  "runtime_secret_values: never recorded" "$TMP/ok.logs/prerequisites.txt"
 has "the run identity records the bundle version" \
   "sol_version: $VERSION" "$TMP/ok.logs/sol-identity.txt"
 has "and the bundle's digest-pinned migration runner" \
