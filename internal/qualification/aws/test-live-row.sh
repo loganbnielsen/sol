@@ -727,8 +727,8 @@ has "the harness creates the documented Secret in the namespace the install name
   "create secret generic redpanda-users -n redpanda" "$TMP/credential-boundary.kubectl"
 has "with the SASL user the workload renderer names" "sol-workloads:" "$TMP/credential-boundary.kubectl"
 has "and the SCRAM mechanism the durable layer declares" "SCRAM-SHA-256" "$TMP/credential-boundary.kubectl"
-has "bound to the deploy identity's own kubeconfig" \
-  "kubeconfig-deploy.yaml" "$TMP/credential-boundary.kubectl"
+has "bound to the cluster-access identity, which holds platform authority for a reserved namespace" \
+  "kubeconfig-access.yaml" "$TMP/credential-boundary.kubectl"
 if [ "$(grep -c 'cloud apply' "$TMP/credential-boundary.sol")" -ge 2 ]; then
   ok "and resumes the apply once the prerequisite exists"
 else

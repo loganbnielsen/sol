@@ -178,7 +178,11 @@ supply_platform_credential() {
     source="generated-for-this-run"
     KAFKA_SASL_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
   fi
-  if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" create secret generic redpanda-users -n redpanda \
+  # `redpanda` is a reserved platform namespace: the deploy identity is
+  # namespace-scoped application authority and correctly cannot write there. The
+  # harness stands in for the operator, who holds platform-management authority,
+  # so it uses the cluster-access identity.
+  if ! kubectl --kubeconfig "$ACCESS_KUBECONFIG" create secret generic redpanda-users -n redpanda \
       --from-literal="users.txt=sol-workloads:$KAFKA_SASL_PASSWORD:SCRAM-SHA-256" \
       >"$LOG_DIR/platform-credential.log" 2>&1; then
     say "could not create the platform's documented prerequisite Secret redpanda/redpanda-users"
