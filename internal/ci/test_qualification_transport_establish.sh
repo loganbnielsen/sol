@@ -78,11 +78,24 @@ case "$1" in
         fi
         ;;
       can-i)
+        { for arg in "$@"; do printf '<%s>' "$arg"; done; printf '\n'; } >>"$state/can-i.argv"
+        case "${3:-}" in
+          "" | *" "*)
+            echo "error: you must specify two arguments: verb resource or verb resource/resourceName." >&2
+            exit 1
+            ;;
+        esac
+        case "${4:-}" in
+          "" | -* | *" "*)
+            echo "error: you must specify two arguments: verb resource or verb resource/resourceName." >&2
+            exit 1
+            ;;
+        esac
         if wide; then echo yes; exit 0; fi
         if [ ! -f "$state/entry" ] || [ ! -f "$state/role" ]; then echo no; exit 0; fi
         case "$*" in
-          *"list services"* | *"create pods/portforward"*) echo yes ;;
-          *"create pods/exec"*)
+          *"list services"* | *"create pods --subresource=portforward"*) echo yes ;;
+          *"create pods --subresource=exec"*)
             if [ -f "$state/exec" ]; then echo yes; else echo no; fi
             ;;
           *) echo no ;;
@@ -137,10 +150,20 @@ expect_text() {
   if grep -q "$1" "$work/out"; then ok "$2"; else bad "$2"; fi
 }
 
+expect_argv_separated() {
+  if grep -qF '<list><services>' "$work/state/can-i.argv" &&
+    ! grep -qF '<list services>' "$work/state/can-i.argv"; then
+    ok "$1"
+  else
+    bad "$1"
+  fi
+}
+
 echo "establish: the surface it declares is the surface it verifies"
 reset_state
 run_establish
 expect_exit 0 "a narrow end state is accepted"
+expect_argv_separated "auth can-i receives the verb and resource as separate arguments"
 expect_file "the run opened the establishment window" "$work/state/associated"
 expect_file "the access entry remains" "$work/state/entry"
 expect_no_file "the cluster-admin window is closed" "$work/state/wide"
@@ -165,7 +188,7 @@ touch "$work/state/exec"
 run_establish
 expect_exit 1 "a residual pods/exec grant fails establishment"
 expect_no_file "the access entry is removed rather than left broad" "$work/state/entry"
-expect_text "auth can-i create pods/exec" "the refusal names the excluded verb"
+expect_text "auth can-i create pods --subresource=exec" "the refusal names the excluded verb and subresource"
 
 echo
 echo "establish: a mapping outside the declared group is refused"

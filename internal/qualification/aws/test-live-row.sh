@@ -331,7 +331,7 @@ case " $* " in
       *) exit 1 ;;
     esac
     ;;
-  *" auth can-i create pods/portforward "*)
+  *" auth can-i create pods --subresource=portforward "*)
     case " $* " in
       *kubeconfig-access.yaml*) printf '%s\n' "${STUB_ACCESS_FORWARD:-no}" ;;
       *kubeconfig-deploy.yaml*) printf '%s\n' "${STUB_DEPLOY_FORWARD:-no}" ;;

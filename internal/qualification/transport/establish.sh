@@ -164,7 +164,12 @@ recreate_narrow_entry
 end_state=none
 
 can_i() {
-  kubectl --context "$alias" auth can-i "$1" -n "$verify_ns" 2>/dev/null
+  local verb="$1" resource="$2" subresource="${3:-}"
+  if [ -n "$subresource" ]; then
+    kubectl --context "$alias" auth can-i "$verb" "$resource" --subresource="$subresource" -n "$verify_ns" 2>/dev/null
+  else
+    kubectl --context "$alias" auth can-i "$verb" "$resource" -n "$verify_ns" 2>/dev/null
+  fi
 }
 
 secrets_verdict() {
@@ -221,20 +226,28 @@ probe_effective_surface() {
     echo "  the grant is not shown to be transport-only: ${verdict}" >&2
     return 1
   fi
-  local denial
-  for denial in "* *" "create pods/exec" "get pods/log" "delete pods"; do
-    if [ "$(can_i "$denial")" != no ]; then
-      echo "  the grant is broader than declared: auth can-i ${denial} -n ${verify_ns} did not answer no" >&2
+  deny() {
+    local verb="$1" resource="$2" subresource="${3:-}" verdict
+    verdict="$(can_i "$verb" "$resource" "$subresource")"
+    if [ "$verdict" != no ]; then
+      echo "  the grant is broader than declared: auth can-i ${verb} ${resource}${subresource:+ --subresource=$subresource} -n ${verify_ns} did not answer no" >&2
       return 1
     fi
-  done
-  local grant
-  for grant in "list services" "create pods/portforward"; do
-    if [ "$(can_i "$grant")" != yes ]; then
-      echo "  the declared grant is not effective: auth can-i ${grant} -n ${verify_ns} did not answer yes" >&2
+  }
+  allow() {
+    local verb="$1" resource="$2" subresource="${3:-}" verdict
+    verdict="$(can_i "$verb" "$resource" "$subresource")"
+    if [ "$verdict" != yes ]; then
+      echo "  the declared grant is not effective: auth can-i ${verb} ${resource}${subresource:+ --subresource=$subresource} -n ${verify_ns} did not answer yes" >&2
       return 1
     fi
-  done
+  }
+  deny '*' '*' || return 1
+  deny create pods exec || return 1
+  deny get pods log || return 1
+  deny delete pods || return 1
+  allow list services || return 1
+  allow create pods portforward || return 1
   return 0
 }
 
@@ -282,5 +295,5 @@ echo "qualification transport established. Verify with:"
 echo "  aws eks update-kubeconfig --name ${cluster} --alias ${alias} --role-arn ${arn}"
 echo "  kubectl --context ${alias} get pods -n ${verify_ns}                                         # succeeds"
 echo "  kubectl --context ${alias} get secrets -n ${verify_ns}                                      # denied"
-echo "  kubectl --context ${alias} auth can-i create pods/portforward -n ${verify_ns}               # yes"
-echo "  kubectl --context ${alias} auth can-i create pods/exec -n ${verify_ns}                      # no"
+echo "  kubectl --context ${alias} auth can-i create pods --subresource=portforward -n ${verify_ns}  # yes"
+echo "  kubectl --context ${alias} auth can-i create pods --subresource=exec -n ${verify_ns}         # no"
