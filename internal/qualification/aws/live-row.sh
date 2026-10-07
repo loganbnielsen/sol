@@ -316,7 +316,7 @@ probe_production_separation() {
         >>"$LOG_DIR/transport-separation-$phase.txt"
       continue
     fi
-    verdict="$(kubectl --kubeconfig "$kc" auth can-i create pods/portforward -n "$APP_NS" 2>/dev/null || true)"
+    verdict="$(kubectl --kubeconfig "$kc" auth can-i create pods --subresource=portforward -n "$APP_NS" 2>/dev/null || true)"
     printf '%s create pods/portforward -n %s: %s\n' "$label" "$APP_NS" "${verdict:-<no answer>}" \
       >>"$LOG_DIR/transport-separation-$phase.txt"
     if [ "$verdict" != no ]; then
@@ -372,7 +372,7 @@ phase_transport() {
   probe_production_separation post || return 1
   local pf
   pf="$(kubectl --kubeconfig "$QUALIFIER_KUBECONFIG" --context "$CLUSTER-qualifier" \
-    auth can-i create pods/portforward -n "$APP_NS" 2>/dev/null || true)"
+    auth can-i create pods --subresource=portforward -n "$APP_NS" 2>/dev/null || true)"
   printf 'qualifier create pods/portforward -n %s: %s\n' "$APP_NS" "${pf:-<no answer>}" \
     >>"$LOG_DIR/transport-separation-post.txt"
   if [ "$pf" != yes ]; then
