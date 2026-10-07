@@ -394,9 +394,23 @@ let autopilot_of_describe_json text : (bool, string) result =
   | exception Yojson.Json_error message ->
     Error (Printf.sprintf "the describe output is not JSON: %s" message)
   | json ->
-    Sol_cli_json.field [ "autopilot"; "enabled" ] json
-    |> Sol_cli_json.bool
-    |> Option.to_result ~none:"the cluster describe carries no autopilot.enabled field"
+    (match Sol_cli_json.assoc (Sol_cli_json.field [ "autopilot" ] json) with
+     | None -> Error "the cluster describe carries no autopilot field"
+     | Some fields ->
+       (match List.assoc_opt "enabled" fields with
+        | None ->
+          (* GKE encodes a standard cluster as an *empty* `autopilot` object:
+             the field is present and the provider writes no `enabled` into it
+             (observed on a cluster this provider created: `{"autopilot":{}}`).
+             An Autopilot cluster always reports `enabled: true`, so an empty
+             object is the provider's encoding of standard, not an unreadable
+             mode. A describe with the field absent altogether, or with an
+             `enabled` that is not a boolean, is still refused. *)
+          Ok false
+        | Some enabled ->
+          (match Sol_cli_json.bool enabled with
+           | Some value -> Ok value
+           | None -> Error "the cluster describe's autopilot.enabled is not a boolean")))
 ;;
 
 let substrate_of_describe ~outputs_json ~region ~cluster_name

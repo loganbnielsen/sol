@@ -93,8 +93,15 @@ let test_the_describe_field_is_read () =
   in
   check "autopilot on" {|{"autopilot":{"enabled":true}}|} true;
   check "autopilot off" {|{"autopilot":{"enabled":false}}|} false;
+  (* What GKE returns for a standard cluster: the field is present and empty. *)
+  check "a standard cluster's empty autopilot object" {|{"autopilot":{}}|} false;
   (match Sol_cli_gcp_cluster.autopilot_of_describe_json {|{"name":"c"}|} with
    | Ok _ -> Windtrap.fail "a describe with no autopilot field was read as a mode"
+   | Error _ -> ());
+  (match
+     Sol_cli_gcp_cluster.autopilot_of_describe_json {|{"autopilot":{"enabled":"yes"}}|}
+   with
+   | Ok _ -> Windtrap.fail "a non-boolean autopilot.enabled was read as a mode"
    | Error _ -> ());
   match Sol_cli_gcp_cluster.autopilot_of_describe_json "not json" with
   | Ok _ -> Windtrap.fail "an unparseable describe was read as a mode"
