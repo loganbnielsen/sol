@@ -25,6 +25,7 @@ BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2700}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$ATTEMPT}"
+export LOG_DIR
 RUN_KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
 export KUBECONFIG="$RUN_KUBECONFIG"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
@@ -990,8 +991,8 @@ app_services() { printf '%s\n' orders_svc fulfilment_worker order_svc fulfillmen
 
 app_helpers() {
   printf '%s\n' say app_registry app_kube_context app_services app_k8s_name app_context_path \
-    app_image_ref build_app_images push_app_images app_ingress_summary app_load_balancer_address \
-    app_orders_transaction
+    app_image_ref build_app_images push_app_images app_image_ref_args app_ingress_summary \
+    app_load_balancer_address app_orders_transaction
 }
 
 app_postgres_url() {
@@ -1100,11 +1101,30 @@ build_app_images() {
 
 push_app_images() {
   gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet || return 1
-  local service
+  local service ref digest
+  : >"$LOG_DIR/app-image-refs.txt"
   for service in $(app_services); do
-    say "  docker push $(app_image_ref "$service")"
-    docker push "$(app_image_ref "$service")" || return 1
+    ref="$(app_image_ref "$service")"
+    say "  docker push $ref"
+    docker push "$ref" || return 1
+    digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$ref" 2>/dev/null || true)"
+    case "$digest" in
+      *"@sha256:"*) printf '%s=%s\n' "$service" "$digest" >>"$LOG_DIR/app-image-refs.txt" ;;
+      *)
+        say "  docker inspect reported no immutable digest for $ref"
+        return 1
+        ;;
+    esac
   done
+}
+
+app_image_ref_args() {
+  local ref out=""
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    out="$out --image-ref $(printf '%q' "$ref")"
+  done <"$LOG_DIR/app-image-refs.txt"
+  printf '%s' "$out"
 }
 
 app_ingress_summary() {
@@ -1223,7 +1243,15 @@ phase_app() {
     finalise_bundle
     return 1
   fi
-  if ! run app-deploy "$SOL" deploy "$TARGET" --registry "$(app_registry)" --image-tag "$APP_TAG"; then
+  image_ref_args="$(app_image_ref_args)"
+  if [ -z "$image_ref_args" ]; then
+    say "app: no immutable image refs were published, so the profile's artifact guarantee cannot be met"
+    capture_app_evidence
+    freeze_evidence
+    finalise_bundle
+    return 1
+  fi
+  if ! run app-deploy "$SOL" deploy "$TARGET" --registry "$(app_registry)" $image_ref_args; then
     capture_app_evidence
     freeze_evidence
     finalise_bundle

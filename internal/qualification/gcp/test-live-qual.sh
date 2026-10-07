@@ -676,6 +676,12 @@ has "and the reason names the endpoint binding" "not the current endpoint" \
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"${DOCKER_LOG:-/dev/null}"
+case " $* " in
+  *" inspect "*)
+    ref="${!#}"
+    printf '%s@sha256:%s\n' "${ref%:*}" "$(printf 'c%.0s' $(seq 1 64))"
+    ;;
+esac
 exit 0
 STUB
 chmod +x "$TMP/bin/docker"
@@ -728,10 +734,14 @@ has "Sol is handed no runner reference at all" \
   "migrate apply qual/gcp/us-central1 [runner=unset]" "$TMP/app-ok.argv"
 has "the deploy is given the target's own registry" \
   "--registry us-central1-docker.pkg.dev/sol-qualification/test-cluster" "$TMP/app-ok.argv"
-has "and the same workspace registry for its migrate prerequisite" \
-  "deploy qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster --image-tag qual-" \
+has "and every selected workload is pinned by digest" \
+  "deploy qual/gcp/us-central1 --registry us-central1-docker.pkg.dev/sol-qualification/test-cluster --image-ref orders_svc=us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/orders-svc@sha256:" \
   "$TMP/app-ok.argv"
-has "and a tag unique to the run" "--image-tag qual-" "$TMP/app-ok.argv"
+has "including the TypeScript namespace's service" \
+  "--image-ref order_svc=us-central1-docker.pkg.dev/sol-qualification/test-cluster/pluto/order-svc@sha256:" \
+  "$TMP/app-ok.argv"
+lacks "no mutable tag is passed to a profile that requires immutable artifacts" \
+  "--image-tag" "$TMP/app-ok.argv"
 has "the run identity records the bundle version" \
   "sol_version: $VERSION" "$TMP/app-ok.logs/sol-identity.txt"
 has "and the bundle's digest-pinned migration runner" \
