@@ -25,8 +25,10 @@ APP_PORT="${APP_PORT:-80}"
 SCENARIO="${SCENARIO:-charges}"
 SVC_UNIT="${SVC_UNIT:-charge_svc}"
 WORKER_UNIT="${WORKER_UNIT:-notify_worker}"
-SVC_DIR="${SVC_DIR:-payments}"
-WORKER_DIR="${WORKER_DIR:-comms}"
+# Every workload the target's plan selects needs an immutable artifact; the
+# production-single-region profile refuses a mutable tag. The profile qualifies
+# OCaml workloads only, and the example target omits the two TypeScript units.
+APP_UNITS="${APP_UNITS:-checkout_svc charge_svc notify_worker orders_svc fulfilment_worker}"
 LEDGER_PREFIX="${LEDGER_PREFIX:-sol}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-2400}"
 APP_TAG="${APP_TAG:-row-$(date -u +%Y%m%d-%H%M%S)}"
@@ -113,8 +115,10 @@ optional (defaults shown)
   APP_NS=pluto-payments          APP_SERVICE=charge-svc
   APP_PORT=80                    SCENARIO=charges
   WORKER_NS=pluto-comms          SVC_UNIT=charge_svc
-  WORKER_UNIT=notify_worker      SVC_DIR=payments
-  WORKER_DIR=comms
+  WORKER_UNIT=notify_worker
+  APP_UNITS="checkout_svc charge_svc notify_worker orders_svc fulfilment_worker"
+                                 every workload the target selects is built,
+                                 pushed and pinned by digest
 
 phases
   cloud      cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
@@ -192,6 +196,29 @@ supply_platform_credential() {
 
 k8s_name() { printf '%s' "$1" | tr '_' '-'; }
 image_ref() { printf '%s/pluto/%s:%s' "$ECR_REGISTRY" "$(k8s_name "$1")" "$APP_TAG"; }
+
+unit_dir() {
+  local unit="$1" dir
+  for dir in "$WORKSPACE"/app/*/"$unit"; do
+    if [ -f "$dir/Dockerfile" ]; then
+      printf '%s' "${dir#"$WORKSPACE"/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+image_digest() {
+  local ref="$1" digest
+  digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$ref" 2>/dev/null || true)"
+  case "$digest" in
+    *"@sha256:"*) printf '%s' "$digest" ;;
+    *)
+      say "docker inspect reported no immutable digest for $ref"
+      return 1
+      ;;
+  esac
+}
 
 target_state_bucket() {
   sed -n 's/^ *state_bucket: *//p' "$TARGET_FILE" | head -1
@@ -404,17 +431,29 @@ phase_cloud() {
   say "the substrate and platform install completed; evidence in $LOG_DIR"
 }
 
+app_publish_images() {
+  local unit dir ref digest
+  : >"$LOG_DIR/app-image-refs.txt"
+  run ecr-login bash -c \
+    "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'" || return 1
+  for unit in $APP_UNITS; do
+    if ! dir="$(unit_dir "$unit")"; then
+      say "no app/*/$unit directory with a Dockerfile in $WORKSPACE"
+      return 1
+    fi
+    ref="$(image_ref "$unit")"
+    run "app-build-$unit" docker build -f "$dir/Dockerfile" -t "$ref" "$WORKSPACE" || return 1
+    run "app-push-$unit" docker push "$ref" || return 1
+    if ! digest="$(image_digest "$ref")"; then return 1; fi
+    printf '%s=%s\n' "$unit" "$digest" >>"$LOG_DIR/app-image-refs.txt"
+    say "  $unit -> $digest"
+  done
+}
+
 phase_app() {
   ensure_contexts || return 1
   verify_identity_boundary || return 1
-  run app-build docker build -f "app/$SVC_DIR/$SVC_UNIT/Dockerfile" \
-    -t "$(image_ref "$SVC_UNIT")" "$WORKSPACE" || return 1
-  run app-build-worker docker build -f "app/$WORKER_DIR/$WORKER_UNIT/Dockerfile" \
-    -t "$(image_ref "$WORKER_UNIT")" "$WORKSPACE" || return 1
-  run ecr-login bash -c \
-    "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'" || return 1
-  run app-push docker push "$(image_ref "$SVC_UNIT")" || return 1
-  run app-push-worker docker push "$(image_ref "$WORKER_UNIT")" || return 1
+  app_publish_images || return 1
   say "runner: release $SOL_BUNDLE_VERSION names $SOL_RUNNER_IMAGE; the publisher publishes nothing"
   capture_state
   local url
@@ -439,7 +478,16 @@ phase_app() {
       say "  $ns: no sol-deploy RoleBinding yet"
     fi
   done
-  run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'" || return 1
+  local image_ref_args=""
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    image_ref_args="$image_ref_args --image-ref $(printf '%q' "$ref")"
+  done <"$LOG_DIR/app-image-refs.txt"
+  if [ -z "$image_ref_args" ]; then
+    say "no immutable image refs were published, so the profile's artifact guarantee cannot be met"
+    return 1
+  fi
+  run app-deploy bash -c "cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' $image_ref_args" || return 1
   for ns in $deploy_namespaces; do
     if ! kubectl --kubeconfig "$DEPLOY_KUBECONFIG" get rolebinding sol-deploy -n "$ns" >/dev/null 2>&1; then
       say "the deploy completed into $ns without establishing its scoped deploy RBAC"

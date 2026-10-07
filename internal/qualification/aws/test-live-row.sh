@@ -101,6 +101,15 @@ STUB
 chmod +x "$ROOT/internal/qualification/transport/establish.sh"
 
 printf 'project: scratch\n' >"$WORKSPACE/sol.yml"
+# The app phase publishes every selected unit, so the workspace must carry a
+# Dockerfile for each (the docker stub answers the build and push).
+mkdir -p "$WORKSPACE/app/checkout/checkout_svc" "$WORKSPACE/app/payments/charge_svc" \
+  "$WORKSPACE/app/comms/notify_worker" "$WORKSPACE/app/payments/orders_svc" \
+  "$WORKSPACE/app/comms/fulfilment_worker"
+for unit in checkout_svc charge_svc notify_worker orders_svc fulfilment_worker; do
+  dir="$(find "$WORKSPACE/app" -maxdepth 2 -type d -name "$unit")"
+  printf 'FROM scratch\n' >"$dir/Dockerfile"
+done
 cat >"$WORKSPACE/sol/environments.local.yml" <<'YAML'
 qualreg:
   targets:
@@ -391,6 +400,12 @@ chmod +x "$TMP/bin/curl"
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"$DOCKER_LOG"
+case " $* " in
+  *" inspect "*)
+    ref="${!#}"
+    printf '%s@sha256:%s\n' "${ref%:*}" "$(printf 'b%.0s' $(seq 1 64))"
+    ;;
+esac
 exit 0
 STUB
 chmod +x "$TMP/bin/docker"
@@ -570,8 +585,12 @@ has "Sol applies the workspace's migrations" \
   "sol migrate apply qualreg/aws/us-east-1 [runner=unset] [home=unset]" "$TMP/ok.sol"
 lacks "without being asked to publish or name a runner" \
   "migrate apply qualreg/aws/us-east-1 --registry" "$TMP/ok.sol"
-has "the deploy still resolves the workspace's own images from the target's registry" \
-  "deploy qualreg/aws/us-east-1 --registry $ECR --image-tag row-" "$TMP/ok.sol"
+has "the deploy resolves the workspace's own images from the target's registry" \
+  "deploy qualreg/aws/us-east-1 --registry $ECR --image-ref checkout_svc=$ECR/pluto/checkout-svc@sha256:" "$TMP/ok.sol"
+has "and pins every selected workload by digest, not a mutable tag" \
+  "image-ref charge_svc=$ECR/pluto/charge-svc@sha256:" "$TMP/ok.sol"
+lacks "no mutable tag is passed to a profile that requires immutable artifacts" \
+  "--image-tag" "$TMP/ok.sol"
 has "the run identity records the bundle version" \
   "sol_version: $VERSION" "$TMP/ok.logs/sol-identity.txt"
 has "and the bundle's digest-pinned migration runner" \
@@ -740,16 +759,19 @@ has "the destroy carries the same var file, so teardown renders the applied shap
   "cloud destroy qualreg/aws/us-east-1 --apply --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
   "$TMP/destroyrun.sol"
 
-printf '\nscenario: the app phase binds the scenario unit names, not the pre-campaign pair\n'
-run_row alphaunits TRANSPORT=0 SVC_UNIT=orders_svc WORKER_UNIT=fulfilment_worker
+printf '\nscenario: the app phase publishes exactly the selected units\n'
+run_row alphaunits TRANSPORT=0 SVC_UNIT=orders_svc WORKER_UNIT=fulfilment_worker \
+  APP_UNITS="orders_svc fulfilment_worker"
 is "exit 0" "$(cat "$TMP/alphaunits.rc")" "0"
-has "the service image is built from the bound unit" \
+has "the service image is built from the selected unit" \
   "docker build -f app/payments/orders_svc/Dockerfile" "$TMP/alphaunits.docker"
 has "and pushed under its k8s name" \
   "docker push $ECR/pluto/orders-svc:row-" "$TMP/alphaunits.docker"
 has "the worker image too" \
   "docker push $ECR/pluto/fulfilment-worker:row-" "$TMP/alphaunits.docker"
-lacks "and no pre-campaign image is built" "charge-svc" "$TMP/alphaunits.docker"
+lacks "and no unselected image is built" "charge-svc" "$TMP/alphaunits.docker"
+has "and every selected unit is pinned by digest" \
+  "image-ref orders_svc=$ECR/pluto/orders-svc@sha256:" "$TMP/alphaunits.sol"
 
 printf '\nscenario: the destroy phase survives a closed stdout reader and records the inventory\n'
 run_phase_closed_stdout destroyclosed destroy
