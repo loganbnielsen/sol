@@ -64,7 +64,9 @@ case "$1 $2" in
         if [ "${STUB_AUTOPILOT:-0}" = "1" ]; then
           printf '{"autopilot":{"enabled":true}}\n'
         else
-          printf '{"autopilot":{"enabled":false}}\n'
+          # What GKE returns for a standard cluster: an empty `autopilot` object,
+          # not `enabled: false` (sol-fab/sol#1285).
+          printf '{"autopilot":{}}\n'
         fi
         exit 0
         ;;
