@@ -56,6 +56,13 @@ eval "$(opam env)"
 dune build
 ```
 
+The `*-eio` packages are pinned to the exact commits in `support-refs.txt`. A build
+failure inside a framework package (`Https_eio`, `Kafka_eio`, ...) on a fresh checkout is
+almost always a stale support-package pin, not a code defect: run
+`bash internal/ci/pin-support-packages.sh` and rebuild before investigating further. The
+fast checks detect drift and re-pin automatically; set `SOL_SKIP_SUPPORT_PIN=1` to be told
+what to run instead.
+
 Run the smallest relevant tests while developing. Before proposing a change, run the
 cheap repository checks:
 
