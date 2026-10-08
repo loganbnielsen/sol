@@ -17,6 +17,17 @@ type outcome =
 
 let kubectl ~ctx ?(timeout_s = 30.) args = Sol_cli_kubectl.run ~timeout_s ~ctx args
 
+(* A target's environment and target layers select which services it deploys,
+   through `services` and `omit` (DEC-047). Migrations are a workspace-level
+   artifact, but the one-shot migration Job must run in a namespace the target
+   actually deploys into: a service the target omits is not part of that target,
+   so its namespace cannot host the Job. Restricting here keeps the standalone
+   `sol migrate apply <target>` namespace selection consistent with the deploy
+   path, which plans over its own target-scoped inventory. *)
+let services_of_target ~(all : Sol_cli_manifest.service list) ~(active : string list) =
+  List.filter (fun (s : Sol_cli_manifest.service) -> List.mem s.name active) all
+;;
+
 let job_namespace ~workspace ~(services : Sol_cli_manifest.service list) =
   let by_domain_and_name (a : Sol_cli_manifest.service) (b : Sol_cli_manifest.service) =
     compare (a.domain, a.name) (b.domain, b.name)
