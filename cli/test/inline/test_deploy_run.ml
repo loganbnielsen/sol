@@ -73,6 +73,7 @@ let plan ?profile services : Sol_cli_deployment_plan.t =
   ; consumer_groups = []
   ; release_id
   ; requested_scope = "workspace"
+  ; platform_shape = Sol_cli_profile.Local
   ; profile
   ; contract = []
   ; contract_changes = []

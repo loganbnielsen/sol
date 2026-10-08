@@ -180,6 +180,7 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   ; consumer_groups = []
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
+  ; platform_shape = Sol_cli_profile.Local
   ; profile = None
   ; contract = []
   ; contract_changes = []

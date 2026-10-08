@@ -315,11 +315,6 @@ let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
   let workspace = ctx.facts.Sol_cli_workspace_model.root in
-  let production =
-    match plan.Sol_cli_deployment_plan.profile with
-    | Some { profile = Sol_cli_profile.Production_single_region; _ } -> true
-    | None -> false
-  in
   if not (Sol_cli_contract.has_projection ~workspace)
   then Ok ()
   else
@@ -327,7 +322,7 @@ let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
     |> Sol_cli_result.map_list (fun (namespace, image) ->
       Sol_cli_contract.reconcile_in_destination
         ~ctx:ctx.execution.cluster
-        ~production
+        ~platform_shape:plan.Sol_cli_deployment_plan.platform_shape
         ~namespace
         ~image)
     |> Result.map (fun _ -> ())

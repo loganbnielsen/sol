@@ -1,5 +1,11 @@
 type t = Production_single_region
 
+type platform_shape =
+  | Local
+  | Durable
+
+val platform_shape : t option -> platform_shape
+val platform_shape_to_string : platform_shape -> string
 val version : t -> int
 val to_string : t -> string
 val of_string : string -> (t, string) result

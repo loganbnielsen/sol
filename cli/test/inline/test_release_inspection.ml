@@ -99,6 +99,7 @@ let hosted_plan ?progressive_delivery () =
   ; consumer_groups = []
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
+  ; platform_shape = Sol_cli_profile.Local
   ; profile = None
   ; contract = []
   ; contract_changes = []

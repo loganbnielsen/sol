@@ -116,6 +116,7 @@ type t =
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
+  ; platform_shape : Sol_cli_profile.platform_shape
   ; profile : profile_claim option
   ; contract : Sol_cli_release_id.contract_fact list
   ; contract_changes : contract_change list
@@ -430,6 +431,8 @@ let to_json t =
           ] )
     ; "release_id", `String (Sol_cli_release_id.to_string t.release_id)
     ; "requested_scope", `String t.requested_scope
+    ; ( "platform_shape"
+      , `String (Sol_cli_profile.platform_shape_to_string t.platform_shape) )
     ; ( "resolved_workloads"
       , `List
           (t.services
@@ -478,6 +481,10 @@ let pp_summary fmt t =
   Format.fprintf fmt "environment: %s (%s)@\n" env.name (mode_to_string env.mode);
   Format.fprintf fmt "registry:    %s@\n" env.registry;
   Format.fprintf fmt "tag:         %s@\n" env.image_tag;
+  Format.fprintf
+    fmt
+    "platform:    %s@\n"
+    (Sol_cli_profile.platform_shape_to_string t.platform_shape);
   t.profile
   |> Option.iter (fun (claim : profile_claim) ->
     Format.fprintf fmt "profile:     %s@\n" (Sol_cli_profile.to_string claim.profile));
@@ -925,6 +932,12 @@ let of_services_result
       ?inventory
       services
   =
+  let platform_shape =
+    Sol_cli_profile.platform_shape
+      (match declared with
+       | Some cfg -> cfg.Sol_cli_config.profile
+       | None -> None)
+  in
   let resolution_units =
     match inventory with
     | None -> services
@@ -1074,19 +1087,15 @@ let of_services_result
       | None -> Option.value toml.replicas ~default:1
     in
     let kafka_durability_config =
-      match declared with
-      | Some cfg
-        when cfg.Sol_cli_config.profile = Some Sol_cli_profile.Production_single_region
-             && service_uses_resource_type declared svc.name "kafka" ->
-        [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
+      match platform_shape with
+      | Sol_cli_profile.Durable when service_uses_resource_type declared svc.name "kafka"
+        -> [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
       | _ -> []
     in
     let kafka_security_config =
-      match declared with
-      | Some cfg
-        when cfg.Sol_cli_config.profile = Some Sol_cli_profile.Production_single_region ->
-        Sol_cli_manifest.production_kafka_config
-      | _ -> []
+      match platform_shape with
+      | Sol_cli_profile.Durable -> Sol_cli_manifest.production_kafka_config
+      | Sol_cli_profile.Local -> []
     in
     let service_config = List.remove_assoc "SOL_KAFKA_DURABILITY" toml.env_config in
     let language = sol_yml_language ~declared ~service_name:svc.name in
@@ -1197,6 +1206,7 @@ let of_services_result
     ; schema_subjects
     ; consumer_groups = derive_consumer_groups ?declared workspace workspace_services
     ; requested_scope
+    ; platform_shape
     ; profile =
         profile_claim
           ~declared

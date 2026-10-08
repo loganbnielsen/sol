@@ -1,5 +1,19 @@
 type t = Production_single_region
 
+type platform_shape =
+  | Local
+  | Durable
+
+let platform_shape = function
+  | Some Production_single_region -> Durable
+  | None -> Local
+;;
+
+let platform_shape_to_string = function
+  | Local -> "local"
+  | Durable -> "durable"
+;;
+
 let version Production_single_region = 1
 let selection_name Production_single_region = "production-single-region"
 let to_string t = Printf.sprintf "%s/v%d" (selection_name t) (version t)
