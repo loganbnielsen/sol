@@ -133,6 +133,25 @@ let substrate_status
          }))
 ;;
 
+(* Live state, so it is read only under --check: how an operator or a harness reaches
+   this target's cluster, as the cloud root itself declares it. Absent outputs are not
+   an error here — the report then says nothing about a handoff rather than guessing a
+   context (DEC-020 keeps the context a mechanism, not the target's identity). *)
+let deploy_handoff (target : Sol_cli_config.target) =
+  match Sol_cli_cloud_lifecycle.cloud_target target with
+  | Error _ -> None
+  | Ok cloud_target ->
+    let infra_dir =
+      Sol_cli_terraform_workdir.chdir
+        ~provider:target.provider
+        ~role:Sol_cli_platform_assets.Cluster
+        ~backend_config:(Sol_cli_cloud_lifecycle.cloud_backend cloud_target)
+    in
+    (match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+     | Error _ -> None
+     | Ok output -> Sol_cli_target_report.deploy_handoff_of_outputs output.stdout)
+;;
+
 open Result.Syntax
 
 let declared_target target =
@@ -160,6 +179,7 @@ let show target verbose json check =
   let platform = platform_status ~check ~verbose target_config in
   let cloud = if check then Some (cloud_status target_config) else None in
   let drift = if check then Some (drift_status target_config) else None in
+  let handoff = if check then deploy_handoff target_config else None in
   let substrate = substrate_status ~check ~verbose target_config status in
   if json
   then
@@ -170,6 +190,7 @@ let show target verbose json check =
             ?cloud
             ?drift
             ?substrate
+            ?deploy_handoff:handoff
             ~verbose
             target_config
             status))
@@ -179,6 +200,7 @@ let show target verbose json check =
       ?cloud
       ?drift
       ?substrate
+      ?deploy_handoff:handoff
       ~verbose
       target_config
       status
