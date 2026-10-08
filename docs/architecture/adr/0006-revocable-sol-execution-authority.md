@@ -1,6 +1,6 @@
 # ADR 0006: Revocable Sol execution authority
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Date:** 2026-10-08
 - **Source:** operator decision (architecture review for #1302)
 - **Related:** #1302, #1307, ADR 0002 (Sol owns the complete cloud-target
@@ -114,6 +114,11 @@ Kubernetes configuration. Detach transfers authority and state:
      until expiry ([Google token types](https://cloud.google.com/docs/authentication/token-types));
      they normally expire after one hour and may be configured up to twelve
      hours ([service account credentials](https://docs.cloud.google.com/iam/docs/service-account-creds)).
+     Sol's current generated GCP provider and backend configurations do not set
+     service-account impersonation or a token lifetime, so there is no
+     Sol-specific configured TTL yet. The handoff implementation must not
+     assume a shorter lifetime unless it explicitly configures and verifies
+     one.
      To reject them sooner, disable the target service account, which causes
      existing access tokens to be rejected ([Google IAM API](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/disable)).
      Verify token rejection before completing handoff.
@@ -123,6 +128,12 @@ Kubernetes configuration. Detach transfers authority and state:
    proposes no unintended changes or resource replacement.
 5. Declare handoff complete only after revocation and the no-unintended-change
    plan are verified. Sol must not reconcile the detached target afterward.
+
+Apply provider-session revocation only after Sol's final authorized write and
+state transfer have completed. Applying it earlier can interrupt the handoff
+itself. Detaching a target does not uninstall the surrounding installation or
+remove installation-owned backend or DNS resources; those remain under the
+installation lifecycle and `sol uninstall`.
 
 State transfer and revocation are separate from configuration export. State
 contains sensitive values and is transferred only through a locked, secure
@@ -140,7 +151,9 @@ For both AWS and GCP:
    isolated cloud qualification target: a representative direct resource write
    and direct state access must be denied, while the scoped assume/impersonation
    path succeeds. A policy simulator or static policy assertion alone is not
-   sufficient evidence of the end-to-end fence.
+   sufficient evidence of the end-to-end fence. Offline CI alone does not
+   satisfy this criterion; running it requires an authorized isolated
+   qualification target.
 2. Terraform provider operations use the target execution identity; backend
    reads, writes, and locks use the separately scoped state identity.
 3. Revoking the target provider identity prevents a stale supported Sol
