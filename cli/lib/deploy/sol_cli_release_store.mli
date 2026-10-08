@@ -7,6 +7,7 @@ val record_plan
   :  ctx:Sol_cli_kube_destination.context
   -> apply_mode:Sol_cli_release.apply_mode
   -> retained:Sol_cli_release.recorded_workload list
+  -> owned:Sol_cli_release_id.owned_object list
   -> Sol_cli_deployment_plan.t
   -> (string, string) result
 

@@ -584,6 +584,33 @@ let verify_workloads
 let display_actual actual = if String.equal actual "" then "<none>" else actual
 let kind_resource kind = fst (live_kind_path kind)
 
+(* Capture the live `metadata.uid` of each workload this apply created, so a later
+   removal can require positive ownership evidence: the live object's UID must
+   equal the UID recorded here (docs/architecture/ownership.md). A read that fails
+   records no evidence for that object rather than failing the deploy; the absence
+   fails closed at removal, not here. *)
+let capture_owned
+      ~(ctx : Sol_cli_kube_destination.context)
+      (plan : Sol_cli_deployment_plan.t)
+  : Sol_cli_release_id.owned_object list
+  =
+  plan.services
+  |> List.filter_map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    let id = identity_of_spec spec in
+    let resource = kind_resource id.kind in
+    match
+      read_jsonpath
+        ~ctx
+        ~resource
+        ~name:id.name
+        ~namespace:id.namespace
+        ~jsonpath:"{.metadata.uid}"
+    with
+    | Ok uid when not (String.equal uid "") ->
+      Some { Sol_cli_release_id.resource; namespace = id.namespace; name = id.name; uid }
+    | Ok _ | Error _ -> None)
+;;
+
 let live_kind_volumes_path = function
   | Live_deployment | Live_rollout -> [ "spec"; "template"; "spec"; "volumes" ]
   | Live_cronjob -> [ "spec"; "jobTemplate"; "spec"; "template"; "spec"; "volumes" ]

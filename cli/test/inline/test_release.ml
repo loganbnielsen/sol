@@ -1092,3 +1092,120 @@ let%test "deployment outcome (DEC-037): a failed release record fails the deploy
 let%test "deployment outcome (DEC-037): a recorded release reports success" =
   test_recorded_release_reports_success ()
 ;;
+
+(* Ownership evidence is captured at apply and recorded per workload. Its absence
+   must read as "no evidence", never as a corrupt record: a release written before
+   UID capture has no [owned] field and must still read. *)
+let rec strip_owned_json = function
+  | `Assoc fields ->
+    `Assoc
+      (List.filter_map
+         (fun (k, v) ->
+            if String.equal k "owned" then None else Some (k, strip_owned_json v))
+         fields)
+  | `List items -> `List (List.map strip_owned_json items)
+  | other -> other
+;;
+
+let rec corrupt_owned_json = function
+  | `Assoc fields ->
+    `Assoc
+      (List.map
+         (fun (k, v) ->
+            k, if String.equal k "owned" then `String "nonsense" else corrupt_owned_json v)
+         fields)
+  | `List items -> `List (List.map corrupt_owned_json items)
+  | other -> other
+;;
+
+let test_owned_evidence_round_trips_and_absence_is_no_evidence () =
+  let evidence =
+    [ { Sol_cli_release_id.resource = "deployment"
+      ; namespace = "myworkspace-charge"
+      ; name = "charge-svc"
+      ; uid = "0f6a1b2c-1111-2222-3333-444455556666"
+      }
+    ]
+  in
+  let with_evidence =
+    { sample_record with
+      workloads =
+        List.map
+          (fun (w : Sol_cli_release.recorded_workload) ->
+             { w with Sol_cli_release_id.owned = evidence })
+          sample_record.workloads
+    }
+  in
+  (match R.of_json (R.to_json with_evidence) with
+   | Error msg -> Windtrap.fail msg
+   | Ok r ->
+     let o = List.hd (List.hd r.workloads).Sol_cli_release_id.owned in
+     check_string "uid preserved" "0f6a1b2c-1111-2222-3333-444455556666" o.uid;
+     check_string "resource preserved" "deployment" o.resource);
+  (match R.of_json (strip_owned_json (R.to_json sample_record)) with
+   | Error msg -> Windtrap.fail ("a record with no UID evidence must still read: " ^ msg)
+   | Ok r ->
+     check_int
+       "absence is no evidence"
+       0
+       (List.length (List.hd r.workloads).Sol_cli_release_id.owned));
+  match R.of_json (corrupt_owned_json (R.to_json sample_record)) with
+  | Error msg ->
+    Windtrap.fail ("malformed ownership evidence must not fail the read: " ^ msg)
+  | Ok r ->
+    check_int
+      "malformed is no evidence"
+      0
+      (List.length (List.hd r.workloads).Sol_cli_release_id.owned)
+;;
+
+let%test "release: UID evidence round-trips, absence is no evidence" =
+  test_owned_evidence_round_trips_and_absence_is_no_evidence ()
+;;
+
+(* Ownership evidence is captured beside a workload, not part of its content: two
+   records with the same intent and different applied UIDs share a record digest,
+   and a record that carries evidence still reads back through the ConfigMap
+   integrity check. *)
+let test_record_digest_excludes_ownership_evidence () =
+  let with_uid uid =
+    { sample_record with
+      workloads =
+        List.map
+          (fun (w : Sol_cli_release.recorded_workload) ->
+             { w with
+               Sol_cli_release_id.owned =
+                 [ { Sol_cli_release_id.resource = "deployment"
+                   ; namespace = "myworkspace-charge"
+                   ; name = "charge-svc"
+                   ; uid
+                   }
+                 ]
+             })
+          sample_record.workloads
+    }
+  in
+  let uid = "0f6a1b2c-1111-2222-3333-444455556666" in
+  check_string
+    "different applied UIDs share a digest"
+    (R.record_digest (with_uid uid))
+    (R.record_digest (with_uid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+  check_string
+    "ownership evidence does not change the digest"
+    (R.record_digest sample_record)
+    (R.record_digest (with_uid uid));
+  match
+    R.of_kubectl_item
+      (item
+         ~digest:(R.record_digest (with_uid uid))
+         (R.record_json_string (with_uid uid)))
+  with
+  | Error msg -> Windtrap.fail ("a record carrying ownership evidence must read: " ^ msg)
+  | Ok r ->
+    let o = List.hd (List.hd r.workloads).Sol_cli_release_id.owned in
+    check_string "uid survives the ConfigMap read" uid o.uid
+;;
+
+let%test "release: record digest excludes ownership evidence" =
+  test_record_digest_excludes_ownership_evidence ()
+;;
