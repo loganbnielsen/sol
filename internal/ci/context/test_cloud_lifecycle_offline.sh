@@ -357,7 +357,7 @@ grep -F 'redpanda-users' "$credential_log.out" >/dev/null || {
   cat "$credential_log.out" >&2
   exit 1
 }
-grep -F -- 'kubectl create secret generic redpanda-users -n redpanda' "$credential_log.out" \
+grep -F -- 'create secret generic redpanda-users -n redpanda' "$credential_log.out" \
   >/dev/null || {
   echo "the refusal did not show how the operator supplies the credential out of band:" >&2
   cat "$credential_log.out" >&2
@@ -368,6 +368,11 @@ if grep -F 'terraform ' "$credential_log" | grep 'cloud/[a-z]*/platform.* apply 
   echo "the whole-root platform apply ran although the operator-supplied credential was absent:" >&2
   cat "$credential_log" >&2
   exit 1
+grep -F 'lifecycle-test-deploy' "$credential_log.out" >/dev/null || {
+  echo "the missing platform credential refusal did not say how to reach the cluster:" >&2
+  cat "$credential_log.out" >&2
+  exit 1
+}
 fi
 grep -F 'the platform install cannot start:' "$credential_log.out" >/dev/null || {
   echo "the apply did not report the missing credential as the install's own error:" >&2

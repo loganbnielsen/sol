@@ -101,29 +101,55 @@ let platform_credentials_of_components ~platform_profile json =
   | _ -> []
 ;;
 
-let missing_platform_credential_message { namespace; secret } =
+let missing_platform_credential_message ?deploy_handoff { namespace; secret } =
+  (* Creating the Secret is an operator action that needs cluster access. When the
+     target's cloud root has published how its deploy identity reaches the cluster,
+     say so: it is the moment the operator needs it, and Sol has already computed
+     it. Without one, keep the bare example. *)
+  let create_lines =
+    match deploy_handoff with
+    | Some (command, context) ->
+      [ "The cluster this needs is reachable with the deploy identity's command for this \
+         target, which Sol has already computed:"
+      ; ""
+      ; Printf.sprintf "    %s" command
+      ; ""
+      ; Printf.sprintf
+          "Run that, then create the Secret through the context it writes (%s):"
+          context
+      ; ""
+      ; Printf.sprintf
+          "    kubectl --context %s create secret generic %s -n %s \\"
+          context
+          secret
+          namespace
+      ; "      --from-literal=users.txt=\"sol-workloads:<password>:SCRAM-SHA-256\""
+      ]
+    | None ->
+      [ "The credential is yours: Sol never generates, reads or stores it. Create the \
+         Secret out of band, for example:"
+      ; ""
+      ; Printf.sprintf "    kubectl create secret generic %s -n %s \\" secret namespace
+      ; "      --from-literal=users.txt=\"sol-workloads:<password>:SCRAM-SHA-256\""
+      ]
+  in
   String.concat
     "\n"
-    [ Printf.sprintf
-        "the platform install cannot start: the operator-supplied Secret %s is absent \
-         from namespace %s."
-        secret
-        namespace
-    ; Printf.sprintf
-        "The Redpanda chart declares auth.sasl.secretRef=%s and mounts that Secret as a \
-         required volume on both the broker StatefulSet and the post-install Job, but \
-         the chart does not create it."
-        secret
-    ; "Without it those pods never leave ContainerCreating, so Helm waits until its \
-       timeout and the install reports only `context deadline exceeded`."
-    ; "The credential is yours: Sol never generates, reads or stores it. Create the \
-       Secret out of band, for example:"
-    ; ""
-    ; Printf.sprintf "    kubectl create secret generic %s -n %s \\" secret namespace
-    ; "      --from-literal=users.txt=\"sol-workloads:<password>:SCRAM-SHA-256\""
-    ; ""
-    ; "then re-run `sol cloud apply <target>` to resume the install."
-    ]
+    ([ Printf.sprintf
+         "the platform install cannot start: the operator-supplied Secret %s is absent \
+          from namespace %s."
+         secret
+         namespace
+     ; Printf.sprintf
+         "The Redpanda chart declares auth.sasl.secretRef=%s and mounts that Secret as a \
+          required volume on both the broker StatefulSet and the post-install Job, but \
+          the chart does not create it."
+         secret
+     ; "Without it those pods never leave ContainerCreating, so Helm waits until its \
+        timeout and the install reports only `context deadline exceeded`."
+     ]
+     @ create_lines
+     @ [ ""; "then re-run `sol cloud apply <target>` to resume the install." ])
 ;;
 
 type credential_presence =
