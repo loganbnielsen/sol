@@ -66,6 +66,12 @@ bash internal/ci/run_fast_checks.sh
 Required GitHub CI is authoritative for merge. Live cloud qualification is separate from
 ordinary development; follow `internal/qualification/README.md` when a claim requires it.
 
+A passing rerun does not explain an earlier failure. Preserve the original failure and its
+evidence, then find the cause; a rerun that happens to pass is not a diagnosis. Report an
+unresolved cause as unresolved rather than as a flake, and fix what you do find at its owning
+boundary. Investigate proportionately: an unexplained failure is worth recording and carrying as
+stated risk, not necessarily an open-ended hunt or a blocker for unrelated work.
+
 ## Durable invariants
 
 - Sol owns only its declared contract boundary. Users may integrate arbitrary
@@ -96,9 +102,13 @@ ordinary development; follow `internal/qualification/README.md` when a claim req
 ## Simplicity budget
 
 Repository-wide process or tooling must protect a concrete guarantee that Git, GitHub, or existing
-CI does not already provide. Prefer a simpler design or a test at the failure boundary over turning
-an incident into a permanent global rule. Historical state belongs in Git and pull requests unless
-it is a current product, architecture, or qualification authority.
+CI does not already provide. Before adding a guard, abstraction, retry, state file, or process, ask
+whether the mechanism, responsibility, or state it protects should exist at all: complexity is
+better deleted at its owning boundary than coordinated with more machinery. When a mechanism goes,
+keep the guarantee it carried and say which test still establishes it. Prefer a simpler design or a
+test at the failure boundary over turning an incident into a permanent global rule. Historical
+state belongs in Git and pull requests unless it is a current product, architecture, or
+qualification authority.
 
 History belongs in Git and pull requests, not current instructions. If prose conflicts
 with executable behavior, verify the implementation and fix or remove the stale prose
