@@ -314,7 +314,10 @@ Two operator steps make the transport usable, and both fail closed:
    On a fresh target the `redpanda` namespace does not exist until the first
    `sol cloud apply` has run its prerequisite stage, so the order is
    `sol cloud apply <target>`, create the Secret when the run names it, then
-   `sol cloud apply <target>` again to resume the install. The credential is
+   `sol cloud apply <target>` again to resume the install. The refusal prints the
+   target's own deploy kubeconfig command and the context it writes, taken from the
+   cloud root's outputs, so reaching the cluster does not depend on knowing how this
+   provider writes kubeconfigs. The credential is
    supplied out of band: Sol never reads it, and it never enters Terraform
    state, a command line, a release artifact or a run log.
 

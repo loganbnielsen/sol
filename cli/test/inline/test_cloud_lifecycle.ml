@@ -2363,3 +2363,63 @@ let%test "credential presence: NotFound is absent, any other failure is unverifi
      | L.Credential_unverifiable _ -> true
      | L.Credential_present | L.Credential_absent -> false)
 ;;
+
+(* The platform install stops for a credential Sol must not hold, so the refusal is
+   the one place the operator is told how to reach the cluster. When the target's
+   cloud root has published its deploy handoff, the refusal carries it; without one
+   it keeps the bare example rather than inventing a context. *)
+let test_missing_platform_credential_message () =
+  let credential = { L.namespace = "redpanda"; secret = "redpanda-users" } in
+  let plain = L.missing_platform_credential_message credential in
+  let contains needle haystack =
+    let nl = String.length needle
+    and hl = String.length haystack in
+    let rec go i = i + nl <= hl && (String.sub haystack i nl = needle || go (i + 1)) in
+    nl = 0 || go 0
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the refusal names the Secret and its namespace"
+    true
+    (contains "redpanda-users" plain && contains "namespace redpanda" plain);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"without a handoff it keeps the bare kubectl example"
+    true
+    (contains "kubectl create secret generic redpanda-users" plain);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and claims no command it does not have"
+    false
+    (contains "deploy identity's command" plain);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and still says how to resume"
+    true
+    (contains "then re-run `sol cloud apply <target>` to resume the install." plain);
+  let handed =
+    L.missing_platform_credential_message
+      ~deploy_handoff:
+        ( "aws eks update-kubeconfig --region us-east-1 --name acme-prod --alias \
+           acme-prod-deploy"
+        , "acme-prod-deploy" )
+      credential
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"with a handoff the refusal prints the target's own command"
+    true
+    (contains "aws eks update-kubeconfig --region us-east-1 --name acme-prod" handed);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and creates the Secret through the context that command writes"
+    true
+    (contains
+       "kubectl --context acme-prod-deploy create secret generic redpanda-users"
+       handed);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"and still names the Secret"
+    true
+    (contains "redpanda-users" handed && contains "namespace redpanda" handed)
+;;

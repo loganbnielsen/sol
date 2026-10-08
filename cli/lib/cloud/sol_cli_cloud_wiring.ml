@@ -389,7 +389,27 @@ let required_platform_credentials ~assets ~platform_vars =
           platform install")
 ;;
 
-let verify_platform_prerequisites ~assets ~env ~platform_vars =
+(* How the target's deploy identity reaches its cluster. The cloud root publishes
+   this, and the operator's prerequisite step needs it at exactly the moment the
+   install stops for it — so the refusal can print it instead of leaving the
+   operator to find a context. Absent outputs are not an error here: the refusal
+   then says only what it knows. *)
+let deploy_kubeconfig_handoff ~infra_dir =
+  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+  | Error _ -> None
+  | Ok output ->
+    let field name =
+      match Sol_cli_terraform_outputs.raw output.stdout ~name with
+      | Ok (Some value) when not (Sol_cli_string.is_blank value) ->
+        Some (String.trim value)
+      | _ -> None
+    in
+    (match field "deploy_kubeconfig_command", field "deploy_kube_context" with
+     | Some command, Some context -> Some (command, context)
+     | _ -> None)
+;;
+
+let verify_platform_prerequisites ~assets ~env ~platform_vars ~deploy_handoff =
   let open Result.Syntax in
   let* required =
     required_platform_credentials ~assets ~platform_vars
@@ -425,7 +445,9 @@ let verify_platform_prerequisites ~assets ~env ~platform_vars =
        | Sol_cli_cloud_lifecycle.Credential_absent ->
          Error
            (Sol_cli_cloud_apply.Refused
-              (Sol_cli_cloud_lifecycle.missing_platform_credential_message credential))
+              (Sol_cli_cloud_lifecycle.missing_platform_credential_message
+                 ?deploy_handoff
+                 credential))
        | Sol_cli_cloud_lifecycle.Credential_unverifiable reason ->
          Error
            (Sol_cli_cloud_apply.Refused
@@ -603,7 +625,11 @@ let apply_deps
             ])
     ; verify_platform_prerequisites =
         (fun env platform_vars ->
-          verify_platform_prerequisites ~assets ~env ~platform_vars)
+          verify_platform_prerequisites
+            ~assets
+            ~env
+            ~platform_vars
+            ~deploy_handoff:(deploy_kubeconfig_handoff ~infra_dir))
     ; apply_platform =
         platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
     ; await_readiness = (fun env -> await_platform_readiness ~provider ~deadline_s ~env)

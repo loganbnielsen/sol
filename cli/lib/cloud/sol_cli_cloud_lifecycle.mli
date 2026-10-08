@@ -32,7 +32,15 @@ val platform_credentials_of_components
   -> Yojson.Safe.t
   -> platform_credential list
 
-val missing_platform_credential_message : platform_credential -> string
+(** The refusal an operator sees when the platform install stops for a credential
+    Sol must not hold. [?deploy_handoff] is the target's already-computed
+    (kubeconfig command, context) for the identity that deploys to it, so the
+    operator who has to create the Secret is told how to reach the cluster
+    instead of having to find a context themselves. *)
+val missing_platform_credential_message
+  :  ?deploy_handoff:string * string
+  -> platform_credential
+  -> string
 
 type credential_presence =
   | Credential_present
