@@ -226,6 +226,39 @@ let test_forbidden_release_read_is_not_absence () =
         (Sol_cli_string.contains ~needle:"forbidden" e))
 ;;
 
+let test_current_release_pointer_absence_is_empty () =
+  with_fake_kubectl ~mode:"missing" ~live_json:"" (fun log ->
+    match Sol_cli_release_store.current_record ~ctx ~workspace:"pluto" with
+    | Error message -> Windtrap.fail message
+    | Ok None ->
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"only a read is performed"
+        [ "get rv=no" ]
+        (verbs log)
+    | Ok (Some _) -> Windtrap.fail "an absent current release pointer returned a record")
+;;
+
+let test_current_release_pointer_corruption_is_not_absence () =
+  let live_json =
+    {|{"kind":"ConfigMap","metadata":{"name":"sol-release-current-pluto"},"data":{}}|}
+  in
+  with_fake_kubectl ~mode:"present" ~live_json (fun log ->
+    match Sol_cli_release_store.current_record ~ctx ~workspace:"pluto" with
+    | Ok _ -> Windtrap.fail "a malformed current release pointer was treated as absent"
+    | Error message ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the malformed pointer is identified"
+        true
+        (Sol_cli_string.contains ~needle:"no data.release_id" message);
+      Windtrap.equal
+        (Windtrap.list Windtrap.string)
+        ~msg:"the malformed pointer is only read"
+        [ "get rv=no" ]
+        (verbs log))
+;;
+
 let%test "release record write (INFRA-055): an absent object is created" =
   test_absent_object_is_created ()
 ;;
@@ -250,4 +283,12 @@ let%test "release record read (REFAC-116): a missing release is not found" =
 
 let%test "release record read (REFAC-116): a forbidden read is not absence" =
   test_forbidden_release_read_is_not_absence ()
+;;
+
+let%test "release record read (1304): missing current pointer is empty" =
+  test_current_release_pointer_absence_is_empty ()
+;;
+
+let%test "release record read (1304): malformed current pointer fails closed" =
+  test_current_release_pointer_corruption_is_not_absence ()
 ;;

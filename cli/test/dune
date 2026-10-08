@@ -32,6 +32,12 @@
 
 (rule
  (alias runtest)
+ (deps ../bin/main.exe test_plan_read_only.sh)
+ (action
+  (run bash %{dep:test_plan_read_only.sh} %{dep:../bin/main.exe})))
+
+(rule
+ (alias runtest)
  (deps ../bin/main.exe test_cloud_bootstrap.sh)
  (action
   (run bash %{dep:test_cloud_bootstrap.sh} %{dep:../bin/main.exe})))
@@ -84,7 +90,7 @@
  (deps ../bin/main.exe)
  (action
   (bash
-   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app/core/api_svc\"\n: > \"$tmp/app/core/api_svc/Dockerfile\"\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  api_svc:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+   "set -eu\nsol=$(pwd)/%{deps}\nroot=$(mktemp -d)\ntmp=\"$root/plan_test\"\ntrap 'rm -rf \"$root\"' EXIT\nmkdir -p \"$tmp/app/core/api_svc\"\n: > \"$tmp/app/core/api_svc/Dockerfile\"\ncat > \"$tmp/sol.yml\" <<'EOF'\nproject: plan_test\nservices:\n  api_svc:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 --image-ref api_svc=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
 
 (rule
  (alias runtest)

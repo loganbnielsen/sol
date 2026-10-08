@@ -171,6 +171,26 @@ let current ~ctx ~(workspace : string) : (string option, string) result =
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
+let current_record ~ctx ~(workspace : string) : (Sol_cli_release.t option, string) result =
+  let name = Sol_cli_release.current_configmap_name ~workspace in
+  match
+    Sol_cli_kubectl.get_if_present
+      ~ctx
+      ~args:[ "get"; "configmap"; name; "-n"; "default"; "-o"; "json" ]
+  with
+  | Error e -> Error (Sol_cli_process.error_to_string e)
+  | Ok None -> Ok None
+  | Ok (Some body) ->
+    let open Result.Syntax in
+    let* json = Sol_cli_json.decode ~what:"current release ConfigMap" body in
+    (match Sol_cli_json.field [ "data"; "release_id" ] json |> Sol_cli_json.string with
+     | None -> Error "current release ConfigMap has no data.release_id"
+     | Some release_id ->
+       (match Sol_cli_string.non_blank (String.trim release_id) with
+        | None -> Error "current release ConfigMap has an empty data.release_id"
+        | Some release_id -> get ~ctx ~workspace ~release_id |> Result.map Option.some))
+;;
+
 let deployed_contract ~ctx ~(workspace : string)
   : (Sol_cli_release_id.contract_fact list, string) result
   =

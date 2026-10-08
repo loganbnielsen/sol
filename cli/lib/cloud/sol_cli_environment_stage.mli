@@ -41,6 +41,15 @@ val plan
   -> unit
   -> (unit, failure) result
 
+val plan_config
+  :  assets:Sol_cli_platform_assets.t
+  -> run_log:Sol_cli_run_log.t
+  -> config:Sol_cli_config.t
+  -> var_file:string option
+  -> vars:string list
+  -> unit
+  -> (unit, failure) result
+
 val apply
   :  ?confirm_ecr_removal:bool
   -> ?accept_unresolved:bool

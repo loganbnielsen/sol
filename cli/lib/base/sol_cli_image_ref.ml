@@ -76,6 +76,35 @@ let resolve ~service_names refs =
     go [] [] refs
 ;;
 
+let resolve_with_previous ~service_names refs previous =
+  let open Result.Syntax in
+  let* explicit = resolve ~service_names refs in
+  let images =
+    List.map
+      (fun name ->
+         match List.assoc_opt name explicit with
+         | Some image -> name, image
+         | None ->
+           (match
+              List.filter
+                (fun (previous_name, _) -> String.equal name previous_name)
+                previous
+            with
+            | [ (_, image) ] when is_digest image -> name, image
+            | _ -> name, ""))
+      service_names
+  in
+  let missing = List.filter (fun (_, image) -> image = "") images in
+  if missing = []
+  then Ok images
+  else
+    Error
+      (Printf.sprintf
+         "no immutable image reference is available for: %s; supply --image-ref for \
+          these workloads (a first deploy requires a complete mapping)"
+         (String.concat ", " (List.map fst missing)))
+;;
+
 let plan_is_immutable (images : string list) =
   images <> [] && List.for_all is_digest images
 ;;

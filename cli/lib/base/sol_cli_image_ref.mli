@@ -6,4 +6,10 @@ val resolve
   -> (string option * string) list
   -> ((string * string) list, string) result
 
+val resolve_with_previous
+  :  service_names:string list
+  -> (string option * string) list
+  -> (string * string) list
+  -> ((string * string) list, string) result
+
 val plan_is_immutable : string list -> bool

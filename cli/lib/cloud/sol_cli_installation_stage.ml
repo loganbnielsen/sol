@@ -445,3 +445,106 @@ let reconcile ~assets ~provider ~configuration ~run () =
   in
   Ok (installation_lines @ delegation_lines @ contract_lines)
 ;;
+
+let plan_fresh
+      ~assets
+      ~provider
+      ~(configuration : Sol_cli_installation.installation_config)
+      ~run_log
+      ~run
+      ()
+  =
+  let open Result.Syntax in
+  let manage_dns_zone = Sol_cli_installation.owns_the_zone configuration.zone in
+  let* manage_dns_zone, zone_note =
+    if not manage_dns_zone
+    then Ok (false, None)
+    else (
+      match Sol_cli_installation.zone_domain configuration.zone with
+      | None -> Ok (true, None)
+      | Some domain ->
+        (match existing_zone_id ~run ~provider ~domain with
+         | Error message -> Error message
+         | Ok None -> Ok (true, None)
+         | Ok (Some identity) ->
+           Ok
+             ( false
+             , Some
+                 (Printf.sprintf
+                    "the zone for %s already exists (%s); its adoption is deferred \
+                     because planning cannot import it into state"
+                    domain
+                    identity) )))
+  in
+  Option.iter (fun line -> Sol_cli_report.app "%s" line) zone_note;
+  let* parent_zone_id =
+    match Sol_cli_installation.zone_domain configuration.zone, manage_dns_zone with
+    | Some domain, true ->
+      (match parent_zone ~run ~provider ~domain with
+       | Parent_in_this_account identity -> Ok identity
+       | Parent_beyond_this_account -> Ok ""
+       | Parent_unobservable reason -> Error reason)
+    | _ -> Ok ""
+  in
+  let terraform_vars =
+    Sol_cli_provider_capabilities.installation_vars
+      provider
+      ~manage_dns_zone
+      ~parent_zone_id
+      configuration
+    |> Sol_cli_terraform.kv_args
+  in
+  let marker = Filename.temp_file "sol-bootstrap-plan-" "" in
+  let* () = Sol_cli_fs.remove_if_present marker in
+  let backend_config = [ "preview=" ^ Filename.basename marker ] in
+  let chdir =
+    Sol_cli_terraform_workdir.chdir
+      ~provider
+      ~role:Sol_cli_platform_assets.Bootstrap
+      ~backend_config
+  in
+  let root =
+    Sol_cli_terraform_workdir.dir
+      ~provider
+      ~role:Sol_cli_platform_assets.Bootstrap
+      ~backend_config
+  in
+  if Sys.file_exists root
+  then
+    Error "the temporary bootstrap plan directory already exists; refusing unknown state"
+  else
+    Fun.protect
+      ~finally:(fun () ->
+        match Sol_cli_fs.remove_tree root with
+        | Ok () -> ()
+        | Error message ->
+          Sol_cli_report.warn "temporary bootstrap plan cleanup failed: %s" message)
+      (fun () ->
+         let* _ =
+           Sol_cli_terraform_workdir.materialize
+             ~assets
+             ~provider
+             ~role:Sol_cli_platform_assets.Bootstrap
+             ~backend_config
+         in
+         Sol_cli_report.app
+           "\nFirst-run installation bootstrap plan (temporary local state):";
+         let* _ =
+           Sol_cli_run_log.run_phase
+             run_log
+             ~name:"terraform-init-local-preview"
+             (fun () ->
+                Sol_cli_process.run
+                  (Sol_cli_process.cmd
+                     [ "terraform"; "-chdir=" ^ chdir; "init"; "-backend=false" ]))
+           |> Result.map_error Sol_cli_process.error_to_string
+         in
+         Sol_cli_terraform.plan
+           ~scope:Sol_cli_terraform.whole_root
+           ~chdir
+           ~var_files:[]
+           ~vars:terraform_vars
+           ()
+         |> Result.map (fun _ -> ())
+         |> Result.map_error Sol_cli_process.error_to_string)
+;;

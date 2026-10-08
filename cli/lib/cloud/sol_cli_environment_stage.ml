@@ -59,15 +59,6 @@ let resolve_var_file ~flag ~target =
   Sol_cli_terraform_vars.var_file ~cwd ~workspace_root ~flag ~target
 ;;
 
-let target_vars ~strict target =
-  Sol_cli_terraform_vars.of_target
-    ~strict
-    ~workspace:(Sol_cli_workspace.current_name ())
-    target
-  |> Result.map (fun (vars, target_cfg) -> Sol_cli_terraform.kv_args vars, target_cfg)
-  |> Result.map_error (fun message -> Refused message)
-;;
-
 let refuse_sensitive_vars ~infra_dir ~vars =
   let* sensitive =
     Sol_cli_sensitive_vars.declared ~root:infra_dir
@@ -168,8 +159,25 @@ type prepared =
   ; inputs : Sol_cli_cloud_wiring.terraform_inputs
   }
 
-let prepare ~strict ~assets ~target ~var_file ~vars () =
-  let* config_vars, target_cfg = target_vars ~strict target in
+let prepare_config ~strict ~assets ~config ~var_file ~vars () =
+  let target_cfg = config.Sol_cli_config.target in
+  let* () =
+    if strict && not (Sol_cli_config.target_declared target_cfg)
+    then
+      refused
+        (Printf.sprintf
+           "target %S is not declared in %s -- terraform apply/destroy require an \
+            explicit target, even an empty one, so a typo'd or unintended target can't \
+            silently inherit sol.yml's shared defaults and mutate infrastructure anyway."
+           target_cfg.name
+           (Sol_cli_config.target_source target_cfg))
+    else Ok ()
+  in
+  let* config_vars =
+    Sol_cli_terraform_vars.of_config ~workspace:(Sol_cli_workspace.current_name ()) config
+    |> Result.map_error (fun message -> Refused message)
+  in
+  let config_vars = Sol_cli_terraform.kv_args config_vars in
   let provider = target_cfg.Sol_cli_config.provider in
   let* () =
     Sol_cli_provider_capabilities.validate_target provider target_cfg
@@ -212,6 +220,14 @@ let prepare ~strict ~assets ~target ~var_file ~vars () =
     }
 ;;
 
+let prepare ~strict ~assets ~target ~var_file ~vars () =
+  let* config =
+    Sol_cli_config.load_for_target ~target
+    |> Result.map_error (fun error -> Refused (Sol_cli_config.error_to_string error))
+  in
+  prepare_config ~strict ~assets ~config ~var_file ~vars ()
+;;
+
 let report_starting { provider; _ } =
   Sol_cli_report.app
     "\nInitializing cloud infrastructure (%s)..."
@@ -249,8 +265,7 @@ let drift ~assets ~target ~var_file ~vars () =
     refresh_only_drift ~assets ~provider ~infra_dir ~cloud_backend ~var_files ~vars
 ;;
 
-let plan ~assets ~run_log ~target ~var_file ~vars () =
-  let* prepared = prepare ~strict:false ~assets ~target ~var_file ~vars () in
+let plan_prepared ~assets ~run_log prepared =
   let { provider; cloud_target; infra_dir; cloud_backend; inputs; _ } = prepared in
   report_starting prepared;
   let* () =
@@ -271,6 +286,16 @@ let plan ~assets ~run_log ~target ~var_file ~vars () =
   in
   Sol_cli_cloud_wiring.plan ~assets ~run_log ~cloud_target ~inputs
   |> Result.map_error of_apply_failure
+;;
+
+let plan ~assets ~run_log ~target ~var_file ~vars () =
+  let* prepared = prepare ~strict:false ~assets ~target ~var_file ~vars () in
+  plan_prepared ~assets ~run_log prepared
+;;
+
+let plan_config ~assets ~run_log ~config ~var_file ~vars () =
+  let* prepared = prepare_config ~strict:false ~assets ~config ~var_file ~vars () in
+  plan_prepared ~assets ~run_log prepared
 ;;
 
 let apply

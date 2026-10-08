@@ -98,10 +98,24 @@ pass "sol cloud plan runs from the read-only install; Terraform works in its own
 refws="$work/refws"
 mkdir -p "$refws"
 git -C "$root" archive HEAD examples/pluto | tar -x -C "$refws"
+# `prod/aws/us-east-1` declares no `kube_context`, so the plan cannot read the current
+# release to inherit workload images from. A target-wide plan needs an immutable
+# `--image-ref` for every workload, as a first deploy does, so supply the complete map.
+# The names are exactly examples/pluto/sol.yml's services, including the deliberate
+# `orders_svc`/`order_svc` and `fulfilment_worker`/`fulfillment_worker` pairs (distinct
+# OCaml and TypeScript workloads). `resolve` refuses a name outside the declared scope,
+# so a stale name here fails the plan rather than passing silently.
+# The digest only has to be valid-shaped; the plan resolves the input contract and
+# nothing is pulled.
+ref_digest="sha256:$(printf '0%.0s' $(seq 64))"
+image_refs=()
+for svc in checkout_svc charge_svc notify_worker orders_svc fulfilment_worker order_svc fulfillment_worker; do
+  image_refs+=("--image-ref" "$svc=registry.example/$svc@$ref_digest")
+done
 if ! out="$(docker run --rm --network none --read-only --tmpfs /tmp -e HOME=/tmp \
       -v "$install:/opt/sol:ro" -v "$refws:/work" -w /work/examples/pluto \
       -e XDG_DATA_HOME=/tmp/xdg \
-      "$image" /opt/sol/bin/sol plan prod/aws/us-east-1 2>&1)"; then
+      "$image" /opt/sol/bin/sol plan prod/aws/us-east-1 "${image_refs[@]}" 2>&1)"; then
   echo "$out"
   die "sol plan failed on the reference workspace from the read-only install"
 fi
