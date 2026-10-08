@@ -495,7 +495,15 @@ let test_plan_refuses_declared_unit_without_directory () =
 let test_plan_accepts_implemented_unit () =
   with_plan_workspace (fun root ~write ->
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    let code, stdout, _stderr = run_sol ~root [ "plan"; "prod/aws/us-east-1" ] in
+    let code, stdout, _stderr =
+      run_sol
+        ~root
+        [ "plan"
+        ; "prod/aws/us-east-1"
+        ; "--image-ref"
+        ; "charge_svc=registry.example/charge@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+    in
     Windtrap.equal Windtrap.int ~msg:"plan succeeds" 0 code;
     Windtrap.equal
       Windtrap.bool

@@ -56,7 +56,7 @@ let check_declared_units services =
   | _ -> Error (fail_unimplemented errors)
 ;;
 
-let run target_name =
+let run target_name image_refs var_file vars =
   let open Result.Syntax in
   let* cfg =
     Sol_cli_config.load_for_target ~target:target_name
@@ -67,6 +67,49 @@ let run target_name =
   let resources = Sol_cli_config.resources cfg in
   let services = Sol_cli_config.services cfg in
   let* () = check_declared_units services in
+  let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
+  let inventory = Sol_cli_workspace_model.services facts in
+  let selected =
+    List.filter
+      (fun (service : Sol_cli_manifest.service) ->
+         not (Sol_cli_config.is_omitted_service cfg ~name:service.name))
+      inventory
+  in
+  let* image_refs =
+    Sol_cli_image_ref.resolve_complete
+      ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) selected)
+      (List.map Sol_cli_image_ref.split_flag_value image_refs)
+    |> Sol_cli_exit.of_msg
+  in
+  let registry = Option.value target.registry ~default:"resolved-image-refs" in
+  let* env_target =
+    Sol_cli_env_target.customer_cloud_defaults
+      ~registry
+      ~image_tag:"per-workload-digests"
+      ~emit_to:None
+      ()
+    |> Sol_cli_exit.of_msg
+  in
+  let secret_backend = Sol_cli_env_target.resolve_secret_backend env_target in
+  let* planning =
+    Sol_cli_deploy_selection.plan
+      { workspace = Sol_cli_workspace.current_name ()
+      ; registry
+      ; sha = "unused"
+      ; emit_to = None
+      ; secret_backend
+      ; config = cfg
+      ; facts
+      ; inventory
+      ; requested_scope = "target"
+      ; image_refs
+      ; services = selected
+      }
+    |> Result.map_error (function
+      | Sol_cli_deploy_selection.Refused message -> Sol_cli_exit.error message
+      | Preflight (profile, findings) ->
+        Sol_cli_exit.failure (Sol_cli_profile_preflight.report profile findings))
+  in
   Printf.printf "Project: %s\n" project;
   Printf.printf "Target: %s\n\n" target_name;
   Printf.printf "Target config:\n";
@@ -111,6 +154,126 @@ let run target_name =
         "    scale: %s..%s\n"
         (Option.fold ~none:"?" ~some:string_of_int min)
         (Option.fold ~none:"?" ~some:string_of_int max));
+  Printf.printf "\nWorkload plan (all target workloads):\n";
+  if planning.Sol_cli_deployment_plan.services = [] then Printf.printf "  (none)\n";
+  List.iter
+    (fun (service : Sol_cli_deployment_plan.service_spec) ->
+       Printf.printf
+         "  - %s/%s image=%s\n"
+         service.domain
+         service.source_name
+         service.image)
+    planning.services;
+  Printf.printf
+    "\n\
+     Kubernetes live diff deferred: this plan resolves desired workload intent; it does \
+     not infer deletion authority from declarations or labels.\n";
+  let var_file =
+    let cwd = Sys.getcwd () in
+    let workspace_root =
+      Option.value (Sol_cli_workspace.find_root ~dir:cwd) ~default:cwd
+    in
+    Sol_cli_terraform_vars.var_file
+      ~cwd
+      ~workspace_root
+      ~flag:var_file
+      ~target:target.terraform_var_file
+  in
+  let run_log = Sol_cli_run_log.create ~prefix:"plan" () in
+  let* installation_established =
+    match Sol_cli_installation.of_target target with
+    | Error message ->
+      Printf.printf
+        "\n\
+         Infrastructure and bootstrap plans deferred: installation configuration is \
+         incomplete (%s).\n"
+        message;
+      Ok false
+    | Ok configuration ->
+      let verdicts =
+        Sol_cli_provider_capabilities.installation_probes target.provider configuration
+        |> Sol_cli_installation.observe
+             ~run:
+               (Sol_cli_provider_capabilities.installation_observation
+                  ~provider:target.provider)
+      in
+      Printf.printf
+        "\nInstallation prerequisites:\n%s\n"
+        (Sol_cli_installation.summary verdicts);
+      (match Sol_cli_installation.all_established verdicts with
+       | Ok () ->
+         let* () = Cmd_cloud_tf.check_terraform () in
+         let* assets = Cmd_cloud_tf.resolve_assets () in
+         (match
+            Sol_cli_environment_stage.plan_config
+              ~assets
+              ~run_log
+              ~config:cfg
+              ~var_file
+              ~vars
+              ()
+          with
+          | Ok () -> Ok true
+          | Error failure ->
+            Error
+              (Sol_cli_exit.error (Sol_cli_environment_stage.failure_to_string failure)))
+       | Error _ ->
+         let entirely_unmet =
+           verdicts <> []
+           && List.for_all
+                (function
+                  | _, Sol_cli_installation.Unmet _ -> true
+                  | _ -> false)
+                verdicts
+         in
+         if entirely_unmet
+         then
+           let* () = Cmd_cloud_tf.check_terraform () in
+           let* assets = Cmd_cloud_tf.resolve_assets () in
+           Sol_cli_installation_stage.plan_fresh
+             ~assets
+             ~provider:target.provider
+             ~configuration
+             ~run_log
+             ~run:
+               (Sol_cli_provider_capabilities.installation_observation
+                  ~provider:target.provider)
+             ()
+           |> Sol_cli_exit.of_msg
+           |> Result.map (fun () -> false)
+         else (
+           Printf.printf
+             "\n\
+              Infrastructure plan deferred: installation prerequisites are partially \
+              established or unknown, so the durable root cannot be safely planned from \
+              empty state.\n";
+           Ok false))
+  in
+  let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
+  let* () =
+    if
+      installation_established
+      && capabilities.authorization_reconciler_field <> ""
+      && List.mem_assoc capabilities.authorization_reconciler_field target.provider_fields
+    then
+      let* () =
+        Cmd_grants.run
+          ~config:cfg
+          ~action:Cmd_grants.Plan
+          ~target:target_name
+          ~var_file
+          ~vars
+          ()
+        |> Result.map_error (fun (failure : Sol_cli_exit.failure) -> failure)
+      in
+      Ok ()
+    else (
+      Printf.printf
+        "\n\
+         Authorization plan deferred: installation or target reconciler prerequisites \
+         are not established.\n";
+      Ok ())
+  in
   let* () =
     Sol_cli_contract.plan_report
       ~workspace:(Sys.getcwd ())
@@ -125,8 +288,46 @@ let target_arg =
   Sol_cli_target_arg.positional ~doc:"Deployment target path: <env>/<provider>/<region>."
 ;;
 
+let image_ref_arg =
+  Arg.(
+    value
+    & opt_all Sol_cli_args.text []
+    & info
+        [ "image-ref" ]
+        ~docv:"SERVICE=REPO@sha256:DIGEST"
+        ~doc:
+          "Immutable image identity for one workload. Repeat for every target workload.")
+;;
+
+let var_file_arg =
+  Arg.(
+    value
+    & opt (some Sol_cli_args.text) None
+    & info
+        [ "var-file" ]
+        ~docv:"PATH"
+        ~doc:"Terraform variable file for target infrastructure planning.")
+;;
+
+let var_arg =
+  Arg.(
+    value
+    & opt_all Sol_cli_args.text []
+    & info [ "var" ] ~docv:"KEY=VALUE" ~doc:"Terraform variable. Repeatable.")
+;;
+
 let cmd =
   Cmd.v
-    (Cmd.info "plan" ~doc:"Print the merged Sol app/resource/service plan for a target.")
-    Term.(const Sol_cli_exit.exit_on $ (const run $ target_arg))
+    (Cmd.info
+       "plan"
+       ~doc:
+         "Preview target infrastructure, authorization, and workload intent without \
+          applying changes.")
+    Term.(
+      const (fun target refs var_file vars ->
+        Sol_cli_exit.exit_on (run target refs var_file vars))
+      $ target_arg
+      $ image_ref_arg
+      $ var_file_arg
+      $ var_arg)
 ;;

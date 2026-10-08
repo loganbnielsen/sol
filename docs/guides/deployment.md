@@ -55,8 +55,17 @@ Inspect what a target resolves to before changing anything:
 
 ```bash
 sol target show prod/aws/us-east-1
-sol plan prod/aws/us-east-1          # the merged app/resource/service plan
+sol plan prod/aws/us-east-1 \
+  --image-ref charge_svc=registry.example/charge@sha256:<64-hex-digest>
 ```
+
+`sol plan` resolves the target once, then previews its target-wide infrastructure and
+authorization plans plus the desired workload images. Provide one immutable `--image-ref`
+for every non-omitted workload; this keeps image identity independent per service. If the
+durable installation is positively absent, Sol shows its bootstrap plan using temporary
+local state. Partial or unknown installation state is deferred. Planning never applies
+changes. Kubernetes live-object changes are not inferred from labels or declarations;
+removal requires positive ownership evidence.
 
 ## 2. The installation comes first, once per account
 

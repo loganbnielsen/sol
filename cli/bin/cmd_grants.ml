@@ -32,6 +32,12 @@ let target_vars ~strict target =
   |> Sol_cli_exit.of_msg
 ;;
 
+let config_vars (config : Sol_cli_config.t) =
+  Sol_cli_terraform_vars.of_config ~workspace:(Sol_cli_workspace.current_name ()) config
+  |> Result.map (fun vars -> Sol_cli_terraform.kv_args vars, config.target)
+  |> Sol_cli_exit.of_msg
+;;
+
 let resolve_var_file ~flag ~target =
   let cwd = Sys.getcwd () in
   let workspace_root = Option.value (Sol_cli_workspace.find_root ~dir:cwd) ~default:cwd in
@@ -85,10 +91,14 @@ let report_plan ~target lines =
   else List.iter (fun line -> Sol_cli_report.app "  %s" line) lines
 ;;
 
-let run ~action ~target ~var_file ~vars () =
+let run ?config ~action ~target ~var_file ~vars () =
   let* () = check_terraform () in
   let* assets = resolve_assets () in
-  let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
+  let* config_vars, target_cfg =
+    match config with
+    | Some config -> config_vars config
+    | None -> target_vars ~strict:(action = Apply) target
+  in
   let provider = target_cfg.Sol_cli_config.provider in
   let* identity =
     Sol_cli_authorization_identity.of_target target_cfg |> Sol_cli_exit.of_msg

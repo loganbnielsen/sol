@@ -89,7 +89,7 @@ The target is the positional; `--scope` narrows to a domain or unit.
 | `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |
 | `sol logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N`, `--target=ENV/PROVIDER/REGION` | documented | Stream logs from a deployed service. Wraps 'kubectl logs' |
 | `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |
-| `sol plan` | TARGET | — | documented | Print the merged Sol app/resource/service plan for a |
+| `sol plan` | TARGET | `--image-ref=SERVICE=REPO@sha256:DIGEST`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview target infrastructure, authorization, and workload |
 | `sol releases` | — | `--target=ENV/PROVIDER/REGION` | documented | List the release records the target's cluster holds for |
 | `sol secret list` | — | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | List secret keys without values |
 | `sol target show` | — | `--check`, `--json`, `--target=ENV/PROVIDER/REGION`, `-v` | documented | Show a deployment target |

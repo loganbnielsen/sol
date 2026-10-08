@@ -123,6 +123,21 @@ let test_image_ref_outside_scope_fails_before_target () =
   | Error _ -> ()
 ;;
 
+let test_target_plan_requires_independent_image_refs () =
+  match
+    Sol_cli_image_ref.resolve_complete
+      ~service_names:[ "charge_svc"; "invoice_svc" ]
+      [ Some "charge_svc", digest ]
+  with
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the missing image is named"
+      true
+      (Sol_cli_string.contains ~needle:"missing: invoice_svc" message)
+  | Ok _ -> Windtrap.fail "target plan accepted incomplete per-workload image identities"
+;;
+
 let%test "target: undeclared target" = test_undeclared_target_is_refused ()
 
 let%test "target: domain scope excludes omitted" =
@@ -141,4 +156,8 @@ let%test "target: emptied by omission" = test_selection_emptied_by_omission_is_r
 
 let%test "select: image-ref outside scope" =
   test_image_ref_outside_scope_fails_before_target ()
+;;
+
+let%test "plan: all workloads need independent image refs" =
+  test_target_plan_requires_independent_image_refs ()
 ;;
