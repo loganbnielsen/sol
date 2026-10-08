@@ -377,6 +377,27 @@ named along with who must act: the application, the target, or Sol itself.
 There is no "accepted but unverified" outcome: the profile is unsatisfiable
 until Sol can establish every guarantee it requires.
 
+#### Shape and qualification are separate axes
+
+The profile resolves two independent things, and only the first decides what Sol
+renders:
+
+- **Platform shape** (`platform_shape`: `local` or `durable`) is a structural
+  derivation from the selected profile — `production-single-region` resolves
+  `durable`, no profile resolves `local`. It is the input to posture that
+  follows the shape: the Kafka transport is `sasl_ssl` on the durable shape and
+  `plaintext` on the local one (#1308). Every consumer derives it from the one
+  resolved target, so the plan and the cloud lifecycle cannot disagree.
+- **Qualification** is the preflight gate above — the guarantees in the table
+  below, which must be established before Sol mutates anything.
+
+They are independent. An unqualified provider still resolves the durable shape,
+so the posture a preflight refuses is exactly the posture the plan previewed:
+qualification decides *whether* a deploy may proceed, never *what* the profile
+means. Deriving the transport from the shape therefore does not imply the
+substrate is qualified, and GCP stays unshippable until it has its own
+production qualification claim.
+
 Every guarantee now has a real establishment branch — none is staged
 (`not_yet_established` no longer exists). Preflight establishes only what is
 observable offline: a declaration, a rendered configuration, or a
