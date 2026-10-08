@@ -237,26 +237,15 @@ service; a whole-workspace deploy needs one `<service>=<ref>` per workload (the
 `app/demo_ts` services deploy the same way). `sol deploy` verifies each
 reference exists in its registry before it applies anything.
 
-```bash
-sol deploy pilot/aws/us-east-1 --scope payments/charge_svc --dry-run \
-  --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$CHARGE_DIGEST"
-```
+`sol deploy` reconciles the whole target; there is no `--scope`, because the
+desired workload set must be singular for a later removal to be authorized
+against it. A profile that requires an immutable reference needs one
+`<service>=<ref>` for every workload the target deploys, and the deploy verifies
+each reference exists in its registry before it applies anything. For a narrow
+update, roll back the release a unit was last deployed in
+(`sol rollback --scope DOMAIN/UNIT`) rather than deploying a subset.
 
-A scoped deploy keeps the cross-domain callers it did not select. This
-workspace's `payments/charge_svc` calls `checkout/checkout_svc`
-(`calls = ["checkout/checkout_svc"]` in `app/payments/charge_svc/sol.toml`), so
-deploying the callee alone:
-
-```bash
-sol deploy pilot/aws/us-east-1 --scope checkout --dry-run
-```
-
-deploys `checkout/checkout_svc` and nothing else, and the NetworkPolicy it
-renders still admits `payments/charge_svc` — the incoming edge comes from the
-whole workspace declaration rather than from the selection, so a caller that is
-already running keeps access to the callee it was pointed at.
-
-Either form runs the profile preflight before anything touches a cluster. It
+The deploy runs the profile preflight before anything touches a cluster. It
 refuses until the target establishes every guarantee the profile requires — a
 tag reference is itself one unmet guarantee — and lists each unmet guarantee
 with who must act.

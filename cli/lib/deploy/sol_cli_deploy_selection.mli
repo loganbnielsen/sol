@@ -5,8 +5,7 @@ type selection =
   }
 
 val select
-  :  scope:string option
-  -> image_refs:(string option * string) list
+  :  image_refs:(string option * string) list
   -> Sol_cli_manifest.service list
   -> (selection, string) result
 

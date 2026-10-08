@@ -105,7 +105,7 @@ let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
   ; config = ctx.resolved_config
   ; facts = ctx.facts
   ; inventory = ctx.inventory
-  ; requested_scope = ctx.requested_scope
+  ; requested_scope = "workspace"
   ; image_refs = ctx.image_refs
   ; services = ctx.services
   }
@@ -658,7 +658,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
   let inventory = Sol_cli_workspace_model.services facts in
   let* selection =
-    Sol_cli_deploy_selection.select ~scope:req.scope ~image_refs:req.image_refs inventory
+    Sol_cli_deploy_selection.select ~image_refs:req.image_refs inventory
     |> Sol_cli_exit.of_msg
   in
   let* resolved_config =
@@ -674,7 +674,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     |> Sol_cli_exit.of_msg
   in
   List.iter print_endline deployed.notes;
-  let { Sol_cli_deploy_selection.requested_scope; image_refs; _ } = selection in
+  let { Sol_cli_deploy_selection.image_refs; _ } = selection in
   let services = deployed.services in
   let registry =
     match req.registry with
@@ -716,7 +716,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; config = resolved_config
     ; facts
     ; inventory
-    ; requested_scope
+    ; requested_scope = "workspace"
     ; image_refs
     ; services
     }
@@ -738,7 +738,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; services
     ; inventory
     ; image_refs
-    ; requested_scope
     ; target_name = req.target
     ; run_log
     ; keep_releases = req.keep_releases
@@ -786,19 +785,6 @@ let target_arg =
        convention as 'sol plan'. Resolves sol.yml, then the environment and target in \
        sol/environments.yml, for registry/env defaults. Unlike 'sol up' (local-only, no \
        target concept), this is required."
-;;
-
-let scope_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "scope" ]
-        ~docv:"DOMAIN[/UNIT]"
-        ~doc:
-          "Deploy one domain (`payments`) or one unit (`payments/charge_svc`). Omit to \
-           deploy the whole workspace. A name that matches nothing fails closed and says \
-           what does, before the target or registry is resolved.")
 ;;
 
 let dry_run_flag =
@@ -1075,7 +1061,6 @@ let cmd =
       const
         (fun
             target
-             scope
              dry_run
              emit_to
              emit_plan_to
@@ -1092,7 +1077,6 @@ let cmd =
              (let* req =
                 Sol_cli_command_request.make_deploy_request
                   ~target
-                  ~scope
                   ~dry_run
                   ~emit_to
                   ~emit_plan_to
@@ -1109,7 +1093,6 @@ let cmd =
               in
               run req))
       $ target_arg
-      $ scope_arg
       $ dry_run_flag
       $ emit_to_arg
       $ emit_plan_to_arg

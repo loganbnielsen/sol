@@ -18,7 +18,6 @@ type up_request =
 
 type deploy_request =
   { target : string
-  ; scope : string option
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
@@ -81,7 +80,6 @@ let invalid_image_ref refs =
 
 let make_deploy_request
       ~target
-      ~scope
       ~dry_run
       ~emit_to
       ~emit_plan_to
@@ -136,7 +134,6 @@ let make_deploy_request
         in
         Ok
           { target
-          ; scope
           ; action
           ; emit_plan_to
           ; image_tag

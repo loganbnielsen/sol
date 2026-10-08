@@ -12,7 +12,6 @@ type context =
   ; services : Sol_cli_manifest.service list
   ; inventory : Sol_cli_manifest.service list
   ; image_refs : (string * string) list
-  ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
   ; keep_releases : int
@@ -300,17 +299,14 @@ let record_applied_state ~cluster ~workspace ~sha plan =
 ;;
 
 let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
-  if not (String.equal ctx.requested_scope "workspace")
-  then []
-  else (
-    match
-      Sol_cli_rollback.live_workloads
-        ~ctx:ctx.execution.cluster
-        ~workspace:ctx.execution.workspace
-    with
-    | Error _ -> []
-    | Ok live ->
-      Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst)
+  match
+    Sol_cli_rollback.live_workloads
+      ~ctx:ctx.execution.cluster
+      ~workspace:ctx.execution.workspace
+  with
+  | Error _ -> []
+  | Ok live ->
+    Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst
 ;;
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
@@ -388,9 +384,7 @@ let run_lifecycle
          confirm_consumer_groups ~ctx:cluster ~workspace ~confirm_group_change plan
        in
        let previous = read_previous_release_in ~cluster ~workspace in
-       let* retained =
-         Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace plan
-       in
+       let* retained = Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace in
        let boundary =
          Sol_cli_release.of_plan_with_boundary
            ~apply_mode:Sol_cli_release.Direct

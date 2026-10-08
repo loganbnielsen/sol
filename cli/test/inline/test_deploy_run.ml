@@ -139,7 +139,6 @@ let with_context ?(migrations = []) f =
          ; services = []
          ; inventory = []
          ; image_refs = []
-         ; requested_scope = "workspace"
          ; target_name = "dev/aws/us-east-1"
          ; run_log = Sol_cli_run_log.create ~base:(temp_dir ()) ~prefix:"deploy" ()
          ; keep_releases = 5

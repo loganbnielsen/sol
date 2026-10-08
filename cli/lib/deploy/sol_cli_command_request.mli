@@ -18,7 +18,6 @@ type up_request =
 
 type deploy_request =
   { target : string
-  ; scope : string option
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
@@ -44,7 +43,6 @@ val make_up_request
 
 val make_deploy_request
   :  target:string
-  -> scope:string option
   -> dry_run:bool
   -> emit_to:string option
   -> emit_plan_to:string option
