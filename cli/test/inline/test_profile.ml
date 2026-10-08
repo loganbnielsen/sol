@@ -818,8 +818,13 @@ let test_unroutable_alert_receiver_is_a_target_finding () =
 let test_unqualified_provider_is_a_target_finding () =
   with_workspace (fun () ->
     write_target "prod/gcp/us-central1" selecting;
+    let plan = plan_for "prod/gcp/us-central1" in
+    check_bool
+      "the production profile still resolves a durable platform shape"
+      true
+      (plan.platform_shape = P.Durable);
     let fs =
-      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/gcp/us-central1")
+      findings (preflight ~plan ~apply_mode:Sol_cli_release.Direct "prod/gcp/us-central1")
     in
     match
       List.find_opt (fun (f : Pre.finding) -> f.capability = P.Qualified_substrate) fs
