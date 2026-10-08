@@ -101,6 +101,12 @@ git -C "$root" archive HEAD examples/pluto | tar -x -C "$refws"
 # `prod/aws/us-east-1` declares no `kube_context`, so the plan cannot read the current
 # release to inherit workload images from. A target-wide plan needs an immutable
 # `--image-ref` for every workload, as a first deploy does, so supply the complete map.
+# The names are exactly examples/pluto/sol.yml's services, including the deliberate
+# `orders_svc`/`order_svc` and `fulfilment_worker`/`fulfillment_worker` pairs (distinct
+# OCaml and TypeScript workloads). `resolve` refuses a name outside the declared scope,
+# so a stale name here fails the plan rather than passing silently.
+# The digest only has to be valid-shaped; the plan resolves the input contract and
+# nothing is pulled.
 ref_digest="sha256:$(printf '0%.0s' $(seq 64))"
 image_refs=()
 for svc in checkout_svc charge_svc notify_worker orders_svc fulfilment_worker order_svc fulfillment_worker; do
