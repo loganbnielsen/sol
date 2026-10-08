@@ -104,3 +104,38 @@ let%test "REFAC-139 part A: a transient wait runs to its bound" =
 ;;
 
 let%test "REFAC-139 part A: job namespace" = test_job_namespace ()
+
+(* The workspace's migrations are a single artifact, but the one-shot Job runs in
+   one namespace. A target that omits the service whose domain sorts first must
+   not place the Job in that omitted service's namespace: the standalone migrate
+   path uses the target's own service selection, as the deploy path does. *)
+let test_job_namespace_follows_target () =
+  let all =
+    [ service "payments" "orders_svc"
+    ; service "comms" "fulfilment_worker"
+    ; service "checkout" "checkout_svc"
+    ]
+  in
+  Windtrap.equal
+    (Windtrap.result Windtrap.string Windtrap.string)
+    ~msg:"the omitted service's namespace is not chosen"
+    (Ok "pluto-comms")
+    (Sol_cli_migration_job.job_namespace
+       ~workspace:"pluto"
+       ~services:
+         (Sol_cli_migration_job.services_of_target
+            ~all
+            ~active:[ "orders_svc"; "fulfilment_worker" ]));
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a target that deploys no service has no migration namespace"
+    true
+    (Result.is_error
+       (Sol_cli_migration_job.job_namespace
+          ~workspace:"pluto"
+          ~services:(Sol_cli_migration_job.services_of_target ~all ~active:[])))
+;;
+
+let%test "a target's service selection decides the migration namespace" =
+  test_job_namespace_follows_target ()
+;;

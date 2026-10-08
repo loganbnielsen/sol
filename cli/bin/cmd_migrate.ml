@@ -128,10 +128,22 @@ let run_migration_job ~ctx ~namespace (job : Sol_cli_migration_job.job) =
   finish_job outcome
 ;;
 
-let run_apply_in_cluster ~ctx ~dir ~table =
+let active_services path =
+  let* cfg =
+    Sol_cli_config.load_for_target ~target:path
+    |> Result.map_error Sol_cli_config.error_to_string
+  in
+  Ok (List.map (fun (s : Sol_cli_config.service) -> s.name) (Sol_cli_config.services cfg))
+;;
+
+let run_apply_in_cluster ~ctx ~dir ~table ~active =
   let workspace = Sol_cli_workspace.current_name () in
   let* facts = Sol_cli_workspace_model.load_cwd () in
-  let services = Sol_cli_workspace_model.services facts in
+  let services =
+    Sol_cli_migration_job.services_of_target
+      ~all:(Sol_cli_workspace_model.services facts)
+      ~active
+  in
   let* namespace = Sol_cli_migration_job.job_namespace ~workspace ~services in
   let* () = Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] ~workloads:[] in
   Sol_cli_migration_gate.reconcile_operator_bindings ~ctx ~workspace ~services;
@@ -237,7 +249,9 @@ let run_apply ~ctx dir table dry_run target =
   else (
     match target with
     | None -> run_apply_local ~ctx dir table
-    | Some _ -> run_apply_in_cluster ~ctx ~dir ~table)
+    | Some path ->
+      let* active = active_services path in
+      run_apply_in_cluster ~ctx ~dir ~table ~active)
 ;;
 
 let run_apply_term dir table dry_run target =
