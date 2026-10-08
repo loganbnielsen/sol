@@ -61,7 +61,11 @@ let state_holds_any ~chdir prefixes =
   | Error (Sol_cli_process.Non_zero result) ->
     Error
       (State_unreadable
-         (Printf.sprintf "terraform state list failed with exit %d" result.exit_code))
+         (Printf.sprintf
+            "terraform state list failed with exit %d%s"
+            result.exit_code
+            (let detail = String.trim result.stderr in
+             if detail = "" then "" else ": " ^ detail)))
   | Error error ->
     Error
       (State_unreadable
@@ -95,7 +99,11 @@ let of_root provider ~target ~chdir =
      | Error (Sol_cli_process.Non_zero result) ->
        Error
          (Outputs_unreadable
-            (Printf.sprintf "terraform output failed with exit %d" result.exit_code))
+            (Printf.sprintf
+               "terraform output failed with exit %d%s"
+               result.exit_code
+               (let detail = String.trim result.stderr in
+                if detail = "" then "" else ": " ^ detail)))
      | Error e ->
        Error
          (Outputs_unreadable

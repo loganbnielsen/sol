@@ -1143,7 +1143,12 @@ let destroy_deps
             state_ref := Sol_cli_cloud_destroy.inventory_of_show_json result.stdout;
             Ok result.stdout
           | Error (Sol_cli_process.Non_zero result) ->
-            Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
+            Error
+              (Printf.sprintf
+                 "terraform show failed with exit %d%s"
+                 result.exit_code
+                 (let detail = String.trim result.stderr in
+                  if detail = "" then "" else ": " ^ detail))
           | Error error ->
             Error
               ("could not read terraform state: " ^ Sol_cli_process.error_to_string error))
