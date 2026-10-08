@@ -731,7 +731,7 @@ sol local run [--scope DOMAIN[/UNIT]]                 run services as native pro
 
 sol plan TARGET                                   print merged app/resource/service plan
 sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
-sol deploy TARGET [--scope DOMAIN[/UNIT]] [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
+sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol status [domain]                               show running pods and port-forward hints
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)

@@ -6,11 +6,11 @@ type selection =
   ; image_refs : (string * string) list
   }
 
-let select ~scope ~image_refs inventory =
+let select ~image_refs inventory =
   let* resolved =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:"no services found in app/ with a Dockerfile"
-      scope
+      None
       inventory
   in
   let* image_refs =
@@ -47,16 +47,7 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
       ~is_omitted:(fun s -> Sol_cli_config.is_omitted_service config ~name:s.name)
       selection.resolved
   in
-  let inclusion_notes =
-    List.map
-      (fun s ->
-         Printf.sprintf
-           "Note: %s is omitted by target %s, and --scope named it, so it is included."
-           (unit_id s)
-           target)
-      omission.included
-  in
-  let exclusion_notes =
+  let notes =
     List.map
       (fun s ->
          Printf.sprintf
@@ -65,7 +56,6 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
            target)
       omission.excluded
   in
-  let notes = inclusion_notes @ exclusion_notes in
   let* () =
     match
       selection.image_refs
@@ -77,18 +67,17 @@ let apply_target ~target ~(config : Sol_cli_config.t) selection =
     | Some s ->
       Error
         (Printf.sprintf
-           "--image-ref names %s, which target %s omits and this deploy excludes. Name \
-            it with --scope %s to deploy it, or drop the reference."
+           "--image-ref names %s, which target %s omits, so this whole-target deploy \
+            excludes it. Drop the reference."
            s.name
-           target
-           (unit_id s))
+           target)
   in
   match omission.selected with
   | [] ->
     Error
       (Printf.sprintf
-         "every unit in scope is omitted by target %s: %s.\n\
-         \  Name one with --scope <domain>/<name> to deploy it anyway."
+         "target %s omits every service, so this whole-target deploy has nothing to \
+          deploy: %s."
          target
          (String.concat ", " (List.map unit_id omission.excluded)))
   | services -> Ok { services; notes }

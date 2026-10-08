@@ -271,7 +271,6 @@ let test_up_request_resolved_sha_has_no_warning () =
 let deploy_without_tag ~git_sha =
   Sol_cli_command_request.make_deploy_request
     ~target:"prod/aws/us-east-1"
-    ~scope:None
     ~dry_run:false
     ~emit_to:None
     ~emit_plan_to:None
@@ -334,7 +333,6 @@ let test_deploy_request_uses_explicit_tag () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -357,7 +355,6 @@ let test_deploy_request_local_mode_builds_request () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -387,7 +384,6 @@ let test_deploy_request_gitops_action () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
@@ -417,7 +413,6 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:true
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
@@ -447,7 +442,6 @@ let test_deploy_request_rejects_empty_target () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:""
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -468,7 +462,6 @@ let test_deploy_request_registry_omitted_stays_none () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -497,7 +490,6 @@ let test_deploy_request_accepts_image_refs () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -525,7 +517,6 @@ let test_deploy_request_rejects_mutable_image_ref () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -1176,7 +1167,6 @@ let test_deploy_request_rejects_nonpositive_keep () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None

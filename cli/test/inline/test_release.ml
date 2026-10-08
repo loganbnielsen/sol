@@ -881,31 +881,22 @@ let with_failing_kubectl f =
     f
 ;;
 
-let read_boundary plan =
+let read_boundary () =
   Sol_cli_release_store.retained_for_plan
     ~ctx:Sol_cli_kube_destination.local_context
     ~workspace:"myworkspace"
-    plan
 ;;
 
-let test_scoped_deploy_refuses_an_unreadable_boundary () =
-  with_plan ~requested_scope:"payments/charge_svc" (fun plan ->
+let test_whole_target_deploy_tolerates_an_unreadable_boundary () =
+  with_plan ~requested_scope:"workspace" (fun _plan ->
     with_failing_kubectl (fun () ->
-      match read_boundary plan with
-      | Ok _ -> Windtrap.fail "expected a scoped deploy to refuse an unreadable boundary"
-      | Error msg -> assert (Sol_cli_string.contains ~needle:"could not be read" msg)))
-;;
-
-let test_full_deploy_tolerates_an_unreadable_boundary () =
-  with_plan ~requested_scope:"workspace" (fun plan ->
-    with_failing_kubectl (fun () ->
-      match read_boundary plan with
+      match read_boundary () with
       | Ok [] -> ()
       | Ok retained ->
         Windtrap.failf
           "expected an unreadable boundary to retain nothing, got %d"
           (List.length retained)
-      | Error msg -> Windtrap.failf "expected a full deploy to proceed: %s" msg))
+      | Error msg -> Windtrap.failf "expected a whole-target deploy to proceed: %s" msg))
 ;;
 
 let test_of_plan_rederives_the_plan_identity () =
@@ -1080,12 +1071,8 @@ let%test "scoped boundary (BUG-077): a full deploy supersedes every workload" =
   test_full_deploy_removes_a_dropped_workload ()
 ;;
 
-let%test "scoped boundary (BUG-077): a scoped deploy refuses an unreadable boundary" =
-  test_scoped_deploy_refuses_an_unreadable_boundary ()
-;;
-
-let%test "scoped boundary (BUG-077): a full deploy tolerates an unreadable boundary" =
-  test_full_deploy_tolerates_an_unreadable_boundary ()
+let%test "whole-target boundary: an unreadable boundary retains nothing" =
+  test_whole_target_deploy_tolerates_an_unreadable_boundary ()
 ;;
 
 let%test "of_plan: rederives the plan identity" =

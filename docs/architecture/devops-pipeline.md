@@ -456,9 +456,10 @@ or pruning — fails a test rather than only a future incident.
 (FEAT-074): after a successful whole-workspace apply, both compare the live
 Sol-owned workload set against the plan's `services` (reusing
 `Sol_cli_rollback.unexpected_workloads`, the same pure diff `verify_workloads`
-uses) and print a note listing anything surplus. A `--scope`d deploy skips
+uses) and print a note listing anything surplus. A `sol up --scope` skips
 this — its plan is only part of the workspace, so comparing it against every
-live workload would flag out-of-scope services as false surplus. Unlike
+live workload would flag out-of-scope services as false surplus (`sol deploy`
+has no `--scope`: it always reconciles the whole target). Unlike
 rollback, a deploy has no recorded release boundary backing "this is exactly
 what should exist", only what it was asked to deploy this run, so it never
 prunes automatically; the note points at `sol rollback` for that.

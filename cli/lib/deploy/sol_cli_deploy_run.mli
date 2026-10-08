@@ -10,7 +10,6 @@ type context =
   ; services : Sol_cli_manifest.service list
   ; inventory : Sol_cli_manifest.service list
   ; image_refs : (string * string) list
-  ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
   ; keep_releases : int

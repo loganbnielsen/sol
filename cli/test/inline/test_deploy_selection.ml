@@ -36,8 +36,8 @@ services:
 
 let omit_charge = Some "services:\n  charge_svc:\n    omit: true\n"
 
-let select ?(image_refs = []) scope =
-  match Sol_cli_deploy_selection.select ~scope ~image_refs inventory with
+let select ?(image_refs = []) () =
+  match Sol_cli_deploy_selection.select ~image_refs inventory with
   | Ok selection -> selection
   | Error msg -> Windtrap.fail ("unexpected selection error: " ^ msg)
 ;;
@@ -59,12 +59,12 @@ let expect_refusal ~containing = function
 
 let test_undeclared_target_is_refused () =
   with_workspace ~target_body:None (fun config ->
-    apply ~config (select None) |> expect_refusal ~containing:"is not declared")
+    apply ~config (select ()) |> expect_refusal ~containing:"is not declared")
 ;;
 
-let test_domain_scope_excludes_omitted_unit () =
+let test_whole_target_excludes_omitted_unit () =
   with_workspace ~target_body:omit_charge (fun config ->
-    match apply ~config (select (Some "payments")) with
+    match apply ~config (select ()) with
     | Error msg -> Windtrap.fail msg
     | Ok deployed ->
       Windtrap.equal
@@ -80,46 +80,25 @@ let test_domain_scope_excludes_omitted_unit () =
         (Sol_cli_string.contains ~needle:"excluded" (List.hd deployed.notes)))
 ;;
 
-let test_unit_scope_names_omitted_unit_back_in () =
-  with_workspace ~target_body:omit_charge (fun config ->
-    match apply ~config (select (Some "payments/charge_svc")) with
-    | Error msg -> Windtrap.fail msg
-    | Ok deployed ->
-      Windtrap.equal
-        (Windtrap.list Windtrap.string)
-        ~msg:"included"
-        [ "charge_svc" ]
-        (names deployed);
-      Windtrap.equal
-        Windtrap.bool
-        ~msg:"the note says included"
-        true
-        (Sol_cli_string.contains ~needle:"included" (List.hd deployed.notes)))
-;;
-
 let test_image_ref_for_omitted_unit_is_refused () =
   with_workspace ~target_body:omit_charge (fun config ->
-    select ~image_refs:[ Some "charge_svc", digest ] (Some "payments")
+    select ~image_refs:[ Some "charge_svc", digest ] ()
     |> apply ~config
     |> expect_refusal ~containing:"charge_svc")
 ;;
 
-let test_selection_emptied_by_omission_is_refused () =
+let test_whole_target_emptied_by_omission_is_refused () =
   with_workspace
     ~target_body:
       (Some "services:\n  charge_svc:\n    omit: true\n  invoice_svc:\n    omit: true\n")
-    (fun config ->
-       apply ~config (select (Some "payments")) |> expect_refusal ~containing:"omit")
+    (fun config -> apply ~config (select ()) |> expect_refusal ~containing:"omit")
 ;;
 
-let test_image_ref_outside_scope_fails_before_target () =
+let test_image_ref_for_unknown_service_fails_before_target () =
   match
-    Sol_cli_deploy_selection.select
-      ~scope:(Some "payments/invoice_svc")
-      ~image_refs:[ Some "charge_svc", digest ]
-      inventory
+    Sol_cli_deploy_selection.select ~image_refs:[ Some "ghost_svc", digest ] inventory
   with
-  | Ok _ -> Windtrap.fail "expected --image-ref outside the scope to be refused"
+  | Ok _ -> Windtrap.fail "expected an image-ref outside the workspace to be refused"
   | Error _ -> ()
 ;;
 
@@ -189,22 +168,20 @@ let test_target_images_require_missing_or_mutable_release_images () =
 
 let%test "target: undeclared target" = test_undeclared_target_is_refused ()
 
-let%test "target: domain scope excludes omitted" =
-  test_domain_scope_excludes_omitted_unit ()
-;;
-
-let%test "target: unit scope includes omitted" =
-  test_unit_scope_names_omitted_unit_back_in ()
+let%test "target: whole workspace excludes omitted" =
+  test_whole_target_excludes_omitted_unit ()
 ;;
 
 let%test "target: image-ref for omitted unit" =
   test_image_ref_for_omitted_unit_is_refused ()
 ;;
 
-let%test "target: emptied by omission" = test_selection_emptied_by_omission_is_refused ()
+let%test "target: emptied by omission" =
+  test_whole_target_emptied_by_omission_is_refused ()
+;;
 
-let%test "select: image-ref outside scope" =
-  test_image_ref_outside_scope_fails_before_target ()
+let%test "select: image-ref for an unknown service" =
+  test_image_ref_for_unknown_service_fails_before_target ()
 ;;
 
 let%test "plan: all workloads need independent image refs" =

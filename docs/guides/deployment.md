@@ -170,10 +170,9 @@ Both modes take the same inputs, and both are honest about what they would do:
 - `--dry-run` runs everything except the change.
 - `--emit-plan-to plan.json` captures the typed deployment intent without rendering, which is what
   a review gate should consume.
-- `--scope payments/checkout-svc` deploys one unit, or `--scope payments` one domain. A scoped
-  deploy still knows the whole workspace: it records, and compares against, the complete
-  consumer-group set the workspace declares, so a worker it did not select is not read as a
-  removed group, and the units it never touched keep their recorded consumer groups.
+- `sol deploy` reconciles the whole target; there is no `--scope`. The desired workload set
+  must be singular so a later removal can be authorized against it, so a narrow update is a
+  separate, explicitly non-deleting operation (`sol rollback`) rather than a partial deploy.
 - `--keep-releases N`, `--refresh-interval`, `--secret-*`, `--key-prefix`, `--loki-push-url` and
   `--confirm-group-change` cover release retention, rollout refresh, secret backends and
   telemetry destinations. `--confirm-group-change` is only for a group that is really going
