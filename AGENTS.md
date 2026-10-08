@@ -65,6 +65,9 @@ bash internal/ci/run_fast_checks.sh
 
 Required GitHub CI is authoritative for merge. Live cloud qualification is separate from
 ordinary development; follow `internal/qualification/README.md` when a claim requires it.
+Releases are the deliberate path in `internal/tooling/release/README.md`: a merge never
+creates or publishes one, and a published release is the exact artifact that passed
+qualification.
 
 A passing rerun does not explain an earlier failure. Preserve the original failure and its
 evidence, then find the cause; a rerun that happens to pass is not a diagnosis. Report an

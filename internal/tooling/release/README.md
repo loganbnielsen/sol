@@ -1,8 +1,27 @@
 # Releasing Sol
 
-A Sol release is two stages: an immutable **candidate** built from one tagged
-revision, and a **promotion** that publishes that exact candidate only after the
-authorized cloud qualification refers to it. Nothing publishes from a tag.
+A Sol release is three stages: an immutable **candidate** built from one tagged
+revision, an authorized live **qualification** of that candidate, and a
+**promotion** that publishes exactly the candidate the qualification refers to.
+Nothing publishes from a tag, and nothing publishes from a merge.
+
+The governing principle is that development is continuous and releasing is
+intentional: **a published release must be the exact artifact that passed
+qualification.** Concretely:
+
+- Ordinary development is continuous. A pull request runs the checks its change
+  needs and a merge to `main` validates the merged commit; neither creates or
+  publishes a release, and neither requires the billable AWS or GCP campaign.
+- A release attempt is initiated deliberately — a `v*` tag pushed for one chosen
+  revision of `main`, or `workflow_dispatch` to resume an interrupted build of
+  that same tag. It produces an immutable candidate with an identity, not a
+  user-facing release.
+- Qualification is an operator-authorized, live action against that candidate,
+  and promotion is a separate, explicit gate. A failed or inconclusive candidate
+  is never published, and its artifacts are never replaced in place: correcting
+  source or artifacts means initiating another candidate, with its own identity.
+- A rerun that passes does not retroactively explain an earlier failure. The
+  earlier failure stays in the record, and the earlier candidate stays failed.
 
 ## 1. Candidate (automated)
 
@@ -111,7 +130,14 @@ The campaign produces one verdict document, `qualification-verdict.json`, whose
 Row status is `pass`, `fail`, `blocked`, `not_run` or `excluded`. Every
 `required_rows` id must appear with `status: pass`; `blocked`, `not_run` and
 `excluded` rows stay in the record with a reason and never become a pass through
-omission. `teardown.absence_verdict` is the independent post-destroy absence
+omission.
+
+`pass` means the claim was demonstrated and `fail` means it was contradicted.
+`blocked` is the honest answer when a claim could not be established — including
+when the environment failed rather than Sol: an external infrastructure failure is
+not automatically a Sol defect, and it cannot count as qualification either. A
+blocked or failed row keeps the candidate unpublished until a new candidate is
+qualified. `teardown.absence_verdict` is the independent post-destroy absence
 result — Sol's exit code and Terraform state are not absence evidence.
 
 ## 3. Promotion (automated gate, operator-triggered)
@@ -142,6 +168,10 @@ mechanics only and are not qualification evidence.
 
 ### Exact operator action
 
+0. Initiate the attempt: push the `v*` tag for the chosen `main` revision, or run
+   **Release** with `version=<tag>` to resume an interrupted build of it. The
+   workflow refuses a tag that is not the checkout's commit, records the candidate
+   as a draft, and never publishes.
 1. Run the authorized AWS and GCP campaign against the installed candidate and
    write the verdict's `candidate` block from the draft's `candidate.json`.
 2. Attach the verdict to the draft candidate:
@@ -149,3 +179,12 @@ mechanics only and are not qualification evidence.
 3. Run **Promote release** with `version=<version>`.
 
 Until step 3, the version is a draft and nothing a user installs can name it.
+
+### When it fails
+
+A candidate that fails or is blocked is not published and is not repaired in
+place. Fix the product or the qualification defect on `main`, then initiate a new
+candidate with a new version and run the campaign against that: the earlier
+candidate keeps its identity, its verdict and its failure, and nothing is
+rebuilt, re-tagged or replaced under an identity a qualification already refers
+to. Correcting the verdict of an earlier candidate is never the fix.
