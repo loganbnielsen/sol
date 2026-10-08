@@ -65,7 +65,7 @@ type kafka_transport =
   | Plaintext
   | Sasl_ssl
 
-val kafka_transport : production:bool -> kafka_transport
+val kafka_transport : Sol_cli_profile.platform_shape -> kafka_transport
 val kafka_tls : kafka_transport -> bool
 val kafka_transport_of_config : (string * string) list -> kafka_transport
 val cluster_env : kafka_transport -> (string * string) list

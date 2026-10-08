@@ -2,7 +2,10 @@ type kafka_transport =
   | Plaintext
   | Sasl_ssl
 
-let kafka_transport ~production = if production then Sasl_ssl else Plaintext
+let kafka_transport = function
+  | Sol_cli_profile.Local -> Plaintext
+  | Sol_cli_profile.Durable -> Sasl_ssl
+;;
 
 let kafka_tls = function
   | Plaintext -> false

@@ -70,9 +70,8 @@ type platform_inputs =
   }
 
 let platform_profile (target : Sol_cli_config.target) =
-  match target.profile with
-  | Some Sol_cli_profile.Production_single_region -> "durable"
-  | None -> "local"
+  Sol_cli_profile.platform_shape target.profile
+  |> Sol_cli_profile.platform_shape_to_string
 ;;
 
 let profile_of_platform_vars vars =

@@ -190,6 +190,7 @@ let gate_plan : Sol_cli_deployment_plan.t =
   ; schema_subjects = []
   ; consumer_groups = []
   ; requested_scope = "workspace"
+  ; platform_shape = Sol_cli_profile.Local
   ; profile = None
   ; contract = []
   ; contract_changes = []

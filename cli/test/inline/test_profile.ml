@@ -487,11 +487,22 @@ let test_profile_declares_the_kafka_posture () =
     check_bool
       "the production profile declares the SASL_SSL posture"
       true
-      (protocol claimed = Some "sasl_ssl");
+      (protocol claimed = Some "sasl_ssl"
+       && claimed.platform_shape = Sol_cli_profile.Durable);
     check_bool
-      "an unclaimed plan leaves the default posture to the renderer"
+      "the local shape leaves the default posture to the renderer"
       true
-      (protocol unclaimed = None);
+      (protocol unclaimed = None && unclaimed.platform_shape = Sol_cli_profile.Local);
+    let contract_protocol (plan : Sol_cli_deployment_plan.t) =
+      Sol_cli_manifest.kafka_transport plan.platform_shape
+      |> Sol_cli_manifest.cluster_env
+      |> List.assoc_opt "KAFKA_SECURITY_PROTOCOL"
+    in
+    check_bool
+      "contract jobs use the same resolved transport as workloads"
+      true
+      (contract_protocol claimed = protocol claimed
+       && contract_protocol unclaimed = Some "plaintext");
     check_bool
       "the declared transport is part of the release identity"
       true

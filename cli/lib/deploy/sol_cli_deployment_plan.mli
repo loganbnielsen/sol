@@ -123,6 +123,7 @@ type t =
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
   ; requested_scope : string
+  ; platform_shape : Sol_cli_profile.platform_shape
   ; profile : profile_claim option
   ; contract : Sol_cli_release_id.contract_fact list
   ; contract_changes : contract_change list

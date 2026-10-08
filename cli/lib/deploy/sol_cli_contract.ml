@@ -99,8 +99,8 @@ let reconciliation_images services =
     services
 ;;
 
-let reconcile_in_destination ~ctx ~production ~namespace ~image =
-  let transport = Sol_cli_manifest.kafka_transport ~production in
+let reconcile_in_destination ~ctx ~platform_shape ~namespace ~image =
+  let transport = Sol_cli_manifest.kafka_transport platform_shape in
   match
     Sol_cli_migration_job.submit_doc
       ~ctx
