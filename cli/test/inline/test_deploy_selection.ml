@@ -138,6 +138,52 @@ let test_target_plan_requires_independent_image_refs () =
   | Ok _ -> Windtrap.fail "target plan accepted incomplete per-workload image identities"
 ;;
 
+let test_target_images_inherit_and_override_release_images () =
+  let old_charge = "registry.example/charge@sha256:" ^ String.make 64 'b' in
+  let new_charge = "registry.example/charge@sha256:" ^ String.make 64 'c' in
+  let old_invoice = "registry.example/invoice@sha256:" ^ String.make 64 'd' in
+  match
+    Sol_cli_image_ref.resolve_with_previous
+      ~service_names:[ "charge_svc"; "invoice_svc" ]
+      [ Some "charge_svc", new_charge ]
+      [ "charge_svc", old_charge; "invoice_svc", old_invoice ]
+  with
+  | Error message -> Windtrap.fail message
+  | Ok images ->
+    Windtrap.equal
+      (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+      ~msg:"explicit changed image overrides; omitted image inherits"
+      [ "charge_svc", new_charge; "invoice_svc", old_invoice ]
+      images
+;;
+
+let test_target_images_require_missing_or_mutable_release_images () =
+  let old_charge = "registry.example/charge@sha256:" ^ String.make 64 'b' in
+  let check_missing message =
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the workload without an immutable prior image is named"
+      true
+      (Sol_cli_string.contains ~needle:"invoice_svc" message)
+  in
+  (match
+     Sol_cli_image_ref.resolve_with_previous
+       ~service_names:[ "charge_svc"; "invoice_svc" ]
+       []
+       [ "charge_svc", old_charge ]
+   with
+   | Ok _ -> Windtrap.fail "target plan accepted a partial release record"
+   | Error message -> check_missing message);
+  match
+    Sol_cli_image_ref.resolve_with_previous
+      ~service_names:[ "charge_svc"; "invoice_svc" ]
+      []
+      [ "charge_svc", old_charge; "invoice_svc", "registry.example/invoice:latest" ]
+  with
+  | Ok _ -> Windtrap.fail "target plan inherited a missing or mutable image identity"
+  | Error message -> check_missing message
+;;
+
 let%test "target: undeclared target" = test_undeclared_target_is_refused ()
 
 let%test "target: domain scope excludes omitted" =
@@ -160,4 +206,12 @@ let%test "select: image-ref outside scope" =
 
 let%test "plan: all workloads need independent image refs" =
   test_target_plan_requires_independent_image_refs ()
+;;
+
+let%test "plan: inherit and override image refs" =
+  test_target_images_inherit_and_override_release_images ()
+;;
+
+let%test "plan: missing or mutable inherited image" =
+  test_target_images_require_missing_or_mutable_release_images ()
 ;;

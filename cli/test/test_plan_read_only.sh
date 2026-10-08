@@ -20,6 +20,7 @@ prod:
   targets:
     aws/us-east-1:
       cluster_name: planned
+      kube_context: planned
       state_bucket: sol-plan-state
       aws:
         state_lock_table: sol-plan-lock
@@ -34,7 +35,12 @@ cat > "$tmp/bin/aws" <<'EOF'
 echo 'ResourceNotFound: not found' >&2
 exit 1
 EOF
-chmod +x "$tmp/bin/terraform" "$tmp/bin/aws"
+cat > "$tmp/bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+echo 'Unable to connect to the server: dial tcp 192.0.2.1:443: i/o timeout' >&2
+exit 1
+EOF
+chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl"
 cd "$tmp/workspace"
 PATH="$tmp/bin:$PATH" "$sol" plan prod/aws/us-east-1 \
   --image-ref api_svc=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -52,3 +58,10 @@ if grep -F ' apply ' "$tmp/terraform.log" >/dev/null; then
   echo 'sol plan invoked terraform apply' >&2
   exit 1
 fi
+if PATH="$tmp/bin:$PATH" "$sol" plan prod/aws/us-east-1 \
+  --image-ref api_svc=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  > "$tmp/unreachable-output" 2>&1; then
+  echo 'sol plan unexpectedly inherited images from an unreachable cluster' >&2
+  exit 1
+fi
+grep -F 'cannot inherit workload images from the current release' "$tmp/unreachable-output" >/dev/null

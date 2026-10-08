@@ -75,10 +75,57 @@ let run target_name image_refs var_file vars =
          not (Sol_cli_config.is_omitted_service cfg ~name:service.name))
       inventory
   in
+  let service_names = List.map (fun (s : Sol_cli_manifest.service) -> s.name) selected in
+  let image_refs = List.map Sol_cli_image_ref.split_flag_value image_refs in
+  let* provided =
+    Sol_cli_image_ref.resolve ~service_names image_refs |> Sol_cli_exit.of_msg
+  in
+  let* previous =
+    if List.length provided = List.length service_names
+    then Ok []
+    else
+      let* destination =
+        Sol_cli_config.destination_of_target target
+        |> Result.map_error (fun message ->
+          Sol_cli_exit.error
+            (Printf.sprintf
+               "cannot inherit workload images because the target Kubernetes destination \
+                is unavailable (%s); supply --image-ref for every workload"
+               message))
+      in
+      let ctx = Sol_cli_kube_destination.context_of_destination destination in
+      match
+        Sol_cli_release_store.current_record
+          ~ctx
+          ~workspace:(Sol_cli_workspace.current_name ())
+      with
+      | Error message ->
+        Error
+          (Sol_cli_exit.error
+             (Printf.sprintf
+                "cannot inherit workload images from the current release (%s); supply \
+                 --image-ref for every workload"
+                message))
+      | Ok None -> Ok []
+      | Ok (Some release) ->
+        Ok
+          (List.filter_map
+             (fun (service : Sol_cli_manifest.service) ->
+                let primitive = Sol_cli_manifest.primitive_label service.primitive in
+                match
+                  List.filter
+                    (fun (workload : Sol_cli_release.recorded_workload) ->
+                       workload.spec.domain = service.domain
+                       && workload.spec.name = service.name
+                       && workload.spec.primitive = primitive)
+                    release.workloads
+                with
+                | [ workload ] -> Some (service.name, workload.spec.image)
+                | _ -> None)
+             selected)
+  in
   let* image_refs =
-    Sol_cli_image_ref.resolve_complete
-      ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) selected)
-      (List.map Sol_cli_image_ref.split_flag_value image_refs)
+    Sol_cli_image_ref.resolve_with_previous ~service_names image_refs previous
     |> Sol_cli_exit.of_msg
   in
   let registry = Option.value target.registry ~default:"resolved-image-refs" in

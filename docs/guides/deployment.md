@@ -60,12 +60,14 @@ sol plan prod/aws/us-east-1 \
 ```
 
 `sol plan` resolves the target once, then previews its target-wide infrastructure and
-authorization plans plus the desired workload images. Provide one immutable `--image-ref`
-for every non-omitted workload; this keeps image identity independent per service. If the
-durable installation is positively absent, Sol shows its bootstrap plan using temporary
-local state. Partial or unknown installation state is deferred. Planning never applies
-changes. Kubernetes live-object changes are not inferred from labels or declarations;
-removal requires positive ownership evidence.
+authorization plans plus the desired workload images. On an existing deployment, omitted
+image refs inherit immutable images from the current release record; supplied refs override
+those images. A first deployment needs one immutable `--image-ref` for every non-omitted
+workload. If the current cluster or release record cannot be read, supply the complete map
+explicitly. If the durable installation is positively absent, Sol shows its bootstrap plan
+using temporary local state. Partial or unknown installation state is deferred. Planning
+never applies changes. Kubernetes live-object changes are not inferred from labels or
+declarations; removal requires positive ownership evidence.
 
 ## 2. The installation comes first, once per account
 

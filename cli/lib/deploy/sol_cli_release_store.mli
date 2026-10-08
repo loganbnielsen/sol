@@ -37,6 +37,11 @@ val current
   -> workspace:string
   -> (string option, string) result
 
+val current_record
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> (Sol_cli_release.t option, string) result
+
 val deployed_contract
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
