@@ -244,22 +244,6 @@ cloud_vars() {
     "--var=base_domain=$BASE_DOMAIN"
 }
 
-start_ns_watcher() {
-  (
-    for _ in $(seq 1 360); do
-      if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
-          --format='value(nameServers)' >"$LOG_DIR/nameservers.txt" 2>/dev/null; then
-        : >"$LOG_DIR/nameservers.ready"
-        printf '\n[%(%H:%M:%S)T] DELEGATION HAND-OFF READY — paste these four NS records at the registrar, named %s:\n' -1 "$ZONE_LABEL" 2>/dev/null || true
-        tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /' 2>/dev/null || true
-        break
-      fi
-      sleep 5
-    done
-  ) &
-  NS_WATCHER=$!
-}
-
 destroy_vars() {
   local zone_var="create_dns_zone=false"
   [ "${KEEP_DNS_ZONE:-1}" = "0" ] && zone_var="create_dns_zone=true"
@@ -497,10 +481,6 @@ bundle_manifest() {
   if [ -s "$LOG_DIR/platform-failure/capture-summary.txt" ]; then
     printf 'platform failure capture: platform-failure/capture-summary.txt\n'
   fi
-  if [ -s "$LOG_DIR/api-readiness.tsv" ]; then
-    printf 'api readiness: api-readiness.tsv (%s samples across the platform apply)\n' \
-      "$(($(wc -l <"$LOG_DIR/api-readiness.tsv") - 1))"
-  fi
   {
     printf 'evidence bundle: %s\n' "$LOG_DIR"
     printf 'attempt: %s  row: %s\n' "${ATTEMPT:--}" "${ROW:-}"
@@ -608,7 +588,6 @@ destroy() {
 cleanup() {
   local rc=$?
   stop_cluster_kubeconfig_waiter
-  api_readiness_probe_stop
   if [ "$KEEP" = "1" ]; then
     say "not tearing down: ${KEEP_REASON:-the delegation boundary is deliberate, not a leak}"
     say "logs: $LOG_DIR"
@@ -664,9 +643,7 @@ phase_cloud() {
 
   CLOUD_APPLIED=1
   INSTALL_STATE=succeeded
-  start_ns_watcher
   start_cluster_kubeconfig_waiter
-  api_readiness_probe_start
   local apply_rc=0
   run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}" || apply_rc=$?
   if [ "$apply_rc" != 0 ] && platform_credential_missing; then
@@ -732,72 +709,6 @@ kube_capture() {
   local name="$1"; shift
   timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" "$@" >"$LOG_DIR/$name.log" 2>&1 || true
   say "  captured $name.log ($(wc -l <"$LOG_DIR/$name.log" | tr -d ' ') lines)"
-}
-
-api_probe_sample() {
-  local out="$1" reported configured verdict detail
-  reported="$(gcloud container clusters describe "${CLUSTER:-}" --region "${REGION:-}" \
-    --project "${PROJECT:-}" --format='value(endpoint)' 2>/dev/null | tr -d '\r' \
-    || printf '')"
-  configured="$(kubeconfig_server_for_cluster "${KUBECONFIG:-$HOME/.kube/config}" "${CLUSTER:-}" \
-    | tr -d '\r')"
-  configured="${configured#https://}"
-  configured="${configured#http://}"
-  configured="${configured%%/*}"
-  configured="${configured%%:*}"
-  if detail="$(timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
-    verdict=REACHABLE
-  else
-    verdict=UNREACHABLE
-  fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${ATTEMPT:--}" "${reported:--}" \
-    "${configured:--}" "$verdict" "$(printf '%s' "$detail" | tr '\n' ' ' | cut -c1-120)" \
-    >>"$out" 2>/dev/null || true
-}
-
-api_probe_sample_or_record() {
-  local out="$1"
-  if ! api_probe_sample "$out" 2>/dev/null; then
-    printf '%s\t%s\t-\t-\tPROBE_FAILED\tapi_probe_sample exited non-zero\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${ATTEMPT:--}" >>"$out" 2>/dev/null || true
-  fi
-}
-
-api_probe_loop() {
-  local out="$1" parent=$$
-  while :; do
-    if ! kill -0 "$parent" 2>/dev/null; then
-      exit 0
-    fi
-    api_probe_sample_or_record "$out"
-    sleep "${API_PROBE_INTERVAL_S:-15}"
-  done
-}
-
-api_readiness_probe_start() {
-  local out="$LOG_DIR/api-readiness.tsv"
-  if [ "${API_READINESS_PROBE:-1}" != "1" ]; then
-    say "api readiness probe: DISABLED by API_READINESS_PROBE"
-    return 0
-  fi
-  if ! : >"$out"; then
-    say "api readiness probe: DISABLED (cannot write $out) — the run continues unobserved"
-    return 0
-  fi
-  printf 'timestamp\tattempt\tserver_reported\tserver_configured\tverdict\tdetail\n' >>"$out" || true
-  api_probe_sample_or_record "$out"
-  api_probe_loop "$out" &
-  API_PROBE_PID=$!
-  say "api readiness probe: every ${API_PROBE_INTERVAL_S:-15}s -> $out (attempt ${ATTEMPT:--}, pid $API_PROBE_PID)"
-}
-
-api_readiness_probe_stop() {
-  if [ -n "${API_PROBE_PID:-}" ] && kill -0 "$API_PROBE_PID" 2>/dev/null; then
-    kill -TERM "$API_PROBE_PID" 2>/dev/null || true
-    wait "$API_PROBE_PID" 2>/dev/null || true
-    say "api readiness probe stopped ($(wc -l <"$LOG_DIR/api-readiness.tsv" 2>/dev/null || echo 0) lines)"
-  fi
-  API_PROBE_PID=""
 }
 
 kubeconfig_has_cluster() {

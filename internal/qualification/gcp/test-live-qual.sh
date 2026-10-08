@@ -1124,81 +1124,23 @@ has "the harness records the signal" "received SIGTERM" "$TMP/sigterm.logs/harne
 
 
 
-probe_case() {
+creds_case() {
   local name="$1" configured="$2"
   shift 2
   local kc="$TMP/kc-$name.yaml"
   printf 'apiVersion: v1\nclusters:\n- cluster:\n    server: https://%s\n  name: c\n' \
     "$configured" >"$kc"
-  run_case "probe-$name" cloud KUBECONFIG="$kc" API_PROBE_INTERVAL_S=1 "$@"
+  run_case "creds-$name" cloud KUBECONFIG="$kc" "$@"
 }
-probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-readiness.tsv"; }
 
-probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
-has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
-is "each API sample carries the attempt identity" "$(probe_col sampling 2)" "$ATTEMPT"
-is "the sample carries the provider-reported endpoint" "$(probe_col sampling 3)" "34.0.0.1"
-sampling_kc="$TMP/probe-sampling.logs/run-kubeconfig.yaml"
+creds_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
+sampling_kc="$TMP/creds-sampling.logs/run-kubeconfig.yaml"
 sampling_name_line="$(grep -n -m1 '^  name:' "$sampling_kc" | cut -d: -f1)"
 sampling_server_line="$(grep -n -m1 '^    server:' "$sampling_kc" | cut -d: -f1)"
 is "the run-owned kubeconfig is the gcloud shape the shell matcher could not read: name after the cluster block" \
   "$sampling_name_line" "$(( ${sampling_server_line:-0} + 1 ))"
 has "and it names this run's cluster, at the fixture's endpoint" "server: https://34.0.0.1" "$sampling_kc"
 lacks "and no cluster of another run appears in it" "sol-qual-gcp-15c" "$sampling_kc"
-if awk -F'\t' 'NR>1 && $4 != "-" && $4 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
-    "$TMP/probe-sampling.logs/api-readiness.tsv"; then
-  no "the configured endpoint is never anything but this run's kubeconfig entry" \
-    "34.0.0.1 while credentials exist, '-' before that" \
-    "$(awk -F'\t' 'NR>1{print $4}' "$TMP/probe-sampling.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
-else
-  ok "the configured endpoint is never anything but this run's kubeconfig entry"
-fi
-has "the probe's reads carry the run's own kubeconfig" "kubeconfig=$TMP/probe-sampling.logs" \
-  "$TMP/probe-sampling.probe.argv"
-has "the probe's gcloud endpoint read is on the probe channel" "value(endpoint)" "$TMP/probe-sampling.probe.argv"
-has "the probe's kubectl readiness read is on the probe channel" "get --raw /readyz" "$TMP/probe-sampling.probe.argv"
-if grep -qE '/readyz|value\(endpoint\)' "$TMP/probe-sampling.argv" 2>/dev/null; then
-  no "the lifecycle channel sees no probe traffic" "no probe traffic" \
-    "$(grep -m1 -E '/readyz|value\(endpoint\)' "$TMP/probe-sampling.argv")"
-else
-  ok "the lifecycle channel sees no probe traffic"
-fi
-
-probe_case multicontext 136.115.125.189 STUB_CLUSTER_EXISTS=1
-if grep -qF "136.65.210.170" "$TMP/probe-multicontext.logs/api-readiness.tsv"; then
-  no "with many contexts, the stale endpoint is never read" "no stale endpoint" "136.65.210.170 present"
-else
-  ok "with many contexts, the stale endpoint is never read"
-fi
-has "the context lookup asked for the run's cluster" "config get-contexts" \
-  "$TMP/probe-multicontext.argv"
-has "and the context was pinned by name" \
-  "config use-context gke_sol-qualification_us-central1_test-cluster" "$TMP/probe-multicontext.argv"
-lacks "and the stale context was never selected" \
-  "use-context gke_old-project_us-central1_sol-qual-gcp-15c" "$TMP/probe-multicontext.argv"
-
-probe_case unreachable 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
-has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
-  "$TMP/probe-unreachable.logs/api-readiness.tsv"
-has "with the dial detail kept" "i/o timeout" "$TMP/probe-unreachable.logs/api-readiness.tsv"
-
-probe_case perturb 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
-run_case "probe-off" cloud API_READINESS_PROBE=0 STUB_CLUSTER_EXISTS=1
-is "a failing probe does not change the phase's exit status" \
-  "$(cat "$TMP/probe-perturb.rc")" "$(cat "$TMP/probe-off.rc")"
-if [ -s "$TMP/probe-off.logs/api-readiness.tsv" ]; then
-  no "the switch really disables the observer" "no samples" "$(wc -l <"$TMP/probe-off.logs/api-readiness.tsv") lines"
-else
-  ok "the switch really disables the observer"
-fi
-
-probe_pid="$(sed -n 's/.*api readiness probe:.*(pid \([0-9]*\)).*/\1/p' "$TMP/probe-sampling.out" 2>/dev/null | tail -1)"
-if [ -n "$probe_pid" ] && kill -0 "$probe_pid" 2>/dev/null; then
-  no "the probe leaves no orphan process" "no process $probe_pid" "still running"
-else
-  ok "the probe leaves no orphan process (recorded pid ${probe_pid:-none} is gone)"
-fi
-
 amb="$TMP/ambient-kubeconfig.yaml"
 {
   printf 'apiVersion: v1\nkind: Config\ncurrent-context: eks-stale\n'
@@ -1209,7 +1151,7 @@ amb="$TMP/ambient-kubeconfig.yaml"
   printf 'users:\n- name: u\n  user:\n    token: x\n'
 } >"$amb"
 
-run_case "e2e-credentials" cloud KUBECONFIG="$amb" API_PROBE_INTERVAL_S=1 STUB_SOL_SLEEP=6 \
+run_case "e2e-credentials" cloud KUBECONFIG="$amb" STUB_SOL_SLEEP=6 \
   CLUSTER_KUBECONFIG_POLL_S=1 STUB_STATUS_FAILS_N=3 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
 
 has "the waiter recorded a poll that found no cluster" "poll-failed" \
@@ -1228,27 +1170,6 @@ else
 fi
 has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
   "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
-
-is "the probe resolves this run's configured endpoint from the run-owned kubeconfig once credentials exist" \
-  "$(awk -F'\t' 'NR>1{v=$4} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "34.0.0.1"
-if awk -F'\t' 'NR>1 && $4 != "-" && $4 != "34.0.0.1" {found=1} END{exit(found?0:1)}' \
-    "$TMP/e2e-credentials.logs/api-readiness.tsv"; then
-  no "the ambient cluster is never the configured endpoint" \
-    "34.0.0.1 while credentials exist, '-' before that" \
-    "$(awk -F'\t' 'NR>1{print $4}' "$TMP/e2e-credentials.logs/api-readiness.tsv" | sort -u | tr '\n' ' ')"
-else
-  ok "the ambient cluster is never the configured endpoint"
-fi
-if grep -qF '9F5AAA970F948E45A7AE0807DA893DCE' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
-  no "the ambient EKS cluster never appears" "no ambient cluster" "EKS hostname present"
-else
-  ok "the ambient EKS cluster never appears"
-fi
-if grep -qF 'localhost:8080' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
-  no "kubectl never falls back to localhost:8080" "no localhost fallback" "localhost:8080 present"
-else
-  ok "kubectl never falls back to localhost:8080"
-fi
 
 if grep -qF "kubeconfig=$TMP/e2e-credentials.logs/run-kubeconfig.yaml" "$TMP/e2e-credentials.argv"; then
   ok "every kubectl read is bound to the run's kubeconfig"
@@ -1291,18 +1212,18 @@ has "and the scheduler's own verdict on it" "PodScheduled=False(Unschedulable)" 
 has "the node taint capture keeps a taint that can keep a pod off a node" "effect:NoSchedule" \
   "$TMP/e2e-credentials.logs/platform-failure/node-taints.log"
 
-probe_case neverready 136.115.125.189 STUB_GET_CREDENTIALS_RC=1 STUB_APPLY_RC=1 \
+creds_case neverready 136.115.125.189 STUB_GET_CREDENTIALS_RC=1 STUB_APPLY_RC=1 \
   STUB_CLUSTER_EXISTS=1
 has "a capture that could not get credentials says so" "could not establish credentials" \
-  "$TMP/probe-neverready.logs/platform-failure/NO-KUBECONFIG.txt"
+  "$TMP/creds-neverready.logs/platform-failure/NO-KUBECONFIG.txt"
 has "and the summary records the credential state" "credentials for test-cluster: no" \
-  "$TMP/probe-neverready.logs/platform-failure/capture-summary.txt"
+  "$TMP/creds-neverready.logs/platform-failure/capture-summary.txt"
 has "the summary lists every artifact it attempted" "helm-release-secrets" \
-  "$TMP/probe-neverready.logs/platform-failure/capture-summary.txt"
+  "$TMP/creds-neverready.logs/platform-failure/capture-summary.txt"
 
-probe_case readfails 136.115.125.189 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_READ_RC=1
+creds_case readfails 136.115.125.189 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_READ_RC=1
 has "a failed capture read records the failure in the artifact" "Error from server" \
-  "$TMP/probe-readfails.logs/platform-failure/pods.log"
+  "$TMP/creds-readfails.logs/platform-failure/pods.log"
 
 printf '\nscenario: a stop before the platform is a complete bundle\n'
 run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
