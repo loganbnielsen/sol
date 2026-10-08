@@ -50,6 +50,8 @@ PATH="$tmp/bin:$PATH" "$sol" plan prod/aws/us-east-1 \
 grep -F 'image=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$tmp/output" >/dev/null
 grep -F 'image=registry.example/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$tmp/output" >/dev/null
 grep -F 'First-run installation bootstrap plan (temporary local state)' "$tmp/output" >/dev/null
+grep -F 'Live workload delta deferred' "$tmp/output" >/dev/null
+grep -F 'Unable to connect to the server' "$tmp/output" >/dev/null
 grep -F 'init -backend=false' "$tmp/terraform.log" >/dev/null
 grep -F ' plan ' "$tmp/terraform.log" >/dev/null
 terraform_chdir=$(sed -n '1s/.*-chdir=\([^ ]*\).*/\1/p' "$tmp/terraform.log")
@@ -69,14 +71,29 @@ if [ -n "$unexpected_terraform" ]; then
   echo "sol plan invoked non-preview terraform commands: $unexpected_terraform" >&2
   exit 1
 fi
-# The only cluster access is reading the current release record; it must stay a read.
-if [ -f "$tmp/kubectl.log" ]; then
-  for verb in apply create delete patch replace edit scale rollout label annotate; do
-    if grep -Eq "(^|[[:space:]])${verb}([[:space:]]|$)" "$tmp/kubectl.log"; then
-      echo "sol plan invoked a mutating kubectl verb: $verb" >&2
-      exit 1
-    fi
+# The cluster access is reading live objects; it must stay a read. The verb is the first
+# token after the leading `--context <name>`, so a resource named `rollout` is not a verb.
+verb_of() {
+  set -- $1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --context) shift 2 ;;
+      --*) shift ;;
+      *) printf '%s' "$1"; return ;;
+    esac
   done
+}
+if [ -f "$tmp/kubectl.log" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    verb="$(verb_of "$line")"
+    case " apply create delete patch replace edit scale rollout label annotate " in
+      *" $verb "*)
+        echo "sol plan invoked a mutating kubectl verb: $verb" >&2
+        exit 1
+        ;;
+    esac
+  done < "$tmp/kubectl.log"
 fi
 if PATH="$tmp/bin:$PATH" "$sol" plan prod/aws/us-east-1 \
   --image-ref api_svc=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \

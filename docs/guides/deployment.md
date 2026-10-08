@@ -66,8 +66,17 @@ those images. A first deployment needs one immutable `--image-ref` for every non
 workload. If the current cluster or release record cannot be read, supply the complete map
 explicitly. If the durable installation is positively absent, Sol shows its bootstrap plan
 using temporary local state. Partial or unknown installation state is deferred. Planning
-never applies changes. Kubernetes live-object changes are not inferred from labels or
-declarations; removal requires positive ownership evidence.
+never applies changes.
+
+`sol plan` also reports the **live workload delta**, classified only by recorded UID
+evidence: each declared workload is `create`, `owned, unchanged`, `live, not owned`, or
+`recorded, gone`, and live workspace objects the plan does not declare are listed as
+surplus (`removable` only while the live UID matches the UID captured at apply, otherwise
+`retained`). When the cluster, credentials, or a kind cannot be observed, Sol says so
+explicitly and infers nothing about those objects: absence of observation is not
+observation of absence. Kubernetes live-object changes are never inferred from labels or
+declarations; removal requires positive ownership evidence (see
+[resource ownership](../architecture/ownership.md)).
 
 ## 2. The installation comes first, once per account
 
