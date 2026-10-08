@@ -550,6 +550,15 @@ run_case() {
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
     printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
+  if [ "${PRESEED_STALE_KUBECONFIG:-0}" = "1" ]; then
+    # A complete kubeconfig naming this cluster, left by an earlier run: the
+    # waiter must not read it as this run's credentials.
+    mkdir -p "$LOG_DIR"
+    sed "s/sol-qual-gcp-15g/test-cluster/g" \
+      "$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml" \
+      >"$LOG_DIR/run-kubeconfig.yaml"
+    printf 'attempt=%s\ncandidate_revision=%s\n' "$ATTEMPT" "$CANDIDATE_REVISION" >"$LOG_DIR/attempt.txt"
+  fi
   if [ "${PRESEED_INVENTORY:-0}" = "1" ]; then
     mkdir -p "$LOG_DIR"
     : >"$LOG_DIR/inventory-pre.tsv"
@@ -706,6 +715,14 @@ has "the capture is taken with no credentials, not the replaced cluster's" \
   "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
 has "and the reason names the endpoint binding" "not the current endpoint" \
   "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
+
+printf '\nscenario: a kubeconfig an earlier run left behind is not this run'"'"'s credential\n'
+PRESEED_STALE_KUBECONFIG=1 run_case stale-artifact cloud STUB_APPLY_RC=1 \
+  CLUSTER_WAIT_TIMEOUT_S=1 CLUSTER_KUBECONFIG_POLL_S=1
+lacks "the waiter never reads the leftover file as this run's credential" \
+  "run kubeconfig: ready" "$TMP/stale-artifact.logs/harness.log"
+lacks "and never reports credentials it did not establish" \
+  "run kubeconfig: established" "$TMP/stale-artifact.logs/harness.log"
 
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash

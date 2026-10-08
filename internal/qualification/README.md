@@ -32,9 +32,8 @@ success. A skipped capability is named as skipped; it is not silently promoted.
    candidate it holds, so a run told only a prefix could file another candidate's evidence under
    this one's name.
 3. Give every disposable run a unique identity and evidence directory. `attempt.sh` refuses
-   accidental reuse: one attempt is one candidate and one specimen, each run records the run that
-   wrote the files beside it (`run.txt`), and evidence an earlier run left is never read as the
-   current run's.
+   accidental reuse: one attempt is one candidate and one specimen, and a credential an earlier run
+   left behind is never read as the current run's.
 4. Exercise lifecycle through Sol. Qualification observes Sol; it must not reproduce Sol's
    Terraform/Helm resource orchestration.
 5. Preserve evidence before cleanup. On any blocker while billable resources exist: capture the

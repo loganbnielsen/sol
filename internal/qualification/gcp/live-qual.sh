@@ -108,11 +108,9 @@ SAY_LOG="$LOG_DIR/harness.log"
 case "${1:-}" in
   cloud)
     attempt_begin 1
-    attempt_begin_run "${1:-}"
     ;;
   app | destroy | identity)
     attempt_begin 0
-    attempt_begin_run "${1:-}"
     ;;
 esac
 say "environment: work tree $ROOT, revision $(git -C "$ROOT" rev-parse --short HEAD)"
@@ -839,8 +837,11 @@ cluster_kubeconfig_waiter() {
       exit 0
     fi
     expected="$(current_endpoint)"
-    if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
-      note "-" "established" "credentials for $CLUSTER at ${expected:-<no endpoint>} exist"
+    # Without a readable endpoint there is nothing to bind the credential to: a
+    # file that only names the cluster may be an earlier run's, for a cluster of
+    # the same name that no longer exists (sol-fab/sol#1287).
+    if [ -n "$expected" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
+      note "-" "established" "credentials for $CLUSTER at $expected exist"
       say "run kubeconfig: ready ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
       exit 0
     fi
@@ -850,7 +851,7 @@ cluster_kubeconfig_waiter() {
       RUNNING)
         kubeconfig_for_cluster || true
         expected="$(current_endpoint)"
-        if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
+        if [ -n "$expected" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$expected"; then
           note "$status" "credentials-established" "context pinned to $CLUSTER"
           say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
           exit 0
@@ -878,7 +879,9 @@ stop_cluster_kubeconfig_waiter() {
   if [ -n "${KUBECONFIG_WAITER_PID:-}" ] && kill -0 "$KUBECONFIG_WAITER_PID" 2>/dev/null; then
     kill -TERM "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
     wait "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
-    if [ -s "$RUN_KUBECONFIG" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$(current_endpoint)"; then
+    endpoint="$(current_endpoint)"
+    if [ -n "$endpoint" ] && [ -s "$RUN_KUBECONFIG" ] &&
+      kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER" "$endpoint"; then
       printf '%s\t-\t-\tstopped-by-run\tcredentials existed; the run ended\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
     else

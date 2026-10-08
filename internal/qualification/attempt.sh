@@ -79,28 +79,6 @@ attempt_write_identity() {
   } >"$file"
 }
 
-# One invocation of a harness is one run inside the attempt. The run marker says
-# which run wrote the files beside it: without it an attempt's artifacts cannot be
-# told apart from the run that produced them, and an earlier run's stale
-# kubeconfig and phase logs have twice been read as the current run's, once
-# pointing a phase at a destroyed cluster (sol-fab/sol#1287).
-ATTEMPT_RUN="${ATTEMPT_RUN:-}"
-
-attempt_begin_run() {
-  local phase="${1:-}"
-  ATTEMPT_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  mkdir -p "$LOG_DIR"
-  {
-    printf 'run=%s\n' "$ATTEMPT_RUN"
-    printf 'attempt=%s\n' "$ATTEMPT"
-    printf 'phase=%s\n' "$phase"
-    printf 'candidate_version=%s\n' "${SOL_CANDIDATE_VERSION:-}"
-    printf 'candidate_revision=%s\n' "${SOL_CANDIDATE_REVISION:-}"
-    printf 'specimen=%s\n' "$(attempt_specimen_recorded || true)"
-    printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$LOG_DIR/run.txt"
-}
-
 attempt_specimen_recorded() {
   local file
   file="$(attempt_identity_file)"

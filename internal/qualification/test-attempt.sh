@@ -37,22 +37,12 @@ begin() {
   )
 }
 
-printf '\nscenario: a fresh attempt records its identity, its specimen and its run\n'
+printf '\nscenario: a fresh attempt records its identity and its specimen\n'
 d="$TMP/fresh"
 STATE_PRESENT=1 begin "$d" alpha7 "$(printf 'a%.0s' $(seq 1 40))" && ok "the fresh attempt is accepted" || no "the fresh attempt is accepted" "0" "$?"
 has "the identity names the attempt" "attempt=alpha7" "$d/attempt.txt"
 has "and the candidate it qualifies" "candidate_revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$d/attempt.txt"
 has "and the specimen it provisioned" "specimen=sol-qual" "$d/attempt.txt"
-(
-  LOG_DIR="$d" ATTEMPT=alpha7 ROW=qual PROVIDER=aws
-  TARGET=qual/aws/us-east-1 STATE_KEY=sol/qual/cloud.tfstate CLUSTER=sol-qual
-  SOL_CANDIDATE_REVISION="$(printf 'a%.0s' $(seq 1 40))" SOL_CANDIDATE_VERSION=v0.1.0-alpha.7
-  attempt_begin_run cloud
-) >/dev/null 2>&1
-has "the run marker names the run" "run=" "$d/run.txt"
-has "and the phase it started" "phase=cloud" "$d/run.txt"
-has "and the candidate beside it" "candidate_revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$d/run.txt"
-
 printf '\nscenario: one attempt is one specimen\n'
 d="$TMP/specimen"
 mkdir -p "$d"
