@@ -49,7 +49,57 @@ sol_under_test_resolve() {
   esac
   [ "${#SOL_REVISION}" -eq 40 ] ||
     sol_under_test_die "release $version records revision '$SOL_REVISION', which is not a 40-hex commit"
+  sol_under_test_verify_candidate
   unset SOL_HOME
+}
+
+# One field of the candidate document the release machinery published.
+sol_under_test_candidate_field() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+field, path = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as handle:
+        document = json.load(handle)
+except Exception as error:
+    print(f"the candidate document {path} is not readable JSON: {error}", file=sys.stderr)
+    raise SystemExit(3)
+value = document.get(field) if isinstance(document, dict) else None
+if not isinstance(value, str) or not value:
+    print(f"the candidate document {path} carries no {field}", file=sys.stderr)
+    raise SystemExit(4)
+print(value)
+PY
+}
+
+# An install prefix says which release is on disk; only the candidate document
+# says which candidate that release is. Without this the run would record its
+# evidence against whatever prefix SOL_INSTALL happened to name -- an alpha.15
+# attempt could provision with the alpha.14 CLI and file the result under
+# alpha.15 (sol-fab/sol#1287).
+sol_under_test_verify_candidate() {
+  local path="${SOL_CANDIDATE:-}"
+  local expected_version expected_revision expected_runner
+  if [ -z "$path" ]; then
+    sol_under_test_die "set SOL_CANDIDATE to the candidate document this run qualifies (the draft's candidate.json): an install prefix alone cannot say which candidate it holds, so the evidence would not name the candidate it belongs to"
+  fi
+  [ -f "$path" ] || sol_under_test_die "SOL_CANDIDATE=$path is not a file"
+  expected_version="$(sol_under_test_candidate_field version "$path")" ||
+    sol_under_test_die "the candidate document $path carries no usable version"
+  expected_revision="$(sol_under_test_candidate_field revision "$path")" ||
+    sol_under_test_die "the candidate document $path carries no usable revision"
+  expected_runner="$(sol_under_test_candidate_field runner_image "$path")" ||
+    sol_under_test_die "the candidate document $path carries no usable runner_image"
+  [ "$SOL_BUNDLE_VERSION" = "$expected_version" ] ||
+    sol_under_test_die "SOL_INSTALL holds release $SOL_BUNDLE_VERSION but the candidate is $expected_version: extract the candidate's own bundle and point SOL_INSTALL at it ($path)"
+  [ "$SOL_REVISION" = "$expected_revision" ] ||
+    sol_under_test_die "release $SOL_BUNDLE_VERSION was built from revision $SOL_REVISION but candidate $expected_version is revision $expected_revision: this install prefix is not that candidate"
+  [ "$SOL_RUNNER_IMAGE" = "$expected_runner" ] ||
+    sol_under_test_die "release $SOL_BUNDLE_VERSION pins migration runner $SOL_RUNNER_IMAGE but candidate $expected_version pins $expected_runner: this install prefix is not that candidate"
+  SOL_CANDIDATE_VERSION="$expected_version"
+  SOL_CANDIDATE_REVISION="$expected_revision"
 }
 
 sol_under_test_record_identity() {
@@ -60,5 +110,6 @@ sol_under_test_record_identity() {
     printf 'sol_version: %s\n' "$SOL_BUNDLE_VERSION"
     printf 'sol_revision: %s\n' "$SOL_REVISION"
     printf 'migration_runner_image: %s\n' "$SOL_RUNNER_IMAGE"
+    printf 'candidate_document: %s\n' "${SOL_CANDIDATE:-none}"
   } >"$dir/sol-identity.txt"
 }

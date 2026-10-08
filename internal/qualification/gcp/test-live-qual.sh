@@ -150,6 +150,13 @@ STUB
 bundle "$INSTALL"
 printf '%s\n' "$RUNNER" >"$INSTALL/share/sol/$VERSION/migration-runner-image"
 printf '%s\n' "$CANDIDATE_REVISION" >"$INSTALL/share/sol/$VERSION/REVISION"
+# The candidate the install prefix belongs to: an install prefix alone cannot say
+# which candidate it holds, so the run is told and verifies it (sol-fab/sol#1287).
+printf '{"version":"%s","revision":"%s","runner_image":"%s"}\n' \
+  "$VERSION" "$CANDIDATE_REVISION" "$RUNNER" >"$INSTALL/candidate.json"
+printf '{"version":"%s","revision":"%s","runner_image":"%s"}\n' \
+  "$VERSION" "0000000000000000000000000000000000000000" "$RUNNER" \
+  >"$TMP/candidate-other-revision.json"
 
 TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
 bundle "$TAG_RUNNER_INSTALL"
@@ -543,12 +550,21 @@ run_case() {
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
     printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
+  if [ "${PRESEED_STALE_KUBECONFIG:-0}" = "1" ]; then
+    # A complete kubeconfig naming this cluster, left by an earlier run: the
+    # waiter must not read it as this run's credentials.
+    mkdir -p "$LOG_DIR"
+    sed "s/sol-qual-gcp-15g/test-cluster/g" \
+      "$REPO/internal/qualification/gcp/fixtures/kubeconfig-gcloud-real.yaml" \
+      >"$LOG_DIR/run-kubeconfig.yaml"
+    printf 'attempt=%s\ncandidate_revision=%s\n' "$ATTEMPT" "$CANDIDATE_REVISION" >"$LOG_DIR/attempt.txt"
+  fi
   if [ "${PRESEED_INVENTORY:-0}" = "1" ]; then
     mkdir -p "$LOG_DIR"
     : >"$LOG_DIR/inventory-pre.tsv"
     [ -s "$LOG_DIR/attempt.txt" ] || printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \
@@ -571,7 +587,7 @@ run_case_without_a_phase() {
     mkdir -p "$LOG_DIR"
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
   fi
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$HARNESS" >"$TMP/no-phase.out" 2>&1
@@ -699,6 +715,14 @@ has "the capture is taken with no credentials, not the replaced cluster's" \
   "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
 has "and the reason names the endpoint binding" "not the current endpoint" \
   "$TMP/stale-endpoint.logs/platform-failure/capture-summary.txt"
+
+printf '\nscenario: a kubeconfig an earlier run left behind is not this run'"'"'s credential\n'
+PRESEED_STALE_KUBECONFIG=1 run_case stale-artifact cloud STUB_APPLY_RC=1 \
+  CLUSTER_WAIT_TIMEOUT_S=1 CLUSTER_KUBECONFIG_POLL_S=1
+lacks "the waiter never reads the leftover file as this run's credential" \
+  "run kubeconfig: ready" "$TMP/stale-artifact.logs/harness.log"
+lacks "and never reports credentials it did not establish" \
+  "run kubeconfig: established" "$TMP/stale-artifact.logs/harness.log"
 
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -872,6 +896,20 @@ lacks "nor for the deploy" "deploy qual/gcp/us-central1" "$TMP/app-runner-tag.ar
 has "the refusal names the digest boundary" "not a digest reference" "$TMP/app-runner-tag.out"
 lacks "and the harness never reaches the registry: it publishes no runner" \
   "sol-migration-runner" "$DOCKER_LOG"
+
+printf '\nscenario: adversarial — a run cannot qualify a prefix that is not the candidate it names\n'
+export DOCKER_LOG="$TMP/gcp-othercandidate.docker"
+: >"$DOCKER_LOG"
+STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case gcp-othercandidate app \
+  SOL_CANDIDATE="$TMP/candidate-other-revision.json"
+[ "$(cat "$TMP/gcp-othercandidate.rc")" != "0" ] \
+  && ok "a candidate naming another revision is refused" \
+  || no "a candidate naming another revision is refused" "non-zero" "0"
+has "and the refusal names both revisions" \
+  "candidate $VERSION is revision 0000000000000000000000000000000000000000" \
+  "$TMP/gcp-othercandidate.out"
+lacks "no image is built for it" "docker build" "$DOCKER_LOG"
+lacks "and Sol is never asked to deploy" "deploy qual" "$TMP/gcp-othercandidate.argv"
 
 printf '\nscenario: adversarial — a development build is refused before any phase runs\n'
 STUB_SOL_VERSION=Sol-ed3f041f run_case app-dev app
@@ -1066,7 +1104,7 @@ run_case_closed_stdout() {
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \
@@ -1091,7 +1129,7 @@ run_case_sigterm() {
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \

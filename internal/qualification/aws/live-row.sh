@@ -103,6 +103,8 @@ required
   CLUSTER           this run's EKS cluster name
   DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
   SOL_INSTALL       the extracted release prefix holding bin/sol and share/sol/<version>
+  SOL_CANDIDATE     the candidate document this run qualifies (the draft's candidate.json);
+                    the run verifies the prefix is that candidate before it provisions
   QUALIFIER_ROLE    the qualification-only transport role; required unless TRANSPORT=0
 optional (defaults shown)
   ROW=qualreg                    the stable logical row label
