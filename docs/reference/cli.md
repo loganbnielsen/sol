@@ -72,7 +72,8 @@ documented with that command rather than listed here.
 
 ## Target-addressed commands
 
-The target is the positional; `--scope` narrows to a domain or unit.
+The target is the positional. `sol deploy` reconciles the whole target and takes no
+`--scope`; `sol up` and `sol rollback` still narrow to a domain or unit with `--scope`.
 
 <!-- BEGIN GENERATED: target -->
 | command | positional | flags | exit | purpose |

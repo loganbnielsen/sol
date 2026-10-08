@@ -134,8 +134,8 @@ let migration_prerequisite ctx ~plan ~live =
              (Printf.sprintf
                 "\n\
                  error: the required migration set is not applied. Missing: %s\n\
-                \  Migrations are workspace-wide, so this is the same set whatever scope \
-                 the deploy selected. Run `sol migrate apply %s`, then deploy again."
+                \  Migrations are workspace-wide, so this is the same set for every \
+                 deploy. Run `sol migrate apply %s`, then deploy again."
                 (String.concat ", " (List.map Sol_cli_migration.to_string missing))
                 ctx.target_name))
       | Sol_cli_migration_gate.Drifted drifted ->
@@ -164,10 +164,10 @@ let migration_prerequisite ctx ~plan ~live =
                 "\n\
                  error: cannot verify the required migration state: %s\n\
                 \  A deploy against the production profile fails closed rather than \
-                 assume the schema is compatible. Migrations are workspace-wide -- the \
-                 deploy's scope does not select them -- so `sol migrate apply %s` checks \
-                 the same required set this deploy did (it reports the applied set). Run \
-                 it, then deploy again."
+                 assume the schema is compatible. Migrations are workspace-wide -- a \
+                 deploy does not select them -- so `sol migrate apply %s` checks the \
+                 same required set this deploy did (it reports the applied set). Run it, \
+                 then deploy again."
                 reason
                 ctx.target_name)))
 ;;
