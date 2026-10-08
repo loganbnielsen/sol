@@ -44,6 +44,7 @@ point for "what is Sol and what is it promising".
 | [`reference/README.md`](reference/README.md), [`reference/runtime.md`](reference/runtime.md), [`reference/substrate.md`](reference/substrate.md) | Application authors | **Published** |
 | CLI reference | All users | **Published** — [`reference/cli.md`](reference/cli.md) |
 | [`architecture/PRODUCT_ARCHITECTURE.md`](architecture/PRODUCT_ARCHITECTURE.md) and [`architecture/adr/`](architecture/adr/) | Evaluators, contributors | **Published** |
+| [`architecture/ownership.md`](architecture/ownership.md) | Contributors | **Published** — the ownership proof per domain; the Kubernetes UID rule lands with `#1304` milestone 2 |
 | [`hosted/README.md`](hosted/README.md) | Evaluators | **Published** — boundary only |
 
 ## Target information architecture
@@ -117,6 +118,7 @@ set, health, logs, rollback, diagnostics, the operational UIs, destroy, and unin
 
 - **Product architecture** — [`architecture/PRODUCT_ARCHITECTURE.md`](architecture/PRODUCT_ARCHITECTURE.md).
 - **Factory pipeline** — [`architecture/devops-pipeline.md`](architecture/devops-pipeline.md).
+- **Resource ownership** — [`architecture/ownership.md`](architecture/ownership.md): what proves Sol owns a resource, per domain, and where each rule is enforced.
 - **Observability design** — [`architecture/observability-design.md`](architecture/observability-design.md).
 - **Architecture decision records** — [`architecture/adr/`](architecture/adr/).
 
