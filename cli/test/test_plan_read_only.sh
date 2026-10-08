@@ -35,8 +35,9 @@ cat > "$tmp/bin/aws" <<'EOF'
 echo 'ResourceNotFound: not found' >&2
 exit 1
 EOF
-cat > "$tmp/bin/kubectl" <<'EOF'
+cat > "$tmp/bin/kubectl" <<EOF
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$tmp/kubectl.log"
 echo 'Unable to connect to the server: dial tcp 192.0.2.1:443: i/o timeout' >&2
 exit 1
 EOF
@@ -57,6 +58,25 @@ test ! -e "$terraform_chdir"
 if grep -F ' apply ' "$tmp/terraform.log" >/dev/null; then
   echo 'sol plan invoked terraform apply' >&2
   exit 1
+fi
+# Absence of `apply` is not enough: `destroy`, `import`, `state`, `taint` and friends
+# mutate too. Assert the whole set of Terraform subcommands is read-only preview.
+unexpected_terraform=$(
+  awk '{ for (i = 1; i <= NF; i++) if ($i !~ /^-/) { print $i; break } }' "$tmp/terraform.log" \
+    | grep -Ev '^(init|plan)$' || true
+)
+if [ -n "$unexpected_terraform" ]; then
+  echo "sol plan invoked non-preview terraform commands: $unexpected_terraform" >&2
+  exit 1
+fi
+# The only cluster access is reading the current release record; it must stay a read.
+if [ -f "$tmp/kubectl.log" ]; then
+  for verb in apply create delete patch replace edit scale rollout label annotate; do
+    if grep -Eq "(^|[[:space:]])${verb}([[:space:]]|$)" "$tmp/kubectl.log"; then
+      echo "sol plan invoked a mutating kubectl verb: $verb" >&2
+      exit 1
+    fi
+  done
 fi
 if PATH="$tmp/bin:$PATH" "$sol" plan prod/aws/us-east-1 \
   --image-ref api_svc=registry.example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \

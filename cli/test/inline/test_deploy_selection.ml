@@ -124,17 +124,20 @@ let test_image_ref_outside_scope_fails_before_target () =
 ;;
 
 let test_target_plan_requires_independent_image_refs () =
+  (* No previous record is the first-deploy path production takes; it must not
+     accept a partial mapping. *)
   match
-    Sol_cli_image_ref.resolve_complete
+    Sol_cli_image_ref.resolve_with_previous
       ~service_names:[ "charge_svc"; "invoice_svc" ]
       [ Some "charge_svc", digest ]
+      []
   with
   | Error message ->
     Windtrap.equal
       Windtrap.bool
       ~msg:"the missing image is named"
       true
-      (Sol_cli_string.contains ~needle:"missing: invoice_svc" message)
+      (Sol_cli_string.contains ~needle:"invoice_svc" message)
   | Ok _ -> Windtrap.fail "target plan accepted incomplete per-workload image identities"
 ;;
 

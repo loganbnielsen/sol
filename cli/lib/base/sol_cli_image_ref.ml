@@ -76,22 +76,6 @@ let resolve ~service_names refs =
     go [] [] refs
 ;;
 
-let resolve_complete ~service_names refs =
-  let open Result.Syntax in
-  let* resolved = resolve ~service_names refs in
-  let missing =
-    List.filter (fun name -> not (List.mem_assoc name resolved)) service_names
-  in
-  if missing = []
-  then Ok resolved
-  else
-    Error
-      (Printf.sprintf
-         "a target-wide plan requires an immutable --image-ref for every workload; \
-          missing: %s"
-         (String.concat ", " missing))
-;;
-
 let resolve_with_previous ~service_names refs previous =
   let open Result.Syntax in
   let* explicit = resolve ~service_names refs in
