@@ -200,7 +200,17 @@ expect_text "Connecting tempo to sol-obs" "healthy Tempo reaches the post-readin
 
 reset_state
 printf '3' >"$work/state/healthy-after"
+# The subject of this case is retrying until a probe succeeds, not the deadline.
+# The 2s budget below fits exactly three attempts when a probe costs nothing, so
+# the number of attempts depends on how long each probe takes: any second the
+# loop loses to a loaded machine drops the third attempt and fails the case.
+# Measured: budget 2s + interval 1s admits 3 attempts with no slack at all.
+# The deadline keeps its tight coverage in the bounded cases below, which assert
+# failure and a wall-clock bound instead of an attempt count.
+tight_budget="$READINESS_TIMEOUT_S"
+READINESS_TIMEOUT_S=8
 run_script ensure-tempo.sh
+READINESS_TIMEOUT_S="$tight_budget"
 expect_exit 0 "an eventually healthy Tempo succeeds"
 expect_text "— ready" "readiness is reported after the probe succeeds"
 if [ "$(cat "$work/state/curl.count")" -ge 3 ]; then
