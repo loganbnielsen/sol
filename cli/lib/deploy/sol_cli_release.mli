@@ -26,7 +26,8 @@ val current_configmap_name : workspace:string -> string
 val of_plan : apply_mode:apply_mode -> Sol_cli_deployment_plan.t -> t
 
 val of_plan_with_boundary
-  :  apply_mode:apply_mode
+  :  ?owned:Sol_cli_release_id.owned_object list
+  -> apply_mode:apply_mode
   -> retained:recorded_workload list
   -> Sol_cli_deployment_plan.t
   -> t

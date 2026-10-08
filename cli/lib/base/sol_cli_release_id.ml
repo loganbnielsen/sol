@@ -146,9 +146,17 @@ let canonical_string (content : content) =
   Buffer.contents b
 ;;
 
+type owned_object =
+  { resource : string
+  ; namespace : string
+  ; name : string
+  ; uid : string
+  }
+
 type recorded_workload =
   { spec : workload
   ; applied_by : string
+  ; owned : owned_object list
   }
 
 let boundary_encoding_version = "sol-boundary-v1"
@@ -195,8 +203,8 @@ let of_boundary
     of_content { workspace; environment; workloads = deployed; contract }
   in
   let workloads =
-    List.map (fun spec -> { spec; applied_by }) deployed
-    @ List.map (fun (spec, applied_by) -> { spec; applied_by }) inherited
+    List.map (fun spec -> { spec; applied_by; owned = [] }) deployed
+    @ List.map (fun (spec, applied_by) -> { spec; applied_by; owned = [] }) inherited
   in
   of_recorded_boundary ~workspace ~environment ~contract workloads
 ;;

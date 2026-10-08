@@ -37,9 +37,17 @@ type content =
   ; contract : contract_fact list
   }
 
+type owned_object =
+  { resource : string
+  ; namespace : string
+  ; name : string
+  ; uid : string
+  }
+
 type recorded_workload =
   { spec : workload
   ; applied_by : string
+  ; owned : owned_object list
   }
 
 type t

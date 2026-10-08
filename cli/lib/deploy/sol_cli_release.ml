@@ -74,7 +74,7 @@ let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
 ;;
 
 let applied_by identity (w : workload) =
-  { Sol_cli_release_id.spec = w; applied_by = identity }
+  { Sol_cli_release_id.spec = w; applied_by = identity; owned = [] }
 ;;
 
 let workload_identity (w : recorded_workload) = w.Sol_cli_release_id.spec
@@ -98,12 +98,30 @@ let boundary_id ~workspace ~environment ~contract ~deployed ~inherited =
 ;;
 
 let of_plan_with_boundary
+      ?(owned = [])
       ~(apply_mode : apply_mode)
       ~(retained : recorded_workload list)
       (plan : Sol_cli_deployment_plan.t)
   : t
   =
   let deployed = List.map workload_of_spec plan.services in
+  (* Attach the UID evidence captured at apply to the workload it identifies.
+     [owned] is matched by the full identity — kind, namespace and name
+     (docs/architecture/ownership.md); a workload with no matching evidence
+     records none, which a removal must read as "no evidence". Matching kind too
+     matters: two units can normalize to one name and still project to different
+     objects (a Deployment and a CronJob both named [charge-svc]). *)
+  let owned_for (spec : Sol_cli_deployment_plan.service_spec) =
+    let resource = Sol_cli_deployment_plan.resource_of_spec spec in
+    let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+    let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+    List.filter
+      (fun (o : Sol_cli_release_id.owned_object) ->
+         String.equal o.resource resource
+         && String.equal o.namespace namespace
+         && String.equal o.name name)
+      owned
+  in
   let deployed_records = List.map (applied_by "") deployed in
   let inherited =
     if Sol_cli_deployment_plan.is_whole_workspace plan
@@ -126,7 +144,13 @@ let of_plan_with_boundary
   ; workspace = plan.workspace
   ; environment = plan.environment.env
   ; workloads =
-      List.map (applied_by (Sol_cli_release_id.to_string plan.release_id)) deployed
+      List.map2
+        (fun (spec : Sol_cli_deployment_plan.service_spec) w ->
+           { (applied_by (Sol_cli_release_id.to_string plan.release_id) w) with
+             Sol_cli_release_id.owned = owned_for spec
+           })
+        plan.services
+        deployed
       @ inherited
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   ; contract = plan.contract
@@ -276,9 +300,26 @@ let workload_to_json (w : workload) : Yojson.Safe.t =
     ]
 ;;
 
+let owned_object_to_json (o : Sol_cli_release_id.owned_object) : Yojson.Safe.t =
+  `Assoc
+    [ "resource", `String o.resource
+    ; "namespace", `String o.namespace
+    ; "name", `String o.name
+    ; "uid", `String o.uid
+    ]
+;;
+
 let recorded_workload_to_json (w : recorded_workload) : Yojson.Safe.t =
   match workload_to_json w.Sol_cli_release_id.spec with
-  | `Assoc fields -> `Assoc (("applied_by", `String w.applied_by) :: fields)
+  | `Assoc fields ->
+    (* A workload with no ownership evidence carries no [owned] field, so a record
+       written before UID capture keeps the canonical body it already had. *)
+    let owned =
+      match w.Sol_cli_release_id.owned with
+      | [] -> []
+      | owned -> [ "owned", `List (List.map owned_object_to_json owned) ]
+    in
+    `Assoc (("applied_by", `String w.applied_by) :: (owned @ fields))
   | other -> other
 ;;
 
@@ -323,7 +364,23 @@ let to_json (t : t) : Yojson.Safe.t =
 ;;
 
 let record_json_string (t : t) : string = Yojson.Safe.to_string (to_json t)
-let record_digest (t : t) : string = Digest.to_hex (Digest.string (record_json_string t))
+
+(* [record_digest] is a digest of the record's content, not of the ownership evidence
+   captured beside a workload: the UID authorizes a removal by matching the live object
+   (docs/architecture/ownership.md), it does not identify the release. Two records with
+   the same content but different applied UIDs therefore share a digest, and a record
+   written before UID capture keeps the digest it had. *)
+let record_digest (t : t) : string =
+  let without_ownership_evidence =
+    { t with
+      workloads =
+        List.map
+          (fun (w : recorded_workload) -> { w with Sol_cli_release_id.owned = [] })
+          t.workloads
+    }
+  in
+  Digest.to_hex (Digest.string (record_json_string without_ownership_evidence))
+;;
 
 let mem key = function
   | `Assoc kvs -> List.assoc_opt key kvs
@@ -418,8 +475,34 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   }
 ;;
 
+(* Ownership evidence captured at apply. A record written before UID capture has
+   no [owned] field: that is "no evidence", never a corrupt record, so its absence
+   must not fail the read. See docs/architecture/ownership.md. *)
+let owned_objects_of_json json : Sol_cli_release_id.owned_object list =
+  match Sol_cli_json.field [ "owned" ] json with
+  | `List items ->
+    List.filter_map
+      (fun item ->
+         let string_field key = Sol_cli_json.field [ key ] item |> Sol_cli_json.string in
+         match
+           ( string_field "resource"
+           , string_field "namespace"
+           , string_field "name"
+           , string_field "uid" )
+         with
+         | Some resource, Some namespace, Some name, Some uid
+           when not (String.equal uid "") ->
+           Some { Sol_cli_release_id.resource; namespace; name; uid }
+         | _ -> None)
+      items
+  | _ -> []
+;;
+
 let recorded_workload_of_json (json : Yojson.Safe.t) : recorded_workload =
-  { Sol_cli_release_id.spec = workload_of_json json; applied_by = str "applied_by" json }
+  { Sol_cli_release_id.spec = workload_of_json json
+  ; applied_by = str "applied_by" json
+  ; owned = owned_objects_of_json json
+  }
 ;;
 
 let contract_fact_of_json (json : Yojson.Safe.t) : contract_fact =
@@ -538,14 +621,18 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
      | Some (`String record) ->
        (match mem "record_digest" data with
         | Some (`String stored) when String.length stored > 0 ->
-          if not (String.equal (Digest.to_hex (Digest.string record)) stored)
-          then Error (Printf.sprintf "%s failed integrity validation" label)
-          else
-            let open Result.Syntax in
-            let* parsed = Sol_cli_json.decode ~what:(label ^ ": data.record") record in
-            let* r = of_json parsed |> Result.map_error (Printf.sprintf "%s: %s" label) in
-            let* () = validate ~name r in
-            Ok r
+          (* The digest covers the record's content, not its ownership evidence
+             (see [record_digest]), so it is checked against the parsed record. *)
+          let open Result.Syntax in
+          let* parsed = Sol_cli_json.decode ~what:(label ^ ": data.record") record in
+          let* r = of_json parsed |> Result.map_error (Printf.sprintf "%s: %s" label) in
+          let* () =
+            if String.equal (record_digest r) stored
+            then Ok ()
+            else Error (Printf.sprintf "%s failed integrity validation" label)
+          in
+          let* () = validate ~name r in
+          Ok r
         | _ ->
           Error
             (Printf.sprintf

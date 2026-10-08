@@ -688,7 +688,14 @@ let test_live_kind_of_service_table () =
   |> List.iter (fun (label, primitive, progressive_delivery, expected) ->
     let spec = { ledger_spec with primitive; progressive_delivery } in
     let got = Sol_cli_rollback.live_kind_of_service spec in
-    Windtrap.equal Windtrap.bool ~msg:label true (got = expected))
+    Windtrap.equal Windtrap.bool ~msg:label true (got = expected);
+    (* A workload's ownership identity is (kind, namespace, name), so the kind a
+       live observation uses must be the same [resource] the plan projects. *)
+    Windtrap.equal
+      Windtrap.string
+      ~msg:(label ^ ": resource agrees with the plan projection")
+      (Sol_cli_deployment_plan.resource_of_spec spec)
+      (Sol_cli_rollback.kind_resource got))
 ;;
 
 let live_kind_label = function

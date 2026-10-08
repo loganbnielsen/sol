@@ -246,12 +246,13 @@ let observe_contract ctx plan =
     plan
 ;;
 
-let record_release_and_prune ~cluster ~workspace ~keep ~previous ~retained plan =
+let record_release_and_prune ~cluster ~workspace ~keep ~previous ~retained ~owned plan =
   match
     Sol_cli_release_store.record_plan
       ~ctx:cluster
       ~apply_mode:Sol_cli_release.Direct
       ~retained
+      ~owned
       plan
   with
   | Error msg ->
@@ -400,6 +401,7 @@ let run_lifecycle
            Sol_cli_release.finish_deployment
              ~record_release:(fun () ->
                let* () = Sol_cli_boundary_lease.ensure_held lease in
+               let owned = Sol_cli_rollback.capture_owned ~ctx:cluster plan in
                let* () =
                  record_release_and_prune
                    ~cluster
@@ -407,6 +409,7 @@ let run_lifecycle
                    ~keep:keep_releases
                    ~previous
                    ~retained
+                   ~owned
                    plan
                in
                record_applied_state ~cluster ~workspace ~sha plan)

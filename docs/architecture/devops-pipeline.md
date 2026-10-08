@@ -378,10 +378,13 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
 1. **Resolve + load + validate** — `Sol_cli_release_store.get` fetches the
    `sol-release-<id>` ConfigMap, decodes it, and checks it both rederives its
    own `release_id` and belongs to the calling workspace. The record also
-   carries `data.record_digest`, a free digest of the complete record body:
-   a missing or mismatched digest is an unsupported/integrity failure, so the
-   non-identity safety fields (`migrations`, `apply_mode`) are as
-   tamper-evident as the id. The body declares the `encoding_version`
+   carries `data.record_digest`, a free digest of the record's content
+   (workloads and their provenance, migrations, contract, apply mode — not the
+   per-object ownership evidence, whose UID is verified against the live object
+   at removal; see [ownership.md](ownership.md)): a missing or mismatched
+   digest is an unsupported/integrity failure, so the non-identity safety
+   fields (`migrations`, `apply_mode`) are as tamper-evident as the id. The
+   body declares the `encoding_version`
    (`Sol_cli_release_id.encoding_version`) it was written with, so the three
    reasons the identity check can fail are told apart instead of collapsing
    into one "corrupt" verdict (AUDIT-077): a record written by an older

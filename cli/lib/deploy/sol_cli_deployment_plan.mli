@@ -183,6 +183,7 @@ val primitive_to_string : primitive -> string
 val primitive_of_string : string -> (primitive, string) result
 val effective_rollout_strategy : service_spec -> effective_rollout_strategy
 val effective_rollout_strategy_to_string : effective_rollout_strategy -> string
+val resource_of_spec : service_spec -> string
 val release_workload_of_spec : service_spec -> Sol_cli_release_id.workload
 val to_json : t -> Yojson.Safe.t
 val pp_summary : Format.formatter -> t -> unit

@@ -90,6 +90,11 @@ val verify_workloads
 val workload_report_to_string : release:Sol_cli_release.t -> workload_report -> string
 val kind_resource : live_kind -> string
 
+val capture_owned
+  :  ctx:Sol_cli_kube_destination.context
+  -> Sol_cli_deployment_plan.t
+  -> Sol_cli_release_id.owned_object list
+
 type prune_target =
   { resource : string
   ; namespace : string

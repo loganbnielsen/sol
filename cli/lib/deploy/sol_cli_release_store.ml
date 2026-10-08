@@ -92,10 +92,13 @@ let record_plan
       ~ctx
       ~(apply_mode : Sol_cli_release.apply_mode)
       ~(retained : Sol_cli_release.recorded_workload list)
+      ~(owned : Sol_cli_release_id.owned_object list)
       (plan : Sol_cli_deployment_plan.t)
   : (string, string) result
   =
-  let boundary = Sol_cli_release.of_plan_with_boundary ~apply_mode ~retained plan in
+  let boundary =
+    Sol_cli_release.of_plan_with_boundary ~owned ~apply_mode ~retained plan
+  in
   let open Result.Syntax in
   let* () = record ~ctx boundary in
   Ok boundary.Sol_cli_release.release_id
