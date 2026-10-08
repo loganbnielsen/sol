@@ -14,7 +14,7 @@ Each domain has exactly one proof, and the proofs are not interchangeable.
 
 | Domain | Proof of ownership | Enforced by |
 |---|---|---|
-| Kubernetes workload objects | the live object's `metadata.uid` equals the UID Sol captured when it applied that object | `#1304` (plan side), `#1305` (apply side) — **in progress** |
+| Kubernetes workload objects | the live object's `metadata.uid` equals the UID Sol captured when it applied that object | `#1304` milestone 2 — capture at apply, plan deltas, removal enforcement, guard; `#1305` consumes it for whole-target deploy and carries the `requested_scope` invariant — **in progress** |
 | Cloud/Terraform resources | exact attribution inside ADR 0005's contract boundary | `Sol_cli_ownership_reconciliation`; `#1119` |
 | Detach (authority handoff) | revocation of Sol's target-scoped execution principals | ADR 0006 |
 
