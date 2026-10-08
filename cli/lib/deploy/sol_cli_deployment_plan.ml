@@ -228,6 +228,20 @@ let release_rollout_to_string (spec : service_spec) =
      | Some Sol_cli_toml.RollingUpdate | None -> "rolling_update")
 ;;
 
+(* The Kubernetes object a spec projects to, as [resource] in the workload identity
+   (kind, namespace, name) that docs/architecture/ownership.md defines: a function is
+   a CronJob, a progressive-delivery service is an Argo Rollout, everything else a
+   Deployment. Apply-time UID capture and record matching share this one projection so
+   they cannot disagree about which object a workload's evidence belongs to. *)
+let resource_of_spec (spec : service_spec) : string =
+  match spec.primitive with
+  | Fn -> "cronjob"
+  | Svc | Worker ->
+    (match spec.progressive_delivery with
+     | Some _ -> "rollout"
+     | None -> "deployment")
+;;
+
 let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload =
   { Sol_cli_release_id.domain = spec.domain
   ; name = spec.source_name

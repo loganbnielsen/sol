@@ -106,14 +106,20 @@ let of_plan_with_boundary
   =
   let deployed = List.map workload_of_spec plan.services in
   (* Attach the UID evidence captured at apply to the workload it identifies.
-     [owned] is matched by namespace and name; a workload with no matching
-     evidence records none, which a removal must read as "no evidence". *)
+     [owned] is matched by the full identity — kind, namespace and name
+     (docs/architecture/ownership.md); a workload with no matching evidence
+     records none, which a removal must read as "no evidence". Matching kind too
+     matters: two units can normalize to one name and still project to different
+     objects (a Deployment and a CronJob both named [charge-svc]). *)
   let owned_for (spec : Sol_cli_deployment_plan.service_spec) =
+    let resource = Sol_cli_deployment_plan.resource_of_spec spec in
     let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
     let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
     List.filter
       (fun (o : Sol_cli_release_id.owned_object) ->
-         String.equal o.namespace namespace && String.equal o.name name)
+         String.equal o.resource resource
+         && String.equal o.namespace namespace
+         && String.equal o.name name)
       owned
   in
   let deployed_records = List.map (applied_by "") deployed in

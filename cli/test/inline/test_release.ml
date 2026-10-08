@@ -1209,3 +1209,53 @@ let test_record_digest_excludes_ownership_evidence () =
 let%test "release: record digest excludes ownership evidence" =
   test_record_digest_excludes_ownership_evidence ()
 ;;
+
+(* Evidence binds to the full (kind, namespace, name) identity, not the name alone:
+   two units can normalize to one k8s_name while projecting to different kinds (a
+   Deployment and a CronJob both named [charge-svc]), and each must keep only its own
+   UID — a shared name must not attach another object's evidence. *)
+let test_ownership_evidence_binds_to_kind_and_name () =
+  with_plan ~requested_scope:"workspace" (fun plan ->
+    let charge =
+      match plan.Sol_cli_deployment_plan.services with
+      | [ charge ] -> charge
+      | specs -> Windtrap.failf "expected one planned service, got %d" (List.length specs)
+    in
+    let charge_fn =
+      { charge with Sol_cli_deployment_plan.primitive = Sol_cli_deployment_plan.Fn }
+    in
+    let plan =
+      plan_with_services plan ~services:[ charge; charge_fn ] ~requested_scope:"workspace"
+    in
+    let namespace = Sol_cli_deployment_plan.namespace_to_string charge.namespace in
+    let name = Sol_cli_deployment_plan.k8s_name_to_string charge.k8s_name in
+    let owned =
+      [ { Sol_cli_release_id.resource = "deployment"
+        ; namespace
+        ; name
+        ; uid = "deploy-uid"
+        }
+      ; { Sol_cli_release_id.resource = "cronjob"; namespace; name; uid = "cronjob-uid" }
+      ]
+    in
+    let boundary =
+      R.of_plan_with_boundary ~owned ~apply_mode:R.Direct ~retained:[] plan
+    in
+    let owned_of primitive =
+      boundary.workloads
+      |> List.find_map (fun (w : R.recorded_workload) ->
+        if String.equal w.Sol_cli_release_id.spec.primitive primitive
+        then Some w.Sol_cli_release_id.owned
+        else None)
+      |> Option.value ~default:[]
+    in
+    match owned_of "svc", owned_of "fn" with
+    | [ deployment ], [ cronjob ] ->
+      check_string "the Deployment keeps only its own UID" "deploy-uid" deployment.uid;
+      check_string "the CronJob keeps only its own UID" "cronjob-uid" cronjob.uid
+    | _ -> Windtrap.fail "expected exactly one evidence entry per workload")
+;;
+
+let%test "release: ownership evidence binds to kind, not name alone" =
+  test_ownership_evidence_binds_to_kind_and_name ()
+;;
