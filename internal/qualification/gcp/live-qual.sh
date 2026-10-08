@@ -450,19 +450,6 @@ capture_terraform_state() {
 
 artifact_status() { if [ -s "$1" ]; then printf 'present (%s bytes)\n' "$(wc -c <"$1" | tr -d ' ')"; else printf 'MISSING\n'; fi; }
 
-bundle_phase_note() {
-  if root_reached platform; then
-    printf 'phases: the platform root was reached; its state is required\n'
-  else
-    printf 'phases: the platform root was never initialised; its state is not required\n'
-  fi
-  if root_reached cloud; then
-    printf 'phases: the cloud root was reached; its state is required\n'
-  else
-    printf 'phases: the cloud root was never initialised; its state is not required\n'
-  fi
-}
-
 bundle_manifest() {
   local m="$LOG_DIR/evidence-manifest.txt" f
   if [ -d "$LOG_DIR/platform-failure" ]; then
@@ -497,25 +484,16 @@ bundle_manifest() {
     printf '\nphase transcripts:\n'
     for f in "$LOG_DIR"/*.log; do [ -e "$f" ] || continue; printf '  %s\n' "$(basename "$f")"; done
   } >"$m"
-  bundle_phase_note >>"$m"
   say "evidence manifest: $m"
-}
-
-root_reached() {
-  local pattern
-  case "$1" in
-    cloud)    pattern='-chdir=[^ ]*/platform/cloud/[a-z]+/cluster' ;;
-    platform) pattern='-chdir=[^ ]*/platform/cloud/[a-z]+/platform' ;;
-    *) return 1 ;;
-  esac
-  grep -qE -- "$pattern" "$LOG_DIR"/cloud-apply*.log 2>/dev/null
 }
 
 verify_bundle() {
   local missing=0 member
+  # What the claims are decided on: what the provider held before teardown, that
+  # it is gone after, and the transcripts of what this run did. Terraform state
+  # snapshots are evidence, not requirements: no row claims them, and the capture
+  # records per object whether the backend held one, held none, or was unreadable.
   local required=( "inventory-pre.tsv" "evidence-manifest.txt" )
-  root_reached cloud && required+=( "state/cloud.tfstate" )
-  root_reached platform && required+=( "state/platform.tfstate" )
   [ "$TEARDOWN_ATTEMPTED" = "1" ] && required+=( "inventory-post.tsv" )
   case "$INSTALL_STATE" in
     failed)    ;;

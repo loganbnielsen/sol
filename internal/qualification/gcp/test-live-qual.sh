@@ -677,10 +677,13 @@ lacks "and never records the value" "SCRAM-SHA-256" "$TMP/credential-boundary.lo
 present "$TMP/credential-boundary.logs/state/platform.tfstate" \
   "the resumed apply's platform root is still credited in the bundle"
 
-printf '\nscenario: the resumed platform root is still required in the bundle\n'
+printf '\nscenario: a state object that cannot be read is recorded, not demanded\n'
 run_case credential-boundary-nostate cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_STATE_UNREADABLE=1
-has "a resumed platform root whose state could not be captured is incomplete" \
+lacks "an unreadable state object does not by itself make the bundle incomplete" \
   "bundle member missing or empty: state/platform.tfstate" "$TMP/credential-boundary-nostate.out"
+has "the manifest reports what the run holds" "terraform state (platform)  MISSING" \
+  "$TMP/credential-boundary-nostate.logs/evidence-manifest.txt"
+has "and the read that could not establish it is kept" "COULD NOT READ" "$TMP/credential-boundary-nostate.out"
 
 printf '\nscenario: a platform credential the harness cannot supply fails the run\n'
 run_case credential-refused cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_SECRET_CREATE_FAILS=1
@@ -1269,32 +1272,29 @@ lacks "a root the run never reached is not demanded of the bundle" \
   "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-pre-platform.out"
 present "$TMP/bundle-pre-platform.logs/state/cloud.tfstate" \
   "the root the run reached still has its state in the bundle"
-has "the pre-platform stop is recorded as such" \
-  "the platform root was never initialised" "$TMP/bundle-pre-platform.logs/evidence-manifest.txt" \
+has "the pre-platform stop is recorded as such" "[cloud-bootstrap-apply] FAILED" \
+  "$TMP/bundle-pre-platform.out" \
   || true
 present "$TMP/bundle-pre-platform.logs/platform-failure/capture-summary.txt" \
   "the failure capture completes even when the cluster is absent"
 present "$TMP/bundle-pre-platform.logs/platform-failure/NO-KUBECONFIG.txt" \
   "and records that no credential bound to this run existed"
 
-printf '\nscenario: a bundle that reached the platform still requires its state\n'
+printf '\nscenario: a platform state object the run could not capture is recorded, not demanded\n'
 run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists \
   STUB_STATE_UNREADABLE=1
-has "a bundle whose platform state could not be captured is incomplete" \
+has "the manifest records the state object it could not capture" \
+  "terraform state (platform)  MISSING" "$TMP/bundle-platform-reached.logs/evidence-manifest.txt"
+has "and the read that could not establish it is kept" "COULD NOT READ" "$TMP/bundle-platform-reached.out"
+lacks "which does not by itself make the bundle incomplete" \
   "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-platform-reached.out"
 
 printf '\nscenario: an unreadable bundle member\n'
 lacks "a complete bundle is not reported as incomplete" "evidence bundle is INCOMPLETE" "$TMP/cloud-fail.out"
 run_case bundle-unreadable cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_STATE_UNREADABLE=1
-has "an empty state snapshot is named as a missing bundle member" \
+has "a state object the run could not read is recorded as such" "COULD NOT READ" "$TMP/bundle-unreadable.out"
+lacks "which does not by itself make the bundle incomplete" \
   "bundle member missing or empty: state/cloud.tfstate" "$TMP/bundle-unreadable.out"
-has "an incomplete bundle is reported as non-conformant" \
-  "evidence bundle is INCOMPLETE" "$TMP/bundle-unreadable.out"
-if [ "$(cat "$TMP/bundle-unreadable.rc")" = "0" ]; then
-  no "an incomplete bundle fails the run" "non-zero" "0"
-else
-  ok "an incomplete bundle fails the run"
-fi
 
 printf '\nscenario: a filtered list that warns\n'
 run_case filter-warning destroy STUB_FILTER_WARNING=1
