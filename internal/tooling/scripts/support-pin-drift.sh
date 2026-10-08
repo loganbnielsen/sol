@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 # Report support packages whose installed opam pin is not the commit declared in
-# support-refs.txt. Compares commit SHAs, never version strings, so a re-tagged
-# release cannot masquerade as the declared revision.
+# the given support-refs.txt. Compares commit SHAs, never version strings, so a
+# re-tagged release cannot masquerade as the declared revision.
+#
+# Usage: support-pin-drift.sh <path/to/support-refs.txt>
 #
 # Exit 0: every declared package is pinned at its declared commit, or opam is
 #         unavailable so there is no installed pin to compare.
 # Exit 1: one or more declared packages are missing or pinned at another commit.
 #         Each drifted package is printed to stdout as
 #           <package> installed=<sha|none> declared=<sha>
-# Exit 2: support-refs.txt is missing or malformed, so nothing can be compared.
+# Exit 2: the arguments or support-refs.txt are unusable, so nothing can be
+#         compared.
 set -uo pipefail
 
-script_dir="${BASH_SOURCE[0]%/*}"
-root="$(cd "$script_dir/../../.." && pwd)"
-refs="${1:-$root/support-refs.txt}"
+if [ "$#" -lt 1 ]; then
+  echo "support-pin-drift: usage: support-pin-drift.sh <path/to/support-refs.txt>" >&2
+  exit 2
+fi
+refs="$1"
 
 [ -f "$refs" ] || { echo "support-pin-drift: $refs not found" >&2; exit 2; }
 

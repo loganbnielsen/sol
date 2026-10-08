@@ -85,3 +85,8 @@ code=0
 run "$tmp/absent.txt" >/dev/null 2>&1 || code=$?
 [ "$code" -eq 2 ] || fail "a missing support-refs.txt should exit 2, got $code"
 echo "  [OK]   a missing support-refs.txt exits 2"
+
+code=0
+bash "$DRIFT" >/dev/null 2>&1 || code=$?
+[ "$code" -eq 2 ] || fail "a missing refs argument should exit 2, got $code"
+echo "  [OK]   a missing refs argument exits 2"

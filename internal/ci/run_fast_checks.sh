@@ -15,10 +15,11 @@ failed=0
 
 pin_command="bash internal/ci/pin-support-packages.sh"
 pin_drift="internal/tooling/scripts/support-pin-drift.sh"
+pin_refs="$root/support-refs.txt"
 
 echo "fast checks: support package pins"
-build_pins_ok=1
-if drift="$(bash "$pin_drift")"; then
+drift=""
+if drift="$(bash "$pin_drift" "$pin_refs")"; then
   :
 else
   pin_code=$?
@@ -27,30 +28,32 @@ else
     if [ "${SOL_SKIP_SUPPORT_PIN:-0}" = "1" ]; then
       echo "fast checks: SOL_SKIP_SUPPORT_PIN=1; not building against the wrong pins" >&2
       echo "fast checks: re-pin and retry with: $pin_command" >&2
-      build_pins_ok=0
+      failed=1
     else
       echo "fast checks: re-pinning support packages: $pin_command" >&2
-      if bash internal/ci/pin-support-packages.sh && drift="$(bash "$pin_drift")"; then
+      if bash internal/ci/pin-support-packages.sh && drift="$(bash "$pin_drift" "$pin_refs")"; then
         echo "fast checks: support packages re-pinned to support-refs.txt"
       else
         printf 'fast checks: re-pin did not reach support-refs.txt:\n%s\n' "$drift" >&2
         echo "fast checks: re-pin and retry with: $pin_command" >&2
-        build_pins_ok=0
+        failed=1
       fi
     fi
   else
-    printf 'fast checks: cannot compare support pins (%s): %s\n' "$pin_code" "$drift" >&2
+    # support-refs.txt is missing or malformed, so the environment cannot be
+    # verified. Do not build as if it were ready.
+    printf 'fast checks: cannot compare support pins (exit %s)\n' "$pin_code" >&2
+    failed=1
   fi
 fi
 
 echo "fast checks: build"
-if [ "$build_pins_ok" -eq 1 ]; then
+if [ "$failed" -eq 0 ]; then
   if ! dune build; then
     failed=1
   fi
 else
-  echo "fast checks: build skipped: support packages are not pinned to support-refs.txt" >&2
-  failed=1
+  echo "fast checks: build skipped: support package pins could not be verified" >&2
 fi
 
 echo "fast checks: formatting"
