@@ -838,6 +838,30 @@ let test_unqualified_provider_is_a_target_finding () =
         (Sol_cli_string.contains ~needle:"gcp" f.reason))
 ;;
 
+(* Shape and qualification are separate axes, and the shape has one source. A
+   profile is claimed on an environment or a target, never in [sol.yml], so only
+   [load_for_target]'s merged intent carries it: a plan that reconstructed the
+   intent from the profile-less base manifest (or the raw target, missing the
+   environment's claim) would resolve [Local] and diverge from the cloud
+   lifecycle. *)
+let test_plan_and_cloud_share_the_resolved_intent () =
+  with_workspace (fun () ->
+    mkdir_p "sol";
+    write
+      "sol/environments.yml"
+      "pilot:\n  profile: production-single-region\n  targets:\n    aws/us-east-1:\n";
+    let cfg = load "pilot/aws/us-east-1" in
+    let resolved = P.platform_shape (target_of cfg).profile in
+    check_bool
+      "the environment's profile resolves onto the target"
+      true
+      (resolved = P.Durable);
+    check_bool
+      "the plan derives its shape from the same resolved intent the cloud lifecycle uses"
+      true
+      ((plan_for "pilot/aws/us-east-1").Sol_cli_deployment_plan.platform_shape = resolved))
+;;
+
 let kafka_consumer_plan plan =
   { plan with
     Sol_cli_deployment_plan.services =
@@ -1306,6 +1330,10 @@ let%test "preflight: TypeScript is not qualified" = test_typescript_is_not_quali
 
 let%test "preflight: unqualified provider is a target finding" =
   test_unqualified_provider_is_a_target_finding ()
+;;
+
+let%test "profile: the plan and the cloud lifecycle share the resolved intent" =
+  test_plan_and_cloud_share_the_resolved_intent ()
 ;;
 
 let%test "preflight: emit-to rejected" = test_emit_to_rejected_for_profile ()
