@@ -72,8 +72,11 @@ qualification.
 A passing rerun does not explain an earlier failure. Preserve the original failure and its
 evidence, then find the cause; a rerun that happens to pass is not a diagnosis. Report an
 unresolved cause as unresolved rather than as a flake, and fix what you do find at its owning
-boundary. Investigate proportionately: an unexplained failure is worth recording and carrying as
-stated risk, not necessarily an open-ended hunt or a blocker for unrelated work.
+boundary. Investigate through source, documented contracts and provider documentation before
+adding defensive machinery or repeating a live test that costs money, and treat "the implementation
+is correct and needs no change" as a valid conclusion. Investigate proportionately: an unexplained
+failure is worth recording and carrying as stated risk, not necessarily an open-ended hunt or a
+blocker for unrelated work.
 
 ## Durable invariants
 
@@ -105,13 +108,21 @@ stated risk, not necessarily an open-ended hunt or a blocker for unrelated work.
 ## Simplicity budget
 
 Repository-wide process or tooling must protect a concrete guarantee that Git, GitHub, or existing
-CI does not already provide. Before adding a guard, abstraction, retry, state file, or process, ask
-whether the mechanism, responsibility, or state it protects should exist at all: complexity is
-better deleted at its owning boundary than coordinated with more machinery. When a mechanism goes,
-keep the guarantee it carried and say which test still establishes it. Prefer a simpler design or a
-test at the failure boundary over turning an incident into a permanent global rule. Historical
-state belongs in Git and pull requests unless it is a current product, architecture, or
-qualification authority.
+CI does not already provide. Prefer the smallest implementation that correctly fulfills Sol's
+declared contract: own only the responsibilities the dependencies do not already handle, and treat
+Terraform, Kubernetes and the cloud providers as authoritative in their domains rather than
+duplicating their documented behavior with Sol-side validation, reconciliation, retries, watchers or
+state. Before adding a guard, abstraction, retry, state file, or process, ask what responsibility it
+fulfills, why the dependency cannot fulfill it, and whether simplifying or deleting would solve the
+problem instead: complexity is better deleted at its owning boundary than coordinated with more
+machinery. When a mechanism goes, keep the guarantee it carried and say which test still establishes
+it. Prefer a simpler design or a test at the failure boundary over turning an incident into a
+permanent global rule. Historical state belongs in Git and pull requests unless it is a current
+product, architecture, or qualification authority.
+
+Preserve the original diagnostics Terraform, Kubernetes and cloud providers emit, including error
+codes and messages. Add concise Sol context when it helps, but do not replace, obscure or
+speculatively reinterpret the underlying error, and redact sensitive values where necessary.
 
 History belongs in Git and pull requests, not current instructions. If prose conflicts
 with executable behavior, verify the implementation and fix or remove the stale prose
