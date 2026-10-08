@@ -26,6 +26,10 @@ where its own state must live, and it cannot assume an identity before that
 identity exists. Bootstrap therefore remains a distinct privileged operation,
 even when the user experience folds it into the first `sol deploy`.
 
+ADR 0002's complete-lifecycle ownership applies while a target is attached to
+Sol. Detach explicitly ends that authority; it does not conflict with the
+attached-target lifecycle contract.
+
 ## Decision
 
 Sol's supported detach guarantee is **revocation of Sol's target-scoped
@@ -72,19 +76,20 @@ revocation.
 
 ### Fresh-account seed path
 
-The primary supported path is a user-provided, already-existing remote state
-backend. The user supplies bootstrap authority to create the target identities
-and routine assume-only credentials for subsequent work. The backend must exist
-before the Terraform root that uses it is initialized.
+Sol supports first-deploy provisioning into an account with no Sol installation
+and no pre-existing state backend. The recommended path is a user-provided,
+already-existing remote backend. In that path, the user supplies bootstrap
+authority to create target identities and routine assume-only credentials for
+subsequent work; the backend exists before any root using it is initialized.
 
-If Sol supports provisioning into an account with no backend, it must document
-an explicit seed path: bootstrap using temporary local state (or a separately
-prepared seed backend), create the durable backend and scoped identities, then
-migrate state into the durable backend while holding an exclusive state lock.
-Temporary state must be verified at the destination before the seed copy is
-retired. A root must never be expected to create its own backend. The user
-provided backend remains the recommended path; the temporary-state route is a
-fallback, not an implicit behavior.
+For a truly fresh account without a backend, the supported seed path is
+temporary local state during privileged bootstrap: create the durable backend
+and scoped identities, migrate the bootstrap state while holding an exclusive
+lock, verify the destination state, then retire the temporary copy securely.
+Routine target reconciliation must not proceed until the remote state migration
+is verified. The temporary state is sensitive and must not enter source control
+or ordinary exported configuration. A root is never expected to create its own
+backend. This is a documented fallback path, not an implicit backend behavior.
 
 ### Detach and ownership transfer
 
@@ -97,9 +102,23 @@ Kubernetes configuration. Detach transfers authority and state:
 2. Export editable configuration and transfer the locked state to the
    standalone owner's backend without placing sensitive state in source control.
 3. Revoke Sol's provider execution principal, backend state principal, and
-   Kubernetes access. Invalidate or deny already-issued cloud sessions where
-   the cloud supports it. Confirm that the normal assume-only caller cannot
-   write directly and cannot regain the revoked target authority.
+   Kubernetes access. Cloud revocation must account for already-issued
+   credentials, not only prevent new sessions:
+   - **AWS:** prevent new role assumptions and revoke permissions from existing
+     role sessions using an explicit session-revocation policy (for example,
+     [`AWSRevokeOlderSessions`](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_revoke-sessions.html).
+     AWS documents approximately 30 seconds for that policy's propagation
+     window; verify denial after the window before completing handoff.
+   - **GCP:** remove the caller's impersonation permission to prevent new
+     tokens. Already-issued access tokens cannot be revoked and remain valid
+     until expiry ([Google token types](https://cloud.google.com/docs/authentication/token-types));
+     they normally expire after one hour and may be configured up to twelve
+     hours ([service account credentials](https://docs.cloud.google.com/iam/docs/service-account-creds)).
+     To reject them sooner, disable the target service account, which causes
+     existing access tokens to be rejected ([Google IAM API](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/disable)).
+     Verify token rejection before completing handoff.
+   Confirm that the normal assume-only caller cannot write directly and cannot
+   regain the revoked target authority.
 4. With the standalone owner's credentials, run a plan and verify that it
    proposes no unintended changes or resource replacement.
 5. Declare handoff complete only after revocation and the no-unintended-change
@@ -117,19 +136,29 @@ For both AWS and GCP:
 
 1. A routine source credential can assume or impersonate the declared target
    identities, and direct cloud-resource mutations by that source credential
-   are denied.
+   are denied. Verify this with policy inspection and a negative API test in an
+   isolated cloud qualification target: a representative direct resource write
+   and direct state access must be denied, while the scoped assume/impersonation
+   path succeeds. A policy simulator or static policy assertion alone is not
+   sufficient evidence of the end-to-end fence.
 2. Terraform provider operations use the target execution identity; backend
    reads, writes, and locks use the separately scoped state identity.
 3. Revoking the target provider identity prevents a stale supported Sol
-   checkout from mutating target resources. Revoking the backend identity
-   prevents it from reading or changing target state.
+   checkout from mutating target resources, including with credentials issued
+   before detach. AWS verifies denial after session-revocation policy
+   propagation; GCP verifies that disabling/deleting the scoped service account
+   rejects its existing tokens. Revoking the backend identity prevents stale
+   Sol from reading or changing target state.
 4. Handoff revokes Kubernetes write access and verifies denial for the Sol
    principal. A repo/state marker alone does not pass this criterion.
 5. State migration is locked and leaves a standalone state that plans without
    unintended changes or replacements. The standalone owner can then update a
    resource without Sol.
-6. A fresh-account deployment follows one of the documented seed paths and
-   does not rely on a Terraform root creating its own backend.
+6. A fresh-account deployment without an existing backend uses the supported
+   temporary-local-state seed path, migrates bootstrap state under lock to the
+   durable backend, verifies it there, and then completes routine reconciliation
+   using scoped backend and provider identities. It does not rely on a
+   Terraform root creating its own backend.
 7. An account owner can intentionally regrant access or bypass the boundary
    using administrator authority; documentation states this limit plainly.
 
@@ -142,6 +171,10 @@ For both AWS and GCP:
 - Bootstrap remains a privileged boundary even though first-run setup is
   exposed through `sol deploy`.
 - Export and detach have distinct safety and authorization semantics.
+- `sol export <target>` exports independently maintainable configuration;
+  `sol detach <target>` performs the separately authorized state and authority
+  handoff. The detailed CLI workflow belongs to #1307; this ADR defines its
+  security guarantees.
 - The contract is identical across AWS and GCP; provider-specific mechanisms
   implement it without weakening the guarantee.
 
