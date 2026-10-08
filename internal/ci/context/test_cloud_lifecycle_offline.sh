@@ -2374,3 +2374,31 @@ if ! ls -d "$XDG_DATA_HOME"/sol/runs/cloud-* >/dev/null 2>&1; then
   echo "probably the operator's real Sol home, where they prune real evidence." >&2
   exit 1
 fi
+
+# The deploy handoff is how an operator or a harness reaches the cluster this target
+# owns, and it comes from Terraform state — so it is live state: reported under
+# --check, alongside the other live observations, and omitted entirely when the
+# root declares none. An identity-only report carries none of it.
+echo
+echo "sol target show: the deploy handoff is live state, reported only under --check"
+show_target() { (cd "$tmp/work" && LIFECYCLE_LOG="$tmp/target-show.log" "$sol" target show --target=prod/aws/us-east-1 "$@"); }
+if ! show_target --check --json >"$tmp/target-check.json" 2>"$tmp/target-check.err"; then
+  echo "sol target show --check --json failed in the offline environment:" >&2
+  cat "$tmp/target-check.err" >&2
+  exit 1
+fi
+assert_contains "the cloud root's own deploy command is reported as its own field" \
+  "$tmp/target-check.json" \
+  '"deploy_kubeconfig_command":"aws eks update-kubeconfig --region us-east-1 --name lifecycle-test --alias lifecycle-test-deploy --role-arn arn:aws:iam::111122223333:role/sol-deploy"'
+assert_contains "and the context that command writes" \
+  "$tmp/target-check.json" '"deploy_kube_context":"lifecycle-test-deploy"'
+
+show_target --json >"$tmp/target-plain.json" 2>/dev/null || true
+assert_not_contains "an identity-only report reads no cloud state, so it carries no handoff" \
+  "$tmp/target-plain.json" '"deploy_kubeconfig_command":'
+assert_not_contains "and no context either" "$tmp/target-plain.json" '"deploy_kube_context":'
+
+OUTPUT_ABSENT=1 show_target --check --json >"$tmp/target-absent.json" 2>/dev/null || true
+assert_not_contains "a root that declares no handoff reports none, rather than a default" \
+  "$tmp/target-absent.json" '"deploy_kubeconfig_command":'
+assert_not_contains "and no context is invented" "$tmp/target-absent.json" '"deploy_kube_context":'

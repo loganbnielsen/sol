@@ -97,6 +97,22 @@ let context_is_configured (destination : Sol_cli_kube_destination.t) =
   | Error _ -> true
 ;;
 
+type deploy_handoff =
+  { command : string
+  ; context : string
+  }
+
+let deploy_handoff_of_outputs json =
+  let field name =
+    match Sol_cli_terraform_outputs.text json ~name with
+    | Ok (Some value) when not (Sol_cli_string.is_blank value) -> Some (String.trim value)
+    | _ -> None
+  in
+  match field "deploy_kubeconfig_command", field "deploy_kube_context" with
+  | Some command, Some context -> Some { command; context }
+  | _ -> None
+;;
+
 let labelled label = function
   | None -> []
   | Some value -> [ label, value ]
@@ -108,6 +124,7 @@ let rows
       ?drift
       ?(last_operation = last_operation_unavailable)
       ?substrate
+      ?deploy_handoff
       ~verbose
       (target : Sol_cli_config.target)
       kubernetes
@@ -126,6 +143,12 @@ let rows
     @ labelled "platform" platform
     @ labelled "cloud" cloud
     @ labelled "drift" drift
+    @ (match deploy_handoff with
+       | None -> []
+       | Some handoff ->
+         [ "deploy_kubeconfig_command", handoff.command
+         ; "deploy_kube_context", handoff.context
+         ])
     @ labelled "last operation" (Some last_operation)
   in
   let core =
@@ -154,11 +177,21 @@ let to_json
       ?drift
       ?(last_operation = last_operation_unavailable)
       ?substrate
+      ?deploy_handoff
       ~verbose
       target
       kubernetes
   =
   `Assoc
-    (rows ?platform ?cloud ?drift ~last_operation ?substrate ~verbose target kubernetes
+    (rows
+       ?platform
+       ?cloud
+       ?drift
+       ~last_operation
+       ?substrate
+       ?deploy_handoff
+       ~verbose
+       target
+       kubernetes
      |> List.map (fun (key, value) -> key, `String value))
 ;;

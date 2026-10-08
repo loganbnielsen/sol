@@ -58,3 +58,23 @@ let raw json ~name =
   | _ -> Error "terraform output -json is not an object of outputs"
   | exception Yojson.Json_error msg -> Error msg
 ;;
+
+let text json ~name =
+  match Yojson.Safe.from_string json with
+  | `Assoc outputs ->
+    (match List.assoc_opt name outputs with
+     | None -> Ok None
+     | Some (`Assoc fields) ->
+       (match List.assoc_opt "value" fields with
+        | None | Some `Null -> Ok None
+        | Some (`String value) -> Ok (Some value)
+        | Some other ->
+          Error
+            (Printf.sprintf
+               "terraform output %S is not text: %s"
+               name
+               (Yojson.Safe.pretty_to_string other)))
+     | Some _ -> Error (Printf.sprintf "terraform output %S is not an output object" name))
+  | _ -> Error "terraform output -json is not an object of outputs"
+  | exception Yojson.Json_error msg -> Error msg
+;;
