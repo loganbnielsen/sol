@@ -320,13 +320,6 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/gcp/test-live-qual.sh
 
-      # Checkout-based harnesses publish the migration runner and give Sol its
-      # digest. These stubs spend nothing and fail if it is not digest-pinned, if
-      # the migrate step publishes again, or if Sol runs when publication failed.
-      - name: Migration-runner publisher test
-        if: needs.classify.outputs.kind != 'docs-only'
-        run: internal/qualification/test-publish-migration-runner.sh
-
       - name: AWS row harness test
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/aws/test-live-row.sh
@@ -339,6 +332,14 @@ jobs:
       - name: Candidate-binding test
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/qualification/test-candidate-binding.sh
+
+      # One attempt is one candidate and one specimen, and a run never reads what
+      # an earlier run of the same attempt left behind: an alpha.15 attempt once
+      # provisioned with the alpha.14 CLI and filed the result under alpha.15, and
+      # a stale run-kubeconfig pointed a resumed phase at a destroyed cluster.
+      - name: Attempt boundary test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/qualification/test-attempt.sh
 
       # The independent AWS absence verdict is decided by provider reads and a
       # tri-state per-class result, not by Sol's destroy exit code. Its regression

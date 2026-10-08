@@ -103,6 +103,8 @@ required
   CLUSTER           this run's EKS cluster name
   DEPLOY_ROLE_ARN   the deploy identity whose kubeconfig the deploy uses
   SOL_INSTALL       the extracted release prefix holding bin/sol and share/sol/<version>
+  SOL_CANDIDATE     the candidate document this run qualifies (the draft's candidate.json);
+                    the run verifies the prefix is that candidate before it provisions
   QUALIFIER_ROLE    the qualification-only transport role; required unless TRANSPORT=0
 optional (defaults shown)
   ROW=qualreg                    the stable logical row label
@@ -637,6 +639,7 @@ disposable_state_present() {
 case "${1:-}" in
   cloud)
     attempt_begin 1
+    attempt_begin_run "${1:-}"
     mkdir -p "$LOG_DIR/state"
     sol_under_test_record_identity "$LOG_DIR"
     say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
@@ -644,6 +647,7 @@ case "${1:-}" in
     ;;
   app | destroy)
     attempt_begin 0
+    attempt_begin_run "${1:-}"
     mkdir -p "$LOG_DIR/state"
     sol_under_test_record_identity "$LOG_DIR"
     say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"

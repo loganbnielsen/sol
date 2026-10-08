@@ -108,9 +108,11 @@ SAY_LOG="$LOG_DIR/harness.log"
 case "${1:-}" in
   cloud)
     attempt_begin 1
+    attempt_begin_run "${1:-}"
     ;;
   app | destroy | identity)
     attempt_begin 0
+    attempt_begin_run "${1:-}"
     ;;
 esac
 say "environment: work tree $ROOT, revision $(git -C "$ROOT" rev-parse --short HEAD)"
@@ -1581,6 +1583,8 @@ required
   IMPERSONATOR   user:<email> the provisioner is impersonated as
   LE_EMAIL       ACME contact address, for the platform's certificates
   SOL_INSTALL    the extracted release prefix holding bin/sol and share/sol/<version>
+  SOL_CANDIDATE  the candidate document this run qualifies (the draft's candidate.json); the
+                 run verifies the prefix is that candidate before it provisions anything
 
 optional (defaults shown)
   ROW=qual                    the stable logical row label

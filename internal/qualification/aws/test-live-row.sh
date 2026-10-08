@@ -145,6 +145,25 @@ for install in "$INSTALL" "$NO_RUNNER_INSTALL" "$TAG_RUNNER_INSTALL"; do
   printf '%s\n' "$CANDIDATE_REVISION" >"$install/share/sol/$VERSION/REVISION"
 done
 
+# The candidate document each install prefix belongs to. A release prefix alone
+# cannot say which candidate it holds, so the run is told and verifies it
+# (sol-fab/sol#1287).
+candidate_document() {
+  local install="$1" version="$2" revision="$3" runner="$4" out="$5"
+  printf '{"version":"%s","revision":"%s","runner_image":"%s"}\n' \
+    "$version" "$revision" "$runner" >"$out"
+}
+for install in "$INSTALL" "$NO_RUNNER_INSTALL" "$TAG_RUNNER_INSTALL"; do
+  candidate_document "$install" "$VERSION" "$CANDIDATE_REVISION" "$RUNNER" "$install/candidate.json"
+done
+# A candidate document that names a different revision: the run must refuse it
+# rather than qualify the prefix under a name it does not belong to.
+candidate_document "$INSTALL" "$VERSION" "0000000000000000000000000000000000000000" "$RUNNER" \
+  "$TMP/candidate-other-revision.json"
+# And one that names a different version.
+candidate_document "$INSTALL" "v0.1.0-alpha.6" "$CANDIDATE_REVISION" "$RUNNER" \
+  "$TMP/candidate-other-version.json"
+
 ECR="123456789012.dkr.ecr.us-east-1.amazonaws.com"
 
 cat >"$TMP/bin/aws" <<'STUB'
@@ -475,7 +494,7 @@ run_row() {
     WORKSPACE="$WORKSPACE" TARGET=qualreg/aws/us-east-1 ECR_REGISTRY="$ECR" \
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
     CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
-    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" PHASE_TIMEOUT=60 "$@" \
     "$ROOT/internal/qualification/aws/live-row.sh" app >"$TMP/$name.out" 2>&1
   echo "$?" >"$TMP/$name.rc"
 }
@@ -509,7 +528,7 @@ run_phase() {
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
     CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
     OPERATOR_ROLE_ARN=arn:aws:iam::1:role/operator QUALIFIER_ROLE=qualifier \
-    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" PHASE_TIMEOUT=60 "$@" \
     "$ROOT/internal/qualification/aws/live-row.sh" "$phase" >"$TMP/$name.out" 2>&1
   echo "$?" >"$TMP/$name.rc"
 }
@@ -538,7 +557,7 @@ run_phase_closed_stdout() {
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
     CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
     OPERATOR_ROLE_ARN=arn:aws:iam::1:role/operator QUALIFIER_ROLE=qualifier \
-    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" PHASE_TIMEOUT=60 "$@" \
     "$ROOT/internal/qualification/aws/live-row.sh" "$phase" 2>"$TMP/$name.err" | true
   local -a codes=("${PIPESTATUS[@]}")
   printf '%s\n' "${codes[0]}" >"$TMP/$name.rc"
@@ -568,7 +587,7 @@ run_phase_sigterm() {
     CLUSTER=test-cluster DEPLOY_ROLE_ARN=arn:aws:iam::1:role/deploy \
     CLUSTER_ACCESS_ROLE_ARN=arn:aws:iam::1:role/access \
     OPERATOR_ROLE_ARN=arn:aws:iam::1:role/operator QUALIFIER_ROLE=qualifier \
-    SOL_INSTALL="$INSTALL" PHASE_TIMEOUT=60 "$@" \
+    SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" PHASE_TIMEOUT=60 "$@" \
     "$ROOT/internal/qualification/aws/live-row.sh" "$phase" >"$TMP/$name.out" 2>&1 &
   local harness_pid=$! waited=0
   while [ ! -e "$LOG_DIR/cloud-apply.log" ] && [ "$waited" -lt 100 ]; do
@@ -668,6 +687,25 @@ refused norevision "a bundle that names no source revision is refused"
 lacks "Sol is never invoked with it" "migrate apply" "$TMP/norevision.sol"
 has "and the refusal says why the run cannot bind the application" \
   "records no source revision" "$TMP/norevision.out"
+
+printf '\nscenario: adversarial — a run cannot qualify a prefix that is not the candidate it names\n'
+run_row nocandidate TRANSPORT=0 SOL_CANDIDATE=
+refused nocandidate "a run that names no candidate document is refused"
+has "and the refusal says an install prefix cannot name a candidate" \
+  "an install prefix alone cannot say which candidate it holds" "$TMP/nocandidate.out"
+lacks "nothing is provisioned" "terraform" "$TMP/nocandidate.terraform"
+
+run_row otherrevision TRANSPORT=0 SOL_CANDIDATE="$TMP/candidate-other-revision.json"
+refused otherrevision "a candidate naming another revision is refused"
+has "and the refusal names both revisions" \
+  "candidate $VERSION is revision 0000000000000000000000000000000000000000" "$TMP/otherrevision.out"
+lacks "nothing is provisioned" "terraform" "$TMP/otherrevision.terraform"
+
+run_row otherversion TRANSPORT=0 SOL_CANDIDATE="$TMP/candidate-other-version.json"
+refused otherversion "a candidate naming another version is refused"
+has "and the refusal names both versions" \
+  "SOL_INSTALL holds release $VERSION but the candidate is v0.1.0-alpha.6" "$TMP/otherversion.out"
+lacks "nothing is provisioned" "terraform" "$TMP/otherversion.terraform"
 
 printf '\nscenario: the qualification transport is established and the identity split holds\n'
 run_phase transport transport

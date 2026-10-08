@@ -392,10 +392,16 @@ let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) 
 let autopilot_of_describe_json text : (bool, string) result =
   match Yojson.Safe.from_string text with
   | exception Yojson.Json_error message ->
-    Error (Printf.sprintf "the describe output is not JSON: %s" message)
+    (* Keep the provider's own answer beside the parse failure: the describe is
+       small (it is projected), and a reader needs to see what came back. *)
+    Error (Printf.sprintf "the describe output is not JSON (%s): %s" message text)
   | json ->
     (match Sol_cli_json.assoc (Sol_cli_json.field [ "autopilot" ] json) with
-     | None -> Error "the cluster describe carries no autopilot field"
+     | None ->
+       Error
+         (Printf.sprintf
+            "the cluster describe carries no autopilot field: %s"
+            (Yojson.Safe.to_string json))
      | Some fields ->
        (match List.assoc_opt "enabled" fields with
         | None ->
@@ -410,7 +416,11 @@ let autopilot_of_describe_json text : (bool, string) result =
         | Some enabled ->
           (match Sol_cli_json.bool enabled with
            | Some value -> Ok value
-           | None -> Error "the cluster describe's autopilot.enabled is not a boolean")))
+           | None ->
+             Error
+               (Printf.sprintf
+                  "the cluster describe's autopilot.enabled is not a boolean: %s"
+                  (Yojson.Safe.to_string enabled)))))
 ;;
 
 let substrate_of_describe ~outputs_json ~region ~cluster_name
@@ -444,7 +454,17 @@ let substrate_of_describe ~outputs_json ~region ~cluster_name
       (match autopilot_of_describe_json output.Sol_cli_process.stdout with
        | Ok true -> Ok Autopilot
        | Ok false -> Ok Standard
-       | Error message -> Ok (Unknown message))
+       | Error message ->
+         (* Name the read that failed and the resource it failed on: the caller
+            only knows "the existing cluster", which is not enough to act on. *)
+         Ok
+           (Unknown
+              (Printf.sprintf
+                 "reading the mode of cluster %s in %s (project %s): %s"
+                 cluster_name
+                 region
+                 project
+                 message)))
     | Error (Sol_cli_process.Non_zero failure) ->
       let said =
         String.trim (failure.Sol_cli_process.stderr ^ failure.Sol_cli_process.stdout)

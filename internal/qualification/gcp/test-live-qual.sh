@@ -150,6 +150,13 @@ STUB
 bundle "$INSTALL"
 printf '%s\n' "$RUNNER" >"$INSTALL/share/sol/$VERSION/migration-runner-image"
 printf '%s\n' "$CANDIDATE_REVISION" >"$INSTALL/share/sol/$VERSION/REVISION"
+# The candidate the install prefix belongs to: an install prefix alone cannot say
+# which candidate it holds, so the run is told and verifies it (sol-fab/sol#1287).
+printf '{"version":"%s","revision":"%s","runner_image":"%s"}\n' \
+  "$VERSION" "$CANDIDATE_REVISION" "$RUNNER" >"$INSTALL/candidate.json"
+printf '{"version":"%s","revision":"%s","runner_image":"%s"}\n' \
+  "$VERSION" "0000000000000000000000000000000000000000" "$RUNNER" \
+  >"$TMP/candidate-other-revision.json"
 
 TAG_RUNNER_INSTALL="$TMP/install-tag-runner"
 bundle "$TAG_RUNNER_INSTALL"
@@ -548,7 +555,7 @@ run_case() {
     : >"$LOG_DIR/inventory-pre.tsv"
     [ -s "$LOG_DIR/attempt.txt" ] || printf 'attempt=%s\n' "$ATTEMPT" >"$LOG_DIR/attempt.txt"
   fi
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \
@@ -571,7 +578,7 @@ run_case_without_a_phase() {
     mkdir -p "$LOG_DIR"
     printf 'apiVersion: v1\n' >"$LOG_DIR/run-kubeconfig.yaml"
   fi
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$HARNESS" >"$TMP/no-phase.out" 2>&1
@@ -873,6 +880,20 @@ has "the refusal names the digest boundary" "not a digest reference" "$TMP/app-r
 lacks "and the harness never reaches the registry: it publishes no runner" \
   "sol-migration-runner" "$DOCKER_LOG"
 
+printf '\nscenario: adversarial — a run cannot qualify a prefix that is not the candidate it names\n'
+export DOCKER_LOG="$TMP/gcp-othercandidate.docker"
+: >"$DOCKER_LOG"
+STUB_STATE_WITH_OUTPUTS=1 PRESEED_CREDENTIALS=1 run_case gcp-othercandidate app \
+  SOL_CANDIDATE="$TMP/candidate-other-revision.json"
+[ "$(cat "$TMP/gcp-othercandidate.rc")" != "0" ] \
+  && ok "a candidate naming another revision is refused" \
+  || no "a candidate naming another revision is refused" "non-zero" "0"
+has "and the refusal names both revisions" \
+  "candidate $VERSION is revision 0000000000000000000000000000000000000000" \
+  "$TMP/gcp-othercandidate.out"
+lacks "no image is built for it" "docker build" "$DOCKER_LOG"
+lacks "and Sol is never asked to deploy" "deploy qual" "$TMP/gcp-othercandidate.argv"
+
 printf '\nscenario: adversarial — a development build is refused before any phase runs\n'
 STUB_SOL_VERSION=Sol-ed3f041f run_case app-dev app
 [ "$(cat "$TMP/app-dev.rc")" != "0" ] \
@@ -1066,7 +1087,7 @@ run_case_closed_stdout() {
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \
@@ -1091,7 +1112,7 @@ run_case_sigterm() {
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
-  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL_INSTALL="$INSTALL" SOL_CANDIDATE="${SOL_CANDIDATE-$INSTALL/candidate.json}" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PROJECT=sol-qualification REGION=us-central1 \
     PATH="$TMP/bin:$PATH" "$@" \

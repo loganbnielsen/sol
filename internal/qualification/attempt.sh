@@ -32,11 +32,23 @@ attempt_recorded() {
   sed -n 's/^attempt=//p' "$file" | head -1
 }
 
+attempt_recorded_candidate_revision() {
+  local file
+  file="$(attempt_identity_file)"
+  [ -s "$file" ] || return 1
+  sed -n 's/^candidate_revision=//p' "$file" | head -1
+}
+
 attempt_dir_continuation() {
-  local recorded
+  local recorded recorded_candidate
   if recorded="$(attempt_recorded)"; then
     if [ "$recorded" != "$ATTEMPT" ]; then
       attempt_die "$LOG_DIR holds attempt '$recorded'; this run is attempt '$ATTEMPT', and one evidence directory belongs to one attempt"
+    fi
+    recorded_candidate="$(attempt_recorded_candidate_revision || true)"
+    if [ -n "$recorded_candidate" ] && [ -n "${SOL_CANDIDATE_REVISION:-}" ] &&
+      [ "$recorded_candidate" != "$SOL_CANDIDATE_REVISION" ]; then
+      attempt_die "$LOG_DIR holds attempt '$recorded' for candidate revision $recorded_candidate, and this run qualifies ${SOL_CANDIDATE_REVISION}: one evidence directory belongs to one attempt and one candidate"
     fi
     return 0
   fi
@@ -61,14 +73,59 @@ attempt_write_identity() {
     printf 'state_key=%s\n' "${STATE_KEY:-}"
     printf 'cluster=%s\n' "${CLUSTER:-}"
     printf 'provider=%s\n' "${PROVIDER:-}"
+    printf 'candidate_version=%s\n' "${SOL_CANDIDATE_VERSION:-}"
+    printf 'candidate_revision=%s\n' "${SOL_CANDIDATE_REVISION:-}"
     printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$file"
+}
+
+# One invocation of a harness is one run inside the attempt. The run marker says
+# which run wrote the files beside it: without it an attempt's artifacts cannot be
+# told apart from the run that produced them, and an earlier run's stale
+# kubeconfig and phase logs have twice been read as the current run's, once
+# pointing a phase at a destroyed cluster (sol-fab/sol#1287).
+ATTEMPT_RUN="${ATTEMPT_RUN:-}"
+
+attempt_begin_run() {
+  local phase="${1:-}"
+  ATTEMPT_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$LOG_DIR"
+  {
+    printf 'run=%s\n' "$ATTEMPT_RUN"
+    printf 'attempt=%s\n' "$ATTEMPT"
+    printf 'phase=%s\n' "$phase"
+    printf 'candidate_version=%s\n' "${SOL_CANDIDATE_VERSION:-}"
+    printf 'candidate_revision=%s\n' "${SOL_CANDIDATE_REVISION:-}"
+    printf 'specimen=%s\n' "$(attempt_specimen_recorded || true)"
+    printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$LOG_DIR/run.txt"
+}
+
+attempt_specimen_recorded() {
+  local file
+  file="$(attempt_identity_file)"
+  [ -s "$file" ] || return 1
+  sed -n 's/^specimen=//p' "$file" | head -1
+}
+
+attempt_record_specimen() {
+  printf 'specimen=%s\n' "${CLUSTER:-}" >>"$(attempt_identity_file)"
 }
 
 attempt_check_fresh() {
   local continuing="$1"
   if ! disposable_state_present; then
+    # The attempt's kubeconfig, captures and logs describe the specimen it
+    # provisioned. Reusing the attempt for a second specimen leaves the first
+    # one's credentials and evidence in place, which is how a run came to read a
+    # destroyed cluster's kubeconfig as its own.
+    if [ -n "$(attempt_specimen_recorded || true)" ]; then
+      attempt_die "$LOG_DIR holds attempt '$ATTEMPT', which already provisioned $(attempt_specimen_recorded): one attempt is one specimen and one set of evidence. Start a new ATTEMPT for a new specimen."
+    fi
     attempt_emit "qualification: fresh disposable target ${TARGET:-} (state key ${STATE_KEY:-})"
+    # Recorded by attempt_begin once the identity is written: appending here would
+    # create the identity file and the standard record would never be written.
+    ATTEMPT_FRESH_SPECIMEN=1
     return 0
   fi
   if [ "$continuing" = 1 ] || [ "${CONTINUE_ATTEMPT:-0}" = 1 ]; then
@@ -85,8 +142,10 @@ attempt_check_fresh() {
 
 attempt_begin() {
   local check_fresh="${1:-1}" continuing=0
+  ATTEMPT_FRESH_SPECIMEN=0
   attempt_require
   if attempt_dir_continuation; then continuing=1; fi
   if [ "$check_fresh" = 1 ]; then attempt_check_fresh "$continuing"; fi
   attempt_write_identity
+  if [ "$ATTEMPT_FRESH_SPECIMEN" = 1 ]; then attempt_record_specimen; fi
 }

@@ -26,24 +26,31 @@ success. A skipped capability is named as skipped; it is not silently promoted.
    refuses a workspace at another revision, a tree with modified tracked files, or a framework
    pin still on a moving ref, before anything is built. A stale checkout must not be able to
    substitute another revision's application while the run reports evidence for the candidate.
-2. Give every disposable run a unique identity and evidence directory. `attempt.sh` refuses
-   accidental reuse.
-3. Exercise lifecycle through Sol. Qualification observes Sol; it must not reproduce Sol's
+2. Name the candidate, not just the prefix. `SOL_CANDIDATE` is the draft's `candidate.json`, and
+   `sol-under-test.sh` verifies the installed release is that candidate — version, revision and
+   pinned runner image — before anything is provisioned. An install prefix alone cannot say which
+   candidate it holds, so a run told only a prefix could file another candidate's evidence under
+   this one's name.
+3. Give every disposable run a unique identity and evidence directory. `attempt.sh` refuses
+   accidental reuse: one attempt is one candidate and one specimen, each run records the run that
+   wrote the files beside it (`run.txt`), and evidence an earlier run left is never read as the
+   current run's.
+4. Exercise lifecycle through Sol. Qualification observes Sol; it must not reproduce Sol's
    Terraform/Helm resource orchestration.
-4. Preserve evidence before cleanup. On any blocker while billable resources exist: capture the
+5. Preserve evidence before cleanup. On any blocker while billable resources exist: capture the
    observation, run supported teardown, independently inventory the provider, and only then wait
    for human input.
-5. `sol cloud destroy` or Terraform success is not proof of absence. Provider-backed inventory
+6. `sol cloud destroy` or Terraform success is not proof of absence. Provider-backed inventory
    must positively establish every relevant target-owned resource class as absent. An unreadable
    class makes the verdict UNKNOWN.
-6. Durable qualification prerequisites (for example state storage or delegated DNS) are distinct
+7. Durable qualification prerequisites (for example state storage or delegated DNS) are distinct
    from disposable target resources. Teardown must neither silently delete nor mistake them for
    target residue.
-7. Keep credentials short-lived and target-specific. Never create long-lived cloud service-account
+8. Keep credentials short-lived and target-specific. Never create long-lived cloud service-account
    keys for qualification.
-8. A phase or command exit code is not itself a claim. Record the observation that satisfies or
+9. A phase or command exit code is not itself a claim. Record the observation that satisfies or
    falsifies each row.
-9. Live cloud qualification may incur cost. Do not start it without explicit operator
+10. Live cloud qualification may incur cost. Do not start it without explicit operator
    authorization.
 
 ## Current executable surfaces
