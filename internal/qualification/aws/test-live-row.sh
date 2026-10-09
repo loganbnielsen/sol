@@ -137,6 +137,8 @@ qualreg:
     aws/us-east-1:
       cluster_name: test-cluster
       state_bucket: sol-qual-test-tfstate
+      # `sol deploy` takes no --var-file; the row's roots read this file.
+      terraform_var_file: /tmp/qual-aws-row.tfvars
 YAML
 
 # The workspace is the candidate's tree, and every bundle names it: a live run
@@ -1031,6 +1033,19 @@ run_phase unrelated-residue verify STUB_FOREIGN_INSTANCE=1
 is "exit 0" "$(cat "$TMP/unrelated-residue.rc")" "0"
 has "another cluster's instance does not read as residue" "ec2-instance: ABSENT" \
   "$TMP/unrelated-residue.logs/aws-inventory-verdict.txt"
+
+printf '\nscenario: a target that names no var file refuses rather than deploy with defaults\n'
+cat >"$WORKSPACE/sol/environments.local.yml" <<'YAML'
+qualreg:
+  targets:
+    aws/us-east-1:
+      cluster_name: test-cluster
+      state_bucket: sol-qual-test-tfstate
+YAML
+run_phase no-tfvars cloud
+refused no-tfvars "a target that names no terraform_var_file refuses the cloud phase"
+has "and the refusal says why" "declares no terraform_var_file" "$TMP/no-tfvars.out"
+lacks "and no Sol command runs" "sol " "$TMP/no-tfvars.sol"
 
 printf '\n'
 if [ "$fail" -gt 0 ]; then

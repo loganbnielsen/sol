@@ -210,6 +210,18 @@ cloud_mutated() {
     grep -qF 'lifecycle phase: CloudBootstrap' "$LOG_DIR"/cloud-apply*.log 2>/dev/null
 }
 
+# `sol deploy` takes no --var-file: the target names the file its cluster and platform roots
+# read, and a target without one would apply those roots with their default variables. The
+# run refuses rather than qualify a target that is not the row's.
+require_target_terraform_var_file() {
+  if grep -qE '^[[:space:]]*terraform_var_file:' "$TARGET_FILE" 2>/dev/null; then
+    return 0
+  fi
+  say "REFUSING: $TARGET_FILE declares no terraform_var_file, and sol deploy takes no --var-file,"
+  say "so the cluster and platform roots would be applied with their default variables."
+  return 1
+}
+
 platform_credential_missing() {
   grep -qF 'the platform install cannot start' "$LOG_DIR/cloud-apply.log" 2>/dev/null &&
     grep -qF 'redpanda-users' "$LOG_DIR/cloud-apply.log" 2>/dev/null
@@ -460,6 +472,7 @@ phase_transport() {
 }
 
 phase_cloud() {
+  require_target_terraform_var_file || return 1
   # `sol plan` is the read-only whole-target preview. `sol deploy` is the only command
   # that reconciles the substrate now: it establishes the durable installation inline and
   # applies the environment's cluster and platform roots.
@@ -591,6 +604,7 @@ app_supply_secrets() {
 }
 
 phase_app() {
+  require_target_terraform_var_file || return 1
   ensure_contexts || return 1
   verify_identity_boundary || return 1
   app_publish_images || return 1
