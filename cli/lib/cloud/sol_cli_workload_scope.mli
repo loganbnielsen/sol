@@ -56,3 +56,13 @@ val read_workloads
   -> namespaces:string list
   -> workspace:string
   -> (scope list, read_error) result
+
+val release_workloads
+  :  run:(string list -> (string, Sol_cli_process.error) result)
+  -> delete:
+       (namespace:string -> names:string list -> (unit, Sol_cli_process.error) result)
+  -> wait:(namespace:string -> (unit, Sol_cli_process.error) result)
+  -> evidence:Sol_cli_release_id.owned_object list
+  -> namespaces:string list
+  -> workspace:string
+  -> release

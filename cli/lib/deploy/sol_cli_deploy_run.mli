@@ -64,6 +64,12 @@ val surplus_workloads
   -> Sol_cli_deployment_plan.t
   -> Sol_cli_rollback.workload_identity list
 
+val warn_not_owned_declared
+  :  cluster:Sol_cli_kube_destination.context
+  -> evidence:Sol_cli_release_id.owned_object list
+  -> Sol_cli_deployment_plan.t
+  -> unit
+
 val confirm_consumer_groups
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string

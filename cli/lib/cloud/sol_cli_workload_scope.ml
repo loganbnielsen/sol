@@ -222,3 +222,72 @@ let to_string scope =
       scope.namespace
       (String.concat ", " (List.map workload_to_string workloads))
 ;;
+
+(* Release (delete) every workload of this workspace in the given namespaces, but only
+   those whose live UID matches the recorded evidence: the `workspace` label selects
+   candidates, it never authorizes removal. Everything else is retained and reported. The
+   command layer supplies the cluster-bound read/delete/wait, so the decision itself is
+   exercised without a cluster. *)
+let release_workloads
+      ~run
+      ~delete
+      ~wait
+      ~(evidence : Sol_cli_release_id.owned_object list)
+      ~namespaces
+      ~workspace
+  : release
+  =
+  match read_workloads ~run ~namespaces ~workspace with
+  | Error (No_cluster reason) -> Workloads_not_releasable reason
+  | Error (Read_unestablished failure) -> Workloads_unestablished failure
+  | Ok scopes ->
+    let unreleased namespace operation reason =
+      Workloads_unestablished { namespace; kind = None; operation; reason }
+    in
+    let remove (scope : scope) : (unit, release) result =
+      let owned, retained = partition_owned ~evidence scope in
+      let warn_retained () =
+        if retained <> []
+        then
+          Sol_cli_report.warn
+            "%s: retaining %d workload(s) Sol cannot prove it owns (no recorded UID \
+             match): %s"
+            scope.namespace
+            (List.length retained)
+            (String.concat ", " (List.map workload_to_string retained))
+      in
+      match owned with
+      | [] ->
+        warn_retained ();
+        Ok ()
+      | owned ->
+        Sol_cli_report.app "  %s" (to_string { scope with workloads = owned });
+        (match
+           delete ~namespace:scope.namespace ~names:(List.map workload_to_string owned)
+         with
+         | Error e ->
+           Error
+             (unreleased
+                scope.namespace
+                "removing the workloads it found"
+                (Sol_cli_process.error_to_string e))
+         | Ok () ->
+           warn_retained ();
+           (match wait ~namespace:scope.namespace with
+            | Ok () -> Ok ()
+            | Error e ->
+              Error
+                (unreleased
+                   scope.namespace
+                   "waiting for the pods to go"
+                   (Sol_cli_process.error_to_string e))))
+    in
+    let rec go = function
+      | [] -> Workloads_released
+      | scope :: rest ->
+        (match remove scope with
+         | Ok () -> go rest
+         | Error unreleased -> unreleased)
+    in
+    go scopes
+;;
