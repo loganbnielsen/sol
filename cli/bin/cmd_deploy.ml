@@ -105,7 +105,6 @@ let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
   ; config = ctx.resolved_config
   ; facts = ctx.facts
   ; inventory = ctx.inventory
-  ; requested_scope = "workspace"
   ; image_refs = ctx.image_refs
   ; services = ctx.services
   }
@@ -483,6 +482,7 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.run_offline
     ctx
@@ -507,6 +507,7 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   let* results =
     Sol_cli_deploy_run.run_offline
@@ -617,6 +618,7 @@ let run_apply
     ~sha:planning.Sol_cli_deploy_selection.Planning_input.sha
     ();
   let* plan = build_plan planning in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* destination, established =
     destination_or_environment_stage
       ~planning
@@ -716,7 +718,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; config = resolved_config
     ; facts
     ; inventory
-    ; requested_scope = "workspace"
     ; image_refs
     ; services
     }

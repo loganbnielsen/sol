@@ -1,6 +1,5 @@
 type selection =
-  { requested_scope : string
-  ; resolved : Sol_cli_workload_selection.resolved
+  { resolved : Sol_cli_workload_selection.resolved
   ; image_refs : (string * string) list
   }
 
@@ -34,10 +33,15 @@ module Planning_input : sig
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
-    ; requested_scope : string
     ; image_refs : (string * string) list
     ; services : Sol_cli_manifest.service list
     }
 end
 
-val plan : Planning_input.t -> (Sol_cli_deployment_plan.t, plan_error) result
+module Target_plan : sig
+  type t
+
+  val to_deployment_plan : t -> Sol_cli_deployment_plan.t
+end
+
+val plan : Planning_input.t -> (Target_plan.t, plan_error) result

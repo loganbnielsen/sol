@@ -1,8 +1,7 @@
 open Result.Syntax
 
 type selection =
-  { requested_scope : string
-  ; resolved : Sol_cli_workload_selection.resolved
+  { resolved : Sol_cli_workload_selection.resolved
   ; image_refs : (string * string) list
   }
 
@@ -19,7 +18,7 @@ let select ~image_refs inventory =
         (List.map (fun (s : Sol_cli_manifest.service) -> s.name) resolved.services)
       image_refs
   in
-  Ok { requested_scope = resolved.requested_scope; resolved; image_refs }
+  Ok { resolved; image_refs }
 ;;
 
 type deployed =
@@ -97,10 +96,15 @@ module Planning_input = struct
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
-    ; requested_scope : string
     ; image_refs : (string * string) list
     ; services : Sol_cli_manifest.service list
     }
+end
+
+module Target_plan = struct
+  type t = Sol_cli_deployment_plan.t
+
+  let to_deployment_plan t = t
 end
 
 let plan (input : Planning_input.t) =
@@ -113,7 +117,6 @@ let plan (input : Planning_input.t) =
       ; config
       ; facts
       ; inventory
-      ; requested_scope
       ; image_refs
       ; services
       }
@@ -150,7 +153,7 @@ let plan (input : Planning_input.t) =
       ~workspace
       ~env
       ~facts
-      ~requested_scope
+      ~requested_scope:"workspace"
       ~declared:(Sol_cli_config.declared_of_config config)
       ~image_refs
       ~inventory
@@ -166,5 +169,5 @@ let plan (input : Planning_input.t) =
     Sol_cli_profile_preflight.check ~target:config.target ~apply_mode plan
     |> Result.map_error (fun (profile, findings) -> Preflight (profile, findings))
   in
-  Ok plan
+  Ok plan |> Result.map (fun plan -> (plan : Target_plan.t))
 ;;
