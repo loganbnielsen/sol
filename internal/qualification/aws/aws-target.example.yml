@@ -12,6 +12,10 @@ qual:
       kube_context: <cluster-name>
       registry: <account>.dkr.ecr.us-east-1.amazonaws.com
 
+      # Terraform variables for the cluster and platform roots (node sizes, RDS flags).
+      # `sol deploy` takes no --var-file, so the target names the file the roots read.
+      terraform_var_file: <absolute path to internal/qualification/aws/qual-aws-row.tfvars>
+
       # Name the remote state backend created during bootstrap.
       state_bucket: <globally-unique-bucket>
 

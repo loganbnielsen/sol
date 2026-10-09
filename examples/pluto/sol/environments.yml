@@ -58,7 +58,7 @@ pilot:
       registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 # A low-cost development environment: Postgres, Kafka and the services that
-# need them are omitted, so `sol cloud apply dev/aws/us-east-1` provisions the
+# need them are omitted, so `sol deploy dev/aws/us-east-1` provisions the
 # cluster and the platform only. Replace the domain and contact address.
 dev:
   base_domain: dev.pluto.example.com

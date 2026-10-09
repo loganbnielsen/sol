@@ -93,7 +93,9 @@ command's output.
 
 1. A fresh, disposable, isolated AWS account and an unexpired SSO session for the operator's
    profile (`aws sts get-caller-identity` names the qualification account).
-2. `aws`, `terraform` ≥ 1.5, `kubectl`, `dig`, `jq`, `python3`; `docker` reachable from the
+2. `aws`, `terraform` ≥ 1.5, `kubectl`, `dig`, `jq`, `python3`, and
+   `script` (util-linux, used to confirm the inline installation offer on a fresh
+   account); `docker` reachable from the
    shell that runs the app phase (`docker version` succeeds, or run under `sg docker -c`).
    `opam` + `dune` are needed only if the runner is built from source rather than taken from
    the release.
@@ -114,13 +116,16 @@ command's output.
 8. A target file `examples/pluto/sol/environments.local.yml` copied from
    `aws-target.example.yml` with real values. It is untracked by design, so the record
    carries its contents or a hash plus its path. It declares `profile: production-single-region`,
-   the five role ARNs, `kube_context`, the registry, `cluster_endpoint_cidr` (never
+   the five role ARNs, `kube_context`, the registry, `terraform_var_file` (the
+   qualification tfvars the cluster and platform roots read; `sol deploy` takes no
+   `--var-file`, and the harness refuses a target that names none rather than deploy the
+   roots with their default variables), `cluster_endpoint_cidr` (never
    `0.0.0.0/0`), `node_failure_headroom_nodes`, `destroy_retention: none`, and the two
    TypeScript units omitted. The alert fields are required by the profile preflight; they are
    set to a real receiver only when pursuing G1–G3, and the run records G as blocked otherwise.
 9. Explicit operator authorization for the live run and the release
    version (§7.6).
-10. The production profile's **pre-platform broker credential**. `sol cloud apply` creates the
+10. The production profile's **pre-platform broker credential**. The whole-target deploy creates the
    `redpanda` namespace in its prerequisite stage, then checks the `redpanda-users` Secret
    exists before the platform apply and stops naming it when absent
    (`docs/deployment/production-bootstrap.md` § *Production Kafka transport (SASL_SSL)*). The
@@ -129,13 +134,13 @@ command's output.
    `KAFKA_SASL_PASSWORD` when the operator supplies one), creates the Secret with the
    documented `kubectl create secret generic redpanda-users -n redpanda` shape at that
    boundary, records that it supplied the input without its value in `prerequisites.txt`, and
-   re-runs `sol cloud apply` to resume — the same ordered steps the bootstrap guide gives the
+   re-runs the whole-target deploy to resume — the same ordered steps the bootstrap guide gives the
    operator. The credential never enters the repository, Terraform state, a command line or a
    run log.
 
 ### Expected resources and cost-bearing steps
 
-Billable from `sol cloud apply` until the independent inventory is `ABSENT`; the cost rule is
+Billable from the whole-target deploy until the independent inventory is `ABSENT`; the cost rule is
 absolute (tear down before asking). The target creates, at least:
 
 | Resource class | Declared by | Teardown class |
@@ -157,18 +162,24 @@ the destroy is part of the run, not a follow-up. A run that stops early is still
 
 `internal/qualification/aws/live-row.sh <phase>` orchestrates Sol's public commands and reads
 provider/Kubernetes state independently. It never invokes `terraform` or `helm`: the `cloud`
-phase reconciles the *durable* bootstrap root (the operator's prerequisite) through the
-installed release's `sol cloud bootstrap <target> --apply`, and every disposable-target step
+phase reconciles the *durable* installation inline (the operator's prerequisite) through the
+installed release's `sol deploy <target>` — its first-run offer is confirmed through `script`
+on a fresh account — and every disposable-target step
 goes through Sol. `SOL` selects the released bundle.
 
-**`cloud`** — `sol cloud bootstrap <target> --apply` reconciles the durable root;
-`sol cloud plan <target> --var-file <tfvars>`; `sol cloud apply <target> --var-file <tfvars>`
-(the row's `qual-aws-row.tfvars`); when that
+**`cloud`** — `sol plan <target> --var-file <tfvars>` previews the whole target;
+`sol deploy <target> --registry <registry> --image-tag <tag>` reconciles the durable
+installation, the cluster and the platform (the row's `qual-aws-row.tfvars` reach the roots
+through the target's `terraform_var_file`, since `sol deploy` takes no `--var-file`). Because
+no image digest exists before the cluster root creates its ECR repositories, this bootstrap
+deploy names a tag and is expected to stop at the workloads phase_app has not published yet;
+the phase succeeds on the reconciled environment (`The environment for <target> is
+reconciled.`), not on the deploy's exit code. When the deploy
 stops at the pre-platform `redpanda-users` credential, create the Secret with the run's
 generated or operator-supplied `sol-workloads` SCRAM credential, record the supplied input,
-and re-run `sol cloud apply` to resume; build the deploy/access/operator kubeconfigs; capture
-nodes and the cluster root state. The profile emits its `-var` arguments after the var file,
-so the profile still wins on every variable it sets. Evidence: `bootstrap.log`,
+and re-run the same deploy to resume; build the deploy/access/operator kubeconfigs; capture
+nodes and the cluster root state. The profile still emits its `-var` arguments after the var
+file, so the profile wins on every variable it sets. Evidence:
 `cloud-plan.log`, `cloud-apply.log`, `cloud-apply-resume.log`, `platform-credential.log`,
 `prerequisites.txt`, `k8s-nodes.txt`, `state/cloud.tfstate`, and the verbatim
 `lifecycle phase:` line per invocation. Rows: I1, I2, I4, A, F1, F2.

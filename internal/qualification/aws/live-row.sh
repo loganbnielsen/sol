@@ -63,7 +63,10 @@ TERMINATION_SIGNAL=""
 
 cleanup() {
   local rc=$?
-  if [ -n "$TERMINATION_SIGNAL" ] && [ "$CLOUD_APPLIED" = 1 ]; then
+  # A signal can arrive while the deploy is still running, before its exit status is seen:
+  # decide from the log whether it already mutated the provider, so a target this run never
+  # touched is never torn down.
+  if [ -n "$TERMINATION_SIGNAL" ] && { [ "$CLOUD_APPLIED" = 1 ] || cloud_mutated; }; then
     say "SIG$TERMINATION_SIGNAL ended the run: tearing down $TARGET and verifying absence"
     phase_destroy || true
   fi
@@ -124,7 +127,8 @@ optional (defaults shown)
                                  pushed and pinned by digest
 
 phases
-  cloud      cloud plan, cloud apply, the deploy identity's kubeconfig, node evidence, state capture
+  cloud      whole-target plan and bootstrap deploy (inline installation, cluster and
+             platform), the deploy identity's kubeconfig, node evidence, state capture
   transport  establish and verify the qualification-only transport (INFRA-060 / DEC-039)
   app        the publisher's work, then Sol's: build, ECR login and push, runtime secrets,
              migrate apply, deploy, the transaction
@@ -166,6 +170,56 @@ run() {
     tail -n 40 "$LOG_DIR/$name.log"
     return 1
   fi
+}
+
+# The whole-target deploy reconciles the durable installation inline (DEC-057 §2), and on an
+# account whose installation is not established it offers to set it up through one
+# interactive confirmation. The run drives that confirmation through a pty with a single
+# 'y'; an account whose installation is already established is deployed to without a
+# prompt, and the extra 'y' is left unread. A deploy also verifies immutable --image-ref
+# manifests before it applies anything, so the bootstrap deploy names a tag: the ECR
+# repositories it is about to create are where phase_app later pushes the digests this run
+# pins. Its exit status is returned rather than inspected here, because the deploy is
+# expected to stop at the workloads those digests belong to.
+bootstrap_deploy() {
+  local name="$1"
+  say "$name"
+  local command="cd '$WORKSPACE' && exec '$SOL' deploy '$TARGET' --registry '$ECR_REGISTRY' --image-tag '$APP_TAG'"
+  if command -v script >/dev/null 2>&1; then
+    printf 'y\n' | timeout "$PHASE_TIMEOUT" script -qec "$command" /dev/null \
+      >"$LOG_DIR/$name.log" 2>&1
+  else
+    timeout "$PHASE_TIMEOUT" bash -c "$command" >"$LOG_DIR/$name.log" 2>&1
+  fi
+}
+
+# `sol deploy` prints this once the durable installation and the environment are
+# reconciled, before it moves on to the workloads. It is the signal that the bootstrap
+# deploy reached the substrate even when the workload stage later stops on images that do
+# not exist yet.
+environment_reconciled() {
+  grep -qF "The environment for $TARGET is reconciled." "$LOG_DIR"/cloud-apply*.log 2>/dev/null
+}
+
+# A deploy that refused at the installation boundary applies nothing, so teardown must stay
+# disarmed for a target this run never touched. Once the durable/cluster phase ran -- or the
+# environment was reconciled -- disposable resources exist that this run owns, so cleanup is
+# armed even if a later phase failed.
+cloud_mutated() {
+  environment_reconciled ||
+    grep -qF 'lifecycle phase: CloudBootstrap' "$LOG_DIR"/cloud-apply*.log 2>/dev/null
+}
+
+# `sol deploy` takes no --var-file: the target names the file its cluster and platform roots
+# read, and a target without one would apply those roots with their default variables. The
+# run refuses rather than qualify a target that is not the row's.
+require_target_terraform_var_file() {
+  if grep -qE '^[[:space:]]*terraform_var_file:' "$TARGET_FILE" 2>/dev/null; then
+    return 0
+  fi
+  say "REFUSING: $TARGET_FILE declares no terraform_var_file, and sol deploy takes no --var-file,"
+  say "so the cluster and platform roots would be applied with their default variables."
+  return 1
 }
 
 platform_credential_missing() {
@@ -418,18 +472,27 @@ phase_transport() {
 }
 
 phase_cloud() {
-  run cloud-bootstrap bash -c "cd '$WORKSPACE' && exec '$SOL' cloud bootstrap '$TARGET' --apply" || return 1
-  run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' cloud plan '$TARGET' --var-file '$TFVARS'" || return 1
-  CLOUD_APPLIED=1
-  if ! run cloud-apply bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'"; then
-    if platform_credential_missing; then
-      say "cloud apply stopped at the platform's documented credential prerequisite; supplying it and resuming"
-      ensure_contexts || return 1
-      supply_platform_credential || return 1
-      run cloud-apply-resume bash -c "cd '$WORKSPACE' && exec '$SOL' cloud apply '$TARGET' --var-file '$TFVARS'" || return 1
-    else
-      return 1
-    fi
+  require_target_terraform_var_file || return 1
+  # `sol plan` is the read-only whole-target preview. `sol deploy` is the only command
+  # that reconciles the substrate now: it establishes the durable installation inline and
+  # applies the environment's cluster and platform roots.
+  run cloud-plan bash -c "cd '$WORKSPACE' && exec '$SOL' plan '$TARGET' --var-file '$TFVARS'" || return 1
+  local deploy_rc=0
+  bootstrap_deploy cloud-apply || deploy_rc=$?
+  if cloud_mutated; then CLOUD_APPLIED=1; fi
+  if [ "$deploy_rc" != 0 ] && platform_credential_missing; then
+    say "the bootstrap deploy stopped at the platform's documented credential prerequisite; supplying it and resuming"
+    ensure_contexts || return 1
+    supply_platform_credential || return 1
+    bootstrap_deploy cloud-apply-resume || deploy_rc=$?
+    if cloud_mutated; then CLOUD_APPLIED=1; fi
+  fi
+  # The bootstrap deploy is expected to stop at the workloads whose digests phase_app has
+  # not published yet: their ECR repositories did not exist when this phase began. What
+  # decides the phase is the reconciled environment, not the deploy's exit code.
+  if ! environment_reconciled; then
+    say "the bootstrap deploy did not reconcile the environment $TARGET (full log $LOG_DIR/cloud-apply.log)"
+    return 1
   fi
   ensure_contexts || return 1
   run nodes kubectl --kubeconfig "$ACCESS_KUBECONFIG" get nodes -o wide || return 1
@@ -541,6 +604,7 @@ app_supply_secrets() {
 }
 
 phase_app() {
+  require_target_terraform_var_file || return 1
   ensure_contexts || return 1
   verify_identity_boundary || return 1
   app_publish_images || return 1

@@ -151,6 +151,51 @@ run() {
   say "ok: $name"
 }
 
+# The whole-target deploy reconciles the durable installation inline (DEC-057 §2), and on an
+# account whose installation is not established it offers to set it up through one
+# interactive confirmation. The run drives that confirmation through a pty with a single
+# 'y'; an account whose installation is already established is deployed to without a
+# prompt, and the extra 'y' is left unread. A deploy also verifies immutable --image-ref
+# manifests before it applies anything, so the bootstrap deploy names a tag: the Artifact
+# Registry repositories it is about to create are where the app phase later pushes the
+# digests this run pins. Its exit status is returned rather than fatal, because the deploy
+# is expected to stop at the workloads those digests belong to.
+bootstrap_deploy() {
+  local name="$1"
+  say "phase: $name"
+  local command="exec '$SOL' deploy '$TARGET' --registry '$(app_registry)' --image-tag '$APP_TAG'"
+  local rc=0
+  if command -v script >/dev/null 2>&1; then
+    ( cd "$WORKSPACE" && printf 'y\n' | timeout "$PHASE_TIMEOUT" script -qec "$command" /dev/null ) \
+      >"$LOG_DIR/$name.log" 2>&1 || rc=$?
+  else
+    ( cd "$WORKSPACE" && timeout "$PHASE_TIMEOUT" bash -c "$command" ) \
+      >"$LOG_DIR/$name.log" 2>&1 || rc=$?
+  fi
+  if [ "$rc" != 0 ]; then
+    say "note: $name exited $rc (expected once the substrate is reconciled; last 40 lines; full log $LOG_DIR/$name.log)"
+    tail -n 40 "$LOG_DIR/$name.log" || true
+  fi
+  return "$rc"
+}
+
+# `sol deploy` prints this once the durable installation and the environment are
+# reconciled, before it moves on to the workloads. It is the signal that the bootstrap
+# deploy reached the substrate even when the workload stage later stops on images that do
+# not exist yet.
+environment_reconciled() {
+  grep -qF "The environment for $TARGET is reconciled." "$LOG_DIR"/cloud-apply*.log 2>/dev/null
+}
+
+# A deploy that refused at the installation boundary applies nothing, so teardown must stay
+# disarmed for a target this run never touched. Once the durable/cluster phase ran -- or the
+# environment was reconciled -- disposable resources exist that this run owns, so cleanup is
+# armed even if a later phase failed.
+cloud_mutated() {
+  environment_reconciled ||
+    grep -qF 'lifecycle phase: CloudBootstrap' "$LOG_DIR"/cloud-apply*.log 2>/dev/null
+}
+
 platform_credential_missing() {
   grep -qF 'the platform install cannot start' "$LOG_DIR/cloud-apply.log" 2>/dev/null &&
     grep -qF 'redpanda-users' "$LOG_DIR/cloud-apply.log" 2>/dev/null
@@ -571,8 +616,12 @@ cleanup() {
     say "logs: $LOG_DIR"
     return "$rc"
   fi
-  if [ "$TEARDOWN_ATTEMPTED" = "0" ] \
-    && [ "$CLOUD_APPLIED" = "1" ]; then
+  # A signal can arrive while the deploy is still running, before its exit status is seen:
+  # decide from the log whether it already mutated the provider, so a target this run never
+  # touched is never torn down.
+  local mutated=0
+  if [ "$CLOUD_APPLIED" = "1" ] || cloud_mutated; then mutated=1; fi
+  if [ "$TEARDOWN_ATTEMPTED" = "0" ] && [ "$mutated" = "1" ]; then
     destroy || true
   fi
   say "logs: $LOG_DIR"
@@ -582,7 +631,7 @@ cleanup() {
   fi
   if [ "$TEARDOWN_OK" = "1" ]; then
     remove_target
-  elif [ "$CLOUD_APPLIED" = "0" ]; then
+  elif [ "$mutated" = "0" ]; then
     remove_target
   else
     say "KEEPING $TARGET_FILE — teardown was not verified, and destroy requires this file."
@@ -612,28 +661,30 @@ phase_cloud() {
   local vars; mapfile -t vars < <(cloud_vars)
 
   if plan_only; then
-    run cloud-plan "$SOL" cloud plan "$TARGET" "${vars[@]}" || return 1
+    run cloud-plan "$SOL" plan "$TARGET" "${vars[@]}" || return 1
     say "PLAN_ONLY=1: no infrastructure mutation requested; durable setup skipped"
     return 0
   fi
 
-  run cloud-bootstrap "$SOL" cloud bootstrap "$TARGET" --apply || return 1
-
-  CLOUD_APPLIED=1
-  INSTALL_STATE=succeeded
   start_cluster_kubeconfig_waiter
-  local apply_rc=0
-  run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}" || apply_rc=$?
-  if [ "$apply_rc" != 0 ] && platform_credential_missing; then
-    say "cloud apply stopped at the platform's documented credential prerequisite; supplying it and resuming"
+  local deploy_rc=0
+  bootstrap_deploy cloud-apply || deploy_rc=$?
+  if cloud_mutated; then CLOUD_APPLIED=1; fi
+  if [ "$deploy_rc" != 0 ] && platform_credential_missing; then
+    say "the whole-target deploy stopped at the platform's documented credential prerequisite; supplying it and resuming"
     if supply_platform_credential; then
-      apply_rc=0
-      run cloud-apply-resume "$SOL" cloud apply "$TARGET" "${vars[@]}" || apply_rc=$?
+      deploy_rc=0
+      bootstrap_deploy cloud-apply-resume || deploy_rc=$?
+      if cloud_mutated; then CLOUD_APPLIED=1; fi
     fi
   fi
-  if [ "$apply_rc" != 0 ]; then
+  # The whole-target deploy reconciles the durable installation inline and is expected to
+  # stop at the workloads whose digests the app phase has not published yet: their Artifact
+  # Registry repositories did not exist when this phase began. What decides the phase is
+  # the reconciled environment.
+  if ! environment_reconciled; then
     INSTALL_STATE=failed
-    say "cloud apply failed -- capturing the discriminator before any teardown"
+    say "the whole-target deploy did not reconcile the environment -- capturing the discriminator before any teardown"
     capture_pre_teardown_inventory
     freeze_evidence
     capture_platform_failure_evidence
@@ -641,6 +692,7 @@ phase_cloud() {
     finalise_bundle
     return 1
   fi
+  INSTALL_STATE=succeeded
 
   capture_ready_evidence
 
@@ -1431,12 +1483,15 @@ live-qual.sh — one GCP qualification specimen, and the evidence it produces
 usage: live-qual.sh PHASE
 
 phases
-  cloud     reconcile the durable root, start the run-kubeconfig waiter and the
-            API-readiness probe, run `sol cloud apply`. When it stops at the
+  cloud     reconcile the whole target: `sol deploy` establishes the durable
+            installation inline (its first-run offer is confirmed through `script`),
+            applies the cluster and platform roots, and stops at the workloads whose
+            digests the app phase has not published yet. The run starts the
+            run-kubeconfig waiter and the API-readiness probe around it. When it stops at the
             pre-platform `redpanda-users` credential, create the Secret with the
             run's generated or operator-supplied `sol-workloads` SCRAM credential,
             record that it was supplied (never the value) in prerequisites.txt, and
-            re-run `sol cloud apply` to resume -- the same ordered steps the
+            re-run `sol deploy` to resume -- the same ordered steps the
             production bootstrap guide gives the operator. On failure it captures the
             Kubernetes evidence, the cert-manager discriminator and the provider
             inventory before any teardown. On success it continues to the delegation
@@ -1500,7 +1555,7 @@ case "${1:-}" in
   app)      phase_app ;;
   identity) phase_identity ;;
   platform)
-    say "no platform phase: 'sol cloud apply' installs the platform, and this harness captures"
+    say "no platform phase: 'sol deploy' reconciles the whole target and installs the platform, and this harness captures"
     say "its discriminator in the cloud phase. Run: live-qual.sh cloud"
     exit 2
     ;;
