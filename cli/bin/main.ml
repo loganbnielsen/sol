@@ -29,7 +29,6 @@ let () =
       ; Cmd_deployments.cmd
       ; Cmd_assets.cmd
       ; Cmd_alert.cmd
-      ; Cmd_cloud.cmd
       ; Cmd_grants.cmd
       ; Cmd_uninstall.cmd
       ]

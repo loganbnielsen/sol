@@ -584,7 +584,7 @@ uninstall never deletes them; it reports them as retained, with the reason.
 Absence is observed through the installation's own probes, never inferred from an
 exit code: an unqueryable answer is UNKNOWN and fails closed.
 
-**Today:** environment destroy and absence verification exist (`sol cloud
+**Today:** environment destroy and absence verification exist (`sol
 destroy`, `DEC-044`), and installation removal exists (`sol uninstall <target>`,
 `FEAT-108`).
 

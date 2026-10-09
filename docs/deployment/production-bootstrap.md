@@ -63,7 +63,7 @@ Each field inside the block is a single value. A nested block (say `aws.vpc.id`)
 refused, naming the key, rather than silently ignored (REFAC-129): a typo that nests
 one used to be indistinguishable from not writing the field at all.
 
-`sol cloud` fails closed before Terraform initialization when either is missing.
+The cloud lifecycle fails closed before Terraform initialization when either is missing.
 It supplies this configuration at runtime and uses deterministic, distinct
 `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` objects. Do not
 create a repository or operator-managed `backend.tf` for the normal lifecycle.
@@ -205,7 +205,7 @@ force-unlock after establishing that no Terraform process anywhere still holds
 it. Unlocking a live lock is how GCP qualification Attempt 6 ended up with a
 cluster the provider had and the state did not.
 
-**Interrupting `sol cloud` (INFRA-076).** Sol runs Terraform under a supervisor
+**Interrupting a cloud lifecycle run (INFRA-076).** Sol runs Terraform under a supervisor
 in a session of its own, with its output in a durable operation record under
 `$XDG_DATA_HOME/sol/operations/` (default `~/.local/share/sol/operations/`), so:
 
@@ -388,7 +388,7 @@ The platform *definition* is the shared module `platform/cloud/modules/platform`
 which declares no backend. A Terraform root's state backend *type* is part of its
 own configuration — `-backend-config` sets attributes, never the type — so each
 provider reaches the module through a thin root of its own, named by role under the
-provider (`platform/cloud/<provider>/platform`, DEC-046 rule 4). `sol cloud` selects
+provider (`platform/cloud/<provider>/platform`, DEC-046 rule 4). The cloud lifecycle selects
 it with `Sol_cli_cloud_lifecycle.platform_root`:
 
 | Provider | Root | Backend | Platform state object |

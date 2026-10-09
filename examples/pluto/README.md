@@ -307,7 +307,7 @@ See the "Production Profile" section of
 
 The installation is the durable, account-level layer — the Terraform state backend
 and its locking, the provisioning/cluster-access/deploy/operator identities, and the
-delegated DNS zone when Sol owns one. It outlives every environment: `sol cloud
+delegated DNS zone when Sol owns one. It outlives every environment: `sol
 destroy <target>` removes an environment, never the installation.
 
 It is declared where the environment's durable state already lives, in the target:

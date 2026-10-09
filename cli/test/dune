@@ -48,9 +48,9 @@
 
 (rule
  (alias runtest)
- (deps ../bin/main.exe test_cloud_command_surface.sh)
+ (deps ../bin/main.exe test_target_command_surface.sh)
  (action
-  (run bash %{dep:test_cloud_command_surface.sh} %{dep:../bin/main.exe})))
+  (run bash %{dep:test_target_command_surface.sh} %{dep:../bin/main.exe})))
 
 (rule
  (alias runtest)

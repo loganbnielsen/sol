@@ -220,7 +220,7 @@ check_contains \
   "error:" \
   "$output"
 check_absent \
-  "a provisioned environment is never reported as still needing sol cloud apply" \
+  "a provisioned environment is never reported as still needing a separate cloud apply" \
   "create it — network, cluster, database and platform — with:" \
   "$output"
 
