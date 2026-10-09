@@ -308,4 +308,9 @@ These are not product defects; they are things the operator's session must have.
   silently authenticates as the deploy role. Verify with
   `kubectl --context <ctx> auth can-i get clusterroles` before trusting a probe's
   identity.
+- **`script` (util-linux) on `PATH`, for a fresh account.** The whole-target deploy
+  offers to establish the durable installation through an interactive prompt, and the
+  harness drives that prompt through a pty (`script -qec …`). Without `script` the
+  harness falls back to a no-terminal run, where a fresh account's deploy refuses to
+  set the installation up and the cloud phase stops before any infrastructure exists.
 

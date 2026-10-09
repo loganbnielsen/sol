@@ -113,8 +113,8 @@ The boundary the contracts encode:
   cannot escalate;
 - **operator** — owns **production observation and diagnosis** (DEC-038). Its
   generated AWS policy is read-only (`eks:DescribeCluster`, `eks:ListClusters`,
-  plus the state bucket), which is enough to obtain a kubeconfig; `sol cloud
-  apply` then creates the EKS access entry (Kubernetes group `sol:operators`) and
+  plus the state bucket), which is enough to obtain a kubeconfig; `sol deploy`
+  then creates the EKS access entry (Kubernetes group `sol:operators`) and
   a `sol-operator-diagnostics` `ClusterRole`, bound per application namespace at
   runtime exactly like deploy's. The grant is `get`/`list` on **only** the
   resources Sol's read-only commands read — pods, pods/log, services, events,

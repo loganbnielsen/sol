@@ -60,10 +60,13 @@ teardown leaves required durable prerequisites intact.
 
 `live-qual.sh` owns the current executable GCP run. Use a fresh `ATTEMPT` and evidence
 directory, an installed release selected with `SOL_INSTALL`, the provider/project inputs named
-by the script, and explicit operator authorization before creating billable resources.
+by the script, and explicit operator authorization before creating billable resources. The host
+needs `script` (util-linux) on `PATH`: the harness drives the whole-target deploy's first-run
+installation offer through a pty, and a fresh account's deploy refuses rather than sets the
+installation up without one.
 
-The production profile's broker SASL credential is a pre-platform operator input. `sol cloud
-apply` creates the `redpanda` namespace in its prerequisite stage, then checks the
+The production profile's broker SASL credential is a pre-platform operator input. `sol deploy`
+creates the `redpanda` namespace in its prerequisite stage, then checks the
 `redpanda-users` Secret exists before the platform apply and stops naming it when absent
 (`docs/deployment/production-bootstrap.md` § *Production Kafka transport (SASL_SSL)*). The
 harness stands in for the operator: it generates a run-scoped `sol-workloads` SCRAM credential
