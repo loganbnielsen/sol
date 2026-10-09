@@ -54,14 +54,27 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 printf 'sol %s [runner=%s] [home=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" "${SOL_HOME:-unset}" >>"$SOL_LOG"
-if [ "${1:-} ${2:-}" = "cloud apply" ] && [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] \
-  && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
-  printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
-  printf 'Resolve that, then re-run `sol cloud apply <target>` to resume the install.\n'
-  exit 1
+# The whole-target deploy reconciles the durable installation inline, so an installation
+# that cannot be established and a first deploy that reaches the substrate both surface
+# here. A fresh account's installation offer is interactive in the real command; the stub
+# accepts it and reports the reconciled environment `sol deploy` prints before workloads.
+if [ "${1:-}" = "deploy" ]; then
+  if [ "${STUB_INSTALL_REFUSED:-0}" = "1" ]; then
+    printf 'the durable installation for %s could not be established with positive evidence\n' "${2:-}"
+    exit 1
+  fi
+  printf 'lifecycle phase: CloudBootstrap\n'
+  if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
+  if [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] \
+    && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
+    printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
+    printf 'Resolve that, then re-run the whole-target deploy to resume the install.\n'
+    exit 1
+  fi
+  printf 'The environment for %s is reconciled.\n' "${2:-}"
+  exit 0
 fi
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
-if [ "$1 $2" = "cloud bootstrap" ]; then exit "${STUB_BOOTSTRAP_RC:-0}"; fi
 exit 0
 STUB
   chmod +x "$dir/bin/sol"
@@ -618,11 +631,15 @@ run_transaction() {
 }
 
 printf '\nscenario: installation failure stops cloud lifecycle at the supported interface\n'
-run_phase bootstrap-refused cloud STUB_BOOTSTRAP_RC=1
+run_phase bootstrap-refused cloud STUB_INSTALL_REFUSED=1
 refused bootstrap-refused "an unresolved installation refuses the cloud phase"
-has "the installed Sol command owns durable reconciliation" "sol cloud bootstrap qualreg/aws/us-east-1 --apply" "$TMP/bootstrap-refused.sol"
-lacks "cloud plan does not follow a failed bootstrap" "sol cloud plan" "$TMP/bootstrap-refused.sol"
-lacks "cloud apply does not follow a failed bootstrap" "sol cloud apply" "$TMP/bootstrap-refused.sol"
+has "the whole-target preview runs first" \
+  "sol plan qualreg/aws/us-east-1 --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
+  "$TMP/bootstrap-refused.sol"
+has "and Sol owns durable reconciliation through the whole-target deploy" \
+  "sol deploy qualreg/aws/us-east-1 --registry $ECR --image-tag row-" "$TMP/bootstrap-refused.sol"
+lacks "no removed cloud subcommand is invoked" "cloud bootstrap" "$TMP/bootstrap-refused.sol"
+lacks "and neither is the removed partial apply" "cloud apply" "$TMP/bootstrap-refused.sol"
 [ ! -s "$TMP/bootstrap-refused.terraform" ] && ok "no direct Terraform operation runs" \
   || no "no direct Terraform operation runs" absent present
 
@@ -799,15 +816,15 @@ refused txnoopen "a port-forward with no local port fails the transaction"
 has "and the refusal names the transport" \
   "the qualification transport did not open" "$TMP/txnoopen.out"
 
-printf '\nscenario: the cloud and destroy phases hand Sol the row its declared var file\n'
+printf '\nscenario: the cloud phase previews with the row var file and deploys the whole target\n'
 run_phase cloudrun cloud
 is "exit 0" "$(cat "$TMP/cloudrun.rc")" "0"
-has "the plan carries the row's var file" \
-  "cloud plan qualreg/aws/us-east-1 --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
+has "the preview carries the row's var file" \
+  "plan qualreg/aws/us-east-1 --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
   "$TMP/cloudrun.sol"
-has "and so does the apply" \
-  "cloud apply qualreg/aws/us-east-1 --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
-  "$TMP/cloudrun.sol"
+has "and the whole-target deploy reconciles the environment by tag" \
+  "deploy qualreg/aws/us-east-1 --registry $ECR --image-tag row-" "$TMP/cloudrun.sol"
+lacks "the removed partial cloud apply is never invoked" "cloud apply" "$TMP/cloudrun.sol"
 
 printf '\nscenario: the harness supplies the platform credential the install names, then resumes\n'
 run_phase credential-boundary cloud STUB_APPLY_CREDENTIAL_MISSING=1
@@ -818,11 +835,11 @@ has "with the SASL user the workload renderer names" "sol-workloads:" "$TMP/cred
 has "and the SCRAM mechanism the durable layer declares" "SCRAM-SHA-256" "$TMP/credential-boundary.kubectl"
 has "bound to the cluster-access identity, which holds platform authority for a reserved namespace" \
   "kubeconfig-access.yaml" "$TMP/credential-boundary.kubectl"
-if [ "$(grep -c 'cloud apply' "$TMP/credential-boundary.sol")" -ge 2 ]; then
-  ok "and resumes the apply once the prerequisite exists"
+if [ "$(grep -c 'deploy qualreg/aws/us-east-1' "$TMP/credential-boundary.sol")" -ge 2 ]; then
+  ok "and resumes the deploy once the prerequisite exists"
 else
-  no "and resumes the apply once the prerequisite exists" "two cloud apply invocations" \
-    "$(grep -c 'cloud apply' "$TMP/credential-boundary.sol")"
+  no "and resumes the deploy once the prerequisite exists" "two whole-target deploy invocations" \
+    "$(grep -c 'deploy qualreg/aws/us-east-1' "$TMP/credential-boundary.sol")"
 fi
 has "the run record states the credential was supplied" \
   "platform_credential: redpanda/redpanda-users" "$TMP/credential-boundary.logs/prerequisites.txt"
@@ -835,11 +852,11 @@ run_phase credential-refused cloud STUB_APPLY_CREDENTIAL_MISSING=1 STUB_SECRET_C
 refused credential-refused "the install does not proceed without the prerequisite the harness stands in for"
 has "and the failure names the input the harness could not create" "redpanda/redpanda-users" \
   "$TMP/credential-refused.out"
-if [ "$(grep -c 'cloud apply' "$TMP/credential-refused.sol")" = "1" ]; then
-  ok "and the harness does not resume the apply"
+if [ "$(grep -c 'deploy qualreg/aws/us-east-1' "$TMP/credential-refused.sol")" = "1" ]; then
+  ok "and the harness does not resume the deploy"
 else
-  no "and the harness does not resume the apply" "one cloud apply invocation" \
-    "$(grep -c 'cloud apply' "$TMP/credential-refused.sol")"
+  no "and the harness does not resume the deploy" "one whole-target deploy invocation" \
+    "$(grep -c 'deploy qualreg/aws/us-east-1' "$TMP/credential-refused.sol")"
 fi
 
 run_phase destroyrun destroy
@@ -907,13 +924,13 @@ printf '\nscenario: a repeated invocation cannot reuse an occupied disposable ta
 run_phase occupied cloud STUB_STATE_PRESENT=1
 refused occupied "an occupied state key is refused as a fresh target"
 has "the refusal names the occupied state key" "already exists" "$TMP/occupied.out"
-lacks "nothing is applied" "cloud apply" "$TMP/occupied.sol"
+lacks "nothing is applied" "deploy qualreg/aws/us-east-1" "$TMP/occupied.sol"
 
 printf '\nscenario: an evidence directory that belongs to another attempt is refused\n'
 PRESEED_FOREIGN_ATTEMPT=another-attempt run_phase reused-dir cloud
 refused reused-dir "an evidence directory for another attempt is refused"
 has "the refusal names the attempt the directory belongs to" "another-attempt" "$TMP/reused-dir.out"
-lacks "nothing is applied" "cloud apply" "$TMP/reused-dir.sol"
+lacks "nothing is applied" "deploy qualreg/aws/us-east-1" "$TMP/reused-dir.sol"
 
 printf '\nscenario: a credential for a replaced same-name cluster is refused\n'
 run_phase stale-endpoint cloud STUB_KUBECONFIG_STALE=1

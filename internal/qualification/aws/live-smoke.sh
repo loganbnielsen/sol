@@ -88,7 +88,30 @@ say "sol-under-test: release $SOL_BUNDLE_VERSION at $SOL_INSTALL"
 trap cleanup EXIT
 write_target
 
-run aws-apply bash -lc "cd '$WORKSPACE' && AWS_PROFILE='$PROFILE' AWS_REGION='$REGION' '$SOL' cloud apply '$TARGET'"
+# The whole-target deploy reconciles the durable installation inline, the cluster and the
+# platform, then stops at the workloads this smoke publishes no images for -- the ECR
+# repositories do not exist until the cluster root this deploy applies creates them. A first
+# run's installation offer is confirmed through a pty. The platform readiness checks below
+# decide the smoke, not the deploy's exit status.
+deploy_whole_target() {
+  local name="$1" registry="$2"
+  say "$name"
+  local command="cd '$WORKSPACE' && AWS_PROFILE='$PROFILE' AWS_REGION='$REGION' exec '$SOL' deploy '$TARGET' --registry '$registry' --image-tag 'smoke-$(date -u +%Y%m%d-%H%M%S)'"
+  local rc=0
+  if command -v script >/dev/null 2>&1; then
+    printf 'y\n' | timeout "$PHASE_TIMEOUT" script -qec "$command" /dev/null >"$LOG_DIR/$name.log" 2>&1 || rc=$?
+  else
+    timeout "$PHASE_TIMEOUT" bash -c "$command" >"$LOG_DIR/$name.log" 2>&1 || rc=$?
+  fi
+  if [ "$rc" != 0 ]; then
+    say "note: $name exited $rc (the smoke builds no workload images); the platform checks below decide"
+    tail -n 40 "$LOG_DIR/$name.log"
+  fi
+}
+
+ACCOUNT="$(AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws sts get-caller-identity --query Account --output text)"
+REGISTRY="${ECR_REGISTRY:-$ACCOUNT.dkr.ecr.$REGION.amazonaws.com}"
+deploy_whole_target aws-deploy "$REGISTRY"
 run kubeconfig aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER"
 run nodes kubectl get nodes -o wide
 run pods kubectl get pods -A

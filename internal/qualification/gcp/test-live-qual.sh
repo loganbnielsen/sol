@@ -102,45 +102,57 @@ if [ "${1:-}" = "--version" ]; then
 fi
 printf 'sol %s [runner=%s]\n' "$*" "${SOL_MIGRATION_RUNNER_IMAGE:-unset}" >>"$ARGV_LOG"
 if [ -n "${STUB_SOL_SLEEP:-}" ]; then sleep "$STUB_SOL_SLEEP"; fi
-case "$1 $2" in
-  "cloud bootstrap")
-    if [ "${STUB_BOOTSTRAP_RC:-0}" != 0 ]; then
-      printf 'bootstrap REFUSED: installation is Unmet or UNKNOWN\n'
-      exit "$STUB_BOOTSTRAP_RC"
+case "$1" in
+  deploy)
+    # The cloud phase's bootstrap deploy names a tag (no digest exists before the Artifact
+    # Registry repositories do); the app phase's deploy pins digests.
+    if printf '%s\n' "$*" | grep -qF -- '--image-tag'; then
+      if [ "${STUB_INSTALL_REFUSED:-0}" = "1" ]; then
+        printf 'bootstrap REFUSED: the durable root would be replaced\n'
+        exit 1
+      fi
+      printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-cluster-stub/platform/cloud/gcp/cluster' 'apply'\n" \
+        "${XDG_DATA_HOME:-/tmp}"
+      printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
+      if [ "${STUB_APPLY_FAILS_AT:-}" = "bootstrap" ]; then
+        printf '[cloud-bootstrap-apply] FAILED (8.0s)\n'
+        printf 'Error: the provider refused the bootstrap\n'
+        exit "${STUB_APPLY_RC:-1}"
+      fi
+      printf 'lifecycle phase: PlatformInstalling\n'
+      if [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
+        printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
+        printf 'Resolve that, then re-run the whole-target deploy to resume the install.\n'
+        exit 1
+      fi
+      if [ "${STUB_APPLY_ERROR:-none}" = "already-exists" ]; then
+      printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\n" \
+          "${XDG_DATA_HOME:-/tmp}"
+        printf '[platform-prerequisites-apply] ok (12.0s)\n'
+        printf '[platform-apply] FAILED (31.0s)\n'
+        printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
+      else
+        printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\\n" \
+          "${XDG_DATA_HOME:-/tmp}"
+        printf 'platform-apply ok\n'
+      fi
+      printf 'provisioner-bootstrap-access-remove ok\n'
+      printf 'lifecycle phase: Ready\nDone.\n'
+      if [ "${STUB_APPLY_RC:-0}" = "0" ] && [ "${STUB_APPLY_ERROR:-none}" != "already-exists" ]; then
+        printf 'The environment for %s is reconciled.\n' "$2"
+      fi
+      [ "${STUB_APPLY_RC:-0}" = "0" ]
+    else
+      [ "${STUB_DEPLOY_RC:-0}" = "0" ]
     fi
     ;;
-  "cloud apply")
-    printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-cluster-stub/platform/cloud/gcp/cluster' 'apply'\n" \
-      "${XDG_DATA_HOME:-/tmp}"
-    printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
-    if [ "${STUB_APPLY_FAILS_AT:-}" = "bootstrap" ]; then
-      printf '[cloud-bootstrap-apply] FAILED (8.0s)\n'
-      printf 'Error: the provider refused the bootstrap\n'
-      exit "${STUB_APPLY_RC:-1}"
-    fi
-    printf 'lifecycle phase: PlatformInstalling\n'
-    if [ "${STUB_APPLY_CREDENTIAL_MISSING:-0}" = "1" ] && [ ! -f "${TMP:-/tmp}/credential-supplied" ]; then
-      printf 'the platform install cannot start: the operator-supplied Secret redpanda-users is absent from namespace redpanda.\n'
-      printf 'Resolve that, then re-run `sol cloud apply <target>` to resume the install.\n'
-      exit 1
-    fi
-    if [ "${STUB_APPLY_ERROR:-none}" = "already-exists" ]; then
-    printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\n" \
-        "${XDG_DATA_HOME:-/tmp}"
-      printf '[platform-prerequisites-apply] ok (12.0s)\n'
-      printf '[platform-apply] FAILED (31.0s)\n'
-      printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
-    else
-      printf "  $ 'terraform' '-chdir=%s/sol/terraform/gcp-platform-stub/platform/cloud/gcp/platform' 'apply'\\n" \
-        "${XDG_DATA_HOME:-/tmp}"
-      printf 'platform-apply ok\n'
-    fi
-    printf 'provisioner-bootstrap-access-remove ok\n'
-    printf 'lifecycle phase: Ready\nDone.\n'
-    [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
-  "cloud plan") [ "${STUB_CLOUD_PLAN_RC:-0}" = "0" ] ;;
-  "cloud destroy") [ "${STUB_DESTROY_RC:-0}" = "0" ] ;;
-  "deploy")        [ "${STUB_DEPLOY_RC:-0}" = "0" ] ;;
+  plan) [ "${STUB_CLOUD_PLAN_RC:-0}" = "0" ] ;;
+  cloud)
+    case "$2" in
+      destroy) [ "${STUB_DESTROY_RC:-0}" = "0" ] ;;
+      *) : ;;
+    esac
+    ;;
   *) : ;;
 esac
 STUB
@@ -601,10 +613,9 @@ for scenario in absent drift failure; do
   [ "$scenario" = failure ] && plan_rc=1
   run_case "plan-$scenario" cloud PLAN_ONLY=1 STUB_PLAN_RC=2 STUB_CLOUD_PLAN_RC="$plan_rc" STUB_BUCKET_ABSENT=1
   is "$scenario: plan exit status is preserved" "$(cat "$TMP/plan-$scenario.rc")" "$plan_rc"
-  has "$scenario: supported cloud planning runs" "sol cloud plan" "$TMP/plan-$scenario.argv"
+  has "$scenario: supported cloud planning runs" "sol plan" "$TMP/plan-$scenario.argv"
   lacks "$scenario: no durable Terraform operation runs" "terraform " "$TMP/plan-$scenario.argv"
-  lacks "$scenario: no installation apply runs" "sol cloud bootstrap" "$TMP/plan-$scenario.argv"
-  lacks "$scenario: no cloud apply runs" "sol cloud apply" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: planning runs no whole-target deploy" "sol deploy" "$TMP/plan-$scenario.argv"
   lacks "$scenario: no destroy runs on exit" "sol cloud destroy" "$TMP/plan-$scenario.argv"
   [ ! -e "$TARGET_FILE" ] && ok "$scenario: scratch target is removed" \
     || no "$scenario: scratch target is removed" absent present
@@ -617,7 +628,7 @@ printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
 lacks "no destroy on the success path (the delegation boundary keeps the substrate)" "cloud destroy" "$TMP/cloud-ok.argv"
-lacks "the cloud phase never runs an application deploy" "sol deploy" "$TMP/cloud-ok.argv"
+lacks "the cloud phase never runs an application deploy" "migrate apply" "$TMP/cloud-ok.argv"
 has "the target is written for the run" "cluster_name" "$TARGET_FILE"
 has "the generated target asks for TLS, which DEC-055 made installable on GCP" "cluster_issuer: letsencrypt-staging" "$TARGET_FILE"
 has "the cloud target declares the app database the enabled units use" "app_db:" "$TARGET_FILE"
@@ -625,10 +636,11 @@ has "and the events resource" "events: {}" "$TARGET_FILE"
 has "and the OCaml units the alpha scenario runs" "orders_svc: {}" "$TARGET_FILE"
 has "and the TypeScript units" "order_svc: {}" "$TARGET_FILE"
 has "Sol validates the declarations in this phase" "sol check" "$TMP/cloud-ok.argv"
-has "installation lifecycle is exercised through Sol" "sol cloud bootstrap $TARGET --apply" "$TMP/cloud-ok.argv"
+has "installation lifecycle is exercised through Sol" "sol deploy $TARGET --registry" "$TMP/cloud-ok.argv"
+lacks "and the bootstrap deploy pins no digest that does not exist yet" "--image-ref" "$TMP/cloud-ok.argv"
 lacks "the harness never mutates the durable Terraform root directly" "terraform apply" "$TMP/cloud-ok.argv"
 
-if [ "$(awk '/sol check/{c=NR} /sol cloud apply/{a=NR} END{print (c && a && c<a) ? "yes" : "no"}' \
+if [ "$(awk '/sol check/{c=NR} /sol deploy/{a=NR} END{print (c && a && c<a) ? "yes" : "no"}' \
     "$TMP/cloud-ok.argv")" = "yes" ]; then
   ok "before it mutates the provider"
 else
@@ -663,11 +675,11 @@ has "with the SASL user the workload renderer names" "sol-workloads:" "$TMP/cred
 has "and the SCRAM mechanism the durable layer declares" "SCRAM-SHA-256" "$TMP/credential-boundary.argv"
 has "bound to the run's own kubeconfig" \
   "[kubeconfig=$TMP/credential-boundary.logs/run-kubeconfig.yaml]" "$TMP/credential-boundary.argv"
-if [ "$(grep -c 'cloud apply' "$TMP/credential-boundary.argv")" -ge 2 ]; then
-  ok "and resumes the apply once the prerequisite exists"
+if [ "$(grep -c 'sol deploy' "$TMP/credential-boundary.argv")" -ge 2 ]; then
+  ok "and resumes the deploy once the prerequisite exists"
 else
-  no "and resumes the apply once the prerequisite exists" "two cloud apply invocations" \
-    "$(grep -c 'cloud apply' "$TMP/credential-boundary.argv")"
+  no "and resumes the deploy once the prerequisite exists" "two whole-target deploy invocations" \
+    "$(grep -c 'sol deploy' "$TMP/credential-boundary.argv")"
 fi
 has "the run record states the credential was supplied" \
   "platform_credential: redpanda/redpanda-users" "$TMP/credential-boundary.logs/prerequisites.txt"
@@ -701,14 +713,14 @@ printf '\nscenario: a repeated invocation cannot reuse an occupied disposable ta
 run_case occupied cloud STUB_STATE_PRESENT=1
 is "exit 2" "$(cat "$TMP/occupied.rc")" "2"
 has "the refusal names the occupied state key" "already exists" "$TMP/occupied.out"
-lacks "nothing is applied" "cloud apply" "$TMP/occupied.argv"
+lacks "nothing is applied" "sol deploy" "$TMP/occupied.argv"
 lacks "and nothing is torn down" "cloud destroy" "$TMP/occupied.argv"
 
 printf '\nscenario: an evidence directory that belongs to another attempt is refused\n'
 PRESEED_FOREIGN_ATTEMPT=another-attempt run_case reused-dir cloud
 is "exit 2" "$(cat "$TMP/reused-dir.rc")" "2"
 has "the refusal names the attempt the directory belongs to" "another-attempt" "$TMP/reused-dir.out"
-lacks "nothing is applied" "cloud apply" "$TMP/reused-dir.argv"
+lacks "nothing is applied" "sol deploy" "$TMP/reused-dir.argv"
 
 printf '\nscenario: a credential for a replaced same-name cluster is not this run'"'"'s\n'
 run_case stale-endpoint cloud STUB_CLUSTER_EXISTS=1 STUB_ENDPOINT_REPORTED=10.9.9.9 \
@@ -991,7 +1003,12 @@ has "the leftover names a class the contract requires (artifact registry)" "arti
 printf '\nscenario: apply fails at the platform boundary\n'
 run_case cloud-fail cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
 has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
-lacks "the harness never runs an application deploy to diagnose the platform" "sol deploy" "$TMP/cloud-fail.argv"
+if [ "$(grep -c 'sol deploy' "$TMP/cloud-fail.argv")" = "1" ]; then
+  ok "the harness does not run a second deploy to diagnose the platform"
+else
+  no "the harness does not run a second deploy to diagnose the platform" "one whole-target deploy" \
+    "$(grep -c 'sol deploy' "$TMP/cloud-fail.argv")"
+fi
 if [ "$(cat "$TMP/cloud-fail.rc")" = "0" ]; then no "a failed apply exits non-zero" "non-zero" "0"; else ok "a failed apply exits non-zero"; fi
 present "$TMP/cloud-fail.logs/inventory-pre.tsv" "the pre-teardown inventory is captured on the failure path (H6)"
 present "$TMP/cloud-fail.logs/state/cloud.tfstate" "the state snapshot is captured on the failure path (H3)"
@@ -1042,21 +1059,21 @@ else
 fi
 
 printf '\nscenario: the durable root would be replaced\n'
-run_case durable-refusal cloud STUB_BOOTSTRAP_RC=1
+run_case durable-refusal cloud STUB_INSTALL_REFUSED=1
 if [ "$(cat "$TMP/durable-refusal.rc")" = "0" ]; then
   no "a plan that would replace a durable prerequisite refuses" "non-zero" "0"
 else
   ok "a plan that would replace a durable prerequisite refuses"
 fi
 has "the refusal names the durable risk" "REFUSED" "$TMP/durable-refusal.out"
-lacks "no cloud apply runs after a refused durable reconcile" "cloud apply" "$TMP/durable-refusal.argv"
+has "the refused whole-target deploy is the only mutation attempted" "sol deploy" "$TMP/durable-refusal.argv"
 lacks "an unresolved installation never tears down a disposable target it did not apply" "cloud destroy" "$TMP/durable-refusal.argv"
 
 printf '\nscenario: platform subcommand\n'
 run_case platform-refused platform
 is "exit 2" "$(cat "$TMP/platform-refused.rc")" "2"
-has "the refusal points at the invocation that installs the platform" "sol cloud apply" "$TMP/platform-refused.out"
-lacks "the refused phase runs nothing" "cloud apply" "$TMP/platform-refused.argv"
+has "the refusal points at the invocation that installs the platform" "sol deploy" "$TMP/platform-refused.out"
+lacks "the refused phase runs nothing" "sol deploy" "$TMP/platform-refused.argv"
 
 printf '\nscenario: process discipline\n'
 grep -vE '^[[:space:]]*#' "$HARNESS" >"$TMP/harness-code.sh"
@@ -1154,7 +1171,7 @@ has "the teardown runs even though stdout is gone" "cloud destroy" "$TMP/sigpipe
 present "$TMP/sigpipe.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
 has "the harness narrative records the teardown" "teardown: sol cloud destroy" \
   "$TMP/sigpipe.logs/harness.log"
-has "and the failure that preceded it" "cloud apply failed" "$TMP/sigpipe.logs/harness.log"
+has "and the failure that preceded it" "did not reconcile the environment" "$TMP/sigpipe.logs/harness.log"
 
 printf '\nscenario: SIGTERM tears down and verifies absence without killing Terraform in flight\n'
 run_case_sigterm sigterm TERM STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_SOL_SLEEP=3
@@ -1202,7 +1219,7 @@ has "and then an establishment on the RUNNING path" "credentials-established" \
 lacks "the waiter did not exit on the absent cluster" "parent-gone" "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
 
 est="$(grep -n 'run kubeconfig: established' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
-fail_line="$(grep -n 'cloud apply failed' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+fail_line="$(grep -n 'did not reconcile the environment' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 if [ -n "$est" ] && [ -n "$fail_line" ] && [ "$est" -lt "$fail_line" ]; then
   ok "run credentials are established before the failure, not by it (line $est < $fail_line)"
 else
