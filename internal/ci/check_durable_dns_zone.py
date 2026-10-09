@@ -12,8 +12,8 @@ This guard reads both providers and fails closed: each bootstrap root owns its z
 managing flag and keeps that ownership in a remote backend; each cluster root owns a zone
 only when told to create one, reads an existing one otherwise, and carries no wildcard
 authority that would hide the difference; each qualification target selects the durable zone;
-each qualification harness delegates durable reconciliation to Sol's guarded installation
-bootstrap; and each absence verifier reports the retained zone as the declared prerequisite
+each qualification harness delegates durable reconciliation to Sol's inline whole-target
+deploy; and each absence verifier reports the retained zone as the declared prerequisite
 rather than as residue.
 """
 
@@ -151,10 +151,12 @@ def check_provider(root: pathlib.Path, provider: str, spec: dict) -> list[str]:
         )
 
     harness = (root / spec["harness"]).read_text()
-    if "cloud bootstrap" not in harness or "--apply" not in harness:
+    # The durable installation is reconciled inline by the whole-target deploy (DEC-057 §2);
+    # the harness must delegate that to Sol rather than driving the root itself.
+    if "deploy '$TARGET'" not in harness:
         problems.append(
             f"{provider}: {spec['harness']} does not reconcile the durable installation "
-            "through `sol cloud bootstrap <target> --apply`"
+            "through the whole-target `sol deploy <target>`"
         )
 
     absence = (root / spec["absence"]).read_text()

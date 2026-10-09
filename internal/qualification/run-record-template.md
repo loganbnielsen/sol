@@ -218,8 +218,8 @@ removal observed during teardown **cannot** be cited as item (4)/(5) for this se
 install path's own before/after pair is what establishes it. See `DEC-040`'s scope note.
 
 The **shape of the authorizer's answer** is checked automatically, in the first minutes
-after the cluster is reachable -- after the cloud apply, before the platform install.
-`sol cloud apply` retries the probe with backoff (a fresh EKS endpoint is briefly unable to
+after the cluster is reachable -- after the whole-target deploy creates it, before the platform install.
+The whole-target deploy retries the probe with backoff (a fresh EKS endpoint is briefly unable to
 authenticate its own principal) and then **fails the run** unless it observes all four of:
 
 1. an answer at all — unreachability after the retry window is a **failure**, not a pass,

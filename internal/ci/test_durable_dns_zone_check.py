@@ -137,17 +137,15 @@ def main():
     cases.append(("aws-record-authority-widened", tmp, "hostedzone/*"))
 
     tmp = scratch()
-    mutate(
-        tmp,
-        "internal/qualification/aws/live-row.sh",
-        "cloud bootstrap '$TARGET' --apply",
-        "cloud plan '$TARGET' --apply",
-    )
+    # A harness that never reconciles the target leaves the durable installation unowned;
+    # remove every whole-target deploy, not just the first, since any of them reconciles it.
+    harness = tmp / "internal/qualification/aws/live-row.sh"
+    harness.write_text(harness.read_text().replace("deploy '$TARGET'", "plan '$TARGET'"))
     cases.append(
         (
-            "aws-harness-delegates-to-guarded-bootstrap",
+            "aws-harness-delegates-to-whole-target-deploy",
             tmp,
-            "cloud bootstrap",
+            "whole-target `sol deploy",
         )
     )
 
