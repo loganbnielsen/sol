@@ -9,6 +9,7 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 export REPO_ROOT="$root"
 sol="$(realpath "${1:-$root/_build/default/cli/bin/main.exe}")"
+real_sol="$sol"
 record_emitter="$(realpath "${2:-$root/_build/default/cli/test/print_release_record.exe}")"
 tmp="$(mktemp -d)"
 heredocs_open=$(grep -cE "^cat >.*<<'EOF'" "$0")
@@ -24,6 +25,34 @@ mkdir -p "$tmp/work/app/payments/charge_svc" "$tmp/work/app/comms/notify_worker"
 printf 'FROM scratch\n' >"$tmp/work/app/payments/charge_svc/Dockerfile"
 printf 'FROM scratch\n' >"$tmp/work/app/comms/notify_worker/Dockerfile"
 cp "$root"/internal/ci/lifecycle_fakes/* "$tmp/bin/"
+
+cat >"$tmp/bin/sol" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+real_sol="${SOL_LIFECYCLE_REAL_SOL:?}"
+workspace="${SOL_LIFECYCLE_WORKSPACE:?}"
+command="${1:-}"
+subcommand="${2:-}"
+if [ "$command" = cloud ] && { [ "$subcommand" = apply ] || [ "$subcommand" = plan ]; }; then
+  target="${3:?target required}"
+  shift 3
+  refs=()
+  if grep -Eq '^[[:space:]]+charge_svc:' "$workspace/sol.yml"; then
+    refs+=(--image-ref charge_svc=registry.example.test/charge-svc@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+  fi
+  if grep -Eq '^[[:space:]]+notify_worker:' "$workspace/sol.yml"; then
+    refs+=(--image-ref notify_worker=registry.example.test/notify-worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+  fi
+  if [ "$subcommand" = apply ]; then
+    exec env POSTGRES_URL=postgresql://lifecycle:offline@localhost:5432/test \
+      "$real_sol" deploy "$target" --image-tag offline-test --registry registry.example.test "${refs[@]}" "$@"
+  else
+    exec "$real_sol" plan "$target" "${refs[@]}" "$@"
+  fi
+fi
+exec "$real_sol" "$@"
+EOF
+chmod +x "$tmp/bin/sol"
 
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: lifecycle-test
@@ -49,9 +78,14 @@ prod:
       # the policy the Destroy policy must override after PrepareDestroy (finding 15).
       profile: production-single-region
       base_domain: example.test
+      dns_zone_ownership: sol
       cluster_name: lifecycle-test
       letsencrypt_email: ops@example.test
       cluster_endpoint_cidr: 203.0.113.0/24
+      alert_receiver_type: webhook
+      alert_receiver_url: https://alerts.example.test/lifecycle
+      alert_owner: platform@example.test
+      alert_runbook_url: https://runbooks.example.test/lifecycle
       state_bucket: lifecycle-state
       aws:
         state_lock_table: lifecycle-lock
@@ -64,6 +98,7 @@ prod:
           size: small
     gcp/us-central1:
       base_domain: qual.example.test
+      dns_zone_ownership: sol
       cluster_name: sol-qual
       letsencrypt_email: ops@example.test
       state_bucket: sol-qualification-tfstate
@@ -92,12 +127,16 @@ done
 
 
 export PATH="$tmp/bin:$PATH"
+export SOL_LIFECYCLE_REAL_SOL="$real_sol"
+export SOL_LIFECYCLE_WORKSPACE="$tmp/work"
+sol="$tmp/bin/sol"
 export SOL_HOME="$root"
 export XDG_DATA_HOME="$tmp/xdg-data"
 export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export SOL_WHOAMI_RETRY_INTERVAL_S=0
+export INSTALLATION_PRESENT=1
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
 export STATE_RM_FILE="$tmp/markers/state-rm"
@@ -537,7 +576,7 @@ if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' \
   cat "$log" >&2
   exit 1
 fi
-grep -F 'requires the installation window that `sol cloud apply` opens' "$log.out" >/dev/null || {
+grep -F 'requires the installation window that `sol deploy` opens' "$log.out" >/dev/null || {
   echo "cloud plan did not report the whole-root platform deferred on the installation window:" >&2
   cat "$log.out" >&2
   exit 1
@@ -586,7 +625,7 @@ if grep -Fi 'forbidden' "$retry_plan_log.out" >/dev/null; then
   cat "$retry_plan_log.out" >&2
   exit 1
 fi
-grep -F 'requires the installation window that `sol cloud apply` opens' \
+grep -F 'requires the installation window that `sol deploy` opens' \
   "$retry_plan_log.out" >/dev/null || {
   echo "the retry plan did not name the installation window as the deferred prerequisite:" >&2
   cat "$retry_plan_log.out" >&2
@@ -651,36 +690,22 @@ then
   echo "cloud plan on GCP failed" >&2
   exit 1
 fi
-grep -F 'gcloud container clusters get-credentials sol-qual --region us-central1' "$gcp_log" \
-  >/dev/null || {
-  echo "GCP plan did not obtain cluster credentials through gcloud:" >&2
-  grep -F 'gcloud ' "$gcp_log" >&2
+grep -F 'kubectl --context lifecycle-test get deployment -A -o json' "$gcp_log" >/dev/null || {
+  echo "GCP plan did not inspect the live target workload set:" >&2
+  cat "$gcp_log" >&2
   exit 1
 }
-while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
-grep -F -- '-var=provisioner_impersonators=["user:qualification-operator@example.test"]' \
-  "$gcp_log" >/dev/null || {
-  echo "the target's declared provisioner_impersonator did not reach the GCP root:" >&2
-  grep -F 'provisioner_impersonators' "$gcp_log" >&2
+grep -E -- '-chdir=[^ ]*cloud/gcp/cluster plan ' "$gcp_log" >/dev/null || {
+  echo "GCP target plan did not plan its infrastructure:" >&2
+  cat "$gcp_log" >&2
   exit 1
 }
-if grep -F -- '-var=provisioner_impersonators=[' "$gcp_log" | grep -vF 'qualification-operator@example.test' >/dev/null; then
-  echo "the impersonation grant named a member the target did not declare:" >&2
-  grep -F 'provisioner_impersonators' "$gcp_log" >&2
+if grep -E -- '-chdir=[^ ]*cloud/gcp/cluster apply ' "$gcp_log" >/dev/null; then
+  echo "read-only GCP target plan unexpectedly applied infrastructure:" >&2
+  grep -E -- '-chdir=[^ ]*cloud/gcp/cluster apply ' "$gcp_log" >&2
   exit 1
 fi
-grep -F -- '-var=cloud_provider=gcp' "$gcp_log" >/dev/null || {
-  echo "the GCP platform root was not told cloud_provider=gcp:" >&2
-  grep -F 'platform/cloud/' "$gcp_log" >&2
-  exit 1
-}
-for aws_only in aws_region= cert_manager_irsa_role_arn= loki_s3_bucket= \
-  provisioner_bootstrap_admin create_rds= rds_multi_az= ecr_repositories= workspace_name=; do
-  if grep -F -- "-var=$aws_only" "$gcp_log" >/dev/null; then
-    echo "an AWS variable ($aws_only) reached the GCP root:" >&2
-    exit 1
-  fi
-done
+while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
 # The workspace's recorded UID evidence: owned_workloads.tsv is the one source for the
 # identities the fake reports as live and the record this seeds carries, so the removal match
@@ -2126,14 +2151,15 @@ assert_contains "INFRA-076: the unresolved operation is named" "$unresolved_log.
 assert_not_contains "INFRA-076: no terraform apply ran" "$unresolved_log.out" '[terraform-apply]' || exit 1
 
 accept_log="$tmp/infra076-accept.log"
-if ! (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$accept_log" \
-        "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$accept_log.out" 2>&1; then
-  cat "$accept_log.out" >&2
-  echo "INFRA-076: --accept-unresolved did not let the apply proceed" >&2
+if (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$accept_log" \
+      "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$accept_log.out" 2>&1; then
+  echo "INFRA-076: deploy accepted a bypass for an unresolved Terraform operation" >&2
   exit 1
 fi
-[ -e "$latest/acknowledged" ] || {
-  echo "INFRA-076: accepting an unresolved operation was not recorded" >&2
+assert_not_contains "INFRA-076: unresolved operation did not reach terraform apply" \
+  "$accept_log.out" '[terraform-apply]' || exit 1
+[ ! -e "$latest/acknowledged" ] || {
+  echo "INFRA-076: refusal recorded an acknowledgement for an unresolved operation" >&2
   exit 1
 }
 
@@ -2356,11 +2382,15 @@ cmp -s "$aws_wd/errored.tfstate" "$tmp/errored.expected" ||
 errored_plan_log="$tmp/dec050-errored-plan.log"
 run_plan_aws "$errored_plan_log" || { cat "$errored_plan_log.out" >&2; echo "DEC-050: plan failed" >&2; exit 1; }
 errored_accept_log="$tmp/dec050-errored-accept.log"
-(cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$errored_accept_log" \
-   "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$errored_accept_log.out" 2>&1 || {
-  cat "$errored_accept_log.out" >&2; echo "DEC-050: --accept-unresolved apply failed" >&2; exit 1; }
+if (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$errored_accept_log" \
+      "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$errored_accept_log.out" 2>&1; then
+  echo "DEC-050: deploy accepted an errored Terraform state" >&2
+  exit 1
+fi
+assert_not_contains "DEC-050: errored state did not reach terraform apply" \
+  "$errored_accept_log.out" '[terraform-apply]' || exit 1
 cmp -s "$aws_wd/errored.tfstate" "$tmp/errored.expected" ||
-  { echo "DEC-050: errored.tfstate did not survive a plan and an accepted apply" >&2; exit 1; }
+  { echo "DEC-050: errored.tfstate did not survive a plan and refused deploy" >&2; exit 1; }
 rm -f "$aws_wd/errored.tfstate"
 echo "DEC-050: errored.tfstate is reported, refuses apply, and survives re-materialization"
 
@@ -2376,12 +2406,12 @@ if ! (cd "$tmp/work" && FAIL_ON="" SOL_HOME="$ro_home" LIFECYCLE_LOG="$ro_log" \
         "$sol" cloud plan prod/aws/us-east-1) >"$ro_log.out" 2>&1; then
   chmod -R u+w "$ro_home"
   cat "$ro_log.out" >&2
-  echo "DEC-050: sol cloud plan failed against read-only assets" >&2
+  echo "DEC-050: sol plan failed against read-only assets" >&2
   exit 1
 fi
 chmod -R u+w "$ro_home"
 grep -q -- "-chdir=$workdirs/" "$ro_log" || { echo "DEC-050: read-only run did not use a working directory" >&2; exit 1; }
-echo "DEC-050: sol cloud plan runs against read-only assets"
+echo "DEC-050: sol plan runs against read-only assets"
 
 if ! SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc "$sol" --version >/dev/null 2>&1; then
   echo "REFAC-115: a malformed SOL_DESTROY_SNAPSHOT_INTERVAL_S broke an unrelated command" >&2

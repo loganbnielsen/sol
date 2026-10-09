@@ -128,7 +128,7 @@ of that fact where the two can drift apart:
 
 | Information | System of record | Sol's role |
 |---|---|---|
-| What infrastructure exists | Terraform state (`sol cloud plan/apply`) | Read and present it; never keep a parallel inventory |
+| What infrastructure exists | Terraform state (`sol plan/apply`) | Read and present it; never keep a parallel inventory |
 | What was released, and when | Sol release records (`sol releases`) and deployment events (`sol deployments`) | Own these — they are Sol's own facts, so nothing else is authoritative for them |
 | What the applications emitted | The observability backend (Loki, Prometheus, Tempo, or an external provider) | Own the labels, definitions, scope mapping and links that make it navigable; never the raw storage |
 | What the cloud provider measured | The provider's own metrics system (CloudWatch on AWS) | Surface it through a managed-resource dashboard (OBS-044) rather than duplicating it |

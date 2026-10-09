@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" = manifest ] && [ "${2:-}" = inspect ] && [ -n "${3:-}" ]; then
+  exit 0
+fi
+
+echo "unexpected docker invocation: $*" >&2
+exit 2

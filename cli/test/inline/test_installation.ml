@@ -1499,9 +1499,7 @@ let test_the_refusal_names_how_to_establish_it () =
   check_bool
     "the refusal names the command that establishes the installation"
     true
-    (Sol_cli_string.contains
-       ~needle:"sol cloud bootstrap prod/aws/us-east-1 --apply"
-       refusal);
+    (Sol_cli_string.contains ~needle:"sol deploy prod/aws/us-east-1" refusal);
   check_bool
     "the refusal says why it will not set it up"
     true
@@ -1526,7 +1524,7 @@ let test_an_unobservable_installation_is_never_absent () =
   check_bool
     "the report says how to observe it"
     true
-    (Sol_cli_string.contains ~needle:"sol cloud bootstrap prod/aws/us-east-1" report);
+    (Sol_cli_string.contains ~needle:"sol plan prod/aws/us-east-1" report);
   check_bool
     "an unobservable installation is never called absent"
     false
@@ -1549,7 +1547,7 @@ let test_the_next_stage_is_named () =
   check_bool
     "an established installation names the environment stage"
     true
-    (Sol_cli_string.contains ~needle:"sol cloud apply prod/aws/us-east-1" present);
+    (Sol_cli_string.contains ~needle:"sol deploy prod/aws/us-east-1" present);
   check_bool
     "an undeclared installation is named with its reason"
     true

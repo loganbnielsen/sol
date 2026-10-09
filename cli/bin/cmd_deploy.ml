@@ -426,9 +426,15 @@ let first_run ~target ~target_cfg ~action ~await_delegation ~run_log () =
   environment_stage ~target ~run_log ~action ()
 ;;
 
-let reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegation () =
+let reconcile_environment_for_deploy
+      ~planning
+      ~target
+      ~run_log
+      ~await_delegation
+      ~confirm_ecr_removal
+      ()
+  =
   let target_cfg = planning.Sol_cli_deploy_selection.Target_plan_input.config.target in
-  let* () = Cmd_cloud_tf.check_terraform () in
   let* assets = Cmd_cloud_tf.resolve_assets () in
   let* installation =
     installation_stage
@@ -440,7 +446,9 @@ let reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegatio
   in
   let* () =
     match installation with
-    | Installation_established -> Ok ()
+    | Installation_established ->
+      print_guided (Sol_cli_installation_onboarding.observed_lines ~target);
+      Ok ()
     | Installation_reported ->
       Error
         (Sol_cli_exit.error
@@ -449,6 +457,17 @@ let reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegatio
                evidence; target reconciliation stopped before changing the environment"
               target))
   in
+  let* () = Cmd_cloud_tf.check_terraform () in
+  (match target_cfg.Sol_cli_config.kube_context with
+   | None ->
+     print_guided
+       [ "This target names no Kubernetes destination Sol can reach from here, so this \
+          is "
+         ^ "the first run for "
+         ^ target
+         ^ ":"
+       ]
+   | Some _ -> ());
   print_guided
     [ ""
     ; Printf.sprintf
@@ -457,6 +476,7 @@ let reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegatio
     ];
   match
     Sol_cli_environment_stage.apply_config
+      ~confirm_ecr_removal
       ~assets
       ~run_log
       ~config:planning.config
@@ -465,6 +485,7 @@ let reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegatio
       ()
   with
   | Ok (Sol_cli_environment_stage.Applied { cluster; infra_dir }) ->
+    print_guided [ Printf.sprintf "The environment for %s is reconciled." target ];
     environment_destination ~target ~cluster ~infra_dir
   | Ok (Sol_cli_environment_stage.Apply_failed { failure; _ }) ->
     Error
@@ -480,6 +501,7 @@ let destination_or_environment_stage
       ~run_log
       ~action
       ~await_delegation
+      ~confirm_ecr_removal
       ()
   =
   let target_cfg =
@@ -500,7 +522,13 @@ let destination_or_environment_stage
     action = Sol_cli_command_request.Deploy_apply
     && Sol_cli_provider_capabilities.owns_root target_cfg.Sol_cli_config.provider
   then
-    reconcile_environment_for_deploy ~planning ~target ~run_log ~await_delegation ()
+    reconcile_environment_for_deploy
+      ~planning
+      ~target
+      ~run_log
+      ~await_delegation
+      ~confirm_ecr_removal
+      ()
     |> Result.map (fun destination -> destination, true)
   else (
     match Sol_cli_config.destination_of_target target_cfg with
@@ -651,6 +679,7 @@ let run_apply
       ~target
       ~run_log
       ~confirm_group_change
+      ~confirm_ecr_removal
       ~loki_push_url
       ~await_delegation
       ()
@@ -678,6 +707,7 @@ let run_apply
       ~run_log
       ~action:Sol_cli_command_request.Deploy_apply
       ~await_delegation
+      ~confirm_ecr_removal
       ()
   in
   let target_cfg = planning.Sol_cli_deploy_selection.Target_plan_input.config.target in
@@ -828,6 +858,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
       ~target:req.target
       ~run_log
       ~confirm_group_change:req.confirm_group_change
+      ~confirm_ecr_removal:req.confirm_ecr_removal
       ~loki_push_url:req.loki_push_url
       ~await_delegation
       ()
@@ -839,6 +870,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         ~run_log
         ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
         ~await_delegation
+        ~confirm_ecr_removal:req.confirm_ecr_removal
         ()
     in
     run_dry_run (context_of ~destination) ~emit_to ~await_delegation
@@ -850,6 +882,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         ~run_log
         ~action:(Sol_cli_command_request.Deploy_emit_to dir)
         ~await_delegation
+        ~confirm_ecr_removal:req.confirm_ecr_removal
         ()
     in
     run_emit (context_of ~destination) ~dir
@@ -1036,6 +1069,17 @@ let confirm_group_change_flag =
         ~doc:"Acknowledge that consumer group IDs have changed and proceed with deploy")
 ;;
 
+let confirm_ecr_removal_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "confirm-ecr-removal" ]
+        ~doc:
+          "Confirm deleting ECR repositories whose workloads leave this target's \
+           declared set")
+;;
+
 let loki_push_url_arg =
   Arg.(
     value
@@ -1146,6 +1190,7 @@ let cmd =
              registry
              secret_backend
              confirm_group_change
+             confirm_ecr_removal
              loki_push_url
              keep_releases
              await_delegation
@@ -1162,6 +1207,7 @@ let cmd =
                   ~registry
                   ~secret_backend
                   ~confirm_group_change
+                  ~confirm_ecr_removal
                   ~loki_push_url
                   ~keep_releases
                   ~await_delegation
@@ -1178,6 +1224,7 @@ let cmd =
       $ registry_arg
       $ secret_backend_term
       $ confirm_group_change_flag
+      $ confirm_ecr_removal_flag
       $ loki_push_url_arg
       $ keep_releases_arg
       $ await_delegation_arg)

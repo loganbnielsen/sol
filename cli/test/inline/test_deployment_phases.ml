@@ -279,6 +279,7 @@ let deploy_without_tag ~git_sha =
     ~registry:None
     ~secret_backend:None
     ~confirm_group_change:false
+    ~confirm_ecr_removal:false
     ~loki_push_url:None
     ~keep_releases:20
     ~await_delegation:None
@@ -341,6 +342,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~registry:(Some "reg.example.com")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -363,6 +365,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~registry:(Some "gcr.io/myproject")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -392,6 +395,7 @@ let test_deploy_request_gitops_action () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -421,6 +425,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -450,6 +455,7 @@ let test_deploy_request_rejects_empty_target () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -470,6 +476,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~registry:None
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -498,6 +505,7 @@ let test_deploy_request_accepts_image_refs () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -525,6 +533,7 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:20
       ~await_delegation:None
@@ -1175,6 +1184,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~registry:(Some "reg")
       ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
+      ~confirm_ecr_removal:false
       ~loki_push_url:None
       ~keep_releases:0
       ~await_delegation:None

@@ -262,11 +262,11 @@ let show_cmd =
     ; `P
         "Every live field names its authority rather than keeping state of its own. \
          `cloud` is the provider's own answer for the installation Sol manages — the \
-         same observation `sol cloud bootstrap` reports, never a Sol-side record. \
-         `drift` is a read-only, refresh-only Terraform plan, so it compares the \
-         recorded state with observed reality without changing either. `last operation` \
-         has no target-scoped authority to read, and ADR 0003 forbids adding one, so it \
-         is reported as unavailable rather than as `none`."
+         same observation `sol plan` reports, never a Sol-side record. `drift` is a \
+         read-only, refresh-only Terraform plan, so it compares the recorded state with \
+         observed reality without changing either. `last operation` has no target-scoped \
+         authority to read, and ADR 0003 forbids adding one, so it is reported as \
+         unavailable rather than as `none`."
     ; `P
         "With --check it also reports the self-hosted substrate contract \
          (docs/reference/substrate.md) input by input, in the same Established / Unmet / \

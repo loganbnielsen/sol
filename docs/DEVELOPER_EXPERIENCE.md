@@ -134,11 +134,11 @@ defined by the
 `bootstrap → preflight → apply` contract `DEC-043` left open.
 
 **Today:** the stages exist as code and as separate commands
-(`sol cloud plan|apply|destroy`, `sol deploy`, `sol migrate`). The durable
+(`sol plan`, `sol deploy`, `sol cloud destroy`, `sol migrate`). The durable
 installation among them is guided in place: a first `sol deploy` observes it and
 offers to set it up (FEAT-106). The environment stage is driven in place too: a
 `sol deploy` that has no destination it can reach reconciles the environment
-itself — the same `Sol_cli_environment_stage` `sol cloud apply` drives, not a
+itself — the same `Sol_cli_environment_stage` `sol deploy` drives, not a
 second implementation — and then reaches the cluster it created as the target's
 own deploy identity (DEC-058), continuing into migration and application without
 the user invoking another command. The explicit stages remain for diagnosis and
@@ -184,8 +184,7 @@ durable root, printing the one external action (the delegation, with the exact
 records), waiting for the delegation to become visible and confirming it from a
 public resolver, then re-observing rather than assuming. Declining, or running
 where no one can answer (CI, `--dry-run`, `--emit-to`), prints the same
-explanation and the command that establishes it (`sol cloud bootstrap <target>
---apply`) instead of prompting or silently skipping. Once the installation is
+explanation and the command that establishes it (`sol deploy <target>`) instead of prompting or silently skipping. Once the installation is
 established the same run continues into the environment stage: it reconciles the
 target's environment (`provision` → `platform`) and then reaches the cluster as
 the deploy identity DEC-058 selected for that provider, rather than naming a
@@ -196,13 +195,13 @@ command the root prints, and the `kube_context` to declare.
 ### 4.3 Inspecting and reconciling the installation
 
 The installation is one stage with one owner, and it is observable before it is
-changed. `sol cloud bootstrap <target>` resolves the installation from the
+changed. `sol plan <target>` resolves the installation from the
 target's own declaration, observes each durable prerequisite at the provider, and
 reports it — never inferring health from configuration, and never promoting a
 prerequisite it could not observe:
 
 ```text
-$ sol cloud bootstrap prod/aws/us-east-1
+$ sol plan prod/aws/us-east-1
 Installation (CloudBootstrap) -- the durable prerequisites that outlive every environment:
 
   resolved configuration
@@ -301,7 +300,7 @@ a question Sol cannot put to the provider is reported rather than answered with 
 **observing public resolution, never by configuration**:
 
 ```bash
-sol cloud bootstrap prod/aws/us-east-1 --await-delegation=120
+sol deploy prod/aws/us-east-1 --await-delegation=120
 ```
 
 That waits in bounded five-second checks for the domain to answer with NS records from a public
@@ -330,8 +329,7 @@ authority over, and must ask for only the part that lives outside that authority
 `DEC-042`/`DEC-043`): the durable root creates or adopts the delegated zone and
 records whose it is, prints the exact NS records to add when the publishing zone
 is elsewhere, and then waits for the delegation and confirms it **from a public
-resolver** rather than from written configuration (`sol cloud bootstrap <target>
---apply`, bounded by `--await-delegation`). A resolver Sol cannot query is
+resolver** rather than from written configuration (`sol deploy <target>`, bounded by `--await-delegation`). A resolver Sol cannot query is
 UNKNOWN, never a silent success. The ownership rules are enforced at teardown: a
 zone you supplied is never deleted.
 
@@ -437,8 +435,7 @@ The lifecycle behind that output:
     exited zero.
 11. **Return stable endpoints** and a concise result.
 
-**Today:** steps 1–11 exist across `sol plan`, `sol cloud plan|apply`, and
-`sol deploy`, with direct and GitOps modes (`DEC-043`, ADR 0002/0003). The
+**Today:** steps 1–11 exist across `sol plan` and `sol deploy`, with direct and GitOps modes (`DEC-043`, ADR 0002/0003). The
 installation among them is inline, and so is the environment: a first
 `sol deploy` observes the installation, offers to set it up, reconciles the
 environment, and continues into migration and deployment as the target's deploy
@@ -627,7 +624,9 @@ but Sol's interface is **target-addressed**, and that is deliberate.
 
 ```text
 sol deploy <env>/<provider>/<region>      # e.g. prod/aws/us-east-1
-sol cloud plan|apply|destroy <target>
+sol plan <target>
+sol deploy <target>
+sol cloud destroy <target>
 ```
 
 The environment is a **property of the resolved target**, not a flag. There is

@@ -22,7 +22,7 @@ let drift_to_string = function
   | In_sync -> "None — Terraform's recorded state matches the provider's observed reality"
   | Detected ->
     "Detected — Terraform's recorded state differs from the provider's observed reality; \
-     `sol cloud plan` shows the changes"
+     `sol plan` shows the changes"
   | Unknown reason -> "Unknown — " ^ reason
 ;;
 

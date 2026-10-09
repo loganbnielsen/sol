@@ -285,8 +285,8 @@ let apply_cmd =
     [ `S Manpage.s_description
     ; `P
         "Runs the authorization root as the target's declared fenced reconciler \
-         identity. The fence itself is created by `sol cloud apply`; the reconciler \
-         cannot create or alter it."
+         identity. The fence itself is created by `sol deploy`; the reconciler cannot \
+         create or alter it."
     ; `P "See 'sol grants plan' for how the safe grant set is computed."
     ; `S "EXIT STATUS"
     ; `P "0 -- the reconciliation was applied."

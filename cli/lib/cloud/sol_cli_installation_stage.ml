@@ -281,7 +281,7 @@ let identity_contract_lines ~target ~provider ~configuration ~verdicts =
     | Ok files ->
       let all_written = List.for_all (fun (_, path) -> Sys.file_exists path) files in
       if not all_written
-      then [ locate; Printf.sprintf "    sol cloud bootstrap %s --apply" target ]
+      then [ locate; Printf.sprintf "    sol deploy %s" target ]
       else
         [ "  the identities are yours to create: Sol owns each policy contract \n\
           \  (AUDIT-072), you create the role and declare its ARN — Sol looks the role \n\

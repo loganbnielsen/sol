@@ -178,8 +178,8 @@ check_contains \
   "This target names no Kubernetes destination Sol can reach from here" \
   "$output"
 check_contains \
-  "the environment stage is the same stage sol cloud apply drives" \
-  "reconcile the environment for prod/aws/us-east-1" \
+  "deploy reconciles the whole target's environment" \
+  "Reconciling the whole target prod/aws/us-east-1" \
   "$output"
 check_file_contains \
   "the run provisions the environment's cluster root" \
@@ -193,7 +193,7 @@ check_file_contains \
   "$tmp/lifecycle.log"
 check_contains \
   "the run reports the environment provisioned" \
-  "The environment for prod/aws/us-east-1 is provisioned." \
+  "The environment for prod/aws/us-east-1 is reconciled." \
   "$output"
 check_file_contains \
   "the run establishes its own deploy-identity cluster access" \
@@ -241,11 +241,11 @@ check_absent \
   "$(lifecycle_log)"
 check_contains \
   "a dry run names the environment stage it will not drive" \
-  "create it — network, cluster, database and platform — with:" \
+  "reconcile it — network, cluster, database and platform — with:" \
   "$output"
 check_contains \
   "and the command that does" \
-  "sol cloud apply prod/aws/us-east-1" \
+  "sol deploy prod/aws/us-east-1" \
   "$output"
 check "a dry run with no destination exits 1" 1 "$rc"
 

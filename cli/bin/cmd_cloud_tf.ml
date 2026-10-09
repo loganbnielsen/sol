@@ -163,8 +163,7 @@ let cloud_init
     (match Sol_cli_environment_stage.plan ~assets ~run_log ~target ~var_file ~vars () with
      | Error failure -> Error (exit_of_environment_failure failure)
      | Ok () ->
-       Printf.printf
-         "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!";
+       Printf.printf "\nDone. Re-run with 'sol deploy' to reconcile the target.\n%!";
        Ok ())
   | Apply ->
     (match
