@@ -211,10 +211,34 @@ let run target_name image_refs var_file vars =
          service.source_name
          service.image)
     planning.services;
-  Printf.printf
-    "\n\
-     Kubernetes live diff deferred: this plan resolves desired workload intent; it does \
-     not infer deletion authority from declarations or labels.\n";
+  let workspace = Sol_cli_workspace.current_name () in
+  let declared =
+    List.map
+      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+         { Sol_cli_workload_ownership.resource =
+             Sol_cli_deployment_plan.resource_of_spec spec
+         ; namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
+         ; name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name
+         })
+      planning.services
+  in
+  let delta =
+    match Sol_cli_config.destination_of_target target with
+    | Error message -> Sol_cli_plan_delta.Deferred message
+    | Ok destination ->
+      let ctx = Sol_cli_kube_destination.context_of_destination destination in
+      let evidence =
+        Sol_cli_release_store.current_record ~ctx ~workspace
+        |> Result.map (function
+          | None -> []
+          | Some (release : Sol_cli_release.t) ->
+            List.concat_map
+              (fun (w : Sol_cli_release.recorded_workload) -> w.Sol_cli_release_id.owned)
+              release.workloads)
+      in
+      Sol_cli_plan_delta.compute ~ctx ~workspace ~evidence ~declared
+  in
+  Printf.printf "\n%s\n" (Sol_cli_plan_delta.to_string delta);
   let var_file =
     let cwd = Sys.getcwd () in
     let workspace_root =
@@ -368,8 +392,8 @@ let cmd =
     (Cmd.info
        "plan"
        ~doc:
-         "Preview target infrastructure, authorization, and workload intent without \
-          applying changes.")
+         "Preview target infrastructure, authorization, workload intent, and the live \
+          workload delta without applying changes.")
     Term.(
       const (fun target refs var_file vars ->
         Sol_cli_exit.exit_on (run target refs var_file vars))

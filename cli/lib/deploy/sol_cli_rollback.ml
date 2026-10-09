@@ -529,6 +529,82 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
   go [] [ Live_deployment; Live_rollout; Live_cronjob ]
 ;;
 
+(* A workspace live workload with the UID needed to decide ownership. The pod-template
+   workspace label only selects what to look at; it is never ownership evidence. *)
+type live_object =
+  { id : Sol_cli_workload_ownership.identity
+  ; uid : string
+  }
+
+(* The workspace's live workloads, and the resources Sol could not list. An unserved
+   kind has no objects of that kind, so it observes nothing rather than failing; any
+   other failure is named, so a caller reports it instead of an empty result. *)
+type workspace_listing =
+  { objects : live_object list
+  ; unobservable : (string * string) list
+  }
+
+let live_object_of_item ~kind ~resource ~workspace item =
+  let wanted = Sol_cli_kubernetes_name.sanitize_label_value workspace in
+  let labels = pod_template_labels kind item in
+  match List.assoc_opt "workspace" labels with
+  | Some w when String.equal w wanted ->
+    let uid = string_at [ "metadata"; "uid" ] item in
+    if String.equal uid ""
+    then None
+    else
+      Some
+        { id =
+            { Sol_cli_workload_ownership.resource
+            ; namespace = string_at [ "metadata"; "namespace" ] item
+            ; name = string_at [ "metadata"; "name" ] item
+            }
+        ; uid
+        }
+  | _ -> None
+;;
+
+let observe_workspace_workloads
+      ~(ctx : Sol_cli_kube_destination.context)
+      ~(workspace : string)
+  : workspace_listing
+  =
+  let rec go objects unobservable = function
+    | [] -> { objects = List.rev objects; unobservable = List.rev unobservable }
+    | kind :: rest ->
+      let resource, _ = live_kind_path kind in
+      (match
+         Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
+       with
+       | Ok r ->
+         (match
+            Sol_cli_json.decode
+              ~what:(Printf.sprintf "kubectl get %s output" resource)
+              r.stdout
+          with
+          | Error reason -> go objects ((resource, reason) :: unobservable) rest
+          | Ok payload ->
+            let items =
+              match Sol_cli_json.field [ "items" ] payload with
+              | `List items -> items
+              | _ -> []
+            in
+            let rows =
+              List.filter_map (live_object_of_item ~kind ~resource ~workspace) items
+            in
+            go (List.rev_append rows objects) unobservable rest)
+       | Error e ->
+         (match Sol_cli_kubectl.classify e with
+          | Sol_cli_kubectl.No_resource_type -> go objects unobservable rest
+          | _ ->
+            go
+              objects
+              ((resource, Sol_cli_process.error_to_string e) :: unobservable)
+              rest))
+  in
+  go [] [] [ Live_deployment; Live_rollout; Live_cronjob ]
+;;
+
 type workload_mismatch =
   { kind : live_kind
   ; namespace : string

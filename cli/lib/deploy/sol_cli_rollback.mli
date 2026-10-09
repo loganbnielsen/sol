@@ -62,6 +62,21 @@ val workload_rows_of_payload
   -> Yojson.Safe.t
   -> ((workload_identity * string) list, string) result
 
+type live_object =
+  { id : Sol_cli_workload_ownership.identity
+  ; uid : string
+  }
+
+type workspace_listing =
+  { objects : live_object list
+  ; unobservable : (string * string) list
+  }
+
+val observe_workspace_workloads
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> workspace_listing
+
 type workload_mismatch =
   { kind : live_kind
   ; namespace : string
