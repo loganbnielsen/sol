@@ -46,16 +46,26 @@ select *what to look at*. None may authorize a removal, and a selector is the
 weakest of all: it admits whatever matches at delete time, including objects
 created after the read that decided to delete.
 
-### Current gaps
+### Runtime enforcement
 
-Two runtime paths still authorize Kubernetes workload removal from a label
-selection rather than recorded UID evidence. Both must move to the rule above;
-each is a milestone-2 item under `#1304`:
+Two runtime paths remove Kubernetes workloads. Both require the recorded UID
+match, decided by `Sol_cli_workload_ownership.owns`; the `workspace`/`release`
+labels only select which objects to look at:
 
-- `Sol_cli_rollback.prune_workloads` — surplus objects are those the live listing
-  reports under the workspace's release label and that the plan does not expect.
+- `Sol_cli_rollback.prune_workloads` — a surplus workload is deleted only while
+  its live UID equals the UID the superseded release recorded. An auxiliary the
+  workload realizes (ServiceAccount, ConfigMap `-env`, NetworkPolicy, Service,
+  Ingress, PodDisruptionBudget, a Rollout's `-active`/`-preview` names) follows
+  the owning workload's match — the workload is the unit of ownership; a
+  referenced PersistentVolumeClaim is never deleted.
 - `Sol_cli_workload_scope` (used by cloud destroy to release workloads) — objects
-  are admitted by a `workspace=<name>` label on the pod template.
+  listed by the pod-template `workspace` label are released only on the same
+  exact match.
+
+An object Sol cannot match — a record written before UID capture, a different
+UID, an absent object, or an unobservable one — is retained and reported for
+explicit adoption. The executable guard proving declarations and labels alone
+cannot authorize a deletion lands with the same milestone (`#1304`).
 
 Terraform-declared Kubernetes objects (the platform module) have a **separate**
 rule already enforced in CI: one object, one Terraform owner —

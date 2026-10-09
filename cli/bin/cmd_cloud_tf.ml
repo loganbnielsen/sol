@@ -301,6 +301,26 @@ let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
     Ok ()
   | Apply ->
     let workload_namespaces = declared_workload_namespaces () in
+    (* The UID evidence the workspace recorded at apply. Workloads it cannot match are
+       retained, not removed (docs/architecture/ownership.md). *)
+    let recorded_evidence =
+      match Sol_cli_config.destination_of_target target_cfg with
+      | Error _ -> []
+      | Ok destination ->
+        let ctx = Sol_cli_kube_destination.context_of_destination destination in
+        (match
+           Sol_cli_release_store.recorded_evidence
+             ~ctx
+             ~workspace:(Sol_cli_workspace.current_name ())
+         with
+         | Ok evidence -> evidence
+         | Error message ->
+           Sol_cli_report.warn
+             "could not read the recorded UID evidence for this workspace (%s); \
+              workloads Sol cannot prove it owns will be retained"
+             message;
+           [])
+    in
     let deps =
       Sol_cli_cloud_wiring.destroy_deps
         ~assets
@@ -310,6 +330,7 @@ let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
         ~retention
         ~workload_namespaces
         ~accept_unreleased
+        ~recorded_evidence
         ~destruction
     in
     let outcome = Sol_cli_cloud_destroy.execute ~deps in

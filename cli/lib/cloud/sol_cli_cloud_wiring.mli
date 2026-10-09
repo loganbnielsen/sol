@@ -97,5 +97,6 @@ val destroy_deps
   -> retention:Sol_cli_cloud_lifecycle.destroy_retention
   -> workload_namespaces:string list
   -> accept_unreleased:bool
+  -> recorded_evidence:Sol_cli_release_id.owned_object list
   -> destruction:Sol_cli_destruction.t
   -> Sol_cli_cloud_destroy.deps

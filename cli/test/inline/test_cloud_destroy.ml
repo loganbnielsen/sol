@@ -1008,7 +1008,8 @@ let test_an_unreadable_workload_listing_is_an_error () =
     (Windtrap.result (Windtrap.list Windtrap.string) Windtrap.string)
     ~msg:"a namespace with no workload of this workspace is empty, not an error"
     (Ok [])
-    (Sol_cli_workload_scope.workloads_of_json {|{"items":[]}|} ~workspace:"pluto");
+    (Sol_cli_workload_scope.workloads_of_json {|{"items":[]}|} ~workspace:"pluto"
+     |> Result.map (List.map Sol_cli_workload_scope.workload_to_string));
   Windtrap.equal
     Windtrap.bool
     ~msg:"a listing that cannot be read is an error rather than an empty scope"
@@ -1051,7 +1052,8 @@ let test_the_workload_selection_reads_the_pod_template () =
        ; "job/invoice-fn-invoke"
        ; "rollout/progressive"
        ])
-    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto")
+    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto"
+     |> Result.map (List.map Sol_cli_workload_scope.workload_to_string))
 ;;
 
 let test_a_rollout_listing_is_read_from_its_pod_template () =
@@ -1073,7 +1075,8 @@ let test_a_rollout_listing_is_read_from_its_pod_template () =
        Deployment's do, so the release can find and remove it before the database is \
        dropped"
     (Ok [ "rollout/charge-svc" ])
-    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto")
+    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto"
+     |> Result.map (List.map Sol_cli_workload_scope.workload_to_string))
 ;;
 
 let test_the_label_is_read_from_the_template_not_the_object () =
@@ -1090,7 +1093,42 @@ let test_the_label_is_read_from_the_template_not_the_object () =
       "a workload labelled on the object rather than on its pod template is not this \
        workspace's: Sol labels the template, and only the pods' labels can be awaited"
     (Ok [])
-    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto")
+    (Sol_cli_workload_scope.workloads_of_json listing ~workspace:"pluto"
+     |> Result.map (List.map Sol_cli_workload_scope.workload_to_string))
+;;
+
+(* Releasing a target removes a workload only while its live UID equals the UID the
+   workspace recorded at apply; the workspace label that listed it is not proof. *)
+let test_the_release_removes_only_proven_workloads () =
+  let evidence =
+    [ { Sol_cli_release_id.resource = "deployment"
+      ; namespace = "pluto-payments"
+      ; name = "charge-svc"
+      ; uid = "uid-1"
+      }
+    ]
+  in
+  let workload resource name uid = { Sol_cli_workload_scope.resource; name; uid } in
+  let scope =
+    { Sol_cli_workload_scope.namespace = "pluto-payments"
+    ; workloads =
+        [ workload "deployment" "charge-svc" "uid-1" (* owned *)
+        ; workload "deployment" "charge-svc-old" "uid-2" (* no evidence *)
+        ; workload "cronjob" "invoice-fn" "" (* UID not observed *)
+        ]
+    }
+  in
+  let owned, retained = Sol_cli_workload_scope.partition_owned ~evidence scope in
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"only the exact recorded-UID match is removable"
+    [ "deployment/charge-svc" ]
+    (List.map Sol_cli_workload_scope.workload_to_string owned);
+  Windtrap.equal
+    (Windtrap.list Windtrap.string)
+    ~msg:"a workload with no evidence, or none observed, is retained"
+    [ "deployment/charge-svc-old"; "cronjob/invoice-fn" ]
+    (List.map Sol_cli_workload_scope.workload_to_string retained)
 ;;
 
 let test_the_workload_read_is_scoped_to_the_declared_namespace () =
@@ -2948,6 +2986,10 @@ let%test "verification: a Rollout listing is read from its pod template" =
 let%test "verification: the ownership label is read from the pod template, not the object"
   =
   test_the_label_is_read_from_the_template_not_the_object ()
+;;
+
+let%test "release: a workload is removed only on an exact recorded-UID match" =
+  test_the_release_removes_only_proven_workloads ()
 ;;
 
 let%test "verification: the workload read is scoped to the declared namespace" =

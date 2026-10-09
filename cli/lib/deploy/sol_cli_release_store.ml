@@ -194,6 +194,22 @@ let current_record ~ctx ~(workspace : string) : (Sol_cli_release.t option, strin
         | Some release_id -> get ~ctx ~workspace ~release_id |> Result.map Option.some))
 ;;
 
+(* The UID evidence the workspace's current release recorded at apply, for deciding which
+   live objects a removal path may act on. An absent record is no evidence (a first
+   deploy); an unreadable one is reported so the caller retains rather than guesses
+   (docs/architecture/ownership.md). *)
+let recorded_evidence ~ctx ~(workspace : string)
+  : (Sol_cli_release_id.owned_object list, string) result
+  =
+  current_record ~ctx ~workspace
+  |> Result.map (function
+    | None -> []
+    | Some (release : Sol_cli_release.t) ->
+      List.concat_map
+        (fun (w : Sol_cli_release.recorded_workload) -> w.Sol_cli_release_id.owned)
+        release.workloads)
+;;
+
 let deployed_contract ~ctx ~(workspace : string)
   : (Sol_cli_release_id.contract_fact list, string) result
   =

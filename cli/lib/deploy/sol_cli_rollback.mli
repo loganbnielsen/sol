@@ -116,19 +116,27 @@ type prune_target =
   ; name : string
   }
 
+type unowned_workload =
+  { identity : workload_identity
+  ; reason : string
+  }
+
 type prune_report =
   { removed : prune_target list
   ; retained : prune_target list
+  ; unowned : unowned_workload list
   }
 
 val plan_prune
-  :  surplus:workload_identity list
+  :  removable:workload_identity list
+  -> unowned:unowned_workload list
   -> live_names:string list
   -> claims:(workload_identity -> string list)
   -> prune_report
 
 val prune_workloads
   :  ctx:Sol_cli_kube_destination.context
+  -> evidence:Sol_cli_release_id.owned_object list
   -> live:(workload_identity * string) list
   -> surplus:(workload_identity * string) list
   -> (prune_report, string) result

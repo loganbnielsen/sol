@@ -46,6 +46,19 @@ let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) 
     Sol_cli_workspace_model.migration_files facts
     |> List.map Sol_cli_plan_ids.Migration_file.to_string
   in
+  (* What the release Sol is rolling back from recorded at apply. A surplus workload may
+     be removed only while its live UID matches this evidence; unreadable evidence
+     retains, it does not guess (docs/architecture/ownership.md). *)
+  let evidence =
+    match Sol_cli_release_store.recorded_evidence ~ctx ~workspace with
+    | Ok evidence -> evidence
+    | Error message ->
+      Sol_cli_report.warn
+        "could not read the recorded UID evidence for this workspace (%s); any surplus \
+         workload will be retained rather than removed"
+        message;
+      []
+  in
   let deps : Sol_cli_rollback.transaction_deps =
     { ensure_held = (fun () -> Sol_cli_boundary_lease.ensure_held lease)
     ; applied_migrations =
@@ -64,7 +77,9 @@ let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) 
           ~release
     ; live_workloads =
         (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
-    ; prune = (fun ~live ~surplus -> Sol_cli_rollback.prune_workloads ~ctx ~live ~surplus)
+    ; prune =
+        (fun ~live ~surplus ->
+          Sol_cli_rollback.prune_workloads ~ctx ~evidence ~live ~surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
     ; record_consumer_groups =
