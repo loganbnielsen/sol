@@ -2396,7 +2396,7 @@ let test_missing_platform_credential_message () =
     Windtrap.bool
     ~msg:"and still says how to resume"
     true
-    (contains "then re-run `sol cloud apply <target>` to resume the install." plain);
+    (contains "then re-run `sol deploy <target>` to resume the install." plain);
   let handed =
     L.missing_platform_credential_message
       ~deploy_handoff:

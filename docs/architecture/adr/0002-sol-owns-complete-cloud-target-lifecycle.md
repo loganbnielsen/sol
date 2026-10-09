@@ -7,8 +7,9 @@
 
 ## Context
 
-`sol cloud apply <target>` currently applies only `platform/cloud/aws/cluster` and
-stops. A ready target also needs `platform/cloud/modules/platform`, including a staged
+At the time of this decision, the public cloud apply operation applied only
+`platform/cloud/aws/cluster` and stopped. A ready target also needs
+`platform/cloud/modules/platform`, including a staged
 cert-manager apply because Terraform resolves `ClusterIssuer` kinds at plan time
 before a same-apply CRD can exist. The only working orchestration is in
 `internal/qualification/aws/live-smoke.sh`; the tutorial instead tells operators to run one
@@ -23,12 +24,12 @@ machine is not a durable target lifecycle.
 
 ## Decision
 
-The existing command is the public lifecycle boundary:
+These commands are the public target lifecycle boundary:
 
 | Command | Contract |
 | --- | --- |
-| `sol cloud plan <target>` | Preview every currently plannable phase and report phases deferred by unavailable prerequisites. |
-| `sol cloud apply <target>` | Reconcile the target through cloud substrate, platform substrate and verified readiness. |
+| `sol plan <target>` | Preview every currently plannable phase and report phases deferred by unavailable prerequisites. |
+| `sol deploy <target>` | Reconcile the whole target through cloud substrate, platform substrate, authorization and workloads. |
 | `sol cloud destroy <target>` | Prepare destruction, verify preparation, destroy both substrates in dependency order and verify absence. |
 | `sol target show <target> --check` | Report live target readiness or a named, fail-closed unmet reason. |
 
@@ -36,7 +37,7 @@ No new `provision` or `cloud status` vocabulary is added.
 
 ### Planning is staged and non-mutating
 
-`sol cloud plan` plans every phase whose lifecycle prerequisites currently
+`sol plan` plans every phase whose lifecycle prerequisites currently
 exist. A later phase that cannot yet be planned is reported as `Deferred` with
 the concrete missing prerequisite; it is not reported as planned and is not a
 production-readiness `Unmet` result. Planning never mutates infrastructure to
@@ -60,7 +61,7 @@ bindings deliberately do not cover, so a read-only plan cannot refresh them. On
 an established target with the window closed, plan reports the platform
 prerequisites `Plannable` (or `Deferred` on their own prerequisites) and the
 platform substrate `Deferred` with the window as the missing prerequisite, naming
-`sol cloud apply` as the command that opens it. Planning still never opens the
+`sol deploy` as the command that opens it. Planning still never opens the
 window itself.
 
 Exit status is defined as follows:
@@ -108,7 +109,7 @@ rules and are not printed or written to Sol logs.
 
 ### Forward reconciliation
 
-For AWS, `sol cloud apply` performs and logs these idempotent phases:
+For AWS, `sol deploy` performs and logs these idempotent phases:
 
 1. initialize the cloud root against its durable state;
 2. apply and verify the AWS cloud substrate;
@@ -213,7 +214,7 @@ A failed destroy after preparation remains observable and safely re-runnable.
 Once preparation is verified the Destroy policy governs (ADR 0003): no later
 reconciliation in this lifecycle re-applies the Ready/Production invariant, so
 deletion protection is not silently restored between preparation and
-destruction. `sol cloud apply` reconciles back toward protected Ready state when
+destruction. `sol deploy` reconciles back toward protected Ready state when
 the target is (or returns to) Ready — for example when a prior destroy attempt is
 abandoned — which is why destroy must first leave the Ready policy domain.
 
@@ -237,7 +238,7 @@ implementation.
 
 ## Consequences
 
-- `sol cloud apply` becomes the single public operation from declared AWS target
+- `sol deploy` becomes the single public operation from declared AWS target
   to verified ready target; the tutorial no longer asks operators to finish it.
 - The roots stay independent and keep distinct blast radii while Sol owns their
   semantic dependency.

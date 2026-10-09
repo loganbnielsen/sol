@@ -85,59 +85,36 @@ deploy/operator identities, and the delegated DNS zone when Sol owns one — is 
 per environment. It outlives every environment, which is why `sol cloud destroy` removes an
 environment and never the installation.
 
-```bash
-sol cloud bootstrap prod/aws/us-east-1          # observe: what is established, what is not
-sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
-```
-
-The report is observed, not inferred: each prerequisite is asked for at the provider, `Unmet`
-means the provider answered that it is not there, and `UNKNOWN` (Sol could not look) fails closed.
-
-The identities are the one part of the installation you create: reconciling the durable root writes
-each generated least-privilege policy document to the root's working directory, and the report
-prints, per identity, the ARN field to declare and the path of its contract (`AUDIT-072` — Sol owns
-the contract, you own the role).
-`--apply` reconciles the durable root and stops when a plan would replace or destroy a durable
-resource, because a recreated DNS zone gets different nameservers than the registrar delegation
-names. The identities it needs, and how to create them, are in
+**Guided first-run.** `sol deploy` observes the durable installation and offers to establish it
+when needed. After that, every cloud-backed deploy reconciles the target's cluster and platform
+roots before continuing to authorization and workloads. `--dry-run` and `--emit-to` remain
+read-only. The durable installation stays separate: `sol uninstall` removes it under its own
+confirmation contract. Where a provider declares no deploy identity — today, GCP — the run stops
+after provisioning and names the kubeconfig command and `kube_context` the operator must add. The
+identity contracts and external setup steps are in
 [production-bootstrap.md](../deployment/production-bootstrap.md).
-
-**Guided first-run.** The ordinary path is that `sol deploy` detects an uninstalled account and
-walks you through this in place, so you never have to invoke an administrative command to get
-started. When the deploy cannot reach the target's cluster it observes the installation at the
-provider, reports what it found — separating the work Sol does from the one external action (the
-delegation, with the exact NS records) — and offers to set it up: reconcile the durable root, wait
-for the delegation to become visible, and confirm it from a public resolver rather than from
-written configuration. An installation that already exists is deployed to with no setup and no
-prompt; a run that cannot be asked (CI, `--dry-run`, `--emit-to`) prints the same observation and
-`sol cloud bootstrap <target> --apply` instead of prompting. The explicit pair above remains the
-administrative route, and the *environment* is reconciled in place too: a run with no destination it
-can reach drives steps 3–5 below itself, then reaches the cluster it created as the target's deploy
-identity (DEC-058) and continues into migration and deployment. Where a provider declares no deploy
-identity — today, GCP — the run stops after provisioning and names the kubeconfig command and
-`kube_context` the operator must add.
 
 ## 3. Provision the substrate
 
-The substrate is the cluster and the platform components Sol runs on it. Three commands, and the
-first one is free:
+The substrate is the cluster and platform components Sol runs on it. `sol plan` is the read-only
+review step, and `sol deploy` reconciles the whole cloud-backed target:
 
 ```bash
-sol cloud plan prod/aws/us-east-1               # what would change; nothing is applied
-sol cloud apply prod/aws/us-east-1              # create or update it
-sol cloud destroy prod/aws/us-east-1 --plan     # what teardown would remove; nothing is applied
-sol cloud destroy prod/aws/us-east-1 --apply    # tear the environment down
+sol plan prod/aws/us-east-1                     # full target preview; nothing is applied
+sol deploy prod/aws/us-east-1                   # reconcile infrastructure and workloads
 ```
 
-- `plan` is read-only and is the review step; it never mutates, and it exits zero on an absent
-  target, reporting the phases it defers.
-- `apply` converges the substrate and then verifies it. When a fact about the target cannot be
-  resolved, it refuses; `--accept-unresolved` exists for an operator who has decided to proceed
-  anyway, and the unresolved facts are reported rather than hidden.
-- `destroy` verifies absence afterwards by observing the provider directly, and refuses while
-  something it does not own is in the way — it will not take your data with it. A destroy that
-  would remove a registry path needs `--confirm-ecr-removal`.
-- `--var` / `--var-file` pass values through to Terraform for the exceptional case.
+- `sol plan` previews the existing target Terraform roots, authorization, and workload changes.
+  Cluster and CRD prerequisites are reported as explicit deferrals when they are not yet present.
+- `sol deploy` applies fresh Terraform plans for the existing roots, verifies the platform, then
+  reconciles configured authorization and workloads. Uncertain state, unsafe grant revocation, and
+  unknown Kubernetes ownership fail closed.
+- Target teardown still uses `sol cloud destroy` until the destroy migration is complete. It does
+  not remove the durable installation; use `sol uninstall` for that separate scope.
+- Add workspace Terraform under `sol/terraform/<provider>/{cluster,platform}`. It joins the
+  matching existing root and state; see the
+  [substrate reference](../reference/substrate.md#workspace-owned-terraform) for the stable
+  `local.sol_target` interface.
 
 What the substrate contains, and which parts Sol generates versus which you bring, is
 [substrate.md](../reference/substrate.md). The `sol.toml` overrides that change what Sol renders

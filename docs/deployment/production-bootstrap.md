@@ -73,7 +73,7 @@ create a repository or operator-managed `backend.tf` for the normal lifecycle.
 The bootstrap root outputs four least-privilege policy documents
 (`provisioner_policy_json`, `publisher_policy_json`, `deploy_policy_json`,
 `operator_policy_json`). Sol owns the *contract*; it does not create roles,
-attach policies, or manage their lifecycle. `sol cloud bootstrap <target> --apply`
+attach policies, or manage their lifecycle. `sol deploy <target>`
 writes them to the durable root's working directory (`identity-contracts/`) and the
 installation report prints each path beside the ARN field to declare, so the roles can
 be created without reading Terraform outputs by hand. Create the roles in your account
@@ -132,12 +132,12 @@ private-only networking is a stronger future posture.
 
 ### Configuring kubectl for the deploy identity
 
-`sol cloud apply` wires `deploy_role_arn` into an EKS access entry (Kubernetes
+`sol deploy` wires `deploy_role_arn` into an EKS access entry (Kubernetes
 group `sol:deployers`) and a cluster-wide `sol-deploy` `ClusterRole`; the
 namespace-scoped `RoleBinding` that actually grants it is applied per
 application namespace at deploy time (`Sol_cli_substrate.ensure`), not by
 Terraform, since application namespaces are created dynamically. Once the role
-exists and `deploy_role_arn` is set, `sol cloud apply`'s output prints the
+exists and `deploy_role_arn` is set, `sol deploy`'s output prints the
 command to run — Sol does not write your kubeconfig or the target file for
 you (AUDIT-072: Sol owns the IAM policy contract, not your local kubeconfig
 or role lifecycle):
@@ -167,7 +167,7 @@ exactly this command and context for you to add.
 ## 3. No standing cluster-creator admin
 
 The AWS module sets `enable_cluster_creator_admin_permissions = false`. During
-`sol cloud apply`, the separate cluster-access identity holds temporary EKS bootstrap admin
+`sol deploy`, the separate cluster-access identity holds temporary EKS bootstrap admin
 access for the whole privileged `PlatformInstalling` phase — the full platform
 apply and verified readiness — because installing cluster-wide software that
 mints RBAC is itself privileged platform establishment (ADR 0003). Sol then
@@ -186,8 +186,8 @@ Control-state RTO is procedure-based, not a numeric bound (DEC-026 §5).
 **Recover a clean runner** (original runner and local files gone):
 
 ```bash
-sol cloud plan prod/aws/us-east-1
-sol cloud apply prod/aws/us-east-1
+sol plan prod/aws/us-east-1
+sol deploy prod/aws/us-east-1
 ```
 
 **Recover a prior state object version** (bad apply, or corrupted state):
@@ -216,14 +216,15 @@ in a session of its own, with its output in a durable operation record under
 - **If `sol` itself dies** (killed, out of memory, terminal closed), Terraform
   keeps running to completion and records its outcome. `sol` exiting does not
   mean Terraform exited.
-- **The next `sol cloud` command reads the last operation against that state:**
+- **The next command that uses that state reads the last operation:**
   - *still running* → refused. Wait for it; do not unlock.
   - *resolved*, including a graceful Ctrl-C → proceeds normally.
   - *unresolved* (Terraform was killed by a signal, its supervisor vanished, or it
-    left `errored.tfstate`) → `apply` is refused until you reconcile: inspect the
-    provider and the state, import or remove what diverged, and push any
-    `errored.tfstate` yourself. Then re-run with `--accept-unresolved`.
-    `plan` and `destroy` proceed with a warning.
+    left `errored.tfstate`) → `sol deploy` refuses to change the target. There is no
+    acknowledgement flag on deploy: inspect the provider and state, import or remove
+    what diverged, and push any `errored.tfstate` yourself before retrying. Read-only
+    plans can still report the unresolved operation; `sol cloud destroy` has its own
+    destructive lifecycle and release checks.
 - **Where Terraform works (DEC-050).** Each state has its own working directory,
   `~/.local/share/sol/terraform/<provider>-<cluster|platform>-<id>/platform/cloud/<provider>/<role>/`
   (`$XDG_DATA_HOME/sol/…` when set). `sol` names it in the refusal above, and
@@ -257,7 +258,7 @@ command line:
 
 ```bash
 TF_VAR_db_password="$(your-secret-tool get sol-db-password)" \
-  sol cloud apply prod/aws/us-east-1
+  sol deploy prod/aws/us-east-1
 ```
 
 Sol refuses an apply that would create Postgres with no credential source, and
@@ -270,8 +271,7 @@ plan, an output, a log or a release record; the module's `postgres_url` output
 the connection string in their secret store for the runtime Secret that
 workloads read as `POSTGRES_URL`.
 
-**`cluster_issuer` belongs to the base platform layer.** `sol cloud plan/apply/
-destroy` pass each Terraform root only the variables it declares.
+**`cluster_issuer` belongs to the base platform layer.** `sol plan`, `sol deploy` and `sol cloud destroy` pass each Terraform root only the variables it declares.
 `cluster_issuer` names a cert-manager `ClusterIssuer`, so Sol routes it to
 `platform/cloud/modules/platform` after the cloud output contract has been validated.
 
@@ -292,7 +292,7 @@ independently of `observability_backend`, so a production target whose telemetry
 goes to an external backend still gets the production transport.
 
 Sol never generates or stores the workload credential. The broker's SASL users
-Secret is a **pre-platform operator input**: `sol cloud apply` creates the
+Secret is a **pre-platform operator input**: `sol deploy` creates the
 platform namespaces in its prerequisite stage and then, before the privileged
 platform apply, checks that the Secret exists. When it is absent the run stops
 naming the missing input and the command that creates it, rather than starting a
@@ -312,9 +312,9 @@ Two operator steps make the transport usable, and both fail closed:
    ```
 
    On a fresh target the `redpanda` namespace does not exist until the first
-   `sol cloud apply` has run its prerequisite stage, so the order is
-   `sol cloud apply <target>`, create the Secret when the run names it, then
-   `sol cloud apply <target>` again to resume the install. The refusal prints the
+   `sol deploy` has run its prerequisite stage, so the order is
+   `sol deploy <target>`, create the Secret when the run names it, then
+   `sol deploy <target>` again to resume the install. The refusal prints the
    target's own deploy kubeconfig command and the context it writes, taken from the
    cloud root's outputs, so reaching the cluster does not depend on knowing how this
    provider writes kubeconfigs. The credential is

@@ -1,8 +1,7 @@
 open Result.Syntax
 
 type selection =
-  { requested_scope : string
-  ; resolved : Sol_cli_workload_selection.resolved
+  { resolved : Sol_cli_workload_selection.resolved
   ; image_refs : (string * string) list
   }
 
@@ -19,7 +18,7 @@ let select ~image_refs inventory =
         (List.map (fun (s : Sol_cli_manifest.service) -> s.name) resolved.services)
       image_refs
   in
-  Ok { requested_scope = resolved.requested_scope; resolved; image_refs }
+  Ok { resolved; image_refs }
 ;;
 
 type deployed =
@@ -103,6 +102,28 @@ module Planning_input = struct
     }
 end
 
+module Target_plan_input = struct
+  type t =
+    { workspace : string
+    ; registry : string
+    ; sha : string
+    ; emit_to : string option
+    ; secret_backend : Sol_cli_manifest.secret_backend
+    ; config : Sol_cli_config.t
+    ; facts : Sol_cli_workspace_model.t
+    ; inventory : Sol_cli_manifest.service list
+    ; image_refs : (string * string) list
+    ; services : Sol_cli_manifest.service list
+    }
+end
+
+module Target_plan = struct
+  type t = { deployment_plan : Sol_cli_deployment_plan.t }
+
+  let profile t = t.deployment_plan.profile
+  let to_deployment_plan t = t.deployment_plan
+end
+
 let plan (input : Planning_input.t) =
   let open Planning_input in
   let { workspace
@@ -167,4 +188,36 @@ let plan (input : Planning_input.t) =
     |> Result.map_error (fun (profile, findings) -> Preflight (profile, findings))
   in
   Ok plan
+;;
+
+let target_plan (input : Target_plan_input.t) =
+  let open Target_plan_input in
+  let { workspace
+      ; registry
+      ; sha
+      ; emit_to
+      ; secret_backend
+      ; config
+      ; facts
+      ; inventory
+      ; image_refs
+      ; services
+      }
+    =
+    input
+  in
+  plan
+    { Planning_input.workspace
+    ; registry
+    ; sha
+    ; emit_to
+    ; secret_backend
+    ; config
+    ; facts
+    ; inventory
+    ; requested_scope = "workspace"
+    ; image_refs
+    ; services
+    }
+  |> Result.map (fun deployment_plan -> Target_plan.{ deployment_plan })
 ;;

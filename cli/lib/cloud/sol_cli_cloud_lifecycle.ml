@@ -148,7 +148,7 @@ let missing_platform_credential_message ?deploy_handoff { namespace; secret } =
         timeout and the install reports only `context deadline exceeded`."
      ]
      @ create_lines
-     @ [ ""; "then re-run `sol cloud apply <target>` to resume the install." ])
+     @ [ ""; "then re-run `sol deploy <target>` to resume target reconciliation." ])
 ;;
 
 type credential_presence =
@@ -181,7 +181,7 @@ let unverifiable_platform_credential_message { namespace; secret } reason =
     ; ""
     ; Printf.sprintf "    kubectl get secret %s -n %s -o name" secret namespace
     ; ""
-    ; "Resolve that, then re-run `sol cloud apply <target>` to resume the install."
+    ; "Resolve that, then re-run `sol deploy <target>` to resume target reconciliation."
     ]
 ;;
 
@@ -294,8 +294,8 @@ let platform_plan_phases
     "requires provisioner platform RBAC established by an earlier apply"
   in
   let requires_install_window =
-    "requires the installation window that `sol cloud apply` opens (the platform root \
-     manages objects outside the namespaces the steady-state provisioner holds)"
+    "requires the installation window that `sol deploy` opens (the platform root manages \
+     objects outside the namespaces the steady-state provisioner holds)"
   in
   if not cluster_exists
   then Deferred requires_cloud, Deferred requires_cloud

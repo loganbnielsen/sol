@@ -188,7 +188,7 @@ sol cloud destroy prod/aws/us-east-1 --apply
 
 This removes the environment's network, cluster, database, registry use, platform and
 workloads through supported lifecycle operations. It is target-addressed and applies the
-same plan-then-apply discipline as `sol cloud apply`; without `--apply` it previews and
+same plan-then-apply discipline as `sol deploy`; without `--apply` it previews and
 changes nothing.
 
 Before anything is destroyed, Sol **releases the workloads this target deployed** (`DEC-059`):
@@ -210,7 +210,7 @@ A target whose **Terraform state cannot be listed** is refused rather than destr
 state listing is what distinguishes a readable `terraform output` from a confirmed absence, so
 a listing that fails while the outputs are readable is the shape of a transient or an
 authorization failure — not evidence that no cluster exists. Destroy exits 1 having destroyed
-nothing and says so, and `sol cloud apply` reports the same read failure rather than planning
+nothing and says so, and `sol deploy` reports the same read failure rather than planning
 as though the target were never provisioned. A state that lists nothing is a confirmed
 absence, and keeps the documented degraded destroy.
 

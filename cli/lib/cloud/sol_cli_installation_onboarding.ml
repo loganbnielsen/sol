@@ -152,8 +152,8 @@ let refusal_lines ~target ~because verdicts =
   @ [ "  missing:" ]
   @ unresolved_lines verdicts
   @ blank
-  @ [ "Set the installation up once, then run this deploy again:"
-    ; Printf.sprintf "  sol cloud bootstrap %s --apply" target
+  @ [ "Run an interactive deploy to establish the installation and reconcile the target:"
+    ; Printf.sprintf "  sol deploy %s" target
     ]
 ;;
 
@@ -167,7 +167,7 @@ let still_unresolved_lines ~target verdicts =
   @ blank
   @ unresolved_lines verdicts
   @ blank
-  @ [ Printf.sprintf "  observe it with: sol cloud bootstrap %s" target ]
+  @ [ Printf.sprintf "  review the target with: sol plan %s" target ]
 ;;
 
 let undeclared_lines ~target ~reason =
@@ -195,8 +195,8 @@ let indeterminate_lines ~target verdicts =
   @ [ "  Sol could not look at:" ]
   @ unknown_lines verdicts
   @ blank
-  @ [ "Observe it with credentials that can read the durable resources:"
-    ; Printf.sprintf "  sol cloud bootstrap %s" target
+  @ [ "Review the target with credentials that can read the durable resources:"
+    ; Printf.sprintf "  sol plan %s" target
     ]
 ;;
 
@@ -210,8 +210,8 @@ let observed_lines ~target =
 
 let environment_guidance_lines ~target =
   [ "The environment for this target is not usable from here. When it does not exist yet,"
-  ; "create it — network, cluster, database and platform — with:"
-  ; Printf.sprintf "  sol cloud apply %s" target
+  ; "reconcile it — network, cluster, database and platform — with:"
+  ; Printf.sprintf "  sol deploy %s" target
   ; "then name the context that command prints as this target's `kube_context`. When it"
   ; "does exist, check that its context is in your kubeconfig and that this target's"
   ; "identity can reach the cluster: Sol never falls back to whatever kubectl is"

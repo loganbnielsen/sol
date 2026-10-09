@@ -31,6 +31,7 @@ let chdir ~provider ~role ~backend_config =
 
 let source_trees = A.terraform_trees
 let manifest_name = ".sol-materialized"
+let custom_manifest_name = ".sol-custom-materialized"
 
 let is_runtime_artifact name =
   name = ".terraform"
@@ -38,6 +39,7 @@ let is_runtime_artifact name =
   || name = "crash.log"
   || name = ".terraform.tfstate.lock.info"
   || name = manifest_name
+  || name = custom_manifest_name
   || String.starts_with ~prefix:"terraform.tfstate" name
   || Filename.check_suffix name ".tfstate"
   || Filename.check_suffix name ".tfstate.backup"
@@ -53,6 +55,21 @@ let rec source_files root rel =
     |> List.filter (fun name -> not (is_runtime_artifact name))
     |> List.concat_map (fun name -> source_files root (Filename.concat rel name))
   else [ rel ]
+;;
+
+let sources_in_cloud_root ~provider ~role sources =
+  let prefix = A.cloud_root_rel provider role ^ Filename.dir_sep in
+  List.filter_map
+    (fun source ->
+       if String.starts_with ~prefix source
+       then
+         Some
+           (String.sub
+              source
+              (String.length prefix)
+              (String.length source - String.length prefix))
+       else None)
+    sources
 ;;
 
 (* The source list Sol wrote on the previous materialization. Only confirmed
@@ -71,6 +88,177 @@ let read_manifest path =
        Ok (String.split_on_char '\n' content |> List.filter (fun l -> l <> ""))
      | Error message -> Error message)
   | _ -> Error (Printf.sprintf "%s is not a readable regular file" path)
+;;
+
+let custom_tf_root ~provider ~role =
+  let role =
+    match role with
+    | A.Cluster -> Some "cluster"
+    | A.Platform -> Some "platform"
+    | A.Bootstrap | A.Authorization -> None
+  in
+  match role, Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
+  | Some role, Some workspace_root ->
+    Some
+      (Filename.concat
+         workspace_root
+         (Printf.sprintf "sol/terraform/%s/%s" (Sol_cli_provider.to_string provider) role))
+  | Some _, None | None, _ -> None
+;;
+
+let custom_file rel =
+  let name = Filename.basename rel in
+  let eligible =
+    String.starts_with ~prefix:"modules/" rel
+    || (Filename.dirname rel = "."
+        && (Filename.check_suffix name ".tf" || Filename.check_suffix name ".tf.json"))
+  in
+  eligible
+  && (not (is_runtime_artifact name))
+  && not (Filename.check_suffix name ".tfvars")
+;;
+
+let rec custom_module_sources root rel =
+  let open Result.Syntax in
+  let path = Filename.concat root rel in
+  match Unix.lstat path with
+  | { Unix.st_kind = Unix.S_DIR; _ } ->
+    let* names =
+      match Sys.readdir path with
+      | names -> Ok (Array.to_list names |> List.sort String.compare)
+      | exception Sys_error message -> Error message
+    in
+    names
+    |> Sol_cli_result.map_list (fun name ->
+      custom_module_sources root (Filename.concat rel name))
+    |> Result.map List.concat
+  | { Unix.st_kind = Unix.S_REG; _ } when custom_file rel -> Ok [ rel ]
+  | { Unix.st_kind = Unix.S_REG; _ } -> Ok []
+  | { Unix.st_kind = Unix.S_LNK; _ } ->
+    Error (Printf.sprintf "symbolic links are not supported in custom Terraform: %s" path)
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
+  | exception Unix.Unix_error (error, _, _) ->
+    Error (Printf.sprintf "%s: %s" path (Unix.error_message error))
+  | _ -> Error (Printf.sprintf "unsupported custom Terraform file type: %s" path)
+;;
+
+let custom_sources_result root =
+  let open Result.Syntax in
+  let module_path = Filename.concat root "modules" in
+  let* root_kind =
+    match Unix.lstat root with
+    | { Unix.st_kind; _ } -> Ok (Some st_kind)
+    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
+    | exception Unix.Unix_error (error, _, _) ->
+      Error (Printf.sprintf "%s: %s" root (Unix.error_message error))
+  in
+  match root_kind with
+  | None -> Ok []
+  | Some Unix.S_DIR ->
+    let* names =
+      match Sys.readdir root with
+      | names -> Ok (Array.to_list names |> List.sort String.compare)
+      | exception Sys_error message -> Error message
+    in
+    let* root_tf_files =
+      names
+      |> List.filter custom_file
+      |> Sol_cli_result.map_list (fun name ->
+        let path = Filename.concat root name in
+        match Unix.lstat path with
+        | { Unix.st_kind = Unix.S_REG; _ } -> Ok name
+        | { Unix.st_kind = Unix.S_LNK; _ } ->
+          Error
+            (Printf.sprintf
+               "symbolic links are not supported in custom Terraform: %s"
+               path)
+        | _ -> Error (Printf.sprintf "unsupported custom Terraform file type: %s" path)
+        | exception Unix.Unix_error (error, _, _) ->
+          Error (Printf.sprintf "%s: %s" path (Unix.error_message error)))
+    in
+    let* module_sources =
+      match Unix.lstat module_path with
+      | { Unix.st_kind = Unix.S_DIR; _ } -> custom_module_sources root "modules"
+      | { Unix.st_kind = Unix.S_LNK; _ } ->
+        Error
+          (Printf.sprintf
+             "symbolic links are not supported in custom Terraform: %s"
+             module_path)
+      | { Unix.st_kind = Unix.S_REG; _ } ->
+        Error
+          (Printf.sprintf
+             "custom Terraform modules path is not a directory: %s"
+             module_path)
+      | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
+      | exception Unix.Unix_error (error, _, _) ->
+        Error (Printf.sprintf "%s: %s" module_path (Unix.error_message error))
+      | _ ->
+        Error (Printf.sprintf "unsupported custom Terraform file type: %s" module_path)
+    in
+    Ok (root_tf_files @ module_sources)
+  | Some _ -> Error (Printf.sprintf "custom Terraform path is not a directory: %s" root)
+;;
+
+let materialize_custom_tf ~provider ~role ~chdir ~sol_sources =
+  let open Result.Syntax in
+  let manifest = Filename.concat chdir custom_manifest_name in
+  let* previous = read_manifest manifest in
+  let* () =
+    if
+      List.for_all
+        (fun path ->
+           path <> ""
+           && path <> "."
+           && Filename.is_relative path
+           && (not (List.mem "." (String.split_on_char '/' path)))
+           && not (List.mem ".." (String.split_on_char '/' path)))
+        previous
+    then Ok ()
+    else Error (Printf.sprintf "invalid custom Terraform manifest: %s" manifest)
+  in
+  let custom_root = custom_tf_root ~provider ~role in
+  let* sources =
+    match custom_root with
+    | None -> Ok []
+    | Some root -> custom_sources_result root
+  in
+  let names = sources in
+  let collisions =
+    List.filter
+      (fun name ->
+         List.mem name sol_sources
+         || ((not (List.mem name previous))
+             && Sys.file_exists (Filename.concat chdir name)))
+      names
+  in
+  let* () =
+    match collisions with
+    | [] -> Ok ()
+    | _ ->
+      Error
+        (Printf.sprintf
+           "custom Terraform files would overwrite Sol's files in %s: %s"
+           chdir
+           (String.concat ", " collisions))
+  in
+  let* _ =
+    previous
+    |> List.filter (fun name -> not (List.mem name names))
+    |> Sol_cli_result.map_list (fun name ->
+      Sol_cli_fs.remove_if_present (Filename.concat chdir name))
+  in
+  let copy source =
+    let target = Filename.concat chdir source in
+    let* () = Sol_cli_fs.mkdir_p (Filename.dirname target) in
+    let* content =
+      match Option.map (fun root -> Filename.concat root source) custom_root with
+      | None -> Error "custom Terraform root disappeared"
+      | Some path -> Sol_cli_fs.read_file path
+    in
+    Sol_cli_fs.write_atomic ~perm:0o600 target content
+  in
+  let* _ = Sol_cli_result.map_list copy sources in
+  Sol_cli_fs.write_atomic ~perm:0o600 manifest (String.concat "\n" names ^ "\n")
 ;;
 
 let materialize ~assets ~provider ~role ~backend_config =
@@ -97,8 +285,49 @@ let materialize ~assets ~provider ~role ~backend_config =
     Sol_cli_fs.write_atomic ~perm dst content
   in
   let prepare sources =
+    let sol_sources = sources_in_cloud_root ~provider ~role sources in
     let* () = Sol_cli_fs.mkdir_p root in
     let* previous = read_manifest manifest in
+    let custom_chdir = chdir ~provider ~role ~backend_config in
+    let custom_manifest = Filename.concat custom_chdir custom_manifest_name in
+    let* custom_previous = read_manifest custom_manifest in
+    let* () =
+      if
+        List.for_all
+          (fun path ->
+             path <> ""
+             && path <> "."
+             && Filename.is_relative path
+             && (not (List.mem "." (String.split_on_char '/' path)))
+             && not (List.mem ".." (String.split_on_char '/' path)))
+          custom_previous
+      then Ok ()
+      else Error (Printf.sprintf "invalid custom Terraform manifest: %s" custom_manifest)
+    in
+    let custom_root = custom_tf_root ~provider ~role in
+    let* custom_sources =
+      match custom_root with
+      | None -> Ok []
+      | Some custom_root -> custom_sources_result custom_root
+    in
+    let custom_collisions =
+      List.filter
+        (fun name ->
+           List.mem name sol_sources
+           || ((not (List.mem name custom_previous))
+               && Sys.file_exists (Filename.concat custom_chdir name)))
+        custom_sources
+    in
+    let* () =
+      match custom_collisions with
+      | [] -> Ok ()
+      | _ ->
+        Error
+          (Printf.sprintf
+             "custom Terraform files would overwrite Sol's files in %s: %s"
+             custom_chdir
+             (String.concat ", " custom_collisions))
+    in
     let* _ =
       previous
       |> List.filter (fun rel -> not (List.mem rel sources))
@@ -109,7 +338,8 @@ let materialize ~assets ~provider ~role ~backend_config =
     let* () =
       Sol_cli_fs.write_atomic ~perm:0o644 manifest (String.concat "\n" sources ^ "\n")
     in
-    Ok (chdir ~provider ~role ~backend_config)
+    let* () = materialize_custom_tf ~provider ~role ~chdir:custom_chdir ~sol_sources in
+    Ok custom_chdir
   in
   match List.concat_map (source_files source_root) source_trees with
   | exception Sys_error message ->

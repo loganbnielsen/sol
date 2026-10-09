@@ -25,6 +25,7 @@ type deploy_request =
   ; registry : string option
   ; secret_backend : Sol_cli_manifest.secret_backend option
   ; confirm_group_change : bool
+  ; confirm_ecr_removal : bool
   ; loki_push_url : string option
   ; keep_releases : int
   ; await_delegation : int option
@@ -88,6 +89,7 @@ let make_deploy_request
       ~registry
       ~secret_backend
       ~confirm_group_change
+      ~confirm_ecr_removal
       ~loki_push_url
       ~keep_releases
       ~await_delegation
@@ -141,6 +143,7 @@ let make_deploy_request
           ; registry
           ; secret_backend
           ; confirm_group_change
+          ; confirm_ecr_removal
           ; loki_push_url
           ; keep_releases
           ; await_delegation

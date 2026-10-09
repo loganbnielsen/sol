@@ -73,7 +73,7 @@ the right environment:
 - reconciler role: `repo:<owner>/<repo>:environment:sol-authorization`.
 
 The reconciler role is assumed by the authorization job and holds the fenced permissions
-`sol cloud apply` provisions for the target's authorization root. The deploy role is the
+`sol deploy` uses for the target's authorization root. The deploy role is the
 target's `deploy_role_arn` and holds only read-only IAM visibility plus cluster
 description, so it can observe effective access but never widen it.
 

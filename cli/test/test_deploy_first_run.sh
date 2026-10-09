@@ -458,37 +458,11 @@ check_contains \
   "$output"
 check_contains \
   "the refusal names the command that establishes the installation" \
-  "sol cloud bootstrap prod/aws/us-east-1 --apply" \
+  "sol deploy prod/aws/us-east-1" \
   "$output"
 check_absent "a non-interactive run never prompts" "[Y/n]" "$output"
 check_absent "a non-interactive run changes nothing" " apply " "$(terraform_log)"
 check_absent "a non-interactive run plans nothing" " plan " "$(terraform_log)"
-check_contains \
-  "the deploy names the external action that writes the identity contracts" \
-  "sol cloud bootstrap prod/aws/us-east-1 --apply" \
-  "$output"
-
-(
-  cd "$tmp/work" &&
-    XDG_DATA_HOME="$tmp/data" PATH="$tmp/bin-no-identity:$tmp/bin-tf:/usr/bin:/bin" \
-      "$sol" cloud bootstrap prod/aws/us-east-1 --apply
-) >"$tmp/bootstrap.out" 2>&1 || true
-rm -f "$tmp/terraform.log"
-run "$tmp/bin-no-identity:/usr/bin:/bin"
-check_contains \
-  "a reconciled durable root hands the deploy the contract to attach" \
-  "declare aws.provisioner_role_arn" \
-  "$output"
-check_contains \
-  "and the deploy names the file that holds it" \
-  "identity-contracts/provisioner_policy_json.json" \
-  "$output"
-check_contains \
-  "the contract the deploy points at is the root's own document" \
-  '"Sid": "sol-provisioner"' \
-  "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
-check_absent "printing the contract runs no terraform" " apply " "$(terraform_log)"
-
 run "$tmp/bin-absent:/usr/bin:/bin" --dry-run
 check "a dry run against an uninstalled account exits 1" 1 "$rc"
 check_contains \
@@ -530,7 +504,7 @@ check_absent \
   "$output"
 check_contains \
   "the report says how to observe the installation" \
-  "sol cloud bootstrap prod/aws/us-east-1" \
+  "sol plan prod/aws/us-east-1" \
   "$output"
 check_absent "an unobservable installation is not set up" " apply " "$(terraform_log)"
 
@@ -554,7 +528,7 @@ check_contains \
   "$output"
 check_contains \
   "the environment stage is named as Sol's own work" \
-  "reconcile the environment for prod/aws/us-east-1" \
+  "Reconciling the whole target prod/aws/us-east-1" \
   "$output"
 check_contains \
   "the run provisions the environment rather than naming a separate command" \
@@ -595,7 +569,7 @@ check_absent \
   "$(terraform_log)"
 rm -f "$tmp/unreadable-state"
 
-run_with stale/aws/us-east-1 "$tmp/bin-installed:$tmp/bin-kubectl:/usr/bin:/bin" --confirm-group-change
+run_with stale/aws/us-east-1 "$tmp/bin-installed:$tmp/bin-tf:$tmp/bin-kubectl:/usr/bin:/bin" --confirm-group-change
 check "a target whose cluster is unreachable exits 1" 1 "$rc"
 check_contains \
   "an unreachable cluster observes the installation" \
@@ -603,12 +577,16 @@ check_contains \
   "$output"
 check_contains \
   "the environment stage is named for the unreachable target" \
-  "sol cloud apply stale/aws/us-east-1" \
+  "Reconciling the whole target stale/aws/us-east-1" \
   "$output"
 check_absent "an installed account is not prompted for its unreachable cluster" "[Y/n]" "$output"
-check_absent \
-  "an unreachable cluster repeats no installation work" \
-  " init " \
+check_contains \
+  "whole-target deploy plans the unreachable cluster's infrastructure root" \
+  " plan " \
+  "$(terraform_log)"
+check_contains \
+  "whole-target deploy reconciles the unreachable cluster's infrastructure root" \
+  " apply " \
   "$(terraform_log)"
 
 if ! command -v script >/dev/null 2>&1; then
@@ -630,6 +608,10 @@ else
     "aws-bootstrap" \
     "$(terraform_log)"
   check_contains \
+    "the accepted setup writes the durable root's identity policy contract" \
+    '"Sid": "sol-provisioner"' \
+    "$(cat "$(find "$tmp/data" -name 'provisioner_policy_json.json' -print -quit)" 2>/dev/null)"
+  check_contains \
     "the setup prints the one external action" \
     "the zone that publishes prod.example.test is in this account" \
     "$output"
@@ -643,7 +625,7 @@ else
     "$output"
   check_contains \
     "the run continues into the environment stage" \
-    "reconcile the environment for prod/aws/us-east-1" \
+    "Reconciling the whole target prod/aws/us-east-1" \
     "$output"
   check_contains \
     "and provisions the environment's cluster root" \

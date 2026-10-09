@@ -6,8 +6,23 @@ case "$1 $2" in
   *)
     case " $* " in
       *" --project sol-qualification "*|*" --project=sol-qualification "*) : ;;
+      *" storage buckets describe "*|*" dns managed-zones list "*|*" dns managed-zones describe "*) : ;;
       *) exit 91 ;;
     esac
+    ;;
+esac
+case " $* " in
+  *" storage buckets describe gs://sol-qualification-tfstate "*)
+    printf 'sol-qualification-tfstate\n'
+    exit 0
+    ;;
+  *" dns managed-zones list "*)
+    printf '[{"name":"qual-example-test","dnsName":"qual.example.test."}]\n'
+    exit 0
+    ;;
+  *" dns managed-zones describe qual-example-test "*)
+    printf 'qual-example-test\n'
+    exit 0
     ;;
 esac
 case " $* " in

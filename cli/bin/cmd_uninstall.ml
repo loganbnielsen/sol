@@ -210,7 +210,7 @@ let cmd =
          Sol never reports a resource removed because a command exited zero."
     ; `P
         "The target is the positional and the environment is a property of it, matching \
-         `sol cloud bootstrap` (DEC-016, DEC-031)."
+         `sol plan` and is established inline by `sol deploy` (DEC-016, DEC-031)."
     ; `S "EXIT STATUS"
     ; `P "0 -- every Sol-owned resource in the plan was observed absent."
     ; `P

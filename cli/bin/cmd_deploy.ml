@@ -38,15 +38,15 @@ let print_header ~workspace ~sha ?mode_line () =
   Printf.printf "\n%!"
 ;;
 
-let build_plan (input : Sol_cli_deploy_selection.Planning_input.t) =
+let build_plan (input : Sol_cli_deploy_selection.Target_plan_input.t) =
   let* plan =
-    Sol_cli_deploy_selection.plan input
+    Sol_cli_deploy_selection.target_plan input
     |> Result.map_error (function
       | Sol_cli_deploy_selection.Refused message -> Sol_cli_exit.error message
       | Preflight (profile, findings) ->
         Sol_cli_exit.failure (Sol_cli_profile_preflight.report profile findings))
   in
-  plan.profile
+  Sol_cli_deploy_selection.Target_plan.profile plan
   |> Option.iter (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
     Printf.printf
       "Profile: %s (preflight passed)\n%!"
@@ -95,7 +95,7 @@ let project_trusted_workload_issuer target_cfg plan =
 ;;
 
 let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
-  : Sol_cli_deploy_selection.Planning_input.t
+  : Sol_cli_deploy_selection.Target_plan_input.t
   =
   { workspace = ctx.execution.workspace
   ; registry = ctx.registry
@@ -105,7 +105,6 @@ let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
   ; config = ctx.resolved_config
   ; facts = ctx.facts
   ; inventory = ctx.inventory
-  ; requested_scope = "workspace"
   ; image_refs = ctx.image_refs
   ; services = ctx.services
   }
@@ -341,10 +340,10 @@ let environment_destination ~target ~cluster ~infra_dir =
     Error
       (Sol_cli_exit.error
          (Printf.sprintf
-            "the environment for %s was provisioned, but Sol cannot read back the \
-             cluster it created from Terraform's outputs, so this run cannot name the \
-             cluster it would deploy to. Observe it with `sol cloud apply %s --plan` and \
-             re-run."
+            "the environment for %s was reconciled, but Sol cannot read back the cluster \
+             it created from Terraform's outputs, so this run cannot name the cluster it \
+             would deploy to. Review it with `sol plan %s` and resolve the output error \
+             before retrying."
             target
             target))
   | Some cluster ->
@@ -369,12 +368,9 @@ let environment_refusal_lines ~target ~because =
      cluster"
   ; "access."
   ; ""
-  ; "Create it with:"
-  ; Printf.sprintf "  sol cloud apply %s" target
-  ; Printf.sprintf
-      "then name the context that command prints as this target's kube_context, and run \
-       `sol deploy %s` again."
-      target
+  ; "Run an interactive deploy to reconcile it:"
+  ; Printf.sprintf "  sol deploy %s" target
+  ; "Then name the context that deploy setup prints as this target's kube_context."
   ]
 ;;
 
@@ -430,16 +426,86 @@ let first_run ~target ~target_cfg ~action ~await_delegation ~run_log () =
   environment_stage ~target ~run_log ~action ()
 ;;
 
+let reconcile_environment_for_deploy
+      ~planning
+      ~target
+      ~run_log
+      ~await_delegation
+      ~confirm_ecr_removal
+      ()
+  =
+  let target_cfg = planning.Sol_cli_deploy_selection.Target_plan_input.config.target in
+  let* assets = Cmd_cloud_tf.resolve_assets () in
+  let* installation =
+    installation_stage
+      ~target
+      ~target_cfg
+      ~action:Sol_cli_command_request.Deploy_apply
+      ~await_delegation
+      ()
+  in
+  let* () =
+    match installation with
+    | Installation_established ->
+      print_guided (Sol_cli_installation_onboarding.observed_lines ~target);
+      Ok ()
+    | Installation_reported ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "the durable installation for %s could not be established with positive \
+               evidence; target reconciliation stopped before changing the environment"
+              target))
+  in
+  let* () = Cmd_cloud_tf.check_terraform () in
+  (match target_cfg.Sol_cli_config.kube_context with
+   | None ->
+     print_guided
+       [ "This target names no Kubernetes destination Sol can reach from here, so this \
+          is "
+         ^ "the first run for "
+         ^ target
+         ^ ":"
+       ]
+   | Some _ -> ());
+  print_guided
+    [ ""
+    ; Printf.sprintf
+        "Reconciling the whole target %s — infrastructure, platform and workloads."
+        target
+    ];
+  match
+    Sol_cli_environment_stage.apply_config
+      ~confirm_ecr_removal
+      ~assets
+      ~run_log
+      ~config:planning.config
+      ~var_file:None
+      ~vars:[]
+      ()
+  with
+  | Ok (Sol_cli_environment_stage.Applied { cluster; infra_dir }) ->
+    print_guided [ Printf.sprintf "The environment for %s is reconciled." target ];
+    environment_destination ~target ~cluster ~infra_dir
+  | Ok (Sol_cli_environment_stage.Apply_failed { failure; _ }) ->
+    Error
+      (Sol_cli_exit.failure ("\n" ^ Sol_cli_environment_stage.failure_to_string failure))
+  | Error failure ->
+    Error
+      (Sol_cli_exit.failure ("\n" ^ Sol_cli_environment_stage.failure_to_string failure))
+;;
+
 let destination_or_environment_stage
       ~planning
       ~target
       ~run_log
       ~action
       ~await_delegation
+      ~confirm_ecr_removal
       ()
   =
   let target_cfg =
-    planning.Sol_cli_deploy_selection.Planning_input.config.Sol_cli_config.target
+    planning.Sol_cli_deploy_selection.Target_plan_input.config.Sol_cli_config.target
   in
   let declared_context =
     match target_cfg.Sol_cli_config.kube_context with
@@ -452,16 +518,29 @@ let destination_or_environment_stage
     in
     Ok (destination, true)
   in
-  match Sol_cli_config.destination_of_target target_cfg with
-  | Ok destination when not (allow_setup action) -> Ok (destination, false)
-  | Ok destination when Sol_cli_target_report.context_is_configured destination ->
-    Ok (destination, false)
-  | Ok _ -> first_run ()
-  | Error message when declared_context -> Error (Sol_cli_exit.error message)
-  | Error _ when allow_setup action -> first_run ()
-  | Error message ->
-    let* () = guide_installation ~target ~target_cfg ~action ~await_delegation in
-    Error (Sol_cli_exit.error message)
+  if
+    action = Sol_cli_command_request.Deploy_apply
+    && Sol_cli_provider_capabilities.owns_root target_cfg.Sol_cli_config.provider
+  then
+    reconcile_environment_for_deploy
+      ~planning
+      ~target
+      ~run_log
+      ~await_delegation
+      ~confirm_ecr_removal
+      ()
+    |> Result.map (fun destination -> destination, true)
+  else (
+    match Sol_cli_config.destination_of_target target_cfg with
+    | Ok destination when not (allow_setup action) -> Ok (destination, false)
+    | Ok destination when Sol_cli_target_report.context_is_configured destination ->
+      Ok (destination, false)
+    | Ok _ -> first_run ()
+    | Error message when declared_context -> Error (Sol_cli_exit.error message)
+    | Error _ when allow_setup action -> first_run ()
+    | Error message ->
+      let* () = guide_installation ~target ~target_cfg ~action ~await_delegation in
+      Error (Sol_cli_exit.error message))
 ;;
 
 let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
@@ -483,6 +562,7 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.run_offline
     ctx
@@ -507,6 +587,7 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
   let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   let* results =
     Sol_cli_deploy_run.run_offline
@@ -570,7 +651,7 @@ let namespace_of_facts ~workspace (facts : Sol_cli_workspace_model.t) =
 ;;
 
 let verify_effective_access
-      (planning : Sol_cli_deploy_selection.Planning_input.t)
+      (planning : Sol_cli_deploy_selection.Target_plan_input.t)
       ~target_cfg
   =
   let open Result.Syntax in
@@ -584,7 +665,7 @@ let verify_effective_access
 ;;
 
 let check_effective_access
-      (planning : Sol_cli_deploy_selection.Planning_input.t)
+      (planning : Sol_cli_deploy_selection.Target_plan_input.t)
       ~target_cfg
   =
   verify_effective_access planning ~target_cfg
@@ -598,25 +679,27 @@ let run_apply
       ~target
       ~run_log
       ~confirm_group_change
+      ~confirm_ecr_removal
       ~loki_push_url
       ~await_delegation
       ()
   =
   let* () =
     check_apply_environment
-      ~facts:planning.Sol_cli_deploy_selection.Planning_input.facts
-      ~services:planning.Sol_cli_deploy_selection.Planning_input.services
+      ~facts:planning.Sol_cli_deploy_selection.Target_plan_input.facts
+      ~services:planning.Sol_cli_deploy_selection.Target_plan_input.services
   in
   let* () =
     Sol_cli_deploy_run.verify_image_refs_exist
-      ~image_refs:planning.Sol_cli_deploy_selection.Planning_input.image_refs
+      ~image_refs:planning.Sol_cli_deploy_selection.Target_plan_input.image_refs
     |> Sol_cli_exit.of_msg
   in
   print_header
-    ~workspace:planning.Sol_cli_deploy_selection.Planning_input.workspace
-    ~sha:planning.Sol_cli_deploy_selection.Planning_input.sha
+    ~workspace:planning.Sol_cli_deploy_selection.Target_plan_input.workspace
+    ~sha:planning.Sol_cli_deploy_selection.Target_plan_input.sha
     ();
   let* plan = build_plan planning in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* destination, established =
     destination_or_environment_stage
       ~planning
@@ -624,7 +707,32 @@ let run_apply
       ~run_log
       ~action:Sol_cli_command_request.Deploy_apply
       ~await_delegation
+      ~confirm_ecr_removal
       ()
+  in
+  let target_cfg = planning.Sol_cli_deploy_selection.Target_plan_input.config.target in
+  let authorization = Sol_cli_provider_capabilities.capabilities_of target_cfg.provider in
+  let reconciler_declared =
+    match
+      Sol_cli_config.provider_field target_cfg authorization.authorization_trust_field
+    with
+    | Some principal -> not (Sol_cli_string.is_blank principal)
+    | None -> false
+  in
+  let* () =
+    if not reconciler_declared
+    then Ok ()
+    else
+      Cmd_grants.run
+        ~config:planning.config
+        ~destination
+        ~action:Cmd_grants.Apply
+        ~target
+        ~var_file:None
+        ~vars:[]
+        ()
+      |> Result.map_error (fun (failure : Sol_cli_exit.failure) ->
+        Sol_cli_exit.failure failure.text)
   in
   let ctx : Sol_cli_deploy_run.context = context_of ~destination in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
@@ -707,7 +815,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
   in
   let await_delegation = Option.value req.await_delegation ~default:300 in
-  let planning : Sol_cli_deploy_selection.Planning_input.t =
+  let planning : Sol_cli_deploy_selection.Target_plan_input.t =
     { workspace
     ; registry
     ; sha
@@ -716,7 +824,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; config = resolved_config
     ; facts
     ; inventory
-    ; requested_scope = "workspace"
     ; image_refs
     ; services
     }
@@ -751,6 +858,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
       ~target:req.target
       ~run_log
       ~confirm_group_change:req.confirm_group_change
+      ~confirm_ecr_removal:req.confirm_ecr_removal
       ~loki_push_url:req.loki_push_url
       ~await_delegation
       ()
@@ -762,6 +870,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         ~run_log
         ~action:(Sol_cli_command_request.Deploy_dry_run { emit_to })
         ~await_delegation
+        ~confirm_ecr_removal:req.confirm_ecr_removal
         ()
     in
     run_dry_run (context_of ~destination) ~emit_to ~await_delegation
@@ -773,6 +882,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
         ~run_log
         ~action:(Sol_cli_command_request.Deploy_emit_to dir)
         ~await_delegation
+        ~confirm_ecr_removal:req.confirm_ecr_removal
         ()
     in
     run_emit (context_of ~destination) ~dir
@@ -959,6 +1069,17 @@ let confirm_group_change_flag =
         ~doc:"Acknowledge that consumer group IDs have changed and proceed with deploy")
 ;;
 
+let confirm_ecr_removal_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "confirm-ecr-removal" ]
+        ~doc:
+          "Confirm deleting ECR repositories whose workloads leave this target's \
+           declared set")
+;;
+
 let loki_push_url_arg =
   Arg.(
     value
@@ -1049,13 +1170,13 @@ let cmd =
     (Cmd.info
        "deploy"
        ~doc:
-         "Deploy pre-built images to a cluster (CI/CD integration). Like 'sol up' but \
-          skips the build step — images must already be in the registry. Takes a \
-          required TARGET positional (<env>/<provider>/<region>, e.g. \
-          dev/aws/us-east-1), unlike 'sol up' whose positional is the optional \
-          service-path filter — 'sol up' is local-only and has no target to resolve. A \
-          first run against an uninstalled account is guided in place rather than \
-          requiring 'sol cloud bootstrap' first."
+         "Reconcile a target's infrastructure, authorization and workloads, deploying \
+          pre-built images. Like 'sol up' but skips the build step — images must already \
+          be in the registry. Takes a required TARGET positional \
+          (<env>/<provider>/<region>, e.g. dev/aws/us-east-1), unlike 'sol up' whose \
+          positional is the optional service-path filter — 'sol up' is local-only and \
+          has no target to resolve. A first run against an uninstalled account is guided \
+          in place rather than requiring a separate bootstrap command first."
        ~man)
     Term.(
       const
@@ -1069,6 +1190,7 @@ let cmd =
              registry
              secret_backend
              confirm_group_change
+             confirm_ecr_removal
              loki_push_url
              keep_releases
              await_delegation
@@ -1085,6 +1207,7 @@ let cmd =
                   ~registry
                   ~secret_backend
                   ~confirm_group_change
+                  ~confirm_ecr_removal
                   ~loki_push_url
                   ~keep_releases
                   ~await_delegation
@@ -1101,6 +1224,7 @@ let cmd =
       $ registry_arg
       $ secret_backend_term
       $ confirm_group_change_flag
+      $ confirm_ecr_removal_flag
       $ loki_push_url_arg
       $ keep_releases_arg
       $ await_delegation_arg)

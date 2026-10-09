@@ -41,6 +41,57 @@ name_arg() { # the object named after that resource
   done
 }
 
+configmap_path() { printf '%s/configmap-%s' "$FAIL_MARKER_DIR" "$1"; }
+file_arg() {
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "-f" ]; then printf '%s' "$argument"; return; fi
+    previous="$argument"
+  done
+}
+
+case " $* " in
+  *" get configmap sol-boundary-lease-"*)
+    lease_file="$(configmap_path "$(name_arg "$@")")"
+    if [ -f "$lease_file" ]; then cat "$lease_file"; exit 0; fi
+    printf 'Error from server (NotFound): configmaps "%s" not found\n' "$(name_arg "$@")" >&2
+    exit 1
+    ;;
+  *" create -f "*)
+    input_file="$(file_arg "$@")"
+    configmap_name="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$input_file" 2>/dev/null || true)"
+    case "$configmap_name" in
+      sol-boundary-lease-*)
+        python3 -c 'import json,sys; p=sys.argv[2]; x=json.load(open(sys.argv[1])); x.setdefault("metadata", {})["resourceVersion"]="1"; json.dump(x,open(p,"w"))' "$input_file" "$(configmap_path "$configmap_name")"
+        printf 'configmap/%s created\n' "$configmap_name"
+        exit 0
+        ;;
+    esac
+    ;;
+  *" replace -f "*)
+    input_file="$(file_arg "$@")"
+    configmap_name="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$input_file" 2>/dev/null || true)"
+    case "$configmap_name" in
+      sol-boundary-lease-*)
+        python3 -c 'import json,sys; p=sys.argv[2]; x=json.load(open(sys.argv[1])); x.setdefault("metadata", {})["resourceVersion"]="2"; json.dump(x,open(p,"w"))' "$input_file" "$(configmap_path "$configmap_name")"
+        printf 'configmap/%s replaced\n' "$configmap_name"
+        exit 0
+        ;;
+    esac
+    ;;
+  *" delete configmap sol-boundary-lease-"*)
+    deleted_name=""
+    saw_configmap=0
+    for argument in "$@"; do
+      if [ "$saw_configmap" = 1 ]; then deleted_name="$argument"; break; fi
+      [ "$argument" = configmap ] && saw_configmap=1
+    done
+    rm -f "$(configmap_path "$deleted_name")"
+    printf 'configmap/%s deleted\n' "$deleted_name"
+    exit 0
+    ;;
+esac
+
 owned_uid() { # resource namespace name
   awk -F'\t' -v r="$1" -v ns="$2" -v n="$3" '
     $0 !~ /^#/ && $1 == r && $2 == ns && $3 == n { print $4; exit }
@@ -134,6 +185,14 @@ case " $* " in
     esac
 esac
 case " $* " in
+  *" get secret sol-secrets "*)
+    printf '{"data":{"POSTGRES_URL":"cG9zdGdyZXNxbDovL2xpZmVjeWNsZTpvZmZsaW5lQGxvY2FsaG9zdDo1NDMyL3Rlc3Q=","SOL_API_KEY":"b2ZmbGluZS1zZWNyZXQ="}}\n'
+    exit 0
+    ;;
+  *" get secret "*"-secrets "*)
+    printf '{"data":{"POSTGRES_URL":"cG9zdGdyZXNxbDovL2xpZmVjeWNsZTpvZmZsaW5lQGxvY2FsaG9zdDo1NDMyL3Rlc3Q=","SOL_API_KEY":"b2ZmbGluZS1zZWNyZXQ=","KAFKA_SASL_PASSWORD":"b2ZmbGluZS1rYWZrYQ==","KAFKA_SSL_CA_CERT":"b2ZmbGluZS1jZXJ0"}}\n'
+    exit 0
+    ;;
   *" get secret redpanda-users -n redpanda "*)
     if [ "${PLATFORM_CREDENTIAL_ABSENT:-}" = 1 ]; then
       printf 'Error from server (NotFound): secrets "redpanda-users" not found\n' >&2

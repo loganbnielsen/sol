@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-18
-- **Scope:** the `sol cloud apply` / `sol cloud destroy` lifecycle for AWS
+- **Scope:** the `sol deploy` / `sol cloud destroy` lifecycle for AWS
   `production-single-region/v1`; the phase vocabulary is provider-neutral
 - **Supersedes:** the "temporary cluster-admin only to create the custom RBAC"
   and "apply always reconciles back toward protected Ready state" wording in
@@ -206,7 +206,7 @@ Regression coverage asserts the semantics, not just the original bugs:
 
 - Two previously implicit rules become one explicit contract, so findings 13, 14
   and 15 share a single answer instead of three local patches.
-- `sol cloud apply` installs the platform under the temporary privileged
+- `sol deploy` installs the platform under the temporary privileged
   authority and de-escalates only after verified readiness; `sol cloud destroy`
   runs the destroy desired-state policy from a verified `PreparingDestroy`.
 - BUG-039 is unchanged: production RDS stays protected throughout `Ready`. The

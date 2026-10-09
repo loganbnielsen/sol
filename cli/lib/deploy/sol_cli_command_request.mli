@@ -25,6 +25,7 @@ type deploy_request =
   ; registry : string option
   ; secret_backend : Sol_cli_manifest.secret_backend option
   ; confirm_group_change : bool
+  ; confirm_ecr_removal : bool
   ; loki_push_url : string option
   ; keep_releases : int
   ; await_delegation : int option
@@ -51,6 +52,7 @@ val make_deploy_request
   -> registry:string option
   -> secret_backend:Sol_cli_manifest.secret_backend option
   -> confirm_group_change:bool
+  -> confirm_ecr_removal:bool
   -> loki_push_url:string option
   -> keep_releases:int
   -> await_delegation:int option
