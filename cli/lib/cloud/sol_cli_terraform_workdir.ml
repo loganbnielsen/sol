@@ -104,74 +104,84 @@ let custom_file rel =
 ;;
 
 let rec custom_module_sources root rel =
+  let open Result.Syntax in
   let path = Filename.concat root rel in
   match Unix.lstat path with
   | { Unix.st_kind = Unix.S_DIR; _ } ->
-    Sys.readdir path
-    |> Array.to_list
-    |> List.sort String.compare
-    |> List.concat_map (fun name -> custom_module_sources root (Filename.concat rel name))
-  | { Unix.st_kind = Unix.S_REG; _ } when custom_file rel -> [ rel ]
-  | { Unix.st_kind = Unix.S_REG; _ } -> []
+    let* names =
+      match Sys.readdir path with
+      | names -> Ok (Array.to_list names |> List.sort String.compare)
+      | exception Sys_error message -> Error message
+    in
+    names
+    |> Sol_cli_result.map_list (fun name ->
+      custom_module_sources root (Filename.concat rel name))
+    |> Result.map List.concat
+  | { Unix.st_kind = Unix.S_REG; _ } when custom_file rel -> Ok [ rel ]
+  | { Unix.st_kind = Unix.S_REG; _ } -> Ok []
   | { Unix.st_kind = Unix.S_LNK; _ } ->
-    failwith
-      (Printf.sprintf "symbolic links are not supported in custom Terraform: %s" path)
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> []
+    Error (Printf.sprintf "symbolic links are not supported in custom Terraform: %s" path)
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
   | exception Unix.Unix_error (error, _, _) ->
-    failwith (Printf.sprintf "%s: %s" path (Unix.error_message error))
-  | _ -> failwith (Printf.sprintf "unsupported custom Terraform file type: %s" path)
+    Error (Printf.sprintf "%s: %s" path (Unix.error_message error))
+  | _ -> Error (Printf.sprintf "unsupported custom Terraform file type: %s" path)
 ;;
 
 let custom_sources_result root =
-  if root = "" || not (Sys.file_exists root)
-  then Ok []
-  else if not (Sys.is_directory root)
-  then Error (Printf.sprintf "custom Terraform path is not a directory: %s" root)
-  else (
-    let module_path = Filename.concat root "modules" in
-    let root_tf_files =
-      Sys.readdir root
-      |> Array.to_list
-      |> List.sort String.compare
-      |> List.filter_map (fun name ->
-        let path = Filename.concat root name in
-        if not (custom_file name)
-        then None
-        else (
-          match Unix.lstat path with
-          | { Unix.st_kind = Unix.S_REG; _ } -> Some name
-          | { Unix.st_kind = Unix.S_LNK; _ } ->
-            failwith
-              (Printf.sprintf
-                 "symbolic links are not supported in custom Terraform: %s"
-                 path)
-          | _ ->
-            failwith (Printf.sprintf "unsupported custom Terraform file type: %s" path)))
+  let open Result.Syntax in
+  let module_path = Filename.concat root "modules" in
+  let* root_kind =
+    match Unix.lstat root with
+    | { Unix.st_kind; _ } -> Ok (Some st_kind)
+    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
+    | exception Unix.Unix_error (error, _, _) ->
+      Error (Printf.sprintf "%s: %s" root (Unix.error_message error))
+  in
+  match root_kind with
+  | None -> Ok []
+  | Some Unix.S_DIR ->
+    let* names =
+      match Sys.readdir root with
+      | names -> Ok (Array.to_list names |> List.sort String.compare)
+      | exception Sys_error message -> Error message
     in
-    match
-      root_tf_files
-      @
+    let* root_tf_files =
+      names
+      |> List.filter custom_file
+      |> Sol_cli_result.map_list (fun name ->
+        let path = Filename.concat root name in
+        match Unix.lstat path with
+        | { Unix.st_kind = Unix.S_REG; _ } -> Ok name
+        | { Unix.st_kind = Unix.S_LNK; _ } ->
+          Error
+            (Printf.sprintf
+               "symbolic links are not supported in custom Terraform: %s"
+               path)
+        | _ -> Error (Printf.sprintf "unsupported custom Terraform file type: %s" path)
+        | exception Unix.Unix_error (error, _, _) ->
+          Error (Printf.sprintf "%s: %s" path (Unix.error_message error)))
+    in
+    let* module_sources =
       match Unix.lstat module_path with
       | { Unix.st_kind = Unix.S_DIR; _ } -> custom_module_sources root "modules"
       | { Unix.st_kind = Unix.S_LNK; _ } ->
-        failwith
+        Error
           (Printf.sprintf
              "symbolic links are not supported in custom Terraform: %s"
              module_path)
       | { Unix.st_kind = Unix.S_REG; _ } ->
-        failwith
+        Error
           (Printf.sprintf
              "custom Terraform modules path is not a directory: %s"
              module_path)
-      | exception Unix.Unix_error (Unix.ENOENT, _, _) -> []
+      | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok []
+      | exception Unix.Unix_error (error, _, _) ->
+        Error (Printf.sprintf "%s: %s" module_path (Unix.error_message error))
       | _ ->
-        failwith (Printf.sprintf "unsupported custom Terraform file type: %s" module_path)
-    with
-    | sources -> Ok sources
-    | exception Failure message -> Error message
-    | exception Sys_error message -> Error message
-    | exception Unix.Unix_error (error, _, _) ->
-      Error (Printf.sprintf "%s: %s" module_path (Unix.error_message error)))
+        Error (Printf.sprintf "unsupported custom Terraform file type: %s" module_path)
+    in
+    Ok (root_tf_files @ module_sources)
+  | Some _ -> Error (Printf.sprintf "custom Terraform path is not a directory: %s" root)
 ;;
 
 let materialize_custom_tf ~provider ~role ~chdir =
