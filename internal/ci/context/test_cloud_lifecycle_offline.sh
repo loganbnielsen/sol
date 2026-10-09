@@ -9,6 +9,7 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 export REPO_ROOT="$root"
 sol="$(realpath "${1:-$root/_build/default/cli/bin/main.exe}")"
+record_emitter="$(realpath "${2:-$root/_build/default/cli/test/print_release_record.exe}")"
 tmp="$(mktemp -d)"
 heredocs_open=$(grep -cE "^cat >.*<<'EOF'" "$0")
 heredocs_close=$(grep -cE '^EOF$' "$0")
@@ -681,8 +682,21 @@ for aws_only in aws_region= cert_manager_irsa_role_arn= loki_s3_bucket= \
   fi
 done
 
+# The workspace's recorded UID evidence: owned_workloads.tsv is the one source for the
+# identities the fake reports as live and the record this seeds carries, so the removal match
+# cannot be accidental.
+seeded_configmaps="$tmp/seeded-release"
+mkdir -p "$seeded_configmaps"
+own_args=()
+while IFS=$'\t' read -r resource namespace name uid; do
+  case "$resource" in "" | \#*) continue ;; esac
+  own_args+=(--own "$resource:$namespace:$name:$uid")
+done <"$root/internal/ci/lifecycle_fakes/owned_workloads.tsv"
+"$record_emitter" --workspace work --out "$seeded_configmaps" "${own_args[@]}" >/dev/null
+
 release_log="$tmp/release-destroy.log"
-if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 LIFECYCLE_LOG="$release_log" \
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 \
+        FAKE_CONFIGMAP_DIR="$seeded_configmaps" LIFECYCLE_LOG="$release_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$release_log.out" 2>&1
 then
@@ -746,9 +760,44 @@ if [ -z "$substrate_line" ] || [ "$wait_line" -ge "$substrate_line" ]; then
   exit 1
 fi
 
+# The same destroy with no seeded record: no recorded UID evidence means the workloads are
+# retained and reported, never deleted (docs/architecture/ownership.md) — and the substrate
+# destroy still proceeds, because Sol retaining an object it cannot prove it owns must not
+# block tearing down the target.
+retain_log="$tmp/release-retain-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 \
+        LIFECYCLE_LOG="$retain_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$retain_log.out" 2>&1
+then
+  cat "$retain_log.out" >&2
+  echo "cloud destroy with no recorded evidence failed instead of retaining the workloads" >&2
+  exit 1
+fi
+grep -F 'retaining' "$retain_log.out" >/dev/null || {
+  echo "the destroy did not report that it retained workloads it cannot prove it owns:" >&2
+  cat "$retain_log.out" >&2
+  exit 1
+}
+grep -F 'deployment/charge-svc' "$retain_log.out" >/dev/null || {
+  echo "the retained workloads were not named for the operator:" >&2
+  cat "$retain_log.out" >&2
+  exit 1
+}
+if grep -E 'delete (deployment|rollout|cronjob|job)/' "$retain_log" >/dev/null; then
+  echo "the destroy deleted a workload without recorded UID evidence:" >&2
+  grep -F 'kubectl' "$retain_log" >&2
+  exit 1
+fi
+grep -E -- 'cloud/gcp/cluster destroy ' "$retain_log" >/dev/null || {
+  echo "the destroy did not proceed to the substrate after retaining the workloads:" >&2
+  grep -F 'terraform' "$retain_log" >&2
+  exit 1
+}
+
 rollout_log="$tmp/rollout-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 ROLLOUT_SERVED=1 \
-        LIFECYCLE_LOG="$rollout_log" \
+        FAKE_CONFIGMAP_DIR="$seeded_configmaps" LIFECYCLE_LOG="$rollout_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$rollout_log.out" 2>&1
 then
@@ -780,6 +829,7 @@ rm -f "$FAIL_MARKER_DIR/pods-released"
 release_fail_log="$tmp/release-fail-destroy.log"
 if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
       DATABASE_REFUSES_UNRELEASED=1 \
+      FAKE_CONFIGMAP_DIR="$seeded_configmaps" \
       LIFECYCLE_LOG="$release_fail_log" \
       "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$release_fail_log.out" 2>&1
@@ -819,6 +869,7 @@ rm -f "$FAIL_MARKER_DIR/pods-released"
 override_log="$tmp/release-override-destroy.log"
 if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
       DATABASE_REFUSES_UNRELEASED=1 \
+      FAKE_CONFIGMAP_DIR="$seeded_configmaps" \
       LIFECYCLE_LOG="$override_log" \
       "$sol" cloud destroy prod/gcp/us-central1 --apply --accept-unreleased) \
   >"$override_log.out" 2>&1

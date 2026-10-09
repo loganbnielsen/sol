@@ -698,13 +698,27 @@ type prune_target =
   ; name : string
   }
 
+(* A surplus workload Sol will not remove because it cannot prove it owns it. *)
+type unowned_workload =
+  { identity : workload_identity
+  ; reason : string
+  }
+
 type prune_report =
   { removed : prune_target list
-  ; retained : prune_target list
+  ; retained : prune_target list (* storage of a removed workload (DEC-033) *)
+  ; unowned : unowned_workload list
   }
 
 let named_target (id : workload_identity) resource name =
   { resource; namespace = id.namespace; name }
+;;
+
+let ownership_identity (id : workload_identity) : Sol_cli_workload_ownership.identity =
+  { Sol_cli_workload_ownership.resource = kind_resource id.kind
+  ; namespace = id.namespace
+  ; name = id.name
+  }
 ;;
 
 let auxiliary_targets ~live_names (id : workload_identity) =
@@ -733,18 +747,21 @@ let auxiliary_targets ~live_names (id : workload_identity) =
   base @ progressive
 ;;
 
-let plan_prune ~surplus ~live_names ~claims : prune_report =
-  let removed =
-    surplus
-    |> List.concat_map (fun id ->
-      named_target id (kind_resource id.kind) id.name :: auxiliary_targets ~live_names id)
-  in
+(* The objects a removal targets for one surplus workload: the workload itself and the
+   auxiliaries it realizes. An auxiliary follows the owning workload's UID match; it has
+   no recorded UID of its own (docs/architecture/ownership.md). *)
+let prune_targets_of_workload ~live_names (id : workload_identity) =
+  named_target id (kind_resource id.kind) id.name :: auxiliary_targets ~live_names id
+;;
+
+let plan_prune ~removable ~unowned ~live_names ~claims : prune_report =
+  let removed = removable |> List.concat_map (prune_targets_of_workload ~live_names) in
   let retained =
-    surplus
+    removable
     |> List.concat_map (fun id ->
       claims id |> List.map (named_target id "persistentvolumeclaim"))
   in
-  { removed; retained }
+  { removed; retained; unowned }
 ;;
 
 let claim_names_of_json kind json =
@@ -804,12 +821,49 @@ let delete_target ~ctx (t : prune_target) =
          (Sol_cli_process.error_to_string e))
 ;;
 
-let prune_workloads ~(ctx : Sol_cli_kube_destination.context) ~live ~surplus
+(* Remove a surplus workload only while its live UID is exactly the UID recorded when
+   Sol applied it; a different UID, no recorded UID, an absent object or an unobservable
+   one is retained and reported. Auxiliaries follow the owning workload's match
+   (docs/architecture/ownership.md). The UID is read at removal time, not from an earlier
+   listing, so a recreate between the listing and the delete is not authorized. *)
+let prune_workloads
+      ~(ctx : Sol_cli_kube_destination.context)
+      ~(evidence : Sol_cli_release_id.owned_object list)
+      ~live
+      ~surplus
   : (prune_report, string) result
   =
   let live_names = List.map (fun ((id : workload_identity), _) -> id.name) live in
+  let classify (id : workload_identity) : (workload_identity, string) result =
+    let ownership = ownership_identity id in
+    let recorded = Sol_cli_workload_ownership.recorded_uid evidence ownership in
+    match Sol_cli_workload_ownership.observe ~ctx ownership with
+    | Sol_cli_workload_ownership.Live_present uid ->
+      if Sol_cli_workload_ownership.owns ~recorded ~live_uid:uid
+      then Ok id
+      else
+        Error
+          (match recorded with
+           | None -> "Sol recorded no UID for it"
+           | Some _ -> "its live UID differs from the UID Sol recorded")
+    | Sol_cli_workload_ownership.Live_absent -> Error "it is no longer present"
+    | Sol_cli_workload_ownership.Live_unobservable reason -> Error reason
+  in
+  let removable, unowned =
+    List.fold_left
+      (fun (removable, unowned) ((id : workload_identity), _) ->
+         match classify id with
+         | Ok id -> id :: removable, unowned
+         | Error reason -> removable, { identity = id; reason } :: unowned)
+      ([], [])
+      surplus
+  in
   let report =
-    plan_prune ~surplus:(List.map fst surplus) ~live_names ~claims:(live_claim_names ~ctx)
+    plan_prune
+      ~removable:(List.rev removable)
+      ~unowned:(List.rev unowned)
+      ~live_names
+      ~claims:(live_claim_names ~ctx)
   in
   match List.filter_map (delete_target ~ctx) report.removed with
   | [] -> Ok report
@@ -819,6 +873,27 @@ let prune_workloads ~(ctx : Sol_cli_kube_destination.context) ~live ~surplus
          "could not prune %d surplus object(s):\n%s"
          (List.length errors)
          (String.concat "\n" errors))
+;;
+
+let unowned_message (unowned : unowned_workload list) =
+  Printf.sprintf
+    "rollback retained %d surplus workload(s) it cannot prove it owns (no recorded UID \
+     match):\n\
+     %s\n\
+     Sol removes a workload only while its live UID equals the UID recorded at apply. \
+     Adopt or remove these by hand."
+    (List.length unowned)
+    (String.concat
+       "\n"
+       (List.map
+          (fun (u : unowned_workload) ->
+             Printf.sprintf
+               "  %s %s/%s (%s)"
+               (kind_resource u.identity.kind)
+               u.identity.namespace
+               u.identity.name
+               u.reason)
+          unowned))
 ;;
 
 let retained_message ~(release : Sol_cli_release.t) retained =
@@ -1031,6 +1106,8 @@ let execute
     let groups = consumer_groups_of_release release in
     match deps.record_consumer_groups groups with
     | Ok () ->
+      if prune_report.unowned <> []
+      then Sol_cli_report.warn "%s" (unowned_message prune_report.unowned);
       if prune_report.retained <> []
       then Sol_cli_report.warn "%s" (retained_message ~release prune_report.retained);
       Ok ()

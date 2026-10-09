@@ -999,6 +999,7 @@ let destroy_deps
       ~retention
       ~workload_namespaces
       ~accept_unreleased
+      ~(recorded_evidence : Sol_cli_release_id.owned_object list)
       ~(destruction : Sol_cli_destruction.t)
   : Sol_cli_cloud_destroy.deps
   =
@@ -1082,16 +1083,29 @@ let destroy_deps
            Workloads_unestablished { namespace; kind = None; operation; reason }
          in
          let remove scope : (unit, release) result =
-           match scope.workloads with
-           | [] -> Ok ()
-           | workloads ->
-             Sol_cli_report.app "  %s" (to_string scope);
+           let owned, retained = partition_owned ~evidence:recorded_evidence scope in
+           let warn_retained () =
+             if retained <> []
+             then
+               Sol_cli_report.warn
+                 "%s: retaining %d workload(s) Sol cannot prove it owns (no recorded UID \
+                  match): %s"
+                 scope.namespace
+                 (List.length retained)
+                 (String.concat ", " (List.map workload_to_string retained))
+           in
+           match owned with
+           | [] ->
+             warn_retained ();
+             Ok ()
+           | owned ->
+             Sol_cli_report.app "  %s" (to_string { scope with workloads = owned });
              let delete =
                Sol_cli_kubectl.run
                  ~ctx
                  (delete_args
                     ~namespace:scope.namespace
-                    ~names:workloads
+                    ~names:(List.map workload_to_string owned)
                     ~timeout_seconds:300)
              in
              (match delete with
@@ -1102,6 +1116,7 @@ let destroy_deps
                      "removing the workloads it found"
                      (Sol_cli_process.error_to_string e))
               | Ok _ ->
+                warn_retained ();
                 Sol_cli_kubectl.run
                   ~ctx
                   (wait_args ~namespace:scope.namespace ~workspace ~timeout_seconds:300)

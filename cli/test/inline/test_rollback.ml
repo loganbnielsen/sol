@@ -1361,7 +1361,7 @@ let recording_deps
           record "prune";
           pruned := Some surplus;
           match prune_result with
-          | Ok () -> Ok { Sol_cli_rollback.removed = []; retained }
+          | Ok () -> Ok { Sol_cli_rollback.removed = []; retained; unowned = [] }
           | Error _ as e -> e)
     ; move_pointer =
         (fun () ->
@@ -2082,7 +2082,8 @@ let test_plan_prune_prunes_stateless_auxiliaries_and_retains_volumes () =
   in
   let report =
     Sol_cli_rollback.plan_prune
-      ~surplus:[ id ]
+      ~removable:[ id ]
+      ~unowned:[]
       ~live_names:[ "ledger-svc"; "ghost-svc" ]
       ~claims:(fun _ -> [ "ghost-svc-data" ])
   in
@@ -2115,7 +2116,11 @@ let test_plan_prune_guards_blue_green_names_against_a_sibling () =
   in
   let names ~live_names =
     let report =
-      Sol_cli_rollback.plan_prune ~surplus:[ id ] ~live_names ~claims:(fun _ -> [])
+      Sol_cli_rollback.plan_prune
+        ~removable:[ id ]
+        ~unowned:[]
+        ~live_names
+        ~claims:(fun _ -> [])
     in
     List.map (fun (t : Sol_cli_rollback.prune_target) -> t.name) report.removed
   in
@@ -2138,6 +2143,85 @@ let test_plan_prune_guards_blue_green_names_against_a_sibling () =
     ~msg:"the base names are still pruned"
     true
     (List.mem "ghost-svc" occupied)
+;;
+
+(* The removal path deletes a surplus workload only while its live UID equals the UID the
+   release recorded at apply; a different UID, a missing object, or no recorded UID is
+   retained and reported. *)
+let test_prune_removes_only_the_workload_whose_uid_matches () =
+  let evidence =
+    [ { Sol_cli_release_id.resource = "deployment"
+      ; namespace = "myapp-payments"
+      ; name = "owned-svc"
+      ; uid = "uid-1"
+      }
+    ]
+  in
+  let live =
+    [ ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+        ; namespace = "myapp-payments"
+        ; name = "owned-svc"
+        }
+      , "r-1" )
+    ]
+  in
+  let surplus =
+    [ { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+      ; namespace = "myapp-payments"
+      ; name = "owned-svc"
+      }
+    ; { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+      ; namespace = "myapp-payments"
+      ; name = "gone-svc"
+      }
+    ]
+  in
+  with_fake_kubectl
+    {|#!/bin/sh
+case "$3" in
+  get)
+    case "$*" in
+      *jsonpath*)
+        case "$5" in
+          owned-svc) printf '%s' uid-1 ;;
+          *) printf '%s\n' 'Error from server (NotFound): deployments "gone-svc" not found' >&2; exit 1 ;;
+        esac ;;
+      *) printf '%s' '{"spec":{"template":{"spec":{"volumes":[]}}}}' ;;
+    esac ;;
+  delete) exit 0 ;;
+  *) exit 1 ;;
+esac
+|}
+    (fun () ->
+       match
+         Sol_cli_rollback.prune_workloads
+           ~ctx:Sol_cli_kube_destination.local_context
+           ~evidence
+           ~live
+           ~surplus:(List.map (fun id -> id, "r-1") surplus)
+       with
+       | Error msg -> Windtrap.fail msg
+       | Ok report ->
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the workload whose live UID matches is removed"
+           true
+           (List.exists
+              (fun (t : Sol_cli_rollback.prune_target) ->
+                 String.equal t.resource "deployment" && String.equal t.name "owned-svc")
+              report.removed);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the workload whose object is gone is retained, not removed"
+           false
+           (List.exists
+              (fun (t : Sol_cli_rollback.prune_target) -> String.equal t.name "gone-svc")
+              report.removed);
+         Windtrap.equal
+           Windtrap.int
+           ~msg:"the retained workload is reported as not owned"
+           1
+           (List.length report.unowned))
 ;;
 
 type modelled_cluster =
@@ -2222,7 +2306,8 @@ let modelled_deps ~release ~cluster ?(fail_at = None) ()
         in
         let report =
           Sol_cli_rollback.plan_prune
-            ~surplus:(List.map fst surplus)
+            ~removable:(List.map fst surplus)
+            ~unowned:[]
             ~live_names
             ~claims:cluster.claims
         in
@@ -2463,6 +2548,10 @@ let%test "prune_plan: stateless auxiliaries pruned, volumes retained (BUG-120)" 
 
 let%test "prune_plan: blue-green names are left when a sibling owns them (BUG-120)" =
   test_plan_prune_guards_blue_green_names_against_a_sibling ()
+;;
+
+let%test "prune: a surplus workload is removed only on an exact recorded-UID match" =
+  test_prune_removes_only_the_workload_whose_uid_matches ()
 ;;
 
 let%test "reconstruction_gate: A: decode correctness" = test_gate_a_decode_correctness ()

@@ -1,6 +1,12 @@
+type workload =
+  { resource : string
+  ; name : string
+  ; uid : string
+  }
+
 type scope =
   { namespace : string
-  ; workloads : string list
+  ; workloads : workload list
   }
 
 type workload_kind =
@@ -109,9 +115,28 @@ let workload_of_item ~workspace item =
   match kind, name with
   | Some kind, Some name when not (Sol_cli_string.is_blank name) ->
     if template_carries_workspace ~kind ~workspace item
-    then Some (Printf.sprintf "%s/%s" (resource_of_kind kind) name)
+    then
+      Some
+        { resource = resource_of_kind kind
+        ; name
+        ; uid =
+            Sol_cli_json.field [ "metadata"; "uid" ] item
+            |> Sol_cli_json.string
+            |> Option.value ~default:""
+        }
     else None
   | _ -> None
+;;
+
+let workload_to_string (w : workload) = Printf.sprintf "%s/%s" w.resource w.name
+
+let compare_workload (a : workload) (b : workload) =
+  let by_resource = String.compare a.resource b.resource in
+  if by_resource <> 0
+  then by_resource
+  else (
+    let by_name = String.compare a.name b.name in
+    if by_name <> 0 then by_name else String.compare a.uid b.uid)
 ;;
 
 let workloads_of_json json ~workspace =
@@ -121,7 +146,26 @@ let workloads_of_json json ~workspace =
     Ok
       (items
        |> List.filter_map (workload_of_item ~workspace)
-       |> List.sort_uniq String.compare)
+       |> List.sort_uniq compare_workload)
+;;
+
+(* Which listed workloads Sol may remove: the live UID equals the UID recorded when Sol
+   applied it (docs/architecture/ownership.md). A workload with no recorded UID, a
+   different UID, or none observed is retained. The label that listed it only selected
+   what to look at. *)
+let partition_owned ~(evidence : Sol_cli_release_id.owned_object list) (scope : scope) =
+  let owns (w : workload) =
+    let id =
+      { Sol_cli_workload_ownership.resource = w.resource
+      ; namespace = scope.namespace
+      ; name = w.name
+      }
+    in
+    let recorded = Sol_cli_workload_ownership.recorded_uid evidence id in
+    (not (String.equal w.uid ""))
+    && Sol_cli_workload_ownership.owns ~recorded ~live_uid:w.uid
+  in
+  List.partition owns scope.workloads
 ;;
 
 type read_error =
@@ -173,5 +217,8 @@ let to_string scope =
   match scope.workloads with
   | [] -> Printf.sprintf "%s: no workload of this workspace is running" scope.namespace
   | workloads ->
-    Printf.sprintf "%s: releasing %s" scope.namespace (String.concat ", " workloads)
+    Printf.sprintf
+      "%s: releasing %s"
+      scope.namespace
+      (String.concat ", " (List.map workload_to_string workloads))
 ;;

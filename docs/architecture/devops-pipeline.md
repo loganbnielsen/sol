@@ -427,14 +427,17 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
    mismatch leaves the pointer unchanged rather than claiming a transition
    that did not happen.
 7. **Prune surplus workloads** (`Sol_cli_rollback.prune_workloads`, FEAT-074)
-   — only reached once step 6's mismatched/missing modes are clean. Deletes
-   exactly the workloads step 6 found unexpected (possibly none) — the
-   primary Deployment/Rollout/CronJob object only, not the removed service's
-   other rendered objects (ConfigMap/Secret/PVC/Service/Ingress/
-   NetworkPolicy/ServiceAccount): deleting a PVC automatically risks real
-   data loss, and cleaning up the rest needs its own ownership/ordering
-   design this ticket did not attempt. A prune failure leaves the pointer
-   unchanged, same as a step-6 refusal.
+   — only reached once step 6's mismatched/missing modes are clean. A surplus
+   workload is deleted only while its live `metadata.uid` equals the UID the
+   superseded release recorded at apply (the current release's recorded
+   evidence, decided by `Sol_cli_workload_ownership.owns`); a different UID, no
+   recorded UID, an absent object, or an unobservable one is retained and
+   reported for explicit adoption, never removed. Its rendered auxiliaries
+   (ServiceAccount, ConfigMap `-env`, NetworkPolicy, Service, Ingress,
+   PodDisruptionBudget, and a Rollout's `-active`/`-preview` names) follow the
+   owning workload's match — the workload is the unit of ownership; a
+   referenced PersistentVolumeClaim is never deleted (DEC-033). A prune failure
+   leaves the pointer unchanged, same as a step-6 refusal.
 8. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
    mutable `sol-release-current-<workspace>` ConfigMap, and only after the
    live set agrees and any surplus is pruned; the immutable per-release
