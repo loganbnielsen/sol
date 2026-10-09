@@ -118,10 +118,10 @@ module Target_plan_input = struct
 end
 
 module Target_plan = struct
-  type t = Sol_cli_deployment_plan.t
+  type t = { deployment_plan : Sol_cli_deployment_plan.t }
 
-  let profile (t : Sol_cli_deployment_plan.t) = t.profile
-  let to_deployment_plan t = t
+  let profile t = t.deployment_plan.profile
+  let to_deployment_plan t = t.deployment_plan
 end
 
 let plan (input : Planning_input.t) =
@@ -219,5 +219,5 @@ let target_plan (input : Target_plan_input.t) =
     ; image_refs
     ; services
     }
-  |> Result.map (fun plan -> (plan : Target_plan.t))
+  |> Result.map (fun deployment_plan -> Target_plan.{ deployment_plan })
 ;;

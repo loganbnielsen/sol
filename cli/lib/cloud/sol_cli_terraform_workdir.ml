@@ -57,6 +57,21 @@ let rec source_files root rel =
   else [ rel ]
 ;;
 
+let sources_in_cloud_root ~provider ~role sources =
+  let prefix = A.cloud_root_rel provider role ^ Filename.dir_sep in
+  List.filter_map
+    (fun source ->
+       if String.starts_with ~prefix source
+       then
+         Some
+           (String.sub
+              source
+              (String.length prefix)
+              (String.length source - String.length prefix))
+       else None)
+    sources
+;;
+
 (* The source list Sol wrote on the previous materialization. Only confirmed
    initial absence is empty: a manifest that exists but cannot be read is
    unobservable, so materialization must refuse rather than treat it as a first
@@ -184,7 +199,7 @@ let custom_sources_result root =
   | Some _ -> Error (Printf.sprintf "custom Terraform path is not a directory: %s" root)
 ;;
 
-let materialize_custom_tf ~provider ~role ~chdir =
+let materialize_custom_tf ~provider ~role ~chdir ~sol_sources =
   let open Result.Syntax in
   let manifest = Filename.concat chdir custom_manifest_name in
   let* previous = read_manifest manifest in
@@ -211,7 +226,9 @@ let materialize_custom_tf ~provider ~role ~chdir =
   let collisions =
     List.filter
       (fun name ->
-         (not (List.mem name previous)) && Sys.file_exists (Filename.concat chdir name))
+         List.mem name sol_sources
+         || ((not (List.mem name previous))
+             && Sys.file_exists (Filename.concat chdir name)))
       names
   in
   let* () =
@@ -268,8 +285,49 @@ let materialize ~assets ~provider ~role ~backend_config =
     Sol_cli_fs.write_atomic ~perm dst content
   in
   let prepare sources =
+    let sol_sources = sources_in_cloud_root ~provider ~role sources in
     let* () = Sol_cli_fs.mkdir_p root in
     let* previous = read_manifest manifest in
+    let custom_chdir = chdir ~provider ~role ~backend_config in
+    let custom_manifest = Filename.concat custom_chdir custom_manifest_name in
+    let* custom_previous = read_manifest custom_manifest in
+    let* () =
+      if
+        List.for_all
+          (fun path ->
+             path <> ""
+             && path <> "."
+             && Filename.is_relative path
+             && (not (List.mem "." (String.split_on_char '/' path)))
+             && not (List.mem ".." (String.split_on_char '/' path)))
+          custom_previous
+      then Ok ()
+      else Error (Printf.sprintf "invalid custom Terraform manifest: %s" custom_manifest)
+    in
+    let custom_root = custom_tf_root ~provider ~role in
+    let* custom_sources =
+      match custom_root with
+      | None -> Ok []
+      | Some custom_root -> custom_sources_result custom_root
+    in
+    let custom_collisions =
+      List.filter
+        (fun name ->
+           List.mem name sol_sources
+           || ((not (List.mem name custom_previous))
+               && Sys.file_exists (Filename.concat custom_chdir name)))
+        custom_sources
+    in
+    let* () =
+      match custom_collisions with
+      | [] -> Ok ()
+      | _ ->
+        Error
+          (Printf.sprintf
+             "custom Terraform files would overwrite Sol's files in %s: %s"
+             custom_chdir
+             (String.concat ", " custom_collisions))
+    in
     let* _ =
       previous
       |> List.filter (fun rel -> not (List.mem rel sources))
@@ -280,9 +338,8 @@ let materialize ~assets ~provider ~role ~backend_config =
     let* () =
       Sol_cli_fs.write_atomic ~perm:0o644 manifest (String.concat "\n" sources ^ "\n")
     in
-    let chdir = chdir ~provider ~role ~backend_config in
-    let* () = materialize_custom_tf ~provider ~role ~chdir in
-    Ok chdir
+    let* () = materialize_custom_tf ~provider ~role ~chdir:custom_chdir ~sol_sources in
+    Ok custom_chdir
   in
   match List.concat_map (source_files source_root) source_trees with
   | exception Sys_error message ->

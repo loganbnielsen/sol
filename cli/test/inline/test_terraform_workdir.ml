@@ -262,6 +262,70 @@ let test_unreadable_manifest_refuses () =
       (Sys.file_exists manifest))
 ;;
 
+let test_custom_tf_composes_with_sol_api_and_survives_new_collision () =
+  with_tmpdir (fun root ->
+    let assets = fake_assets root in
+    write (Filename.concat root "sol.yml") "project: test\n";
+    write
+      (Filename.concat root "platform/cloud/aws/cluster/custom_api.tf")
+      "locals { sol_target = { provider = \"aws\" } }\n";
+    let custom_source = Filename.concat root "sol/terraform/aws/cluster/consumer.tf" in
+    write custom_source "locals { service_network = local.sol_target.network_id }\n";
+    let previous_cwd = Sys.getcwd () in
+    Sys.chdir root;
+    Fun.protect
+      ~finally:(fun () -> Sys.chdir previous_cwd)
+      (fun () ->
+         let target = "custom-terraform/aws/us-east-1" in
+         let chdir = materialize assets ~target () in
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"Sol's stable API is in the generated root"
+           "locals { sol_target = { provider = \"aws\" } }\n"
+           (read (Filename.concat chdir "custom_api.tf"));
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"user Terraform is in that same root and can read local.sol_target"
+           "locals { service_network = local.sol_target.network_id }\n"
+           (read (Filename.concat chdir "consumer.tf"));
+         write
+           (Filename.concat root "platform/cloud/aws/cluster/consumer.tf")
+           "# new Sol source with a colliding name\n";
+         (match
+            W.materialize
+              ~assets
+              ~provider:Sol_cli_provider.Aws
+              ~role:A.Cluster
+              ~backend_config:(backend target)
+          with
+          | Ok _ ->
+            let generated_manifest =
+              read
+                (Filename.concat
+                   (W.dir
+                      ~provider:Sol_cli_provider.Aws
+                      ~role:A.Cluster
+                      ~backend_config:(backend target))
+                   W.manifest_name)
+            in
+            Windtrap.fail
+              (Printf.sprintf
+                 "a newly introduced Sol source collision was accepted; generated files: \
+                  %s"
+                 generated_manifest)
+          | Error message ->
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"the refusal identifies the colliding custom Terraform file"
+              true
+              (Sol_cli_string.contains ~needle:"consumer.tf" message));
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"the prior custom source survives the refused rematerialization"
+           "locals { service_network = local.sol_target.network_id }\n"
+           (read (Filename.concat chdir "consumer.tf"))))
+;;
+
 let%test "workdir: identity isolates states" = test_identity ()
 let%test "workdir: materializes the assets" = test_materializes_the_assets ()
 
@@ -274,6 +338,10 @@ let%test "workdir: re-materialization is authoritative and preserves" =
 ;;
 
 let%test "workdir: read-only assets" = test_read_only_assets ()
+
+let%test "workdir: custom Terraform composes against the stable API" =
+  test_custom_tf_composes_with_sol_api_and_survives_new_collision ()
+;;
 
 let%test
     "workdir: an unobservable manifest refuses without changing the working directory"

@@ -216,14 +216,15 @@ in a session of its own, with its output in a durable operation record under
 - **If `sol` itself dies** (killed, out of memory, terminal closed), Terraform
   keeps running to completion and records its outcome. `sol` exiting does not
   mean Terraform exited.
-- **The next `sol cloud` command reads the last operation against that state:**
+- **The next command that uses that state reads the last operation:**
   - *still running* → refused. Wait for it; do not unlock.
   - *resolved*, including a graceful Ctrl-C → proceeds normally.
   - *unresolved* (Terraform was killed by a signal, its supervisor vanished, or it
-    left `errored.tfstate`) → `apply` is refused until you reconcile: inspect the
-    provider and the state, import or remove what diverged, and push any
-    `errored.tfstate` yourself. Then re-run with `--accept-unresolved`.
-    `plan` and `destroy` proceed with a warning.
+    left `errored.tfstate`) → `sol deploy` refuses to change the target. There is no
+    acknowledgement flag on deploy: inspect the provider and state, import or remove
+    what diverged, and push any `errored.tfstate` yourself before retrying. Read-only
+    plans can still report the unresolved operation; `sol cloud destroy` has its own
+    destructive lifecycle and release checks.
 - **Where Terraform works (DEC-050).** Each state has its own working directory,
   `~/.local/share/sol/terraform/<provider>-<cluster|platform>-<id>/platform/cloud/<provider>/<role>/`
   (`$XDG_DATA_HOME/sol/…` when set). `sol` names it in the refusal above, and
