@@ -33,6 +33,22 @@ module Planning_input : sig
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
+    ; requested_scope : string
+    ; image_refs : (string * string) list
+    ; services : Sol_cli_manifest.service list
+    }
+end
+
+module Target_plan_input : sig
+  type t =
+    { workspace : string
+    ; registry : string
+    ; sha : string
+    ; emit_to : string option
+    ; secret_backend : Sol_cli_manifest.secret_backend
+    ; config : Sol_cli_config.t
+    ; facts : Sol_cli_workspace_model.t
+    ; inventory : Sol_cli_manifest.service list
     ; image_refs : (string * string) list
     ; services : Sol_cli_manifest.service list
     }
@@ -41,7 +57,9 @@ end
 module Target_plan : sig
   type t
 
+  val profile : t -> Sol_cli_deployment_plan.profile_claim option
   val to_deployment_plan : t -> Sol_cli_deployment_plan.t
 end
 
-val plan : Planning_input.t -> (Target_plan.t, plan_error) result
+val plan : Planning_input.t -> (Sol_cli_deployment_plan.t, plan_error) result
+val target_plan : Target_plan_input.t -> (Target_plan.t, plan_error) result

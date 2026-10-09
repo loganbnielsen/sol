@@ -762,7 +762,7 @@ sol local secret set|list|delete ...                                            
 # --scope selects one domain (`payments`) or one unit (`payments/charge_svc`).
 # A name that matches nothing fails closed and says what exists, before any
 # mutation runs. Mutating commands (up/deploy/rollback) refuse an empty
-# selection. A scoped deploy records a complete workspace boundary: the
+# selection. A scoped local `sol up` records a complete workspace boundary: the
 # workloads it did not select keep their recorded spec and their provenance,
 # and `sol rollback` restores each workload under the release that applied it,
 # so rolling back a scoped change never prunes or re-labels the services it
@@ -770,11 +770,11 @@ sol local secret set|list|delete ...                                            
 # held, so the release a scoped `sol up` records describes the workspace as it
 # was at apply time: a deploy or rollback that won the lease first is what the
 # new release builds on, never a snapshot taken before the lease was acquired.
-# A scoped deploy keeps the callers it did not select: deploying a callee alone
+# A scoped local `sol up` keeps the callers it did not select: deploying a callee alone
 # renders its NetworkPolicy from the whole workspace declaration, so a
 # cross-domain caller that is already running keeps the ingress rule that
 # admits it.
-# A scoped deploy refuses before mutating anything when the current boundary
+# A scoped local `sol up` refuses before mutating anything when the current boundary
 # cannot be read; deploy the whole workspace to establish it. A scoped deploy
 # also compares and records the workspace's complete consumer-group set, not only
 # the units it selected: a worker it did not select is not read as a removed
@@ -786,8 +786,8 @@ sol local secret set|list|delete ...                                            
 # `--scope`, because secrets are addressed by Kubernetes namespace, not by
 # workload.
 
-sol cloud plan TARGET                             preview cloud infrastructure changes
-sol cloud apply TARGET                            apply cloud infrastructure changes
+sol plan TARGET                                  preview target changes
+sol deploy TARGET                                reconcile infrastructure and workloads
 sol cloud destroy TARGET [--plan|--apply]         destroy cloud infrastructure via Terraform
 ```
 
@@ -856,7 +856,7 @@ The summary is offline by default, so it still prints while you are diagnosing a
 
 Two things that line is telling you:
 
-- **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. After `sol cloud apply`, run the printed `deploy_kubeconfig_command` output and add the resulting context name to the target; for a cluster you own, name its context directly.
+- **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. After `sol deploy` provisions the target, run the printed `deploy_kubeconfig_command` output and add the resulting context name to the target; for a cluster you own, name its context directly.
 - **The context is hidden unless you ask.** It is how Sol reaches the cluster, not what the target is, so it does not lead the summary — but it is what you need when you want to run `kubectl` by hand, which is what `--verbose` is for.
 
 ### Destinations: the cluster comes from the target, never from your shell
@@ -954,7 +954,7 @@ A verified rollback also corrects the workspace's consumer-group safety record t
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
-Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped deploy's complete release record also retains the untouched workloads and their earlier provenance. Use that workload label to select logs with `sol logs --release <id>`.
+Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped local `sol up` release record also retains untouched workloads and their earlier provenance. Use that workload label to select logs with `sol logs --release <id>`.
 
 `sol deployments` lists the other half: one row per deploy *attempt* (minted `d-…` id, the release it tried to put in place, time, commit, actor with the source that identity came from, and whether the apply succeeded), newest first. A failed apply is still a deployment attempt, so it appears with `status` `apply_failed` while the release record — which claims the release exists — is only written on success. Attempts are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two attempts pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an attempt to the authoritative record without telemetry ever being the system of record.
 
@@ -995,63 +995,16 @@ See [`deployment/ci.md`](../deployment/ci.md) for the generated workflow and the
 
 ### Provisioning a production cluster
 
-Use `sol cloud plan` and `sol cloud apply` to provision the complete AWS target. Sol initializes separate durable cloud/platform states, stages cert-manager before CRD-dependent resources, and verifies component-native readiness before reporting success.
+Use `sol plan` to preview a target and `sol deploy` to reconcile its infrastructure, authorization and workloads. `sol deploy` consumes pre-built images; pass immutable image refs for workloads that do not already have a recorded image. Sol keeps separate durable cloud and platform Terraform states and observes readiness before reporting success.
 
 **AWS (EKS, ECR, RDS, Route53):**
 
 ```bash
-sol cloud plan prod/aws/us-east-1
-sol cloud apply prod/aws/us-east-1
+sol plan prod/aws/us-east-1
+sol deploy prod/aws/us-east-1 --image-ref=payments=123456789.dkr.ecr.us-east-1.amazonaws.com/payments@sha256:…
 ```
 
-**Plan (show terraform plan without creating resources):**
-
-```bash
-sol cloud plan prod/aws/us-east-1
-```
-
-Later phases may be reported as `DEFERRED` when an earlier lifecycle prerequisite does not yet exist. This is a successful partial preview, not a readiness result, and planning never mutates infrastructure to unlock another phase. The complete lifecycle is currently qualified only for AWS; GCP fails closed rather than running the former incomplete path.
-
-**Pass a Terraform variables file:**
-
-```bash
-sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
-```
-
-A path given to `--var-file` is relative to the directory you run `sol` from. To
-keep the file with the target instead, set `terraform_var_file` in the target's
-`target:` block. That path is relative to the workspace root, so the target uses
-the same file from any directory in the workspace. When both are given, the flag
-wins.
-
-**Pass one-off Terraform variables:**
-
-```bash
-sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
-```
-
-**ECR repositories follow the checkout.** The AWS root keeps one ECR repository per
-workload that has a Dockerfile in the checkout you run `sol cloud apply` from, and a
-repository is deleted with its images when it leaves that set. So `sol cloud apply`
-plans first, reads the plan, and refuses (changing nothing) when it would delete any
-ECR repository. It names the repositories. Run from the checkout that deploys the
-target, or pass `--confirm-ecr-removal` when the removal is intended. The plan that
-was read is the plan that is applied.
-
-During platform reconciliation Sol creates an ephemeral kubeconfig for the declared steady-state cluster-access identity, separate from the cloud-provisioning identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the cluster-access identity holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready. In steady state it holds neither Kubernetes `escalate`/`bind` nor IAM access-entry/policy-association mutation. On success the command prints the non-sensitive provisioned endpoints:
-
-```
-  cluster_name                  acme-prod
-  cluster_endpoint              https://ABCDEF123456.gr7.us-east-1.eks.amazonaws.com
-  kubeconfig_command            aws eks update-kubeconfig --region us-east-1 --name acme-prod
-  ecr_registry                  123456789.dkr.ecr.us-east-1.amazonaws.com
-
-```
-
-Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
-
-**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared cloud provisioner; and a target declaring the bootstrap-created `state_bucket` and, in its `aws:` block, `state_lock_table`, `provisioner_role_arn`, and a distinct `cluster_access_role_arn`.
-The target must also declare `base_domain` and `letsencrypt_email`, which are required platform inputs validated before any platform mutation.
+Set Terraform variables through the target's `terraform_var_file` and provider configuration in `sol/environments.yml`; deploy no longer has a separate cloud apply command or cloud-only variable flags. The first interactive deploy previews and confirms durable installation setup inline.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:
 
@@ -1062,7 +1015,7 @@ kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 
 Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`platform/cloud/aws/cluster` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
-> **Advanced / manual recovery:** direct Terraform is an escape hatch, not the supported lifecycle. An operator using it must initialize each root against its correct durable backend (distinct `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` keys), preserve cloud-before-platform ordering and explicit output wiring, stage cert-manager before CRD-dependent resources, and perform the same live readiness checks. Do not use a bare `terraform init`, local state, or ambient kubeconfig as a substitute for `sol cloud apply`. See `docs/deployment/production-bootstrap.md` for the recovery procedure.
+> **Advanced / manual recovery:** direct Terraform is an escape hatch, not the supported lifecycle. An operator using it must initialize each root against its correct durable backend (distinct `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` keys), preserve cloud-before-platform ordering and explicit output wiring, stage cert-manager before CRD-dependent resources, and perform the same live readiness checks. Do not use a bare `terraform init`, local state, or ambient kubeconfig as a substitute for `sol deploy`. See `docs/deployment/production-bootstrap.md` for the recovery procedure.
 
 **Set up Argo CD GitOps** (one-time per cluster):
 

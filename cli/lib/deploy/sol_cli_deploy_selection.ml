@@ -96,6 +96,22 @@ module Planning_input = struct
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
+    ; requested_scope : string
+    ; image_refs : (string * string) list
+    ; services : Sol_cli_manifest.service list
+    }
+end
+
+module Target_plan_input = struct
+  type t =
+    { workspace : string
+    ; registry : string
+    ; sha : string
+    ; emit_to : string option
+    ; secret_backend : Sol_cli_manifest.secret_backend
+    ; config : Sol_cli_config.t
+    ; facts : Sol_cli_workspace_model.t
+    ; inventory : Sol_cli_manifest.service list
     ; image_refs : (string * string) list
     ; services : Sol_cli_manifest.service list
     }
@@ -104,6 +120,7 @@ end
 module Target_plan = struct
   type t = Sol_cli_deployment_plan.t
 
+  let profile (t : Sol_cli_deployment_plan.t) = t.profile
   let to_deployment_plan t = t
 end
 
@@ -117,6 +134,7 @@ let plan (input : Planning_input.t) =
       ; config
       ; facts
       ; inventory
+      ; requested_scope
       ; image_refs
       ; services
       }
@@ -153,7 +171,7 @@ let plan (input : Planning_input.t) =
       ~workspace
       ~env
       ~facts
-      ~requested_scope:"workspace"
+      ~requested_scope
       ~declared:(Sol_cli_config.declared_of_config config)
       ~image_refs
       ~inventory
@@ -169,5 +187,37 @@ let plan (input : Planning_input.t) =
     Sol_cli_profile_preflight.check ~target:config.target ~apply_mode plan
     |> Result.map_error (fun (profile, findings) -> Preflight (profile, findings))
   in
-  Ok plan |> Result.map (fun plan -> (plan : Target_plan.t))
+  Ok plan
+;;
+
+let target_plan (input : Target_plan_input.t) =
+  let open Target_plan_input in
+  let { workspace
+      ; registry
+      ; sha
+      ; emit_to
+      ; secret_backend
+      ; config
+      ; facts
+      ; inventory
+      ; image_refs
+      ; services
+      }
+    =
+    input
+  in
+  plan
+    { Planning_input.workspace
+    ; registry
+    ; sha
+    ; emit_to
+    ; secret_backend
+    ; config
+    ; facts
+    ; inventory
+    ; requested_scope = "workspace"
+    ; image_refs
+    ; services
+    }
+  |> Result.map (fun plan -> (plan : Target_plan.t))
 ;;

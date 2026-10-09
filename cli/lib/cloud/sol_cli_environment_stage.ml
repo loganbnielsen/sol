@@ -298,17 +298,17 @@ let plan_config ~assets ~run_log ~config ~var_file ~vars () =
   plan_prepared ~assets ~run_log prepared
 ;;
 
-let apply
+let apply_config
       ?confirm_ecr_removal
       ?accept_unresolved
       ~assets
       ~run_log
-      ~target
+      ~config
       ~var_file
       ~vars
       ()
   =
-  let* prepared = prepare ~strict:true ~assets ~target ~var_file ~vars () in
+  let* prepared = prepare_config ~strict:true ~assets ~config ~var_file ~vars () in
   let { provider
       ; target_cfg
       ; cloud_target
@@ -395,4 +395,29 @@ let apply
        attributed exactly:";
     reconcile_ownership_at ~provider ~target_cfg ~infra_dir ~var_files ~vars;
     Ok (Apply_failed { failure = of_apply_failure failure; cleanup })
+;;
+
+let apply
+      ?confirm_ecr_removal
+      ?accept_unresolved
+      ~assets
+      ~run_log
+      ~target
+      ~var_file
+      ~vars
+      ()
+  =
+  let* config =
+    Sol_cli_config.load_for_target ~target
+    |> Result.map_error (fun error -> Refused (Sol_cli_config.error_to_string error))
+  in
+  apply_config
+    ?confirm_ecr_removal
+    ?accept_unresolved
+    ~assets
+    ~run_log
+    ~config
+    ~var_file
+    ~vars
+    ()
 ;;

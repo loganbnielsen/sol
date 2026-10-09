@@ -142,23 +142,7 @@ in `sol/environments.local.yml`, which the scaffolded `.gitignore` excludes.
 
 ### 4.2 Create the identities from the contracts Sol generates
 
-Ask Sol for the installation, without changing anything:
-
-```bash
-sol cloud bootstrap prod/aws/us-east-1
-```
-
-This is read-only. It observes each durable prerequisite **at the provider** and
-reports `Established`, `Unmet` (the provider answered that it is not there) or
-`UNKNOWN` (Sol could not look) — never a guess, and an answer Sol could not
-observe is never promoted to healthy (`DEC-052`).
-
-Then reconcile the durable root, which is what writes the policy contracts to
-disk:
-
-```bash
-sol cloud bootstrap prod/aws/us-east-1 --apply
-```
+The first interactive `sol deploy <target>` previews durable installation setup and offers to reconcile it inline. `sol plan <target>` remains read-only. Sol reports provider-observed prerequisites as `Established`, `Unmet` or `UNKNOWN`; an unobservable prerequisite is never promoted to healthy (`DEC-052`).
 
 The report prints each contract's path beside the ARN field to declare:
 
@@ -214,8 +198,7 @@ This is one command, and it does the whole first run in order:
    visible and confirms it **from a public resolver** rather than from written
    configuration, then re-observes.
 3. **Environment** — reconcile this target: network, cluster, database and platform.
-   The same stage `sol cloud apply prod/aws/us-east-1` drives; if you prefer to see
-   it on its own, run that command instead and re-run the deploy after.
+   This is part of `sol deploy`; `sol plan` previews the target without applying it.
 4. **Access** — reach the cluster Sol just created as the *deploy* identity, with a
    temporary kubeconfig for this run only. Sol does not write your `~/.kube/config`
    or your target file, and never reaches a cluster as the provisioning identity
@@ -287,7 +270,7 @@ In CI, `sol deploy prod/aws/us-east-1 …` performs the same preflight, environm
 and application stages with no prompt. A run that *cannot* be asked — no terminal,
 `--dry-run`, `--emit-to` — never prompts and never sets an installation up: it
 prints the same observation and the command that establishes it
-(`sol cloud bootstrap prod/aws/us-east-1 --apply`), so a pipeline fails with an
+(`sol deploy prod/aws/us-east-1`), so a pipeline fails with an
 explanation instead of hanging or silently skipping. `--dry-run` and `--emit-to`
 change nothing at all, including the environment.
 

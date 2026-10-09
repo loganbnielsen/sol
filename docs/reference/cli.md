@@ -79,12 +79,9 @@ The target is the positional. `sol deploy` reconciles the whole target and takes
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
 | `sol alert test` | — | `--alertmanager-url=URL`, `--dry-run`, `--target=ENV/PROVIDER/REGION` | documented | Send a synthetic alert through the target's |
-| `sol cloud apply` | TARGET | `--accept-unresolved`, `--confirm-ecr-removal`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Apply cloud infrastructure changes for a target. |
-| `sol cloud bootstrap` | TARGET | `--apply`, `--await-delegation=SECONDS` | documented | Report whether a target's durable installation |
 | `sol cloud destroy` | TARGET | `--accept-unreleased`, `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Destroy cloud infrastructure via Terraform. |
-| `sol cloud plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview cloud infrastructure changes for a target. |
 | `sol cloud reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
-| `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Deploy pre-built images to a cluster (CI/CD integration). |
+| `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Reconcile a target's infrastructure, authorization and |
 | `sol deployments` | — | `--target=ENV/PROVIDER/REGION` | documented | List the deployment events the target's cluster |
 | `sol grants apply` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile the target-wide workload authorization: |
 | `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |

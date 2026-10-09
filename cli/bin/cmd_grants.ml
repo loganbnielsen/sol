@@ -58,8 +58,13 @@ let namespace_of_workspace ~workspace model =
 
 let authorization_vars = Sol_cli_authorization_stage.root_vars
 
-let observe_deployed ~target_cfg ~namespaces =
-  match Sol_cli_config.destination_of_target target_cfg with
+let observe_deployed ~destination ~target_cfg ~namespaces =
+  let destination =
+    match destination with
+    | Some destination -> Ok destination
+    | None -> Sol_cli_config.destination_of_target target_cfg
+  in
+  match destination with
   | Error reason ->
     Sol_cli_authorization.Unobservable
       ("the target's cluster could not be addressed: " ^ reason)
@@ -91,7 +96,7 @@ let report_plan ~target lines =
   else List.iter (fun line -> Sol_cli_report.app "  %s" line) lines
 ;;
 
-let run ?config ~action ~target ~var_file ~vars () =
+let run ?config ?destination ~action ~target ~var_file ~vars () =
   let* () = check_terraform () in
   let* assets = resolve_assets () in
   let* config_vars, target_cfg =
@@ -162,7 +167,7 @@ let run ?config ~action ~target ~var_file ~vars () =
       | Ok unit -> namespace_of unit
       | Error _ -> None)
   in
-  let deployed = observe_deployed ~target_cfg ~namespaces in
+  let deployed = observe_deployed ~destination ~target_cfg ~namespaces in
   let plan = Sol_cli_authorization.compute ~desired ~current ~deployed in
   report_plan ~target (Sol_cli_authorization.render plan);
   (match plan.Sol_cli_authorization.notes with

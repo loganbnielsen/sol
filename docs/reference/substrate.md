@@ -1,9 +1,9 @@
 # Self-Hosted Substrate Contract
 
-Sol deploys your application to Kubernetes. This document defines the minimum
-contract a self-hosted environment must satisfy for `sol deploy` to work, and
-draws the boundary between what Sol generates and what cloud tooling (Terraform,
-Pulumi, cloud console) must provide.
+Sol reconciles a declared target's Sol-owned cloud roots and Kubernetes workloads
+with `sol deploy`. For a bring-your-own target, this document defines the minimum
+substrate contract that must already exist. It also draws the boundary between
+what Sol owns and what users provide through other infrastructure tooling.
 
 This covers the environment *around* your containers. See
 [`runtime.md`](runtime.md) for the other
@@ -14,13 +14,45 @@ that Sol's tooling checks versus merely assumes.
 
 Sol generates **application-layer Kubernetes objects**: namespaces, service
 accounts, Deployments, Services, CronJobs, Ingress objects, and NetworkPolicies.
-Sol does not provision cloud infrastructure. VPCs, IAM roles, managed databases,
-managed Kafka clusters, DNS zones, container registries, and TLS certificates
-are all **substrate** — they must exist before `sol deploy` runs.
+For providers with a Sol-owned Terraform target root, `sol plan` previews and
+`sol deploy` reconciles the declared cloud and platform roots before deploying
+workloads. Sol only manages resources in those declared roots; it does not plan or
+manage arbitrary account infrastructure. Bring-your-own targets must already
+provide the substrate they use.
 
-This boundary is intentional. Terraform, Pulumi, and cloud-native tooling are
-already excellent at provisioning substrate. Sol does not attempt to replicate
-them. Instead, Sol consumes what they produce.
+This boundary is intentional. Terraform remains authoritative for resources in
+Sol's roots, and users may manage external infrastructure with Terraform, Pulumi,
+or cloud-native tooling. Sol consumes external services but does not discover or
+manage them by inference.
+
+## Workspace-owned Terraform
+
+For AWS and GCP targets, add user-owned Terraform to the existing target roots:
+
+```text
+sol/terraform/aws/cluster/*.tf
+sol/terraform/aws/cluster/modules/**
+sol/terraform/aws/platform/*.tf
+sol/terraform/aws/platform/modules/**
+```
+
+Use `gcp` in place of `aws` for GCP. Root `.tf` and `.tf.json` files, plus files
+under the root's `modules/` directory, are composed into that root for `sol plan`
+and `sol deploy`. Terraform then plans and applies them with Sol's resources in
+the same dependency graph and state. Removing a custom resource declaration is
+an ordinary Terraform deletion, subject to the same plan review and state guards.
+The `cluster` root is for cloud resources; the `platform` root is for Kubernetes
+and Helm resources after the cluster exists. The durable bootstrap and fenced
+authorization roots do not accept workspace overlays.
+
+Custom files can use the stable `local.sol_target` object. In the cluster root it
+contains `provider`, `region`, `cluster_name`, `cluster_endpoint`, `network_id`,
+and `private_subnet_ids`; in the platform root it contains `provider`,
+`base_domain`, `cluster_issuer`, and `platform_profile`. These values are a
+provider-neutral interface; generated Terraform module and resource addresses
+remain implementation details. Declare ordinary Terraform `output` blocks for
+values your own configuration needs to publish; those outputs belong to the same
+Terraform root and state.
 
 ---
 

@@ -61,6 +61,17 @@ val apply
   -> unit
   -> (outcome, failure) result
 
+val apply_config
+  :  ?confirm_ecr_removal:bool
+  -> ?accept_unresolved:bool
+  -> assets:Sol_cli_platform_assets.t
+  -> run_log:Sol_cli_run_log.t
+  -> config:Sol_cli_config.t
+  -> var_file:string option
+  -> vars:string list
+  -> unit
+  -> (outcome, failure) result
+
 val reconcile_ownership_at
   :  provider:Sol_cli_provider.t
   -> target_cfg:Sol_cli_config.target
