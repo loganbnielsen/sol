@@ -1,0 +1,10 @@
+# The workload identities the lifecycle fakes report as live in the `work` workspace, and
+# the UIDs its release record captured at apply. This is the one source for all three places
+# the ownership rule needs to agree — the fake's listing, the fake's per-object UID read, and
+# the release record the harness seeds through print_release_record.exe — so a removal can
+# never match by accident.
+#
+# resource<TAB>namespace<TAB>name<TAB>uid
+deployment	work-payments	charge-svc	uid-charge-svc
+deployment	work-comms	notify-worker	uid-notify-worker
+rollout	work-payments	charge-canary	uid-charge-canary

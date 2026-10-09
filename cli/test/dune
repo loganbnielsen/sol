@@ -12,6 +12,10 @@
  (name print_readiness_invocations)
  (libraries sol_cli))
 
+(executable
+ (name print_release_record)
+ (libraries sol_cli))
+
 (rule
  (alias runtest)
  (deps ../bin/main.exe test_secret_cli.sh)
@@ -81,6 +85,7 @@
  (alias runtest-lifecycle)
  (deps
   ../bin/main.exe
+  print_release_record.exe
   ../../internal/ci/context/test_cloud_lifecycle_offline.sh
   ../../internal/ci/lib/stray_terraform_state.sh
   ../../internal/ci/qualification_assertions.sh
@@ -89,7 +94,8 @@
   (run
    bash
    %{dep:../../internal/ci/context/test_cloud_lifecycle_offline.sh}
-   %{dep:../bin/main.exe})))
+   %{dep:../bin/main.exe}
+   %{dep:print_release_record.exe})))
 
 (rule
  (alias runtest)

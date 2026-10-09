@@ -1,6 +1,65 @@
 #!/usr/bin/env bash
 set -eu
 printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
+
+# The live workload identities and the UIDs the workspace recorded at apply come from one
+# file (owned_workloads.tsv, copied alongside this fake), so the listing and the per-object
+# UID read cannot drift from the record the harness seeds.
+owned_seed="$(dirname "$0")/owned_workloads.tsv"
+
+namespace_arg() {
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "-n" ]; then
+      printf '%s' "$argument"
+      return
+    fi
+    previous="$argument"
+  done
+}
+
+resource_arg() { # the resource named after "get"
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "get" ]; then
+      printf '%s' "$argument"
+      return
+    fi
+    previous="$argument"
+  done
+}
+
+name_arg() { # the object named after that resource
+  resource="$(resource_arg "$@")"
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "$resource" ]; then
+      printf '%s' "$argument"
+      return
+    fi
+    previous="$argument"
+  done
+}
+
+owned_uid() { # resource namespace name
+  awk -F'\t' -v r="$1" -v ns="$2" -v n="$3" '
+    $0 !~ /^#/ && $1 == r && $2 == ns && $3 == n { print $4; exit }
+  ' "$owned_seed"
+}
+
+owned_listing() { # resource namespace
+  awk -F'\t' -v r="$1" -v ns="$2" '
+    BEGIN { printf "{\"items\":["; found = 0 }
+    $0 !~ /^#/ && NF == 4 && $1 == r && $2 == ns {
+      kind = ($1 == "deployment" ? "Deployment" : $1 == "cronjob" ? "CronJob" : $1 == "job" ? "Job" : "Rollout")
+      if (found) printf ","
+      printf "{\"kind\":\"%s\",\"metadata\":{\"name\":\"%s\",\"uid\":\"%s\"},\"spec\":{\"template\":{\"metadata\":{\"labels\":{\"workspace\":\"work\"}}}}}", kind, $3, $4
+      found = 1
+    }
+    END { printf "]}\n" }
+  ' "$owned_seed"
+}
+
 case " $* " in
   *" auth whoami "*)
     case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
@@ -87,27 +146,60 @@ case " $* " in
     printf 'secret/redpanda-users\n'
     exit 0
     ;;
-  *" get deployment -n "*)
+  *" get configmap sol-release-"*)
+    # The release-boundary ConfigMaps a seeded harness writes through
+    # print_release_record.exe. Without one, the workspace has no recorded UID evidence, so
+    # the removal paths must retain (the no-evidence case).
+    cm_name="$(name_arg "$@")"
+    if [ -n "${FAKE_CONFIGMAP_DIR:-}" ] && [ -f "$FAKE_CONFIGMAP_DIR/$cm_name" ]; then
+      cat "$FAKE_CONFIGMAP_DIR/$cm_name"
+      exit 0
+    fi
+    printf 'Error from server (NotFound): configmaps "%s" not found\n' "$cm_name" >&2
+    exit 1
+    ;;
+  *" get deployment "*)
     if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
       printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
       exit 1
     fi
+    namespace="$(namespace_arg "$@")"
+    if case " $* " in *" -o jsonpath="*) true ;; *) false ;; esac; then
+      uid="$(owned_uid deployment "$namespace" "$(name_arg "$@")")"
+      if [ -n "$uid" ]; then
+        printf '%s' "$uid"
+        exit 0
+      fi
+      printf 'Error from server (NotFound): deployments "%s" not found\n' "$(name_arg "$@")" >&2
+      exit 1
+    fi
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
-      printf '%s\n' '{"items":[{"kind":"Deployment","metadata":{"name":"charge-svc"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
+      owned_listing deployment "$namespace"
     else
       printf '{"items":[]}\n'
     fi
     exit 0
     ;;
-  *" get cronjob -n "*|*" get job -n "*)
+  *" get cronjob "*|*" get job "*)
     if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
       printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 1
+    fi
+    namespace="$(namespace_arg "$@")"
+    resource="$(resource_arg "$@")"
+    if case " $* " in *" -o jsonpath="*) true ;; *) false ;; esac; then
+      uid="$(owned_uid "$resource" "$namespace" "$(name_arg "$@")")"
+      if [ -n "$uid" ]; then
+        printf '%s' "$uid"
+        exit 0
+      fi
+      printf 'Error from server (NotFound): %ss "%s" not found\n' "$resource" "$(name_arg "$@")" >&2
       exit 1
     fi
     printf '{"items":[]}\n'
     exit 0
     ;;
-  *" get rollout -n "*)
+  *" get rollout "*)
     if [ "${CLUSTER_UNREACHABLE:-}" = 1 ]; then
       printf 'error: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
       exit 1
@@ -116,19 +208,29 @@ case " $* " in
       printf "error: the server doesn't have a resource type \"rollout\"\n" >&2
       exit 1
     fi
+    namespace="$(namespace_arg "$@")"
+    if case " $* " in *" -o jsonpath="*) true ;; *) false ;; esac; then
+      uid="$(owned_uid rollout "$namespace" "$(name_arg "$@")")"
+      if [ -n "$uid" ]; then
+        printf '%s' "$uid"
+        exit 0
+      fi
+      printf 'Error from server (NotFound): rollouts "%s" not found\n' "$(name_arg "$@")" >&2
+      exit 1
+    fi
     if [ "${WORKSPACE_PODS:-}" = 1 ]; then
-      printf '%s\n' '{"items":[{"kind":"Rollout","metadata":{"name":"charge-canary"},"spec":{"template":{"metadata":{"labels":{"workspace":"work"}}}}}]}'
+      owned_listing rollout "$namespace"
     else
       printf '{"items":[]}\n'
     fi
     exit 0
     ;;
-  *" delete deployment/charge-svc "*)
+  *" delete deployment/"*|*" delete rollout/"*|*" delete cronjob/"*|*" delete job/"*)
     if [ "${RELEASE_DELETE_FAILS:-}" = 1 ]; then
       printf 'error: the workload could not be deleted\n' >&2
       exit 1
     fi
-    printf 'deployment.apps "charge-svc" deleted\n'
+    printf 'workload deleted\n'
     exit 0
     ;;
   *" wait --for=delete pod -n "*)
