@@ -48,8 +48,32 @@ if in_container "$install" env SOL_HOME=/nonexistent /opt/sol/bin/sol assets >/d
 fi
 pass "an invalid SOL_HOME is an error, not a fall-through"
 
+# The cloud group is deliberately narrow: `sol deploy` reconciles the whole target, so
+# the public surface keeps only destroy and the ownership reconciler. The removed
+# plan/apply/bootstrap wrappers must not reappear through the installed bundle, whose
+# layout differs from the development build that cli/test/test_cloud_command_surface.sh
+# checks.
+surface="$(in_container "$install" /opt/sol/bin/sol cloud --help=plain)" ||
+  { echo "$surface"; die "sol cloud --help failed from the read-only install"; }
+for command in destroy reconcile; do
+  grep -Eq "^[[:space:]]+$command[[:space:]]" <<<"$surface" ||
+    die "sol cloud $command is missing from the installed release"
+done
+for command in plan apply bootstrap; do
+  if grep -Eq "^[[:space:]]+$command[[:space:]]" <<<"$surface"; then
+    die "sol cloud $command is still public in the installed release"
+  fi
+done
+pass "sol cloud exposes only destroy/reconcile; plan, apply and bootstrap are gone"
+
+# `sol plan` is the read-only whole-target preview. From the installed bundle it has to
+# read a workspace with no checkout and run without a writable install or Terraform on
+# PATH. A fresh target's installation prerequisites are not established, so the
+# infrastructure plan defers rather than failing. The Terraform working directory and
+# cloud backend identity are asserted where Terraform actually runs: the offline
+# lifecycle harness (DEC-050) and cli/test/inline/test_terraform_workdir.ml.
 cloud="$work/cloud"
-mkdir -p "$cloud/ws/sol" "$cloud/tools"
+mkdir -p "$cloud/ws/sol"
 printf 'project: installed-smoke\n' >"$cloud/ws/sol.yml"
 cat >"$cloud/ws/sol/environments.yml" <<'YAML'
 prod:
@@ -65,35 +89,17 @@ prod:
         provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
         cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
 YAML
-cat >"$cloud/tools/terraform" <<'TF'
-#!/bin/sh
-echo "terraform $*" >>"$FAKE_TERRAFORM_LOG"
-for a in "$@"; do case "$a" in -chdir=*) d="${a#-chdir=}" ;; esac; done
-case " $* " in
-  *" init "*) mkdir -p "$d/.terraform" && : >"$d/.terraform/fake-init" ;;
-  *" output "*) echo '{}' ;;
-esac
-exit 0
-TF
-chmod +x "$cloud/tools/terraform"
 if ! out="$(docker run --rm --network none --read-only --tmpfs /tmp -e HOME=/tmp \
-      -v "$install:/opt/sol:ro" -v "$cloud/tools:/opt/tools:ro" -v "$cloud/ws:/work" -w /work \
-      -e PATH=/opt/tools:/usr/local/bin:/usr/bin:/bin -e XDG_DATA_HOME=/tmp/xdg \
-      -e FAKE_TERRAFORM_LOG=/tmp/terraform.log "$image" sh -c '
-        /opt/sol/bin/sol cloud plan prod/aws/us-east-1 >/tmp/plan.out 2>&1 || { cat /tmp/plan.out; exit 1; }
-        echo "--- terraform"; cat /tmp/terraform.log
-        echo "--- workdir"; ls -d /tmp/xdg/sol/terraform/*/platform/cloud/aws/cluster/main.tf \
-          /tmp/xdg/sol/terraform/*/platform/cloud/aws/cluster/.terraform/fake-init')" ; then
-  echo "$out"; die "sol cloud plan failed from the read-only install"
+      -v "$install:/opt/sol:ro" -v "$cloud/ws:/work" -w /work \
+      -e PATH=/usr/local/bin:/usr/bin:/bin -e XDG_DATA_HOME=/tmp/xdg \
+      "$image" /opt/sol/bin/sol plan prod/aws/us-east-1 2>&1)"; then
+  echo "$out"; die "sol plan failed from the read-only install"
 fi
-echo "$out" | sed -n '/--- terraform/,$p' | cut -c1-150 | sed 's/^/         /'
-grep -q -- "-chdir=/tmp/xdg/sol/terraform/aws-cluster-[0-9a-f]\{16\}/platform/cloud/aws/cluster init" <<<"$out" ||
-  die "terraform init did not run in a working directory under Sol's state"
-grep -q -- "-chdir=/opt/sol" <<<"$out" && die "terraform ran inside the read-only bundle"
-grep -q -- "-backend-config=key=sol/prod/aws/us-east-1/cloud.tfstate" <<<"$out" ||
-  die "the target's remote-state identity changed"
-grep -q "/.terraform/fake-init$" <<<"$out" || die "Terraform's own directory is not in the working directory"
-pass "sol cloud plan runs from the read-only install; Terraform works in its own directory"
+grep -qx "Project: installed-smoke" <<<"$out" ||
+  { echo "$out"; die "sol plan did not read the installed-smoke declaration"; }
+grep -qx "Target: prod/aws/us-east-1" <<<"$out" ||
+  { echo "$out"; die "sol plan did not resolve the target"; }
+pass "sol plan previews the whole target from the read-only install"
 
 refws="$work/refws"
 mkdir -p "$refws"
