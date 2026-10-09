@@ -204,11 +204,11 @@ In `sol/environments.yml`, the `pilot` environment selects the
 environment's name never makes a production claim.
 
 The profile runs Kafka as SASL_SSL. The broker's SASL users Secret is a
-pre-platform operator input: `sol cloud apply` creates the `redpanda` namespace
+pre-platform operator input: `sol deploy` creates the `redpanda` namespace
 in its prerequisite stage, then stops before the privileged platform apply if
 the Secret is absent, naming it and the command that creates it. On a fresh
-target the order is `sol cloud apply pilot/aws/us-east-1`, create the Secret when
-the run names it, then `sol cloud apply pilot/aws/us-east-1` again to resume.
+target the order is `sol deploy pilot/aws/us-east-1`, create the Secret when
+the run names it, then `sol deploy pilot/aws/us-east-1` again to resume.
 Give the workload namespaces the credential and the CA as well; `sol deploy`
 fails closed without them:
 
@@ -338,17 +338,11 @@ read by hand:
       contract: ~/.local/share/sol/terraform/aws-bootstrap-…/identity-contracts/provisioner_policy_json.json
 ```
 
-Then observe it, and reconcile it once:
+Then reconcile it with the whole-target deploy:
 
-```bash
-sol cloud bootstrap prod/aws/us-east-1          # report: what is established, what is not
-sol cloud bootstrap prod/aws/us-east-1 --apply  # reconcile the durable root
-```
+### `sol deploy` detects it
 
-### The ordinary path: `sol deploy` detects it
-
-That pair is the explicit administrative route. The ordinary one needs no
-separate command: `sol deploy` observes the same installation, and when it is not
+`sol deploy` observes the same installation, and when it is not
 established — which is what a target with no cluster to reach looks like on a
 fresh account — it reports what it found and offers to set it up:
 
@@ -418,16 +412,16 @@ of hanging or skipping installation:
 Sol is not installed for prod/aws/us-east-1, and this run is not interactive, so
 Sol will not set it up and will not continue as if it were there.
 ...
-Set the installation up once, then run this deploy again:
-  sol cloud bootstrap prod/aws/us-east-1 --apply
+Run an interactive deploy to establish the installation and reconcile the target:
+  sol deploy prod/aws/us-east-1
 ```
 
 An account that already has an installation is deployed to with no one-time setup
 and no prompt; and because the run only ever *observes* it in that case, no
 durable resource is touched again.
 
-The environment is created in place as well, and that is the same stage
-`sol cloud apply` drives — not a second implementation. Once the installation is
+The environment is created in place as well, as part of the same whole-target
+deploy rather than a separate command. Once the installation is
 established, the run reconciles the environment (network, cluster, database and
 platform) and then reaches the cluster it created as the *deploy* identity, so it
 continues straight into migration and deployment:
@@ -450,11 +444,11 @@ The plan and the profile preflight are built *before* anything is provisioned, s
 a blocker that can be named now is named now rather than after the billable
 boundary. The deploy identity's cluster access is a temporary kubeconfig for that
 run: Sol never writes your `~/.kube/config` or the target file, and never reaches
-the cluster as the provisioning identity (`DEC-058`, `DEC-034`). `sol cloud apply
-prod/aws/us-east-1` remains the explicit route for the same stage, and is what
-`sol status`, `sol logs` and `sol migrate` need: those read the target's declared
-`kube_context`, so run the printed `deploy_kubeconfig_command` once and add the
-context name it writes. Where a provider declares no deploy identity — GCP today —
+the cluster as the provisioning identity (`DEC-058`, `DEC-034`). The deploy reconciles
+that stage in place, and it is what `sol status`, `sol logs` and `sol migrate` need:
+those read the target's declared `kube_context`, so run the printed
+`deploy_kubeconfig_command` once and add the context name it writes. Where a provider
+declares no deploy identity — GCP today —
 the deploy stops after provisioning and prints exactly that command and context.
 
 A second environment needs **no** installation work: it deploys against the
@@ -471,13 +465,14 @@ sol deploy pilot/aws/us-east-1    # a second one, same installation
 A unit that declares `secrets = ["stripe"]` needs a cloud identity and an IAM grant
 of its own. That is a lifecycle separate from infrastructure and from deployment
 (DEC-062): a fenced reconciler reconciles the whole target's workload identities and
-grants, `sol cloud apply` creates that reconciler's identity and its fence, and
-`sol deploy` only *observes* the resulting access — it never creates or repairs it.
+grants. `sol grants apply` establishes that reconciler's identity and its fence for a
+reviewed, deploy-independent change; the whole-target deploy drives the same reconcile
+before the workloads run, and fails closed if the access is not effective.
 
 ```bash
 sol grants plan prod/aws/us-east-1   # review: + payments-api → secret/stripe
 sol grants apply prod/aws/us-east-1  # the reconciler establishes it
-sol deploy prod/aws/us-east-1        # consumes it; grants nothing
+sol deploy prod/aws/us-east-1        # reconciles it too, then consumes it
 ```
 
 The plan names the unit, the capability and the resource, so a production credential

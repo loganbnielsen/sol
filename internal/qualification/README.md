@@ -68,8 +68,9 @@ success. A skipped capability is named as skipped; it is not silently promoted.
 - `observability/observability-diagnostic-matrix.md` — observability claims.
 - `run-record-template.md` — concise record format for evidence that changes a current verdict.
 
-The AWS and GCP cloud phases begin with the installed release's
-`sol cloud bootstrap <target> --apply`. The target declaration owns installation
+The AWS and GCP cloud phases begin with the installed release's whole-target
+`sol deploy <target>`, which establishes the durable installation inline (a fresh
+account's setup offer is confirmed through a pty). The target declaration owns installation
 configuration, including state storage, identities, and DNS ownership. An Unmet or
 UNKNOWN installation stops the phase before disposable infrastructure is applied;
 resolve the operator inputs named by Sol and continue the same attempt. Durable

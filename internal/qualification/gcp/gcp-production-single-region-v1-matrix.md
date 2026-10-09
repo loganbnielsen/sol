@@ -69,7 +69,7 @@ apply` creates the `redpanda` namespace in its prerequisite stage, then checks t
 harness stands in for the operator: it generates a run-scoped `sol-workloads` SCRAM credential
 (or uses `KAFKA_SASL_PASSWORD` when supplied), creates the Secret with the documented
 `kubectl create secret generic redpanda-users -n redpanda` shape at that boundary, records that
-it supplied the input without its value in `prerequisites.txt`, and re-runs `sol cloud apply`
+it supplied the input without its value in `prerequisites.txt`, and re-runs `sol deploy`
 to resume — the same ordered steps the bootstrap guide gives the operator. Credential creation
 failing fails the phase rather than letting the platform apply proceed without the
 prerequisite.
