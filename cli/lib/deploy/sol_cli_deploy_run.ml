@@ -316,39 +316,40 @@ let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
    live UID through capture_owned, so the mismatch is transient, not a standing hazard.
    The warning is how a user learns the name was occupied by something Sol did not apply.
    Read before apply, against the release being superseded. *)
-let warn_not_owned_declared ~cluster ~workspace (plan : Sol_cli_deployment_plan.t) =
-  match Sol_cli_release_store.recorded_evidence ~ctx:cluster ~workspace with
-  | Error _ -> ()
-  | Ok evidence ->
-    plan.Sol_cli_deployment_plan.services
-    |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-      let id =
-        { Sol_cli_workload_ownership.resource =
-            Sol_cli_deployment_plan.resource_of_spec spec
-        ; namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
-        ; name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name
-        }
-      in
-      match Sol_cli_workload_ownership.observe ~ctx:cluster id with
-      | Sol_cli_workload_ownership.Live_present live_uid ->
-        let recorded = Sol_cli_workload_ownership.recorded_uid evidence id in
-        if not (Sol_cli_workload_ownership.owns ~recorded ~live_uid)
-        then
-          Sol_cli_report.warn
-            "%s %s/%s is live but not Sol-owned (%s); apply reconciles it and the new \
-             release records the live UID"
-            id.resource
-            id.namespace
-            id.name
-            (match recorded with
-             | Some recorded_uid ->
-               Printf.sprintf
-                 "its live UID %s differs from the recorded UID %s"
-                 live_uid
-                 recorded_uid
-             | None -> "Sol recorded no UID for it")
-      | Sol_cli_workload_ownership.Live_absent
-      | Sol_cli_workload_ownership.Live_unobservable _ -> ())
+let warn_not_owned_declared
+      ~cluster
+      ~(evidence : Sol_cli_release_id.owned_object list)
+      (plan : Sol_cli_deployment_plan.t)
+  =
+  plan.Sol_cli_deployment_plan.services
+  |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    let id =
+      { Sol_cli_workload_ownership.resource =
+          Sol_cli_deployment_plan.resource_of_spec spec
+      ; namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
+      ; name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name
+      }
+    in
+    match Sol_cli_workload_ownership.observe ~ctx:cluster id with
+    | Sol_cli_workload_ownership.Live_present live_uid ->
+      let recorded = Sol_cli_workload_ownership.recorded_uid evidence id in
+      if not (Sol_cli_workload_ownership.owns ~recorded ~live_uid)
+      then
+        Sol_cli_report.warn
+          "%s %s/%s is live but not Sol-owned (%s); apply reconciles it and the new \
+           release records the live UID"
+          id.resource
+          id.namespace
+          id.name
+          (match recorded with
+           | Some recorded_uid ->
+             Printf.sprintf
+               "its live UID %s differs from the recorded UID %s"
+               live_uid
+               recorded_uid
+           | None -> "Sol recorded no UID for it")
+    | Sol_cli_workload_ownership.Live_absent
+    | Sol_cli_workload_ownership.Live_unobservable _ -> ())
 ;;
 
 let contract_reconciliation ctx (plan : Sol_cli_deployment_plan.t) =
@@ -427,7 +428,15 @@ let run_lifecycle
        in
        let previous = read_previous_release_in ~cluster ~workspace in
        let* retained = Sol_cli_release_store.retained_for_plan ~ctx:cluster ~workspace in
-       warn_not_owned_declared ~cluster ~workspace plan;
+       (* Unreadable evidence means no recorded UID, so nothing is treated as owned here;
+          the warning below may then name a workload Sol actually applied. It reports the
+          mismatch rather than guessing. *)
+       let ownership_evidence =
+         match Sol_cli_release_store.recorded_evidence ~ctx:cluster ~workspace with
+         | Ok evidence -> evidence
+         | Error _ -> []
+       in
+       warn_not_owned_declared ~cluster ~evidence:ownership_evidence plan;
        let boundary =
          Sol_cli_release.of_plan_with_boundary
            ~apply_mode:Sol_cli_release.Direct

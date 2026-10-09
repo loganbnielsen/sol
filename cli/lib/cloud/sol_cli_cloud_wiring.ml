@@ -1075,66 +1075,17 @@ let destroy_deps
         Sol_cli_kubectl.run ~ctx args
         |> Result.map (fun (listing : Sol_cli_process.output) -> listing.stdout)
       in
-      (match read_workloads ~run ~namespaces:workload_namespaces ~workspace with
-       | Error (No_cluster reason) -> Workloads_not_releasable reason
-       | Error (Read_unestablished failure) -> Workloads_unestablished failure
-       | Ok scopes ->
-         let unreleased namespace operation reason =
-           Workloads_unestablished { namespace; kind = None; operation; reason }
-         in
-         let remove scope : (unit, release) result =
-           let owned, retained = partition_owned ~evidence:recorded_evidence scope in
-           let warn_retained () =
-             if retained <> []
-             then
-               Sol_cli_report.warn
-                 "%s: retaining %d workload(s) Sol cannot prove it owns (no recorded UID \
-                  match): %s"
-                 scope.namespace
-                 (List.length retained)
-                 (String.concat ", " (List.map workload_to_string retained))
-           in
-           match owned with
-           | [] ->
-             warn_retained ();
-             Ok ()
-           | owned ->
-             Sol_cli_report.app "  %s" (to_string { scope with workloads = owned });
-             let delete =
-               Sol_cli_kubectl.run
-                 ~ctx
-                 (delete_args
-                    ~namespace:scope.namespace
-                    ~names:(List.map workload_to_string owned)
-                    ~timeout_seconds:300)
-             in
-             (match delete with
-              | Error e ->
-                Error
-                  (unreleased
-                     scope.namespace
-                     "removing the workloads it found"
-                     (Sol_cli_process.error_to_string e))
-              | Ok _ ->
-                warn_retained ();
-                Sol_cli_kubectl.run
-                  ~ctx
-                  (wait_args ~namespace:scope.namespace ~workspace ~timeout_seconds:300)
-                |> Result.map (fun _ -> ())
-                |> Result.map_error (fun e ->
-                  unreleased
-                    scope.namespace
-                    "waiting for the pods to go"
-                    (Sol_cli_process.error_to_string e)))
-         in
-         let rec release = function
-           | [] -> Workloads_released
-           | scope :: rest ->
-             (match remove scope with
-              | Ok () -> release rest
-              | Error unreleased -> unreleased)
-         in
-         release scopes)
+      release_workloads
+        ~run
+        ~delete:(fun ~namespace ~names ->
+          Sol_cli_kubectl.run ~ctx (delete_args ~namespace ~names ~timeout_seconds:300)
+          |> Result.map ignore)
+        ~wait:(fun ~namespace ->
+          Sol_cli_kubectl.run ~ctx (wait_args ~namespace ~workspace ~timeout_seconds:300)
+          |> Result.map ignore)
+        ~evidence:recorded_evidence
+        ~namespaces:workload_namespaces
+        ~workspace
   in
   let deps : Sol_cli_cloud_destroy.deps =
     { require_credentials =

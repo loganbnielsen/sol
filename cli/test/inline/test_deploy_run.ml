@@ -302,6 +302,86 @@ let with_fake_kubectl f =
     (fun () -> f ~calls:(fun () -> read_file (Filename.concat dir "calls.log")))
 ;;
 
+(* A minimal scripted kubectl for a single behaviour under test, e.g. answering the
+   per-object UID read the deploy warning makes. *)
+let with_scripted_kubectl script f =
+  let dir = Filename.temp_file "sol-scripted-kubectl-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let bin = Filename.concat dir "kubectl" in
+  write_file bin script;
+  Unix.chmod bin 0o755;
+  let old_path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" old_path;
+      (try Sys.remove bin with
+       | _ -> ());
+      try Unix.rmdir dir with
+      | _ -> ())
+    f
+;;
+
+(* The warning is the deploy-path half of the ownership rule: a declared workload whose live
+   object is not Sol-owned is named (object and both UIDs) and apply continues; the new
+   release re-captures the live UID, so the mismatch is transient. *)
+let test_deploy_warns_only_when_the_declared_workload_is_not_owned () =
+  let spec =
+    spec
+      ~domain:"payments"
+      ~name:"charge_svc"
+      ~k8s:"charge-svc"
+      Sol_cli_deployment_plan.Svc
+  in
+  let plan = plan [ spec ] in
+  let reports_with ~evidence =
+    let (), reported =
+      Sol_cli_report.collect (fun () ->
+        Sol_cli_deploy_run.warn_not_owned_declared
+          ~cluster:Sol_cli_kube_destination.local_context
+          ~evidence
+          plan)
+    in
+    String.concat "\n" (List.map snd reported)
+  in
+  let recorded uid : Sol_cli_release_id.owned_object =
+    { resource = "deployment"; namespace = "myapp-payments"; name = "charge-svc"; uid }
+  in
+  with_scripted_kubectl
+    {|#!/bin/sh
+case "$*" in
+  *jsonpath*) printf '%s' 'live-uid' ;;
+  *) printf '%s' '{}' ;;
+esac
+|}
+    (fun () ->
+       let mismatched = reports_with ~evidence:[ recorded "recorded-uid" ] in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"a mismatch names the object and both UIDs"
+         true
+         (Sol_cli_string.contains
+            ~needle:"deployment myapp-payments/charge-svc"
+            mismatched
+          && Sol_cli_string.contains ~needle:"live-uid" mismatched
+          && Sol_cli_string.contains ~needle:"recorded-uid" mismatched);
+       let no_evidence = reports_with ~evidence:[] in
+       Windtrap.equal
+         Windtrap.bool
+         ~msg:"no recorded UID is reported as such"
+         true
+         (Sol_cli_string.contains
+            ~needle:"deployment myapp-payments/charge-svc"
+            no_evidence
+          && Sol_cli_string.contains ~needle:"recorded no UID" no_evidence);
+       Windtrap.equal
+         Windtrap.string
+         ~msg:"an owned workload is not reported"
+         ""
+         (reports_with ~evidence:[ recorded "live-uid" ]))
+;;
+
 let consumer_group_exn s =
   match Sol_cli_plan_ids.Consumer_group.of_string s with
   | Ok group -> group
@@ -571,6 +651,12 @@ let%test "lifecycle: presentation, gates and apply run in order under one lease"
           true
           (lease_at < contract_at)
       | _ -> Windtrap.failf "expected a lease and a prior-contract read:\n%s" log))
+;;
+
+let%test
+    "ownership: a declared workload that is not Sol-owned is reported, then reconciled"
+  =
+  test_deploy_warns_only_when_the_declared_workload_is_not_owned ()
 ;;
 
 let%test "lifecycle: a failed apply does not report success" =
