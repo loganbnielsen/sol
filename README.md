@@ -195,7 +195,7 @@ remains the default. `sol new fn` currently supports OCaml only. See
 
 ## Deployment
 
-Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy <env>/<provider>/<region>` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sol cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
+Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy <env>/<provider>/<region>` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. The same whole-target deploy reconciles the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
 
 Two things are worth distinguishing, because conflating them is the usual source
 of lifecycle confusion:

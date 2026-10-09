@@ -88,7 +88,7 @@ asserts that no run ever reaches `disassociate-access-policy`.
 
 ## What must never happen
 
-- `sol cloud apply` applying this, or any production Terraform root referencing
+- `sol deploy` (its environment reconcile) applying this, or any production Terraform root referencing
   `sol:qualifiers` or `sol-qualifier-transport` — a customer environment must not be
   able to acquire qualification scaffolding by running Sol's normal lifecycle.
 - A target field naming the qualifier principal.
