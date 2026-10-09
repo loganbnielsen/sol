@@ -8,7 +8,7 @@
 
 ## Context
 
-`sol cloud destroy` is the only supported way to take a target apart. A
+`sol destroy` is the only supported way to take a target apart. A
 qualification run on a real AWS target (HARDEN-002 Run 5, Attempt 5) got all the
 way to `Ready`, re-entered through `PlatformUpdating`, and then **failed to
 destroy the target it had just built**:
@@ -64,7 +64,7 @@ new providers, and any future artifact kind (caches, registries, backups).
 
 Destroy still has to decide what to *deliberately* keep. Two situations differ:
 
-- **Production**: `sol cloud destroy` preserves recoverability. The Destroy policy
+- **Production**: `sol destroy` preserves recoverability. The Destroy policy
   keeps a final RDS snapshot (`rds_skip_final_snapshot = false`, a unique
   per-attempt identifier — INFRA-023). Cost-clean here means "nothing running",
   not "nothing retained".
@@ -80,7 +80,7 @@ snapshots**, and the operator's manual deletion is recorded as a deviation.
 
 ## Consequences
 
-- `sol cloud destroy` completes on a target that has published images and filled
+- `sol destroy` completes on a target that has published images and filled
   its log/metric buckets, on both providers, with no manual intervention.
 - Destroying a target now destroys data that would otherwise have been retained
   by accident: log chunks and metrics blocks in object storage. That is
@@ -97,7 +97,7 @@ snapshots**, and the operator's manual deletion is recorded as a deviation.
 
 A target names what its destruction keeps:
 
-- **absent** — the production default is unchanged. `sol cloud destroy` retains the
+- **absent** — the production default is unchanged. `sol destroy` retains the
   final snapshot, and the destroy reports it by identifier along with the command
   that eventually removes it, so retention is explicit rather than inferred.
 - **`destroy_retention: none`** — a disposable qualification target. Its

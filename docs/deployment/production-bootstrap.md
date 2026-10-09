@@ -223,7 +223,7 @@ in a session of its own, with its output in a durable operation record under
     left `errored.tfstate`) → `sol deploy` refuses to change the target. There is no
     acknowledgement flag on deploy: inspect the provider and state, import or remove
     what diverged, and push any `errored.tfstate` yourself before retrying. Read-only
-    plans can still report the unresolved operation; `sol cloud destroy` has its own
+    plans can still report the unresolved operation; `sol destroy` has its own
     destructive lifecycle and release checks.
 - **Where Terraform works (DEC-050).** Each state has its own working directory,
   `~/.local/share/sol/terraform/<provider>-<cluster|platform>-<id>/platform/cloud/<provider>/<role>/`
@@ -271,7 +271,7 @@ plan, an output, a log or a release record; the module's `postgres_url` output
 the connection string in their secret store for the runtime Secret that
 workloads read as `POSTGRES_URL`.
 
-**`cluster_issuer` belongs to the base platform layer.** `sol plan`, `sol deploy` and `sol cloud destroy` pass each Terraform root only the variables it declares.
+**`cluster_issuer` belongs to the base platform layer.** `sol plan`, `sol deploy` and `sol destroy` pass each Terraform root only the variables it declares.
 `cluster_issuer` names a cert-manager `ClusterIssuer`, so Sol routes it to
 `platform/cloud/modules/platform` after the cloud output contract has been validated.
 
@@ -433,7 +433,7 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
 4. `terraform destroy` completes;
 5. absence is verified. For what Terraform manages (EKS, RDS, ECR, the VPC with its
    NAT gateways and elastic IPs), a successful `terraform destroy` plus an empty
-   state is the authority (DEC-045). `sol cloud destroy` additionally checks what
+   state is the authority (DEC-045). `sol destroy` additionally checks what
    Terraform does not own: load balancers created by the in-cluster cloud
    controller, and target-tagged EBS volumes created for PersistentVolumeClaims. It
    fails closed when any of those queries errors or returns a resource. The live
@@ -451,18 +451,18 @@ plan contains only deletes, so the provider is handed prior state and never sees
 new value: `terraform plan -destroy -var x=B` on an applied `x = "A"` plans
 `input = "A" -> null`. Both settings have to be applied *before* the destroy.
 
-**Known gap:** `sol cloud destroy` therefore cannot yet destroy a protected
+**Known gap:** `sol destroy` therefore cannot yet destroy a protected
 production RDS instance. It runs the destroy only; it performs no preparatory
 transition, and a `-var` it forwarded would be inert for the reason above. Until the
 preparation step exists, the operator performs steps 2 and 3 directly (via
 `terraform apply` or the `aws` CLI) and may then use either `terraform destroy` or
-`sol cloud destroy <target> --apply`.
+`sol destroy <target> --apply`.
 
 What is fixed here is the Terraform-level defect: `skip_final_snapshot` is no longer
 derived from `deletion_protection` — so permitting destruction no longer means
 silently forgoing the final snapshot — and an identifier is always set when a
 snapshot will be taken, so Terraform no longer refuses the destroy outright.
-`sol cloud destroy` now runs the Sol lifecycle skeleton (prepare → verify the
+`sol destroy` now runs the Sol lifecycle skeleton (prepare → verify the
 preparation landed → destroy platform → destroy cloud → verify absence); its AWS
 preparation is a declared no-op until finding 9b supplies the RDS
 deletion-protection transition and a unique snapshot identity per attempt. Until

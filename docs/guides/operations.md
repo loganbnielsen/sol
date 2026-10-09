@@ -20,7 +20,7 @@ spelling in [`reference/cli.md`](../reference/cli.md), the deployment path in
 | `sol check [--scope DOMAIN[/UNIT]]` | Is the declaration valid before anything runs? | scope flag | `domain`, `domain/unit` |
 | `sol open <view> [SCOPE]` | Open the operational UI for a scope | scope | workspace (omit), `domain`, `domain/unit` |
 | `sol open infra --target TARGET` | The infrastructure a target runs on | target | none — infrastructure has no application scope (`DEC-032`) |
-| `sol cloud destroy <TARGET>` | Remove one environment | target | the target |
+| `sol destroy <TARGET>` | Remove one environment | target | the target |
 | `sol uninstall <TARGET>` | Remove the installation itself | target | the target |
 
 Two scope rules are deliberate and are not inconsistencies:
@@ -183,7 +183,7 @@ view, and the command says so rather than opening an empty one.
 ## 7. Destroy an environment
 
 ```bash
-sol cloud destroy prod/aws/us-east-1 --apply
+sol destroy prod/aws/us-east-1 --apply
 ```
 
 This removes the environment's network, cluster, database, registry use, platform and

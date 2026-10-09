@@ -82,7 +82,7 @@ declarations; removal requires positive ownership evidence (see
 
 The durable layer — the Terraform state backend and locking, the provisioning/cluster-access/
 deploy/operator identities, and the delegated DNS zone when Sol owns one — is per **account**, not
-per environment. It outlives every environment, which is why `sol cloud destroy` removes an
+per environment. It outlives every environment, which is why `sol destroy` removes an
 environment and never the installation.
 
 **Guided first-run.** `sol deploy` observes the durable installation and offers to establish it
@@ -109,7 +109,7 @@ sol deploy prod/aws/us-east-1                   # reconcile infrastructure and w
 - `sol deploy` applies fresh Terraform plans for the existing roots, verifies the platform, then
   reconciles configured authorization and workloads. Uncertain state, unsafe grant revocation, and
   unknown Kubernetes ownership fail closed.
-- Target teardown still uses `sol cloud destroy` until the destroy migration is complete. It does
+- Target teardown is `sol destroy <target>`. It does
   not remove the durable installation; use `sol uninstall` for that separate scope.
 - Add workspace Terraform under `sol/terraform/<provider>/{cluster,platform}`. It joins the
   matching existing root and state; see the

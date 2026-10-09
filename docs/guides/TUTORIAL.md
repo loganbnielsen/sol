@@ -788,7 +788,7 @@ sol local secret set|list|delete ...                                            
 
 sol plan TARGET                                  preview target changes
 sol deploy TARGET                                reconcile infrastructure and workloads
-sol cloud destroy TARGET [--plan|--apply]         destroy cloud infrastructure via Terraform
+sol destroy TARGET [--plan|--apply]              destroy cloud infrastructure via Terraform
 ```
 
 ---

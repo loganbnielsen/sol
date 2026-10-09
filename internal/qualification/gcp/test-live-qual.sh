@@ -616,7 +616,7 @@ for scenario in absent drift failure; do
   has "$scenario: supported cloud planning runs" "sol plan" "$TMP/plan-$scenario.argv"
   lacks "$scenario: no durable Terraform operation runs" "terraform " "$TMP/plan-$scenario.argv"
   lacks "$scenario: planning runs no whole-target deploy" "sol deploy" "$TMP/plan-$scenario.argv"
-  lacks "$scenario: no destroy runs on exit" "sol cloud destroy" "$TMP/plan-$scenario.argv"
+  lacks "$scenario: no destroy runs on exit" "sol destroy" "$TMP/plan-$scenario.argv"
   [ ! -e "$TARGET_FILE" ] && ok "$scenario: scratch target is removed" \
     || no "$scenario: scratch target is removed" absent present
   if [ "$plan_rc" = 1 ]; then
@@ -627,7 +627,7 @@ done
 printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
-lacks "no destroy on the success path (the delegation boundary keeps the substrate)" "cloud destroy" "$TMP/cloud-ok.argv"
+lacks "no destroy on the success path (the delegation boundary keeps the substrate)" "sol destroy" "$TMP/cloud-ok.argv"
 lacks "the cloud phase never runs an application deploy" "migrate apply" "$TMP/cloud-ok.argv"
 has "the target is written for the run" "cluster_name" "$TARGET_FILE"
 has "the generated target asks for TLS, which DEC-055 made installable on GCP" "cluster_issuer: letsencrypt-staging" "$TARGET_FILE"
@@ -714,7 +714,7 @@ run_case occupied cloud STUB_STATE_PRESENT=1
 is "exit 2" "$(cat "$TMP/occupied.rc")" "2"
 has "the refusal names the occupied state key" "already exists" "$TMP/occupied.out"
 lacks "nothing is applied" "sol deploy" "$TMP/occupied.argv"
-lacks "and nothing is torn down" "cloud destroy" "$TMP/occupied.argv"
+lacks "and nothing is torn down" "sol destroy" "$TMP/occupied.argv"
 
 printf '\nscenario: an evidence directory that belongs to another attempt is refused\n'
 PRESEED_FOREIGN_ATTEMPT=another-attempt run_case reused-dir cloud
@@ -946,7 +946,7 @@ run_case destroy-nocred destroy CLUSTER=test-cluster IMPERSONATOR=
 is "a destroy without the impersonator is refused" "$(cat "$TMP/destroy-nocred.rc")" "1"
 has "and names the variable the phase needs rather than crashing on it" \
   "IMPERSONATOR" "$TMP/destroy-nocred.out"
-lacks "and tears nothing down" "cloud destroy" "$TMP/destroy-nocred.argv"
+lacks "and tears nothing down" "sol destroy" "$TMP/destroy-nocred.argv"
 
 printf '\nscenario: destroy reuses the target file the harness left behind (FND-0078)\n'
 run_case destroy-empty-target destroy CLUSTER=test-cluster IMPERSONATOR=user:test@example.test \
@@ -954,7 +954,7 @@ run_case destroy-empty-target destroy CLUSTER=test-cluster IMPERSONATOR=user:tes
 lacks "an empty harness target file is not treated as a foreign one" \
   "was not written by this harness" "$TMP/destroy-empty-target.out"
 has "and the phase went on to destroy its target, which it could only do from a usable file" \
-  "cloud destroy" "$TMP/destroy-empty-target.argv"
+  "sol destroy" "$TMP/destroy-empty-target.argv"
 
 printf '\nscenario: no phase given\n'
 run_case_without_a_phase
@@ -962,7 +962,7 @@ is "a bare invocation exits 2" "$(cat "$TMP/no-phase.rc")" "2"
 has "and prints its phase model" "usage: live-qual.sh PHASE" "$TMP/no-phase.out"
 has "and the environment a run needs" "IMPERSONATOR" "$TMP/no-phase.out"
 lacks "and not its own source" "set -euo pipefail" "$TMP/no-phase.out"
-lacks "and tears nothing down" "cloud destroy" "$TMP/no-phase.argv"
+lacks "and tears nothing down" "sol destroy" "$TMP/no-phase.argv"
 
 run_case ready-bindings cloud STUB_CLUSTER_EXISTS=1
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
@@ -982,8 +982,8 @@ has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$T
 printf '\nscenario: destroy\n'
 run_case destroy-ok destroy
 is "exit 0" "$(cat "$TMP/destroy-ok.rc")" "0"
-is "teardown is invoked" "$([ "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" -ge 1 ] && echo yes)" "yes"
-is "teardown is invoked exactly once" "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" "1"
+is "teardown is invoked" "$([ "$(grep -c 'sol destroy' "$TMP/destroy-ok.argv")" -ge 1 ] && echo yes)" "yes"
+is "teardown is invoked exactly once" "$(grep -c 'sol destroy' "$TMP/destroy-ok.argv")" "1"
 has "destroy carries the cluster" "--var=cluster_name=test-cluster" "$TMP/destroy-ok.argv"
 has "destroy carries the base domain" "--var=base_domain=" "$TMP/destroy-ok.argv"
 has "destroy carries the impersonator" "provisioner_impersonators" "$TMP/destroy-ok.argv"
@@ -1002,7 +1002,7 @@ has "the leftover names a class the contract requires (artifact registry)" "arti
 
 printf '\nscenario: apply fails at the platform boundary\n'
 run_case cloud-fail cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
-has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
+has "a failed apply still tears down" "sol destroy" "$TMP/cloud-fail.argv"
 if [ "$(grep -c 'sol deploy' "$TMP/cloud-fail.argv")" = "1" ]; then
   ok "the harness does not run a second deploy to diagnose the platform"
 else
@@ -1067,7 +1067,7 @@ else
 fi
 has "the refusal names the durable risk" "REFUSED" "$TMP/durable-refusal.out"
 has "the refused whole-target deploy is the only mutation attempted" "sol deploy" "$TMP/durable-refusal.argv"
-lacks "an unresolved installation never tears down a disposable target it did not apply" "cloud destroy" "$TMP/durable-refusal.argv"
+lacks "an unresolved installation never tears down a disposable target it did not apply" "sol destroy" "$TMP/durable-refusal.argv"
 
 printf '\nscenario: platform subcommand\n'
 run_case platform-refused platform
@@ -1167,16 +1167,16 @@ run_case_sigterm() {
 printf '\nscenario: the harness survives a closed stdout reader and still tears down (attempt-5 shape)\n'
 run_case_closed_stdout sigpipe cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
 is "the phase still fails" "$(cat "$TMP/sigpipe.rc")" "1"
-has "the teardown runs even though stdout is gone" "cloud destroy" "$TMP/sigpipe.argv"
+has "the teardown runs even though stdout is gone" "sol destroy" "$TMP/sigpipe.argv"
 present "$TMP/sigpipe.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
-has "the harness narrative records the teardown" "teardown: sol cloud destroy" \
+has "the harness narrative records the teardown" "teardown: sol destroy" \
   "$TMP/sigpipe.logs/harness.log"
 has "and the failure that preceded it" "did not reconcile the environment" "$TMP/sigpipe.logs/harness.log"
 
 printf '\nscenario: SIGTERM tears down and verifies absence without killing Terraform in flight\n'
 run_case_sigterm sigterm TERM STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_SOL_SLEEP=3
 is "the terminated run exits non-zero" "$(cat "$TMP/sigterm.rc")" "1"
-has "the teardown runs on TERM" "cloud destroy" "$TMP/sigterm.argv"
+has "the teardown runs on TERM" "sol destroy" "$TMP/sigterm.argv"
 present "$TMP/sigterm.logs/inventory-post.tsv" "the independent post-teardown inventory is captured"
 has "the harness records the signal" "received SIGTERM" "$TMP/sigterm.logs/harness.log"
 
@@ -1238,7 +1238,7 @@ fi
 
 freeze_line="$(grep -n 'freezing the evidence bundle' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 kube_line="$(grep -n 'capturing read-only Kubernetes evidence' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
-teardown_line="$(grep -n 'teardown: sol cloud destroy' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+teardown_line="$(grep -n 'teardown: sol destroy' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 if [ -n "$freeze_line" ] && [ -n "$kube_line" ] && [ "$freeze_line" -lt "$kube_line" ]; then
   ok "the bundle is frozen before the heavy Kubernetes reads (line $freeze_line < $kube_line)"
 else
@@ -1329,11 +1329,11 @@ if [ "$(cat "$TMP/verify-fail.rc")" = "0" ]; then
 else
   ok "a failing verification exits non-zero"
 fi
-lacks "a failing verification invokes no teardown, even with a target file present" "cloud destroy" "$TMP/verify-fail.argv"
+lacks "a failing verification invokes no teardown, even with a target file present" "sol destroy" "$TMP/verify-fail.argv"
 has "it still reports what it saw" "resources remain" "$TMP/verify-fail.out"
 PRESEED_TARGET=1 run_case verify-clean verify
 is "a clean verification exits 0" "$(cat "$TMP/verify-clean.rc")" "0"
-lacks "a clean verification invokes no teardown" "cloud destroy" "$TMP/verify-clean.argv"
+lacks "a clean verification invokes no teardown" "sol destroy" "$TMP/verify-clean.argv"
 if grep -q 'NOT_FOUND: Unknown service account' "$HERE/test-live-qual.sh"; then
   ok "the not-found fixture is the provider's captured wording (underscore form), not a paraphrase"
 else
@@ -1343,7 +1343,7 @@ fi
 
 printf '\nscenario: the target key is overridable\n'
 TARGET=qual9/gcp/us-central1 run_case target-override destroy
-has "the override reaches sol" "cloud destroy qual9/gcp/us-central1" "$TMP/target-override.argv"
+has "the override reaches sol" "sol destroy qual9/gcp/us-central1" "$TMP/target-override.argv"
 has "and names the state objects it will read" "sol/qual9/gcp/us-central1/cloud.tfstate" "$TMP/target-override.argv"
 if grep -q 'sol/qual/gcp/us-central1/' "$TMP/target-override.argv"; then
   no "the default key is not silently used as well" "no sol/qual/ path" "found one"

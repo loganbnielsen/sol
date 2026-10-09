@@ -31,6 +31,7 @@
   cmd_plan
   cmd_up
   cmd_deploy
+  cmd_destroy
   cmd_deploy_event
   cmd_status
   cmd_logs

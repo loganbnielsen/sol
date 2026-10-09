@@ -218,15 +218,41 @@ let declared_workload_namespaces () =
     |> List.sort_uniq String.compare
 ;;
 
-let cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased () =
-  let* provider = provider_of_target_path target in
+(* Destroy consumes the target intent its caller already resolved
+   (`Sol_cli_config.load_for_target`, the same resolution `sol plan` and `sol deploy`
+   read), so the provider and the Terraform variables come from the one typed target
+   rather than being re-derived from the target string here. Every destruction safety
+   policy below is unchanged. *)
+let cloud_destroy ~target ~resolved_config ~var_file ~vars ~action ~accept_unreleased () =
+  let target_cfg = resolved_config.Sol_cli_config.target in
+  let provider = target_cfg.Sol_cli_config.provider in
   let* () = require_cloud_root ~driver:provider in
   let* () = check_terraform () in
   let pname = Sol_cli_provider.to_string provider in
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
-  let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
+  let* () =
+    if action = Apply && not (Sol_cli_config.target_declared target_cfg)
+    then
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "target %S is not declared in %s -- terraform apply/destroy require an \
+               explicit target, even an empty one, so a typo'd or unintended target \
+               can't silently inherit sol.yml's shared defaults and mutate \
+               infrastructure anyway."
+              target
+              (Sol_cli_config.target_source target_cfg)))
+    else Ok ()
+  in
+  let* config_vars =
+    Sol_cli_terraform_vars.of_config
+      ~workspace:(Sol_cli_workspace.current_name ())
+      resolved_config
+    |> Result.map Sol_cli_terraform.kv_args
+    |> Sol_cli_exit.of_msg
+  in
   let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars = config_vars @ vars in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
@@ -651,7 +677,7 @@ let cloud_bootstrap ~target ~reconcile ~await_delegation () =
     "\n\
      The installation is established. Environments can be created and destroyed against \
      it;\n\
-     `sol cloud destroy` removes an environment, never this.\n\
+     `sol destroy` removes an environment, never this.\n\
      %!";
   Ok ()
 ;;
@@ -815,62 +841,6 @@ let apply_cmd =
       $ accept_unresolved_flag)
 ;;
 
-let destroy_cmd =
-  let doc =
-    "Destroy cloud infrastructure via Terraform. Requires the same target/provider used \
-     with apply."
-  in
-  let man =
-    [ `S Manpage.s_description
-    ; `P
-        "Destruction proceeds even when a best-effort preparation -- lowering a deletion \
-         guard -- fails or its plan is refused: the failure is reported, the unsafe \
-         apply is never executed, and what Terraform represents is still destroyed. Only \
-         a failure that stands for a destruction-time guarantee the target itself \
-         declared (such as `destroy_retention: final-snapshot`, which could not be \
-         prepared) blocks destruction and leaves the target standing."
-    ; `P
-        "Before the substrate is destroyed, the workloads this target deployed are \
-         released -- discovered in the target's declared namespaces, removed by name, \
-         and waited on until their pods are gone -- so a provider is never asked to drop \
-         durable application state while the workloads that own it may still be running. \
-         A destroy that cannot establish that the workloads are gone stops before the \
-         substrate: it destroys nothing, claims no absence, and exits 1 naming the \
-         namespace, the kind and the operation that failed. The precondition does not \
-         apply when there is no cluster to release from (the substrate is absent, or the \
-         cluster cannot be reached), and `--accept-unreleased` destroys anyway, \
-         recording that the absence check, not the release, decided the outcome."
-    ; `P
-        "A target whose Terraform state cannot be listed is refused, not destroyed: the \
-         listing is what tells `terraform output` apart from a confirmed absence, so a \
-         read that failed while the state was readable enough to publish outputs is the \
-         shape of a transient or an authorization failure. Such a destroy exits 1 having \
-         destroyed nothing, and says so; a state that lists nothing is a confirmed \
-         absence, and keeps the documented degraded destroy."
-    ; `S "EXIT STATUS"
-    ; `P
-        "0 -- destruction reached absence and it was verified. A best-effort preparation \
-         that failed or was refused does not change this (REFAC-094): each one is \
-         reported on stderr as a warning."
-    ; `P
-        "1 -- destruction did not reach its postcondition: it failed, it was blocked by \
-         a declared guarantee, the application workloads could not be established as \
-         released (nothing was destroyed, and nothing is claimed absent), the state \
-         could not be listed (nothing was destroyed, and no absence is claimed), absence \
-         could not be verified, or the elevated bootstrap access could not be removed. \
-         The reason is named on stderr."
-    ; `P "No other code is used by this command."
-    ]
-  in
-  Cmd.v
-    (Cmd.info "destroy" ~doc ~man)
-    Term.(
-      const (fun target var_file vars action accept_unreleased ->
-        Sol_cli_exit.exit_on
-          (cloud_destroy ~target ~var_file ~vars ~action ~accept_unreleased ()))
-      $ target_arg
-      $ var_file_arg
-      $ var_arg
-      $ action_term
-      $ accept_unreleased_flag)
-;;
+(* The public target destroy command moved to `cmd_destroy.ml` as the top-level
+   `sol destroy <target>`; its flags (`action_term`, `accept_unreleased_flag`) and the
+   executor (`cloud_destroy`) stay here and are referenced from there. *)

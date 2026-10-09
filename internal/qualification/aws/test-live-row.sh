@@ -864,7 +864,7 @@ fi
 run_phase destroyrun destroy
 is "exit 0" "$(cat "$TMP/destroyrun.rc")" "0"
 has "the destroy carries the same var file, so teardown renders the applied shape" \
-  "cloud destroy qualreg/aws/us-east-1 --apply --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
+  "destroy qualreg/aws/us-east-1 --apply --var-file $ROOT/internal/qualification/aws/qual-aws-row.tfvars" \
   "$TMP/destroyrun.sol"
 
 printf '\nscenario: the app phase publishes exactly the selected units\n'
@@ -906,7 +906,7 @@ git -C "$WORKSPACE" reset -q --hard "$CANDIDATE_REVISION"
 printf '\nscenario: the destroy phase survives a closed stdout reader and records the inventory\n'
 run_phase_closed_stdout destroyclosed destroy
 is "exit 0" "$(cat "$TMP/destroyclosed.rc")" "0"
-has "the teardown still ran" "cloud destroy qualreg/aws/us-east-1 --apply" "$TMP/destroyclosed.sol"
+has "the teardown still ran" "destroy qualreg/aws/us-east-1 --apply" "$TMP/destroyclosed.sol"
 exists "the independent inventory is captured" "$TMP/destroyclosed.logs/aws-inventory.txt"
 has "the harness writes its own narrative" "destroy returned success" \
   "$TMP/destroyclosed.logs/harness.log"
@@ -918,7 +918,7 @@ if [ "$(cat "$TMP/cloudterm.rc")" = "0" ]; then
 else
   ok "a terminated cloud run exits non-zero"
 fi
-has "the teardown runs" "cloud destroy qualreg/aws/us-east-1 --apply" "$TMP/cloudterm.sol"
+has "the teardown runs" "destroy qualreg/aws/us-east-1 --apply" "$TMP/cloudterm.sol"
 exists "the independent inventory is captured" "$TMP/cloudterm.logs/aws-inventory.txt"
 has "the harness records the signal" "received SIGTERM" "$TMP/cloudterm.logs/harness.log"
 

@@ -594,8 +594,8 @@ destroy() {
   TEARDOWN_ATTEMPTED=1
   local vars
   mapfile -t vars < <(destroy_vars)
-  say "teardown: sol cloud destroy $TARGET"
-  ( cd "$WORKSPACE" && "$SOL" cloud destroy "$TARGET" --apply "${vars[@]}" ) \
+  say "teardown: sol destroy $TARGET"
+  ( cd "$WORKSPACE" && "$SOL" destroy "$TARGET" --apply "${vars[@]}" ) \
     >"$LOG_DIR/destroy.log" 2>&1 || say "  (destroy exited non-zero; the verification below decides)"
   if verify_absent; then
     say "teardown verified: absent"

@@ -30,7 +30,7 @@ These commands are the public target lifecycle boundary:
 | --- | --- |
 | `sol plan <target>` | Preview every currently plannable phase and report phases deferred by unavailable prerequisites. |
 | `sol deploy <target>` | Reconcile the whole target through cloud substrate, platform substrate, authorization and workloads. |
-| `sol cloud destroy <target>` | Prepare destruction, verify preparation, destroy both substrates in dependency order and verify absence. |
+| `sol destroy <target>` | Prepare destruction, verify preparation, destroy both substrates in dependency order and verify absence. |
 | `sol target show <target> --check` | Report live target readiness or a named, fail-closed unmet reason. |
 
 No new `provision` or `cloud status` vocabulary is added.

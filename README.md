@@ -205,7 +205,7 @@ of lifecycle confusion:
   zone. It is designed to be set up once and removed only by an explicit
   `sol uninstall`, never by destroying an environment.
 - **An environment** is one disposable target — its network, cluster, database
-  and workloads. `sol cloud destroy <target>` removes the environment and is
+  and workloads. `sol destroy <target>` removes the environment and is
   designed to leave the installation intact, so redeploying does not redo
   registrar or DNS work.
 

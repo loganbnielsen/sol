@@ -77,7 +77,7 @@ never needs a source checkout to complete the ordinary path.
 
 - **Targets and environments** — the addressing model, and why the environment
   is a property of the target (`DEC-016`). *DOCS-028.*
-- **Provisioning and deploying a target** — `sol plan` previews and `sol deploy` reconciles infrastructure, authorization and workloads; `sol cloud destroy` remains the target teardown command during the lifecycle migration.
+- **Provisioning and deploying a target** — `sol plan` previews and `sol deploy` reconciles infrastructure, authorization and workloads; `sol destroy <target>` tears the target down.
 - **Deploying the application** — direct and GitOps modes. *DOCS-028.*
 - **CI and continuous deployment** — [`deployment/ci.md`](deployment/ci.md): the generated
   workflow, its OIDC identities and the gated authorization job.
@@ -93,7 +93,7 @@ set, health, logs, rollback, diagnostics, the operational UIs, destroy, and unin
 - **Everyday operations** — `status`, `logs`, `open`, `check`.
 - **Releases and rollback** — the release contract and `sol rollback`.
 - **Destroy and uninstall** — the environment/installation distinction, and the
-  explicit teardown of each (`sol cloud destroy`, `sol uninstall`).
+  explicit teardown of each (`sol destroy`, `sol uninstall`).
 - **Recovery** — [`deployment/application-data-recovery.md`](deployment/application-data-recovery.md),
   [`deployment/credential-rotation.md`](deployment/credential-rotation.md),
   [`deployment/workload-availability.md`](deployment/workload-availability.md),

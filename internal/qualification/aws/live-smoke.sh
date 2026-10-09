@@ -38,7 +38,7 @@ run() {
 cleanup() {
   local rc=$?
   say "cleanup: target destroy"
-  (cd "$WORKSPACE" && AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" "$SOL" cloud destroy "$TARGET" --apply) >"$LOG_DIR/aws-destroy.log" 2>&1 || true
+  (cd "$WORKSPACE" && AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" "$SOL" destroy "$TARGET" --apply) >"$LOG_DIR/aws-destroy.log" 2>&1 || true
   say "cleanup: best-effort smoke check of the cluster and one VPC (not the H6 verdict)"
   AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws eks describe-cluster --name "$CLUSTER" --region "$REGION" >"$LOG_DIR/verify-eks.log" 2>&1 && rc=1 || true
   if AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws ec2 describe-vpcs --filters Name=tag:Name,Values="$CLUSTER" --query 'length(Vpcs)' --output text >"$LOG_DIR/verify-vpcs.log" 2>&1; then

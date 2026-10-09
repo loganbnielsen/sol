@@ -188,8 +188,8 @@ let cmd =
         "The installation is the durable account-level layer that outlives every \
          environment (DEC-057): the Terraform state facility, the delegated DNS zone \
          when Sol owns it, and the provisioning objects the durable root manages. `sol \
-         cloud destroy <target>` removes an environment and leaves all of this standing; \
-         this command is the only supported way to remove it, and it is never implied by \
+         destroy <target>` removes an environment and leaves all of this standing; this \
+         command is the only supported way to remove it, and it is never implied by \
          destroying environments."
     ; `P
         "Sol prints what it will remove and what it will keep before changing anything, \

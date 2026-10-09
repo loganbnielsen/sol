@@ -682,7 +682,7 @@ phase_destroy() {
   TEARDOWN_ATTEMPTED=1
   capture_state
   local destroy_rc=0 verdict_rc=0
-  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' cloud destroy '$TARGET' --apply --var-file '$TFVARS'" || destroy_rc=$?
+  run cloud-destroy bash -c "cd '$WORKSPACE' && exec '$SOL' destroy '$TARGET' --apply --var-file '$TFVARS'" || destroy_rc=$?
   if [ "$destroy_rc" = 0 ]; then
     say "destroy returned success; the independent inventory decides absence"
   else

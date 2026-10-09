@@ -58,7 +58,7 @@ variable "sql_high_availability" {
 }
 
 variable "gke_deletion_protection" {
-  description = "Enable the GKE provider's deletion protection on the cluster. Default true (a direct destroy fails rather than deleting a cluster); `sol cloud destroy` sets it false for the Destroy phase."
+  description = "Enable the GKE provider's deletion protection on the cluster. Default true (a direct destroy fails rather than deleting a cluster); `sol destroy` sets it false for the Destroy phase."
   type        = bool
   default     = true
 }
