@@ -25,6 +25,8 @@ let make_result (spec : Sol_cli_deployment_plan.service_spec) =
 let apply_workload_phased ~ctx ~(spec : Sol_cli_deployment_plan.service_spec) ~bundle =
   let open Result.Syntax in
   let* () = Sol_cli_secret.verify_external_secret_destination ~ctx spec in
+  (* Reads the unit's Sol-managed Secret. On a first deploy the user has already
+     created it — and the namespace it lives in — with `sol secret set`. *)
   let* () = Sol_cli_secret.verify_workload_secret ~ctx spec in
   let* () = Sol_cli_manifest.apply_bundle_namespace ~ctx bundle in
   let* () = Sol_cli_manifest.apply_bundle_prerequisites ~ctx bundle in
@@ -118,9 +120,15 @@ let dispatch_rendered ~ctx ~mode spec bundle =
   Result.map (fun () -> make_result spec) dispatched
 ;;
 
+(* Local development runs against a k3d cluster with no External Secrets Operator:
+   every declared key is delivered from the unit's Sol-managed Secret (populated from
+   sol/secrets.local), so force every key to Sol_managed and never wait on ESO. *)
 let local_development_spec (spec : Sol_cli_deployment_plan.service_spec) =
   let key = "SOL_ALLOW_UNVERIFIED_JWT" in
-  { spec with config = (key, "1") :: List.remove_assoc key spec.config }
+  { spec with
+    config = (key, "1") :: List.remove_assoc key spec.config
+  ; secret_sources = []
+  }
 ;;
 
 let local ~ctx ~workspace ~release_id ~dry_run spec =

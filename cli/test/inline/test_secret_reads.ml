@@ -27,7 +27,7 @@ for a in "$@"; do
   if [ "$next_is_kind" = 1 ]; then kind="$a"; next_is_kind=0; fi
   if [ "$next_is_ns" = 1 ]; then namespace="$a"; next_is_ns=0; fi
   case "$a" in
-    apply|patch|rollout) [ -z "$verb" ] && verb="$a" ;;
+    apply|patch|rollout|create) [ -z "$verb" ] && verb="$a" ;;
     get) [ -z "$verb" ] && verb="get" && next_is_kind=1 ;;
     -n) next_is_ns=1 ;;
   esac
@@ -51,6 +51,14 @@ if [ "$verb" = "get" ]; then
   fi
   case "$kind" in
     externalsecret)
+      if [ "$mode" = "eso-no-observed-generation" ]; then
+        printf '{"metadata":{"generation":2},"status":{"conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
+        exit 0
+      fi
+      if [ "$mode" = "eso-no-metadata-generation" ]; then
+        printf '{"metadata":{},"status":{"conditions":[{"type":"Ready","status":"True","reason":"SecretSynced","observedGeneration":2}]}}\n'
+        exit 0
+      fi
       if [ "$mode" = "phased-eso-ready" ] || [ "$mode" = "phased-eso-not-synced" ]; then
         state=True
         reason=SecretSynced
@@ -545,9 +553,10 @@ let prerequisites_doc =
 ;;
 
 let workload_doc = "---\nkind: Deployment\nmetadata:\n  name: charge-svc\n"
+let namespace_doc = "---\nkind: Namespace\nmetadata:\n  name: payments\n"
 
 let phased_bundle ~prerequisites ~workload =
-  { Sol_cli_manifest.namespace_yaml = ""
+  { Sol_cli_manifest.namespace_yaml = namespace_doc
   ; prerequisites_yaml = prerequisites
   ; workload_yaml = workload
   }
@@ -567,7 +576,7 @@ let index_of_substring haystack needle =
 ;;
 
 let test_phased_apply_waits_for_the_external_secret_before_the_workload () =
-  with_fake_kubectl ~mode:"phased-eso-ready" (fun ~calls:_ ~manifests ->
+  with_fake_kubectl ~mode:"phased-eso-ready" (fun ~calls ~manifests ->
     match
       Sol_cli_executor.apply_workload_phased
         ~ctx
@@ -586,6 +595,15 @@ let test_phased_apply_waits_for_the_external_secret_before_the_workload () =
            , index_of_substring applied "kind: Deployment" )
          with
          | Some external_secret_at, Some workload_at -> external_secret_at < workload_at
+         | _ -> false);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the namespace is created before any object is applied"
+        true
+        (match
+           index_of_substring (calls ()) "create", index_of_substring (calls ()) "apply"
+         with
+         | Some created_at, Some applied_at -> created_at < applied_at
          | _ -> false))
 ;;
 
@@ -609,6 +627,41 @@ let test_phased_apply_blocks_the_workload_when_eso_is_not_synced () =
         ~msg:"the workload is never applied"
         false
         (Sol_cli_string.contains ~needle:"kind: Deployment" (manifests ())))
+;;
+
+(* The deploy gate must not accept a Ready condition it cannot tie to the live spec:
+   a missing generation field is an unverifiable sync, not a satisfied one. *)
+let test_external_secret_readiness_rejects_missing_generation mode =
+  with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
+    match
+      Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ())
+    with
+    | Ok () -> Windtrap.failf "ESO state %s must fail closed" mode
+    | Error message ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the generation field it needs"
+        true
+        (Sol_cli_string.contains ~needle:"observedGeneration" message);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the ESO version assumption"
+        true
+        (Sol_cli_string.contains ~needle:"0.16" message))
+;;
+
+let test_local_development_spec_forces_sol_managed () =
+  let local = Sol_cli_executor.local_development_spec (external_workload_spec ()) in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"local development carries no external secret source"
+    0
+    (List.length local.secret_sources);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"local development still sets the unverified-JWT escape hatch"
+    true
+    (List.mem_assoc "SOL_ALLOW_UNVERIFIED_JWT" local.config)
 ;;
 
 let test_wait_for_workload_ready_skips_a_cronjob () =
@@ -679,4 +732,16 @@ let%test "rollout: a Deployment is waited on" =
 
 let%test "rollout: an Argo Rollout is waited on" =
   test_wait_for_workload_ready_targets_a_rollout ()
+;;
+
+let%test "external Secret readiness fails closed without observedGeneration" =
+  test_external_secret_readiness_rejects_missing_generation "eso-no-observed-generation"
+;;
+
+let%test "external Secret readiness fails closed without metadata.generation" =
+  test_external_secret_readiness_rejects_missing_generation "eso-no-metadata-generation"
+;;
+
+let%test "local development forces every key to Sol-managed" =
+  test_local_development_spec_forces_sol_managed ()
 ;;
