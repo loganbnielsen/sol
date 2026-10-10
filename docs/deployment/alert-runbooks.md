@@ -42,8 +42,8 @@ minutes: the new release is not becoming ready. This is the signal DEC-026 §3's
 1. `kubectl -n <workspace>-<domain> describe deploy <service>` — read the
    `Progressing`/`Available` conditions.
 2. `kubectl -n <namespace> get events --sort-by=.lastTimestamp | tail`.
-3. `sol deployments` — confirm which release/attempt is in flight.
-4. If the new release is bad: `sol rollback <service>` back to the last good
+3. `sol releases` — confirm which release is in flight.
+4. If the new release is bad: `sol rollback <release-id>` back to the last good
    recorded digest (DEC-027: the failed attempt never advanced the pointer, so
    the prior release is still authoritative).
 

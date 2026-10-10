@@ -54,7 +54,6 @@ val substrate_prerequisite
 val deploy_events
   :  workspace:string
   -> target_cfg:Sol_cli_config.target
-  -> deployment_id:Sol_cli_deployment_id.t
   -> ?release_id:Sol_cli_release_id.t
   -> Sol_cli_deployment_plan.t
   -> Sol_cli_deploy_event.t list
@@ -81,7 +80,6 @@ val run_lifecycle
   :  cluster:Sol_cli_kube_destination.context
   -> workspace:string
   -> sha:string
-  -> target:string option
   -> run_log:Sol_cli_run_log.t
   -> keep_releases:int
   -> confirm_group_change:bool
@@ -94,11 +92,7 @@ val run_lifecycle
         -> Sol_cli_deployment_plan.t
         -> (Sol_cli_executor.result list, string) result)
   -> report_success:(Sol_cli_deployment_plan.t -> Sol_cli_executor.result list -> unit)
-  -> push_events:
-       (release_id:Sol_cli_release_id.t
-        -> deployment_id:Sol_cli_deployment_id.t
-        -> Sol_cli_deployment_plan.t
-        -> unit)
+  -> push_events:(release_id:Sol_cli_release_id.t -> Sol_cli_deployment_plan.t -> unit)
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
 

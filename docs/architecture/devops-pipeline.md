@@ -207,37 +207,6 @@ logs, or dashboard interface.
 
 ---
 
-### `sol deployments`
-
-**Module:** `cli/bin/cmd_deployments.ml`
-
-Lists the deployment events the target's cluster holds for the workspace, newest
-first: `DEPLOYMENT / RELEASE / TIME / COMMIT / STATUS / ACTOR`, where the
-actor is shown with the source that identity came from (FEAT-110, AUDIT-075). A deployment event
-(FEAT-070) is one deploy *attempt* — a minted `d-<YYYYMMDDtHHMMSSz>-<16 hex>` id,
-the content-addressed release it tried to put in place, provenance (`created_at`,
-git commit, dirty, actor, target), and its outcome (`applied` / `apply_failed`).
-It is recorded as an immutable `sol-deployment-<deployment_id>` ConfigMap, so
-repeated no-op deploys of the same release appear as separate attempts rather
-than being collapsed.
-
-An event is an attempt, not a success (FEAT-071): a failed apply still records an
-event and still exits non-zero, but the release record — which says the release
-exists — is written only when the apply succeeded. Health is a third fact, read
-from the live workload / Argo, never written back into the record.
-
-Two records, one join key: `sol releases` answers "what distinct released states
-exist?", `sol deployments` answers "what deploy attempts happened, and which
-release did each put in place?". Both readers fail closed on a corrupt matching
-record rather than printing a partial list as if it were the whole history. The
-deploy marker pushed to Loki carries the same `deployment_id` as a field, and is
-only emitted once the record has actually been persisted, so the observability
-timeline can never advertise a join to a record that does not exist.
-
-**Reads:** the target cluster via kubectl. **Writes:** nothing.
-
----
-
 ### `sol migrate`
 
 **Module:** `cli/bin/cmd_migrate.ml`
@@ -303,14 +272,8 @@ database still track migrations separately.
 `sol_cli_migration_disposition.ml`
 
 Takes a `RELEASE_ID` positional (`sol rollback <release-id>`, found via
-`sol releases`), or `--commit <sha>` (FEAT-073) to resolve that commit's
-successful deploy to a release id instead of naming one directly — always
-echoed before anything mutates, and refused (candidates listed) rather than
-guessed if the commit matches more than one release. `--scope DOMAIN[/UNIT]`
-narrows which of a commit's releases `--commit` resolves to when it deployed
-more than one (e.g. `payments` and the whole workspace as two separate
-releases); it is a *selector* only — a release's recorded workload set is
-always restored whole, never partially.
+`sol releases`). A release's recorded workload set is always restored whole,
+never partially.
 
 **A boundary is complete, and each workload carries its own provenance
 (BUG-077).** A release record does not hold bare specs; it holds
@@ -329,8 +292,7 @@ The boundary's id is derived from the workloads the deploy applied together
 with the provenance of the ones it inherited — a whole-workspace deploy with
 nothing inherited is exactly its content id, as before — so a record's content
 is always a function of its id and the immutable ConfigMap is never rewritten
-with different content. `--commit` resolution is authoritative
-(FEAT-070's deployment-event record), never Loki. Either form restores that
+with different content. The release id restores that
 recorded release boundary. Does not use `kubectl rollout undo` — that
 mechanism cannot restore config, volumes, or ingress. Restoration comes
 entirely from the release record `sol up`/`sol deploy` write on every deploy
@@ -461,10 +423,9 @@ writing into it. An operation already in progress when the takeover happens
 therefore completes at most the mutation it was inside and no more — there is no
 forced kill.
 
-GitOps-mode rollback (content and pointer travelling in one emitted commit) and
-`--commit`/`--scope` release disambiguation are not yet implemented — this
-command only accepts an exact, unambiguous release id against a live cluster,
-and refuses a release recorded as GitOps-owned.
+GitOps-mode rollback (content and pointer travelling in one emitted commit) is not
+yet implemented — this command only accepts an exact release id against a live
+cluster, and refuses a release recorded as GitOps-owned.
 
 ### Release retention (FEAT-072, DEC-018)
 
@@ -477,10 +438,10 @@ are never pruned, even when they fall outside the window. Order comes from each
 record's cluster-assigned `metadata.creationTimestamp` (the record itself
 deliberately carries no timestamp, FEAT-069); duplicate deploys of identical
 content collapse to one distinct release. Only the immutable `sol-release-<id>`
-ConfigMaps are deleted — the current-release pointer and the deployment-event
-history are untouched, since "how many releases are recent" and "what happened"
-are different retention questions. Pruning is best-effort/non-fatal: a pruning
-failure warns and does not turn a successful deploy into a failure.
+ConfigMaps are deleted — the current-release pointer is untouched, since "how
+many releases are recent" and what the pointer names are different questions.
+Pruning is best-effort/non-fatal: a pruning failure warns and does not turn a
+successful deploy into a failure.
 
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
 consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster
@@ -498,7 +459,6 @@ customer's own provider:
 |---|---|---|
 | A released state | `sol-release-<release_id>` (immutable) | the first discovered service's domain namespace |
 | The rollback target | `sol-release-current-<workspace>` (mutable pointer) | same |
-| One deploy attempt | `sol-deployment-<deployment_id>` (immutable) | same |
 
 That is a deliberate choice, not an accident of implementation: it is
 provider-native, it keeps Sol from operating a service or a second
@@ -510,6 +470,14 @@ content-addressed from the workload boundary **and the deployed event contract**
 (`Sol_cli_release_id`, encoding `sol-release-v5`), so a record can be re-derived
 and checked, not merely believed, and a contract-only change is still a distinct
 release a rollback can name.
+
+**Upgrading past deployment-attempt records.** Earlier Sol versions wrote one
+immutable `sol-deployment-<id>` ConfigMap per deploy attempt. Nothing in current
+Sol reads or writes those objects: a deploy, rollback, release listing and
+release retention all select `sol.dev/type=release`, so retention never prunes
+them and no lifecycle decision is inferred from their absence. They are inert
+and may be deleted with `kubectl` if the namespace's history is not wanted; Sol
+does not delete them opportunistically.
 
 **The record carries the deployed contract.** Each Sol-owned event's declaration
 facts — registry subject identity, topic, partition count, key field and schema
@@ -543,9 +511,6 @@ kubectl get configmap -A -l sol.dev/workspace=<workspace> \
 NS=<namespace from above>
 kubectl -n "$NS" get configmap sol-release-current-<workspace> -o jsonpath='{.data.release_id}'
 kubectl -n "$NS" get configmap "sol-release-<that release_id>" -o jsonpath='{.data.record}' | jq .
-# the attempts, and who made each one
-kubectl -n "$NS" get configmap -l sol.dev/type=deployment \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.data.record}{"\n"}{end}' | jq -r '.actor_source + " " + .actor'
 ```
 
 Reading the current pointer and the release it names is enough to identify the
@@ -554,22 +519,11 @@ digest and the migrations that were applied, so what is running can be described
 and operated (rolled forward or back) with `kubectl`/`argo` and the provider's
 own tooling alone.
 
-**Provenance is observed, not asserted (AUDIT-075).** A deploy attempt records
-the actor *and where that identity came from*: a CI claim from the environment
-(`ci:github-actions`, `ci:gitlab`) first, then the workspace repository's
-`git config user.email` (`git:local`), then `SOL_ACTOR` (`override:env`), then
-nothing at all (`sol deployments` shows `-`). A record never invents an actor,
-and showing the source beside the name is what keeps an unverified string from
-reading like a signed identity: `SOL_ACTOR` is a convenience, and both it and a
-dirty working tree are visible as such.
-
 **Retention is stated, not implied.** Committed release records are pruned to the
 last `--keep-releases N` distinct releases (default 20, DEC-018) with the current
-pointer and its predecessor always kept. **Deployment events are not pruned**:
-`sol-deployment-<id>` ConfigMaps accumulate for the life of the namespace, which
-is deliberate — an attempt history that silently loses its oldest entries is
-worse than a large one — and the volume question is tracked as AUDIT-076 rather
-than answered by quietly deleting history here.
+pointer and its predecessor always kept. There is no separate deployment-attempt
+history to retain or prune (#1143's no-pruning policy is withdrawn with the
+records it protected).
 
 **A record written by an older Sol is diagnosable, not "corrupt" (AUDIT-077).**
 The release record carries the `encoding_version` of the format that wrote it. A

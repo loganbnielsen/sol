@@ -15,23 +15,12 @@ let sample =
   ; service = "invoicer"
   ; primitive = "svc"
   ; release_id = Result.get_ok (Sol_cli_release_id.of_string "r-0123456789abcdef")
-  ; deployment_id =
-      Result.get_ok
-        (Sol_cli_deployment_id.of_string "d-20260101t000000z-0123456789abcdef")
   }
 ;;
 
 let test_fields_includes_event_deploy () =
   let fields = E.fields sample in
   check_bool "event=deploy present" true (List.mem ("event", "deploy") fields)
-;;
-
-let test_fields_includes_deployment_id_join_key () =
-  let fields = E.fields sample in
-  check_bool
-    "deployment_id present (FEAT-070 join key)"
-    true
-    (List.mem ("deployment_id", "d-20260101t000000z-0123456789abcdef") fields)
 ;;
 
 (* The deploy event and the rendered workload taxonomy share one identity key
@@ -62,13 +51,10 @@ let test_fields_matches_taxonomy_label_set () =
   check_string "release value" "r-0123456789abcdef" (List.assoc "release" fields)
 ;;
 
-let test_fields_are_event_then_identity_then_join_key () =
+let test_fields_are_event_then_identity () =
   let labels = List.map fst (E.fields sample) in
   let identity_keys = List.map fst Sol_cli_manifest.observability_identity in
-  check_strings
-    "event, the taxonomy keys, then the deployment join key"
-    ([ "event" ] @ identity_keys @ [ "deployment_id" ])
-    labels
+  check_strings "event, then the taxonomy keys" ([ "event" ] @ identity_keys) labels
 ;;
 
 let test_message_mentions_domain_service_and_release () =
@@ -111,14 +97,7 @@ let test_external_without_override_skips () =
 
 let%test "fields: includes event=deploy" = test_fields_includes_event_deploy ()
 let%test "fields: matches taxonomy label set" = test_fields_matches_taxonomy_label_set ()
-
-let%test "fields: event, taxonomy keys, then deployment_id" =
-  test_fields_are_event_then_identity_then_join_key ()
-;;
-
-let%test "fields: includes deployment_id join key" =
-  test_fields_includes_deployment_id_join_key ()
-;;
+let%test "fields: event, then taxonomy keys" = test_fields_are_event_then_identity ()
 
 let%test "message: mentions domain/service/release" =
   test_message_mentions_domain_service_and_release ()

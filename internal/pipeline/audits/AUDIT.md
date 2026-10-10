@@ -17,7 +17,7 @@ Sol must eliminate "it works on my machine" syndrome. The local loop must mirror
 ### Checklist
 
 * [ ] **Zero-Knowledge Onboarding:** `sol new workspace <name>` generates a fully compiling, zero-warnings codebase on the first try. Library names are workspace-namespaced to prevent collisions in multi-workspace monorepos.
-* [ ] **Whole-plan prevalidation, recorded failure:** `sol up`/`sol deploy` build and render the whole plan before touching the cluster (`Sol_cli_change_set.build` collects every render error first, and `--dry-run` contacts no cluster), so a refusal before the billable boundary changes nothing. Once apply begins, a failure exits non-zero and is recorded as a deploy *attempt* with outcome `apply_failed` (`sol deployments`), and the release record is written only when apply succeeded. Sol does not promise atomic rollback of a partially-applied set: recovery is re-running `sol deploy` (the plan is idempotent) or `sol rollback <release_id>` to restore a recorded boundary. A scoped deploy or a rollback refuses, before any mutation, when the boundary it must read cannot be read.
+* [ ] **Whole-plan prevalidation, recorded failure:** `sol up`/`sol deploy` build and render the whole plan before touching the cluster (`Sol_cli_change_set.build` collects every render error first, and `--dry-run` contacts no cluster), so a refusal before the billable boundary changes nothing. Once apply begins, a failure exits non-zero and the release record is written only when apply succeeded, so the prior release remains authoritative. Sol does not promise atomic rollback of a partially-applied set: recovery is re-running `sol deploy` (the plan is idempotent) or `sol rollback <release_id>` to restore a recorded boundary. A scoped deploy or a rollback refuses, before any mutation, when the boundary it must read cannot be read.
 * [ ] **Hermetic Test Harnesses:** The E2E test sequence does not rely on ambient `sleep N` timing, manual port-forwards, or host-level broker state. Infrastructure setup is fully scripted and idempotent.
 
 ---
@@ -129,17 +129,18 @@ sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> \
 # nothing new, because a GitOps artifact must never carry a live secret.
 
 # 3. Recovery facts are recorded, not assumed (live-only: needs an apply that fails)
-sol deployments --target dev/aws/us-east-1
-# A deploy that failed after apply began appears as an attempt with status apply_failed;
-# sol releases shows no release record for it. Recovery is another sol deploy or
-# sol rollback <release_id>; Sol does not roll the partial apply back for you.
+sol releases --target dev/aws/us-east-1
+# A deploy that failed after apply began writes no release record and leaves the
+# current-release pointer unchanged, so sol releases still shows the prior release.
+# Recovery is another sol deploy or sol rollback <release_id>; Sol does not roll the
+# partial apply back for you.
 ```
 
 **Invariants:**
 * [ ] A build failure exits non-zero and leaves zero orphaned containers or services
 * [ ] An incompatible secret backend is refused before any file or cluster state changes
 * [ ] CLI exit codes are non-zero on every failure path (`echo $?`)
-* [ ] A failed apply is recorded as an `apply_failed` attempt and writes no release record (live-only)
+* [ ] A failed apply writes no release record and leaves the prior release authoritative (live-only)
 
 ---
 

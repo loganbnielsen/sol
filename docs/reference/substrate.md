@@ -374,14 +374,11 @@ bundle byte-identical and the diff empty. The emitted record is marked
 `sol rollback` refuses a GitOps-owned release instead of direct-applying against
 the controller (see the rollback section of the pipeline doc).
 
-Invocation provenance is *not* in the bundle: `sol up` and `sol deploy` record a
-separate immutable `sol-deployment-<deployment_id>` ConfigMap in the target's
-cluster (minted id, the release attempted, timestamp, commit, dirty, actor,
-target, outcome), listed by `sol deployments`. One event per deploy *attempt*,
-success or failure; the release record is written only on success. Keeping
-provenance out of the release artifact is what lets two deploys of identical
-content share one release record and one empty GitOps diff while still being two
-auditable attempts.
+Invocation provenance is deliberately not part of a release artifact: a release
+record is content, so two deploys of identical content share one record and one
+empty GitOps diff. Sol keeps no separate deployment-attempt history — the
+retained `sol-release-<id>` records, listed by `sol releases`, are the durable
+deployment record (see the pipeline doc's *Where release history lives*).
 
 ### Production Profile
 
@@ -508,10 +505,9 @@ evidence for those procedures belongs to HARDEN-002; the runbook is the
 procedure, not proof a target passed.
 
 A deploy that passes preflight carries `production-single-region/v1` in its plan
-(`--emit-plan-to`, with the guarantees as `evidence_requirements`) and in its
-deployment event. The claim is never written into the release record: a release
-is content, and two targets may deploy the same release while only one of them
-claims the profile.
+(`--emit-plan-to`, with the guarantees as `evidence_requirements`). The claim is
+never written into the release record: a release is content, and two targets may
+deploy the same release while only one of them claims the profile.
 
 ---
 

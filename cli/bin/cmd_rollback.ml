@@ -94,44 +94,10 @@ let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) 
   Ok ()
 ;;
 
-let resolve_commit ~ctx ~workspace ~target_string ~commit ~scope =
-  let* events = Sol_cli_deployment_store.list ~ctx ~workspace in
-  let resolution =
-    Sol_cli_rollback.resolve_commit ~commit ?scope ~target:target_string events
-  in
-  match resolution with
-  | Sol_cli_rollback.Commit_resolved release_id -> Ok release_id
-  | Commit_invalid _ | Commit_no_match | Commit_ambiguous _ ->
-    Error
-      (Sol_cli_rollback.commit_resolution_to_string
-         ~commit
-         ~target:target_string
-         ?scope
-         resolution)
-;;
-
-let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
-  : (string, string) result
-  =
-  match release_id, commit, scope with
-  | Some id, None, None -> Ok id
-  | None, None, None -> Error "pass a release id, or --commit <sha>."
-  | _, None, Some _ ->
-    Error
-      "--scope only narrows --commit candidate resolution; pass --commit too, or a \
-       release id directly."
-  | Some _, Some _, _ -> Error "pass either a release id or --commit, not both."
-  | None, Some commit, scope ->
-    resolve_commit ~ctx ~workspace ~target_string ~commit ~scope
-;;
-
-let run ~ctx ?(local = false) ~target_string release_id commit scope =
+let run ~ctx ?(local = false) release_id =
   let workspace = workspace_name () in
   Sol_cli_exit.of_msg
     (let* facts = Sol_cli_workspace_model.load_cwd () in
-     let* release_id =
-       resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
-     in
      Sol_cli_boundary_lease.with_boundary_lease
        ~ctx
        ~workspace
@@ -143,39 +109,12 @@ let run ~ctx ?(local = false) ~target_string release_id commit scope =
 
 let release_id_arg =
   Arg.(
-    value
+    required
     & pos 0 (some Sol_cli_args.text) None
     & info
         []
         ~docv:"RELEASE_ID"
-        ~doc:
-          "The release id to restore, e.g. r-1a2b3c4d5e6f7890. Omit when using --commit.")
-;;
-
-let commit_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "commit" ]
-        ~docv:"SHA"
-        ~doc:
-          "Resolve to the release id a successful deploy of this commit produced on the \
-           target, instead of naming a release id directly (FEAT-073). Lists candidates \
-           and refuses to guess if more than one release matches.")
-;;
-
-let scope_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "scope" ]
-        ~docv:"DOMAIN[/UNIT]"
-        ~doc:
-          "With --commit, narrows which of that commit's releases to resolve -- the same \
-           commit may have been deployed at more than one scope. Never means \"restore \
-           part of a release\": a release's workload set is always restored whole.")
+        ~doc:"The release id to restore, e.g. r-1a2b3c4d5e6f7890.")
 ;;
 
 let cmd =
@@ -187,20 +126,13 @@ let cmd =
           that release, reconstructs and re-applies its workloads, moves the \
           current-release pointer, then verifies both independently.")
     Term.(
-      const (fun release_id commit scope target ->
+      const (fun release_id target ->
         let result =
           let* ctx = Cmd_destination.remote ~command:"rollback" target in
-          run
-            ~ctx
-            ~target_string:(Option.value target ~default:"local")
-            release_id
-            commit
-            scope
+          run ~ctx release_id
         in
         Sol_cli_exit.exit_on result)
       $ release_id_arg
-      $ commit_arg
-      $ scope_arg
       $ Cmd_destination.target_arg)
 ;;
 
@@ -208,16 +140,7 @@ let local_cmd =
   Cmd.v
     (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")
     Term.(
-      const (fun release_id commit scope ->
-        Sol_cli_exit.exit_on
-          (run
-             ~ctx:Cmd_destination.local
-             ~local:true
-             ~target_string:"local"
-             release_id
-             commit
-             scope))
-      $ release_id_arg
-      $ commit_arg
-      $ scope_arg)
+      const (fun release_id ->
+        Sol_cli_exit.exit_on (run ~ctx:Cmd_destination.local ~local:true release_id))
+      $ release_id_arg)
 ;;

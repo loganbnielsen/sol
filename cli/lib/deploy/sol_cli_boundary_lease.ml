@@ -37,11 +37,7 @@ let configmap_name ~workspace =
 ;;
 
 let make_run_id ~holder ~now ~pid =
-  Printf.sprintf
-    "%s-%s-%d"
-    (holder_to_string holder)
-    (Sol_cli_deployment.rfc3339_utc now)
-    pid
+  Printf.sprintf "%s-%s-%d" (holder_to_string holder) (Sol_cli_time.rfc3339 now) pid
 ;;
 
 let create ~boundary ~holder ~run_id ~now =
@@ -68,7 +64,7 @@ let describe t =
     "%s run %s (started %s)"
     (holder_to_string t.holder)
     t.run_id
-    (Sol_cli_deployment.rfc3339_utc t.started_at)
+    (Sol_cli_time.rfc3339 t.started_at)
 ;;
 
 type decision =

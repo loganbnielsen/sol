@@ -77,7 +77,7 @@ let test_migration_status () =
      | status -> status.Sol_cli_migration.applied)
 ;;
 
-let test_release_and_deployment_lists () =
+let test_release_lists () =
   is_error
     "a release list without items"
     (Sol_cli_release.parse_kubectl_list (`Assoc [ "kind", `String "List" ]));
@@ -86,21 +86,10 @@ let test_release_and_deployment_lists () =
     ~msg:"an empty release list"
     0
     (List.length
-       (ok "releases" (Sol_cli_release.parse_kubectl_list (`Assoc [ "items", `List [] ]))));
-  is_error
-    "a deployment list without items"
-    (Sol_cli_deployment.parse_kubectl_list (`Assoc [ "kind", `String "List" ]));
-  Windtrap.equal
-    Windtrap.int
-    ~msg:"an empty deployment list"
-    0
-    (List.length
-       (ok
-          "deployments"
-          (Sol_cli_deployment.parse_kubectl_list (`Assoc [ "items", `List [] ]))))
+       (ok "releases" (Sol_cli_release.parse_kubectl_list (`Assoc [ "items", `List [] ]))))
 ;;
 
 let%test "REFAC-132: the boundary" = test_boundary ()
 let%test "REFAC-132: disk quota" = test_disk_quota ()
 let%test "REFAC-132: migration status" = test_migration_status ()
-let%test "REFAC-132: release and deployment lists" = test_release_and_deployment_lists ()
+let%test "REFAC-132: release lists" = test_release_lists ()

@@ -744,7 +744,7 @@ The experience is achieved when:
 | DNS onboarding | FEAT-107 |
 | `sol uninstall` and zone ownership | FEAT-108 |
 | CI bootstrap | FEAT-109 |
-| Portable release/state | FEAT-110, AUDIT-075/076/077 |
+| Portable release/state | FEAT-110, AUDIT-075/077 |
 | Guided documentation set | [docs/README.md](README.md), DOCS-026…030 |
 | Delegated zone lifetime | `DEC-042` |
 | Substrate observed, not asserted | `DEC-052` |

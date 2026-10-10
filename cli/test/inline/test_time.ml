@@ -23,12 +23,7 @@ let test_callers () =
     Windtrap.string
     ~msg:"run id"
     "cloud-apply-20260926T153049Z-42"
-    (Sol_cli_run_log.generate_run_id ~prefix:"cloud-apply" ~now:instant ~pid:42);
-  Windtrap.equal
-    Windtrap.string
-    ~msg:"deployment record time"
-    "2026-09-26T15:30:49Z"
-    (Sol_cli_deployment.rfc3339_utc instant)
+    (Sol_cli_run_log.generate_run_id ~prefix:"cloud-apply" ~now:instant ~pid:42)
 ;;
 
 let test_epoch () =

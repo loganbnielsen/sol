@@ -16,7 +16,6 @@ This bit FEAT-071 (`push_deploy_events`), and the same shape is likely elsewhere
 **Scope — keep it small.** Only the types that exist *because* they are abstract:
 
 - `Sol_cli_release_id.t`
-- `Sol_cli_deployment_id.t`
 - `Sol_cli_kubernetes_name`'s resolved names
 
 Add a type to the list when it appears; do **not** widen this audit into
@@ -30,7 +29,6 @@ Inventory every conversion site for each abstract type:
 
 ```
 rg -n 'Sol_cli_release_id\.(to_string|of_string)' cli/
-rg -n 'Sol_cli_deployment_id\.(to_string|of_string)' cli/
 rg -n 'Sol_cli_kubernetes_name\.' cli/
 ```
 
@@ -48,8 +46,8 @@ Then check the reverse direction: a record whose field holds an identity. Decide
 whether the record is a **domain object** (the field should be the abstract
 type) or is itself the **serialized form** (a `string` is fine, because it *is*
 the edge). State which in the ticket; do not leave it ambiguous. Precedent:
-`Sol_cli_deployment.t` is a domain object and carries `Deployment_id.t` /
-`Release_id.t` (FEAT-071); `Sol_cli_release.t` is the serialized artifact.
+`Sol_cli_release.t` is the serialized artifact, with its `Release_id.t` field
+kept abstract until the record is written out.
 
 ## Ticket quality bar
 
@@ -70,6 +68,8 @@ Findings are ticketed as `TYPE_AUDIT-<n>` and appended here.
   *Fixed 2026-09-14:* `push_deploy_events` and `Sol_cli_deploy_event.t` now carry
   `Deployment_id.t` / `Release_id.t`; `to_string` happens only in the logfmt
   field set, the message body, and the stream labels the pusher builds.
+  *(The deployment id and its record were removed with deployment-attempt
+  persistence, #1331; the release id remains.)*
 
 - **2026-10-04 — `Sol_cli_up_execution.service_execution`.** Resolved workload
   namespace/name types are erased into strings in an internal execution record

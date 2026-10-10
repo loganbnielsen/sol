@@ -88,7 +88,7 @@ nothing.
 
 | # | Invariant (DEC-026) | Scenario / action | Pass condition | Evidence |
 |---|---|---|---|---|
-| A1 | Profile selection is explicit and versioned (§1) | `sol deploy <target> --dry-run` on a target with `profile: production-single-region` | plan records the profile claim; deployment event carries the profile version | plan JSON, deployment event |
+| A1 | Profile selection is explicit and versioned (§1) | `sol deploy <target> --dry-run` on a target with `profile: production-single-region` | plan records the profile claim | plan JSON |
 | A2 | An environment named `prod` with no `profile` makes no claim (§1) | same command against a target without `profile:` | runs with no profile claim; no production guarantee asserted anywhere in plan/output | plan JSON, CLI output |
 | A3 | Unsupported Kubernetes version fails before mutation (§2) | point the target at a cluster whose version ≠ the matrix | `qualified_versions` unmet, refuses, names the mismatch; **no** cluster mutation | preflight report, `kubectl` event check |
 | A4 | TypeScript workload fails before mutation (§2) | target containing a `language: typescript` service | `qualified_versions` unmet naming the service + "OCaml-only (DEC-026 §2)" | preflight report |
@@ -111,10 +111,10 @@ repository checks rather than this harness.
 
 | # | Invariant | Scenario / action | Pass condition | Evidence |
 |---|---|---|---|---|
-| B1 | Fresh provision + normal deploy reaches a healthy recorded release (scenario 1) | provision target → `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` | all workloads Ready; release + deployment event recorded with resolved digests and the profile version | `kubectl get`, release record JSON, deployment event |
+| B1 | Fresh provision + normal deploy reaches a healthy recorded release (scenario 1) | provision target → `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` | all workloads Ready; release recorded with resolved digests | `kubectl get`, release record JSON |
 | B2 | Repeat is idempotent (scenario 1) | re-run the identical B1 command | no workload restarts (same release identity), exit 0, pointer unchanged | pod `restartCount`/UID + `creationTimestamp` before/after, release id before/after |
 | B3 | Representative transaction after deploy (scenario 10) | drive one real app transaction through the `-svc` (and one message through the `-worker`) | request succeeds; Kafka message observed processed; no error in logs | HTTP response, and for the `-worker` half the **application's own** evidence that it processed the record — its log line or downstream state, never broker progress such as consumer offset/lag (DEC-039 §5) |
-| B4 | Deliberately failed deploy does not advance the pointer (scenario 2) | deploy a workload that cannot become ready (failing probe / bad image) | deploy exits non-zero; **prior** release remains authoritative; failed attempt recorded as failed; running pods unchanged | release record before/after, attempt record, `kubectl get pods`, deploy stderr |
+| B4 | Deliberately failed deploy does not advance the pointer (scenario 2) | deploy a workload that cannot become ready (failing probe / bad image) | deploy exits non-zero; **prior** release remains authoritative; no new release record is written; running pods unchanged | release record before/after, `kubectl get pods`, deploy stderr |
 | B5 | Rollback restores the prior compatible digest set and verifies live state (scenario 3) | `sol rollback` to the B1 release | operation refuses **before** moving the pointer unless the live workload set verifies; after: exactly the recorded digests run | rollback output, live image digests vs release record |
 | B6 | Rollback refuses an incompatible migration boundary (FEAT-066) | roll back across a `contract` migration | refuses, naming the migration boundary; pointer unchanged | rollback output, release pointer |
 | B7 | Drift detection/correction per DEC-027 (scenario 9) | mutate a live workload directly (surplus workload / changed replica) | `sol deploy`/`sol up` reports the drift (`unexpected_workloads`), and a re-deploy converges | drift output, post-reconcile `kubectl get` |

@@ -186,12 +186,10 @@ let test_offline_run_without_migrations_says_nothing () =
 
 let test_deploy_events_one_per_service () =
   with_context (fun ctx ->
-    let deployment_id = Sol_cli_deployment_id.create ~now:0. ~entropy:"test" in
     let events =
       Sol_cli_deploy_run.deploy_events
         ~workspace:"myapp"
         ~target_cfg:ctx.target_cfg
-        ~deployment_id
         (plan
            [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc
            ; spec ~domain:"comms" ~name:"notify_worker" ~k8s:"notify-worker" Worker
@@ -202,13 +200,6 @@ let test_deploy_events_one_per_service () =
       ~msg:"service and primitive"
       [ "charge-svc", "svc"; "notify-worker", "worker" ]
       (List.map (fun (e : Sol_cli_deploy_event.t) -> e.service, e.primitive) events);
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"joined to the deployment"
-      true
-      (List.for_all
-         (fun (e : Sol_cli_deploy_event.t) -> e.deployment_id = deployment_id)
-         events);
     Windtrap.equal
       (Windtrap.list Windtrap.string)
       ~msg:"the target's env"
@@ -417,7 +408,6 @@ let removed_group_lifecycle ~(ctx : Sol_cli_deploy_run.context) =
     ~cluster:ctx.execution.cluster
     ~workspace:ctx.execution.workspace
     ~sha:ctx.sha
-    ~target:(Some ctx.target_name)
     ~run_log:ctx.run_log
     ~keep_releases:ctx.keep_releases
     ~confirm_group_change:false
@@ -427,7 +417,7 @@ let removed_group_lifecycle ~(ctx : Sol_cli_deploy_run.context) =
     ~apply:(fun ~lease:_ ~release_id:_ _ ->
       Windtrap.fail "a group the plan no longer carries must refuse before apply")
     ~report_success:(fun _ _ -> ())
-    ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+    ~push_events:(fun ~release_id:_ _ -> ())
     plan
 ;;
 
@@ -527,9 +517,7 @@ let%test "migration gate (AUDIT-069): offline: no migrations" =
   test_offline_run_without_migrations_says_nothing ()
 ;;
 
-let%test "deploy events (FEAT-071): one per service" =
-  test_deploy_events_one_per_service ()
-;;
+let%test "deploy events: one per service" = test_deploy_events_one_per_service ()
 
 let%test "consumer-group guard (BUG-088): the record is read under the boundary lease" =
   test_the_group_check_reads_the_record_under_the_lease ()
@@ -574,7 +562,6 @@ let%test "lifecycle: a refused gate releases the lease before apply" =
           ~cluster:ctx.execution.cluster
           ~workspace:ctx.execution.workspace
           ~sha:ctx.sha
-          ~target:(Some ctx.target_name)
           ~run_log:ctx.run_log
           ~keep_releases:ctx.keep_releases
           ~confirm_group_change:true
@@ -585,7 +572,7 @@ let%test "lifecycle: a refused gate releases the lease before apply" =
             applied := true;
             Ok [])
           ~report_success:(fun _ _ -> ())
-          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          ~push_events:(fun ~release_id:_ _ -> ())
           (plan [])
       in
       Windtrap.equal
@@ -611,7 +598,6 @@ let%test "lifecycle: presentation, gates and apply run in order under one lease"
           ~cluster:ctx.execution.cluster
           ~workspace:ctx.execution.workspace
           ~sha:ctx.sha
-          ~target:(Some ctx.target_name)
           ~run_log:ctx.run_log
           ~keep_releases:ctx.keep_releases
           ~confirm_group_change:true
@@ -628,7 +614,7 @@ let%test "lifecycle: presentation, gates and apply run in order under one lease"
             note "apply";
             Error "stop before recording")
           ~report_success:(fun _ _ -> ())
-          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          ~push_events:(fun ~release_id:_ _ -> ())
           (plan [])
       in
       Windtrap.equal
@@ -668,7 +654,6 @@ let%test "lifecycle: a failed apply does not report success" =
           ~cluster:ctx.execution.cluster
           ~workspace:ctx.execution.workspace
           ~sha:ctx.sha
-          ~target:(Some ctx.target_name)
           ~run_log:ctx.run_log
           ~keep_releases:ctx.keep_releases
           ~confirm_group_change:true
@@ -677,7 +662,7 @@ let%test "lifecycle: a failed apply does not report success" =
           ~before_apply:(fun _ -> Ok ())
           ~apply:(fun ~lease:_ ~release_id:_ _ -> Error "apply failed")
           ~report_success:(fun _ _ -> reported := true)
-          ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+          ~push_events:(fun ~release_id:_ _ -> ())
           (plan [])
       in
       Windtrap.equal

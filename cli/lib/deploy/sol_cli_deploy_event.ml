@@ -5,7 +5,6 @@ type t =
   ; service : string
   ; primitive : string
   ; release_id : Sol_cli_release_id.t
-  ; deployment_id : Sol_cli_deployment_id.t
   }
 
 (* The identity fields a deploy event shares with the workload taxonomy. The key
@@ -30,19 +29,15 @@ let identity_fields t =
     Option.map (fun value -> label, value) (identity_field t label))
 ;;
 
-let fields t =
-  (("event", "deploy") :: identity_fields t)
-  @ [ "deployment_id", Sol_cli_deployment_id.to_string t.deployment_id ]
-;;
+let fields t = ("event", "deploy") :: identity_fields t
 
 let message t =
   Printf.sprintf
-    "deployed %s/%s (%s) release %s as deployment %s to workspace %s (%s)"
+    "deployed %s/%s (%s) release %s to workspace %s (%s)"
     t.domain
     t.service
     t.primitive
     (Sol_cli_release_id.to_string t.release_id)
-    (Sol_cli_deployment_id.to_string t.deployment_id)
     t.workspace
     t.env
 ;;

@@ -1109,58 +1109,6 @@ let test_report_speaks_in_guarantees () =
          [ "FEAT-"; "AUDIT-"; "SEC-"; "OBS-"; "DEC-" ]))
 ;;
 
-let event_of plan =
-  Sol_cli_deployment.of_plan
-    ~deployment_id:(Sol_cli_deployment_id.create ~now:1767225600.0 ~entropy:"seed")
-    ~now:1767225600.0
-    ~git_commit:"abc1234"
-    ~git_dirty:false
-    ~actor:None
-    ~actor_source:None
-    ~target:(Some "prod/aws/us-east-1")
-    ~outcome:Sol_cli_deployment.Applied
-    plan
-;;
-
-let test_event_records_claim () =
-  with_workspace (fun () ->
-    write_target prod_aws selecting;
-    let event = event_of (plan_for "prod/aws/us-east-1") in
-    check_bool
-      "event carries the claim"
-      true
-      (event.profile = Some P.Production_single_region);
-    match Sol_cli_deployment.of_json (Sol_cli_deployment.to_json event) with
-    | Error e -> Windtrap.fail e
-    | Ok back -> check_bool "round-trips" true (back.profile = event.profile))
-;;
-
-let with_profile_field value =
-  with_workspace (fun () ->
-    write_target prod_aws "target:\n  cluster_name: pluto-prod\n";
-    match Sol_cli_deployment.to_json (event_of (plan_for "prod/aws/us-east-1")) with
-    | `Assoc kvs ->
-      Sol_cli_deployment.of_json
-        (`Assoc
-            (kvs
-             |> List.filter_map (fun (k, v) ->
-               if k <> "profile" then Some (k, v) else Option.map (fun v -> k, v) value)))
-    | _ -> Windtrap.fail "expected an object")
-;;
-
-let test_event_without_profile_field_claims_nothing () =
-  match with_profile_field None with
-  | Ok event -> check_bool "no claim" true (event.profile = None)
-  | Error e -> Windtrap.fail e
-;;
-
-let test_event_with_unknown_profile_rejected () =
-  check_bool
-    "unknown identity is an error, not a weaker claim"
-    true
-    (Result.is_error (with_profile_field (Some (`String "production-single-region/v9"))))
-;;
-
 let test_recommended_shape_satisfies_the_envelope () =
   let shape = P.recommended_node_shape in
   P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
@@ -1420,15 +1368,6 @@ let%test "preflight: digest plan establishes the artifact guarantee" =
 
 let%test "preflight: all established passes" = test_all_established_passes ()
 let%test "preflight: report speaks in guarantees" = test_report_speaks_in_guarantees ()
-let%test "deployment event: records the claim" = test_event_records_claim ()
-
-let%test "deployment event: missing field claims nothing" =
-  test_event_without_profile_field_claims_nothing ()
-;;
-
-let%test "deployment event: unknown profile rejected" =
-  test_event_with_unknown_profile_rejected ()
-;;
 
 let%test "platform capacity: recommended shape satisfies the envelope" =
   test_recommended_shape_satisfies_the_envelope ()
