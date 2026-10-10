@@ -695,28 +695,6 @@ let test_scoped_deploy_records_a_complete_boundary () =
       (Sol_cli_string.contains
          ~needle:("release: \"" ^ charge.applied_by ^ "\"")
          rendered);
-    let event =
-      Sol_cli_deployment.of_plan
-        ~release_id:(Result.get_ok (Sol_cli_release_id.of_string boundary_b.release_id))
-        ~deployment_id:(Sol_cli_deployment_id.create ~now:0. ~entropy:"scoped")
-        ~now:0.
-        ~git_commit:"abc1234"
-        ~git_dirty:false
-        ~actor:None
-        ~actor_source:None
-        ~target:(Some "dev/aws/us-east-1")
-        ~outcome:Sol_cli_deployment.Applied
-        scoped
-    in
-    (match
-       Sol_cli_rollback.resolve_commit
-         ~commit:"abc1234"
-         ~target:"dev/aws/us-east-1"
-         [ event ]
-     with
-     | Sol_cli_rollback.Commit_resolved id ->
-       check_string "commit resolves the persisted boundary" boundary_b.release_id id
-     | _ -> Windtrap.fail "commit did not resolve the persisted boundary");
     check_string
       "the untouched workload keeps its spec"
       (recorded_of boundary_a "ledger_svc").Sol_cli_release_id.spec.image

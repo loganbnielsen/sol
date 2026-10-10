@@ -5,7 +5,6 @@ type t =
   ; service : string
   ; primitive : string
   ; release_id : Sol_cli_release_id.t
-  ; deployment_id : Sol_cli_deployment_id.t
   }
 
 val fields : t -> (string * string) list

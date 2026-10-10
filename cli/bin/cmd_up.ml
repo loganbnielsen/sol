@@ -315,7 +315,6 @@ let run_apply
       ~cluster
       ~workspace
       ~sha
-      ~target:(Some "local")
       ~run_log
       ~keep_releases
       ~confirm_group_change
@@ -336,7 +335,7 @@ let run_apply
         apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
         |> Result.map (fun () -> []))
       ~report_success:(fun plan _ -> report_apply_success ~workspace ~facts plan)
-      ~push_events:(fun ~release_id:_ ~deployment_id:_ _ -> ())
+      ~push_events:(fun ~release_id:_ _ -> ())
       plan
   in
   Result.map_error run_failed

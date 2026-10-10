@@ -170,8 +170,6 @@ The runs that produced the LOCAL evidence are
   the Tempo trace id for the same request, byte-for-byte (run record §4).
 - **Verdict:** `QUALIFIED (LOCAL)` for the id/encoding; the Grafana click-through
   is `UNQUALIFIED` (no Grafana).
-- **Also:** the deploy-event marker's join key is `deployment_id`, emitted only
-  after the record is persisted (`observability-design.md`) — `UNQUALIFIED (live)`.
 
 ### OB-T3 — A trace carries the Sol taxonomy identity
 
@@ -384,7 +382,8 @@ The runs that produced the LOCAL evidence are
 ### OB-F4 — A deploy failure is visible as "the current release is bad"
 
 - **Claim:** `SolRolloutFailed` catches a rollout that never becomes available;
-  `sol deployments`/`sol logs` are the detail view (`observability-backends.md`).
+  Kubernetes plus the configured telemetry backend are the detail view
+  (`observability-backends.md`).
 - **Evidence:** MODELED.
 - **Verdict:** `UNQUALIFIED (live)` — needs a cluster and a target.
 
@@ -488,7 +487,7 @@ target) must observe each of them; a row stays `UNQUALIFIED` until then.
 - OB-F1 — the specific `SolTelemetryTargetDown` firing from a `monitoring`
   scrape that can go down.
 - OB-F4 — `SolRolloutFailed` on a rollout that never becomes available, and the
-  `sol deployments`/`sol logs` detail view.
+  Kubernetes/backend detail view.
 - OB-O1 — the full deploy → failure → diagnose → rollback → recovery loop.
 
 **Operator-gated (not automatable here):**

@@ -723,7 +723,6 @@ sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to l
 sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)
-sol deployments                                  list this workspace's recorded deployment attempts, newest first (deployment id, release, time, commit, status)
 
 sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
@@ -929,13 +928,12 @@ labels Sol injects into workloads.
 
 Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped local `sol up` release record also retains untouched workloads and their earlier provenance. Use that workload label to filter telemetry in the configured observability tools.
 
-`sol deployments` lists the other half: one row per deploy *attempt* (minted `d-…` id, the release it tried to put in place, time, commit, actor with the source that identity came from, and whether the apply succeeded), newest first. A failed apply is still a deployment attempt, so it appears with `status` `apply_failed` while the release record — which claims the release exists — is only written on success. Attempts are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two attempts pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an attempt to the authoritative record without telemetry ever being the system of record.
+There is no separate deployment-attempt history: a failed apply is not recorded as an attempt. The release record is written only on success, and a failed apply leaves the current-release pointer unchanged, so the prior release is still authoritative.
 
-Both records live in your own cluster, so neither of these commands is required to
-read them — you can leave Sol behind without leaving your history behind:
+The release record lives in your own cluster, so `sol releases` is not required to read it — you can leave Sol behind without leaving your release history behind:
 
 ```bash
-kubectl get configmap -A -l sol.dev/workspace=pluto   # every release/attempt Sol recorded here
+kubectl get configmap -A -l sol.dev/workspace=pluto   # every release Sol recorded here
 NS=pluto-payments
 kubectl -n "$NS" get configmap sol-release-current-pluto -o jsonpath='{.data.release_id}'
 kubectl -n "$NS" get configmap sol-release-<id> -o jsonpath='{.data.record}' | jq .

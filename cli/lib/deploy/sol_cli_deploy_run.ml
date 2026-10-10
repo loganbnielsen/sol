@@ -188,13 +188,7 @@ let substrate_prerequisite ctx ~plan ~live =
     |> Result.map_error (fun message -> Refused message)
 ;;
 
-let deploy_events
-      ~workspace
-      ~(target_cfg : Sol_cli_config.target)
-      ~deployment_id
-      ?release_id
-      plan
-  =
+let deploy_events ~workspace ~(target_cfg : Sol_cli_config.target) ?release_id plan =
   let release_id =
     Option.value release_id ~default:plan.Sol_cli_deployment_plan.release_id
   in
@@ -211,7 +205,6 @@ let deploy_events
            | Worker -> Sol_cli_manifest.Worker
            | Fn -> Sol_cli_manifest.Fn)
     ; release_id
-    ; deployment_id
     })
 ;;
 
@@ -399,7 +392,6 @@ let run_lifecycle
       ~cluster
       ~workspace
       ~sha
-      ~target
       ~run_log
       ~keep_releases
       ~confirm_group_change
@@ -445,7 +437,6 @@ let run_lifecycle
        in
        let* release_id = Sol_cli_release_id.of_string boundary.release_id in
        let* () = before_apply plan in
-       let attempt = Sol_cli_deployment_attempt.start () in
        let applied = apply ~lease ~release_id plan in
        let completed =
          Result.bind applied (fun results ->
@@ -466,23 +457,9 @@ let run_lifecycle
                record_applied_state ~cluster ~workspace ~sha plan)
              ~report_success:(fun () -> report_success plan results))
        in
-       let outcome = Sol_cli_deployment_attempt.outcome_of completed in
-       let recorded =
-         Sol_cli_deployment_attempt.record
-           ~ctx:cluster
-           ~target
-           ~release_id
-           plan
-           attempt
-           outcome
-       in
-       (match outcome with
-        | Sol_cli_deployment.Applied when recorded ->
-          push_events
-            ~release_id
-            ~deployment_id:(Sol_cli_deployment_attempt.deployment_id attempt)
-            plan
-        | _ -> ());
+       (match completed with
+        | Ok _ -> push_events ~release_id plan
+        | Error _ -> ());
        completed)
 ;;
 
@@ -507,7 +484,6 @@ let apply
     ~cluster:ctx.execution.cluster
     ~workspace:ctx.execution.workspace
     ~sha:ctx.sha
-    ~target:(Some ctx.target_name)
     ~run_log:ctx.run_log
     ~keep_releases:ctx.keep_releases
     ~confirm_group_change
@@ -526,12 +502,11 @@ let apply
         ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
         plan)
     ~report_success
-    ~push_events:(fun ~release_id ~deployment_id plan ->
+    ~push_events:(fun ~release_id plan ->
       push_events
         (deploy_events
            ~workspace:ctx.execution.workspace
            ~target_cfg:ctx.target_cfg
-           ~deployment_id
            ~release_id
            plan))
     plan

@@ -53,7 +53,6 @@ The target is the positional. `sol deploy` reconciles the whole target and takes
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
 | `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-ecr-removal`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Reconcile a target's infrastructure, authorization and |
-| `sol deployments` | — | `--target=ENV/PROVIDER/REGION` | documented | List the deployment events the target's cluster |
 | `sol destroy` | TARGET | `--accept-unreleased`, `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile a target toward empty: destroy its Sol-owned |
 | `sol grants apply` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile the target-wide workload authorization: |
 | `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |
@@ -94,7 +93,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol new svc` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add an HTTP service to the current workspace |
 | `sol new worker` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add a Kafka consumer worker to the current workspace |
 | `sol new workspace` | NAME | — | documented | Scaffold a new Sol workspace with a working |
-| `sol rollback` | RELEASE_ID | `--commit=SHA`, `--scope=DOMAIN[/UNIT]`, `--target=ENV/PROVIDER/REGION` | documented | Restore a recorded release boundary. Refuses on a |
+| `sol rollback` | RELEASE_ID | `--target=ENV/PROVIDER/REGION` | documented | Restore a recorded release boundary. Refuses on a |
 | `sol secret delete` | KEY | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | Delete a secret key |
 | `sol secret set` | KEY | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION`, `--value=VALUE` | documented | Create or update a secret key |
 <!-- END GENERATED: workspace -->
@@ -106,13 +105,12 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 <!-- BEGIN GENERATED: local -->
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
-| `sol local deployments` | — | — | documented | List the deployment events Sol's local cluster |
 | `sol local infra down` | — | `--cluster` | documented | Stop port-forwards (and optionally delete the |
 | `sol local infra status` | — | — | documented | Show infra pod health and registered |
 | `sol local infra up` | — | — | documented | Provision local k3d cluster and deploy all |
 | `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
 | `sol local releases` | — | — | documented | List the release records Sol's local cluster |
-| `sol local rollback` | RELEASE_ID | `--commit=SHA`, `--scope=DOMAIN[/UNIT]` | documented | Restore a recorded release boundary on the local |
+| `sol local rollback` | RELEASE_ID | — | documented | Restore a recorded release boundary on the local |
 | `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Start all workspace services locally using dune exec |
 | `sol local secret delete` | KEY | `--domain=DOMAIN` | documented | Delete a secret key |
 | `sol local secret list` | — | `--domain=DOMAIN` | documented | List secret keys without values |

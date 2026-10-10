@@ -21,9 +21,8 @@ node, or region; they do not replace the application identity.
 
 The release identifies an immutable application state. It is useful for
 correlating a deployment with telemetry, but it is not a metrics label, because
-that would create an unbounded time-series dimension. Deployment-attempt records
-and their consumers are tracked separately; this page does not define or remove
-that history contract.
+that would create an unbounded time-series dimension. Sol keeps no separate
+deployment-attempt history; the release record is the durable deployment record.
 
 ## Platform responsibilities
 

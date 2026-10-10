@@ -22,7 +22,6 @@ let () =
       ; Cmd_secret.cmd
       ; Cmd_target.cmd
       ; Cmd_releases.cmd
-      ; Cmd_deployments.cmd
       ; Cmd_assets.cmd
       ; Cmd_grants.cmd
       ; Cmd_uninstall.cmd

@@ -173,8 +173,7 @@ Deployed releases are records, not folklore:
 
 ```bash
 sol releases --target prod/aws/us-east-1     # what is deployed, by content-addressed id
-sol rollback --target prod/aws/us-east-1     # restore a recorded boundary
-sol deployments --target prod/aws/us-east-1  # the deployment events for this workspace
+sol rollback <release-id> --target prod/aws/us-east-1  # restore a recorded boundary
 ```
 
 `sol rollback` refuses when a migration since that release is contracting, because restoring
