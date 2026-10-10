@@ -228,7 +228,11 @@ let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
             rendered_manifests_of_service
               ~workspace:plan.workspace
               ?env:plan.environment.env
-              ~release_id:plan.release_id
+              ~release_id:
+                (Sol_cli_deployment_plan.workload_release_id
+                   ~workspace:plan.workspace
+                   ~environment:plan.environment.env
+                   service)
               ~secret_backend:plan.environment.secret_backend
               service
           in

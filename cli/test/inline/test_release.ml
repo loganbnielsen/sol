@@ -592,8 +592,18 @@ let reconstruct release =
 
 let live_of release =
   reconstruct release
-  |> List.map (fun (spec, applied_by) ->
-    Sol_cli_rollback.identity_of_spec spec, applied_by)
+  |> List.map (fun (spec, identity) -> Sol_cli_rollback.identity_of_spec spec, identity)
+;;
+
+(* The `release` label a workload's objects carry: its own immutable identity, derived
+   from its effective spec ([Sol_cli_deployment_plan.workload_release_id]), not the
+   recorded deploy id. *)
+let workload_identity ~release spec =
+  Sol_cli_release_id.to_string
+    (Sol_cli_deployment_plan.workload_release_id
+       ~workspace:release.Sol_cli_release.workspace
+       ~environment:release.Sol_cli_release.environment
+       spec)
 ;;
 
 let plan_with_services plan ~services ~requested_scope =
@@ -783,14 +793,20 @@ let test_scoped_rollback_keeps_untouched_workloads () =
       "rolling back to the scoped boundary prunes nothing"
       0
       (List.length report.Sol_cli_rollback.unexpected);
+    let ledger_spec =
+      List.assoc
+        "ledger_svc"
+        (List.map
+           (fun (spec, _) -> spec.Sol_cli_deployment_plan.source_name, spec)
+           expected_b)
+    in
     check_string
-      "the untouched workload is verified under the boundary that applied it"
-      boundary_a.release_id
+      "the untouched workload is verified under its own immutable identity"
+      (workload_identity ~release:boundary_b ledger_spec)
       (List.assoc
          "ledger_svc"
          (List.map
-            (fun (spec, applied_by) ->
-               spec.Sol_cli_deployment_plan.source_name, applied_by)
+            (fun (spec, identity) -> spec.Sol_cli_deployment_plan.source_name, identity)
             expected_b));
     check_int
       "rolling back to the full boundary covers both workloads"

@@ -169,7 +169,7 @@ labels, and `Sol_obs.of_env` reads it back:
 | `SOL_DOMAIN` | `domain` | the unit's domain |
 | `SOL_SERVICE` | `service` | the workload's Kubernetes name (`charge_svc` → `charge-svc`) |
 | `SOL_PRIMITIVE` | `primitive` | `svc`, `worker`, or `fn` |
-| `SOL_RELEASE` | `release` | the content-addressed release id (`r-<16 hex>`) |
+| `SOL_RELEASE` | `release` | the workload's own immutable content-addressed identity (`r-<16 hex>`), derived from its effective spec and independent of unrelated workloads, so a change to one workload does not re-label the others |
 
 The values are byte-for-byte the rendered label values, so an app-emitted trace
 carries the same `service` a Prometheus scrape and a Loki stream do. The

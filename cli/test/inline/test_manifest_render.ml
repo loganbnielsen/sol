@@ -1955,6 +1955,101 @@ let test_release_label_is_the_supplied_identity () =
   assert_absent "not the default id" workload expected_release_label
 ;;
 
+(* #1305: a whole-target deploy must not roll out the workloads it did not change. The
+   Pod template's [release] label is each workload's own immutable identity, derived from
+   that workload's effective spec, so changing one workload's image leaves every other
+   workload's template byte-for-byte identical while the changed one moves. *)
+let workload_identity spec =
+  Sol_cli_deployment_plan.workload_release_id ~workspace:"myapp" ~environment:None spec
+;;
+
+let render_with_own_identity spec =
+  let _, workload =
+    render_spec_ok ~workspace:"myapp" ~release_id:(workload_identity spec) spec
+  in
+  workload
+;;
+
+let numbered_svc_specs count =
+  List.init count (fun i ->
+    let name = Printf.sprintf "unit-%d" i in
+    { svc_spec with
+      source_name = String.map (fun c -> if Char.equal c '-' then '_' else c) name
+    ; k8s_name = k8s_name name
+    ; image = Printf.sprintf "sol-registry:5000/myapp/%s:abc123" name
+    })
+;;
+
+let test_changing_one_workload_leaves_the_others_unchanged () =
+  let specs = numbered_svc_specs 5 in
+  let changed =
+    List.mapi
+      (fun i (spec : Sol_cli_deployment_plan.service_spec) ->
+         if i = 2
+         then { spec with image = "sol-registry:5000/myapp/unit-2:def5678" }
+         else spec)
+      specs
+  in
+  let before = List.map render_with_own_identity specs in
+  let after = List.map render_with_own_identity changed in
+  List.iteri
+    (fun i (b, a) ->
+       if i = 2
+       then
+         check_bool "the changed workload's Pod template changes" false (String.equal b a)
+       else
+         check_bool
+           (Printf.sprintf "workload %d that did not change keeps its Pod template" i)
+           true
+           (String.equal b a))
+    (List.combine before after);
+  (* The identity is a function of one workload's own spec, never of the target-wide
+     release record: a spec that did not change keeps the identity it had, and only the
+     workload whose image changed moves. *)
+  List.iteri
+    (fun i spec ->
+       let same =
+         String.equal
+           (Sol_cli_release_id.to_string (workload_identity spec))
+           (Sol_cli_release_id.to_string (workload_identity (List.nth changed i)))
+       in
+       check_bool
+         (Printf.sprintf "workload %d identity tracks only its own spec" i)
+         (not (Int.equal i 2))
+         same)
+    specs
+;;
+
+let test_identity_tracks_effective_config_not_the_release_record () =
+  let config = [ "APP_ENV", "prod" ] in
+  let spec = { svc_spec with config } in
+  let same = workload_identity spec in
+  let changed_config =
+    workload_identity { spec with config = [ "APP_ENV", "staging" ] }
+  in
+  let changed_image =
+    workload_identity { spec with image = "sol-registry:5000/myapp/charge-svc:new" }
+  in
+  check_bool
+    "an unchanged spec keeps its identity"
+    true
+    (String.equal
+       (Sol_cli_release_id.to_string same)
+       (Sol_cli_release_id.to_string (workload_identity spec)));
+  check_bool
+    "an effective config change moves the identity"
+    false
+    (String.equal
+       (Sol_cli_release_id.to_string same)
+       (Sol_cli_release_id.to_string changed_config));
+  check_bool
+    "an image change moves the identity"
+    false
+    (String.equal
+       (Sol_cli_release_id.to_string same)
+       (Sol_cli_release_id.to_string changed_image))
+;;
+
 let test_sanitize_label_value_bounds_length () =
   let long = String.make 90 'a' in
   check_string
@@ -3003,6 +3098,14 @@ let%test "taxonomy_labels: label does not leak the image tag" =
 
 let%test "taxonomy_labels: label is the supplied identity" =
   test_release_label_is_the_supplied_identity ()
+;;
+
+let%test "release identity: changing one workload leaves the others unchanged" =
+  test_changing_one_workload_leaves_the_others_unchanged ()
+;;
+
+let%test "release identity: tracks effective config, not the release record" =
+  test_identity_tracks_effective_config_not_the_release_record ()
 ;;
 
 let%test "taxonomy_labels: sanitize_label_value bounds length" =

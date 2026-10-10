@@ -189,10 +189,12 @@ for needle in "$caller_ns" "app: charge-svc" "port: 8080"; do
 done
 echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
 
-# A successful deploy must leave a content-addressed
-# release record — listed by `sol releases`, carried verbatim as the
-# workload's `release` label, pointed at by the current-release object,
-# and not editable in place.
+# A successful deploy must leave a content-addressed target release
+# record, listed by `sol releases` and pointed at by the current-release
+# object. The workload's `release` label has a separate identity: it is
+# derived from that workload's effective spec so an unrelated target
+# release does not change its Pod template. The manifest unit tests verify
+# that derivation; this smoke test verifies the live label and target record.
 sol local releases > "$GITHUB_WORKSPACE/releases.txt"
 grep -F 'ID' "$GITHUB_WORKSPACE/releases.txt" >/dev/null
 if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
@@ -201,34 +203,36 @@ if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
 fi
 listed_ids=$(awk 'NR>1 {print $1}' "$GITHUB_WORKSPACE/releases.txt" | tr '\n' ' ')
 
-# The taxonomy label a workload carries must be one of the
-# ids `sol releases` lists — that equality is the join key from a
-# deploy record to its telemetry.
 label_release=$(kubectl -n "$caller_ns" get deployment charge-svc -o jsonpath='{.spec.template.metadata.labels.release}' 2>/dev/null || true)
 case "$label_release" in
   r-????????????????) ;;
   *) echo "::error::FEAT-069: workload release label '$label_release' is not a content-addressed release id"; exit 1 ;;
 esac
+pointer=$(kubectl -n default get configmap -l sol.dev/type=release-current,sol.dev/workspace=ci_smoke -o jsonpath='{.items[0].data.release_id}' 2>/dev/null || true)
 case " ${listed_ids} " in
-  *" ${label_release} "*) ;;
-  *) echo "::error::FEAT-069: workload release label '$label_release' is not among the ids sol releases lists (${listed_ids})"; exit 1 ;;
+  *" ${pointer} "*) ;;
+  *) echo "::error::FEAT-069: current-release pointer '$pointer' is not among the ids sol releases lists (${listed_ids})"; exit 1 ;;
 esac
-
-release_cm=$(kubectl -n default get configmap -l sol.dev/type=release -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-if [ "$release_cm" != "sol-release-${label_release}" ]; then
-  echo "::error::FEAT-069: release ConfigMap '$release_cm' is not named for release '$label_release'"
+if [ "$pointer" = "$label_release" ]; then
+  echo "::error::FEAT-069: workload release label uses the target-wide release id '$pointer'"
   exit 1
 fi
-pointer=$(kubectl -n default get configmap -l sol.dev/type=release-current,sol.dev/workspace=ci_smoke -o jsonpath='{.items[0].data.release_id}' 2>/dev/null || true)
-if [ "$pointer" != "$label_release" ]; then
-  echo "::error::FEAT-069: current-release pointer '$pointer' != workload release '$label_release'"
+
+release_cm="sol-release-${pointer}"
+if ! kubectl -n default get configmap "$release_cm" >/dev/null 2>&1; then
+  echo "::error::FEAT-069: current release ConfigMap '$release_cm' is missing"
+  exit 1
+fi
+release_cm_immutable=$(kubectl -n default get configmap "$release_cm" -o jsonpath='{.immutable}' 2>/dev/null || true)
+if [ "$release_cm_immutable" != "true" ]; then
+  echo "::error::FEAT-067: release ConfigMap '$release_cm' is not immutable"
   exit 1
 fi
 if kubectl -n default patch configmap "$release_cm" -p '{"data":{"tampered":"1"}}' >/dev/null 2>&1; then
   echo "::error::FEAT-067: release ConfigMap was edited in place (immutable: true not honoured)"
   exit 1
 fi
-echo "release record written, listed, labelled and immutable OK"
+echo "target release is listed/current/immutable; workload carries independent release identity"
 
 # `scheduled_concurrency` and `backoff_limit` render into the
 # deployed CronJob, and remains available through the Kubernetes CronJob API. It needs no

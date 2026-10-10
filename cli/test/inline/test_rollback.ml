@@ -205,6 +205,17 @@ let reconstruct_ok () =
   | Error msg -> Windtrap.failf "expected reconstruction to succeed: %s" msg
 ;;
 
+(* The `release` label a workload's objects carry: its own immutable identity, derived
+   from its effective spec, not the recorded deploy id
+   ([Sol_cli_deployment_plan.workload_release_id]). *)
+let workload_identity ~(release : Sol_cli_release.t) spec =
+  Sol_cli_release_id.to_string
+    (Sol_cli_deployment_plan.workload_release_id
+       ~workspace:release.Sol_cli_release.workspace
+       ~environment:release.Sol_cli_release.environment
+       spec)
+;;
+
 let call_eq
       (c1 : Sol_cli_deployment_plan.service_call)
       (c2 : Sol_cli_deployment_plan.service_call)
@@ -330,13 +341,13 @@ let test_gate_a_decode_correctness () =
     assert_spec_equal ~label:"ledger_svc" ledger_spec got_ledger;
     Windtrap.equal
       Windtrap.string
-      ~msg:"billing provenance"
-      gate_release.release_id
+      ~msg:"billing identity"
+      (workload_identity ~release:gate_release billing_spec)
       billing_by;
     Windtrap.equal
       Windtrap.string
-      ~msg:"ledger provenance"
-      gate_release.release_id
+      ~msg:"ledger identity"
+      (workload_identity ~release:gate_release ledger_spec)
       ledger_by
   | specs -> Windtrap.failf "expected 2 reconstructed specs, got %d" (List.length specs)
 ;;
@@ -883,7 +894,11 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
   match Sol_cli_rollback.service_specs_of_release fn_release with
   | Error msg -> Windtrap.fail msg
   | Ok [ (got, applied_by) ] ->
-    Windtrap.equal Windtrap.string ~msg:"provenance" fn_release.release_id applied_by;
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"identity"
+      (workload_identity ~release:fn_release got)
+      applied_by;
     Windtrap.equal
       Windtrap.bool
       ~msg:"primitive is still Fn"
@@ -931,11 +946,13 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
       (Sol_cli_rollback.live_kind_of_service got = Sol_cli_rollback.Live_cronjob);
     let live =
       [ ( id Sol_cli_rollback.Live_cronjob "myapp-payments" "invoice-fn"
-        , fn_release.release_id )
+        , workload_identity ~release:fn_release got )
       ]
     in
     let report =
-      Sol_cli_rollback.verify_workloads ~expected:[ got, fn_release.release_id ] ~live
+      Sol_cli_rollback.verify_workloads
+        ~expected:[ got, workload_identity ~release:fn_release got ]
+        ~live
     in
     Windtrap.equal
       Windtrap.bool
@@ -1440,16 +1457,19 @@ let release_with_workloads ~apply_mode specs : Sol_cli_release.t =
   }
 ;;
 
-let live_for specs =
+(* The live workload set as the release's own workloads: each object carries the
+   workload's immutable identity as its `release` label, which is what the deploy that
+   applied this boundary rendered. *)
+let live_for ~release specs =
   List.map
-    (fun spec -> Sol_cli_rollback.identity_of_spec spec, "r-3333333333333333")
+    (fun spec -> Sol_cli_rollback.identity_of_spec spec, workload_identity ~release spec)
     specs
 ;;
 
 let test_execute_records_the_restored_consumer_groups () =
   let groups_for specs =
-    let calls, _pruned, deps = recording_deps ~live:(live_for specs) () in
     let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct specs in
+    let calls, _pruned, deps = recording_deps ~live:(live_for ~release specs) () in
     match
       Sol_cli_rollback.execute
         ~release
@@ -1510,13 +1530,13 @@ let test_execute_leaves_the_guard_alone_when_verification_fails () =
 
 let test_execute_reports_an_uncorrected_guard_record () =
   let notify = worker_spec () in
+  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct [ notify ] in
   let calls, _pruned, deps =
     recording_deps
-      ~live:(live_for [ notify ])
+      ~live:(live_for ~release [ notify ])
       ~record_consumer_groups:(fun _ -> Error "the ConfigMap is forbidden")
       ()
   in
-  let release = release_with_workloads ~apply_mode:Sol_cli_release.Direct [ notify ] in
   match
     Sol_cli_rollback.execute
       ~release
@@ -2177,13 +2197,14 @@ let test_qualification_restores_after_a_bad_deploy () =
   List.iter
     (fun spec ->
        let id = Sol_cli_rollback.identity_of_spec spec in
+       let expected = workload_identity ~release spec in
        Windtrap.equal
          Windtrap.bool
          ~msg:(Printf.sprintf "restored %s/%s" id.namespace id.name)
          true
          (List.exists
             (fun (live_id, label) ->
-               same_identity live_id id && String.equal label release.release_id)
+               same_identity live_id id && String.equal label expected)
             cluster.live))
     target;
   Windtrap.equal
