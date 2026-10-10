@@ -43,37 +43,80 @@ the same block as `cluster_name` and `profile`. No new file, no new section outs
 
 ```yaml
 prod:
+  # Environment level: shared by every target of this environment.
+  secrets:
+    payments/charge_svc:
+      STRIPE_API_KEY:
+        authority: external
+        store: prod-vault
+        key: secret/production/payments/stripe
+  capabilities:
+    kafka.connection:
+      provider: external
+      store: prod-kafka
+      keys:
+        KAFKA_SASL_PASSWORD: kafka/workloads/password
+        KAFKA_SSL_CA_CERT: kafka/workloads/ca
+
   targets:
     aws/us-east-1:
-      cluster_name: pluto-prod
+      cluster_name: pluto-prod-use1
+      # inherits the environment's secrets and capabilities unchanged
+    aws/eu-west-1:
+      cluster_name: pluto-prod-euw1
+      # one reference differs, so override exactly that one
+      secrets:
+        payments/charge_svc:
+          STRIPE_API_KEY:
+            authority: external
+            store: eu-vault
+            key: secret/production/payments/stripe
       capabilities:
         # Present only to bind an external database. Absent = the target provides the
-        # database it already provisions (the workspace's postgres resource + the profile).
+        # database its workspace already provisions.
         database.connection:
           provider: external
           store: prod-db
           keys:
             POSTGRES_URL: pluto/app-db/url
-        kafka.connection:
-          provider: external
-          store: prod-kafka
-          keys:
-            KAFKA_SASL_PASSWORD: kafka/workloads/password
-            KAFKA_SSL_CA_CERT: kafka/workloads/ca
 ```
 
+**`secrets:` and `capabilities:` are valid at both levels; the target overrides the environment,
+per key.** Env-only, target-only and env+target are all valid — the environment is an *optional
+layer above* the target, never a required one. This is the same two-level pattern `base_domain`,
+`registry` and `cluster_name` already use, and it exists for the common case where several targets
+of one environment share a reference: one vault path, three regions.
+
+**Overrides are atomic.** An override replaces the *complete* declaration for that key — the whole
+`Sol_managed | External { store; key }` value, or the whole capability block including its `keys:`
+mappings. There is no field-level merging, so a `store` cannot linger from the inherited
+declaration while the `key` changes. This is already how `secrets:` behaves: `merge_fields` upserts
+each key with the incoming value.
+
+**`secrets:` inheritance already works; `capabilities:` is new work.** `secrets` decodes as a
+target field (`target_key_of_string`), and unlike `cluster_name`/`registry` it is not in
+`target_only_keys`, so an environment-level declaration is accepted. The loader applies the
+environment layer and then the target layer (`apply … env_layer`, then `apply … target_layer`),
+merging through `merge_target` → `merge_secret_authorities` → `merge_fields`. So env-only,
+target-only and env+target already resolve today; 1344d adds `capabilities:` in that same shape
+with the same atomicity.
+
 **The existing provisioner setting is the declaration; the capability block is external-only.**
-`create_rds` is not a target field — the CLI derives it (`root_declared_vars ~has_postgres` in
-`sol_cli_provider_capabilities.ml` sets `create_rds` from the workspace's declared resource and
-the profile). A target that provisions a database therefore provides `database.connection`
-without any declaration. `provider = sol` may be written but is never required, and writing it
-duplicates nothing because there is nothing to duplicate: the block exists to *override*.
+`create_rds` is not a target field — the CLI derives it. `has_postgres` is
+`List.exists (r.typ = Some "postgres")` over the workspace's resources
+(`sol_cli_terraform_vars.ml`), and `root_declared_vars ~has_postgres` sets
+`create_rds = has_postgres` **regardless of profile** (`sol_cli_provider_capabilities.ml`); the
+profile adds only multi-AZ and deletion protection
+(`production_postgres = has_postgres && production`). A target whose workspace declares a postgres
+resource therefore provides `database.connection` with no declaration at all. `provider = sol` may
+be written but is never required — there is nothing to duplicate, so the block exists to
+*override*.
 
 **External references are per contract key.** The existing authority type is already per key —
 `External { store; key }`, held as `secret_authorities : unit → key → authority` — so a
-capability whose contract has two keys names two remote paths. This is also the shape ESO
-renders: one `ExternalSecret.data` entry per key, each with its own `remoteRef`. A single
-`key:` for a multi-key capability would be unrenderable.
+capability whose contract has two keys names two remote paths. That is also the shape ESO renders:
+one `ExternalSecret.data` entry per key, each with its own `remoteRef`. A single `key:` for a
+multi-key capability would be unrenderable.
 
 **Consumers require capabilities without naming a provider:**
 
@@ -83,9 +126,9 @@ renders: one `ExternalSecret.data` entry per key, each with its own `remoteRef`.
   DSL.
 
 **The meeting point is plan time.** A required capability with no provider **fails at plan**, not
-deploy. Where `provider = sol` but no provisioner exists for that capability (Kafka until a
-generated credential lands), the plan fails naming the missing provisioner and the external
-alternative — never deferring to a missing Secret at deploy.
+deploy — §3.3 states this concretely for the database. Where `provider = sol` but no provisioner
+exists for that capability (Kafka until a generated credential lands), the plan fails naming the
+missing provisioner and the external alternative.
 
 ## 3. Fulfillment
 
@@ -111,6 +154,27 @@ namespace, so a target with consumers in three namespaces has **three projection
 capability** (for example three `sol-database-connection` Secrets), all produced from the same
 source. It is *not* one object per target. Stating it here because "one per capability" is the
 natural misreading and it breaks cross-namespace consumption.
+
+### 3.3 What plan does at the database boundary
+
+Three cases the derivation makes precise, because each one decides whether a deploy can proceed.
+
+**Two `postgres` resources in one workspace, one target.** `has_postgres` is an existence check
+(`List.exists`), so the derivation still provisions exactly one database while both resources
+require `database.connection` and therefore both project `POSTGRES_URL`. **Plan refuses**, naming
+the second resource, until the workspace drops to one `postgres` resource — or the capability
+grows an env-var mapping, which is the future work §3.1 defers.
+
+**A non-production profile.** `create_rds = has_postgres` is profile-independent, so a dev target
+whose workspace declares a `postgres` resource still provisions one. The profile only decides
+durability (`production_postgres = has_postgres && production` → multi-AZ, deletion protection).
+There is no "dev binds externally instead" behaviour, and none is implied.
+
+**A consumer requires `database.connection` and the target cannot provide it** — no `postgres`
+resource in the workspace, and no `capabilities.database.connection` at either level. **Plan
+fails** with a message naming the two ways to satisfy it: declare a `postgres` resource (which
+makes the workspace's provisioner bring one up), or bind the capability to an external authority
+at the environment or target level. It never proceeds to deploy and fails later on a missing key.
 
 ## 4. Delivery quadrants
 
@@ -154,6 +218,11 @@ precondition. Not v1.
   `sol` projections are untouched.
 - **Drift** — reconciled by the projection's writer: the installation for `sol`, ESO for
   `external`. Nothing application-side repairs it.
+- **Inheritance blast radius** — an environment-level change reaches **every inheriting target**;
+  a target-level change reaches only that target. Rotation follows the same rule: if `prod`
+  declares `store: prod-vault` and `eu-west-1` overrides to `eu-vault`, rotating at `prod-vault`
+  affects every inheriting target *except* `eu-west-1`. v1 relies on per-target `--dry-run` to
+  preview a change; an env-wide change report is deliberately not built (§9).
 
 ## 7. Moves and removals — report, never delete
 
@@ -187,13 +256,23 @@ can prove it owns, and a populated object that may still hold a live credential 
    the v1 refusal.
 8. **Authority migration is reported** — a move between providers reports the object it orphans
    (§7); no silent change and no silent deletion.
+9. **Resolution is visible** — `sol plan` and `sol secret status` print the **resolved** authority
+   for each key. When a key is declared at the environment level, each target's output names the
+   level it came from; when a key is overridden at the target, the output shows both the override
+   and the inherited source. The level is recorded on the resolved value at merge time — a side map
+   in the resolved config, never a parallel structure threaded through deploy, release and
+   rollback, and never persisted in the release record.
+10. **Inheritance behaves** — tests cover env-only, target-only, env+target override, an atomic
+    override (no `store` carried over from the inherited declaration), a missing authority, and
+    cross-target isolation (an override in one target leaves its siblings resolving to the
+    inherited value).
 
 ## 9. Out of scope
 
 Multi-target sharing of a capability; resource CRUD independent of the target lifecycle;
 capability types beyond database and Kafka; a new `resources:` DSL; automatic rotation;
-cross-cloud portability; multi-database-per-target; and — for v1 — GitOps with a Sol-provisioned
-capability.
+cross-cloud portability; multi-database-per-target; environment-wide change reports (per-target
+`--dry-run` covers previewing a change); and — for v1 — GitOps with a Sol-provisioned capability.
 
 ## 10. Local development — a deliberate asymmetry
 
@@ -206,3 +285,6 @@ The asymmetry with the cluster is the point. Local runs have no workload identit
 universal plaintext fallback; production authenticates with workload identity and needs no
 universal key. The hardcoded local list is not a leftover and must not be "fixed" to match the
 cluster.
+
+The environment/target inheritance model (§2) does not apply locally: `sol/secrets.local/` is per
+workspace and has no environment layer, so there is nothing to inherit from. Local stays as it is.
