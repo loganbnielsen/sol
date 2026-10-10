@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed. Gates #1344d PR 2 (role-separated delivery).
+Accepted. Gates #1344d PR 2 (role-separated delivery).
+
+The setup step is accepted as the mechanism because no cheaper honest alternative exists — the
+alternatives are enumerated below and each is rejected for a stated reason. **There is no fallback:**
+if the setup step proves infeasible on investigation, the honest outcome is *"credential classes are
+deferred, and workloads still receive a credential above their role"* — stated as such. It is never
+*"classes exist but mean nothing"*.
 
 ## Context
 
@@ -81,6 +87,64 @@ fails the plan (§3).
 **One delivered object per class per consuming namespace**, each with exactly one writer: Sol's
 provisioning/database-setup path for a Sol-provisioned resource, ESO for an external one. A class with
 no consumer in a namespace is not delivered, so a target that declares no migrations has no DDL object.
+
+### 5. The setup step is part of the provisioning path, not a consumer
+
+> The in-cluster database setup step is part of the **provisioning path**, not a consumer. It receives
+> the master credential for the duration of one Job, creates the DDL and DML roles, writes their
+> credentials to target Secrets, and exits. The master credential is not persisted to a target-owned
+> Secret, and the setup step **does not appear in the class model as a role**.
+
+It is a third thing at the boundary: not provisioning-as-owner, not a consumer. Stated so it is not
+reclassified later as a consumer that "happens to hold the master".
+
+### 6. Conditions on the setup step
+
+1. **The master credential is not persisted anywhere.** The setup Job receives it as an environment
+   value or a mounted Secret that exists for the Job's lifetime, from the same source the provisioning
+   path already holds it — the cluster root's output. That is delivery *to the provisioning path*, not
+   to a consumer. The credential is used, the Job completes, and it is gone; nothing writes it into a
+   target-owned Secret. Anything else creates a second place the master lives.
+2. **Idempotent.** Re-running against a target whose roles exist is safe: no recreate, no drop, no
+   password churn. Existing roles are verified and the Job exits. If rotation is ever added, this is
+   where it hooks.
+3. **Fail-closed.** No workload starts until the setup step **succeeded** and the DDL and DML
+   credentials are delivered. Same posture as every other prerequisite: no workload comes up against a
+   credential it does not have.
+4. **Ordering is explicit** — a phase in the coordinator, not an implicit consequence (§7).
+5. **The generated passwords are target Kubernetes Secrets in v1.** Durability, rotation and any
+   provider-store migration belong to #1360 — the same honest interim as the storage truth already
+   stated in the model.
+
+### 7. Reachability and the phase sequence
+
+The setup Job is a *cluster* Job, so it needs the cluster, the network path and the database all ready.
+Verified in the current roots:
+
+- **AWS** — `aws_security_group.rds` admits TCP 5432 **from the EKS node security group**, and the
+  instance sits in the VPC's private subnets. A Job pod on a node is therefore covered by the same rule.
+- **GCP** — private services access (`google_compute_global_address.sql_peering` +
+  `google_service_networking_connection.sql`) with `ipv4_enabled = false`; no firewall rule is defined
+  and GCP's rules are ingress-only, so egress to the peering range is permitted.
+- **The NetworkPolicy is the part that can lag** — `managed_database_egress_doc` builds the egress rule
+  from the cluster root's `database_egress_cidrs` output, and the deploy creates it in its
+  **prerequisites** phase.
+
+Phase sequence:
+
+```text
+cloud/cluster apply (database + network path)
+  → deploy prerequisites (namespace, NetworkPolicy incl. database egress, projections + readiness)
+  → database setup step            ← creates the DDL and DML roles
+  → migration Job                  ← DDL
+  → workloads                      ← DML
+```
+
+**The setup step and the workloads run in the same namespace under the same NetworkPolicy.** So there
+is no case where a workload can reach the database and the setup step cannot: if the network path is
+not ready, neither can connect, and the setup step fails closed *before* any workload starts. The
+constraint is real but it is the same constraint the workloads already carry — which is why the step
+belongs after prerequisites rather than beside the cloud apply.
 
 ## Consequences
 
