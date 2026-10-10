@@ -27,7 +27,9 @@ val verify_workload_secret
   -> (unit, string) result
 
 val verify_external_secret_ready
-  :  ctx:Sol_cli_kube_destination.context
+  :  ?timeout_s:float
+  -> ?poll_s:float
+  -> ctx:Sol_cli_kube_destination.context
   -> Sol_cli_deployment_plan.service_spec
   -> (unit, string) result
 

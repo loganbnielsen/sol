@@ -22,7 +22,13 @@ let make_result (spec : Sol_cli_deployment_plan.service_spec) =
    external Secret has actually materialized, and only then apply the objects that
    start pods. Applying the Deployment and its ExternalSecret in one [kubectl apply]
    is what allowed a Deployment to reference a not-yet-synced external Secret. *)
-let apply_workload_phased ~ctx ~(spec : Sol_cli_deployment_plan.service_spec) ~bundle =
+let apply_workload_phased
+      ?eso_timeout_s
+      ~ctx
+      ~(spec : Sol_cli_deployment_plan.service_spec)
+      ~bundle
+      ()
+  =
   let open Result.Syntax in
   let* () = Sol_cli_secret.verify_external_secret_destination ~ctx spec in
   (* Reads the unit's Sol-managed Secret. On a first deploy the user has already
@@ -30,7 +36,9 @@ let apply_workload_phased ~ctx ~(spec : Sol_cli_deployment_plan.service_spec) ~b
   let* () = Sol_cli_secret.verify_workload_secret ~ctx spec in
   let* () = Sol_cli_manifest.apply_bundle_namespace ~ctx bundle in
   let* () = Sol_cli_manifest.apply_bundle_prerequisites ~ctx bundle in
-  let* () = Sol_cli_secret.verify_external_secret_ready ~ctx spec in
+  let* () =
+    Sol_cli_secret.verify_external_secret_ready ?timeout_s:eso_timeout_s ~ctx spec
+  in
   Sol_cli_manifest.apply_bundle_workload ~ctx bundle
 ;;
 
@@ -109,7 +117,7 @@ let dispatch_rendered ~ctx ~mode spec bundle =
     | Dry_run ->
       Sol_cli_manifest.print_bundle bundle;
       Ok ()
-    | Apply -> apply_workload_phased ~ctx ~spec ~bundle
+    | Apply -> apply_workload_phased ~ctx ~spec ~bundle ()
     | Emit_to dir ->
       let ns =
         Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace

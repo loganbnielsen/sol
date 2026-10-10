@@ -22,8 +22,8 @@ remain **NOT RUN**.
 
 | Row | Provider path | Required live evidence | Status |
 |---|---|---|---|
-| ESO-AWS | Namespace `SecretStore` authenticating to AWS Secrets Manager | Authorized read, ExternalSecret `Ready=True` / `SecretSynced`, observed generation where supplied, exact materialized key set, workload environment consumption, unauthorized-read failure | NOT RUN |
-| ESO-VAULT | Namespace `SecretStore` authenticating to Vault | Authorized read, ExternalSecret `Ready=True` / `SecretSynced`, observed generation where supplied, exact materialized key set, workload environment consumption, unauthorized-read failure | NOT RUN |
+| ESO-AWS | Namespace `SecretStore` authenticating to AWS Secrets Manager | Authorized read, ExternalSecret `Ready=True` / `SecretSynced`, the `status.syncedResourceVersion` generation prefix matching `metadata.generation`, exact materialized key set, workload environment consumption, unauthorized-read failure | NOT RUN |
+| ESO-VAULT | Namespace `SecretStore` authenticating to Vault | Authorized read, ExternalSecret `Ready=True` / `SecretSynced`, the `status.syncedResourceVersion` generation prefix matching `metadata.generation`, exact materialized key set, workload environment consumption, unauthorized-read failure | NOT RUN |
 | ESO-GCP | Namespace `SecretStore` authenticating to Google Secret Manager | Not currently claimed; add a row only when Sol documents and supports this provider path | NOT CLAIMED |
 
 Direct deployment and GitOps emission must use the same ExternalSecret and
