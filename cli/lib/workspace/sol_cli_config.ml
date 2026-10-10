@@ -45,6 +45,19 @@ type index =
   ; sort_key : string option
   }
 
+(* How a resource is managed, and — when externally managed — where its
+   credential comes from. The selection is atomic: see [merge_resource]. *)
+type resource_ownership =
+  | Ownership_sol
+  | Ownership_external
+
+type resource_binding =
+  { ownership : resource_ownership
+  ; store : string option
+  ; keys : (string * string) list
+  ; connection : (string * string) list
+  }
+
 type resource =
   { name : string
   ; typ : string option
@@ -53,6 +66,7 @@ type resource =
   ; indexes : index list
   ; size : string option
   ; omit : bool
+  ; binding : resource_binding option
   }
 
 type service =
@@ -152,6 +166,7 @@ let resource_empty name =
   ; indexes = []
   ; size = None
   ; omit = false
+  ; binding = None
   }
 ;;
 
@@ -577,6 +592,84 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
       (index_empty name)
       fields
   in
+  let string_map ~what v =
+    let* named =
+      members
+        ~path
+        ~where:(" in " ^ what)
+        ~duplicate:(fun k -> Printf.sprintf "duplicate key %S in %s" k what)
+        v
+    in
+    fold
+      (fun acc (k, v) ->
+         let* s = value k v in
+         Ok (acc @ [ k, s ]))
+      []
+      named
+  in
+  (* The binding selection. Absent means Sol provisions the resource; the block
+     exists only to override it to an externally managed one, so `ownership: sol`
+     is refused rather than accepted as a redundant second declaration. *)
+  let decode_binding resource_name v =
+    let what = Printf.sprintf "resource %S binding" resource_name in
+    let* fields = members ~path ~where:(" in " ^ what) v in
+    let* () =
+      match
+        List.filter
+          (fun (k, _) -> not (List.mem k [ "ownership"; "store"; "keys"; "connection" ]))
+          fields
+      with
+      | (k, _) :: _ -> refuse (Printf.sprintf "%s: unknown key %S" what k)
+      | [] -> Ok ()
+    in
+    let* ownership =
+      match List.assoc_opt "ownership" fields with
+      | None -> refuse (Printf.sprintf "%s: ownership is required" what)
+      | Some v ->
+        let* s = value "ownership" v in
+        (match s with
+         | "external" -> Ok Ownership_external
+         | "sol" ->
+           refuse
+             (Printf.sprintf
+                "%s: ownership \"sol\" is not accepted — the effective resource graph \
+                 already declares a Sol-provisioned resource, so a binding exists only \
+                 to override it to \"external\""
+                what)
+         | _ -> refuse (Printf.sprintf "%s: ownership must be \"external\"" what))
+    in
+    let* store =
+      match List.assoc_opt "store" fields with
+      | None -> Ok None
+      | Some v ->
+        let* s = value "store" v in
+        if Sol_cli_string.is_blank s
+        then refuse (Printf.sprintf "%s: store must be a non-blank store name" what)
+        else Ok (Some s)
+    in
+    let* keys =
+      match List.assoc_opt "keys" fields with
+      | None -> Ok []
+      | Some v -> string_map ~what:(what ^ " keys") v
+    in
+    let* connection =
+      match List.assoc_opt "connection" fields with
+      | None -> Ok []
+      | Some v -> string_map ~what:(what ^ " connection") v
+    in
+    let* () =
+      match store, keys with
+      | None, _ -> refuse (Printf.sprintf "%s: an external binding requires store" what)
+      | Some _, [] ->
+        refuse
+          (Printf.sprintf
+             "%s: an external binding requires keys — one remote path per sensitive \
+              contract key"
+             what)
+      | Some _, _ -> Ok ()
+    in
+    Ok { ownership; store; keys; connection }
+  in
   let decode_resource (name, v) =
     let* fields = members ~path ~where:(Printf.sprintf " in resource %S" name) v in
     fold
@@ -614,6 +707,9 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
                indexes
            in
            Ok { r with indexes }
+         | "binding" ->
+           let* binding = decode_binding name v in
+           Ok { r with binding = Some binding }
          | _ -> refuse (Printf.sprintf "unknown resource key %S" k))
       (resource_empty name)
       fields
@@ -887,6 +983,10 @@ let merge_target a b =
   }
 ;;
 
+(* Unrelated resource attributes merge field by field, as they always have. The
+   binding is different: it is one atomic selection, so an override replaces it
+   whole. Merging it field by field could pair an inherited source with a new
+   connection, which is exactly what the design forbids. *)
 let merge_resource (a : resource) (b : resource) =
   { name = a.name
   ; typ = prefer a.typ b.typ
@@ -895,6 +995,7 @@ let merge_resource (a : resource) (b : resource) =
   ; indexes = prefer_list a.indexes b.indexes
   ; size = prefer a.size b.size
   ; omit = b.omit || a.omit
+  ; binding = prefer a.binding b.binding
   }
 ;;
 
@@ -1086,8 +1187,8 @@ let check_placement ~path (e : environment) =
       refuse
         context
         (Printf.sprintf
-           "%s belongs in sol.yml: an environment or target may only adjust size, scale \
-            and omit (DEC-047)"
+           "%s belongs in sol.yml: an environment or target may only adjust size, scale, \
+            omit, and a resource's binding selection (DEC-047)"
            key)
   in
   let* () =

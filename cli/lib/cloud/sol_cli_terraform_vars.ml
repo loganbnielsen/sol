@@ -39,19 +39,22 @@ let of_config ~workspace cfg =
       not (List.mem key (Sol_cli_provider.sol_keys target.provider)))
     |> List.rev_append provider_own
   in
-  let has_postgres =
-    Sol_cli_config.resources cfg
-    |> List.exists (fun (r : Sol_cli_config.resource) -> r.typ = Some "postgres")
-  in
-  let production = target.profile = Some Sol_cli_profile.Production_single_region in
-  let production_postgres = has_postgres && production in
-  let vars = capabilities.profile_vars ~production ~production_postgres @ vars in
-  Result.map
-    (fun declared -> declared @ vars)
-    (capabilities.root_declared_vars
-       ~has_postgres
-       ~production_postgres
-       ~ecr_repositories:ecr_repositories_var)
+  (* Provisioning follows the resolved ownership, not the bare presence of a postgres
+     resource: an externally bound database must not also be provisioned, and every
+     provider derives the decision from the same resolution. *)
+  match Sol_cli_resource_binding.resolve cfg with
+  | Error message -> Error message
+  | Ok bindings ->
+    let has_postgres = Sol_cli_resource_binding.provisions bindings ~typ:"postgres" in
+    let production = target.profile = Some Sol_cli_profile.Production_single_region in
+    let production_postgres = has_postgres && production in
+    let vars = capabilities.profile_vars ~production ~production_postgres @ vars in
+    Result.map
+      (fun declared -> declared @ vars)
+      (capabilities.root_declared_vars
+         ~has_postgres
+         ~production_postgres
+         ~ecr_repositories:ecr_repositories_var)
 ;;
 
 let var_file ~cwd ~workspace_root ~flag ~target =

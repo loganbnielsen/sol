@@ -783,6 +783,7 @@ let kafka_config service_names : Sol_cli_config.t =
         ; indexes = []
         ; size = None
         ; omit = false
+        ; binding = None
         }
       ]
   ; services =

@@ -156,6 +156,7 @@ resource "google_artifact_registry_repository_iam_member" "gke_pull" {
 }
 
 resource "google_sql_database_instance" "postgres" {
+  count               = var.create_database ? 1 : 0
   name                = "${var.cluster_name}-postgres"
   database_version    = "POSTGRES_16"
   region              = var.region
@@ -188,15 +189,17 @@ resource "google_sql_database_instance" "postgres" {
 }
 
 resource "google_sql_database" "app" {
+  count    = var.create_database ? 1 : 0
   name     = "app"
-  instance = google_sql_database_instance.postgres.name
+  instance = google_sql_database_instance.postgres[0].name
 
   depends_on = [google_sql_user.postgres]
 }
 
 resource "google_sql_user" "postgres" {
+  count    = var.create_database ? 1 : 0
   name     = "postgres"
-  instance = google_sql_database_instance.postgres.name
+  instance = google_sql_database_instance.postgres[0].name
   password = var.db_password
 }
 

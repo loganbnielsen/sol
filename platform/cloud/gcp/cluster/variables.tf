@@ -82,9 +82,17 @@ variable "provisioner_bootstrap_admin" {
 }
 
 variable "db_password" {
-  description = "PostgreSQL admin password"
+  description = "PostgreSQL admin password. Required when create_database is true; unused otherwise."
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "create_database" {
+  description = "Create a Cloud SQL PostgreSQL instance. Mirrors AWS's create_rds so both providers derive provisioning from the same resolved ownership decision."
+
+  type    = bool
+  default = true
 }
 
 variable "create_dns_zone" {

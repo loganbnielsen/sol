@@ -34,13 +34,13 @@ output "docker_auth_command" {
 
 output "postgres_private_ip" {
   description = "Cloud SQL private IP (accessible from GKE pods)"
-  value       = google_sql_database_instance.postgres.private_ip_address
+  value       = var.create_database ? google_sql_database_instance.postgres[0].private_ip_address : null
   sensitive   = true
 }
 
 output "postgres_url" {
   description = "POSTGRES_URL for Sol services"
-  value       = "postgresql://postgres:${replace(urlencode(var.db_password), "+", "%20")}@${google_sql_database_instance.postgres.private_ip_address}/app"
+  value       = var.create_database ? "postgresql://postgres:${replace(urlencode(var.db_password), "+", "%20")}@${google_sql_database_instance.postgres[0].private_ip_address}/app" : null
   sensitive   = true
 }
 

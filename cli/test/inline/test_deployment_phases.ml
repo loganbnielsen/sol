@@ -603,6 +603,7 @@ let test_plan_consumer_groups_derived_from_workers () =
           ; indexes = []
           ; size = None
           ; omit = false
+          ; binding = None
           }
         ]
     ; services =
