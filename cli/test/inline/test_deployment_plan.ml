@@ -274,7 +274,6 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; region = Some "us-east-1"
     ; base_domain = Some "example.com"
     ; cluster_issuer = "letsencrypt-prod"
-    ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
     }
   in
   let svc : Sol_cli_deployment_plan.service_spec =
@@ -287,6 +286,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; image = "123.dkr.ecr.us-east-1.amazonaws.com/myworkspace/charge-svc:abc1234"
     ; config = [ "LOG_LEVEL", "info"; "REGION", "us-east-1" ]
     ; secrets = [ "DB_PASSWORD", "super-secret-value"; "API_KEY", "also-secret" ]
+    ; secret_sources = []
     ; build_secret_keys = [ "BUILD_REGISTRY_TOKEN" ]
     ; volumes = []
     ; schedule = None
@@ -396,7 +396,6 @@ let test_to_json_mode_strings () =
       ; region = None
       ; base_domain = None
       ; cluster_issuer = "letsencrypt-prod"
-      ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
       }
     in
     let plan : Sol_cli_deployment_plan.t =
@@ -746,6 +745,7 @@ let make_worker_spec name domain =
   ; image = "reg/ws/" ^ name ^ ":t"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -844,39 +844,6 @@ let test_consumer_groups_sorted () =
     Sol_cli_plan_ids.Consumer_group.to_string
     [ consumer_group_exn "ws.comms.a_worker"; consumer_group_exn "ws.comms.b_worker" ]
     groups
-;;
-
-let test_to_json_secret_backend () =
-  let plan = sample_plan () in
-  let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
-  assert (
-    let re = Str.regexp {|"secret_backend"|} in
-    matches_regex re s)
-;;
-
-let test_to_json_secret_backend_values () =
-  let check_backend backend expected =
-    let plan = sample_plan () in
-    let plan =
-      { plan with environment = { plan.environment with secret_backend = backend } }
-    in
-    let json = Sol_cli_deployment_plan.to_json plan in
-    let actual =
-      Yojson.Safe.Util.(
-        json |> member "environment" |> member "secret_backend" |> to_string)
-    in
-    Windtrap.equal Windtrap.string ~msg:expected expected actual
-  in
-  check_backend Sol_cli_manifest.Kubernetes_live "kubernetes-live";
-  check_backend Sol_cli_manifest.Kubernetes_placeholder "kubernetes-placeholder";
-  check_backend
-    (Sol_cli_manifest.External_secrets
-       { store_ref = "cluster-secret-store"
-       ; store_kind = Sol_cli_manifest.Cluster_secret_store
-       ; key_prefix = "prod/myworkspace"
-       ; refresh_interval = "1h"
-       })
-    "external-secrets"
 ;;
 
 let test_to_json_rollout_strategy () =
@@ -1177,7 +1144,6 @@ let test_of_services_result_surfaces_toml_parse_error () =
       ; region = None
       ; base_domain = None
       ; cluster_issuer = "letsencrypt-prod"
-      ; secret_backend = Sol_cli_manifest.Kubernetes_live
       }
     in
     let service : Sol_cli_manifest.service =
@@ -1227,7 +1193,6 @@ let deploy_env : Sol_cli_deployment_plan.env_config =
   ; region = None
   ; base_domain = None
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_live
   }
 ;;
 
@@ -2008,8 +1973,6 @@ let%test "to_json: build secret keys present" = test_to_json_build_secret_keys_p
 let%test "to_json: env present" = test_to_json_env_present ()
 let%test "to_json: config values present" = test_to_json_config_values_present ()
 let%test "to_json: mode strings" = test_to_json_mode_strings ()
-let%test "to_json: secret_backend present" = test_to_json_secret_backend ()
-let%test "to_json: secret_backend values" = test_to_json_secret_backend_values ()
 let%test "to_json: rollout_strategy rolling_update" = test_to_json_rollout_strategy ()
 let%test "to_json: rollout_strategy recreate" = test_to_json_rollout_strategy_recreate ()
 let%test "to_json: rollout_strategy canary" = test_to_json_rollout_strategy_canary ()

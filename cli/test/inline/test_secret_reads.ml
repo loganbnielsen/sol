@@ -40,6 +40,16 @@ if [ "$verb" = "get" ]; then
     exit 1
   fi
   case "$kind" in
+    externalsecret)
+      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
+        observed=2
+        reason=SecretSynced
+        state=True
+        [ "$mode" = "eso-stale" ] && observed=1
+        if [ "$mode" = "eso-not-synced" ]; then reason=SecretSyncedError; state=False; fi
+        printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"%%s","reason":"%%s","observedGeneration":%%s}]}}\n' "$state" "$reason" "$observed"
+      fi
+      exit 0 ;;
     externalsecrets)
       if [ "$mode" = "platform-collision" ] && [ "$namespace" = "notifications" ]; then
         printf 'owner\tsol-secrets\n'
@@ -58,6 +68,14 @@ if [ "$verb" = "get" ]; then
       fi
       exit 0 ;;
     secret)
+      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
+        if [ "$mode" = "eso-wrong-keys" ]; then
+          echo '{"apiVersion":"v1","kind":"Secret","data":{"OTHER_KEY":"c2VjcmV0"}}'
+        else
+          echo '{"apiVersion":"v1","kind":"Secret","data":{"PAYMENT_KEY":"c2VjcmV0"}}'
+        fi
+        exit 0
+      fi
       if [ "$mode" = "present" ] || [ "$mode" = "listing-fails" ] || [ "$mode" = "workloads-fail" ]; then
         echo '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"sol-secrets","namespace":"payments","resourceVersion":"1"},"data":{"EXISTING":"ZXhpc3Rpbmc="}}'
         exit 0
@@ -258,6 +276,105 @@ let test_platform_preflight_checks_all_namespaces_before_secret_writes () =
         (Sol_cli_string.contains ~needle:"kind: Secret" (manifests ())))
 ;;
 
+let test_external_secret_status_reports_sync_and_materialized_keys () =
+  with_fake_kubectl ~mode:"eso-ready" (fun ~calls:_ ~manifests:_ ->
+    match
+      Sol_cli_secret.external_secret_status
+        ~ctx
+        ~namespace:"payments"
+        ~unit_name:"charge-svc"
+        ~expected_keys:[ "PAYMENT_KEY" ]
+    with
+    | Error message -> Windtrap.failf "ESO status observation failed: %s" message
+    | Ok state ->
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"reports synced state and last refresh without value"
+        "ready (SecretSynced; refreshed 2026-10-10T12:00:00Z)"
+        state)
+;;
+
+let external_workload_spec () : Sol_cli_deployment_plan.service_spec =
+  let k8s_name =
+    match Sol_cli_deployment_plan.k8s_name_result "charge-svc" with
+    | Ok value -> value
+    | Error error -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string error)
+  in
+  let namespace =
+    match
+      Sol_cli_deployment_plan.namespace_result ~workspace:"myapp" ~domain:"payments"
+    with
+    | Ok value -> value
+    | Error error -> Windtrap.fail (Sol_cli_deployment_plan.plan_error_to_string error)
+  in
+  let cpu =
+    match Sol_cli_toml.cpu_quantity_of_string "100m" with
+    | Ok value -> value
+    | Error message -> Windtrap.fail message
+  in
+  let memory =
+    match Sol_cli_toml.memory_quantity_of_string "128Mi" with
+    | Ok value -> value
+    | Error message -> Windtrap.fail message
+  in
+  { domain = "payments"
+  ; source_name = "charge_svc"
+  ; k8s_name
+  ; namespace
+  ; primitive = Sol_cli_deployment_plan.Svc
+  ; source_dir = "app/payments/charge_svc"
+  ; image = "registry.example.com/myapp/charge-svc:test"
+  ; config = []
+  ; secrets = [ "PAYMENT_KEY", "" ]
+  ; secret_sources =
+      [ ( "PAYMENT_KEY"
+        , Sol_cli_manifest.External { store = "payments-store"; key = "payment/key" } )
+      ]
+  ; build_secret_keys = []
+  ; volumes = []
+  ; schedule = None
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
+  ; replicas = 1
+  ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
+  ; language = None
+  ; cpu
+  ; memory
+  ; rollout_strategy = None
+  ; ingress_host = None
+  ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
+  ; extra_labels = []
+  ; progressive_delivery = None
+  }
+;;
+
+let test_external_secret_readiness_succeeds () =
+  with_fake_kubectl ~mode:"eso-ready" (fun ~calls:_ ~manifests:_ ->
+    match
+      Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ())
+    with
+    | Ok () -> ()
+    | Error message -> Windtrap.failf "synced external Secret was rejected: %s" message)
+;;
+
+let test_external_secret_readiness_fails_closed mode expected_message =
+  with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
+    match
+      Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ())
+    with
+    | Ok () -> Windtrap.failf "ESO state %s should fail readiness" mode
+    | Error message ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:("reports readiness failure for " ^ mode)
+        true
+        (Sol_cli_string.contains ~needle:expected_message message))
+;;
+
 let test_unit_set_writes_only_its_unit_secret () =
   with_fake_kubectl ~mode:"owned-unit" (fun ~calls:_ ~manifests ->
     match
@@ -369,4 +486,26 @@ let%test "verify: TLS contract readiness checks both Kafka Job inputs" =
 
 let%test "verify: TLS contract Job requires platform inputs before submit" =
   test_tls_contract_job_refuses_before_submission_without_platform_inputs ()
+;;
+
+let%test "external Secret status reports readiness and keys" =
+  test_external_secret_status_reports_sync_and_materialized_keys ()
+;;
+
+let%test "external Secret deploy readiness accepts exact synced key set" =
+  test_external_secret_readiness_succeeds ()
+;;
+
+let%test "external Secret deploy readiness rejects unsynced ESO condition" =
+  test_external_secret_readiness_fails_closed "eso-not-synced" "SecretSyncedError"
+;;
+
+let%test "external Secret deploy readiness rejects stale generation" =
+  test_external_secret_readiness_fails_closed "eso-stale" "stale for metadata generation"
+;;
+
+let%test "external Secret deploy readiness rejects wrong materialized keys" =
+  test_external_secret_readiness_fails_closed
+    "eso-wrong-keys"
+    "expected exactly [PAYMENT_KEY]"
 ;;

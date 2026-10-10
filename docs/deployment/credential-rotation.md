@@ -58,10 +58,12 @@ and presence without printing values.
 ### Deploy and rollback
 
 Deploy and rollback preserve secret values. They verify required unit Secrets
-and the shared platform inputs needed by the operation. In M1, a required key
-declared `external` causes remote deployment to fail explicitly; it is never
-delivered through a legacy placeholder or Sol-owned write. ESO delivery is a
-later milestone.
+and the shared platform inputs needed by the operation. For an external key,
+`sol deploy` waits for ESO `SecretSynced`, verifies the materialized key set, then
+verifies workload rollout. ESO sync does not prove that an already-running
+process has loaded a rotated value. Rotate at the external authority, wait for
+ESO, then restart the affected workload with Kubernetes rollout tooling; an
+unchanged `sol deploy` does not restart it.
 
 Sol-owned unit and platform values update their existing Kubernetes Secret in
 place. A later deploy cannot restore a previous value from CI or a local shell.

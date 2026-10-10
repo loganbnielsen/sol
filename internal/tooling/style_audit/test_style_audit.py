@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
     ?(on_retry = fun _ -> ())
     ?(on_error = fun _ -> print_endline "failure")
     () = ()
-let render ~workspace ~environment ~release_id ~secret_backend ~target () = ()
+let render ~workspace ~environment ~release_id ~target () = ()
 let twelve a b c d e f g h i j k l = ()
 let eleven a b c d e f g h i j k = ()
 let client ~http_host ~http_port ~http_scheme ~http_path () = ()

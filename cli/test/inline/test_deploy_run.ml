@@ -26,6 +26,7 @@ let spec ~domain ~name ~k8s primitive : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/" ^ k8s ^ ":abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -70,7 +71,6 @@ let plan ?profile services : Sol_cli_deployment_plan.t =
       ; region = None
       ; base_domain = None
       ; cluster_issuer = "letsencrypt-prod"
-      ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
       }
   ; services
   ; topics = []
@@ -100,11 +100,7 @@ let temp_dir () =
   dir
 ;;
 
-let with_context
-      ?(migrations = [])
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      f
-  =
+let with_context ?(migrations = []) f =
   let root = temp_dir () in
   let cwd = Sys.getcwd () in
   Fun.protect
@@ -142,7 +138,6 @@ let with_context
          ; sha = "abc123"
          ; registry = "registry.example.com"
          ; facts
-         ; secret_backend
          ; emit_plan_to = None
          ; target_cfg = config.target
          ; resolved_config = config
@@ -795,7 +790,7 @@ let test_deploy_removal_is_retryable_after_a_partial_failure () =
    authoritative and the next deploy retries with its recorded UID evidence. *)
 let test_lifecycle_fails_before_recording_when_removal_is_incomplete () =
   with_fake_kubectl (fun ~calls:_ ->
-    with_context ~secret_backend:Sol_cli_manifest.Kubernetes_live (fun ctx ->
+    with_context (fun ctx ->
       let reported = ref false in
       let plan =
         plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
@@ -837,7 +832,7 @@ let test_lifecycle_fails_before_recording_when_removal_is_incomplete () =
    the new release and reports success. *)
 let test_lifecycle_advances_when_removal_completes () =
   with_fake_kubectl ~live_listing:{|{"items":[]}|} (fun ~calls:_ ->
-    with_context ~secret_backend:Sol_cli_manifest.Kubernetes_live (fun ctx ->
+    with_context (fun ctx ->
       let reported = ref false in
       let plan =
         plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]

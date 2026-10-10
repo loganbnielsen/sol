@@ -17,7 +17,6 @@ val plan_of_services
 val execute
   :  Sol_cli_execution.context
   -> mode:Sol_cli_executor.mode
-  -> ?secret_backend:Sol_cli_manifest.secret_backend
   -> ?before_apply:(Sol_cli_deployment_plan.service_spec -> (unit, string) result)
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result

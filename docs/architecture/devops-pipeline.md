@@ -172,8 +172,8 @@ Pipeline:
 2. Pre-flight: validate `POSTGRES_URL` (skipped for `--dry-run` and `--emit-to`).
 3. Construct env_target with `Sol_cli_env_target.customer_cloud_defaults` (requires
    `--registry`).
-4. Guard: `Customer_gitops` mode is incompatible with `Kubernetes_live` secret backend
-   (would write plaintext secrets into the GitOps repo).
+4. Resolve every declared per-key secret authority. Sol-owned values reference the unit Secret;
+   external values render as namespaced `ExternalSecret` resources. No secret value is emitted.
 5. **Plan:** `Sol_cli_deployment_plan.of_services_result` → `plan`.
 6. Optionally emit the plan as JSON (`--emit-plan-to`).
 7. Select execution mode:
@@ -193,8 +193,7 @@ Pipeline:
 - `--emit-to DIR` — GitOps mode: write one `<ns>-<name>.yaml` per service to DIR, plus the release artifact (`sol-release-<id>.yaml` and `sol-current-release.yaml`, both derived from the plan's release id)
 - `--emit-plan-to FILE` — write plan JSON to FILE (experimental)
 - `--dry-run` — print YAML, no cluster contact
-- `--secret-backend` — overrides the destination's default: `kubernetes-live` (local and direct deploys — Sol renders no Secret and the workload references the one that already exists) or `kubernetes-placeholder` (the GitOps default — a redacted Secret with empty values). External secret delivery is not enabled yet; selecting `external-secrets` is refused until its delivery milestone.
-- `--secret-store-ref`, `--secret-store-kind`, `--key-prefix`, `--refresh-interval` — External Secrets Operator fields
+- Secret authorities are resolved per declared unit key. Sol-owned values use the unit's `-secrets` object; external values use a namespaced ESO `ExternalSecret` targeting `-external-secrets`. Direct and GitOps rendering use the same references and never emit placeholders or secret values.
 
 ---
 
@@ -344,10 +343,9 @@ entirely from the release record `sol local deploy`/`sol deploy` write on every 
    `namespace_result`, `service_url`, `call_env_var`) — never the workspace,
    `sol.toml`/`sol.yml`, the environment, or discovery. `called_by` is derived
    from the record's own `calls` rows, not a stored forward-edge env var.
-5. **Render + apply** — `Sol_cli_deployment_render.render_spec` per spec
-   (`Kubernetes_live` secret backend — secret values, never persisted, are
-   read from the process environment same as any direct apply), then
-   `Sol_cli_manifest.apply`.
+5. **Render + apply** — `Sol_cli_deployment_render.render_spec` per spec, then
+   `Sol_cli_manifest.apply`. For external keys, ESO sync and the exact materialized key set are
+   verified before the rollout is accepted.
 6. **Verify the workload set** (`Sol_cli_rollback.live_workloads` +
    `verify_workloads`) — enumerates every live Sol-owned workload for the
    workspace (Deployment/Rollout/CronJob whose pod template carries the
@@ -636,7 +634,7 @@ and the `artifact_invariants` test suite.
 | Non-root execution | `spec.securityContext.runAsNonRoot: true` | Enforced | Pod-level; all primitives |
 | No privilege escalation | `containers[].securityContext.allowPrivilegeEscalation: false` | Enforced | Container-level; all primitives |
 | Read-only root filesystem | `containers[].securityContext.readOnlyRootFilesystem: true` | Enforced | Container-level; all primitives |
-| GitOps secret redaction | `Secret.stringData` values are empty strings | Enforced | `Kubernetes_placeholder` mode only |
+| Secret value exclusion | Secret values are never emitted into deployment artifacts | Enforced | Direct and GitOps use the same per-key authority references |
 | Taxonomy labels | `metadata.labels["workspace"\|"domain"\|"service"\|"primitive"\|"release"]` | Enforced | Pod-template labels, unprefixed (not `sol.dev/*` — see `docs/architecture/observability-design.md`); shipped in OBS-008 |
 | `env` taxonomy label | `metadata.labels["env"]` | Done | Emitted by `sol deploy <env>/<provider>/<region>` (FEAT-026); `sol local deploy` stays local-only and omits it — see `observability-design.md`'s Identity section |
 
@@ -647,9 +645,7 @@ the three enforced security context invariants on any rendered workload YAML str
 It is applied to: `Svc` (Deployment), `Worker` (Deployment), `Fn` (CronJob),
 canary `Rollout`, and blue-green `Rollout`.
 
-The `test_gitops_secret_redacted` test case in the `artifact_invariants` suite
-verifies that `Kubernetes_placeholder` mode strips all user-supplied secret values
-before the YAML is written to disk.
+Renderer tests verify that Sol-managed values and external values are never emitted into GitOps YAML; workloads reference exactly the authority-specific Secret objects.
 
 ### When adding a new resource type
 

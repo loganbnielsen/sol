@@ -26,7 +26,6 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
         ~workspace:release.Sol_cli_release.workspace
         ?env:release.environment
         ~release_id:release_id_t
-        ~secret_backend:Sol_cli_manifest.Kubernetes_live
         spec
     in
     let* () = Sol_cli_manifest.apply ~ctx yaml ~dry_run:false in

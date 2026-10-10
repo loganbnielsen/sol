@@ -5,7 +5,6 @@ type context =
   ; sha : string
   ; registry : string
   ; facts : Sol_cli_workspace_model.t
-  ; secret_backend : Sol_cli_manifest.secret_backend
   ; emit_plan_to : string option
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
@@ -69,12 +68,7 @@ let verify_image_refs_exist ~image_refs =
 
 let run_plan_result ctx ~phase ~mode ?before_apply plan =
   Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
-    Sol_cli_factory.execute
-      ctx.execution
-      ~mode
-      ~secret_backend:ctx.secret_backend
-      ?before_apply
-      plan)
+    Sol_cli_factory.execute ctx.execution ~mode ?before_apply plan)
 ;;
 
 type gate_failure =

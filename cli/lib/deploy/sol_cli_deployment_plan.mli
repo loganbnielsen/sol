@@ -12,7 +12,6 @@ type env_config =
   ; region : string option
   ; base_domain : string option
   ; cluster_issuer : string
-  ; secret_backend : Sol_cli_manifest.secret_backend
   }
 
 type primitive =
@@ -55,6 +54,7 @@ type service_spec =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; secret_sources : (string * Sol_cli_manifest.secret_source) list
   ; build_secret_keys : string list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option

@@ -265,6 +265,12 @@ let rows_to_json rows =
        `List [ `String a; `String b; `String c; `String d ]))
 ;;
 
+let rows3_to_json rows =
+  `List
+    (List.sort compare rows
+     |> List.map (fun (a, b, c) -> `List [ `String a; `String b; `String c ]))
+;;
+
 let workload_to_json (w : workload) : Yojson.Safe.t =
   `Assoc
     [ "domain", `String w.domain
@@ -273,6 +279,7 @@ let workload_to_json (w : workload) : Yojson.Safe.t =
     ; "image", `String w.image
     ; "config", pairs_to_assoc w.config
     ; "secrets", pairs_to_assoc w.secrets
+    ; "external_secret_refs", rows3_to_json w.external_secret_refs
     ; ( "schedule"
       , match w.schedule with
         | None -> `Null
@@ -444,6 +451,11 @@ let row4 = function
   | _ -> "", "", "", ""
 ;;
 
+let row3 = function
+  | [ a; b; c ] -> a, b, c
+  | _ -> "", "", ""
+;;
+
 let workload_of_json (json : Yojson.Safe.t) : workload =
   { domain = str "domain" json
   ; name = str "name" json
@@ -451,6 +463,7 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   ; image = str "image" json
   ; config = pairs "config" json
   ; secrets = pairs "secrets" json
+  ; external_secret_refs = List.map row3 (rows "external_secret_refs" json)
   ; schedule = string_option "schedule" json
   ; scheduled_concurrency = str "scheduled_concurrency" json
   ; backoff_limit = int "backoff_limit" json

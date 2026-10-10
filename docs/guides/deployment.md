@@ -165,12 +165,9 @@ Both modes take the same inputs, and both are honest about what they would do:
 - `sol deploy` reconciles the whole target; there is no `--scope`. The desired workload set
   must be singular so a later removal can be authorized against it, so a narrow update is a
   separate, explicitly non-deleting operation (`sol rollback`) rather than a partial deploy.
-- `--keep-releases N`, `--refresh-interval`, `--secret-*`, `--key-prefix`, `--loki-push-url` and
-  `--confirm-group-change` cover release retention, rollout refresh, secret backends and
-  telemetry destinations. `--confirm-group-change` is only for a group that is really going
-  away; the check that asks for it reads the recorded set while the deploy holds the workspace
-  lease, so it decides on the boundary as it is at apply time rather than as it was when the
-  command started.
+- `--keep-releases N`, `--loki-push-url` and `--confirm-group-change` cover release retention,
+  telemetry destinations and explicit authorization for removing a consumer group. The check
+  reads the recorded set while the deploy holds the workspace lease.
 
 Never rebuild the plan/render/execute logic in your own CI: all deployment decisions (image tags,
 namespaces, discovery, secrets) belong to `sol deploy`, and CI's job is to supply the inputs
@@ -225,8 +222,33 @@ by CI (FEAT-053). Seed Sol-owned values from a secret source through stdin, for 
 `your-secret-tool get payment-api-key | sol secret set "$SOL_TARGET" payments/charge_svc/PAYMENT_API_KEY --from-stdin`.
 Provide migration Job database access separately with
 `your-secret-tool get production-postgres-url | sol secret set "$SOL_TARGET" @platform/POSTGRES_URL --from-stdin`.
-Every required key has an explicit `sol` or `external` authority mapping in the target declaration;
-M1 refuses deployment for external keys until ESO delivery is implemented.
+Every required key has an explicit `sol` or `external` authority mapping in the target declaration.
+Sol-owned values live in that unit's Kubernetes Secret. For an external key, declare a namespaced
+`SecretStore` and remote key under the same unit, for example:
+
+```yaml
+production:
+  targets:
+    aws/us-east-1:
+      secrets:
+        payments/charge_svc:
+          PAYMENT_API_KEY:
+            authority: external
+            store: payments-vault
+            key: production/payments/api-key
+```
+
+The SecretStore and ExternalSecret are namespaced to the unit's domain. Sol does not install ESO or
+create the SecretStore; install the controller and configure its controller identity, provider
+permissions and namespaced SecretStore before deploying. Direct deploy waits for ESO to
+report `Ready=True` with reason `SecretSynced`, checks the materialized Secret's key set, and then
+verifies rollout readiness. GitOps emits the same ExternalSecret and workload references; Argo CD
+and ESO reconcile after CI writes the manifests. `sol plan` reports declarations, not proof that
+provider credentials can read a value. `sol secret status` reports observed ESO sync state and
+refresh time when available; it cannot prove an already-running process has loaded a rotated value.
+
+ESO rotation is manual: rotate at the external authority, wait for ESO sync, then restart the
+affected workload with Kubernetes rollout tooling. An unchanged `sol deploy` is not a restart.
 
 The deploy step is the same lifecycle as local execution — `sol deploy <target>` then
 `sol migrate <target>` — so nothing about the plan, the render or the apply exists in the workflow.

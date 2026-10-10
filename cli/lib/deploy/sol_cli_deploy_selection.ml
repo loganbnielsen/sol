@@ -63,26 +63,25 @@ let secret_authorities_for_plan ~config plan =
   | [] -> Ok (List.rev !mappings)
 ;;
 
-let refuse_external_delivery ~config plan =
-  let* mappings = secret_authorities_for_plan ~config plan in
-  let external_keys =
-    List.filter_map
-      (fun (unit_address, key, authority) ->
-         match authority with
-         | Sol_cli_config.Sol_managed -> None
-         | External _ -> Some (unit_address, key))
-      mappings
+let secret_sources_for_plan ~config plan =
+  let* authorities = secret_authorities_for_plan ~config plan in
+  let source = function
+    | Sol_cli_config.Sol_managed -> Sol_cli_manifest.Sol_managed
+    | Sol_cli_config.External { store; key } -> Sol_cli_manifest.External { store; key }
   in
-  match external_keys with
-  | [] -> Ok ()
-  | (unit_address, key) :: _ ->
-    Error
-      (Printf.sprintf
-         "Cannot deploy %s.\n\n\
-          %s is externally managed, but external secret delivery is not yet supported by \
-          this deployment path. No legacy backend or placeholder will be used."
-         config.Sol_cli_config.target.name
-         (unit_address ^ "/" ^ key))
+  let services =
+    List.map
+      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+         let unit_address = spec.domain ^ "/" ^ spec.source_name in
+         let secret_sources =
+           authorities
+           |> List.filter_map (fun (unit, key, authority) ->
+             if String.equal unit unit_address then Some (key, source authority) else None)
+         in
+         { spec with secret_sources })
+      plan.Sol_cli_deployment_plan.services
+  in
+  Ok { plan with services }
 ;;
 
 let apply_target ~target ~(config : Sol_cli_config.t) selection =
@@ -149,7 +148,6 @@ module Planning_input = struct
     ; registry : string
     ; sha : string
     ; emit_to : string option
-    ; secret_backend : Sol_cli_manifest.secret_backend
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
@@ -165,7 +163,6 @@ module Target_plan_input = struct
     ; registry : string
     ; sha : string
     ; emit_to : string option
-    ; secret_backend : Sol_cli_manifest.secret_backend
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
@@ -187,7 +184,6 @@ let plan (input : Planning_input.t) =
       ; registry
       ; sha
       ; emit_to
-      ; secret_backend
       ; config
       ; facts
       ; inventory
@@ -203,22 +199,9 @@ let plan (input : Planning_input.t) =
     Sol_cli_env_target.customer_cloud_defaults ~registry ~image_tag:sha ~emit_to ()
     |> refused
   in
-  let* () =
-    match env_target, secret_backend with
-    | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
-      Error
-        (Refused
-           "cannot use --secret-backend kubernetes-live with --emit-to (GitOps mode).\n\
-           \  This combination would write plaintext secrets into the GitOps repository,\n\
-           \  leaking them to every reader of the repo.\n\
-           \  Use --secret-backend kubernetes-placeholder (the default) or \
-            --secret-backend external-secrets instead.")
-    | _ -> Ok ()
-  in
   let env =
     { (Sol_cli_env_target.to_env_config ~name:workspace env_target) with
-      Sol_cli_deployment_plan.secret_backend
-    ; env = Some config.target.env
+      env = Some config.target.env
     ; cluster_issuer =
         Option.value config.target.cluster_issuer ~default:"letsencrypt-prod"
     }
@@ -235,7 +218,7 @@ let plan (input : Planning_input.t) =
       services
     |> refused
   in
-  let* _secret_mappings = secret_authorities_for_plan ~config plan |> refused in
+  let* plan = secret_sources_for_plan ~config plan |> refused in
   let apply_mode =
     match emit_to with
     | Some _ -> Sol_cli_release.Gitops
@@ -254,7 +237,6 @@ let target_plan (input : Target_plan_input.t) =
       ; registry
       ; sha
       ; emit_to
-      ; secret_backend
       ; config
       ; facts
       ; inventory
@@ -269,7 +251,6 @@ let target_plan (input : Target_plan_input.t) =
     ; registry
     ; sha
     ; emit_to
-    ; secret_backend
     ; config
     ; facts
     ; inventory

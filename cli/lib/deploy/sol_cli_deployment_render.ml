@@ -6,6 +6,7 @@ type common_fields =
   ; spec_image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; secret_sources : (string * Sol_cli_manifest.secret_source) list
   ; calls : Sol_cli_deployment_plan.service_call list
   ; called_by : Sol_cli_deployment_plan.service_call list
   }
@@ -50,14 +51,7 @@ type render_spec_t =
   ; workload : render_workload
   }
 
-let render
-      ~workspace
-      ?env
-      ?(image = "")
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_live)
-      ~release_id
-      { common; workload }
-  =
+let render ~workspace ?env ?(image = "") ~release_id { common; workload } =
   let { namespace
       ; k8s_name
       ; domain
@@ -65,6 +59,7 @@ let render
       ; spec_image
       ; config
       ; secrets
+      ; secret_sources
       ; calls
       ; called_by
       }
@@ -130,51 +125,28 @@ let render
   let base_cluster_env = Sol_cli_manifest.cluster_env Sol_cli_manifest.Plaintext in
   let cfg_hash = Sol_cli_manifest.config_hash base_cluster_env config in
   let kafka_tls_enabled = Sol_cli_manifest.kafka_tls transport in
-  let kafka_secret_keys =
-    Sol_cli_manifest.required_secret_keys ~transport []
-    |> List.filter (fun key -> not (List.mem_assoc key Sol_cli_manifest.default_secrets))
+  let secret_keys =
+    Sol_cli_manifest.required_secret_keys ~transport (List.map fst secrets)
   in
-  let secret_keys = List.map fst secrets @ kafka_secret_keys in
   Sol_cli_manifest.(
     let ns_yaml = namespace_doc ~ns in
-    let secret_resource_result =
-      match secret_backend with
-      | Kubernetes_live -> Ok None
-      | Kubernetes_placeholder ->
-        let extra_secrets =
-          List.map (fun (k, _) -> k, "") secrets
-          @ List.map (fun k -> k, "") kafka_secret_keys
-        in
-        Ok
-          (Some
-             (secret_doc
-                ~extra_secrets
-                ~redact:true
-                ~ns
-                ~name:(workload_secret_name name)
-                ()))
-      | External_secrets { store_ref; store_kind; key_prefix; refresh_interval } ->
-        let all_keys =
-          List.map fst default_secrets @ List.map fst secrets @ kafka_secret_keys
-        in
-        Ok
-          (Some
-             (external_secret_doc
-                ~store_ref
-                ~store_kind
-                ~key_prefix
-                ~refresh_interval
-                ~secret_keys:all_keys
-                ~ns
-                ~name))
+    let external_secret_resource =
+      secret_sources
+      |> List.filter_map (fun (key, source) ->
+        match source with
+        | Sol_cli_manifest.Sol_managed -> None
+        | External { store; key = remote_key } -> Some (key, store, remote_key))
+      |> function
+      | [] -> None
+      | secret_refs -> Some (external_secret_doc ~secret_refs ~ns ~name)
     in
     Result.map
-      (fun secret_resource ->
+      (fun () ->
          let common_resources =
            [ service_account_doc ~ns ~name
            ; configmap_doc ~cluster_env:base_cluster_env ~extra_env:config ~ns ~name ()
            ]
-           @ Option.to_list secret_resource
+           @ Option.to_list external_secret_resource
            @ [ network_policy_doc
                  ~egress_to:
                    (calls
@@ -217,6 +189,7 @@ let render
            let workload : Sol_cli_manifest.Workload_spec.t =
              { Sol_cli_manifest.Workload_spec.extra_labels
              ; secret_keys
+             ; secret_sources
              ; volumes
              ; projected_identities = Sol_cli_deployment_plan.identity_projections calls
              ; env
@@ -331,6 +304,7 @@ let render
              in
              let workload : Scheduled_workload_spec.t =
                { secret_keys
+               ; secret_sources
                ; projected_identities = Sol_cli_deployment_plan.identity_projections calls
                ; env
                ; ns
@@ -351,7 +325,7 @@ let render
          in
          ( Sol_cli_yaml.render [ ns_yaml ]
          , Sol_cli_yaml.render (common_resources @ resources) ))
-      secret_resource_result)
+      (Ok ()))
 ;;
 
 let render_spec
@@ -359,7 +333,6 @@ let render_spec
       ?env
       ?(image = "")
       ~release_id
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_live)
       (s : Sol_cli_deployment_plan.service_spec)
   =
   let primitive =
@@ -376,6 +349,7 @@ let render_spec
     ; spec_image = s.image
     ; config = s.config
     ; secrets = s.secrets
+    ; secret_sources = s.secret_sources
     ; calls = s.calls
     ; called_by = s.called_by
     }
@@ -425,5 +399,5 @@ let render_spec
               (Sol_cli_kubernetes_name.k8s_name_to_string s.k8s_name)))
   in
   Result.bind workload (fun workload ->
-    render ~workspace ?env ~image ~release_id ~secret_backend { common; workload })
+    render ~workspace ?env ~image ~release_id { common; workload })
 ;;

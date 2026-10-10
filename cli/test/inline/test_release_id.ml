@@ -30,6 +30,7 @@ let wl
   ; image
   ; config
   ; secrets
+  ; external_secret_refs = []
   ; schedule
   ; scheduled_concurrency
   ; backoff_limit
@@ -161,6 +162,38 @@ let test_secret_references_count_and_values_do_not () =
      && Sol_cli_string.contains ~needle:"db-prod" s)
 ;;
 
+let test_external_secret_reference_changes_release_identity () =
+  let base = wl "charge_svc" "acme/charge:1" in
+  let with_ref remote =
+    { base with external_secret_refs = [ "PAYMENT_API_KEY", "payments-vault", remote ] }
+  in
+  check_bool
+    "an external remote reference changes release identity"
+    true
+    (id (content [ with_ref "production/payment-api" ])
+     <> id (content [ with_ref "staging/payment-api" ]));
+  check_string
+    "external reference ordering is not semantic"
+    (id
+       (content
+          [ { base with
+              external_secret_refs =
+                [ "PAYMENT_API_KEY", "payments-vault", "prod/api"
+                ; "SMTP_KEY", "payments-vault", "prod/smtp"
+                ]
+            }
+          ]))
+    (id
+       (content
+          [ { base with
+              external_secret_refs =
+                [ "SMTP_KEY", "payments-vault", "prod/smtp"
+                ; "PAYMENT_API_KEY", "payments-vault", "prod/api"
+                ]
+            }
+          ]))
+;;
+
 let test_encoding_is_unambiguous () =
   check_bool
     "adjacent fields cannot bleed into each other"
@@ -213,7 +246,7 @@ let test_of_string_round_trips_and_validates () =
 let test_known_vector () =
   check_string
     "known id for a fixed content"
-    "r-4b2ed7373a80de25"
+    "r-7637ae5d26cd37e1"
     (id
        (content
           [ wl
@@ -358,6 +391,10 @@ let%test "identity: workspace and environment change identity" =
 
 let%test "identity: secret references count, values do not" =
   test_secret_references_count_and_values_do_not ()
+;;
+
+let%test "identity: external secret references are release inputs" =
+  test_external_secret_reference_changes_release_identity ()
 ;;
 
 let%test "identity: encoding is unambiguous" = test_encoding_is_unambiguous ()

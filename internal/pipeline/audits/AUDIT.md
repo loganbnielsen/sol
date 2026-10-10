@@ -32,7 +32,7 @@ Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 
 * [ ] **Containers never run as root:** Every generated `Deployment` and `CronJob` sets `runAsNonRoot: true`, `runAsUser`, and `runAsGroup`. Container-level contexts enforce `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true`.
 * [ ] **Seccomp profile is set:** Pod security contexts include `seccompProfile: type: RuntimeDefault`, passing standard Kubernetes security scanners.
-* [ ] **Credentials are never rendered as plaintext:** The generated `ConfigMap` holds only non-sensitive config. With the default backend for `sol local deploy` and a direct `sol deploy` (`kubernetes-live`) Sol renders **no** Secret at all — the workload references a Secret that already exists in the cluster, `sol secret set` (or the operator's secret authority) seeds it, and the deploy fails closed naming every required key that is absent or empty. `kubernetes-placeholder` renders a Secret whose values are empty strings, and `external-secrets` renders an `ExternalSecret`. No backend renders a value.
+* [ ] **Credentials are never rendered as plaintext:** ConfigMaps contain only non-sensitive config. Every required unit key has an explicit `sol` or `external` authority. Sol-owned values are written to `<unit>-secrets`; ESO-owned values are rendered as namespace-scoped ExternalSecrets targeting `<unit>-external-secrets`. Direct and GitOps artifacts contain references, never values or placeholder Secret objects. Direct deploy verifies Sol-owned keys, ESO sync, materialized key sets and workload rollout.
 * [ ] **Services use ClusterIP + Ingress, never NodePort:** Generated `Service` resources use `type: ClusterIP`. HTTP services generate an `Ingress` with TLS redirect.
 * [ ] **NetworkPolicy is generated for every workload:** Each workload gets a `NetworkPolicy` restricting ingress and egress to only what it needs (ingress-nginx, in-cluster pods, Redpanda, PostgreSQL, monitoring namespaces, DNS).
 * [ ] **Subprocesses run from an argv list:** Shipped code (`cli/`, `framework/`, `platform/`) invokes subprocesses through `Sol_cli_process.cmd`, which carries a `string list` argv and never a shell string; `Sys.command` appears nowhere in those trees. The deliberate shell exceptions are `sol local run`'s generated command and maintainer tooling (`internal/tooling/sol_process.run_shell`), and both `Filename.quote` every interpolated value.
@@ -122,11 +122,12 @@ sol local deploy
 kubectl get pods -l workspace=audit_test --all-namespaces  # must be empty
 git checkout app/payments/charge_svc/Dockerfile
 
-# 2. Refusal before anything is written: an incompatible secret backend
+# 2. External secret delivery is a reference, not a value
+# Declare an external key in the target, emit GitOps manifests, and inspect the result:
 sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> \
-  --secret-backend kubernetes-live --emit-to /tmp/audit-gitops
-# Expected: non-zero exit naming the incompatible combination; /tmp/audit-gitops holds
-# nothing new, because a GitOps artifact must never carry a live secret.
+  --emit-to /tmp/audit-gitops
+# Expected: an ExternalSecret and matching workload secretKeyRef; no Secret value or
+# placeholder Secret is written. Direct deploy additionally verifies ESO and rollout state.
 
 # 3. Recovery facts are recorded, not assumed (live-only: needs an apply that fails)
 sol releases --target dev/aws/us-east-1
@@ -183,20 +184,15 @@ grep "readOnlyRootFilesystem" /tmp/sol-manifest.yaml  # must appear per containe
 grep "seccompProfile"         /tmp/sol-manifest.yaml  # must appear per pod
 grep "kind: NetworkPolicy"    /tmp/sol-manifest.yaml  # must appear per workload
 
-# A direct deploy defaults to kubernetes-live, so it renders secret *references* only:
-grep -E "kind: (Secret|ExternalSecret)" /tmp/sol-manifest.yaml  # must be empty
-grep -E "POSTGRES_URL|SOL_API_KEY"      /tmp/sol-manifest.yaml  # referenced, never a value
-
-# Force the placeholder backend to confirm Sol can render a Secret, with empty values:
-sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> \
-  --secret-backend kubernetes-placeholder --dry-run 2>&1 | tee /tmp/sol-manifest-placeholder.yaml
-grep "kind: Secret" /tmp/sol-manifest-placeholder.yaml  # must appear per workload
-grep "POSTGRES_URL" /tmp/sol-manifest-placeholder.yaml  # must have an empty value, never plaintext
+# Deployment artifacts contain secret references only:
+grep -E "^kind: Secret$" /tmp/sol-manifest.yaml       # must be empty
+grep -E "^kind: ExternalSecret$" /tmp/sol-manifest.yaml # expected for external keys
+grep -E "POSTGRES_URL|SOL_API_KEY" /tmp/sol-manifest.yaml # references, never values
 ```
 
 **Invariants:**
 * [ ] All `grep` checks above produce the expected matches/non-matches before any cluster state is touched
-* [ ] The default direct deploy renders no plaintext secret value and no `Secret` resource; `kubernetes-placeholder` renders only empty values
+* [ ] Sol-owned and ESO-owned values are never rendered into deployment artifacts; a declared external key produces only its namespaced ExternalSecret and workload reference
 
 ---
 

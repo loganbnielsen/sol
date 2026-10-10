@@ -15,18 +15,9 @@ let render_spec_ok
       ?env
       ?image
       ?(release_id = release_id_of_test)
-      ?secret_backend
       spec
   =
-  match
-    Sol_cli_deployment_render.render_spec
-      ~workspace
-      ?env
-      ?image
-      ~release_id
-      ?secret_backend
-      spec
-  with
+  match Sol_cli_deployment_render.render_spec ~workspace ?env ?image ~release_id spec with
   | Ok v -> v
   | Error e -> Windtrap.fail ("render_spec unexpectedly failed: " ^ e)
 ;;
@@ -67,6 +58,7 @@ let workload
   =
   { Sol_cli_manifest.Workload_spec.extra_labels = []
   ; secret_keys = []
+  ; secret_sources = []
   ; volumes = []
   ; projected_identities = []
   ; env = None
@@ -151,6 +143,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/charge-svc:abc123"
   ; config = [ "APP_ENV", "staging" ]
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -185,6 +178,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/notify-worker:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -215,6 +209,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/invoice-fn:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = Some "0 9 * * 1"
@@ -590,22 +585,14 @@ let test_live_render_emits_no_secret_values () =
 
 let test_placeholder_render_redacts_values () =
   Unix.putenv "POSTGRES_URL" "postgresql://user:pass@db.example.com:5432/app";
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder svc_spec
-  in
+  let _ns, workload = render_spec_ok svc_spec in
   Unix.putenv "POSTGRES_URL" "";
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains
-    "GitOps placeholder keeps POSTGRES_URL key"
-    secret_block
-    {|POSTGRES_URL: ""|};
-  assert_contains
-    "GitOps placeholder keeps SOL_API_KEY key"
-    secret_block
-    {|SOL_API_KEY: ""|};
+  assert_absent "GitOps emits no placeholder Secret" workload "kind: Secret";
+  assert_contains "GitOps projects POSTGRES_URL" workload "key: POSTGRES_URL";
+  assert_contains "GitOps projects SOL_API_KEY" workload "key: SOL_API_KEY";
   assert_absent
     "GitOps placeholder redacts the value"
-    secret_block
+    workload
     "postgresql://user:pass@db.example.com:5432/app"
 ;;
 
@@ -673,15 +660,10 @@ let test_local_svc_has_no_kafka_ca_mount () =
 ;;
 
 let test_production_placeholder_secret_requires_kafka_keys () =
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder production_spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains
-    "SASL password key in placeholder Secret"
-    secret_block
-    "KAFKA_SASL_PASSWORD:";
-  assert_contains "CA key in placeholder Secret" secret_block "KAFKA_SSL_CA_CERT:"
+  let _ns, workload = render_spec_ok production_spec in
+  assert_absent "no placeholder Secret" workload "kind: Secret";
+  assert_contains "SASL password is projected" workload "key: KAFKA_SASL_PASSWORD";
+  assert_contains "CA key is projected" workload "key: KAFKA_SSL_CA_CERT"
 ;;
 
 let test_svc_secret_refs_without_values () =
@@ -690,9 +672,7 @@ let test_svc_secret_refs_without_values () =
       secrets = [ "DATABASE_URL", "postgres://secret"; "API_TOKEN", "token-value" ]
     }
   in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
+  let _ns, workload = render_spec_ok spec in
   assert_contains "database secret ref" workload "key: DATABASE_URL";
   assert_contains "api token secret ref" workload "key: API_TOKEN";
   assert_absent "database value absent" workload "postgres://secret";
@@ -707,73 +687,59 @@ let test_svc_namespace_in_workload () =
 
 let test_user_secret_key_in_secret_resource () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "STRIPE_KEY present in Secret resource" secret_block "STRIPE_KEY:"
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no Secret is rendered" workload "kind: Secret";
+  assert_contains "STRIPE_KEY uses Sol-owned Secret" workload "name: charge-svc-secrets";
+  assert_contains "STRIPE_KEY reference is present" workload "key: STRIPE_KEY"
 ;;
 
 let test_user_secret_key_ref_in_deployment () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
+  let _ns, workload = render_spec_ok spec in
   assert_contains "STRIPE_KEY secretKeyRef" workload "key: STRIPE_KEY"
 ;;
 
 let test_multiple_user_secret_keys_in_secret_resource () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", ""; "SENDGRID_API_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "STRIPE_KEY in Secret" secret_block "STRIPE_KEY:";
-  assert_contains "SENDGRID_API_KEY in Secret" secret_block "SENDGRID_API_KEY:"
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no Secret is rendered" workload "kind: Secret";
+  assert_contains "STRIPE_KEY ref" workload "key: STRIPE_KEY";
+  assert_contains "SENDGRID_API_KEY ref" workload "key: SENDGRID_API_KEY"
 ;;
 
 let test_default_secrets_preserved_with_user_secrets () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "POSTGRES_URL still in Secret" secret_block "POSTGRES_URL:";
-  assert_contains "STRIPE_KEY also in Secret" secret_block "STRIPE_KEY:"
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no Secret is rendered" workload "kind: Secret";
+  assert_contains "POSTGRES_URL ref" workload "key: POSTGRES_URL";
+  assert_contains "STRIPE_KEY ref" workload "key: STRIPE_KEY"
 ;;
 
 let test_gitops_redacts_all_secret_values () =
   let spec = { svc_spec with secrets = [ "STRIPE_KEY", "sk_live_should_not_render" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "redaction comment" secret_block "Populate these values before applying";
-  assert_contains "default POSTGRES_URL key retained" secret_block {|POSTGRES_URL: ""|};
-  assert_contains "user STRIPE_KEY key retained" secret_block {|STRIPE_KEY: ""|};
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no placeholder Secret" workload "kind: Secret";
+  assert_contains "default POSTGRES_URL referenced" workload "key: POSTGRES_URL";
+  assert_contains "user STRIPE_KEY referenced" workload "key: STRIPE_KEY";
   assert_absent
     "default postgres value redacted"
-    secret_block
+    workload
     "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev";
-  assert_absent "user secret value redacted" secret_block "sk_live_should_not_render"
+  assert_absent "user secret value redacted" workload "sk_live_should_not_render"
 ;;
 
 let test_worker_user_secret_key_in_secret_resource () =
   let spec = { worker_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "worker STRIPE_KEY in Secret" secret_block "STRIPE_KEY:"
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no Secret is rendered" workload "kind: Secret";
+  assert_contains "worker STRIPE_KEY reference" workload "key: STRIPE_KEY"
 ;;
 
 let test_fn_user_secret_key_in_secret_resource () =
   let spec = { fn_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
-  let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "fn STRIPE_KEY in Secret" secret_block "STRIPE_KEY:"
+  let _ns, workload = render_spec_ok spec in
+  assert_absent "no Secret is rendered" workload "kind: Secret";
+  assert_contains "fn STRIPE_KEY reference" workload "key: STRIPE_KEY"
 ;;
 
 let test_svc_image_override () =
@@ -1078,9 +1044,7 @@ let test_rollout_canary_secrets_use_sol_secrets () =
     ; secrets = [ "STRIPE_KEY", ""; "DATABASE_URL", "" ]
     }
   in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
+  let _ns, workload = render_spec_ok spec in
   let rollout_block = extract_kind_block workload "kind: Rollout" in
   assert_contains
     "rollout uses charge-svc-secrets ref"
@@ -1098,9 +1062,7 @@ let test_rollout_blue_green_secrets_use_sol_secrets () =
     ; secrets = [ "API_TOKEN", "" ]
     }
   in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
+  let _ns, workload = render_spec_ok spec in
   let rollout_block = extract_kind_block workload "kind: Rollout" in
   assert_contains
     "blue-green rollout uses charge-svc-secrets"
@@ -1590,73 +1552,54 @@ steps = [{weight = 20}, {pause = {}}, {weight = 60}, {pause = {duration = 60}}]
   | _ -> Windtrap.fail "expected canary steps with pause from [infra.rollout]"
 ;;
 
-let eso_backend =
-  Sol_cli_manifest.External_secrets
-    { store_ref = "aws-secrets-manager"
-    ; store_kind = Sol_cli_manifest.Cluster_secret_store
-    ; key_prefix = "myapp/"
-    ; refresh_interval = "1h"
-    }
-;;
-
 let test_external_secret_doc_no_stringdata () =
   let doc =
     Sol_cli_manifest.external_secret_doc
-      ~store_ref:"aws-secrets-manager"
-      ~store_kind:Sol_cli_manifest.Cluster_secret_store
-      ~key_prefix:"myapp/"
-      ~refresh_interval:"1h"
-      ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY" ]
+      ~secret_refs:[ "STRIPE_KEY", "aws-secrets-manager", "myapp/payments/stripe" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
     |> render_doc
   in
   assert_contains "kind ExternalSecret" doc "kind: ExternalSecret";
   assert_contains "remoteRef present" doc "remoteRef:";
-  assert_contains "ESO apiVersion" doc "apiVersion: external-secrets.io/v1beta1";
+  assert_contains "ESO apiVersion" doc "apiVersion: external-secrets.io/v1";
   assert_absent "no stringData" doc "stringData"
 ;;
 
 let test_external_secret_doc_keys_present () =
   let doc =
     Sol_cli_manifest.external_secret_doc
-      ~store_ref:"aws-secrets-manager"
-      ~store_kind:Sol_cli_manifest.Cluster_secret_store
-      ~key_prefix:""
-      ~refresh_interval:"1h"
-      ~secret_keys:[ "POSTGRES_URL"; "STRIPE_KEY"; "SENDGRID_API_KEY" ]
+      ~secret_refs:
+        [ "STRIPE_KEY", "aws-secrets-manager", "payments/stripe"
+        ; "SENDGRID_API_KEY", "vault-prod", "payments/sendgrid"
+        ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
     |> render_doc
   in
-  assert_contains "POSTGRES_URL secretKey" doc "secretKey: POSTGRES_URL";
   assert_contains "STRIPE_KEY secretKey" doc "secretKey: STRIPE_KEY";
-  assert_contains "SENDGRID_API_KEY secretKey" doc "secretKey: SENDGRID_API_KEY"
+  assert_contains "SENDGRID_API_KEY secretKey" doc "secretKey: SENDGRID_API_KEY";
+  assert_contains "per-key store override" doc "name: vault-prod"
 ;;
 
 let test_external_secret_doc_target_name () =
   let doc =
     Sol_cli_manifest.external_secret_doc
-      ~store_ref:"my-store"
-      ~store_kind:Sol_cli_manifest.Cluster_secret_store
-      ~key_prefix:""
-      ~refresh_interval:"1h"
-      ~secret_keys:[ "POSTGRES_URL" ]
+      ~secret_refs:[ "POSTGRES_URL", "my-store", "db/production" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
     |> render_doc
   in
-  assert_contains "target name is charge-svc-secrets" doc "name: charge-svc-secrets"
+  assert_contains
+    "target name is charge-svc-external-secrets"
+    doc
+    "name: charge-svc-external-secrets"
 ;;
 
 let test_external_secret_doc_namespace_scoped_store () =
   let doc =
     Sol_cli_manifest.external_secret_doc
-      ~store_ref:"my-store"
-      ~store_kind:Sol_cli_manifest.Secret_store
-      ~key_prefix:""
-      ~refresh_interval:"1h"
-      ~secret_keys:[ "POSTGRES_URL" ]
+      ~secret_refs:[ "POSTGRES_URL", "my-store", "db/production" ]
       ~ns:"myapp-payments"
       ~name:"charge-svc"
     |> render_doc
@@ -1666,22 +1609,52 @@ let test_external_secret_doc_namespace_scoped_store () =
 ;;
 
 let test_render_spec_eso_backend_no_k8s_secret () =
-  let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
+  let spec =
+    { svc_spec with
+      secrets = [ "STRIPE_KEY", "" ]
+    ; secret_sources =
+        [ "STRIPE_KEY", Sol_cli_manifest.External { store = "prod-store"; key = "stripe" }
+        ]
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
   assert_contains "ExternalSecret present" workload "kind: ExternalSecret";
-  assert_absent "no plain Secret kind" workload "kind: Secret"
+  assert_contains
+    "ESO output name is isolated"
+    workload
+    "name: charge-svc-external-secrets";
+  assert_absent "no plain Secret kind" workload "\nkind: Secret\n"
 ;;
 
 let test_render_spec_eso_backend_all_keys () =
-  let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
-  assert_contains "POSTGRES_URL in ESO data" workload "secretKey: POSTGRES_URL";
-  assert_contains "STRIPE_KEY in ESO data" workload "secretKey: STRIPE_KEY"
+  let spec =
+    { svc_spec with
+      secrets = [ "STRIPE_KEY", "" ]
+    ; secret_sources =
+        [ "STRIPE_KEY", Sol_cli_manifest.External { store = "prod-store"; key = "stripe" }
+        ]
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
+  assert_absent
+    "Sol-owned default is not copied to ESO"
+    workload
+    "secretKey: POSTGRES_URL";
+  assert_contains "only external key is in ESO data" workload "secretKey: STRIPE_KEY";
+  assert_contains "external key's store is explicit" workload "name: prod-store";
+  assert_contains "external key's remote name is explicit" workload "key: stripe"
 ;;
 
 let test_render_spec_eso_backend_no_stringdata () =
-  let spec = { svc_spec with secrets = [ "STRIPE_KEY", "" ] } in
-  let _ns, workload = render_spec_ok ~secret_backend:eso_backend spec in
+  let spec =
+    { svc_spec with
+      secrets = [ "STRIPE_KEY", "" ]
+    ; secret_sources =
+        [ "STRIPE_KEY", Sol_cli_manifest.External { store = "prod-store"; key = "stripe" }
+        ]
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
   assert_absent "no stringData in ESO output" workload "stringData"
 ;;
 
@@ -1695,9 +1668,7 @@ let test_live_backend_render_never_reads_env () =
   let absent = "__SOL_TEST_ABSENT_KEY_XQ9Z2__" in
   Unix.putenv absent "";
   let spec = { svc_spec with secrets = [ absent, "" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_live spec
-  in
+  let _ns, workload = render_spec_ok spec in
   assert_absent
     "live render emits no Secret regardless of the environment"
     workload
@@ -1706,9 +1677,7 @@ let test_live_backend_render_never_reads_env () =
 
 let test_live_backend_no_user_secrets_always_succeeds () =
   let spec = { svc_spec with secrets = [] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_live spec
-  in
+  let _ns, workload = render_spec_ok spec in
   assert_absent "no Secret with no declared keys" workload "kind: Secret"
 ;;
 
@@ -1757,9 +1726,7 @@ let test_rollout_blue_green_satisfies_invariants () =
 
 let test_gitops_secret_redacted () =
   let spec = { svc_spec with secrets = [ "SECRET_KEY", "real-value-must-not-appear" ] } in
-  let _ns, workload =
-    render_spec_ok ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder spec
-  in
+  let _ns, workload = render_spec_ok spec in
   assert_absent
     "no real secret value in gitops output"
     workload

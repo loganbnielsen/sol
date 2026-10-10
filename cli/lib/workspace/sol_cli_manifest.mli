@@ -1,22 +1,9 @@
-type secret_store_kind =
-  | Secret_store
-  | Cluster_secret_store
-
-val secret_store_kind_to_string : secret_store_kind -> string
-val secret_store_kind_of_string : string -> (secret_store_kind, string) result
-val refresh_interval_of_string : string -> (string, string) result
-
-type secret_backend =
-  | Kubernetes_live
-  | Kubernetes_placeholder
-  | External_secrets of
-      { store_ref : string
-      ; store_kind : secret_store_kind
-      ; key_prefix : string
-      ; refresh_interval : string
+type secret_source = Sol_cli_manifest_yaml.secret_source =
+  | Sol_managed
+  | External of
+      { store : string
+      ; key : string
       }
-
-val secret_backend_to_string : secret_backend -> string
 
 type primitive =
   | Svc
@@ -95,6 +82,7 @@ val local_url : int -> string
 val default_secrets : (string * string) list
 val runtime_secret_name : string
 val workload_secret_name : string -> string
+val external_secret_name : string -> string
 val required_secret_keys : ?transport:kafka_transport -> string list -> string list
 val config_hash : (string * string) list -> (string * string) list -> string
 val sanitize_label_value : string -> string
@@ -123,11 +111,7 @@ val secret_doc
   -> Sol_cli_yaml.document
 
 val external_secret_doc
-  :  store_ref:string
-  -> store_kind:secret_store_kind
-  -> key_prefix:string
-  -> refresh_interval:string
-  -> secret_keys:string list
+  :  secret_refs:(string * string * string) list
   -> ns:string
   -> name:string
   -> Sol_cli_yaml.document
@@ -140,6 +124,7 @@ module Workload_spec : sig
   type t =
     { extra_labels : (string * string) list
     ; secret_keys : string list
+    ; secret_sources : (string * secret_source) list
     ; volumes : Sol_cli_toml.volume list
     ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
@@ -214,6 +199,7 @@ module Scheduled_workload_spec : sig
     ; name : string
     ; image : string
     ; secret_keys : string list
+    ; secret_sources : (string * secret_source) list
     ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; schedule : string

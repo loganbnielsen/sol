@@ -486,14 +486,343 @@ let verify_required_keys ~ctx ~namespace ~secret_name ~required_keys =
 
 let verify_workload_secret ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
   let transport = Sol_cli_manifest.kafka_transport_of_config spec.config in
+  let required =
+    Sol_cli_manifest.required_secret_keys ~transport (List.map fst spec.secrets)
+    |> List.filter (fun key ->
+      match List.assoc_opt key spec.secret_sources with
+      | Some (Sol_cli_manifest.External _) -> false
+      | Some Sol_cli_manifest.Sol_managed | None -> true)
+  in
   verify_required_keys
     ~ctx
     ~namespace:(Sol_cli_deployment_plan.namespace_to_string spec.namespace)
     ~secret_name:
       (Sol_cli_manifest.workload_secret_name
          (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
-    ~required_keys:
-      (Sol_cli_manifest.required_secret_keys ~transport (List.map fst spec.secrets))
+    ~required_keys:required
+;;
+
+let json_object = function
+  | `Assoc fields -> fields
+  | _ -> []
+;;
+
+let json_string key fields =
+  match List.assoc_opt key fields with
+  | Some (`String value) -> Some value
+  | Some (`Int value) -> Some (string_of_int value)
+  | Some (`Intlit value) -> Some value
+  | _ -> None
+;;
+
+let verify_external_secret_ready ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
+  let external_keys =
+    spec.secret_sources
+    |> List.filter_map (fun (key, source) ->
+      match source with
+      | Sol_cli_manifest.Sol_managed -> None
+      | External _ -> Some key)
+  in
+  match external_keys with
+  | [] -> Ok ()
+  | _ ->
+    let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+    let unit_name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+    let external_name = Sol_cli_manifest.external_secret_name unit_name in
+    let* waited =
+      Sol_cli_kubectl.run
+        ~timeout_s:150.
+        ~ctx
+        [ "wait"
+        ; "--for=condition=Ready"
+        ; "externalsecret/" ^ external_name
+        ; "-n"
+        ; namespace
+        ; "--timeout=120s"
+        ]
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "ExternalSecret %s/%s did not become Ready: %s"
+          namespace
+          external_name
+          (Sol_cli_process.error_to_string error))
+    in
+    let _ = waited in
+    let* output =
+      Sol_cli_kubectl.get_raw
+        ~ctx
+        ~args:[ "get"; "externalsecret"; external_name; "-n"; namespace; "-o"; "json" ]
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "could not read ExternalSecret %s/%s after Ready: %s"
+          namespace
+          external_name
+          (Sol_cli_process.error_to_string error))
+    in
+    let* external_secret =
+      Sol_cli_json.decode
+        ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace external_name)
+        output.Sol_cli_process.stdout
+    in
+    let root = json_object external_secret in
+    let metadata =
+      json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
+    in
+    let generation = json_string "generation" metadata in
+    let status =
+      json_object (Option.value (List.assoc_opt "status" root) ~default:`Null)
+    in
+    let conditions =
+      match List.assoc_opt "conditions" status with
+      | Some (`List rows) -> rows
+      | _ -> []
+    in
+    let ready =
+      conditions
+      |> List.map json_object
+      |> List.find_opt (fun fields -> json_string "type" fields = Some "Ready")
+    in
+    let* () =
+      match ready with
+      | None -> Error "ESO reported Ready but returned no Ready condition"
+      | Some condition ->
+        let state = json_string "status" condition in
+        let reason = json_string "reason" condition in
+        let observed = json_string "observedGeneration" condition in
+        if state <> Some "True" || reason <> Some "SecretSynced"
+        then
+          Error
+            (Printf.sprintf
+               "ESO condition for %s/%s is not SecretSynced (status=%s reason=%s)"
+               namespace
+               external_name
+               (Option.value state ~default:"unknown")
+               (Option.value reason ~default:"unknown"))
+        else if
+          List.mem_assoc "observedGeneration" condition
+          && Option.fold
+               ~none:false
+               ~some:(fun generation -> observed <> Some generation)
+               generation
+        then
+          Error
+            (Printf.sprintf
+               "ESO condition for %s/%s is stale for metadata generation %s"
+               namespace
+               external_name
+               (Option.value generation ~default:"unknown"))
+        else Ok ()
+    in
+    let* materialized =
+      get_named_secret_json
+        ~ctx
+        ~name:(Sol_cli_manifest.external_secret_name unit_name)
+        namespace
+    in
+    let found =
+      materialized
+      |> Option.to_list
+      |> List.concat_map data_keys
+      |> List.map fst
+      |> List.sort_uniq String.compare
+    in
+    let expected = List.sort_uniq String.compare external_keys in
+    if found = expected
+    then Ok ()
+    else
+      Error
+        (Printf.sprintf
+           "ESO Secret %s/%s has keys [%s], expected exactly [%s]"
+           namespace
+           (Sol_cli_manifest.external_secret_name unit_name)
+           (String.concat ", " found)
+           (String.concat ", " expected))
+;;
+
+let external_secret_status ~ctx ~namespace ~unit_name ~expected_keys =
+  let external_keys = List.sort_uniq String.compare expected_keys in
+  match external_keys with
+  | [] -> Ok "not applicable"
+  | _ ->
+    let name = Sol_cli_manifest.external_secret_name unit_name in
+    let* raw =
+      Sol_cli_kubectl.get_if_present
+        ~ctx
+        ~args:[ "get"; "externalsecret"; name; "-n"; namespace; "-o"; "json" ]
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "could not observe ExternalSecret %s/%s: %s"
+          namespace
+          name
+          (Sol_cli_process.error_to_string error))
+    in
+    (match raw with
+     | None -> Ok "missing"
+     | Some raw ->
+       let* json =
+         Sol_cli_json.decode
+           ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace name)
+           raw
+       in
+       let root = json_object json in
+       let metadata =
+         json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
+       in
+       let status =
+         json_object (Option.value (List.assoc_opt "status" root) ~default:`Null)
+       in
+       let conditions =
+         match List.assoc_opt "conditions" status with
+         | Some (`List rows) -> rows
+         | _ -> []
+       in
+       let ready =
+         conditions
+         |> List.map json_object
+         |> List.find_opt (fun fields -> json_string "type" fields = Some "Ready")
+       in
+       let synced =
+         match ready with
+         | Some fields ->
+           json_string "status" fields = Some "True"
+           && json_string "reason" fields = Some "SecretSynced"
+           &&
+             (match
+                json_string "generation" metadata, json_string "observedGeneration" fields
+              with
+             | Some generation, Some observed -> generation = observed
+             | _ -> true)
+         | None -> false
+       in
+       if not synced
+       then (
+         let reason =
+           match ready with
+           | Some fields ->
+             Option.value (json_string "reason" fields) ~default:"not ready"
+           | None -> "Ready condition absent"
+         in
+         Ok ("not ready (" ^ reason ^ ")"))
+       else
+         let* materialized = get_named_secret_json ~ctx ~name namespace in
+         let found =
+           materialized
+           |> Option.to_list
+           |> List.concat_map data_keys
+           |> List.map fst
+           |> List.sort_uniq String.compare
+         in
+         let expected = List.sort_uniq String.compare external_keys in
+         if found <> expected
+         then Ok "materialized keys differ from declaration"
+         else (
+           let refreshed = json_string "refreshTime" status in
+           Ok
+             ("ready (SecretSynced"
+              ^ Option.fold ~none:"" ~some:(fun time -> "; refreshed " ^ time) refreshed
+              ^ ")")))
+;;
+
+let verify_external_secret_destination ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
+  let external_keys =
+    spec.secret_sources
+    |> List.filter_map (fun (key, source) ->
+      match source with
+      | Sol_cli_manifest.Sol_managed -> None
+      | External _ -> Some key)
+  in
+  match external_keys with
+  | [] -> Ok ()
+  | _ ->
+    let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+    let unit_name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+    let es_name = Sol_cli_manifest.external_secret_name unit_name in
+    let target_name = es_name in
+    let* es_raw =
+      Sol_cli_kubectl.get_if_present
+        ~ctx
+        ~args:[ "get"; "externalsecret"; es_name; "-n"; namespace; "-o"; "json" ]
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "could not inspect ExternalSecret destination %s/%s: %s"
+          namespace
+          es_name
+          (Sol_cli_process.error_to_string error))
+    in
+    let* es_json =
+      match es_raw with
+      | None -> Ok None
+      | Some raw ->
+        Sol_cli_json.decode
+          ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace es_name)
+          raw
+        |> Result.map Option.some
+    in
+    let external_uid, already_owned =
+      match es_json with
+      | None -> None, false
+      | Some json ->
+        let root = json_object json in
+        let metadata =
+          json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
+        in
+        let labels =
+          json_object (Option.value (List.assoc_opt "labels" metadata) ~default:`Null)
+        in
+        let uid = json_string "uid" metadata in
+        let target =
+          json_object (Option.value (List.assoc_opt "spec" root) ~default:`Null)
+          |> fun fields ->
+          json_object (Option.value (List.assoc_opt "target" fields) ~default:`Null)
+        in
+        let name_matches = json_string "name" target = Some target_name in
+        let owned = json_string "app.kubernetes.io/managed-by" labels = Some "sol" in
+        uid, owned && name_matches
+    in
+    let* () =
+      match es_json with
+      | None -> Ok ()
+      | Some _ when already_owned -> Ok ()
+      | Some _ ->
+        Error
+          (Printf.sprintf
+             "refusing to replace ExternalSecret %s/%s: it is not a Sol-owned \
+              ExternalSecret targeting %s"
+             namespace
+             es_name
+             target_name)
+    in
+    let* materialized = get_named_secret_json ~ctx ~name:target_name namespace in
+    (match materialized with
+     | None -> Ok ()
+     | Some json ->
+       let root = json_object json in
+       let metadata =
+         json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
+       in
+       let owner_refs =
+         match List.assoc_opt "ownerReferences" metadata with
+         | Some (`List rows) -> rows
+         | _ -> []
+       in
+       let owned_by_external_secret =
+         Option.fold
+           ~none:false
+           ~some:(fun uid ->
+             List.exists
+               (fun row -> json_string "uid" (json_object row) = Some uid)
+               owner_refs)
+           external_uid
+       in
+       if owned_by_external_secret
+       then Ok ()
+       else
+         Error
+           (Printf.sprintf
+              "refusing to use existing Secret %s/%s as ESO output: its owner is not the \
+               declared ExternalSecret"
+              namespace
+              target_name))
 ;;
 
 let verify_runtime_secret ~ctx ~namespace =

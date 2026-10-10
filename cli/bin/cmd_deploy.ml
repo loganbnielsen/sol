@@ -101,7 +101,6 @@ let planning_input_of_ctx (ctx : Sol_cli_deploy_run.context) ~emit_to
   ; registry = ctx.registry
   ; sha = ctx.sha
   ; emit_to
-  ; secret_backend = ctx.secret_backend
   ; config = ctx.resolved_config
   ; facts = ctx.facts
   ; inventory = ctx.inventory
@@ -564,10 +563,6 @@ let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   let planning = planning_input_of_ctx ctx ~emit_to in
   let* plan = build_plan planning in
   let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
-  let* () =
-    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
-    |> Sol_cli_exit.of_msg
-  in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.run_offline
     ctx
@@ -594,10 +589,6 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
   let planning = planning_input_of_ctx ctx ~emit_to:(Some dir) in
   let* plan = build_plan planning in
   let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
-  let* () =
-    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
-    |> Sol_cli_exit.of_msg
-  in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   let* results =
     Sol_cli_deploy_run.run_offline
@@ -679,10 +670,6 @@ let run_apply
     ();
   let* plan = build_plan planning in
   let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
-  let* () =
-    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
-    |> Sol_cli_exit.of_msg
-  in
   let* () =
     check_apply_environment
       ~facts:planning.Sol_cli_deploy_selection.Target_plan_input.facts
@@ -796,24 +783,12 @@ let run (req : Sol_cli_command_request.deploy_request) =
     | Sol_cli_command_request.Deploy_emit_to dir -> Some dir
     | Sol_cli_command_request.Deploy_apply -> None
   in
-  let* env_target =
-    Sol_cli_env_target.customer_cloud_defaults
-      ~registry
-      ~image_tag:sha
-      ~emit_to:emit_intent
-      ()
-    |> Sol_cli_exit.of_msg
-  in
-  let secret_backend =
-    Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
-  in
   let await_delegation = Option.value req.await_delegation ~default:300 in
   let planning : Sol_cli_deploy_selection.Target_plan_input.t =
     { workspace
     ; registry
     ; sha
     ; emit_to = emit_intent
-    ; secret_backend
     ; config = resolved_config
     ; facts
     ; inventory
@@ -831,7 +806,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; sha
     ; registry
     ; facts
-    ; secret_backend
     ; emit_plan_to = req.emit_plan_to
     ; target_cfg
     ; resolved_config
@@ -958,97 +932,6 @@ let registry_arg =
           "Container registry prefix, e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com. \
            Omit to fall back to the resolved target's own registry (its registry in \
            sol/environments.yml); required if neither is set.")
-;;
-
-let secret_backend_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "secret-backend" ]
-        ~docv:"BACKEND"
-        ~doc:
-          "Override how the runtime Secret is rendered. Omitted -- the usual case -- the \
-           destination decides: a direct or local deploy uses the operator-owned live \
-           Secret ('kubernetes-live'; Sol emits no Secret for it, so populate it with \
-           'sol secret set'), while a GitOps target writes a redacted \
-           'kubernetes-placeholder' Secret. External secret delivery is not supported \
-           yet; selecting 'external-secrets' is refused.")
-;;
-
-let secret_store_ref_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "secret-store-ref" ]
-        ~docv:"NAME"
-        ~doc:
-          "Reserved for the future External Secrets delivery path; external delivery is \
-           not supported yet.")
-;;
-
-let secret_store_kind_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "secret-store-kind" ]
-        ~docv:"KIND"
-        ~doc:
-          "Kind of the secret store reference. One of 'SecretStore' (namespace-scoped) \
-           or 'ClusterSecretStore' (default).")
-;;
-
-let key_prefix_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "key-prefix" ]
-        ~docv:"PREFIX"
-        ~doc:
-          "Prefix to prepend to each secret key when looking up in the external store \
-           (default: \"\"). Example: 'myworkspace/' produces keys like \
-           'myworkspace/POSTGRES_URL'.")
-;;
-
-let refresh_interval_arg =
-  Arg.(
-    value
-    & opt (some Sol_cli_args.text) None
-    & info
-        [ "refresh-interval" ]
-        ~docv:"INTERVAL"
-        ~doc:
-          "How often ESO should sync the secret from the external store (default: 1h). A \
-           Go duration: one or more number/unit groups, e.g. '1h', '30m', '5m', '1h30m', \
-           '500ms' (units: ns, us, µs, ms, s, m, h).")
-;;
-
-let secret_backend_term =
-  let build backend store_ref store_kind key_prefix refresh_interval emit_to =
-    match
-      Sol_cli_secret_backend.emission_backend
-        ~emit_to
-        ~backend
-        ~store_ref
-        ~store_kind
-        ~key_prefix
-        ~refresh_interval
-    with
-    | Ok backend -> `Ok backend
-    | Error message -> `Error (true, message)
-  in
-  Term.(
-    ret
-      (const build
-       $ secret_backend_arg
-       $ secret_store_ref_arg
-       $ secret_store_kind_arg
-       $ key_prefix_arg
-       $ refresh_interval_arg
-       $ emit_to_arg))
 ;;
 
 let confirm_group_change_flag =
@@ -1180,7 +1063,6 @@ let cmd =
              image_tag
              raw_image_refs
              registry
-             secret_backend
              confirm_group_change
              confirm_ecr_removal
              loki_push_url
@@ -1197,7 +1079,6 @@ let cmd =
                   ~image_tag
                   ~image_refs:(List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
                   ~registry
-                  ~secret_backend
                   ~confirm_group_change
                   ~confirm_ecr_removal
                   ~loki_push_url
@@ -1214,7 +1095,6 @@ let cmd =
       $ image_tag_arg
       $ image_ref_arg
       $ registry_arg
-      $ secret_backend_term
       $ confirm_group_change_flag
       $ confirm_ecr_removal_flag
       $ loki_push_url_arg

@@ -37,6 +37,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/charge-svc:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -71,6 +72,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/notify-worker:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -100,7 +102,6 @@ let env_config : Sol_cli_deployment_plan.env_config =
   ; region = None
   ; base_domain = None
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
   }
 ;;
 
@@ -121,7 +122,7 @@ let make_plan services =
   }
 ;;
 
-let run_ok ~mode ?secret_backend plan =
+let run_ok ~mode plan =
   match
     Sol_cli_executor.run_plan
       (Sol_cli_execution.context
@@ -129,7 +130,6 @@ let run_ok ~mode ?secret_backend plan =
          ~workspace:plan.Sol_cli_deployment_plan.workspace
          ())
       ~mode
-      ?secret_backend
       plan
   with
   | Ok rs -> rs

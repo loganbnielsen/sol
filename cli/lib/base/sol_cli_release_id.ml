@@ -5,6 +5,7 @@ type workload =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; external_secret_refs : (string * string * string) list
   ; schedule : string option
   ; scheduled_concurrency : string
   ; backoff_limit : int
@@ -39,7 +40,7 @@ type content =
 
 type t = string
 
-let encoding_version = "sol-release-v5"
+let encoding_version = "sol-release-v6"
 
 let enc_string b s =
   Buffer.add_string b (Printf.sprintf "%d:" (String.length s));
@@ -77,6 +78,15 @@ let compare4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
       if c <> 0 then c else String.compare a4 b4))
 ;;
 
+let compare3 (a1, a2, a3) (b1, b2, b3) =
+  let c = String.compare a1 b1 in
+  if c <> 0
+  then c
+  else (
+    let c = String.compare a2 b2 in
+    if c <> 0 then c else String.compare a3 b3)
+;;
+
 let enc_table b rows =
   enc_int b (List.length rows);
   rows
@@ -92,6 +102,11 @@ let enc_workload b (w : workload) =
   enc_string b w.image;
   enc_pairs b w.config;
   enc_pairs b w.secrets;
+  enc_table
+    b
+    (List.map
+       (fun (key, store, remote) -> [ key; store; remote ])
+       (List.sort compare3 w.external_secret_refs));
   enc_option enc_string b w.schedule;
   enc_string b w.scheduled_concurrency;
   enc_int b w.backoff_limit;

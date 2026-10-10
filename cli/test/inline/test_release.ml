@@ -24,6 +24,8 @@ let sample_workload : R.workload =
   ; image = "reg/myworkspace/charge-svc:abc1234"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DATABASE_URL", "db-secret" ]
+  ; external_secret_refs =
+      [ "PAYMENT_API_KEY", "payments-vault", "production/payment-api" ]
   ; schedule = None
   ; scheduled_concurrency = "forbid"
   ; backoff_limit = 0
@@ -85,6 +87,12 @@ let test_json_round_trip () =
       "secret reference preserved"
       "db-secret"
       (List.assoc "DATABASE_URL" w.secrets);
+    check_bool
+      "external secret reference preserved"
+      true
+      (List.mem
+         ("PAYMENT_API_KEY", "payments-vault", "production/payment-api")
+         w.external_secret_refs);
     check_int "replicas preserved" 2 w.replicas;
     check_string "scheduled concurrency preserved" "forbid" w.scheduled_concurrency;
     check_int "backoff limit preserved" 0 w.backoff_limit;
@@ -441,7 +449,7 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "e86912e2fd3146fe5db934cc51f684a5"
+    "59746b2444ef2c1d7afd1a161a4c3855"
     (R.record_digest sample_record)
 ;;
 
@@ -538,7 +546,6 @@ let test_env : Sol_cli_deployment_plan.env_config =
   ; region = None
   ; base_domain = None
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_live
   }
 ;;
 
