@@ -308,6 +308,16 @@ let refuse_external_secret_target ~ctx ~namespace ~secret_name =
   else Ok ()
 ;;
 
+let verify_platform_secret_destinations ~ctx ~namespaces =
+  let* () = require_namespaces namespaces in
+  iter_namespaces namespaces ~f:(fun namespace ->
+    let secret_name = Sol_cli_manifest.runtime_secret_name in
+    let* () = ensure_namespace ~ctx namespace in
+    let* () = refuse_external_secret_target ~ctx ~namespace ~secret_name in
+    let* existing = get_named_secret_json ~ctx ~name:secret_name namespace in
+    verify_runtime_secret_owner existing)
+;;
+
 let set_named_key
       ?(allow_unlabeled_runtime = false)
       ~ctx
@@ -366,6 +376,7 @@ let set_platform_key ~ctx ~namespaces ~key ~value =
   then Error (Printf.sprintf "%s is not a supported Sol platform Job secret" key)
   else
     let* () = require_namespaces namespaces in
+    let* () = verify_platform_secret_destinations ~ctx ~namespaces in
     let changed = ref [] in
     let* () =
       iter_namespaces namespaces ~f:(fun namespace ->

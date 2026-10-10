@@ -600,10 +600,13 @@ let test_check_requires_and_accepts_explicit_secret_authorities () =
       \            authority: external\n\
       \            store: payments-store\n\
       \            key: payments/database-url\n\
-      \          SOL_API_KEY: sol\n\
+      \          SOL_API_KEY:\n\
+      \            authority: sol\n\
       \        comms/notify_worker:\n\
-      \          POSTGRES_URL: sol\n\
-      \          SOL_API_KEY: sol\n";
+      \          POSTGRES_URL:\n\
+      \            authority: sol\n\
+      \          SOL_API_KEY:\n\
+      \            authority: sol\n";
     let code, stdout, stderr = run_sol ~root [ "check" ] in
     Windtrap.equal
       Windtrap.int
@@ -688,8 +691,10 @@ let with_plan_workspace f =
          \      cluster_name: probe\n\
          \      secrets:\n\
          \        payments/charge_svc:\n\
-         \          POSTGRES_URL: sol\n\
-         \          SOL_API_KEY: sol\n";
+         \          POSTGRES_URL:\n\
+         \            authority: sol\n\
+         \          SOL_API_KEY:\n\
+         \            authority: sol\n";
        f root ~write)
 ;;
 

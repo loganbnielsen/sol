@@ -66,10 +66,14 @@ prod:
       state_bucket: first-run-tfstate
       secrets:
         payments/charge_svc:
-          POSTGRES_URL: sol
-          SOL_API_KEY: sol
-          KAFKA_SASL_PASSWORD: sol
-          KAFKA_SSL_CA_CERT: sol
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
       aws:
         state_lock_table: first-run-tflock
         provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
@@ -88,10 +92,14 @@ stale:
       state_bucket: first-run-tfstate
       secrets:
         payments/charge_svc:
-          POSTGRES_URL: sol
-          SOL_API_KEY: sol
-          KAFKA_SASL_PASSWORD: sol
-          KAFKA_SSL_CA_CERT: sol
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
       aws:
         state_lock_table: first-run-tflock
         provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner

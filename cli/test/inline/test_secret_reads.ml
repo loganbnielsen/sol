@@ -21,11 +21,15 @@ let fake_kubectl ~log ~mode_file =
 verb=""
 kind=""
 next_is_kind=0
+next_is_ns=0
+namespace=""
 for a in "$@"; do
   if [ "$next_is_kind" = 1 ]; then kind="$a"; next_is_kind=0; fi
+  if [ "$next_is_ns" = 1 ]; then namespace="$a"; next_is_ns=0; fi
   case "$a" in
     apply|patch|rollout) [ -z "$verb" ] && verb="$a" ;;
     get) [ -z "$verb" ] && verb="get" && next_is_kind=1 ;;
+    -n) next_is_ns=1 ;;
   esac
 done
 printf '%%s %%s\n' "$verb" "$kind" >> %s
@@ -36,6 +40,11 @@ if [ "$verb" = "get" ]; then
     exit 1
   fi
   case "$kind" in
+    externalsecrets)
+      if [ "$mode" = "platform-collision" ] && [ "$namespace" = "notifications" ]; then
+        printf 'owner\tsol-secrets\n'
+      fi
+      exit 0 ;;
     secrets)
       if [ "$mode" = "listing-fails" ]; then
         echo 'Error from server (Forbidden): secrets is forbidden: cannot list resource "secrets"' >&2
@@ -226,6 +235,29 @@ let test_platform_set_writes_only_the_runtime_secret () =
         (Sol_cli_string.contains ~needle:"charge-svc-secrets" manifests))
 ;;
 
+let test_platform_preflight_checks_all_namespaces_before_secret_writes () =
+  with_fake_kubectl ~mode:"platform-collision" (fun ~calls:_ ~manifests ->
+    match
+      Sol_cli_secret.verify_platform_secret_destinations
+        ~ctx
+        ~namespaces:[ "payments"; "notifications" ]
+    with
+    | Ok () -> Windtrap.fail "an ExternalSecret collision must fail preflight"
+    | Error message ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the conflicting shared Secret"
+        true
+        (Sol_cli_string.contains
+           ~needle:"ExternalSecret already targets this object"
+           message);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"preflight writes no shared Secret before discovering the collision"
+        false
+        (Sol_cli_string.contains ~needle:"kind: Secret" (manifests ())))
+;;
+
 let test_unit_set_writes_only_its_unit_secret () =
   with_fake_kubectl ~mode:"owned-unit" (fun ~calls:_ ~manifests ->
     match
@@ -317,6 +349,10 @@ let%test "verify: runtime Secret check reads the substrate Secret" =
 
 let%test "scope: platform writes only the shared Job Secret" =
   test_platform_set_writes_only_the_runtime_secret ()
+;;
+
+let%test "scope: platform secret destinations preflight as a target" =
+  test_platform_preflight_checks_all_namespaces_before_secret_writes ()
 ;;
 
 let%test "scope: unit writes only the selected unit Secret" =

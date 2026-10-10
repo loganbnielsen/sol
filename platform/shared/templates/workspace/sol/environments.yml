@@ -10,8 +10,12 @@ prod:
       # registry: <your-registry-url>
       secrets:
         payments/charge_svc:
-          POSTGRES_URL: sol
-          SOL_API_KEY: sol
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
         comms/notify_worker:
-          POSTGRES_URL: sol
-          SOL_API_KEY: sol
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol

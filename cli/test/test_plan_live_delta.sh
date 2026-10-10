@@ -21,10 +21,14 @@ prod:
       state_bucket: sol-plan-state
       secrets:
         payments/api_svc:
-          POSTGRES_URL: sol
-          SOL_API_KEY: sol
-          KAFKA_SASL_PASSWORD: sol
-          KAFKA_SSL_CA_CERT: sol
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
       aws:
         state_lock_table: sol-plan-lock
 EOF

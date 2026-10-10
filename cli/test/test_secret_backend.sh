@@ -27,7 +27,8 @@ prod:
             authority: external
             store: vault-production
             key: postgres/production
-          SOL_API_KEY: sol
+          SOL_API_KEY:
+            authority: sol
 EOF
 
 refuse_external() {

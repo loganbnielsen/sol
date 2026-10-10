@@ -164,13 +164,15 @@ let test_target_secret_authorities_resolve_per_unit_key () =
   registry: registry.example.test/pluto
   secrets:
     payments/charge_svc:
-      DATABASE_URL: sol
+      DATABASE_URL:
+        authority: sol
       STRIPE_API_KEY:
         authority: external
         store: vault-production
         key: secret/production/payments/stripe
     notifications/email_worker:
-      STRIPE_API_KEY: sol
+      STRIPE_API_KEY:
+        authority: sol
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error error -> Windtrap.fail (Sol_cli_config.error_to_string error)
@@ -237,6 +239,29 @@ let test_secret_authorities_reject_malformed_references () =
     expect_load_error
       "prod.targets.aws/us-east-1: secrets.STRIPE_API_KEY.store must be a non-empty \
        string")
+;;
+
+let test_secret_authorities_reject_scalar_shorthand () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      {|target:
+  secrets:
+    payments/charge_svc:
+      DATABASE_URL: sol
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Windtrap.fail "scalar secret authority shorthand must be rejected"
+    | Error error ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"explains the required mapping shape"
+        true
+        (Sol_cli_string.contains
+           ~needle:"secrets.DATABASE_URL must be an authority mapping"
+           (Sol_cli_config.error_to_string error)))
 ;;
 
 let test_duplicate_resource_fails () =
@@ -2365,4 +2390,8 @@ let%test "target secrets: per-unit authority resolution" =
 
 let%test "target secrets: malformed external refs fail" =
   test_secret_authorities_reject_malformed_references ()
+;;
+
+let%test "target secrets: scalar authority shorthand fails" =
+  test_secret_authorities_reject_scalar_shorthand ()
 ;;

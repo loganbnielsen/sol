@@ -407,12 +407,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
   let decode_secret_authority key value =
     let where = "secrets." ^ key in
     match value with
-    | `Scalar _ ->
-      let* authority = read_scalar ~where "authority" value in
-      (match authority with
-       | "sol" -> Ok Sol_managed
-       | "external" -> refuse (where ^ " must declare an external store and key")
-       | _ -> refuse (where ^ ".authority must be sol or external"))
+    | `Scalar _ -> refuse (where ^ " must be an authority mapping with an authority field")
     | `O _ ->
       let* fields = members ~path ~where:(" in " ^ where) value in
       let* authority =

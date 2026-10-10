@@ -246,7 +246,9 @@ let run_set target address from_stdin from_file =
       let* namespaces = target_namespaces ~config ~facts ~workspace in
       if namespaces = []
       then Error "target has no active workload namespaces for Sol platform Jobs"
-      else Ok (`Platform (key, namespaces))
+      else
+        let* () = Sol_cli_secret.verify_platform_secret_destinations ~ctx ~namespaces in
+        Ok (`Platform (key, namespaces))
   in
   (* Resolve authority and the exact destination before opening secret input. *)
   let* value = read_value ~from_stdin ~from_file in
