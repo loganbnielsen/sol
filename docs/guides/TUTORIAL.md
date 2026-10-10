@@ -406,7 +406,7 @@ sol local secret set SOL_API_KEY --value dev-internal-key
 Then deploy:
 
 ```bash
-sol up
+sol local deploy
 ```
 
 For each service that has a `Dockerfile`, Sol:
@@ -649,7 +649,7 @@ sol new worker logistics/fulfillment
 Generates a minimal worker in `app/logistics/fulfillment_worker/`. Wire the event library into its `dune` file, set `module Message = Payment_confirmed`, implement `handle`, then redeploy:
 
 ```bash
-sol up
+sol local deploy
 ```
 
 ### New service
@@ -719,7 +719,7 @@ sol local infra down                                      tear down the cluster
 sol local run [--scope DOMAIN[/UNIT]]                 run services as native processes (fast iteration)
 
 sol plan TARGET                                   print merged app/resource/service plan
-sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
+sol local deploy [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
 sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)

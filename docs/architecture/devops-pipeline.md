@@ -47,7 +47,7 @@ verified before application; emitted artifacts must use an artifact-safe backend
 for Kafka consumer groups. It is a removal-warning baseline, not provider evidence
 that a group is active or that a workload succeeded.
 
-There are three writers: local `sol up` and direct deploy both run
+There are three writers: local `sol local deploy` and direct deploy both run
 `Sol_cli_deploy_run.run_lifecycle`, which records the release boundary and then the
 group record; rollback (`Sol_cli_rollback.execute`) writes separately. Local up has no
 release record, so release persistence cannot replace this shared record without also
@@ -68,7 +68,7 @@ Decision (#1190): the record stays independent. The warning protects the workspa
 retained** boundary; a scoped deploy deliberately carries every declared group so the
 units it leaves out are not read as removals
 (`Sol_cli_deployment_plan.derive_consumer_groups`). Release state therefore cannot
-supply the baseline for a scoped deploy. Local `sol up` and direct `sol deploy` record
+supply the baseline for a scoped deploy. Local `sol local deploy` and direct `sol deploy` record
 the plan's declared intent; rollback records the restored release's applied groups
 because it restores that boundary. Missing records mean a first deployment; unreadable
 records fail the guard unless the operator explicitly passes `--confirm-group-change`.
@@ -77,7 +77,7 @@ records fail the guard unless the operator explicitly passes `--confirm-group-ch
 
 ## Deploy lifecycle ownership
 
-Local `sol up` and cloud/direct `sol deploy` share one correctness-sequence owner,
+Local `sol local deploy` and cloud/direct `sol deploy` share one correctness-sequence owner,
 `Sol_cli_deploy_run.run_lifecycle`. Under the boundary lease it reads the prior
 contract, presents the plan, runs the target's prerequisite gates, records the plan,
 checks consumer-group removal, reads retained state, reconciles and applies, then
@@ -130,7 +130,7 @@ port-forwards started by `sol local infra up`. Prefixes each service's stdout/st
 
 ---
 
-### `sol up`
+### `sol local deploy`
 
 **Module:** `cli/bin/cmd_up.ml` → `run`
 
@@ -304,7 +304,7 @@ units it never touched, while a full-workspace deploy that drops a workload stil
 records a boundary without it and rollback still prunes it. The release id restores that
 recorded release boundary. Does not use `kubectl rollout undo` — that
 mechanism cannot restore config, volumes, or ingress. Restoration comes
-entirely from the release record `sol up`/`sol deploy` write on every deploy
+entirely from the release record `sol local deploy`/`sol deploy` write on every deploy
 (FEAT-067):
 
 1. **Resolve + load + validate** — `Sol_cli_release_store.get` fetches the
@@ -390,7 +390,7 @@ is `Sol_cli_rollback.execute` (FEAT-075), not inline logic in
 mutation ahead of a refusal — or the pointer ahead of workload verification
 or pruning — fails a test rather than only a future incident.
 
-**`sol deploy` removes surplus it owns; `sol up` only reports it**
+**`sol deploy` removes surplus it owns; `sol local deploy` only reports it**
 (FEAT-074, #1305): after a successful apply, both compare the live Sol-owned
 workload set against the plan's `services` (reusing
 `Sol_cli_rollback.unexpected_workloads`, the same pure diff `verify_workloads`
@@ -414,7 +414,7 @@ whole target and always has the released boundary to authorize a removal).
 **Mutation boundary (FEAT-072).** Before any step below mutates anything,
 rollback acquires the workspace's boundary lease — the mutable
 `sol-boundary-lease-<workspace>` ConfigMap (`Sol_cli_boundary_lease`), the same
-lease `sol deploy`/`sol up` hold while applying. Acquisition is a `kubectl
+lease `sol deploy`/`sol local deploy` hold while applying. Acquisition is a `kubectl
 create`, so the API server is the arbiter and two processes cannot both believe
 they own the boundary. If a live deploy holds it, rollback asks it to abort and
 polls for the lease to go quiet; if it cannot establish quiescence within the
@@ -430,7 +430,7 @@ refusal becomes a process exit.
 Ownership is not just acquired once: every mutation re-verifies it against the
 live lease (`Sol_cli_boundary_lease.ensure_held`, a heartbeat write guarded by a
 `resourceVersion` compare-and-swap) — before each workload `apply`, before the
-surplus `prune`, and before the pointer move — and `sol deploy`/`sol up` do the
+surplus `prune`, and before the pointer move — and `sol deploy`/`sol local deploy` do the
 same before recording the release and advancing the pointer. That is also the
 renewal: a long rollback or deploy keeps pushing its heartbeat forward as it
 works, so a long healthy operation is never taken over mid-flight. Losing
@@ -449,7 +449,7 @@ cluster, and refuses a release recorded as GitOps-owned.
 
 **Module:** `cli/lib/deploy/sol_cli_release_retention.ml`
 
-A successful `sol up`/`sol deploy` bounds the workspace's release history to the
+A successful `sol local deploy`/`sol deploy` bounds the workspace's release history to the
 last `--keep-releases N` distinct release records (default 20, DEC-018). The
 current pointer target and the release the pointer named before the transition
 are never pruned, even when they fall outside the window. Order comes from each
@@ -462,7 +462,7 @@ Pruning is best-effort/non-fatal: a pruning failure warns and does not turn a
 successful deploy into a failure.
 
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
-consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster
+consumer group guard on the next `sol local deploy`/`sol deploy` will re-read the cluster
 state.
 
 ---
@@ -583,7 +583,7 @@ Inline tests live in `cli/test/inline/`; process-level tests remain in `cli/test
 - **Changing rollback behavior** (e.g. supporting a new progressive delivery
   strategy): extend `test_rollback.ml` with a case for the new target type.
 
-- **Any new deployment behavior in `sol up` or `sol deploy`** that is not already
+- **Any new deployment behavior in `sol local deploy` or `sol deploy`** that is not already
   covered by the above should get an integration-level test in
   `test_deployment_phases.ml`, which exercises the plan → render → execute sequence using a dry-run or stubbed executor to avoid cluster access.
 
@@ -626,7 +626,7 @@ Add it to `sol_cli_deployment_plan.ml` (plan phase) or `sol_cli_executor.ml`
 
 ## Generated Kubernetes Artifact Invariants
 
-Every resource emitted by `sol up`, `sol deploy`, and `sol local infra up` must satisfy
+Every resource emitted by `sol local deploy`, `sol deploy`, and `sol local infra up` must satisfy
 these invariants. The security context invariants are enforced in
 `cli/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
 and the `artifact_invariants` test suite.
@@ -638,7 +638,7 @@ and the `artifact_invariants` test suite.
 | Read-only root filesystem | `containers[].securityContext.readOnlyRootFilesystem: true` | Enforced | Container-level; all primitives |
 | GitOps secret redaction | `Secret.stringData` values are empty strings | Enforced | `Kubernetes_placeholder` mode only |
 | Taxonomy labels | `metadata.labels["workspace"\|"domain"\|"service"\|"primitive"\|"release"]` | Enforced | Pod-template labels, unprefixed (not `sol.dev/*` — see `docs/architecture/observability-design.md`); shipped in OBS-008 |
-| `env` taxonomy label | `metadata.labels["env"]` | Done | Emitted by `sol deploy <env>/<provider>/<region>` (FEAT-026); `sol up` stays local-only and omits it — see `observability-design.md`'s Identity section |
+| `env` taxonomy label | `metadata.labels["env"]` | Done | Emitted by `sol deploy <env>/<provider>/<region>` (FEAT-026); `sol local deploy` stays local-only and omits it — see `observability-design.md`'s Identity section |
 
 ### What is covered by `assert_k8s_invariants`
 
