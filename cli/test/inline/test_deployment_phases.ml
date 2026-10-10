@@ -1432,7 +1432,25 @@ let test_database_setup_sql_is_idempotent () =
     Windtrap.bool
     ~msg:"no password literal is embedded in the manifest"
     false
-    (setup_mentions "PASSWORD '" sql)
+    (setup_mentions "PASSWORD '" sql);
+  (* The grants are the difference between roles that exist and roles that work: without
+     them the migration cannot create anything and the application cannot read what it
+     creates. *)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"both roles can use the schema"
+    true
+    (setup_mentions "GRANT USAGE ON SCHEMA public" sql);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"the DDL role can create in it"
+    true
+    (setup_mentions "GRANT CREATE ON SCHEMA public" sql);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"objects the migration creates default to the DML role"
+    true
+    (setup_mentions "ALTER DEFAULT PRIVILEGES FOR ROLE" sql)
 ;;
 
 let%test "database setup: the image must be a digest reference" =

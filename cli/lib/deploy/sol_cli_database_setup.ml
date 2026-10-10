@@ -48,9 +48,19 @@ let ddl_role = "sol_migrator"
 let dml_role = "sol_app"
 
 (** Idempotent by construction: re-running against a target whose roles exist is a no-op
-    — no recreate, no drop, no password churn. Passwords arrive as [psql] variables
-    ([:'ddl_password']) rather than being embedded, so this text never carries a secret
-    and the manifest stays free of credential material. *)
+    in value — the passwords come from the existing Secret (the renderer reads it), so
+    the [ALTER] re-applies the same value rather than churning it.
+
+    **The grants belong here, not in the migrations.** A role without them cannot do
+    anything. The migration runs as [sol_migrator] and creates the schema's objects, so
+    [ALTER DEFAULT PRIVILEGES] for that role is what makes everything it later creates
+    reachable by [sol_app], without every migration carrying grants of its own. On
+    PostgreSQL 15 and later [public] grants no [CREATE] to [PUBLIC], so [sol_migrator]
+    needs it explicitly or the migration cannot create anything.
+
+    Passwords arrive as [psql] variables ([:'ddl_password']) rather than being embedded,
+    so this text never carries a secret and the manifest stays free of credential
+    material. *)
 let role_sql =
   Printf.sprintf
     {sql|DO $$
@@ -66,12 +76,25 @@ BEGIN
     ALTER ROLE %s LOGIN PASSWORD :'dml_password';
   END IF;
 END
-$$;|sql}
+$$;
+GRANT USAGE ON SCHEMA public TO %s, %s;
+GRANT CREATE ON SCHEMA public TO %s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO %s;|sql}
     ddl_role
     ddl_role
     ddl_role
     dml_role
     dml_role
+    dml_role
+    ddl_role
+    dml_role
+    ddl_role
+    ddl_role
+    dml_role
+    ddl_role
     dml_role
 ;;
 
