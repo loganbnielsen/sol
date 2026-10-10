@@ -154,6 +154,11 @@ empty or unreadable file is a startup `Config` error. A rotated key therefore ta
 effect only after a restart, whichever source is used: `sol secret set` restarts the
 workloads for this reason.
 
+`Api_key` applies to the built-in `/metrics` endpoint (`metrics_auth`). It is **not**
+applied to application routes: an internal route authenticates with `` `Workload_identity``
+and an external route (`Route.external_`) is unauthenticated. Per-route API-key auth is not
+implemented; endpoint-level API-key auth is future work.
+
 On success: `Service { key_id }` where `key_id` is the first 8 characters of the
 validated key. Missing header or wrong value → 401.
 
