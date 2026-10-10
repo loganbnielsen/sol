@@ -666,6 +666,123 @@ let test_production_placeholder_secret_requires_kafka_keys () =
   assert_contains "CA key is projected" workload "key: KAFKA_SSL_CA_CERT"
 ;;
 
+(* The CA env var and the CA volume must be projected from the same Secret object:
+   [secret_name_for_key] is the one routing decision both now use. *)
+let index_of_needle haystack needle =
+  let haystack_length = String.length haystack in
+  let needle_length = String.length needle in
+  let rec go i =
+    if i + needle_length > haystack_length
+    then None
+    else if String.equal (String.sub haystack i needle_length) needle
+    then Some i
+    else go (i + 1)
+  in
+  go 0
+;;
+
+let last_index_of_needle haystack needle =
+  let rec go last i =
+    match index_of_needle (String.sub haystack i (String.length haystack - i)) needle with
+    | None -> last
+    | Some at -> go (Some (i + at)) (i + at + 1)
+  in
+  go None 0
+;;
+
+let line_value_after haystack start =
+  let n = String.length haystack in
+  let rec stop i = if i >= n || haystack.[i] = '\n' then i else stop (i + 1) in
+  String.trim (String.sub haystack start (stop start - start))
+;;
+
+(* The CA volume is `- name: kafka-ca` then `secret: { secretName: ..., items: ... }`. *)
+let ca_volume_secret_name workload =
+  match index_of_needle workload "name: kafka-ca" with
+  | None -> None
+  | Some at ->
+    (match
+       index_of_needle
+         (String.sub workload at (String.length workload - at))
+         "secretName:"
+     with
+     | None -> None
+     | Some relative ->
+       Some (line_value_after workload (at + relative + String.length "secretName:")))
+;;
+
+(* The CA env entry is the last `key: KAFKA_SSL_CA_CERT`, inside its secretKeyRef. *)
+let ca_env_secret_name workload =
+  match last_index_of_needle workload "key: KAFKA_SSL_CA_CERT" with
+  | None -> None
+  | Some at ->
+    (match last_index_of_needle (String.sub workload 0 at) "name:" with
+     | None -> None
+     | Some name_at -> Some (line_value_after workload (name_at + String.length "name:")))
+;;
+
+let assert_ca_routes workload ~expected =
+  (match ca_volume_secret_name workload with
+   | Some name -> Windtrap.equal Windtrap.string ~msg:"CA volume secretName" expected name
+   | None -> Windtrap.fail "no CA volume secretName in the rendered workload");
+  match ca_env_secret_name workload, ca_volume_secret_name workload with
+  | Some env, Some volume ->
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the CA env ref and the CA volume name the same Secret"
+      volume
+      env
+  | _ -> Windtrap.fail "expected both a CA env ref and a CA volume"
+;;
+
+let external_ca_spec =
+  { production_spec with
+    secret_sources =
+      [ ( "KAFKA_SSL_CA_CERT"
+        , Sol_cli_manifest.External { store = "payments-store"; key = "payments/ca" } )
+      ]
+  }
+;;
+
+let production_fn_spec =
+  { fn_spec with config = Sol_cli_manifest.production_kafka_config @ fn_spec.config }
+;;
+
+let test_external_ca_routes_to_the_external_secret () =
+  let _ns, workload = render_spec_ok external_ca_spec in
+  assert_ca_routes workload ~expected:"charge-svc-external-secrets"
+;;
+
+let test_sol_managed_ca_routes_to_the_unit_secret () =
+  let _ns, workload = render_spec_ok production_spec in
+  assert_ca_routes workload ~expected:"charge-svc-secrets"
+;;
+
+let test_external_ca_routes_in_a_cronjob () =
+  let cronjob =
+    { production_fn_spec with
+      secret_sources =
+        [ ( "KAFKA_SSL_CA_CERT"
+          , Sol_cli_manifest.External { store = "payments-store"; key = "payments/ca" } )
+        ]
+    }
+  in
+  let _ns, workload = render_spec_ok cronjob in
+  assert_ca_routes workload ~expected:"invoice-fn-external-secrets"
+;;
+
+let%test "kafka CA: external CA volume and env use the external secret" =
+  test_external_ca_routes_to_the_external_secret ()
+;;
+
+let%test "kafka CA: Sol-managed CA volume and env use the unit secret" =
+  test_sol_managed_ca_routes_to_the_unit_secret ()
+;;
+
+let%test "kafka CA: external CA volume and env use the external secret (CronJob)" =
+  test_external_ca_routes_in_a_cronjob ()
+;;
+
 let test_svc_secret_refs_without_values () =
   let spec =
     { svc_spec with
