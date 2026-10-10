@@ -12,8 +12,7 @@ let backend_config (target : Sol_cli_config.target) ~root =
       target
       ~bucket
       ~object_key
-  | None ->
-    Error "target must declare state_bucket before `sol cloud` can use durable state"
+  | None -> Error "target must declare state_bucket before Sol can use durable state"
 ;;
 
 let authorization_backend target = backend_config target ~root:`Authorization

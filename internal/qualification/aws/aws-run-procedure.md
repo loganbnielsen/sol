@@ -207,7 +207,7 @@ Textual substring matching cannot establish success, so an empty or malformed re
 be read as the worker's effect.
 
 **`destroy`** — capture both roots' state with `terraform state pull` into the bundle, run
-`sol cloud destroy <target> --apply`, then the independent inventory. **`verify`** runs the
+`sol destroy <target> --apply`, then the independent inventory. **`verify`** runs the
 inventory alone. Rows: I3, I5, I7–I9, H6.
 
 ### VERIF-021 — managed secret projection and the fenced grant (alpha E4, E6)
@@ -268,14 +268,14 @@ lands, E5 is `BLOCKED` — recorded as blocked, never weakened.
 | H5/E5/E6 | produce N `acks=all` messages, kill one broker | none lost; measured consumer auto-resume ≤ 60 s |
 | H6/E2–E4 | `aws rds reboot-db-instance --force-failover`; PITR restore into a clean target | measured RTO/RPO within the matrix bounds; the app serves a transaction after each |
 | H7/E10 | stop the telemetry backend | the app is unaffected; the telemetry gap is recorded, with no business-data claim |
-| I10 | stop the platform install partway, then `sol cloud destroy --apply` | the destroy succeeds and enters `PreparingDestroy`; no out-of-band deletion |
+| I10 | stop the platform install partway, then `sol destroy --apply` | the destroy succeeds and enters `PreparingDestroy`; no out-of-band deletion |
 | I12 | interrupt a destroy between preparation and destruction, then re-run | the second run completes without reusing the first attempt's snapshot identity |
 
 ### Teardown and independent absence verification
 
 1. `terraform state pull` for both the cluster and platform roots into the evidence bundle
    **before** any teardown (ledger rule 4).
-2. `sol cloud destroy <target> --apply`; capture every `lifecycle phase:` line and the
+2. `sol destroy <target> --apply`; capture every `lifecycle phase:` line and the
    terraform argv (I7's `-var` order, I8's targeted preparation, I9's `Destroying` → `Absent`).
 3. Independent inventory (`absence.py`, read-only), tri-state `PRESENT` / `ABSENT` / `UNKNOWN`,
    over EKS clusters, RDS instances, subnet groups and snapshots, EC2 instances, VPCs, NAT gateways,
@@ -291,7 +291,7 @@ lands, E5 is `BLOCKED` — recorded as blocked, never weakened.
    verdict: it is the contract that outlives the target, not a leak. Confirm it is present and its
    nameservers are unchanged, and that no snapshot, bucket, address or volume is retained
    (`retention: none`).
-5. Re-run `sol cloud destroy <target> --apply` against the now-`Absent` target: exit 0,
+5. Re-run `sol destroy <target> --apply` against the now-`Absent` target: exit 0,
    `Absent`, no preparation (I11).
 
 ### Released-bundle interface (RELEASE-006, landed)

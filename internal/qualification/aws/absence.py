@@ -2,7 +2,7 @@
 """Independent, read-only AWS residue observation for a qualification target.
 
 The AWS row harness destroys a target through Sol's public lifecycle
-(``sol cloud destroy <target> --apply``) and must then decide, independently of
+(``sol destroy <target> --apply``) and must then decide, independently of
 Sol, whether the target's disposable resources are actually gone. Sol's destroy
 exit code, its Terraform state and Sol's own absence report are not that
 decision; this module makes the decision from provider reads alone.
@@ -89,7 +89,7 @@ LIMITATIONS = [
     f"{CLUSTER_TAG_PREFIX}<cluster> tag, the cluster name as a name component, or the target's "
     "registry path. A resource that carries none of those after teardown cannot be attributed "
     "to the target and is not counted as its residue.",
-    "the verdict is read-only. Teardown itself is Sol's `sol cloud destroy <target> --apply`; "
+    "the verdict is read-only. Teardown itself is Sol's `sol destroy <target> --apply`; "
     "this observer never mutates the provider and never infers absence from Sol's exit code or "
     "Terraform state.",
     "sub-resources whose lifecycle is owned by a checked parent (for example EKS node groups "

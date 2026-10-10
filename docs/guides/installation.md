@@ -58,7 +58,7 @@ Sol separates two things that look similar in most tools:
 | Scope | your account | one deployable target |
 | Members | Terraform state + locking; the provisioning, cluster-access, deploy and operator identities; the delegated DNS zone when Sol owns one | network, cluster, database, registry use, platform, workloads |
 | Lifetime | outlives every environment | disposable |
-| Removed by | `sol uninstall` | `sol cloud destroy <target>` |
+| Removed by | `sol uninstall` | `sol destroy <target>` |
 
 You set the installation up **once per account**, and every environment afterwards
 is disposable. Both are created by the same command, in this order, and neither
@@ -331,7 +331,7 @@ way is the delegated zone Sol manages for you when `dns_zone_ownership: sol` —
 
 ## 7. Teardown: two different operations
 
-|  | `sol cloud destroy prod/aws/us-east-1` | `sol uninstall prod/aws/us-east-1` |
+|  | `sol destroy prod/aws/us-east-1` | `sol uninstall prod/aws/us-east-1` |
 |---|---|---|
 | Removes | that environment: network, cluster, database, workloads | the installation: state backend, locking, the delegated zone Sol created |
 | Leaves | the installation, untouched | the roles you created, a zone you supplied, anything Sol does not own |

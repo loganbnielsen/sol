@@ -82,7 +82,7 @@ A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
 migration-runner image published with that version, pinned by digest
 (see [installation](docs/guides/installation.md)). It needs glibc 2.35 or newer
 (Ubuntu 22.04+) and the `libpq5` and `libgmp10` libraries. The install can be
-read-only: `sol cloud` runs Terraform in a working directory of its own per target,
+read-only: `sol plan` and `sol deploy` run Terraform in a working directory of its own per target,
 under `~/.local/share/sol/terraform/`.
 
 The CLI and its platform assets need no Sol checkout. One thing still does:
@@ -205,7 +205,7 @@ of lifecycle confusion:
   zone. It is designed to be set up once and removed only by an explicit
   `sol uninstall`, never by destroying an environment.
 - **An environment** is one disposable target — its network, cluster, database
-  and workloads. `sol cloud destroy <target>` removes the environment and is
+  and workloads. `sol destroy <target>` removes the environment and is
   designed to leave the installation intact, so redeploying does not redo
   registrar or DNS work.
 

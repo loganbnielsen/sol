@@ -54,7 +54,7 @@ consistency:
 
 - **0** — the command did what it says.
 - **1** — it refused, or it failed. This is the default for every refusal and failure, and
-  the code `sol cloud` uses for a target that did not reach its postcondition. The reason is
+  the code the cloud lifecycle uses for a target that did not reach its postcondition. The reason is
   on stderr, and a command that refuses before the billable boundary has changed nothing.
 - **2** — a *negative answer from a command that ran*: `sol check` when a check fails, and
   `sol alert test` when the target does not satisfy the alert-delivery contract. Exit 1 means
@@ -79,10 +79,9 @@ The target is the positional. `sol deploy` reconciles the whole target and takes
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
 | `sol alert test` | — | `--alertmanager-url=URL`, `--dry-run`, `--target=ENV/PROVIDER/REGION` | documented | Send a synthetic alert through the target's |
-| `sol cloud destroy` | TARGET | `--accept-unreleased`, `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Destroy cloud infrastructure via Terraform. |
-| `sol cloud reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
 | `sol deploy` | TARGET | `--await-delegation=SECONDS`, `--confirm-ecr-removal`, `--confirm-group-change`, `--dry-run`, `--emit-plan-to=FILE`, `--emit-to=DIR`, `--image-ref=[SERVICE=]REPO@sha256:DIGEST`, `--image-tag=TAG`, `--keep-releases=N`, `--key-prefix=PREFIX`, `--loki-push-url=URL`, `--refresh-interval=INTERVAL`, `--registry=URL`, `--secret-backend=BACKEND`, `--secret-store-kind=KIND`, `--secret-store-ref=NAME` | documented | Reconcile a target's infrastructure, authorization and |
 | `sol deployments` | — | `--target=ENV/PROVIDER/REGION` | documented | List the deployment events the target's cluster |
+| `sol destroy` | TARGET | `--accept-unreleased`, `--apply`, `--plan`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile a target toward empty: destroy its Sol-owned |
 | `sol grants apply` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Reconcile the target-wide workload authorization: |
 | `sol grants plan` | TARGET | `--var=KEY=VALUE`, `--var-file=PATH` | documented | Plan the target-wide workload authorization |
 | `sol logs` | — | `--base-domain=DOMAIN`, `-f`, `--grafana-base-url=URL`, `--loki-base-url=URL`, `--loki-password=PASSWORD`, `--loki-username=USERNAME`, `--no-follow`, `--observability-backend=BACKEND`, `--release=RELEASE_ID`, `--scope=DOMAIN/UNIT`, `--tail=N`, `--target=ENV/PROVIDER/REGION` | documented | Stream logs from a deployed service. Wraps 'kubectl logs' |
@@ -90,6 +89,7 @@ The target is the positional. `sol deploy` reconciles the whole target and takes
 | `sol plan` | TARGET | `--image-ref=SERVICE=REPO@sha256:DIGEST`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview target infrastructure, authorization, workload |
 | `sol releases` | — | `--target=ENV/PROVIDER/REGION` | documented | List the release records the target's cluster holds for |
 | `sol secret list` | — | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | List secret keys without values |
+| `sol target reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
 | `sol target show` | — | `--check`, `--json`, `--target=ENV/PROVIDER/REGION`, `-v` | documented | Show a deployment target |
 | `sol uninstall` | TARGET | `--confirm`, `--confirm-dns-zone=DOMAIN`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Remove a Sol installation: its Sol-owned durable |
 <!-- END GENERATED: target -->

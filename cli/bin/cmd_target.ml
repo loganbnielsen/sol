@@ -283,4 +283,12 @@ let show_cmd =
       $ (const show $ target_arg $ verbose_arg $ json_arg $ check_arg))
 ;;
 
-let cmd = Cmd.group (Cmd.info "target" ~doc:"Inspect deployment targets") [ show_cmd ]
+(* `reconcile` is the target's ownership audit: it compares Terraform's recorded
+   attribution with independently observed provider reality, and adopts what it can
+   attribute exactly. It is target-scoped, like `show`, so it lives here rather than
+   under a removed `sol cloud` group. *)
+let cmd =
+  Cmd.group
+    (Cmd.info "target" ~doc:"Inspect and reconcile deployment targets")
+    [ show_cmd; Cmd_cloud_tf.reconcile_cmd ]
+;;

@@ -48,23 +48,30 @@ if in_container "$install" env SOL_HOME=/nonexistent /opt/sol/bin/sol assets >/d
 fi
 pass "an invalid SOL_HOME is an error, not a fall-through"
 
-# The cloud group is deliberately narrow: `sol deploy` reconciles the whole target, so
-# the public surface keeps only destroy and the ownership reconciler. The removed
-# plan/apply/bootstrap wrappers must not reappear through the installed bundle, whose
-# layout differs from the development build that cli/test/test_cloud_command_surface.sh
-# checks.
-surface="$(in_container "$install" /opt/sol/bin/sol cloud --help=plain)" ||
-  { echo "$surface"; die "sol cloud --help failed from the read-only install"; }
-for command in destroy reconcile; do
-  grep -Eq "^[[:space:]]+$command[[:space:]]" <<<"$surface" ||
-    die "sol cloud $command is missing from the installed release"
+# There is no `sol cloud` group: the user model is target-addressed. The whole target is
+# reconciled by `sol deploy`, destroyed by the top-level `sol destroy` (which keeps its
+# destructive confirmation), and audited by the target-scoped `sol target reconcile`. The
+# removed `sol cloud` group and its plan/apply/bootstrap/destroy members must not reappear
+# through the installed bundle, whose layout differs from the development build that
+# cli/test/test_target_command_surface.sh checks.
+root_surface="$(in_container "$install" /opt/sol/bin/sol --help=plain)" ||
+  { echo "$root_surface"; die "sol --help failed from the read-only install"; }
+if grep -Eq "^[[:space:]]+cloud[[:space:]]" <<<"$root_surface"; then
+  die "the removed sol cloud group is still public in the installed release"
+fi
+destroy_surface="$(in_container "$install" /opt/sol/bin/sol destroy --help=plain)" ||
+  { echo "$destroy_surface"; die "sol destroy --help failed from the read-only install"; }
+grep -Eq "^[[:space:]]+sol destroy" <<<"$destroy_surface" ||
+  die "sol destroy is missing from the installed release"
+grep -Fq -- "--apply" <<<"$destroy_surface" ||
+  die "sol destroy lost the --apply destructive confirmation"
+target_surface="$(in_container "$install" /opt/sol/bin/sol target --help=plain)" ||
+  { echo "$target_surface"; die "sol target --help failed from the read-only install"; }
+for command in show reconcile; do
+  grep -Eq "^[[:space:]]+$command[[:space:]]" <<<"$target_surface" ||
+    die "sol target $command is missing from the installed release"
 done
-for command in plan apply bootstrap; do
-  if grep -Eq "^[[:space:]]+$command[[:space:]]" <<<"$surface"; then
-    die "sol cloud $command is still public in the installed release"
-  fi
-done
-pass "sol cloud exposes only destroy/reconcile; plan, apply and bootstrap are gone"
+pass "sol destroy is top-level, sol target owns the ownership audit, and there is no sol cloud group"
 
 # `sol plan` is the read-only whole-target preview. From the installed bundle it has to
 # read a workspace with no checkout and run without a writable install or Terraform on

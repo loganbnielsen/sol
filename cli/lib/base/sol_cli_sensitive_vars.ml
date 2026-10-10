@@ -151,7 +151,7 @@ let refuse_on_command_line ~sensitive ~vars =
          "refusing %s on the terraform command line: the root declares it sensitive, and \
           Sol records the terraform command line in its run log, so the value would be \
           written to a file. Supply it out of band instead, from your secret store:\n\
-         \      TF_VAR_%s=\"$(your-secret-tool get ...)\" sol cloud ...\n\
+         \      TF_VAR_%s=\"$(your-secret-tool get ...)\" sol deploy ...\n\
          \  and remove it from --var and from the target's variables."
          name
          name)

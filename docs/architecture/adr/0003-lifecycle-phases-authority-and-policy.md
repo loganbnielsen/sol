@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-18
-- **Scope:** the `sol deploy` / `sol cloud destroy` lifecycle for AWS
+- **Scope:** the `sol deploy` / `sol destroy` lifecycle for AWS
   `production-single-region/v1`; the phase vocabulary is provider-neutral
 - **Supersedes:** the "temporary cluster-admin only to create the custom RBAC"
   and "apply always reconciles back toward protected Ready state" wording in
@@ -22,7 +22,7 @@ three had a single root cause that the earlier design did not model:
   prometheus chart's `prometheus-server` ClusterRole) during the full platform
   apply, which ran *after* the temporary cluster-admin association had been
   removed.
-- **Finding 15** — `sol cloud destroy` prepared destruction (deletion protection
+- **Finding 15** — `sol destroy` prepared destruction (deletion protection
   off, unique final snapshot, verified) and then re-applied ordinary production
   desired state before destroying, restoring `rds_deletion_protection=true` and
   stranding the instance.
@@ -181,7 +181,7 @@ destruction through `enter_destruction`, the abort edge of invariant 6 -- and
 `policy_vars` supplies the phase's desired-state overrides, appended after caller
 variables so the phase policy wins.
 
-`sol cloud destroy` derives its phase from `enter_destruction` rather than
+`sol destroy` derives its phase from `enter_destruction` rather than
 asserting `PreparingDestroy` directly. That is what makes the model and the
 operation agree: before, the operation was legal from any state while the relation
 said the edge was not.
@@ -207,7 +207,7 @@ Regression coverage asserts the semantics, not just the original bugs:
 - Two previously implicit rules become one explicit contract, so findings 13, 14
   and 15 share a single answer instead of three local patches.
 - `sol deploy` installs the platform under the temporary privileged
-  authority and de-escalates only after verified readiness; `sol cloud destroy`
+  authority and de-escalates only after verified readiness; `sol destroy`
   runs the destroy desired-state policy from a verified `PreparingDestroy`.
 - BUG-039 is unchanged: production RDS stays protected throughout `Ready`. The
   destroy path deliberately leaves that policy domain rather than weakening it.

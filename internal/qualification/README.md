@@ -39,7 +39,7 @@ success. A skipped capability is named as skipped; it is not silently promoted.
 5. Preserve evidence before cleanup. On any blocker while billable resources exist: capture the
    observation, run supported teardown, independently inventory the provider, and only then wait
    for human input.
-6. `sol cloud destroy` or Terraform success is not proof of absence. Provider-backed inventory
+6. `sol destroy` or Terraform success is not proof of absence. Provider-backed inventory
    must positively establish every relevant target-owned resource class as absent. An unreadable
    class makes the verdict UNKNOWN.
 7. Durable qualification prerequisites (for example state storage or delegated DNS) are distinct

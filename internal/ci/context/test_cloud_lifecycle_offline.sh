@@ -149,7 +149,7 @@ run_apply() {
 }
 
 run_destroy() {
-  (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$1" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+  (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$1" "$sol" destroy prod/aws/us-east-1 --apply) \
     >"$1.out" 2>&1
 }
 
@@ -722,11 +722,11 @@ done <"$root/internal/ci/lifecycle_fakes/owned_workloads.tsv"
 release_log="$tmp/release-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 \
         FAKE_CONFIGMAP_DIR="$seeded_configmaps" LIFECYCLE_LOG="$release_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$release_log.out" 2>&1
 then
   cat "$release_log.out" >&2
-  echo "cloud destroy with deployed workloads failed (FND-0077)" >&2
+  echo "destroy with deployed workloads failed (FND-0077)" >&2
   exit 1
 fi
 grep -F 'Releasing the application workloads' "$release_log.out" >/dev/null || {
@@ -792,11 +792,11 @@ fi
 retain_log="$tmp/release-retain-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 \
         LIFECYCLE_LOG="$retain_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$retain_log.out" 2>&1
 then
   cat "$retain_log.out" >&2
-  echo "cloud destroy with no recorded evidence failed instead of retaining the workloads" >&2
+  echo "destroy with no recorded evidence failed instead of retaining the workloads" >&2
   exit 1
 fi
 grep -F 'retaining' "$retain_log.out" >/dev/null || {
@@ -823,11 +823,11 @@ grep -E -- 'cloud/gcp/cluster destroy ' "$retain_log" >/dev/null || {
 rollout_log="$tmp/rollout-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 ROLLOUT_SERVED=1 \
         FAKE_CONFIGMAP_DIR="$seeded_configmaps" LIFECYCLE_LOG="$rollout_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$rollout_log.out" 2>&1
 then
   cat "$rollout_log.out" >&2
-  echo "cloud destroy with a progressive-delivery Rollout failed (FND-0079)" >&2
+  echo "destroy with a progressive-delivery Rollout failed (FND-0079)" >&2
   exit 1
 fi
 grep -F 'rollout/charge-canary' "$rollout_log" >/dev/null || {
@@ -856,7 +856,7 @@ if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
       DATABASE_REFUSES_UNRELEASED=1 \
       FAKE_CONFIGMAP_DIR="$seeded_configmaps" \
       LIFECYCLE_LOG="$release_fail_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+      "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$release_fail_log.out" 2>&1
 then
   cat "$release_fail_log.out" >&2
@@ -896,7 +896,7 @@ if (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 RELEASE_DELETE_FAILS=1 \
       DATABASE_REFUSES_UNRELEASED=1 \
       FAKE_CONFIGMAP_DIR="$seeded_configmaps" \
       LIFECYCLE_LOG="$override_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply --accept-unreleased) \
+      "$sol" destroy prod/gcp/us-central1 --apply --accept-unreleased) \
   >"$override_log.out" 2>&1
 then
   cat "$override_log.out" >&2
@@ -928,7 +928,7 @@ rm -f "$FAIL_MARKER_DIR/pods-released"
 unreachable_log="$tmp/release-unreachable-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 WORKSPACE_PODS=1 CLUSTER_UNREACHABLE=1 \
         LIFECYCLE_LOG="$unreachable_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$unreachable_log.out" 2>&1
 then
   cat "$unreachable_log.out" >&2
@@ -950,7 +950,7 @@ rm -f "$FAIL_MARKER_DIR/pods-released"
 unreadable_state_log="$tmp/state-unreadable-destroy.log"
 if (cd "$tmp/work" && DESTROYING=1 STATE_LIST_FAILS=1 \
       LIFECYCLE_LOG="$unreadable_state_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+      "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$unreadable_state_log.out" 2>&1
 then
   cat "$unreadable_state_log.out" >&2
@@ -995,11 +995,11 @@ fi
 
 gcp_destroy_log="$tmp/gcp-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$gcp_destroy_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$gcp_destroy_log.out" 2>&1
 then
   cat "$gcp_destroy_log.out" >&2
-  echo "cloud destroy on GCP failed" >&2
+  echo "destroy on GCP failed" >&2
   exit 1
 fi
 grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$gcp_destroy_log" \
@@ -1142,7 +1142,7 @@ refuse_log="$tmp/gcp-refuse.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
 refuse_rc=0
 (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
-   LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+   LIFECYCLE_LOG="$refuse_log" "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$refuse_log.out" 2>&1 || refuse_rc=$?
 if [ "$refuse_rc" -ne 0 ]; then
   echo "a destroy that reached absence with a degraded preparation must exit 0, not $refuse_rc:" >&2
@@ -1174,7 +1174,7 @@ orphan_log="$tmp/gcp-orphan.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
 orphan_rc=0
 (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 ORPHAN_SQL_PRESENT=1 \
-   LIFECYCLE_LOG="$orphan_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+   LIFECYCLE_LOG="$orphan_log" "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$orphan_log.out" 2>&1 || orphan_rc=$?
 if [ "$orphan_rc" -eq 0 ]; then
   echo "FND-0070: a destroy whose provider still holds a resource Terraform never adopted exited 0:" >&2
@@ -1216,7 +1216,7 @@ gcp_access_log="$tmp/gcp-access-failure.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access" \
   "$FAIL_MARKER_DIR/bootstrap-window"
 if ! (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
     >"$gcp_access_log.out" 2>&1
 then
   cat "$gcp_access_log.out" >&2
@@ -1431,7 +1431,7 @@ grep -E -- '-chdir=[^ ]*cloud/aws/cluster apply .*\.tfplan' "$ecr_confirmed_log"
 gcp_toolchain_log="$tmp/gcp-toolchain.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if (cd "$tmp/work" && NO_AUTH_PLUGIN=1 DESTROYING=1 LIFECYCLE_LOG="$gcp_toolchain_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+      "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$gcp_toolchain_log.out" 2>&1
 then
   echo "a GCP platform stage ran without gke-gcloud-auth-plugin" >&2
@@ -1450,7 +1450,7 @@ fi
 partial_log="$tmp/gcp-partial.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && PARTIAL_INSTALL=1 DESTROYING=1 LIFECYCLE_LOG="$partial_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$partial_log.out" 2>&1
 then
   cat "$partial_log.out" >&2
@@ -1491,7 +1491,7 @@ assert_contains "INFRA-042: the destroy completed after the recovery" "$partial_
 served_log="$tmp/gcp-partial-served.log"
 rm -f "$STATE_RM_FILE"
 if (cd "$tmp/work" && PARTIAL_INSTALL=1 CRD_SERVED=1 DESTROYING=1 \
-      LIFECYCLE_LOG="$served_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+      LIFECYCLE_LOG="$served_log" "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$served_log.out" 2>&1
 then
   echo "INFRA-042: a destroy that could not delete a served resource reported success" >&2
@@ -1510,7 +1510,7 @@ stale_platform_log="$tmp/gcp-stale-platform-state.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 DESTROYING=1 \
         SUBSTRATE_ABSENT_AT_PROVIDER=1 LIFECYCLE_LOG="$stale_platform_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$stale_platform_log.out" 2>&1
 then
   cat "$stale_platform_log.out" >&2
@@ -1562,7 +1562,7 @@ stale_present_log="$tmp/gcp-stale-platform-state-present.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 \
    DESTROYING=1 LIFECYCLE_LOG="$stale_present_log" \
-   "$sol" cloud destroy prod/gcp/us-central1 --apply) >"$stale_present_log.out" 2>&1 || true
+   "$sol" destroy prod/gcp/us-central1 --apply) >"$stale_present_log.out" 2>&1 || true
 if grep -F 'state-rm' "$stale_present_log" >/dev/null; then
   echo "INFRA-082: state was forgotten although the provider did not establish the substrate's absence:" >&2
   grep -F 'state-rm' "$stale_present_log" >&2
@@ -1583,7 +1583,7 @@ grep -v '      cluster_name: sol-qual$' "$tmp/work/target.before-infra082.yml" \
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && CLOUD_STATE_EMPTY=1 PARTIAL_INSTALL=1 DESTROYING=1 \
         LIFECYCLE_LOG="$stale_unidentified_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$stale_unidentified_log.out" 2>&1
 then
   mv "$tmp/work/target.before-infra082.yml" "$tmp/work/sol/environments.yml"
@@ -1608,7 +1608,7 @@ lost_substrate_log="$tmp/gcp-lost-substrate.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && BOOTSTRAP_BINDING_IN_STATE=1 SUBSTRATE_ABSENT_AT_PROVIDER=1 \
         PARTIAL_INSTALL=1 DESTROYING=1 LIFECYCLE_LOG="$lost_substrate_log" \
-        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+        "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$lost_substrate_log.out" 2>&1
 then
   cat "$lost_substrate_log.out" >&2
@@ -1684,7 +1684,7 @@ rm -f "$STATE_RM_FILE"
 
 gcp_nocred_log="$tmp/gcp-nocred.log"
 if (cd "$tmp/work" && DESTROYING=1 FAIL_CREDENTIALS=1 LIFECYCLE_LOG="$gcp_nocred_log" \
-      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+      "$sol" destroy prod/gcp/us-central1 --apply) \
   >"$gcp_nocred_log.out" 2>&1
 then
   echo "a GCP destroy with unresolvable credentials proceeded instead of failing closed" >&2
@@ -1705,7 +1705,7 @@ rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-established.log"
 if ! run_destroy "$log"; then
   cat "$log.out" >&2
-  echo "cloud destroy on an established target must succeed" >&2
+  echo "destroy on an established target must succeed" >&2
   exit 1
 fi
 if grep -F 'auth can-i create namespaces' "$log" >/dev/null; then
@@ -1826,7 +1826,7 @@ done
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
 destroy_line_no="$(grep -n 'cloud/aws/cluster.* destroy ' "$log" | head -1 | cut -d: -f1)"
 if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
-  echo "RDS destroy preparation did not run before the cloud destroy" >&2
+  echo "RDS destroy preparation did not run before the destroy" >&2
   cat "$log" >&2
   exit 1
 fi
@@ -1850,7 +1850,7 @@ fi
 log2="$tmp/destroy-established-2.log"
 if ! run_destroy "$log2"; then
   cat "$log2.out" >&2
-  echo "a second cloud destroy attempt must also succeed" >&2
+  echo "a second destroy attempt must also succeed" >&2
   exit 1
 fi
 snapshot_line2="$(grep -F -- '-target=aws_db_instance.postgres' "$log2" | head -1)"
@@ -1939,7 +1939,7 @@ assert_contains "an unparseable interval is refused, naming the variable" \
 
 mismatch_log="$tmp/destroy-snapshot-mismatch.log"
 if (cd "$tmp/work" && DESTROYING=1 RDS_SNAPSHOT_MISMATCH=1 \
-      LIFECYCLE_LOG="$mismatch_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+      LIFECYCLE_LOG="$mismatch_log" "$sol" destroy prod/aws/us-east-1 --apply) \
       >"$mismatch_log.out" 2>&1; then
   echo "a destroy whose prepared snapshot identity does not match the provider's must fail" >&2
   cat "$mismatch_log.out" >&2
@@ -2047,7 +2047,7 @@ assert_contains "the state residue was reported, by address" "$residue_state_log
 destroy_tri_log="$tmp/destroy-can-i-indeterminate.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
 if ! (cd "$tmp/work" && DESTROYING=1 CAN_I_FAIL=1 LIFECYCLE_LOG="$destroy_tri_log" \
-      "$sol" cloud destroy prod/aws/us-east-1 --apply) >"$destroy_tri_log.out" 2>&1; then
+      "$sol" destroy prod/aws/us-east-1 --apply) >"$destroy_tri_log.out" 2>&1; then
   echo "the destroy was blocked by the de-escalation probe, which must never strand a target:" >&2
   cat "$destroy_tri_log.out" >&2
   exit 1
@@ -2067,12 +2067,12 @@ rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-absent.log"
 if ! (export OUTPUT_ABSENT=1; run_destroy "$log"); then
   cat "$log.out" >&2
-  echo "cloud destroy on an absent target must still succeed" >&2
+  echo "destroy on an absent target must still succeed" >&2
   exit 1
 fi
 grep -F 'prepare: cloud substrate is absent, nothing to prepare' "$log.out" >/dev/null
 if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
-  echo "cloud destroy attempted RDS preparation on an absent cloud substrate" >&2
+  echo "destroy attempted RDS preparation on an absent cloud substrate" >&2
   exit 1
 fi
 
@@ -2080,12 +2080,12 @@ rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-no-rds.log"
 if ! (export RDS_ABSENT=1; run_destroy "$log"); then
   cat "$log.out" >&2
-  echo "cloud destroy on a target with no RDS instance must still succeed" >&2
+  echo "destroy on a target with no RDS instance must still succeed" >&2
   exit 1
 fi
 grep -F 'prepare: no RDS instance for this target, nothing to prepare' "$log.out" >/dev/null
 if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
-  echo "cloud destroy attempted RDS preparation when no RDS instance exists" >&2
+  echo "destroy attempted RDS preparation when no RDS instance exists" >&2
   exit 1
 fi
 
@@ -2094,7 +2094,7 @@ rm -f "$PLATFORM_INSTALLED_FILE"
 log="$tmp/destroy-partial-install.log"
 if ! run_destroy "$log"; then
   cat "$log.out" >&2
-  echo "cloud destroy on a partially installed target must succeed (invariant 6)" >&2
+  echo "destroy on a partially installed target must succeed (invariant 6)" >&2
   exit 1
 fi
 grep -F 'lifecycle phase: PreparingDestroy' "$log.out" >/dev/null || {
@@ -2432,7 +2432,7 @@ case "$retention_region" in
 esac
 for bad in abc inf -1 nan; do
   if (cd "$tmp/work" && FAIL_ON="" DESTROYING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S="$bad" \
-        LIFECYCLE_LOG="$interval_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+        LIFECYCLE_LOG="$interval_log" "$sol" destroy prod/aws/us-east-1 --apply) \
       >"$interval_log.out" 2>&1; then
     cat "$interval_log.out" >&2
     echo "REFAC-115: a destroy proceeded with SOL_DESTROY_SNAPSHOT_INTERVAL_S=$bad" >&2

@@ -28,7 +28,7 @@ variable "storage_class_name" {
 }
 
 variable "cloud_provider" {
-  description = "Cloud provider for provider-specific Kubernetes integrations. This root is the GCP one, so it defaults to gcp; `sol cloud` always sets it explicitly."
+  description = "Cloud provider for provider-specific Kubernetes integrations. This root is the GCP one, so it defaults to gcp; Sol always sets it explicitly."
   type        = string
   default     = "gcp"
   validation {

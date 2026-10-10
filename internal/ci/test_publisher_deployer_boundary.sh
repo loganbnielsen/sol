@@ -10,8 +10,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/cli/bin" "$tmp/cli/lib/cloud" "$tmp/cli/lib/deploy"
 cp "$root"/cli/lib/deploy/*.ml "$tmp/cli/lib/deploy/"
-cp "$root/cli/bin/cmd_deploy.ml" "$root/cli/bin/cmd_cloud.ml" \
-  "$root/cli/bin/cmd_cloud_tf.ml" "$root/cli/bin/cmd_migrate.ml" "$tmp/cli/bin/"
+cp "$root/cli/bin/cmd_deploy.ml" "$root/cli/bin/cmd_destroy.ml" \
+  "$root/cli/bin/cmd_target.ml" "$root/cli/bin/cmd_cloud_tf.ml" "$root/cli/bin/cmd_migrate.ml" \
+  "$tmp/cli/bin/"
 cp "$root"/cli/lib/cloud/*.ml "$tmp/cli/lib/cloud/"
 
 refuse_mutation() {
@@ -34,6 +35,8 @@ refuse_mutation() {
 refuse_mutation cli/bin/cmd_deploy.ml push "the deployer"
 refuse_mutation cli/bin/cmd_migrate.ml build "the migrate path"
 refuse_mutation cli/bin/cmd_cloud_tf.ml build "the provisioner"
+refuse_mutation cli/bin/cmd_destroy.ml build "the destroy command"
+refuse_mutation cli/bin/cmd_target.ml push "the target ownership audit"
 refuse_mutation cli/lib/cloud/sol_cli_cloud_wiring.ml push "a provisioner library"
 refuse_mutation cli/lib/deploy/sol_cli_deploy_run.ml push "a deployer library"
 refuse_mutation cli/lib/deploy/sol_cli_migration_job.ml push "the migration Job module"

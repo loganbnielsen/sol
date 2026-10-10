@@ -307,7 +307,7 @@ See the "Production Profile" section of
 
 The installation is the durable, account-level layer — the Terraform state backend
 and its locking, the provisioning/cluster-access/deploy/operator identities, and the
-delegated DNS zone when Sol owns one. It outlives every environment: `sol cloud
+delegated DNS zone when Sol owns one. It outlives every environment: `sol
 destroy <target>` removes an environment, never the installation.
 
 It is declared where the environment's durable state already lives, in the target:
@@ -512,7 +512,7 @@ grant (`check_deploy_identity_iam.py` holds that structurally).
 The two operations remove different things, and neither removes the other's.
 
 ```bash
-sol cloud destroy prod/aws/us-east-1 --apply   # environment only
+sol destroy prod/aws/us-east-1 --apply   # environment only
 ```
 
 That removes the environment's network, cluster, database and workloads, verifies

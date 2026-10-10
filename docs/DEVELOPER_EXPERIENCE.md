@@ -96,12 +96,12 @@ Most confusion about deployment lifecycles comes from conflating these two.
 | What it is | Sol's durable, account-level setup | One deployable target |
 | Examples | Terraform state backend, provisioner/deploy/operator identities, the delegated DNS zone | Network, cluster, database, registry use, the deployed application |
 | Lifetime | Outlives every environment | Disposable; can be destroyed and recreated |
-| Removed by | An explicit `sol uninstall <target>` | `sol cloud destroy <target>` |
+| Removed by | An explicit `sol uninstall <target>` | `sol destroy <target>` |
 | Contains billable resources | Some (the delegated zone, the state bucket) | Yes (the cluster, database, load balancers) |
 
 This distinction is the whole point of the model:
 
-> **`sol cloud destroy <target>` destroys an environment. It does not uninstall
+> **`sol destroy <target>` destroys an environment. It does not uninstall
 > Sol.** The state backend and the delegated DNS zone survive, so redeploying the
 > same environment does not require re-doing registrar or DNS work.
 
@@ -134,7 +134,7 @@ defined by the
 `bootstrap → preflight → apply` contract `DEC-043` left open.
 
 **Today:** the stages exist as code and as separate commands
-(`sol plan`, `sol deploy`, `sol cloud destroy`, `sol migrate`). The durable
+(`sol plan`, `sol deploy`, `sol destroy`, `sol migrate`). The durable
 installation among them is guided in place: a first `sol deploy` observes it and
 offers to set it up (FEAT-106). The environment stage is driven in place too: a
 `sol deploy` that has no destination it can reach reconciles the environment
@@ -458,7 +458,7 @@ into provider tools for the normal path.
 | `sol rollback` | Return to a recorded known release via Sol's release contract | **Today** |
 | `sol check` | Diagnostics against the selected target/scope, with explained failures | **Partial** — declaration validity today; target/scope diagnostics **Target** |
 | `sol open <view>` | Open the relevant local/white-labelled operational UI | **Today** (logs, metrics, dashboard, and the target-scoped `infra` view — INFRA-027); traces **Target** (OBS-045) |
-| `sol cloud destroy <target>` | Remove disposable environment resources and verify absence | **Today** |
+| `sol destroy <target>` | Remove disposable environment resources and verify absence | **Today** |
 | `sol uninstall <target>` | Remove Sol's persistent installation, explicitly | **Today** |
 
 ---
@@ -526,13 +526,13 @@ which of three things they are doing.
 
 | Operation | Removes | Leaves intact |
 |---|---|---|
-| `sol cloud destroy <target>` | Environment X's network, cluster, database, workloads | The installation: state backend, identities, delegated DNS zone |
+| `sol destroy <target>` | Environment X's network, cluster, database, workloads | The installation: state backend, identities, delegated DNS zone |
 | `sol uninstall <target>` | Sol's durable installation for the account/workspace | Externally supplied zones, the identities the operator created, and any resources Sol does not own |
 | `terraform destroy` (advanced) | Whatever that root manages | Everything else |
 
 Rules:
 
-- `sol cloud destroy <target>` removes resources belonging to that environment
+- `sol destroy <target>` removes resources belonging to that environment
   through supported lifecycle operations.
 - Destroy **verifies absence independently**; it does not declare success from a
   command's exit code.
@@ -584,7 +584,7 @@ uninstall never deletes them; it reports them as retained, with the reason.
 Absence is observed through the installation's own probes, never inferred from an
 exit code: an unqueryable answer is UNKNOWN and fails closed.
 
-**Today:** environment destroy and absence verification exist (`sol cloud
+**Today:** environment destroy and absence verification exist (`sol
 destroy`, `DEC-044`), and installation removal exists (`sol uninstall <target>`,
 `FEAT-108`).
 
@@ -626,7 +626,7 @@ but Sol's interface is **target-addressed**, and that is deliberate.
 sol deploy <env>/<provider>/<region>      # e.g. prod/aws/us-east-1
 sol plan <target>
 sol deploy <target>
-sol cloud destroy <target>
+sol destroy <target>
 ```
 
 The environment is a **property of the resolved target**, not a flag. There is

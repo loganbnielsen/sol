@@ -116,8 +116,8 @@ let report_ownership_reconciliation
     then
       Sol_cli_report.warn
         "warning: %d resource(s) the provider holds for this target cannot be attributed \
-         to a Terraform address automatically; run 'sol cloud reconcile %s --explain' to \
-         see what was checked."
+         to a Terraform address automatically; run 'sol target reconcile %s --explain' \
+         to see what was checked."
         (List.length refused)
         target_cfg.Sol_cli_config.name
 ;;

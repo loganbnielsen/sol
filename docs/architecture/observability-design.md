@@ -77,7 +77,7 @@ must carry the same ownership identity:
 > **Status:** all six labels, including `env`, are emitted (OBS-008,
 > `env` added by FEAT-026). `sol deploy <env>/<provider>/<region>` resolves
 > the target via `Sol_cli_config.load_for_target` — the same path `sol
-> plan`/`sol cloud tf` already used, and `sol status`/`sol logs`/`sol open`
+> plan`/`sol deploy` already used, and `sol status`/`sol logs`/`sol open`
 > use for `observability_backend`/`base_domain` (OBS-015) — and threads
 > `env = target.env` through to every generated manifest's labels. `sol
 > up` stays local-only by design (no target, no `env` label — it's omitted

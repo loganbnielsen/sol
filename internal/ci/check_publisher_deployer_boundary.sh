@@ -43,8 +43,9 @@ refuse() {
   fi
 }
 
-refuse "provisioner (cmd_cloud[_tf].ml, cli/lib/cloud)" \
-  "$root/cli/bin/cmd_cloud.ml" "$root/cli/bin/cmd_cloud_tf.ml" "${cloud_libs[@]}" \
+refuse "provisioner (cmd_destroy.ml, cmd_target.ml, cmd_cloud_tf.ml, cli/lib/cloud)" \
+  "$root/cli/bin/cmd_destroy.ml" "$root/cli/bin/cmd_target.ml" "$root/cli/bin/cmd_cloud_tf.ml" \
+  "${cloud_libs[@]}" \
   || exit 1
 refuse "deploy path (cmd_deploy.ml, cmd_migrate.ml, cli/lib/deploy)" \
   "$root/cli/bin/cmd_deploy.ml" "$root/cli/bin/cmd_migrate.ml" "${deploy_libs[@]}" \

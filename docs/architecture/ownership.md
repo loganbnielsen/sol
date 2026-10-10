@@ -58,7 +58,7 @@ labels only select which objects to look at:
   Ingress, PodDisruptionBudget, a Rollout's `-active`/`-preview` names) follows
   the owning workload's match — the workload is the unit of ownership; a
   referenced PersistentVolumeClaim is never deleted.
-- `Sol_cli_workload_scope` (used by cloud destroy to release workloads) — objects
+- `Sol_cli_workload_scope` (used by `sol destroy` to release workloads) — objects
   listed by the pod-template `workspace` label are released only on the same
   exact match.
 
