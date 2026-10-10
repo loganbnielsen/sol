@@ -96,6 +96,25 @@ prod:
       resources:
         app_db:
           size: small
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
     gcp/us-central1:
       base_domain: qual.example.test
       dns_zone_ownership: sol
@@ -110,6 +129,17 @@ prod:
       resources:
         app_db:
           omit: true
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
 EOF
 
 

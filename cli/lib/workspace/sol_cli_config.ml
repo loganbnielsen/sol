@@ -23,6 +23,20 @@ type target =
   ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
+  ; secret_authorities : (string * (string * secret_authority) list) list
+  }
+
+and secret_authority =
+  | Sol_managed
+  | External of
+      { store : string
+      ; key : string
+      }
+
+type unit_secret_resolution =
+  { resolved : (string * secret_authority) list
+  ; missing : string list
+  ; additional : string list
   }
 
 type index =
@@ -84,6 +98,7 @@ let target_empty =
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = []
+  ; secret_authorities = []
   }
 ;;
 
@@ -172,6 +187,7 @@ type target_field =
   | Target_node_failure_headroom_nodes
   | Target_profile
   | Target_dns_zone_ownership
+  | Target_secrets
 
 type target_key =
   | Target_field of target_field
@@ -200,6 +216,7 @@ let target_key_of_string s =
   | "node_failure_headroom_nodes" -> Target_field Target_node_failure_headroom_nodes
   | "profile" -> Target_field Target_profile
   | "dns_zone_ownership" -> Target_field Target_dns_zone_ownership
+  | "secrets" -> Target_field Target_secrets
   | _ ->
     (match Sol_cli_provider.owned_legacy_key s with
      | Some provider -> Target_provider_owned (s, provider)
@@ -229,6 +246,7 @@ let target_field_name = function
   | Target_node_failure_headroom_nodes -> "node_failure_headroom_nodes"
   | Target_profile -> "profile"
   | Target_dns_zone_ownership -> "dns_zone_ownership"
+  | Target_secrets -> "secrets"
 ;;
 
 let error_at ~path message = { path; line = 0; message }
@@ -357,6 +375,114 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
           (Printf.sprintf "%s.%s must be a single value, not a nested block" provider k))
     |> Result.map (List.filter_map Fun.id)
   in
+  let valid_identifier value =
+    let valid_char = function
+      | 'a' .. 'z' | '0' .. '9' | '_' | '-' -> true
+      | _ -> false
+    in
+    let len = String.length value in
+    len > 0
+    && len <= 63
+    && value.[0] >= 'a'
+    && value.[0] <= 'z'
+    && String.for_all valid_char value
+  in
+  let valid_secret_key value =
+    let valid_char = function
+      | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+      | _ -> false
+    in
+    let len = String.length value in
+    len > 0
+    && len <= 253
+    && value.[0] >= 'A'
+    && value.[0] <= 'Z'
+    && String.for_all valid_char value
+  in
+  let read_scalar ~where name value =
+    match scalar_text value with
+    | Some text -> Ok text
+    | None -> refuse (Printf.sprintf "%s.%s must be a non-empty string" where name)
+  in
+  let decode_secret_authority key value =
+    let where = "secrets." ^ key in
+    match value with
+    | `Scalar _ -> refuse (where ^ " must be an authority mapping with an authority field")
+    | `O _ ->
+      let* fields = members ~path ~where:(" in " ^ where) value in
+      let* authority =
+        match List.assoc_opt "authority" fields with
+        | None -> refuse (where ^ ".authority is required")
+        | Some value -> read_scalar ~where "authority" value
+      in
+      (match authority with
+       | "sol" ->
+         if List.length fields = 1
+         then Ok Sol_managed
+         else refuse (where ^ " with authority sol must not include store or key")
+       | "external" ->
+         let unknown =
+           List.find_opt
+             (fun (field, _) -> not (List.mem field [ "authority"; "store"; "key" ]))
+             fields
+         in
+         let* () =
+           match unknown with
+           | None -> Ok ()
+           | Some (field, _) -> refuse (where ^ " has unknown field " ^ field)
+         in
+         let* store =
+           match List.assoc_opt "store" fields with
+           | None -> refuse (where ^ ".store is required for an external secret")
+           | Some value -> read_scalar ~where "store" value
+         in
+         let* external_key =
+           match List.assoc_opt "key" fields with
+           | None -> refuse (where ^ ".key is required for an external secret")
+           | Some value -> read_scalar ~where "key" value
+         in
+         if not (valid_identifier store)
+         then refuse (where ^ ".store must be a lowercase Kubernetes name")
+         else Ok (External { store; key = external_key })
+       | _ -> refuse (where ^ ".authority must be sol or external"))
+    | _ -> refuse (where ^ " must be sol or an authority mapping")
+  in
+  let decode_secret_authorities value =
+    let* units =
+      members
+        ~path
+        ~where:" in target secrets"
+        ~duplicate:(Printf.sprintf "duplicate secret unit %S")
+        value
+    in
+    Sol_cli_result.map_list
+      (fun (unit_address, value) ->
+         let domain, unit_name =
+           match String.split_on_char '/' unit_address with
+           | [ domain; unit_name ] -> domain, unit_name
+           | _ -> "", ""
+         in
+         if not (valid_identifier domain && valid_identifier unit_name)
+         then refuse ("secret unit must be a domain/unit address, got " ^ unit_address)
+         else
+           let* keys =
+             members
+               ~path
+               ~where:(" in target secrets." ^ unit_address)
+               ~duplicate:(Printf.sprintf "duplicate secret key %S")
+               value
+           in
+           Sol_cli_result.map_list
+             (fun (secret_key, value) ->
+                if not (valid_secret_key secret_key)
+                then refuse ("invalid secret key " ^ secret_key)
+                else
+                  decode_secret_authority secret_key value
+                  |> Result.map (fun authority -> secret_key, authority))
+             keys
+           |> Result.map (fun authorities -> unit_address, authorities))
+      units
+  in
   let set_field (current : target) field s =
     match field with
     | Target_registry -> Ok { current with registry = Some s }
@@ -385,6 +511,7 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
       Sol_cli_profile.of_selection s
       |> Result.map (fun profile -> { current with profile = Some profile })
       |> Result.map_error error
+    | Target_secrets -> assert false
   in
   let decode_target_fields fields =
     fold
@@ -412,6 +539,9 @@ let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) 
                 provider
                 provider
                 k)
+         | Target_field Target_secrets ->
+           let* secret_authorities = decode_secret_authorities v in
+           Ok { current with secret_authorities }
          | Target_field field ->
            let* s = value (target_field_name field) v in
            set_field current field s)
@@ -683,10 +813,50 @@ let merge_provider_fields a b =
     b
 ;;
 
+let merge_secret_authorities a b =
+  List.fold_left
+    (fun acc (unit_address, authorities) ->
+       let merged =
+         match List.assoc_opt unit_address acc with
+         | None -> authorities
+         | Some previous -> merge_fields previous authorities
+       in
+       upsert_by_name
+         fst
+         unit_address
+         (function
+           | None -> unit_address, merged
+           | Some _ -> unit_address, merged)
+         acc)
+    a
+    b
+;;
+
 let provider_field (target : target) key =
   List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
   |> Option.value ~default:[]
   |> List.assoc_opt key
+;;
+
+let secret_authority (target : target) ~unit_address ~key =
+  match List.assoc_opt unit_address target.secret_authorities with
+  | None -> None
+  | Some authorities -> List.assoc_opt key authorities
+;;
+
+let secret_authorities_for_unit (target : target) unit_address =
+  List.assoc_opt unit_address target.secret_authorities |> Option.value ~default:[]
+;;
+
+let resolve_secret_authorities (target : target) ~unit_address ~required_keys =
+  let authorities = secret_authorities_for_unit target unit_address in
+  { resolved = List.filter (fun (key, _) -> List.mem key required_keys) authorities
+  ; missing = List.filter (fun key -> not (List.mem_assoc key authorities)) required_keys
+  ; additional =
+      List.filter_map
+        (fun (key, _) -> if List.mem key required_keys then None else Some key)
+        authorities
+  }
 ;;
 
 let merge_target a b =
@@ -712,6 +882,8 @@ let merge_target a b =
       prefer a.node_failure_headroom_nodes b.node_failure_headroom_nodes
   ; profile = prefer a.profile b.profile
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
+  ; secret_authorities =
+      merge_secret_authorities a.secret_authorities b.secret_authorities
   }
 ;;
 
@@ -821,6 +993,7 @@ let target_of_path s =
           ; node_failure_headroom_nodes = None
           ; profile = None
           ; provider_fields = []
+          ; secret_authorities = []
           }
       | None ->
         Error
@@ -1013,6 +1186,9 @@ let layer_keys (l : layer) =
         ; opt "dns_zone_ownership" t.dns_zone_ownership
         ; opt "node_failure_headroom_nodes" t.node_failure_headroom_nodes
         ; opt "profile" t.profile
+        ; t.secret_authorities
+          |> List.concat_map (fun (unit_address, authorities) ->
+            List.map (fun (key, _) -> "secrets." ^ unit_address ^ "." ^ key) authorities)
         ]
       @ (t.provider_fields
          |> List.concat_map (fun (provider, fields) ->

@@ -1,4 +1,4 @@
 (library
  (name sol_cli_test_support)
  (wrapped false)
- (libraries unix))
+ (libraries sol_cli unix))

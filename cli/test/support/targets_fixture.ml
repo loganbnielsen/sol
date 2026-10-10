@@ -47,6 +47,54 @@ let render entries =
       entries
   in
   let buf = Buffer.create 512 in
+  let rec app_units dir =
+    if not (Sys.file_exists dir && Sys.is_directory dir)
+    then []
+    else
+      Sys.readdir dir
+      |> Array.to_list
+      |> List.filter_map (fun child ->
+        let path = Filename.concat dir child in
+        if child.[0] = '.' || not (Sys.is_directory path)
+        then None
+        else if Filename.dirname dir = "app"
+        then (
+          match Sol_cli_manifest.primitive_of_suffix child with
+          | None -> None
+          | Some _ -> Some (Filename.basename dir, child, path))
+        else None)
+      |> fun immediate ->
+      if immediate <> []
+      then immediate
+      else
+        Sys.readdir dir
+        |> Array.to_list
+        |> List.filter_map (fun child ->
+          let path = Filename.concat dir child in
+          if child.[0] = '.' || not (Sys.is_directory path) then None else Some path)
+        |> List.concat_map app_units
+  in
+  let synthesized_secret_lines text =
+    if
+      String.split_on_char '\n' text
+      |> List.exists (fun line -> String.trim line = "secrets:")
+    then []
+    else
+      app_units "app"
+      |> List.concat_map (fun (domain, unit_name, dir) ->
+        let user_keys =
+          match Sol_cli_toml.load_result (Filename.concat dir "sol.toml") with
+          | Ok config -> config.secret_keys
+          | Error _ -> []
+        in
+        let keys =
+          Sol_cli_manifest.required_secret_keys
+            ~transport:Sol_cli_manifest.Sasl_ssl
+            user_keys
+        in
+        [ "secrets:"; Printf.sprintf "  %s/%s:" domain unit_name ]
+        @ List.map (fun key -> "    " ^ key ^ ": sol") keys)
+  in
   envs
   |> List.iter (fun env ->
     Buffer.add_string buf (env ^ ":\n  targets:\n");
@@ -55,10 +103,11 @@ let render entries =
       match String.split_on_char '/' target with
       | [ e; provider; region ] when e = env ->
         Buffer.add_string buf (Printf.sprintf "    %s/%s:\n" provider region);
+        let generated = synthesized_secret_lines text in
         List.iter
           (fun line ->
              if String.trim line <> "" then Buffer.add_string buf ("      " ^ line ^ "\n"))
-          (body_of_target_file text)
+          (body_of_target_file text @ generated)
       | _ -> ()));
   Buffer.contents buf
 ;;

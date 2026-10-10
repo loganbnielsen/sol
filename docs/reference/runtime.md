@@ -97,41 +97,36 @@ wrong:
   duration below the Pod's termination grace period or Kubernetes may force
   termination before draining completes.
 
-## Config and secret injection — the wiring is real, the naming is trusted
+## Config and secret injection
 
-There are two distinct Secret objects per namespace, and only one of them is
-actually mounted by any generated workload:
+Application values are scoped to one `domain/unit`. A workload references its
+own Kubernetes Secret, named `<k8s-unit-name>-secrets`, through `envFrom`; for
+example, `payments/charge_svc` receives values from `charge-svc-secrets` in the
+`<workspace>-payments` namespace. `sol secret set TARGET payments/charge_svc/KEY`
+changes only that Secret and restarts the unit when it is a long-running
+Deployment. It never writes the platform Secret or another unit's Secret.
 
-- Both a standard `Deployment` (`deployment_doc`) and an Argo Rollout
-  (`rollout_doc`) get `envFrom: secretRef: name: <k8s-name>-secrets` — a
-  **per-service** Secret (`sol_cli_manifest_yaml.ml`'s `secret_doc`), e.g.
-  `charge-svc-secrets`. Verified by rendering both directly: `rollout_doc`'s
-  `envFrom` block is identical to `deployment_doc`'s, same per-service
-  `%s-env`/`%s-secrets` names, same indentation — there is no difference at
-  all between the two rollout strategies here.
-- A separate, fixed-name Secret, `sol-secrets`
-  (`Sol_cli_manifest.runtime_secret_name`), currently has **no workload Pod
-  consumer at all** in any generated manifest. Its only actual consumer today
-  is FRIC-012's in-cluster migration Job, which mounts it directly via
-  `envFrom`. A comment in `sol_cli_secret.ml` describes patching it as being
-  "for Argo Rollout workloads," but that doesn't match what `rollout_doc`
-  currently generates — the comment appears to describe an intent that isn't
-  (or isn't yet) wired up in the manifest-rendering code.
+Sol's internal Jobs use a separate fixed-name Secret, `sol-secrets`. Migration
+Jobs read `POSTGRES_URL` from it. When a contract Job runs against a SASL_SSL
+target, it also reads `KAFKA_SASL_PASSWORD` and mounts `KAFKA_SSL_CA_CERT` from
+it. `sol secret set TARGET @platform/KEY` writes only these platform Job inputs
+to `sol-secrets` objects in the target's active workload namespaces. It does
+not fan values out to application Secrets.
 
-`sol secret set` (`sol_cli_secret.ml`) still writes to **both** objects on
-every call: it patches the shared `sol-secrets` Secret, then patches every
-per-service `<name>-secrets` Secret it finds in the namespace
-(`patch_workload_secrets`), then triggers a rollout restart. Given the above,
-only the per-service patch currently has any effect on a running workload —
-the `sol-secrets` write updates an object nothing reads except the migration
-Job.
+The substrate checks the shared database input before proceeding, and the TLS
+contract Job checks its Kafka inputs before it starts. Application Secrets
+contain the unit's declared keys plus the workload defaults `POSTGRES_URL` and
+`SOL_API_KEY`. `sol secret status TARGET` reports owners and presence without
+printing values.
 
-This is real, mechanical wiring in both directions — but what's **not**
-checked in either case is that your application code actually reads the
-environment variable by the name Sol/you expect (`POSTGRES_URL`,
-`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, etc.). Typo the name in your own code
-and nothing fails until the connection you expected to work doesn't, at
-runtime.
+For M1, each required application key must declare `sol` or `external` authority
+in the target. Sol can write only `sol` keys. External delivery is not yet
+implemented: a remote deployment that needs an external key fails closed rather
+than falling back to a legacy Secret path.
+
+Sol verifies that each required value exists and is non-empty; it cannot verify
+that application code reads the environment variable by the expected name. A
+misspelled key in application code remains an application-level runtime issue.
 
 ### `SOL_ENV` — the environment, for behaviour only
 

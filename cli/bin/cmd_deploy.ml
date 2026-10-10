@@ -561,8 +561,13 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
 
 let run_dry_run (ctx : Sol_cli_deploy_run.context) ~emit_to ~await_delegation =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
-  let* plan = build_plan (planning_input_of_ctx ctx ~emit_to) in
+  let planning = planning_input_of_ctx ctx ~emit_to in
+  let* plan = build_plan planning in
   let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
+  let* () =
+    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
+    |> Sol_cli_exit.of_msg
+  in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   Sol_cli_deploy_run.run_offline
     ctx
@@ -586,8 +591,13 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
     ~sha:ctx.sha
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
-  let* plan = build_plan (planning_input_of_ctx ctx ~emit_to:(Some dir)) in
+  let planning = planning_input_of_ctx ctx ~emit_to:(Some dir) in
+  let* plan = build_plan planning in
   let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
+  let* () =
+    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
+    |> Sol_cli_exit.of_msg
+  in
   let* plan = project_trusted_workload_issuer ctx.target_cfg plan in
   let* results =
     Sol_cli_deploy_run.run_offline
@@ -663,6 +673,16 @@ let run_apply
       ~await_delegation
       ()
   =
+  print_header
+    ~workspace:planning.Sol_cli_deploy_selection.Target_plan_input.workspace
+    ~sha:planning.Sol_cli_deploy_selection.Target_plan_input.sha
+    ();
+  let* plan = build_plan planning in
+  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
+  let* () =
+    Sol_cli_deploy_selection.refuse_external_delivery ~config:planning.config plan
+    |> Sol_cli_exit.of_msg
+  in
   let* () =
     check_apply_environment
       ~facts:planning.Sol_cli_deploy_selection.Target_plan_input.facts
@@ -673,12 +693,6 @@ let run_apply
       ~image_refs:planning.Sol_cli_deploy_selection.Target_plan_input.image_refs
     |> Sol_cli_exit.of_msg
   in
-  print_header
-    ~workspace:planning.Sol_cli_deploy_selection.Target_plan_input.workspace
-    ~sha:planning.Sol_cli_deploy_selection.Target_plan_input.sha
-    ();
-  let* plan = build_plan planning in
-  let plan = Sol_cli_deploy_selection.Target_plan.to_deployment_plan plan in
   let* destination, established =
     destination_or_environment_stage
       ~planning
@@ -958,10 +972,8 @@ let secret_backend_arg =
            destination decides: a direct or local deploy uses the operator-owned live \
            Secret ('kubernetes-live'; Sol emits no Secret for it, so populate it with \
            'sol secret set'), while a GitOps target writes a redacted \
-           'kubernetes-placeholder' Secret. Pass 'kubernetes-placeholder' to force a \
-           redacted Secret, or 'external-secrets' (requires --emit-to and \
-           --secret-store-ref) to emit an ExternalSecret CRD for the External Secrets \
-           Operator instead.")
+           'kubernetes-placeholder' Secret. External secret delivery is not supported \
+           yet; selecting 'external-secrets' is refused.")
 ;;
 
 let secret_store_ref_arg =
@@ -972,8 +984,8 @@ let secret_store_ref_arg =
         [ "secret-store-ref" ]
         ~docv:"NAME"
         ~doc:
-          "Name of the SecretStore or ClusterSecretStore to reference. Required when \
-           --secret-backend=external-secrets.")
+          "Reserved for the future External Secrets delivery path; external delivery is \
+           not supported yet.")
 ;;
 
 let secret_store_kind_arg =

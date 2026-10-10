@@ -154,6 +154,116 @@ services:
       check_int_opt "scale max" (Some 10) service.scale_max)
 ;;
 
+let test_target_secret_authorities_resolve_per_unit_key () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      {|target:
+  registry: registry.example.test/pluto
+  secrets:
+    payments/charge_svc:
+      DATABASE_URL:
+        authority: sol
+      STRIPE_API_KEY:
+        authority: external
+        store: vault-production
+        key: secret/production/payments/stripe
+    notifications/email_worker:
+      STRIPE_API_KEY:
+        authority: sol
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error error -> Windtrap.fail (Sol_cli_config.error_to_string error)
+    | Ok config ->
+      let target = config.Sol_cli_config.target in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"charge database authority"
+        true
+        (Sol_cli_config.secret_authority
+           target
+           ~unit_address:"payments/charge_svc"
+           ~key:"DATABASE_URL"
+         = Some Sol_cli_config.Sol_managed);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"external authority retains provider reference"
+        true
+        (Sol_cli_config.secret_authority
+           target
+           ~unit_address:"payments/charge_svc"
+           ~key:"STRIPE_API_KEY"
+         = Some
+             (Sol_cli_config.External
+                { store = "vault-production"; key = "secret/production/payments/stripe" })
+        );
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"same key has independent unit authority"
+        true
+        (Sol_cli_config.secret_authority
+           target
+           ~unit_address:"notifications/email_worker"
+           ~key:"STRIPE_API_KEY"
+         = Some Sol_cli_config.Sol_managed);
+      Windtrap.equal
+        Windtrap.string
+        ~msg:"unmapped key does not inherit authority"
+        ""
+        (match
+           Sol_cli_config.secret_authority
+             target
+             ~unit_address:"payments/charge_svc"
+             ~key:"UNMAPPED"
+         with
+         | None -> ""
+         | Some _ -> "mapped"))
+;;
+
+let test_secret_authorities_reject_malformed_references () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      {|target:
+  secrets:
+    payments/charge_svc:
+      STRIPE_API_KEY:
+        authority: external
+        store: ""
+        key: secret/stripe
+|};
+    expect_load_error
+      "prod.targets.aws/us-east-1: secrets.STRIPE_API_KEY.store must be a non-empty \
+       string")
+;;
+
+let test_secret_authorities_reject_scalar_shorthand () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      {|target:
+  secrets:
+    payments/charge_svc:
+      DATABASE_URL: sol
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Windtrap.fail "scalar secret authority shorthand must be rejected"
+    | Error error ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"explains the required mapping shape"
+        true
+        (Sol_cli_string.contains
+           ~needle:"secrets.DATABASE_URL must be an authority mapping"
+           (Sol_cli_config.error_to_string error)))
+;;
+
 let test_duplicate_resource_fails () =
   with_temp_dir (fun () ->
     write
@@ -2272,4 +2382,16 @@ let%test "driver keys: sol_keys is the consumed subset (DEC-053)" =
 
 let%test "driver keys: a flat key resolves to its owning driver (DEC-053)" =
   test_owned_legacy_key_finds_the_driver ()
+;;
+
+let%test "target secrets: per-unit authority resolution" =
+  test_target_secret_authorities_resolve_per_unit_key ()
+;;
+
+let%test "target secrets: malformed external refs fail" =
+  test_secret_authorities_reject_malformed_references ()
+;;
+
+let%test "target secrets: scalar authority shorthand fails" =
+  test_secret_authorities_reject_scalar_shorthand ()
 ;;

@@ -3,9 +3,87 @@ open Result.Syntax
 
 let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
 
+let secret_authority_findings ~facts =
+  let finding severity path message : Sol_cli_check.finding =
+    { severity; path; message }
+  in
+  match
+    Sol_cli_config.discover_target_paths ~root:facts.Sol_cli_workspace_model.root ()
+  with
+  | Error error ->
+    [ finding
+        Sol_cli_check.Severity.Error
+        "sol/environments.yml"
+        (Sol_cli_config.error_to_string error)
+    ]
+  | Ok target_paths ->
+    target_paths
+    |> List.concat_map (fun target_path ->
+      match Sol_cli_config.load_for_target ~target:target_path with
+      | Error error ->
+        [ finding
+            Sol_cli_check.Severity.Error
+            "sol/environments.yml"
+            (Sol_cli_config.error_to_string error)
+        ]
+      | Ok config ->
+        Sol_cli_workspace_model.workloads facts
+        |> List.filter (fun (workload : Sol_cli_workspace_model.workload) ->
+          not
+            (Sol_cli_config.is_omitted_service
+               config
+               ~name:workload.service.Sol_cli_manifest.name))
+        |> List.concat_map (fun (workload : Sol_cli_workspace_model.workload) ->
+          match workload.config with
+          | Error _ -> []
+          | Ok toml ->
+            let unit_address = workload.service.domain ^ "/" ^ workload.service.name in
+            let required_keys =
+              Sol_cli_manifest.required_secret_keys
+                ~transport:
+                  (Sol_cli_manifest.kafka_transport
+                     (Sol_cli_profile.platform_shape config.target.profile))
+                toml.secret_keys
+            in
+            let resolution =
+              Sol_cli_config.resolve_secret_authorities
+                config.target
+                ~unit_address
+                ~required_keys
+            in
+            let path = "sol/environments.yml" in
+            List.map
+              (fun key ->
+                 finding
+                   Sol_cli_check.Severity.Error
+                   path
+                   (Printf.sprintf
+                      "%s/%s has no authority mapping for target %s; declare authority: \
+                       sol or external"
+                      unit_address
+                      key
+                      target_path))
+              resolution.missing
+            @ List.map
+                (fun key ->
+                   finding
+                     Sol_cli_check.Severity.Warning
+                     path
+                     (Printf.sprintf
+                        "%s/%s maps an undeclared secret for target %s; it will not be \
+                         projected"
+                        unit_address
+                        key
+                        target_path))
+                resolution.additional))
+;;
+
 let findings_for ~facts = function
   | None ->
-    Ok (Sol_cli_check.run ~facts @ Sol_cli_check.generated_contract_findings ~facts)
+    Ok
+      (Sol_cli_check.run ~facts
+       @ secret_authority_findings ~facts
+       @ Sol_cli_check.generated_contract_findings ~facts)
   | Some requested ->
     let* selected =
       Sol_cli_workload_selection.resolve
@@ -17,6 +95,7 @@ let findings_for ~facts = function
     Ok
       (Sol_cli_check.run_services ~facts selected.services
        @ Sol_cli_check.declaration_findings_in_scope ~facts selected.request
+       @ secret_authority_findings ~facts
        @ Sol_cli_check.generated_contract_findings ~facts)
 ;;
 

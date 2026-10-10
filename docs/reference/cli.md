@@ -60,7 +60,6 @@ The target is the positional. `sol deploy` reconciles the whole target and takes
 | `sol migrate apply` | TARGET | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply all pending migrations (default subcommand) |
 | `sol plan` | TARGET | `--image-ref=SERVICE=REPO@sha256:DIGEST`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Preview target infrastructure, authorization, workload |
 | `sol releases` | — | `--target=ENV/PROVIDER/REGION` | documented | List the release records the target's cluster holds for |
-| `sol secret list` | — | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | List secret keys without values |
 | `sol target reconcile` | TARGET | `--dry-run`, `--explain`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Compare Terraform ownership with independently |
 | `sol target show` | — | `--check`, `--json`, `--target=ENV/PROVIDER/REGION`, `-v` | documented | Show a deployment target |
 | `sol uninstall` | TARGET | `--confirm`, `--confirm-dns-zone=DOMAIN`, `--var=KEY=VALUE`, `--var-file=PATH` | documented | Remove a Sol installation: its Sol-owned durable |
@@ -94,8 +93,9 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol new worker` | DOMAIN/NAME | `--language=LANGUAGE` | documented | Add a Kafka consumer worker to the current workspace |
 | `sol new workspace` | NAME | — | documented | Scaffold a new Sol workspace with a working |
 | `sol rollback` | RELEASE_ID | `--target=ENV/PROVIDER/REGION` | documented | Restore a recorded release boundary. Refuses on a |
-| `sol secret delete` | KEY | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION` | documented | Delete a secret key |
-| `sol secret set` | KEY | `--domain=DOMAIN`, `--target=ENV/PROVIDER/REGION`, `--value=VALUE` | documented | Create or update a secret key |
+| `sol secret delete` | — | — | documented | Delete an unused Sol-owned unit or platform Job |
+| `sol secret set` | — | `--from-file=PATH`, `--from-stdin` | documented | Create or update a Sol-owned unit secret or platform |
+| `sol secret status` | — | — | documented | Show secret owners and delivery readiness for a |
 <!-- END GENERATED: workspace -->
 
 ## Local commands
@@ -110,10 +110,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
 | `sol local releases` | — | — | documented | List the release records Sol's local cluster |
 | `sol local rollback` | RELEASE_ID | — | documented | Restore a recorded release boundary on the local |
-| `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Run workspace services as native processes, with local |
-| `sol local secret delete` | KEY | `--domain=DOMAIN` | documented | Delete a secret key |
-| `sol local secret list` | — | `--domain=DOMAIN` | documented | List secret keys without values |
-| `sol local secret set` | KEY | `--domain=DOMAIN`, `--value=VALUE` | documented | Create or update a secret key |
+| `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Run workspace services as native processes, with |
 <!-- END GENERATED: local -->
 
 ## Sources of truth

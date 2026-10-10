@@ -31,6 +31,7 @@ let target ?(fields = []) ?cluster_name ?(region = "us-east-1") provider =
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = [ Sol_cli_provider.to_string provider, fields ]
+  ; secret_authorities = []
   }
 ;;
 

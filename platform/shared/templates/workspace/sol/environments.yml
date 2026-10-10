@@ -8,3 +8,14 @@ prod:
   targets:
     aws/us-east-1:
       # registry: <your-registry-url>
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol

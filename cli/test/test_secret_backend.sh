@@ -1,63 +1,100 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 sol=$(realpath "$1")
-tmp=$(mktemp -d)
+tmp="/tmp/sol-secret-authority-test-$$"
+mkdir -p "$tmp"
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 mkdir -p app/payments/charge_svc sol
 printf 'FROM scratch\n' >app/payments/charge_svc/Dockerfile
-printf 'project: secret-backend-test\nservices:\n  charge_svc:\n    type: http\n    path: app/payments/charge_svc\n    language: ocaml\n' >sol.yml
-printf 'prod:\n  targets:\n    aws/us-east-1:\n      registry: registry.example.com\n      profile: production-single-region\n' >sol/environments.yml
+cat >sol.yml <<'EOF'
+project: secret-authority-test
+services:
+  charge_svc:
+    type: http
+    path: app/payments/charge_svc
+    language: ocaml
+EOF
+cat >sol/environments.yml <<'EOF'
+prod:
+  targets:
+    aws/us-east-1:
+      registry: registry.example.com
+      kube_context: unavailable-but-explicit
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: external
+            store: vault-production
+            key: postgres/production
+          SOL_API_KEY:
+            authority: sol
+EOF
 
-# The deploy help must describe the operator-owned live Secret, not claim a
-# direct deploy writes real values.
-help=$("$sol" deploy --help=plain | tr '\n' ' ')
-printf '%s\n' "$help" | grep -F 'operator-owned live Secret' >/dev/null
-printf '%s\n' "$help" | grep -F 'sol secret set' >/dev/null
-
-refuse() {
-  label=$1
+refuse_external() {
+  local label="$1"
   shift
   if "$sol" "$@" >"$tmp/refused.out" 2>&1; then
-    echo "sol accepted a secret-emission request it must refuse: $label" >&2
+    echo "sol accepted unsupported external delivery: $label" >&2
+    cat "$tmp/refused.out" >&2
+    exit 1
+  fi
+  if ! grep -F 'externally managed, but external secret delivery is not yet supported' \
+    "$tmp/refused.out" >/dev/null; then
     cat "$tmp/refused.out" >&2
     exit 1
   fi
 }
 
-# external-secrets without its GitOps emission mode must refuse, not silently
-# become a placeholder.
-refuse "external-secrets without --emit-to" \
-  deploy prod/aws/us-east-1 --secret-backend external-secrets
-grep -F -- '--emit-to' "$tmp/refused.out" >/dev/null
-if grep -F 'kubernetes-placeholder' "$tmp/refused.out" >/dev/null; then
-  echo "the refusal silently selected kubernetes-placeholder" >&2
-  cat "$tmp/refused.out" >&2
+# Configuration establishes that the key is externally owned, but M1 has no
+# external delivery. This refusal must precede rendering or writing GitOps
+# manifests, even when the legacy selector requests the former ESO path.
+refuse_external "GitOps" \
+  deploy prod/aws/us-east-1 --emit-to "$tmp/external-out" --image-tag abc
+test ! -e "$tmp/external-out"
+
+# Secret CRUD resolves ownership before opening either non-interactive input.
+if "$sol" secret set prod/aws/us-east-1 \
+  payments/charge_svc/POSTGRES_URL --from-file "$tmp/not-a-secret" \
+  >"$tmp/set-refused.out" 2>&1; then
+  echo "sol secret set accepted an externally owned key" >&2
+  exit 1
+fi
+grep -F 'externally managed' "$tmp/set-refused.out" >/dev/null
+if grep -F 'could not read' "$tmp/set-refused.out" >/dev/null; then
+  echo "sol secret set opened the input before resolving external ownership" >&2
+  cat "$tmp/set-refused.out" >&2
   exit 1
 fi
 
-# A missing store reference must refuse before any file output.
-refuse "external-secrets without a store reference" \
-  deploy prod/aws/us-east-1 --emit-to "$tmp/out" --secret-backend external-secrets
-grep -F -- '--secret-store-ref is required' "$tmp/refused.out" >/dev/null
-test ! -e "$tmp/out"
+# The reserved platform scope accepts only target Job inputs. Reject an
+# application-only default before attempting to open the supplied file.
+if "$sol" secret set prod/aws/us-east-1 @platform/SOL_API_KEY \
+  --from-file "$tmp/not-a-secret" >"$tmp/platform-refused.out" 2>&1; then
+  echo "sol secret set accepted an unsupported platform key" >&2
+  exit 1
+fi
+grep -F 'not required by this target' "$tmp/platform-refused.out" >/dev/null
+if grep -F 'could not read' "$tmp/platform-refused.out" >/dev/null; then
+  echo "sol secret set opened platform input before resolving its scope" >&2
+  cat "$tmp/platform-refused.out" >&2
+  exit 1
+fi
 
-refuse "unknown store kind" \
-  deploy prod/aws/us-east-1 --emit-to "$tmp/out" --secret-backend external-secrets \
-  --secret-store-ref my-store --secret-store-kind ConfigMap
-grep -F 'unknown secret store kind' "$tmp/refused.out" >/dev/null
+refuse_external "dry run" deploy prod/aws/us-east-1 --dry-run --image-tag abc
 
-refuse "malformed refresh interval" \
-  deploy prod/aws/us-east-1 --emit-to "$tmp/out" --secret-backend external-secrets \
-  --secret-store-ref my-store --refresh-interval soon
-grep -F 'not a duration' "$tmp/refused.out" >/dev/null
+refuse_external "direct apply" deploy prod/aws/us-east-1 --image-tag abc
 
-refuse "irrelevant dependent flag" \
-  deploy prod/aws/us-east-1 --secret-backend kubernetes-placeholder --secret-store-ref my-store
-grep -F 'only apply with --secret-backend=external-secrets' "$tmp/refused.out" >/dev/null
+# The old backend selector cannot enable the not-yet-implemented ESO path for
+# otherwise Sol-owned keys.
+sed -i 's/authority: external/authority: sol/' sol/environments.yml
+if "$sol" deploy prod/aws/us-east-1 --emit-to "$tmp/legacy-out" --image-tag abc \
+  --secret-backend external-secrets --secret-store-ref vault-production \
+  >"$tmp/backend-refused.out" 2>&1; then
+  echo "sol accepted the pre-M2 external-secrets backend" >&2
+  exit 1
+fi
+grep -F 'external secret delivery is not supported yet' "$tmp/backend-refused.out" >/dev/null
+test ! -e "$tmp/legacy-out"
 
-refuse "unknown backend" deploy prod/aws/us-east-1 --secret-backend vault
-grep -F 'unknown --secret-backend value' "$tmp/refused.out" >/dev/null
-
-test ! -e "$tmp/out"
-echo "secret emission options: refused before any output, and the help names live-secret ownership"
+echo "secret authority: external keys fail closed on every M1 deployment path"

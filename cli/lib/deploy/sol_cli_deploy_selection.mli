@@ -19,6 +19,16 @@ val apply_target
   -> selection
   -> (deployed, string) result
 
+val secret_authorities_for_plan
+  :  config:Sol_cli_config.t
+  -> Sol_cli_deployment_plan.t
+  -> ((string * string * Sol_cli_config.secret_authority) list, string) result
+
+val refuse_external_delivery
+  :  config:Sol_cli_config.t
+  -> Sol_cli_deployment_plan.t
+  -> (unit, string) result
+
 type plan_error =
   | Refused of string
   | Preflight of Sol_cli_profile.t * Sol_cli_profile_preflight.finding list

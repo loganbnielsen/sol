@@ -33,6 +33,7 @@ let target : Sol_cli_config.target =
           ; "cluster_access_role_arn", "arn:aws:iam::1:role/cluster-access"
           ] )
       ]
+  ; secret_authorities = []
   }
 ;;
 

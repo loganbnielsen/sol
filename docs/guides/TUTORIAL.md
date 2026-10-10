@@ -100,7 +100,7 @@ sol local run
 
 `sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile` and runs each one as a **native process** — no Docker image rebuild required. The workload's declared language (above) picks how it is built and launched: an OCaml unit is built with a single `dune build` across all of them and its compiled binary is spawned; a TypeScript unit is built with `npm run build` in its npm project and its built entry is run with `node`. Sol launches each service with its literal argv and working directory — paths with spaces or shell metacharacters need no quoting — and owns each process, so Ctrl-C or SIGTERM stops every service Sol started and leaves no descendants. If one service exits nonzero or is signalled, Sol stops the rest and exits nonzero rather than reporting a successful run. Each service's stdout and stderr is prefixed with `[domain/name]`, so you can follow several in one terminal.
 
-For local-only credentials, put `KEY=value` lines in the workspace's ignored `.env.local` file. Sol passes each value only to services that declare that key under `[infra.env].secrets`; values are not shell-expanded, passed to build commands, or printed when they appear in service output. The scaffolded `.gitignore` and `.dockerignore` both exclude `.env.local`; add the same entries to older workspaces before creating the file. A declared key missing from both `.env.local` and the current shell environment stops `sol local run` before it builds or starts services.
+For local-only credentials, put values in `sol/secrets.local/<domain>/<unit>.env`. For example, `sol/secrets.local/payments/charge_svc.env` can contain `PAYMENT_API_KEY=value`. Each unit has a separate file, so two units can use the same key name with different values. Sol passes a value only to the matching unit when that key is declared under `[infra.env].secrets`; values are not shell-expanded, passed to build commands, or printed when they appear in service output. Local processes do not inherit the shell environment; Sol supplies its local development variables and the unit's declared secret values. Missing values stop local run before it builds or starts services. The scaffolded `.gitignore` and `.dockerignore` both exclude `sol/secrets.local/`; add the same entries to older workspaces before creating secret files.
 
 The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
@@ -396,13 +396,19 @@ The `lib/dune` file publishes this as `pluto_storage`, a library both services d
 
 ## Part 3 — Deploy to the local cluster
 
-Secrets are the one input Sol never writes during a deploy, so create them first
-(`sol local secret set` is the only Sol path that writes a secret value, and it
-also creates the namespace when it is missing):
+Local secret values are kept in ignored, unit-scoped files. For each workload,
+create `sol/secrets.local/<domain>/<unit>.env` with the values it needs:
 
 ```bash
-sol local secret set POSTGRES_URL --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
-sol local secret set SOL_API_KEY --value dev-internal-key
+mkdir -p sol/secrets.local/payments sol/secrets.local/comms
+cat > sol/secrets.local/payments/charge_svc.env <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
+cat > sol/secrets.local/comms/notify_worker.env <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
 ```
 
 Then deploy:
@@ -415,13 +421,13 @@ For each service that has a `Dockerfile`, Sol:
 
 1. Builds the Docker image and tags it with the short git SHA
 2. Pushes it to the local registry (`sol-registry:5000`)
-3. Verifies the service's Secret exists with every required non-empty key
+3. Reads that unit's ignored secret file and applies its required values to the unit Secret
 4. Generates Kubernetes manifests (Namespace, Deployment, Service, ServiceAccount, ConfigMap)
 5. Validates them against the live API server (`kubectl apply --dry-run=server`)
 6. Applies them live
 
-If a required key is absent or blank, Sol stops before applying anything and names
-the keys to set — a deploy never creates or overwrites a Secret value.
+If a required key is absent or blank, Sol stops before building images and names
+the keys and file that need values.
 
 > The generated `Dockerfile` is a two-stage build, and its rationale -- the glibc
 > pin, where its dependencies come from, and the uid it runs as -- is documented
@@ -438,11 +444,11 @@ LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
 TEMPO_URL           http://tempo.monitoring.svc.cluster.local:4318
 ```
 
-Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are delivered through a
-Kubernetes Secret instead of the ConfigMap. Sol creates the per-workload
-`<service>-secrets` object only through `sol local secret set`; the deploy itself
-just verifies and mounts it. Rotating a value is the same command followed by a
-verified restart — see [`docs/deployment/credential-rotation.md`](../deployment/credential-rotation.md).
+Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are delivered through each
+workload's Kubernetes Secret instead of the ConfigMap. `sol local deploy` reads
+the matching ignored file under `sol/secrets.local/`, applies only that unit's
+declared values, and verifies the rollout. A changed local value causes the
+affected workload to restart.
 
 A secret that only the **build** needs is declared separately, in
 `[infra.env] build_secrets`, so it is never delivered to the running workload:
@@ -734,10 +740,11 @@ sol assets                                        where this sol's own assets co
 
 sol rollback RELEASE_ID                           restore a recorded release boundary (see `sol releases` for ids)
 
-sol secret set <KEY> --target ENV/PROVIDER/REGION --value <VAL> [--domain DOMAIN]   create or update a secret
-sol secret list --target ENV/PROVIDER/REGION [--domain DOMAIN]                      list secret keys (values never printed)
-sol secret delete <KEY> --target ENV/PROVIDER/REGION [--domain DOMAIN]              delete a secret
-sol local secret set|list|delete ...                                               use the local cluster
+sol secret set TARGET DOMAIN/UNIT/KEY [--from-stdin|--from-file PATH]
+sol secret set TARGET @platform/KEY [--from-stdin|--from-file PATH]
+sol secret status TARGET                                                         show owners and readiness without values
+sol secret delete TARGET ADDRESS                                                 delete an unused Sol-owned key
+sol local run                                                                    load ignored sol/secrets.local/<domain>/<unit>.env files
 
 # --scope selects one domain (`payments`) or one unit (`payments/charge_svc`).
 # A name that matches nothing fails closed and says what exists, before any
@@ -761,7 +768,8 @@ sol local secret set|list|delete ...                                            
 # group, while a group whose worker really is gone from the workspace still
 # refuses until `--confirm-group-change` acknowledges it. That check reads the
 # recorded set while the workspace lease is held, so an update that won the lease
-# before the check is what the deploy measures against. `sol secret` takes `--domain` because secrets are addressed by Kubernetes namespace, not by workload.
+# before the check is what the deploy measures against. `sol secret` addresses the exact
+# workload as `<domain>/<unit>/<KEY>`; it never broadcasts a value across a namespace.
 
 sol plan TARGET                                  preview target changes
 sol deploy TARGET                                reconcile infrastructure and workloads
@@ -896,24 +904,16 @@ sol deploy prod/aws/us-east-1 \
 # → Argo CD detects the change and applies it
 ```
 
-If the External Secrets Operator should supply the runtime credentials, pass the
-store on the same command — the emitted workload manifest is then an
-`ExternalSecret` referencing that store rather than an ordinary `Secret`:
+Application secret authority is declared per unit and key in the selected target.
+The current M1 deployment path resolves that declaration but refuses to deploy
+an externally owned key until ESO delivery is implemented; it never falls back
+to placeholder or legacy backend behavior.
 
-```bash
-sol deploy prod/aws/us-east-1 \
-  --emit-to          manifests/ \
-  --image-tag        "$GIT_SHA" \
-  --registry         "123456789.dkr.ecr.us-east-1.amazonaws.com" \
-  --secret-backend   external-secrets \
-  --secret-store-ref payments-store \
-  --key-prefix       "pluto/"
-# → manifests/pluto-payments-charge-svc.yaml contains an ExternalSecret
-#   (secretStoreRef payments-store, keys prefixed pluto/), not a plaintext Secret
-```
-
-`--secret-backend=kubernetes-live` is refused for `--emit-to`: these files are
-committed to a repository, and a plaintext Secret must never be.
+Sol platform Jobs use the reserved `@platform` scope for their own inputs, such
+as `POSTGRES_URL` for migration Jobs. For SASL_SSL targets, the contract Job also
+requires `KAFKA_SASL_PASSWORD` and `KAFKA_SSL_CA_CERT`. These values go only into
+the shared `sol-secrets` Secret used by Sol Jobs; they are never copied into
+application-unit Secrets.
 
 The generated files contain the full manifest (Namespace, ServiceAccount, ConfigMap, Deployment/Service). If a service enables progressive delivery in `sol.toml`, Sol emits an Argo Rollouts `Rollout` instead of a Kubernetes `Deployment`. Argo CD applies these manifests with `ServerSideApply=true` and prunes resources that are removed.
 

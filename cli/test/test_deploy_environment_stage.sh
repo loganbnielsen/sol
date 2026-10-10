@@ -83,6 +83,16 @@ prod:
       letsencrypt_email: ops@example.test
       cluster_endpoint_cidr: 203.0.113.0/24
       state_bucket: lifecycle-state
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
       aws:
         state_lock_table: lifecycle-lock
         provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner

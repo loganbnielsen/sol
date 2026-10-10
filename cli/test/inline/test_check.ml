@@ -572,6 +572,59 @@ let test_scoped_check_validates_workspace_generated_projections () =
       (In_channel.with_open_bin comms In_channel.input_all))
 ;;
 
+let test_check_requires_and_accepts_explicit_secret_authorities () =
+  with_contract_subprocess_workspace (fun root ->
+    let write rel body =
+      let path = Filename.concat root rel in
+      ignore (Sol_cli_fs.mkdir_p (Filename.dirname path));
+      Result.get_ok (Sol_cli_fs.write_atomic path body)
+    in
+    write
+      "sol/environments.yml"
+      "prod:\n  targets:\n    aws/us-east-1:\n      secrets: {}\n";
+    let code, _stdout, stderr = run_sol ~root [ "check" ] in
+    Windtrap.equal Windtrap.int ~msg:"unmapped required keys fail check" 2 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"check identifies the exact unit and missing mapping"
+      true
+      (Sol_cli_string.contains ~needle:"payments/charge_svc/POSTGRES_URL" stderr);
+    write
+      "sol/environments.yml"
+      "prod:\n\
+      \  targets:\n\
+      \    aws/us-east-1:\n\
+      \      secrets:\n\
+      \        payments/charge_svc:\n\
+      \          POSTGRES_URL:\n\
+      \            authority: external\n\
+      \            store: payments-store\n\
+      \            key: payments/database-url\n\
+      \          SOL_API_KEY:\n\
+      \            authority: sol\n\
+      \        comms/notify_worker:\n\
+      \          POSTGRES_URL:\n\
+      \            authority: sol\n\
+      \          SOL_API_KEY:\n\
+      \            authority: sol\n";
+    let code, stdout, stderr = run_sol ~root [ "check" ] in
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"valid Sol and external mappings pass offline check"
+      0
+      code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"check remains offline and succeeds without provider access"
+      true
+      (Sol_cli_string.contains ~needle:"sol check: ok" stdout);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"valid declared keys produce no authority errors"
+      false
+      (Sol_cli_string.contains ~needle:"has no authority mapping" stderr))
+;;
+
 let test_unreadable_workspace_exits_one () =
   with_subprocess_workspace (fun root ->
     let path = Filename.concat root "sol.yml" in
@@ -632,7 +685,16 @@ let with_plan_workspace f =
        write "sol.yml" "services:\n  charge_svc:\n    language: ocaml\n";
        write
          "sol/environments.yml"
-         "prod:\n  targets:\n    aws/us-east-1:\n      cluster_name: probe\n";
+         "prod:\n\
+         \  targets:\n\
+         \    aws/us-east-1:\n\
+         \      cluster_name: probe\n\
+         \      secrets:\n\
+         \        payments/charge_svc:\n\
+         \          POSTGRES_URL:\n\
+         \            authority: sol\n\
+         \          SOL_API_KEY:\n\
+         \            authority: sol\n";
        f root ~write)
 ;;
 
@@ -735,6 +797,10 @@ let%test "check: missing generated projection fails without writing" =
 
 let%test "check: scoped checks validate workspace generated projections" =
   test_scoped_check_validates_workspace_generated_projections ()
+;;
+
+let%test "check: secret authority mappings are explicit and offline" =
+  test_check_requires_and_accepts_explicit_secret_authorities ()
 ;;
 
 let%test "check: an unreadable workspace exits 1" = test_unreadable_workspace_exits_one ()

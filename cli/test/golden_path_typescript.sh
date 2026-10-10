@@ -12,21 +12,18 @@ hash -r
 
 cd examples/pluto
 
-# The first `sol local deploy` establishes the cluster and its infrastructure,
-# then refuses because the demo_ts secrets are not seeded yet — ordinary deploy
-# verifies them and never writes a value. The cluster it created is what the
-# migrations and `sol local secret set` need; the second run reuses it and
-# deploys.
-first_deploy_log="$GITHUB_WORKSPACE/first-local-deploy.log"
-if sol local deploy --scope=demo_ts >"$first_deploy_log" 2>&1; then
-  echo "::error::sol local deploy deployed before the required secrets were seeded"
-  exit 1
-fi
-if ! grep -F 'POSTGRES_URL' "$first_deploy_log" >/dev/null; then
-  echo "::error::the first sol local deploy did not refuse by naming the missing secret key"
-  cat "$first_deploy_log"
-  exit 1
-fi
+# Unit-scoped ignored inputs allow different values for identical secret keys.
+mkdir -p sol/secrets.local/demo_ts
+for unit in order_svc fulfillment_worker; do
+  cat >"sol/secrets.local/demo_ts/${unit}.env" <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
+done
+
+# Establish local infrastructure and workloads before applying workspace
+# migrations; the following deploy verifies the migrated schema.
+sol local deploy --scope=demo_ts
 
 # The demo's tables are workspace migrations now
 # (db/migrations/0006_orders_ts.sql owns orders_ts, fulfilled_orders_ts
@@ -35,12 +32,6 @@ fi
 # Applying them here is also what proves the migrations cover the
 # TypeScript namespace, rather than the apps' own `CREATE TABLE`.
 sol local migrate
-
-# Seed the demo_ts namespace's secrets before the deploy;
-# ordinary deploy verifies them and never writes a value.
-sol local secret set POSTGRES_URL --domain demo_ts \
-  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
-sol local secret set SOL_API_KEY --domain demo_ts --value dev-internal-key
 
 sol local deploy --scope=demo_ts
 

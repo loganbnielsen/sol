@@ -19,7 +19,7 @@ type plan =
   }
 
 val plan
-  :  ?secret_values:(string * string) list
+  :  ?secret_values:(string * (string * string) list) list
   -> root:string
   -> facts:Sol_cli_workspace_model.t
   -> Sol_cli_manifest.service list

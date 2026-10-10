@@ -209,16 +209,27 @@ in its prerequisite stage, then stops before the privileged platform apply if
 the Secret is absent, naming it and the command that creates it. On a fresh
 target the order is `sol deploy pilot/aws/us-east-1`, create the Secret when
 the run names it, then `sol deploy pilot/aws/us-east-1` again to resume.
-Give the workload namespaces the credential and the CA as well; `sol deploy`
-fails closed without them:
+Supply the platform Job inputs to the reserved target scope, then set the
+application values separately for each unit that declares them:
 
 ```bash
 kubectl create secret generic redpanda-users -n redpanda \
   --from-literal=users.txt="sol-workloads:$KAFKA_SASL_PASSWORD:SCRAM-SHA-256"
-sol secret set KAFKA_SASL_PASSWORD --value "$KAFKA_SASL_PASSWORD" --target pilot/aws/us-east-1
+printf '%s' "$POSTGRES_URL" \
+  | sol secret set pilot/aws/us-east-1 @platform/POSTGRES_URL --from-stdin
+printf '%s' "$KAFKA_SASL_PASSWORD" \
+  | sol secret set pilot/aws/us-east-1 @platform/KAFKA_SASL_PASSWORD --from-stdin
 kubectl get secret redpanda-default-cert -n redpanda -o jsonpath='{.data.ca\.crt}' \
-  | base64 -d | sol secret set KAFKA_SSL_CA_CERT --target pilot/aws/us-east-1
+  | base64 -d > ca.crt
+sol secret set pilot/aws/us-east-1 @platform/KAFKA_SSL_CA_CERT --from-file ca.crt
+printf '%s' "$KAFKA_SASL_PASSWORD" \
+  | sol secret set pilot/aws/us-east-1 payments/charge_svc/KAFKA_SASL_PASSWORD --from-stdin
+sol secret set pilot/aws/us-east-1 payments/charge_svc/KAFKA_SSL_CA_CERT --from-file ca.crt
 ```
+
+Repeat the final two unit-scoped commands for each other declared TLS workload.
+The `@platform` writes only populate `sol-secrets` for Sol's internal Jobs and
+never copy values into application Secrets.
 
 See [production bootstrap](../../docs/deployment/production-bootstrap.md) for the
 full procedure.
@@ -550,11 +561,14 @@ closed rather than being reported as removed.
 ## CLI commands
 
 ```bash
-sol local deploy          # establish local k3d cluster + infra, then stop at the unseeded secrets
-# Secrets are the one input a deploy never writes; create them first.
-sol local secret set POSTGRES_URL --value postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
-sol local secret set SOL_API_KEY --value dev-internal-key
-sol local deploy          # verify the secrets, then build and apply the workloads
+mkdir -p sol/secrets.local/demo_ts
+for unit in order_svc fulfillment_worker; do
+  cat >"sol/secrets.local/demo_ts/${unit}.env" <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
+done
+sol local deploy          # build, apply each unit's secret values, and deploy workloads
 kubectl get pods --all-namespaces  # inspect local workloads
 sol local migrate # apply database migrations
 ```

@@ -33,6 +33,42 @@ prod:
   targets:
     aws/us-east-1:
       cluster_name: pluto-prod
+      secrets:
+        checkout/checkout_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/orders_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/fulfilment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/order_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/fulfillment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
 
 # Selects the production-single-region profile explicitly.
 #
@@ -56,6 +92,70 @@ pilot:
       cluster_name: pluto-pilot
       kube_context: pluto-pilot
       registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+      secrets:
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        payments/orders_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        comms/fulfilment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        checkout/checkout_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        demo_ts/order_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
+        demo_ts/fulfillment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+          KAFKA_SASL_PASSWORD:
+            authority: sol
+          KAFKA_SSL_CA_CERT:
+            authority: sol
 
 # A low-cost development environment: Postgres, Kafka and the services that
 # need them are omitted, so `sol deploy dev/aws/us-east-1` provisions the
@@ -83,6 +183,22 @@ dev:
   targets:
     aws/us-east-1:
       cluster_name: pluto-dev
+      secrets:
+        checkout/checkout_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/order_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/fulfillment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
 
 # The customer-cloud environment the tutorial deploys to (docs/guides/TUTORIAL.md,
 # "Ingress"). Replace the domain and contact address with your own; pass
@@ -95,7 +211,79 @@ customer_cloud:
   targets:
     aws/us-east-1:
       cluster_name: pluto-customer
+      secrets:
+        checkout/checkout_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/orders_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/fulfilment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/order_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/fulfillment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
     # BYO targets use an existing cluster; cloud lifecycle commands refuse them.
     byo/onprem:
       kube_context: pluto-customer
       registry: registry.example.com/pluto
+      secrets:
+        checkout/checkout_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/charge_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        payments/orders_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/notify_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        comms/fulfilment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/order_svc:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol
+        demo_ts/fulfillment_worker:
+          POSTGRES_URL:
+            authority: sol
+          SOL_API_KEY:
+            authority: sol

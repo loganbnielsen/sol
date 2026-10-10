@@ -23,6 +23,7 @@ let target : Sol_cli_config.target =
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = []
+  ; secret_authorities = []
   }
 ;;
 

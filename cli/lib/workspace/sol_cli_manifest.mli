@@ -116,6 +116,7 @@ val secret_doc
   :  ?base_secrets:(string * string) list
   -> ?extra_secrets:(string * string) list
   -> ?redact:bool
+  -> ?labels:(string * string) list
   -> ns:string
   -> name:string
   -> unit

@@ -217,12 +217,11 @@ let secret_keys_of_workload workload =
   | Error error -> Error (Sol_cli_toml.parse_error_to_string error)
 ;;
 
-let local_secret_env ~secret_values ~secret_keys =
-  let find key =
-    match List.assoc_opt key secret_values with
-    | Some value -> Some value
-    | None -> Sys.getenv_opt key
+let local_secret_env ~secret_values ~secret_keys ~unit_address =
+  let unit_values =
+    Option.value ~default:[] (List.assoc_opt unit_address secret_values)
   in
+  let find key = List.assoc_opt key unit_values in
   let missing =
     secret_keys
     |> List.filter (fun key ->
@@ -236,7 +235,9 @@ let local_secret_env ~secret_values ~secret_keys =
     Error
       ("missing local secret value(s): "
        ^ String.concat ", " missing
-       ^ ". Add them to .env.local.")
+       ^ ". Add them to sol/secrets.local/"
+       ^ unit_address
+       ^ ".env.")
   | [] ->
     let values =
       "POSTGRES_URL" :: "SOL_API_KEY" :: secret_keys
@@ -246,7 +247,7 @@ let local_secret_env ~secret_values ~secret_keys =
     Ok values
 ;;
 
-let recipe_of_ocaml ~root ~secret_env (svc : Sol_cli_manifest.service) =
+let recipe_of_ocaml ~root ~base_env ~secret_env (svc : Sol_cli_manifest.service) =
   let dir = svc.Sol_cli_manifest.dir in
   Ok
     { label = label svc
@@ -255,12 +256,12 @@ let recipe_of_ocaml ~root ~secret_env (svc : Sol_cli_manifest.service) =
     ; launch = { argv = [ "_build/default/" ^ dir ^ "/bin/main.exe" ]; cwd = "" }
     ; artifact = dir ^ "/bin/main.exe"
     ; env =
-        List.fold_left (fun env (key, value) -> set_env key value env) dev_env secret_env
+        List.fold_left (fun env (key, value) -> set_env key value env) base_env secret_env
         @ dev_identity ~root svc
     }
 ;;
 
-let recipe_of_typescript ~root ~secret_env (svc : Sol_cli_manifest.service) =
+let recipe_of_typescript ~root ~base_env ~secret_env (svc : Sol_cli_manifest.service) =
   let unit_dir = svc.Sol_cli_manifest.dir in
   let package_path = Filename.concat (join root unit_dir) "package.json" in
   let* package =
@@ -316,15 +317,29 @@ let recipe_of_typescript ~root ~secret_env (svc : Sol_cli_manifest.service) =
         }
     ; artifact = Filename.concat unit_dir entry
     ; env =
-        List.fold_left (fun env (key, value) -> set_env key value env) dev_env secret_env
+        List.fold_left (fun env (key, value) -> set_env key value env) base_env secret_env
         @ dev_identity ~root svc
     }
 ;;
 
-let recipe ~root ~secret_env (svc : Sol_cli_manifest.service) language =
+let recipe ~root ~base_env ~secret_env (svc : Sol_cli_manifest.service) language =
   match language with
-  | Sol_cli_compat.Ocaml -> recipe_of_ocaml ~root ~secret_env svc
-  | Sol_cli_compat.Typescript -> recipe_of_typescript ~root ~secret_env svc
+  | Sol_cli_compat.Ocaml -> recipe_of_ocaml ~root ~base_env ~secret_env svc
+  | Sol_cli_compat.Typescript -> recipe_of_typescript ~root ~base_env ~secret_env svc
+;;
+
+let runtime_environment () =
+  let inherited_keys = [ "PATH"; "HOME"; "TMPDIR"; "TMP"; "TEMP"; "LANG"; "LC_ALL" ] in
+  Unix.environment ()
+  |> Array.to_list
+  |> List.filter_map (fun entry ->
+    match String.index_opt entry '=' with
+    | None -> None
+    | Some equals ->
+      let key = String.sub entry 0 equals in
+      if not (List.mem key inherited_keys)
+      then None
+      else Some (key, String.sub entry (equals + 1) (String.length entry - equals - 1)))
 ;;
 
 let workload_of (facts : Sol_cli_workspace_model.t) (svc : Sol_cli_manifest.service) =
@@ -336,6 +351,7 @@ let workload_of (facts : Sol_cli_workspace_model.t) (svc : Sol_cli_manifest.serv
 ;;
 
 let plan ?(secret_values = []) ~root ~facts services =
+  let base_env = runtime_environment () @ dev_env in
   let resolved =
     services
     |> List.map (fun svc ->
@@ -345,12 +361,17 @@ let plan ?(secret_values = []) ~root ~facts services =
         (match secret_keys_of_workload workload with
          | Error message -> Error (label svc, message)
          | Ok secret_keys ->
-           (match local_secret_env ~secret_values ~secret_keys with
+           (match
+              local_secret_env
+                ~secret_values
+                ~secret_keys
+                ~unit_address:(svc.domain ^ "/" ^ svc.name)
+            with
             | Error message -> Error (label svc, message)
             | Ok secret_env ->
               (match workload.Sol_cli_workspace_model.language with
                | Some language ->
-                 (match recipe ~root ~secret_env svc language with
+                 (match recipe ~root ~base_env ~secret_env svc language with
                   | Ok recipe -> Ok recipe
                   | Error message -> Error (label svc, message))
                | None ->
@@ -461,7 +482,11 @@ let launch ~output (recipe : recipe) =
   match
     Sol_cli_process.spawn_detached
       ~output
-      (Sol_cli_process.cmd ~cwd:recipe.launch.cwd ~env:recipe.env recipe.launch.argv)
+      (Sol_cli_process.cmd
+         ~cwd:recipe.launch.cwd
+         ~env:recipe.env
+         ~inherit_env:false
+         recipe.launch.argv)
   with
   | Ok background ->
     Ok { child_label = recipe.label; child_pid = Sol_cli_process.pid background }

@@ -2,6 +2,7 @@ type cmd =
   { argv : string list
   ; cwd : string option
   ; env : (string * string) list option
+  ; inherit_env : bool
   ; timeout_s : float option
   ; redact : string list
   }
@@ -22,7 +23,9 @@ type error =
   | Non_zero of failure
   | Timeout of float
 
-let cmd ?cwd ?env ?timeout_s ?(redact = []) argv = { argv; cwd; env; timeout_s; redact }
+let cmd ?cwd ?env ?(inherit_env = true) ?timeout_s ?(redact = []) argv =
+  { argv; cwd; env; inherit_env; timeout_s; redact }
+;;
 
 let completed ~exit_code ~stdout ~stderr =
   if exit_code = 0
@@ -84,6 +87,13 @@ let merge_env extras =
       not (List.mem key extra_keys))
   in
   Array.of_list (filtered @ List.map (fun (k, v) -> k ^ "=" ^ v) extras)
+;;
+
+let environment c =
+  match c.env with
+  | None -> if c.inherit_env then Unix.environment () else [||]
+  | Some extras when c.inherit_env -> merge_env extras
+  | Some extras -> Array.of_list (List.map (fun (key, value) -> key ^ "=" ^ value) extras)
 ;;
 
 let close_noerr fd =
@@ -212,11 +222,7 @@ let run ?(echo = false) c =
     (match cwd_result with
      | Error msg -> Error (Spawn_failed msg)
      | Ok saved_cwd ->
-       let env_arr =
-         match c.env with
-         | None -> Unix.environment ()
-         | Some extras -> merge_env extras
-       in
+       let env_arr = environment c in
        let devnull = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
        let out_r, out_w = Unix.pipe ~cloexec:true () in
        let err_r, err_w = Unix.pipe ~cloexec:true () in
@@ -296,11 +302,7 @@ let spawn ?output c =
   match c.argv with
   | [] -> Error (Spawn_failed "empty argv")
   | prog :: _ ->
-    let env_arr =
-      match c.env with
-      | None -> Unix.environment ()
-      | Some extras -> merge_env extras
-    in
+    let env_arr = environment c in
     let devnull_in = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
     let out, close_out_fd =
       match output with
@@ -339,11 +341,7 @@ let spawn_detached ?output c =
   | [] -> Error (Spawn_failed "empty argv")
   | prog :: _ as argv ->
     let program = resolve_program prog in
-    let env_arr =
-      match c.env with
-      | None -> Unix.environment ()
-      | Some extras -> merge_env extras
-    in
+    let env_arr = environment c in
     let devnull_in = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
     let out =
       match output with

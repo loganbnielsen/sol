@@ -127,6 +127,31 @@ let test_local_secret_file_rejects_duplicate_keys_without_values () =
       (Sol_cli_string.contains ~needle:"never-print-this" message)
 ;;
 
+let test_local_secret_file_loads_by_unit_address () =
+  with_workspace
+    [ "sol/secrets.local/payments/charge_svc.env", "PAYMENT_API_KEY=unit-value\n"
+    ; "sol/secrets.local/notifications/email_svc.env", "PAYMENT_API_KEY=other-unit\n"
+    ]
+  @@ fun root ->
+  let load unit_address =
+    Sol_cli_local_secret_input.load ~root ~unit_address |> Result.get_ok
+  in
+  check_strings
+    "first unit gets its own file"
+    [ "PAYMENT_API_KEY"; "unit-value" ]
+    (List.concat_map (fun (key, value) -> [ key; value ]) (load "payments/charge_svc"));
+  check_strings
+    "second unit gets a separate file"
+    [ "PAYMENT_API_KEY"; "other-unit" ]
+    (List.concat_map
+       (fun (key, value) -> [ key; value ])
+       (load "notifications/email_svc"));
+  check_bool
+    "invalid unit address refused"
+    true
+    (Result.is_error (Sol_cli_local_secret_input.load ~root ~unit_address:"../escape"))
+;;
+
 let test_local_run_projects_only_declared_secret_keys () =
   with_workspace
     [ "sol.yml", sol_yml ~services:"services:\n  charge_svc:\n    language: ocaml\n"
@@ -138,7 +163,10 @@ let test_local_run_projects_only_declared_secret_keys () =
   let facts = facts_of root in
   match
     Sol_cli_local_run.plan
-      ~secret_values:[ "PAYMENT_API_KEY", "sensitive-value"; "UNDECLARED", "do-not-pass" ]
+      ~secret_values:
+        [ ( "payments/charge_svc"
+          , [ "PAYMENT_API_KEY", "sensitive-value"; "UNDECLARED", "do-not-pass" ] )
+        ]
       ~root
       ~facts
       (services_of facts)
@@ -181,6 +209,63 @@ let test_local_run_requires_declared_secret_value () =
          true
          (Sol_cli_string.contains ~needle:"PAYMENT_API_KEY" message)
      | [] -> Windtrap.fail "expected missing secret diagnostic")
+;;
+
+let test_local_run_scopes_same_secret_key_per_unit_and_filters_ambient_value () =
+  with_workspace
+    [ ( "sol.yml"
+      , "services:\n\
+        \  charge_svc:\n\
+        \    language: ocaml\n\
+        \  email_svc:\n\
+        \    language: ocaml\n" )
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", "[infra.env]\nsecrets = [\"API_KEY\"]\n"
+    ; "app/payments/charge_svc/bin/dune", "(executable (name main))\n"
+    ; "app/notifications/email_svc/Dockerfile", dockerfile
+    ; "app/notifications/email_svc/sol.toml", "[infra.env]\nsecrets = [\"API_KEY\"]\n"
+    ; "app/notifications/email_svc/bin/dune", "(executable (name main))\n"
+    ]
+  @@ fun root ->
+  let original = Sys.getenv_opt "API_KEY" in
+  Fun.protect
+    ~finally:(fun () ->
+      match original with
+      | Some value -> Unix.putenv "API_KEY" value
+      | None -> Unix.putenv "API_KEY" "")
+    (fun () ->
+       Unix.putenv "API_KEY" "ambient-secret-must-not-leak";
+       let facts = facts_of root in
+       let secret_values =
+         [ "payments/charge_svc", [ "API_KEY", "payments-value" ]
+         ; "notifications/email_svc", [ "API_KEY", "notifications-value" ]
+         ]
+       in
+       match Sol_cli_local_run.plan ~secret_values ~root ~facts (services_of facts) with
+       | Error errors -> Windtrap.fail (String.concat "; " (List.map snd errors))
+       | Ok plan ->
+         (match plan.launches with
+          | [ payments; notifications ] ->
+            check_string
+              "payments receives its unit value"
+              "payments-value"
+              (Option.value ~default:"" (List.assoc_opt "API_KEY" payments.env));
+            check_string
+              "notifications receives its unit value"
+              "notifications-value"
+              (Option.value ~default:"" (List.assoc_opt "API_KEY" notifications.env));
+            check_bool
+              "ambient secret is filtered from launches"
+              false
+              (List.exists
+                 (fun (_, value) -> value = "ambient-secret-must-not-leak")
+                 payments.env);
+            check_bool
+              "file values are redacted"
+              true
+              (List.mem "payments-value" plan.redact
+               && List.mem "notifications-value" plan.redact)
+          | _ -> Windtrap.fail "expected two local units"))
 ;;
 
 let typescript_unit =
@@ -505,7 +590,9 @@ let test_command_preserves_build_launch_phases () =
          exit \"$SOL_TEST_BUILD_EXIT\"\n";
       write_file
         node
-        "#!/bin/sh\necho launch >> \"$SOL_TEST_PHASE_LOG\"\necho child-output\n";
+        (Printf.sprintf
+           "#!/bin/sh\necho launch >> %s\necho child-output\n"
+           (Filename.quote log));
       Unix.chmod npm 0o755;
       Unix.chmod node 0o755;
       let path = bin ^ ":" ^ Option.value (Sys.getenv_opt "PATH") ~default:"" in
@@ -523,7 +610,10 @@ let test_command_preserves_build_launch_phases () =
       in
       check_bool "command success" expected_success (Result.is_ok result);
       let phases = In_channel.with_open_text log In_channel.input_all in
-      check_string "build gates launch" expected_phases phases;
+      check_bool
+        (Printf.sprintf "build gates launch: expected %S, got %S" expected_phases phases)
+        true
+        (expected_phases = phases);
       let stdout =
         match result with
         | Ok completed -> completed.stdout
@@ -1043,4 +1133,13 @@ let test_ocaml_launch_recipe_runs () =
 
 let%test "runtime: an OCaml launch recipe runs without a shell" =
   test_ocaml_launch_recipe_runs ()
+;;
+
+let%test "secrets: local input is scoped to a unit" =
+  test_local_secret_file_parses_without_shell_evaluation ();
+  test_local_secret_file_rejects_duplicate_keys_without_values ();
+  test_local_secret_file_loads_by_unit_address ();
+  test_local_run_projects_only_declared_secret_keys ();
+  test_local_run_requires_declared_secret_value ();
+  test_local_run_scopes_same_secret_key_per_unit_and_filters_ambient_value ()
 ;;

@@ -102,18 +102,16 @@ The following substrate inputs must exist before running `sol deploy`.
 
 ### Postgres Connection Secret
 
-- A Kubernetes Secret containing a `POSTGRES_URL` key with a valid libpq
+- A target platform Secret containing a `POSTGRES_URL` key with a valid libpq
   connection string, e.g.
   `postgresql://user:password@host:5432/dbname?sslmode=require`.
-- Sol delivers a per-workload Secret named `<service>-secrets` through `envFrom`,
-  but it does not create or write it in an ordinary deploy: `sol secret set` is
-  the create and rotation path, and an ordinary deploy verifies the live Secret
-  exists with every required non-empty key before it applies a workload. In GitOps
-  output, the value is emitted empty or via an `ExternalSecret`, depending on
-  `--secret-backend`.
+- Migration Jobs read `POSTGRES_URL` from the target's `sol-secrets` object.
+  Populate it with `sol secret set <TARGET> @platform/POSTGRES_URL`. Application
+  workloads receive only their unit-scoped `<unit>-secrets` object. GitOps output
+  contains empty placeholders for Sol-owned application keys.
 - Sol does not create the database in the application deploy path, run
-  migrations at cluster startup, or manage credentials rotation. Use
-  `sol migrate` to apply migrations after `POSTGRES_URL` is available.
+  migrations at cluster startup, or manage credentials rotation. `sol migrate`
+  uses the target platform Secret after `POSTGRES_URL` is available.
 - The contract key is **`POSTGRES_URL`**, not `DATABASE_URL`. There are no
   `postgres_secret_name`, `kafka_secret_name`, or `tls_secret_name` fields in
   `sol.toml`; per-workload Secret names are derived as `<service>-secrets`, and
@@ -216,7 +214,7 @@ objects for each service in your workspace:
 | Namespace | Always. One namespace per `<workspace>-<domain>` pair. |
 | ServiceAccount | Always. One per service, in its namespace. |
 | ConfigMap | Always. Contains Sol's platform defaults plus any `[infra.env] config` keys from `sol.toml`. |
-| Secret | Never in a direct deploy: the workload references `<service>-secrets` and the deploy verifies it exists with non-empty required keys, but `sol secret set` is the only thing that writes it. GitOps mode (`--emit-to`) emits empty `stringData` placeholders or `ExternalSecret` resources, depending on `--secret-backend`. |
+| Secret | Direct deploys do not write application values: each workload references its own `<unit>-secrets` object, which `sol secret set TARGET <domain>/<unit>/<KEY>` creates or updates. GitOps output contains empty placeholders for Sol-owned unit keys. External keys fail closed until ESO delivery is implemented. Sol platform Jobs use a separate `sol-secrets` object for target-level inputs. |
 | Deployment | For every `-svc` and `-worker`. |
 | Service (ClusterIP) | For every `-svc`. |
 | CronJob | For every `-fn`, using the `schedule:` field from `sol.toml`. |
@@ -228,21 +226,23 @@ without `--emit-to`) Sol applies them via `kubectl apply`. In GitOps mode
 (`sol deploy --emit-to <dir>`) Sol writes them to a directory for Argo CD or
 Flux to apply.
 
-**Secret values in GitOps output:** In GitOps mode, all `kind: Secret` resources
-are emitted with empty `stringData` values. A comment block above `stringData`
+**Secret values in GitOps output:** Sol-owned application Secret resources are
+emitted with empty `stringData` values. A comment block above `stringData`
 lists every key that must be populated before the manifest is applied:
 
 ```yaml
 kind: Secret
 # Populate these values before applying.
-# Use `sol secret set <KEY> --target <env>/<provider>/<region>` or your secrets manager.
+# Use `sol secret set <TARGET> <domain>/<unit>/<KEY>` or your secrets manager.
 stringData:
   POSTGRES_URL: ""
 ```
 
-Use `sol secret set` to write values directly to the cluster, or replace the
-empty strings with references from Sealed Secrets, External Secrets Operator,
-or equivalent. Do not commit manifest files that contain real secret values.
+For direct deployments, use `sol secret set <TARGET> <domain>/<unit>/<KEY>` to
+write a Sol-owned value to one unit. Platform Job inputs use the reserved
+`@platform/<KEY>` address and write only `sol-secrets`. Do not commit manifest
+files that contain real secret values. External authority declarations are
+validated, but deployment is refused until their delivery path is implemented.
 
 No per-service manifest hand-editing is required or expected. If a generated
 manifest does not fit your needs, open an issue or add a `sol.toml` escape
