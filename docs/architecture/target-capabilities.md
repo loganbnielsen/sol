@@ -19,12 +19,15 @@ sentence, not independent choices. Two derived rules are used throughout:
 - **No key without a named consumer.** A key is projected only because something reads it.
 - **The consumer's declaration does not vary by provider** — the acceptance test (§8.1).
 
+The invariant is not Kubernetes-specific. It applies to every delivery mechanism Sol owns,
+local development included (§10).
+
 ## 1. Vocabulary — v1 has two
 
 | Capability | Contract keys | Destination | Consumers today |
 |---|---|---|---|
-| `database.connection` | `POSTGRES_URL` | Secret | migration Job; units using a `postgres` resource |
-| `kafka.connection` | `KAFKA_SASL_PASSWORD` | Secret | contract Job; units using a `kafka` resource |
+| `database.connection` | `POSTGRES_URL` | Secret | migration Job; units consuming a `postgres` resource |
+| `kafka.connection` | `KAFKA_SASL_PASSWORD` | Secret | contract Job; units consuming a `kafka` resource |
 | | `KAFKA_SSL_CA_CERT` | ConfigMap | trust material; not confidential |
 
 **Admission rule for a third capability** (all three conditions): a Sol provisioner exists in
@@ -32,9 +35,8 @@ sentence, not independent choices. Two derived rules are used throughout:
 enough to name. `cache.connection`, `objectstore.bucket` and `search.connection` fail today.
 
 The rule is a **documented convention, not a runtime check**: a capability is a compiled
-artifact — contract keys, a provider, and a projection — so one cannot exist without
-code in those three places, and the rule is what that change is reviewed against. Default: not
-yet.
+artifact — contract keys, a provider, and a projection — so one cannot exist without code in
+those three places, and the rule is what that change is reviewed against (§9). Default: not yet.
 
 ## 2. Declaration
 
@@ -73,7 +75,7 @@ prod:
             key: secret/production/payments/stripe
       capabilities:
         # Present only to bind an external database. Absent = the target provides the
-        # database its workspace already provisions.
+        # database its effective resource graph consumes.
         database.connection:
           provider: external
           store: prod-db
@@ -81,36 +83,45 @@ prod:
             POSTGRES_URL: pluto/app-db/url
 ```
 
-**`secrets:` and `capabilities:` are valid at both levels; the target overrides the environment,
-per key.** Env-only, target-only and env+target are all valid — the environment is an *optional
-layer above* the target, never a required one. This is the same two-level pattern `base_domain`,
-`registry` and `cluster_name` already use, and it exists for the common case where several targets
-of one environment share a reference: one vault path, three regions.
+**`secrets:` and `capabilities:` are valid at both levels; the target overrides the environment.**
+Env-only, target-only and env+target are all valid — the environment is an *optional layer above*
+the target, never a required one. This is the same two-level pattern `base_domain`, `registry` and
+`cluster_name` already use, and it exists for the common case where several targets of one
+environment share a reference: one vault path, three regions.
 
-**Overrides are atomic.** An override replaces the *complete* declaration for that key — the whole
-`Sol_managed | External { store; key }` value, or the whole capability block including its `keys:`
-mappings. There is no field-level merging, so a `store` cannot linger from the inherited
-declaration while the `key` changes. This is already how `secrets:` behaves: `merge_fields` upserts
-each key with the incoming value.
+**Merge boundaries are exact and closed.**
+
+- Secrets merge by **`unit/key`**.
+- Capabilities merge by **capability name**.
+- A secret override replaces its **complete authority declaration** — the whole
+  `Sol_managed | External { store; key }` value.
+- A capability override replaces its **complete provider declaration**, including every entry in
+  its `keys:` mappings.
+- **No field-level or recursive merging occurs inside either declaration.** There is no way for a
+  `store` to survive from the inherited declaration while the `key` changes.
+
+`secrets:` already behaves this way: `merge_fields` upserts each key with the incoming value.
+`capabilities:` is implemented to match. **No new configuration hierarchy and no generic merge
+engine** — the existing layering is the mechanism.
 
 **`secrets:` inheritance already works; `capabilities:` is new work.** `secrets` decodes as a
 target field (`target_key_of_string`), and unlike `cluster_name`/`registry` it is not in
 `target_only_keys`, so an environment-level declaration is accepted. The loader applies the
 environment layer and then the target layer (`apply … env_layer`, then `apply … target_layer`),
-merging through `merge_target` → `merge_secret_authorities` → `merge_fields`. So env-only,
-target-only and env+target already resolve today; 1344d adds `capabilities:` in that same shape
-with the same atomicity.
+merging through `merge_target` → `merge_secret_authorities` → `merge_fields`. Env-only,
+target-only and env+target already resolve today.
 
 **The existing provisioner setting is the declaration; the capability block is external-only.**
-`create_rds` is not a target field — the CLI derives it. `has_postgres` is
-`List.exists (r.typ = Some "postgres")` over the workspace's resources
-(`sol_cli_terraform_vars.ml`), and `root_declared_vars ~has_postgres` sets
-`create_rds = has_postgres` **regardless of profile** (`sol_cli_provider_capabilities.ml`); the
-profile adds only multi-AZ and deletion protection
-(`production_postgres = has_postgres && production`). A target whose workspace declares a postgres
-resource therefore provides `database.connection` with no declaration at all. `provider = sol` may
-be written but is never required — there is nothing to duplicate, so the block exists to
-*override*.
+`create_rds` is not a target field — the CLI derives it, and the derivation is already
+**target-scoped, not workspace-scoped**. `Sol_cli_config.resources cfg` filters omitted resources,
+`Sol_cli_terraform_vars.of_config` is called from the environment stage with the resolved per-target
+config, and only then is `has_postgres = List.exists (r.typ = Some "postgres")` computed.
+`root_declared_vars ~has_postgres` sets `create_rds = has_postgres` **regardless of profile**
+(`sol_cli_provider_capabilities.ml`); the profile adds only multi-AZ and deletion protection
+(`production_postgres = has_postgres && production`). So a target whose *effective* resource graph
+contains a postgres resource provides `database.connection` with no declaration at all, and
+`provider = sol` may be written but is never required — there is nothing to duplicate, so the block
+exists to *override*.
 
 **External references are per contract key.** The existing authority type is already per key —
 `External { store; key }`, held as `secret_authorities : unit → key → authority` — so a
@@ -132,20 +143,30 @@ missing provisioner and the external alternative.
 
 ## 3. Fulfillment
 
-- **`sol`** — the value already exists as the target's Terraform output (`postgres_url` in
-  `platform/cloud/{aws,gcp}/cluster/outputs.tf`). Sol projects it at **target install/reconcile**,
-  never at app deploy.
-- **`external`** — the target names an ESO store and a remote path per contract key; Sol renders
-  a namespaced `ExternalSecret` into the app bundle's prerequisites (the existing external-secret
-  path).
+- **`sol`** — Sol's infrastructure provisioning *configuration* supplies the authoritative
+  credential inputs. Terraform **outputs** (`postgres_url` in
+  `platform/cloud/{aws,gcp}/cluster/outputs.tf`) expose the connection information *derived from*
+  those inputs and the provisioned infrastructure. Target install/reconcile consumes that
+  information to produce the Kubernetes projections. The output is the reporting of the
+  authoritative configuration, not a separate authority.
+- **`external`** — the target names an ESO store and a remote path per contract key; Sol renders a
+  namespaced `ExternalSecret` into the app bundle's prerequisites (the existing external-secret
+  path). ESO is the authority; Kubernetes holds the delivered representation.
 - The consumer is identical either way (§8.1).
 
-### 3.1 One database per target
+### 3.1 What reconciliation can and cannot do
 
-The consumer contract fixes the key name (`POSTGRES_URL`), so two `postgres` resources in one
-target collide. **v1 is exactly one `database.connection` per target**; a second requirement
-fails at plan, naming the constraint. Multi-database would require a capability to carry an
-env-var mapping — a new surface, explicitly future work.
+- **Out-of-band password changes are not discovered.** If an operator changes the database password
+  outside Sol, no configuration changed and reconciliation has nothing to re-derive from.
+  Re-reading a Terraform output does not recover a credential that was changed in the database.
+- **Reconciliation cannot invent an unknown credential.** It derives the intended value from the
+  declared authoritative source; when that source no longer reflects reality, the projection is
+  stale and Sol cannot tell.
+- **Updating a Kubernetes Secret does not refresh a running process.** Environment variables are
+  read at process start, so a changed projection reaches a workload only after a restart. This is
+  the same restart requirement as the Kafka credential.
+- **v1 does not add rotation.** No automatic rotation and no new credential-synchronization
+  controller (§9); rotation is a deliberate operator action followed by a restart.
 
 ### 3.2 Projection objects are per capability *per namespace*
 
@@ -155,36 +176,50 @@ capability** (for example three `sol-database-connection` Secrets), all produced
 source. It is *not* one object per target. Stating it here because "one per capability" is the
 natural misreading and it breaks cross-namespace consumption.
 
-### 3.3 What plan does at the database boundary
+**Reconciliation updates every namespace it is responsible for, and reports partial failure
+accurately.** If a projection succeeds in one namespace and fails in another, the operation
+**reports failure and names the affected namespace**; it must not report target-wide success
+(§8.12).
 
-Three cases the derivation makes precise, because each one decides whether a deploy can proceed.
+### 3.3 One database per target
+
+The consumer contract fixes the key name (`POSTGRES_URL`), and the provisioner produces exactly one
+database per target cluster. **v1 supports at most one `postgres` resource in a target's effective
+resource graph**; a second one fails at plan, naming the constraint. Multi-database would require a
+capability to carry an env-var mapping — a new surface, explicitly future work (§9).
+
+### 3.4 What plan does at the database boundary
 
 **Two `postgres` resources consumed by one target.** The refusal is **per target, not per
-workspace**: it fires when *this target's* unit set consumes more than one distinct `postgres`
-resource, because those units would project two different databases into the same `POSTGRES_URL`.
-A workspace declaring `app_db` and `analytics_db` is legitimate when target A consumes only
-`app_db` and target B only `analytics_db` — both targets pass, and neither is refused for the
-other's resource. `has_postgres` — the workspace-wide `List.exists` that drives `create_rds` —
-answers only *whether a provisioner is configured at all*, and must not be reused as the refusal,
-or a legitimate multi-target workspace is refused for workspace state rather than target state.
-Plan refuses across the offending target, naming the second resource, until that target drops to
-one `postgres` resource or the capability grows an env-var mapping (§3.1).
+workspace**: it fires when *this target's* effective resource graph consumes more than one distinct
+`postgres` resource, because those units would project two different databases into one
+`POSTGRES_URL` — and the provisioner makes only one. A workspace declaring `app_db` and
+`analytics_db` is legitimate when target A consumes only `app_db` and target B only `analytics_db`;
+both targets pass. `has_postgres` answers only *whether a provisioner is configured for this
+target*, and must not be reused as the refusal, or a legitimate multi-target workspace is refused
+for another target's state.
+
+**Omitting a resource removes it from the effective graph.** `omit` is settable per layer and
+`Sol_cli_config.resources` filters omitted entries before `has_postgres` is computed, so a target
+that omits its postgres resource neither provisions a database nor provides `database.connection`.
+Resource-graph validation and infrastructure provisioning must read the **same** effective graph
+(§8.11).
 
 **A non-production profile.** `create_rds = has_postgres` is profile-independent, so a dev target
-whose workspace declares a `postgres` resource still provisions one. The profile only decides
+whose effective graph contains a `postgres` resource still provisions one. The profile only decides
 durability (`production_postgres = has_postgres && production` → multi-AZ, deletion protection).
 There is no "dev binds externally instead" behaviour, and none is implied.
 
 **A consumer requires `database.connection` and the target cannot provide it** — no `postgres`
-resource in the workspace, and no `capabilities.database.connection` at either level. **Plan
-fails** with a message naming the two ways to satisfy it: declare a `postgres` resource (which
-makes the workspace's provisioner bring one up), or bind the capability to an external authority
-at the environment or target level. It never proceeds to deploy and fails later on a missing key.
+resource in the effective graph, and no `capabilities.database.connection` at either level. **Plan
+fails** with a message naming the two ways to satisfy it: declare a `postgres` resource (which makes
+the target's provisioner bring one up), or bind the capability to an external authority at the
+environment or target level. It never proceeds to deploy and fails later on a missing key.
 
 **The plan is a gate, not a hint.** `sol deploy` builds the plan first (`build_plan` in
-`cmd_deploy.ml`) and returns its error before the environment stage, destination resolution, or
-any apply — so a refused plan cannot be applied past, and every refusal above is enforced on the
-apply path, not only under `sol plan`.
+`cmd_deploy.ml`) and returns its error before the environment stage, destination resolution, or any
+apply — so a refused plan cannot be applied past, and every refusal above is enforced on the apply
+path, not only under `sol plan`.
 
 ## 4. Delivery quadrants
 
@@ -197,104 +232,155 @@ Mode differences are only *who waits*. The emitted bytes are the contract.
 
 ### 4.1 GitOps with a Sol-provisioned capability is refused in v1
 
-Under GitOps, Argo reconciles the namespace. A projection created by the target installation is
-not in the app bundle, so Argo does not own it and nothing reconciles its drift — and v1 has no
-controller that would. The plan refuses the quadrant and names both options: deploy directly, or
-bind the capability to an external authority (which Argo *can* reconcile through ESO).
+GitOps with a Sol-provisioned capability is refused in v1 because **the GitOps deployment path
+cannot establish prerequisite readiness for installation-owned credential projections before
+workload reconciliation**.
 
-The v2 direction, once a reconciler exists, is an installation-owned projection with a stated
-precondition. Not v1.
+Argo does not need to own these projections — an installation-owned Kubernetes Secret is a
+legitimate external prerequisite of an Argo-managed workload. The gap is that Sol currently has no
+mechanism in the GitOps flow to verify such a prerequisite's existence and readiness, nor a defined
+way to invoke installation reconciliation from that flow. Direct deployment can establish
+readiness before applying workloads; GitOps has no equivalent integration.
+
+So the plan refuses the quadrant, with a clear explanation and the supported alternatives: deploy
+directly, or bind the capability to an external authority delivered through ESO — which remains
+fully supported, because the bundle itself carries the `ExternalSecret`.
+
+**1344d does not open this quadrant.** No reconciliation controller, Argo integration, or new
+installation lifecycle is added for it. A future version may add an explicit mechanism for
+verifying and reconciling installation-owned projections from the GitOps flow.
 
 ## 5. What this replaces
 
 - `@platform/POSTGRES_URL`, `@platform/KAFKA_SASL_PASSWORD`, `@platform/KAFKA_SSL_CA_CERT` →
-  capability projections. `@platform` addressing is removed and errors name the replacement.
-- `default_secrets` → **deleted, not emptied.** It had two lives: the `secret_doc` base and
-  `required_secret_keys`. Both go; the Kafka keys follow the capability requirement, so a unit
-  that uses no `kafka` resource stops requiring them.
+  capability projections. `@platform` parsing, addressing, and commands are **actually removed**,
+  and an error names the replacement.
+- `default_secrets` → **deleted, not emptied, and not relocated.** It had two lives: the
+  `secret_doc` base and `required_secret_keys`. Both go; the Kafka keys follow the capability
+  requirement, so a unit that consumes no `kafka` resource stops requiring them.
 - `runtime_secret_name = "sol-secrets"` → one projection object per capability per namespace
-  (§3.2), so each object has one owner.
+  (§3.2), so each object has one owner and none becomes a new shared bucket.
 - `SOL_API_KEY` is already a declared unit secret, not a workload default.
 
 ## 6. Lifecycle
 
 - **Owner** — the target. Projections die with the target; applications never own them; an
   application rollback does not touch them.
-- **Rotation, `sol`** — refreshed by target reconcile (re-reading the output). v1 requires
-  re-running install/reconcile; automatic rotation is out of scope.
-- **Rotation, `external`** — ESO semantics: source rotation needs a workload restart; a spec
-  change is waited on softly.
-- **Rollback** — re-renders the app bundle only; `external` projections re-render with it,
-  `sol` projections are untouched.
-- **Drift** — reconciled by the projection's writer: the installation for `sol`, ESO for
-  `external`. Nothing application-side repairs it.
-- **Inheritance blast radius** — an environment-level change reaches **every inheriting target**;
-  a target-level change reaches only that target. Rotation follows the same rule: if `prod`
-  declares `store: prod-vault` and `eu-west-1` overrides to `eu-vault`, rotating at `prod-vault`
-  affects every inheriting target *except* `eu-west-1`. v1 relies on per-target `--dry-run` to
-  preview a change; an env-wide change report is deliberately not built (§9).
+- **Rotation, `sol`** — refreshed by target reconcile. v1 requires re-running install/reconcile;
+  automatic rotation is out of scope.
+- **Rotation, `external`** — ESO semantics: source rotation needs a workload restart; a spec change
+  is waited on softly.
+- **Rollback** — re-renders the app bundle only; `external` projections re-render with it, `sol`
+  projections are untouched.
+- **Drift** — reconciled by the projection's writer: the installation for `sol`, ESO for `external`.
+  Nothing application-side repairs it.
+- **Partial failure** — reconciliation reports per namespace and never claims target-wide success
+  when one namespace failed (§8.12).
+- **Inheritance blast radius** — an environment-level change reaches **every inheriting target**; a
+  target-level change reaches only that target. Rotation follows the same rule: if `prod` declares
+  `store: prod-vault` and `eu-west-1` overrides to `eu-vault`, rotating at `prod-vault` affects
+  every inheriting target *except* `eu-west-1`. v1 relies on per-target `--dry-run` to preview a
+  change; an env-wide change report is deliberately not built (§9).
 
 ## 7. Moves and removals — report, never delete
 
 Two cases share one rule.
 
 - **`@platform` retirement.** The old `sol-secrets` object is not auto-deleted. Sol does not
-  silently remove a populated object; the deploy reports it as unreferenced and the operator
-  removes it.
-- **Authority migration** (§8.8). When a key moves between `sol` and `external` — or a
-  capability moves between providers — Sol **reports the object the move orphans** (the previous
-  writer's Secret or `ExternalSecret`) and leaves it in place. It does not delete it, and it does
-  not silently leave it either: the report names it, and the operator removes it.
+  silently remove a populated object; the deploy reports it as unreferenced and the operator removes
+  it.
+- **Authority migration** (§8.8). When a key moves between `sol` and `external` — or a capability
+  moves between providers — Sol **reports the object the move orphans** (the previous writer's
+  Secret or `ExternalSecret`) and leaves it in place.
 
-This keeps every removal in the same discipline as resource ownership: Sol removes only what it
-can prove it owns, and a populated object that may still hold a live credential is not proof.
+Cleanup and orphan reporting respect **target, namespace, and release ownership boundaries**: a
+projection observed in a namespace is only removed when Sol can prove it owns it there.
+
+This keeps every removal in the same discipline as resource ownership: Sol removes only what it can
+prove it owns, and a populated object that may still hold a live credential is not proof.
 
 ## 8. Acceptance set — the implementation's review checklist
 
-1. **Byte-equality** — the consumer's rendered spec is byte-identical under both providers, and
-   the template contains no provider branch.
+1. **Provider independence** — the consumer's rendered **pod-template fragments** are byte-identical
+   under both providers (not the complete manifests: provider-specific prerequisite resources
+   legitimately differ), and the template contains no provider branch.
 2. **No key without a consumer** — every projected key has a named consumer contract.
 3. **Unit scope preserved** — a unit's Secret holds only its declared keys plus its capabilities'
    contract keys; no cross-unit leakage.
 4. **Removals leave no dangling references** — dropping a capability or a key leaves no workload
-   referencing a vanished key.
-5. **Every new object has a named source** — each projected value has a producer (install output
-   or ESO store), never a placeholder.
-6. **Projections are never cached** — a projection is produced or read at its defined time; no
-   stale copy is kept.
+   referencing a vanished key, **including after an interrupted reconciliation or a failed
+   projection update** — not merely in the final rendered state.
+5. **Every new object has a named source** — each projected value has a producer (install output or
+   ESO store), never a placeholder, and never a fallback default when the source is absent.
+6. **No additional authority** — a projection must not become an independent source of credential
+   authority. Reconciliation derives its intended value from the declared authoritative source;
+   Kubernetes stores the delivered representation. Persistence of the Secret is not itself a
+   violation.
 7. **All four quadrants are answered** — {direct, GitOps} × {sol, external}, per §4, with §4.1 as
    the v1 refusal.
 8. **Authority migration is reported** — a move between providers reports the object it orphans
    (§7); no silent change and no silent deletion.
-9. **Resolution is visible** — `sol plan` and `sol secret status` print the **resolved** authority
-   for each key. When a key is declared at the environment level, each target's output names the
-   level it came from; when a key is overridden at the target, the output shows both the override
-   and the inherited source. The level is recorded on the resolved value at merge time — a side map
-   in the resolved config, never a parallel structure threaded through deploy, release and
-   rollback, and never persisted in the release record.
+9. **Observable provenance** — `sol plan` and `sol secret status` show the resolved authority for
+   each key and where it was declared (environment or target). No particular internal
+   representation is prescribed: use the smallest mechanism that produces the diagnostic without
+   threading provenance through deployment, release, or rollback.
 10. **Inheritance behaves** — tests cover env-only, target-only, env+target override, an atomic
     override (no `store` carried over from the inherited declaration), a missing authority, and
-    cross-target isolation (an override in one target leaves its siblings resolving to the
-    inherited value).
+    cross-target isolation.
+11. **Resource-graph consistency** — capability availability, consumer requirements, and
+    infrastructure provisioning resolve against a **consistent effective resource graph for the
+    selected target**. A plan must not succeed when the infrastructure it provisions cannot satisfy
+    the resolved capability contract. Tests cover both successful selection and refusal, including
+    omitted resources and multiple `postgres` declarations.
+12. **Partial projection failure is reported** — a reconciliation that succeeds in one namespace and
+    fails in another reports failure and names the affected namespace; it never claims target-wide
+    success.
 
 ## 9. Out of scope
 
-Multi-target sharing of a capability; resource CRUD independent of the target lifecycle;
-capability types beyond database and Kafka; a new `resources:` DSL; automatic rotation;
-cross-cloud portability; multi-database-per-target; environment-wide change reports (per-target
-`--dry-run` covers previewing a change); and — for v1 — GitOps with a Sol-provisioned capability.
+Multi-target sharing of a capability; resource CRUD independent of the target lifecycle; capability
+types beyond database and Kafka; a new `resources:` DSL; automatic rotation; cross-cloud
+portability; multi-database-per-target; environment-wide change reports (per-target `--dry-run`
+covers previewing a change); and — for v1 — GitOps with a Sol-provisioned capability.
 
-## 10. Local development — a deliberate asymmetry
+Implementation non-goals, stated so a diff can be checked against them:
 
-`cli/lib/local/sol_cli_local_run.ml` injects `POSTGRES_URL`, `SOL_API_KEY`, and the unit's
-declared `[infra.env] secrets` into every local workload, and requires each to be present in
-`sol/secrets.local/`. Kafka keys are **not** among them: local Kafka runs plaintext, so no SASL
-credential or CA is projected locally — a unit that declares them is asking for them explicitly.
+- No generic capability registry and no runtime capability registration.
+- No independent capability inventory and no separate capability reconciliation lifecycle.
+- No new resource declaration DSL and no parallel configuration of existing infrastructure
+  resources.
+- No speculative adapters for future capability types.
+- No automatic credential rotation controller.
+- No environment-wide impact-analysis system.
 
-The asymmetry with the cluster is the point. Local runs have no workload identity, so they need a
-universal plaintext fallback; production authenticates with workload identity and needs no
-universal key. The hardcoded local list is not a leftover and must not be "fixed" to match the
-cluster.
+Capabilities remain a small, compiled contract for the concrete PostgreSQL and Kafka requirements
+Sol supports today. A third capability justifies itself through an actual provisioner, a consumer,
+and a stable contract — not hypothetical extensibility.
+
+## 10. Local development — the same invariant
+
+The §0 invariant applies locally as it does in Kubernetes. The **delivery mechanism** differs —
+`sol/secrets.local/` rather than Secrets and ESO — but the requirement to project only consumed
+credentials does not.
+
+`cli/lib/local/sol_cli_local_run.ml` currently injects `POSTGRES_URL` and `SOL_API_KEY` into every
+local workload regardless of whether the unit consumes them. That is a defect against §0, not a
+deliberate exception, and 1344d corrects it:
+
+- **`POSTGRES_URL`** is derived from the existing resource dependency graph: units that consume a
+  postgres resource receive the connection; units that do not, do not. A missing required local
+  credential fails explicitly, as it does today.
+- **`SOL_API_KEY`** is injected only for units that actually require the local plaintext peer-auth
+  fallback. The candidate signal is the existing declared `calls` graph — the fallback is the caller
+  side, used when a unit has no projected identity. The implementation confirms whether that graph
+  identifies the consumers; **if it cannot, that limitation is reported rather than solved by
+  inventing a new application declaration or authentication abstraction.**
+- The explicit development-only plaintext opt-in (`SOL_ALLOW_PLAINTEXT_PEER_AUTH`) is preserved.
+- Kafka keys remain outside the local set: local Kafka runs plaintext, so no SASL credential or CA
+  is projected locally.
+
+**Acceptance:** a Kafka-only workload receives neither `POSTGRES_URL` nor an unrelated API key,
+while workloads with demonstrated credential requirements receive both correctly.
 
 The environment/target inheritance model (§2) does not apply locally: `sol/secrets.local/` is per
-workspace and has no environment layer, so there is nothing to inherit from. Local stays as it is.
+workspace and has no environment layer, so there is nothing to inherit from.
