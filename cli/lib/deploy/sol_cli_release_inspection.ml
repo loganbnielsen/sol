@@ -202,8 +202,13 @@ let rendered_manifests_of_service
       (service : Sol_cli_deployment_plan.service_spec)
   =
   Sol_cli_deployment_render.render_spec ~workspace ?env ~release_id service
-  |> Result.map (fun (namespace_yaml, workload_yaml) ->
-    split_manifest_docs (namespace_yaml ^ "\n" ^ workload_yaml)
+  |> Result.map (fun bundle ->
+    split_manifest_docs
+      (bundle.Sol_cli_manifest.namespace_yaml
+       ^ "\n"
+       ^ bundle.prerequisites_yaml
+       ^ "\n"
+       ^ bundle.workload_yaml)
     |> List.map (fun yaml ->
       { name = manifest_name yaml
       ; namespace = Sol_cli_deployment_plan.namespace_to_string service.namespace

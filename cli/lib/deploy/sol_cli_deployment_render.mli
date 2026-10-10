@@ -4,4 +4,4 @@ val render_spec
   -> ?image:string
   -> release_id:Sol_cli_release_id.t
   -> Sol_cli_deployment_plan.service_spec
-  -> (string * string, string) result
+  -> (Sol_cli_manifest.bundle, string) result

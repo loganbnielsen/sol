@@ -92,34 +92,66 @@ let create_idempotent_yaml ~ctx yaml =
   with_manifest_file yaml (fun file -> create_idempotent ~ctx ~file)
 ;;
 
-let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
+(* A rendered workload is applied in phases so that an object which starts pods is
+   never applied before the objects it depends on exist: the caller owns the
+   ordering between [apply_bundle_prerequisites] (no readiness gate: ServiceAccount,
+   ConfigMap, ExternalSecret, NetworkPolicy) and [apply_bundle_workload] (the
+   Deployment/Rollout/CronJob, Service, Ingress, PDB, PVC). Collapsing the two back
+   into a single apply is what let a Deployment reference a not-yet-materialized
+   external Secret. *)
+type bundle =
+  { namespace_yaml : string
+  ; prerequisites_yaml : string
+  ; workload_yaml : string
+  }
+
+let apply_document ~ctx yaml =
   let open Result.Syntax in
   let step what = Result.map_error (fun e -> what ^ Sol_cli_process.error_to_string e) in
-  if dry_run
-  then (
-    Sol_cli_report.app "%s\n%s" ns_yaml workload_yaml;
-    Ok ())
-  else
+  Sol_cli_fs.with_temp_file ~prefix:"sol-manifest-" ~suffix:".yaml" yaml (fun file ->
     let* () =
-      create_idempotent_yaml ~ctx ns_yaml |> step "kubectl create (namespace): "
+      Sol_cli_kubectl.apply_dry_run ~ctx ~file
+      |> step "kubectl server-side dry-run failed: "
     in
-    Sol_cli_fs.with_temp_file
-      ~prefix:"sol-manifest-"
-      ~suffix:".yaml"
-      workload_yaml
-      (fun file ->
-         let* () =
-           Sol_cli_kubectl.apply_dry_run ~ctx ~file
-           |> step "kubectl server-side dry-run failed: "
-         in
-         Sol_cli_kubectl.apply ~ctx ~file |> step "kubectl apply failed: ")
-    |> Result.join
+    Sol_cli_kubectl.apply ~ctx ~file |> step "kubectl apply failed: ")
+  |> Result.join
 ;;
 
-let emit_to_dir dir (ns_yaml, workload_yaml) ~ns ~name =
+let apply_bundle_namespace ~ctx bundle =
+  create_idempotent_yaml ~ctx bundle.namespace_yaml
+  |> Result.map_error (fun e ->
+    "kubectl create (namespace): " ^ Sol_cli_process.error_to_string e)
+;;
+
+let apply_bundle_prerequisites ~ctx bundle =
+  match String.trim bundle.prerequisites_yaml with
+  | "" -> Ok ()
+  | _ -> apply_document ~ctx bundle.prerequisites_yaml
+;;
+
+let apply_bundle_workload ~ctx bundle = apply_document ~ctx bundle.workload_yaml
+
+let print_bundle bundle =
+  Sol_cli_report.app
+    "%s\n%s\n%s"
+    bundle.namespace_yaml
+    bundle.prerequisites_yaml
+    bundle.workload_yaml
+;;
+
+let emit_to_dir dir bundle ~ns ~name =
   let open Result.Syntax in
   let path = Filename.concat dir (Printf.sprintf "%s-%s.yaml" ns name) in
   let* () = Sol_cli_fs.mkdir_p dir in
-  let* () = Sol_cli_fs.write_atomic path (ns_yaml ^ "\n" ^ workload_yaml ^ "\n") in
+  let* () =
+    Sol_cli_fs.write_atomic
+      path
+      (bundle.namespace_yaml
+       ^ "\n"
+       ^ bundle.prerequisites_yaml
+       ^ "\n"
+       ^ bundle.workload_yaml
+       ^ "\n")
+  in
   Ok path
 ;;

@@ -598,20 +598,30 @@ let verify_external_secret_ready ~ctx (spec : Sol_cli_deployment_plan.service_sp
                external_name
                (Option.value state ~default:"unknown")
                (Option.value reason ~default:"unknown"))
-        else if
-          List.mem_assoc "observedGeneration" condition
-          && Option.fold
-               ~none:false
-               ~some:(fun generation -> observed <> Some generation)
-               generation
-        then
-          Error
-            (Printf.sprintf
-               "ESO condition for %s/%s is stale for metadata generation %s"
-               namespace
-               external_name
-               (Option.value generation ~default:"unknown"))
-        else Ok ()
+        else (
+          match generation, observed with
+          | Some generation, Some observed when String.equal generation observed -> Ok ()
+          | Some generation, Some observed ->
+            Error
+              (Printf.sprintf
+                 "ESO condition for %s/%s is stale for metadata generation %s (observed \
+                  %s)"
+                 namespace
+                 external_name
+                 generation
+                 observed)
+          | _ ->
+            (* Fail closed rather than accept a Ready condition we cannot tie to the
+                live spec: External Secrets Operator >= 0.16 supplies both
+                metadata.generation and the condition's observedGeneration. *)
+            Error
+              (Printf.sprintf
+                 "cannot verify ESO sync for %s/%s: the deploy gate requires \
+                  metadata.generation and the Ready condition's observedGeneration \
+                  (External Secrets Operator >= 0.16 supplies both); refusing to apply a \
+                  workload against an unverified external Secret"
+                 namespace
+                 external_name))
     in
     let* materialized =
       get_named_secret_json

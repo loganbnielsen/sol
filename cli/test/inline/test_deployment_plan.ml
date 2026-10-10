@@ -1738,7 +1738,7 @@ let rendered_workload spec =
       ~release_id:release_id_of_test
       spec
   with
-  | Ok (_, workload) -> workload
+  | Ok bundle -> bundle.prerequisites_yaml ^ bundle.workload_yaml
   | Error message -> Windtrap.fail ("render_spec failed: " ^ message)
 ;;
 

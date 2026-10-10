@@ -323,8 +323,10 @@ let render ~workspace ?env ?(image = "") ~release_id { common; workload } =
              in
              [ cronjob_doc workload ]
          in
-         ( Sol_cli_yaml.render [ ns_yaml ]
-         , Sol_cli_yaml.render (common_resources @ resources) ))
+         { Sol_cli_manifest.namespace_yaml = Sol_cli_yaml.render [ ns_yaml ]
+         ; prerequisites_yaml = Sol_cli_yaml.render common_resources
+         ; workload_yaml = Sol_cli_yaml.render resources
+         })
       (Ok ()))
 ;;
 

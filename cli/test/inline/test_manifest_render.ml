@@ -18,7 +18,7 @@ let render_spec_ok
       spec
   =
   match Sol_cli_deployment_render.render_spec ~workspace ?env ?image ~release_id spec with
-  | Ok v -> v
+  | Ok bundle -> bundle.namespace_yaml, bundle.prerequisites_yaml ^ bundle.workload_yaml
   | Error e -> Windtrap.fail ("render_spec unexpectedly failed: " ^ e)
 ;;
 
@@ -3267,4 +3267,42 @@ let%test "workload identity: sol secret set refuses the target issuer" =
     "sol secret set refuses the target-projected key"
     true
     (Result.is_error (Sol_cli_secret.validate_key "SOL_TRUSTED_WORKLOAD_ISSUER"))
+;;
+
+(* Deploy ordering depends on the renderer separating the objects that must exist
+   before a pod starts (the ExternalSecret) from the objects that start pods. *)
+let%test "bundle: the ExternalSecret is a prerequisite, not part of the workload" =
+  let spec =
+    { svc_spec with
+      secrets = [ "PAYMENT_KEY", "" ]
+    ; secret_sources =
+        [ ( "PAYMENT_KEY"
+          , Sol_cli_manifest.External { store = "payments-store"; key = "payment/key" } )
+        ]
+    }
+  in
+  match
+    Sol_cli_deployment_render.render_spec
+      ~workspace:"myapp"
+      ~release_id:release_id_of_test
+      spec
+  with
+  | Error message -> Windtrap.fail ("render_spec failed: " ^ message)
+  | Ok bundle ->
+    assert_contains
+      "prerequisites carry the ExternalSecret"
+      bundle.Sol_cli_manifest.prerequisites_yaml
+      "kind: ExternalSecret";
+    assert_contains
+      "the workload document carries the Deployment"
+      bundle.workload_yaml
+      "kind: Deployment";
+    assert_absent
+      "the ExternalSecret is not applied with the workload"
+      bundle.workload_yaml
+      "kind: ExternalSecret";
+    assert_absent
+      "the Deployment is not applied with the prerequisites"
+      bundle.prerequisites_yaml
+      "kind: Deployment"
 ;;

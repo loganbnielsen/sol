@@ -385,7 +385,8 @@ let render_by_identity ~release_id apply_specs =
              ~release_id
              s
          with
-         | Ok (ns_yaml, body) -> ns_yaml ^ body
+         | Ok bundle ->
+           bundle.namespace_yaml ^ bundle.prerequisites_yaml ^ bundle.workload_yaml
          | Error msg -> Windtrap.fail msg
        in
        key, rendered)
@@ -925,7 +926,7 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
              | Error msg -> Windtrap.fail msg)
           got
       with
-      | Ok (_ns_yaml, body) -> body
+      | Ok bundle -> bundle.prerequisites_yaml ^ bundle.workload_yaml
       | Error msg -> Windtrap.fail msg
     in
     Windtrap.equal
@@ -2067,7 +2068,8 @@ let render_for_release ~(release : Sol_cli_release.t) spec applied_by =
          spec
      with
      | Error msg -> Error msg
-     | Ok (ns_yaml, body) -> Ok (ns_yaml ^ body))
+     | Ok bundle ->
+       Ok (bundle.namespace_yaml ^ bundle.prerequisites_yaml ^ bundle.workload_yaml))
 ;;
 
 let modelled_deps ~release ~cluster ?(fail_at = None) ()
