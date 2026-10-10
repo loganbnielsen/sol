@@ -42,8 +42,9 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
 
 (* The ExternalSecrets the release Sol is rolling back to declares: one per recorded
    workload that carries external remote refs. An ExternalSecret recorded by the release it
-   is rolling back from but not declared here is an orphan to prune. *)
-let declared_external_secrets (release : Sol_cli_release.t) =
+   is rolling back from but not declared here is an orphan to prune. Named [_of_release] to
+   distinguish it from [Sol_cli_rollback.declared_external_secrets], which reads a plan. *)
+let declared_external_secrets_of_release (release : Sol_cli_release.t) =
   release.workloads
   |> List.filter_map (fun (w : Sol_cli_release_id.recorded_workload) ->
     if w.spec.external_secret_refs = []
@@ -108,7 +109,7 @@ let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) 
             Sol_cli_rollback.prune_external_secrets
               ~ctx
               ~evidence
-              ~declared:(declared_external_secrets release)
+              ~declared:(declared_external_secrets_of_release release)
           in
           List.iter
             (fun (t : Sol_cli_rollback.prune_target) ->

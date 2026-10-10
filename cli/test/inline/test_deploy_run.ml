@@ -1159,6 +1159,71 @@ let%test "removal: a completed removal lets the release advance" =
   test_lifecycle_advances_when_removal_completes ()
 ;;
 
+(* #4 end-to-end through the deploy's own [remove_surplus_workloads]: a unit that dropped
+   its last external key is still declared, so its workload is not surplus, but its
+   recorded ExternalSecret is pruned and the workload is left alone. *)
+let test_deploy_prunes_an_external_secret_the_unit_no_longer_declares () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let declared =
+      plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+    in
+    let owned =
+      [ recorded_charge_svc "uid-recorded"
+      ; { Sol_cli_release_id.resource = "externalsecret"
+        ; namespace = "myapp-payments"
+        ; name = "charge-svc-external-secrets"
+        ; uid = "uid-recorded"
+        }
+      ]
+    in
+    let current, record = release_configmap_files ~dir ~evidence_plan:declared ~owned in
+    let deployments = Filename.concat dir "deployments.json" in
+    write_file
+      deployments
+      (listing
+         [ deployment_listing_item
+             ~name:"charge-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-recorded"
+         ]);
+    let deletes = Filename.concat dir "deletes.log" in
+    write_file deletes "";
+    with_scripted_kubectl
+      (surplus_kubectl_script ~current ~record ~deployments ~deletes ())
+      (fun () ->
+         let outcome, reports = surplus_removal_outcome ~ctx declared in
+         check_removal_result
+           ~msg:"pruning the orphaned ExternalSecret lets the release advance"
+           (Ok ())
+           outcome;
+         let log = read_file deletes in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the orphaned ExternalSecret is removed"
+           true
+           (Sol_cli_string.contains
+              ~needle:
+                "delete externalsecret charge-svc-external-secrets -n myapp-payments"
+              log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the still-declared workload is not removed"
+           false
+           (Sol_cli_string.contains ~needle:"delete deployment" log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the removal is reported to the user"
+           true
+           (Sol_cli_string.contains
+              ~needle:"Removed externalsecret myapp-payments/charge-svc-external-secrets"
+              reports)))
+;;
+
+let%test "removal: an ExternalSecret the unit no longer declares is pruned" =
+  test_deploy_prunes_an_external_secret_the_unit_no_longer_declares ()
+;;
+
 let%test "lifecycle: a failed apply does not report success" =
   with_fake_kubectl (fun ~calls:_ ->
     with_context (fun ctx ->

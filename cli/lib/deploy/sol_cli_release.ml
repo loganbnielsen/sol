@@ -110,16 +110,20 @@ let of_plan_with_boundary
      (docs/architecture/ownership.md); a workload with no matching evidence
      records none, which a removal must read as "no evidence". Matching kind too
      matters: two units can normalize to one name and still project to different
-     objects (a Deployment and a CronJob both named [charge-svc]). *)
+     objects (a Deployment and a CronJob both named [charge-svc]). A unit's
+     ExternalSecret (<name>-external-secrets) is recorded with its workload, so an
+     orphan can be pruned with the same UID evidence. *)
   let owned_for (spec : Sol_cli_deployment_plan.service_spec) =
     let resource = Sol_cli_deployment_plan.resource_of_spec spec in
     let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
     let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+    let external_secret = Sol_cli_manifest.external_secret_name name in
     List.filter
       (fun (o : Sol_cli_release_id.owned_object) ->
-         String.equal o.resource resource
-         && String.equal o.namespace namespace
-         && String.equal o.name name)
+         String.equal o.namespace namespace
+         && ((String.equal o.resource resource && String.equal o.name name)
+             || (String.equal o.resource "externalsecret"
+                 && String.equal o.name external_secret)))
       owned
   in
   let deployed_records = List.map (applied_by "") deployed in
